@@ -133,7 +133,7 @@ impl ClientBuilder {
                 tcp_keepalive: None, //Some(Duration::from_secs(60)),
                 proxies: Vec::new(),
                 auto_sys_proxy: true,
-                redirect_policy: redirect::Policy::default(),
+                redirect_policy: redirect::Policy::none(),
                 referer: true,
                 timeout: None,
                 local_address_ipv6: None,
