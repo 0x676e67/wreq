@@ -77,6 +77,10 @@ struct ChromeTlsSettings<'a> {
     #[builder(default = &CIPHER_LIST)]
     cipher_list: &'a [&'a str],
 
+    // TLS permute extensions
+    #[builder(default = false, setter(into))]
+    permute_extensions: bool,
+
     // TLS extension
     extension: TlsExtensionSettings,
 }
@@ -98,6 +102,7 @@ impl TryInto<(SslConnectorBuilder, TlsExtensionSettings)> for ChromeTlsSettings<
         builder.enable_signed_cert_timestamps();
         builder.set_min_proto_version(Some(SslVersion::TLS1_2))?;
         builder.set_max_proto_version(Some(SslVersion::TLS1_3))?;
+        builder.set_permute_extensions(self.permute_extensions);
         builder
             .configure_add_cert_compression_alg(CertCompressionAlgorithm::Brotli)
             .map(|builder| (builder, self.extension))

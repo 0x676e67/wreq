@@ -10,6 +10,7 @@ pub(crate) fn get_settings(settings: ImpersonateConfig) -> TlsResult<Impersonate
     Ok(ImpersonateSettings::builder()
         .tls(
             EdgeTlsSettings::builder()
+                .permute_extensions(true)
                 .extension(settings.tls_extension)
                 .build()
                 .try_into()?,

@@ -22,7 +22,8 @@ use connector::{HttpsConnector, HttpsLayer, HttpsLayerSettings};
 use extension::{TlsConnectExtension, TlsExtension};
 pub use impersonate::{tls_settings, Impersonate};
 pub use settings::{
-    Http2Settings, ImpersonateConfig, ImpersonateSettings, TlsConnectorBuilder, TlsExtensionSettings,
+    Http2Settings, ImpersonateConfig, ImpersonateSettings, TlsConnectorBuilder,
+    TlsExtensionSettings,
 };
 
 type TlsResult<T> = std::result::Result<T, ErrorStack>;
