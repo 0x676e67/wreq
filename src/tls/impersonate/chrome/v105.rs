@@ -11,7 +11,12 @@ use http::{
 
 pub(crate) fn get_settings() -> TlsResult<ImpersonateSettings> {
     Ok(ImpersonateSettings::builder()
-        .tls(ChromeTlsSettings::builder().build().try_into()?)
+        .tls(
+            ChromeTlsSettings::builder()
+                .enable_ech_grease(true)
+                .build()
+                .try_into()?,
+        )
         .http2(
             Http2Settings::builder()
                 .initial_stream_window_size(6291456)

@@ -14,6 +14,7 @@ pub(crate) fn get_settings() -> TlsResult<ImpersonateSettings> {
         .tls(
             ChromeTlsSettings::builder()
                 .permute_extensions(true)
+                .enable_ech_grease(true)
                 .build()
                 .try_into()?,
         )

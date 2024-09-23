@@ -64,6 +64,10 @@ pub struct EdgeTlsSettings<'a> {
     #[builder(default = true, setter(into))]
     application_settings: bool,
 
+    // TLS enable ech grease, https://chromestatus.com/feature/6196703843581952
+    #[builder(default = false, setter(into))]
+    enable_ech_grease: bool,
+
     // TLS permute extensions
     #[builder(default = false, setter(into))]
     permute_extensions: bool,
@@ -96,6 +100,7 @@ impl TryInto<(SslConnectorBuilder, TlsExtensionSettings)> for EdgeTlsSettings<'_
             .http_version_pref(HttpVersionPref::All)
             .permute_extensions(self.permute_extensions)
             .pre_shared_key(self.pre_shared_key)
+            .enable_ech_grease(self.enable_ech_grease)
             .application_settings(self.application_settings)
             .build();
 

@@ -14,6 +14,7 @@ pub(crate) fn get_settings() -> TlsResult<ImpersonateSettings> {
                 .curves(NEW_CURVES)
                 .permute_extensions(true)
                 .pre_shared_key(true)
+                .enable_ech_grease(true)
                 .build()
                 .try_into()?,
         )
