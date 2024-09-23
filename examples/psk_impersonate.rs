@@ -7,7 +7,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let client = rquest::Client::builder()
         .impersonate(Impersonate::Chrome128)
         .enable_ech_grease()
-        .permute_extensions()
         .build()?;
 
     // Use the API you're already familiar with

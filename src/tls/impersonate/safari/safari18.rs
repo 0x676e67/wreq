@@ -1,17 +1,17 @@
-use super::{SafariTlsSettings, CIPHER_LIST};
-use crate::tls::{Http2Settings, ImpersonateSettings};
-use crate::tls::{ImpersonateConfig, TlsResult};
+use super::http2::{NEW_HEADERS_PSEUDO_ORDER, NEW_HEADER_PRORIORITY, NEW_SETTINGS_ORDER};
+use super::tls::{SafariTlsSettings, CIPHER_LIST};
+use crate::tls::impersonate::{http2::Http2Settings, ImpersonateSettings};
+use crate::tls::TlsResult;
 use http::{
     header::{ACCEPT, ACCEPT_ENCODING, ACCEPT_LANGUAGE, USER_AGENT},
     HeaderMap, HeaderValue,
 };
 
-pub(crate) fn get_settings(settings: ImpersonateConfig) -> TlsResult<ImpersonateSettings> {
+pub(crate) fn get_settings() -> TlsResult<ImpersonateSettings> {
     Ok(ImpersonateSettings::builder()
         .tls(
             SafariTlsSettings::builder()
                 .cipher_list(&CIPHER_LIST)
-                .extension(settings.tls_extension)
                 .build()
                 .try_into()?,
         )
@@ -23,9 +23,9 @@ pub(crate) fn get_settings(settings: ImpersonateConfig) -> TlsResult<Impersonate
                 .enable_push(false)
                 .unknown_setting8(true)
                 .unknown_setting9(true)
-                .headers_priority(settings.http2_headers_priority)
-                .headers_pseudo_order(settings.http2_headers_pseudo_order)
-                .settings_order(settings.http2_settings_order)
+                .headers_priority(*NEW_HEADER_PRORIORITY)
+                .headers_pseudo_order(*NEW_HEADERS_PSEUDO_ORDER)
+                .settings_order(NEW_SETTINGS_ORDER.to_vec())
                 .build(),
         )
         .headers(Box::new(header_initializer))

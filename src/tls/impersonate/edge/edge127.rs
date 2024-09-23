@@ -1,18 +1,19 @@
-use super::{EdgeTlsSettings, NEW_CURVES};
-use crate::tls::{Http2Settings, ImpersonateSettings};
-use crate::tls::{ImpersonateConfig, TlsResult};
+use super::http2::{HEADERS_PSEUDO_ORDER, HEADER_PRORIORITY, SETTINGS_ORDER};
+use super::tls::{EdgeTlsSettings, NEW_CURVES};
+use crate::tls::impersonate::{http2::Http2Settings, ImpersonateSettings};
+use crate::tls::TlsResult;
 use http::{
     header::{ACCEPT, ACCEPT_ENCODING, ACCEPT_LANGUAGE, UPGRADE_INSECURE_REQUESTS, USER_AGENT},
     HeaderMap, HeaderValue,
 };
 
-pub(crate) fn get_settings(settings: ImpersonateConfig) -> TlsResult<ImpersonateSettings> {
+pub(crate) fn get_settings() -> TlsResult<ImpersonateSettings> {
     Ok(ImpersonateSettings::builder()
         .tls(
             EdgeTlsSettings::builder()
                 .curves(NEW_CURVES)
                 .permute_extensions(true)
-                .extension(settings.tls_extension)
+                .pre_shared_key(true)
                 .build()
                 .try_into()?,
         )
@@ -23,9 +24,9 @@ pub(crate) fn get_settings(settings: ImpersonateConfig) -> TlsResult<Impersonate
                 .max_header_list_size(262144)
                 .header_table_size(65536)
                 .enable_push(false)
-                .headers_priority(settings.http2_headers_priority)
-                .headers_pseudo_order(settings.http2_headers_pseudo_order)
-                .settings_order(settings.http2_settings_order)
+                .headers_priority(*HEADER_PRORIORITY)
+                .headers_pseudo_order(*HEADERS_PSEUDO_ORDER)
+                .settings_order(SETTINGS_ORDER.to_vec())
                 .build(),
         )
         .headers(Box::new(header_initializer))

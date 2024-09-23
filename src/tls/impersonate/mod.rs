@@ -1,25 +1,45 @@
-#![allow(missing_docs)]
+#![allow(missing_docs, missing_debug_implementations)]
 
 mod chrome;
 mod edge;
+pub mod http2;
 mod okhttp;
 mod safari;
+pub mod tls;
 
-use super::{ImpersonateSettings, TlsResult};
-use crate::tls::ImpersonateConfig;
+use super::TlsResult;
+use boring::ssl::SslConnectorBuilder;
 use chrome::*;
 use edge::*;
+use http::HeaderMap;
+use http2::Http2Settings;
 use okhttp::*;
 use safari::*;
 use std::{fmt::Debug, str::FromStr};
+use tls::TlsExtensionSettings;
+use typed_builder::TypedBuilder;
 use Impersonate::*;
+
+/// Impersonate Settings.
+#[derive(TypedBuilder)]
+pub struct ImpersonateSettings {
+    /// The SSL connector builder.
+    pub(crate) tls: (SslConnectorBuilder, TlsExtensionSettings),
+
+    /// HTTP/2 settings.
+    pub(crate) http2: Http2Settings,
+
+    /// Http headers
+    #[builder(default, setter(strip_option))]
+    pub(crate) headers: Option<Box<dyn FnOnce(&mut HeaderMap)>>,
+}
 
 macro_rules! impersonate_match {
     ($ver:expr, $($variant:pat => $path:path),+) => {
         match $ver {
             $(
                 $variant => {
-                    $path(ImpersonateConfig::from($ver))
+                    $path()
                 },
             )+
         }

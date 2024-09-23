@@ -6,24 +6,23 @@
 //!   `ClientBuilder`.
 
 #![allow(missing_docs)]
+mod builder;
 mod cert_compression;
 mod connector;
 pub mod extension;
 mod impersonate;
-mod settings;
 
 use crate::{connect::HttpConnector, HttpVersionPref};
 use boring::{
     error::ErrorStack,
     ssl::{SslConnector, SslMethod},
 };
+pub use builder::TlsConnectorBuilder;
 pub use connector::MaybeHttpsStream;
 use connector::{HttpsConnector, HttpsLayer, HttpsLayerSettings};
 use extension::{TlsConnectExtension, TlsExtension};
-pub use impersonate::{tls_settings, Impersonate};
-pub use settings::{
-    Http2Settings, ImpersonateConfig, ImpersonateSettings, TlsConnectorBuilder,
-    TlsExtensionSettings,
+pub use impersonate::{
+    http2::Http2Settings, tls::TlsExtensionSettings, tls_settings, Impersonate, ImpersonateSettings,
 };
 
 type TlsResult<T> = std::result::Result<T, ErrorStack>;

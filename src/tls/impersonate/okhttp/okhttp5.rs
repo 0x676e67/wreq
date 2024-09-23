@@ -1,12 +1,13 @@
-use super::OkHttpTlsSettings;
-use crate::tls::{Http2Settings, ImpersonateSettings};
-use crate::tls::{ImpersonateConfig, TlsResult};
+use super::http2::{HEADERS_PSEUDO_ORDER, HEADER_PRORIORITY, SETTINGS_ORDER};
+use super::tls::OkHttpTlsSettings;
+use crate::tls::impersonate::{http2::Http2Settings, ImpersonateSettings};
+use crate::tls::TlsResult;
 use http::{
     header::{ACCEPT, ACCEPT_ENCODING, ACCEPT_LANGUAGE, USER_AGENT},
     HeaderMap, HeaderValue,
 };
 
-pub(crate) fn get_settings(settings: ImpersonateConfig) -> TlsResult<ImpersonateSettings> {
+pub(crate) fn get_settings() -> TlsResult<ImpersonateSettings> {
     Ok(ImpersonateSettings::builder()
         .tls(
             OkHttpTlsSettings::builder()
@@ -28,7 +29,6 @@ pub(crate) fn get_settings(settings: ImpersonateConfig) -> TlsResult<Impersonate
                     "TLS_RSA_WITH_AES_256_CBC_SHA",
                     "TLS_RSA_WITH_3DES_EDE_CBC_SHA",
                 ])
-                .extension(settings.tls_extension)
                 .build()
                 .try_into()?,
         )
@@ -36,9 +36,9 @@ pub(crate) fn get_settings(settings: ImpersonateConfig) -> TlsResult<Impersonate
             Http2Settings::builder()
                 .initial_stream_window_size(16777216)
                 .initial_connection_window_size(16777216)
-                .headers_priority(settings.http2_headers_priority)
-                .headers_pseudo_order(settings.http2_headers_pseudo_order)
-                .settings_order(settings.http2_settings_order)
+                .headers_priority(*HEADER_PRORIORITY)
+                .headers_pseudo_order(*HEADERS_PSEUDO_ORDER)
+                .settings_order(SETTINGS_ORDER.to_vec())
                 .build(),
         )
         .headers(Box::new(header_initializer))
