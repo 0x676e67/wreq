@@ -1,7 +1,7 @@
 use boring::ssl::{SslConnector, SslMethod};
-use http::HeaderValue;
+use http::{header, HeaderValue};
 use rquest::{
-    tls::{Http2Settings, ImpersonateSettings, SslExtension},
+    tls::{Http2Settings, ImpersonateSettings, TlsExtensionSettings},
     HttpVersionPref,
 };
 use rquest::{PseudoOrder::*, SettingsOrder::*};
@@ -13,9 +13,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let settings = ImpersonateSettings::builder()
         .tls((
             SslConnector::builder(SslMethod::tls_client())?,
-            SslExtension::builder()
+            TlsExtensionSettings::builder()
                 .tls_sni(true)
-                .http_version_pref(HttpVersionPref::All)
+                .http_version_pref(HttpVersionPref::Http2)
                 .application_settings(true)
                 .pre_shared_key(true)
                 .enable_ech_grease(true)
@@ -44,15 +44,13 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 .build(),
         )
         .headers(Box::new(|headers| {
-            headers.insert("user-agent", HeaderValue::from_static("rquest"));
+            headers.insert(header::USER_AGENT, HeaderValue::from_static("rquest"));
         }))
         .build();
 
     // Build a client with pre-configured TLS settings
     let client = rquest::Client::builder()
         .use_preconfigured_tls(settings)
-        .enable_ech_grease()
-        .permute_extensions()
         .build()?;
 
     // Use the API you're already familiar with

@@ -1,18 +1,20 @@
-use super::OLD_CIPHER_LIST;
-use crate::tls::builder::{SafariTlsBuilder, TlsBuilder};
+use super::{SafariTlsSettings, OLD_CIPHER_LIST};
 use crate::tls::{Http2Settings, ImpersonateSettings};
-use crate::tls::{ImpersonateConfig, TlsResult};
+use crate::tls::{ImpersonateConfig, SslResult};
 use http::{
     header::{ACCEPT, ACCEPT_ENCODING, ACCEPT_LANGUAGE, USER_AGENT},
     HeaderMap, HeaderValue,
 };
 
-pub(crate) fn get_settings(settings: ImpersonateConfig) -> TlsResult<ImpersonateSettings> {
+pub(crate) fn get_settings(settings: ImpersonateConfig) -> SslResult<ImpersonateSettings> {
     Ok(ImpersonateSettings::builder()
-        .tls((
-            SafariTlsBuilder::new(&OLD_CIPHER_LIST)?,
-            settings.tls_extension,
-        ))
+        .tls(
+            SafariTlsSettings::builder()
+                .cipher_list(&OLD_CIPHER_LIST)
+                .extension(settings.tls_extension)
+                .build()
+                .try_into()?,
+        )
         .http2(
             Http2Settings::builder()
                 .initial_stream_window_size(4194304)

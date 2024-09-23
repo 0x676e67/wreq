@@ -34,7 +34,7 @@ use crate::error;
 use crate::into_url::{expect_uri, try_uri};
 use crate::redirect::{self, remove_sensitive_headers};
 #[cfg(feature = "boring-tls")]
-use crate::tls::{self, BoringTlsConnector, Impersonate, ImpersonateSettings, Tls};
+use crate::tls::{self, BoringTlsConnector, Impersonate, ImpersonateSettings, TlsConnectorBuilder};
 use crate::{IntoUrl, Method, Proxy, StatusCode, Url};
 use log::{debug, trace};
 
@@ -104,7 +104,7 @@ struct Config {
     #[cfg(feature = "boring-tls")]
     tls_info: bool,
     #[cfg(feature = "boring-tls")]
-    tls: Tls,
+    tls: TlsConnectorBuilder,
 }
 
 impl Default for ClientBuilder {
@@ -130,7 +130,7 @@ impl ClientBuilder {
                 pool_max_idle_per_host: usize::MAX,
                 // TODO: Re-enable default duration once hyper's HttpConnector is fixed
                 // to no longer error when an option fails.
-                tcp_keepalive: None, //Some(Duration::from_secs(60)),
+                tcp_keepalive: None,
                 proxies: Vec::new(),
                 auto_sys_proxy: true,
                 redirect_policy: redirect::Policy::none(),
@@ -294,7 +294,9 @@ impl ClientBuilder {
         set_headers: bool,
     ) -> ClientBuilder {
         if set_headers {
-            (settings.headers)(&mut self.config.headers);
+            if let Some(headers) = settings.headers {
+                (headers)(&mut self.config.headers);
+            }
         }
         self.config.tls.builder = Some(settings.tls);
         let http2_headers_priority = settings

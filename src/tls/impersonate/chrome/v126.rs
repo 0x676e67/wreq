@@ -1,18 +1,20 @@
-use super::CIPHER_LIST;
-use crate::tls::builder::{ChromeTlsBuilder, TlsBuilder, TlsExtension};
+use super::{ChromeTlsSettings, NEW_CURVES};
 use crate::tls::{Http2Settings, ImpersonateSettings};
-use crate::tls::{ImpersonateConfig, TlsResult};
+use crate::tls::{ImpersonateConfig, SslResult};
 use http::{
     header::{ACCEPT, ACCEPT_ENCODING, ACCEPT_LANGUAGE, UPGRADE_INSECURE_REQUESTS, USER_AGENT},
     HeaderMap, HeaderValue,
 };
 
-pub(crate) fn get_settings(settings: ImpersonateConfig) -> TlsResult<ImpersonateSettings> {
+pub(crate) fn get_settings(settings: ImpersonateConfig) -> SslResult<ImpersonateSettings> {
     Ok(ImpersonateSettings::builder()
-        .tls((
-            ChromeTlsBuilder::new(&CIPHER_LIST)?.configure_chrome_new_curves()?,
-            settings.tls_extension,
-        ))
+        .tls(
+            ChromeTlsSettings::builder()
+                .curves(NEW_CURVES)
+                .extension(settings.tls_extension)
+                .build()
+                .try_into()?,
+        )
         .http2(
             Http2Settings::builder()
                 .initial_stream_window_size(6291456)

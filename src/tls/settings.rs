@@ -11,7 +11,7 @@ use PseudoOrder::*;
 use SettingsOrder::*;
 
 /// The TLS connector configuration.
-pub struct Tls {
+pub struct TlsConnectorBuilder {
     /// Verify certificates.
     pub(crate) certs_verification: bool,
 
@@ -19,11 +19,22 @@ pub struct Tls {
     pub(crate) ca_cert_file: Option<PathBuf>,
 
     /// The SSL connector builder.
-    pub(crate) builder: Option<(SslConnectorBuilder, SslExtension)>,
+    pub(crate) builder: Option<(SslConnectorBuilder, TlsExtensionSettings)>,
+}
+
+// ============= SslSettings impls =============
+impl Default for TlsConnectorBuilder {
+    fn default() -> Self {
+        Self {
+            certs_verification: true,
+            ca_cert_file: None,
+            builder: None,
+        }
+    }
 }
 
 // ============= Tls impls =============
-impl Tls {
+impl TlsConnectorBuilder {
     pub fn permute_extensions(&mut self) {
         self.builder
             .as_mut()
@@ -65,9 +76,9 @@ impl Tls {
     }
 }
 
-/// Extension settings.
+/// TLS Extension settings.
 #[derive(Clone, Copy, TypedBuilder)]
-pub struct SslExtension {
+pub struct TlsExtensionSettings {
     #[builder(default = true)]
     pub(crate) tls_sni: bool,
 
@@ -152,20 +163,21 @@ pub struct Http2Settings {
 #[derive(TypedBuilder)]
 pub struct ImpersonateSettings {
     /// The SSL connector builder.
-    pub(crate) tls: (SslConnectorBuilder, SslExtension),
+    pub(crate) tls: (SslConnectorBuilder, TlsExtensionSettings),
 
     /// HTTP/2 settings.
     pub(crate) http2: Http2Settings,
 
     /// Http headers
-    pub(crate) headers: Box<dyn FnOnce(&mut HeaderMap)>,
+    #[builder(default, setter(strip_option))]
+    pub(crate) headers: Option<Box<dyn FnOnce(&mut HeaderMap)>>,
 }
 
 /// Impersonate config.
 #[derive(TypedBuilder)]
 pub struct ImpersonateConfig {
     /// TLS extension settings.
-    pub(crate) tls_extension: SslExtension,
+    pub(crate) tls_extension: TlsExtensionSettings,
 
     /// Headers frame priority.
     pub(crate) http2_headers_priority: Option<(u32, u8, bool)>,
@@ -175,17 +187,6 @@ pub struct ImpersonateConfig {
 
     /// Settings frame order.
     pub(crate) http2_settings_order: Option<Vec<SettingsOrder>>,
-}
-
-// ============= SslSettings impls =============
-impl Default for Tls {
-    fn default() -> Self {
-        Self {
-            certs_verification: true,
-            ca_cert_file: None,
-            builder: None,
-        }
-    }
 }
 
 // ============= ImpersonateConfig impls =============
@@ -205,12 +206,12 @@ impl From<Impersonate> for ImpersonateConfig {
                 2
             }
 
-            // Safari
+            // Safari version < 18
             SafariIos17_2 | SafariIos16_5 | SafariIos17_4_1 | Safari15_3 | Safari15_5
             | Safari15_6_1 | Safari16 | Safari16_5 | Safari17_0 | Safari17_2_1 | Safari17_4_1
             | Safari17_5 => 3,
 
-            // Safari18
+            // Safari version >= 18
             Safari18 => 4,
         };
 
@@ -292,13 +293,10 @@ impl From<Impersonate> for ImpersonateConfig {
 
         Self::builder()
             .tls_extension(
-                SslExtension::builder()
-                    .tls_sni(true)
+                TlsExtensionSettings::builder()
                     .http_version_pref(HttpVersionPref::All)
                     .application_settings(application_settings)
                     .pre_shared_key(pre_shared_key)
-                    .permute_extensions(false)
-                    .enable_ech_grease(false)
                     .build(),
             )
             .http2_settings_order(settings_order)

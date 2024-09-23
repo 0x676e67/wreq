@@ -39,7 +39,6 @@
 //!         .impersonate(Impersonate::Chrome128)
 //!         .enable_ech_grease()
 //!         .permute_extensions()
-//!         .cookie_store(true)
 //!         .build()?;
 //!
 //!     // Use the API you're already familiar with
@@ -98,9 +97,9 @@
 //!
 //! ```rust
 //!use boring::ssl::{SslConnector, SslMethod};
-//!use http::HeaderValue;
+//!use http::{header, HeaderValue};
 //!use rquest::{
-//!    tls::{Http2Settings, ImpersonateSettings, SslExtension},
+//!    tls::{Http2Settings, ImpersonateSettings, TlsExtensionSettings},
 //!    HttpVersionPref,
 //!};
 //!use rquest::{PseudoOrder::*, SettingsOrder::*};
@@ -112,7 +111,7 @@
 //!    let settings = ImpersonateSettings::builder()
 //!        .tls((
 //!            SslConnector::builder(SslMethod::tls_client())?,
-//!            SslExtension::builder()
+//!            TlsExtensionSettings::builder()
 //!                .tls_sni(true)
 //!                .http_version_pref(HttpVersionPref::All)
 //!                .application_settings(true)
@@ -143,15 +142,13 @@
 //!                .build(),
 //!        )
 //!        .headers(Box::new(|headers| {
-//!            headers.insert("user-agent", HeaderValue::from_static("rquest"));
+//!            headers.insert(header::USER_AGENT, HeaderValue::from_static("rquest"));
 //!        }))
 //!        .build();
 //!
 //!    // Build a client with pre-configured TLS settings
 //!    let client = rquest::Client::builder()
 //!        .use_preconfigured_tls(settings)
-//!        .enable_ech_grease()
-//!        .permute_extensions()
 //!        .build()?;
 //!
 //!    // Use the API you're already familiar with

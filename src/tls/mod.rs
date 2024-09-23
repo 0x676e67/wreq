@@ -6,9 +6,9 @@
 //!   `ClientBuilder`.
 
 #![allow(missing_docs)]
-pub mod builder;
 mod cert_compression;
 mod connector;
+pub mod extension;
 mod impersonate;
 mod settings;
 
@@ -17,13 +17,15 @@ use boring::{
     error::ErrorStack,
     ssl::{SslConnector, SslMethod},
 };
-use builder::{TlsConnectExtension, TlsExtension};
 pub use connector::MaybeHttpsStream;
 use connector::{HttpsConnector, HttpsLayer, HttpsLayerSettings};
+use extension::{TlsConnectExtension, TlsExtension};
 pub use impersonate::{tls_settings, Impersonate};
-pub use settings::{Http2Settings, ImpersonateConfig, ImpersonateSettings, SslExtension, Tls};
+pub use settings::{
+    Http2Settings, ImpersonateConfig, ImpersonateSettings, TlsConnectorBuilder, TlsExtensionSettings,
+};
 
-type TlsResult<T> = std::result::Result<T, ErrorStack>;
+type SslResult<T> = std::result::Result<T, ErrorStack>;
 
 /// A wrapper around a `SslConnectorBuilder` that allows for additional settings.
 #[derive(Clone)]
@@ -33,13 +35,12 @@ pub struct BoringTlsConnector {
     enable_ech_grease: bool,
     application_settings: bool,
     http_version_pref: HttpVersionPref,
-    /// The TLS connector layer.
     layer: HttpsLayer,
 }
 
 impl BoringTlsConnector {
     /// Create a new `BoringTlsConnector` with the given function.
-    pub fn new(tls: Tls) -> TlsResult<BoringTlsConnector> {
+    pub fn new(tls: TlsConnectorBuilder) -> SslResult<BoringTlsConnector> {
         Ok(Self {
             tls_sni: tls.builder.as_ref().map_or(false, |(_, ext)| ext.tls_sni),
             enable_ech_grease: tls
@@ -83,13 +84,13 @@ impl BoringTlsConnector {
 }
 
 /// Create a new `HttpsLayer` with the given `Tls` settings.
-fn layer(tls: Tls) -> TlsResult<HttpsLayer> {
+fn layer(tls: TlsConnectorBuilder) -> SslResult<HttpsLayer> {
     // If the builder is set, use it. Otherwise, create a new one.
     let (ssl, extension) = match tls.builder {
         Some(ssl) => ssl,
         None => (
             SslConnector::builder(SslMethod::tls_client())?,
-            SslExtension::builder()
+            TlsExtensionSettings::builder()
                 .http_version_pref(HttpVersionPref::All)
                 .tls_sni(true)
                 .build(),
