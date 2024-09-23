@@ -4,9 +4,9 @@ use std::error::Error;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
-    // Build a client to mimic Edge127
+    // Build a client to mimic Chrome129
     let client = rquest::Client::builder()
-        .impersonate(Impersonate::Edge127)
+        .impersonate(Impersonate::Chrome129)
         .headers_order(vec![
             header::USER_AGENT,
             header::HOST,

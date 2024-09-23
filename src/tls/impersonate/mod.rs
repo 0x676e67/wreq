@@ -70,6 +70,7 @@ pub fn tls_settings(ver: Impersonate) -> TlsResult<ImpersonateSettings> {
         Chrome126 => v126::get_settings,
         Chrome127 => v127::get_settings,
         Chrome128 => v128::get_settings,
+        Chrome129 => v129::get_settings,
 
         // Safari
         SafariIos17_2 => safari_ios_17_2::get_settings,
@@ -123,8 +124,9 @@ pub enum Impersonate {
     Chrome124,
     Chrome126,
     Chrome127,
-    #[default]
     Chrome128,
+    #[default]
+    Chrome129,
 
     // Safari
     SafariIos17_2,
@@ -182,6 +184,7 @@ impl FromStr for Impersonate {
             "chrome_126" => Ok(Chrome126),
             "chrome_127" => Ok(Chrome127),
             "chrome_128" => Ok(Chrome128),
+            "chrome_129" => Ok(Chrome129),
 
             // Safari
             "safari_ios_17.2" => Ok(SafariIos17_2),

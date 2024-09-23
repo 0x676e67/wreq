@@ -3,11 +3,9 @@ use std::error::Error;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
-    // Build a client to mimic Edge127 with headers
+    // Build a client to mimic Chrome129 with headers
     let client = rquest::Client::builder()
-        .impersonate_with_headers(Impersonate::Edge127, false)
-        .enable_ech_grease()
-        .permute_extensions()
+        .impersonate_with_headers(Impersonate::Chrome129, false)
         .build()?;
 
     // Use the API you're already familiar with

@@ -3,9 +3,9 @@ use std::error::Error;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
-    // Build a client to mimic Safari18
+    // Build a client to mimic Chrome129
     let client = rquest::Client::builder()
-        .impersonate(Impersonate::Safari18)
+        .impersonate(Impersonate::Chrome129)
         .build()?;
 
     // Use the API you're already familiar with

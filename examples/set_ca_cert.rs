@@ -6,8 +6,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // Build a client to mimic Edge127
     let client = rquest::Client::builder()
         .impersonate(Impersonate::Edge127)
-        .enable_ech_grease()
-        .permute_extensions()
         .ca_cert_file("examples/data/root-ca.pem")
         .build()?;
 

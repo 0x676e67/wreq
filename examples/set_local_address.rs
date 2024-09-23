@@ -3,11 +3,9 @@ use std::net::Ipv4Addr;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Build a client to mimic Chrome126
+    // Build a client to mimic Chrome129
     let mut client = rquest::Client::builder()
-        .impersonate(Impersonate::Chrome126)
-        .enable_ech_grease()
-        .permute_extensions()
+        .impersonate(Impersonate::Chrome129)
         .build()?;
 
     let resp = client.get("https://api.ip.sb/ip").send().await?;
