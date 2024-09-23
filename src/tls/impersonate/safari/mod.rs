@@ -12,4 +12,5 @@ pub mod safari18;
 pub mod safari_ios_16_5;
 pub mod safari_ios_17_2;
 pub mod safari_ios_17_4_1;
+pub mod safari_ipad_18;
 mod tls;
