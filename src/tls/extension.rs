@@ -1,5 +1,5 @@
 #![allow(missing_debug_implementations)]
-use super::{cert_compression::CertCompressionAlgorithm, SslResult, Version};
+use super::{cert_compression::CertCompressionAlgorithm, TlsResult, Version};
 use crate::client::http::HttpVersionPref;
 use ::std::os::raw::c_int;
 use boring::error::ErrorStack;
@@ -22,42 +22,42 @@ pub trait TlsExtension {
     fn configure_cert_verification(
         self,
         certs_verification: bool,
-    ) -> SslResult<SslConnectorBuilder>;
+    ) -> TlsResult<SslConnectorBuilder>;
 
     /// Configure the ALPN and certificate settings for the given `SslConnectorBuilder`.
     fn configure_alpn_protos(self, http_version: HttpVersionPref)
-        -> SslResult<SslConnectorBuilder>;
+        -> TlsResult<SslConnectorBuilder>;
 
     /// Configure the minimum TLS version for the given `SslConnectorBuilder`.
     fn configure_min_tls_version(
         self,
         min_tls_version: Option<Version>,
-    ) -> SslResult<SslConnectorBuilder>;
+    ) -> TlsResult<SslConnectorBuilder>;
 
     /// Configure the maximum TLS version for the given `SslConnectorBuilder`.
     fn configure_max_tls_version(
         self,
         max_tls_version: Option<Version>,
-    ) -> SslResult<SslConnectorBuilder>;
+    ) -> TlsResult<SslConnectorBuilder>;
 
     /// Configure the certificate compression algorithm for the given `SslConnectorBuilder`.
     fn configure_add_cert_compression_alg(
         self,
         cert_compression_alg: CertCompressionAlgorithm,
-    ) -> SslResult<SslConnectorBuilder>;
+    ) -> TlsResult<SslConnectorBuilder>;
 
     /// Configure the ca certificate file for the given `SslConnectorBuilder`.
     fn configure_ca_cert_file<P: AsRef<Path>>(
         self,
         ca_cert_file: Option<P>,
-    ) -> SslResult<SslConnectorBuilder>;
+    ) -> TlsResult<SslConnectorBuilder>;
 
     /// Configure the permute_extensions for the given `SslConnectorBuilder`.
     fn configure_permute_extensions(
         self,
         enable: bool,
         permute_extensions: bool,
-    ) -> SslResult<SslConnectorBuilder>;
+    ) -> TlsResult<SslConnectorBuilder>;
 }
 
 /// TlsConnectExtension trait for `ConnectConfiguration`.
@@ -67,21 +67,21 @@ pub trait TlsConnectExtension {
         &mut self,
         enable: bool,
         enable_ech_grease: bool,
-    ) -> SslResult<&mut ConnectConfiguration>;
+    ) -> TlsResult<&mut ConnectConfiguration>;
 
     /// Configure the add_application_settings for the given `ConnectConfiguration`.
     fn configure_add_application_settings(
         &mut self,
         enable: bool,
         http_version: HttpVersionPref,
-    ) -> SslResult<&mut ConnectConfiguration>;
+    ) -> TlsResult<&mut ConnectConfiguration>;
 }
 
 impl TlsExtension for SslConnectorBuilder {
     fn configure_cert_verification(
         mut self,
         certs_verification: bool,
-    ) -> SslResult<SslConnectorBuilder> {
+    ) -> TlsResult<SslConnectorBuilder> {
         if !certs_verification {
             self.set_verify(SslVerifyMode::NONE);
         } else {
@@ -93,7 +93,7 @@ impl TlsExtension for SslConnectorBuilder {
     fn configure_alpn_protos(
         mut self,
         http_version: HttpVersionPref,
-    ) -> SslResult<SslConnectorBuilder> {
+    ) -> TlsResult<SslConnectorBuilder> {
         match http_version {
             HttpVersionPref::Http1 => {
                 self.set_alpn_protos(b"\x08http/1.1")?;
@@ -112,7 +112,7 @@ impl TlsExtension for SslConnectorBuilder {
     fn configure_min_tls_version(
         mut self,
         min_tls_version: Option<Version>,
-    ) -> SslResult<SslConnectorBuilder> {
+    ) -> TlsResult<SslConnectorBuilder> {
         if let Some(version) = min_tls_version {
             let ssl_version = match version.0 {
                 super::InnerVersion::Tls1_0 => SslVersion::TLS1,
@@ -129,7 +129,7 @@ impl TlsExtension for SslConnectorBuilder {
     fn configure_max_tls_version(
         mut self,
         max_tls_version: Option<Version>,
-    ) -> SslResult<SslConnectorBuilder> {
+    ) -> TlsResult<SslConnectorBuilder> {
         if let Some(version) = max_tls_version {
             let ssl_version = match version.0 {
                 super::InnerVersion::Tls1_0 => SslVersion::TLS1,
@@ -147,7 +147,7 @@ impl TlsExtension for SslConnectorBuilder {
     fn configure_add_cert_compression_alg(
         self,
         cert_compression_alg: CertCompressionAlgorithm,
-    ) -> SslResult<SslConnectorBuilder> {
+    ) -> TlsResult<SslConnectorBuilder> {
         unsafe {
             sv_handler(boring_sys::SSL_CTX_add_cert_compression_alg(
                 self.as_ptr(),
@@ -162,7 +162,7 @@ impl TlsExtension for SslConnectorBuilder {
     fn configure_ca_cert_file<P: AsRef<Path>>(
         mut self,
         ca_cert_file: Option<P>,
-    ) -> SslResult<SslConnectorBuilder> {
+    ) -> TlsResult<SslConnectorBuilder> {
         if let Some(file) = ca_cert_file {
             self.set_ca_file(file)?;
         }
@@ -174,7 +174,7 @@ impl TlsExtension for SslConnectorBuilder {
         mut self,
         enable: bool,
         permute_extensions: bool,
-    ) -> SslResult<SslConnectorBuilder> {
+    ) -> TlsResult<SslConnectorBuilder> {
         if !enable {
             return Ok(self);
         }
@@ -189,7 +189,7 @@ impl TlsConnectExtension for ConnectConfiguration {
         &mut self,
         enable: bool,
         enable_ech_grease: bool,
-    ) -> SslResult<&mut ConnectConfiguration> {
+    ) -> TlsResult<&mut ConnectConfiguration> {
         if !enable {
             return Ok(self);
         }
@@ -202,7 +202,7 @@ impl TlsConnectExtension for ConnectConfiguration {
         &mut self,
         enable: bool,
         http_version: HttpVersionPref,
-    ) -> SslResult<&mut ConnectConfiguration> {
+    ) -> TlsResult<&mut ConnectConfiguration> {
         if !enable {
             return Ok(self);
         }

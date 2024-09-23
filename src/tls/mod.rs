@@ -25,7 +25,7 @@ pub use settings::{
     Http2Settings, ImpersonateConfig, ImpersonateSettings, TlsConnectorBuilder, TlsExtensionSettings,
 };
 
-type SslResult<T> = std::result::Result<T, ErrorStack>;
+type TlsResult<T> = std::result::Result<T, ErrorStack>;
 
 /// A wrapper around a `SslConnectorBuilder` that allows for additional settings.
 #[derive(Clone)]
@@ -40,7 +40,7 @@ pub struct BoringTlsConnector {
 
 impl BoringTlsConnector {
     /// Create a new `BoringTlsConnector` with the given function.
-    pub fn new(tls: TlsConnectorBuilder) -> SslResult<BoringTlsConnector> {
+    pub fn new(tls: TlsConnectorBuilder) -> TlsResult<BoringTlsConnector> {
         Ok(Self {
             tls_sni: tls.builder.as_ref().map_or(false, |(_, ext)| ext.tls_sni),
             enable_ech_grease: tls
@@ -84,7 +84,7 @@ impl BoringTlsConnector {
 }
 
 /// Create a new `HttpsLayer` with the given `Tls` settings.
-fn layer(tls: TlsConnectorBuilder) -> SslResult<HttpsLayer> {
+fn layer(tls: TlsConnectorBuilder) -> TlsResult<HttpsLayer> {
     // If the builder is set, use it. Otherwise, create a new one.
     let (ssl, extension) = match tls.builder {
         Some(ssl) => ssl,

@@ -1,12 +1,12 @@
 use super::{ChromeTlsSettings, NEW_CURVES};
 use crate::tls::{Http2Settings, ImpersonateSettings};
-use crate::tls::{ImpersonateConfig, SslResult};
+use crate::tls::{ImpersonateConfig, TlsResult};
 use http::{
     header::{ACCEPT, ACCEPT_ENCODING, ACCEPT_LANGUAGE, UPGRADE_INSECURE_REQUESTS, USER_AGENT},
     HeaderMap, HeaderValue,
 };
 
-pub(crate) fn get_settings(settings: ImpersonateConfig) -> SslResult<ImpersonateSettings> {
+pub(crate) fn get_settings(settings: ImpersonateConfig) -> TlsResult<ImpersonateSettings> {
     Ok(ImpersonateSettings::builder()
         .tls(
             ChromeTlsSettings::builder()
