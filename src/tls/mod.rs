@@ -42,7 +42,7 @@ impl BoringTlsConnector {
     /// Create a new `BoringTlsConnector` with the given function.
     pub fn new(tls: TlsConnectorBuilder) -> TlsResult<BoringTlsConnector> {
         Ok(Self {
-            tls_sni: tls.builder.as_ref().map_or(false, |(_, ext)| ext.tls_sni),
+            tls_sni: tls.builder.as_ref().map_or(true, |(_, ext)| ext.tls_sni),
             enable_ech_grease: tls
                 .builder
                 .as_ref()
