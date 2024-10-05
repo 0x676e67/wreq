@@ -110,7 +110,7 @@ mime = "0.3.17"
 percent-encoding = "2.3"
 tokio = { version = "1", default-features = false, features = ["net", "time"] }
 pin-project-lite = "0.2.0"
-ipnet = "2.9.0"
+ipnet = "2.10.0"
 
 # Optional deps...
 
