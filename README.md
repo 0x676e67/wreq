@@ -192,6 +192,13 @@ Install the environment required to build [BoringSSL](https://github.com/google/
 
 Do not compile with crates that depend on OpenSSL; their prefixing symbols are the same and may cause linking [failures](https://github.com/rustls/rustls/issues/2010).
 
+## Setting Up / Building
+
+```shell
+sudo apt-get install build-essential cmake perl pkg-config libclang-dev musl-tools -y
+cargo build --release
+```
+
 ## Contributing
 
 If you would like to submit your contribution, please open a [Pull Request](https://github.com/0x676e67/rquest/pulls).
