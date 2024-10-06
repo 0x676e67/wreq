@@ -196,8 +196,11 @@ Do not compile with crates that depend on OpenSSL; their prefixing symbols are t
 
 ```shell
 sudo apt-get install build-essential cmake perl pkg-config libclang-dev musl-tools -y
+
 cargo build --release
 ```
+
+You can also use [this GitHub Actions](https://github.com/penumbra-x/rquest/blob/main/compilation-guide/build.yml) to compile your project.
 
 ## Contributing
 
