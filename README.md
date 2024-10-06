@@ -16,12 +16,12 @@ An fast asynchronous Rust `HTTP`/`WebSocket` Client with `TLS`/`JA3`/`JA4`/`HTTP
 - `HTTP`/`WebSocket` Proxies
 - `HTTPS`/`WebSocket` via BoringSSL
 - Preconfigured `TLS`/`HTTP2`/`Headers` settings
-- [Changelog](https://github.com/0x676e67/rquest/blob/main/CHANGELOG.md)
+- [Changelog](https://github.com/penumbra-x/rquest/blob/main/CHANGELOG.md)
 
 Additional learning resources include:
 
 - [API Documentation](https://docs.rs/rquest)
-- [Repository Examples](https://github.com/0x676e67/rquest/tree/master/examples)
+- [Repository Examples](https://github.com/penumbra-x/rqeust/tree/main/examples)
 
 ## Usage
 
@@ -201,11 +201,11 @@ cargo build --release
 
 ## Contributing
 
-If you would like to submit your contribution, please open a [Pull Request](https://github.com/0x676e67/rquest/pulls).
+If you would like to submit your contribution, please open a [Pull Request](https://github.com/penumbra-x/rquest/pulls).
 
 ## Getting help
 
-Your question might already be answered on the [issues](https://github.com/0x676e67/rquest/issues)
+Your question might already be answered on the [issues](https://github.com/penumbra-x/rquest/issues)
 
 ## License
 
