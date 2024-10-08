@@ -26,13 +26,13 @@ jobs:
       if: runner.os == 'Linux'
       run: |
         sudo apt-get update
-        sudo apt-get install build-essential cmake perl pkg-config libclang-dev musl-tools nasm -y
+        sudo apt-get install build-essential cmake perl pkg-config libclang-dev musl-tools -y
 
     - name: Install dependencies on macOS
       if: runner.os == 'macOS'
       run: |
         brew update
-        brew install --formula cmake pkg-config llvm nasm
+        brew install --formula cmake pkg-config llvm
 
     - name: Install dependencies on Windows
       if: runner.os == 'Windows'
