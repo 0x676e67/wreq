@@ -105,6 +105,7 @@ pub enum ProxyScheme {
         auth: Option<HeaderValue>,
         host: http::uri::Authority,
     },
+    #[cfg(feature = "socks")]
     Socks4 {
         addr: SocketAddr,
     },
@@ -652,6 +653,7 @@ impl ProxyScheme {
             ProxyScheme::Https { ref mut auth, .. } => {
                 *auth = Some(header_value);
             }
+            #[cfg(feature = "socks")]
             ProxyScheme::Socks4 { .. } => {
                 panic!("Socks4 is not supported for this method")
             }
@@ -674,6 +676,7 @@ impl ProxyScheme {
                     *auth = update.clone();
                 }
             }
+            #[cfg(feature = "socks")]
             ProxyScheme::Socks4 { .. } => {}
             #[cfg(feature = "socks")]
             ProxyScheme::Socks5 { .. } => {}
@@ -707,6 +710,7 @@ impl ProxyScheme {
         let mut scheme = match url.scheme() {
             "http" => Self::http(&url[Position::BeforeHost..Position::AfterPort])?,
             "https" => Self::https(&url[Position::BeforeHost..Position::AfterPort])?,
+            #[cfg(feature = "socks")]
             "socks4" => Self::socks4(to_addr()?)?,
             #[cfg(feature = "socks")]
             "socks5" => Self::socks5(to_addr()?)?,
@@ -730,6 +734,7 @@ impl fmt::Debug for ProxyScheme {
         match self {
             ProxyScheme::Http { auth: _auth, host } => write!(f, "http://{}", host),
             ProxyScheme::Https { auth: _auth, host } => write!(f, "https://{}", host),
+            #[cfg(feature = "socks")]
             ProxyScheme::Socks4 { addr } => {
                 write!(f, "socks4://{addr}")
             }
