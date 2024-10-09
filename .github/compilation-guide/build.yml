@@ -44,14 +44,31 @@ jobs:
         choco install nasm -y
       shell: cmd
 
-    - name: Build
+    - name: Build on Windows/macOS
+      if: runner.os != 'Linux'
       run: cargo build --release
 
-    - name: Archive build artifacts on Linux/macOS
-      if: runner.os == 'Linux' || runner.os == 'macOS'
+    - name: Build on Linux
+      if: runner.os == 'Linux'
+      run: |
+        cargo build --release
+        docker pull messense/rust-musl-cross:x86_64-musl
+        docker run --rm -v "$(pwd)":/home/rust/src messense/rust-musl-cross:x86_64-musl cargo build --release
+
+    - name: Archive build artifacts on macOS
+      if: runner.os == 'macOS'
       run: |
         cd target/release
         zip -r ../../build-${{ runner.os }}-${{ matrix.architecture }}.zip *
+      working-directory: ${{ github.workspace }}
+
+    - name: Archive build artifacts on Linux
+      if: runner.os == 'Linux'
+      run: |
+        cd target/release
+        zip -r ../../build-${{ runner.os }}-${{ matrix.architecture }}.zip *
+        cd ../x86_64-unknown-linux-musl/release
+        zip -r ../../../build-x86_64-unknown-linux-musl.zip *
       working-directory: ${{ github.workspace }}
 
     - name: Archive build artifacts on Windows
@@ -66,3 +83,10 @@ jobs:
       with:
         name: build-${{ matrix.os }}-${{ matrix.architecture }}
         path: build-${{ runner.os }}-${{ matrix.architecture }}.zip
+
+    - name: Upload x86_64-unknown-linux-musl Linux build artifact
+      if: runner.os == 'Linux'
+      uses: actions/upload-artifact@v4
+      with:
+        name: build-x86_64-unknown-linux-musl
+        path: build-x86_64-unknown-linux-musl.zip
