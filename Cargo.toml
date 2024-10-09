@@ -19,7 +19,7 @@ rustdoc-args = ["--cfg", "docsrs"]
 targets = ["x86_64-unknown-linux-gnu"]
 
 [features]
-default = ["boring-tls", "full"]
+default = ["boring-tls"]
 
 full = [
     "boring-tls",
