@@ -1,7 +1,7 @@
 use std::fmt;
 #[cfg(feature = "socks")]
 use std::net::SocketAddr;
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 
 use crate::into_url::{IntoUrl, IntoUrlSealed};
 use crate::Url;
@@ -275,15 +275,9 @@ impl Proxy {
     }
 
     pub(crate) fn system() -> Proxy {
-        let mut proxy = if cfg!(feature = "__internal_proxy_sys_no_cache") {
-            Proxy::new(Intercept::System(Arc::new(get_sys_proxies(
-                get_from_platform(),
-            ))))
-        } else {
-            let sys_proxies =
-                SYS_PROXIES.get_or_init(|| Arc::new(get_sys_proxies(get_from_platform())));
-            Proxy::new(Intercept::System(sys_proxies.clone()))
-        };
+        let mut proxy = Proxy::new(Intercept::System(Arc::new(get_sys_proxies(
+            get_from_platform(),
+        ))));
         proxy.no_proxy = NoProxy::from_env();
         proxy
     }
@@ -822,8 +816,6 @@ impl Dst for Uri {
         self.port().map(|p| p.as_u16())
     }
 }
-
-static SYS_PROXIES: OnceLock<Arc<SystemProxyMap>> = OnceLock::new();
 
 /// Get system proxies information.
 ///

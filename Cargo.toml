@@ -74,9 +74,6 @@ boring-tls = [
     "dep:typed-builder",
 ]
 
-# When enabled, disable using the cached SYS_PROXIES.
-__internal_proxy_sys_no_cache = []
-
 [dependencies]
 base64 = "0.22"
 http = "0.2"
