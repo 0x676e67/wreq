@@ -105,6 +105,9 @@ pub enum ProxyScheme {
         auth: Option<HeaderValue>,
         host: http::uri::Authority,
     },
+    Socks4 {
+        addr: SocketAddr,
+    },
     #[cfg(feature = "socks")]
     Socks5 {
         addr: SocketAddr,
@@ -570,6 +573,16 @@ impl ProxyScheme {
         })
     }
 
+    /// Proxy traffic via the specified socket address over SOCKS4
+    ///
+    /// # Note
+    ///
+    /// Current SOCKS4 support is provided via blocking IO.
+    #[cfg(feature = "socks")]
+    fn socks4(addr: SocketAddr) -> crate::Result<Self> {
+        Ok(ProxyScheme::Socks4 { addr })
+    }
+
     /// Proxy traffic via the specified socket address over SOCKS5
     ///
     /// # Note
@@ -621,6 +634,10 @@ impl ProxyScheme {
                 *auth = Some(header);
             }
             #[cfg(feature = "socks")]
+            ProxyScheme::Socks4 { .. } => {
+                panic!("Socks4 is not supported for this method")
+            }
+            #[cfg(feature = "socks")]
             ProxyScheme::Socks5 { ref mut auth, .. } => {
                 *auth = Some((username.into(), password.into()));
             }
@@ -635,9 +652,12 @@ impl ProxyScheme {
             ProxyScheme::Https { ref mut auth, .. } => {
                 *auth = Some(header_value);
             }
+            ProxyScheme::Socks4 { .. } => {
+                panic!("Socks4 is not supported for this method")
+            }
             #[cfg(feature = "socks")]
             ProxyScheme::Socks5 { .. } => {
-                panic!("Socks is not supported for this method")
+                panic!("Socks5 is not supported for this method")
             }
         }
     }
@@ -654,6 +674,7 @@ impl ProxyScheme {
                     *auth = update.clone();
                 }
             }
+            ProxyScheme::Socks4 { .. } => {}
             #[cfg(feature = "socks")]
             ProxyScheme::Socks5 { .. } => {}
         }
@@ -663,7 +684,7 @@ impl ProxyScheme {
 
     /// Convert a URL into a proxy scheme
     ///
-    /// Supported schemes: HTTP, HTTPS, (SOCKS5, SOCKS5H if `socks` feature is enabled).
+    /// Supported schemes: HTTP, HTTPS, (SOCKS4, SOCKS5, SOCKS5H if `socks` feature is enabled).
     // Private for now...
     fn parse(url: Url) -> crate::Result<Self> {
         use url::Position;
@@ -673,7 +694,7 @@ impl ProxyScheme {
         let to_addr = || {
             let addrs = url
                 .socket_addrs(|| match url.scheme() {
-                    "socks5" | "socks5h" => Some(1080),
+                    "socks4" | "socks5" | "socks5h" => Some(1080),
                     _ => None,
                 })
                 .map_err(crate::error::builder)?;
@@ -686,6 +707,7 @@ impl ProxyScheme {
         let mut scheme = match url.scheme() {
             "http" => Self::http(&url[Position::BeforeHost..Position::AfterPort])?,
             "https" => Self::https(&url[Position::BeforeHost..Position::AfterPort])?,
+            "socks4" => Self::socks4(to_addr()?)?,
             #[cfg(feature = "socks")]
             "socks5" => Self::socks5(to_addr()?)?,
             #[cfg(feature = "socks")]
@@ -708,6 +730,9 @@ impl fmt::Debug for ProxyScheme {
         match self {
             ProxyScheme::Http { auth: _auth, host } => write!(f, "http://{}", host),
             ProxyScheme::Https { auth: _auth, host } => write!(f, "https://{}", host),
+            ProxyScheme::Socks4 { addr } => {
+                write!(f, "socks4://{addr}")
+            }
             #[cfg(feature = "socks")]
             ProxyScheme::Socks5 {
                 addr,
