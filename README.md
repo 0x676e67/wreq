@@ -6,15 +6,15 @@
 [![Documentation](https://docs.rs/rquest/badge.svg)](https://docs.rs/rquest)
 [![Crates.io Total Downloads](https://img.shields.io/crates/d/rquest)](https://crates.io/crates/rquest)
 
-An fast asynchronous Rust `HTTP`/`WebSocket` Client with `TLS`/`JA3`/`JA4`/`HTTP2` fingerprint impersonate
+An ergonomic, all-in-one `TLS`/`JA3`/`JA4`/`HTTP2` fingerprint `HTTP`/`WebSocket` client.
 
-- `Async` Client
+- Async Client
 - Plain, JSON, urlencoded, multipart bodies
 - Headers Order
 - Customizable redirect policy
 - Cookie Store
+- HTTP Proxies
 - `HTTPS`/`WebSocket` via BoringSSL
-- `HTTP`, `HTTPS`, (`SOCKS4`, `SOCKS5`, `SOCKS5H`) Proxies
 - Preconfigured `TLS`/`HTTP2`/`Headers` settings
 - [Changelog](https://github.com/penumbra-x/rquest/blob/main/CHANGELOG.md)
 
@@ -70,7 +70,16 @@ use std::error::Error;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
-    let websocket = rquest::websocket("wss://echo.websocket.org").await?;
+    let websocket = Client::builder()
+        .impersonate(Impersonate::Chrome127)
+        .http1_only()
+        .build()?
+        .get("wss://echo.websocket.org")
+        .upgrade()
+        .send()
+        .await?
+        .into_websocket()
+        .await?;
 
     let (mut tx, mut rx) = websocket.split();
 
@@ -91,6 +100,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     Ok(())
 }
+
 ```
 
 Preconfigured `TLS`/`HTTP2`

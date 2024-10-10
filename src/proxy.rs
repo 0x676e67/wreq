@@ -106,9 +106,7 @@ pub enum ProxyScheme {
         host: http::uri::Authority,
     },
     #[cfg(feature = "socks")]
-    Socks4 {
-        addr: SocketAddr,
-    },
+    Socks4 { addr: SocketAddr },
     #[cfg(feature = "socks")]
     Socks5 {
         addr: SocketAddr,

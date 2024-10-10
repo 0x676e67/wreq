@@ -5,7 +5,7 @@
 
 //! # rquest
 //!
-//! An fast asynchronous Rust `Http`/`WebSocket` [`Client`][client] with `TLS`/`JA3`/`JA4`/`HTTP2` fingerprint impersonate
+//! An ergonomic, all-in-one `JA3`/`JA4`/`HTTP2` fingerprint `HTTP`/`WebSocket` client.
 //!
 //! - Async Client
 //! - Plain bodies, [JSON](#json), [urlencoded](#forms), [multipart], [websocket](#websocket)
@@ -13,8 +13,7 @@
 //! - Customizable [redirect policy](#redirect-policies)
 //! - Cookies Store
 //! - Uses [BoringSSL](#tls)
-//! - `HTTP`, `HTTPS`, (`SOCKS4`, `SOCKS5`, `SOCKS5H`) [Proxies](#proxies)
-//! - `JA3`/`JA4`/`HTTP2` fingerprint
+//! - HTTP [Proxies](#proxies)
 //! - [Preconfigured](#preconfigured-tls) `TLS`/`HTTP2`/`Headers` settings
 //! - Chrome / Safari / Edge / OkHttp [Fingerprint](#impersonate)
 //! - [Changelog](https://github.com/0x676e67/rquest/blob/main/CHANGELOG.md)

@@ -42,19 +42,10 @@ impl BoringTlsConnector {
     /// Create a new `BoringTlsConnector` with the given function.
     pub fn new(tls: TlsConnectorBuilder) -> TlsResult<BoringTlsConnector> {
         Ok(Self {
-            tls_sni: tls.builder.as_ref().map_or(true, |(_, ext)| ext.tls_sni),
-            enable_ech_grease: tls
-                .builder
-                .as_ref()
-                .map_or(false, |(_, ext)| ext.enable_ech_grease),
-            application_settings: tls
-                .builder
-                .as_ref()
-                .map_or(false, |(_, ext)| ext.application_settings),
-            http_version_pref: tls
-                .builder
-                .as_ref()
-                .map_or(HttpVersionPref::All, |(_, ext)| ext.http_version_pref),
+            tls_sni: tls.builder.1.tls_sni,
+            enable_ech_grease: tls.builder.1.enable_ech_grease,
+            application_settings: tls.builder.1.application_settings,
+            http_version_pref: tls.builder.1.http_version_pref,
             layer: layer(tls)?,
         })
     }
@@ -86,14 +77,11 @@ impl BoringTlsConnector {
 /// Create a new `HttpsLayer` with the given `Tls` settings.
 fn layer(tls: TlsConnectorBuilder) -> TlsResult<HttpsLayer> {
     // If the builder is set, use it. Otherwise, create a new one.
-    let (ssl, extension) = match tls.builder {
-        Some(ssl) => ssl,
+    let (ssl, extension) = match tls.builder.0 {
+        Some(ssl) => (ssl, tls.builder.1),
         None => (
             SslConnector::builder(SslMethod::tls_client())?,
-            TlsExtensionSettings::builder()
-                .http_version_pref(HttpVersionPref::All)
-                .tls_sni(true)
-                .build(),
+            tls.builder.1,
         ),
     };
 

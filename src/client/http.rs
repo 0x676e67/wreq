@@ -298,7 +298,8 @@ impl ClientBuilder {
                 (headers)(&mut self.config.headers);
             }
         }
-        self.config.tls.builder = Some(settings.tls);
+        self.config.tls.builder.0 = Some(settings.tls.0);
+        self.config.tls.builder.1 = settings.tls.1;
         let http2_headers_priority = settings
             .http2
             .headers_priority
