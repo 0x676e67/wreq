@@ -33,7 +33,7 @@ impl HickoryDnsResolver {
                 )
             })
             .map_err(|err| Error::new(Kind::Builder, Some(err.to_string())))?;
-        opts.ip_strategy = strategy.unwrap_or(LookupIpStrategy::Ipv4AndIpv6);
+        opts.ip_strategy = strategy.unwrap_or_else(|| LookupIpStrategy::Ipv4AndIpv6);
         Ok(Self {
             state: TokioAsyncResolver::tokio(config, opts),
         })
