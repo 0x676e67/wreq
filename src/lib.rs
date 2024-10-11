@@ -322,6 +322,8 @@
 pub use boring;
 #[cfg(feature = "boring-tls")]
 pub use boring_sys;
+#[cfg(feature = "hickory-dns")]
+pub use hickory_resolver::config::LookupIpStrategy;
 pub use http::header;
 pub use http::Method;
 pub use http::{StatusCode, Version};

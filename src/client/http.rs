@@ -36,6 +36,8 @@ use crate::redirect::{self, remove_sensitive_headers};
 #[cfg(feature = "boring-tls")]
 use crate::tls::{self, BoringTlsConnector, Impersonate, ImpersonateSettings, TlsConnectorBuilder};
 use crate::{IntoUrl, Method, Proxy, StatusCode, Url};
+#[cfg(feature = "hickory-dns")]
+use hickory_resolver::config::LookupIpStrategy;
 use log::{debug, trace};
 
 /// An asynchronous `Client` to make Requests with.
@@ -99,6 +101,8 @@ struct Config {
     error: Option<crate::Error>,
     dns_overrides: HashMap<String, Vec<SocketAddr>>,
     dns_resolver: Option<Arc<dyn Resolve>>,
+    #[cfg(feature = "hickory-dns")]
+    dns_strategy: Option<LookupIpStrategy>,
     builder: hyper::client::Builder,
     https_only: bool,
     #[cfg(feature = "boring-tls")]
@@ -142,6 +146,8 @@ impl ClientBuilder {
                 interface: None,
                 nodelay: true,
                 hickory_dns: cfg!(feature = "hickory-dns"),
+                #[cfg(feature = "hickory-dns")]
+                dns_strategy: None,
                 #[cfg(feature = "cookies")]
                 cookie_store: None,
                 dns_overrides: HashMap::new(),
@@ -186,7 +192,7 @@ impl ClientBuilder {
             let mut resolver: Arc<dyn Resolve> = match config.hickory_dns {
                 false => Arc::new(GaiResolver::new()),
                 #[cfg(feature = "hickory-dns")]
-                true => Arc::new(HickoryDnsResolver::default()),
+                true => Arc::new(HickoryDnsResolver::new(config.dns_strategy)?),
                 #[cfg(not(feature = "hickory-dns"))]
                 true => unreachable!("hickory-dns shouldn't be enabled unless the feature is"),
             };
@@ -1173,6 +1179,20 @@ impl ClientBuilder {
     #[cfg_attr(docsrs, doc(cfg(feature = "hickory-dns")))]
     pub fn hickory_dns(mut self, enable: bool) -> ClientBuilder {
         self.config.hickory_dns = enable;
+        self
+    }
+
+    /// Enables the `hickory-dns` asynchronous resolver instead of the default threadpool-based `getaddrinfo`.
+    ///
+    /// By default, if the `hickory-dns` feature is enabled, this option is used.
+    ///
+    /// # Optional
+    ///
+    /// Requires the `hickory-dns` feature to be enabled.
+    #[cfg(feature = "hickory-dns")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "hickory-dns")))]
+    pub fn hickory_strategy(mut self, strategy: LookupIpStrategy) -> ClientBuilder {
+        self.config.dns_strategy = Some(strategy);
         self
     }
 

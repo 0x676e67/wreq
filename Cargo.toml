@@ -147,9 +147,7 @@ tokio-socks = { version = "0.5.2", optional = true }
 async-tungstenite = { version = "0.28.0", optional = true }
 
 ## hickory-dns
-hickory-resolver = { version = "0.24", optional = true, features = [
-    "tokio-runtime",
-] }
+hickory-resolver = { version = "0.24", optional = true }
 
 [target.'cfg(windows)'.dependencies]
 windows-registry = "0.3.0"
@@ -203,6 +201,11 @@ path = "examples/simple.rs"
 [[example]]
 name = "impersonate"
 path = "examples/impersonate.rs"
+
+[[example]]
+name = "hickory_dns"
+path = "examples/hickory_dns.rs"
+required-features = ["hickory-dns"]
 
 [[example]]
 name = "impersonate_with_headers"
