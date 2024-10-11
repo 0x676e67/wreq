@@ -1168,20 +1168,6 @@ impl ClientBuilder {
         self
     }
 
-    /// Enables the [hickory-dns](hickory-dns) async resolver instead of a default threadpool using `getaddrinfo`.
-    ///
-    /// If the `hickory-dns` feature is turned on, the default option is enabled.
-    ///
-    /// # Optional
-    ///
-    /// This requires the optional `hickory-dns` feature to be enabled
-    #[cfg(feature = "hickory-dns")]
-    #[cfg_attr(docsrs, doc(cfg(feature = "hickory-dns")))]
-    pub fn hickory_dns(mut self, enable: bool) -> ClientBuilder {
-        self.config.hickory_dns = enable;
-        self
-    }
-
     /// Enables the `hickory-dns` asynchronous resolver instead of the default threadpool-based `getaddrinfo`.
     ///
     /// By default, if the `hickory-dns` feature is enabled, this option is used.
@@ -1201,16 +1187,11 @@ impl ClientBuilder {
     /// This method exists even if the optional `hickory-dns` feature is not enabled.
     /// This can be used to ensure a `Client` doesn't use the hickory-dns async resolver
     /// even if another dependency were to enable the optional `hickory-dns` feature.
-    pub fn no_hickory_dns(self) -> ClientBuilder {
-        #[cfg(feature = "hickory-dns")]
-        {
-            self.hickory_dns(false)
-        }
-
-        #[cfg(not(feature = "hickory-dns"))]
-        {
-            self
-        }
+    #[cfg(feature = "hickory-dns")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "hickory-dns")))]
+    pub fn no_hickory_dns(mut self) -> ClientBuilder {
+        self.config.hickory_dns = false;
+        self
     }
 
     /// Override DNS resolution for specific domains to a particular IP address.
