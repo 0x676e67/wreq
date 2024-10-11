@@ -9,6 +9,7 @@ use hickory_resolver::{
 };
 use std::io;
 use std::net::SocketAddr;
+use std::sync::Arc;
 
 /// Wrapper around an `AsyncResolver`, which implements the `Resolve` trait.
 #[derive(Debug, Clone)]
@@ -16,7 +17,7 @@ pub(crate) struct HickoryDnsResolver {
     /// Since we might not have been called in the context of a
     /// Tokio Runtime in initialization, so we must delay the actual
     /// construction of the resolver.
-    state: TokioAsyncResolver,
+    state: Arc<TokioAsyncResolver>,
 }
 
 impl HickoryDnsResolver {
@@ -35,7 +36,7 @@ impl HickoryDnsResolver {
             .map_err(|err| Error::new(Kind::Builder, Some(err.to_string())))?;
         opts.ip_strategy = strategy.unwrap_or_else(|| LookupIpStrategy::Ipv4AndIpv6);
         Ok(Self {
-            state: TokioAsyncResolver::tokio(config, opts),
+            state: Arc::new(TokioAsyncResolver::tokio(config, opts)),
         })
     }
 }
