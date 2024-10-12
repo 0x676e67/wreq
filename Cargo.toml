@@ -19,7 +19,7 @@ rustdoc-args = ["--cfg", "docsrs"]
 targets = ["x86_64-unknown-linux-gnu"]
 
 [features]
-default = ["boring-tls"]
+default = ["boring-tls", "boring-tls-native-roots"]
 
 full = [
     "boring-tls",
@@ -31,7 +31,7 @@ full = [
     "stream",
     "cookies",
     "socks",
-    "hickory-dns",
+    "hickory-dns"
 ]
 
 websocket = ["async-tungstenite", "tokio-util/compat"]

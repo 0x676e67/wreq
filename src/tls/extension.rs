@@ -190,10 +190,15 @@ impl TlsExtension for SslConnectorBuilder {
     #[cfg(feature = "boring-tls-native-roots")]
     fn configure_set_verify_cert_store(mut self) -> TlsResult<SslConnectorBuilder> {
         use boring::x509::{store::X509StoreBuilder, X509};
+        use rustls_native_certs::CertificateResult;
+        use std::sync::LazyLock;
+
+        static CERTS: LazyLock<CertificateResult> =
+            LazyLock::new(|| rustls_native_certs::load_native_certs());
 
         let mut verify_store = X509StoreBuilder::new()?;
-        for cert in rustls_native_certs::load_native_certs().certs {
-            let cert = X509::from_der(&*cert)?;
+        for cert in CERTS.certs.iter() {
+            let cert = X509::from_der(cert)?;
             verify_store.add_cert(cert)?;
         }
 
