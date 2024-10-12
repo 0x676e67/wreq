@@ -19,7 +19,7 @@ rustdoc-args = ["--cfg", "docsrs"]
 targets = ["x86_64-unknown-linux-gnu"]
 
 [features]
-default = ["boring-tls", "boring-tls-native-roots"]
+default = ["boring-tls"]
 
 full = [
     "boring-tls",
@@ -74,6 +74,7 @@ boring-tls = [
     "dep:tower-layer",
     "dep:antidote",
     "dep:typed-builder",
+    "boring-tls-native-roots"
 ]
 
 [dependencies]

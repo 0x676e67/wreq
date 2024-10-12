@@ -87,7 +87,6 @@ fn layer(tls: TlsConnectorBuilder) -> TlsResult<HttpsLayer> {
 
     // Create the `SslConnectorBuilder` and configure it.
     let builder = ssl
-        .configure_ca_cert_file(tls.ca_cert_file)?
         .configure_cert_verification(tls.certs_verification)?
         .configure_alpn_protos(extension.http_version_pref)?
         .configure_min_tls_version(extension.min_tls_version)?
@@ -97,10 +96,22 @@ fn layer(tls: TlsConnectorBuilder) -> TlsResult<HttpsLayer> {
             extension.permute_extensions,
         )?;
 
-    // This code is conditionally compiled when the "boring-tls-native-roots" feature is enabled.
-    // It configures the TLS builder to use the system's native certificate store for verifying certificates.
-    #[cfg(feature = "boring-tls-native-roots")]
-    let builder = builder.configure_set_verify_cert_store()?;
+    // Conditionally configure the TLS builder based on the "boring-tls-native-roots" feature.
+    let builder = if tls.ca_cert_store.is_none() {
+        // If no custom CA cert store, use the system's native certificate store if the feature is enabled.
+        #[cfg(feature = "boring-tls-native-roots")]
+        {
+            builder.configure_set_verify_cert_store()?
+        }
+
+        #[cfg(not(feature = "boring-tls-native-roots"))]
+        {
+            builder
+        }
+    } else {
+        // If a custom CA cert store is provided, configure it.
+        builder.configure_ca_cert_store(tls.ca_cert_store)?
+    };
 
     // Create the `HttpsLayerSettings` with the default session cache capacity.
     let settings = HttpsLayerSettings::builder()

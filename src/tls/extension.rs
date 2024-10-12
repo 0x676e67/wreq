@@ -4,8 +4,8 @@ use crate::client::http::HttpVersionPref;
 use ::std::os::raw::c_int;
 use boring::error::ErrorStack;
 use boring::ssl::{ConnectConfiguration, SslConnectorBuilder, SslVerifyMode, SslVersion};
+use boring::x509::store::X509Store;
 use foreign_types::ForeignTypeRef;
-use std::path::Path;
 
 /// Error handler for the boringssl functions.
 fn sv_handler(r: c_int) -> Result<c_int, ErrorStack> {
@@ -46,10 +46,10 @@ pub trait TlsExtension {
         cert_compression_alg: CertCompressionAlgorithm,
     ) -> TlsResult<SslConnectorBuilder>;
 
-    /// Configure the ca certificate file for the given `SslConnectorBuilder`.
-    fn configure_ca_cert_file<P: AsRef<Path>>(
+    /// Configure the ca certificate store for the given `SslConnectorBuilder`.
+    fn configure_ca_cert_store(
         self,
-        ca_cert_file: Option<P>,
+        ca_cert_stroe: Option<X509Store>,
     ) -> TlsResult<SslConnectorBuilder>;
 
     /// Configure the permute_extensions for the given `SslConnectorBuilder`.
@@ -163,12 +163,12 @@ impl TlsExtension for SslConnectorBuilder {
         }
     }
 
-    fn configure_ca_cert_file<P: AsRef<Path>>(
+    fn configure_ca_cert_store(
         mut self,
-        ca_cert_file: Option<P>,
+        ca_cert_stroe: Option<X509Store>,
     ) -> TlsResult<SslConnectorBuilder> {
-        if let Some(file) = ca_cert_file {
-            self.set_ca_file(file)?;
+        if let Some(stroe) = ca_cert_stroe {
+            self.set_verify_cert_store(stroe)?;
         }
 
         Ok(self)

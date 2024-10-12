@@ -1161,10 +1161,10 @@ impl ClientBuilder {
         self
     }
 
-    /// Set CA certificate file path.
+    /// Set CA certificate store.
     #[cfg(feature = "boring-tls")]
-    pub fn ca_cert_file<P: AsRef<std::path::Path>>(mut self, ca_cert_file: P) -> ClientBuilder {
-        self.config.tls.ca_cert_file = Some(ca_cert_file.as_ref().to_path_buf());
+    pub fn ca_cert_store(mut self, store: boring::x509::store::X509Store) -> ClientBuilder {
+        self.config.tls.ca_cert_store = Some(store);
         self
     }
 

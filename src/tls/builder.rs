@@ -1,16 +1,15 @@
 #![allow(missing_debug_implementations)]
 use super::{impersonate::tls::TlsExtensionSettings, Version};
 use crate::client::http::HttpVersionPref;
-use boring::ssl::SslConnectorBuilder;
-use std::path::PathBuf;
+use boring::{ssl::SslConnectorBuilder, x509::store::X509Store};
 
 /// The TLS connector configuration.
 pub struct TlsConnectorBuilder {
     /// Verify certificates.
     pub(crate) certs_verification: bool,
 
-    /// CA certificates file path.
-    pub(crate) ca_cert_file: Option<PathBuf>,
+    /// CA certificates store.
+    pub(crate) ca_cert_store: Option<X509Store>,
 
     /// The SSL connector builder.
     pub(crate) builder: (Option<SslConnectorBuilder>, TlsExtensionSettings),
@@ -21,7 +20,7 @@ impl Default for TlsConnectorBuilder {
     fn default() -> Self {
         Self {
             certs_verification: true,
-            ca_cert_file: None,
+            ca_cert_store: None,
             builder: (
                 None,
                 TlsExtensionSettings::builder()
