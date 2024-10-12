@@ -58,6 +58,10 @@ pub trait TlsExtension {
         enable: bool,
         permute_extensions: bool,
     ) -> TlsResult<SslConnectorBuilder>;
+
+    /// Configure the set_verify_cert_store for the given `SslConnectorBuilder`.
+    #[cfg(feature = "boring-tls-native-roots")]
+    fn configure_set_verify_cert_store(self) -> TlsResult<SslConnectorBuilder>;
 }
 
 /// TlsConnectExtension trait for `ConnectConfiguration`.
@@ -180,6 +184,20 @@ impl TlsExtension for SslConnectorBuilder {
         }
 
         self.set_permute_extensions(permute_extensions);
+        Ok(self)
+    }
+
+    #[cfg(feature = "boring-tls-native-roots")]
+    fn configure_set_verify_cert_store(mut self) -> TlsResult<SslConnectorBuilder> {
+        use boring::x509::{store::X509StoreBuilder, X509};
+
+        let mut verify_store = X509StoreBuilder::new()?;
+        for cert in rustls_native_certs::load_native_certs().certs {
+            let cert = X509::from_der(&*cert)?;
+            verify_store.add_cert(cert)?;
+        }
+
+        self.set_verify_cert_store(verify_store.build())?;
         Ok(self)
     }
 }

@@ -56,6 +56,8 @@ stream = ["tokio/fs", "tokio-util"]
 
 socks = ["tokio-socks"]
 
+boring-tls-native-roots = ["rustls-native-certs"]
+
 # Internal (PRIVATE!) features used to aid testing.
 # Don't rely on these whatsoever. They may disappear at anytime.
 
@@ -118,6 +120,7 @@ foreign-types = { version = "0.5.0", optional = true }
 brotli_crate = { package = "brotli", version = "7", optional = true }
 flate2 = { version = "1", optional = true }
 libc = { version = "0.2", optional = true }
+rustls-native-certs = { version = "0.8.0", optional = true }
 
 # boring-tls session cache
 linked_hash_set = { version = "0.1", optional = true }

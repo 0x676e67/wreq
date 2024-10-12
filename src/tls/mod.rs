@@ -97,6 +97,11 @@ fn layer(tls: TlsConnectorBuilder) -> TlsResult<HttpsLayer> {
             extension.permute_extensions,
         )?;
 
+    // This code is conditionally compiled when the "boring-tls-native-roots" feature is enabled.
+    // It configures the TLS builder to use the system's native certificate store for verifying certificates.
+    #[cfg(feature = "boring-tls-native-roots")]
+    let builder = builder.configure_set_verify_cert_store()?;
+
     // Create the `HttpsLayerSettings` with the default session cache capacity.
     let settings = HttpsLayerSettings::builder()
         .session_cache_capacity(8)
