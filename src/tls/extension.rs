@@ -193,13 +193,28 @@ impl TlsExtension for SslConnectorBuilder {
         use rustls_native_certs::CertificateResult;
         use std::sync::LazyLock;
 
-        static CERTS: LazyLock<CertificateResult> =
+        static LOAD_CERTS: LazyLock<CertificateResult> =
             LazyLock::new(|| rustls_native_certs::load_native_certs());
 
+        let mut valid_count = 0;
+        let mut invalid_count = 0;
+
         let mut verify_store = X509StoreBuilder::new()?;
-        for cert in CERTS.certs.iter() {
-            let cert = X509::from_der(cert)?;
-            verify_store.add_cert(cert)?;
+        for cert in LOAD_CERTS.certs.iter() {
+            match X509::from_der(cert) {
+                Ok(cert) => {
+                    verify_store.add_cert(cert)?;
+                    valid_count += 1
+                },
+                Err(err) => {
+                    invalid_count += 1;
+                    log::debug!("tls failed to parse DER certificate: {err:?}");
+                },
+            }
+        }
+
+        if valid_count == 0 && invalid_count > 0 {
+            verify_store.set_default_paths()?;            
         }
 
         self.set_verify_cert_store(verify_store.build())?;
