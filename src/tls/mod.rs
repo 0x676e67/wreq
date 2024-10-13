@@ -97,15 +97,36 @@ fn layer(tls: TlsConnectorBuilder) -> TlsResult<HttpsLayer> {
         )?;
 
     // Conditionally configure the TLS builder based on the "boring-tls-native-roots" feature.
+    // If no custom CA cert store, use the system's native certificate store if the feature is enabled.
     let builder = if tls.ca_cert_store.is_none() {
-        // If no custom CA cert store, use the system's native certificate store if the feature is enabled.
-        #[cfg(feature = "boring-tls-native-roots")]
-        {
-            builder.configure_set_verify_cert_store()?
-        }
+        if cfg!(any(
+            feature = "boring-tls-native-roots",
+            feature = "boring-tls-webpki-roots"
+        )) {
+            #[cfg(all(
+                feature = "boring-tls-native-roots",
+                not(feature = "boring-tls-webpki-roots")
+            ))]
+            {
+                builder.configure_set_native_verify_cert_store()?
+            }
 
-        #[cfg(not(feature = "boring-tls-native-roots"))]
-        {
+            #[cfg(all(
+                feature = "boring-tls-webpki-roots",
+                not(feature = "boring-tls-native-roots")
+            ))]
+            {
+                builder.configure_set_webpki_verify_cert_store()?
+            }
+
+            #[cfg(all(
+                feature = "boring-tls-webpki-roots",
+                feature = "boring-tls-native-roots"
+            ))]
+            {
+                compile_error!("Both 'boring-tls-native-roots' and 'boring-tls-webpki-roots' features are enabled, but they are mutually exclusive. Enable only one.");
+            }
+        } else {
             builder
         }
     } else {
