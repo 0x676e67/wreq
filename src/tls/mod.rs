@@ -99,34 +99,24 @@ fn layer(tls: TlsConnectorBuilder) -> TlsResult<HttpsLayer> {
     // Conditionally configure the TLS builder based on the "boring-tls-native-roots" feature.
     // If no custom CA cert store, use the system's native certificate store if the feature is enabled.
     let builder = if tls.ca_cert_store.is_none() {
-        if cfg!(any(
+        #[cfg(feature = "boring-tls-webpki-roots")]
+        {
+            builder.configure_set_webpki_verify_cert_store()?
+        }
+
+        #[cfg(all(
+            feature = "boring-tls-native-roots",
+            not(feature = "boring-tls-webpki-roots")
+        ))]
+        {
+            builder.configure_set_native_verify_cert_store()?
+        }
+
+        #[cfg(not(any(
             feature = "boring-tls-native-roots",
             feature = "boring-tls-webpki-roots"
-        )) {
-            #[cfg(all(
-                feature = "boring-tls-native-roots",
-                not(feature = "boring-tls-webpki-roots")
-            ))]
-            {
-                builder.configure_set_native_verify_cert_store()?
-            }
-
-            #[cfg(all(
-                feature = "boring-tls-webpki-roots",
-                not(feature = "boring-tls-native-roots")
-            ))]
-            {
-                builder.configure_set_webpki_verify_cert_store()?
-            }
-
-            #[cfg(all(
-                feature = "boring-tls-webpki-roots",
-                feature = "boring-tls-native-roots"
-            ))]
-            {
-                builder.configure_set_webpki_verify_cert_store()?
-            }
-        } else {
+        )))]
+        {
             builder
         }
     } else {

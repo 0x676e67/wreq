@@ -6,7 +6,6 @@ use boring::error::ErrorStack;
 use boring::ssl::{ConnectConfiguration, SslConnectorBuilder, SslVerifyMode, SslVersion};
 use boring::x509::store::X509Store;
 use foreign_types::ForeignTypeRef;
-use std::ops::Deref;
 
 /// Error handler for the boringssl functions.
 fn sv_handler(r: c_int) -> Result<c_int, ErrorStack> {
@@ -195,6 +194,7 @@ impl TlsExtension for SslConnectorBuilder {
     #[cfg(feature = "boring-tls-native-roots")]
     fn configure_set_native_verify_cert_store(mut self) -> TlsResult<SslConnectorBuilder> {
         use boring::x509::X509;
+        use std::ops::Deref;
         use std::sync::LazyLock;
 
         static LOAD_NATIVE_CERTS: LazyLock<Result<X509Store, crate::Error>> = LazyLock::new(|| {
@@ -211,6 +211,7 @@ impl TlsExtension for SslConnectorBuilder {
     #[cfg(feature = "boring-tls-webpki-roots")]
     fn configure_set_webpki_verify_cert_store(mut self) -> TlsResult<SslConnectorBuilder> {
         use boring::x509::X509;
+        use std::ops::Deref;
         use std::sync::LazyLock;
 
         static LOAD_WEBPKI_CERTS: LazyLock<Result<X509Store, crate::Error>> = LazyLock::new(|| {
