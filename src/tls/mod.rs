@@ -101,6 +101,7 @@ fn layer(tls: TlsConnectorBuilder) -> TlsResult<HttpsLayer> {
     let builder = if tls.ca_cert_store.is_none() {
         #[cfg(feature = "boring-tls-webpki-roots")]
         {
+            // WebPKI root certificates are enabled (regardless of whether native-roots is also enabled).
             builder.configure_set_webpki_verify_cert_store()?
         }
 
@@ -109,6 +110,7 @@ fn layer(tls: TlsConnectorBuilder) -> TlsResult<HttpsLayer> {
             not(feature = "boring-tls-webpki-roots")
         ))]
         {
+            // Only native-roots is enabled, WebPKI is not enabled.
             builder.configure_set_native_verify_cert_store()?
         }
 
@@ -117,10 +119,11 @@ fn layer(tls: TlsConnectorBuilder) -> TlsResult<HttpsLayer> {
             feature = "boring-tls-webpki-roots"
         )))]
         {
+            // Neither native-roots nor WebPKI roots are enabled, proceed with the default builder.
             builder
         }
     } else {
-        // If a custom CA cert store is provided, configure it.
+        // If a custom CA certificate store is provided, configure it.
         builder.configure_ca_cert_store(tls.ca_cert_store)?
     };
 
