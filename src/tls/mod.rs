@@ -22,7 +22,8 @@ pub use connector::MaybeHttpsStream;
 use connector::{HttpsConnector, HttpsLayer, HttpsLayerSettings};
 use extension::{TlsConnectExtension, TlsExtension};
 pub use impersonate::{
-    http2::Http2Settings, tls::TlsExtensionSettings, tls_settings, Impersonate, ImpersonateSettings,
+    chrome, edge, http2::Http2Settings, okhttp, safari, tls::TlsExtensionSettings, tls_settings,
+    Impersonate, ImpersonateSettings,
 };
 
 type TlsResult<T> = std::result::Result<T, ErrorStack>;

@@ -1,6 +1,4 @@
-use super::http2::{HEADERS_PSEUDO_ORDER, HEADER_PRORIORITY, SETTINGS_ORDER};
-use super::tls::{SafariTlsSettings, OLD_CIPHER_LIST};
-use crate::tls::impersonate::{http2::Http2Settings, ImpersonateSettings};
+use crate::tls::impersonate::ImpersonateSettings;
 use crate::tls::TlsResult;
 use http::{
     header::{ACCEPT, ACCEPT_ENCODING, ACCEPT_LANGUAGE, USER_AGENT},
@@ -9,22 +7,8 @@ use http::{
 
 pub(crate) fn get_settings() -> TlsResult<ImpersonateSettings> {
     Ok(ImpersonateSettings::builder()
-        .tls(
-            SafariTlsSettings::builder()
-                .cipher_list(&OLD_CIPHER_LIST)
-                .build()
-                .try_into()?,
-        )
-        .http2(
-            Http2Settings::builder()
-                .initial_stream_window_size(4194304)
-                .initial_connection_window_size(10551295)
-                .max_concurrent_streams(100)
-                .headers_priority(*HEADER_PRORIORITY)
-                .headers_pseudo_order(*HEADERS_PSEUDO_ORDER)
-                .settings_order(SETTINGS_ORDER.to_vec())
-                .build(),
-        )
+        .tls(super::safari_tls_template_2()?)
+        .http2(super::safari_http2_template_4())
         .headers(Box::new(header_initializer))
         .build())
 }

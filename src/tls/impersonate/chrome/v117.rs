@@ -1,6 +1,4 @@
-use super::http2::{HEADERS_PSEUDO_ORDER, HEADER_PRORIORITY, SETTINGS_ORDER};
-use super::tls::ChromeTlsSettings;
-use crate::tls::impersonate::{http2::Http2Settings, ImpersonateSettings};
+use crate::tls::impersonate::ImpersonateSettings;
 use crate::tls::TlsResult;
 use http::{
     header::{ACCEPT, ACCEPT_ENCODING, ACCEPT_LANGUAGE, UPGRADE_INSECURE_REQUESTS, USER_AGENT},
@@ -9,26 +7,8 @@ use http::{
 
 pub(crate) fn get_settings() -> TlsResult<ImpersonateSettings> {
     Ok(ImpersonateSettings::builder()
-        .tls(
-            ChromeTlsSettings::builder()
-                .permute_extensions(true)
-                .pre_shared_key(true)
-                .enable_ech_grease(true)
-                .build()
-                .try_into()?,
-        )
-        .http2(
-            Http2Settings::builder()
-                .initial_stream_window_size(6291456)
-                .initial_connection_window_size(15728640)
-                .max_header_list_size(262144)
-                .header_table_size(65536)
-                .enable_push(false)
-                .headers_priority(*HEADER_PRORIORITY)
-                .headers_pseudo_order(*HEADERS_PSEUDO_ORDER)
-                .settings_order(SETTINGS_ORDER.to_vec())
-                .build(),
-        )
+        .tls(super::chrome_tls_template_5()?)
+        .http2(super::chrome_http2_template_3())
         .headers(Box::new(header_initializer))
         .build())
 }

@@ -7,7 +7,7 @@ use boring::{
 };
 use typed_builder::TypedBuilder;
 
-pub const OLD_CIPHER_LIST: [&str; 26] = [
+pub const CIPHER_LIST: [&str; 26] = [
     "TLS_AES_128_GCM_SHA256",
     "TLS_AES_256_GCM_SHA384",
     "TLS_CHACHA20_POLY1305_SHA256",
@@ -36,7 +36,7 @@ pub const OLD_CIPHER_LIST: [&str; 26] = [
     "TLS_RSA_WITH_3DES_EDE_CBC_SHA",
 ];
 
-pub const CIPHER_LIST: [&str; 20] = [
+pub const NEW_CIPHER_LIST: [&str; 20] = [
     "TLS_AES_128_GCM_SHA256",
     "TLS_AES_256_GCM_SHA384",
     "TLS_CHACHA20_POLY1305_SHA256",

@@ -1,6 +1,5 @@
-use super::http2::{HEADERS_PSEUDO_ORDER, HEADER_PRORIORITY, SETTINGS_ORDER};
 use super::tls::OkHttpTlsSettings;
-use crate::tls::impersonate::{http2::Http2Settings, ImpersonateSettings};
+use crate::tls::impersonate::ImpersonateSettings;
 use crate::tls::TlsResult;
 use http::{
     header::{ACCEPT, ACCEPT_ENCODING, ACCEPT_LANGUAGE, USER_AGENT},
@@ -29,15 +28,7 @@ pub(crate) fn get_settings() -> TlsResult<ImpersonateSettings> {
                 .build()
                 .try_into()?,
         )
-        .http2(
-            Http2Settings::builder()
-                .initial_stream_window_size(16777216)
-                .initial_connection_window_size(16777216)
-                .headers_priority(*HEADER_PRORIORITY)
-                .headers_pseudo_order(*HEADERS_PSEUDO_ORDER)
-                .settings_order(SETTINGS_ORDER.to_vec())
-                .build(),
-        )
+        .http2(super::okhttp_http2_template_1())
         .headers(Box::new(header_initializer))
         .build())
 }

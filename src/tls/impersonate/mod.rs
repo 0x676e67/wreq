@@ -1,10 +1,10 @@
 #![allow(missing_docs, missing_debug_implementations)]
 
-mod chrome;
-mod edge;
+pub mod chrome;
+pub mod edge;
 pub mod http2;
-mod okhttp;
-mod safari;
+pub mod okhttp;
+pub mod safari;
 pub mod tls;
 
 use super::TlsResult;
