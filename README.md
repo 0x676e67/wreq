@@ -2,7 +2,6 @@
 
 [![Crates.io License](https://img.shields.io/crates/l/rquest)](./LICENSE)
 [![crates.io](https://img.shields.io/crates/v/rquest.svg)](https://crates.io/crates/rquest)
-[![Documentation](https://docs.rs/rquest/badge.svg)](https://docs.rs/rquest)
 [![Crates.io Total Downloads](https://img.shields.io/crates/d/rquest)](https://crates.io/crates/rquest)
 
 An ergonomic, all-in-one `TLS`/`JA3`/`JA4`/`HTTP2` fingerprint `HTTP`/`WebSocket` client.
