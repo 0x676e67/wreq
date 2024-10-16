@@ -1383,6 +1383,18 @@ impl Client {
             }
         }
 
+        let uri = expect_uri(&url);
+
+        let (reusable, body) = match body {
+            Some(body) => {
+                let (reusable, body) = body.try_reuse();
+                (Some(reusable), body)
+            }
+            None => (None, Body::empty()),
+        };
+
+        self.proxy_auth(&uri, &mut headers);
+
         // Insert headers in order if enabled
         if let Some(ref headers_order) = self.inner.headers_order {
             let mut sorted_headers = HeaderMap::with_capacity(headers.keys_len());
@@ -1403,18 +1415,6 @@ impl Client {
 
             headers = sorted_headers;
         }
-
-        let uri = expect_uri(&url);
-
-        let (reusable, body) = match body {
-            Some(body) => {
-                let (reusable, body) = body.try_reuse();
-                (Some(reusable), body)
-            }
-            None => (None, Body::empty()),
-        };
-
-        self.proxy_auth(&uri, &mut headers);
 
         let builder = hyper::Request::builder()
             .method(method.clone())
