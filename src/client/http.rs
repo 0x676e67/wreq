@@ -79,7 +79,7 @@ struct Config {
     // NOTE: When adding a new field, update `fmt::Debug for ClientBuilder`
     accepts: Accepts,
     headers: HeaderMap,
-    headers_order: Option<Vec<HeaderName>>,
+    headers_order: Option<&'static [HeaderName]>,
     connect_timeout: Option<Duration>,
     connection_verbose: bool,
     pool_idle_timeout: Option<Duration>,
@@ -440,7 +440,7 @@ impl ClientBuilder {
     ///
     /// The host header needs to be manually inserted if you want to modify its order.
     /// Otherwise it will be inserted by hyper after sorting.
-    pub fn headers_order(mut self, order: Vec<HeaderName>) -> ClientBuilder {
+    pub fn headers_order(mut self, order: &'static [HeaderName]) -> ClientBuilder {
         self.config.headers_order = Some(order);
         self
     }
@@ -1396,11 +1396,11 @@ impl Client {
         self.proxy_auth(&uri, &mut headers);
 
         // Insert headers in order if enabled
-        if let Some(ref headers_order) = self.inner.headers_order {
+        if let Some(headers_order) = self.inner.headers_order {
             let mut sorted_headers = HeaderMap::with_capacity(headers.keys_len());
 
             // First insert headers in the specified order
-            for key in headers_order {
+            for key in headers_order.iter() {
                 if let Some(value) = headers.remove(key) {
                     sorted_headers.insert(key, value);
                 }
@@ -1689,7 +1689,7 @@ struct ClientRef {
     #[cfg(feature = "cookies")]
     cookie_store: Option<Arc<dyn cookie::CookieStore>>,
     headers: HeaderMap,
-    headers_order: Option<Vec<HeaderName>>,
+    headers_order: Option<&'static [HeaderName]>,
     hyper: HyperClient,
     redirect_policy: Arc<redirect::Policy>,
     referer: bool,
