@@ -46,9 +46,9 @@ pub fn http2_template_1() -> Http2Settings {
         .initial_stream_window_size(2097152)
         .initial_connection_window_size(10551295)
         .max_concurrent_streams(100)
-        .headers_priority(*HEADER_PRORIORITY)
-        .headers_pseudo_order(*HEADERS_PSEUDO_ORDER)
-        .settings_order(SETTINGS_ORDER.to_vec())
+        .headers_priority(HEADER_PRORIORITY)
+        .headers_pseudo_order(HEADERS_PSEUDO_ORDER)
+        .settings_order(&SETTINGS_ORDER)
         .build()
 }
 
@@ -58,9 +58,9 @@ pub fn http2_template_2() -> Http2Settings {
         .initial_connection_window_size(10551295)
         .max_concurrent_streams(100)
         .enable_push(false)
-        .headers_priority(*HEADER_PRORIORITY)
-        .headers_pseudo_order(*HEADERS_PSEUDO_ORDER)
-        .settings_order(SETTINGS_ORDER.to_vec())
+        .headers_priority(HEADER_PRORIORITY)
+        .headers_pseudo_order(HEADERS_PSEUDO_ORDER)
+        .settings_order(&SETTINGS_ORDER)
         .build()
 }
 
@@ -72,9 +72,9 @@ pub fn http2_template_3() -> Http2Settings {
         .enable_push(false)
         .unknown_setting8(true)
         .unknown_setting9(true)
-        .headers_priority(*NEW_HEADER_PRORIORITY)
-        .headers_pseudo_order(*NEW_HEADERS_PSEUDO_ORDER)
-        .settings_order(NEW_SETTINGS_ORDER.to_vec())
+        .headers_priority(NEW_HEADER_PRORIORITY)
+        .headers_pseudo_order(NEW_HEADERS_PSEUDO_ORDER)
+        .settings_order(&NEW_SETTINGS_ORDER)
         .build()
 }
 
@@ -83,9 +83,9 @@ pub fn http2_template_4() -> Http2Settings {
         .initial_stream_window_size(4194304)
         .initial_connection_window_size(10551295)
         .max_concurrent_streams(100)
-        .headers_priority(*HEADER_PRORIORITY)
-        .headers_pseudo_order(*HEADERS_PSEUDO_ORDER)
-        .settings_order(SETTINGS_ORDER.to_vec())
+        .headers_priority(HEADER_PRORIORITY)
+        .headers_pseudo_order(HEADERS_PSEUDO_ORDER)
+        .settings_order(&SETTINGS_ORDER)
         .build()
 }
 
@@ -95,8 +95,8 @@ pub fn http2_template_5() -> Http2Settings {
         .initial_connection_window_size(10551295)
         .max_concurrent_streams(100)
         .enable_push(false)
-        .headers_priority(*HEADER_PRORIORITY)
-        .headers_pseudo_order(*HEADERS_PSEUDO_ORDER)
-        .settings_order(SETTINGS_ORDER.to_vec())
+        .headers_priority(HEADER_PRORIORITY)
+        .headers_pseudo_order(HEADERS_PSEUDO_ORDER)
+        .settings_order(&SETTINGS_ORDER)
         .build()
 }

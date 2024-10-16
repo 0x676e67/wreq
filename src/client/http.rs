@@ -954,7 +954,7 @@ impl ClientBuilder {
     #[cfg(feature = "boring-tls")]
     pub fn http2_settings_order(
         mut self,
-        order: impl Into<Option<Vec<SettingsOrder>>>,
+        order: impl Into<Option<&'static [SettingsOrder]>>,
     ) -> ClientBuilder {
         self.config.builder.http2_settings_order(order.into());
         self

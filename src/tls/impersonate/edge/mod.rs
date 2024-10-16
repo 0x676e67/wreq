@@ -15,9 +15,9 @@ pub fn http2_template_1() -> Http2Settings {
         .max_concurrent_streams(1000)
         .max_header_list_size(262144)
         .header_table_size(65536)
-        .headers_priority(*HEADER_PRORIORITY)
-        .headers_pseudo_order(*HEADERS_PSEUDO_ORDER)
-        .settings_order(SETTINGS_ORDER.to_vec())
+        .headers_priority(HEADER_PRORIORITY)
+        .headers_pseudo_order(HEADERS_PSEUDO_ORDER)
+        .settings_order(&SETTINGS_ORDER)
         .build()
 }
 
@@ -28,8 +28,8 @@ pub fn http2_template_2() -> Http2Settings {
         .max_header_list_size(262144)
         .header_table_size(65536)
         .enable_push(false)
-        .headers_priority(*HEADER_PRORIORITY)
-        .headers_pseudo_order(*HEADERS_PSEUDO_ORDER)
-        .settings_order(SETTINGS_ORDER.to_vec())
+        .headers_priority(HEADER_PRORIORITY)
+        .headers_pseudo_order(HEADERS_PSEUDO_ORDER)
+        .settings_order(&SETTINGS_ORDER)
         .build()
 }

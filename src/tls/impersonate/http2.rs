@@ -46,6 +46,6 @@ pub struct Http2Settings {
     pub(crate) headers_pseudo_order: Option<[PseudoOrder; 4]>,
 
     /// The settings order.
-    #[builder(default, setter(into))]
-    pub(crate) settings_order: Option<Vec<SettingsOrder>>,
+    #[builder(default, setter(strip_option))]
+    pub(crate) settings_order: Option<&'static [SettingsOrder]>,
 }
