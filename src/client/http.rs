@@ -1400,7 +1400,7 @@ impl Client {
             let mut sorted_headers = HeaderMap::with_capacity(headers.keys_len());
 
             // First insert headers in the specified order
-            for key in headers_order.iter() {
+            for key in headers_order {
                 if let Some(value) = headers.remove(key) {
                     sorted_headers.insert(key, value);
                 }
