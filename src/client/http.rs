@@ -1387,17 +1387,17 @@ impl Client {
         if let Some(ref headers_order) = self.inner.headers_order {
             let mut sorted_headers = HeaderMap::with_capacity(headers.keys_len());
 
-            // First insert headers in order
+            // First insert headers in the specified order
             for key in headers_order {
-                if let Some(value) = headers.get(key) {
-                    sorted_headers.insert(key, value.clone());
+                if let Some(value) = headers.remove(key) {
+                    sorted_headers.insert(key, value);
                 }
             }
 
-            // Then insert any remaining headers
-            for (name, value) in headers.iter() {
-                if !sorted_headers.contains_key(name) {
-                    sorted_headers.insert(name, value.clone());
+            // Then insert any remaining headers that were not ordered
+            for (key, value) in headers.drain() {
+                if let Some(key) = key {
+                    sorted_headers.insert(key, value);
                 }
             }
 
