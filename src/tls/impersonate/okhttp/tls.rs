@@ -1,7 +1,7 @@
-use crate::tls::TlsExtensionSettings;
+use crate::tls::TlsSettings;
 use boring::{
     error::ErrorStack,
-    ssl::{SslConnector, SslConnectorBuilder, SslCurve, SslMethod, SslVersion},
+    ssl::{SslConnector, SslCurve, SslMethod, SslVersion},
 };
 use typed_builder::TypedBuilder;
 
@@ -31,10 +31,10 @@ pub struct OkHttpTlsSettings<'a> {
     cipher_list: &'a [&'a str],
 }
 
-impl TryInto<(SslConnectorBuilder, TlsExtensionSettings)> for OkHttpTlsSettings<'_> {
+impl TryInto<TlsSettings> for OkHttpTlsSettings<'_> {
     type Error = ErrorStack;
 
-    fn try_into(self) -> Result<(SslConnectorBuilder, TlsExtensionSettings), Self::Error> {
+    fn try_into(self) -> Result<TlsSettings, Self::Error> {
         let mut builder = SslConnector::builder(SslMethod::tls_client())?;
         builder.enable_ocsp_stapling();
         builder.set_curves(self.curves.unwrap_or(&[
@@ -46,11 +46,9 @@ impl TryInto<(SslConnectorBuilder, TlsExtensionSettings)> for OkHttpTlsSettings<
         builder.set_cipher_list(&self.cipher_list.join(":"))?;
         builder.set_min_proto_version(Some(SslVersion::TLS1_2))?;
         builder.set_max_proto_version(Some(SslVersion::TLS1_3))?;
-        Ok((
-            builder,
-            TlsExtensionSettings::builder()
-                .http_version_pref(crate::HttpVersionPref::All)
-                .build(),
-        ))
+        Ok(TlsSettings::builder()
+            .connector(builder)
+            .http_version_pref(crate::HttpVersionPref::All)
+            .build())
     }
 }

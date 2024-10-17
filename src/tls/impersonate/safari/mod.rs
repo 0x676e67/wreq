@@ -15,8 +15,7 @@ pub mod safari_ios_17_4_1;
 pub mod safari_ipad_18;
 mod tls;
 
-use crate::tls::{Http2Settings, TlsExtensionSettings, TlsResult};
-use boring::ssl::SslConnectorBuilder;
+use crate::tls::{Http2Settings, TlsResult, TlsSettings};
 use http2::{
     HEADERS_PSEUDO_ORDER, HEADER_PRORIORITY, NEW_HEADERS_PSEUDO_ORDER, NEW_HEADER_PRORIORITY,
     NEW_SETTINGS_ORDER, SETTINGS_ORDER,
@@ -24,7 +23,7 @@ use http2::{
 use tls::{SafariTlsSettings, CIPHER_LIST, NEW_CIPHER_LIST};
 
 // ============== TLS template ==============
-pub fn tls_template_1() -> TlsResult<(SslConnectorBuilder, TlsExtensionSettings)> {
+pub fn tls_template_1() -> TlsResult<TlsSettings> {
     SafariTlsSettings::builder()
         .cipher_list(&NEW_CIPHER_LIST)
         .build()
@@ -32,7 +31,7 @@ pub fn tls_template_1() -> TlsResult<(SslConnectorBuilder, TlsExtensionSettings)
         .map_err(Into::into)
 }
 
-pub fn tls_template_2() -> TlsResult<(SslConnectorBuilder, TlsExtensionSettings)> {
+pub fn tls_template_2() -> TlsResult<TlsSettings> {
     SafariTlsSettings::builder()
         .cipher_list(&CIPHER_LIST)
         .build()

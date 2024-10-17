@@ -8,7 +8,6 @@ pub mod safari;
 pub mod tls;
 
 use super::TlsResult;
-use boring::ssl::SslConnectorBuilder;
 use chrome::*;
 use edge::*;
 use http::HeaderMap;
@@ -16,7 +15,7 @@ use http2::Http2Settings;
 use okhttp::*;
 use safari::*;
 use std::{fmt::Debug, str::FromStr};
-use tls::TlsExtensionSettings;
+use tls::TlsSettings;
 use typed_builder::TypedBuilder;
 use Impersonate::*;
 
@@ -24,7 +23,7 @@ use Impersonate::*;
 #[derive(TypedBuilder)]
 pub struct ImpersonateSettings {
     /// The SSL connector builder.
-    pub(crate) tls: (SslConnectorBuilder, TlsExtensionSettings),
+    pub(crate) tls: TlsSettings,
 
     /// HTTP/2 settings.
     pub(crate) http2: Http2Settings,

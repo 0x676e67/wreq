@@ -21,20 +21,19 @@ pub mod v127;
 pub mod v128;
 pub mod v129;
 
-use crate::tls::{Http2Settings, TlsExtensionSettings, TlsResult};
-use boring::ssl::SslConnectorBuilder;
+use crate::tls::{Http2Settings, TlsResult, TlsSettings};
 use http2::{HEADERS_PSEUDO_ORDER, HEADER_PRORIORITY, SETTINGS_ORDER};
 use tls::{ChromeTlsSettings, NEW_CURVES};
 
 // ============== TLS template ==============
-pub fn tls_template_1() -> TlsResult<(SslConnectorBuilder, TlsExtensionSettings)> {
+pub fn tls_template_1() -> TlsResult<TlsSettings> {
     ChromeTlsSettings::builder()
         .build()
         .try_into()
         .map_err(Into::into)
 }
 
-pub fn tls_template_2() -> TlsResult<(SslConnectorBuilder, TlsExtensionSettings)> {
+pub fn tls_template_2() -> TlsResult<TlsSettings> {
     ChromeTlsSettings::builder()
         .enable_ech_grease(true)
         .build()
@@ -42,7 +41,7 @@ pub fn tls_template_2() -> TlsResult<(SslConnectorBuilder, TlsExtensionSettings)
         .map_err(Into::into)
 }
 
-pub fn tls_template_3() -> TlsResult<(SslConnectorBuilder, TlsExtensionSettings)> {
+pub fn tls_template_3() -> TlsResult<TlsSettings> {
     ChromeTlsSettings::builder()
         .permute_extensions(true)
         .build()
@@ -50,7 +49,7 @@ pub fn tls_template_3() -> TlsResult<(SslConnectorBuilder, TlsExtensionSettings)
         .map_err(Into::into)
 }
 
-pub fn tls_template_4() -> TlsResult<(SslConnectorBuilder, TlsExtensionSettings)> {
+pub fn tls_template_4() -> TlsResult<TlsSettings> {
     ChromeTlsSettings::builder()
         .permute_extensions(true)
         .enable_ech_grease(true)
@@ -59,7 +58,7 @@ pub fn tls_template_4() -> TlsResult<(SslConnectorBuilder, TlsExtensionSettings)
         .map_err(Into::into)
 }
 
-pub fn tls_template_5() -> TlsResult<(SslConnectorBuilder, TlsExtensionSettings)> {
+pub fn tls_template_5() -> TlsResult<TlsSettings> {
     ChromeTlsSettings::builder()
         .permute_extensions(true)
         .enable_ech_grease(true)
@@ -69,7 +68,7 @@ pub fn tls_template_5() -> TlsResult<(SslConnectorBuilder, TlsExtensionSettings)
         .map_err(Into::into)
 }
 
-pub fn tls_template_6() -> TlsResult<(SslConnectorBuilder, TlsExtensionSettings)> {
+pub fn tls_template_6() -> TlsResult<TlsSettings> {
     ChromeTlsSettings::builder()
         .curves(NEW_CURVES)
         .permute_extensions(true)

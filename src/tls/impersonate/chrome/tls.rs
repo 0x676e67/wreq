@@ -1,12 +1,10 @@
 use crate::{
-    tls::{
-        cert_compression::CertCompressionAlgorithm, extension::TlsExtension, TlsExtensionSettings,
-    },
+    tls::{cert_compression::CertCompressionAlgorithm, extension::TlsExtension, TlsSettings},
     HttpVersionPref,
 };
 use boring::{
     error::ErrorStack,
-    ssl::{SslConnector, SslConnectorBuilder, SslCurve, SslMethod, SslVersion},
+    ssl::{SslConnector, SslCurve, SslMethod, SslVersion},
 };
 use typed_builder::TypedBuilder;
 
@@ -77,10 +75,10 @@ pub struct ChromeTlsSettings<'a> {
     pre_shared_key: bool,
 }
 
-impl TryInto<(SslConnectorBuilder, TlsExtensionSettings)> for ChromeTlsSettings<'_> {
+impl TryInto<TlsSettings> for ChromeTlsSettings<'_> {
     type Error = ErrorStack;
 
-    fn try_into(self) -> Result<(SslConnectorBuilder, TlsExtensionSettings), Self::Error> {
+    fn try_into(self) -> Result<TlsSettings, Self::Error> {
         let mut builder = SslConnector::builder(SslMethod::tls_client())?;
         builder.set_grease_enabled(true);
         builder.enable_ocsp_stapling();
@@ -96,16 +94,16 @@ impl TryInto<(SslConnectorBuilder, TlsExtensionSettings)> for ChromeTlsSettings<
         builder.set_max_proto_version(Some(SslVersion::TLS1_3))?;
         builder.set_permute_extensions(self.permute_extensions);
 
-        let extension = TlsExtensionSettings::builder()
+        let connector =
+            builder.configure_add_cert_compression_alg(CertCompressionAlgorithm::Brotli)?;
+
+        Ok(TlsSettings::builder()
+            .connector(connector)
             .http_version_pref(HttpVersionPref::All)
             .permute_extensions(self.permute_extensions)
             .pre_shared_key(self.pre_shared_key)
             .enable_ech_grease(self.enable_ech_grease)
             .application_settings(self.application_settings)
-            .build();
-
-        builder
-            .configure_add_cert_compression_alg(CertCompressionAlgorithm::Brotli)
-            .map(|builder| (builder, extension))
+            .build())
     }
 }

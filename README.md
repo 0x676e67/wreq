@@ -116,7 +116,7 @@ rquest = "0.23"
 use boring::ssl::{SslConnector, SslMethod};
 use http::{header, HeaderValue};
 use rquest::{
-    tls::{Http2Settings, ImpersonateSettings, TlsExtensionSettings},
+    tls::{Http2Settings, ImpersonateSettings, TlsSettings},
     HttpVersionPref,
 };
 use rquest::{PseudoOrder::*, SettingsOrder::*};
@@ -126,9 +126,9 @@ use std::error::Error;
 async fn main() -> Result<(), Box<dyn Error>> {
     // Create a pre-configured TLS settings
     let settings = ImpersonateSettings::builder()
-        .tls((
-            SslConnector::builder(SslMethod::tls_client())?,
-            TlsExtensionSettings::builder()
+        .tls(
+            TlsSettings::builder()
+                .connector(SslConnector::builder(SslMethod::tls_client())?)
                 .tls_sni(true)
                 .http_version_pref(HttpVersionPref::Http2)
                 .application_settings(true)
@@ -136,7 +136,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 .enable_ech_grease(true)
                 .permute_extensions(true)
                 .build(),
-        ))
+        )
         .http2(
             Http2Settings::builder()
                 .initial_stream_window_size(6291456)

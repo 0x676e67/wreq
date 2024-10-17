@@ -22,7 +22,7 @@ pub use connector::MaybeHttpsStream;
 use connector::{HttpsConnector, HttpsLayer, HttpsLayerSettings};
 use extension::{TlsConnectExtension, TlsExtension};
 pub use impersonate::{
-    chrome, edge, http2::Http2Settings, okhttp, safari, tls::TlsExtensionSettings, tls_settings,
+    chrome, edge, http2::Http2Settings, okhttp, safari, tls::TlsSettings, tls_settings,
     Impersonate, ImpersonateSettings,
 };
 
@@ -41,13 +41,13 @@ pub struct BoringTlsConnector {
 
 impl BoringTlsConnector {
     /// Create a new `BoringTlsConnector` with the given function.
-    pub fn new(tls: TlsConnectorBuilder) -> TlsResult<BoringTlsConnector> {
+    pub fn new(builder: TlsConnectorBuilder) -> TlsResult<BoringTlsConnector> {
         Ok(Self {
-            tls_sni: tls.builder.1.tls_sni,
-            enable_ech_grease: tls.builder.1.enable_ech_grease,
-            application_settings: tls.builder.1.application_settings,
-            http_version_pref: tls.builder.1.http_version_pref,
-            layer: layer(tls)?,
+            tls_sni: builder.tls.tls_sni,
+            enable_ech_grease: builder.tls.enable_ech_grease,
+            application_settings: builder.tls.application_settings,
+            http_version_pref: builder.tls.http_version_pref,
+            layer: new_layer(builder)?,
         })
     }
 
@@ -76,34 +76,29 @@ impl BoringTlsConnector {
 }
 
 /// Create a new `HttpsLayer` with the given `Tls` settings.
-fn layer(tls: TlsConnectorBuilder) -> TlsResult<HttpsLayer> {
-    // If the builder is set, use it. Otherwise, create a new one.
-    let (ssl, extension) = match tls.builder.0 {
-        Some(ssl) => (ssl, tls.builder.1),
-        None => (
-            SslConnector::builder(SslMethod::tls_client())?,
-            tls.builder.1,
-        ),
+fn new_layer(builder: TlsConnectorBuilder) -> TlsResult<HttpsLayer> {
+    let tls = builder.tls;
+    // If the connector builder is set, use it. Otherwise, create a new one.
+    let connector = match tls.connector {
+        Some(connector) => connector,
+        None => SslConnector::builder(SslMethod::tls_client())?,
     };
 
     // Create the `SslConnectorBuilder` and configure it.
-    let builder = ssl
-        .configure_cert_verification(tls.certs_verification)?
-        .configure_alpn_protos(extension.http_version_pref)?
-        .configure_min_tls_version(extension.min_tls_version)?
-        .configure_max_tls_version(extension.max_tls_version)?
-        .configure_permute_extensions(
-            extension.application_settings,
-            extension.permute_extensions,
-        )?;
+    let connector = connector
+        .configure_cert_verification(builder.certs_verification)?
+        .configure_alpn_protos(tls.http_version_pref)?
+        .configure_min_tls_version(tls.min_tls_version)?
+        .configure_max_tls_version(tls.max_tls_version)?
+        .configure_permute_extensions(tls.application_settings, tls.permute_extensions)?;
 
     // Conditionally configure the TLS builder based on the "boring-tls-native-roots" feature.
     // If no custom CA cert store, use the system's native certificate store if the feature is enabled.
-    let builder = if tls.ca_cert_store.is_none() {
+    let connector = if builder.ca_cert_store.is_none() {
         #[cfg(feature = "boring-tls-webpki-roots")]
         {
             // WebPKI root certificates are enabled (regardless of whether native-roots is also enabled).
-            builder.configure_set_webpki_verify_cert_store()?
+            connector.configure_set_webpki_verify_cert_store()?
         }
 
         #[cfg(all(
@@ -112,7 +107,7 @@ fn layer(tls: TlsConnectorBuilder) -> TlsResult<HttpsLayer> {
         ))]
         {
             // Only native-roots is enabled, WebPKI is not enabled.
-            builder.configure_set_native_verify_cert_store()?
+            connector.configure_set_native_verify_cert_store()?
         }
 
         #[cfg(not(any(
@@ -121,20 +116,20 @@ fn layer(tls: TlsConnectorBuilder) -> TlsResult<HttpsLayer> {
         )))]
         {
             // Neither native-roots nor WebPKI roots are enabled, proceed with the default builder.
-            builder
+            connector
         }
     } else {
         // If a custom CA certificate store is provided, configure it.
-        builder.configure_ca_cert_store(tls.ca_cert_store)?
+        connector.configure_ca_cert_store(builder.ca_cert_store)?
     };
 
     // Create the `HttpsLayerSettings` with the default session cache capacity.
     let settings = HttpsLayerSettings::builder()
         .session_cache_capacity(8)
-        .session_cache(extension.application_settings && extension.pre_shared_key)
+        .session_cache(tls.application_settings && tls.pre_shared_key)
         .build();
 
-    HttpsLayer::with_connector_and_settings(builder, settings)
+    HttpsLayer::with_connector_and_settings(connector, settings)
 }
 
 /// A TLS protocol version.

@@ -1,7 +1,7 @@
 #![allow(missing_debug_implementations)]
-use super::{impersonate::tls::TlsExtensionSettings, Version};
+use super::{impersonate::tls::TlsSettings, Version};
 use crate::client::http::HttpVersionPref;
-use boring::{ssl::SslConnectorBuilder, x509::store::X509Store};
+use boring::x509::store::X509Store;
 
 /// The TLS connector configuration.
 pub struct TlsConnectorBuilder {
@@ -11,8 +11,8 @@ pub struct TlsConnectorBuilder {
     /// CA certificates store.
     pub(crate) ca_cert_store: Option<X509Store>,
 
-    /// The SSL connector builder.
-    pub(crate) builder: (Option<SslConnectorBuilder>, TlsExtensionSettings),
+    /// The TLS connector settings.
+    pub(crate) tls: TlsSettings,
 }
 
 // ============= SslSettings impls =============
@@ -21,13 +21,10 @@ impl Default for TlsConnectorBuilder {
         Self {
             certs_verification: true,
             ca_cert_store: None,
-            builder: (
-                None,
-                TlsExtensionSettings::builder()
-                    .http_version_pref(HttpVersionPref::All)
-                    .tls_sni(true)
-                    .build(),
-            ),
+            tls: TlsSettings::builder()
+                .http_version_pref(HttpVersionPref::All)
+                .tls_sni(true)
+                .build(),
         }
     }
 }
@@ -35,30 +32,30 @@ impl Default for TlsConnectorBuilder {
 // ============= Tls impls =============
 impl TlsConnectorBuilder {
     pub fn permute_extensions(&mut self) {
-        self.builder.1.permute_extensions = true;
+        self.tls.permute_extensions = true;
     }
 
     pub fn pre_shared_key(&mut self) {
-        self.builder.1.pre_shared_key = true;
+        self.tls.pre_shared_key = true;
     }
 
     pub fn enable_ech_grease(&mut self) {
-        self.builder.1.enable_ech_grease = true;
+        self.tls.enable_ech_grease = true;
     }
 
     pub fn http_version_pref(&mut self, version: HttpVersionPref) {
-        self.builder.1.http_version_pref = version;
+        self.tls.http_version_pref = version;
     }
 
     pub fn min_tls_version(&mut self, version: Version) {
-        self.builder.1.min_tls_version = Some(version);
+        self.tls.min_tls_version = Some(version);
     }
 
     pub fn max_tls_version(&mut self, version: Version) {
-        self.builder.1.max_tls_version = Some(version);
+        self.tls.max_tls_version = Some(version);
     }
 
     pub fn tls_sni(&mut self, tls_sni: bool) {
-        self.builder.1.tls_sni = tls_sni;
+        self.tls.tls_sni = tls_sni;
     }
 }

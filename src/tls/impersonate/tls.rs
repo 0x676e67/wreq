@@ -1,10 +1,14 @@
 #![allow(missing_debug_implementations)]
 use crate::{tls::Version, HttpVersionPref};
+use boring::ssl::SslConnectorBuilder;
 use typed_builder::TypedBuilder;
 
 /// TLS Extension settings.
-#[derive(Clone, Copy, TypedBuilder)]
-pub struct TlsExtensionSettings {
+#[derive(TypedBuilder)]
+pub struct TlsSettings {
+    #[builder(default, setter(into))]
+    pub(crate) connector: Option<SslConnectorBuilder>,
+
     #[builder(default = true)]
     pub(crate) tls_sni: bool,
 

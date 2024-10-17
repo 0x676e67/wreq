@@ -1,9 +1,9 @@
 use crate::tls::{
-    cert_compression::CertCompressionAlgorithm, extension::TlsExtension, TlsExtensionSettings,
+    cert_compression::CertCompressionAlgorithm, extension::TlsExtension, TlsSettings,
 };
 use boring::{
     error::ErrorStack,
-    ssl::{SslConnector, SslConnectorBuilder, SslCurve, SslMethod, SslOptions, SslVersion},
+    ssl::{SslConnector, SslCurve, SslMethod, SslOptions, SslVersion},
 };
 use typed_builder::TypedBuilder;
 
@@ -87,10 +87,10 @@ pub struct SafariTlsSettings<'a> {
     cipher_list: &'a [&'a str],
 }
 
-impl TryInto<(SslConnectorBuilder, TlsExtensionSettings)> for SafariTlsSettings<'_> {
+impl TryInto<TlsSettings> for SafariTlsSettings<'_> {
     type Error = ErrorStack;
 
-    fn try_into(self) -> Result<(SslConnectorBuilder, TlsExtensionSettings), Self::Error> {
+    fn try_into(self) -> Result<TlsSettings, Self::Error> {
         let mut builder = SslConnector::builder(SslMethod::tls_client())?;
         builder.set_options(SslOptions::NO_TICKET);
         builder.set_grease_enabled(true);
@@ -105,15 +105,13 @@ impl TryInto<(SslConnectorBuilder, TlsExtensionSettings)> for SafariTlsSettings<
         ]))?;
         builder.enable_signed_cert_timestamps();
         builder.set_min_proto_version(Some(SslVersion::TLS1))?;
-        builder
-            .configure_add_cert_compression_alg(CertCompressionAlgorithm::Zlib)
-            .map(|builder| {
-                (
-                    builder,
-                    TlsExtensionSettings::builder()
-                        .http_version_pref(crate::HttpVersionPref::All)
-                        .build(),
-                )
-            })
+
+        let connector =
+            builder.configure_add_cert_compression_alg(CertCompressionAlgorithm::Zlib)?;
+
+        Ok(TlsSettings::builder()
+            .connector(connector)
+            .http_version_pref(crate::HttpVersionPref::All)
+            .build())
     }
 }
