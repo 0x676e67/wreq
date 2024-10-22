@@ -74,8 +74,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .build()?;
 
     // Use the API you're already familiar with
-    let websocket = client.get("wss://echo.websocket.org")
-        .upgrade()
+    let websocket = client
+        .websocket("wss://echo.websocket.org")
         .send()
         .await?
         .into_websocket()
@@ -100,6 +100,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     Ok(())
 }
+
 
 ```
 

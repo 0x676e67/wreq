@@ -60,8 +60,7 @@
 //!     let websocket = Client::builder()
 //!         .impersonate(Impersonate::Chrome127)
 //!         .build()?
-//!         .get("wss://echo.websocket.org")
-//!         .upgrade()
+//!         .websocket("wss://echo.websocket.org")
 //!         .send()
 //!         .await?
 //!         .into_websocket()
@@ -377,8 +376,7 @@ pub async fn get<T: IntoUrl>(url: T) -> crate::Result<Response> {
 pub async fn websocket<T: IntoUrl>(url: T) -> crate::Result<WebSocket> {
     Client::builder()
         .build()?
-        .get(url)
-        .upgrade()
+        .websocket(url)
         .send()
         .await?
         .into_websocket()

@@ -1271,6 +1271,15 @@ impl Client {
         self.request(Method::GET, url)
     }
 
+    /// Upgrades the [`RequestBuilder`] to perform a
+    /// websocket handshake. This returns a wrapped type, so you must do
+    /// this after you set up your request, and just before you send the
+    /// request.
+    #[cfg(feature = "websocket")]
+    pub fn websocket<U: IntoUrl>(&self, url: U) -> crate::WebSocketRequestBuilder {
+        crate::WebSocketRequestBuilder::new(self.request(Method::GET, url))
+    }
+
     /// Convenience method to make a `POST` request to a URL.
     ///
     /// # Errors
