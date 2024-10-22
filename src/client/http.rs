@@ -1161,8 +1161,11 @@ impl ClientBuilder {
 
     /// Set CA certificate store.
     #[cfg(feature = "boring-tls")]
-    pub fn ca_cert_store(mut self, store: boring::x509::store::X509Store) -> ClientBuilder {
-        self.config.tls.ca_cert_store = Some(store);
+    pub fn ca_cert_store<F>(mut self, store: F) -> ClientBuilder
+    where
+        F: Fn() -> Result<boring::x509::store::X509Store, boring::error::ErrorStack> + 'static,
+    {
+        self.config.tls.ca_cert_store = Some(Arc::new(store));
         self
     }
 
@@ -1347,12 +1350,16 @@ impl Client {
 
     pub(super) fn execute_request(&self, req: Request) -> Pending {
         let (method, url, mut headers, body, timeout, version) = req.pieces();
-        if url.scheme() != "http" && url.scheme() != "https" {
+        if url.scheme() != "http"
+            && url.scheme() != "https"
+            && url.scheme() != "ws"
+            && url.scheme() != "wss"
+        {
             return Pending::new_err(error::url_bad_scheme(url));
         }
 
         // check if we're in https_only mode and check the scheme of the current URL
-        if self.inner.https_only && url.scheme() != "https" {
+        if self.inner.https_only && url.scheme() != "https" && url.scheme() != "wss" {
             return Pending::new_err(error::url_bad_scheme(url));
         }
 
@@ -1476,7 +1483,6 @@ impl Client {
     }
 
     /// Get the client user agent
-    #[cfg_attr(docsrs, doc(cfg(feature = "boring-tls")))]
     pub fn user_agent(&self) -> Option<&HeaderValue> {
         self.inner.headers.get(USER_AGENT)
     }

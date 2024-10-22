@@ -59,7 +59,6 @@
 //! async fn main() -> Result<(), Box<dyn Error>> {
 //!     let websocket = Client::builder()
 //!         .impersonate(Impersonate::Chrome127)
-//!         .http1_only()
 //!         .build()?
 //!         .get("wss://echo.websocket.org")
 //!         .upgrade()
@@ -377,7 +376,6 @@ pub async fn get<T: IntoUrl>(url: T) -> crate::Result<Response> {
 #[cfg(feature = "websocket")]
 pub async fn websocket<T: IntoUrl>(url: T) -> crate::Result<WebSocket> {
     Client::builder()
-        .http1_only()
         .build()?
         .get(url)
         .upgrade()

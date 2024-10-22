@@ -71,7 +71,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // Build a client to mimic Chrome129
     let client = Client::builder()
         .impersonate(Impersonate::Chrome129)
-        .http1_only()
         .build()?;
 
     // Use the API you're already familiar with

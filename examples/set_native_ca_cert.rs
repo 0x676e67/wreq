@@ -4,16 +4,17 @@ use std::error::Error;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
-    let mut verify_store = X509StoreBuilder::new()?;
-    for cert in rustls_native_certs::load_native_certs().certs {
-        let cert = X509::from_der(&*cert)?;
-        verify_store.add_cert(cert)?;
-    }
-
     // Build a client to mimic Edge127
     let client = rquest::Client::builder()
         .impersonate(Impersonate::Edge127)
-        .ca_cert_store(verify_store.build())
+        .ca_cert_store(|| {
+            let mut verify_store = X509StoreBuilder::new()?;
+            for cert in rustls_native_certs::load_native_certs().certs {
+                let cert = X509::from_der(&*cert)?;
+                verify_store.add_cert(cert)?;
+            }
+            Ok(verify_store.build())
+        })
         .build()?;
 
     // Use the API you're already familiar with

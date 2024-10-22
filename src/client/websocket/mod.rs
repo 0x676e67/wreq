@@ -97,20 +97,6 @@ impl WebSocketRequestBuilder {
         let (client, request_result) = self.inner.build_split();
         let mut request = request_result?;
 
-        // change the scheme from wss? to https?
-        let url = request.url_mut();
-        match url.scheme() {
-            "ws" => url
-                .set_scheme("http")
-                .expect("url should accept http scheme"),
-            "wss" => url
-                .set_scheme("https")
-                .expect("url should accept https scheme"),
-            _ => {
-                Err(Error::new(Kind::Builder, Some("invalid scheme")))?;
-            }
-        }
-
         // prepare request
         let version = request.version();
 

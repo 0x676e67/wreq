@@ -7,9 +7,8 @@
 
 #![allow(missing_docs)]
 mod builder;
-mod cert_compression;
 mod connector;
-pub mod extension;
+mod extension;
 mod impersonate;
 
 use crate::{connect::HttpConnector, HttpVersionPref};
@@ -20,6 +19,7 @@ use boring::{
 pub use builder::TlsConnectorBuilder;
 pub use connector::MaybeHttpsStream;
 use connector::{HttpsConnector, HttpsLayer, HttpsLayerSettings};
+pub use extension::cert_compression;
 use extension::{TlsConnectExtension, TlsExtension};
 pub use impersonate::{
     chrome, edge, http2::Http2Settings, okhttp, safari, tls::TlsSettings, tls_settings,
@@ -27,6 +27,7 @@ pub use impersonate::{
 };
 
 type TlsResult<T> = std::result::Result<T, ErrorStack>;
+type ConnectLayer = HttpsLayer;
 
 /// A wrapper around a `SslConnectorBuilder` that allows for additional settings.
 #[derive(Clone)]
@@ -36,7 +37,9 @@ pub struct BoringTlsConnector {
     enable_ech_grease: bool,
     application_settings: bool,
     http_version_pref: HttpVersionPref,
-    layer: HttpsLayer,
+    #[cfg(feature = "websocket")]
+    ws_connect_layer: ConnectLayer,
+    connect_layer: ConnectLayer,
 }
 
 impl BoringTlsConnector {
@@ -47,15 +50,35 @@ impl BoringTlsConnector {
             enable_ech_grease: builder.tls.enable_ech_grease,
             application_settings: builder.tls.application_settings,
             http_version_pref: builder.tls.http_version_pref,
-            layer: new_layer(builder)?,
+            #[cfg(feature = "websocket")]
+            ws_connect_layer: new_layer(&builder, true)?,
+            connect_layer: new_layer(&builder, false)?,
         })
     }
 
     /// Create a new `HttpsConnector` with the settings from the `TlsContext`.
     #[inline]
-    pub(crate) async fn from(&self, http: HttpConnector) -> HttpsConnector<HttpConnector> {
-        // Create the `HttpsConnector` with the given `HttpConnector` and `HttpsLayer`.
-        let mut http = HttpsConnector::with_connector_layer(http, self.layer.clone());
+    pub(crate) async fn from(
+        &self,
+        http: HttpConnector,
+        ws: bool,
+    ) -> HttpsConnector<HttpConnector> {
+        // Create the `HttpsConnector` with the given `HttpConnector` and `ConnectLayer`.
+        let mut http = HttpsConnector::with_connector_layer(
+            http,
+            if ws {
+                #[cfg(feature = "websocket")]
+                {
+                    self.ws_connect_layer.clone()
+                }
+                #[cfg(not(feature = "websocket"))]
+                {
+                    self.connect_layer.clone()
+                }
+            } else {
+                self.connect_layer.clone()
+            },
+        );
 
         // Set the callback to add application settings.
         let (application_settings, enable_ech_grease, http_version_pref, tls_sni) = (
@@ -75,19 +98,26 @@ impl BoringTlsConnector {
     }
 }
 
-/// Create a new `HttpsLayer` with the given `Tls` settings.
-fn new_layer(builder: TlsConnectorBuilder) -> TlsResult<HttpsLayer> {
-    let tls = builder.tls;
+/// Create a new `ConnectLayer` with the given `Tls` settings.
+fn new_layer(builder: &TlsConnectorBuilder, ws: bool) -> TlsResult<ConnectLayer> {
+    let tls = builder.tls.clone();
     // If the connector builder is set, use it. Otherwise, create a new one.
     let connector = match tls.connector {
-        Some(connector) => connector,
+        Some(connector) => connector()?,
         None => SslConnector::builder(SslMethod::tls_client())?,
+    };
+
+    // Set websocket use http1 alpn proto
+    let http_version_pref = if ws {
+        HttpVersionPref::Http1
+    } else {
+        tls.http_version_pref
     };
 
     // Create the `SslConnectorBuilder` and configure it.
     let connector = connector
         .configure_cert_verification(builder.certs_verification)?
-        .configure_alpn_protos(tls.http_version_pref)?
+        .configure_alpn_protos(http_version_pref)?
         .configure_min_tls_version(tls.min_tls_version)?
         .configure_max_tls_version(tls.max_tls_version)?
         .configure_permute_extensions(tls.application_settings, tls.permute_extensions)?;
@@ -120,7 +150,7 @@ fn new_layer(builder: TlsConnectorBuilder) -> TlsResult<HttpsLayer> {
         }
     } else {
         // If a custom CA certificate store is provided, configure it.
-        connector.configure_ca_cert_store(builder.ca_cert_store)?
+        connector.configure_ca_cert_store(builder.ca_cert_store.clone())?
     };
 
     // Create the `HttpsLayerSettings` with the default session cache capacity.

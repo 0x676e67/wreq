@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use crate::tls::{
     cert_compression::CertCompressionAlgorithm, extension::TlsExtension, TlsSettings,
 };
@@ -91,23 +93,29 @@ impl TryInto<TlsSettings> for SafariTlsSettings<'_> {
     type Error = ErrorStack;
 
     fn try_into(self) -> Result<TlsSettings, Self::Error> {
-        let mut builder = SslConnector::builder(SslMethod::tls_client())?;
-        builder.set_options(SslOptions::NO_TICKET);
-        builder.set_grease_enabled(true);
-        builder.enable_ocsp_stapling();
-        builder.set_sigalgs_list(&self.sigalgs_list.join(":"))?;
-        builder.set_cipher_list(&self.cipher_list.join(":"))?;
-        builder.set_curves(self.curves.unwrap_or(&[
-            SslCurve::X25519,
-            SslCurve::SECP256R1,
-            SslCurve::SECP384R1,
-            SslCurve::SECP521R1,
-        ]))?;
-        builder.enable_signed_cert_timestamps();
-        builder.set_min_proto_version(Some(SslVersion::TLS1))?;
+        let sigalgs_list = self.sigalgs_list.join(":");
+        let cipher_list = self.cipher_list.join(":");
+        let curves = self.curves.map(|c| c.to_owned()).unwrap_or_else(|| {
+            vec![
+                SslCurve::X25519,
+                SslCurve::SECP256R1,
+                SslCurve::SECP384R1,
+                SslCurve::SECP521R1,
+            ]
+        });
 
-        let connector =
-            builder.configure_add_cert_compression_alg(CertCompressionAlgorithm::Zlib)?;
+        let connector = Arc::new(move || {
+            let mut builder = SslConnector::builder(SslMethod::tls_client())?;
+            builder.set_options(SslOptions::NO_TICKET);
+            builder.set_grease_enabled(true);
+            builder.enable_ocsp_stapling();
+            builder.set_sigalgs_list(&sigalgs_list)?;
+            builder.set_cipher_list(&cipher_list)?;
+            builder.set_curves(&curves)?;
+            builder.enable_signed_cert_timestamps();
+            builder.set_min_proto_version(Some(SslVersion::TLS1))?;
+            builder.configure_add_cert_compression_alg(CertCompressionAlgorithm::Zlib)
+        });
 
         Ok(TlsSettings::builder()
             .connector(connector)

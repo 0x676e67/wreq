@@ -5,7 +5,7 @@ use rquest::{
     HttpVersionPref,
 };
 use rquest::{PseudoOrder::*, SettingsOrder::*};
-use std::error::Error;
+use std::{error::Error, sync::Arc};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
@@ -13,7 +13,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let settings = ImpersonateSettings::builder()
         .tls(
             TlsSettings::builder()
-                .connector(SslConnector::builder(SslMethod::tls_client())?)
+                .connector(Arc::new(|| SslConnector::builder(SslMethod::tls_client())))
                 .tls_sni(true)
                 .http_version_pref(HttpVersionPref::All)
                 .application_settings(true)

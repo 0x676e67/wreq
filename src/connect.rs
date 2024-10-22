@@ -171,7 +171,7 @@ impl Connector {
     }
 
     #[cfg(feature = "socks")]
-    async fn connect_socks(&self, dst: Uri, proxy: ProxyScheme) -> Result<Conn, BoxError> {
+    async fn connect_socks(&self, mut dst: Uri, proxy: ProxyScheme) -> Result<Conn, BoxError> {
         let dns = match proxy {
             ProxyScheme::Socks4 { .. } => socks::DnsResolve::Local,
             ProxyScheme::Socks5 {
@@ -185,13 +185,15 @@ impl Connector {
             }
         };
 
+        let ws = check_websocket_uri(&mut dst);
+
         match &self.inner {
             #[cfg(feature = "boring-tls")]
             Inner::BoringTls { http, tls, .. } => {
                 if dst.scheme() == Some(&Scheme::HTTPS) {
                     let host = dst.host().ok_or("no host in url")?;
                     let conn = socks::connect(proxy, dst.clone(), dns).await?;
-                    let connector = tls.from(http.clone()).await;
+                    let connector = tls.from(http.clone(), ws).await;
                     let setup_ssl = connector.setup_ssl(&dst, host)?;
                     let io = tokio_boring::SslStreamBuilder::new(setup_ssl, conn)
                         .connect()
@@ -214,7 +216,12 @@ impl Connector {
         })
     }
 
-    async fn connect_with_maybe_proxy(self, dst: Uri, is_proxy: bool) -> Result<Conn, BoxError> {
+    async fn connect_with_maybe_proxy(
+        self,
+        mut dst: Uri,
+        is_proxy: bool,
+    ) -> Result<Conn, BoxError> {
+        let ws = check_websocket_uri(&mut dst);
         match self.inner {
             #[cfg(not(feature = "boring-tls"))]
             Inner::Http(mut http) => {
@@ -236,7 +243,7 @@ impl Connector {
                     http.set_nodelay(true);
                 }
 
-                let mut http = tls.from(http).await;
+                let mut http = tls.from(http, ws).await;
                 let io = http.call(dst).await?;
 
                 if let MaybeHttpsStream::Https(stream) = io {
@@ -262,7 +269,7 @@ impl Connector {
 
     async fn connect_via_proxy(
         self,
-        dst: Uri,
+        mut dst: Uri,
         proxy_scheme: ProxyScheme,
     ) -> Result<Conn, BoxError> {
         log::debug!("proxy({:?}) intercepts '{:?}'", proxy_scheme, dst);
@@ -279,6 +286,8 @@ impl Connector {
         #[cfg(feature = "boring-tls")]
         let auth = _auth;
 
+        let ws = check_websocket_uri(&mut dst);
+
         match &self.inner {
             #[cfg(feature = "boring-tls")]
             Inner::BoringTls { http, tls } => {
@@ -286,7 +295,7 @@ impl Connector {
                     let host = dst.host().ok_or("no host in url")?;
                     let port = dst.port().map(|p| p.as_u16()).unwrap_or(443);
 
-                    let mut http = tls.from(http.clone()).await;
+                    let mut http = tls.from(http.clone(), ws).await;
                     let conn = http.call(proxy_dst).await?;
                     log::trace!("tunneling HTTPS over proxy");
                     let tunneled = tunnel(conn, host, port, self.user_agent.as_ref(), auth).await?;
@@ -308,6 +317,22 @@ impl Connector {
         }
 
         self.connect_with_maybe_proxy(proxy_dst, true).await
+    }
+}
+
+fn check_websocket_uri(dst: &mut Uri) -> bool {
+    match (dst.scheme_str(), dst.authority()) {
+        #[cfg(feature = "websocket")]
+        (Some("ws"), Some(host)) => {
+            *dst = into_uri(Scheme::HTTP, host.clone());
+            true
+        }
+        #[cfg(feature = "websocket")]
+        (Some("wss"), Some(host)) => {
+            *dst = into_uri(Scheme::HTTPS, host.clone());
+            true
+        }
+        _ => false,
     }
 }
 
