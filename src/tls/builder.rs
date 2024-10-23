@@ -9,7 +9,7 @@ pub struct TlsConnectorBuilder {
     pub(crate) certs_verification: bool,
 
     /// CA certificates store.
-    pub(crate) ca_cert_store: Option<Box<dyn Fn() -> TlsResult<X509Store>>>,
+    pub(crate) ca_cert_store: Option<Box<dyn Fn() -> TlsResult<X509Store> + Send + Sync>>,
 
     /// The TLS connector settings.
     pub(crate) tls: TlsSettings,

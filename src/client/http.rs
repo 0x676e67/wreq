@@ -4,6 +4,8 @@ use std::time::Duration;
 use std::{collections::HashMap, convert::TryInto, net::SocketAddr};
 use std::{fmt, str};
 
+#[cfg(feature = "boring-tls")]
+use boring::{error::ErrorStack, x509::store::X509Store};
 use bytes::Bytes;
 use http::header::{
     Entry, HeaderMap, HeaderValue, ACCEPT, ACCEPT_ENCODING, CONTENT_ENCODING, CONTENT_LENGTH,
@@ -1163,7 +1165,7 @@ impl ClientBuilder {
     #[cfg(feature = "boring-tls")]
     pub fn ca_cert_store<F>(mut self, store: F) -> ClientBuilder
     where
-        F: Fn() -> Result<boring::x509::store::X509Store, boring::error::ErrorStack> + 'static,
+        F: Fn() -> Result<X509Store, ErrorStack> + Send + Sync + 'static,
     {
         self.config.tls.ca_cert_store = Some(Box::new(store));
         self

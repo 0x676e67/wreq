@@ -1,6 +1,9 @@
 #![allow(missing_debug_implementations)]
-use crate::{tls::Version, HttpVersionPref};
-use boring::{error::ErrorStack, ssl::SslConnectorBuilder};
+use crate::{
+    tls::{TlsResult, Version},
+    HttpVersionPref,
+};
+use boring::ssl::SslConnectorBuilder;
 use typed_builder::TypedBuilder;
 
 /// TLS Extension settings.
@@ -8,7 +11,7 @@ use typed_builder::TypedBuilder;
 pub struct TlsSettings {
     #[builder(default, setter(strip_option))]
     pub(crate) connector:
-        Option<Box<dyn Fn() -> Result<SslConnectorBuilder, ErrorStack> + Send + Sync>>,
+        Option<Box<dyn Fn() -> TlsResult<SslConnectorBuilder> + Send + Sync + 'static>>,
 
     #[builder(default = true)]
     pub(crate) tls_sni: bool,

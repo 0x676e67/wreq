@@ -53,7 +53,7 @@ pub trait TlsExtension {
     /// Configure the ca certificate store for the given `SslConnectorBuilder`.
     fn configure_ca_cert_store(
         self,
-        ca_cert_stroe: Option<&dyn Fn() -> TlsResult<X509Store>>,
+        ca_cert_stroe: Option<&(dyn Fn() -> TlsResult<X509Store> + Send + Sync)>,
     ) -> TlsResult<SslConnectorBuilder>;
 
     /// Configure the permute_extensions for the given `SslConnectorBuilder`.
@@ -64,7 +64,10 @@ pub trait TlsExtension {
     ) -> TlsResult<SslConnectorBuilder>;
 
     /// Configure the native roots CA for the given `SslConnectorBuilder`.
-    #[cfg(feature = "boring-tls-native-roots")]
+    #[cfg(all(
+        feature = "boring-tls-native-roots",
+        not(feature = "boring-tls-webpki-roots")
+    ))]
     fn configure_set_native_verify_cert_store(self) -> TlsResult<SslConnectorBuilder>;
 
     /// Configure the webpki roots CA for the given `SslConnectorBuilder`.
@@ -173,7 +176,7 @@ impl TlsExtension for SslConnectorBuilder {
 
     fn configure_ca_cert_store(
         mut self,
-        ca_cert_stroe: Option<&dyn Fn() -> TlsResult<X509Store>>,
+        ca_cert_stroe: Option<&(dyn Fn() -> TlsResult<X509Store> + Send + Sync)>,
     ) -> TlsResult<SslConnectorBuilder> {
         if let Some(stroe) = ca_cert_stroe {
             self.set_verify_cert_store(stroe()?)?;
@@ -195,7 +198,10 @@ impl TlsExtension for SslConnectorBuilder {
         Ok(self)
     }
 
-    #[cfg(feature = "boring-tls-native-roots")]
+    #[cfg(all(
+        feature = "boring-tls-native-roots",
+        not(feature = "boring-tls-webpki-roots")
+    ))]
     fn configure_set_native_verify_cert_store(mut self) -> TlsResult<SslConnectorBuilder> {
         use boring::x509::X509;
         use std::ops::Deref;
