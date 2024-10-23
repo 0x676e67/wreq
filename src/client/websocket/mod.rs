@@ -12,7 +12,7 @@ use crate::{error::Kind, RequestBuilder};
 use crate::{Error, Response};
 use async_tungstenite::tungstenite;
 use futures_util::{Sink, SinkExt, Stream, StreamExt};
-use http::{header, HeaderValue, StatusCode, Version};
+use http::{header, HeaderName, HeaderValue, StatusCode, Version};
 pub use message::{CloseCode, Message};
 use tokio_util::compat::TokioAsyncReadCompatExt;
 use tungstenite::protocol::WebSocketConfig;
@@ -25,32 +25,44 @@ pub type WebSocketStream =
 #[derive(Debug)]
 pub struct WebSocketRequestBuilder {
     inner: RequestBuilder,
-    nonce: String,
+    nonce: Option<String>,
     protocols: Option<Vec<String>>,
     config: WebSocketConfig,
 }
 
 impl WebSocketRequestBuilder {
-    pub(crate) fn new_with_key(inner: RequestBuilder, key: String) -> Self {
-        Self::upgraded_request(inner, key)
-    }
-
     pub(crate) fn new(inner: RequestBuilder) -> Self {
-        Self::upgraded_request(inner, tungstenite::handshake::client::generate_key())
-    }
-
-    fn upgraded_request(inner: RequestBuilder, nonce: String) -> Self {
         Self {
             inner,
-            nonce,
+            nonce: None,
             protocols: None,
             config: WebSocketConfig::default(),
         }
     }
 
+    /// Websocket handshake with a specified websocket key. This returns a wrapped type,
+    /// so you must do this after you set up your request, and just before you send the
+    /// request.
+    pub fn key<K: Into<String>>(mut self, key: K) -> Self {
+        self.nonce = Some(key.into());
+        self
+    }
+
     /// Sets the websocket subprotocols to request.
     pub fn protocols(mut self, protocols: Vec<String>) -> Self {
         self.protocols.as_mut().map(|p| p.extend(protocols));
+        self
+    }
+
+    /// Add a set of Header to the existing ones on this Request.
+    pub fn header<K, V>(mut self, key: K, value: V) -> Self
+    where
+        HeaderName: TryFrom<K>,
+        <HeaderName as TryFrom<K>>::Error: Into<http::Error>,
+        HeaderValue: TryFrom<V>,
+        <HeaderValue as TryFrom<V>>::Error: Into<http::Error>,
+    {
+        self.inner = self.inner.header(key, value);
         self
     }
 
@@ -97,6 +109,10 @@ impl WebSocketRequestBuilder {
         let (client, request_result) = self.inner.build_split();
         let mut request = request_result?;
 
+        let nonce = self
+            .nonce
+            .unwrap_or_else(|| tungstenite::handshake::client::generate_key());
+
         // prepare request
         let version = request.version();
 
@@ -109,7 +125,7 @@ impl WebSocketRequestBuilder {
                 headers.insert(header::UPGRADE, HeaderValue::from_static("websocket"));
                 headers.insert(
                     header::SEC_WEBSOCKET_KEY,
-                    HeaderValue::from_str(&self.nonce)
+                    HeaderValue::from_str(&nonce)
                         .map_err(|_| Error::new(Kind::Builder, Some("invalid key")))?,
                 );
                 headers.insert(
@@ -147,7 +163,7 @@ impl WebSocketRequestBuilder {
 
         Ok(WebSocketResponse {
             inner: client.execute(request).await?,
-            nonce: self.nonce,
+            nonce,
             protocols: self.protocols,
             version,
             config: self.config,
