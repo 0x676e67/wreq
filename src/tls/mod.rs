@@ -37,9 +37,9 @@ pub struct BoringTlsConnector {
     enable_ech_grease: bool,
     application_settings: bool,
     http_version_pref: HttpVersionPref,
+    connect_layer: ConnectLayer,
     #[cfg(feature = "websocket")]
     ws_connect_layer: ConnectLayer,
-    connect_layer: ConnectLayer,
 }
 
 impl BoringTlsConnector {
@@ -50,15 +50,15 @@ impl BoringTlsConnector {
             enable_ech_grease: builder.tls.enable_ech_grease,
             application_settings: builder.tls.application_settings,
             http_version_pref: builder.tls.http_version_pref,
+            connect_layer: create_connect_layer(&builder, false)?,
             #[cfg(feature = "websocket")]
-            ws_connect_layer: new_layer(&builder, true)?,
-            connect_layer: new_layer(&builder, false)?,
+            ws_connect_layer: create_connect_layer(&builder, true)?,
         })
     }
 
-    /// Create a new `HttpsConnector` with the settings from the `TlsContext`.
+    /// Create a new `HttpsConnector` with the settings from the `HttpConnector`.
     #[inline]
-    pub(crate) async fn from(
+    pub(crate) async fn create_connector(
         &self,
         http: HttpConnector,
         ws: bool,
@@ -99,7 +99,7 @@ impl BoringTlsConnector {
 }
 
 /// Create a new `ConnectLayer` with the given `Tls` settings.
-fn new_layer(builder: &TlsConnectorBuilder, ws: bool) -> TlsResult<ConnectLayer> {
+fn create_connect_layer(builder: &TlsConnectorBuilder, ws: bool) -> TlsResult<ConnectLayer> {
     let tls = &builder.tls;
 
     // If the connector builder is set, use it. Otherwise, create a new one.

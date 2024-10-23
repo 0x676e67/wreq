@@ -185,7 +185,7 @@ impl Connector {
             }
         };
 
-        let ws = check_websocket_uri(&mut dst);
+        let ws = maybe_websocket_uri(&mut dst);
 
         match &self.inner {
             #[cfg(feature = "boring-tls")]
@@ -193,7 +193,7 @@ impl Connector {
                 if dst.scheme() == Some(&Scheme::HTTPS) {
                     let host = dst.host().ok_or("no host in url")?;
                     let conn = socks::connect(proxy, dst.clone(), dns).await?;
-                    let connector = tls.from(http.clone(), ws).await;
+                    let connector = tls.create_connector(http.clone(), ws).await;
                     let setup_ssl = connector.setup_ssl(&dst, host)?;
                     let io = tokio_boring::SslStreamBuilder::new(setup_ssl, conn)
                         .connect()
@@ -221,7 +221,7 @@ impl Connector {
         mut dst: Uri,
         is_proxy: bool,
     ) -> Result<Conn, BoxError> {
-        let ws = check_websocket_uri(&mut dst);
+        let ws = maybe_websocket_uri(&mut dst);
         match self.inner {
             #[cfg(not(feature = "boring-tls"))]
             Inner::Http(mut http) => {
@@ -243,7 +243,7 @@ impl Connector {
                     http.set_nodelay(true);
                 }
 
-                let mut http = tls.from(http, ws).await;
+                let mut http = tls.create_connector(http, ws).await;
                 let io = http.call(dst).await?;
 
                 if let MaybeHttpsStream::Https(stream) = io {
@@ -286,7 +286,7 @@ impl Connector {
         #[cfg(feature = "boring-tls")]
         let auth = _auth;
 
-        let ws = check_websocket_uri(&mut dst);
+        let ws = maybe_websocket_uri(&mut dst);
 
         match &self.inner {
             #[cfg(feature = "boring-tls")]
@@ -295,7 +295,7 @@ impl Connector {
                     let host = dst.host().ok_or("no host in url")?;
                     let port = dst.port().map(|p| p.as_u16()).unwrap_or(443);
 
-                    let mut http = tls.from(http.clone(), ws).await;
+                    let mut http = tls.create_connector(http.clone(), ws).await;
                     let conn = http.call(proxy_dst).await?;
                     log::trace!("tunneling HTTPS over proxy");
                     let tunneled = tunnel(conn, host, port, self.user_agent.as_ref(), auth).await?;
@@ -320,7 +320,26 @@ impl Connector {
     }
 }
 
-fn check_websocket_uri(dst: &mut Uri) -> bool {
+/// Checks if the given URI is a WebSocket (ws or wss) URI and, if so,
+/// converts it into an HTTP or HTTPS URI.
+///
+/// This function modifies the provided URI (`dst`) if it detects a WebSocket scheme.
+/// If the scheme is "ws", it changes the URI scheme to HTTP.
+/// If the scheme is "wss", it changes the URI scheme to HTTPS.
+///
+/// Returns `true` if the URI was modified, meaning it originally had a "ws" or "wss" scheme.
+/// Returns `false` if the URI is not a WebSocket URI.
+///
+/// # Parameters:
+/// - `dst`: A mutable reference to a `Uri` that may be modified if it is a WebSocket URI.
+///
+/// # Returns:
+/// - `true`: if the URI was a WebSocket URI and was modified.
+/// - `false`: if the URI was not a WebSocket URI.
+///
+/// # Conditional compilation:
+/// This function only works if the "websocket" feature is enabled.
+fn maybe_websocket_uri(dst: &mut Uri) -> bool {
     match (dst.scheme_str(), dst.authority()) {
         #[cfg(feature = "websocket")]
         (Some("ws"), Some(host)) => {
