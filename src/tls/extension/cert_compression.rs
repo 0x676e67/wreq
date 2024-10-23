@@ -1,6 +1,4 @@
 use boring_sys as ffi;
-use brotli_crate::enc::encode::BrotliEncoderInitParams;
-use libc::c_int;
 use std::{io::Read, slice};
 
 /// A certificate compression algorithm.
@@ -32,11 +30,11 @@ extern "C" fn brotli_compressor(
     buffer: *mut ffi::CBB,
     in_: *const u8,
     in_len: usize,
-) -> c_int {
+) -> ::std::os::raw::c_int {
     let mut uncompressed = unsafe { slice::from_raw_parts(in_, in_len) };
     let mut compressed: Vec<u8> = Vec::new();
 
-    let params = BrotliEncoderInitParams();
+    let params = brotli_crate::enc::encode::BrotliEncoderInitParams();
 
     if let Err(e) = brotli_crate::BrotliCompress(&mut uncompressed, &mut compressed, &params) {
         log::debug!("brotli compression error: {:?}", e);
@@ -51,7 +49,7 @@ extern "C" fn zlib_compressor(
     out: *mut ffi::CBB,
     in_: *const u8,
     in_len: usize,
-) -> c_int {
+) -> ::std::os::raw::c_int {
     let mut uncompressed = unsafe { slice::from_raw_parts(in_, in_len) };
     let mut compressed: Vec<u8> = Vec::new();
 
@@ -72,7 +70,7 @@ extern "C" fn brotli_decompressor(
     uncompressed_len: usize,
     in_: *const u8,
     in_len: usize,
-) -> c_int {
+) -> ::std::os::raw::c_int {
     let mut compressed = unsafe { slice::from_raw_parts(in_, in_len) };
     let mut uncompressed: Vec<u8> = Vec::with_capacity(uncompressed_len);
 
@@ -102,7 +100,7 @@ extern "C" fn zlib_decompressor(
     uncompressed_len: usize,
     in_: *const u8,
     in_len: usize,
-) -> c_int {
+) -> ::std::os::raw::c_int {
     let mut compressed = unsafe { slice::from_raw_parts(in_, in_len) };
     let mut uncompressed: Vec<u8> = Vec::with_capacity(uncompressed_len);
 

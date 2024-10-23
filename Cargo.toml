@@ -69,7 +69,6 @@ boring-tls = [
     "dep:foreign-types",
     "dep:flate2",
     "dep:brotli_crate",
-    "dep:libc",
     "dep:linked_hash_set",
     "dep:tower-layer",
     "dep:antidote",
@@ -119,7 +118,6 @@ tokio-boring = { package = "tokio-rboring", version = "4", optional = true }
 foreign-types = { version = "0.5.0", optional = true }
 brotli_crate = { package = "brotli", version = "7", optional = true }
 flate2 = { version = "1", optional = true }
-libc = { version = "0.2", optional = true }
 
 # tls root certs
 rustls-native-certs = { version = "0.8.0", optional = true }
