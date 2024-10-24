@@ -7,11 +7,10 @@
 //!
 //! An ergonomic, all-in-one `JA3`/`JA4`/`HTTP2` fingerprint `HTTP`/`WebSocket` client.
 //!
-//! - Async Client
 //! - Plain bodies, [JSON](#json), [urlencoded](#forms), [multipart], [websocket](#websocket)
 //! - Headers Order
-//! - Customizable [redirect policy](#redirect-policies)
 //! - Cookies Store
+//! - [Redirect policy](#redirect-policies)
 //! - Uses [BoringSSL](#tls)
 //! - HTTP [Proxies](#proxies)
 //! - [Preconfigured](#preconfigured-tls) `TLS`/`HTTP2`/`Headers` settings
@@ -247,9 +246,8 @@
 //!
 //! ## Redirect Policies
 //!
-//! By default, a `Client` will automatically handle HTTP redirects, having a
-//! maximum redirect chain of 10 hops. To customize this behavior, a
-//! [`redirect::Policy`][redirect] can be used with a `ClientBuilder`.
+//! By default, the client does not handle HTTP redirects.
+//! To customize this behavior, you can use [`redirect::Policy`][redirect] with ClientBuilder.
 //!
 //! ## Cookies
 //!

@@ -6,11 +6,10 @@
 
 An ergonomic, all-in-one `JA3`/`JA4`/`HTTP2` fingerprint `HTTP`/`WebSocket` client.
 
-- Async Client
 - Plain, JSON, urlencoded, multipart bodies
 - Headers Order
-- Customizable redirect policy
 - Cookie Store
+- Redirect policy
 - HTTP Proxies
 - `HTTPS`/`WebSocket` via BoringSSL
 - Preconfigured `TLS`/`HTTP2`/`Headers` settings
@@ -100,7 +99,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     Ok(())
 }
-
 
 ```
 
@@ -201,7 +199,9 @@ Currently supported impersonate device types
 
 Install the environment required to build [BoringSSL](https://github.com/google/boringssl/blob/master/BUILDING.md)
 
-Do not compile with crates that depend on OpenSSL; their prefixing symbols are the same and may cause linking [failures](https://github.com/rustls/rustls/issues/2010).
+Do not compile with crates that depend on `OpenSSL`; their prefixing symbols are the same and may cause linking [failures](https://github.com/rustls/rustls/issues/2010).
+
+If both `OpenSSL` and `BoringSSL` are used as dependencies simultaneously, even if the compilation succeeds, strange issues may still arise.
 
 ## Building
 
