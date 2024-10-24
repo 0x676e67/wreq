@@ -13,7 +13,7 @@ use std::sync::Arc;
 
 /// Wrapper around an `AsyncResolver`, which implements the `Resolve` trait.
 #[derive(Debug, Clone)]
-pub(crate) struct HickoryDnsResolver {
+pub struct HickoryDnsResolver {
     /// Since we might not have been called in the context of a
     /// Tokio Runtime in initialization, so we must delay the actual
     /// construction of the resolver.
@@ -25,7 +25,7 @@ impl HickoryDnsResolver {
     /// which reads from `/etc/resolve.conf`. The options are
     /// overriden to look up for both IPv4 and IPv6 addresses
     /// to work with "happy eyeballs" algorithm.
-    pub(crate) fn new(strategy: Option<LookupIpStrategy>) -> crate::Result<Self> {
+    pub fn new<S: Into<Option<LookupIpStrategy>>>(strategy: S) -> crate::Result<Self> {
         let (config, mut opts) = system_conf::read_system_conf()
             .map_err(|e| {
                 io::Error::new(
@@ -34,7 +34,7 @@ impl HickoryDnsResolver {
                 )
             })
             .map_err(|err| Error::new(Kind::Builder, Some(err.to_string())))?;
-        opts.ip_strategy = strategy.unwrap_or_else(|| LookupIpStrategy::Ipv4AndIpv6);
+        opts.ip_strategy = strategy.into().unwrap_or(LookupIpStrategy::Ipv4AndIpv6);
         Ok(Self {
             state: Arc::new(TokioAsyncResolver::tokio(config, opts)),
         })

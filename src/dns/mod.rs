@@ -5,5 +5,5 @@ pub(crate) use resolve::{DnsResolverWithOverrides, DynResolver};
 
 pub(crate) mod gai;
 #[cfg(feature = "hickory-dns")]
-pub(crate) mod hickory;
+pub mod hickory;
 pub(crate) mod resolve;

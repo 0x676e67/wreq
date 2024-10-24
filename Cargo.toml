@@ -22,14 +22,14 @@ default = ["boring-tls", "boring-tls-webpki-roots"]
 
 full = [
     "boring-tls",
-    "gzip",
-    "brotli",
-    "zstd",
-    "deflate",
     "json",
     "stream",
     "cookies",
     "socks",
+    "gzip",
+    "brotli",
+    "zstd",
+    "deflate",
     "hickory-dns"
 ]
 
