@@ -4,9 +4,8 @@ use crate::error::Kind;
 use crate::Error;
 
 use super::{Addrs, Name, Resolve, Resolving};
-use hickory_resolver::{
-    config::LookupIpStrategy, lookup_ip::LookupIpIntoIter, system_conf, TokioAsyncResolver,
-};
+pub use hickory_resolver::config::LookupIpStrategy;
+use hickory_resolver::{lookup_ip::LookupIpIntoIter, system_conf, TokioAsyncResolver};
 use std::io;
 use std::net::SocketAddr;
 use std::sync::Arc;
