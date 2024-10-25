@@ -162,6 +162,8 @@ impl ClientBuilder {
                 tls_info: false,
                 #[cfg(feature = "boring-tls")]
                 tls: Default::default(),
+                http1_title_case_headers: true,
+                http1_preserve_header_case: true,
             },
         }
     }
