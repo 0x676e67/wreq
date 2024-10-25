@@ -1,4 +1,7 @@
-use rquest::{dns::hickory::HickoryDnsResolver, tls::Impersonate, LookupIpStrategy};
+use rquest::{
+    dns::{HickoryDnsResolver, LookupIpStrategy},
+    tls::Impersonate,
+};
 use std::sync::Arc;
 
 #[tokio::main]
