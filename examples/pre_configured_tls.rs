@@ -1,7 +1,7 @@
 use boring::ssl::{SslConnector, SslMethod};
 use http::{header, HeaderValue};
 use rquest::{
-    tls::{Http2Settings, ImpersonateSettings, TlsSettings},
+    tls::{Http2Settings, ImpersonateSettings, TlsSettings, Version},
     HttpVersionPref,
 };
 use rquest::{PseudoOrder::*, SettingsOrder::*};
@@ -19,6 +19,8 @@ async fn main() -> Result<(), rquest::Error> {
                 .pre_shared_key(true)
                 .enable_ech_grease(true)
                 .permute_extensions(true)
+                .min_tls_version(Version::TLS_1_0)
+                .max_tls_version(Version::TLS_1_3)
                 .build(),
         )
         .http2(

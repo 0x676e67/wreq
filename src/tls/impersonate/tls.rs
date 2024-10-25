@@ -21,11 +21,11 @@ pub struct TlsSettings {
     pub(crate) http_version_pref: HttpVersionPref,
 
     /// The minimum TLS version to use.
-    #[builder(default)]
+    #[builder(default, setter(into))]
     pub(crate) min_tls_version: Option<Version>,
 
     /// The maximum TLS version to use.
-    #[builder(default)]
+    #[builder(default, setter(into))]
     pub(crate) max_tls_version: Option<Version>,
 
     /// Enable application settings.
