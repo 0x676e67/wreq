@@ -109,10 +109,10 @@ rquest = "0.25"
 ```
 
 ```rust
-use boring::ssl::{SslConnector, SslMethod};
+use boring::ssl::{SslConnector, SslCurve, SslMethod, SslOptions};
 use http::{header, HeaderValue};
 use rquest::{
-    tls::{Http2Settings, ImpersonateSettings, TlsSettings},
+    tls::{Http2Settings, ImpersonateSettings, TlsSettings, Version},
     HttpVersionPref,
 };
 use rquest::{PseudoOrder::*, SettingsOrder::*};
@@ -123,13 +123,20 @@ async fn main() -> Result<(), rquest::Error> {
     let settings = ImpersonateSettings::builder()
         .tls(
             TlsSettings::builder()
-                .connector(Box::new(|| SslConnector::builder(SslMethod::tls_client())))
+                .connector(Box::new(|| {
+                    let mut builder = SslConnector::builder(SslMethod::tls_client())?;
+                    builder.set_curves(&[SslCurve::SECP224R1, SslCurve::SECP521R1])?;
+                    builder.set_options(SslOptions::NO_TICKET);
+                    Ok(builder)
+                }))
                 .tls_sni(true)
-                .http_version_pref(HttpVersionPref::Http2)
+                .http_version_pref(HttpVersionPref::All)
                 .application_settings(true)
                 .pre_shared_key(true)
                 .enable_ech_grease(true)
                 .permute_extensions(true)
+                .min_tls_version(Version::TLS_1_0)
+                .max_tls_version(Version::TLS_1_3)
                 .build(),
         )
         .http2(
