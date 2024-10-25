@@ -161,7 +161,7 @@ impl ClientBuilder {
                 tls_info: false,
                 #[cfg(feature = "boring-tls")]
                 tls: Default::default(),
-                http1_title_case_headers: true
+                http1_title_case_headers: true,
             },
         }
     }
@@ -1847,11 +1847,11 @@ impl PendingRequest {
 
 fn is_retryable_error(err: &(dyn std::error::Error + 'static)) -> bool {
     if let Some(cause) = err.source() {
-        if let Some(err) = cause.downcast_ref::<h2::Error>() {
+        if let Some(err) = cause.downcast_ref::<hyper::h2::Error>() {
             // They sent us a graceful shutdown, try with a new connection!
             return err.is_go_away()
                 && err.is_remote()
-                && err.reason() == Some(h2::Reason::NO_ERROR);
+                && err.reason() == Some(hyper::h2::Reason::NO_ERROR);
         }
     }
     false

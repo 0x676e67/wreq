@@ -101,7 +101,6 @@ hyper = { package = "rhyper", version = "0.14.50", default-features = false, fea
     "client",
     "runtime",
 ] }
-h2 = { package = "rh2", version = "0.3.40" }
 log = "0.4"
 mime = "0.3.17"
 percent-encoding = "2.3"
