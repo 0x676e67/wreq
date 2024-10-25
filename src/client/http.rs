@@ -94,6 +94,8 @@ struct Config {
     timeout: Option<Duration>,
     local_address_ipv6: Option<Ipv6Addr>,
     local_address_ipv4: Option<Ipv4Addr>,
+    http1_title_case_headers: bool,
+    http1_preserve_header_case: bool,
     #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
     interface: Option<String>,
     nodelay: bool,
@@ -160,6 +162,8 @@ impl ClientBuilder {
                 tls_info: false,
                 #[cfg(feature = "boring-tls")]
                 tls: Default::default(),
+                http1_title_case_headers: true,
+                http1_preserve_header_case: true,
             },
         }
     }
@@ -245,7 +249,9 @@ impl ClientBuilder {
         config
             .builder
             .pool_idle_timeout(config.pool_idle_timeout)
-            .pool_max_idle_per_host(config.pool_max_idle_per_host);
+            .pool_max_idle_per_host(config.pool_max_idle_per_host)
+            .http1_title_case_headers(config.http1_title_case_headers)
+            .http1_preserve_header_case(config.http1_preserve_header_case);
 
         Ok(Client {
             inner: Arc::new(ClientRef {
@@ -758,8 +764,14 @@ impl ClientBuilder {
     }
 
     /// Send headers as title case instead of lowercase.
-    pub fn http1_title_case_headers(mut self) -> ClientBuilder {
-        self.config.builder.http1_title_case_headers(true);
+    pub fn http1_title_case_headers(mut self, enabled: bool) -> ClientBuilder {
+        self.config.http1_title_case_headers = enabled;
+        self
+    }
+
+    /// Set whether to support preserving original header cases.
+    pub fn http1_preserve_header_case(mut self, enabled: bool) -> ClientBuilder {
+        self.config.http1_preserve_header_case = enabled;
         self
     }
 
