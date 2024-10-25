@@ -96,7 +96,6 @@ struct Config {
     local_address_ipv4: Option<Ipv4Addr>,
     http1_title_case_headers: bool,
     http1_preserve_header_case: bool,
-    http1_preserve_header_case: bool,
     #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
     interface: Option<String>,
     nodelay: bool,
