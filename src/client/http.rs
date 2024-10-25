@@ -94,7 +94,6 @@ struct Config {
     timeout: Option<Duration>,
     local_address_ipv6: Option<Ipv6Addr>,
     local_address_ipv4: Option<Ipv4Addr>,
-    http1_preserve_header_case: bool,
     #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
     interface: Option<String>,
     nodelay: bool,
@@ -145,7 +144,6 @@ impl ClientBuilder {
                 timeout: None,
                 local_address_ipv6: None,
                 local_address_ipv4: None,
-                http1_preserve_header_case: true,
                 #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
                 interface: None,
                 nodelay: true,
@@ -247,8 +245,7 @@ impl ClientBuilder {
         config
             .builder
             .pool_idle_timeout(config.pool_idle_timeout)
-            .pool_max_idle_per_host(config.pool_max_idle_per_host)
-            .http1_preserve_header_case(config.http1_preserve_header_case);
+            .pool_max_idle_per_host(config.pool_max_idle_per_host);
 
         Ok(Client {
             inner: Arc::new(ClientRef {
@@ -763,12 +760,6 @@ impl ClientBuilder {
     /// Send headers as title case instead of lowercase.
     pub fn http1_title_case_headers(mut self) -> ClientBuilder {
         self.config.builder.http1_title_case_headers(true);
-        self
-    }
-
-    /// Send headers as preserve case instead of lowercase.
-    pub fn http1_preserve_header_case(mut self, enabled: bool) -> ClientBuilder {
-        self.config.http1_preserve_header_case = enabled;
         self
     }
 
