@@ -6,9 +6,9 @@ use std::sync::Arc;
 
 #[tokio::main]
 async fn main() -> Result<(), rquest::Error> {
-    // Build a client to mimic Chrome129
+    // Build a client to mimic Chrome130
     let client = rquest::Client::builder()
-        .impersonate(Impersonate::Chrome129)
+        .impersonate(Impersonate::Chrome130)
         .hickory_dns_strategy(LookupIpStrategy::Ipv4Only)
         .build()?;
 
@@ -19,9 +19,9 @@ async fn main() -> Result<(), rquest::Error> {
     // Custom dns resolve，Can be assigned to multiple clients
     let resolver = Arc::new(HickoryDnsResolver::new(LookupIpStrategy::Ipv4thenIpv6)?);
 
-    // Build a client to mimic Chrome129
+    // Build a client to mimic Chrome130
     let client = rquest::Client::builder()
-        .impersonate(Impersonate::Chrome129)
+        .impersonate(Impersonate::Chrome130)
         .no_hickory_dns()
         .dns_resolver(resolver)
         .build()?;

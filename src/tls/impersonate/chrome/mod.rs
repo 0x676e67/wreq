@@ -20,6 +20,7 @@ pub mod v126;
 pub mod v127;
 pub mod v128;
 pub mod v129;
+pub mod v130;
 
 use crate::tls::{Http2Settings, TlsResult, TlsSettings};
 use http2::{HEADERS_PSEUDO_ORDER, HEADER_PRORIORITY, SETTINGS_ORDER};

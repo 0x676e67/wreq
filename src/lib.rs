@@ -31,9 +31,9 @@
 //!
 //! #[tokio::main]
 //! async fn main() -> Result<(), rquest::Error> {
-//!     // Build a client to mimic Chrome129
+//!     // Build a client to mimic Chrome130
 //!     let client = rquest::Client::builder()
-//!         .impersonate(Impersonate::Chrome129)
+//!         .impersonate(Impersonate::Chrome130)
 //!         .build()?;
 //!
 //!     // Use the API you're already familiar with
@@ -54,9 +54,9 @@
 //!
 //! #[tokio::main]
 //! async fn main() -> Result<(), rquest::Error> {
-//!     // Build a client to mimic Chrome129
+//!     // Build a client to mimic Chrome130
 //!     let websocket = Client::builder()
-//!         .impersonate(Impersonate::Chrome129)
+//!         .impersonate(Impersonate::Chrome130)
 //!         .build()?
 //!         .websocket("wss://echo.websocket.org")
 //!         .send()

@@ -2,10 +2,10 @@ use rquest::{tls::Impersonate, Client};
 
 #[tokio::main]
 async fn main() -> Result<(), rquest::Error> {
-    // Build a client to mimic Chrome129
+    // Build a client to mimic Chrome130
     #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
     let client = Client::builder()
-        .impersonate(Impersonate::Chrome129)
+        .impersonate(Impersonate::Chrome130)
         .interface("eth0")
         .build()?;
 

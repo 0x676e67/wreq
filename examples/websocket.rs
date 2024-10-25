@@ -3,9 +3,9 @@ use rquest::{tls::Impersonate, Client, Message};
 
 #[tokio::main]
 async fn main() -> Result<(), rquest::Error> {
-    // Build a client to mimic Chrome129
+    // Build a client to mimic Chrome130
     let websocket = Client::builder()
-        .impersonate(Impersonate::Chrome129)
+        .impersonate(Impersonate::Chrome130)
         .build()?
         .websocket("wss://echo.websocket.org")
         .send()

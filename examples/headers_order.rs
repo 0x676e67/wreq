@@ -12,9 +12,9 @@ static HEADER_ORDER: [HeaderName; 6] = [
 
 #[tokio::main]
 async fn main() -> Result<(), rquest::Error> {
-    // Build a client to mimic Chrome129
+    // Build a client to mimic Chrome130
     let client = rquest::Client::builder()
-        .impersonate(Impersonate::Chrome129)
+        .impersonate(Impersonate::Chrome130)
         .headers_order(&HEADER_ORDER)
         .build()?;
 
