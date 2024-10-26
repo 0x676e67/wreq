@@ -6,7 +6,7 @@ use super::{TlsResult, Version};
 use crate::client::http::HttpVersionPref;
 use ::std::os::raw::c_int;
 use boring::error::ErrorStack;
-use boring::ssl::{ConnectConfiguration, SslConnectorBuilder, SslVerifyMode, SslVersion};
+use boring::ssl::{ConnectConfiguration, SslConnectorBuilder, SslVerifyMode};
 use boring::x509::store::X509Store;
 #[cfg(any(
     feature = "boring-tls-webpki-roots",
@@ -139,13 +139,7 @@ impl TlsExtension for SslConnectorBuilder {
         min_tls_version: Option<Version>,
     ) -> TlsResult<SslConnectorBuilder> {
         if let Some(version) = min_tls_version {
-            let ssl_version = match version.0 {
-                super::InnerVersion::Tls1_0 => SslVersion::TLS1,
-                super::InnerVersion::Tls1_1 => SslVersion::TLS1_1,
-                super::InnerVersion::Tls1_2 => SslVersion::TLS1_2,
-                super::InnerVersion::Tls1_3 => SslVersion::TLS1_3,
-            };
-            self.set_min_proto_version(Some(ssl_version))?
+            self.set_min_proto_version(Some(version.0))?
         }
 
         Ok(self)
@@ -156,14 +150,7 @@ impl TlsExtension for SslConnectorBuilder {
         max_tls_version: Option<Version>,
     ) -> TlsResult<SslConnectorBuilder> {
         if let Some(version) = max_tls_version {
-            let ssl_version = match version.0 {
-                super::InnerVersion::Tls1_0 => SslVersion::TLS1,
-                super::InnerVersion::Tls1_1 => SslVersion::TLS1_1,
-                super::InnerVersion::Tls1_2 => SslVersion::TLS1_2,
-                super::InnerVersion::Tls1_3 => SslVersion::TLS1_3,
-            };
-
-            self.set_max_proto_version(Some(ssl_version))?
+            self.set_max_proto_version(Some(version.0))?
         }
 
         Ok(self)

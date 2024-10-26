@@ -14,7 +14,7 @@ mod impersonate;
 use crate::{connect::HttpConnector, HttpVersionPref};
 use boring::{
     error::ErrorStack,
-    ssl::{SslConnector, SslMethod},
+    ssl::{SslConnector, SslMethod, SslVersion},
 };
 pub use builder::TlsConnectorBuilder;
 pub use connector::MaybeHttpsStream;
@@ -164,29 +164,20 @@ fn create_connect_layer(builder: &TlsConnectorBuilder, ws: bool) -> TlsResult<Co
 }
 
 /// A TLS protocol version.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub struct Version(InnerVersion);
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-#[non_exhaustive]
-enum InnerVersion {
-    Tls1_0,
-    Tls1_1,
-    Tls1_2,
-    Tls1_3,
-}
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Version(SslVersion);
 
 // These could perhaps be From/TryFrom implementations, but those would be
 // part of the public API so let's be careful
 impl Version {
     /// Version 1.0 of the TLS protocol.
-    pub const TLS_1_0: Version = Version(InnerVersion::Tls1_0);
+    pub const TLS_1_0: Version = Version(SslVersion::TLS1);
     /// Version 1.1 of the TLS protocol.
-    pub const TLS_1_1: Version = Version(InnerVersion::Tls1_1);
+    pub const TLS_1_1: Version = Version(SslVersion::TLS1_1);
     /// Version 1.2 of the TLS protocol.
-    pub const TLS_1_2: Version = Version(InnerVersion::Tls1_2);
+    pub const TLS_1_2: Version = Version(SslVersion::TLS1_2);
     /// Version 1.3 of the TLS protocol.
-    pub const TLS_1_3: Version = Version(InnerVersion::Tls1_3);
+    pub const TLS_1_3: Version = Version(SslVersion::TLS1_3);
 }
 
 /// Hyper extension carrying extra TLS layer information.
