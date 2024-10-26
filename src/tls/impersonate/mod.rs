@@ -161,65 +161,72 @@ pub enum Impersonate {
     Edge127,
 }
 
-/// Impersonate version from string
-impl FromStr for Impersonate {
-    type Err = String;
+macro_rules! impl_from_str {
+    ($(($variant:ident, $string:expr)),* $(,)?) => {
+        impl FromStr for Impersonate {
+            type Err = String;
 
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            // Chrome
-            "chrome_100" => Ok(Chrome100),
-            "chrome_101" => Ok(Chrome101),
-            "chrome_104" => Ok(Chrome104),
-            "chrome_105" => Ok(Chrome105),
-            "chrome_106" => Ok(Chrome106),
-            "chrome_107" => Ok(Chrome107),
-            "chrome_108" => Ok(Chrome108),
-            "chrome_109" => Ok(Chrome109),
-            "chrome_114" => Ok(Chrome114),
-            "chrome_116" => Ok(Chrome116),
-            "chrome_117" => Ok(Chrome117),
-            "chrome_118" => Ok(Chrome118),
-            "chrome_119" => Ok(Chrome119),
-            "chrome_120" => Ok(Chrome120),
-            "chrome_123" => Ok(Chrome123),
-            "chrome_124" => Ok(Chrome124),
-            "chrome_126" => Ok(Chrome126),
-            "chrome_127" => Ok(Chrome127),
-            "chrome_128" => Ok(Chrome128),
-            "chrome_129" => Ok(Chrome129),
-            "chrome_130" => Ok(Chrome130),
-
-            // Safari
-            "safari_ios_17.2" => Ok(SafariIos17_2),
-            "safari_ios_17.4.1" => Ok(SafariIos17_4_1),
-            "safari_15.3" => Ok(Safari15_3),
-            "safari_15.5" => Ok(Safari15_5),
-            "safari_15.6.1" => Ok(Safari15_6_1),
-            "safari_16" => Ok(Safari16),
-            "safari_16.5" => Ok(Safari16_5),
-            "safari_ios_16.5" => Ok(SafariIos16_5),
-            "safari_17.0" => Ok(Safari17_0),
-            "safari_17.2.1" => Ok(Safari17_2_1),
-            "safari_17.4.1" => Ok(Safari17_4_1),
-            "safari_17.5" => Ok(Safari17_5),
-            "safari_18" => Ok(Safari18),
-            "safari_ipad_18" => Ok(SafariIPad18),
-
-            // OkHttp
-            "okhttp_3.9" => Ok(OkHttp3_9),
-            "okhttp_3.11" => Ok(OkHttp3_11),
-            "okhttp_3.13" => Ok(OkHttp3_13),
-            "okhttp_3.14" => Ok(OkHttp3_14),
-            "okhttp_4.9" => Ok(OkHttp4_9),
-            "okhttp_4.10" => Ok(OkHttp4_10),
-            "okhttp_5" => Ok(OkHttp5),
-
-            // Edge
-            "edge_101" => Ok(Edge101),
-            "edge_122" => Ok(Edge122),
-            "edge_127" => Ok(Edge127),
-            _ => Err(format!("Unknown impersonate version: {}", s)),
+            fn from_str(s: &str) -> Result<Self, Self::Err> {
+                match s {
+                    $( $string => Ok(Impersonate::$variant), )*
+                    _ => Err(format!("Unknown impersonate version: {}", s)),
+                }
+            }
         }
-    }
+    };
+}
+
+impl_from_str! {
+    // Chrome
+    (Chrome100, "chrome_100"),
+    (Chrome101, "chrome_101"),
+    (Chrome104, "chrome_104"),
+    (Chrome105, "chrome_105"),
+    (Chrome106, "chrome_106"),
+    (Chrome107, "chrome_107"),
+    (Chrome108, "chrome_108"),
+    (Chrome109, "chrome_109"),
+    (Chrome114, "chrome_114"),
+    (Chrome116, "chrome_116"),
+    (Chrome117, "chrome_117"),
+    (Chrome118, "chrome_118"),
+    (Chrome119, "chrome_119"),
+    (Chrome120, "chrome_120"),
+    (Chrome123, "chrome_123"),
+    (Chrome124, "chrome_124"),
+    (Chrome126, "chrome_126"),
+    (Chrome127, "chrome_127"),
+    (Chrome128, "chrome_128"),
+    (Chrome129, "chrome_129"),
+    (Chrome130, "chrome_130"),
+
+    // Safari
+    (SafariIos17_2, "safari_ios_17.2"),
+    (SafariIos17_4_1, "safari_ios_17.4.1"),
+    (SafariIos16_5, "safari_ios_16.5"),
+    (Safari15_3, "safari_15.3"),
+    (Safari15_5, "safari_15.5"),
+    (Safari15_6_1, "safari_15.6.1"),
+    (Safari16, "safari_16"),
+    (Safari16_5, "safari_16.5"),
+    (Safari17_0, "safari_17.0"),
+    (Safari17_2_1, "safari_17.2.1"),
+    (Safari17_4_1, "safari_17.4.1"),
+    (Safari17_5, "safari_17.5"),
+    (Safari18, "safari_18"),
+    (SafariIPad18, "safari_ipad_18"),
+
+    // OkHttp
+    (OkHttp3_9, "okhttp_3.9"),
+    (OkHttp3_11, "okhttp_3.11"),
+    (OkHttp3_13, "okhttp_3.13"),
+    (OkHttp3_14, "okhttp_3.14"),
+    (OkHttp4_9, "okhttp_4.9"),
+    (OkHttp4_10, "okhttp_4.10"),
+    (OkHttp5, "okhttp_5"),
+
+    // Edge
+    (Edge101, "edge_101"),
+    (Edge122, "edge_122"),
+    (Edge127, "edge_127"),
 }
