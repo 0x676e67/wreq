@@ -188,7 +188,7 @@ impl FromStr for Impersonate {
             "chrome_127" => Ok(Chrome127),
             "chrome_128" => Ok(Chrome128),
             "chrome_129" => Ok(Chrome129),
-            "chrome_130" => Ok(Chrome129),
+            "chrome_130" => Ok(Chrome130),
 
             // Safari
             "safari_ios_17.2" => Ok(SafariIos17_2),
