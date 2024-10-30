@@ -3,23 +3,11 @@ use hyper::{PseudoOrder, SettingsOrder};
 use typed_builder::TypedBuilder;
 
 /// HTTP/2 settings.
-#[derive(TypedBuilder)]
+#[derive(TypedBuilder, Debug, Clone)]
 pub struct Http2Settings {
-    /// The initial stream window size.
-    #[builder(default, setter(into))]
-    pub(crate) initial_stream_window_size: Option<u32>,
-
     /// The initial connection window size.
     #[builder(default, setter(into))]
     pub(crate) initial_connection_window_size: Option<u32>,
-
-    /// The maximum concurrent streams.
-    #[builder(default, setter(into))]
-    pub(crate) max_concurrent_streams: Option<u32>,
-
-    /// The maximum header list size.
-    #[builder(default, setter(into))]
-    pub(crate) max_header_list_size: Option<u32>,
 
     /// The header table size.
     #[builder(default, setter(into))]
@@ -28,6 +16,22 @@ pub struct Http2Settings {
     /// Enable push.
     #[builder(default, setter(into))]
     pub(crate) enable_push: Option<bool>,
+
+    /// The maximum concurrent streams.
+    #[builder(default, setter(into))]
+    pub(crate) max_concurrent_streams: Option<u32>,
+
+    /// The initial stream window size.
+    #[builder(default, setter(into))]
+    pub(crate) initial_stream_window_size: Option<u32>,
+
+    /// The max frame size
+    #[builder(default, setter(into))]
+    pub(crate) max_frame_size: Option<u32>,
+
+    /// The maximum header list size.
+    #[builder(default, setter(into))]
+    pub(crate) max_header_list_size: Option<u32>,
 
     /// Unknown setting8.
     #[builder(default, setter(into))]

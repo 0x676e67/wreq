@@ -321,6 +321,7 @@ impl ClientBuilder {
             .http2_max_header_list_size(settings.http2.max_header_list_size)
             .http2_header_table_size(settings.http2.header_table_size)
             .http2_enable_push(settings.http2.enable_push)
+            .http2_max_frame_size(settings.http2.max_frame_size)
             .http2_headers_priority(http2_headers_priority)
             .http2_headers_pseudo_order(settings.http2.headers_pseudo_order)
             .http2_settings_order(settings.http2.settings_order)
@@ -932,7 +933,6 @@ impl ClientBuilder {
     /// Sets the pseudo header order for HTTP2.
     /// This is an array of 4 elements, each element is a `PseudoOrder` enum.
     /// Default is `None`.
-    #[cfg(feature = "boring-tls")]
     pub fn http2_headers_pseudo_order(
         mut self,
         order: impl Into<Option<[PseudoOrder; 4]>>,
@@ -943,7 +943,6 @@ impl ClientBuilder {
 
     /// Sets the priority for HTTP2 headers.
     /// Default is `None`.
-    #[cfg(feature = "boring-tls")]
     pub fn http2_headers_priority(
         mut self,
         priority: impl Into<Option<StreamDependency>>,
@@ -955,7 +954,6 @@ impl ClientBuilder {
     /// Sets the settings order for HTTP2.
     /// This is an array of 2 elements, each element is a `SettingsOrder` enum.
     /// Default is `None`.
-    #[cfg(feature = "boring-tls")]
     pub fn http2_settings_order(
         mut self,
         order: impl Into<Option<&'static [SettingsOrder]>>,
