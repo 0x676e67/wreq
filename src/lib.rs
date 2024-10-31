@@ -129,14 +129,15 @@
 //!                .enable_push(false)
 //!                .headers_priority((0, 255, true))
 //!                .headers_pseudo_order([Method, Scheme, Authority, Path])
-//!                .settings_order(&[
+//!                .settings_order([
 //!                    HeaderTableSize,
 //!                    EnablePush,
 //!                    MaxConcurrentStreams,
 //!                    InitialWindowSize,
 //!                    MaxFrameSize,
 //!                    MaxHeaderListSize,
-//!                    EnableConnectProtocol,
+//!                    UnknownSetting8,
+//!                    UnknownSetting9,
 //!                ])
 //!                .build(),
 //!        )

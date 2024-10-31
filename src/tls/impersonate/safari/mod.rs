@@ -43,7 +43,7 @@ pub fn http2_template_1() -> Http2Settings {
         .max_concurrent_streams(100)
         .headers_priority(HEADER_PRORIORITY)
         .headers_pseudo_order(HEADERS_PSEUDO_ORDER)
-        .settings_order(&SETTINGS_ORDER)
+        .settings_order(SETTINGS_ORDER)
         .build()
 }
 
@@ -55,7 +55,7 @@ pub fn http2_template_2() -> Http2Settings {
         .enable_push(false)
         .headers_priority(HEADER_PRORIORITY)
         .headers_pseudo_order(HEADERS_PSEUDO_ORDER)
-        .settings_order(&SETTINGS_ORDER)
+        .settings_order(SETTINGS_ORDER)
         .build()
 }
 
@@ -69,7 +69,7 @@ pub fn http2_template_3() -> Http2Settings {
         .unknown_setting9(true)
         .headers_priority(NEW_HEADER_PRORIORITY)
         .headers_pseudo_order(NEW_HEADERS_PSEUDO_ORDER)
-        .settings_order(&NEW_SETTINGS_ORDER)
+        .settings_order(NEW_SETTINGS_ORDER)
         .build()
 }
 
@@ -80,7 +80,7 @@ pub fn http2_template_4() -> Http2Settings {
         .max_concurrent_streams(100)
         .headers_priority(HEADER_PRORIORITY)
         .headers_pseudo_order(HEADERS_PSEUDO_ORDER)
-        .settings_order(&SETTINGS_ORDER)
+        .settings_order(SETTINGS_ORDER)
         .build()
 }
 
@@ -92,7 +92,7 @@ pub fn http2_template_5() -> Http2Settings {
         .enable_push(false)
         .headers_priority(HEADER_PRORIORITY)
         .headers_pseudo_order(HEADERS_PSEUDO_ORDER)
-        .settings_order(&SETTINGS_ORDER)
+        .settings_order(SETTINGS_ORDER)
         .build()
 }
 
@@ -235,23 +235,23 @@ mod http2 {
     pub const NEW_HEADERS_PSEUDO_ORDER: [PseudoOrder; 4] = [Method, Scheme, Authority, Path];
 
     /// ============== http2 settings frame order ==============
-    pub const SETTINGS_ORDER: [SettingsOrder; 7] = [
+    pub const SETTINGS_ORDER: [SettingsOrder; 8] = [
         HeaderTableSize,
         EnablePush,
         InitialWindowSize,
         MaxConcurrentStreams,
         MaxFrameSize,
         MaxHeaderListSize,
-        EnableConnectProtocol,
+        UnknownSetting8,
+        UnknownSetting9,
     ];
-    pub const NEW_SETTINGS_ORDER: [SettingsOrder; 9] = [
+    pub const NEW_SETTINGS_ORDER: [SettingsOrder; 8] = [
         HeaderTableSize,
         EnablePush,
         MaxConcurrentStreams,
         InitialWindowSize,
         MaxFrameSize,
         MaxHeaderListSize,
-        EnableConnectProtocol,
         UnknownSetting8,
         UnknownSetting9,
     ];

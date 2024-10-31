@@ -51,5 +51,5 @@ pub struct Http2Settings {
 
     /// The settings order.
     #[builder(default, setter(strip_option))]
-    pub(crate) settings_order: Option<&'static [SettingsOrder]>,
+    pub(crate) settings_order: Option<[SettingsOrder; 8]>,
 }

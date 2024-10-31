@@ -956,7 +956,7 @@ impl ClientBuilder {
     /// Default is `None`.
     pub fn http2_settings_order(
         mut self,
-        order: impl Into<Option<&'static [SettingsOrder]>>,
+        order: impl Into<Option<[SettingsOrder; 8]>>,
     ) -> ClientBuilder {
         self.config.builder.http2_settings_order(order.into());
         self

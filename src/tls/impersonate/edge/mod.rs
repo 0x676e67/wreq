@@ -15,7 +15,7 @@ pub fn http2_template_1() -> Http2Settings {
         .header_table_size(65536)
         .headers_priority(HEADER_PRORIORITY)
         .headers_pseudo_order(HEADERS_PSEUDO_ORDER)
-        .settings_order(&SETTINGS_ORDER)
+        .settings_order(SETTINGS_ORDER)
         .build()
 }
 
@@ -28,7 +28,7 @@ pub fn http2_template_2() -> Http2Settings {
         .enable_push(false)
         .headers_priority(HEADER_PRORIORITY)
         .headers_pseudo_order(HEADERS_PSEUDO_ORDER)
-        .settings_order(&SETTINGS_ORDER)
+        .settings_order(SETTINGS_ORDER)
         .build()
 }
 
@@ -157,13 +157,14 @@ mod http2 {
     pub const HEADERS_PSEUDO_ORDER: [PseudoOrder; 4] = [Method, Authority, Scheme, Path];
 
     /// ============== http2 settings frame order ==============
-    pub static SETTINGS_ORDER: [SettingsOrder; 7] = [
+    pub static SETTINGS_ORDER: [SettingsOrder; 8] = [
         HeaderTableSize,
         EnablePush,
         MaxConcurrentStreams,
         InitialWindowSize,
         MaxFrameSize,
         MaxHeaderListSize,
-        EnableConnectProtocol,
+        UnknownSetting8,
+        UnknownSetting9,
     ];
 }
