@@ -116,12 +116,48 @@ fn create_connect_layer(builder: &TlsConnectorBuilder, ws: bool) -> TlsResult<Co
     };
 
     // Create the `SslConnectorBuilder` and configure it.
-    let connector = connector
+    let mut connector = connector
         .configure_cert_verification(builder.certs_verification)?
         .configure_alpn_protos(http_version_pref)?
         .configure_min_tls_version(tls.min_tls_version)?
         .configure_max_tls_version(tls.max_tls_version)?
         .configure_permute_extensions(tls.application_settings, tls.permute_extensions)?;
+
+    // Set grease enabled if it is set.
+    if let Some(grease_enabled) = tls.grease_enabled {
+        connector.set_grease_enabled(grease_enabled);
+    }
+
+    // Set enable ocsp stapling if it is set.
+    if tls.enable_ocsp_stapling {
+        connector.enable_ocsp_stapling();
+    }
+
+    // Set the curves if they are set.
+    if let Some(curves) = tls.curves.as_deref() {
+        connector.set_curves(curves)?;
+    }
+
+    // Set the signature algorithms list if it is set.
+    if let Some(sigalgs_list) = tls.sigalgs_list.as_deref() {
+        connector.set_sigalgs_list(sigalgs_list)?;
+    }
+
+    // Set the cipher list if it is set.
+    if let Some(cipher_list) = tls.cipher_list.as_deref() {
+        connector.set_cipher_list(cipher_list)?;
+    }
+
+    // Set enable signed cert timestamps if it is set.
+    if tls.enable_signed_cert_timestamps {
+        connector.enable_signed_cert_timestamps();
+    }
+
+    // Set the certificate compression algorithm if it is set.
+    if let Some(ref cert_compression_algorithm) = tls.cert_compression_algorithm {
+        connector =
+            connector.configure_add_cert_compression_alg(cert_compression_algorithm.clone())?;
+    }
 
     // Conditionally configure the TLS builder based on the "boring-tls-native-roots" feature.
     // If no custom CA cert store, use the system's native certificate store if the feature is enabled.

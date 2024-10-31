@@ -26,6 +26,16 @@ async fn main() -> Result<(), rquest::Error> {
                 .permute_extensions(true)
                 .min_tls_version(Version::TLS_1_0)
                 .max_tls_version(Version::TLS_1_3)
+                .sigalgs_list([
+                    "ECDSA_SECP256R1_SHA256".to_lowercase(),
+                    "RSA_PSS_RSAE_SHA256".to_ascii_lowercase(),
+                    "RSA_PKCS1_SHA256".to_ascii_lowercase(),
+                    "ECDSA_SECP384R1_SHA384".to_ascii_lowercase(),
+                    "RSA_PSS_RSAE_SHA384".to_ascii_lowercase(),
+                    "RSA_PKCS1_SHA384".to_ascii_lowercase(),
+                    "RSA_PSS_RSAE_SHA512".to_ascii_lowercase(),
+                    "RSA_PKCS1_SHA512".to_ascii_lowercase(),
+                ].join(":"))
                 .build(),
         )
         .http2(
