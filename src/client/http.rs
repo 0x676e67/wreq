@@ -36,7 +36,7 @@ use crate::error;
 use crate::into_url::{expect_uri, try_uri};
 use crate::redirect::{self, remove_sensitive_headers};
 #[cfg(feature = "boring-tls")]
-use crate::tls::{self, BoringTlsConnector, Impersonate, ImpersonateSettings, TlsConnectorBuilder};
+use crate::tls::{self, BoringTlsConnector, Impersonate, ImpersonateSettings, TlsSettings};
 use crate::{IntoUrl, Method, Proxy, StatusCode, Url};
 #[cfg(feature = "hickory-dns")]
 use hickory_resolver::config::LookupIpStrategy;
@@ -67,13 +67,14 @@ pub struct ClientBuilder {
 }
 
 /// A `HttpVersionPref` is used to set the HTTP version preference.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Default)]
 pub enum HttpVersionPref {
     /// Prefer HTTP/1.1
     Http1,
     /// Prefer HTTP/2
     Http2,
     /// Prefer HTTP/1 and HTTP/2
+    #[default]
     All,
 }
 
@@ -111,7 +112,7 @@ struct Config {
     #[cfg(feature = "boring-tls")]
     tls_info: bool,
     #[cfg(feature = "boring-tls")]
-    tls: TlsConnectorBuilder,
+    tls: TlsSettings,
 }
 
 impl Default for ClientBuilder {
@@ -308,7 +309,7 @@ impl ClientBuilder {
                 (headers)(&mut self.config.headers);
             }
         }
-        self.config.tls.tls = settings.tls;
+        self.config.tls = settings.tls;
         let http2_headers_priority = settings
             .http2
             .headers_priority
@@ -332,21 +333,21 @@ impl ClientBuilder {
     /// Enable Encrypted Client Hello (Secure SNI)
     #[cfg(feature = "boring-tls")]
     pub fn enable_ech_grease(mut self) -> ClientBuilder {
-        self.config.tls.enable_ech_grease();
+        self.config.tls.enable_ech_grease = true;
         self
     }
 
     /// Enable TLS permute_extensions
     #[cfg(feature = "boring-tls")]
     pub fn permute_extensions(mut self) -> ClientBuilder {
-        self.config.tls.permute_extensions();
+        self.config.tls.permute_extensions = true;
         self
     }
 
     /// Enable TLS pre_shared_key
     #[cfg(feature = "boring-tls")]
     pub fn pre_shared_key(mut self) -> ClientBuilder {
-        self.config.tls.pre_shared_key();
+        self.config.tls.pre_shared_key = true;
         self
     }
 
@@ -810,7 +811,7 @@ impl ClientBuilder {
     pub fn http1_only(mut self) -> ClientBuilder {
         #[cfg(feature = "boring-tls")]
         {
-            self.config.tls.http_version_pref(HttpVersionPref::Http1);
+            self.config.tls.http_version_pref = HttpVersionPref::Http1;
         }
 
         self.config.builder.http2_only(false);
@@ -827,7 +828,7 @@ impl ClientBuilder {
     pub fn http2_only(mut self) -> ClientBuilder {
         #[cfg(feature = "boring-tls")]
         {
-            self.config.tls.http_version_pref(HttpVersionPref::Http2);
+            self.config.tls.http_version_pref = HttpVersionPref::Http2;
         }
 
         self.config.builder.http2_only(true);
@@ -1099,7 +1100,7 @@ impl ClientBuilder {
     /// feature to be enabled.
     #[cfg(feature = "boring-tls")]
     pub fn tls_sni(mut self, tls_sni: bool) -> ClientBuilder {
-        self.config.tls.tls_sni(tls_sni);
+        self.config.tls.tls_sni = tls_sni;
         self
     }
 
@@ -1119,7 +1120,7 @@ impl ClientBuilder {
     /// feature to be enabled.
     #[cfg(feature = "boring-tls")]
     pub fn min_tls_version(mut self, version: tls::Version) -> ClientBuilder {
-        self.config.tls.min_tls_version(version);
+        self.config.tls.min_tls_version = Some(version);
         self
     }
 
@@ -1139,7 +1140,7 @@ impl ClientBuilder {
     /// feature to be enabled.
     #[cfg(feature = "boring-tls")]
     pub fn max_tls_version(mut self, version: tls::Version) -> ClientBuilder {
-        self.config.tls.max_tls_version(version);
+        self.config.tls.max_tls_version = Some(version);
         self
     }
 

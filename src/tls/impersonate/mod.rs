@@ -2,20 +2,16 @@
 
 pub mod chrome;
 pub mod edge;
-pub mod http2;
 pub mod okhttp;
 pub mod safari;
-pub mod tls;
 
-use super::TlsResult;
+use super::{Http2Settings, TlsResult, TlsSettings};
 use chrome::*;
 use edge::*;
 use http::HeaderMap;
-use http2::Http2Settings;
 use okhttp::*;
 use safari::*;
 use std::{fmt::Debug, str::FromStr};
-use tls::TlsSettings;
 use typed_builder::TypedBuilder;
 use Impersonate::*;
 

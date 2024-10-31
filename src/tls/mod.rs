@@ -6,25 +6,24 @@
 //!   `ClientBuilder`.
 
 #![allow(missing_docs)]
-mod builder;
 mod connector;
 mod extension;
 mod impersonate;
+mod settings;
 
 use crate::{connect::HttpConnector, HttpVersionPref};
 use boring::{
     error::ErrorStack,
     ssl::{SslConnector, SslMethod, SslVersion},
 };
-pub use builder::TlsConnectorBuilder;
 pub use connector::MaybeHttpsStream;
 use connector::{HttpsConnector, HttpsLayer, HttpsLayerSettings};
 pub use extension::cert_compression;
 use extension::{TlsConnectExtension, TlsExtension};
 pub use impersonate::{
-    chrome, edge, http2::Http2Settings, okhttp, safari, tls::TlsSettings, tls_settings,
-    Impersonate, ImpersonateSettings,
+    chrome, edge, okhttp, safari, tls_settings, Impersonate, ImpersonateSettings,
 };
+pub use settings::{Http2Settings, TlsSettings};
 
 type TlsResult<T> = std::result::Result<T, ErrorStack>;
 type ConnectLayer = HttpsLayer;
@@ -44,15 +43,15 @@ pub struct BoringTlsConnector {
 
 impl BoringTlsConnector {
     /// Create a new `BoringTlsConnector` with the given function.
-    pub fn new(builder: TlsConnectorBuilder) -> TlsResult<BoringTlsConnector> {
+    pub fn new(settings: TlsSettings) -> TlsResult<BoringTlsConnector> {
         Ok(Self {
-            tls_sni: builder.tls.tls_sni,
-            enable_ech_grease: builder.tls.enable_ech_grease,
-            application_settings: builder.tls.application_settings,
-            http_version_pref: builder.tls.http_version_pref,
-            connect_layer: create_connect_layer(&builder, false)?,
+            tls_sni: settings.tls_sni,
+            enable_ech_grease: settings.enable_ech_grease,
+            application_settings: settings.application_settings,
+            http_version_pref: settings.http_version_pref,
+            connect_layer: create_connect_layer(&settings, false)?,
             #[cfg(feature = "websocket")]
-            ws_connect_layer: create_connect_layer(&builder, true)?,
+            ws_connect_layer: create_connect_layer(&settings, true)?,
         })
     }
 
@@ -99,8 +98,8 @@ impl BoringTlsConnector {
 }
 
 /// Create a new `ConnectLayer` with the given `Tls` settings.
-fn create_connect_layer(builder: &TlsConnectorBuilder, ws: bool) -> TlsResult<ConnectLayer> {
-    let tls = &builder.tls;
+fn create_connect_layer(settings: &TlsSettings, ws: bool) -> TlsResult<ConnectLayer> {
+    let tls = &settings;
 
     // If the connector builder is set, use it. Otherwise, create a new one.
     let connector = match &tls.connector {
@@ -117,7 +116,7 @@ fn create_connect_layer(builder: &TlsConnectorBuilder, ws: bool) -> TlsResult<Co
 
     // Create the `SslConnectorBuilder` and configure it.
     let mut connector = connector
-        .configure_cert_verification(builder.certs_verification)?
+        .configure_cert_verification(settings.certs_verification)?
         .configure_alpn_protos(http_version_pref)?
         .configure_min_tls_version(tls.min_tls_version)?
         .configure_max_tls_version(tls.max_tls_version)?
@@ -161,7 +160,7 @@ fn create_connect_layer(builder: &TlsConnectorBuilder, ws: bool) -> TlsResult<Co
 
     // Conditionally configure the TLS builder based on the "boring-tls-native-roots" feature.
     // If no custom CA cert store, use the system's native certificate store if the feature is enabled.
-    let connector = if builder.ca_cert_store.is_none() {
+    let connector = if settings.ca_cert_store.is_none() {
         #[cfg(feature = "boring-tls-webpki-roots")]
         {
             // WebPKI root certificates are enabled (regardless of whether native-roots is also enabled).
@@ -187,7 +186,7 @@ fn create_connect_layer(builder: &TlsConnectorBuilder, ws: bool) -> TlsResult<Co
         }
     } else {
         // If a custom CA certificate store is provided, configure it.
-        connector.configure_ca_cert_store(builder.ca_cert_store.as_deref())?
+        connector.configure_ca_cert_store(settings.ca_cert_store.as_deref())?
     };
 
     // Create the `HttpsLayerSettings` with the default session cache capacity.
