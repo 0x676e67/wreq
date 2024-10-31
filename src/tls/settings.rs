@@ -11,7 +11,7 @@ use boring::{
 use hyper::{PseudoOrder, SettingsOrder};
 use typed_builder::TypedBuilder;
 
-// ============== TLS settings ==============
+// ============== TLS ==============
 #[derive(TypedBuilder, Default)]
 pub struct TlsSettings {
     // Option TLS connector builder
