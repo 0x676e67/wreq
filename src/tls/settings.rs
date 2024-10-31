@@ -1,4 +1,3 @@
-// HTTP/2 settings
 #![allow(missing_debug_implementations)]
 use crate::{
     tls::{cert_compression::CertCompressionAlgorithm, TlsResult, Version},
