@@ -115,7 +115,7 @@ fn create_connect_layer(settings: &TlsSettings, ws: bool) -> TlsResult<ConnectLa
     };
 
     // Create the `SslConnectorBuilder` and configure it.
-    let mut connector = connector
+    let mut mut connector = connector
         .configure_cert_verification(settings.certs_verification)?
         .configure_alpn_protos(http_version_pref)?
         .configure_min_tls_version(tls.min_tls_version)?
