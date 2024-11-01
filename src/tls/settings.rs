@@ -33,6 +33,10 @@ pub struct TlsSettings {
     #[builder(default = HttpVersionPref::All)]
     pub http_version_pref: HttpVersionPref,
 
+    /// No session ticket
+    #[builder(default = false)]
+    pub no_session_ticket: bool,
+
     /// The minimum TLS version to use.
     #[builder(default, setter(into))]
     pub min_tls_version: Option<Version>,
@@ -87,7 +91,7 @@ pub struct TlsSettings {
 }
 
 // ============== http2 ==============
-#[derive(TypedBuilder, Debug, Clone)]
+#[derive(TypedBuilder, Debug)]
 pub struct Http2Settings {
     // ============== windows update frame ==============
     /// The initial connection window size.
