@@ -7,11 +7,12 @@
 An ergonomic, all-in-one `JA3`/`JA4`/`HTTP2` fingerprint `HTTP`/`WebSocket` client.
 
 - Plain, JSON, urlencoded, multipart bodies
-- Headers Order
+- WebSocket
+- Header Order
 - Cookie Store
 - Redirect policy
-- HTTP Proxies
 - `HTTPS`/`WebSocket` via BoringSSL
+- `HTTP`/`HTTPS`/`SOCKS4`/`SOCKS5`/`SOCKS5H` Proxies
 - Preconfigured `TLS`/`HTTP2`/`Headers` settings
 - [Changelog](https://github.com/penumbra-x/rquest/blob/main/CHANGELOG.md)
 
@@ -30,7 +31,7 @@ HTTP
 ```toml
 [dependencies]
 tokio = { version = "1", features = ["full"] }
-rquest = "0.26"
+rquest = "0.27"
 ```
 
 ```rust,no_run
@@ -56,7 +57,7 @@ WebSocket
 ```toml
 [dependencies]
 tokio = { version = "1", features = ["full"] }
-rquest = { version = "0.26", features = ["websocket"] }
+rquest = { version = "0.27", features = ["websocket"] }
 ```
 
 ```rust,no_run
@@ -105,7 +106,7 @@ Preconfigured `TLS`/`HTTP2`
 ```toml
 [dependencies]
 tokio = { version = "1", features = ["full"] }
-rquest = "0.26"
+rquest = "0.27"
 ```
 
 ```rust
@@ -186,7 +187,7 @@ Currently supported impersonate device types
 
 - **Chrome**
 
-`Chrome100`，`Chrome101`，`Chrome104`，`Chrome105`，`Chrome106`，`Chrome107`，`Chrome108`，`Chrome109`，`Chrome114`，`Chrome116`，`Chrome117`，`Chrome118`，`Chrome119`，`Chrome120`，`Chrome123`，`Chrome124`，`Chrome126`，`Chrome127`，`Chrome128`，`Chrome129`
+`Chrome100`，`Chrome101`，`Chrome104`，`Chrome105`，`Chrome106`，`Chrome107`，`Chrome108`，`Chrome109`，`Chrome114`，`Chrome116`，`Chrome117`，`Chrome118`，`Chrome119`，`Chrome120`，`Chrome123`，`Chrome124`，`Chrome126`，`Chrome127`，`Chrome128`，`Chrome129`，`Chrome130`
 
 - **Edge**
 
