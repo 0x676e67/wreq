@@ -90,6 +90,30 @@ pub struct TlsSettings {
     pub cert_compression_algorithm: Option<CertCompressionAlgorithm>,
 }
 
+impl std::fmt::Debug for TlsSettings {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TlsSettings")
+            .field("certs_verification", &self.certs_verification)
+            .field("tls_sni", &self.tls_sni)
+            .field("http_version_pref", &self.http_version_pref)
+            .field("no_session_ticket", &self.no_session_ticket)
+            .field("min_tls_version", &self.min_tls_version)
+            .field("max_tls_version", &self.max_tls_version)
+            .field("application_settings", &self.application_settings)
+            .field("pre_shared_key", &self.pre_shared_key)
+            .field("enable_ech_grease", &self.enable_ech_grease)
+            .field("permute_extensions", &self.permute_extensions)
+            .field("grease_enabled", &self.grease_enabled)
+            .field("enable_ocsp_stapling", &self.enable_ocsp_stapling)
+            .field("curves", &self.curves)
+            .field("sigalgs_list", &self.sigalgs_list)
+            .field("cipher_list", &self.cipher_list)
+            .field("enable_signed_cert_timestamps", &self.enable_signed_cert_timestamps)
+            .field("cert_compression_algorithm", &self.cert_compression_algorithm)
+            .finish()
+    }
+}
+
 // ============== http2 ==============
 #[derive(TypedBuilder, Debug)]
 pub struct Http2Settings {
