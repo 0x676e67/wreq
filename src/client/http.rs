@@ -332,22 +332,22 @@ impl ClientBuilder {
 
     /// Enable Encrypted Client Hello (Secure SNI)
     #[cfg(feature = "boring-tls")]
-    pub fn enable_ech_grease(mut self) -> ClientBuilder {
-        self.config.tls.enable_ech_grease = true;
+    pub fn enable_ech_grease(mut self, enabled: bool) -> ClientBuilder {
+        self.config.tls.enable_ech_grease = enabled;
         self
     }
 
     /// Enable TLS permute_extensions
     #[cfg(feature = "boring-tls")]
-    pub fn permute_extensions(mut self) -> ClientBuilder {
-        self.config.tls.permute_extensions = true;
+    pub fn permute_extensions(mut self, enabled: bool) -> ClientBuilder {
+        self.config.tls.permute_extensions = enabled;
         self
     }
 
     /// Enable TLS pre_shared_key
     #[cfg(feature = "boring-tls")]
-    pub fn pre_shared_key(mut self) -> ClientBuilder {
-        self.config.tls.pre_shared_key = true;
+    pub fn pre_shared_key(mut self, enabled: bool) -> ClientBuilder {
+        self.config.tls.pre_shared_key = enabled;
         self
     }
 
