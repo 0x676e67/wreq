@@ -58,6 +58,9 @@ socks = ["tokio-socks"]
 boring-tls-native-roots = ["dep:rustls-native-certs"]
 boring-tls-webpki-roots = ["dep:webpki-root-certs"]
 
+# BoringSSL PQ experimental features
+boring-tls-pq = ["boring/pq-experimental"]
+
 # Internal (PRIVATE!) features used to aid testing.
 # Don't rely on these whatsoever. They may disappear at anytime.
 
