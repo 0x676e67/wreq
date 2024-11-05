@@ -96,7 +96,7 @@ impl BoringTlsConnector {
         );
         http.set_callback(move |conf, _| {
             conf.configure_enable_ech_grease(enable_ech_grease)?
-                .set_use_server_name_indication(tls_sni);
+                .set_verify_hostname(tls_sni);
 
             // Add application settings if it is set.
             if application_settings {
