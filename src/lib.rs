@@ -327,6 +327,8 @@ pub use boring_sys;
 pub use http::header;
 pub use http::Method;
 pub use http::{StatusCode, Version};
+#[cfg(feature = "boring-tls")]
+pub use tokio_boring;
 pub use url::Url;
 
 // universal mods
