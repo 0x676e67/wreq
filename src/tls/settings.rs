@@ -66,8 +66,8 @@ pub struct TlsSettings {
     pub grease_enabled: Option<bool>,
 
     /// Enable OCSP stapling.
-    #[builder(default = false)]
-    pub enable_ocsp_stapling: bool,
+    #[builder(default, setter(into))]
+    pub enable_ocsp_stapling: Option<bool>,
 
     /// The curves to use.
     #[builder(default, setter(into))]

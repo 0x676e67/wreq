@@ -131,7 +131,7 @@ fn create_connect_layer(
         .configure_max_tls_version(tls.max_tls_version)?;
 
     // Set enable ocsp stapling if it is set.
-    if tls.enable_ocsp_stapling {
+    if let Some(true) = tls.enable_ocsp_stapling {
         connector.enable_ocsp_stapling();
     }
 
