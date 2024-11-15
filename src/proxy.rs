@@ -1,7 +1,7 @@
 use std::fmt;
 #[cfg(feature = "socks")]
 use std::net::SocketAddr;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 
 use crate::into_url::{IntoUrl, IntoUrlSealed};
 use crate::Url;
@@ -277,9 +277,16 @@ impl Proxy {
     }
 
     pub(crate) fn system() -> Proxy {
-        let mut proxy = Proxy::new(Intercept::System(Arc::new(get_sys_proxies(
-            get_from_platform(),
-        ))));
+        static SYS_PROXIES: LazyLock<Arc<SystemProxyMap>> =
+            LazyLock::new(|| Arc::new(get_sys_proxies(get_from_platform())));
+
+        let mut proxy = if cfg!(feature = "internal_proxy_sys_no_cache") {
+            Proxy::new(Intercept::System(Arc::new(get_sys_proxies(
+                get_from_platform(),
+            ))))
+        } else {
+            Proxy::new(Intercept::System(SYS_PROXIES.clone()))
+        };
         proxy.no_proxy = NoProxy::from_env();
         proxy
     }

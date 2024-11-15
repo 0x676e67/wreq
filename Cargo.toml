@@ -61,6 +61,9 @@ boring-tls-webpki-roots = ["dep:webpki-root-certs"]
 # BoringSSL PQ experimental features
 boring-tls-pq = ["boring/pq-experimental"]
 
+# Optional disable internal proxy cache
+internal_proxy_sys_no_cache = []
+
 # Internal (PRIVATE!) features used to aid testing.
 # Don't rely on these whatsoever. They may disappear at anytime.
 
