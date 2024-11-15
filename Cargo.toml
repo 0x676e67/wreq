@@ -29,8 +29,7 @@ full = [
     "gzip",
     "brotli",
     "zstd",
-    "deflate",
-    "hickory-dns"
+    "deflate"
 ]
 
 websocket = ["async-tungstenite", "tokio-util/compat"]
