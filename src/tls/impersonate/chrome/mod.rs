@@ -19,10 +19,11 @@ pub mod v127;
 pub mod v128;
 pub mod v129;
 pub mod v130;
+pub mod v131;
 
 use crate::tls::{Http2Settings, TlsResult, TlsSettings};
 use http2::{HEADERS_PSEUDO_ORDER, HEADER_PRORIORITY, SETTINGS_ORDER};
-use tls::{ChromeTlsSettings, NEW_CURVES};
+use tls::{ChromeTlsSettings, NEW_CURVES_1, NEW_CURVES_2};
 
 // ============== TLS template ==============
 pub fn tls_template_1() -> TlsResult<TlsSettings> {
@@ -62,7 +63,17 @@ pub fn tls_template_5() -> TlsResult<TlsSettings> {
 
 pub fn tls_template_6() -> TlsResult<TlsSettings> {
     ChromeTlsSettings::builder()
-        .curves(NEW_CURVES)
+        .curves(NEW_CURVES_1)
+        .permute_extensions(true)
+        .pre_shared_key(true)
+        .enable_ech_grease(true)
+        .build()
+        .try_into()
+}
+
+pub fn tls_template_7() -> TlsResult<TlsSettings> {
+    ChromeTlsSettings::builder()
+        .curves(NEW_CURVES_2)
         .permute_extensions(true)
         .pre_shared_key(true)
         .enable_ech_grease(true)
@@ -124,8 +135,15 @@ mod tls {
 
     pub const CURVES: &[SslCurve] = &[SslCurve::X25519, SslCurve::SECP256R1, SslCurve::SECP384R1];
 
-    pub const NEW_CURVES: &[SslCurve] = &[
+    pub const NEW_CURVES_1: &[SslCurve] = &[
         SslCurve::X25519_KYBER768_DRAFT00,
+        SslCurve::X25519,
+        SslCurve::SECP256R1,
+        SslCurve::SECP384R1,
+    ];
+
+    pub const NEW_CURVES_2: &[SslCurve] = &[
+        SslCurve::X25519_MLKEM768,
         SslCurve::X25519,
         SslCurve::SECP256R1,
         SslCurve::SECP384R1,

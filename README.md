@@ -42,9 +42,9 @@ use rquest::tls::Impersonate;
 
 #[tokio::main]
 async fn main() -> Result<(), rquest::Error> {
-    // Build a client to mimic Chrome130
+    // Build a client to mimic Chrome131
     let client = rquest::Client::builder()
-        .impersonate(Impersonate::Chrome130)
+        .impersonate(Impersonate::Chrome131)
         .build()?;
 
     // Use the API you're already familiar with
@@ -69,9 +69,9 @@ use rquest::{tls::Impersonate, Client, Message};
 
 #[tokio::main]
 async fn main() -> Result<(), rquest::Error> {
-    // Build a client to mimic Chrome130
+    // Build a client to mimic Chrome131
     let client = Client::builder()
-        .impersonate(Impersonate::Chrome130)
+        .impersonate(Impersonate::Chrome131)
         .build()?;
 
     // Use the API you're already familiar with
@@ -190,7 +190,7 @@ Currently supported impersonate device types
 
 - **Chrome**
 
-`Chrome100`，`Chrome101`，`Chrome104`，`Chrome105`，`Chrome106`，`Chrome107`，`Chrome108`，`Chrome109`，`Chrome114`，`Chrome116`，`Chrome117`，`Chrome118`，`Chrome119`，`Chrome120`，`Chrome123`，`Chrome124`，`Chrome126`，`Chrome127`，`Chrome128`，`Chrome129`，`Chrome130`
+`Chrome100`，`Chrome101`，`Chrome104`，`Chrome105`，`Chrome106`，`Chrome107`，`Chrome108`，`Chrome109`，`Chrome114`，`Chrome116`，`Chrome117`，`Chrome118`，`Chrome119`，`Chrome120`，`Chrome123`，`Chrome124`，`Chrome126`，`Chrome127`，`Chrome128`，`Chrome129`，`Chrome130`，`Chrome131`
 
 - **Edge**
 

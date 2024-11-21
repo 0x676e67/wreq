@@ -2,9 +2,9 @@ use rquest::tls::Impersonate;
 
 #[tokio::main]
 async fn main() -> Result<(), rquest::Error> {
-    // Build a client to mimic Chrome130
+    // Build a client to mimic Chrome131
     let client = rquest::Client::builder()
-        .impersonate(Impersonate::Chrome130)
+        .impersonate(Impersonate::Chrome131)
         .build()?;
 
     // Use the API you're already familiar with

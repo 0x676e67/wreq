@@ -77,7 +77,8 @@ boring-tls = [
     "dep:linked_hash_set",
     "dep:tower-layer",
     "dep:antidote",
-    "dep:typed-builder"
+    "dep:typed-builder",
+    "boring-tls-pq"
 ]
 
 [dependencies]
