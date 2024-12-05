@@ -1597,6 +1597,7 @@ impl Client {
     }
 
     /// Set the impersonate for this client.
+    #[inline]
     pub fn set_impersonate(&mut self, var: Impersonate) -> crate::Result<()> {
         let settings = tls::tls_settings(var)?;
         let inner = Arc::make_mut(&mut self.inner);
@@ -1604,6 +1605,7 @@ impl Client {
     }
 
     /// Set the impersonate for this client without setting the headers.
+    #[inline]
     pub fn set_impersonate_without_headers(&mut self, var: Impersonate) -> crate::Result<()> {
         let settings = tls::tls_settings(var)?;
         let inner = Arc::make_mut(&mut self.inner);
@@ -1611,6 +1613,7 @@ impl Client {
     }
 
     /// Set the impersonate for this client with the given settings.
+    #[inline]
     pub fn set_impersonate_with_settings(
         &mut self,
         settings: ImpersonateSettings,
