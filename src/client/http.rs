@@ -304,12 +304,16 @@ impl ClientBuilder {
         settings: ImpersonateSettings,
         set_headers: bool,
     ) -> ClientBuilder {
+        // Set the headers if needed
         if set_headers {
             if let Some(headers) = settings.headers {
                 (headers)(&mut self.config.headers);
             }
         }
+
         self.config.tls = settings.tls;
+
+        // Convert the headers priority to the correct type
         let http2_headers_priority = settings
             .http2
             .headers_priority
@@ -1590,6 +1594,77 @@ impl Client {
             .hyper
             .set_interface(interface);
         self.inner.hyper.reset_pool_idle();
+    }
+
+    /// Set the impersonate for this client.
+    pub fn set_impersonate(&mut self, var: Impersonate) -> crate::Result<()> {
+        let settings = tls::tls_settings(var)?;
+        let inner = Arc::make_mut(&mut self.inner);
+        Self::apply_impersonate_settings(inner, settings, true)
+    }
+
+    /// Set the impersonate for this client without setting the headers.
+    pub fn set_impersonate_without_headers(&mut self, var: Impersonate) -> crate::Result<()> {
+        let settings = tls::tls_settings(var)?;
+        let inner = Arc::make_mut(&mut self.inner);
+        Self::apply_impersonate_settings(inner, settings, false)
+    }
+
+    /// Set the impersonate for this client with the given settings.
+    pub fn set_impersonate_with_settings(
+        &mut self,
+        settings: ImpersonateSettings,
+    ) -> crate::Result<()> {
+        let inner = Arc::make_mut(&mut self.inner);
+        Self::apply_impersonate_settings(inner, settings, true)
+    }
+
+    /// Apply the impersonate settings to the client.
+    fn apply_impersonate_settings(
+        inner: &mut ClientRef,
+        settings: ImpersonateSettings,
+        with_headers: bool,
+    ) -> crate::Result<()> {
+        let hyper = &mut inner.hyper;
+
+        // Clear the headers
+        inner.headers.clear();
+
+        // Set the headers
+        if with_headers {
+            if let Some(headers) = settings.headers {
+                headers(&mut inner.headers)
+            }
+        }
+
+        // Set the connector
+        let boringtls_connector = BoringTlsConnector::new(settings.tls)?;
+        hyper.set_connector(|c| c.set_connector(boringtls_connector));
+
+        // Set the conn builder
+        hyper.set_conn_builder(|conn| {
+            // Convert the headers priority to the correct type
+            let http2_headers_priority = settings
+                .http2
+                .headers_priority
+                .map(|(a, b, c)| StreamDependency::new(StreamId::from(a), b, c));
+
+            // Set the http2 version preference
+            conn.http2_initial_stream_window_size(settings.http2.initial_stream_window_size)
+                .http2_initial_connection_window_size(settings.http2.initial_connection_window_size)
+                .http2_max_concurrent_streams(settings.http2.max_concurrent_streams)
+                .http2_max_header_list_size(settings.http2.max_header_list_size)
+                .http2_header_table_size(settings.http2.header_table_size)
+                .http2_enable_push(settings.http2.enable_push)
+                .http2_max_frame_size(settings.http2.max_frame_size)
+                .http2_headers_priority(http2_headers_priority)
+                .http2_headers_pseudo_order(settings.http2.headers_pseudo_order)
+                .http2_settings_order(settings.http2.settings_order)
+                .http2_unknown_setting8(settings.http2.unknown_setting8)
+                .http2_unknown_setting9(settings.http2.unknown_setting9);
+        });
+
+        Ok(())
     }
 }
 

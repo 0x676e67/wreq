@@ -170,6 +170,15 @@ impl Connector {
         };
     }
 
+    pub(crate) fn set_connector(&mut self, connector: BoringTlsConnector) {
+        match &mut self.inner {
+            #[cfg(not(feature = "boring-tls"))]
+            Inner::Http(http) => *http = connector.into(),
+            #[cfg(feature = "boring-tls")]
+            Inner::BoringTls { tls, .. } => *tls = connector,
+        }
+    }
+
     #[cfg(feature = "socks")]
     async fn connect_socks(&self, mut dst: Uri, proxy: ProxyScheme) -> Result<Conn, BoxError> {
         let dns = match proxy {

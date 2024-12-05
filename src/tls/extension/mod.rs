@@ -251,6 +251,7 @@ fn configure_set_verify_cert_store(
     let mut verify_store = X509StoreBuilder::new()?;
 
     if let Some(store) = certs.as_ref().ok() {
+        #[allow(deprecated)]
         for cert in store.objects().iter() {
             if let Some(cert) = cert.x509() {
                 verify_store.add_cert(cert.to_owned())?;
