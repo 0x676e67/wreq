@@ -225,6 +225,10 @@ name = "psk_impersonate"
 path = "examples/psk_impersonate.rs"
 
 [[example]]
+name = "set_headers"
+path = "examples/set_headers.rs"
+
+[[example]]
 name = "set_proxies"
 path = "examples/set_proxies.rs"
 required-features = ["socks"]

@@ -1500,6 +1500,11 @@ impl Client {
         self.inner.headers.get(USER_AGENT)
     }
 
+    /// Get a mutable reference to the headers for this client.
+    pub fn headers_mut(&mut self) -> &mut HeaderMap {
+        &mut Arc::make_mut(&mut self.inner).headers
+    }
+
     /// Returns a `String` of the header-value of all `Cookie` in a `Url`.
     ///
     /// # Errors
