@@ -1669,6 +1669,11 @@ impl Client {
 
         Ok(())
     }
+
+    /// Set the headers order for this client.
+    pub fn set_headers_order(&mut self, order: &'static [HeaderName]) {
+        Arc::make_mut(&mut self.inner).headers_order = Some(order);
+    }
 }
 
 impl fmt::Debug for Client {

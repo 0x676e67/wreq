@@ -1,4 +1,14 @@
+use http::{header, HeaderName};
 use rquest::tls::Impersonate;
+
+static HEADER_ORDER: [HeaderName; 6] = [
+    header::ACCEPT_LANGUAGE,
+    header::USER_AGENT,
+    header::ACCEPT_ENCODING,
+    header::HOST,
+    header::COOKIE,
+    HeaderName::from_static("priority"),
+];
 
 #[tokio::main]
 async fn main() -> Result<(), rquest::Error> {
@@ -6,6 +16,9 @@ async fn main() -> Result<(), rquest::Error> {
     let mut client = rquest::Client::builder()
         .impersonate(Impersonate::Chrome131)
         .build()?;
+
+    // Set the headers order
+    client.set_headers_order(&HEADER_ORDER);
 
     // Use the API you're already familiar with
     let resp = client.get("https://tls.peet.ws/api/all").send().await?;
