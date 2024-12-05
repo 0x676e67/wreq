@@ -42,7 +42,7 @@ brotli = ["async-compression", "async-compression/brotli", "tokio-util"]
 
 zstd = ["async-compression", "async-compression/zstd", "tokio-util"]
 
-deflate = ["async-compression", "async-compression/deflate", "tokio-util"]
+deflate = ["async-compression", "async-compression/zlib", "tokio-util"]
 
 json = ["serde_json"]
 
@@ -241,15 +241,17 @@ required-features = ["cookies"]
 [[example]]
 name = "set_proxies"
 path = "examples/set_proxies.rs"
-required-features = ["socks"]
+required-features = ["socks", "brotli"]
 
 [[example]]
 name = "set_local_address"
 path = "examples/set_local_address.rs"
+required-features = ["brotli"]
 
 [[example]]
 name = "set_interface"
 path = "examples/set_interface.rs"
+required-features = ["brotli"]
 
 [[example]]
 name = "set_native_ca_cert"
