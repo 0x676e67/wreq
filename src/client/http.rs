@@ -2030,7 +2030,7 @@ impl Future for PendingRequest {
                                     _ => {
                                         let mut req = hyper::Request::builder()
                                             .method(self.method.clone())
-                                            .uri(uri.clone())
+                                            .uri(uri)
                                             .body(body.into_stream())
                                             .expect("valid request parts");
                                         *req.headers_mut() = headers.clone();
