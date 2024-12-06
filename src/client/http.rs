@@ -1674,6 +1674,11 @@ impl Client {
     pub fn set_headers_order(&mut self, order: &'static [HeaderName]) {
         Arc::make_mut(&mut self.inner).headers_order = Some(order);
     }
+
+    /// Set the redirect policy for this client.
+    pub fn set_redirect_policy(&mut self, policy: redirect::Policy) {
+        Arc::make_mut(&mut self.inner).redirect_policy = Arc::new(policy);
+    }
 }
 
 impl fmt::Debug for Client {
