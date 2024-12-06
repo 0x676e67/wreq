@@ -90,13 +90,10 @@ impl BoringTlsConnector {
 }
 
 /// Create a new `ConnectLayer` with the given `Tls` settings.
-/// Creating a TLS connector takes a lot of time. It is recommended to complete it in a blocking task when creating a client.
 #[inline]
 fn create_connect_layer(settings: TlsSettings) -> TlsResult<ConnectLayer> {
-    let tls = &settings;
-
     // If the connector builder is set, use it. Otherwise, create a new one.
-    let connector = match &tls.connector {
+    let connector = match settings.connector {
         Some(connector) => connector()?,
         None => SslConnector::builder(SslMethod::tls_client())?,
     };
@@ -105,51 +102,51 @@ fn create_connect_layer(settings: TlsSettings) -> TlsResult<ConnectLayer> {
     let mut connector = connector
         .configure_cert_verification(settings.certs_verification)?
         .configure_alpn_protos(settings.http_version_pref)?
-        .configure_min_tls_version(tls.min_tls_version)?
-        .configure_max_tls_version(tls.max_tls_version)?;
+        .configure_min_tls_version(settings.min_tls_version)?
+        .configure_max_tls_version(settings.max_tls_version)?;
 
     // Set enable ocsp stapling if it is set.
-    if tls.enable_ocsp_stapling {
+    if settings.enable_ocsp_stapling {
         connector.enable_ocsp_stapling();
     }
 
     // Set enable signed cert timestamps if it is set.
-    if tls.enable_signed_cert_timestamps {
+    if settings.enable_signed_cert_timestamps {
         connector.enable_signed_cert_timestamps();
     }
 
     // Set no session ticket if it is set.
-    if let Some(false) = tls.session_ticket {
+    if let Some(false) = settings.session_ticket {
         connector.set_options(SslOptions::NO_TICKET);
     }
 
     // Set grease enabled if it is set.
-    if let Some(grease_enabled) = tls.grease_enabled {
+    if let Some(grease_enabled) = settings.grease_enabled {
         connector.set_grease_enabled(grease_enabled);
     }
 
     // Set permute extensions if it is set.
-    if let Some(permute_extensions) = tls.permute_extensions {
+    if let Some(permute_extensions) = settings.permute_extensions {
         connector.set_permute_extensions(permute_extensions);
     }
 
     // Set the curves if they are set.
-    if let Some(curves) = tls.curves.as_deref() {
+    if let Some(curves) = settings.curves.as_deref() {
         connector.set_curves(curves)?;
     }
 
     // Set the signature algorithms list if it is set.
-    if let Some(sigalgs_list) = tls.sigalgs_list.as_deref() {
+    if let Some(sigalgs_list) = settings.sigalgs_list.as_deref() {
         connector.set_sigalgs_list(sigalgs_list)?;
     }
 
     // Set the cipher list if it is set.
-    if let Some(cipher_list) = tls.cipher_list.as_deref() {
+    if let Some(cipher_list) = settings.cipher_list.as_deref() {
         connector.set_cipher_list(cipher_list)?;
     }
 
     // Set the certificate compression algorithm if it is set.
-    if let Some(cert_compression_algorithm) = tls.cert_compression_algorithm {
+    if let Some(cert_compression_algorithm) = settings.cert_compression_algorithm {
         connector = connector.configure_add_cert_compression_alg(cert_compression_algorithm)?;
     }
 
@@ -181,13 +178,13 @@ fn create_connect_layer(settings: TlsSettings) -> TlsResult<ConnectLayer> {
         }
     } else {
         // If a custom CA certificate store is provided, configure it.
-        connector.configure_ca_cert_store(settings.ca_cert_store.as_deref())?
+        connector.configure_ca_cert_store(settings.ca_cert_store)?
     };
 
     // Create the `HttpsLayerSettings` with the default session cache capacity.
     let settings = HttpsLayerSettings::builder()
         .session_cache_capacity(8)
-        .session_cache(tls.pre_shared_key)
+        .session_cache(settings.pre_shared_key)
         .build();
 
     HttpsLayer::with_connector_and_settings(connector, settings)

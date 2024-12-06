@@ -2,6 +2,7 @@
 
 pub mod cert_compression;
 
+use super::settings::CAStore;
 use super::{TlsResult, Version};
 use crate::client::http::HttpVersionPref;
 use ::std::os::raw::c_int;
@@ -63,7 +64,7 @@ pub trait TlsExtension {
     /// Configure the ca certificate store for the given `SslConnectorBuilder`.
     fn configure_ca_cert_store(
         self,
-        ca_cert_stroe: Option<&(dyn Fn() -> TlsResult<X509Store> + Send + Sync)>,
+        ca_cert_stroe: Option<CAStore>,
     ) -> TlsResult<SslConnectorBuilder>;
 
     /// Configure the native roots CA for the given `SslConnectorBuilder`.
@@ -164,7 +165,7 @@ impl TlsExtension for SslConnectorBuilder {
 
     fn configure_ca_cert_store(
         mut self,
-        ca_cert_stroe: Option<&(dyn Fn() -> TlsResult<X509Store> + Send + Sync)>,
+        ca_cert_stroe: Option<CAStore>,
     ) -> TlsResult<SslConnectorBuilder> {
         if let Some(stroe) = ca_cert_stroe {
             self.set_verify_cert_store(stroe()?)?;

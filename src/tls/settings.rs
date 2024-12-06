@@ -10,16 +10,22 @@ use boring::{
 use hyper::{PseudoOrder, SettingsOrder};
 use typed_builder::TypedBuilder;
 
+/// A TLS connector builder.
+pub type ConnectorBuilder = Box<dyn Fn() -> TlsResult<SslConnectorBuilder> + Send + Sync + 'static>;
+
+/// A CA certificate store.
+pub type CAStore = Box<dyn Fn() -> TlsResult<X509Store> + Send + Sync + 'static>;
+
 // ============== TLS ==============
 #[derive(TypedBuilder, Default)]
 pub struct TlsSettings {
     // Option TLS connector builder
     #[builder(default, setter(strip_option))]
-    pub connector: Option<Box<dyn Fn() -> TlsResult<SslConnectorBuilder> + Send + Sync + 'static>>,
+    pub connector: Option<ConnectorBuilder>,
 
     /// CA certificates store.
     #[builder(default, setter(strip_option))]
-    pub ca_cert_store: Option<Box<dyn Fn() -> TlsResult<X509Store> + Send + Sync + 'static>>,
+    pub ca_cert_store: Option<CAStore>,
 
     /// Verify certificates.
     #[builder(default = true)]

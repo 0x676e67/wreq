@@ -222,14 +222,16 @@ async fn main() -> Result<(), rquest::Error> {
 
     // Change the impersonate to Safari18
     {
-        client.set_impersonate(Impersonate::Safari18)?;
+        client.set_impersonate(Impersonate::Safari18).await?;
         let resp = client.get("https://tls.peet.ws/api/all").send().await?;
         println!("{}", resp.text().await?);
     }
 
     // Change the impersonate to Edge127 without setting the headers
     {
-        client.set_impersonate_without_headers(Impersonate::Edge127)?;
+        client
+            .set_impersonate_without_headers(Impersonate::Edge127)
+            .await?;
 
         // Set a header
         client
@@ -274,7 +276,7 @@ async fn main() -> Result<(), rquest::Error> {
     // Set the impersonate to Chrome131
     // Expected: Chrome131
     {
-        client2.set_impersonate(Impersonate::Chrome131)?;
+        client2.set_impersonate(Impersonate::Chrome131).await?;
 
         let resp = client2.get("https://api.ip.sb/ip").send().await?;
         println!("{}", resp.text().await?);
