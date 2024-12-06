@@ -1567,15 +1567,6 @@ impl Client {
         self.inner.hyper.reset_pool_idle();
     }
 
-    /// Set the interface for this client.
-    #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
-    pub fn set_interface(&mut self, interface: &str) {
-        Arc::make_mut(&mut self.inner)
-            .hyper
-            .set_interface(interface);
-        self.inner.hyper.reset_pool_idle();
-    }
-
     /// Set that all sockets are bound to the configured address before connection.
     ///
     /// If `None`, the sockets will not be bound.

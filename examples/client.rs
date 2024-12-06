@@ -82,7 +82,6 @@ async fn main() -> Result<(), rquest::Error> {
     // Expected: Chrome131
     {
         client2.set_impersonate(Impersonate::Chrome131).await?;
-
         let resp = client2.get("https://api.ip.sb/ip").send().await?;
         println!("{}", resp.text().await?);
     }

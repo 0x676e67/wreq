@@ -1080,7 +1080,7 @@ fn extract_type_prefix(address: &str) -> Option<&str> {
             None
         } else {
             let prefix = &address[..indice];
-            let contains_banned = prefix.contains(|c| c == ':' || c == '/');
+            let contains_banned = prefix.contains([':', '/']);
 
             if !contains_banned {
                 Some(prefix)

@@ -251,7 +251,7 @@ fn configure_set_verify_cert_store(
 ) -> TlsResult<X509Store> {
     let mut verify_store = X509StoreBuilder::new()?;
 
-    if let Some(store) = certs.as_ref().ok() {
+    if let Ok(store) = certs.as_ref() {
         #[allow(deprecated)]
         for cert in store.objects().iter() {
             if let Some(cert) = cert.x509() {
