@@ -37,34 +37,17 @@ pub struct BoringTlsConnector {
     application_settings: bool,
     http_version_pref: HttpVersionPref,
     connect_layer: ConnectLayer,
-    ws_connect_layer: Option<ConnectLayer>,
 }
 
 impl BoringTlsConnector {
     /// Create a new `BoringTlsConnector` with the given function.
     pub fn new(settings: TlsSettings) -> TlsResult<BoringTlsConnector> {
-        // If the HTTP version preference is HTTP/1, we only need to create the
-        // connect layer once.
-        let (connect_layer, ws_connect_layer) = match settings.http_version_pref {
-            HttpVersionPref::Http1 => {
-                let connect_layer = create_connect_layer(&settings, settings.http_version_pref)?;
-                (connect_layer, None)
-            }
-            HttpVersionPref::Http2 | HttpVersionPref::All => {
-                let connect_layer = create_connect_layer(&settings, settings.http_version_pref)?;
-                // Set websocket use http1 alpn proto
-                let ws_connect_layer = create_connect_layer(&settings, HttpVersionPref::Http1)?;
-                (connect_layer, Some(ws_connect_layer))
-            }
-        };
-
         Ok(Self {
             tls_sni: settings.tls_sni,
             enable_ech_grease: settings.enable_ech_grease,
             application_settings: settings.application_settings,
             http_version_pref: settings.http_version_pref,
-            connect_layer,
-            ws_connect_layer,
+            connect_layer: create_connect_layer(settings)?,
         })
     }
 
@@ -76,16 +59,7 @@ impl BoringTlsConnector {
         ws: bool,
     ) -> HttpsConnector<HttpConnector> {
         // Create the `HttpsConnector` with the given `HttpConnector` and `ConnectLayer`.
-        let mut http = HttpsConnector::with_connector_layer(
-            http,
-            if ws {
-                self.ws_connect_layer
-                    .clone()
-                    .unwrap_or_else(|| self.connect_layer.clone())
-            } else {
-                self.connect_layer.clone()
-            },
-        );
+        let mut http = HttpsConnector::with_connector_layer(http, self.connect_layer.clone());
 
         // Set the callback to add application settings.
         let (application_settings, enable_ech_grease, http_version_pref, tls_sni) = (
@@ -102,6 +76,12 @@ impl BoringTlsConnector {
             if application_settings {
                 conf.configure_add_application_settings(http_version_pref)?;
             }
+
+            // Set websocket use http1 alpn proto
+            if ws {
+                conf.set_alpn_protos(b"\x08http/1.1")?;
+            }
+
             Ok(())
         });
 
@@ -111,10 +91,7 @@ impl BoringTlsConnector {
 
 /// Create a new `ConnectLayer` with the given `Tls` settings.
 #[inline]
-fn create_connect_layer(
-    settings: &TlsSettings,
-    http_version_pref: HttpVersionPref,
-) -> TlsResult<ConnectLayer> {
+fn create_connect_layer(settings: TlsSettings) -> TlsResult<ConnectLayer> {
     let tls = &settings;
 
     // If the connector builder is set, use it. Otherwise, create a new one.
@@ -126,7 +103,7 @@ fn create_connect_layer(
     // Create the `SslConnectorBuilder` and configure it.
     let mut connector = connector
         .configure_cert_verification(settings.certs_verification)?
-        .configure_alpn_protos(http_version_pref)?
+        .configure_alpn_protos(settings.http_version_pref)?
         .configure_min_tls_version(tls.min_tls_version)?
         .configure_max_tls_version(tls.max_tls_version)?;
 
