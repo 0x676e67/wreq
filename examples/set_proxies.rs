@@ -13,7 +13,7 @@ async fn main() -> Result<(), rquest::Error> {
 
     // Set the proxy
     {
-        let proxy = rquest::Proxy::all("socks5h://127.0.0.1:1080")?;
+        let proxy = rquest::Proxy::all("socks5h://127.0.0.1:6153")?;
         client.set_proxies(&[proxy]);
 
         let resp = client.get("https://api.ip.sb/ip").send().await?;
