@@ -2125,19 +2125,16 @@ impl Future for PendingRequest {
                                 }
                             }
 
-                            *self.as_mut().in_flight().get_mut() =
-                                match *self.as_mut().in_flight().as_ref() {
-                                    _ => {
-                                        let mut req = hyper::Request::builder()
-                                            .method(self.method.clone())
-                                            .uri(uri)
-                                            .body(body.into_stream())
-                                            .expect("valid request parts");
-                                        *req.headers_mut() = headers.clone();
-                                        std::mem::swap(self.as_mut().headers(), &mut headers);
-                                        ResponseFuture::Default(self.client.hyper.request(req))
-                                    }
-                                };
+                            *self.as_mut().in_flight().get_mut() = {
+                                let mut req = hyper::Request::builder()
+                                    .method(self.method.clone())
+                                    .uri(uri)
+                                    .body(body.into_stream())
+                                    .expect("valid request parts");
+                                *req.headers_mut() = headers.clone();
+                                std::mem::swap(self.as_mut().headers(), &mut headers);
+                                ResponseFuture::Default(self.client.hyper.request(req))
+                            };
 
                             continue;
                         }

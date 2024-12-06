@@ -81,6 +81,7 @@ impl Connector {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     #[cfg(feature = "boring-tls")]
     pub(crate) fn new_boring_tls(
         mut http: HttpConnector,
