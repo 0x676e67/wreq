@@ -10,7 +10,6 @@ use boring::ssl::{
 };
 
 use super::TlsResult;
-///! Hyper SSL support via OpenSSL.
 use cache::{SessionCache, SessionKey};
 use http::uri::Scheme;
 use hyper::client::connect::{Connected, Connection};

@@ -1935,16 +1935,14 @@ impl PendingRequest {
 
         let uri = expect_uri(&self.url);
 
-        *self.as_mut().in_flight().get_mut() = match *self.as_mut().in_flight().as_ref() {
-            _ => {
-                let mut req = hyper::Request::builder()
-                    .method(self.method.clone())
-                    .uri(uri)
-                    .body(body.into_stream())
-                    .expect("valid request parts");
-                *req.headers_mut() = self.headers.clone();
-                ResponseFuture::Default(self.client.hyper.request(req))
-            }
+        *self.as_mut().in_flight().get_mut() = {
+            let mut req = hyper::Request::builder()
+                .method(self.method.clone())
+                .uri(uri)
+                .body(body.into_stream())
+                .expect("valid request parts");
+            *req.headers_mut() = self.headers.clone();
+            ResponseFuture::Default(self.client.hyper.request(req))
         };
 
         true
