@@ -95,7 +95,7 @@ fn create_connect_layer(settings: TlsSettings) -> TlsResult<ConnectLayer> {
     // If the connector builder is set, use it. Otherwise, create a new one.
     let connector = match settings.connector {
         Some(connector) => connector()?,
-        None => SslConnector::builder(SslMethod::tls_client())?,
+        None => SslConnector::no_default_verify_builder(SslMethod::tls_client())?,
     };
 
     // Create the `SslConnectorBuilder` and configure it.

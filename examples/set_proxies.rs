@@ -5,8 +5,7 @@ async fn main() -> Result<(), rquest::Error> {
     // Build a client to mimic Chrome130
     let mut client = Client::builder()
         .impersonate(Impersonate::Chrome130)
-        .async_build()
-        .await?;
+        .build()?;
 
     let resp = client.get("https://api.ip.sb/ip").send().await?;
     println!("{}", resp.text().await?);

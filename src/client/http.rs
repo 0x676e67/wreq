@@ -266,15 +266,6 @@ impl ClientBuilder {
         })
     }
 
-    /// Build the client asynchronously.
-    /// Creating a TLS connector will block for a slightly longer period of time during client creation.
-    /// It is recommended to call this method when creating a client.
-    pub async fn async_build(self) -> crate::Result<Client> {
-        tokio::task::spawn_blocking(move || self.build())
-            .await
-            .map_err(|e| error::Error::new(error::Kind::Builder, e.into()))?
-    }
-
     /// Sets the necessary values to mimic the specified impersonate version.
     /// This will set the necessary headers and TLS settings.
     #[cfg(feature = "boring-tls")]
@@ -1606,35 +1597,35 @@ impl Client {
     /// Set the impersonate for this client.
     #[inline]
     #[cfg(feature = "boring-tls")]
-    pub async fn set_impersonate(&mut self, var: Impersonate) -> crate::Result<()> {
+    pub fn set_impersonate(&mut self, var: Impersonate) -> crate::Result<()> {
         let settings = tls::tls_settings(var)?;
         let inner = Arc::make_mut(&mut self.inner);
-        Self::apply_impersonate_settings(inner, settings, true).await
+        Self::apply_impersonate_settings(inner, settings, true)
     }
 
     /// Set the impersonate for this client without setting the headers.
     #[inline]
     #[cfg(feature = "boring-tls")]
-    pub async fn set_impersonate_without_headers(&mut self, var: Impersonate) -> crate::Result<()> {
+    pub fn set_impersonate_without_headers(&mut self, var: Impersonate) -> crate::Result<()> {
         let settings = tls::tls_settings(var)?;
         let inner = Arc::make_mut(&mut self.inner);
-        Self::apply_impersonate_settings(inner, settings, false).await
+        Self::apply_impersonate_settings(inner, settings, false)
     }
 
     /// Set the impersonate for this client with the given settings.
     #[inline]
     #[cfg(feature = "boring-tls")]
-    pub async fn set_impersonate_with_settings(
+    pub fn set_impersonate_with_settings(
         &mut self,
         settings: ImpersonateSettings,
     ) -> crate::Result<()> {
         let inner = Arc::make_mut(&mut self.inner);
-        Self::apply_impersonate_settings(inner, settings, true).await
+        Self::apply_impersonate_settings(inner, settings, true)
     }
 
     /// Apply the impersonate settings to the client.
     #[cfg(feature = "boring-tls")]
-    async fn apply_impersonate_settings(
+    fn apply_impersonate_settings(
         inner: &mut ClientRef,
         settings: ImpersonateSettings,
         with_headers: bool,
@@ -1652,10 +1643,7 @@ impl Client {
         }
 
         // Set the connector
-        let boringtls_connector =
-            tokio::task::spawn_blocking(move || BoringTlsConnector::new(settings.tls))
-                .await
-                .map_err(|e| error::Error::new(error::Kind::Builder, e.into()))??;
+        let boringtls_connector = BoringTlsConnector::new(settings.tls)?;
         hyper.set_connector(|c| c.set_connector(boringtls_connector));
 
         // Set the conn builder

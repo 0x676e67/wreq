@@ -104,7 +104,7 @@
 //!        .tls(
 //!            TlsSettings::builder()
 //!                 .connector(Box::new(|| {
-//!                     let mut builder = SslConnector::builder(SslMethod::tls_client())?;
+//!                     let mut builder = SslConnector::no_default_verify_builder(SslMethod::tls_client())?;
 //!                     builder.set_curves(&[SslCurve::SECP224R1, SslCurve::SECP521R1])?;
 //!                     builder.set_options(SslOptions::NO_TICKET);
 //!                     Ok(builder)

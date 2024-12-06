@@ -68,7 +68,7 @@ mod tls {
             let curves = self.curves;
 
             let connector = Box::new(move || {
-                let mut builder = SslConnector::builder(SslMethod::tls_client())?;
+                let mut builder = SslConnector::no_default_verify_builder(SslMethod::tls_client())?;
                 builder.enable_ocsp_stapling();
                 builder.set_curves(curves)?;
                 builder.set_sigalgs_list(&sigalgs_list)?;
