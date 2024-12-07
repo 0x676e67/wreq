@@ -5,7 +5,7 @@ pub mod edge;
 pub mod okhttp;
 pub mod safari;
 
-use super::{Http2Settings, TlsResult, TlsSettings};
+use super::{Http2Settings, TlsSettings};
 use chrome::*;
 use edge::*;
 use http::HeaderMap;
@@ -42,7 +42,7 @@ macro_rules! impersonate_match {
 }
 
 /// Get the connection settings for the given impersonate version
-pub fn tls_settings(ver: Impersonate) -> TlsResult<ImpersonateSettings> {
+pub fn tls_settings(ver: Impersonate) -> ImpersonateSettings {
     impersonate_match!(
         ver,
         // Chrome

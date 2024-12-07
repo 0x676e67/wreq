@@ -5,7 +5,7 @@ use rquest::tls::{chrome, ImpersonateSettings};
 async fn main() -> Result<(), rquest::Error> {
     // Create a pre-configured TLS settings
     let settings = ImpersonateSettings::builder()
-        .tls(chrome::tls_template_1()?)
+        .tls(chrome::tls_template_1())
         .http2(chrome::http2_template_1())
         .headers(|headers| {
             headers.insert(header::USER_AGENT, HeaderValue::from_static("rquest"));

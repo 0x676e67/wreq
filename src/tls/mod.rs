@@ -93,9 +93,7 @@ impl BoringTlsConnector {
 #[inline]
 fn create_connect_layer(settings: TlsSettings) -> TlsResult<ConnectLayer> {
     // If the connector builder is set, use it. Otherwise, create a new one.
-    let connector = if let Some(connector) = settings.connector {
-        connector()?
-    } else if cfg!(any(
+    let connector = if cfg!(any(
         feature = "boring-tls-native-roots",
         feature = "boring-tls-webpki-roots"
     )) {

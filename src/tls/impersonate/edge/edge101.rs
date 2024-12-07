@@ -1,17 +1,16 @@
 use super::tls::EdgeTlsSettings;
 use crate::tls::impersonate::ImpersonateSettings;
-use crate::tls::TlsResult;
 use http::{
     header::{ACCEPT, ACCEPT_ENCODING, ACCEPT_LANGUAGE, UPGRADE_INSECURE_REQUESTS, USER_AGENT},
     HeaderMap, HeaderValue,
 };
 
-pub(crate) fn get_settings() -> TlsResult<ImpersonateSettings> {
-    Ok(ImpersonateSettings::builder()
-        .tls(EdgeTlsSettings::builder().build().try_into()?)
+pub(crate) fn get_settings() -> ImpersonateSettings {
+    ImpersonateSettings::builder()
+        .tls(EdgeTlsSettings::builder().build().try_into().unwrap())
         .http2(super::http2_template_1())
         .headers(header_initializer)
-        .build())
+        .build()
 }
 
 fn header_initializer(headers: &mut HeaderMap) {

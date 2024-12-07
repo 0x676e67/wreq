@@ -12,13 +12,13 @@ async fn main() -> Result<(), rquest::Error> {
     let settings = ImpersonateSettings::builder()
         .tls(
             TlsSettings::builder()
-                .connector(Box::new(|| {
+                .connector(|| {
                     let mut builder =
                         SslConnector::no_default_verify_builder(SslMethod::tls_client())?;
                     builder.set_curves(&[SslCurve::SECP224R1, SslCurve::SECP521R1])?;
                     builder.set_options(SslOptions::NO_TICKET);
                     Ok(builder)
-                }))
+                })
                 .tls_sni(true)
                 .http_version_pref(HttpVersionPref::All)
                 .application_settings(true)

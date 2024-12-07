@@ -1,13 +1,12 @@
 use super::tls::OkHttpTlsSettings;
 use crate::tls::impersonate::ImpersonateSettings;
-use crate::tls::TlsResult;
 use http::{
     header::{ACCEPT, ACCEPT_ENCODING, ACCEPT_LANGUAGE, USER_AGENT},
     HeaderMap, HeaderValue,
 };
 
-pub(crate) fn get_settings() -> TlsResult<ImpersonateSettings> {
-    Ok(ImpersonateSettings::builder()
+pub(crate) fn get_settings() -> ImpersonateSettings {
+    ImpersonateSettings::builder()
         .tls(
             OkHttpTlsSettings::builder()
                 .cipher_list(&[
@@ -28,11 +27,11 @@ pub(crate) fn get_settings() -> TlsResult<ImpersonateSettings> {
                     "TLS_RSA_WITH_AES_256_CBC_SHA",
                 ])
                 .build()
-                .try_into()?,
+                .into(),
         )
         .http2(super::http2_template_1())
         .headers(header_initializer)
-        .build())
+        .build()
 }
 
 fn header_initializer(headers: &mut HeaderMap) {

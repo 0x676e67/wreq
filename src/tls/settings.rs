@@ -11,7 +11,7 @@ use hyper::{PseudoOrder, SettingsOrder};
 use typed_builder::TypedBuilder;
 
 /// A TLS connector builder.
-pub type ConnectorBuilder = Box<dyn Fn() -> TlsResult<SslConnectorBuilder> + Send + Sync + 'static>;
+pub type ConnectorBuilder = fn() -> TlsResult<SslConnectorBuilder>;
 
 /// A CA certificate store.
 pub type CAStore = fn() -> Option<&'static X509StoreRef>;
@@ -19,7 +19,7 @@ pub type CAStore = fn() -> Option<&'static X509StoreRef>;
 // ============== TLS ==============
 #[derive(TypedBuilder, Default)]
 pub struct TlsSettings {
-    // Option TLS connector builder
+    /// The TLS connector builder.
     #[builder(default, setter(strip_option))]
     pub connector: Option<ConnectorBuilder>,
 

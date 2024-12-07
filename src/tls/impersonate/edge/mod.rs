@@ -33,14 +33,8 @@ pub fn http2_template_2() -> Http2Settings {
 }
 
 mod tls {
-    use crate::{
-        tls::{cert_compression::CertCompressionAlgorithm, extension::TlsExtension, TlsSettings},
-        HttpVersionPref,
-    };
-    use boring::{
-        error::ErrorStack,
-        ssl::{SslConnector, SslCurve, SslMethod, SslVersion},
-    };
+    use crate::tls::{cert_compression::CertCompressionAlgorithm, TlsSettings, Version};
+    use boring::ssl::SslCurve;
     use typed_builder::TypedBuilder;
 
     pub const CURVES: &[SslCurve] = &[SslCurve::X25519, SslCurve::SECP256R1, SslCurve::SECP384R1];
@@ -85,7 +79,7 @@ mod tls {
     pub struct EdgeTlsSettings<'a> {
         // TLS curves
         #[builder(default = &CURVES)]
-        curves: &'static [SslCurve],
+        curves: &'a [SslCurve],
 
         // TLS sigalgs list
         #[builder(default = &SIGALGS_LIST)]
@@ -112,36 +106,23 @@ mod tls {
         pre_shared_key: bool,
     }
 
-    impl TryInto<TlsSettings> for EdgeTlsSettings<'_> {
-        type Error = ErrorStack;
-
-        fn try_into(self) -> Result<TlsSettings, Self::Error> {
-            let sigalgs_list = self.sigalgs_list.join(":");
-            let cipher_list = self.cipher_list.join(":");
-            let curves = self.curves;
-
-            let connector = Box::new(move || {
-                let mut builder = SslConnector::no_default_verify_builder(SslMethod::tls_client())?;
-                builder.set_grease_enabled(true);
-                builder.enable_ocsp_stapling();
-                builder.set_curves(curves)?;
-                builder.set_sigalgs_list(&sigalgs_list)?;
-                builder.set_cipher_list(&cipher_list)?;
-                builder.enable_signed_cert_timestamps();
-                builder.set_min_proto_version(Some(SslVersion::TLS1_2))?;
-                builder.set_max_proto_version(Some(SslVersion::TLS1_3))?;
-                builder.set_permute_extensions(self.permute_extensions);
-                builder.configure_add_cert_compression_alg(CertCompressionAlgorithm::Brotli)
-            });
-
-            Ok(TlsSettings::builder()
-                .connector(connector)
-                .http_version_pref(HttpVersionPref::All)
+    impl Into<TlsSettings> for EdgeTlsSettings<'_> {
+        fn into(self) -> TlsSettings {
+            TlsSettings::builder()
+                .grease_enabled(true)
+                .enable_ocsp_stapling(true)
+                .enable_signed_cert_timestamps(true)
+                .curves(self.curves.to_vec())
+                .sigalgs_list(self.sigalgs_list.join(":"))
+                .cipher_list(self.cipher_list.join(":"))
+                .min_tls_version(Some(Version::TLS_1_2))
+                .max_tls_version(Some(Version::TLS_1_3))
                 .permute_extensions(self.permute_extensions)
                 .pre_shared_key(self.pre_shared_key)
                 .enable_ech_grease(self.enable_ech_grease)
                 .application_settings(self.application_settings)
-                .build())
+                .cert_compression_algorithm(CertCompressionAlgorithm::Brotli)
+                .build()
         }
     }
 }

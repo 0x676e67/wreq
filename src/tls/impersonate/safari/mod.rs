@@ -13,7 +13,7 @@ pub mod safari_ios_17_2;
 pub mod safari_ios_17_4_1;
 pub mod safari_ipad_18;
 
-use crate::tls::{Http2Settings, TlsResult, TlsSettings};
+use crate::tls::{Http2Settings, TlsSettings};
 use http2::{
     HEADERS_PSEUDO_ORDER, HEADER_PRORIORITY, NEW_HEADERS_PSEUDO_ORDER, NEW_HEADER_PRORIORITY,
     NEW_SETTINGS_ORDER, SETTINGS_ORDER,
@@ -21,18 +21,18 @@ use http2::{
 use tls::{SafariTlsSettings, CIPHER_LIST, NEW_CIPHER_LIST};
 
 // ============== TLS template ==============
-pub fn tls_template_1() -> TlsResult<TlsSettings> {
+pub fn tls_template_1() -> TlsSettings {
     SafariTlsSettings::builder()
         .cipher_list(&NEW_CIPHER_LIST)
         .build()
-        .try_into()
+        .into()
 }
 
-pub fn tls_template_2() -> TlsResult<TlsSettings> {
+pub fn tls_template_2() -> TlsSettings {
     SafariTlsSettings::builder()
         .cipher_list(&CIPHER_LIST)
         .build()
-        .try_into()
+        .into()
 }
 
 // ============== HTTP template ==============
@@ -97,13 +97,8 @@ pub fn http2_template_5() -> Http2Settings {
 }
 
 mod tls {
-    use crate::tls::{
-        cert_compression::CertCompressionAlgorithm, extension::TlsExtension, TlsSettings,
-    };
-    use boring::{
-        error::ErrorStack,
-        ssl::{SslConnector, SslCurve, SslMethod, SslOptions, SslVersion},
-    };
+    use crate::tls::{cert_compression::CertCompressionAlgorithm, TlsSettings, Version};
+    use boring::ssl::SslCurve;
     use typed_builder::TypedBuilder;
 
     pub const CURVES: &[SslCurve] = &[
@@ -183,7 +178,7 @@ mod tls {
     pub struct SafariTlsSettings<'a> {
         // TLS curves
         #[builder(default = CURVES)]
-        curves: &'static [SslCurve],
+        curves: &'a [SslCurve],
 
         // TLS sigalgs list
         #[builder(default = &SIGALGS_LIST)]
@@ -193,31 +188,19 @@ mod tls {
         cipher_list: &'a [&'a str],
     }
 
-    impl TryInto<TlsSettings> for SafariTlsSettings<'_> {
-        type Error = ErrorStack;
-
-        fn try_into(self) -> Result<TlsSettings, Self::Error> {
-            let sigalgs_list = self.sigalgs_list.join(":");
-            let cipher_list = self.cipher_list.join(":");
-            let curves = self.curves;
-
-            let connector = Box::new(move || {
-                let mut builder = SslConnector::no_default_verify_builder(SslMethod::tls_client())?;
-                builder.set_options(SslOptions::NO_TICKET);
-                builder.set_grease_enabled(true);
-                builder.enable_ocsp_stapling();
-                builder.set_curves(curves)?;
-                builder.set_sigalgs_list(&sigalgs_list)?;
-                builder.set_cipher_list(&cipher_list)?;
-                builder.enable_signed_cert_timestamps();
-                builder.set_min_proto_version(Some(SslVersion::TLS1))?;
-                builder.configure_add_cert_compression_alg(CertCompressionAlgorithm::Zlib)
-            });
-
-            Ok(TlsSettings::builder()
-                .connector(connector)
-                .http_version_pref(crate::HttpVersionPref::All)
-                .build())
+    impl Into<TlsSettings> for SafariTlsSettings<'_> {
+        fn into(self) -> TlsSettings {
+            TlsSettings::builder()
+                .session_ticket(false)
+                .grease_enabled(true)
+                .enable_ocsp_stapling(true)
+                .enable_signed_cert_timestamps(true)
+                .curves(self.curves.to_vec())
+                .sigalgs_list(self.sigalgs_list.join(":"))
+                .cipher_list(self.cipher_list.join(":"))
+                .min_tls_version(Some(Version::TLS_1_0))
+                .cert_compression_algorithm(CertCompressionAlgorithm::Zlib)
+                .build()
         }
     }
 }

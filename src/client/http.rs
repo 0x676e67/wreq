@@ -288,10 +288,8 @@ impl ClientBuilder {
     #[cfg(feature = "boring-tls")]
     #[inline]
     fn configure_impersonate(self, impersonate: Impersonate, with_headers: bool) -> ClientBuilder {
-        if let Ok(settings) = tls::tls_settings(impersonate) {
-            return self.apply_tls_settings(settings, with_headers);
-        }
-        self
+        let settings = tls::tls_settings(impersonate);
+        return self.apply_tls_settings(settings, with_headers);
     }
 
     /// Apply the given TLS settings and header function.
@@ -1598,7 +1596,7 @@ impl Client {
     #[inline]
     #[cfg(feature = "boring-tls")]
     pub fn set_impersonate(&mut self, var: Impersonate) -> crate::Result<()> {
-        let settings = tls::tls_settings(var)?;
+        let settings = tls::tls_settings(var);
         let inner = Arc::make_mut(&mut self.inner);
         Self::apply_impersonate_settings(inner, settings, true)
     }
@@ -1607,7 +1605,7 @@ impl Client {
     #[inline]
     #[cfg(feature = "boring-tls")]
     pub fn set_impersonate_without_headers(&mut self, var: Impersonate) -> crate::Result<()> {
-        let settings = tls::tls_settings(var)?;
+        let settings = tls::tls_settings(var);
         let inner = Arc::make_mut(&mut self.inner);
         Self::apply_impersonate_settings(inner, settings, false)
     }

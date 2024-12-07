@@ -1,13 +1,12 @@
 use super::tls::{EdgeTlsSettings, NEW_CURVES};
 use crate::tls::impersonate::ImpersonateSettings;
-use crate::tls::TlsResult;
 use http::{
     header::{ACCEPT, ACCEPT_ENCODING, ACCEPT_LANGUAGE, UPGRADE_INSECURE_REQUESTS, USER_AGENT},
     HeaderMap, HeaderValue,
 };
 
-pub(crate) fn get_settings() -> TlsResult<ImpersonateSettings> {
-    Ok(ImpersonateSettings::builder()
+pub(crate) fn get_settings() -> ImpersonateSettings {
+    ImpersonateSettings::builder()
         .tls(
             EdgeTlsSettings::builder()
                 .curves(NEW_CURVES)
@@ -15,11 +14,11 @@ pub(crate) fn get_settings() -> TlsResult<ImpersonateSettings> {
                 .pre_shared_key(true)
                 .enable_ech_grease(true)
                 .build()
-                .try_into()?,
+                .into(),
         )
         .http2(super::http2_template_2())
         .headers(header_initializer)
-        .build())
+        .build()
 }
 
 fn header_initializer(headers: &mut HeaderMap) {
