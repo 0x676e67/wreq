@@ -168,10 +168,7 @@ impl TlsExtension for SslConnectorBuilder {
     ) -> TlsResult<SslConnectorBuilder> {
         if let Some(cert_store) = ca_cert_stroe.and_then(|call| call()) {
             sv_handler(unsafe {
-                boring_sys::SSL_CTX_set1_verify_cert_store(
-                    self.as_ptr(),
-                    cert_store.as_ptr(),
-                )
+                boring_sys::SSL_CTX_set1_verify_cert_store(self.as_ptr(), cert_store.as_ptr())
             })?;
         }
 
