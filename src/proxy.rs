@@ -905,13 +905,6 @@ fn get_from_environment() -> SystemProxyMap {
         insert_from_env(&mut proxies, "https", "all_proxy");
     }
 
-    if !(insert_from_env(&mut proxies, "http", "ALL_PROXY")
-        && insert_from_env(&mut proxies, "https", "ALL_PROXY"))
-    {
-        insert_from_env(&mut proxies, "http", "all_proxy");
-        insert_from_env(&mut proxies, "https", "all_proxy");
-    }
-
     if is_cgi() {
         if log::log_enabled!(log::Level::Warn) && env::var_os("HTTP_PROXY").is_some() {
             log::warn!("HTTP_PROXY environment variable ignored in CGI");

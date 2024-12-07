@@ -187,11 +187,6 @@ impl ClientBuilder {
         let proxies_maybe_http_auth = proxies.iter().any(|p| p.maybe_has_http_auth());
 
         let mut connector = {
-            #[cfg(feature = "boring-tls")]
-            fn user_agent(headers: &HeaderMap) -> Option<HeaderValue> {
-                headers.get(USER_AGENT).cloned()
-            }
-
             let mut resolver: Arc<dyn Resolve> = match config.hickory_dns {
                 false => Arc::new(GaiResolver::new()),
                 #[cfg(feature = "hickory-dns")]
@@ -217,7 +212,7 @@ impl ClientBuilder {
                     http,
                     BoringTlsConnector::new(config.tls)?,
                     proxies,
-                    user_agent(&config.headers),
+                    config.headers.get(USER_AGENT).cloned(),
                     config.local_address_ipv4,
                     config.local_address_ipv6,
                     #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
@@ -269,6 +264,7 @@ impl ClientBuilder {
     /// Sets the necessary values to mimic the specified impersonate version.
     /// This will set the necessary headers and TLS settings.
     #[cfg(feature = "boring-tls")]
+    #[inline]
     pub fn impersonate(self, impersonate: Impersonate) -> ClientBuilder {
         self.configure_impersonate(impersonate, true)
     }
@@ -276,18 +272,21 @@ impl ClientBuilder {
     /// Sets the necessary values to mimic the specified impersonate version (without headers).
     /// This will set the necessary headers and TLS settings.
     #[cfg(feature = "boring-tls")]
+    #[inline]
     pub fn impersonate_without_headers(self, impersonate: Impersonate) -> ClientBuilder {
         self.configure_impersonate(impersonate, false)
     }
 
     /// Use the preconfigured TLS settings.
     #[cfg(feature = "boring-tls")]
+    #[inline]
     pub fn use_preconfigured_tls(self, settings: ImpersonateSettings) -> ClientBuilder {
         self.apply_tls_settings(settings, true)
     }
 
     /// Private helper to configure impersonation.
     #[cfg(feature = "boring-tls")]
+    #[inline]
     fn configure_impersonate(self, impersonate: Impersonate, with_headers: bool) -> ClientBuilder {
         if let Ok(settings) = tls::tls_settings(impersonate) {
             return self.apply_tls_settings(settings, with_headers);
@@ -334,6 +333,7 @@ impl ClientBuilder {
 
     /// Enable Encrypted Client Hello (Secure SNI)
     #[cfg(feature = "boring-tls")]
+    #[inline]
     pub fn enable_ech_grease(mut self, enabled: bool) -> ClientBuilder {
         self.config.tls.enable_ech_grease = enabled;
         self
@@ -341,6 +341,7 @@ impl ClientBuilder {
 
     /// Enable TLS permute_extensions
     #[cfg(feature = "boring-tls")]
+    #[inline]
     pub fn permute_extensions(mut self, enabled: bool) -> ClientBuilder {
         self.config.tls.permute_extensions = Some(enabled);
         self
@@ -348,6 +349,7 @@ impl ClientBuilder {
 
     /// Enable TLS pre_shared_key
     #[cfg(feature = "boring-tls")]
+    #[inline]
     pub fn pre_shared_key(mut self, enabled: bool) -> ClientBuilder {
         self.config.tls.pre_shared_key = enabled;
         self
@@ -448,6 +450,7 @@ impl ClientBuilder {
     ///
     /// The host header needs to be manually inserted if you want to modify its order.
     /// Otherwise it will be inserted by hyper after sorting.
+    #[inline]
     pub fn headers_order(mut self, order: &'static [HeaderName]) -> ClientBuilder {
         self.config.headers_order = Some(order);
         self

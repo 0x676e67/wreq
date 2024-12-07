@@ -15,6 +15,10 @@ use boring::x509::store::X509Store;
 ))]
 use boring::x509::{store::X509StoreBuilder, X509};
 use cert_compression::CertCompressionAlgorithm;
+#[cfg(any(
+    feature = "boring-tls-webpki-roots",
+    feature = "boring-tls-native-roots"
+))]
 use foreign_types::ForeignTypeRef;
 #[cfg(any(
     feature = "boring-tls-webpki-roots",
@@ -95,6 +99,7 @@ pub trait TlsConnectExtension {
 }
 
 impl TlsExtension for SslConnectorBuilder {
+    #[inline]
     fn configure_cert_verification(
         mut self,
         certs_verification: bool,
@@ -107,6 +112,7 @@ impl TlsExtension for SslConnectorBuilder {
         Ok(self)
     }
 
+    #[inline]
     fn configure_alpn_protos(
         mut self,
         http_version: HttpVersionPref,
@@ -126,6 +132,7 @@ impl TlsExtension for SslConnectorBuilder {
         Ok(self)
     }
 
+    #[inline]
     fn configure_min_tls_version(
         mut self,
         min_tls_version: Option<Version>,
@@ -137,6 +144,7 @@ impl TlsExtension for SslConnectorBuilder {
         Ok(self)
     }
 
+    #[inline]
     fn configure_max_tls_version(
         mut self,
         max_tls_version: Option<Version>,
@@ -148,6 +156,7 @@ impl TlsExtension for SslConnectorBuilder {
         Ok(self)
     }
 
+    #[inline]
     fn configure_add_cert_compression_alg(
         self,
         cert_compression_alg: CertCompressionAlgorithm,
@@ -160,9 +169,11 @@ impl TlsExtension for SslConnectorBuilder {
                 cert_compression_alg.decompression_fn(),
             ))
             .map(|_| self)
+            .map_err(Into::into)
         }
     }
 
+    #[inline]
     fn configure_ca_cert_store(
         mut self,
         ca_cert_stroe: Option<CAStore>,
@@ -178,19 +189,29 @@ impl TlsExtension for SslConnectorBuilder {
         feature = "boring-tls-native-roots",
         not(feature = "boring-tls-webpki-roots")
     ))]
+    #[inline]
     fn configure_set_native_verify_cert_store(mut self) -> TlsResult<SslConnectorBuilder> {
         static LOAD_NATIVE_CERTS: LazyLock<Result<X509Store, crate::Error>> = LazyLock::new(|| {
             let load_certs = rustls_native_certs::load_native_certs();
             load_certs_from_source(load_certs.certs.iter().map(|c| X509::from_der(c.as_ref())))
         });
 
-        let store = configure_set_verify_cert_store(&LOAD_NATIVE_CERTS)?;
-        self.set_verify_cert_store(store)?;
+        if let Ok(cert_store) = LOAD_NATIVE_CERTS.as_deref() {
+            unsafe {
+                sv_handler(boring_sys::SSL_CTX_set1_verify_cert_store(
+                    self.as_ptr(),
+                    cert_store.as_ptr(),
+                ) as c_int)?;
+            }
+        } else {
+            self.set_default_verify_paths()?;
+        }
 
         Ok(self)
     }
 
     #[cfg(feature = "boring-tls-webpki-roots")]
+    #[inline]
     fn configure_set_webpki_verify_cert_store(mut self) -> TlsResult<SslConnectorBuilder> {
         static LOAD_WEBPKI_CERTS: LazyLock<Result<X509Store, crate::Error>> = LazyLock::new(|| {
             load_certs_from_source(
@@ -200,8 +221,16 @@ impl TlsExtension for SslConnectorBuilder {
             )
         });
 
-        let stroe = configure_set_verify_cert_store(&LOAD_WEBPKI_CERTS)?;
-        self.set_verify_cert_store(stroe)?;
+        if let Ok(cert_store) = LOAD_WEBPKI_CERTS.as_deref() {
+            unsafe {
+                sv_handler(boring_sys::SSL_CTX_set1_verify_cert_store(
+                    self.as_ptr(),
+                    cert_store.as_ptr(),
+                ) as c_int)?;
+            }
+        } else {
+            self.set_default_verify_paths()?;
+        }
 
         Ok(self)
     }
@@ -242,30 +271,8 @@ where
     Ok(verify_store.build())
 }
 
-#[cfg(any(
-    feature = "boring-tls-webpki-roots",
-    feature = "boring-tls-native-roots"
-))]
-fn configure_set_verify_cert_store(
-    certs: &Result<X509Store, crate::Error>,
-) -> TlsResult<X509Store> {
-    let mut verify_store = X509StoreBuilder::new()?;
-
-    if let Ok(store) = certs.as_ref() {
-        #[allow(deprecated)]
-        for cert in store.objects().iter() {
-            if let Some(cert) = cert.x509() {
-                verify_store.add_cert(cert.to_owned())?;
-            }
-        }
-    } else {
-        verify_store.set_default_paths()?;
-    }
-
-    Ok(verify_store.build())
-}
-
 impl TlsConnectExtension for ConnectConfiguration {
+    #[inline]
     fn configure_enable_ech_grease(
         &mut self,
         enable_ech_grease: bool,
@@ -274,6 +281,7 @@ impl TlsConnectExtension for ConnectConfiguration {
         Ok(self)
     }
 
+    #[inline]
     fn configure_add_application_settings(
         &mut self,
         http_version: HttpVersionPref,

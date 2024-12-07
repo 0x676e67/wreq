@@ -6,7 +6,7 @@
 //!   `ClientBuilder`.
 
 #![allow(missing_docs)]
-mod connector;
+mod conn;
 mod extension;
 mod impersonate;
 mod settings;
@@ -16,14 +16,14 @@ use boring::{
     error::ErrorStack,
     ssl::{SslConnector, SslMethod, SslOptions, SslVersion},
 };
-pub use connector::MaybeHttpsStream;
-use connector::{HttpsConnector, HttpsLayer, HttpsLayerSettings};
+pub use conn::MaybeHttpsStream;
+use conn::{HttpsConnector, HttpsLayer, HttpsLayerSettings};
 pub use extension::cert_compression;
 use extension::{TlsConnectExtension, TlsExtension};
 pub use impersonate::{
     chrome, edge, okhttp, safari, tls_settings, Impersonate, ImpersonateSettings,
 };
-pub use settings::{Http2Settings, TlsSettings};
+pub use settings::{CAStore, Http2Settings, TlsSettings};
 
 type TlsResult<T> = std::result::Result<T, ErrorStack>;
 type ConnectLayer = HttpsLayer;
@@ -93,9 +93,15 @@ impl BoringTlsConnector {
 #[inline]
 fn create_connect_layer(settings: TlsSettings) -> TlsResult<ConnectLayer> {
     // If the connector builder is set, use it. Otherwise, create a new one.
-    let connector = match settings.connector {
-        Some(connector) => connector()?,
-        None => SslConnector::no_default_verify_builder(SslMethod::tls_client())?,
+    let connector = if let Some(connector) = settings.connector {
+        connector()?
+    } else if cfg!(any(
+        feature = "boring-tls-native-roots",
+        feature = "boring-tls-webpki-roots"
+    )) {
+        SslConnector::no_default_verify_builder(SslMethod::tls_client())?
+    } else {
+        SslConnector::builder(SslMethod::tls_client())?
     };
 
     // Create the `SslConnectorBuilder` and configure it.
@@ -153,27 +159,29 @@ fn create_connect_layer(settings: TlsSettings) -> TlsResult<ConnectLayer> {
     // Conditionally configure the TLS builder based on the "boring-tls-native-roots" feature.
     // If no custom CA cert store, use the system's native certificate store if the feature is enabled.
     let connector = if settings.ca_cert_store.is_none() {
+        // WebPKI root certificates are enabled (regardless of whether native-roots is also enabled).
         #[cfg(feature = "boring-tls-webpki-roots")]
         {
-            // WebPKI root certificates are enabled (regardless of whether native-roots is also enabled).
             connector.configure_set_webpki_verify_cert_store()?
         }
 
+        // Only native-roots is enabled, WebPKI is not enabled.
         #[cfg(all(
             feature = "boring-tls-native-roots",
             not(feature = "boring-tls-webpki-roots")
         ))]
         {
-            // Only native-roots is enabled, WebPKI is not enabled.
             connector.configure_set_native_verify_cert_store()?
         }
 
+        // Neither native-roots nor WebPKI roots are enabled, proceed with the default builder.
         #[cfg(not(any(
             feature = "boring-tls-native-roots",
             feature = "boring-tls-webpki-roots"
         )))]
         {
-            // Neither native-roots nor WebPKI roots are enabled, proceed with the default builder.
+            // Calling this method will consume a lot of time
+            connector.set_default_verify_paths()?;
             connector
         }
     } else {
