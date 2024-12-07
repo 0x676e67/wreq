@@ -16,7 +16,7 @@ use cert_compression::CertCompressionAlgorithm;
 use cert_imports::*;
 
 /// Error handler for the boringssl functions.
-fn sv_handler(r: c_int) -> Result<c_int, ErrorStack> {
+fn sv_handler(r: c_int) -> TlsResult<c_int> {
     if r == 0 {
         Err(ErrorStack::get())
     } else {
@@ -150,15 +150,15 @@ impl TlsExtension for SslConnectorBuilder {
         self,
         cert_compression_alg: CertCompressionAlgorithm,
     ) -> TlsResult<SslConnectorBuilder> {
-        unsafe {
-            sv_handler(boring_sys::SSL_CTX_add_cert_compression_alg(
+        sv_handler(unsafe {
+            boring_sys::SSL_CTX_add_cert_compression_alg(
                 self.as_ptr(),
                 cert_compression_alg as _,
                 cert_compression_alg.compression_fn(),
                 cert_compression_alg.decompression_fn(),
-            ))
-            .map(|_| self)
-        }
+            )
+        })
+        .map(|_| self)
     }
 
     #[inline]
@@ -167,12 +167,12 @@ impl TlsExtension for SslConnectorBuilder {
         ca_cert_stroe: Option<CAStore>,
     ) -> TlsResult<SslConnectorBuilder> {
         if let Some(cert_store) = ca_cert_stroe.and_then(|call| call()) {
-            unsafe {
-                sv_handler(boring_sys::SSL_CTX_set1_verify_cert_store(
+            sv_handler(unsafe {
+                boring_sys::SSL_CTX_set1_verify_cert_store(
                     self.as_ptr(),
                     cert_store.as_ptr(),
-                ))?;
-            }
+                )
+            })?;
         }
 
         Ok(self)
@@ -227,16 +227,16 @@ impl TlsConnectExtension for ConnectConfiguration {
             HttpVersionPref::Http2 | HttpVersionPref::All => ("h2", 2),
         };
 
-        unsafe {
-            sv_handler(boring_sys::SSL_add_application_settings(
+        sv_handler(unsafe {
+            boring_sys::SSL_add_application_settings(
                 self.as_ptr(),
                 alpn.as_ptr(),
                 alpn_len,
                 std::ptr::null(),
                 0,
-            ))
-            .map(|_| self)
-        }
+            )
+        })
+        .map(|_| self)
     }
 }
 
