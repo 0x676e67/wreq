@@ -9,7 +9,7 @@ pub(crate) fn get_settings() -> TlsResult<ImpersonateSettings> {
     Ok(ImpersonateSettings::builder()
         .tls(super::tls_template_6()?)
         .http2(super::http2_template_3())
-        .headers(Box::new(header_initializer))
+        .headers(header_initializer)
         .build())
 }
 

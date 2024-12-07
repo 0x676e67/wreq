@@ -26,7 +26,7 @@ pub struct ImpersonateSettings {
 
     /// Http headers
     #[builder(default, setter(strip_option))]
-    pub(crate) headers: Option<Box<dyn FnOnce(&mut HeaderMap)>>,
+    pub(crate) headers: Option<fn(&mut HeaderMap)>,
 }
 
 macro_rules! impersonate_match {

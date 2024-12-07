@@ -166,9 +166,9 @@ async fn main() -> Result<(), rquest::Error> {
                 ])
                 .build(),
         )
-        .headers(Box::new(|headers| {
+        .headers(|headers| {
             headers.insert(header::USER_AGENT, HeaderValue::from_static("rquest"));
-        }))
+        })
         .build();
 
     // Build a client with pre-configured TLS settings

@@ -7,9 +7,9 @@ async fn main() -> Result<(), rquest::Error> {
     let settings = ImpersonateSettings::builder()
         .tls(chrome::tls_template_1()?)
         .http2(chrome::http2_template_1())
-        .headers(Box::new(|headers| {
+        .headers(|headers| {
             headers.insert(header::USER_AGENT, HeaderValue::from_static("rquest"));
-        }))
+        })
         .build();
 
     // Build a client with pre-configured TLS settings
