@@ -5,7 +5,7 @@ use crate::{
 };
 use boring::{
     ssl::{SslConnectorBuilder, SslCurve},
-    x509::store::X509Store,
+    x509::store::X509StoreRef,
 };
 use hyper::{PseudoOrder, SettingsOrder};
 use typed_builder::TypedBuilder;
@@ -14,7 +14,7 @@ use typed_builder::TypedBuilder;
 pub type ConnectorBuilder = Box<dyn Fn() -> TlsResult<SslConnectorBuilder> + Send + Sync + 'static>;
 
 /// A CA certificate store.
-pub type CAStore = Box<dyn Fn() -> TlsResult<X509Store> + Send + Sync + 'static>;
+pub type CAStore = fn() -> Option<&'static X509StoreRef>;
 
 // ============== TLS ==============
 #[derive(TypedBuilder, Default)]

@@ -1,7 +1,15 @@
 #![allow(missing_debug_implementations)]
 
 pub mod cert_compression;
-
+#[cfg(any(
+    feature = "boring-tls-webpki-roots",
+    feature = "boring-tls-native-roots"
+))]
+mod cert_imports {
+    pub use boring::x509::{store::X509StoreBuilder, X509};
+    pub use foreign_types::ForeignTypeRef;
+    pub use std::sync::LazyLock;
+}
 use super::settings::CAStore;
 use super::{TlsResult, Version};
 use crate::client::http::HttpVersionPref;
@@ -9,22 +17,12 @@ use ::std::os::raw::c_int;
 use boring::error::ErrorStack;
 use boring::ssl::{ConnectConfiguration, SslConnectorBuilder, SslVerifyMode};
 use boring::x509::store::X509Store;
-#[cfg(any(
-    feature = "boring-tls-webpki-roots",
-    feature = "boring-tls-native-roots"
-))]
-use boring::x509::{store::X509StoreBuilder, X509};
 use cert_compression::CertCompressionAlgorithm;
 #[cfg(any(
     feature = "boring-tls-webpki-roots",
     feature = "boring-tls-native-roots"
 ))]
-use foreign_types::ForeignTypeRef;
-#[cfg(any(
-    feature = "boring-tls-webpki-roots",
-    feature = "boring-tls-native-roots"
-))]
-use std::sync::LazyLock;
+use cert_imports::*;
 
 /// Error handler for the boringssl functions.
 fn sv_handler(r: c_int) -> Result<c_int, ErrorStack> {
@@ -175,11 +173,16 @@ impl TlsExtension for SslConnectorBuilder {
 
     #[inline]
     fn configure_ca_cert_store(
-        mut self,
+        self,
         ca_cert_stroe: Option<CAStore>,
     ) -> TlsResult<SslConnectorBuilder> {
-        if let Some(stroe) = ca_cert_stroe {
-            self.set_verify_cert_store(stroe()?)?;
+        if let Some(cert_store) = ca_cert_stroe.and_then(|call| call()) {
+            unsafe {
+                sv_handler(boring_sys::SSL_CTX_set1_verify_cert_store(
+                    self.as_ptr(),
+                    cert_store.as_ptr(),
+                ) as c_int)?;
+            }
         }
 
         Ok(self)
@@ -246,12 +249,12 @@ where
 {
     let mut valid_count = 0;
     let mut invalid_count = 0;
-    let mut verify_store = X509StoreBuilder::new()?;
+    let mut cert_store = X509StoreBuilder::new()?;
 
     for cert in certs {
         match cert {
             Ok(cert) => {
-                verify_store.add_cert(cert)?;
+                cert_store.add_cert(cert)?;
                 valid_count += 1;
             }
             Err(err) => {
@@ -268,7 +271,7 @@ where
         ));
     }
 
-    Ok(verify_store.build())
+    Ok(cert_store.build())
 }
 
 impl TlsConnectExtension for ConnectConfiguration {
