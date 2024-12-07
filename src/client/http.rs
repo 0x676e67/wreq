@@ -210,7 +210,6 @@ impl ClientBuilder {
                     http,
                     BoringTlsConnector::new(config.tls)?,
                     proxies,
-                    config.headers.get(USER_AGENT).cloned(),
                     config.local_address_ipv4,
                     config.local_address_ipv6,
                     #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]

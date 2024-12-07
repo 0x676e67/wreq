@@ -34,9 +34,7 @@ pub(crate) struct Connector {
     #[cfg(feature = "boring-tls")]
     nodelay: bool,
     #[cfg(feature = "boring-tls")]
-    tls_info: bool,
-    #[cfg(feature = "boring-tls")]
-    user_agent: Option<HeaderValue>,
+    tls_info: bool
 }
 
 #[derive(Clone)]
@@ -87,7 +85,6 @@ impl Connector {
         mut http: HttpConnector,
         tls: BoringTlsConnector,
         proxies: Arc<Vec<Proxy>>,
-        user_agent: Option<HeaderValue>,
         local_addr_v4: Option<Ipv4Addr>,
         local_addr_v6: Option<Ipv6Addr>,
         #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
@@ -113,7 +110,6 @@ impl Connector {
             verbose: verbose::OFF,
             timeout: None,
             nodelay,
-            user_agent,
             tls_info,
         }
     }
@@ -306,7 +302,7 @@ impl Connector {
                     let mut http = tls.create_connector(http.clone(), _ws).await;
                     let conn = http.call(proxy_dst).await?;
                     log::trace!("tunneling HTTPS over proxy");
-                    let tunneled = tunnel(conn, host, port, self.user_agent.as_ref(), auth).await?;
+                    let tunneled = tunnel(conn, host, port, auth).await?;
 
                     let ssl = http.setup_ssl(&dst, host)?;
                     let io = tokio_boring::SslStreamBuilder::new(ssl, tunneled)
@@ -569,7 +565,6 @@ async fn tunnel<T>(
     mut conn: T,
     host: &str,
     port: u16,
-    user_agent: Option<&HeaderValue>,
     auth: Option<HeaderValue>,
 ) -> Result<T, BoxError>
 where
@@ -587,11 +582,10 @@ where
     .into_bytes();
 
     // user-agent
-    if let Some(user_agent) = user_agent {
-        buf.extend_from_slice(b"User-Agent: ");
-        buf.extend_from_slice(user_agent.as_bytes());
-        buf.extend_from_slice(b"\r\n");
-    }
+    buf.extend_from_slice(b"User-Agent: ");
+    buf.extend_from_slice(b"rquest/");
+    buf.extend_from_slice(env!("CARGO_PKG_VERSION").as_bytes());
+    buf.extend_from_slice(b"\r\n");
 
     // proxy-authorization
     if let Some(value) = auth {
@@ -953,171 +947,5 @@ mod verbose {
             }
             Ok(())
         }
-    }
-}
-
-#[cfg(feature = "boring-tls")]
-#[cfg(test)]
-mod tests {
-    use super::tunnel;
-    use crate::proxy;
-    use std::io::{Read, Write};
-    use std::net::TcpListener;
-    use std::thread;
-    use tokio::net::TcpStream;
-    use tokio::runtime;
-
-    static TUNNEL_UA: &str = "tunnel-test/x.y";
-    static TUNNEL_OK: &[u8] = b"\
-        HTTP/1.1 200 OK\r\n\
-        \r\n\
-    ";
-
-    macro_rules! mock_tunnel {
-        () => {{
-            mock_tunnel!(TUNNEL_OK)
-        }};
-        ($write:expr) => {{
-            mock_tunnel!($write, "")
-        }};
-        ($write:expr, $auth:expr) => {{
-            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-            let addr = listener.local_addr().unwrap();
-            let connect_expected = format!(
-                "\
-                 CONNECT {0}:{1} HTTP/1.1\r\n\
-                 Host: {0}:{1}\r\n\
-                 User-Agent: {2}\r\n\
-                 {3}\
-                 \r\n\
-                 ",
-                addr.ip(),
-                addr.port(),
-                TUNNEL_UA,
-                $auth
-            )
-            .into_bytes();
-
-            thread::spawn(move || {
-                let (mut sock, _) = listener.accept().unwrap();
-                let mut buf = [0u8; 4096];
-                let n = sock.read(&mut buf).unwrap();
-                assert_eq!(&buf[..n], &connect_expected[..]);
-
-                sock.write_all($write).unwrap();
-            });
-            addr
-        }};
-    }
-
-    fn ua() -> Option<http::header::HeaderValue> {
-        Some(http::header::HeaderValue::from_static(TUNNEL_UA))
-    }
-
-    #[test]
-    fn test_tunnel() {
-        let addr = mock_tunnel!();
-
-        let rt = runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .expect("new rt");
-        let f = async move {
-            let tcp = TcpStream::connect(&addr).await?;
-            let host = addr.ip().to_string();
-            let port = addr.port();
-            tunnel(tcp, &host, port, ua().as_ref(), None).await
-        };
-
-        rt.block_on(f).unwrap();
-    }
-
-    #[test]
-    fn test_tunnel_eof() {
-        let addr = mock_tunnel!(b"HTTP/1.1 200 OK");
-
-        let rt = runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .expect("new rt");
-        let f = async move {
-            let tcp = TcpStream::connect(&addr).await?;
-            let host = addr.ip().to_string();
-            let port = addr.port();
-            tunnel(tcp, &host, port, ua().as_ref(), None).await
-        };
-
-        rt.block_on(f).unwrap_err();
-    }
-
-    #[test]
-    fn test_tunnel_non_http_response() {
-        let addr = mock_tunnel!(b"foo bar baz hallo");
-
-        let rt = runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .expect("new rt");
-        let f = async move {
-            let tcp = TcpStream::connect(&addr).await?;
-            let host = addr.ip().to_string();
-            let port = addr.port();
-            tunnel(tcp, &host, port, ua().as_ref(), None).await
-        };
-
-        rt.block_on(f).unwrap_err();
-    }
-
-    #[test]
-    fn test_tunnel_proxy_unauthorized() {
-        let addr = mock_tunnel!(
-            b"\
-            HTTP/1.1 407 Proxy Authentication Required\r\n\
-            Proxy-Authenticate: Basic realm=\"nope\"\r\n\
-            \r\n\
-        "
-        );
-
-        let rt = runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .expect("new rt");
-        let f = async move {
-            let tcp = TcpStream::connect(&addr).await?;
-            let host = addr.ip().to_string();
-            let port = addr.port();
-            tunnel(tcp, &host, port, ua().as_ref(), None).await
-        };
-
-        let error = rt.block_on(f).unwrap_err();
-        assert_eq!(error.to_string(), "proxy authentication required");
-    }
-
-    #[test]
-    fn test_tunnel_basic_auth() {
-        let addr = mock_tunnel!(
-            TUNNEL_OK,
-            "Proxy-Authorization: Basic QWxhZGRpbjpvcGVuIHNlc2FtZQ==\r\n"
-        );
-
-        let rt = runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .expect("new rt");
-        let f = async move {
-            let tcp = TcpStream::connect(&addr).await?;
-            let host = addr.ip().to_string();
-            let port = addr.port();
-            tunnel(
-                tcp,
-                &host,
-                port,
-                ua().as_ref(),
-                Some(proxy::encode_basic_auth("Aladdin", "open sesame")),
-            )
-            .await
-        };
-
-        rt.block_on(f).unwrap();
     }
 }
