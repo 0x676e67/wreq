@@ -58,7 +58,7 @@ impl Connector {
         local_addr_v4: Option<Ipv4Addr>,
         local_addr_v6: Option<Ipv6Addr>,
         #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
-        interface: Option<&str>,
+        interface: Option<String>,
         nodelay: bool,
     ) -> Connector {
         match (local_addr_v4, local_addr_v6) {
@@ -69,7 +69,7 @@ impl Connector {
         }
         #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
         if let Some(interface) = interface {
-            http.set_interface(interface);
+            http.set_interface(&interface);
         }
         http.set_nodelay(nodelay);
 
@@ -91,7 +91,7 @@ impl Connector {
         local_addr_v4: Option<Ipv4Addr>,
         local_addr_v6: Option<Ipv6Addr>,
         #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
-        interface: Option<&str>,
+        interface: Option<String>,
         nodelay: bool,
         tls_info: bool,
     ) -> Connector {
@@ -103,7 +103,7 @@ impl Connector {
         }
         #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
         if let Some(interface) = interface {
-            http.set_interface(interface);
+            http.set_interface(&interface);
         }
         http.enforce_http(false);
 

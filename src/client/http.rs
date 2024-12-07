@@ -216,7 +216,7 @@ impl ClientBuilder {
                     config.local_address_ipv4,
                     config.local_address_ipv6,
                     #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
-                    config.interface.as_deref(),
+                    config.interface,
                     config.nodelay,
                     config.tls_info,
                 )
@@ -229,6 +229,8 @@ impl ClientBuilder {
                     proxies.clone(),
                     config.local_address_ipv4,
                     config.local_address_ipv6,
+                    #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
+                    config.interface,
                     config.nodelay,
                 )
             }
