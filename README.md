@@ -12,7 +12,8 @@ An ergonomic, all-in-one `JA3`/`JA4`/`HTTP2` fingerprint `HTTP`/`WebSocket` clie
 - Header Order
 - Redirect policy
 - Cookie Store
-- `HTTPS`/`WebSocket` via BoringSSL
+- Ultra-fast client setup
+- `HTTPS`/`WebSocket` via [BoringSSL](https://github.com/google/boringssl)
 - Preconfigured `TLS`/`HTTP2` settings
 - `HTTP`, `HTTPS`, `SOCKS4` and `SOCKS5` proxies
 - [Changelog](https://github.com/penumbra-x/rquest/blob/main/CHANGELOG.md)
