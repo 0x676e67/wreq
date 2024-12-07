@@ -180,8 +180,6 @@ fn create_connect_layer(settings: TlsSettings) -> TlsResult<ConnectLayer> {
             feature = "boring-tls-webpki-roots"
         )))]
         {
-            // Calling this method will consume a lot of time
-            connector.set_default_verify_paths()?;
             connector
         }
     } else {
