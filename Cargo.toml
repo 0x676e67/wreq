@@ -240,6 +240,11 @@ path = "examples/set_cookies.rs"
 required-features = ["cookies"]
 
 [[example]]
+name = "set_cookie_provider"
+path = "examples/set_cookie_provider.rs"
+required-features = ["cookies"]
+
+[[example]]
 name = "set_proxies"
 path = "examples/set_proxies.rs"
 required-features = ["socks", "brotli"]
