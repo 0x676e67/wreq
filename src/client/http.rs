@@ -1,4 +1,5 @@
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use std::num::NonZeroUsize;
 use std::sync::Arc;
 use std::time::Duration;
 use std::{collections::HashMap, convert::TryInto, net::SocketAddr};
@@ -83,6 +84,7 @@ struct Config {
     connection_verbose: bool,
     pool_idle_timeout: Option<Duration>,
     pool_max_idle_per_host: usize,
+    pool_max_size: Option<NonZeroUsize>,
     tcp_keepalive: Option<Duration>,
     proxies: Vec<Proxy>,
     auto_sys_proxy: bool,
@@ -132,6 +134,7 @@ impl ClientBuilder {
                 connection_verbose: false,
                 pool_idle_timeout: Some(Duration::from_secs(90)),
                 pool_max_idle_per_host: usize::MAX,
+                pool_max_size: None,
                 // TODO: Re-enable default duration once hyper's HttpConnector is fixed
                 // to no longer error when an option fails.
                 tcp_keepalive: None,
@@ -241,6 +244,7 @@ impl ClientBuilder {
             .builder
             .pool_idle_timeout(config.pool_idle_timeout)
             .pool_max_idle_per_host(config.pool_max_idle_per_host)
+            .pool_max_size(config.pool_max_size)
             .http1_title_case_headers(config.http1_title_case_headers);
 
         Ok(Client {
@@ -761,6 +765,12 @@ impl ClientBuilder {
     /// Sets the maximum idle connection per host allowed in the pool.
     pub fn pool_max_idle_per_host(mut self, max: usize) -> ClientBuilder {
         self.config.pool_max_idle_per_host = max;
+        self
+    }
+
+    /// Sets the maximum number of connections in the pool.
+    pub fn pool_max_size(mut self, max: impl Into<Option<NonZeroUsize>>) -> ClientBuilder {
+        self.config.pool_max_size = max.into();
         self
     }
 
@@ -1501,14 +1511,7 @@ impl Client {
 
     /// Get a mutable reference to the headers for this client.
     pub fn headers_mut(&mut self) -> &mut HeaderMap {
-        &mut Arc::make_mut(&mut self.inner).headers
-    }
-
-    /// Set the cookie provider for this client.
-    #[cfg(feature = "cookies")]
-    #[inline]
-    pub fn set_cookie_provider<C: cookie::CookieStore + 'static>(&mut self, cookie_store: Arc<C>) {
-        Arc::make_mut(&mut self.inner).cookie_store = Some(cookie_store as _);
+        &mut self.inner_mut().headers
     }
 
     /// Returns a `String` of the header-value of all `Cookie` in a `Url`.
@@ -1553,11 +1556,17 @@ impl Client {
 
         Ok(())
     }
+    /// Set the cookie provider for this client.
+    #[cfg(feature = "cookies")]
+    #[inline]
+    pub fn set_cookie_provider<C: cookie::CookieStore + 'static>(&mut self, cookie_store: Arc<C>) {
+        self.inner_mut().cookie_store = Some(cookie_store as _);
+    }
 
     /// Set the proxies for this client.
     #[inline]
     pub fn set_proxies(&mut self, proxies: &[Proxy]) {
-        Arc::make_mut(&mut self.inner).hyper.set_proxies(proxies);
+        self.inner_mut().hyper.set_proxies(proxies);
         self.inner.hyper.reset_pool_idle();
     }
 
@@ -1571,17 +1580,15 @@ impl Client {
     where
         T: Into<Option<IpAddr>>,
     {
-        Arc::make_mut(&mut self.inner)
-            .hyper
-            .set_local_address(addr.into());
+        self.inner_mut().hyper.set_local_address(addr.into());
         self.inner.hyper.reset_pool_idle();
     }
 
-    /// Set that all sockets are bound to the configured IPv4 or IPv6 address (depending on host's
-    /// preferences) before connection.
+    /// Set that all sockets are bound to the configured IPv4 or IPv6 address
+    /// (depending on host's preferences) before connection.
     #[inline]
     pub fn set_local_addresses(&mut self, addr_ipv4: Ipv4Addr, addr_ipv6: Ipv6Addr) {
-        Arc::make_mut(&mut self.inner)
+        self.inner_mut()
             .hyper
             .set_local_addresses(addr_ipv4, addr_ipv6);
         self.inner.hyper.reset_pool_idle();
@@ -1591,9 +1598,7 @@ impl Client {
     #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
     #[inline]
     pub fn set_interface(&mut self, interface: &str) {
-        Arc::make_mut(&mut self.inner)
-            .hyper
-            .set_interface(interface);
+        self.inner_mut().hyper.set_interface(interface);
         self.inner.hyper.reset_pool_idle();
     }
 
@@ -1602,8 +1607,7 @@ impl Client {
     #[cfg(feature = "boring-tls")]
     pub fn set_impersonate(&mut self, var: Impersonate) -> crate::Result<()> {
         let settings = tls::tls_settings(var);
-        let inner = Arc::make_mut(&mut self.inner);
-        Self::apply_impersonate_settings(inner, settings, true)
+        self.apply_impersonate_settings(settings, true)
     }
 
     /// Set the impersonate for this client without setting the headers.
@@ -1611,8 +1615,7 @@ impl Client {
     #[cfg(feature = "boring-tls")]
     pub fn set_impersonate_without_headers(&mut self, var: Impersonate) -> crate::Result<()> {
         let settings = tls::tls_settings(var);
-        let inner = Arc::make_mut(&mut self.inner);
-        Self::apply_impersonate_settings(inner, settings, false)
+        self.apply_impersonate_settings(settings, false)
     }
 
     /// Set the impersonate for this client with the given settings.
@@ -1622,18 +1625,18 @@ impl Client {
         &mut self,
         settings: ImpersonateSettings,
     ) -> crate::Result<()> {
-        let inner = Arc::make_mut(&mut self.inner);
-        Self::apply_impersonate_settings(inner, settings, true)
+        self.apply_impersonate_settings(settings, true)
     }
 
     /// Apply the impersonate settings to the client.
     #[cfg(feature = "boring-tls")]
+    #[inline]
     fn apply_impersonate_settings(
-        inner: &mut ClientRef,
+        &mut self,
         settings: ImpersonateSettings,
         with_headers: bool,
     ) -> crate::Result<()> {
-        let hyper = &mut inner.hyper;
+        let inner = self.inner_mut();
 
         // Clear the headers
         inner.headers.clear();
@@ -1644,6 +1647,8 @@ impl Client {
                 headers(&mut inner.headers)
             }
         }
+
+        let hyper = &mut inner.hyper;
 
         // Set the connector
         let boringtls_connector = BoringTlsConnector::new(settings.tls)?;
@@ -1677,12 +1682,20 @@ impl Client {
 
     /// Set the headers order for this client.
     pub fn set_headers_order(&mut self, order: &'static [HeaderName]) {
-        Arc::make_mut(&mut self.inner).headers_order = Some(order);
+        self.inner_mut().headers_order = Some(order);
     }
 
     /// Set the redirect policy for this client.
     pub fn set_redirect_policy(&mut self, policy: Arc<redirect::Policy>) {
-        Arc::make_mut(&mut self.inner).redirect_policy = policy;
+        self.inner_mut().redirect_policy = policy;
+    }
+
+    /// private mut ref to inner
+    fn inner_mut(&mut self) -> &mut ClientRef {
+        // If the are HttpConnector clones, this will clone the inner
+        // config. So mutating the config won't ever affect previous
+        // clones.
+        Arc::make_mut(&mut self.inner)
     }
 }
 

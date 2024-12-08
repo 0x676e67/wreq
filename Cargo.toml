@@ -101,7 +101,7 @@ mime_guess = { version = "2.0", default-features = false, optional = true }
 
 encoding_rs = "0.8"
 http-body = "0.4.6"
-hyper = { package = "hyper2", version = "0.14.60", default-features = false, features = [
+hyper = { package = "hyper2", version = "0.14.70", default-features = false, features = [
     "http1",
     "http2",
     "client",
@@ -166,7 +166,7 @@ system-configuration = "0.6.0"
 
 [dev-dependencies]
 env_logger = "0.10.0"
-hyper = { package = "hyper2", version = "0.14.60", default-features = false, features = [
+hyper = { package = "hyper2", version = "0.14.70", default-features = false, features = [
     "stream",
     "http1",
     "http2",

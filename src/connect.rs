@@ -34,7 +34,7 @@ pub(crate) struct Connector {
     #[cfg(feature = "boring-tls")]
     nodelay: bool,
     #[cfg(feature = "boring-tls")]
-    tls_info: bool
+    tls_info: bool,
 }
 
 #[derive(Clone)]
