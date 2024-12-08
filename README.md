@@ -13,6 +13,7 @@ An ergonomic, all-in-one `JA3`/`JA4`/`HTTP2` fingerprint `HTTP`/`WebSocket` clie
 - Redirect policy
 - Cookie Store
 - Ultra-fast client setup
+- Customizable Connection Pool
 - `HTTPS`/`WebSocket` via [BoringSSL](https://github.com/google/boringssl)
 - Preconfigured `TLS`/`HTTP2` settings
 - `HTTP`, `HTTPS`, `SOCKS4` and `SOCKS5` proxies
