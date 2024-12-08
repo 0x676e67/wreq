@@ -1440,10 +1440,24 @@ impl Client {
             headers = sorted_headers;
         }
 
-        let builder = hyper::Request::builder()
+        // Proxy-level connection pool, two factors (host and authentication)
+        let mut pool_key_ext = None;
+        for proxy in self.inner.hyper.get_proxies().as_ref() {
+            if let Some(proxy_scheme) = proxy.intercept(&uri) {
+                let ext = proxy_scheme.pool_key_extension();
+                pool_key_ext = Some(ext);
+                break;
+            }
+        }
+
+        let mut builder = hyper::Request::builder()
             .method(method.clone())
             .uri(uri)
             .version(version);
+
+        if let Some(pool_key_ext) = pool_key_ext {
+            builder = builder.extension(pool_key_ext);
+        }
 
         let in_flight = {
             let mut req = builder
@@ -1563,7 +1577,6 @@ impl Client {
     #[inline]
     pub fn set_proxies(&mut self, proxies: &[Proxy]) {
         self.inner_mut().hyper.set_proxies(proxies);
-        self.inner.hyper.reset_pool_idle();
     }
 
     /// Set that all sockets are bound to the configured address before connection.
@@ -1577,7 +1590,6 @@ impl Client {
         T: Into<Option<IpAddr>>,
     {
         self.inner_mut().hyper.set_local_address(addr.into());
-        self.inner.hyper.reset_pool_idle();
     }
 
     /// Set that all sockets are bound to the configured IPv4 or IPv6 address
@@ -1587,7 +1599,6 @@ impl Client {
         self.inner_mut()
             .hyper
             .set_local_addresses(addr_ipv4, addr_ipv6);
-        self.inner.hyper.reset_pool_idle();
     }
 
     /// Bind to an interface by `SO_BINDTODEVICE`.

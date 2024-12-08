@@ -6,7 +6,8 @@ use std::sync::{Arc, LazyLock};
 use crate::into_url::{IntoUrl, IntoUrlSealed};
 use crate::Url;
 
-use http::{header::HeaderValue, Uri};
+use http::{header::HeaderValue, uri::Scheme, Uri};
+use hyper::ext::PoolKeyExt;
 use ipnet::IpNet;
 use percent_encoding::percent_decode;
 use std::collections::HashMap;
@@ -121,6 +122,17 @@ impl ProxyScheme {
             ProxyScheme::Http { auth, .. } | ProxyScheme::Https { auth, .. } => auth.as_ref(),
             #[cfg(feature = "socks")]
             _ => None,
+        }
+    }
+
+    pub fn pool_key_extension(self) -> PoolKeyExt {
+        match self {
+            ProxyScheme::Http { host, auth } => PoolKeyExt::Http(Scheme::HTTP, host, auth),
+            ProxyScheme::Https { host, auth } => PoolKeyExt::Http(Scheme::HTTPS, host, auth),
+            #[cfg(feature = "socks")]
+            ProxyScheme::Socks4 { addr } => PoolKeyExt::Socks4(addr, None),
+            #[cfg(feature = "socks")]
+            ProxyScheme::Socks5 { addr, auth, .. } => PoolKeyExt::Socks5(addr, auth),
         }
     }
 }
