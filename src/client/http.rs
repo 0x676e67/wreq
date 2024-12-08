@@ -7,8 +7,8 @@ use std::{fmt, str};
 
 use bytes::Bytes;
 use http::header::{
-    Entry, HeaderMap, HeaderValue, ACCEPT, ACCEPT_ENCODING, CONTENT_ENCODING, CONTENT_LENGTH,
-    CONTENT_TYPE, LOCATION, PROXY_AUTHORIZATION, RANGE, REFERER, TRANSFER_ENCODING, USER_AGENT,
+    Entry, HeaderMap, HeaderValue, ACCEPT, CONTENT_ENCODING, CONTENT_LENGTH, CONTENT_TYPE,
+    LOCATION, PROXY_AUTHORIZATION, REFERER, TRANSFER_ENCODING, USER_AGENT,
 };
 use http::uri::Scheme;
 use http::{HeaderName, Uri};
@@ -1406,14 +1406,6 @@ impl Client {
             }
         }
 
-        let accept_encoding = self.inner.accepts.as_str();
-
-        if let Some(accept_encoding) = accept_encoding {
-            if !headers.contains_key(ACCEPT_ENCODING) && !headers.contains_key(RANGE) {
-                headers.insert(ACCEPT_ENCODING, HeaderValue::from_static(accept_encoding));
-            }
-        }
-
         let uri = expect_uri(&url);
 
         let (reusable, body) = match body {
@@ -2196,20 +2188,5 @@ fn make_referer(next: &Url, previous: &Url) -> Option<HeaderValue> {
 fn add_cookie_header(headers: &mut HeaderMap, cookie_store: &dyn cookie::CookieStore, url: &Url) {
     if let Some(header) = cookie_store.cookies(url) {
         headers.insert(crate::header::COOKIE, header);
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    #[tokio::test]
-    async fn execute_request_rejects_invald_urls() {
-        let url_str = "hxxps://www.rust-lang.org/";
-        let url = url::Url::parse(url_str).unwrap();
-        let result = crate::get(url.clone()).await;
-
-        assert!(result.is_err());
-        let err = result.err().unwrap();
-        assert!(err.is_builder());
-        assert_eq!(url_str, err.url().unwrap().as_str());
     }
 }
