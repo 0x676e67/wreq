@@ -50,7 +50,7 @@ pub struct ImpersonateSettings {
     pub(crate) http2: Http2Settings,
 
     /// Http headers
-    #[builder(default, setter(strip_option))]
+    #[builder(default, setter(into))]
     pub(crate) headers: Option<HeaderMap>,
 
     /// Http headers order
@@ -59,11 +59,11 @@ pub struct ImpersonateSettings {
 }
 
 macro_rules! impersonate_match {
-    ($ver:expr, $($variant:pat => $path:path),+) => {
+    ($ver:expr, $with_headers:expr, $($variant:pat => $path:path),+) => {
         match $ver {
             $(
                 $variant => {
-                    $path()
+                    $path($with_headers)
                 },
             )+
         }
@@ -72,9 +72,10 @@ macro_rules! impersonate_match {
 
 /// Get the connection settings for the given impersonate version
 #[inline]
-pub fn tls_settings(ver: Impersonate) -> ImpersonateSettings {
+pub fn tls_settings(ver: Impersonate, with_headers: bool) -> ImpersonateSettings {
     impersonate_match!(
         ver,
+        with_headers,
         // Chrome
         Chrome100 => v100::get_settings,
         Chrome101 => v101::get_settings,

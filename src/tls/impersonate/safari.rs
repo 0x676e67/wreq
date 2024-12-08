@@ -228,11 +228,15 @@ pub(crate) mod safari15_3 {
     use crate::tls::impersonate::impersonte_imports::*;
 
     #[inline]
-    pub fn get_settings() -> ImpersonateSettings {
+    pub fn get_settings(with_headers: bool) -> ImpersonateSettings {
         ImpersonateSettings::builder()
             .tls(super::tls_template_2())
             .http2(super::http2_template_4())
-            .headers(header_initializer())
+            .headers(if with_headers {
+                Some(header_initializer())
+            } else {
+                None
+            })
             .build()
     }
 
@@ -259,11 +263,15 @@ pub(crate) mod safari15_5 {
     use crate::tls::impersonate::impersonte_imports::*;
 
     #[inline]
-    pub fn get_settings() -> ImpersonateSettings {
+    pub fn get_settings(with_headers: bool) -> ImpersonateSettings {
         ImpersonateSettings::builder()
             .tls(super::tls_template_2())
             .http2(super::http2_template_4())
-            .headers(header_initializer())
+            .headers(if with_headers {
+                Some(header_initializer())
+            } else {
+                None
+            })
             .build()
     }
 
@@ -290,11 +298,15 @@ pub(crate) mod safari15_6_1 {
     use crate::tls::impersonate::impersonte_imports::*;
 
     #[inline]
-    pub fn get_settings() -> ImpersonateSettings {
+    pub fn get_settings(with_headers: bool) -> ImpersonateSettings {
         ImpersonateSettings::builder()
             .tls(super::tls_template_1())
             .http2(super::http2_template_4())
-            .headers(header_initializer())
+            .headers(if with_headers {
+                Some(header_initializer())
+            } else {
+                None
+            })
             .build()
     }
 
@@ -321,11 +333,15 @@ pub(crate) mod safari16 {
     use crate::tls::impersonate::impersonte_imports::*;
 
     #[inline]
-    pub fn get_settings() -> ImpersonateSettings {
+    pub fn get_settings(with_headers: bool) -> ImpersonateSettings {
         ImpersonateSettings::builder()
             .tls(super::tls_template_1())
             .http2(super::http2_template_4())
-            .headers(header_initializer())
+            .headers(if with_headers {
+                Some(header_initializer())
+            } else {
+                None
+            })
             .build()
     }
 
@@ -355,11 +371,15 @@ pub(crate) mod safari16_5 {
     use crate::tls::impersonate::impersonte_imports::*;
 
     #[inline]
-    pub fn get_settings() -> ImpersonateSettings {
+    pub fn get_settings(with_headers: bool) -> ImpersonateSettings {
         ImpersonateSettings::builder()
             .tls(super::tls_template_1())
             .http2(super::http2_template_4())
-            .headers(header_initializer())
+            .headers(if with_headers {
+                Some(header_initializer())
+            } else {
+                None
+            })
             .build()
     }
 
@@ -389,11 +409,15 @@ pub(crate) mod safari17_0 {
     use crate::tls::impersonate::impersonte_imports::*;
 
     #[inline]
-    pub fn get_settings() -> ImpersonateSettings {
+    pub fn get_settings(with_headers: bool) -> ImpersonateSettings {
         ImpersonateSettings::builder()
             .tls(super::tls_template_1())
             .http2(super::http2_template_5())
-            .headers(header_initializer())
+            .headers(if with_headers {
+                Some(header_initializer())
+            } else {
+                None
+            })
             .build()
     }
 
@@ -423,11 +447,15 @@ pub(crate) mod safari17_2_1 {
     use crate::tls::impersonate::impersonte_imports::*;
 
     #[inline]
-    pub fn get_settings() -> ImpersonateSettings {
+    pub fn get_settings(with_headers: bool) -> ImpersonateSettings {
         ImpersonateSettings::builder()
             .tls(super::tls_template_1())
             .http2(super::http2_template_5())
-            .headers(header_initializer())
+            .headers(if with_headers {
+                Some(header_initializer())
+            } else {
+                None
+            })
             .build()
     }
 
@@ -457,11 +485,15 @@ pub(crate) mod safari17_4_1 {
     use crate::tls::impersonate::impersonte_imports::*;
 
     #[inline]
-    pub fn get_settings() -> ImpersonateSettings {
+    pub fn get_settings(with_headers: bool) -> ImpersonateSettings {
         ImpersonateSettings::builder()
             .tls(super::tls_template_1())
             .http2(super::http2_template_4())
-            .headers(header_initializer())
+            .headers(if with_headers {
+                Some(header_initializer())
+            } else {
+                None
+            })
             .build()
     }
 
@@ -491,11 +523,15 @@ pub(crate) mod safari17_5 {
     use crate::tls::impersonate::impersonte_imports::*;
 
     #[inline]
-    pub fn get_settings() -> ImpersonateSettings {
+    pub fn get_settings(with_headers: bool) -> ImpersonateSettings {
         ImpersonateSettings::builder()
             .tls(super::tls_template_1())
             .http2(super::http2_template_5())
-            .headers(header_initializer())
+            .headers(if with_headers {
+                Some(header_initializer())
+            } else {
+                None
+            })
             .build()
     }
 
@@ -525,11 +561,15 @@ pub(crate) mod safari18 {
     use crate::tls::impersonate::impersonte_imports::*;
 
     #[inline]
-    pub fn get_settings() -> ImpersonateSettings {
+    pub fn get_settings(with_headers: bool) -> ImpersonateSettings {
         ImpersonateSettings::builder()
             .tls(super::tls_template_1())
             .http2(super::http2_template_3())
-            .headers(header_initializer())
+            .headers(if with_headers {
+                Some(header_initializer())
+            } else {
+                None
+            })
             .build()
     }
 
@@ -560,11 +600,15 @@ pub(crate) mod safari_ios_16_5 {
     use crate::tls::impersonate::impersonte_imports::*;
 
     #[inline]
-    pub fn get_settings() -> ImpersonateSettings {
+    pub fn get_settings(with_headers: bool) -> ImpersonateSettings {
         ImpersonateSettings::builder()
             .tls(super::tls_template_1())
             .http2(super::http2_template_1())
-            .headers(header_initializer())
+            .headers(if with_headers {
+                Some(header_initializer())
+            } else {
+                None
+            })
             .build()
     }
 
@@ -594,11 +638,15 @@ pub(crate) mod safari_ios_17_2 {
     use crate::tls::impersonate::impersonte_imports::*;
 
     #[inline]
-    pub fn get_settings() -> ImpersonateSettings {
+    pub fn get_settings(with_headers: bool) -> ImpersonateSettings {
         ImpersonateSettings::builder()
             .tls(super::tls_template_1())
             .http2(super::http2_template_2())
-            .headers(header_initializer())
+            .headers(if with_headers {
+                Some(header_initializer())
+            } else {
+                None
+            })
             .build()
     }
 
@@ -628,11 +676,15 @@ pub(crate) mod safari_ios_17_4_1 {
     use crate::tls::impersonate::impersonte_imports::*;
 
     #[inline]
-    pub fn get_settings() -> ImpersonateSettings {
+    pub fn get_settings(with_headers: bool) -> ImpersonateSettings {
         ImpersonateSettings::builder()
             .tls(super::tls_template_1())
             .http2(super::http2_template_2())
-            .headers(header_initializer())
+            .headers(if with_headers {
+                Some(header_initializer())
+            } else {
+                None
+            })
             .build()
     }
 
@@ -662,11 +714,15 @@ pub(crate) mod safari_ipad_18 {
     use crate::tls::impersonate::impersonte_imports::*;
 
     #[inline]
-    pub fn get_settings() -> ImpersonateSettings {
+    pub fn get_settings(with_headers: bool) -> ImpersonateSettings {
         ImpersonateSettings::builder()
             .tls(super::tls_template_1())
             .http2(super::http2_template_3())
-            .headers(header_initializer())
+            .headers(if with_headers {
+                Some(header_initializer())
+            } else {
+                None
+            })
             .build()
     }
 

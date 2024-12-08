@@ -89,7 +89,7 @@ pub(crate) mod okhttp3_11 {
     use crate::tls::impersonate::impersonte_imports::*;
 
     #[inline]
-    pub fn get_settings() -> ImpersonateSettings {
+    pub fn get_settings(with_headers: bool) -> ImpersonateSettings {
         ImpersonateSettings::builder()
             .tls(
                 OkHttpTlsSettings::builder()
@@ -112,7 +112,11 @@ pub(crate) mod okhttp3_11 {
                     .into(),
             )
             .http2(super::http2_template_1())
-            .headers(header_initializer())
+            .headers(if with_headers {
+                Some(header_initializer())
+            } else {
+                None
+            })
             .build()
     }
 
@@ -138,7 +142,7 @@ pub(crate) mod okhttp3_13 {
     use crate::tls::impersonate::impersonte_imports::*;
 
     #[inline]
-    pub fn get_settings() -> ImpersonateSettings {
+    pub fn get_settings(with_headers: bool) -> ImpersonateSettings {
         ImpersonateSettings::builder()
             .tls(
                 OkHttpTlsSettings::builder()
@@ -166,7 +170,11 @@ pub(crate) mod okhttp3_13 {
                     .into(),
             )
             .http2(super::http2_template_1())
-            .headers(header_initializer())
+            .headers(if with_headers {
+                Some(header_initializer())
+            } else {
+                None
+            })
             .build()
     }
 
@@ -192,7 +200,7 @@ pub(crate) mod okhttp3_14 {
     use crate::tls::impersonate::impersonte_imports::*;
 
     #[inline]
-    pub fn get_settings() -> ImpersonateSettings {
+    pub fn get_settings(with_headers: bool) -> ImpersonateSettings {
         ImpersonateSettings::builder()
             .tls(
                 OkHttpTlsSettings::builder()
@@ -218,7 +226,11 @@ pub(crate) mod okhttp3_14 {
                     .into(),
             )
             .http2(super::http2_template_1())
-            .headers(header_initializer())
+            .headers(if with_headers {
+                Some(header_initializer())
+            } else {
+                None
+            })
             .build()
     }
 
@@ -241,7 +253,7 @@ pub(crate) mod okhttp3_9 {
     use crate::tls::impersonate::impersonte_imports::*;
 
     #[inline]
-    pub fn get_settings() -> ImpersonateSettings {
+    pub fn get_settings(with_headers: bool) -> ImpersonateSettings {
         ImpersonateSettings::builder()
             .tls(
                 OkHttpTlsSettings::builder()
@@ -266,7 +278,11 @@ pub(crate) mod okhttp3_9 {
                     .into(),
             )
             .http2(super::http2_template_1())
-            .headers(header_initializer())
+            .headers(if with_headers {
+                Some(header_initializer())
+            } else {
+                None
+            })
             .build()
     }
 
@@ -292,7 +308,7 @@ pub(crate) mod okhttp4_10 {
     use crate::tls::impersonate::impersonte_imports::*;
 
     #[inline]
-    pub fn get_settings() -> ImpersonateSettings {
+    pub fn get_settings(with_headers: bool) -> ImpersonateSettings {
         ImpersonateSettings::builder()
             .tls(
                 OkHttpTlsSettings::builder()
@@ -318,7 +334,11 @@ pub(crate) mod okhttp4_10 {
                     .into(),
             )
             .http2(super::http2_template_1())
-            .headers(header_initializer())
+            .headers(if with_headers {
+                Some(header_initializer())
+            } else {
+                None
+            })
             .build()
     }
 
@@ -344,7 +364,7 @@ pub(crate) mod okhttp4_9 {
     use crate::tls::impersonate::impersonte_imports::*;
 
     #[inline]
-    pub fn get_settings() -> ImpersonateSettings {
+    pub fn get_settings(with_headers: bool) -> ImpersonateSettings {
         ImpersonateSettings::builder()
             .tls(
                 OkHttpTlsSettings::builder()
@@ -369,7 +389,11 @@ pub(crate) mod okhttp4_9 {
                     .into(),
             )
             .http2(super::http2_template_1())
-            .headers(header_initializer())
+            .headers(if with_headers {
+                Some(header_initializer())
+            } else {
+                None
+            })
             .build()
     }
 
@@ -395,7 +419,7 @@ pub(crate) mod okhttp5 {
     use crate::tls::impersonate::impersonte_imports::*;
 
     #[inline]
-    pub fn get_settings() -> ImpersonateSettings {
+    pub fn get_settings(with_headers: bool) -> ImpersonateSettings {
         ImpersonateSettings::builder()
             .tls(
                 OkHttpTlsSettings::builder()
@@ -421,7 +445,11 @@ pub(crate) mod okhttp5 {
                     .into(),
             )
             .http2(super::http2_template_1())
-            .headers(header_initializer())
+            .headers(if with_headers {
+                Some(header_initializer())
+            } else {
+                None
+            })
             .build()
     }
 

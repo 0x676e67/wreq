@@ -227,11 +227,15 @@ pub(crate) mod v100 {
     use crate::tls::impersonate::impersonte_imports::*;
 
     #[inline]
-    pub fn get_settings() -> ImpersonateSettings {
+    pub fn get_settings(with_headers: bool) -> ImpersonateSettings {
         ImpersonateSettings::builder()
             .tls(super::tls_template_1())
             .http2(super::http2_template_1())
-            .headers(header_initializer())
+            .headers(if with_headers {
+                Some(header_initializer())
+            } else {
+                None
+            })
             .build()
     }
 
@@ -270,11 +274,15 @@ pub(crate) mod v101 {
     use crate::tls::impersonate::impersonte_imports::*;
 
     #[inline]
-    pub fn get_settings() -> ImpersonateSettings {
+    pub fn get_settings(with_headers: bool) -> ImpersonateSettings {
         ImpersonateSettings::builder()
             .tls(super::tls_template_1())
             .http2(super::http2_template_1())
-            .headers(header_initializer())
+            .headers(if with_headers {
+                Some(header_initializer())
+            } else {
+                None
+            })
             .build()
     }
 
@@ -313,11 +321,15 @@ pub(crate) mod v104 {
     use crate::tls::impersonate::impersonte_imports::*;
 
     #[inline]
-    pub fn get_settings() -> ImpersonateSettings {
+    pub fn get_settings(with_headers: bool) -> ImpersonateSettings {
         ImpersonateSettings::builder()
             .tls(super::tls_template_1())
             .http2(super::http2_template_1())
-            .headers(header_initializer())
+            .headers(if with_headers {
+                Some(header_initializer())
+            } else {
+                None
+            })
             .build()
     }
 
@@ -356,11 +368,15 @@ pub(crate) mod v105 {
     use crate::tls::impersonate::impersonte_imports::*;
 
     #[inline]
-    pub fn get_settings() -> ImpersonateSettings {
+    pub fn get_settings(with_headers: bool) -> ImpersonateSettings {
         ImpersonateSettings::builder()
             .tls(super::tls_template_2())
             .http2(super::http2_template_1())
-            .headers(header_initializer())
+            .headers(if with_headers {
+                Some(header_initializer())
+            } else {
+                None
+            })
             .build()
     }
 
@@ -399,11 +415,15 @@ pub(crate) mod v106 {
     use crate::tls::impersonate::impersonte_imports::*;
 
     #[inline]
-    pub fn get_settings() -> ImpersonateSettings {
+    pub fn get_settings(with_headers: bool) -> ImpersonateSettings {
         ImpersonateSettings::builder()
             .tls(super::tls_template_3())
             .http2(super::http2_template_2())
-            .headers(header_initializer())
+            .headers(if with_headers {
+                Some(header_initializer())
+            } else {
+                None
+            })
             .build()
     }
 
@@ -442,11 +462,15 @@ pub(crate) mod v107 {
     use crate::tls::impersonate::impersonte_imports::*;
 
     #[inline]
-    pub fn get_settings() -> ImpersonateSettings {
+    pub fn get_settings(with_headers: bool) -> ImpersonateSettings {
         ImpersonateSettings::builder()
             .tls(super::tls_template_3())
             .http2(super::http2_template_2())
-            .headers(header_initializer())
+            .headers(if with_headers {
+                Some(header_initializer())
+            } else {
+                None
+            })
             .build()
     }
 
@@ -485,11 +509,15 @@ pub(crate) mod v108 {
     use crate::tls::impersonate::impersonte_imports::*;
 
     #[inline]
-    pub fn get_settings() -> ImpersonateSettings {
+    pub fn get_settings(with_headers: bool) -> ImpersonateSettings {
         ImpersonateSettings::builder()
             .tls(super::tls_template_3())
             .http2(super::http2_template_2())
-            .headers(header_initializer())
+            .headers(if with_headers {
+                Some(header_initializer())
+            } else {
+                None
+            })
             .build()
     }
 
@@ -528,11 +556,15 @@ pub(crate) mod v109 {
     use crate::tls::impersonate::impersonte_imports::*;
 
     #[inline]
-    pub fn get_settings() -> ImpersonateSettings {
+    pub fn get_settings(with_headers: bool) -> ImpersonateSettings {
         ImpersonateSettings::builder()
             .tls(super::tls_template_3())
             .http2(super::http2_template_2())
-            .headers(header_initializer())
+            .headers(if with_headers {
+                Some(header_initializer())
+            } else {
+                None
+            })
             .build()
     }
 
@@ -571,11 +603,15 @@ pub(crate) mod v114 {
     use crate::tls::impersonate::impersonte_imports::*;
 
     #[inline]
-    pub fn get_settings() -> ImpersonateSettings {
+    pub fn get_settings(with_headers: bool) -> ImpersonateSettings {
         ImpersonateSettings::builder()
             .tls(super::tls_template_3())
             .http2(super::http2_template_2())
-            .headers(header_initializer())
+            .headers(if with_headers {
+                Some(header_initializer())
+            } else {
+                None
+            })
             .build()
     }
 
@@ -611,11 +647,15 @@ pub(crate) mod v116 {
     use crate::tls::impersonate::impersonte_imports::*;
 
     #[inline]
-    pub fn get_settings() -> ImpersonateSettings {
+    pub fn get_settings(with_headers: bool) -> ImpersonateSettings {
         ImpersonateSettings::builder()
             .tls(super::tls_template_4())
             .http2(super::http2_template_2())
-            .headers(header_initializer())
+            .headers(if with_headers {
+                Some(header_initializer())
+            } else {
+                None
+            })
             .build()
     }
 
@@ -653,11 +693,15 @@ pub(crate) mod v117 {
     use crate::tls::impersonate::impersonte_imports::*;
 
     #[inline]
-    pub fn get_settings() -> ImpersonateSettings {
+    pub fn get_settings(with_headers: bool) -> ImpersonateSettings {
         ImpersonateSettings::builder()
             .tls(super::tls_template_5())
             .http2(super::http2_template_3())
-            .headers(header_initializer())
+            .headers(if with_headers {
+                Some(header_initializer())
+            } else {
+                None
+            })
             .build()
     }
 
@@ -694,11 +738,15 @@ pub(crate) mod v117 {
 pub(crate) mod v118 {
     use crate::tls::impersonate::impersonte_imports::*;
     #[inline]
-    pub fn get_settings() -> ImpersonateSettings {
+    pub fn get_settings(with_headers: bool) -> ImpersonateSettings {
         ImpersonateSettings::builder()
             .tls(super::tls_template_4())
             .http2(super::http2_template_3())
-            .headers(header_initializer())
+            .headers(if with_headers {
+                Some(header_initializer())
+            } else {
+                None
+            })
             .build()
     }
 
@@ -734,11 +782,15 @@ pub(crate) mod v119 {
     use crate::tls::impersonate::impersonte_imports::*;
 
     #[inline]
-    pub fn get_settings() -> ImpersonateSettings {
+    pub fn get_settings(with_headers: bool) -> ImpersonateSettings {
         ImpersonateSettings::builder()
             .tls(super::tls_template_4())
             .http2(super::http2_template_3())
-            .headers(header_initializer())
+            .headers(if with_headers {
+                Some(header_initializer())
+            } else {
+                None
+            })
             .build()
     }
 
@@ -778,11 +830,15 @@ pub(crate) mod v120 {
     use crate::tls::impersonate::impersonte_imports::*;
 
     #[inline]
-    pub fn get_settings() -> ImpersonateSettings {
+    pub fn get_settings(with_headers: bool) -> ImpersonateSettings {
         ImpersonateSettings::builder()
             .tls(super::tls_template_5())
             .http2(super::http2_template_3())
-            .headers(header_initializer())
+            .headers(if with_headers {
+                Some(header_initializer())
+            } else {
+                None
+            })
             .build()
     }
 
@@ -825,11 +881,15 @@ pub(crate) mod v123 {
     use crate::tls::impersonate::impersonte_imports::*;
 
     #[inline]
-    pub fn get_settings() -> ImpersonateSettings {
+    pub fn get_settings(with_headers: bool) -> ImpersonateSettings {
         ImpersonateSettings::builder()
             .tls(super::tls_template_5())
             .http2(super::http2_template_3())
-            .headers(header_initializer())
+            .headers(if with_headers {
+                Some(header_initializer())
+            } else {
+                None
+            })
             .build()
     }
 
@@ -864,11 +924,15 @@ pub(crate) mod v124 {
     use crate::tls::impersonate::impersonte_imports::*;
 
     #[inline]
-    pub fn get_settings() -> ImpersonateSettings {
+    pub fn get_settings(with_headers: bool) -> ImpersonateSettings {
         ImpersonateSettings::builder()
             .tls(super::tls_template_6())
             .http2(super::http2_template_3())
-            .headers(header_initializer())
+            .headers(if with_headers {
+                Some(header_initializer())
+            } else {
+                None
+            })
             .build()
     }
 
@@ -903,11 +967,15 @@ pub(crate) mod v126 {
     use crate::tls::impersonate::impersonte_imports::*;
 
     #[inline]
-    pub fn get_settings() -> ImpersonateSettings {
+    pub fn get_settings(with_headers: bool) -> ImpersonateSettings {
         ImpersonateSettings::builder()
             .tls(super::tls_template_6())
             .http2(super::http2_template_3())
-            .headers(header_initializer())
+            .headers(if with_headers {
+                Some(header_initializer())
+            } else {
+                None
+            })
             .build()
     }
 
@@ -942,11 +1010,15 @@ pub(crate) mod v127 {
     use crate::tls::impersonate::impersonte_imports::*;
 
     #[inline]
-    pub fn get_settings() -> ImpersonateSettings {
+    pub fn get_settings(with_headers: bool) -> ImpersonateSettings {
         ImpersonateSettings::builder()
             .tls(super::tls_template_6())
             .http2(super::http2_template_3())
-            .headers(header_initializer())
+            .headers(if with_headers {
+                Some(header_initializer())
+            } else {
+                None
+            })
             .build()
     }
 
@@ -981,11 +1053,15 @@ pub(crate) mod v128 {
     use crate::tls::impersonate::impersonte_imports::*;
 
     #[inline]
-    pub fn get_settings() -> ImpersonateSettings {
+    pub fn get_settings(with_headers: bool) -> ImpersonateSettings {
         ImpersonateSettings::builder()
             .tls(super::tls_template_6())
             .http2(super::http2_template_3())
-            .headers(header_initializer())
+            .headers(if with_headers {
+                Some(header_initializer())
+            } else {
+                None
+            })
             .build()
     }
 
@@ -1020,11 +1096,15 @@ pub(crate) mod v129 {
     use crate::tls::impersonate::impersonte_imports::*;
 
     #[inline]
-    pub fn get_settings() -> ImpersonateSettings {
+    pub fn get_settings(with_headers: bool) -> ImpersonateSettings {
         ImpersonateSettings::builder()
             .tls(super::tls_template_6())
             .http2(super::http2_template_3())
-            .headers(header_initializer())
+            .headers(if with_headers {
+                Some(header_initializer())
+            } else {
+                None
+            })
             .build()
     }
 
@@ -1060,11 +1140,15 @@ pub(crate) mod v130 {
     use crate::tls::impersonate::impersonte_imports::*;
 
     #[inline]
-    pub fn get_settings() -> ImpersonateSettings {
+    pub fn get_settings(with_headers: bool) -> ImpersonateSettings {
         ImpersonateSettings::builder()
             .tls(super::tls_template_6())
             .http2(super::http2_template_3())
-            .headers(header_initializer())
+            .headers(if with_headers {
+                Some(header_initializer())
+            } else {
+                None
+            })
             .build()
     }
 
@@ -1106,11 +1190,15 @@ pub(crate) mod v131 {
     use crate::tls::impersonate::impersonte_imports::*;
 
     #[inline]
-    pub fn get_settings() -> ImpersonateSettings {
+    pub fn get_settings(with_headers: bool) -> ImpersonateSettings {
         ImpersonateSettings::builder()
             .tls(super::tls_template_7())
             .http2(super::http2_template_3())
-            .headers(header_initializer())
+            .headers(if with_headers {
+                Some(header_initializer())
+            } else {
+                None
+            })
             .build()
     }
 

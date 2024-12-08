@@ -150,11 +150,15 @@ pub(crate) mod edge101 {
     use crate::tls::impersonate::impersonte_imports::*;
 
     #[inline]
-    pub fn get_settings() -> ImpersonateSettings {
+    pub fn get_settings(with_headers: bool) -> ImpersonateSettings {
         ImpersonateSettings::builder()
             .tls(EdgeTlsSettings::builder().build().try_into().unwrap())
             .http2(super::http2_template_1())
-            .headers(header_initializer())
+            .headers(if with_headers {
+                Some(header_initializer())
+            } else {
+                None
+            })
             .build()
     }
 
@@ -193,7 +197,7 @@ pub(crate) mod edge122 {
     use crate::tls::impersonate::impersonte_imports::*;
 
     #[inline]
-    pub fn get_settings() -> ImpersonateSettings {
+    pub fn get_settings(with_headers: bool) -> ImpersonateSettings {
         ImpersonateSettings::builder()
             .tls(
                 EdgeTlsSettings::builder()
@@ -204,7 +208,11 @@ pub(crate) mod edge122 {
                     .into(),
             )
             .http2(super::http2_template_2())
-            .headers(header_initializer())
+            .headers(if with_headers {
+                Some(header_initializer())
+            } else {
+                None
+            })
             .build()
     }
 
@@ -243,7 +251,7 @@ pub(crate) mod edge127 {
     use crate::tls::impersonate::impersonte_imports::*;
 
     #[inline]
-    pub fn get_settings() -> ImpersonateSettings {
+    pub fn get_settings(with_headers: bool) -> ImpersonateSettings {
         ImpersonateSettings::builder()
             .tls(
                 EdgeTlsSettings::builder()
@@ -255,7 +263,11 @@ pub(crate) mod edge127 {
                     .into(),
             )
             .http2(super::http2_template_2())
-            .headers(header_initializer())
+            .headers(if with_headers {
+                Some(header_initializer())
+            } else {
+                None
+            })
             .build()
     }
 
