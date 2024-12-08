@@ -25,6 +25,7 @@ mod impersonte_imports {
         },
         HeaderMap, HeaderValue,
     };
+    pub use std::sync::LazyLock;
 }
 
 /// Http2 settings imports

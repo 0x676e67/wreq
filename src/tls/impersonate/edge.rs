@@ -155,7 +155,8 @@ pub(crate) mod edge101 {
             .tls(EdgeTlsSettings::builder().build().try_into().unwrap())
             .http2(super::http2_template_1())
             .headers(if with_headers {
-                Some(header_initializer())
+                static HEADER_INITIALIZER: LazyLock<HeaderMap> = LazyLock::new(header_initializer);
+                Some(HEADER_INITIALIZER.clone())
             } else {
                 None
             })
@@ -209,7 +210,8 @@ pub(crate) mod edge122 {
             )
             .http2(super::http2_template_2())
             .headers(if with_headers {
-                Some(header_initializer())
+                static HEADER_INITIALIZER: LazyLock<HeaderMap> = LazyLock::new(header_initializer);
+                Some(HEADER_INITIALIZER.clone())
             } else {
                 None
             })
@@ -264,7 +266,8 @@ pub(crate) mod edge127 {
             )
             .http2(super::http2_template_2())
             .headers(if with_headers {
-                Some(header_initializer())
+                static HEADER_INITIALIZER: LazyLock<HeaderMap> = LazyLock::new(header_initializer);
+                Some(HEADER_INITIALIZER.clone())
             } else {
                 None
             })

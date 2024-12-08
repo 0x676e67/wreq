@@ -113,7 +113,8 @@ pub(crate) mod okhttp3_11 {
             )
             .http2(super::http2_template_1())
             .headers(if with_headers {
-                Some(header_initializer())
+                static HEADER_INITIALIZER: LazyLock<HeaderMap> = LazyLock::new(header_initializer);
+                Some(HEADER_INITIALIZER.clone())
             } else {
                 None
             })
@@ -171,7 +172,8 @@ pub(crate) mod okhttp3_13 {
             )
             .http2(super::http2_template_1())
             .headers(if with_headers {
-                Some(header_initializer())
+                static HEADER_INITIALIZER: LazyLock<HeaderMap> = LazyLock::new(header_initializer);
+                Some(HEADER_INITIALIZER.clone())
             } else {
                 None
             })
@@ -227,7 +229,8 @@ pub(crate) mod okhttp3_14 {
             )
             .http2(super::http2_template_1())
             .headers(if with_headers {
-                Some(header_initializer())
+                static HEADER_INITIALIZER: LazyLock<HeaderMap> = LazyLock::new(header_initializer);
+                Some(HEADER_INITIALIZER.clone())
             } else {
                 None
             })
@@ -279,7 +282,8 @@ pub(crate) mod okhttp3_9 {
             )
             .http2(super::http2_template_1())
             .headers(if with_headers {
-                Some(header_initializer())
+                static HEADER_INITIALIZER: LazyLock<HeaderMap> = LazyLock::new(header_initializer);
+                Some(HEADER_INITIALIZER.clone())
             } else {
                 None
             })
@@ -335,7 +339,8 @@ pub(crate) mod okhttp4_10 {
             )
             .http2(super::http2_template_1())
             .headers(if with_headers {
-                Some(header_initializer())
+                static HEADER_INITIALIZER: LazyLock<HeaderMap> = LazyLock::new(header_initializer);
+                Some(HEADER_INITIALIZER.clone())
             } else {
                 None
             })
@@ -390,7 +395,8 @@ pub(crate) mod okhttp4_9 {
             )
             .http2(super::http2_template_1())
             .headers(if with_headers {
-                Some(header_initializer())
+                static HEADER_INITIALIZER: LazyLock<HeaderMap> = LazyLock::new(header_initializer);
+                Some(HEADER_INITIALIZER.clone())
             } else {
                 None
             })
@@ -446,7 +452,8 @@ pub(crate) mod okhttp5 {
             )
             .http2(super::http2_template_1())
             .headers(if with_headers {
-                Some(header_initializer())
+                static HEADER_INITIALIZER: LazyLock<HeaderMap> = LazyLock::new(header_initializer);
+                Some(HEADER_INITIALIZER.clone())
             } else {
                 None
             })

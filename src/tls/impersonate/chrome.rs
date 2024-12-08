@@ -232,7 +232,8 @@ pub(crate) mod v100 {
             .tls(super::tls_template_1())
             .http2(super::http2_template_1())
             .headers(if with_headers {
-                Some(header_initializer())
+                static HEADER_INITIALIZER: LazyLock<HeaderMap> = LazyLock::new(header_initializer);
+                Some(HEADER_INITIALIZER.clone())
             } else {
                 None
             })
@@ -279,7 +280,8 @@ pub(crate) mod v101 {
             .tls(super::tls_template_1())
             .http2(super::http2_template_1())
             .headers(if with_headers {
-                Some(header_initializer())
+                static HEADER_INITIALIZER: LazyLock<HeaderMap> = LazyLock::new(header_initializer);
+                Some(HEADER_INITIALIZER.clone())
             } else {
                 None
             })
@@ -326,7 +328,8 @@ pub(crate) mod v104 {
             .tls(super::tls_template_1())
             .http2(super::http2_template_1())
             .headers(if with_headers {
-                Some(header_initializer())
+                static HEADER_INITIALIZER: LazyLock<HeaderMap> = LazyLock::new(header_initializer);
+                Some(HEADER_INITIALIZER.clone())
             } else {
                 None
             })
@@ -373,7 +376,8 @@ pub(crate) mod v105 {
             .tls(super::tls_template_2())
             .http2(super::http2_template_1())
             .headers(if with_headers {
-                Some(header_initializer())
+                static HEADER_INITIALIZER: LazyLock<HeaderMap> = LazyLock::new(header_initializer);
+                Some(HEADER_INITIALIZER.clone())
             } else {
                 None
             })
@@ -420,7 +424,8 @@ pub(crate) mod v106 {
             .tls(super::tls_template_3())
             .http2(super::http2_template_2())
             .headers(if with_headers {
-                Some(header_initializer())
+                static HEADER_INITIALIZER: LazyLock<HeaderMap> = LazyLock::new(header_initializer);
+                Some(HEADER_INITIALIZER.clone())
             } else {
                 None
             })
@@ -467,7 +472,8 @@ pub(crate) mod v107 {
             .tls(super::tls_template_3())
             .http2(super::http2_template_2())
             .headers(if with_headers {
-                Some(header_initializer())
+                static HEADER_INITIALIZER: LazyLock<HeaderMap> = LazyLock::new(header_initializer);
+                Some(HEADER_INITIALIZER.clone())
             } else {
                 None
             })
@@ -514,7 +520,8 @@ pub(crate) mod v108 {
             .tls(super::tls_template_3())
             .http2(super::http2_template_2())
             .headers(if with_headers {
-                Some(header_initializer())
+                static HEADER_INITIALIZER: LazyLock<HeaderMap> = LazyLock::new(header_initializer);
+                Some(HEADER_INITIALIZER.clone())
             } else {
                 None
             })
@@ -561,7 +568,8 @@ pub(crate) mod v109 {
             .tls(super::tls_template_3())
             .http2(super::http2_template_2())
             .headers(if with_headers {
-                Some(header_initializer())
+                static HEADER_INITIALIZER: LazyLock<HeaderMap> = LazyLock::new(header_initializer);
+                Some(HEADER_INITIALIZER.clone())
             } else {
                 None
             })
@@ -608,7 +616,8 @@ pub(crate) mod v114 {
             .tls(super::tls_template_3())
             .http2(super::http2_template_2())
             .headers(if with_headers {
-                Some(header_initializer())
+                static HEADER_INITIALIZER: LazyLock<HeaderMap> = LazyLock::new(header_initializer);
+                Some(HEADER_INITIALIZER.clone())
             } else {
                 None
             })
@@ -652,7 +661,8 @@ pub(crate) mod v116 {
             .tls(super::tls_template_4())
             .http2(super::http2_template_2())
             .headers(if with_headers {
-                Some(header_initializer())
+                static HEADER_INITIALIZER: LazyLock<HeaderMap> = LazyLock::new(header_initializer);
+                Some(HEADER_INITIALIZER.clone())
             } else {
                 None
             })
@@ -698,7 +708,8 @@ pub(crate) mod v117 {
             .tls(super::tls_template_5())
             .http2(super::http2_template_3())
             .headers(if with_headers {
-                Some(header_initializer())
+                static HEADER_INITIALIZER: LazyLock<HeaderMap> = LazyLock::new(header_initializer);
+                Some(HEADER_INITIALIZER.clone())
             } else {
                 None
             })
@@ -743,7 +754,8 @@ pub(crate) mod v118 {
             .tls(super::tls_template_4())
             .http2(super::http2_template_3())
             .headers(if with_headers {
-                Some(header_initializer())
+                static HEADER_INITIALIZER: LazyLock<HeaderMap> = LazyLock::new(header_initializer);
+                Some(HEADER_INITIALIZER.clone())
             } else {
                 None
             })
@@ -787,7 +799,8 @@ pub(crate) mod v119 {
             .tls(super::tls_template_4())
             .http2(super::http2_template_3())
             .headers(if with_headers {
-                Some(header_initializer())
+                static HEADER_INITIALIZER: LazyLock<HeaderMap> = LazyLock::new(header_initializer);
+                Some(HEADER_INITIALIZER.clone())
             } else {
                 None
             })
@@ -835,7 +848,8 @@ pub(crate) mod v120 {
             .tls(super::tls_template_5())
             .http2(super::http2_template_3())
             .headers(if with_headers {
-                Some(header_initializer())
+                static HEADER_INITIALIZER: LazyLock<HeaderMap> = LazyLock::new(header_initializer);
+                Some(HEADER_INITIALIZER.clone())
             } else {
                 None
             })
@@ -886,7 +900,8 @@ pub(crate) mod v123 {
             .tls(super::tls_template_5())
             .http2(super::http2_template_3())
             .headers(if with_headers {
-                Some(header_initializer())
+                static HEADER_INITIALIZER: LazyLock<HeaderMap> = LazyLock::new(header_initializer);
+                Some(HEADER_INITIALIZER.clone())
             } else {
                 None
             })
@@ -929,7 +944,8 @@ pub(crate) mod v124 {
             .tls(super::tls_template_6())
             .http2(super::http2_template_3())
             .headers(if with_headers {
-                Some(header_initializer())
+                static HEADER_INITIALIZER: LazyLock<HeaderMap> = LazyLock::new(header_initializer);
+                Some(HEADER_INITIALIZER.clone())
             } else {
                 None
             })
@@ -972,7 +988,8 @@ pub(crate) mod v126 {
             .tls(super::tls_template_6())
             .http2(super::http2_template_3())
             .headers(if with_headers {
-                Some(header_initializer())
+                static HEADER_INITIALIZER: LazyLock<HeaderMap> = LazyLock::new(header_initializer);
+                Some(HEADER_INITIALIZER.clone())
             } else {
                 None
             })
@@ -1015,7 +1032,8 @@ pub(crate) mod v127 {
             .tls(super::tls_template_6())
             .http2(super::http2_template_3())
             .headers(if with_headers {
-                Some(header_initializer())
+                static HEADER_INITIALIZER: LazyLock<HeaderMap> = LazyLock::new(header_initializer);
+                Some(HEADER_INITIALIZER.clone())
             } else {
                 None
             })
@@ -1058,7 +1076,8 @@ pub(crate) mod v128 {
             .tls(super::tls_template_6())
             .http2(super::http2_template_3())
             .headers(if with_headers {
-                Some(header_initializer())
+                static HEADER_INITIALIZER: LazyLock<HeaderMap> = LazyLock::new(header_initializer);
+                Some(HEADER_INITIALIZER.clone())
             } else {
                 None
             })
@@ -1101,7 +1120,8 @@ pub(crate) mod v129 {
             .tls(super::tls_template_6())
             .http2(super::http2_template_3())
             .headers(if with_headers {
-                Some(header_initializer())
+                static HEADER_INITIALIZER: LazyLock<HeaderMap> = LazyLock::new(header_initializer);
+                Some(HEADER_INITIALIZER.clone())
             } else {
                 None
             })
@@ -1145,7 +1165,8 @@ pub(crate) mod v130 {
             .tls(super::tls_template_6())
             .http2(super::http2_template_3())
             .headers(if with_headers {
-                Some(header_initializer())
+                static HEADER_INITIALIZER: LazyLock<HeaderMap> = LazyLock::new(header_initializer);
+                Some(HEADER_INITIALIZER.clone())
             } else {
                 None
             })
@@ -1195,7 +1216,8 @@ pub(crate) mod v131 {
             .tls(super::tls_template_7())
             .http2(super::http2_template_3())
             .headers(if with_headers {
-                Some(header_initializer())
+                static HEADER_INITIALIZER: LazyLock<HeaderMap> = LazyLock::new(header_initializer);
+                Some(HEADER_INITIALIZER.clone())
             } else {
                 None
             })
