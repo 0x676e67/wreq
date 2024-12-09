@@ -73,13 +73,25 @@ impl Connector {
         }
         http.set_nodelay(nodelay);
 
-        Connector {
+        let mut connector = Connector {
             inner: Inner::Http(http),
             proxies,
             verbose: verbose::OFF,
             timeout: None,
             pool_key_ext: None,
-        }
+        };
+
+        #[cfg(not(any(target_os = "android", target_os = "fuchsia", target_os = "linux")))]
+        connector.set_pool_key_ext(local_addr_v4.map(IpAddr::V4), local_addr_v6.map(IpAddr::V6));
+
+        #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
+        connector.set_pool_key_ext(
+            local_addr_v4.map(IpAddr::V4),
+            local_addr_v6.map(IpAddr::V6),
+            interface,
+        );
+
+        connector
     }
 
     #[allow(clippy::too_many_arguments)]
