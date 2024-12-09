@@ -102,8 +102,8 @@ impl Connector {
             _ => {}
         }
         #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
-        if let Some(interface) = interface {
-            http.set_interface(interface.into_owned());
+        if let Some(ref interface) = interface {
+            http.set_interface(interface.clone());
         }
         http.enforce_http(false);
 
@@ -183,6 +183,10 @@ impl Connector {
 
     #[inline]
     pub(crate) fn set_local_address(&mut self, addr: Option<IpAddr>) {
+        #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
+        self.set_pool_key_ext(addr, None, None);
+
+        #[cfg(not(any(target_os = "android", target_os = "fuchsia", target_os = "linux")))]
         self.set_pool_key_ext(addr, None);
 
         match &mut self.inner {
@@ -195,6 +199,10 @@ impl Connector {
 
     #[inline]
     pub(crate) fn set_local_addresses(&mut self, addr_ipv4: Ipv4Addr, addr_ipv6: Ipv6Addr) {
+        #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
+        self.set_pool_key_ext(IpAddr::V4(addr_ipv4), IpAddr::V6(addr_ipv6), None);
+
+        #[cfg(not(any(target_os = "android", target_os = "fuchsia", target_os = "linux")))]
         self.set_pool_key_ext(IpAddr::V4(addr_ipv4), IpAddr::V6(addr_ipv6));
 
         match &mut self.inner {
