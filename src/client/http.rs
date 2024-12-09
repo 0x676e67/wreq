@@ -1,7 +1,7 @@
 use std::borrow::Cow;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::num::NonZeroUsize;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 use std::{collections::HashMap, convert::TryInto, net::SocketAddr};
 use std::{fmt, str};
@@ -125,11 +125,19 @@ impl ClientBuilder {
     ///
     /// This is the same as `Client::builder()`.
     pub fn new() -> ClientBuilder {
+        // NOTE: This is a hack to ensure that the default headers are always the same
+        // across all instances of ClientBuilder.
+        static DEFAULT_HEADERS: LazyLock<HeaderMap> = LazyLock::new(|| {
+            let mut headers = HeaderMap::with_capacity(2);
+            headers.insert(ACCEPT, HeaderValue::from_static("*/*"));
+            headers
+        });
+
         ClientBuilder {
             config: Config {
                 error: None,
                 accepts: Accepts::default(),
-                headers: Cow::Owned(HeaderMap::with_capacity(1)),
+                headers: Cow::Borrowed(&*DEFAULT_HEADERS),
                 headers_order: None,
                 connect_timeout: None,
                 connection_verbose: false,
@@ -437,8 +445,9 @@ impl ClientBuilder {
     /// # }
     /// ```
     pub fn default_headers(mut self, headers: HeaderMap) -> ClientBuilder {
-        for (key, value) in headers.iter() {
-            self.config.headers.to_mut().insert(key, value.clone());
+        let headers_mut = self.config.headers.to_mut();
+        for (key, value) in headers.into_iter().filter_map(|(k, v)| k.map(|k| (k, v))) {
+            headers_mut.insert(key, value);
         }
         self
     }
@@ -452,15 +461,6 @@ impl ClientBuilder {
     #[inline]
     pub fn headers_order(mut self, order: impl Into<Cow<'static, [HeaderName]>>) -> ClientBuilder {
         self.config.headers_order = Some(order.into());
-        self
-    }
-
-    /// Default accpet
-    pub fn default_accpet(mut self) -> ClientBuilder {
-        self.config
-            .headers
-            .to_mut()
-            .insert(ACCEPT, HeaderValue::from_static("*/*"));
         self
     }
 
