@@ -1,4 +1,6 @@
 #![allow(missing_debug_implementations)]
+use std::borrow::Cow;
+
 use crate::{
     tls::{cert_compression::CertCompressionAlgorithm, Version},
     HttpVersionPref,
@@ -74,15 +76,15 @@ pub struct TlsSettings {
 
     /// The curves to use.
     #[builder(default, setter(into))]
-    pub curves: Option<Vec<SslCurve>>,
+    pub curves: Option<Cow<'static, [SslCurve]>>,
 
     /// The signature algorithms list to use.
     #[builder(default, setter(into))]
-    pub sigalgs_list: Option<String>,
+    pub sigalgs_list: Option<Cow<'static, str>>,
 
     /// The cipher list to use.
     #[builder(default, setter(into))]
-    pub cipher_list: Option<String>,
+    pub cipher_list: Option<Cow<'static, str>>,
 
     /// Enable signed cert timestamps.
     #[builder(default = false)]

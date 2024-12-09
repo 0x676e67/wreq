@@ -1,5 +1,6 @@
 use http::{header, HeaderMap, HeaderValue};
 use rquest::tls::{chrome, ImpersonateSettings};
+use std::borrow::Cow;
 
 #[tokio::main]
 async fn main() -> Result<(), rquest::Error> {
@@ -10,7 +11,7 @@ async fn main() -> Result<(), rquest::Error> {
         .headers({
             let mut headers = HeaderMap::new();
             headers.insert(header::USER_AGENT, HeaderValue::from_static("rquest"));
-            headers
+            Cow::Owned(headers)
         })
         .build();
 

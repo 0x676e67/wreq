@@ -8,14 +8,14 @@ use tls::{SafariTlsSettings, CIPHER_LIST, NEW_CIPHER_LIST};
 // ============== TLS template ==============
 pub fn tls_template_1() -> TlsSettings {
     SafariTlsSettings::builder()
-        .cipher_list(&NEW_CIPHER_LIST)
+        .cipher_list(NEW_CIPHER_LIST)
         .build()
         .into()
 }
 
 pub fn tls_template_2() -> TlsSettings {
     SafariTlsSettings::builder()
-        .cipher_list(&CIPHER_LIST)
+        .cipher_list(CIPHER_LIST)
         .build()
         .into()
 }
@@ -92,7 +92,8 @@ mod tls {
         SslCurve::SECP521R1,
     ];
 
-    pub const CIPHER_LIST: [&str; 26] = [
+    pub const CIPHER_LIST: &str = static_join!(
+        ":",
         "TLS_AES_128_GCM_SHA256",
         "TLS_AES_256_GCM_SHA384",
         "TLS_CHACHA20_POLY1305_SHA256",
@@ -118,10 +119,11 @@ mod tls {
         "TLS_RSA_WITH_AES_128_CBC_SHA",
         "TLS_ECDHE_ECDSA_WITH_3DES_EDE_CBC_SHA",
         "TLS_ECDHE_RSA_WITH_3DES_EDE_CBC_SHA",
-        "TLS_RSA_WITH_3DES_EDE_CBC_SHA",
-    ];
+        "TLS_RSA_WITH_3DES_EDE_CBC_SHA"
+    );
 
-    pub const NEW_CIPHER_LIST: [&str; 20] = [
+    pub const NEW_CIPHER_LIST: &str = static_join!(
+        ":",
         "TLS_AES_128_GCM_SHA256",
         "TLS_AES_256_GCM_SHA384",
         "TLS_CHACHA20_POLY1305_SHA256",
@@ -141,10 +143,11 @@ mod tls {
         "TLS_RSA_WITH_AES_128_CBC_SHA",
         "TLS_ECDHE_ECDSA_WITH_3DES_EDE_CBC_SHA",
         "TLS_ECDHE_RSA_WITH_3DES_EDE_CBC_SHA",
-        "TLS_RSA_WITH_3DES_EDE_CBC_SHA",
-    ];
+        "TLS_RSA_WITH_3DES_EDE_CBC_SHA"
+    );
 
-    pub const SIGALGS_LIST: [&str; 11] = [
+    pub const SIGALGS_LIST: &str = static_join!(
+        ":",
         "ecdsa_secp256r1_sha256",
         "rsa_pss_rsae_sha256",
         "rsa_pkcs1_sha256",
@@ -155,33 +158,33 @@ mod tls {
         "rsa_pkcs1_sha384",
         "rsa_pss_rsae_sha512",
         "rsa_pkcs1_sha512",
-        "rsa_pkcs1_sha1",
-    ];
+        "rsa_pkcs1_sha1"
+    );
 
     #[derive(TypedBuilder)]
-    pub struct SafariTlsSettings<'a> {
+    pub struct SafariTlsSettings {
         // TLS curves
         #[builder(default = CURVES)]
-        curves: &'a [SslCurve],
+        curves: &'static [SslCurve],
 
         // TLS sigalgs list
-        #[builder(default = &SIGALGS_LIST)]
-        sigalgs_list: &'a [&'a str],
+        #[builder(default = SIGALGS_LIST)]
+        sigalgs_list: &'static str,
 
         // TLS cipher list
-        cipher_list: &'a [&'a str],
+        cipher_list: &'static str,
     }
 
-    impl Into<TlsSettings> for SafariTlsSettings<'_> {
+    impl Into<TlsSettings> for SafariTlsSettings {
         fn into(self) -> TlsSettings {
             TlsSettings::builder()
                 .session_ticket(false)
                 .grease_enabled(true)
                 .enable_ocsp_stapling(true)
                 .enable_signed_cert_timestamps(true)
-                .curves(self.curves.to_vec())
-                .sigalgs_list(self.sigalgs_list.join(":"))
-                .cipher_list(self.cipher_list.join(":"))
+                .curves(Cow::Borrowed(self.curves))
+                .sigalgs_list(Cow::Borrowed(self.sigalgs_list))
+                .cipher_list(Cow::Borrowed(self.cipher_list))
                 .min_tls_version(Some(Version::TLS_1_0))
                 .cert_compression_algorithm(CertCompressionAlgorithm::Zlib)
                 .build()
@@ -234,7 +237,7 @@ pub(crate) mod safari15_3 {
             .http2(super::http2_template_4())
             .headers(if with_headers {
                 static HEADER_INITIALIZER: LazyLock<HeaderMap> = LazyLock::new(header_initializer);
-                Some(HEADER_INITIALIZER.clone())
+                Some(Cow::Borrowed(&*HEADER_INITIALIZER))
             } else {
                 None
             })
@@ -270,7 +273,7 @@ pub(crate) mod safari15_5 {
             .http2(super::http2_template_4())
             .headers(if with_headers {
                 static HEADER_INITIALIZER: LazyLock<HeaderMap> = LazyLock::new(header_initializer);
-                Some(HEADER_INITIALIZER.clone())
+                Some(Cow::Borrowed(&*HEADER_INITIALIZER))
             } else {
                 None
             })
@@ -306,7 +309,7 @@ pub(crate) mod safari15_6_1 {
             .http2(super::http2_template_4())
             .headers(if with_headers {
                 static HEADER_INITIALIZER: LazyLock<HeaderMap> = LazyLock::new(header_initializer);
-                Some(HEADER_INITIALIZER.clone())
+                Some(Cow::Borrowed(&*HEADER_INITIALIZER))
             } else {
                 None
             })
@@ -342,7 +345,7 @@ pub(crate) mod safari16 {
             .http2(super::http2_template_4())
             .headers(if with_headers {
                 static HEADER_INITIALIZER: LazyLock<HeaderMap> = LazyLock::new(header_initializer);
-                Some(HEADER_INITIALIZER.clone())
+                Some(Cow::Borrowed(&*HEADER_INITIALIZER))
             } else {
                 None
             })
@@ -381,7 +384,7 @@ pub(crate) mod safari16_5 {
             .http2(super::http2_template_4())
             .headers(if with_headers {
                 static HEADER_INITIALIZER: LazyLock<HeaderMap> = LazyLock::new(header_initializer);
-                Some(HEADER_INITIALIZER.clone())
+                Some(Cow::Borrowed(&*HEADER_INITIALIZER))
             } else {
                 None
             })
@@ -420,7 +423,7 @@ pub(crate) mod safari17_0 {
             .http2(super::http2_template_5())
             .headers(if with_headers {
                 static HEADER_INITIALIZER: LazyLock<HeaderMap> = LazyLock::new(header_initializer);
-                Some(HEADER_INITIALIZER.clone())
+                Some(Cow::Borrowed(&*HEADER_INITIALIZER))
             } else {
                 None
             })
@@ -459,7 +462,7 @@ pub(crate) mod safari17_2_1 {
             .http2(super::http2_template_5())
             .headers(if with_headers {
                 static HEADER_INITIALIZER: LazyLock<HeaderMap> = LazyLock::new(header_initializer);
-                Some(HEADER_INITIALIZER.clone())
+                Some(Cow::Borrowed(&*HEADER_INITIALIZER))
             } else {
                 None
             })
@@ -498,7 +501,7 @@ pub(crate) mod safari17_4_1 {
             .http2(super::http2_template_4())
             .headers(if with_headers {
                 static HEADER_INITIALIZER: LazyLock<HeaderMap> = LazyLock::new(header_initializer);
-                Some(HEADER_INITIALIZER.clone())
+                Some(Cow::Borrowed(&*HEADER_INITIALIZER))
             } else {
                 None
             })
@@ -537,7 +540,7 @@ pub(crate) mod safari17_5 {
             .http2(super::http2_template_5())
             .headers(if with_headers {
                 static HEADER_INITIALIZER: LazyLock<HeaderMap> = LazyLock::new(header_initializer);
-                Some(HEADER_INITIALIZER.clone())
+                Some(Cow::Borrowed(&*HEADER_INITIALIZER))
             } else {
                 None
             })
@@ -576,7 +579,7 @@ pub(crate) mod safari18 {
             .http2(super::http2_template_3())
             .headers(if with_headers {
                 static HEADER_INITIALIZER: LazyLock<HeaderMap> = LazyLock::new(header_initializer);
-                Some(HEADER_INITIALIZER.clone())
+                Some(Cow::Borrowed(&*HEADER_INITIALIZER))
             } else {
                 None
             })
@@ -616,7 +619,7 @@ pub(crate) mod safari_ios_16_5 {
             .http2(super::http2_template_1())
             .headers(if with_headers {
                 static HEADER_INITIALIZER: LazyLock<HeaderMap> = LazyLock::new(header_initializer);
-                Some(HEADER_INITIALIZER.clone())
+                Some(Cow::Borrowed(&*HEADER_INITIALIZER))
             } else {
                 None
             })
@@ -655,7 +658,7 @@ pub(crate) mod safari_ios_17_2 {
             .http2(super::http2_template_2())
             .headers(if with_headers {
                 static HEADER_INITIALIZER: LazyLock<HeaderMap> = LazyLock::new(header_initializer);
-                Some(HEADER_INITIALIZER.clone())
+                Some(Cow::Borrowed(&*HEADER_INITIALIZER))
             } else {
                 None
             })
@@ -694,7 +697,7 @@ pub(crate) mod safari_ios_17_4_1 {
             .http2(super::http2_template_2())
             .headers(if with_headers {
                 static HEADER_INITIALIZER: LazyLock<HeaderMap> = LazyLock::new(header_initializer);
-                Some(HEADER_INITIALIZER.clone())
+                Some(Cow::Borrowed(&*HEADER_INITIALIZER))
             } else {
                 None
             })
@@ -733,7 +736,7 @@ pub(crate) mod safari_ipad_18 {
             .http2(super::http2_template_3())
             .headers(if with_headers {
                 static HEADER_INITIALIZER: LazyLock<HeaderMap> = LazyLock::new(header_initializer);
-                Some(HEADER_INITIALIZER.clone())
+                Some(Cow::Borrowed(&*HEADER_INITIALIZER))
             } else {
                 None
             })

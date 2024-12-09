@@ -122,6 +122,7 @@ use rquest::{
     HttpVersionPref,
 };
 use rquest::{PseudoOrder::*, SettingsOrder::*};
+use std::borrow::Cow;
 
 static HEADER_ORDER: [HeaderName; 5] = [
     header::USER_AGENT,
@@ -188,9 +189,9 @@ async fn main() -> Result<(), rquest::Error> {
             );
             headers.insert(header::HOST, HeaderValue::from_static("tls.peet.ws"));
             headers.insert(header::COOKIE, HeaderValue::from_static("foo=bar"));
-            headers
+            Cow::Owned(headers)
         })
-        .headers_order(&HEADER_ORDER)
+        .headers_order(Cow::Borrowed(&HEADER_ORDER))
         .build();
 
     // Build a client with pre-configured TLS settings

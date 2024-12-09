@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::num::NonZeroUsize;
 use std::sync::Arc;
@@ -78,8 +79,8 @@ pub enum HttpVersionPref {
 struct Config {
     // NOTE: When adding a new field, update `fmt::Debug for ClientBuilder`
     accepts: Accepts,
-    headers: HeaderMap,
-    headers_order: Option<&'static [HeaderName]>,
+    headers: Cow<'static, HeaderMap>,
+    headers_order: Option<Cow<'static, [HeaderName]>>,
     connect_timeout: Option<Duration>,
     connection_verbose: bool,
     pool_idle_timeout: Option<Duration>,
@@ -128,7 +129,7 @@ impl ClientBuilder {
             config: Config {
                 error: None,
                 accepts: Accepts::default(),
-                headers: HeaderMap::with_capacity(1),
+                headers: Cow::Owned(HeaderMap::with_capacity(1)),
                 headers_order: None,
                 connect_timeout: None,
                 connection_verbose: false,
@@ -301,7 +302,7 @@ impl ClientBuilder {
     fn apply_tls_settings(mut self, settings: ImpersonateSettings) -> ClientBuilder {
         // Set the headers if needed
         if let Some(headers) = settings.headers {
-            crate::util::replace_headers(&mut self.config.headers, headers);
+            crate::util::replace_headers(&mut self.config.headers.to_mut(), headers.into_owned());
         }
 
         // Set the headers order if needed
@@ -382,7 +383,7 @@ impl ClientBuilder {
     {
         match value.try_into() {
             Ok(value) => {
-                self.config.headers.insert(USER_AGENT, value);
+                self.config.headers.to_mut().insert(USER_AGENT, value);
             }
             Err(e) => {
                 self.config.error = Some(crate::error::builder(e.into()));
@@ -437,7 +438,7 @@ impl ClientBuilder {
     /// ```
     pub fn default_headers(mut self, headers: HeaderMap) -> ClientBuilder {
         for (key, value) in headers.iter() {
-            self.config.headers.insert(key, value.clone());
+            self.config.headers.to_mut().insert(key, value.clone());
         }
         self
     }
@@ -449,8 +450,8 @@ impl ClientBuilder {
     /// The host header needs to be manually inserted if you want to modify its order.
     /// Otherwise it will be inserted by hyper after sorting.
     #[inline]
-    pub fn headers_order(mut self, order: &'static [HeaderName]) -> ClientBuilder {
-        self.config.headers_order = Some(order);
+    pub fn headers_order(mut self, order: impl Into<Cow<'static, [HeaderName]>>) -> ClientBuilder {
+        self.config.headers_order = Some(order.into());
         self
     }
 
@@ -458,6 +459,7 @@ impl ClientBuilder {
     pub fn default_accpet(mut self) -> ClientBuilder {
         self.config
             .headers
+            .to_mut()
             .insert(ACCEPT, HeaderValue::from_static("*/*"));
         self
     }
@@ -1387,7 +1389,7 @@ impl Client {
 
         // insert default headers in the request headers
         // without overwriting already appended headers.
-        for (key, value) in &self.inner.headers {
+        for (key, value) in self.inner.headers.iter() {
             if let Entry::Vacant(entry) = headers.entry(key) {
                 entry.insert(value.clone());
             }
@@ -1424,11 +1426,11 @@ impl Client {
         self.proxy_auth(&uri, &mut headers);
 
         // Insert headers in order if enabled
-        if let Some(headers_order) = self.inner.headers_order {
+        if let Some(ref headers_order) = self.inner.headers_order {
             let mut sorted_headers = HeaderMap::with_capacity(headers.keys_len());
 
             // First insert headers in the specified order
-            for key in headers_order {
+            for key in headers_order.iter() {
                 if let Some(value) = headers.remove(key) {
                     sorted_headers.insert(key, value);
                 }
@@ -1518,7 +1520,7 @@ impl Client {
 
     /// Get a mutable reference to the headers for this client.
     pub fn headers_mut(&mut self) -> &mut HeaderMap {
-        &mut self.inner_mut().headers
+        self.inner_mut().headers.to_mut()
     }
 
     /// Returns a `String` of the header-value of all `Cookie` in a `Url`.
@@ -1638,11 +1640,11 @@ impl Client {
         let inner = self.inner_mut();
 
         // Clear the headers
-        inner.headers.clear();
+        inner.headers.to_mut().clear();
 
         // Set the headers
         if let Some(headers) = settings.headers {
-            crate::util::replace_headers(&mut inner.headers, headers);
+            crate::util::replace_headers(&mut inner.headers.to_mut(), headers.into_owned());
         }
 
         // Set the headers order if needed
@@ -1679,8 +1681,8 @@ impl Client {
     }
 
     /// Set the headers order for this client.
-    pub fn set_headers_order(&mut self, order: &'static [HeaderName]) {
-        self.inner_mut().headers_order = Some(order);
+    pub fn set_headers_order(&mut self, order: impl Into<Cow<'static, [HeaderName]>>) {
+        self.inner_mut().headers_order = Some(order.into());
     }
 
     /// Set the redirect policy for this client.
@@ -1815,8 +1817,8 @@ struct ClientRef {
     accepts: Accepts,
     #[cfg(feature = "cookies")]
     cookie_store: Option<Arc<dyn cookie::CookieStore>>,
-    headers: HeaderMap,
-    headers_order: Option<&'static [HeaderName]>,
+    headers: Cow<'static, HeaderMap>,
+    headers_order: Option<Cow<'static, [HeaderName]>>,
     hyper: HyperClient,
     redirect_policy: Arc<redirect::Policy>,
     referer: bool,

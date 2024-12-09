@@ -41,7 +41,8 @@ mod tls {
         SslCurve::SECP384R1,
     ];
 
-    pub const CIPHER_LIST: [&str; 15] = [
+    pub const CIPHER_LIST: &str = static_join!(
+        ":",
         "TLS_AES_128_GCM_SHA256",
         "TLS_AES_256_GCM_SHA384",
         "TLS_CHACHA20_POLY1305_SHA256",
@@ -56,10 +57,11 @@ mod tls {
         "TLS_RSA_WITH_AES_128_GCM_SHA256",
         "TLS_RSA_WITH_AES_256_GCM_SHA384",
         "TLS_RSA_WITH_AES_128_CBC_SHA",
-        "TLS_RSA_WITH_AES_256_CBC_SHA",
-    ];
+        "TLS_RSA_WITH_AES_256_CBC_SHA"
+    );
 
-    pub const SIGALGS_LIST: [&str; 8] = [
+    pub const SIGALGS_LIST: &str = static_join!(
+        ":",
         "ecdsa_secp256r1_sha256",
         "rsa_pss_rsae_sha256",
         "rsa_pkcs1_sha256",
@@ -67,22 +69,22 @@ mod tls {
         "rsa_pss_rsae_sha384",
         "rsa_pkcs1_sha384",
         "rsa_pss_rsae_sha512",
-        "rsa_pkcs1_sha512",
-    ];
+        "rsa_pkcs1_sha512"
+    );
 
     #[derive(TypedBuilder)]
-    pub struct EdgeTlsSettings<'a> {
+    pub struct EdgeTlsSettings {
         // TLS curves
-        #[builder(default = &CURVES)]
-        curves: &'a [SslCurve],
+        #[builder(default = CURVES)]
+        curves: &'static [SslCurve],
 
         // TLS sigalgs list
-        #[builder(default = &SIGALGS_LIST)]
-        sigalgs_list: &'a [&'a str],
+        #[builder(default = SIGALGS_LIST)]
+        sigalgs_list: &'static str,
 
         // TLS cipher list
-        #[builder(default = &CIPHER_LIST)]
-        cipher_list: &'a [&'a str],
+        #[builder(default = CIPHER_LIST)]
+        cipher_list: &'static str,
 
         // TLS application_settings extension
         #[builder(default = true, setter(into))]
@@ -101,15 +103,15 @@ mod tls {
         pre_shared_key: bool,
     }
 
-    impl Into<TlsSettings> for EdgeTlsSettings<'_> {
+    impl Into<TlsSettings> for EdgeTlsSettings {
         fn into(self) -> TlsSettings {
             TlsSettings::builder()
                 .grease_enabled(true)
                 .enable_ocsp_stapling(true)
                 .enable_signed_cert_timestamps(true)
-                .curves(self.curves.to_vec())
-                .sigalgs_list(self.sigalgs_list.join(":"))
-                .cipher_list(self.cipher_list.join(":"))
+                .curves(Cow::Borrowed(self.curves))
+                .sigalgs_list(Cow::Borrowed(self.sigalgs_list))
+                .cipher_list(Cow::Borrowed(self.cipher_list))
                 .min_tls_version(Some(Version::TLS_1_2))
                 .max_tls_version(Some(Version::TLS_1_3))
                 .permute_extensions(self.permute_extensions)
@@ -156,7 +158,7 @@ pub(crate) mod edge101 {
             .http2(super::http2_template_1())
             .headers(if with_headers {
                 static HEADER_INITIALIZER: LazyLock<HeaderMap> = LazyLock::new(header_initializer);
-                Some(HEADER_INITIALIZER.clone())
+                Some(Cow::Borrowed(&*HEADER_INITIALIZER))
             } else {
                 None
             })
@@ -211,7 +213,7 @@ pub(crate) mod edge122 {
             .http2(super::http2_template_2())
             .headers(if with_headers {
                 static HEADER_INITIALIZER: LazyLock<HeaderMap> = LazyLock::new(header_initializer);
-                Some(HEADER_INITIALIZER.clone())
+                Some(Cow::Borrowed(&*HEADER_INITIALIZER))
             } else {
                 None
             })
@@ -267,7 +269,7 @@ pub(crate) mod edge127 {
             .http2(super::http2_template_2())
             .headers(if with_headers {
                 static HEADER_INITIALIZER: LazyLock<HeaderMap> = LazyLock::new(header_initializer);
-                Some(HEADER_INITIALIZER.clone())
+                Some(Cow::Borrowed(&*HEADER_INITIALIZER))
             } else {
                 None
             })

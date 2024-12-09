@@ -11,13 +11,14 @@ use edge::*;
 use http::{HeaderMap, HeaderName};
 use okhttp::*;
 use safari::*;
-use std::{fmt::Debug, str::FromStr};
+use std::{borrow::Cow, fmt::Debug, str::FromStr};
 use typed_builder::TypedBuilder;
 use Impersonate::*;
 
 /// Impersonate settings imports
 mod impersonte_imports {
     pub use super::ImpersonateSettings;
+    pub use crate::static_join;
     pub use http::{
         header::{
             ACCEPT, ACCEPT_ENCODING, ACCEPT_LANGUAGE, CACHE_CONTROL, DNT,
@@ -25,6 +26,7 @@ mod impersonte_imports {
         },
         HeaderMap, HeaderValue,
     };
+    pub use std::borrow::Cow;
     pub use std::sync::LazyLock;
 }
 
@@ -36,9 +38,18 @@ mod http2_imports {
 
 /// TLS settings imports
 mod tls_imports {
+    pub use crate::static_join;
     pub use crate::tls::{cert_compression::CertCompressionAlgorithm, TlsSettings, Version};
     pub use boring::ssl::SslCurve;
+    pub use std::borrow::Cow;
     pub use typed_builder::TypedBuilder;
+
+    #[macro_export]
+    macro_rules! static_join {
+        ($sep:expr, $first:expr $(, $rest:expr)*) => {
+            concat!($first $(, $sep, $rest)*)
+        };
+    }
 }
 
 /// Impersonate Settings.
@@ -52,11 +63,11 @@ pub struct ImpersonateSettings {
 
     /// Http headers
     #[builder(default, setter(into))]
-    pub(crate) headers: Option<HeaderMap>,
+    pub(crate) headers: Option<Cow<'static, HeaderMap>>,
 
     /// Http headers order
     #[builder(default, setter(strip_option))]
-    pub(crate) headers_order: Option<&'static [HeaderName]>,
+    pub(crate) headers_order: Option<Cow<'static, [HeaderName]>>,
 }
 
 macro_rules! impersonate_match {

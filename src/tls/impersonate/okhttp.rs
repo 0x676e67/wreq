@@ -21,7 +21,8 @@ mod tls {
 
     pub const CURVES: &[SslCurve] = &[SslCurve::X25519, SslCurve::SECP256R1, SslCurve::SECP384R1];
 
-    pub const SIGALGS_LIST: [&str; 9] = [
+    pub const SIGALGS_LIST: &str = static_join!(
+        ":",
         "ecdsa_secp256r1_sha256",
         "rsa_pss_rsae_sha256",
         "rsa_pkcs1_sha256",
@@ -30,30 +31,30 @@ mod tls {
         "rsa_pkcs1_sha384",
         "rsa_pss_rsae_sha512",
         "rsa_pkcs1_sha512",
-        "rsa_pkcs1_sha1",
-    ];
+        "rsa_pkcs1_sha1"
+    );
 
     #[derive(TypedBuilder)]
-    pub struct OkHttpTlsSettings<'a> {
+    pub struct OkHttpTlsSettings {
         // TLS curves
-        #[builder(default = &CURVES)]
-        curves: &'a [SslCurve],
+        #[builder(default = CURVES)]
+        curves: &'static [SslCurve],
 
         // TLS sigalgs list
-        #[builder(default = &SIGALGS_LIST)]
-        sigalgs_list: &'a [&'a str],
+        #[builder(default = SIGALGS_LIST)]
+        sigalgs_list: &'static str,
 
         // TLS cipher list
-        cipher_list: &'a [&'a str],
+        cipher_list: &'static str,
     }
 
-    impl Into<TlsSettings> for OkHttpTlsSettings<'_> {
+    impl Into<TlsSettings> for OkHttpTlsSettings {
         fn into(self) -> TlsSettings {
             TlsSettings::builder()
                 .enable_ocsp_stapling(true)
-                .curves(self.curves.to_vec())
-                .sigalgs_list(self.sigalgs_list.join(":"))
-                .cipher_list(self.cipher_list.join(":"))
+                .curves(Cow::Borrowed(self.curves))
+                .sigalgs_list(Cow::Borrowed(self.sigalgs_list))
+                .cipher_list(Cow::Borrowed(self.cipher_list))
                 .min_tls_version(Some(Version::TLS_1_2))
                 .max_tls_version(Some(Version::TLS_1_3))
                 .build()
@@ -93,7 +94,8 @@ pub(crate) mod okhttp3_11 {
         ImpersonateSettings::builder()
             .tls(
                 OkHttpTlsSettings::builder()
-                    .cipher_list(&[
+                    .cipher_list(static_join!(
+                        ":",
                         "TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256",
                         "TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256",
                         "TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384",
@@ -106,15 +108,15 @@ pub(crate) mod okhttp3_11 {
                         "TLS_RSA_WITH_AES_256_GCM_SHA384",
                         "TLS_RSA_WITH_AES_128_CBC_SHA",
                         "TLS_RSA_WITH_AES_256_CBC_SHA",
-                        "TLS_RSA_WITH_3DES_EDE_CBC_SHA",
-                    ])
+                        "TLS_RSA_WITH_3DES_EDE_CBC_SHA"
+                    ))
                     .build()
                     .into(),
             )
             .http2(super::http2_template_1())
             .headers(if with_headers {
                 static HEADER_INITIALIZER: LazyLock<HeaderMap> = LazyLock::new(header_initializer);
-                Some(HEADER_INITIALIZER.clone())
+                Some(Cow::Borrowed(&*HEADER_INITIALIZER))
             } else {
                 None
             })
@@ -147,7 +149,8 @@ pub(crate) mod okhttp3_13 {
         ImpersonateSettings::builder()
             .tls(
                 OkHttpTlsSettings::builder()
-                    .cipher_list(&[
+                    .cipher_list(static_join!(
+                        ":",
                         "TLS_AES_128_GCM_SHA256",
                         "TLS_AES_256_GCM_SHA384",
                         "TLS_CHACHA20_POLY1305_SHA256",
@@ -165,15 +168,15 @@ pub(crate) mod okhttp3_13 {
                         "TLS_RSA_WITH_AES_256_GCM_SHA384",
                         "TLS_RSA_WITH_AES_128_CBC_SHA",
                         "TLS_RSA_WITH_AES_256_CBC_SHA",
-                        "TLS_RSA_WITH_3DES_EDE_CBC_SHA",
-                    ])
+                        "TLS_RSA_WITH_3DES_EDE_CBC_SHA"
+                    ))
                     .build()
                     .into(),
             )
             .http2(super::http2_template_1())
             .headers(if with_headers {
                 static HEADER_INITIALIZER: LazyLock<HeaderMap> = LazyLock::new(header_initializer);
-                Some(HEADER_INITIALIZER.clone())
+                Some(Cow::Borrowed(&*HEADER_INITIALIZER))
             } else {
                 None
             })
@@ -206,7 +209,8 @@ pub(crate) mod okhttp3_14 {
         ImpersonateSettings::builder()
             .tls(
                 OkHttpTlsSettings::builder()
-                    .cipher_list(&[
+                    .cipher_list(static_join!(
+                        ":",
                         "TLS_AES_128_GCM_SHA256",
                         "TLS_AES_256_GCM_SHA384",
                         "TLS_CHACHA20_POLY1305_SHA256",
@@ -222,15 +226,15 @@ pub(crate) mod okhttp3_14 {
                         "TLS_RSA_WITH_AES_256_GCM_SHA384",
                         "TLS_RSA_WITH_AES_128_CBC_SHA",
                         "TLS_RSA_WITH_AES_256_CBC_SHA",
-                        "TLS_RSA_WITH_3DES_EDE_CBC_SHA",
-                    ])
+                        "TLS_RSA_WITH_3DES_EDE_CBC_SHA"
+                    ))
                     .build()
                     .into(),
             )
             .http2(super::http2_template_1())
             .headers(if with_headers {
                 static HEADER_INITIALIZER: LazyLock<HeaderMap> = LazyLock::new(header_initializer);
-                Some(HEADER_INITIALIZER.clone())
+                Some(Cow::Borrowed(&*HEADER_INITIALIZER))
             } else {
                 None
             })
@@ -260,7 +264,8 @@ pub(crate) mod okhttp3_9 {
         ImpersonateSettings::builder()
             .tls(
                 OkHttpTlsSettings::builder()
-                    .cipher_list(&[
+                    .cipher_list(static_join!(
+                        ":",
                         "TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256",
                         "TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256",
                         "TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384",
@@ -275,15 +280,15 @@ pub(crate) mod okhttp3_9 {
                         "TLS_RSA_WITH_AES_256_GCM_SHA384",
                         "TLS_RSA_WITH_AES_128_CBC_SHA",
                         "TLS_RSA_WITH_AES_256_CBC_SHA",
-                        "TLS_RSA_WITH_3DES_EDE_CBC_SHA",
-                    ])
+                        "TLS_RSA_WITH_3DES_EDE_CBC_SHA"
+                    ))
                     .build()
                     .into(),
             )
             .http2(super::http2_template_1())
             .headers(if with_headers {
                 static HEADER_INITIALIZER: LazyLock<HeaderMap> = LazyLock::new(header_initializer);
-                Some(HEADER_INITIALIZER.clone())
+                Some(Cow::Borrowed(&*HEADER_INITIALIZER))
             } else {
                 None
             })
@@ -316,7 +321,8 @@ pub(crate) mod okhttp4_10 {
         ImpersonateSettings::builder()
             .tls(
                 OkHttpTlsSettings::builder()
-                    .cipher_list(&[
+                    .cipher_list(static_join!(
+                        ":",
                         "TLS_AES_128_GCM_SHA256",
                         "TLS_AES_256_GCM_SHA384",
                         "TLS_CHACHA20_POLY1305_SHA256",
@@ -332,15 +338,15 @@ pub(crate) mod okhttp4_10 {
                         "TLS_RSA_WITH_AES_256_GCM_SHA384",
                         "TLS_RSA_WITH_AES_128_CBC_SHA",
                         "TLS_RSA_WITH_AES_256_CBC_SHA",
-                        "TLS_RSA_WITH_3DES_EDE_CBC_SHA",
-                    ])
+                        "TLS_RSA_WITH_3DES_EDE_CBC_SHA"
+                    ))
                     .build()
                     .into(),
             )
             .http2(super::http2_template_1())
             .headers(if with_headers {
                 static HEADER_INITIALIZER: LazyLock<HeaderMap> = LazyLock::new(header_initializer);
-                Some(HEADER_INITIALIZER.clone())
+                Some(Cow::Borrowed(&*HEADER_INITIALIZER))
             } else {
                 None
             })
@@ -373,7 +379,8 @@ pub(crate) mod okhttp4_9 {
         ImpersonateSettings::builder()
             .tls(
                 OkHttpTlsSettings::builder()
-                    .cipher_list(&[
+                    .cipher_list(static_join!(
+                        ":",
                         "TLS_AES_128_GCM_SHA256",
                         "TLS_AES_256_GCM_SHA384",
                         "TLS_CHACHA20_POLY1305_SHA256",
@@ -388,15 +395,15 @@ pub(crate) mod okhttp4_9 {
                         "TLS_RSA_WITH_AES_128_GCM_SHA256",
                         "TLS_RSA_WITH_AES_256_GCM_SHA384",
                         "TLS_RSA_WITH_AES_128_CBC_SHA",
-                        "TLS_RSA_WITH_AES_256_CBC_SHA",
-                    ])
+                        "TLS_RSA_WITH_AES_256_CBC_SHA"
+                    ))
                     .build()
                     .into(),
             )
             .http2(super::http2_template_1())
             .headers(if with_headers {
                 static HEADER_INITIALIZER: LazyLock<HeaderMap> = LazyLock::new(header_initializer);
-                Some(HEADER_INITIALIZER.clone())
+                Some(Cow::Borrowed(&*HEADER_INITIALIZER))
             } else {
                 None
             })
@@ -429,7 +436,8 @@ pub(crate) mod okhttp5 {
         ImpersonateSettings::builder()
             .tls(
                 OkHttpTlsSettings::builder()
-                    .cipher_list(&[
+                    .cipher_list(static_join!(
+                        ":",
                         "TLS_AES_128_GCM_SHA256",
                         "TLS_AES_256_GCM_SHA384",
                         "TLS_CHACHA20_POLY1305_SHA256",
@@ -445,15 +453,15 @@ pub(crate) mod okhttp5 {
                         "TLS_RSA_WITH_AES_256_GCM_SHA384",
                         "TLS_RSA_WITH_AES_128_CBC_SHA",
                         "TLS_RSA_WITH_AES_256_CBC_SHA",
-                        "TLS_RSA_WITH_3DES_EDE_CBC_SHA",
-                    ])
+                        "TLS_RSA_WITH_3DES_EDE_CBC_SHA"
+                    ))
                     .build()
                     .into(),
             )
             .http2(super::http2_template_1())
             .headers(if with_headers {
                 static HEADER_INITIALIZER: LazyLock<HeaderMap> = LazyLock::new(header_initializer);
-                Some(HEADER_INITIALIZER.clone())
+                Some(Cow::Borrowed(&*HEADER_INITIALIZER))
             } else {
                 None
             })
