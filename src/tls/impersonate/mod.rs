@@ -15,9 +15,9 @@ use std::{borrow::Cow, fmt::Debug, str::FromStr};
 use typed_builder::TypedBuilder;
 use Impersonate::*;
 
-/// Impersonate settings imports
 mod impersonte_imports {
     pub use super::ImpersonateSettings;
+    pub use crate::conditional_headers;
     pub use crate::static_join;
     pub use http::{
         header::{
@@ -28,15 +28,25 @@ mod impersonte_imports {
     };
     pub use std::borrow::Cow;
     pub use std::sync::LazyLock;
+
+    #[macro_export]
+    macro_rules! conditional_headers {
+        ($with_headers:expr, $initializer:expr) => {
+            if $with_headers {
+                static HEADER_INITIALIZER: LazyLock<HeaderMap> = LazyLock::new($initializer);
+                Some(Cow::Borrowed(&*HEADER_INITIALIZER))
+            } else {
+                None
+            }
+        };
+    }
 }
 
-/// Http2 settings imports
 mod http2_imports {
     pub use hyper::PseudoOrder::{self, *};
     pub use hyper::SettingsOrder::{self, *};
 }
 
-/// TLS settings imports
 mod tls_imports {
     pub use crate::static_join;
     pub use crate::tls::{cert_compression::CertCompressionAlgorithm, TlsSettings, Version};

@@ -1,5 +1,30 @@
-use crate::tls::Http2Settings;
+use crate::tls::{Http2Settings, TlsSettings};
 use http2::{HEADERS_PSEUDO_ORDER, HEADER_PRORIORITY, SETTINGS_ORDER};
+use tls::{EdgeTlsSettings, NEW_CURVES};
+
+// ============== TLS template ==============
+pub fn tls_template_1() -> TlsSettings {
+    EdgeTlsSettings::builder().build().into()
+}
+
+pub fn tls_template_2() -> TlsSettings {
+    EdgeTlsSettings::builder()
+        .permute_extensions(true)
+        .pre_shared_key(true)
+        .enable_ech_grease(true)
+        .build()
+        .into()
+}
+
+pub fn tls_template_3() -> TlsSettings {
+    EdgeTlsSettings::builder()
+        .curves(NEW_CURVES)
+        .permute_extensions(true)
+        .pre_shared_key(true)
+        .enable_ech_grease(true)
+        .build()
+        .into()
+}
 
 // ============== HTTP template ==============
 pub fn http2_template_1() -> Http2Settings {
@@ -112,8 +137,8 @@ mod tls {
                 .curves(Cow::Borrowed(self.curves))
                 .sigalgs_list(Cow::Borrowed(self.sigalgs_list))
                 .cipher_list(Cow::Borrowed(self.cipher_list))
-                .min_tls_version(Some(Version::TLS_1_2))
-                .max_tls_version(Some(Version::TLS_1_3))
+                .min_tls_version(Version::TLS_1_2)
+                .max_tls_version(Version::TLS_1_3)
                 .permute_extensions(self.permute_extensions)
                 .pre_shared_key(self.pre_shared_key)
                 .enable_ech_grease(self.enable_ech_grease)
@@ -148,20 +173,14 @@ mod http2 {
 }
 
 pub(crate) mod edge101 {
-    use super::tls::EdgeTlsSettings;
     use crate::tls::impersonate::impersonte_imports::*;
 
     #[inline]
     pub fn get_settings(with_headers: bool) -> ImpersonateSettings {
         ImpersonateSettings::builder()
-            .tls(EdgeTlsSettings::builder().build().try_into().unwrap())
+            .tls(super::tls_template_1())
             .http2(super::http2_template_1())
-            .headers(if with_headers {
-                static HEADER_INITIALIZER: LazyLock<HeaderMap> = LazyLock::new(header_initializer);
-                Some(Cow::Borrowed(&*HEADER_INITIALIZER))
-            } else {
-                None
-            })
+            .headers(conditional_headers!(with_headers, header_initializer))
             .build()
     }
 
@@ -196,27 +215,14 @@ pub(crate) mod edge101 {
 }
 
 pub(crate) mod edge122 {
-    use super::tls::EdgeTlsSettings;
     use crate::tls::impersonate::impersonte_imports::*;
 
     #[inline]
     pub fn get_settings(with_headers: bool) -> ImpersonateSettings {
         ImpersonateSettings::builder()
-            .tls(
-                EdgeTlsSettings::builder()
-                    .permute_extensions(true)
-                    .pre_shared_key(true)
-                    .enable_ech_grease(true)
-                    .build()
-                    .into(),
-            )
+            .tls(super::tls_template_2())
             .http2(super::http2_template_2())
-            .headers(if with_headers {
-                static HEADER_INITIALIZER: LazyLock<HeaderMap> = LazyLock::new(header_initializer);
-                Some(Cow::Borrowed(&*HEADER_INITIALIZER))
-            } else {
-                None
-            })
+            .headers(conditional_headers!(with_headers, header_initializer))
             .build()
     }
 
@@ -251,28 +257,14 @@ pub(crate) mod edge122 {
 }
 
 pub(crate) mod edge127 {
-    use super::tls::{EdgeTlsSettings, NEW_CURVES};
     use crate::tls::impersonate::impersonte_imports::*;
 
     #[inline]
     pub fn get_settings(with_headers: bool) -> ImpersonateSettings {
         ImpersonateSettings::builder()
-            .tls(
-                EdgeTlsSettings::builder()
-                    .curves(NEW_CURVES)
-                    .permute_extensions(true)
-                    .pre_shared_key(true)
-                    .enable_ech_grease(true)
-                    .build()
-                    .into(),
-            )
+            .tls(super::tls_template_3())
             .http2(super::http2_template_2())
-            .headers(if with_headers {
-                static HEADER_INITIALIZER: LazyLock<HeaderMap> = LazyLock::new(header_initializer);
-                Some(Cow::Borrowed(&*HEADER_INITIALIZER))
-            } else {
-                None
-            })
+            .headers(conditional_headers!(with_headers, header_initializer))
             .build()
     }
 

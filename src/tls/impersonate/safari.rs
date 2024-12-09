@@ -185,7 +185,7 @@ mod tls {
                 .curves(Cow::Borrowed(self.curves))
                 .sigalgs_list(Cow::Borrowed(self.sigalgs_list))
                 .cipher_list(Cow::Borrowed(self.cipher_list))
-                .min_tls_version(Some(Version::TLS_1_0))
+                .min_tls_version(Version::TLS_1_0)
                 .cert_compression_algorithm(CertCompressionAlgorithm::Zlib)
                 .build()
         }
@@ -235,12 +235,7 @@ pub(crate) mod safari15_3 {
         ImpersonateSettings::builder()
             .tls(super::tls_template_2())
             .http2(super::http2_template_4())
-            .headers(if with_headers {
-                static HEADER_INITIALIZER: LazyLock<HeaderMap> = LazyLock::new(header_initializer);
-                Some(Cow::Borrowed(&*HEADER_INITIALIZER))
-            } else {
-                None
-            })
+            .headers(conditional_headers!(with_headers, header_initializer))
             .build()
     }
 
@@ -271,12 +266,7 @@ pub(crate) mod safari15_5 {
         ImpersonateSettings::builder()
             .tls(super::tls_template_2())
             .http2(super::http2_template_4())
-            .headers(if with_headers {
-                static HEADER_INITIALIZER: LazyLock<HeaderMap> = LazyLock::new(header_initializer);
-                Some(Cow::Borrowed(&*HEADER_INITIALIZER))
-            } else {
-                None
-            })
+            .headers(conditional_headers!(with_headers, header_initializer))
             .build()
     }
 
@@ -307,12 +297,7 @@ pub(crate) mod safari15_6_1 {
         ImpersonateSettings::builder()
             .tls(super::tls_template_1())
             .http2(super::http2_template_4())
-            .headers(if with_headers {
-                static HEADER_INITIALIZER: LazyLock<HeaderMap> = LazyLock::new(header_initializer);
-                Some(Cow::Borrowed(&*HEADER_INITIALIZER))
-            } else {
-                None
-            })
+            .headers(conditional_headers!(with_headers, header_initializer))
             .build()
     }
 
@@ -343,12 +328,7 @@ pub(crate) mod safari16 {
         ImpersonateSettings::builder()
             .tls(super::tls_template_1())
             .http2(super::http2_template_4())
-            .headers(if with_headers {
-                static HEADER_INITIALIZER: LazyLock<HeaderMap> = LazyLock::new(header_initializer);
-                Some(Cow::Borrowed(&*HEADER_INITIALIZER))
-            } else {
-                None
-            })
+            .headers(conditional_headers!(with_headers, header_initializer))
             .build()
     }
 
@@ -382,12 +362,7 @@ pub(crate) mod safari16_5 {
         ImpersonateSettings::builder()
             .tls(super::tls_template_1())
             .http2(super::http2_template_4())
-            .headers(if with_headers {
-                static HEADER_INITIALIZER: LazyLock<HeaderMap> = LazyLock::new(header_initializer);
-                Some(Cow::Borrowed(&*HEADER_INITIALIZER))
-            } else {
-                None
-            })
+            .headers(conditional_headers!(with_headers, header_initializer))
             .build()
     }
 
@@ -421,12 +396,7 @@ pub(crate) mod safari17_0 {
         ImpersonateSettings::builder()
             .tls(super::tls_template_1())
             .http2(super::http2_template_5())
-            .headers(if with_headers {
-                static HEADER_INITIALIZER: LazyLock<HeaderMap> = LazyLock::new(header_initializer);
-                Some(Cow::Borrowed(&*HEADER_INITIALIZER))
-            } else {
-                None
-            })
+            .headers(conditional_headers!(with_headers, header_initializer))
             .build()
     }
 
@@ -460,12 +430,7 @@ pub(crate) mod safari17_2_1 {
         ImpersonateSettings::builder()
             .tls(super::tls_template_1())
             .http2(super::http2_template_5())
-            .headers(if with_headers {
-                static HEADER_INITIALIZER: LazyLock<HeaderMap> = LazyLock::new(header_initializer);
-                Some(Cow::Borrowed(&*HEADER_INITIALIZER))
-            } else {
-                None
-            })
+            .headers(conditional_headers!(with_headers, header_initializer))
             .build()
     }
 
@@ -499,12 +464,7 @@ pub(crate) mod safari17_4_1 {
         ImpersonateSettings::builder()
             .tls(super::tls_template_1())
             .http2(super::http2_template_4())
-            .headers(if with_headers {
-                static HEADER_INITIALIZER: LazyLock<HeaderMap> = LazyLock::new(header_initializer);
-                Some(Cow::Borrowed(&*HEADER_INITIALIZER))
-            } else {
-                None
-            })
+            .headers(conditional_headers!(with_headers, header_initializer))
             .build()
     }
 
@@ -538,12 +498,7 @@ pub(crate) mod safari17_5 {
         ImpersonateSettings::builder()
             .tls(super::tls_template_1())
             .http2(super::http2_template_5())
-            .headers(if with_headers {
-                static HEADER_INITIALIZER: LazyLock<HeaderMap> = LazyLock::new(header_initializer);
-                Some(Cow::Borrowed(&*HEADER_INITIALIZER))
-            } else {
-                None
-            })
+            .headers(conditional_headers!(with_headers, header_initializer))
             .build()
     }
 
@@ -577,12 +532,7 @@ pub(crate) mod safari18 {
         ImpersonateSettings::builder()
             .tls(super::tls_template_1())
             .http2(super::http2_template_3())
-            .headers(if with_headers {
-                static HEADER_INITIALIZER: LazyLock<HeaderMap> = LazyLock::new(header_initializer);
-                Some(Cow::Borrowed(&*HEADER_INITIALIZER))
-            } else {
-                None
-            })
+            .headers(conditional_headers!(with_headers, header_initializer))
             .build()
     }
 
@@ -617,12 +567,7 @@ pub(crate) mod safari_ios_16_5 {
         ImpersonateSettings::builder()
             .tls(super::tls_template_1())
             .http2(super::http2_template_1())
-            .headers(if with_headers {
-                static HEADER_INITIALIZER: LazyLock<HeaderMap> = LazyLock::new(header_initializer);
-                Some(Cow::Borrowed(&*HEADER_INITIALIZER))
-            } else {
-                None
-            })
+            .headers(conditional_headers!(with_headers, header_initializer))
             .build()
     }
 
@@ -656,12 +601,7 @@ pub(crate) mod safari_ios_17_2 {
         ImpersonateSettings::builder()
             .tls(super::tls_template_1())
             .http2(super::http2_template_2())
-            .headers(if with_headers {
-                static HEADER_INITIALIZER: LazyLock<HeaderMap> = LazyLock::new(header_initializer);
-                Some(Cow::Borrowed(&*HEADER_INITIALIZER))
-            } else {
-                None
-            })
+            .headers(conditional_headers!(with_headers, header_initializer))
             .build()
     }
 
@@ -695,12 +635,7 @@ pub(crate) mod safari_ios_17_4_1 {
         ImpersonateSettings::builder()
             .tls(super::tls_template_1())
             .http2(super::http2_template_2())
-            .headers(if with_headers {
-                static HEADER_INITIALIZER: LazyLock<HeaderMap> = LazyLock::new(header_initializer);
-                Some(Cow::Borrowed(&*HEADER_INITIALIZER))
-            } else {
-                None
-            })
+            .headers(conditional_headers!(with_headers, header_initializer))
             .build()
     }
 
@@ -734,12 +669,7 @@ pub(crate) mod safari_ipad_18 {
         ImpersonateSettings::builder()
             .tls(super::tls_template_1())
             .http2(super::http2_template_3())
-            .headers(if with_headers {
-                static HEADER_INITIALIZER: LazyLock<HeaderMap> = LazyLock::new(header_initializer);
-                Some(Cow::Borrowed(&*HEADER_INITIALIZER))
-            } else {
-                None
-            })
+            .headers(conditional_headers!(with_headers, header_initializer))
             .build()
     }
 

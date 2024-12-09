@@ -55,8 +55,8 @@ mod tls {
                 .curves(Cow::Borrowed(self.curves))
                 .sigalgs_list(Cow::Borrowed(self.sigalgs_list))
                 .cipher_list(Cow::Borrowed(self.cipher_list))
-                .min_tls_version(Some(Version::TLS_1_2))
-                .max_tls_version(Some(Version::TLS_1_3))
+                .min_tls_version(Version::TLS_1_2)
+                .max_tls_version(Version::TLS_1_3)
                 .build()
         }
     }
@@ -114,12 +114,7 @@ pub(crate) mod okhttp3_11 {
                     .into(),
             )
             .http2(super::http2_template_1())
-            .headers(if with_headers {
-                static HEADER_INITIALIZER: LazyLock<HeaderMap> = LazyLock::new(header_initializer);
-                Some(Cow::Borrowed(&*HEADER_INITIALIZER))
-            } else {
-                None
-            })
+            .headers(conditional_headers!(with_headers, header_initializer))
             .build()
     }
 
@@ -174,12 +169,7 @@ pub(crate) mod okhttp3_13 {
                     .into(),
             )
             .http2(super::http2_template_1())
-            .headers(if with_headers {
-                static HEADER_INITIALIZER: LazyLock<HeaderMap> = LazyLock::new(header_initializer);
-                Some(Cow::Borrowed(&*HEADER_INITIALIZER))
-            } else {
-                None
-            })
+            .headers(conditional_headers!(with_headers, header_initializer))
             .build()
     }
 
@@ -232,12 +222,7 @@ pub(crate) mod okhttp3_14 {
                     .into(),
             )
             .http2(super::http2_template_1())
-            .headers(if with_headers {
-                static HEADER_INITIALIZER: LazyLock<HeaderMap> = LazyLock::new(header_initializer);
-                Some(Cow::Borrowed(&*HEADER_INITIALIZER))
-            } else {
-                None
-            })
+            .headers(conditional_headers!(with_headers, header_initializer))
             .build()
     }
 
@@ -286,12 +271,7 @@ pub(crate) mod okhttp3_9 {
                     .into(),
             )
             .http2(super::http2_template_1())
-            .headers(if with_headers {
-                static HEADER_INITIALIZER: LazyLock<HeaderMap> = LazyLock::new(header_initializer);
-                Some(Cow::Borrowed(&*HEADER_INITIALIZER))
-            } else {
-                None
-            })
+            .headers(conditional_headers!(with_headers, header_initializer))
             .build()
     }
 
@@ -344,12 +324,7 @@ pub(crate) mod okhttp4_10 {
                     .into(),
             )
             .http2(super::http2_template_1())
-            .headers(if with_headers {
-                static HEADER_INITIALIZER: LazyLock<HeaderMap> = LazyLock::new(header_initializer);
-                Some(Cow::Borrowed(&*HEADER_INITIALIZER))
-            } else {
-                None
-            })
+            .headers(conditional_headers!(with_headers, header_initializer))
             .build()
     }
 
@@ -401,12 +376,7 @@ pub(crate) mod okhttp4_9 {
                     .into(),
             )
             .http2(super::http2_template_1())
-            .headers(if with_headers {
-                static HEADER_INITIALIZER: LazyLock<HeaderMap> = LazyLock::new(header_initializer);
-                Some(Cow::Borrowed(&*HEADER_INITIALIZER))
-            } else {
-                None
-            })
+            .headers(conditional_headers!(with_headers, header_initializer))
             .build()
     }
 
@@ -459,12 +429,7 @@ pub(crate) mod okhttp5 {
                     .into(),
             )
             .http2(super::http2_template_1())
-            .headers(if with_headers {
-                static HEADER_INITIALIZER: LazyLock<HeaderMap> = LazyLock::new(header_initializer);
-                Some(Cow::Borrowed(&*HEADER_INITIALIZER))
-            } else {
-                None
-            })
+            .headers(conditional_headers!(with_headers, header_initializer))
             .build()
     }
 

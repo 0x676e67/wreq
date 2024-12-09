@@ -190,8 +190,8 @@ mod tls {
                 .curves(Cow::Borrowed(self.curves))
                 .sigalgs_list(Cow::Borrowed(self.sigalgs_list))
                 .cipher_list(Cow::Borrowed(self.cipher_list))
-                .min_tls_version(Some(Version::TLS_1_2))
-                .max_tls_version(Some(Version::TLS_1_3))
+                .min_tls_version(Version::TLS_1_2)
+                .max_tls_version(Version::TLS_1_3)
                 .permute_extensions(self.permute_extensions)
                 .pre_shared_key(self.pre_shared_key)
                 .enable_ech_grease(self.enable_ech_grease)
@@ -233,12 +233,7 @@ pub(crate) mod v100 {
         ImpersonateSettings::builder()
             .tls(super::tls_template_1())
             .http2(super::http2_template_1())
-            .headers(if with_headers {
-                static HEADER_INITIALIZER: LazyLock<HeaderMap> = LazyLock::new(header_initializer);
-                Some(Cow::Borrowed(&*HEADER_INITIALIZER))
-            } else {
-                None
-            })
+            .headers(conditional_headers!(with_headers, header_initializer))
             .build()
     }
 
@@ -281,12 +276,7 @@ pub(crate) mod v101 {
         ImpersonateSettings::builder()
             .tls(super::tls_template_1())
             .http2(super::http2_template_1())
-            .headers(if with_headers {
-                static HEADER_INITIALIZER: LazyLock<HeaderMap> = LazyLock::new(header_initializer);
-                Some(Cow::Borrowed(&*HEADER_INITIALIZER))
-            } else {
-                None
-            })
+            .headers(conditional_headers!(with_headers, header_initializer))
             .build()
     }
 
@@ -329,12 +319,7 @@ pub(crate) mod v104 {
         ImpersonateSettings::builder()
             .tls(super::tls_template_1())
             .http2(super::http2_template_1())
-            .headers(if with_headers {
-                static HEADER_INITIALIZER: LazyLock<HeaderMap> = LazyLock::new(header_initializer);
-                Some(Cow::Borrowed(&*HEADER_INITIALIZER))
-            } else {
-                None
-            })
+            .headers(conditional_headers!(with_headers, header_initializer))
             .build()
     }
 
@@ -377,12 +362,7 @@ pub(crate) mod v105 {
         ImpersonateSettings::builder()
             .tls(super::tls_template_2())
             .http2(super::http2_template_1())
-            .headers(if with_headers {
-                static HEADER_INITIALIZER: LazyLock<HeaderMap> = LazyLock::new(header_initializer);
-                Some(Cow::Borrowed(&*HEADER_INITIALIZER))
-            } else {
-                None
-            })
+            .headers(conditional_headers!(with_headers, header_initializer))
             .build()
     }
 
@@ -425,12 +405,7 @@ pub(crate) mod v106 {
         ImpersonateSettings::builder()
             .tls(super::tls_template_3())
             .http2(super::http2_template_2())
-            .headers(if with_headers {
-                static HEADER_INITIALIZER: LazyLock<HeaderMap> = LazyLock::new(header_initializer);
-                Some(Cow::Borrowed(&*HEADER_INITIALIZER))
-            } else {
-                None
-            })
+            .headers(conditional_headers!(with_headers, header_initializer))
             .build()
     }
 
@@ -473,12 +448,7 @@ pub(crate) mod v107 {
         ImpersonateSettings::builder()
             .tls(super::tls_template_3())
             .http2(super::http2_template_2())
-            .headers(if with_headers {
-                static HEADER_INITIALIZER: LazyLock<HeaderMap> = LazyLock::new(header_initializer);
-                Some(Cow::Borrowed(&*HEADER_INITIALIZER))
-            } else {
-                None
-            })
+            .headers(conditional_headers!(with_headers, header_initializer))
             .build()
     }
 
@@ -521,12 +491,7 @@ pub(crate) mod v108 {
         ImpersonateSettings::builder()
             .tls(super::tls_template_3())
             .http2(super::http2_template_2())
-            .headers(if with_headers {
-                static HEADER_INITIALIZER: LazyLock<HeaderMap> = LazyLock::new(header_initializer);
-                Some(Cow::Borrowed(&*HEADER_INITIALIZER))
-            } else {
-                None
-            })
+            .headers(conditional_headers!(with_headers, header_initializer))
             .build()
     }
 
@@ -569,12 +534,7 @@ pub(crate) mod v109 {
         ImpersonateSettings::builder()
             .tls(super::tls_template_3())
             .http2(super::http2_template_2())
-            .headers(if with_headers {
-                static HEADER_INITIALIZER: LazyLock<HeaderMap> = LazyLock::new(header_initializer);
-                Some(Cow::Borrowed(&*HEADER_INITIALIZER))
-            } else {
-                None
-            })
+            .headers(conditional_headers!(with_headers, header_initializer))
             .build()
     }
 
@@ -617,12 +577,7 @@ pub(crate) mod v114 {
         ImpersonateSettings::builder()
             .tls(super::tls_template_3())
             .http2(super::http2_template_2())
-            .headers(if with_headers {
-                static HEADER_INITIALIZER: LazyLock<HeaderMap> = LazyLock::new(header_initializer);
-                Some(Cow::Borrowed(&*HEADER_INITIALIZER))
-            } else {
-                None
-            })
+            .headers(conditional_headers!(with_headers, header_initializer))
             .build()
     }
 
@@ -662,12 +617,7 @@ pub(crate) mod v116 {
         ImpersonateSettings::builder()
             .tls(super::tls_template_4())
             .http2(super::http2_template_2())
-            .headers(if with_headers {
-                static HEADER_INITIALIZER: LazyLock<HeaderMap> = LazyLock::new(header_initializer);
-                Some(Cow::Borrowed(&*HEADER_INITIALIZER))
-            } else {
-                None
-            })
+            .headers(conditional_headers!(with_headers, header_initializer))
             .build()
     }
 
@@ -709,12 +659,7 @@ pub(crate) mod v117 {
         ImpersonateSettings::builder()
             .tls(super::tls_template_5())
             .http2(super::http2_template_3())
-            .headers(if with_headers {
-                static HEADER_INITIALIZER: LazyLock<HeaderMap> = LazyLock::new(header_initializer);
-                Some(Cow::Borrowed(&*HEADER_INITIALIZER))
-            } else {
-                None
-            })
+            .headers(conditional_headers!(with_headers, header_initializer))
             .build()
     }
 
@@ -755,12 +700,7 @@ pub(crate) mod v118 {
         ImpersonateSettings::builder()
             .tls(super::tls_template_4())
             .http2(super::http2_template_3())
-            .headers(if with_headers {
-                static HEADER_INITIALIZER: LazyLock<HeaderMap> = LazyLock::new(header_initializer);
-                Some(Cow::Borrowed(&*HEADER_INITIALIZER))
-            } else {
-                None
-            })
+            .headers(conditional_headers!(with_headers, header_initializer))
             .build()
     }
 
@@ -800,12 +740,7 @@ pub(crate) mod v119 {
         ImpersonateSettings::builder()
             .tls(super::tls_template_4())
             .http2(super::http2_template_3())
-            .headers(if with_headers {
-                static HEADER_INITIALIZER: LazyLock<HeaderMap> = LazyLock::new(header_initializer);
-                Some(Cow::Borrowed(&*HEADER_INITIALIZER))
-            } else {
-                None
-            })
+            .headers(conditional_headers!(with_headers, header_initializer))
             .build()
     }
 
@@ -849,12 +784,7 @@ pub(crate) mod v120 {
         ImpersonateSettings::builder()
             .tls(super::tls_template_5())
             .http2(super::http2_template_3())
-            .headers(if with_headers {
-                static HEADER_INITIALIZER: LazyLock<HeaderMap> = LazyLock::new(header_initializer);
-                Some(Cow::Borrowed(&*HEADER_INITIALIZER))
-            } else {
-                None
-            })
+            .headers(conditional_headers!(with_headers, header_initializer))
             .build()
     }
 
@@ -901,12 +831,7 @@ pub(crate) mod v123 {
         ImpersonateSettings::builder()
             .tls(super::tls_template_5())
             .http2(super::http2_template_3())
-            .headers(if with_headers {
-                static HEADER_INITIALIZER: LazyLock<HeaderMap> = LazyLock::new(header_initializer);
-                Some(Cow::Borrowed(&*HEADER_INITIALIZER))
-            } else {
-                None
-            })
+            .headers(conditional_headers!(with_headers, header_initializer))
             .build()
     }
 
@@ -945,12 +870,7 @@ pub(crate) mod v124 {
         ImpersonateSettings::builder()
             .tls(super::tls_template_6())
             .http2(super::http2_template_3())
-            .headers(if with_headers {
-                static HEADER_INITIALIZER: LazyLock<HeaderMap> = LazyLock::new(header_initializer);
-                Some(Cow::Borrowed(&*HEADER_INITIALIZER))
-            } else {
-                None
-            })
+            .headers(conditional_headers!(with_headers, header_initializer))
             .build()
     }
 
@@ -989,12 +909,7 @@ pub(crate) mod v126 {
         ImpersonateSettings::builder()
             .tls(super::tls_template_6())
             .http2(super::http2_template_3())
-            .headers(if with_headers {
-                static HEADER_INITIALIZER: LazyLock<HeaderMap> = LazyLock::new(header_initializer);
-                Some(Cow::Borrowed(&*HEADER_INITIALIZER))
-            } else {
-                None
-            })
+            .headers(conditional_headers!(with_headers, header_initializer))
             .build()
     }
 
@@ -1033,12 +948,7 @@ pub(crate) mod v127 {
         ImpersonateSettings::builder()
             .tls(super::tls_template_6())
             .http2(super::http2_template_3())
-            .headers(if with_headers {
-                static HEADER_INITIALIZER: LazyLock<HeaderMap> = LazyLock::new(header_initializer);
-                Some(Cow::Borrowed(&*HEADER_INITIALIZER))
-            } else {
-                None
-            })
+            .headers(conditional_headers!(with_headers, header_initializer))
             .build()
     }
 
@@ -1077,12 +987,7 @@ pub(crate) mod v128 {
         ImpersonateSettings::builder()
             .tls(super::tls_template_6())
             .http2(super::http2_template_3())
-            .headers(if with_headers {
-                static HEADER_INITIALIZER: LazyLock<HeaderMap> = LazyLock::new(header_initializer);
-                Some(Cow::Borrowed(&*HEADER_INITIALIZER))
-            } else {
-                None
-            })
+            .headers(conditional_headers!(with_headers, header_initializer))
             .build()
     }
 
@@ -1121,12 +1026,7 @@ pub(crate) mod v129 {
         ImpersonateSettings::builder()
             .tls(super::tls_template_6())
             .http2(super::http2_template_3())
-            .headers(if with_headers {
-                static HEADER_INITIALIZER: LazyLock<HeaderMap> = LazyLock::new(header_initializer);
-                Some(Cow::Borrowed(&*HEADER_INITIALIZER))
-            } else {
-                None
-            })
+            .headers(conditional_headers!(with_headers, header_initializer))
             .build()
     }
 
@@ -1166,12 +1066,7 @@ pub(crate) mod v130 {
         ImpersonateSettings::builder()
             .tls(super::tls_template_6())
             .http2(super::http2_template_3())
-            .headers(if with_headers {
-                static HEADER_INITIALIZER: LazyLock<HeaderMap> = LazyLock::new(header_initializer);
-                Some(Cow::Borrowed(&*HEADER_INITIALIZER))
-            } else {
-                None
-            })
+            .headers(conditional_headers!(with_headers, header_initializer))
             .build()
     }
 
@@ -1217,12 +1112,7 @@ pub(crate) mod v131 {
         ImpersonateSettings::builder()
             .tls(super::tls_template_7())
             .http2(super::http2_template_3())
-            .headers(if with_headers {
-                static HEADER_INITIALIZER: LazyLock<HeaderMap> = LazyLock::new(header_initializer);
-                Some(Cow::Borrowed(&*HEADER_INITIALIZER))
-            } else {
-                None
-            })
+            .headers(conditional_headers!(with_headers, header_initializer))
             .build()
     }
 
