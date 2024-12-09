@@ -7,6 +7,7 @@ use http::header::HeaderValue;
 use http::uri::{Authority, Scheme};
 use http::Uri;
 use hyper::client::connect::{Connected, Connection};
+use hyper::ext::PoolKeyExt;
 use hyper::service::Service;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 
@@ -35,6 +36,10 @@ pub(crate) struct Connector {
     nodelay: bool,
     #[cfg(feature = "boring-tls")]
     tls_info: bool,
+    local_addr_v4: Option<Ipv4Addr>,
+    local_addr_v6: Option<Ipv6Addr>,
+    #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
+    interface: Option<std::borrow::Cow<'static, str>>,
 }
 
 #[derive(Clone)]
@@ -88,7 +93,7 @@ impl Connector {
         local_addr_v4: Option<Ipv4Addr>,
         local_addr_v6: Option<Ipv6Addr>,
         #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
-        interface: Option<String>,
+        interface: Option<Cow<'static, str>>,
         nodelay: bool,
         tls_info: bool,
     ) -> Connector {
@@ -111,6 +116,10 @@ impl Connector {
             timeout: None,
             nodelay,
             tls_info,
+            local_addr_v4: None,
+            local_addr_v6: None,
+            #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
+            interface: None,
         }
     }
 
@@ -139,7 +148,53 @@ impl Connector {
         Arc::make_mut(&mut self.proxies).clone_from_slice(proxies);
     }
 
+    pub(crate) fn pool_key_extension(&self, uri: &Uri) -> Option<PoolKeyExt> {
+        for proxy in self.proxies.as_ref() {
+            if let Some(proxy_scheme) = proxy.intercept(uri) {
+                let ext = match proxy_scheme {
+                    ProxyScheme::Http { host, auth } => PoolKeyExt::Http(Scheme::HTTP, host, auth),
+                    ProxyScheme::Https { host, auth } => {
+                        PoolKeyExt::Http(Scheme::HTTPS, host, auth)
+                    }
+                    #[cfg(feature = "socks")]
+                    ProxyScheme::Socks4 { addr } => PoolKeyExt::Socks4(addr, None),
+                    #[cfg(feature = "socks")]
+                    ProxyScheme::Socks5 { addr, auth, .. } => PoolKeyExt::Socks5(addr, auth),
+                };
+                return Some(ext);
+            }
+        }
+
+        if let (Some(_), Some(_)) | (Some(_), None) | (None, Some(_)) =
+            (&self.local_addr_v4, &self.local_addr_v6)
+        {
+            return Some(PoolKeyExt::Address(
+                self.local_addr_v4.map(IpAddr::V4),
+                self.local_addr_v6.map(IpAddr::V6),
+            ));
+        }
+
+        #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
+        if let Some(ref interface) = self.interface {
+            return Some(PoolKeyExt::Interface(interface.clone()));
+        }
+
+        None
+    }
+
     pub(crate) fn set_local_address(&mut self, addr: Option<IpAddr>) {
+        if self.proxies.is_empty() {
+            match addr {
+                Some(IpAddr::V4(a)) => {
+                    self.local_addr_v4 = Some(a);
+                }
+                Some(IpAddr::V6(a)) => {
+                    self.local_addr_v6 = Some(a);
+                }
+                _ => {}
+            };
+        }
+
         match &mut self.inner {
             #[cfg(not(feature = "boring-tls"))]
             Inner::Http(http) => http.set_local_address(addr),
@@ -149,6 +204,11 @@ impl Connector {
     }
 
     pub(crate) fn set_local_addresses(&mut self, addr_ipv4: Ipv4Addr, addr_ipv6: Ipv6Addr) {
+        if self.proxies.is_empty() {
+            self.local_addr_v4 = Some(addr_ipv4);
+            self.local_addr_v6 = Some(addr_ipv6);
+        }
+
         match &mut self.inner {
             #[cfg(not(feature = "boring-tls"))]
             Inner::Http(http) => http.set_local_addresses(addr_ipv4, addr_ipv6),
@@ -158,7 +218,11 @@ impl Connector {
     }
 
     #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
-    pub(crate) fn set_interface(&mut self, interface: &str) {
+    pub(crate) fn set_interface(&mut self, interface: std::borrow::Cow<'static, str>) {
+        if self.proxies.is_empty() {
+            self.interface = Some(interface.clone());
+        }
+
         match &mut self.inner {
             #[cfg(not(feature = "boring-tls"))]
             Inner::Http(http) => http.set_interface(interface),

@@ -95,7 +95,7 @@ struct Config {
     local_address_ipv4: Option<Ipv4Addr>,
     http1_title_case_headers: bool,
     #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
-    interface: Option<String>,
+    interface: Option<std::borrow::Cow<'static, str>>,
     nodelay: bool,
     #[cfg(feature = "cookies")]
     cookie_store: Option<Arc<dyn cookie::CookieStore>>,
@@ -209,9 +209,10 @@ impl ClientBuilder {
 
             #[cfg(feature = "boring-tls")]
             {
+                let tls = BoringTlsConnector::new(config.tls)?;
                 Connector::new_boring_tls(
                     http,
-                    BoringTlsConnector::new(config.tls)?,
+                    tls,
                     proxies,
                     config.local_address_ipv4,
                     config.local_address_ipv6,
@@ -1062,8 +1063,11 @@ impl ClientBuilder {
     ///     .build().unwrap();
     /// ```
     #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
-    pub fn interface(mut self, interface: &str) -> ClientBuilder {
-        self.config.interface = Some(interface.to_string());
+    pub fn interface(
+        mut self,
+        interface: impl Into<std::borrow::Cow<'static, str>>,
+    ) -> ClientBuilder {
+        self.config.interface = Some(interface.into());
         self
     }
 
@@ -1440,15 +1444,8 @@ impl Client {
             headers = sorted_headers;
         }
 
-        // Proxy-level connection pool, two factors (host and authentication)
-        let mut pool_key_ext = None;
-        for proxy in self.inner.hyper.get_proxies().as_ref() {
-            if let Some(proxy_scheme) = proxy.intercept(&uri) {
-                let ext = proxy_scheme.pool_key_extension();
-                pool_key_ext = Some(ext);
-                break;
-            }
-        }
+        // proxy/address/interface-level connection pool, two factors (host and authentication, or address and interface)
+        let pool_key_ext = self.inner.hyper.pool_key_extension(&uri);
 
         let mut builder = hyper::Request::builder()
             .method(method.clone())
@@ -1604,8 +1601,8 @@ impl Client {
     /// Bind to an interface by `SO_BINDTODEVICE`.
     #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
     #[inline]
-    pub fn set_interface(&mut self, interface: &str) {
-        self.inner_mut().hyper.set_interface(interface);
+    pub fn set_interface(&mut self, interface: impl Into<std::borrow::Cow<'static, str>>) {
+        self.inner_mut().hyper.set_interface(interface.into());
     }
 
     /// Set the impersonate for this client.
