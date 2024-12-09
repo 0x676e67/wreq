@@ -24,7 +24,7 @@ pub use impersonate::{
 };
 pub use settings::{CAStore, Http2Settings, TlsSettings};
 
-type TlsResult<T> = std::result::Result<T, ErrorStack>;
+type TlsResult<T> = Result<T, ErrorStack>;
 type ConnectLayer = HttpsLayer;
 
 /// A wrapper around a `SslConnectorBuilder` that allows for additional settings.

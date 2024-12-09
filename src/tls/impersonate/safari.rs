@@ -1,6 +1,6 @@
 use crate::tls::{Http2Settings, TlsSettings};
 use http2::{
-    HEADERS_PSEUDO_ORDER, HEADER_PRORIORITY, NEW_HEADERS_PSEUDO_ORDER, NEW_HEADER_PRORIORITY,
+    HEADERS_PSEUDO_ORDER, HEADER_PRIORITY, NEW_HEADERS_PSEUDO_ORDER, NEW_HEADER_PRIORITY,
     NEW_SETTINGS_ORDER, SETTINGS_ORDER,
 };
 use tls::{SafariTlsSettings, CIPHER_LIST, NEW_CIPHER_LIST};
@@ -26,7 +26,7 @@ pub fn http2_template_1() -> Http2Settings {
         .initial_stream_window_size(2097152)
         .initial_connection_window_size(10551295)
         .max_concurrent_streams(100)
-        .headers_priority(HEADER_PRORIORITY)
+        .headers_priority(HEADER_PRIORITY)
         .headers_pseudo_order(HEADERS_PSEUDO_ORDER)
         .settings_order(SETTINGS_ORDER)
         .build()
@@ -38,7 +38,7 @@ pub fn http2_template_2() -> Http2Settings {
         .initial_connection_window_size(10551295)
         .max_concurrent_streams(100)
         .enable_push(false)
-        .headers_priority(HEADER_PRORIORITY)
+        .headers_priority(HEADER_PRIORITY)
         .headers_pseudo_order(HEADERS_PSEUDO_ORDER)
         .settings_order(SETTINGS_ORDER)
         .build()
@@ -52,7 +52,7 @@ pub fn http2_template_3() -> Http2Settings {
         .enable_push(false)
         .unknown_setting8(true)
         .unknown_setting9(true)
-        .headers_priority(NEW_HEADER_PRORIORITY)
+        .headers_priority(NEW_HEADER_PRIORITY)
         .headers_pseudo_order(NEW_HEADERS_PSEUDO_ORDER)
         .settings_order(NEW_SETTINGS_ORDER)
         .build()
@@ -63,7 +63,7 @@ pub fn http2_template_4() -> Http2Settings {
         .initial_stream_window_size(4194304)
         .initial_connection_window_size(10551295)
         .max_concurrent_streams(100)
-        .headers_priority(HEADER_PRORIORITY)
+        .headers_priority(HEADER_PRIORITY)
         .headers_pseudo_order(HEADERS_PSEUDO_ORDER)
         .settings_order(SETTINGS_ORDER)
         .build()
@@ -75,7 +75,7 @@ pub fn http2_template_5() -> Http2Settings {
         .initial_connection_window_size(10551295)
         .max_concurrent_streams(100)
         .enable_push(false)
-        .headers_priority(HEADER_PRORIORITY)
+        .headers_priority(HEADER_PRIORITY)
         .headers_pseudo_order(HEADERS_PSEUDO_ORDER)
         .settings_order(SETTINGS_ORDER)
         .build()
@@ -197,8 +197,8 @@ mod http2 {
     use crate::tls::impersonate::http2_imports::*;
 
     // ============== http2 headers priority ==============
-    pub const HEADER_PRORIORITY: (u32, u8, bool) = (0, 255, true);
-    pub const NEW_HEADER_PRORIORITY: (u32, u8, bool) = (0, 255, false);
+    pub const HEADER_PRIORITY: (u32, u8, bool) = (0, 255, true);
+    pub const NEW_HEADER_PRIORITY: (u32, u8, bool) = (0, 255, false);
 
     /// ============== http2 headers pseudo order ==============
     pub const HEADERS_PSEUDO_ORDER: [PseudoOrder; 4] = [Method, Scheme, Path, Authority];
@@ -228,7 +228,7 @@ mod http2 {
 }
 
 pub(crate) mod safari15_3 {
-    use crate::tls::impersonate::impersonte_imports::*;
+    use crate::tls::impersonate::impersonate_imports::*;
 
     #[inline]
     pub fn get_settings(with_headers: bool) -> ImpersonateSettings {
@@ -259,7 +259,7 @@ pub(crate) mod safari15_3 {
 }
 
 pub(crate) mod safari15_5 {
-    use crate::tls::impersonate::impersonte_imports::*;
+    use crate::tls::impersonate::impersonate_imports::*;
 
     #[inline]
     pub fn get_settings(with_headers: bool) -> ImpersonateSettings {
@@ -290,7 +290,7 @@ pub(crate) mod safari15_5 {
 }
 
 pub(crate) mod safari15_6_1 {
-    use crate::tls::impersonate::impersonte_imports::*;
+    use crate::tls::impersonate::impersonate_imports::*;
 
     #[inline]
     pub fn get_settings(with_headers: bool) -> ImpersonateSettings {
@@ -321,7 +321,7 @@ pub(crate) mod safari15_6_1 {
 }
 
 pub(crate) mod safari16 {
-    use crate::tls::impersonate::impersonte_imports::*;
+    use crate::tls::impersonate::impersonate_imports::*;
 
     #[inline]
     pub fn get_settings(with_headers: bool) -> ImpersonateSettings {
@@ -355,7 +355,7 @@ pub(crate) mod safari16 {
 }
 
 pub(crate) mod safari16_5 {
-    use crate::tls::impersonate::impersonte_imports::*;
+    use crate::tls::impersonate::impersonate_imports::*;
 
     #[inline]
     pub fn get_settings(with_headers: bool) -> ImpersonateSettings {
@@ -389,7 +389,7 @@ pub(crate) mod safari16_5 {
 }
 
 pub(crate) mod safari17_0 {
-    use crate::tls::impersonate::impersonte_imports::*;
+    use crate::tls::impersonate::impersonate_imports::*;
 
     #[inline]
     pub fn get_settings(with_headers: bool) -> ImpersonateSettings {
@@ -423,7 +423,7 @@ pub(crate) mod safari17_0 {
 }
 
 pub(crate) mod safari17_2_1 {
-    use crate::tls::impersonate::impersonte_imports::*;
+    use crate::tls::impersonate::impersonate_imports::*;
 
     #[inline]
     pub fn get_settings(with_headers: bool) -> ImpersonateSettings {
@@ -457,7 +457,7 @@ pub(crate) mod safari17_2_1 {
 }
 
 pub(crate) mod safari17_4_1 {
-    use crate::tls::impersonate::impersonte_imports::*;
+    use crate::tls::impersonate::impersonate_imports::*;
 
     #[inline]
     pub fn get_settings(with_headers: bool) -> ImpersonateSettings {
@@ -491,7 +491,7 @@ pub(crate) mod safari17_4_1 {
 }
 
 pub(crate) mod safari17_5 {
-    use crate::tls::impersonate::impersonte_imports::*;
+    use crate::tls::impersonate::impersonate_imports::*;
 
     #[inline]
     pub fn get_settings(with_headers: bool) -> ImpersonateSettings {
@@ -525,7 +525,7 @@ pub(crate) mod safari17_5 {
 }
 
 pub(crate) mod safari18 {
-    use crate::tls::impersonate::impersonte_imports::*;
+    use crate::tls::impersonate::impersonate_imports::*;
 
     #[inline]
     pub fn get_settings(with_headers: bool) -> ImpersonateSettings {
@@ -560,7 +560,7 @@ pub(crate) mod safari18 {
 }
 
 pub(crate) mod safari_ios_16_5 {
-    use crate::tls::impersonate::impersonte_imports::*;
+    use crate::tls::impersonate::impersonate_imports::*;
 
     #[inline]
     pub fn get_settings(with_headers: bool) -> ImpersonateSettings {
@@ -594,7 +594,7 @@ pub(crate) mod safari_ios_16_5 {
 }
 
 pub(crate) mod safari_ios_17_2 {
-    use crate::tls::impersonate::impersonte_imports::*;
+    use crate::tls::impersonate::impersonate_imports::*;
 
     #[inline]
     pub fn get_settings(with_headers: bool) -> ImpersonateSettings {
@@ -628,7 +628,7 @@ pub(crate) mod safari_ios_17_2 {
 }
 
 pub(crate) mod safari_ios_17_4_1 {
-    use crate::tls::impersonate::impersonte_imports::*;
+    use crate::tls::impersonate::impersonate_imports::*;
 
     #[inline]
     pub fn get_settings(with_headers: bool) -> ImpersonateSettings {
@@ -662,7 +662,7 @@ pub(crate) mod safari_ios_17_4_1 {
 }
 
 pub(crate) mod safari_ipad_18 {
-    use crate::tls::impersonate::impersonte_imports::*;
+    use crate::tls::impersonate::impersonate_imports::*;
 
     #[inline]
     pub fn get_settings(with_headers: bool) -> ImpersonateSettings {

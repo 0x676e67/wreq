@@ -1,5 +1,5 @@
 use crate::tls::{Http2Settings, TlsSettings};
-use http2::{HEADERS_PSEUDO_ORDER, HEADER_PRORIORITY, SETTINGS_ORDER};
+use http2::{HEADERS_PSEUDO_ORDER, HEADER_PRIORITY, SETTINGS_ORDER};
 use tls::{EdgeTlsSettings, NEW_CURVES};
 
 // ============== TLS template ==============
@@ -34,7 +34,7 @@ pub fn http2_template_1() -> Http2Settings {
         .max_concurrent_streams(1000)
         .max_header_list_size(262144)
         .header_table_size(65536)
-        .headers_priority(HEADER_PRORIORITY)
+        .headers_priority(HEADER_PRIORITY)
         .headers_pseudo_order(HEADERS_PSEUDO_ORDER)
         .settings_order(SETTINGS_ORDER)
         .build()
@@ -47,7 +47,7 @@ pub fn http2_template_2() -> Http2Settings {
         .max_header_list_size(262144)
         .header_table_size(65536)
         .enable_push(false)
-        .headers_priority(HEADER_PRORIORITY)
+        .headers_priority(HEADER_PRIORITY)
         .headers_pseudo_order(HEADERS_PSEUDO_ORDER)
         .settings_order(SETTINGS_ORDER)
         .build()
@@ -154,7 +154,7 @@ mod http2 {
     use crate::tls::impersonate::http2_imports::*;
 
     // ============== http2 headers priority ==============
-    pub const HEADER_PRORIORITY: (u32, u8, bool) = (0, 255, true);
+    pub const HEADER_PRIORITY: (u32, u8, bool) = (0, 255, true);
 
     /// ============== http2 headers pseudo order ==============
     pub const HEADERS_PSEUDO_ORDER: [PseudoOrder; 4] = [Method, Authority, Scheme, Path];
@@ -173,7 +173,7 @@ mod http2 {
 }
 
 pub(crate) mod edge101 {
-    use crate::tls::impersonate::impersonte_imports::*;
+    use crate::tls::impersonate::impersonate_imports::*;
 
     #[inline]
     pub fn get_settings(with_headers: bool) -> ImpersonateSettings {
@@ -215,7 +215,7 @@ pub(crate) mod edge101 {
 }
 
 pub(crate) mod edge122 {
-    use crate::tls::impersonate::impersonte_imports::*;
+    use crate::tls::impersonate::impersonate_imports::*;
 
     #[inline]
     pub fn get_settings(with_headers: bool) -> ImpersonateSettings {
@@ -257,7 +257,7 @@ pub(crate) mod edge122 {
 }
 
 pub(crate) mod edge127 {
-    use crate::tls::impersonate::impersonte_imports::*;
+    use crate::tls::impersonate::impersonate_imports::*;
 
     #[inline]
     pub fn get_settings(with_headers: bool) -> ImpersonateSettings {

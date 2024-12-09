@@ -15,7 +15,7 @@ use std::{borrow::Cow, fmt::Debug, str::FromStr};
 use typed_builder::TypedBuilder;
 use Impersonate::*;
 
-mod impersonte_imports {
+mod impersonate_imports {
     pub use super::ImpersonateSettings;
     pub use crate::conditional_headers;
     pub use crate::static_join;
@@ -121,6 +121,7 @@ pub fn tls_settings(ver: Impersonate, with_headers: bool) -> ImpersonateSettings
         Chrome129 => v129::get_settings,
         Chrome130 => v130::get_settings,
         Chrome131 => v131::get_settings,
+
         // Safari
         SafariIos17_2 => safari_ios_17_2::get_settings,
         SafariIos17_4_1 => safari_ios_17_4_1::get_settings,

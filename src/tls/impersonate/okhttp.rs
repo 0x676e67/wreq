@@ -1,5 +1,5 @@
 use crate::tls::Http2Settings;
-use http2::{HEADERS_PSEUDO_ORDER, HEADER_PRORIORITY, SETTINGS_ORDER};
+use http2::{HEADERS_PSEUDO_ORDER, HEADER_PRIORITY, SETTINGS_ORDER};
 
 // ============== HTTP template ==============
 pub fn http2_template_1() -> Http2Settings {
@@ -9,7 +9,7 @@ pub fn http2_template_1() -> Http2Settings {
         .max_concurrent_streams(1000)
         .max_header_list_size(262144)
         .header_table_size(65536)
-        .headers_priority(HEADER_PRORIORITY)
+        .headers_priority(HEADER_PRIORITY)
         .headers_pseudo_order(HEADERS_PSEUDO_ORDER)
         .settings_order(SETTINGS_ORDER)
         .build()
@@ -67,7 +67,7 @@ mod http2 {
     use crate::tls::impersonate::http2_imports::*;
 
     // ============== http2 headers priority ==============
-    pub const HEADER_PRORIORITY: (u32, u8, bool) = (0, 255, true);
+    pub const HEADER_PRIORITY: (u32, u8, bool) = (0, 255, true);
 
     /// ============== http2 headers pseudo order ==============
     pub const HEADERS_PSEUDO_ORDER: [PseudoOrder; 4] = [Method, Path, Authority, Scheme];
@@ -87,7 +87,7 @@ mod http2 {
 
 pub(crate) mod okhttp3_11 {
     use super::tls::OkHttpTlsSettings;
-    use crate::tls::impersonate::impersonte_imports::*;
+    use crate::tls::impersonate::impersonate_imports::*;
 
     #[inline]
     pub fn get_settings(with_headers: bool) -> ImpersonateSettings {
@@ -137,7 +137,7 @@ pub(crate) mod okhttp3_11 {
 
 pub(crate) mod okhttp3_13 {
     use super::tls::OkHttpTlsSettings;
-    use crate::tls::impersonate::impersonte_imports::*;
+    use crate::tls::impersonate::impersonate_imports::*;
 
     #[inline]
     pub fn get_settings(with_headers: bool) -> ImpersonateSettings {
@@ -192,7 +192,7 @@ pub(crate) mod okhttp3_13 {
 
 pub(crate) mod okhttp3_14 {
     use super::tls::OkHttpTlsSettings;
-    use crate::tls::impersonate::impersonte_imports::*;
+    use crate::tls::impersonate::impersonate_imports::*;
 
     #[inline]
     pub fn get_settings(with_headers: bool) -> ImpersonateSettings {
@@ -242,7 +242,7 @@ pub(crate) mod okhttp3_14 {
 
 pub(crate) mod okhttp3_9 {
     use super::tls::OkHttpTlsSettings;
-    use crate::tls::impersonate::impersonte_imports::*;
+    use crate::tls::impersonate::impersonate_imports::*;
 
     #[inline]
     pub fn get_settings(with_headers: bool) -> ImpersonateSettings {
@@ -294,7 +294,7 @@ pub(crate) mod okhttp3_9 {
 
 pub(crate) mod okhttp4_10 {
     use super::tls::OkHttpTlsSettings;
-    use crate::tls::impersonate::impersonte_imports::*;
+    use crate::tls::impersonate::impersonate_imports::*;
 
     #[inline]
     pub fn get_settings(with_headers: bool) -> ImpersonateSettings {
@@ -347,7 +347,7 @@ pub(crate) mod okhttp4_10 {
 
 pub(crate) mod okhttp4_9 {
     use super::tls::OkHttpTlsSettings;
-    use crate::tls::impersonate::impersonte_imports::*;
+    use crate::tls::impersonate::impersonate_imports::*;
 
     #[inline]
     pub fn get_settings(with_headers: bool) -> ImpersonateSettings {
@@ -399,7 +399,7 @@ pub(crate) mod okhttp4_9 {
 
 pub(crate) mod okhttp5 {
     use super::tls::OkHttpTlsSettings;
-    use crate::tls::impersonate::impersonte_imports::*;
+    use crate::tls::impersonate::impersonate_imports::*;
 
     #[inline]
     pub fn get_settings(with_headers: bool) -> ImpersonateSettings {

@@ -1,5 +1,5 @@
 use crate::tls::{Http2Settings, TlsSettings};
-use http2::{HEADERS_PSEUDO_ORDER, HEADER_PRORIORITY, SETTINGS_ORDER};
+use http2::{HEADERS_PSEUDO_ORDER, HEADER_PRIORITY, SETTINGS_ORDER};
 use tls::{ChromeTlsSettings, NEW_CURVES_1, NEW_CURVES_2};
 
 // ============== TLS template ==============
@@ -66,7 +66,7 @@ pub fn http2_template_1() -> Http2Settings {
         .max_concurrent_streams(1000)
         .max_header_list_size(262144)
         .header_table_size(65536)
-        .headers_priority(HEADER_PRORIORITY)
+        .headers_priority(HEADER_PRIORITY)
         .headers_pseudo_order(HEADERS_PSEUDO_ORDER)
         .settings_order(SETTINGS_ORDER)
         .build()
@@ -80,7 +80,7 @@ pub fn http2_template_2() -> Http2Settings {
         .max_header_list_size(262144)
         .header_table_size(65536)
         .enable_push(false)
-        .headers_priority(HEADER_PRORIORITY)
+        .headers_priority(HEADER_PRIORITY)
         .headers_pseudo_order(HEADERS_PSEUDO_ORDER)
         .settings_order(SETTINGS_ORDER)
         .build()
@@ -93,7 +93,7 @@ pub fn http2_template_3() -> Http2Settings {
         .max_header_list_size(262144)
         .header_table_size(65536)
         .enable_push(false)
-        .headers_priority(HEADER_PRORIORITY)
+        .headers_priority(HEADER_PRIORITY)
         .headers_pseudo_order(HEADERS_PSEUDO_ORDER)
         .settings_order(SETTINGS_ORDER)
         .build()
@@ -207,7 +207,7 @@ mod http2 {
     use crate::tls::impersonate::http2_imports::*;
 
     // ============== http2 headers priority ==============
-    pub const HEADER_PRORIORITY: (u32, u8, bool) = (0, 255, true);
+    pub const HEADER_PRIORITY: (u32, u8, bool) = (0, 255, true);
 
     /// ============== http2 headers pseudo order ==============
     pub const HEADERS_PSEUDO_ORDER: [PseudoOrder; 4] = [Method, Authority, Scheme, Path];
@@ -226,7 +226,7 @@ mod http2 {
 }
 
 pub(crate) mod v100 {
-    use crate::tls::impersonate::impersonte_imports::*;
+    use crate::tls::impersonate::impersonate_imports::*;
 
     #[inline]
     pub fn get_settings(with_headers: bool) -> ImpersonateSettings {
@@ -269,7 +269,7 @@ pub(crate) mod v100 {
 }
 
 pub(crate) mod v101 {
-    use crate::tls::impersonate::impersonte_imports::*;
+    use crate::tls::impersonate::impersonate_imports::*;
 
     #[inline]
     pub fn get_settings(with_headers: bool) -> ImpersonateSettings {
@@ -312,7 +312,7 @@ pub(crate) mod v101 {
 }
 
 pub(crate) mod v104 {
-    use crate::tls::impersonate::impersonte_imports::*;
+    use crate::tls::impersonate::impersonate_imports::*;
 
     #[inline]
     pub fn get_settings(with_headers: bool) -> ImpersonateSettings {
@@ -355,7 +355,7 @@ pub(crate) mod v104 {
 }
 
 pub(crate) mod v105 {
-    use crate::tls::impersonate::impersonte_imports::*;
+    use crate::tls::impersonate::impersonate_imports::*;
 
     #[inline]
     pub fn get_settings(with_headers: bool) -> ImpersonateSettings {
@@ -398,7 +398,7 @@ pub(crate) mod v105 {
 }
 
 pub(crate) mod v106 {
-    use crate::tls::impersonate::impersonte_imports::*;
+    use crate::tls::impersonate::impersonate_imports::*;
 
     #[inline]
     pub fn get_settings(with_headers: bool) -> ImpersonateSettings {
@@ -441,7 +441,7 @@ pub(crate) mod v106 {
 }
 
 pub(crate) mod v107 {
-    use crate::tls::impersonate::impersonte_imports::*;
+    use crate::tls::impersonate::impersonate_imports::*;
 
     #[inline]
     pub fn get_settings(with_headers: bool) -> ImpersonateSettings {
@@ -484,7 +484,7 @@ pub(crate) mod v107 {
 }
 
 pub(crate) mod v108 {
-    use crate::tls::impersonate::impersonte_imports::*;
+    use crate::tls::impersonate::impersonate_imports::*;
 
     #[inline]
     pub fn get_settings(with_headers: bool) -> ImpersonateSettings {
@@ -527,7 +527,7 @@ pub(crate) mod v108 {
 }
 
 pub(crate) mod v109 {
-    use crate::tls::impersonate::impersonte_imports::*;
+    use crate::tls::impersonate::impersonate_imports::*;
 
     #[inline]
     pub fn get_settings(with_headers: bool) -> ImpersonateSettings {
@@ -570,7 +570,7 @@ pub(crate) mod v109 {
 }
 
 pub(crate) mod v114 {
-    use crate::tls::impersonate::impersonte_imports::*;
+    use crate::tls::impersonate::impersonate_imports::*;
 
     #[inline]
     pub fn get_settings(with_headers: bool) -> ImpersonateSettings {
@@ -610,7 +610,7 @@ pub(crate) mod v114 {
 }
 
 pub(crate) mod v116 {
-    use crate::tls::impersonate::impersonte_imports::*;
+    use crate::tls::impersonate::impersonate_imports::*;
 
     #[inline]
     pub fn get_settings(with_headers: bool) -> ImpersonateSettings {
@@ -652,7 +652,7 @@ pub(crate) mod v116 {
 }
 
 pub(crate) mod v117 {
-    use crate::tls::impersonate::impersonte_imports::*;
+    use crate::tls::impersonate::impersonate_imports::*;
 
     #[inline]
     pub fn get_settings(with_headers: bool) -> ImpersonateSettings {
@@ -694,7 +694,7 @@ pub(crate) mod v117 {
 }
 
 pub(crate) mod v118 {
-    use crate::tls::impersonate::impersonte_imports::*;
+    use crate::tls::impersonate::impersonate_imports::*;
     #[inline]
     pub fn get_settings(with_headers: bool) -> ImpersonateSettings {
         ImpersonateSettings::builder()
@@ -733,7 +733,7 @@ pub(crate) mod v118 {
 }
 
 pub(crate) mod v119 {
-    use crate::tls::impersonate::impersonte_imports::*;
+    use crate::tls::impersonate::impersonate_imports::*;
 
     #[inline]
     pub fn get_settings(with_headers: bool) -> ImpersonateSettings {
@@ -777,7 +777,7 @@ pub(crate) mod v119 {
 }
 
 pub(crate) mod v120 {
-    use crate::tls::impersonate::impersonte_imports::*;
+    use crate::tls::impersonate::impersonate_imports::*;
 
     #[inline]
     pub fn get_settings(with_headers: bool) -> ImpersonateSettings {
@@ -824,7 +824,7 @@ pub(crate) mod v120 {
 }
 
 pub(crate) mod v123 {
-    use crate::tls::impersonate::impersonte_imports::*;
+    use crate::tls::impersonate::impersonate_imports::*;
 
     #[inline]
     pub fn get_settings(with_headers: bool) -> ImpersonateSettings {
@@ -863,7 +863,7 @@ pub(crate) mod v123 {
 }
 
 pub(crate) mod v124 {
-    use crate::tls::impersonate::impersonte_imports::*;
+    use crate::tls::impersonate::impersonate_imports::*;
 
     #[inline]
     pub fn get_settings(with_headers: bool) -> ImpersonateSettings {
@@ -902,7 +902,7 @@ pub(crate) mod v124 {
 }
 
 pub(crate) mod v126 {
-    use crate::tls::impersonate::impersonte_imports::*;
+    use crate::tls::impersonate::impersonate_imports::*;
 
     #[inline]
     pub fn get_settings(with_headers: bool) -> ImpersonateSettings {
@@ -941,7 +941,7 @@ pub(crate) mod v126 {
 }
 
 pub(crate) mod v127 {
-    use crate::tls::impersonate::impersonte_imports::*;
+    use crate::tls::impersonate::impersonate_imports::*;
 
     #[inline]
     pub fn get_settings(with_headers: bool) -> ImpersonateSettings {
@@ -980,7 +980,7 @@ pub(crate) mod v127 {
 }
 
 pub(crate) mod v128 {
-    use crate::tls::impersonate::impersonte_imports::*;
+    use crate::tls::impersonate::impersonate_imports::*;
 
     #[inline]
     pub fn get_settings(with_headers: bool) -> ImpersonateSettings {
@@ -1019,7 +1019,7 @@ pub(crate) mod v128 {
 }
 
 pub(crate) mod v129 {
-    use crate::tls::impersonate::impersonte_imports::*;
+    use crate::tls::impersonate::impersonate_imports::*;
 
     #[inline]
     pub fn get_settings(with_headers: bool) -> ImpersonateSettings {
@@ -1059,7 +1059,7 @@ pub(crate) mod v129 {
 }
 
 pub(crate) mod v130 {
-    use crate::tls::impersonate::impersonte_imports::*;
+    use crate::tls::impersonate::impersonate_imports::*;
 
     #[inline]
     pub fn get_settings(with_headers: bool) -> ImpersonateSettings {
@@ -1105,7 +1105,7 @@ pub(crate) mod v130 {
 }
 
 pub(crate) mod v131 {
-    use crate::tls::impersonate::impersonte_imports::*;
+    use crate::tls::impersonate::impersonate_imports::*;
 
     #[inline]
     pub fn get_settings(with_headers: bool) -> ImpersonateSettings {
