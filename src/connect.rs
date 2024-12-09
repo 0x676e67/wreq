@@ -58,7 +58,7 @@ impl Connector {
         local_addr_v4: Option<Ipv4Addr>,
         local_addr_v6: Option<Ipv6Addr>,
         #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
-        interface: Option<String>,
+        interface: Option<std::borrow::Cow<'static, str>>,
         nodelay: bool,
     ) -> Connector {
         match (local_addr_v4, local_addr_v6) {
@@ -68,8 +68,8 @@ impl Connector {
             _ => {}
         }
         #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
-        if let Some(interface) = interface {
-            http.set_interface(&interface);
+        if let Some(ref interface) = interface {
+            http.set_interface(interface.clone());
         }
         http.set_nodelay(nodelay);
 
