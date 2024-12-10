@@ -61,7 +61,7 @@ impl BoringTlsConnector {
         let mut http = HttpsConnector::with_connector_layer(http, self.connect_layer.clone());
 
         // Set the callback to add application settings.
-        let (application_settings, enable_ech_grease, http_version_pref, tls_sni) = (
+        let (application_settings, enable_ech_grease, alpn_protos, tls_sni) = (
             self.application_settings,
             self.enable_ech_grease,
             self.alpn_protos,
@@ -73,7 +73,7 @@ impl BoringTlsConnector {
 
             // Add application settings if it is set.
             if application_settings {
-                conf.configure_add_application_settings(http_version_pref)?;
+                conf.configure_add_application_settings(alpn_protos)?;
             }
 
             // Set websocket use http1 alpn proto
