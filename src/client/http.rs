@@ -12,7 +12,7 @@ use http::header::{
     CONTENT_TYPE, LOCATION, PROXY_AUTHORIZATION, RANGE, REFERER, TRANSFER_ENCODING, USER_AGENT,
 };
 use http::uri::Scheme;
-use http::{HeaderName, Uri};
+use http::{HeaderName, Uri, Version};
 use hyper::client::{HttpConnector, ResponseFuture as HyperResponseFuture};
 use pin_project_lite::pin_project;
 use std::future::Future;
@@ -1426,20 +1426,11 @@ impl Client {
             crate::util::sort_headers(&mut headers, headers_order);
         }
 
-        // proxy/address/interface-level connection pool, two factors (host and authentication, or address and interface)
-        let pool_key_ext = self.inner.hyper.pool_key_extension(&uri);
-
-        let mut builder = hyper::Request::builder()
-            .method(method.clone())
-            .uri(uri)
-            .version(version);
-
-        if let Some(pool_key_ext) = pool_key_ext {
-            builder = builder.extension(pool_key_ext);
-        }
-
         let in_flight = {
-            let mut req = builder
+            let mut req = self
+                .inner
+                .hyper
+                .new_builder(uri, method.clone(), version)
                 .body(body.into_stream())
                 .expect("valid request parts");
             *req.headers_mut() = headers.clone();
@@ -1457,6 +1448,7 @@ impl Client {
                 url,
                 headers,
                 body: reusable,
+                version,
                 urls: Vec::new(),
                 retry_count: 0,
                 client: self.inner.clone(),
@@ -1869,6 +1861,8 @@ pin_project! {
         headers: HeaderMap,
         body: Option<Option<Bytes>>,
 
+        version: Version,
+
         urls: Vec<Url>,
 
         retry_count: usize,
@@ -1928,9 +1922,10 @@ impl PendingRequest {
         let uri = expect_uri(&self.url);
 
         *self.as_mut().in_flight().get_mut() = {
-            let mut req = hyper::Request::builder()
-                .method(self.method.clone())
-                .uri(uri)
+            let mut req = self
+                .client
+                .hyper
+                .new_builder(uri, self.method.clone(), self.version)
                 .body(body.into_stream())
                 .expect("valid request parts");
             *req.headers_mut() = self.headers.clone();
@@ -2129,17 +2124,10 @@ impl Future for PendingRequest {
                             }
 
                             *self.as_mut().in_flight().get_mut() = {
-                                let pool_key_ext = self.client.hyper.pool_key_extension(&uri);
-                                
-                                let mut builder = hyper::Request::builder()
-                                    .method(self.method.clone())
-                                    .uri(uri);
-
-                                if let Some(pool_key_ext) = pool_key_ext {
-                                    builder = builder.extension(pool_key_ext);
-                                }
-
-                                let mut req = builder
+                                let mut req = self
+                                    .client
+                                    .hyper
+                                    .new_builder(uri, self.method.clone(), self.version)
                                     .body(body.into_stream())
                                     .expect("valid request parts");
                                 *req.headers_mut() = headers.clone();

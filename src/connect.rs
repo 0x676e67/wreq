@@ -4,8 +4,9 @@ use self::boring_tls_conn::BoringTlsConn;
 use crate::tls::{BoringTlsConnector, MaybeHttpsStream};
 #[cfg(feature = "boring-tls")]
 use http::header::HeaderValue;
+use http::request::Builder;
 use http::uri::{Authority, Scheme};
-use http::Uri;
+use http::{Method, Uri, Version};
 use hyper::client::connect::{Connected, Connection};
 use hyper::ext::PoolKeyExt;
 use hyper::service::Service;
@@ -189,27 +190,6 @@ impl Connector {
     }
 
     #[inline]
-    pub(crate) fn pool_key_extension(&self, uri: &Uri) -> Option<PoolKeyExt> {
-        for proxy in self.proxies.as_ref() {
-            if let Some(proxy_scheme) = proxy.intercept(uri) {
-                let ext = match proxy_scheme {
-                    ProxyScheme::Http { host, auth } => PoolKeyExt::Http(Scheme::HTTP, host, auth),
-                    ProxyScheme::Https { host, auth } => {
-                        PoolKeyExt::Http(Scheme::HTTPS, host, auth)
-                    }
-                    #[cfg(feature = "socks")]
-                    ProxyScheme::Socks4 { addr } => PoolKeyExt::Socks4(addr, None),
-                    #[cfg(feature = "socks")]
-                    ProxyScheme::Socks5 { addr, auth, .. } => PoolKeyExt::Socks5(addr, auth),
-                };
-                return Some(ext);
-            }
-        }
-
-        self.pool_key_ext.clone()
-    }
-
-    #[inline]
     pub(crate) fn set_local_address(&mut self, addr: Option<IpAddr>) {
         #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
         self.set_pool_key_ext(addr, None, None);
@@ -288,6 +268,42 @@ impl Connector {
         match &mut self.inner {
             Inner::BoringTls { tls, .. } => *tls = connector,
         }
+    }
+
+    pub(crate) fn new_builder(&self, uri: Uri, method: Method, version: Version) -> Builder {
+        let pool_key_ext = self.pool_key_extension(&uri);
+
+        let mut builder = hyper::Request::builder()
+            .method(method)
+            .uri(uri)
+            .version(version);
+
+        if let Some(pool_key_ext) = pool_key_ext {
+            builder = builder.extension(pool_key_ext);
+        }
+
+        builder
+    }
+
+    #[inline]
+    fn pool_key_extension(&self, uri: &Uri) -> Option<PoolKeyExt> {
+        for proxy in self.proxies.as_ref() {
+            if let Some(proxy_scheme) = proxy.intercept(uri) {
+                let ext = match proxy_scheme {
+                    ProxyScheme::Http { host, auth } => PoolKeyExt::Http(Scheme::HTTP, host, auth),
+                    ProxyScheme::Https { host, auth } => {
+                        PoolKeyExt::Http(Scheme::HTTPS, host, auth)
+                    }
+                    #[cfg(feature = "socks")]
+                    ProxyScheme::Socks4 { addr } => PoolKeyExt::Socks4(addr, None),
+                    #[cfg(feature = "socks")]
+                    ProxyScheme::Socks5 { addr, auth, .. } => PoolKeyExt::Socks5(addr, auth),
+                };
+                return Some(ext);
+            }
+        }
+
+        self.pool_key_ext.clone()
     }
 
     #[cfg(feature = "socks")]
