@@ -822,7 +822,7 @@ impl ClientBuilder {
     pub fn http1_only(mut self) -> ClientBuilder {
         #[cfg(feature = "boring-tls")]
         {
-            self.config.tls.http_version_pref = HttpVersionPref::Http1;
+            self.config.tls.alpn_protos = HttpVersionPref::Http1;
         }
 
         self.config.builder.http2_only(false);
@@ -839,7 +839,7 @@ impl ClientBuilder {
     pub fn http2_only(mut self) -> ClientBuilder {
         #[cfg(feature = "boring-tls")]
         {
-            self.config.tls.http_version_pref = HttpVersionPref::Http2;
+            self.config.tls.alpn_protos = HttpVersionPref::Http2;
         }
 
         self.config.builder.http2_only(true);

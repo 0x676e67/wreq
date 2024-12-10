@@ -115,7 +115,6 @@ rquest = "0.31.0"
 ```
 
 ```rust
-use boring::ssl::{SslConnector, SslCurve, SslMethod, SslOptions};
 use http::{header, HeaderMap, HeaderName, HeaderValue};
 use rquest::{
     tls::{Http2Settings, ImpersonateSettings, TlsSettings, Version},
@@ -124,7 +123,7 @@ use rquest::{
 use rquest::{PseudoOrder::*, SettingsOrder::*};
 use std::borrow::Cow;
 
-static HEADER_ORDER: [HeaderName; 5] = [
+static HEADER_ORDER: &[HeaderName] = &[
     header::USER_AGENT,
     header::ACCEPT_LANGUAGE,
     header::ACCEPT_ENCODING,
@@ -134,18 +133,12 @@ static HEADER_ORDER: [HeaderName; 5] = [
 
 #[tokio::main]
 async fn main() -> Result<(), rquest::Error> {
-    // Create a TLS connector builder
-    let mut connector = SslConnector::no_default_verify_builder(SslMethod::tls_client())?;
-    connector.set_curves(&[SslCurve::SECP224R1, SslCurve::SECP521R1])?;
-    connector.set_options(SslOptions::NO_TICKET);
-
     // Create a pre-configured TLS settings
     let settings = ImpersonateSettings::builder()
         .tls(
             TlsSettings::builder()
-                .connector(connector)
                 .tls_sni(true)
-                .http_version_pref(HttpVersionPref::All)
+                .alpn_protos(HttpVersionPref::All)
                 .application_settings(true)
                 .pre_shared_key(true)
                 .enable_ech_grease(true)
@@ -191,7 +184,7 @@ async fn main() -> Result<(), rquest::Error> {
             headers.insert(header::COOKIE, HeaderValue::from_static("foo=bar"));
             Cow::Owned(headers)
         })
-        .headers_order(Cow::Borrowed(&HEADER_ORDER))
+        .headers_order(Cow::Borrowed(HEADER_ORDER))
         .build();
 
     // Build a client with pre-configured TLS settings

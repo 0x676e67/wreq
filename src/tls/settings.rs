@@ -36,7 +36,7 @@ pub struct TlsSettings {
 
     /// The HTTP version preference (setting alpn).
     #[builder(default = HttpVersionPref::All)]
-    pub http_version_pref: HttpVersionPref,
+    pub alpn_protos: HttpVersionPref,
 
     /// No session ticket
     #[builder(default, setter(into))]
@@ -100,7 +100,7 @@ impl std::fmt::Debug for TlsSettings {
         f.debug_struct("TlsSettings")
             .field("certs_verification", &self.certs_verification)
             .field("tls_sni", &self.tls_sni)
-            .field("http_version_pref", &self.http_version_pref)
+            .field("http_version_pref", &self.alpn_protos)
             .field("session_ticket", &self.session_ticket)
             .field("min_tls_version", &self.min_tls_version)
             .field("max_tls_version", &self.max_tls_version)

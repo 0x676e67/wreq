@@ -25,7 +25,6 @@ pub use impersonate::{
 pub use settings::{CAStore, Http2Settings, TlsSettings};
 
 type TlsResult<T> = Result<T, ErrorStack>;
-type ConnectLayer = HttpsLayer;
 
 /// A wrapper around a `SslConnectorBuilder` that allows for additional settings.
 #[derive(Clone)]
@@ -34,8 +33,8 @@ pub struct BoringTlsConnector {
     tls_sni: bool,
     enable_ech_grease: bool,
     application_settings: bool,
-    http_version_pref: HttpVersionPref,
-    connect_layer: ConnectLayer,
+    alpn_protos: HttpVersionPref,
+    connect_layer: HttpsLayer,
 }
 
 impl BoringTlsConnector {
@@ -46,7 +45,7 @@ impl BoringTlsConnector {
             tls_sni: settings.tls_sni,
             enable_ech_grease: settings.enable_ech_grease,
             application_settings: settings.application_settings,
-            http_version_pref: settings.http_version_pref,
+            alpn_protos: settings.alpn_protos,
             connect_layer: connect_layer(settings)?,
         })
     }
@@ -65,7 +64,7 @@ impl BoringTlsConnector {
         let (application_settings, enable_ech_grease, http_version_pref, tls_sni) = (
             self.application_settings,
             self.enable_ech_grease,
-            self.http_version_pref,
+            self.alpn_protos,
             self.tls_sni,
         );
         http.set_callback(move |conf, _| {
@@ -91,7 +90,7 @@ impl BoringTlsConnector {
 
 /// Create a new `ConnectLayer` with the given `Tls` settings.
 #[inline]
-fn connect_layer(settings: TlsSettings) -> TlsResult<ConnectLayer> {
+fn connect_layer(settings: TlsSettings) -> TlsResult<HttpsLayer> {
     let default_connector = if cfg!(any(
         feature = "boring-tls-native-roots",
         feature = "boring-tls-webpki-roots"
@@ -110,7 +109,7 @@ fn connect_layer(settings: TlsSettings) -> TlsResult<ConnectLayer> {
     // Create the `SslConnectorBuilder` and configure it.
     let mut connector = connector
         .configure_cert_verification(settings.certs_verification)?
-        .configure_alpn_protos(settings.http_version_pref)?
+        .configure_alpn_protos(settings.alpn_protos)?
         .configure_min_tls_version(settings.min_tls_version)?
         .configure_max_tls_version(settings.max_tls_version)?;
 
