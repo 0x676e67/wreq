@@ -2129,9 +2129,17 @@ impl Future for PendingRequest {
                             }
 
                             *self.as_mut().in_flight().get_mut() = {
-                                let mut req = hyper::Request::builder()
+                                let pool_key_ext = self.client.hyper.pool_key_extension(&uri);
+                                
+                                let mut builder = hyper::Request::builder()
                                     .method(self.method.clone())
-                                    .uri(uri)
+                                    .uri(uri);
+
+                                if let Some(pool_key_ext) = pool_key_ext {
+                                    builder = builder.extension(pool_key_ext);
+                                }
+
+                                let mut req = builder
                                     .body(body.into_stream())
                                     .expect("valid request parts");
                                 *req.headers_mut() = headers.clone();
