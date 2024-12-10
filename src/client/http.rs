@@ -2120,13 +2120,13 @@ impl Future for PendingRequest {
                                 }
                             }
 
+                            self.client.proxy_auth(&uri, &mut headers);
+
                             if sort_headers {
                                 if let Some(ref headers_order) = self.client.headers_order {
                                     crate::util::sort_headers(&mut headers, headers_order);
                                 }
                             }
-
-                            self.client.proxy_auth(&uri, &mut headers);
 
                             *self.as_mut().in_flight().get_mut() = {
                                 let mut req = hyper::Request::builder()
