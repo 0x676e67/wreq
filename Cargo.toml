@@ -303,3 +303,8 @@ required-features = ["multipart"]
 name = "client"
 path = "examples/client.rs"
 required-features = ["full"]
+
+[[example]]
+name = "redirect_via_proxy"
+path = "examples/redirect_via_proxy.rs"
+required-features = ["full"]
