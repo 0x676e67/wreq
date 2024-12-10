@@ -1573,9 +1573,23 @@ impl Client {
     }
 
     /// Set the proxies for this client.
+    ///
+    /// Returns the old proxies.
     #[inline]
-    pub fn set_proxies(&mut self, proxies: &[Proxy]) {
-        self.inner_mut().hyper.set_proxies(proxies);
+    pub fn set_proxies(&mut self, proxies: impl Into<Cow<'static, [Proxy]>>) -> Vec<Proxy> {
+        self.inner_mut().hyper.set_proxies(proxies.into())
+    }
+
+    /// Append the proxies to the client.
+    #[inline]
+    pub fn append_proxies(&mut self, proxies: impl Into<Cow<'static, [Proxy]>>) {
+        self.inner_mut().hyper.append_proxies(proxies.into());
+    }
+
+    /// Clear the proxies for this client.
+    #[inline]
+    pub fn clear_proxies(&mut self) {
+        self.inner_mut().hyper.clear_proxies();
     }
 
     /// Set that all sockets are bound to the configured address before connection.

@@ -12,6 +12,7 @@ use hyper::service::Service;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 
 use pin_project_lite::pin_project;
+use std::borrow::Cow;
 use std::future::Future;
 use std::io::{self, IoSlice};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
@@ -163,13 +164,28 @@ impl Connector {
     }
 
     #[inline]
-    pub(crate) fn get_proxies(&self) -> Arc<Vec<Proxy>> {
-        self.proxies.clone()
+    pub(crate) fn get_proxies(&self) -> &[Proxy] {
+        self.proxies.as_ref()
     }
 
     #[inline]
-    pub(crate) fn set_proxies(&mut self, proxies: &[Proxy]) {
-        Arc::make_mut(&mut self.proxies).clone_from_slice(proxies);
+    pub(crate) fn set_proxies(&mut self, proxies: Cow<'static, [Proxy]>) -> Vec<Proxy> {
+        std::mem::replace(self.proxies_mut(), proxies.into_owned())
+    }
+
+    #[inline]
+    pub(crate) fn append_proxies(&mut self, proxies: Cow<'static, [Proxy]>) {
+        self.proxies_mut().extend(proxies.into_owned());
+    }
+
+    #[inline]
+    pub(crate) fn clear_proxies(&mut self) {
+        self.proxies_mut().clear();
+    }
+
+    #[inline]
+    fn proxies_mut(&mut self) -> &mut Vec<Proxy> {
+        Arc::make_mut(&mut self.proxies).as_mut()
     }
 
     #[inline]
