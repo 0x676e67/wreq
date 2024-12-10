@@ -1,4 +1,4 @@
-use crate::header::{Entry, HeaderMap, HeaderValue, OccupiedEntry};
+use crate::header::{Entry, HeaderMap, HeaderName, HeaderValue, OccupiedEntry};
 
 pub fn basic_auth<U, P>(username: U, password: Option<P>) -> HeaderValue
 where
@@ -86,6 +86,34 @@ pub(crate) fn replace_headers(dst: &mut HeaderMap, src: HeaderMap) {
             },
         }
     }
+}
+
+/// Sort the headers in the specified order.
+///
+/// Headers in `headers_order` are sorted to the front, preserving their order.
+/// Remaining headers are appended in their original order.
+#[inline]
+pub(crate) fn sort_headers(headers: &mut HeaderMap, headers_order: &[HeaderName]) {
+    if headers.len() <= 1 {
+        return;
+    }
+
+    let mut sorted_headers = HeaderMap::with_capacity(headers.keys_len());
+
+    // First insert headers in the specified order
+    for (key, value) in headers_order
+        .iter()
+        .filter_map(|key| headers.remove(key).map(|value| (key, value)))
+    {
+        sorted_headers.insert(key, value);
+    }
+
+    // Then insert any remaining headers that were not ordered
+    for (key, value) in headers.drain().filter_map(|(k, v)| k.map(|k| (k, v))) {
+        sorted_headers.insert(key, value);
+    }
+
+    std::mem::swap(headers, &mut sorted_headers);
 }
 
 // Convert the headers priority to the correct type

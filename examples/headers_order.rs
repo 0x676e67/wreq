@@ -1,13 +1,12 @@
 use http::{header, HeaderName, HeaderValue};
 use rquest::tls::Impersonate;
 
-static HEADER_ORDER: [HeaderName; 6] = [
+static HEADER_ORDER: &[HeaderName] = &[
     header::USER_AGENT,
     header::ACCEPT_LANGUAGE,
     header::ACCEPT_ENCODING,
     header::HOST,
     header::COOKIE,
-    HeaderName::from_static("priority"),
 ];
 
 #[tokio::main]
@@ -15,7 +14,7 @@ async fn main() -> Result<(), rquest::Error> {
     // Build a client to mimic Chrome130
     let client = rquest::Client::builder()
         .impersonate(Impersonate::Chrome130)
-        .headers_order(&HEADER_ORDER)
+        .headers_order(HEADER_ORDER)
         .cookie_store(true)
         .build()?;
 

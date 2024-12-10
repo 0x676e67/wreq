@@ -1425,25 +1425,8 @@ impl Client {
 
         self.proxy_auth(&uri, &mut headers);
 
-        // Insert headers in order if enabled
         if let Some(ref headers_order) = self.inner.headers_order {
-            let mut sorted_headers = HeaderMap::with_capacity(headers.keys_len());
-
-            // First insert headers in the specified order
-            for key in headers_order.iter() {
-                if let Some(value) = headers.remove(key) {
-                    sorted_headers.insert(key, value);
-                }
-            }
-
-            // Then insert any remaining headers that were not ordered
-            for (key, value) in headers.drain() {
-                if let Some(key) = key {
-                    sorted_headers.insert(key, value);
-                }
-            }
-
-            headers = sorted_headers;
+            crate::util::sort_headers(&mut headers, headers_order);
         }
 
         // proxy/address/interface-level connection pool, two factors (host and authentication, or address and interface)
@@ -2097,9 +2080,11 @@ impl Future for PendingRequest {
                     loc
                 });
                 if let Some(loc) = loc {
+                    let mut sort_headers = false;
                     if self.client.referer {
                         if let Some(referer) = make_referer(&loc, &self.url) {
                             self.headers.insert(REFERER, referer);
+                            sort_headers = true;
                         }
                     }
                     let url = self.url.clone();
@@ -2140,6 +2125,13 @@ impl Future for PendingRequest {
                             {
                                 if let Some(ref cookie_store) = self.client.cookie_store {
                                     add_cookie_header(&mut headers, &**cookie_store, &self.url);
+                                    sort_headers = true;
+                                }
+                            }
+
+                            if sort_headers {
+                                if let Some(ref headers_order) = self.client.headers_order {
+                                    crate::util::sort_headers(&mut headers, headers_order);
                                 }
                             }
 
