@@ -194,8 +194,6 @@ impl ClientBuilder {
         }
         let proxies = Arc::new(proxies);
 
-        let proxies_maybe_http_auth = proxies.iter().any(|p| p.maybe_has_http_auth());
-
         let mut connector = {
             let mut resolver: Arc<dyn Resolve> = match config.hickory_dns {
                 false => Arc::new(GaiResolver::new()),
@@ -269,7 +267,6 @@ impl ClientBuilder {
                 referer: config.referer,
                 request_timeout: config.timeout,
                 https_only: config.https_only,
-                proxies_maybe_http_auth,
             }),
         })
     }
@@ -1423,7 +1420,7 @@ impl Client {
             None => (None, Body::empty()),
         };
 
-        self.proxy_auth(&uri, &mut headers);
+        self.inner.proxy_auth(&uri, &mut headers);
 
         if let Some(ref headers_order) = self.inner.headers_order {
             crate::util::sort_headers(&mut headers, headers_order);
@@ -1466,33 +1463,6 @@ impl Client {
                 in_flight,
                 timeout,
             }),
-        }
-    }
-
-    fn proxy_auth(&self, dst: &Uri, headers: &mut HeaderMap) {
-        if !self.inner.proxies_maybe_http_auth {
-            return;
-        }
-
-        // Only set the header here if the destination scheme is 'http',
-        // since otherwise, the header will be included in the CONNECT tunnel
-        // request instead.
-        if dst.scheme() != Some(&Scheme::HTTP) {
-            return;
-        }
-
-        if headers.contains_key(PROXY_AUTHORIZATION) {
-            return;
-        }
-
-        for proxy in self.inner.hyper.get_proxies().iter() {
-            if proxy.is_match(dst) {
-                if let Some(header) = proxy.http_basic_auth(dst) {
-                    headers.insert(PROXY_AUTHORIZATION, header);
-                }
-
-                break;
-            }
         }
     }
 
@@ -1820,7 +1790,6 @@ struct ClientRef {
     redirect_policy: Arc<redirect::Policy>,
     referer: bool,
     request_timeout: Option<Duration>,
-    proxies_maybe_http_auth: bool,
     https_only: bool,
 }
 
@@ -1855,6 +1824,28 @@ impl ClientRef {
 
         if let Some(ref d) = self.request_timeout {
             f.field("timeout", d);
+        }
+    }
+
+    #[inline]
+    fn proxy_auth(&self, dst: &Uri, headers: &mut HeaderMap) {
+        // Only set the header here if the destination scheme is 'http',
+        // since otherwise, the header will be included in the CONNECT tunnel
+        // request instead.
+        if dst.scheme() != Some(&Scheme::HTTP) || headers.contains_key(PROXY_AUTHORIZATION) {
+            return;
+        }
+
+        // Find the first proxy that matches the destination URI
+        // If a matching proxy provides an HTTP basic auth header, insert it into the headers
+        if let Some(header) = self
+            .hyper
+            .get_proxies()
+            .iter()
+            .find(|proxy| proxy.maybe_has_http_auth() && proxy.is_match(dst))
+            .and_then(|proxy| proxy.http_basic_auth(dst))
+        {
+            headers.insert(PROXY_AUTHORIZATION, header);
         }
     }
 }
@@ -2134,6 +2125,8 @@ impl Future for PendingRequest {
                                     crate::util::sort_headers(&mut headers, headers_order);
                                 }
                             }
+
+                            self.client.proxy_auth(&uri, &mut headers);
 
                             *self.as_mut().in_flight().get_mut() = {
                                 let mut req = hyper::Request::builder()
