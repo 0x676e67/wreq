@@ -9,7 +9,8 @@ use std::{fmt, str};
 use bytes::Bytes;
 use http::header::{
     Entry, HeaderMap, HeaderValue, ACCEPT, ACCEPT_ENCODING, CONTENT_ENCODING, CONTENT_LENGTH,
-    CONTENT_TYPE, LOCATION, PROXY_AUTHORIZATION, RANGE, REFERER, TRANSFER_ENCODING, USER_AGENT,
+    CONTENT_TYPE, HOST, LOCATION, PROXY_AUTHORIZATION, RANGE, REFERER, TRANSFER_ENCODING,
+    USER_AGENT,
 };
 use http::uri::Scheme;
 use http::{HeaderName, Uri, Version};
@@ -250,6 +251,7 @@ impl ClientBuilder {
 
         config
             .builder
+            .set_host(false)
             .pool_idle_timeout(config.pool_idle_timeout)
             .pool_max_idle_per_host(config.pool_max_idle_per_host)
             .pool_max_size(config.pool_max_size)
@@ -1419,6 +1421,17 @@ impl Client {
             }
             None => (None, Body::empty()),
         };
+
+        headers.entry(HOST).or_insert_with(|| {
+            let hostname = uri.host().expect("authority implies host");
+            let is_secure = matches!(uri.scheme_str(), Some("wss" | "https"));
+            let host_with_port = uri
+                .port()
+                .filter(|p| !(is_secure && p.as_u16() == 443 || !is_secure && p.as_u16() == 80))
+                .map(|port| Cow::from(format!("{}:{}", hostname, port)))
+                .unwrap_or_else(|| Cow::from(hostname));
+            HeaderValue::from_str(&host_with_port).expect("uri host is valid header value")
+        });
 
         self.inner.proxy_auth(&uri, &mut headers);
 
