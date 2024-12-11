@@ -2037,6 +2037,9 @@ impl Future for PendingRequest {
                 }
                 _ => false,
             };
+
+            let previous_method = self.method.clone();
+
             if should_redirect {
                 let loc = res.headers().get(LOCATION).and_then(|val| {
                     let loc = (|| -> Option<Url> {
@@ -2074,7 +2077,13 @@ impl Future for PendingRequest {
                         .redirect
                         .as_ref()
                         .unwrap_or(&self.client.redirect)
-                        .check(res.status(), &loc, &self.urls);
+                        .check(
+                            res.status(),
+                            &self.method,
+                            &loc,
+                            &previous_method,
+                            &self.urls,
+                        );
 
                     match action {
                         redirect::ActionKind::Follow => {
