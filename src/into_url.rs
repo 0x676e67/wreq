@@ -8,6 +8,7 @@ pub trait IntoUrl: IntoUrlSealed {}
 
 impl IntoUrl for Url {}
 impl IntoUrl for String {}
+impl<'a> IntoUrl for &'a Url {}
 impl<'a> IntoUrl for &'a str {}
 impl<'a> IntoUrl for &'a String {}
 impl<'a> IntoUrl for std::borrow::Cow<'a, str> {}
@@ -22,20 +23,24 @@ pub trait IntoUrlSealed {
 
 impl IntoUrlSealed for Url {
     fn into_url(self) -> crate::Result<Url> {
-        // With blob url the `self.has_host()` check is always false, so we
-        // remove the `blob:` scheme and check again if the url is valid.
-        #[cfg(target_arch = "wasm32")]
-        if self.scheme() == "blob"
-            && self.path().starts_with("http") // Check if the path starts with http or https to avoid validating a `blob:blob:...` url.
-            && self.as_str()[5..].into_url().is_ok()
-        {
-            return Ok(self);
-        }
-
         if self.has_host() {
             Ok(self)
         } else {
             Err(crate::error::url_bad_scheme(self))
+        }
+    }
+
+    fn as_str(&self) -> &str {
+        self.as_ref()
+    }
+}
+
+impl<'a> IntoUrlSealed for &'a Url {
+    fn into_url(self) -> crate::Result<Url> {
+        if self.has_host() {
+            Ok(self.clone())
+        } else {
+            Err(crate::error::url_bad_scheme(self.clone()))
         }
     }
 
