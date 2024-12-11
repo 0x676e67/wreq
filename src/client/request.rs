@@ -14,7 +14,7 @@ use super::multipart;
 use super::response::Response;
 #[cfg(feature = "multipart")]
 use crate::header::CONTENT_LENGTH;
-use crate::header::{HeaderMap, HeaderName, HeaderValue, CONTENT_TYPE};
+use crate::header::{HeaderMap, HeaderName, HeaderValue, CONTENT_TYPE, HOST};
 use crate::{Method, Url};
 use http::{request::Parts, Request as HttpRequest, Version};
 
@@ -234,6 +234,27 @@ impl RequestBuilder {
     pub fn headers(mut self, headers: crate::header::HeaderMap) -> RequestBuilder {
         if let Ok(ref mut req) = self.request {
             crate::util::replace_headers(req.headers_mut(), headers);
+        }
+        self
+    }
+
+    /// If the URL is not a full URL, this will append the host header to the request.
+    ///
+    /// This is useful when you want to append the host header to the request
+    /// when the URL is not a full URL.
+    pub fn with_host_header(mut self) -> RequestBuilder {
+        if let Ok(ref mut req) = self.request {
+            let url = &mut req.url;
+            let hostname = url.host().expect("authority implies host");
+            let is_secure = matches!(url.scheme(), "wss" | "https");
+            let host_with_port = url
+                .port()
+                .filter(|p| !(is_secure && *p == 443 || !is_secure && *p == 80))
+                .map(|port| format!("{}:{}", hostname, port))
+                .unwrap_or_else(|| hostname.to_string());
+            let header_value =
+                HeaderValue::from_str(&host_with_port).expect("uri host is valid header value");
+            return self.header_sensitive(HOST, header_value, false);
         }
         self
     }

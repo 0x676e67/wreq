@@ -27,7 +27,7 @@ async fn main() -> Result<(), rquest::Error> {
     // Use the API you're already familiar with
     let resp = client
         .get("https://tls.peet.ws/api/all")
-        .header(header::HOST, "tls.peet.ws")
+        .with_host_header()
         .send()
         .await?;
     println!("{}", resp.text().await?);
