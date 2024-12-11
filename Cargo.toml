@@ -308,3 +308,8 @@ required-features = ["full"]
 name = "redirect_via_proxy"
 path = "examples/redirect_via_proxy.rs"
 required-features = ["full"]
+
+[[example]]
+name = "redirect_with_request"
+path = "examples/redirect_with_request.rs"
+required-features = ["full"]

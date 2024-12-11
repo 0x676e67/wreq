@@ -263,7 +263,7 @@ impl ClientBuilder {
                 hyper: config.builder.build(connector),
                 headers: config.headers,
                 headers_order: config.headers_order,
-                redirect_policy: Arc::new(config.redirect_policy),
+                redirect: Arc::new(config.redirect_policy),
                 referer: config.referer,
                 request_timeout: config.timeout,
                 https_only: config.https_only,
@@ -1370,7 +1370,7 @@ impl Client {
     }
 
     pub(super) fn execute_request(&self, req: Request) -> Pending {
-        let (method, url, mut headers, body, timeout, version) = req.pieces();
+        let (method, url, mut headers, body, timeout, version, redirect) = req.pieces();
         if url.scheme() != "http"
             && url.scheme() != "https"
             && url.scheme() != "ws"
@@ -1446,6 +1446,7 @@ impl Client {
                 version,
                 urls: Vec::new(),
                 retry_count: 0,
+                redirect,
                 client: self.inner.clone(),
                 in_flight,
                 timeout,
@@ -1641,7 +1642,7 @@ impl Client {
 
     /// Set the redirect policy for this client.
     pub fn set_redirect_policy(&mut self, policy: Arc<redirect::Policy>) {
-        self.inner_mut().redirect_policy = policy;
+        self.inner_mut().redirect = policy;
     }
 
     /// private mut ref to inner
@@ -1774,7 +1775,7 @@ struct ClientRef {
     headers: Cow<'static, HeaderMap>,
     headers_order: Option<Cow<'static, [HeaderName]>>,
     hyper: HyperClient,
-    redirect_policy: Arc<redirect::Policy>,
+    redirect: Arc<redirect::Policy>,
     referer: bool,
     request_timeout: Option<Duration>,
     https_only: bool,
@@ -1799,8 +1800,8 @@ impl ClientRef {
             f.field("proxies", &proxies);
         }
 
-        if !self.redirect_policy.is_default() {
-            f.field("redirect_policy", &self.redirect_policy);
+        if !self.redirect.is_default() {
+            f.field("redirect_policy", &self.redirect);
         }
 
         if self.referer {
@@ -1861,6 +1862,8 @@ pin_project! {
         urls: Vec<Url>,
 
         retry_count: usize,
+
+        redirect: Option<redirect::Policy>,
 
         client: Arc<ClientRef>,
 
@@ -2068,8 +2071,9 @@ impl Future for PendingRequest {
                     let url = self.url.clone();
                     self.as_mut().urls().push(url);
                     let action = self
-                        .client
-                        .redirect_policy
+                        .redirect
+                        .as_ref()
+                        .unwrap_or(&self.client.redirect)
                         .check(res.status(), &loc, &self.urls);
 
                     match action {

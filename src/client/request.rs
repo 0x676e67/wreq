@@ -16,7 +16,7 @@ use super::http::{Client, Pending};
 use super::multipart;
 use super::response::Response;
 use crate::header::{HeaderMap, HeaderName, HeaderValue, CONTENT_TYPE, HOST};
-use crate::{Method, Url};
+use crate::{redirect, Method, Url};
 use http::{request::Parts, Request as HttpRequest, Version};
 
 /// A request which can be executed with `Client::execute()`.
@@ -27,6 +27,7 @@ pub struct Request {
     body: Option<Body>,
     timeout: Option<Duration>,
     version: Version,
+    redirect: Option<redirect::Policy>,
 }
 
 /// A builder to construct the properties of a `Request`.
@@ -49,6 +50,7 @@ impl Request {
             body: None,
             timeout: None,
             version: Version::default(),
+            redirect: None,
         }
     }
 
@@ -124,6 +126,14 @@ impl Request {
         &mut self.version
     }
 
+    /// private
+    ///
+    /// Set the mutable reference to the redirect policy for this request.
+    #[inline]
+    fn redirect_mut(&mut self) -> &mut Option<redirect::Policy> {
+        &mut self.redirect
+    }
+
     /// Attempt to clone the request.
     ///
     /// `None` is returned if the request can not be cloned, i.e. if the body is a stream.
@@ -149,6 +159,7 @@ impl Request {
         Option<Body>,
         Option<Duration>,
         Version,
+        Option<redirect::Policy>,
     ) {
         (
             self.method,
@@ -157,6 +168,7 @@ impl Request {
             self.body,
             self.timeout,
             self.version,
+            self.redirect,
         )
     }
 }
@@ -394,6 +406,14 @@ impl RequestBuilder {
         self
     }
 
+    /// Set the redirect policy for this request.
+    pub fn redirect(mut self, policy: redirect::Policy) -> RequestBuilder {
+        if let Ok(ref mut req) = self.request {
+            *req.redirect_mut() = Some(policy)
+        }
+        self
+    }
+
     /// Send a form body.
     ///
     /// Sets the body to the url encoded serialization of the passed value,
@@ -623,6 +643,7 @@ where
             body: Some(body.into()),
             timeout: None,
             version,
+            redirect: None,
         })
     }
 }
