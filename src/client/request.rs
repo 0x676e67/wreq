@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::convert::TryFrom;
 use std::fmt;
 use std::future::Future;
@@ -244,17 +245,20 @@ impl RequestBuilder {
     /// when the URL is not a full URL.
     pub fn with_host_header(mut self) -> RequestBuilder {
         if let Ok(ref mut req) = self.request {
-            let url = &mut req.url;
-            let hostname = url.host().expect("authority implies host");
-            let is_secure = matches!(url.scheme(), "wss" | "https");
-            let host_with_port = url
-                .port()
-                .filter(|p| !(is_secure && *p == 443 || !is_secure && *p == 80))
-                .map(|port| format!("{}:{}", hostname, port))
-                .unwrap_or_else(|| hostname.to_string());
-            let header_value =
-                HeaderValue::from_str(&host_with_port).expect("uri host is valid header value");
-            return self.header_sensitive(HOST, header_value, false);
+            let parse_host = || {
+                let url = req.url();
+                let hostname = url.host_str()?;
+                let is_secure = matches!(url.scheme(), "wss" | "https");
+                let host_with_port = url
+                    .port()
+                    .filter(|p| !(is_secure && *p == 443 || !is_secure && *p == 80))
+                    .map(|port| Cow::Owned(format!("{}:{}", hostname, port)))
+                    .unwrap_or_else(|| Cow::Borrowed(hostname));
+                HeaderValue::from_str(&host_with_port).ok()
+            };
+            if let Some(header_value) = parse_host() {
+                return self.header_sensitive(HOST, header_value, false);
+            }
         }
         self
     }
