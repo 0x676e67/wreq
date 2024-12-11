@@ -4,9 +4,8 @@ use self::boring_tls_conn::BoringTlsConn;
 use crate::tls::{BoringTlsConnector, MaybeHttpsStream};
 #[cfg(feature = "boring-tls")]
 use http::header::HeaderValue;
-use http::request::Builder;
 use http::uri::{Authority, Scheme};
-use http::{Method, Uri, Version};
+use http::Uri;
 use hyper::client::connect::{Connected, Connection};
 use hyper::ext::PoolKeyExt;
 use hyper::service::Service;
@@ -270,23 +269,8 @@ impl Connector {
         }
     }
 
-    pub(crate) fn new_builder(&self, uri: Uri, method: Method, version: Version) -> Builder {
-        let pool_key_ext = self.pool_key_extension(&uri);
-
-        let mut builder = hyper::Request::builder()
-            .method(method)
-            .uri(uri)
-            .version(version);
-
-        if let Some(pool_key_ext) = pool_key_ext {
-            builder = builder.extension(pool_key_ext);
-        }
-
-        builder
-    }
-
     #[inline]
-    fn pool_key_extension(&self, uri: &Uri) -> Option<PoolKeyExt> {
+    pub(crate) fn pool_key_extension(&self, uri: &Uri) -> Option<PoolKeyExt> {
         for proxy in self.proxies.as_ref() {
             if let Some(proxy_scheme) = proxy.intercept(uri) {
                 let ext = match proxy_scheme {

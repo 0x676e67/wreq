@@ -21,7 +21,7 @@ use std::task::{Context, Poll};
 use tokio::time::Sleep;
 
 use super::decoder::Accepts;
-use super::request::{Request, RequestBuilder};
+use super::request::{InnerRequest, Request, RequestBuilder};
 use super::response::Response;
 use super::Body;
 use crate::connect::Connector;
@@ -1422,18 +1422,13 @@ impl Client {
 
         self.inner.proxy_auth(&uri, &mut headers);
 
-        if let Some(ref headers_order) = self.inner.headers_order {
-            crate::util::sort_headers(&mut headers, headers_order);
-        }
-
         let in_flight = {
-            let mut req = self
-                .inner
-                .hyper
-                .new_builder(uri, method.clone(), version)
-                .body(body.into_stream())
-                .expect("valid request parts");
-            *req.headers_mut() = headers.clone();
+            let extension = self.inner.hyper.pool_key_extension(&uri);
+            let req = InnerRequest::new(version, uri, method.clone(), headers.clone())
+                .headers_order(self.inner.headers_order.as_deref())
+                .extension(extension)
+                .build(body);
+
             ResponseFuture::Default(self.inner.hyper.request(req))
         };
 
@@ -1922,13 +1917,12 @@ impl PendingRequest {
         let uri = expect_uri(&self.url);
 
         *self.as_mut().in_flight().get_mut() = {
-            let mut req = self
-                .client
-                .hyper
-                .new_builder(uri, self.method.clone(), self.version)
-                .body(body.into_stream())
-                .expect("valid request parts");
-            *req.headers_mut() = self.headers.clone();
+            let extension = self.client.hyper.pool_key_extension(&uri);
+            let req =
+                InnerRequest::new(self.version, uri, self.method.clone(), self.headers.clone())
+                    .headers_order(self.client.headers_order.as_deref())
+                    .extension(extension)
+                    .build(body);
             ResponseFuture::Default(self.client.hyper.request(req))
         };
 
@@ -2066,11 +2060,9 @@ impl Future for PendingRequest {
                     loc
                 });
                 if let Some(loc) = loc {
-                    let mut sort_headers = false;
                     if self.client.referer {
                         if let Some(referer) = make_referer(&loc, &self.url) {
                             self.headers.insert(REFERER, referer);
-                            sort_headers = true;
                         }
                     }
                     let url = self.url.clone();
@@ -2111,26 +2103,22 @@ impl Future for PendingRequest {
                             {
                                 if let Some(ref cookie_store) = self.client.cookie_store {
                                     add_cookie_header(&mut headers, &**cookie_store, &self.url);
-                                    sort_headers = true;
                                 }
                             }
 
                             self.client.proxy_auth(&uri, &mut headers);
 
-                            if sort_headers {
-                                if let Some(ref headers_order) = self.client.headers_order {
-                                    crate::util::sort_headers(&mut headers, headers_order);
-                                }
-                            }
-
                             *self.as_mut().in_flight().get_mut() = {
-                                let mut req = self
-                                    .client
-                                    .hyper
-                                    .new_builder(uri, self.method.clone(), self.version)
-                                    .body(body.into_stream())
-                                    .expect("valid request parts");
-                                *req.headers_mut() = headers.clone();
+                                let extension = self.client.hyper.pool_key_extension(&uri);
+                                let req = InnerRequest::new(
+                                    self.version,
+                                    uri,
+                                    self.method.clone(),
+                                    headers.clone(),
+                                )
+                                .headers_order(self.client.headers_order.as_deref())
+                                .extension(extension)
+                                .build(body);
                                 std::mem::swap(self.as_mut().headers(), &mut headers);
                                 ResponseFuture::Default(self.client.hyper.request(req))
                             };

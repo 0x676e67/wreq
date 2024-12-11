@@ -3,11 +3,14 @@ use std::fmt;
 use std::future::Future;
 use std::time::Duration;
 
+use http::header::CONTENT_LENGTH;
+use http::Uri;
+use hyper::ext::PoolKeyExt;
 use serde::Serialize;
 #[cfg(feature = "json")]
 use serde_json;
 
-use super::body::Body;
+use super::body::{Body, ImplStream};
 use super::http::{Client, Pending};
 #[cfg(feature = "multipart")]
 use super::multipart;
@@ -648,6 +651,88 @@ impl TryFrom<Request> for HttpRequest<Body> {
 
         *req.headers_mut() = headers;
         Ok(req)
+    }
+}
+
+/// A builder for constructing HTTP requests.
+pub(crate) struct InnerRequest<'a> {
+    version: Version,
+    uri: Uri,
+    method: Method,
+    headers: HeaderMap,
+    headers_order: Option<&'a [HeaderName]>,
+    extension: Option<PoolKeyExt>,
+}
+
+impl<'a> InnerRequest<'a> {
+    /// Create a new `RequestBuilder` with required fields.
+    #[inline]
+    pub fn new(version: Version, uri: Uri, method: Method, headers: HeaderMap) -> Self {
+        Self {
+            version,
+            uri,
+            method,
+            headers,
+            headers_order: None,
+            extension: None,
+        }
+    }
+
+    /// Set the headers order for the request.
+    #[inline]
+    pub fn headers_order(mut self, order: Option<&'a [HeaderName]>) -> Self {
+        self.headers_order = order;
+        self
+    }
+
+    /// Set an extension for the request.
+    #[inline]
+    pub fn extension(mut self, extension: Option<PoolKeyExt>) -> Self {
+        self.extension = extension;
+        self
+    }
+
+    /// Build and return the constructed request.
+    pub fn build(self, body: Body) -> http::Request<ImplStream> {
+        let mut headers = self.headers;
+        let body = body.into_stream();
+
+        // Add CONTENT_LENGTH header if required
+        if let Some(len) = http_body::Body::size_hint(&body).exact() {
+            let needs_content_length = len != 0
+                || !matches!(
+                    self.method,
+                    Method::GET | Method::HEAD | Method::DELETE | Method::CONNECT
+                );
+            if needs_content_length {
+                headers
+                    .entry(CONTENT_LENGTH)
+                    .or_insert_with(|| HeaderValue::from(len));
+            }
+        }
+
+        // Build the request
+        let mut builder = hyper::Request::builder()
+            .method(self.method)
+            .uri(self.uri)
+            .version(self.version);
+
+        // Add pool key extension
+        if let Some(extension) = self.extension {
+            builder = builder.extension(extension);
+        }
+
+        // Sort headers if headers_order is provided
+        if let Some(order) = self.headers_order {
+            crate::util::sort_headers(&mut headers, &order);
+        }
+
+        // Add headers to the request
+        builder
+            .headers_mut()
+            .map(|h| std::mem::swap(h, &mut headers));
+
+        builder.body(body).expect("valid request parts")
     }
 }
 
