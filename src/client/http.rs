@@ -2010,9 +2010,8 @@ impl Future for PendingRequest {
                 }
             }
 
-
             let previous_method = self.method.clone();
-            
+
             let should_redirect = match res.status() {
                 StatusCode::MOVED_PERMANENTLY | StatusCode::FOUND | StatusCode::SEE_OTHER => {
                     self.body = None;
