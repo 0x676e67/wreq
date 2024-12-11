@@ -9,8 +9,7 @@ use std::{fmt, str};
 use bytes::Bytes;
 use http::header::{
     Entry, HeaderMap, HeaderValue, ACCEPT, ACCEPT_ENCODING, CONTENT_ENCODING, CONTENT_LENGTH,
-    CONTENT_TYPE, HOST, LOCATION, PROXY_AUTHORIZATION, RANGE, REFERER, TRANSFER_ENCODING,
-    USER_AGENT,
+    CONTENT_TYPE, LOCATION, PROXY_AUTHORIZATION, RANGE, REFERER, TRANSFER_ENCODING, USER_AGENT,
 };
 use http::uri::Scheme;
 use http::{HeaderName, Uri, Version};
@@ -1422,16 +1421,7 @@ impl Client {
             None => (None, Body::empty()),
         };
 
-        headers.entry(HOST).or_insert_with(|| {
-            let hostname = uri.host().expect("authority implies host");
-            let is_secure = matches!(uri.scheme_str(), Some("wss" | "https"));
-            let host_with_port = uri
-                .port()
-                .filter(|p| !(is_secure && p.as_u16() == 443 || !is_secure && p.as_u16() == 80))
-                .map(|port| Cow::from(format!("{}:{}", hostname, port)))
-                .unwrap_or_else(|| Cow::from(hostname));
-            HeaderValue::from_str(&host_with_port).expect("uri host is valid header value")
-        });
+        crate::util::set_host(&mut headers, &uri);
 
         self.inner.proxy_auth(&uri, &mut headers);
 
@@ -2079,11 +2069,9 @@ impl Future for PendingRequest {
                     loc
                 });
                 if let Some(loc) = loc {
-                    let mut sort_headers = false;
                     if self.client.referer {
                         if let Some(referer) = make_referer(&loc, &self.url) {
                             self.headers.insert(REFERER, referer);
-                            sort_headers = true;
                         }
                     }
                     let url = self.url.clone();
@@ -2108,6 +2096,8 @@ impl Future for PendingRequest {
                                 )));
                             }
 
+                            let set_host = self.url.host_str() != loc.host_str();
+
                             self.url = loc;
                             let mut headers =
                                 std::mem::replace(self.as_mut().headers(), HeaderMap::new());
@@ -2124,16 +2114,17 @@ impl Future for PendingRequest {
                             {
                                 if let Some(ref cookie_store) = self.client.cookie_store {
                                     add_cookie_header(&mut headers, &**cookie_store, &self.url);
-                                    sort_headers = true;
                                 }
+                            }
+
+                            if set_host {
+                                crate::util::set_host(&mut headers, &uri);
                             }
 
                             self.client.proxy_auth(&uri, &mut headers);
 
-                            if sort_headers {
-                                if let Some(ref headers_order) = self.client.headers_order {
-                                    crate::util::sort_headers(&mut headers, headers_order);
-                                }
+                            if let Some(ref headers_order) = self.client.headers_order {
+                                crate::util::sort_headers(&mut headers, headers_order);
                             }
 
                             *self.as_mut().in_flight().get_mut() = {

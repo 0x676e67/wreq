@@ -1,4 +1,6 @@
 use crate::header::{Entry, HeaderMap, HeaderName, HeaderValue, OccupiedEntry};
+use http::{header::HOST, Uri};
+use std::borrow::Cow;
 
 pub fn basic_auth<U, P>(username: U, password: Option<P>) -> HeaderValue
 where
@@ -114,6 +116,23 @@ pub(crate) fn sort_headers(headers: &mut HeaderMap, headers_order: &[HeaderName]
     }
 
     std::mem::swap(headers, &mut sorted_headers);
+}
+
+/// Set the host header to the uri host.
+///
+/// If the uri has a port, it will be included in the host header.
+#[inline]
+pub(crate) fn set_host(headers: &mut HeaderMap, uri: &Uri) {
+    headers.entry(HOST).or_insert_with(|| {
+        let hostname = uri.host().expect("authority implies host");
+        let is_secure = matches!(uri.scheme_str(), Some("wss" | "https"));
+        let host_with_port = uri
+            .port()
+            .filter(|p| !(is_secure && p.as_u16() == 443 || !is_secure && p.as_u16() == 80))
+            .map(|port| Cow::from(format!("{}:{}", hostname, port)))
+            .unwrap_or_else(|| Cow::from(hostname));
+        HeaderValue::from_str(&host_with_port).expect("uri host is valid header value")
+    });
 }
 
 // Convert the headers priority to the correct type
