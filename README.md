@@ -226,8 +226,7 @@ static HEADER_ORDER: [HeaderName; 6] = [
     header::USER_AGENT,
     header::ACCEPT_ENCODING,
     header::HOST,
-    header::COOKIE,
-    HeaderName::from_static("priority"),
+    header::COOKIE
 ];
 
 #[tokio::main]
@@ -246,14 +245,14 @@ async fn main() -> Result<(), rquest::Error> {
 
     // Change the impersonate to Safari18
     {
-        client.apply_impersonate(Impersonate::Safari18)?;
+        client.set_impersonate(Impersonate::Safari18)?;
         let resp = client.get("https://tls.peet.ws/api/all").send().await?;
         println!("{}", resp.text().await?);
     }
 
     // Change the impersonate to Edge127 without setting the headers
     {
-        client.apply_impersonate_skip_headers(Impersonate::Edge127)?;
+        client.set_impersonate_skip_headers(Impersonate::Edge127)?;
 
         // Set a header
         client
@@ -298,7 +297,7 @@ async fn main() -> Result<(), rquest::Error> {
     // Set the impersonate to Chrome131
     // Expected: Chrome131
     {
-        client2.apply_impersonate(Impersonate::Chrome131)?;
+        client2.set_impersonate(Impersonate::Chrome131)?;
         let resp = client2.get("https://api.ip.sb/ip").send().await?;
         println!("{}", resp.text().await?);
     }
