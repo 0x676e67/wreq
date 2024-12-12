@@ -49,7 +49,7 @@ mod http2_imports {
 
 mod tls_imports {
     pub use crate::static_join;
-    pub use crate::tls::{cert_compression::CertCompressionAlgorithm, TlsSettings, Version};
+    pub use crate::tls::{cert_compression::CertCompressionAlgorithm, TlsSettings, TlsVersion};
     pub use boring::ssl::SslCurve;
     pub use std::borrow::Cow;
     pub use typed_builder::TypedBuilder;

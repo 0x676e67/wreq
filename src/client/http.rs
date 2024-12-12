@@ -271,40 +271,39 @@ impl ClientBuilder {
         })
     }
 
-    /// Sets the necessary values to mimic the specified impersonate version.
-    /// This will set the necessary headers and TLS settings.
+    /// Sets the necessary values to mimic the specified impersonate version, including headers and TLS settings.
     #[cfg(feature = "boring-tls")]
     #[inline]
     pub fn impersonate(self, impersonate: Impersonate) -> ClientBuilder {
-        self.configure_impersonate(impersonate, true)
+        self.apply_impersonate(impersonate, true)
     }
 
-    /// Sets the necessary values to mimic the specified impersonate version (without headers).
-    /// This will set the necessary headers and TLS settings.
+    /// Sets the necessary values to mimic the specified impersonate version, skipping header configuration.
+    /// This will only apply the required TLS settings.
     #[cfg(feature = "boring-tls")]
     #[inline]
-    pub fn impersonate_without_headers(self, impersonate: Impersonate) -> ClientBuilder {
-        self.configure_impersonate(impersonate, false)
+    pub fn impersonate_skip_headers(self, impersonate: Impersonate) -> ClientBuilder {
+        self.apply_impersonate(impersonate, false)
     }
 
-    /// Use the preconfigured TLS settings.
+    /// Apply the given impersonate settings directly.
     #[cfg(feature = "boring-tls")]
     #[inline]
-    pub fn use_preconfigured_tls(self, settings: ImpersonateSettings) -> ClientBuilder {
-        self.apply_tls_settings(settings)
+    pub fn impersonate_settings(self, settings: ImpersonateSettings) -> ClientBuilder {
+        self.apply_impersonate_settings(settings)
     }
 
-    /// Private helper to configure impersonation.
+    /// Private helper to configure impersonation with optional header settings.
     #[cfg(feature = "boring-tls")]
     #[inline]
-    fn configure_impersonate(self, impersonate: Impersonate, with_headers: bool) -> ClientBuilder {
+    fn apply_impersonate(self, impersonate: Impersonate, with_headers: bool) -> ClientBuilder {
         let settings = tls::tls_settings(impersonate, with_headers);
-        return self.apply_tls_settings(settings);
+        return self.apply_impersonate_settings(settings);
     }
 
     /// Apply the given TLS settings and header function.
     #[cfg(feature = "boring-tls")]
-    fn apply_tls_settings(mut self, settings: ImpersonateSettings) -> ClientBuilder {
+    fn apply_impersonate_settings(mut self, settings: ImpersonateSettings) -> ClientBuilder {
         // Set the headers if needed
         if let Some(headers) = settings.headers {
             self.config.headers = headers;
@@ -1130,7 +1129,7 @@ impl ClientBuilder {
     ///
     /// feature to be enabled.
     #[cfg(feature = "boring-tls")]
-    pub fn min_tls_version(mut self, version: tls::Version) -> ClientBuilder {
+    pub fn min_tls_version(mut self, version: tls::TlsVersion) -> ClientBuilder {
         self.config.tls.min_tls_version = Some(version);
         self
     }
@@ -1150,7 +1149,7 @@ impl ClientBuilder {
     ///
     /// feature to be enabled.
     #[cfg(feature = "boring-tls")]
-    pub fn max_tls_version(mut self, version: tls::Version) -> ClientBuilder {
+    pub fn max_tls_version(mut self, version: tls::TlsVersion) -> ClientBuilder {
         self.config.tls.max_tls_version = Some(version);
         self
     }
@@ -1567,31 +1566,28 @@ impl Client {
     #[cfg(feature = "boring-tls")]
     pub fn set_impersonate(&mut self, var: Impersonate) -> crate::Result<()> {
         let settings = tls::tls_settings(var, true);
-        self.apply_impersonate_settings(settings)
+        self.set_impersonate0(settings)
     }
 
     /// Set the impersonate for this client without setting the headers.
     #[inline]
     #[cfg(feature = "boring-tls")]
-    pub fn set_impersonate_without_headers(&mut self, var: Impersonate) -> crate::Result<()> {
+    pub fn set_impersonate_skip_headers(&mut self, var: Impersonate) -> crate::Result<()> {
         let settings = tls::tls_settings(var, true);
-        self.apply_impersonate_settings(settings)
+        self.set_impersonate0(settings)
     }
 
     /// Set the impersonate for this client with the given settings.
     #[inline]
     #[cfg(feature = "boring-tls")]
-    pub fn set_impersonate_with_settings(
-        &mut self,
-        settings: ImpersonateSettings,
-    ) -> crate::Result<()> {
-        self.apply_impersonate_settings(settings)
+    pub fn set_impersonate_settings(&mut self, settings: ImpersonateSettings) -> crate::Result<()> {
+        self.set_impersonate0(settings)
     }
 
     /// Apply the impersonate settings to the client.
     #[cfg(feature = "boring-tls")]
     #[inline]
-    fn apply_impersonate_settings(&mut self, settings: ImpersonateSettings) -> crate::Result<()> {
+    fn set_impersonate0(&mut self, settings: ImpersonateSettings) -> crate::Result<()> {
         let inner = self.inner_mut();
 
         // Clear the headers

@@ -33,7 +33,7 @@ async fn main() -> Result<(), rquest::Error> {
 
     // Change the impersonate to Edge127 without setting the headers
     {
-        client.set_impersonate_without_headers(Impersonate::Edge127)?;
+        client.set_impersonate_skip_headers(Impersonate::Edge127)?;
         let resp = client.get("https://tls.peet.ws/api/all").send().await?;
         println!("{}", resp.text().await?);
     }

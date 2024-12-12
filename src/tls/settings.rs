@@ -2,7 +2,7 @@
 use std::borrow::Cow;
 
 use crate::{
-    tls::{cert_compression::CertCompressionAlgorithm, Version},
+    tls::{cert_compression::CertCompressionAlgorithm, TlsVersion},
     HttpVersionPref,
 };
 use boring::{
@@ -44,11 +44,11 @@ pub struct TlsSettings {
 
     /// The minimum TLS version to use.
     #[builder(default, setter(into))]
-    pub min_tls_version: Option<Version>,
+    pub min_tls_version: Option<TlsVersion>,
 
     /// The maximum TLS version to use.
     #[builder(default, setter(into))]
-    pub max_tls_version: Option<Version>,
+    pub max_tls_version: Option<TlsVersion>,
 
     /// Enable application settings.
     #[builder(default = false)]

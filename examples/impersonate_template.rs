@@ -17,7 +17,7 @@ async fn main() -> Result<(), rquest::Error> {
 
     // Build a client with pre-configured TLS settings
     let client = rquest::Client::builder()
-        .use_preconfigured_tls(settings)
+        .impersonate_settings(settings)
         .build()?;
 
     // Use the API you're already familiar with

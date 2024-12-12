@@ -4,7 +4,7 @@ use rquest::tls::Impersonate;
 async fn main() -> Result<(), rquest::Error> {
     // Build a client to mimic Chrome130 with headers
     let client = rquest::Client::builder()
-        .impersonate_without_headers(Impersonate::Chrome130)
+        .impersonate_skip_headers(Impersonate::Chrome130)
         .build()?;
 
     // Use the API you're already familiar with

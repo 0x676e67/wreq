@@ -2,7 +2,7 @@
 
 pub mod cert_compression;
 use super::settings::CAStore;
-use super::{TlsResult, Version};
+use super::{TlsResult, TlsVersion};
 use crate::client::http::HttpVersionPref;
 use ::std::os::raw::c_int;
 use boring::error::ErrorStack;
@@ -39,13 +39,13 @@ pub trait TlsExtension {
     /// Configure the minimum TLS version for the given `SslConnectorBuilder`.
     fn configure_min_tls_version(
         self,
-        min_tls_version: Option<Version>,
+        min_tls_version: Option<TlsVersion>,
     ) -> TlsResult<SslConnectorBuilder>;
 
     /// Configure the maximum TLS version for the given `SslConnectorBuilder`.
     fn configure_max_tls_version(
         self,
-        max_tls_version: Option<Version>,
+        max_tls_version: Option<TlsVersion>,
     ) -> TlsResult<SslConnectorBuilder>;
 
     /// Configure the certificate compression algorithm for the given `SslConnectorBuilder`.
@@ -124,7 +124,7 @@ impl TlsExtension for SslConnectorBuilder {
     #[inline]
     fn configure_min_tls_version(
         mut self,
-        min_tls_version: Option<Version>,
+        min_tls_version: Option<TlsVersion>,
     ) -> TlsResult<SslConnectorBuilder> {
         if let Some(version) = min_tls_version {
             self.set_min_proto_version(Some(version.0))?
@@ -136,7 +136,7 @@ impl TlsExtension for SslConnectorBuilder {
     #[inline]
     fn configure_max_tls_version(
         mut self,
-        max_tls_version: Option<Version>,
+        max_tls_version: Option<TlsVersion>,
     ) -> TlsResult<SslConnectorBuilder> {
         if let Some(version) = max_tls_version {
             self.set_max_proto_version(Some(version.0))?

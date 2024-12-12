@@ -9,12 +9,10 @@ async fn main() -> Result<(), rquest::Error> {
         .impersonate(Impersonate::Safari18)
         .build()?;
 
+    // Set the redirect policy
     client.set_redirect(Policy::default());
 
-    let resp = client
-        .get("http://google.com/")
-        .send()
-        .await?;
+    let resp = client.get("http://google.com/").send().await?;
 
     println!("{}", resp.text().await?);
 

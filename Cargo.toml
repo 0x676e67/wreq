@@ -223,8 +223,12 @@ path = "examples/headers_order.rs"
 required-features = ["cookies"]
 
 [[example]]
-name = "impersonate_without_headers"
-path = "examples/impersonate_without_headers.rs"
+name = "impersonate_skip_headers"
+path = "examples/impersonate_skip_headers.rs"
+
+[[example]]
+name = "impersonate_settings"
+path = "examples/impersonate_settings.rs"
 
 [[example]]
 name = "psk_impersonate"

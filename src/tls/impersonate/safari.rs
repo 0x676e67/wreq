@@ -185,7 +185,7 @@ mod tls {
                 .curves(Cow::Borrowed(self.curves))
                 .sigalgs_list(Cow::Borrowed(self.sigalgs_list))
                 .cipher_list(Cow::Borrowed(self.cipher_list))
-                .min_tls_version(Version::TLS_1_0)
+                .min_tls_version(TlsVersion::TLS_1_0)
                 .cert_compression_algorithm(CertCompressionAlgorithm::Zlib)
                 .build()
         }

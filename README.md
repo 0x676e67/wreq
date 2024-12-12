@@ -117,7 +117,7 @@ rquest = "0.31.0"
 ```rust
 use http::{header, HeaderMap, HeaderName, HeaderValue};
 use rquest::{
-    tls::{Http2Settings, ImpersonateSettings, TlsSettings, Version},
+    tls::{Http2Settings, ImpersonateSettings, TlsSettings, TlsVersion},
     HttpVersionPref,
 };
 use rquest::{PseudoOrder::*, SettingsOrder::*};
@@ -133,43 +133,43 @@ static HEADER_ORDER: &[HeaderName] = &[
 
 #[tokio::main]
 async fn main() -> Result<(), rquest::Error> {
-    // Create a pre-configured TLS settings
-    let settings = ImpersonateSettings::builder()
-        .tls(
-            TlsSettings::builder()
-                .tls_sni(true)
-                .alpn_protos(HttpVersionPref::All)
-                .application_settings(true)
-                .pre_shared_key(true)
-                .enable_ech_grease(true)
-                .permute_extensions(true)
-                .min_tls_version(Version::TLS_1_0)
-                .max_tls_version(Version::TLS_1_3)
-                .build(),
-        )
-        .http2(
-            Http2Settings::builder()
-                .initial_stream_window_size(6291456)
-                .initial_connection_window_size(15728640)
-                .max_concurrent_streams(1000)
-                .max_header_list_size(262144)
-                .header_table_size(65536)
-                .enable_push(false)
-                .headers_priority((0, 255, true))
-                .headers_pseudo_order([Method, Scheme, Authority, Path])
-                .settings_order([
-                    HeaderTableSize,
-                    EnablePush,
-                    MaxConcurrentStreams,
-                    InitialWindowSize,
-                    MaxFrameSize,
-                    MaxHeaderListSize,
-                    UnknownSetting8,
-                    UnknownSetting9,
-                ])
-                .build(),
-        )
-        .headers({
+    // TLS settings
+    let tls_settings = TlsSettings::builder()
+        .tls_sni(true)
+        .alpn_protos(HttpVersionPref::All)
+        .application_settings(true)
+        .pre_shared_key(true)
+        .enable_ech_grease(true)
+        .permute_extensions(true)
+        .min_tls_version(TlsVersion::TLS_1_0)
+        .max_tls_version(TlsVersion::TLS_1_3)
+        .build();
+
+    // HTTP/2 settings
+    let http2_settings = Http2Settings::builder()
+        .initial_stream_window_size(6291456)
+        .initial_connection_window_size(15728640)
+        .max_concurrent_streams(1000)
+        .max_header_list_size(262144)
+        .header_table_size(65536)
+        .enable_push(false)
+        .headers_priority((0, 255, true))
+        .headers_pseudo_order([Method, Scheme, Authority, Path])
+        .settings_order([
+            HeaderTableSize,
+            EnablePush,
+            MaxConcurrentStreams,
+            InitialWindowSize,
+            MaxFrameSize,
+            MaxHeaderListSize,
+            UnknownSetting8,
+            UnknownSetting9,
+        ])
+        .build();
+
+    // Headers
+    let headers = {
+        {
             let mut headers = HeaderMap::new();
             headers.insert(header::USER_AGENT, HeaderValue::from_static("rquest"));
             headers.insert(
@@ -183,13 +183,20 @@ async fn main() -> Result<(), rquest::Error> {
             headers.insert(header::HOST, HeaderValue::from_static("tls.peet.ws"));
             headers.insert(header::COOKIE, HeaderValue::from_static("foo=bar"));
             Cow::Owned(headers)
-        })
+        }
+    };
+
+    // Create impersonate settings
+    let settings = ImpersonateSettings::builder()
+        .tls(tls_settings)
+        .http2(http2_settings)
+        .headers(headers)
         .headers_order(Cow::Borrowed(HEADER_ORDER))
         .build();
 
-    // Build a client with pre-configured TLS settings
+    // Build a client with impersonate settings
     let client = rquest::Client::builder()
-        .use_preconfigured_tls(settings)
+        .impersonate_settings(settings)
         .build()?;
 
     // Use the API you're already familiar with
@@ -239,14 +246,14 @@ async fn main() -> Result<(), rquest::Error> {
 
     // Change the impersonate to Safari18
     {
-        client.set_impersonate(Impersonate::Safari18)?;
+        client.apply_impersonate(Impersonate::Safari18)?;
         let resp = client.get("https://tls.peet.ws/api/all").send().await?;
         println!("{}", resp.text().await?);
     }
 
     // Change the impersonate to Edge127 without setting the headers
     {
-        client.set_impersonate_without_headers(Impersonate::Edge127)?;
+        client.apply_impersonate_skip_headers(Impersonate::Edge127)?;
 
         // Set a header
         client
@@ -291,7 +298,7 @@ async fn main() -> Result<(), rquest::Error> {
     // Set the impersonate to Chrome131
     // Expected: Chrome131
     {
-        client2.set_impersonate(Impersonate::Chrome131)?;
+        client2.apply_impersonate(Impersonate::Chrome131)?;
         let resp = client2.get("https://api.ip.sb/ip").send().await?;
         println!("{}", resp.text().await?);
     }
