@@ -7,7 +7,7 @@ static HEADER_ORDER: [HeaderName; 6] = [
     header::USER_AGENT,
     header::ACCEPT_ENCODING,
     header::HOST,
-    header::COOKIE
+    header::COOKIE,
 ];
 
 #[tokio::main]

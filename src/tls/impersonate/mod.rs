@@ -137,7 +137,7 @@ pub fn tls_settings(ver: Impersonate, with_headers: bool) -> ImpersonateSettings
         Safari17_5 => safari17_5::get_settings,
         Safari18 => safari18::get_settings,
         SafariIPad18 => safari_ipad_18::get_settings,
-
+        Safari18_2 => safari18_2::get_settings,
         // OkHttp
         OkHttp3_9 => okhttp3_9::get_settings,
         OkHttp3_11 => okhttp3_11::get_settings,
@@ -196,6 +196,7 @@ pub enum Impersonate {
     Safari17_5,
     Safari18,
     SafariIPad18,
+    Safari18_2,
 
     // OkHttp
     OkHttp3_9,
@@ -266,6 +267,7 @@ impl_from_str! {
     (Safari17_5, "safari_17.5"),
     (Safari18, "safari_18"),
     (SafariIPad18, "safari_ipad_18"),
+    (Safari18_2, "safari_18.2"),
 
     // OkHttp
     (OkHttp3_9, "okhttp_3.9"),

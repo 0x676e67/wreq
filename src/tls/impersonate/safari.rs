@@ -3,7 +3,7 @@ use http2::{
     HEADERS_PSEUDO_ORDER, HEADER_PRIORITY, NEW_HEADERS_PSEUDO_ORDER, NEW_HEADER_PRIORITY,
     NEW_SETTINGS_ORDER, SETTINGS_ORDER,
 };
-use tls::{SafariTlsSettings, CIPHER_LIST, NEW_CIPHER_LIST};
+use tls::{SafariTlsSettings, CIPHER_LIST, NEW_CIPHER_LIST, NEW_SIGALGS_LIST};
 
 // ============== TLS template ==============
 pub fn tls_template_1() -> TlsSettings {
@@ -16,6 +16,14 @@ pub fn tls_template_1() -> TlsSettings {
 pub fn tls_template_2() -> TlsSettings {
     SafariTlsSettings::builder()
         .cipher_list(CIPHER_LIST)
+        .build()
+        .into()
+}
+
+pub fn tls_template_3() -> TlsSettings {
+    SafariTlsSettings::builder()
+        .cipher_list(NEW_CIPHER_LIST)
+        .sigalgs_list(NEW_SIGALGS_LIST)
         .build()
         .into()
 }
@@ -153,6 +161,20 @@ mod tls {
         "rsa_pkcs1_sha256",
         "ecdsa_secp384r1_sha384",
         "ecdsa_sha1",
+        "rsa_pss_rsae_sha384",
+        "rsa_pss_rsae_sha384",
+        "rsa_pkcs1_sha384",
+        "rsa_pss_rsae_sha512",
+        "rsa_pkcs1_sha512",
+        "rsa_pkcs1_sha1"
+    );
+
+    pub const NEW_SIGALGS_LIST: &str = static_join!(
+        ":",
+        "ecdsa_secp256r1_sha256",
+        "rsa_pss_rsae_sha256",
+        "rsa_pkcs1_sha256",
+        "ecdsa_secp384r1_sha384",
         "rsa_pss_rsae_sha384",
         "rsa_pss_rsae_sha384",
         "rsa_pkcs1_sha384",
@@ -541,6 +563,41 @@ pub(crate) mod safari18 {
         let mut headers = HeaderMap::new();
         headers.insert("sec-fetch-dest", HeaderValue::from_static("document"));
         headers.insert(USER_AGENT, HeaderValue::from_static("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15"));
+        headers.insert(
+            ACCEPT,
+            HeaderValue::from_static(
+                "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            ),
+        );
+        headers.insert("sec-fetch-site", HeaderValue::from_static("none"));
+        headers.insert("sec-fetch-mode", HeaderValue::from_static("navigate"));
+        headers.insert(ACCEPT_LANGUAGE, HeaderValue::from_static("en-US,en;q=0.9"));
+        headers.insert("priority", HeaderValue::from_static("u=0, i"));
+        headers.insert(
+            ACCEPT_ENCODING,
+            HeaderValue::from_static("gzip, deflate, br"),
+        );
+        headers
+    }
+}
+
+pub(crate) mod safari18_2 {
+    use crate::tls::impersonate::impersonate_imports::*;
+
+    #[inline]
+    pub fn get_settings(with_headers: bool) -> ImpersonateSettings {
+        ImpersonateSettings::builder()
+            .tls(super::tls_template_3())
+            .http2(super::http2_template_3())
+            .headers(conditional_headers!(with_headers, header_initializer))
+            .build()
+    }
+
+    #[inline]
+    fn header_initializer() -> HeaderMap {
+        let mut headers = HeaderMap::new();
+        headers.insert("sec-fetch-dest", HeaderValue::from_static("document"));
+        headers.insert(USER_AGENT, HeaderValue::from_static("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.2 Safari/605.1.15"));
         headers.insert(
             ACCEPT,
             HeaderValue::from_static(
