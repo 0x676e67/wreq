@@ -313,3 +313,8 @@ required-features = ["full"]
 name = "redirect_with_request"
 path = "examples/redirect_with_request.rs"
 required-features = ["full"]
+
+[[example]]
+name = "set_redirect"
+path = "examples/set_redirect.rs"
+required-features = ["full"]

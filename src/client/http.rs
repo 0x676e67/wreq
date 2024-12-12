@@ -1641,8 +1641,8 @@ impl Client {
     }
 
     /// Set the redirect policy for this client.
-    pub fn set_redirect_policy(&mut self, policy: Arc<redirect::Policy>) {
-        self.inner_mut().redirect = policy;
+    pub fn set_redirect(&mut self, policy: impl Into<Arc<redirect::Policy>>) {
+        self.inner_mut().redirect = policy.into();
     }
 
     /// private mut ref to inner
