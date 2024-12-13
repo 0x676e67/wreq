@@ -158,14 +158,10 @@ pub(crate) mod okhttp3_11 {
             "TLS_RSA_WITH_3DES_EDE_CBC_SHA"
         ));
 
-        let headers = conditional_headers!(with_headers, || {
-            header_initializer("NRC Audio/2.0.6 (nl.nrc.audio; build:36; Android 12; Sdk:31; Manufacturer:motorola; Model: moto g72) OkHttp/3.11.0")
-        });
-
         ImpersonateSettings::builder()
             .tls(tls)
             .http2(okhttp_http2_template!())
-            .headers(headers)
+            .headers(conditional_headers!(with_headers, header_initializer, "NRC Audio/2.0.6 (nl.nrc.audio; build:36; Android 12; Sdk:31; Manufacturer:motorola; Model: moto g72) OkHttp/3.11.0"))
             .build()
     }
 }
@@ -198,14 +194,10 @@ pub(crate) mod okhttp3_13 {
             "TLS_RSA_WITH_3DES_EDE_CBC_SHA"
         ));
 
-        let headers = conditional_headers!(with_headers, || {
-            header_initializer("GM-Android/6.112.2 (240590300; M:Google Pixel 7a; O:34; D:2b045e03986fa6dc) ObsoleteUrlFactory/1.0 OkHttp/3.13.0")
-        });
-
         ImpersonateSettings::builder()
             .tls(tls)
             .http2(okhttp_http2_template!())
-            .headers(headers)
+            .headers(conditional_headers!(with_headers, header_initializer, "GM-Android/6.112.2 (240590300; M:Google Pixel 7a; O:34; D:2b045e03986fa6dc) ObsoleteUrlFactory/1.0 OkHttp/3.13.0"))
             .build()
     }
 }
@@ -216,14 +208,10 @@ pub(crate) mod okhttp3_14 {
 
     #[inline]
     pub fn get_settings(with_headers: bool) -> ImpersonateSettings {
-        let headers = conditional_headers!(with_headers, || {
-            header_initializer("DS podcast/2.0.1 (be.standaard.audio; build:9; Android 11; Sdk:30; Manufacturer:samsung; Model: SM-A405FN) OkHttp/3.14.0")
-        });
-
         ImpersonateSettings::builder()
             .tls(okhttp_tls_template!(CIPHER_LIST))
             .http2(okhttp_http2_template!())
-            .headers(headers)
+            .headers(conditional_headers!(with_headers, header_initializer, "DS podcast/2.0.1 (be.standaard.audio; build:9; Android 11; Sdk:30; Manufacturer:samsung; Model: SM-A405FN) OkHttp/3.14.0"))
             .build()
     }
 }
@@ -253,14 +241,10 @@ pub(crate) mod okhttp3_9 {
             "TLS_RSA_WITH_3DES_EDE_CBC_SHA"
         ));
 
-        let headers = conditional_headers!(with_headers, || {
-            header_initializer("MaiMemo/4.4.50_639 okhttp/3.9 Android/5.0 Channel/WanDouJia Device/alps+M8+Emulator (armeabi-v7a) Screen/4.44 Resolution/480x800 DId/aa6cde19def3806806d5374c4e5fd617 RAM/0.94 ROM/4.91 Theme/Day")
-        });
-
         ImpersonateSettings::builder()
             .tls(tls)
             .http2(okhttp_http2_template!())
-            .headers(headers)
+            .headers(conditional_headers!(with_headers, header_initializer, "MaiMemo/4.4.50_639 okhttp/3.9 Android/5.0 Channel/WanDouJia Device/alps+M8+Emulator (armeabi-v7a) Screen/4.44 Resolution/480x800 DId/aa6cde19def3806806d5374c4e5fd617 RAM/0.94 ROM/4.91 Theme/Day"))
             .build()
     }
 }
@@ -271,14 +255,10 @@ pub(crate) mod okhttp4_10 {
 
     #[inline]
     pub fn get_settings(with_headers: bool) -> ImpersonateSettings {
-        let headers = conditional_headers!(with_headers, || {
-            header_initializer("GM-Android/6.112.2 (240590300; M:samsung SM-G781U1; O:33; D:edb34792871638d8) ObsoleteUrlFactory/1.0 OkHttp/4.10.0")
-        });
-
         ImpersonateSettings::builder()
             .tls(okhttp_tls_template!(CIPHER_LIST))
             .http2(okhttp_http2_template!())
-            .headers(headers)
+            .headers(conditional_headers!(with_headers, header_initializer, "GM-Android/6.112.2 (240590300; M:samsung SM-G781U1; O:33; D:edb34792871638d8) ObsoleteUrlFactory/1.0 OkHttp/4.10.0"))
             .build()
     }
 }
@@ -308,14 +288,10 @@ pub(crate) mod okhttp4_9 {
             "TLS_RSA_WITH_AES_256_CBC_SHA"
         ));
 
-        let headers = conditional_headers!(with_headers, || {
-            header_initializer("GM-Android/6.111.1 (240460200; M:motorola moto g power (2021); O:30; D:76ba9f6628d198c8) ObsoleteUrlFactory/1.0 OkHttp/4.9")
-        });
-
         ImpersonateSettings::builder()
             .tls(tls)
             .http2(okhttp_http2_template!())
-            .headers(headers)
+            .headers(conditional_headers!(with_headers, header_initializer, "GM-Android/6.111.1 (240460200; M:motorola moto g power (2021); O:30; D:76ba9f6628d198c8) ObsoleteUrlFactory/1.0 OkHttp/4.9"))
             .build()
     }
 }
@@ -326,14 +302,10 @@ pub(crate) mod okhttp5 {
 
     #[inline]
     pub fn get_settings(with_headers: bool) -> ImpersonateSettings {
-        let headers = conditional_headers!(with_headers, || {
-            header_initializer("NRC Audio/2.0.6 (nl.nrc.audio; build:36; Android 14; Sdk:34; Manufacturer:OnePlus; Model: CPH2609) OkHttp/5.0.0-alpha2")
-        });
-
         ImpersonateSettings::builder()
             .tls(okhttp_tls_template!(CIPHER_LIST))
             .http2(okhttp_http2_template!())
-            .headers(headers)
+            .headers(conditional_headers!(with_headers, header_initializer, "NRC Audio/2.0.6 (nl.nrc.audio; build:36; Android 14; Sdk:34; Manufacturer:OnePlus; Model: CPH2609) OkHttp/5.0.0-alpha2"))
             .build()
     }
 }

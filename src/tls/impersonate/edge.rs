@@ -188,13 +188,13 @@ pub(crate) mod edge101 {
     #[inline]
     fn header_initializer() -> HeaderMap {
         let mut headers = HeaderMap::new();
-        windows_chrome_edge_sec_ch_ua!(
+        header_windows_chrome_edge_sec_ch_ua!(
             headers,
             r#""Not A;Brand";v="99", "Chromium";v="101", "Microsoft Edge";v="101""#
         );
-        chrome_edge_ua!(headers, "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/101.0.4951.64 Safari/537.36 Edg/101.0.1210.47");
-        chrome_edge_sec_fetch!(headers);
-        chrome_edge_accpet!(headers);
+        header_chrome_edge_ua!(headers, "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/101.0.4951.64 Safari/537.36 Edg/101.0.1210.47");
+        header_chrome_edge_sec_fetch!(headers);
+        header_chrome_edge_accpet!(headers);
         headers
     }
 }
@@ -214,13 +214,13 @@ pub(crate) mod edge122 {
     #[inline]
     fn header_initializer() -> HeaderMap {
         let mut headers = HeaderMap::new();
-        macos_chrome_edge_sec_ch_ua!(
+        header_macos_chrome_edge_sec_ch_ua!(
             headers,
             "\"Chromium\";v=\"122\", \"Not(A:Brand\";v=\"24\", \"Microsoft Edge\";v=\"122\""
         );
-        chrome_edge_ua!(headers, "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36 Edg/122.0.0.0");
-        chrome_edge_sec_fetch!(headers);
-        chrome_edge_accpet!(headers);
+        header_chrome_edge_ua!(headers, "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36 Edg/122.0.0.0");
+        header_chrome_edge_sec_fetch!(headers);
+        header_chrome_edge_accpet!(headers);
         headers
     }
 }
@@ -241,13 +241,13 @@ pub(crate) mod edge127 {
     #[inline]
     fn header_initializer() -> HeaderMap {
         let mut headers = HeaderMap::new();
-        macos_chrome_edge_sec_ch_ua!(
+        header_macos_chrome_edge_sec_ch_ua!(
             headers,
             "\"Not)A;Brand\";v=\"99\", \"Microsoft Edge\";v=\"127\", \"Chromium\";v=\"127\""
         );
-        chrome_edge_ua!(headers, "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36 Edg/127.0.0.0");
-        chrome_edge_sec_fetch!(headers);
-        chrome_edge_accpet_with_zstd!(headers);
+        header_chrome_edge_ua!(headers, "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36 Edg/127.0.0.0");
+        header_chrome_edge_sec_fetch!(headers);
+        header_chrome_edge_accpet_with_zstd!(headers);
         headers.insert("priority", HeaderValue::from_static("u=0, i"));
         headers
     }

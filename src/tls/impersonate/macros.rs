@@ -10,10 +10,20 @@ macro_rules! conditional_headers {
             None
         }
     };
+    ($with_headers:expr, $initializer:expr, $ua:expr) => {
+        if $with_headers {
+            use std::borrow::Cow;
+            use std::sync::LazyLock;
+            static HEADER_INITIALIZER: LazyLock<HeaderMap> = LazyLock::new(|| $initializer($ua));
+            Some(Cow::Borrowed(&*HEADER_INITIALIZER))
+        } else {
+            None
+        }
+    };
 }
 
 #[macro_export]
-macro_rules! macos_chrome_edge_sec_ch_ua {
+macro_rules! header_macos_chrome_edge_sec_ch_ua {
     ($headers:expr, $ua:expr) => {
         $headers.insert("sec-ch-ua", HeaderValue::from_static($ua));
         $headers.insert("sec-ch-ua-mobile", HeaderValue::from_static("?0"));
@@ -22,7 +32,7 @@ macro_rules! macos_chrome_edge_sec_ch_ua {
 }
 
 #[macro_export]
-macro_rules! windows_chrome_edge_sec_ch_ua {
+macro_rules! header_windows_chrome_edge_sec_ch_ua {
     ($headers:expr, $ua:expr) => {
         $headers.insert("sec-ch-ua", HeaderValue::from_static($ua));
         $headers.insert("sec-ch-ua-mobile", HeaderValue::from_static("?0"));
@@ -34,7 +44,7 @@ macro_rules! windows_chrome_edge_sec_ch_ua {
 }
 
 #[macro_export]
-macro_rules! chrome_edge_sec_fetch {
+macro_rules! header_chrome_edge_sec_fetch {
     ($headers:expr) => {
         $headers.insert("sec-fetch-site", HeaderValue::from_static("none"));
         $headers.insert("sec-fetch-mode", HeaderValue::from_static("navigate"));
@@ -44,7 +54,7 @@ macro_rules! chrome_edge_sec_fetch {
 }
 
 #[macro_export]
-macro_rules! chrome_edge_sec_fetch1 {
+macro_rules! header_chrome_edge_sec_fetch1 {
     ($headers:expr) => {
         $headers.insert("sec-fetch-site", HeaderValue::from_static("cross-site"));
         $headers.insert("sec-fetch-mode", HeaderValue::from_static("navigate"));
@@ -54,7 +64,7 @@ macro_rules! chrome_edge_sec_fetch1 {
 }
 
 #[macro_export]
-macro_rules! chrome_edge_ua {
+macro_rules! header_chrome_edge_ua {
     ($headers:expr, $ua:expr) => {
         $headers.insert(DNT, HeaderValue::from_static("1"));
         $headers.insert(UPGRADE_INSECURE_REQUESTS, HeaderValue::from_static("1"));
@@ -64,7 +74,7 @@ macro_rules! chrome_edge_ua {
 }
 
 #[macro_export]
-macro_rules! chrome_edge_accpet {
+macro_rules! header_chrome_edge_accpet {
     ($headers:expr) => {
         $headers.insert(
             ACCEPT_ENCODING,
@@ -75,7 +85,7 @@ macro_rules! chrome_edge_accpet {
 }
 
 #[macro_export]
-macro_rules! chrome_edge_accpet_with_zstd {
+macro_rules! header_chrome_edge_accpet_with_zstd {
     ($headers:expr) => {
         $headers.insert(
             ACCEPT_ENCODING,
