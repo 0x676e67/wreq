@@ -509,3 +509,17 @@ pub(crate) mod safari_ipad_18 {
             .build()
     }
 }
+
+pub(crate) mod safari_ios_18_1_1 {
+    use super::tls::NEW_CIPHER_LIST;
+    use crate::tls::{impersonate::impersonate_imports::*, safari::header_initializer_for_18};
+
+    #[inline]
+    pub fn get_settings(with_headers: bool) -> ImpersonateSettings {
+        ImpersonateSettings::builder()
+            .tls(safari_tls_template!(1, NEW_CIPHER_LIST))
+            .http2(safari_http2_template!(3))
+            .headers(conditional_headers!(with_headers, header_initializer_for_18, "Mozilla/5.0 (iPhone; CPU iPhone OS 18_1_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.1.1 Mobile/15E148 Safari/604.1"))
+            .build()
+    }
+}
