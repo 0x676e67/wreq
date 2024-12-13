@@ -1,6 +1,5 @@
 #![allow(missing_docs, missing_debug_implementations)]
 pub mod chrome;
-pub mod edge;
 #[macro_use]
 mod macros;
 pub mod okhttp;
@@ -8,7 +7,6 @@ pub mod safari;
 
 use super::{Http2Settings, TlsSettings};
 use chrome::*;
-use edge::*;
 use http::{HeaderMap, HeaderName};
 use okhttp::*;
 use safari::*;
@@ -18,11 +16,10 @@ use Impersonate::*;
 
 mod impersonate_imports {
     pub use super::ImpersonateSettings;
+    pub use crate::tls::Http2Settings;
     pub use crate::*;
     pub use http::{
-        header::{
-            ACCEPT, ACCEPT_ENCODING, ACCEPT_LANGUAGE, DNT, UPGRADE_INSECURE_REQUESTS, USER_AGENT,
-        },
+        header::{ACCEPT, ACCEPT_ENCODING, ACCEPT_LANGUAGE, UPGRADE_INSECURE_REQUESTS, USER_AGENT},
         HeaderMap, HeaderValue,
     };
 }
@@ -118,7 +115,8 @@ pub fn tls_settings(ver: Impersonate, with_headers: bool) -> ImpersonateSettings
         // Edge
         Edge101 => edge101::get_settings,
         Edge122 => edge122::get_settings,
-        Edge127 => edge127::get_settings
+        Edge127 => edge127::get_settings,
+        Edge131 => edge131::get_settings
     )
 }
 
@@ -180,6 +178,7 @@ pub enum Impersonate {
     Edge101,
     Edge122,
     Edge127,
+    Edge131,
 }
 
 impl_from_str! {
@@ -238,4 +237,5 @@ impl_from_str! {
     (Edge101, "edge_101"),
     (Edge122, "edge_122"),
     (Edge127, "edge_127"),
+    (Edge131, "edge_131"),
 }

@@ -1,6 +1,5 @@
 use super::impersonate_imports::*;
-use crate::tls::Http2Settings;
-use http2::{HEADERS_PSEUDO_ORDER, HEADER_PRIORITY, SETTINGS_ORDER};
+use http2::*;
 use tls::*;
 
 macro_rules! chrome_mod_generator {
@@ -460,4 +459,40 @@ chrome_mod_generator!(
     header_initializer_with_zstd_priority,
     r#""Google Chrome";v="131", "Chromium";v="131", "Not_A Brand\";v="24""#,
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+);
+
+chrome_mod_generator!(
+    edge101,
+    chrome_tls_template!(1),
+    chrome_http2_template!(1),
+    header_initializer,
+    r#""Not A;Brand";v="99", "Chromium";v="101", "Microsoft Edge";v="101""#,
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/101.0.4951.64 Safari/537.36 Edg/101.0.1210.47"
+);
+
+chrome_mod_generator!(
+    edge122,
+    chrome_tls_template!(5),
+    chrome_http2_template!(3),
+    header_initializer,
+    "\"Chromium\";v=\"122\", \"Not(A:Brand\";v=\"24\", \"Microsoft Edge\";v=\"122\"",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36 Edg/122.0.0.0"
+);
+
+chrome_mod_generator!(
+    edge127,
+    chrome_tls_template!(6, NEW_CURVES_1),
+    chrome_http2_template!(3),
+    header_initializer_with_zstd_priority,
+    "\"Not)A;Brand\";v=\"99\", \"Microsoft Edge\";v=\"127\", \"Chromium\";v=\"127\"",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36 Edg/127.0.0.0"
+);
+
+chrome_mod_generator!(
+    edge131,
+    chrome_tls_template!(6, NEW_CURVES_2),
+    chrome_http2_template!(3),
+    header_initializer_with_zstd_priority,
+    r#""Microsoft Edge";v="131", "Chromium";v="131", "Not_A Brand";v="24""#,
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 Edg/131.0.0.0"
 );

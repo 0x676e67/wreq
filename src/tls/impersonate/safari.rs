@@ -1,12 +1,5 @@
-use crate::tls::Http2Settings;
-use http::{
-    header::{ACCEPT, ACCEPT_ENCODING, ACCEPT_LANGUAGE, USER_AGENT},
-    HeaderMap, HeaderValue,
-};
-use http2::{
-    HEADERS_PSEUDO_ORDER, HEADER_PRIORITY, NEW_HEADERS_PSEUDO_ORDER, NEW_HEADER_PRIORITY,
-    NEW_SETTINGS_ORDER, SETTINGS_ORDER,
-};
+use super::impersonate_imports::*;
+use http2::*;
 use tls::*;
 
 macro_rules! safari_mod_generator {

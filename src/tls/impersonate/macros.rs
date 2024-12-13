@@ -44,7 +44,6 @@ macro_rules! header_chrome_edge_sec_fetch {
 #[macro_export]
 macro_rules! header_chrome_edge_ua {
     ($headers:expr, $ua:expr) => {
-        $headers.insert(DNT, HeaderValue::from_static("1"));
         $headers.insert(UPGRADE_INSECURE_REQUESTS, HeaderValue::from_static("1"));
         $headers.insert(USER_AGENT, HeaderValue::from_static($ua));
         $headers.insert(ACCEPT, HeaderValue::from_static("text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.9"));

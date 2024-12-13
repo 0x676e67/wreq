@@ -1,9 +1,5 @@
-use crate::tls::Http2Settings;
-use http::{
-    header::{ACCEPT, ACCEPT_ENCODING, ACCEPT_LANGUAGE, USER_AGENT},
-    HeaderMap, HeaderValue,
-};
-use http2::{HEADERS_PSEUDO_ORDER, HEADER_PRIORITY, SETTINGS_ORDER};
+use super::impersonate_imports::*;
+use http2::*;
 use tls::*;
 
 macro_rules! okhttp_mod_generator {
