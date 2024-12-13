@@ -323,7 +323,7 @@ You can customize the `TLS`/`HTTP2` fingerprint parameters of the device. In add
 
 - **Edge**
 
-`Edge101`，`Edge122`，`Edge127`
+`Edge101`，`Edge122`，`Edge127`，`Edge131`
 
 - **Safari**
 
