@@ -1423,7 +1423,7 @@ impl Client {
 
         let in_flight = {
             let extension = self.inner.hyper.pool_key_extension(&uri);
-            let req = InnerRequest::new(version, uri, method.clone(), headers.clone())
+            let req = InnerRequest::new(version, uri, &method, headers.clone())
                 .headers_order(self.inner.headers_order.as_deref())
                 .extension(extension)
                 .build(body);
@@ -1917,11 +1917,10 @@ impl PendingRequest {
 
         *self.as_mut().in_flight().get_mut() = {
             let extension = self.client.hyper.pool_key_extension(&uri);
-            let req =
-                InnerRequest::new(self.version, uri, self.method.clone(), self.headers.clone())
-                    .headers_order(self.client.headers_order.as_deref())
-                    .extension(extension)
-                    .build(body);
+            let req = InnerRequest::new(self.version, uri, &self.method, self.headers.clone())
+                .headers_order(self.client.headers_order.as_deref())
+                .extension(extension)
+                .build(body);
             ResponseFuture::Default(self.client.hyper.request(req))
         };
 
@@ -2123,7 +2122,7 @@ impl Future for PendingRequest {
                                 let req = InnerRequest::new(
                                     self.version,
                                     uri,
-                                    self.method.clone(),
+                                    &self.method,
                                     headers.clone(),
                                 )
                                 .headers_order(self.client.headers_order.as_deref())

@@ -669,7 +669,7 @@ impl TryFrom<Request> for HttpRequest<Body> {
 pub(crate) struct InnerRequest<'a> {
     version: Version,
     uri: Uri,
-    method: Method,
+    method: &'a Method,
     headers: HeaderMap,
     headers_order: Option<&'a [HeaderName]>,
     extension: Option<PoolKeyExt>,
@@ -678,7 +678,7 @@ pub(crate) struct InnerRequest<'a> {
 impl<'a> InnerRequest<'a> {
     /// Create a new `RequestBuilder` with required fields.
     #[inline]
-    pub fn new(version: Version, uri: Uri, method: Method, headers: HeaderMap) -> Self {
+    pub fn new(version: Version, uri: Uri, method: &'a Method, headers: HeaderMap) -> Self {
         Self {
             version,
             uri,
@@ -708,34 +708,35 @@ impl<'a> InnerRequest<'a> {
         let mut headers = self.headers;
         let body = body.into_stream();
 
-        // Add CONTENT_LENGTH header if required
-        if let Some(len) = http_body::Body::size_hint(&body).exact() {
-            let needs_content_length = len != 0
-                || !matches!(
-                    self.method,
-                    Method::GET | Method::HEAD | Method::DELETE | Method::CONNECT
-                );
-            if needs_content_length {
-                headers
-                    .entry(CONTENT_LENGTH)
-                    .or_insert_with(|| HeaderValue::from(len));
-            }
-        }
-
         // Build the request
         let mut builder = hyper::Request::builder()
             .method(self.method)
             .uri(self.uri)
             .version(self.version);
 
+        // Sort headers if headers_order is provided
+        if let Some(order) = self.headers_order {
+            // Add CONTENT_LENGTH header if required
+            if let Some(len) = http_body::Body::size_hint(&body).exact() {
+                let needs_content_length = len != 0
+                    || !matches!(
+                        *self.method,
+                        Method::GET | Method::HEAD | Method::DELETE | Method::CONNECT
+                    );
+                if needs_content_length {
+                    headers
+                        .entry(CONTENT_LENGTH)
+                        .or_insert_with(|| HeaderValue::from(len));
+                }
+            }
+
+            // Sort headers
+            crate::util::sort_headers(&mut headers, &order);
+        }
+
         // Add pool key extension
         if let Some(extension) = self.extension {
             builder = builder.extension(extension);
-        }
-
-        // Sort headers if headers_order is provided
-        if let Some(order) = self.headers_order {
-            crate::util::sort_headers(&mut headers, &order);
         }
 
         // Add headers to the request
