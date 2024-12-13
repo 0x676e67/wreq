@@ -19,9 +19,12 @@ use Impersonate::*;
 mod impersonate_imports {
     pub use super::ImpersonateSettings;
     pub use crate::{
-        chrome_edge_accpet, chrome_edge_accpet_with_zstd, chrome_edge_sec_fetch,
-        chrome_edge_sec_fetch1, chrome_edge_ua, conditional_headers, macos_chrome_edge_sec_ch_ua,
-        static_join, windows_chrome_edge_sec_ch_ua,
+        chrome_http2_template, chrome_tls_template, conditional_headers, edge_http2_template,
+        edge_tls_template, header_chrome_edge_accpet, header_chrome_edge_accpet_with_zstd,
+        header_chrome_edge_sec_fetch, header_chrome_edge_sec_fetch1, header_chrome_edge_ua,
+        header_macos_chrome_edge_sec_ch_ua, header_windows_chrome_edge_sec_ch_ua,
+        okhttp_http2_template, okhttp_tls_template, safari_http2_template, safari_tls_template,
+        static_join,
     };
     pub use http::{
         header::{

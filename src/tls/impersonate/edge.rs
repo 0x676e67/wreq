@@ -1,57 +1,6 @@
-use crate::tls::{Http2Settings, TlsSettings};
+use crate::tls::Http2Settings;
 use http2::{HEADERS_PSEUDO_ORDER, HEADER_PRIORITY, SETTINGS_ORDER};
-use tls::{EdgeTlsSettings, NEW_CURVES};
-
-// ============== TLS template ==============
-pub fn tls_template_1() -> TlsSettings {
-    EdgeTlsSettings::builder().build().into()
-}
-
-pub fn tls_template_2() -> TlsSettings {
-    EdgeTlsSettings::builder()
-        .permute_extensions(true)
-        .pre_shared_key(true)
-        .enable_ech_grease(true)
-        .build()
-        .into()
-}
-
-pub fn tls_template_3() -> TlsSettings {
-    EdgeTlsSettings::builder()
-        .curves(NEW_CURVES)
-        .permute_extensions(true)
-        .pre_shared_key(true)
-        .enable_ech_grease(true)
-        .build()
-        .into()
-}
-
-// ============== HTTP template ==============
-pub fn http2_template_1() -> Http2Settings {
-    Http2Settings::builder()
-        .initial_stream_window_size(6291456)
-        .initial_connection_window_size(15728640)
-        .max_concurrent_streams(1000)
-        .max_header_list_size(262144)
-        .header_table_size(65536)
-        .headers_priority(HEADER_PRIORITY)
-        .headers_pseudo_order(HEADERS_PSEUDO_ORDER)
-        .settings_order(SETTINGS_ORDER)
-        .build()
-}
-
-pub fn http2_template_2() -> Http2Settings {
-    Http2Settings::builder()
-        .initial_stream_window_size(6291456)
-        .initial_connection_window_size(15728640)
-        .max_header_list_size(262144)
-        .header_table_size(65536)
-        .enable_push(false)
-        .headers_priority(HEADER_PRIORITY)
-        .headers_pseudo_order(HEADERS_PSEUDO_ORDER)
-        .settings_order(SETTINGS_ORDER)
-        .build()
-}
+use tls::EdgeTlsSettings;
 
 // ============== TLS settings ==============
 mod tls {
@@ -147,6 +96,30 @@ mod tls {
                 .build()
         }
     }
+
+    #[macro_export]
+    macro_rules! edge_tls_template {
+        (1) => {{
+            super::EdgeTlsSettings::builder().build().into()
+        }};
+        (2) => {{
+            super::EdgeTlsSettings::builder()
+                .permute_extensions(true)
+                .pre_shared_key(true)
+                .enable_ech_grease(true)
+                .build()
+                .into()
+        }};
+        (3, $curves:expr) => {{
+            super::EdgeTlsSettings::builder()
+                .curves($curves)
+                .permute_extensions(true)
+                .pre_shared_key(true)
+                .enable_ech_grease(true)
+                .build()
+                .into()
+        }};
+    }
 }
 
 // ============== Http2 settings ==============
@@ -170,6 +143,34 @@ mod http2 {
         UnknownSetting8,
         UnknownSetting9,
     ];
+
+    #[macro_export]
+    macro_rules! edge_http2_template {
+        (1) => {{
+            super::Http2Settings::builder()
+                .initial_stream_window_size(6291456)
+                .initial_connection_window_size(15728640)
+                .max_concurrent_streams(1000)
+                .max_header_list_size(262144)
+                .header_table_size(65536)
+                .headers_priority(super::HEADER_PRIORITY)
+                .headers_pseudo_order(super::HEADERS_PSEUDO_ORDER)
+                .settings_order(super::SETTINGS_ORDER)
+                .build()
+        }};
+        (2) => {{
+            super::Http2Settings::builder()
+                .initial_stream_window_size(6291456)
+                .initial_connection_window_size(15728640)
+                .max_header_list_size(262144)
+                .header_table_size(65536)
+                .enable_push(false)
+                .headers_priority(super::HEADER_PRIORITY)
+                .headers_pseudo_order(super::HEADERS_PSEUDO_ORDER)
+                .settings_order(super::SETTINGS_ORDER)
+                .build()
+        }};
+    }
 }
 
 pub(crate) mod edge101 {
@@ -178,8 +179,8 @@ pub(crate) mod edge101 {
     #[inline]
     pub fn get_settings(with_headers: bool) -> ImpersonateSettings {
         ImpersonateSettings::builder()
-            .tls(super::tls_template_1())
-            .http2(super::http2_template_1())
+            .tls(edge_tls_template!(1))
+            .http2(edge_http2_template!(1))
             .headers(conditional_headers!(with_headers, header_initializer))
             .build()
     }
@@ -187,13 +188,13 @@ pub(crate) mod edge101 {
     #[inline]
     fn header_initializer() -> HeaderMap {
         let mut headers = HeaderMap::new();
-        windows_chrome_edge_sec_ch_ua!(
+        header_windows_chrome_edge_sec_ch_ua!(
             headers,
             r#""Not A;Brand";v="99", "Chromium";v="101", "Microsoft Edge";v="101""#
         );
-        chrome_edge_ua!(headers, "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/101.0.4951.64 Safari/537.36 Edg/101.0.1210.47");
-        chrome_edge_sec_fetch!(headers);
-        chrome_edge_accpet!(headers);
+        header_chrome_edge_ua!(headers, "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/101.0.4951.64 Safari/537.36 Edg/101.0.1210.47");
+        header_chrome_edge_sec_fetch!(headers);
+        header_chrome_edge_accpet!(headers);
         headers
     }
 }
@@ -204,8 +205,8 @@ pub(crate) mod edge122 {
     #[inline]
     pub fn get_settings(with_headers: bool) -> ImpersonateSettings {
         ImpersonateSettings::builder()
-            .tls(super::tls_template_2())
-            .http2(super::http2_template_2())
+            .tls(edge_tls_template!(2))
+            .http2(edge_http2_template!(2))
             .headers(conditional_headers!(with_headers, header_initializer))
             .build()
     }
@@ -213,25 +214,26 @@ pub(crate) mod edge122 {
     #[inline]
     fn header_initializer() -> HeaderMap {
         let mut headers = HeaderMap::new();
-        macos_chrome_edge_sec_ch_ua!(
+        header_macos_chrome_edge_sec_ch_ua!(
             headers,
             "\"Chromium\";v=\"122\", \"Not(A:Brand\";v=\"24\", \"Microsoft Edge\";v=\"122\""
         );
-        chrome_edge_ua!(headers, "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36 Edg/122.0.0.0");
-        chrome_edge_sec_fetch!(headers);
-        chrome_edge_accpet!(headers);
+        header_chrome_edge_ua!(headers, "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36 Edg/122.0.0.0");
+        header_chrome_edge_sec_fetch!(headers);
+        header_chrome_edge_accpet!(headers);
         headers
     }
 }
 
 pub(crate) mod edge127 {
+    use super::tls::NEW_CURVES;
     use crate::tls::impersonate::impersonate_imports::*;
 
     #[inline]
     pub fn get_settings(with_headers: bool) -> ImpersonateSettings {
         ImpersonateSettings::builder()
-            .tls(super::tls_template_3())
-            .http2(super::http2_template_2())
+            .tls(edge_tls_template!(3, NEW_CURVES))
+            .http2(edge_http2_template!(2))
             .headers(conditional_headers!(with_headers, header_initializer))
             .build()
     }
@@ -239,13 +241,13 @@ pub(crate) mod edge127 {
     #[inline]
     fn header_initializer() -> HeaderMap {
         let mut headers = HeaderMap::new();
-        macos_chrome_edge_sec_ch_ua!(
+        header_macos_chrome_edge_sec_ch_ua!(
             headers,
             "\"Not)A;Brand\";v=\"99\", \"Microsoft Edge\";v=\"127\", \"Chromium\";v=\"127\""
         );
-        chrome_edge_ua!(headers, "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36 Edg/127.0.0.0");
-        chrome_edge_sec_fetch!(headers);
-        chrome_edge_accpet_with_zstd!(headers);
+        header_chrome_edge_ua!(headers, "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36 Edg/127.0.0.0");
+        header_chrome_edge_sec_fetch!(headers);
+        header_chrome_edge_accpet_with_zstd!(headers);
         headers.insert("priority", HeaderValue::from_static("u=0, i"));
         headers
     }
