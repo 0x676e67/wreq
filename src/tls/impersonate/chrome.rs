@@ -1,103 +1,6 @@
-use crate::tls::{Http2Settings, TlsSettings};
+use crate::tls::Http2Settings;
 use http2::{HEADERS_PSEUDO_ORDER, HEADER_PRIORITY, SETTINGS_ORDER};
-use tls::{ChromeTlsSettings, NEW_CURVES_1, NEW_CURVES_2};
-
-// ============== TLS template ==============
-pub fn tls_template_1() -> TlsSettings {
-    ChromeTlsSettings::builder().build().into()
-}
-
-pub fn tls_template_2() -> TlsSettings {
-    ChromeTlsSettings::builder()
-        .enable_ech_grease(true)
-        .build()
-        .into()
-}
-
-pub fn tls_template_3() -> TlsSettings {
-    ChromeTlsSettings::builder()
-        .permute_extensions(true)
-        .build()
-        .into()
-}
-
-pub fn tls_template_4() -> TlsSettings {
-    ChromeTlsSettings::builder()
-        .permute_extensions(true)
-        .enable_ech_grease(true)
-        .build()
-        .into()
-}
-
-pub fn tls_template_5() -> TlsSettings {
-    ChromeTlsSettings::builder()
-        .permute_extensions(true)
-        .enable_ech_grease(true)
-        .pre_shared_key(true)
-        .build()
-        .into()
-}
-
-pub fn tls_template_6() -> TlsSettings {
-    ChromeTlsSettings::builder()
-        .curves(NEW_CURVES_1)
-        .permute_extensions(true)
-        .pre_shared_key(true)
-        .enable_ech_grease(true)
-        .build()
-        .into()
-}
-
-pub fn tls_template_7() -> TlsSettings {
-    ChromeTlsSettings::builder()
-        .curves(NEW_CURVES_2)
-        .permute_extensions(true)
-        .pre_shared_key(true)
-        .enable_ech_grease(true)
-        .build()
-        .into()
-}
-
-// ============== HTTP template ==============
-pub fn http2_template_1() -> Http2Settings {
-    Http2Settings::builder()
-        .initial_stream_window_size(6291456)
-        .initial_connection_window_size(15728640)
-        .max_concurrent_streams(1000)
-        .max_header_list_size(262144)
-        .header_table_size(65536)
-        .headers_priority(HEADER_PRIORITY)
-        .headers_pseudo_order(HEADERS_PSEUDO_ORDER)
-        .settings_order(SETTINGS_ORDER)
-        .build()
-}
-
-pub fn http2_template_2() -> Http2Settings {
-    Http2Settings::builder()
-        .initial_stream_window_size(6291456)
-        .initial_connection_window_size(15728640)
-        .max_concurrent_streams(1000)
-        .max_header_list_size(262144)
-        .header_table_size(65536)
-        .enable_push(false)
-        .headers_priority(HEADER_PRIORITY)
-        .headers_pseudo_order(HEADERS_PSEUDO_ORDER)
-        .settings_order(SETTINGS_ORDER)
-        .build()
-}
-
-pub fn http2_template_3() -> Http2Settings {
-    Http2Settings::builder()
-        .initial_stream_window_size(6291456)
-        .initial_connection_window_size(15728640)
-        .max_header_list_size(262144)
-        .header_table_size(65536)
-        .enable_push(false)
-        .headers_priority(HEADER_PRIORITY)
-        .headers_pseudo_order(HEADERS_PSEUDO_ORDER)
-        .settings_order(SETTINGS_ORDER)
-        .build()
-}
+use tls::ChromeTlsSettings;
 
 // ============== TLS settings ==============
 mod tls {
@@ -200,6 +103,49 @@ mod tls {
                 .build()
         }
     }
+
+    #[macro_export]
+    macro_rules! chrome_tls_template {
+        (1) => {{
+            super::ChromeTlsSettings::builder().build().into()
+        }};
+        (2) => {{
+            super::ChromeTlsSettings::builder()
+                .enable_ech_grease(true)
+                .build()
+                .into()
+        }};
+        (3) => {{
+            super::ChromeTlsSettings::builder()
+                .permute_extensions(true)
+                .build()
+                .into()
+        }};
+        (4) => {{
+            super::ChromeTlsSettings::builder()
+                .permute_extensions(true)
+                .enable_ech_grease(true)
+                .build()
+                .into()
+        }};
+        (5) => {{
+            super::ChromeTlsSettings::builder()
+                .permute_extensions(true)
+                .enable_ech_grease(true)
+                .pre_shared_key(true)
+                .build()
+                .into()
+        }};
+        (6, $curves:expr) => {{
+            super::ChromeTlsSettings::builder()
+                .curves($curves)
+                .permute_extensions(true)
+                .pre_shared_key(true)
+                .enable_ech_grease(true)
+                .build()
+                .into()
+        }};
+    }
 }
 
 // ============== Http2 settings ==============
@@ -223,6 +169,47 @@ mod http2 {
         UnknownSetting8,
         UnknownSetting9,
     ];
+
+    #[macro_export]
+    macro_rules! chrome_http2_template {
+        (1) => {{
+            super::Http2Settings::builder()
+                .initial_stream_window_size(6291456)
+                .initial_connection_window_size(15728640)
+                .max_concurrent_streams(1000)
+                .max_header_list_size(262144)
+                .header_table_size(65536)
+                .headers_priority(super::HEADER_PRIORITY)
+                .headers_pseudo_order(super::HEADERS_PSEUDO_ORDER)
+                .settings_order(super::SETTINGS_ORDER)
+                .build()
+        }};
+        (2) => {{
+            super::Http2Settings::builder()
+                .initial_stream_window_size(6291456)
+                .initial_connection_window_size(15728640)
+                .max_concurrent_streams(1000)
+                .max_header_list_size(262144)
+                .header_table_size(65536)
+                .enable_push(false)
+                .headers_priority(super::HEADER_PRIORITY)
+                .headers_pseudo_order(super::HEADERS_PSEUDO_ORDER)
+                .settings_order(super::SETTINGS_ORDER)
+                .build()
+        }};
+        (3) => {{
+            super::Http2Settings::builder()
+                .initial_stream_window_size(6291456)
+                .initial_connection_window_size(15728640)
+                .max_header_list_size(262144)
+                .header_table_size(65536)
+                .enable_push(false)
+                .headers_priority(super::HEADER_PRIORITY)
+                .headers_pseudo_order(super::HEADERS_PSEUDO_ORDER)
+                .settings_order(super::SETTINGS_ORDER)
+                .build()
+        }};
+    }
 }
 
 pub(crate) mod v100 {
@@ -231,8 +218,8 @@ pub(crate) mod v100 {
     #[inline]
     pub fn get_settings(with_headers: bool) -> ImpersonateSettings {
         ImpersonateSettings::builder()
-            .tls(super::tls_template_1())
-            .http2(super::http2_template_1())
+            .tls(chrome_tls_template!(1))
+            .http2(chrome_http2_template!(1))
             .headers(conditional_headers!(with_headers, header_initializer))
             .build()
     }
@@ -257,8 +244,8 @@ pub(crate) mod v101 {
     #[inline]
     pub fn get_settings(with_headers: bool) -> ImpersonateSettings {
         ImpersonateSettings::builder()
-            .tls(super::tls_template_1())
-            .http2(super::http2_template_1())
+            .tls(chrome_tls_template!(1))
+            .http2(chrome_http2_template!(1))
             .headers(conditional_headers!(with_headers, header_initializer))
             .build()
     }
@@ -283,8 +270,8 @@ pub(crate) mod v104 {
     #[inline]
     pub fn get_settings(with_headers: bool) -> ImpersonateSettings {
         ImpersonateSettings::builder()
-            .tls(super::tls_template_1())
-            .http2(super::http2_template_1())
+            .tls(chrome_tls_template!(1))
+            .http2(chrome_http2_template!(1))
             .headers(conditional_headers!(with_headers, header_initializer))
             .build()
     }
@@ -309,8 +296,8 @@ pub(crate) mod v105 {
     #[inline]
     pub fn get_settings(with_headers: bool) -> ImpersonateSettings {
         ImpersonateSettings::builder()
-            .tls(super::tls_template_2())
-            .http2(super::http2_template_1())
+            .tls(chrome_tls_template!(2))
+            .http2(chrome_http2_template!(1))
             .headers(conditional_headers!(with_headers, header_initializer))
             .build()
     }
@@ -335,8 +322,8 @@ pub(crate) mod v106 {
     #[inline]
     pub fn get_settings(with_headers: bool) -> ImpersonateSettings {
         ImpersonateSettings::builder()
-            .tls(super::tls_template_3())
-            .http2(super::http2_template_2())
+            .tls(chrome_tls_template!(3))
+            .http2(chrome_http2_template!(2))
             .headers(conditional_headers!(with_headers, header_initializer))
             .build()
     }
@@ -361,8 +348,8 @@ pub(crate) mod v107 {
     #[inline]
     pub fn get_settings(with_headers: bool) -> ImpersonateSettings {
         ImpersonateSettings::builder()
-            .tls(super::tls_template_3())
-            .http2(super::http2_template_2())
+            .tls(chrome_tls_template!(3))
+            .http2(chrome_http2_template!(2))
             .headers(conditional_headers!(with_headers, header_initializer))
             .build()
     }
@@ -387,8 +374,8 @@ pub(crate) mod v108 {
     #[inline]
     pub fn get_settings(with_headers: bool) -> ImpersonateSettings {
         ImpersonateSettings::builder()
-            .tls(super::tls_template_3())
-            .http2(super::http2_template_2())
+            .tls(chrome_tls_template!(3))
+            .http2(chrome_http2_template!(2))
             .headers(conditional_headers!(with_headers, header_initializer))
             .build()
     }
@@ -413,8 +400,8 @@ pub(crate) mod v109 {
     #[inline]
     pub fn get_settings(with_headers: bool) -> ImpersonateSettings {
         ImpersonateSettings::builder()
-            .tls(super::tls_template_3())
-            .http2(super::http2_template_2())
+            .tls(chrome_tls_template!(3))
+            .http2(chrome_http2_template!(2))
             .headers(conditional_headers!(with_headers, header_initializer))
             .build()
     }
@@ -439,8 +426,8 @@ pub(crate) mod v114 {
     #[inline]
     pub fn get_settings(with_headers: bool) -> ImpersonateSettings {
         ImpersonateSettings::builder()
-            .tls(super::tls_template_3())
-            .http2(super::http2_template_2())
+            .tls(chrome_tls_template!(3))
+            .http2(chrome_http2_template!(2))
             .headers(conditional_headers!(with_headers, header_initializer))
             .build()
     }
@@ -465,8 +452,8 @@ pub(crate) mod v116 {
     #[inline]
     pub fn get_settings(with_headers: bool) -> ImpersonateSettings {
         ImpersonateSettings::builder()
-            .tls(super::tls_template_4())
-            .http2(super::http2_template_2())
+            .tls(chrome_tls_template!(4))
+            .http2(chrome_http2_template!(2))
             .headers(conditional_headers!(with_headers, header_initializer))
             .build()
     }
@@ -491,8 +478,8 @@ pub(crate) mod v117 {
     #[inline]
     pub fn get_settings(with_headers: bool) -> ImpersonateSettings {
         ImpersonateSettings::builder()
-            .tls(super::tls_template_5())
-            .http2(super::http2_template_3())
+            .tls(chrome_tls_template!(5))
+            .http2(chrome_http2_template!(3))
             .headers(conditional_headers!(with_headers, header_initializer))
             .build()
     }
@@ -516,8 +503,8 @@ pub(crate) mod v118 {
     #[inline]
     pub fn get_settings(with_headers: bool) -> ImpersonateSettings {
         ImpersonateSettings::builder()
-            .tls(super::tls_template_4())
-            .http2(super::http2_template_3())
+            .tls(chrome_tls_template!(4))
+            .http2(chrome_http2_template!(3))
             .headers(conditional_headers!(with_headers, header_initializer))
             .build()
     }
@@ -542,8 +529,8 @@ pub(crate) mod v119 {
     #[inline]
     pub fn get_settings(with_headers: bool) -> ImpersonateSettings {
         ImpersonateSettings::builder()
-            .tls(super::tls_template_4())
-            .http2(super::http2_template_3())
+            .tls(chrome_tls_template!(4))
+            .http2(chrome_http2_template!(3))
             .headers(conditional_headers!(with_headers, header_initializer))
             .build()
     }
@@ -568,8 +555,8 @@ pub(crate) mod v120 {
     #[inline]
     pub fn get_settings(with_headers: bool) -> ImpersonateSettings {
         ImpersonateSettings::builder()
-            .tls(super::tls_template_5())
-            .http2(super::http2_template_3())
+            .tls(chrome_tls_template!(5))
+            .http2(chrome_http2_template!(3))
             .headers(conditional_headers!(with_headers, header_initializer))
             .build()
     }
@@ -594,8 +581,8 @@ pub(crate) mod v123 {
     #[inline]
     pub fn get_settings(with_headers: bool) -> ImpersonateSettings {
         ImpersonateSettings::builder()
-            .tls(super::tls_template_5())
-            .http2(super::http2_template_3())
+            .tls(chrome_tls_template!(5))
+            .http2(chrome_http2_template!(3))
             .headers(conditional_headers!(with_headers, header_initializer))
             .build()
     }
@@ -615,13 +602,14 @@ pub(crate) mod v123 {
 }
 
 pub(crate) mod v124 {
+    use super::tls::NEW_CURVES_1;
     use crate::tls::impersonate::impersonate_imports::*;
 
     #[inline]
     pub fn get_settings(with_headers: bool) -> ImpersonateSettings {
         ImpersonateSettings::builder()
-            .tls(super::tls_template_6())
-            .http2(super::http2_template_3())
+            .tls(chrome_tls_template!(6, NEW_CURVES_1))
+            .http2(chrome_http2_template!(3))
             .headers(conditional_headers!(with_headers, header_initializer))
             .build()
     }
@@ -641,13 +629,14 @@ pub(crate) mod v124 {
 }
 
 pub(crate) mod v126 {
+    use super::tls::NEW_CURVES_1;
     use crate::tls::impersonate::impersonate_imports::*;
 
     #[inline]
     pub fn get_settings(with_headers: bool) -> ImpersonateSettings {
         ImpersonateSettings::builder()
-            .tls(super::tls_template_6())
-            .http2(super::http2_template_3())
+            .tls(chrome_tls_template!(6, NEW_CURVES_1))
+            .http2(chrome_http2_template!(3))
             .headers(conditional_headers!(with_headers, header_initializer))
             .build()
     }
@@ -667,13 +656,14 @@ pub(crate) mod v126 {
 }
 
 pub(crate) mod v127 {
+    use super::tls::NEW_CURVES_1;
     use crate::tls::impersonate::impersonate_imports::*;
 
     #[inline]
     pub fn get_settings(with_headers: bool) -> ImpersonateSettings {
         ImpersonateSettings::builder()
-            .tls(super::tls_template_6())
-            .http2(super::http2_template_3())
+            .tls(chrome_tls_template!(6, NEW_CURVES_1))
+            .http2(chrome_http2_template!(3))
             .headers(conditional_headers!(with_headers, header_initializer))
             .build()
     }
@@ -693,13 +683,14 @@ pub(crate) mod v127 {
 }
 
 pub(crate) mod v128 {
+    use super::tls::NEW_CURVES_1;
     use crate::tls::impersonate::impersonate_imports::*;
 
     #[inline]
     pub fn get_settings(with_headers: bool) -> ImpersonateSettings {
         ImpersonateSettings::builder()
-            .tls(super::tls_template_6())
-            .http2(super::http2_template_3())
+            .tls(chrome_tls_template!(6, NEW_CURVES_1))
+            .http2(chrome_http2_template!(3))
             .headers(conditional_headers!(with_headers, header_initializer))
             .build()
     }
@@ -719,13 +710,14 @@ pub(crate) mod v128 {
 }
 
 pub(crate) mod v129 {
+    use super::tls::NEW_CURVES_1;
     use crate::tls::impersonate::impersonate_imports::*;
 
     #[inline]
     pub fn get_settings(with_headers: bool) -> ImpersonateSettings {
         ImpersonateSettings::builder()
-            .tls(super::tls_template_6())
-            .http2(super::http2_template_3())
+            .tls(chrome_tls_template!(6, NEW_CURVES_1))
+            .http2(chrome_http2_template!(3))
             .headers(conditional_headers!(with_headers, header_initializer))
             .build()
     }
@@ -746,13 +738,14 @@ pub(crate) mod v129 {
 }
 
 pub(crate) mod v130 {
+    use super::tls::NEW_CURVES_1;
     use crate::tls::impersonate::impersonate_imports::*;
 
     #[inline]
     pub fn get_settings(with_headers: bool) -> ImpersonateSettings {
         ImpersonateSettings::builder()
-            .tls(super::tls_template_6())
-            .http2(super::http2_template_3())
+            .tls(chrome_tls_template!(6, NEW_CURVES_1))
+            .http2(chrome_http2_template!(3))
             .headers(conditional_headers!(with_headers, header_initializer))
             .build()
     }
@@ -773,13 +766,14 @@ pub(crate) mod v130 {
 }
 
 pub(crate) mod v131 {
+    use super::tls::NEW_CURVES_2;
     use crate::tls::impersonate::impersonate_imports::*;
 
     #[inline]
     pub fn get_settings(with_headers: bool) -> ImpersonateSettings {
         ImpersonateSettings::builder()
-            .tls(super::tls_template_7())
-            .http2(super::http2_template_3())
+            .tls(chrome_tls_template!(6, NEW_CURVES_2))
+            .http2(chrome_http2_template!(3))
             .headers(conditional_headers!(with_headers, header_initializer))
             .build()
     }

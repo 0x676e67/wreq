@@ -1,57 +1,6 @@
-use crate::tls::{Http2Settings, TlsSettings};
+use crate::tls::Http2Settings;
 use http2::{HEADERS_PSEUDO_ORDER, HEADER_PRIORITY, SETTINGS_ORDER};
-use tls::{EdgeTlsSettings, NEW_CURVES};
-
-// ============== TLS template ==============
-pub fn tls_template_1() -> TlsSettings {
-    EdgeTlsSettings::builder().build().into()
-}
-
-pub fn tls_template_2() -> TlsSettings {
-    EdgeTlsSettings::builder()
-        .permute_extensions(true)
-        .pre_shared_key(true)
-        .enable_ech_grease(true)
-        .build()
-        .into()
-}
-
-pub fn tls_template_3() -> TlsSettings {
-    EdgeTlsSettings::builder()
-        .curves(NEW_CURVES)
-        .permute_extensions(true)
-        .pre_shared_key(true)
-        .enable_ech_grease(true)
-        .build()
-        .into()
-}
-
-// ============== HTTP template ==============
-pub fn http2_template_1() -> Http2Settings {
-    Http2Settings::builder()
-        .initial_stream_window_size(6291456)
-        .initial_connection_window_size(15728640)
-        .max_concurrent_streams(1000)
-        .max_header_list_size(262144)
-        .header_table_size(65536)
-        .headers_priority(HEADER_PRIORITY)
-        .headers_pseudo_order(HEADERS_PSEUDO_ORDER)
-        .settings_order(SETTINGS_ORDER)
-        .build()
-}
-
-pub fn http2_template_2() -> Http2Settings {
-    Http2Settings::builder()
-        .initial_stream_window_size(6291456)
-        .initial_connection_window_size(15728640)
-        .max_header_list_size(262144)
-        .header_table_size(65536)
-        .enable_push(false)
-        .headers_priority(HEADER_PRIORITY)
-        .headers_pseudo_order(HEADERS_PSEUDO_ORDER)
-        .settings_order(SETTINGS_ORDER)
-        .build()
-}
+use tls::EdgeTlsSettings;
 
 // ============== TLS settings ==============
 mod tls {
@@ -147,6 +96,30 @@ mod tls {
                 .build()
         }
     }
+
+    #[macro_export]
+    macro_rules! edge_tls_template {
+        (1) => {{
+            super::EdgeTlsSettings::builder().build().into()
+        }};
+        (2) => {{
+            super::EdgeTlsSettings::builder()
+                .permute_extensions(true)
+                .pre_shared_key(true)
+                .enable_ech_grease(true)
+                .build()
+                .into()
+        }};
+        (3, $curves:expr) => {{
+            super::EdgeTlsSettings::builder()
+                .curves($curves)
+                .permute_extensions(true)
+                .pre_shared_key(true)
+                .enable_ech_grease(true)
+                .build()
+                .into()
+        }};
+    }
 }
 
 // ============== Http2 settings ==============
@@ -170,6 +143,34 @@ mod http2 {
         UnknownSetting8,
         UnknownSetting9,
     ];
+
+    #[macro_export]
+    macro_rules! edge_http2_template {
+        (1) => {{
+            super::Http2Settings::builder()
+                .initial_stream_window_size(6291456)
+                .initial_connection_window_size(15728640)
+                .max_concurrent_streams(1000)
+                .max_header_list_size(262144)
+                .header_table_size(65536)
+                .headers_priority(super::HEADER_PRIORITY)
+                .headers_pseudo_order(super::HEADERS_PSEUDO_ORDER)
+                .settings_order(super::SETTINGS_ORDER)
+                .build()
+        }};
+        (2) => {{
+            super::Http2Settings::builder()
+                .initial_stream_window_size(6291456)
+                .initial_connection_window_size(15728640)
+                .max_header_list_size(262144)
+                .header_table_size(65536)
+                .enable_push(false)
+                .headers_priority(super::HEADER_PRIORITY)
+                .headers_pseudo_order(super::HEADERS_PSEUDO_ORDER)
+                .settings_order(super::SETTINGS_ORDER)
+                .build()
+        }};
+    }
 }
 
 pub(crate) mod edge101 {
@@ -178,8 +179,8 @@ pub(crate) mod edge101 {
     #[inline]
     pub fn get_settings(with_headers: bool) -> ImpersonateSettings {
         ImpersonateSettings::builder()
-            .tls(super::tls_template_1())
-            .http2(super::http2_template_1())
+            .tls(edge_tls_template!(1))
+            .http2(edge_http2_template!(1))
             .headers(conditional_headers!(with_headers, header_initializer))
             .build()
     }
@@ -204,8 +205,8 @@ pub(crate) mod edge122 {
     #[inline]
     pub fn get_settings(with_headers: bool) -> ImpersonateSettings {
         ImpersonateSettings::builder()
-            .tls(super::tls_template_2())
-            .http2(super::http2_template_2())
+            .tls(edge_tls_template!(2))
+            .http2(edge_http2_template!(2))
             .headers(conditional_headers!(with_headers, header_initializer))
             .build()
     }
@@ -225,13 +226,14 @@ pub(crate) mod edge122 {
 }
 
 pub(crate) mod edge127 {
+    use super::tls::NEW_CURVES;
     use crate::tls::impersonate::impersonate_imports::*;
 
     #[inline]
     pub fn get_settings(with_headers: bool) -> ImpersonateSettings {
         ImpersonateSettings::builder()
-            .tls(super::tls_template_3())
-            .http2(super::http2_template_2())
+            .tls(edge_tls_template!(3, NEW_CURVES))
+            .http2(edge_http2_template!(2))
             .headers(conditional_headers!(with_headers, header_initializer))
             .build()
     }

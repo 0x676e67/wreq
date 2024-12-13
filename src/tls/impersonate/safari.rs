@@ -1,93 +1,9 @@
-use crate::tls::{Http2Settings, TlsSettings};
+use crate::tls::Http2Settings;
 use http2::{
     HEADERS_PSEUDO_ORDER, HEADER_PRIORITY, NEW_HEADERS_PSEUDO_ORDER, NEW_HEADER_PRIORITY,
     NEW_SETTINGS_ORDER, SETTINGS_ORDER,
 };
-use tls::{SafariTlsSettings, CIPHER_LIST, NEW_CIPHER_LIST, NEW_SIGALGS_LIST};
-
-// ============== TLS template ==============
-pub fn tls_template_1() -> TlsSettings {
-    SafariTlsSettings::builder()
-        .cipher_list(NEW_CIPHER_LIST)
-        .build()
-        .into()
-}
-
-pub fn tls_template_2() -> TlsSettings {
-    SafariTlsSettings::builder()
-        .cipher_list(CIPHER_LIST)
-        .build()
-        .into()
-}
-
-pub fn tls_template_3() -> TlsSettings {
-    SafariTlsSettings::builder()
-        .cipher_list(NEW_CIPHER_LIST)
-        .sigalgs_list(NEW_SIGALGS_LIST)
-        .build()
-        .into()
-}
-
-// ============== HTTP template ==============
-pub fn http2_template_1() -> Http2Settings {
-    Http2Settings::builder()
-        .initial_stream_window_size(2097152)
-        .initial_connection_window_size(10551295)
-        .max_concurrent_streams(100)
-        .headers_priority(HEADER_PRIORITY)
-        .headers_pseudo_order(HEADERS_PSEUDO_ORDER)
-        .settings_order(SETTINGS_ORDER)
-        .build()
-}
-
-pub fn http2_template_2() -> Http2Settings {
-    Http2Settings::builder()
-        .initial_stream_window_size(2097152)
-        .initial_connection_window_size(10551295)
-        .max_concurrent_streams(100)
-        .enable_push(false)
-        .headers_priority(HEADER_PRIORITY)
-        .headers_pseudo_order(HEADERS_PSEUDO_ORDER)
-        .settings_order(SETTINGS_ORDER)
-        .build()
-}
-
-pub fn http2_template_3() -> Http2Settings {
-    Http2Settings::builder()
-        .initial_stream_window_size(2097152)
-        .initial_connection_window_size(10485760)
-        .max_concurrent_streams(100)
-        .enable_push(false)
-        .unknown_setting8(true)
-        .unknown_setting9(true)
-        .headers_priority(NEW_HEADER_PRIORITY)
-        .headers_pseudo_order(NEW_HEADERS_PSEUDO_ORDER)
-        .settings_order(NEW_SETTINGS_ORDER)
-        .build()
-}
-
-pub fn http2_template_4() -> Http2Settings {
-    Http2Settings::builder()
-        .initial_stream_window_size(4194304)
-        .initial_connection_window_size(10551295)
-        .max_concurrent_streams(100)
-        .headers_priority(HEADER_PRIORITY)
-        .headers_pseudo_order(HEADERS_PSEUDO_ORDER)
-        .settings_order(SETTINGS_ORDER)
-        .build()
-}
-
-pub fn http2_template_5() -> Http2Settings {
-    Http2Settings::builder()
-        .initial_stream_window_size(4194304)
-        .initial_connection_window_size(10551295)
-        .max_concurrent_streams(100)
-        .enable_push(false)
-        .headers_priority(HEADER_PRIORITY)
-        .headers_pseudo_order(HEADERS_PSEUDO_ORDER)
-        .settings_order(SETTINGS_ORDER)
-        .build()
-}
+use tls::SafariTlsSettings;
 
 // ============== TLS settings ==============
 mod tls {
@@ -212,6 +128,23 @@ mod tls {
                 .build()
         }
     }
+
+    #[macro_export]
+    macro_rules! safari_tls_template {
+        (1, $cipher_list:expr) => {{
+            super::SafariTlsSettings::builder()
+                .cipher_list($cipher_list)
+                .build()
+                .into()
+        }};
+        (2, $cipher_list:expr, $sigalgs_list:expr) => {{
+            super::SafariTlsSettings::builder()
+                .cipher_list($cipher_list)
+                .sigalgs_list($sigalgs_list)
+                .build()
+                .into()
+        }};
+    }
 }
 
 // ============== Http2 settings ==============
@@ -247,16 +180,76 @@ mod http2 {
         UnknownSetting8,
         UnknownSetting9,
     ];
+
+    #[macro_export]
+    macro_rules! safari_http2_template {
+        (1) => {{
+            super::Http2Settings::builder()
+                .initial_stream_window_size(2097152)
+                .initial_connection_window_size(10551295)
+                .max_concurrent_streams(100)
+                .headers_priority(super::HEADER_PRIORITY)
+                .headers_pseudo_order(super::HEADERS_PSEUDO_ORDER)
+                .settings_order(super::SETTINGS_ORDER)
+                .build()
+        }};
+        (2) => {{
+            super::Http2Settings::builder()
+                .initial_stream_window_size(2097152)
+                .initial_connection_window_size(10551295)
+                .max_concurrent_streams(100)
+                .enable_push(false)
+                .headers_priority(super::HEADER_PRIORITY)
+                .headers_pseudo_order(super::HEADERS_PSEUDO_ORDER)
+                .settings_order(super::SETTINGS_ORDER)
+                .build()
+        }};
+        (3) => {{
+            super::Http2Settings::builder()
+                .initial_stream_window_size(2097152)
+                .initial_connection_window_size(10485760)
+                .max_concurrent_streams(100)
+                .enable_push(false)
+                .unknown_setting8(true)
+                .unknown_setting9(true)
+                .headers_priority(super::NEW_HEADER_PRIORITY)
+                .headers_pseudo_order(super::NEW_HEADERS_PSEUDO_ORDER)
+                .settings_order(super::NEW_SETTINGS_ORDER)
+                .build()
+        }};
+        (4) => {{
+            super::Http2Settings::builder()
+                .initial_stream_window_size(4194304)
+                .initial_connection_window_size(10551295)
+                .max_concurrent_streams(100)
+                .headers_priority(super::HEADER_PRIORITY)
+                .headers_pseudo_order(super::HEADERS_PSEUDO_ORDER)
+                .settings_order(super::SETTINGS_ORDER)
+                .build()
+        }};
+        (5) => {{
+            super::Http2Settings::builder()
+                .initial_stream_window_size(4194304)
+                .initial_connection_window_size(10551295)
+                .max_concurrent_streams(100)
+                .enable_push(false)
+                .headers_priority(super::HEADER_PRIORITY)
+                .headers_pseudo_order(super::HEADERS_PSEUDO_ORDER)
+                .settings_order(super::SETTINGS_ORDER)
+                .build()
+        }};
+    }
 }
 
 pub(crate) mod safari15_3 {
+    use super::tls::CIPHER_LIST;
     use crate::tls::impersonate::impersonate_imports::*;
 
     #[inline]
     pub fn get_settings(with_headers: bool) -> ImpersonateSettings {
         ImpersonateSettings::builder()
-            .tls(super::tls_template_2())
-            .http2(super::http2_template_4())
+            .tls(safari_tls_template!(1, CIPHER_LIST))
+            .http2(safari_http2_template!(4))
             .headers(conditional_headers!(with_headers, header_initializer))
             .build()
     }
@@ -281,13 +274,14 @@ pub(crate) mod safari15_3 {
 }
 
 pub(crate) mod safari15_5 {
+    use super::tls::CIPHER_LIST;
     use crate::tls::impersonate::impersonate_imports::*;
 
     #[inline]
     pub fn get_settings(with_headers: bool) -> ImpersonateSettings {
         ImpersonateSettings::builder()
-            .tls(super::tls_template_2())
-            .http2(super::http2_template_4())
+            .tls(safari_tls_template!(1, CIPHER_LIST))
+            .http2(safari_http2_template!(4))
             .headers(conditional_headers!(with_headers, header_initializer))
             .build()
     }
@@ -312,13 +306,14 @@ pub(crate) mod safari15_5 {
 }
 
 pub(crate) mod safari15_6_1 {
+    use super::tls::NEW_CIPHER_LIST;
     use crate::tls::impersonate::impersonate_imports::*;
 
     #[inline]
     pub fn get_settings(with_headers: bool) -> ImpersonateSettings {
         ImpersonateSettings::builder()
-            .tls(super::tls_template_1())
-            .http2(super::http2_template_4())
+            .tls(safari_tls_template!(1, NEW_CIPHER_LIST))
+            .http2(safari_http2_template!(4))
             .headers(conditional_headers!(with_headers, header_initializer))
             .build()
     }
@@ -343,13 +338,14 @@ pub(crate) mod safari15_6_1 {
 }
 
 pub(crate) mod safari16 {
+    use super::tls::NEW_CIPHER_LIST;
     use crate::tls::impersonate::impersonate_imports::*;
 
     #[inline]
     pub fn get_settings(with_headers: bool) -> ImpersonateSettings {
         ImpersonateSettings::builder()
-            .tls(super::tls_template_1())
-            .http2(super::http2_template_4())
+            .tls(safari_tls_template!(1, NEW_CIPHER_LIST))
+            .http2(safari_http2_template!(4))
             .headers(conditional_headers!(with_headers, header_initializer))
             .build()
     }
@@ -377,13 +373,14 @@ pub(crate) mod safari16 {
 }
 
 pub(crate) mod safari16_5 {
+    use super::tls::NEW_CIPHER_LIST;
     use crate::tls::impersonate::impersonate_imports::*;
 
     #[inline]
     pub fn get_settings(with_headers: bool) -> ImpersonateSettings {
         ImpersonateSettings::builder()
-            .tls(super::tls_template_1())
-            .http2(super::http2_template_4())
+            .tls(safari_tls_template!(1, NEW_CIPHER_LIST))
+            .http2(safari_http2_template!(4))
             .headers(conditional_headers!(with_headers, header_initializer))
             .build()
     }
@@ -411,13 +408,14 @@ pub(crate) mod safari16_5 {
 }
 
 pub(crate) mod safari17_0 {
+    use super::tls::NEW_CIPHER_LIST;
     use crate::tls::impersonate::impersonate_imports::*;
 
     #[inline]
     pub fn get_settings(with_headers: bool) -> ImpersonateSettings {
         ImpersonateSettings::builder()
-            .tls(super::tls_template_1())
-            .http2(super::http2_template_5())
+            .tls(safari_tls_template!(1, NEW_CIPHER_LIST))
+            .http2(safari_http2_template!(5))
             .headers(conditional_headers!(with_headers, header_initializer))
             .build()
     }
@@ -445,13 +443,14 @@ pub(crate) mod safari17_0 {
 }
 
 pub(crate) mod safari17_2_1 {
+    use super::tls::NEW_CIPHER_LIST;
     use crate::tls::impersonate::impersonate_imports::*;
 
     #[inline]
     pub fn get_settings(with_headers: bool) -> ImpersonateSettings {
         ImpersonateSettings::builder()
-            .tls(super::tls_template_1())
-            .http2(super::http2_template_5())
+            .tls(safari_tls_template!(1, NEW_CIPHER_LIST))
+            .http2(safari_http2_template!(5))
             .headers(conditional_headers!(with_headers, header_initializer))
             .build()
     }
@@ -479,13 +478,14 @@ pub(crate) mod safari17_2_1 {
 }
 
 pub(crate) mod safari17_4_1 {
+    use super::tls::NEW_CIPHER_LIST;
     use crate::tls::impersonate::impersonate_imports::*;
 
     #[inline]
     pub fn get_settings(with_headers: bool) -> ImpersonateSettings {
         ImpersonateSettings::builder()
-            .tls(super::tls_template_1())
-            .http2(super::http2_template_4())
+            .tls(safari_tls_template!(1, NEW_CIPHER_LIST))
+            .http2(safari_http2_template!(4))
             .headers(conditional_headers!(with_headers, header_initializer))
             .build()
     }
@@ -513,13 +513,14 @@ pub(crate) mod safari17_4_1 {
 }
 
 pub(crate) mod safari17_5 {
+    use super::tls::NEW_CIPHER_LIST;
     use crate::tls::impersonate::impersonate_imports::*;
 
     #[inline]
     pub fn get_settings(with_headers: bool) -> ImpersonateSettings {
         ImpersonateSettings::builder()
-            .tls(super::tls_template_1())
-            .http2(super::http2_template_5())
+            .tls(safari_tls_template!(1, NEW_CIPHER_LIST))
+            .http2(safari_http2_template!(5))
             .headers(conditional_headers!(with_headers, header_initializer))
             .build()
     }
@@ -547,13 +548,14 @@ pub(crate) mod safari17_5 {
 }
 
 pub(crate) mod safari18 {
+    use super::tls::NEW_CIPHER_LIST;
     use crate::tls::impersonate::impersonate_imports::*;
 
     #[inline]
     pub fn get_settings(with_headers: bool) -> ImpersonateSettings {
         ImpersonateSettings::builder()
-            .tls(super::tls_template_1())
-            .http2(super::http2_template_3())
+            .tls(safari_tls_template!(1, NEW_CIPHER_LIST))
+            .http2(safari_http2_template!(3))
             .headers(conditional_headers!(with_headers, header_initializer))
             .build()
     }
@@ -582,13 +584,14 @@ pub(crate) mod safari18 {
 }
 
 pub(crate) mod safari18_2 {
+    use super::tls::{NEW_CIPHER_LIST, NEW_SIGALGS_LIST};
     use crate::tls::impersonate::impersonate_imports::*;
 
     #[inline]
     pub fn get_settings(with_headers: bool) -> ImpersonateSettings {
         ImpersonateSettings::builder()
-            .tls(super::tls_template_3())
-            .http2(super::http2_template_3())
+            .tls(safari_tls_template!(2, NEW_CIPHER_LIST, NEW_SIGALGS_LIST))
+            .http2(safari_http2_template!(3))
             .headers(conditional_headers!(with_headers, header_initializer))
             .build()
     }
@@ -617,13 +620,14 @@ pub(crate) mod safari18_2 {
 }
 
 pub(crate) mod safari_ios_16_5 {
+    use super::tls::NEW_CIPHER_LIST;
     use crate::tls::impersonate::impersonate_imports::*;
 
     #[inline]
     pub fn get_settings(with_headers: bool) -> ImpersonateSettings {
         ImpersonateSettings::builder()
-            .tls(super::tls_template_1())
-            .http2(super::http2_template_1())
+            .tls(safari_tls_template!(1, NEW_CIPHER_LIST))
+            .http2(safari_http2_template!(1))
             .headers(conditional_headers!(with_headers, header_initializer))
             .build()
     }
@@ -651,13 +655,14 @@ pub(crate) mod safari_ios_16_5 {
 }
 
 pub(crate) mod safari_ios_17_2 {
+    use super::tls::NEW_CIPHER_LIST;
     use crate::tls::impersonate::impersonate_imports::*;
 
     #[inline]
     pub fn get_settings(with_headers: bool) -> ImpersonateSettings {
         ImpersonateSettings::builder()
-            .tls(super::tls_template_1())
-            .http2(super::http2_template_2())
+            .tls(safari_tls_template!(1, NEW_CIPHER_LIST))
+            .http2(safari_http2_template!(2))
             .headers(conditional_headers!(with_headers, header_initializer))
             .build()
     }
@@ -685,13 +690,14 @@ pub(crate) mod safari_ios_17_2 {
 }
 
 pub(crate) mod safari_ios_17_4_1 {
+    use super::tls::NEW_CIPHER_LIST;
     use crate::tls::impersonate::impersonate_imports::*;
 
     #[inline]
     pub fn get_settings(with_headers: bool) -> ImpersonateSettings {
         ImpersonateSettings::builder()
-            .tls(super::tls_template_1())
-            .http2(super::http2_template_2())
+            .tls(safari_tls_template!(1, NEW_CIPHER_LIST))
+            .http2(safari_http2_template!(2))
             .headers(conditional_headers!(with_headers, header_initializer))
             .build()
     }
@@ -719,13 +725,14 @@ pub(crate) mod safari_ios_17_4_1 {
 }
 
 pub(crate) mod safari_ipad_18 {
+    use super::tls::NEW_CIPHER_LIST;
     use crate::tls::impersonate::impersonate_imports::*;
 
     #[inline]
     pub fn get_settings(with_headers: bool) -> ImpersonateSettings {
         ImpersonateSettings::builder()
-            .tls(super::tls_template_1())
-            .http2(super::http2_template_3())
+            .tls(safari_tls_template!(1, NEW_CIPHER_LIST))
+            .http2(safari_http2_template!(3))
             .headers(conditional_headers!(with_headers, header_initializer))
             .build()
     }
