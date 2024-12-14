@@ -483,7 +483,7 @@ fn into_uri(scheme: Scheme, host: Authority) -> Result<Uri, BoxError> {
         .authority(host)
         .path_and_query(http::uri::PathAndQuery::from_static("/"))
         .build()
-        .map_err(error::uri_bad_scheme_and_authority)
+        .map_err(From::from)
 }
 
 async fn with_timeout<T, F>(f: F, timeout: Option<Duration>) -> Result<T, BoxError>
