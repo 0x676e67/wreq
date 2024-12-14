@@ -89,12 +89,6 @@ impl IntoUrlSealed for Cow<'_, str> {
     }
 }
 
-pub(crate) fn expect_uri(url: &Url) -> http::Uri {
-    url.as_str()
-        .parse()
-        .expect("a parsed Url should always be a valid Uri")
-}
-
 pub(crate) fn try_uri(url: &Url) -> Option<http::Uri> {
     url.as_str().parse().ok()
 }
@@ -119,5 +113,17 @@ mod tests {
             err.to_string(),
             "builder error for url (blob:https://example.com): URL scheme is not allowed"
         );
+    }
+
+    #[tokio::test]
+    async fn execute_request_rejects_invalid_hostname() {
+        let url_str = "https://{{hostname}}/";
+        let url = url::Url::parse(url_str).unwrap();
+        let result = crate::get(url).await;
+
+        assert!(result.is_err());
+        let err = result.err().unwrap();
+        assert!(err.is_builder());
+        assert_eq!(url_str, err.url().unwrap().as_str());
     }
 }

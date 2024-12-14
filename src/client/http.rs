@@ -31,7 +31,7 @@ use crate::cookie;
 use crate::dns::hickory::HickoryDnsResolver;
 use crate::dns::{gai::GaiResolver, DnsResolverWithOverrides, DynResolver, Resolve};
 use crate::error;
-use crate::into_url::{expect_uri, try_uri};
+use crate::into_url::try_uri;
 use crate::redirect::{self, remove_sensitive_headers};
 #[cfg(feature = "boring-tls")]
 use crate::tls::{self, BoringTlsConnector, Impersonate, ImpersonateSettings, TlsSettings};
@@ -1451,7 +1451,10 @@ impl Client {
             }
         }
 
-        let uri = expect_uri(&url);
+        let uri = match try_uri(&url) {
+            Some(uri) => uri,
+            None => return Pending::new_err(error::url_bad_uri(url)),
+        };
 
         let (reusable, body) = match body {
             Some(body) => {
@@ -1985,7 +1988,13 @@ impl PendingRequest {
         }
         self.retry_count += 1;
 
-        let uri = expect_uri(&self.url);
+        let uri = match try_uri(&self.url) {
+            Some(uri) => uri,
+            None => {
+                debug!("a parsed Url should always be a valid Uri: {}", self.url);
+                return false;
+            }
+        };
 
         *self.as_mut().in_flight().get_mut() = {
             let extension = self.client.hyper.pool_key_extension(&uri);
@@ -2173,7 +2182,12 @@ impl Future for PendingRequest {
                                 std::mem::replace(self.as_mut().headers(), HeaderMap::new());
 
                             remove_sensitive_headers(&mut headers, &self.url, &self.urls);
-                            let uri = expect_uri(&self.url);
+                            let uri = match try_uri(&self.url) {
+                                Some(uri) => uri,
+                                None => {
+                                    return Poll::Ready(Err(error::url_bad_uri(self.url.clone())));
+                                }
+                            };
                             let body = match self.body {
                                 Some(Some(ref body)) => Body::reusable(body.clone()),
                                 _ => Body::empty(),
