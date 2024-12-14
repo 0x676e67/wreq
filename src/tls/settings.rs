@@ -12,8 +12,8 @@ use boring::{
 use hyper::{PseudoOrder, SettingsOrder};
 use typed_builder::TypedBuilder;
 
-/// A CA certificate store.
-pub type CAStore = fn() -> Option<&'static X509StoreRef>;
+/// A root certificates store.
+pub type RootCertsStore = fn() -> Option<&'static X509StoreRef>;
 
 // ============== TLS ==============
 #[derive(TypedBuilder, Default)]
@@ -22,9 +22,9 @@ pub struct TlsSettings {
     #[builder(default, setter(strip_option))]
     pub connector: Option<SslConnectorBuilder>,
 
-    /// CA certificates store.
+    /// Root certificates store.
     #[builder(default, setter(strip_option))]
-    pub ca_cert_store: Option<CAStore>,
+    pub root_certs_store: Option<RootCertsStore>,
 
     /// Verify certificates.
     #[builder(default = true)]

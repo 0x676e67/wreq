@@ -1179,10 +1179,10 @@ impl ClientBuilder {
         self
     }
 
-    /// Set CA certificate store.
+    /// Set root certificate store.
     #[cfg(feature = "boring-tls")]
-    pub fn ca_cert_store(mut self, store: tls::CAStore) -> ClientBuilder {
-        self.config.tls.ca_cert_store = Some(store);
+    pub fn root_certs_store(mut self, store: tls::RootCertsStore) -> ClientBuilder {
+        self.config.tls.root_certs_store = Some(store);
         self
     }
 

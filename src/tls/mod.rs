@@ -20,7 +20,7 @@ pub use conn::MaybeHttpsStream;
 use conn::{HttpsConnector, HttpsLayer, HttpsLayerSettings};
 pub use extension::{cert_compression, TlsConnectExtension, TlsExtension};
 pub use impersonate::{chrome, okhttp, safari, tls_settings, Impersonate, ImpersonateSettings};
-pub use settings::{CAStore, Http2Settings, TlsSettings};
+pub use settings::{Http2Settings, RootCertsStore, TlsSettings};
 
 type TlsResult<T> = Result<T, ErrorStack>;
 
@@ -158,7 +158,7 @@ fn connect_layer(settings: TlsSettings) -> TlsResult<HttpsLayer> {
 
     // Conditionally configure the TLS builder based on the "boring-tls-native-roots" feature.
     // If no custom CA cert store, use the system's native certificate store if the feature is enabled.
-    let connector = if settings.ca_cert_store.is_none() {
+    let connector = if settings.root_certs_store.is_none() {
         // WebPKI root certificates are enabled (regardless of whether native-roots is also enabled).
         #[cfg(feature = "boring-tls-webpki-roots")]
         {
@@ -184,7 +184,7 @@ fn connect_layer(settings: TlsSettings) -> TlsResult<HttpsLayer> {
         }
     } else {
         // If a custom CA certificate store is provided, configure it.
-        connector.configure_ca_cert_store(settings.ca_cert_store)?
+        connector.configure_ca_cert_store(settings.root_certs_store)?
     };
 
     // Create the `HttpsLayerSettings` with the default session cache capacity.

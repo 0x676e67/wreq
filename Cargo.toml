@@ -266,13 +266,13 @@ path = "examples/set_interface.rs"
 required-features = ["brotli"]
 
 [[example]]
-name = "set_native_ca_cert"
-path = "examples/set_native_ca_cert.rs"
+name = "set_native_root_cert"
+path = "examples/set_native_root_cert.rs"
 required-features = ["boring-tls-native-roots"]
 
 [[example]]
-name = "set_webpki_ca_cert"
-path = "examples/set_webpki_ca_cert.rs"
+name = "set_webpki_root_cert"
+path = "examples/set_webpki_root_cert.rs"
 required-features = ["boring-tls-webpki-roots"]
 
 [[example]]

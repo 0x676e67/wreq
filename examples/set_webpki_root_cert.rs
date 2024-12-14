@@ -5,11 +5,11 @@ use boring::{
         X509,
     },
 };
-use rquest::tls::Impersonate;
+use rquest::{tls::Impersonate, Client};
 use std::sync::LazyLock;
 
-/// Loads the CA certificates from the WebPKI certificate store.
-fn load_ca_certs() -> Option<&'static X509StoreRef> {
+/// Loads the root certificates from the WebPKI certificate store.
+fn load_root_certs() -> Option<&'static X509StoreRef> {
     static CERT_STORE: LazyLock<Result<X509Store, ErrorStack>> = LazyLock::new(|| {
         let mut cert_store = X509StoreBuilder::new()?;
         for cert in webpki_root_certs::TLS_SERVER_ROOT_CERTS {
@@ -21,11 +21,11 @@ fn load_ca_certs() -> Option<&'static X509StoreRef> {
 
     match CERT_STORE.as_ref() {
         Ok(cert_store) => {
-            log::info!("Loaded CA certs");
+            log::info!("Loaded root certs");
             Some(cert_store)
         }
         Err(err) => {
-            log::error!("Failed to load CA certs: {:?}", err);
+            log::error!("Failed to load root certs: {:?}", err);
             None
         }
     }
@@ -36,9 +36,9 @@ async fn main() -> Result<(), rquest::Error> {
     env_logger::init_from_env(env_logger::Env::default().default_filter_or("info"));
 
     // Build a client to mimic Edge127
-    let client = rquest::Client::builder()
+    let client = Client::builder()
         .impersonate(Impersonate::Edge127)
-        .ca_cert_store(load_ca_certs)
+        .root_certs_store(load_root_certs)
         .build()?;
 
     // Use the API you're already familiar with
