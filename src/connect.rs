@@ -341,7 +341,7 @@ impl Connector {
         mut dst: Uri,
         is_proxy: bool,
     ) -> Result<Conn, BoxError> {
-        let _ws = maybe_websocket_uri(&mut dst);
+        let _ws = maybe_websocket_uri(&mut dst)?;
         match self.inner {
             #[cfg(not(feature = "boring-tls"))]
             Inner::Http(mut http) => {
@@ -406,7 +406,7 @@ impl Connector {
         #[cfg(feature = "boring-tls")]
         let auth = _auth;
 
-        let _ws = maybe_websocket_uri(&mut dst);
+        let _ws = maybe_websocket_uri(&mut dst)?;
 
         match &self.inner {
             #[cfg(feature = "boring-tls")]
@@ -460,20 +460,22 @@ impl Connector {
 /// # Conditional compilation:
 /// This function only works if the "websocket" feature is enabled.
 #[inline]
-fn maybe_websocket_uri(dst: &mut Uri) -> bool {
-    match (dst.scheme_str(), dst.authority()) {
+fn maybe_websocket_uri(dst: &mut Uri) -> Result<bool, BoxError> {
+    let ok = match (dst.scheme_str(), dst.authority()) {
         #[cfg(feature = "websocket")]
         (Some("ws"), Some(host)) => {
-            *dst = into_uri(Scheme::HTTP, host.clone());
+            *dst = into_uri(Scheme::HTTP, host.clone())?;
             true
         }
         #[cfg(feature = "websocket")]
         (Some("wss"), Some(host)) => {
-            *dst = into_uri(Scheme::HTTPS, host.clone());
+            *dst = into_uri(Scheme::HTTPS, host.clone())?;
             true
         }
         _ => false,
-    }
+    };
+
+    Ok(ok)
 }
 
 fn into_uri(scheme: Scheme, host: Authority) -> Result<Uri, BoxError> {
