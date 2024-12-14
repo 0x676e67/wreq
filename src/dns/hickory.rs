@@ -1,12 +1,9 @@
 //! DNS resolution via the [hickory-resolver](https://github.com/hickory-dns/hickory-dns) crate
 
-use crate::error::Kind;
-use crate::Error;
-
 use super::{Addrs, Name, Resolve, Resolving};
 pub use hickory_resolver::config::LookupIpStrategy;
+use hickory_resolver::config::{ResolverConfig, ResolverOpts};
 use hickory_resolver::{lookup_ip::LookupIpIntoIter, system_conf, TokioAsyncResolver};
-use std::io;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
@@ -25,14 +22,13 @@ impl HickoryDnsResolver {
     /// overriden to look up for both IPv4 and IPv6 addresses
     /// to work with "happy eyeballs" algorithm.
     pub fn new<S: Into<Option<LookupIpStrategy>>>(strategy: S) -> crate::Result<Self> {
-        let (config, mut opts) = system_conf::read_system_conf()
-            .map_err(|e| {
-                io::Error::new(
-                    io::ErrorKind::Other,
-                    format!("error reading DNS system conf: {}", e),
-                )
-            })
-            .map_err(|err| Error::new(Kind::Builder, Some(err.to_string())))?;
+        let (config, mut opts) = match system_conf::read_system_conf() {
+            Ok((config, opts)) => (config, opts),
+            Err(err) => {
+                log::debug!("error reading DNS system conf: {}", err);
+                (ResolverConfig::default(), ResolverOpts::default())
+            }
+        };
         opts.ip_strategy = strategy.into().unwrap_or(LookupIpStrategy::Ipv4AndIpv6);
         Ok(Self {
             state: Arc::new(TokioAsyncResolver::tokio(config, opts)),
