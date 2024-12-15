@@ -163,14 +163,12 @@ impl TlsExtension for SslConnectorBuilder {
 
     #[inline]
     fn configure_ca_cert_store(
-        self,
+        mut self,
         ca_cert_stroe: RootCertsStore,
     ) -> TlsResult<SslConnectorBuilder> {
         match ca_cert_stroe {
             RootCertsStore::Owned(cert_store) => {
-                sv_handler(unsafe {
-                    boring_sys::SSL_CTX_set0_verify_cert_store(self.as_ptr(), cert_store.as_ptr())
-                })?;
+                self.set_verify_cert_store(cert_store)?;
             }
             RootCertsStore::Borrowed(cert_store) => {
                 sv_handler(unsafe {
