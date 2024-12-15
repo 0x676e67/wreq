@@ -73,7 +73,7 @@ macro_rules! impl_root_cert_store {
     };
 }
 
-impl_root_cert_store!(X509Store, Owned, &'static X509Store, Borrowed,);
+impl_root_cert_store!(X509Store, Owned, &'static X509Store, Borrowed);
 
 impl_root_cert_store!(
     Option<X509Store>,
