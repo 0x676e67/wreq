@@ -15,9 +15,37 @@ use super::http::{Client, Pending};
 #[cfg(feature = "multipart")]
 use super::multipart;
 use super::response::Response;
+#[cfg(feature = "cookies")]
+use crate::cookie;
 use crate::header::{HeaderMap, HeaderName, HeaderValue, CONTENT_TYPE, HOST};
 use crate::{redirect, Method, Url};
 use http::{request::Parts, Request as HttpRequest, Version};
+#[cfg(feature = "cookies")]
+use std::sync::Arc;
+
+#[cfg(not(feature = "cookies"))]
+type PiecesWithCookieStore = (
+    Method,
+    Url,
+    HeaderMap,
+    Option<Body>,
+    Option<Duration>,
+    Version,
+    Option<redirect::Policy>,
+    (),
+);
+
+#[cfg(feature = "cookies")]
+type PiecesWithCookieStore = (
+    Method,
+    Url,
+    HeaderMap,
+    Option<Body>,
+    Option<Duration>,
+    Version,
+    Option<redirect::Policy>,
+    Option<Arc<dyn cookie::CookieStore>>,
+);
 
 /// A request which can be executed with `Client::execute()`.
 pub struct Request {
@@ -28,6 +56,8 @@ pub struct Request {
     timeout: Option<Duration>,
     version: Version,
     redirect: Option<redirect::Policy>,
+    #[cfg(feature = "cookies")]
+    cookie_store: Option<Arc<dyn cookie::CookieStore>>,
 }
 
 /// A builder to construct the properties of a `Request`.
@@ -51,6 +81,8 @@ impl Request {
             timeout: None,
             version: Version::default(),
             redirect: None,
+            #[cfg(feature = "cookies")]
+            cookie_store: None,
         }
     }
 
@@ -142,17 +174,7 @@ impl Request {
         Some(req)
     }
 
-    pub(super) fn pieces(
-        self,
-    ) -> (
-        Method,
-        Url,
-        HeaderMap,
-        Option<Body>,
-        Option<Duration>,
-        Version,
-        Option<redirect::Policy>,
-    ) {
+    pub(super) fn pieces(self) -> PiecesWithCookieStore {
         (
             self.method,
             self.url,
@@ -161,6 +183,10 @@ impl Request {
             self.timeout,
             self.version,
             self.redirect,
+            #[cfg(feature = "cookies")]
+            self.cookie_store,
+            #[cfg(not(feature = "cookies"))]
+            (),
         )
     }
 }
@@ -406,6 +432,15 @@ impl RequestBuilder {
         self
     }
 
+    /// Set the cookie store for this request.
+    #[cfg(feature = "cookies")]
+    pub fn cookie_store(mut self, cookie_store: Arc<dyn cookie::CookieStore>) -> RequestBuilder {
+        if let Ok(ref mut req) = self.request {
+            req.cookie_store = Some(cookie_store);
+        }
+        self
+    }
+
     /// Send a form body.
     ///
     /// Sets the body to the url encoded serialization of the passed value,
@@ -636,6 +671,8 @@ where
             timeout: None,
             version,
             redirect: None,
+            #[cfg(feature = "cookies")]
+            cookie_store: None,
         })
     }
 }

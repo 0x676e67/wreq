@@ -76,6 +76,11 @@ pub enum HttpVersionPref {
     All,
 }
 
+#[cfg(feature = "cookies")]
+type CookieStoreOption = Option<Arc<dyn cookie::CookieStore>>;
+#[cfg(not(feature = "cookies"))]
+type CookieStoreOption = ();
+
 struct Config {
     // NOTE: When adding a new field, update `fmt::Debug for ClientBuilder`
     accepts: Accepts,
@@ -99,7 +104,7 @@ struct Config {
     interface: Option<std::borrow::Cow<'static, str>>,
     nodelay: bool,
     #[cfg(feature = "cookies")]
-    cookie_store: Option<Arc<dyn cookie::CookieStore>>,
+    cookie_store: CookieStoreOption,
     hickory_dns: bool,
     error: Option<crate::Error>,
     dns_overrides: HashMap<String, Vec<SocketAddr>>,
@@ -1411,7 +1416,8 @@ impl Client {
     }
 
     pub(super) fn execute_request(&self, req: Request) -> Pending {
-        let (method, url, mut headers, body, timeout, version, redirect) = req.pieces();
+        let (method, url, mut headers, body, timeout, version, redirect, _cookie_store) =
+            req.pieces();
         if url.scheme() != "http"
             && url.scheme() != "https"
             && url.scheme() != "ws"
@@ -1433,10 +1439,15 @@ impl Client {
             }
         }
 
+        #[cfg(feature = "cookies")]
+        let cookie_store = _cookie_store
+            .as_ref()
+            .or_else(|| self.inner.cookie_store.as_ref());
+
         // Add cookies from the cookie store.
         #[cfg(feature = "cookies")]
         {
-            if let Some(cookie_store) = self.inner.cookie_store.as_ref() {
+            if let Some(cookie_store) = cookie_store {
                 if headers.get(crate::header::COOKIE).is_none() {
                     add_cookie_header(&mut headers, &**cookie_store, &url);
                 }
@@ -1491,6 +1502,10 @@ impl Client {
                 urls: Vec::new(),
                 retry_count: 0,
                 redirect,
+                #[cfg(feature = "cookies")]
+                cookie_store: cookie_store.cloned(),
+                #[cfg(not(feature = "cookies"))]
+                cookie_store: _cookie_store,
                 client: self.inner.clone(),
                 in_flight,
                 timeout,
@@ -1936,6 +1951,8 @@ pin_project! {
 
         redirect: Option<redirect::Policy>,
 
+        cookie_store: CookieStoreOption,
+
         client: Arc<ClientRef>,
 
         #[pin]
@@ -2076,8 +2093,14 @@ impl Future for PendingRequest {
             };
 
             #[cfg(feature = "cookies")]
+            let cookie_store = self
+                .cookie_store
+                .as_ref()
+                .or_else(|| self.client.cookie_store.as_ref());
+
+            #[cfg(feature = "cookies")]
             {
-                if let Some(ref cookie_store) = self.client.cookie_store {
+                if let Some(ref cookie_store) = cookie_store {
                     let mut cookies =
                         cookie::extract_response_cookie_headers(&res.headers()).peekable();
                     if cookies.peek().is_some() {
@@ -2193,10 +2216,16 @@ impl Future for PendingRequest {
                                 _ => Body::empty(),
                             };
 
+                            #[cfg(feature = "cookies")]
+                            let cookie_store = self
+                                .cookie_store
+                                .as_ref()
+                                .or_else(|| self.client.cookie_store.as_ref());
+
                             // Add cookies from the cookie store.
                             #[cfg(feature = "cookies")]
                             {
-                                if let Some(ref cookie_store) = self.client.cookie_store {
+                                if let Some(cookie_store) = cookie_store {
                                     add_cookie_header(&mut headers, &**cookie_store, &self.url);
                                 }
                             }

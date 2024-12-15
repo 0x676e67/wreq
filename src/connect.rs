@@ -22,7 +22,7 @@ use std::task::{Context, Poll};
 use std::time::Duration;
 
 use crate::dns::DynResolver;
-use crate::error::{self, BoxError};
+use crate::error::BoxError;
 use crate::proxy::{Proxy, ProxyScheme};
 
 pub(crate) type HttpConnector = hyper::client::HttpConnector<DynResolver>;
@@ -412,7 +412,7 @@ impl Connector {
             #[cfg(feature = "boring-tls")]
             Inner::BoringTls { http, tls } => {
                 if dst.scheme() == Some(&Scheme::HTTPS) {
-                    let host = dst.host().ok_or(error::uri_bad_host())?;
+                    let host = dst.host().ok_or(crate::error::uri_bad_host())?;
                     let port = dst.port().map(|p| p.as_u16()).unwrap_or(443);
 
                     let mut http = tls.create_connector(http.clone(), _ws).await;
