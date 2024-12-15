@@ -7,7 +7,7 @@ use crate::{
 };
 use boring::{
     ssl::{SslConnectorBuilder, SslCurve},
-    x509::store::X509StoreRef,
+    x509::store::X509Store,
 };
 use http::{HeaderMap, HeaderName};
 use hyper::{PseudoOrder, SettingsOrder};
@@ -32,7 +32,66 @@ pub struct ImpersonateSettings {
 }
 
 /// A root certificates store.
-pub type RootCertsStore = fn() -> Option<&'static X509StoreRef>;
+#[derive(Default)]
+pub enum RootCertsStore {
+    /// Use the default root certificates store.
+    Owned(X509Store),
+
+    /// Use the custom root certificates store.
+    Borrowed(&'static X509Store),
+
+    /// No root certificates store.
+    #[default]
+    None,
+}
+
+impl RootCertsStore {
+    pub fn is_none(&self) -> bool {
+        matches!(self, RootCertsStore::None)
+    }
+}
+
+macro_rules! impl_root_cert_store {
+    ($($type:ty, $variant:ident),* $(,)?) => {
+        $(
+            impl From<$type> for RootCertsStore {
+                fn from(store: $type) -> Self {
+                    Self::$variant(store)
+                }
+            }
+        )*
+    };
+
+    ($($type:ty, $variant:ident, $unwrap:expr),* $(,)?) => {
+        $(
+            impl From<$type> for RootCertsStore {
+                fn from(store: $type) -> Self {
+                    store.map(Self::$variant).unwrap_or_default()
+                }
+            }
+        )*
+    };
+}
+
+impl_root_cert_store!(X509Store, Owned, &'static X509Store, Borrowed,);
+
+impl_root_cert_store!(
+    Option<X509Store>,
+    Owned,
+    |s| s,
+    Option<&'static X509Store>,
+    Borrowed,
+    |s| s,
+);
+
+impl<F> From<F> for RootCertsStore
+where
+    F: Fn() -> Option<&'static X509Store>,
+{
+    fn from(func: F) -> Self {
+        func().map(Self::Borrowed).unwrap_or_default()
+    }
+}
 
 // ============== TLS ==============
 #[derive(TypedBuilder, Default)]
@@ -42,8 +101,8 @@ pub struct TlsSettings {
     pub connector: Option<SslConnectorBuilder>,
 
     /// Root certificates store.
-    #[builder(default, setter(strip_option))]
-    pub root_certs_store: Option<RootCertsStore>,
+    #[builder(default)]
+    pub root_certs_store: RootCertsStore,
 
     /// Verify certificates.
     #[builder(default = true)]

@@ -61,7 +61,7 @@ pub trait TlsExtension {
     /// Configure the ca certificate store for the given `SslConnectorBuilder`.
     fn configure_ca_cert_store(
         self,
-        ca_cert_stroe: Option<RootCertsStore>,
+        ca_cert_stroe: RootCertsStore,
     ) -> TlsResult<SslConnectorBuilder>;
 
     /// Configure the webpki/native roots CA for the given `SslConnectorBuilder`.
@@ -164,12 +164,20 @@ impl TlsExtension for SslConnectorBuilder {
     #[inline]
     fn configure_ca_cert_store(
         self,
-        ca_cert_stroe: Option<RootCertsStore>,
+        ca_cert_stroe: RootCertsStore,
     ) -> TlsResult<SslConnectorBuilder> {
-        if let Some(cert_store) = ca_cert_stroe.and_then(|call| call()) {
-            sv_handler(unsafe {
-                boring_sys::SSL_CTX_set1_verify_cert_store(self.as_ptr(), cert_store.as_ptr())
-            })?;
+        match ca_cert_stroe {
+            RootCertsStore::Owned(cert_store) => {
+                sv_handler(unsafe {
+                    boring_sys::SSL_CTX_set0_verify_cert_store(self.as_ptr(), cert_store.as_ptr())
+                })?;
+            }
+            RootCertsStore::Borrowed(cert_store) => {
+                sv_handler(unsafe {
+                    boring_sys::SSL_CTX_set1_verify_cert_store(self.as_ptr(), cert_store.as_ptr())
+                })?;
+            }
+            _ => {}
         }
 
         Ok(self)

@@ -1,7 +1,7 @@
 use boring::{
     error::ErrorStack,
     x509::{
-        store::{X509Store, X509StoreBuilder, X509StoreRef},
+        store::{X509Store, X509StoreBuilder},
         X509,
     },
 };
@@ -9,7 +9,7 @@ use rquest::{tls::Impersonate, Client};
 use std::sync::LazyLock;
 
 /// Loads the root certificates from the WebPKI certificate store.
-fn load_root_certs() -> Option<&'static X509StoreRef> {
+fn load_root_certs() -> Option<&'static X509Store> {
     static CERT_STORE: LazyLock<Result<X509Store, ErrorStack>> = LazyLock::new(|| {
         let mut cert_store = X509StoreBuilder::new()?;
         for cert in webpki_root_certs::TLS_SERVER_ROOT_CERTS {
