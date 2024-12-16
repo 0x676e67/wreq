@@ -22,7 +22,6 @@ async fn main() -> Result<(), rquest::Error> {
     // Build a client to mimic Chrome130
     let client = rquest::Client::builder()
         .impersonate(Impersonate::Chrome130)
-        .no_hickory_dns()
         .dns_resolver(resolver)
         .build()?;
 

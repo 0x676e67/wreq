@@ -204,16 +204,22 @@ impl ClientBuilder {
         let proxies_maybe_http_auth = proxies.iter().any(|p| p.maybe_has_http_auth());
 
         let mut connector = {
-            let mut resolver: Arc<dyn Resolve> = match config.hickory_dns {
-                false => Arc::new(GaiResolver::new()),
-                #[cfg(feature = "hickory-dns")]
-                true => Arc::new(HickoryDnsResolver::new(config.dns_strategy)?),
-                #[cfg(not(feature = "hickory-dns"))]
-                true => unreachable!("hickory-dns shouldn't be enabled unless the feature is"),
+            let mut resolver: Arc<dyn Resolve> = if let Some(dns_resolver) = config.dns_resolver {
+                dns_resolver
+            } else {
+                if config.hickory_dns {
+                    #[cfg(feature = "hickory-dns")]
+                    {
+                        Arc::new(HickoryDnsResolver::new(config.dns_strategy)?)
+                    }
+                    #[cfg(not(feature = "hickory-dns"))]
+                    {
+                        unreachable!("hickory-dns shouldn't be enabled unless the feature is")
+                    }
+                } else {
+                    Arc::new(GaiResolver::new())
+                }
             };
-            if let Some(dns_resolver) = config.dns_resolver {
-                resolver = dns_resolver;
-            }
             if !config.dns_overrides.is_empty() {
                 resolver = Arc::new(DnsResolverWithOverrides::new(
                     resolver,
