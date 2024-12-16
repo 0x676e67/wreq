@@ -278,6 +278,11 @@ name = "websocket"
 path = "examples/websocket.rs"
 required-features = ["websocket", "futures-util/std"]
 
+[[example]]
+name = "websocket_via_proxy"
+path = "examples/websocket_via_proxy.rs"
+required-features = ["websocket", "futures-util/std", "socks"]
+
 [[test]]
 name = "cookie"
 path = "tests/cookie.rs"
