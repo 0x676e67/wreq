@@ -164,9 +164,9 @@ impl TlsExtension for SslConnectorBuilder {
     #[inline]
     fn configure_ca_cert_store(
         mut self,
-        ca_cert_stroe: RootCertsStore,
+        root_certs_stroe: RootCertsStore,
     ) -> TlsResult<SslConnectorBuilder> {
-        match ca_cert_stroe {
+        match root_certs_stroe {
             RootCertsStore::Owned(cert_store) => {
                 self.set_verify_cert_store(cert_store)?;
             }

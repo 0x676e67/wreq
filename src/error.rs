@@ -236,7 +236,7 @@ impl From<serde_json::Error> for Error {
 #[cfg(feature = "boring-tls")]
 impl From<boring::error::ErrorStack> for Error {
     fn from(err: boring::error::ErrorStack) -> Error {
-        Error::new(Kind::Builder, Some(err))
+        Error::new(Kind::Builder, Some(format!("boring tls error: {:?}", err)))
     }
 }
 
