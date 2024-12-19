@@ -14,7 +14,7 @@ use hyper::{PseudoOrder, SettingsOrder};
 use typed_builder::TypedBuilder;
 
 /// Impersonate Settings.
-#[derive(TypedBuilder)]
+#[derive(TypedBuilder, Debug)]
 pub struct ImpersonateSettings {
     /// The SSL connector builder.
     pub(crate) tls: TlsSettings,
@@ -52,7 +52,7 @@ impl RootCertsStore {
 }
 
 macro_rules! impl_root_cert_store {
-    ($($type:ty, $variant:ident),* $(,)?) => {
+    ($($type:ty => $variant:ident),* $(,)?) => {
         $(
             impl From<$type> for RootCertsStore {
                 fn from(store: $type) -> Self {
@@ -62,26 +62,25 @@ macro_rules! impl_root_cert_store {
         )*
     };
 
-    ($($type:ty, $variant:ident, $unwrap:expr),* $(,)?) => {
+    ($($type:ty => $variant:ident, $unwrap:expr),* $(,)?) => {
         $(
             impl From<$type> for RootCertsStore {
                 fn from(store: $type) -> Self {
-                    store.map(Self::$variant).unwrap_or_default()
+                    $unwrap(store).map(Self::$variant).unwrap_or_default()
                 }
             }
         )*
     };
 }
 
-impl_root_cert_store!(X509Store, Owned, &'static X509Store, Borrowed);
+impl_root_cert_store!(
+    X509Store => Owned,
+    &'static X509Store => Borrowed,
+);
 
 impl_root_cert_store!(
-    Option<X509Store>,
-    Owned,
-    |s| s,
-    Option<&'static X509Store>,
-    Borrowed,
-    |s| s,
+    Option<X509Store> => Owned, |s| s,
+    Option<&'static X509Store> => Borrowed, |s| s,
 );
 
 impl<F> From<F> for RootCertsStore
@@ -160,6 +159,10 @@ pub struct TlsSettings {
     #[builder(default, setter(into))]
     pub sigalgs_list: Option<Cow<'static, str>>,
 
+    /// The delegated credentials algorithm to use.
+    #[builder(default, setter(into))]
+    pub delegated_credentials: Option<Cow<'static, str>>,
+
     /// The cipher list to use.
     #[builder(default, setter(into))]
     pub cipher_list: Option<Cow<'static, str>>,
@@ -170,38 +173,67 @@ pub struct TlsSettings {
 
     /// The certificate compression algorithm to use.
     #[builder(default, setter(into))]
-    pub cert_compression_algorithm: Option<CertCompressionAlgorithm>,
+    pub cert_compression_algorithm: Option<Cow<'static, [CertCompressionAlgorithm]>>,
+
+    /// Set record size limit.
+    #[builder(default, setter(into))]
+    pub record_size_limit: Option<u16>,
+
+    /// Enable three key_shares
+    #[builder(default = false)]
+    pub enable_three_key_shares: bool,
+
+    /// PSk with no session ticket.
+    #[builder(default = false)]
+    pub psk_skip_session_ticket: bool,
 }
 
-impl std::fmt::Debug for TlsSettings {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("TlsSettings")
-            .field("certs_verification", &self.certs_verification)
-            .field("tls_sni", &self.tls_sni)
-            .field("http_version_pref", &self.alpn_protos)
-            .field("session_ticket", &self.session_ticket)
-            .field("min_tls_version", &self.min_tls_version)
-            .field("max_tls_version", &self.max_tls_version)
-            .field("application_settings", &self.application_settings)
-            .field("pre_shared_key", &self.pre_shared_key)
-            .field("enable_ech_grease", &self.enable_ech_grease)
-            .field("permute_extensions", &self.permute_extensions)
-            .field("grease_enabled", &self.grease_enabled)
-            .field("enable_ocsp_stapling", &self.enable_ocsp_stapling)
-            .field("curves", &self.curves)
-            .field("sigalgs_list", &self.sigalgs_list)
-            .field("cipher_list", &self.cipher_list)
-            .field(
-                "enable_signed_cert_timestamps",
-                &self.enable_signed_cert_timestamps,
-            )
-            .field(
-                "cert_compression_algorithm",
-                &self.cert_compression_algorithm,
-            )
-            .finish()
+macro_rules! impl_debug_for_tls {
+    ($type:ty, { $($field_name:ident),* }, { $($skip_field_name:ident),* }) => {
+        impl std::fmt::Debug for $type {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                let mut debug_struct = f.debug_struct(stringify!($type));
+                $(
+                    debug_struct.field(stringify!($field_name), &self.$field_name);
+                )*
+                $(
+                    let _ = &self.$skip_field_name;
+                )*
+                debug_struct.finish()
+            }
+        }
     }
 }
+
+impl_debug_for_tls!(
+    TlsSettings,
+    {
+        certs_verification,
+        tls_sni,
+        alpn_protos,
+        session_ticket,
+        min_tls_version,
+        max_tls_version,
+        application_settings,
+        pre_shared_key,
+        enable_ech_grease,
+        permute_extensions,
+        grease_enabled,
+        enable_ocsp_stapling,
+        curves,
+        sigalgs_list,
+        cipher_list,
+        enable_signed_cert_timestamps,
+        cert_compression_algorithm,
+        record_size_limit,
+        enable_three_key_shares,
+        psk_skip_session_ticket
+    },
+    {
+        connector,
+        root_certs_store
+    }
+);
 
 // ============== http2 ==============
 #[derive(TypedBuilder, Debug)]

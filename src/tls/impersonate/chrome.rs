@@ -21,6 +21,88 @@ macro_rules! chrome_mod_generator {
     };
 }
 
+macro_rules! chrome_tls_template {
+    (1) => {{
+        super::ChromeTlsSettings::builder().build().into()
+    }};
+    (2) => {{
+        super::ChromeTlsSettings::builder()
+            .enable_ech_grease(true)
+            .build()
+            .into()
+    }};
+    (3) => {{
+        super::ChromeTlsSettings::builder()
+            .permute_extensions(true)
+            .build()
+            .into()
+    }};
+    (4) => {{
+        super::ChromeTlsSettings::builder()
+            .permute_extensions(true)
+            .enable_ech_grease(true)
+            .build()
+            .into()
+    }};
+    (5) => {{
+        super::ChromeTlsSettings::builder()
+            .permute_extensions(true)
+            .enable_ech_grease(true)
+            .pre_shared_key(true)
+            .build()
+            .into()
+    }};
+    (6, $curves:expr) => {{
+        super::ChromeTlsSettings::builder()
+            .curves($curves)
+            .permute_extensions(true)
+            .pre_shared_key(true)
+            .enable_ech_grease(true)
+            .build()
+            .into()
+    }};
+}
+
+macro_rules! chrome_http2_template {
+    (1) => {{
+        super::Http2Settings::builder()
+            .initial_stream_window_size(6291456)
+            .initial_connection_window_size(15728640)
+            .max_concurrent_streams(1000)
+            .max_header_list_size(262144)
+            .header_table_size(65536)
+            .headers_priority(super::HEADER_PRIORITY)
+            .headers_pseudo_order(super::HEADERS_PSEUDO_ORDER)
+            .settings_order(super::SETTINGS_ORDER)
+            .build()
+    }};
+    (2) => {{
+        super::Http2Settings::builder()
+            .initial_stream_window_size(6291456)
+            .initial_connection_window_size(15728640)
+            .max_concurrent_streams(1000)
+            .max_header_list_size(262144)
+            .header_table_size(65536)
+            .enable_push(false)
+            .headers_priority(super::HEADER_PRIORITY)
+            .headers_pseudo_order(super::HEADERS_PSEUDO_ORDER)
+            .settings_order(super::SETTINGS_ORDER)
+            .build()
+    }};
+    (3) => {{
+        super::Http2Settings::builder()
+            .initial_stream_window_size(6291456)
+            .initial_connection_window_size(15728640)
+            .max_header_list_size(262144)
+            .header_table_size(65536)
+            .enable_push(false)
+            .headers_priority(super::HEADER_PRIORITY)
+            .headers_pseudo_order(super::HEADERS_PSEUDO_ORDER)
+            .settings_order(super::SETTINGS_ORDER)
+            .build()
+    }};
+}
+
 // ============== Header initializer ==============
 #[inline]
 fn header_initializer(sec_ch_ua: &'static str, ua: &'static str) -> HeaderMap {
@@ -104,6 +186,9 @@ mod tls {
         "rsa_pkcs1_sha512"
     );
 
+    pub const CERT_COMPRESSION_ALGORITHM: &[CertCompressionAlgorithm] =
+        &[CertCompressionAlgorithm::Brotli];
+
     #[derive(TypedBuilder)]
     pub struct ChromeTlsSettings {
         // TLS curves
@@ -150,52 +235,9 @@ mod tls {
                 .pre_shared_key(val.pre_shared_key)
                 .enable_ech_grease(val.enable_ech_grease)
                 .application_settings(val.application_settings)
-                .cert_compression_algorithm(CertCompressionAlgorithm::Brotli)
+                .cert_compression_algorithm(Cow::Borrowed(CERT_COMPRESSION_ALGORITHM))
                 .build()
         }
-    }
-
-    #[macro_export]
-    macro_rules! chrome_tls_template {
-        (1) => {{
-            super::ChromeTlsSettings::builder().build().into()
-        }};
-        (2) => {{
-            super::ChromeTlsSettings::builder()
-                .enable_ech_grease(true)
-                .build()
-                .into()
-        }};
-        (3) => {{
-            super::ChromeTlsSettings::builder()
-                .permute_extensions(true)
-                .build()
-                .into()
-        }};
-        (4) => {{
-            super::ChromeTlsSettings::builder()
-                .permute_extensions(true)
-                .enable_ech_grease(true)
-                .build()
-                .into()
-        }};
-        (5) => {{
-            super::ChromeTlsSettings::builder()
-                .permute_extensions(true)
-                .enable_ech_grease(true)
-                .pre_shared_key(true)
-                .build()
-                .into()
-        }};
-        (6, $curves:expr) => {{
-            super::ChromeTlsSettings::builder()
-                .curves($curves)
-                .permute_extensions(true)
-                .pre_shared_key(true)
-                .enable_ech_grease(true)
-                .build()
-                .into()
-        }};
     }
 }
 
@@ -220,47 +262,6 @@ mod http2 {
         UnknownSetting8,
         UnknownSetting9,
     ];
-
-    #[macro_export]
-    macro_rules! chrome_http2_template {
-        (1) => {{
-            super::Http2Settings::builder()
-                .initial_stream_window_size(6291456)
-                .initial_connection_window_size(15728640)
-                .max_concurrent_streams(1000)
-                .max_header_list_size(262144)
-                .header_table_size(65536)
-                .headers_priority(super::HEADER_PRIORITY)
-                .headers_pseudo_order(super::HEADERS_PSEUDO_ORDER)
-                .settings_order(super::SETTINGS_ORDER)
-                .build()
-        }};
-        (2) => {{
-            super::Http2Settings::builder()
-                .initial_stream_window_size(6291456)
-                .initial_connection_window_size(15728640)
-                .max_concurrent_streams(1000)
-                .max_header_list_size(262144)
-                .header_table_size(65536)
-                .enable_push(false)
-                .headers_priority(super::HEADER_PRIORITY)
-                .headers_pseudo_order(super::HEADERS_PSEUDO_ORDER)
-                .settings_order(super::SETTINGS_ORDER)
-                .build()
-        }};
-        (3) => {{
-            super::Http2Settings::builder()
-                .initial_stream_window_size(6291456)
-                .initial_connection_window_size(15728640)
-                .max_header_list_size(262144)
-                .header_table_size(65536)
-                .enable_push(false)
-                .headers_priority(super::HEADER_PRIORITY)
-                .headers_pseudo_order(super::HEADERS_PSEUDO_ORDER)
-                .settings_order(super::SETTINGS_ORDER)
-                .build()
-        }};
-    }
 }
 
 chrome_mod_generator!(

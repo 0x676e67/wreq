@@ -19,7 +19,7 @@ use boring::{
 pub use conn::MaybeHttpsStream;
 use conn::{HttpsConnector, HttpsLayer, HttpsLayerSettings};
 pub use extension::{cert_compression, TlsConnectExtension, TlsExtension};
-pub use impersonate::{chrome, okhttp, safari, tls_settings, Impersonate};
+pub use impersonate::{chrome, okhttp, safari, firefox, tls_settings, Impersonate};
 pub use settings::{Http2Settings, ImpersonateSettings, RootCertsStore, TlsSettings};
 
 type TlsResult<T> = Result<T, ErrorStack>;
@@ -146,6 +146,11 @@ fn connect_layer(settings: TlsSettings) -> TlsResult<HttpsLayer> {
         connector.set_sigalgs_list(sigalgs_list)?;
     }
 
+    // Set the delegated credentials if it is set.
+    if let Some(delegated_credentials) = settings.delegated_credentials.as_deref() {
+        connector.set_delegated_credentials(delegated_credentials)?;
+    }
+
     // Set the cipher list if it is set.
     if let Some(cipher_list) = settings.cipher_list.as_deref() {
         connector.set_cipher_list(cipher_list)?;
@@ -153,7 +158,19 @@ fn connect_layer(settings: TlsSettings) -> TlsResult<HttpsLayer> {
 
     // Set the certificate compression algorithm if it is set.
     if let Some(cert_compression_algorithm) = settings.cert_compression_algorithm {
-        connector = connector.configure_add_cert_compression_alg(cert_compression_algorithm)?;
+        for algorithm in cert_compression_algorithm.iter() {
+            connector = connector.configure_add_cert_compression_alg(*algorithm)?;
+        }
+    }
+
+    // Set the record size limit if it is set.
+    if let Some(record_size_limit) = settings.record_size_limit {
+        connector.set_record_size_limit(record_size_limit);
+    }
+
+    // Set the enabled three key_shares
+    if settings.enable_three_key_shares {
+        connector.set_enable_three_key_shares();
     }
 
     // Conditionally configure the TLS builder based on the "boring-tls-native-roots" feature.
@@ -185,6 +202,7 @@ fn connect_layer(settings: TlsSettings) -> TlsResult<HttpsLayer> {
     let settings = HttpsLayerSettings::builder()
         .session_cache_capacity(8)
         .session_cache(settings.pre_shared_key)
+        .skip_session_ticket(settings.psk_skip_session_ticket)
         .build();
 
     HttpsLayer::with_connector_and_settings(connector, settings)

@@ -326,10 +326,7 @@ fn _assert_impls() {
     assert_send::<Request>();
     assert_send::<RequestBuilder>();
 
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        assert_send::<Response>();
-    }
+    assert_send::<Response>();
 
     assert_send::<Error>();
     assert_sync::<Error>();

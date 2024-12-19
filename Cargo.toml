@@ -73,7 +73,8 @@ boring-tls = [
     "dep:boring-sys",
     "dep:foreign-types",
     "dep:flate2",
-    "dep:brotli_crate",
+    "dep:brotli",
+    "dep:zstd",
     "dep:linked_hash_set",
     "dep:tower-layer",
     "dep:antidote",
@@ -117,12 +118,15 @@ ipnet = "2.10.0"
 # Optional deps...
 
 ## boring-tls
-boring = { package = "boring2", version = "4", optional = true }
-boring-sys = { package = "boring-sys2", version = "4", optional = true }
-tokio-boring = { package = "tokio-boring2", version = "4", optional = true }
+boring = { git = "https://github.com/penumbra-x/boring2", package = "boring2", branch = "master", optional = true }
+boring-sys = { git = "https://github.com/penumbra-x/boring2", package = "boring-sys2", branch = "master", optional = true }
+tokio-boring = { git = "https://github.com/penumbra-x/boring2", package = "tokio-boring2", branch = "master", optional = true }
 foreign-types = { version = "0.5.0", optional = true }
-brotli_crate = { package = "brotli", version = "7", optional = true }
+
+# cert compression
+brotli = { version = "7", optional = true }
 flate2 = { version = "1", optional = true }
+zstd = { version = "0.13", optional = true }
 
 # tls root certs
 rustls-native-certs = { version = "0.8.0", optional = true }
@@ -176,7 +180,7 @@ hyper = { package = "hyper2", version = "0.14.80", default-features = false, fea
 ] }
 serde = { version = "1.0", features = ["derive"] }
 libflate = "2.0.0"
-zstd_crate = { package = "zstd", version = "0.13" }
+zstd = { version = "0.13" }
 doc-comment = "0.3"
 tokio = { version = "1.0", default-features = false, features = [
     "macros",
@@ -229,6 +233,7 @@ path = "examples/impersonate_skip_headers.rs"
 [[example]]
 name = "impersonate_settings"
 path = "examples/impersonate_settings.rs"
+required-features = ["full"]
 
 [[example]]
 name = "psk_impersonate"

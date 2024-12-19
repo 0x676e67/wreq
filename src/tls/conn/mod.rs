@@ -9,7 +9,7 @@ use boring::ssl::{
     ConnectConfiguration, Ssl, SslConnector, SslConnectorBuilder, SslRef, SslSessionCacheMode,
 };
 
-use super::TlsResult;
+use super::{TlsConnectExtension, TlsResult};
 use cache::{SessionCache, SessionKey};
 use http::uri::Scheme;
 use hyper::client::connect::{Connected, Connection};
@@ -38,6 +38,7 @@ struct Inner {
     cache: Option<Arc<Mutex<SessionCache>>>,
     callback: Option<Callback>,
     ssl_callback: Option<SslCallback>,
+    skip_session_ticket: bool,
 }
 
 type Callback = Arc<dyn Fn(&mut ConnectConfiguration, &Uri) -> TlsResult<()> + Sync + Send>;
@@ -60,6 +61,10 @@ impl Inner {
             if let Some(session) = cache.lock().get(&key) {
                 unsafe {
                     conf.set_session(&session)?;
+                }
+
+                if self.skip_session_ticket {
+                    conf.configure_no_session_ticket()?;
                 }
             }
         }
@@ -87,6 +92,7 @@ pub struct HttpsLayer {
 pub struct HttpsLayerSettings {
     session_cache_capacity: usize,
     session_cache: bool,
+    skip_session_ticket: bool,
 }
 
 impl HttpsLayerSettings {
@@ -100,7 +106,8 @@ impl Default for HttpsLayerSettings {
     fn default() -> Self {
         Self {
             session_cache_capacity: 8,
-            session_cache: true,
+            session_cache: false,
+            skip_session_ticket: false,
         }
     }
 }
@@ -116,9 +123,15 @@ impl HttpsLayerSettingsBuilder {
         self
     }
 
-    /// Sets whether to enable session caching. Defaults to `true`.
+    /// Sets whether to enable session caching. Defaults to `false`.
     pub fn session_cache(mut self, enable: bool) -> Self {
         self.0.session_cache = enable;
+        self
+    }
+
+    /// Sets whether to enable no session ticket. Defaults to `false`.
+    pub fn skip_session_ticket(mut self, enable: bool) -> Self {
+        self.0.skip_session_ticket = enable;
         self
     }
 
@@ -162,6 +175,7 @@ impl HttpsLayer {
                 cache,
                 callback: None,
                 ssl_callback: None,
+                skip_session_ticket: settings.skip_session_ticket,
             },
         })
     }

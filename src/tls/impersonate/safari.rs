@@ -19,6 +19,80 @@ macro_rules! safari_mod_generator {
     };
 }
 
+macro_rules! safari_tls_template {
+    (1, $cipher_list:expr) => {{
+        super::SafariTlsSettings::builder()
+            .cipher_list($cipher_list)
+            .build()
+            .into()
+    }};
+    (2, $cipher_list:expr, $sigalgs_list:expr) => {{
+        super::SafariTlsSettings::builder()
+            .cipher_list($cipher_list)
+            .sigalgs_list($sigalgs_list)
+            .build()
+            .into()
+    }};
+}
+
+macro_rules! safari_http2_template {
+    (1) => {{
+        super::Http2Settings::builder()
+            .initial_stream_window_size(2097152)
+            .initial_connection_window_size(10551295)
+            .max_concurrent_streams(100)
+            .headers_priority(super::HEADER_PRIORITY)
+            .headers_pseudo_order(super::HEADERS_PSEUDO_ORDER)
+            .settings_order(super::SETTINGS_ORDER)
+            .build()
+    }};
+    (2) => {{
+        super::Http2Settings::builder()
+            .initial_stream_window_size(2097152)
+            .initial_connection_window_size(10551295)
+            .max_concurrent_streams(100)
+            .enable_push(false)
+            .headers_priority(super::HEADER_PRIORITY)
+            .headers_pseudo_order(super::HEADERS_PSEUDO_ORDER)
+            .settings_order(super::SETTINGS_ORDER)
+            .build()
+    }};
+    (3) => {{
+        super::Http2Settings::builder()
+            .initial_stream_window_size(2097152)
+            .initial_connection_window_size(10485760)
+            .max_concurrent_streams(100)
+            .enable_push(false)
+            .unknown_setting8(true)
+            .unknown_setting9(true)
+            .headers_priority(super::NEW_HEADER_PRIORITY)
+            .headers_pseudo_order(super::NEW_HEADERS_PSEUDO_ORDER)
+            .settings_order(super::NEW_SETTINGS_ORDER)
+            .build()
+    }};
+    (4) => {{
+        super::Http2Settings::builder()
+            .initial_stream_window_size(4194304)
+            .initial_connection_window_size(10551295)
+            .max_concurrent_streams(100)
+            .headers_priority(super::HEADER_PRIORITY)
+            .headers_pseudo_order(super::HEADERS_PSEUDO_ORDER)
+            .settings_order(super::SETTINGS_ORDER)
+            .build()
+    }};
+    (5) => {{
+        super::Http2Settings::builder()
+            .initial_stream_window_size(4194304)
+            .initial_connection_window_size(10551295)
+            .max_concurrent_streams(100)
+            .enable_push(false)
+            .headers_priority(super::HEADER_PRIORITY)
+            .headers_pseudo_order(super::HEADERS_PSEUDO_ORDER)
+            .settings_order(super::SETTINGS_ORDER)
+            .build()
+    }};
+}
+
 // ============== Headers ==============
 #[inline]
 fn header_initializer_for_16_17(ua: &'static str) -> HeaderMap {
@@ -169,6 +243,9 @@ mod tls {
         "rsa_pkcs1_sha1"
     );
 
+    pub const CERT_COMPRESSION_ALGORITHM: &[CertCompressionAlgorithm] =
+        &[CertCompressionAlgorithm::Zlib];
+
     #[derive(TypedBuilder)]
     pub struct SafariTlsSettings {
         // TLS curves
@@ -194,26 +271,9 @@ mod tls {
                 .sigalgs_list(Cow::Borrowed(val.sigalgs_list))
                 .cipher_list(Cow::Borrowed(val.cipher_list))
                 .min_tls_version(TlsVersion::TLS_1_0)
-                .cert_compression_algorithm(CertCompressionAlgorithm::Zlib)
+                .cert_compression_algorithm(Cow::Borrowed(CERT_COMPRESSION_ALGORITHM))
                 .build()
         }
-    }
-
-    #[macro_export]
-    macro_rules! safari_tls_template {
-        (1, $cipher_list:expr) => {{
-            super::SafariTlsSettings::builder()
-                .cipher_list($cipher_list)
-                .build()
-                .into()
-        }};
-        (2, $cipher_list:expr, $sigalgs_list:expr) => {{
-            super::SafariTlsSettings::builder()
-                .cipher_list($cipher_list)
-                .sigalgs_list($sigalgs_list)
-                .build()
-                .into()
-        }};
     }
 }
 
@@ -250,65 +310,6 @@ mod http2 {
         UnknownSetting8,
         UnknownSetting9,
     ];
-
-    #[macro_export]
-    macro_rules! safari_http2_template {
-        (1) => {{
-            super::Http2Settings::builder()
-                .initial_stream_window_size(2097152)
-                .initial_connection_window_size(10551295)
-                .max_concurrent_streams(100)
-                .headers_priority(super::HEADER_PRIORITY)
-                .headers_pseudo_order(super::HEADERS_PSEUDO_ORDER)
-                .settings_order(super::SETTINGS_ORDER)
-                .build()
-        }};
-        (2) => {{
-            super::Http2Settings::builder()
-                .initial_stream_window_size(2097152)
-                .initial_connection_window_size(10551295)
-                .max_concurrent_streams(100)
-                .enable_push(false)
-                .headers_priority(super::HEADER_PRIORITY)
-                .headers_pseudo_order(super::HEADERS_PSEUDO_ORDER)
-                .settings_order(super::SETTINGS_ORDER)
-                .build()
-        }};
-        (3) => {{
-            super::Http2Settings::builder()
-                .initial_stream_window_size(2097152)
-                .initial_connection_window_size(10485760)
-                .max_concurrent_streams(100)
-                .enable_push(false)
-                .unknown_setting8(true)
-                .unknown_setting9(true)
-                .headers_priority(super::NEW_HEADER_PRIORITY)
-                .headers_pseudo_order(super::NEW_HEADERS_PSEUDO_ORDER)
-                .settings_order(super::NEW_SETTINGS_ORDER)
-                .build()
-        }};
-        (4) => {{
-            super::Http2Settings::builder()
-                .initial_stream_window_size(4194304)
-                .initial_connection_window_size(10551295)
-                .max_concurrent_streams(100)
-                .headers_priority(super::HEADER_PRIORITY)
-                .headers_pseudo_order(super::HEADERS_PSEUDO_ORDER)
-                .settings_order(super::SETTINGS_ORDER)
-                .build()
-        }};
-        (5) => {{
-            super::Http2Settings::builder()
-                .initial_stream_window_size(4194304)
-                .initial_connection_window_size(10551295)
-                .max_concurrent_streams(100)
-                .enable_push(false)
-                .headers_priority(super::HEADER_PRIORITY)
-                .headers_pseudo_order(super::HEADERS_PSEUDO_ORDER)
-                .settings_order(super::SETTINGS_ORDER)
-                .build()
-        }};
-    }
 }
 
 safari_mod_generator!(

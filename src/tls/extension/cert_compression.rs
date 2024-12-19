@@ -7,6 +7,7 @@ use std::{io::Read, slice};
 pub enum CertCompressionAlgorithm {
     Brotli = ffi::TLSEXT_cert_compression_brotli as _,
     Zlib = ffi::TLSEXT_cert_compression_zlib as _,
+    Zstd = ffi::TLSEXT_cert_compression_zstd as _,
 }
 
 impl CertCompressionAlgorithm {
@@ -14,6 +15,7 @@ impl CertCompressionAlgorithm {
         match &self {
             Self::Brotli => Some(brotli_compressor),
             Self::Zlib => Some(zlib_compressor),
+            Self::Zstd => Some(zstd_compressor),
         }
     }
 
@@ -21,6 +23,7 @@ impl CertCompressionAlgorithm {
         match &self {
             Self::Brotli => Some(brotli_decompressor),
             Self::Zlib => Some(zlib_decompressor),
+            Self::Zstd => Some(zstd_decompressor),
         }
     }
 }
@@ -32,11 +35,11 @@ extern "C" fn brotli_compressor(
     in_len: usize,
 ) -> ::std::os::raw::c_int {
     let mut uncompressed = unsafe { slice::from_raw_parts(in_, in_len) };
-    let mut compressed: Vec<u8> = Vec::new();
+    let mut compressed = Vec::new();
 
-    let params = brotli_crate::enc::encode::BrotliEncoderInitParams();
+    let params = brotli::enc::encode::BrotliEncoderInitParams();
 
-    if let Err(e) = brotli_crate::BrotliCompress(&mut uncompressed, &mut compressed, &params) {
+    if let Err(e) = brotli::BrotliCompress(&mut uncompressed, &mut compressed, &params) {
         log::debug!("brotli compression error: {:?}", e);
         return 0;
     }
@@ -51,7 +54,7 @@ extern "C" fn zlib_compressor(
     in_len: usize,
 ) -> ::std::os::raw::c_int {
     let mut uncompressed = unsafe { slice::from_raw_parts(in_, in_len) };
-    let mut compressed: Vec<u8> = Vec::new();
+    let mut compressed = Vec::new();
 
     let params = flate2::Compression::default();
 
@@ -64,6 +67,23 @@ extern "C" fn zlib_compressor(
     unsafe { boring_sys::CBB_add_bytes(out, compressed.as_ptr(), compressed.len()) }
 }
 
+extern "C" fn zstd_compressor(
+    _ssl: *mut ffi::SSL,
+    out: *mut ffi::CBB,
+    in_: *const u8,
+    in_len: usize,
+) -> ::std::os::raw::c_int {
+    let mut uncompressed = unsafe { slice::from_raw_parts(in_, in_len) };
+
+    let compressed = if let Ok(compressed) = zstd::encode_all(&mut uncompressed, 3) {
+        compressed
+    } else {
+        return 0;
+    };
+
+    unsafe { boring_sys::CBB_add_bytes(out, compressed.as_ptr(), compressed.len()) }
+}
+
 extern "C" fn brotli_decompressor(
     _ssl: *mut ffi::SSL,
     buffer: *mut *mut ffi::CRYPTO_BUFFER,
@@ -72,9 +92,9 @@ extern "C" fn brotli_decompressor(
     in_len: usize,
 ) -> ::std::os::raw::c_int {
     let mut compressed = unsafe { slice::from_raw_parts(in_, in_len) };
-    let mut uncompressed: Vec<u8> = Vec::with_capacity(uncompressed_len);
+    let mut uncompressed = Vec::with_capacity(uncompressed_len);
 
-    if let Err(e) = brotli_crate::BrotliDecompress(&mut compressed, &mut uncompressed) {
+    if let Err(e) = brotli::BrotliDecompress(&mut compressed, &mut uncompressed) {
         log::debug!("brotli decompression error: {:?}", e);
         return 0;
     }
@@ -102,13 +122,43 @@ extern "C" fn zlib_decompressor(
     in_len: usize,
 ) -> ::std::os::raw::c_int {
     let mut compressed = unsafe { slice::from_raw_parts(in_, in_len) };
-    let mut uncompressed: Vec<u8> = Vec::with_capacity(uncompressed_len);
+    let mut uncompressed = Vec::with_capacity(uncompressed_len);
 
     let mut decoder = flate2::bufread::ZlibDecoder::new(&mut compressed);
     if let Err(e) = decoder.read_to_end(&mut uncompressed) {
         log::debug!("zlib decompression error: {:?}", e);
         return 0;
     }
+
+    if uncompressed.len() != uncompressed_len {
+        return 0;
+    }
+
+    unsafe {
+        *buffer = ffi::CRYPTO_BUFFER_new(
+            uncompressed.as_ptr(),
+            uncompressed_len,
+            std::ptr::null_mut(),
+        )
+    }
+
+    1
+}
+
+extern "C" fn zstd_decompressor(
+    _ssl: *mut ffi::SSL,
+    buffer: *mut *mut ffi::CRYPTO_BUFFER,
+    uncompressed_len: usize,
+    in_: *const u8,
+    in_len: usize,
+) -> ::std::os::raw::c_int {
+    let mut compressed = unsafe { slice::from_raw_parts(in_, in_len) };
+
+    let uncompressed = if let Ok(uncompressed) = zstd::decode_all(&mut compressed) {
+        uncompressed
+    } else {
+        return 0;
+    };
 
     if uncompressed.len() != uncompressed_len {
         return 0;

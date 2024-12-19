@@ -2,11 +2,12 @@
 pub mod chrome;
 #[macro_use]
 mod macros;
+pub mod firefox;
 pub mod okhttp;
 pub mod safari;
-
 use super::ImpersonateSettings;
 use chrome::*;
+use firefox::*;
 use okhttp::*;
 use safari::*;
 use std::{fmt::Debug, str::FromStr};
@@ -95,7 +96,10 @@ pub fn tls_settings(ver: Impersonate, with_headers: bool) -> ImpersonateSettings
         Edge101 => edge101::get_settings,
         Edge122 => edge122::get_settings,
         Edge127 => edge127::get_settings,
-        Edge131 => edge131::get_settings
+        Edge131 => edge131::get_settings,
+
+        // Firefox
+        Firefox133 => ff133::get_settings
     )
 }
 
@@ -158,6 +162,9 @@ pub enum Impersonate {
     Edge122,
     Edge127,
     Edge131,
+
+    // Firefox
+    Firefox133,
 }
 
 impl_from_str! {
@@ -217,4 +224,7 @@ impl_from_str! {
     (Edge122, "edge_122"),
     (Edge127, "edge_127"),
     (Edge131, "edge_131"),
+
+    // Firefox
+    (Firefox133, "firefox_133"),
 }

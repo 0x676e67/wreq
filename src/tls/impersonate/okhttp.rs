@@ -19,6 +19,30 @@ macro_rules! okhttp_mod_generator {
     };
 }
 
+macro_rules! okhttp_tls_template {
+    ($cipher_list:expr) => {
+        OkHttpTlsSettings::builder()
+            .cipher_list($cipher_list)
+            .build()
+            .into()
+    };
+}
+
+macro_rules! okhttp_http2_template {
+    () => {
+        super::Http2Settings::builder()
+            .initial_stream_window_size(6291456)
+            .initial_connection_window_size(15728640)
+            .max_concurrent_streams(1000)
+            .max_header_list_size(262144)
+            .header_table_size(65536)
+            .headers_priority(super::HEADER_PRIORITY)
+            .headers_pseudo_order(super::HEADERS_PSEUDO_ORDER)
+            .settings_order(super::SETTINGS_ORDER)
+            .build()
+    };
+}
+
 // ============== Headers ==============
 #[inline]
 fn header_initializer(ua: &'static str) -> HeaderMap {
@@ -98,16 +122,6 @@ mod tls {
                 .build()
         }
     }
-
-    #[macro_export]
-    macro_rules! okhttp_tls_template {
-        ($cipher_list:expr) => {
-            OkHttpTlsSettings::builder()
-                .cipher_list($cipher_list)
-                .build()
-                .into()
-        };
-    }
 }
 
 // ============== Http2 settings ==============
@@ -131,22 +145,6 @@ mod http2 {
         UnknownSetting8,
         UnknownSetting9,
     ];
-
-    #[macro_export]
-    macro_rules! okhttp_http2_template {
-        () => {
-            super::Http2Settings::builder()
-                .initial_stream_window_size(6291456)
-                .initial_connection_window_size(15728640)
-                .max_concurrent_streams(1000)
-                .max_header_list_size(262144)
-                .header_table_size(65536)
-                .headers_priority(super::HEADER_PRIORITY)
-                .headers_pseudo_order(super::HEADERS_PSEUDO_ORDER)
-                .settings_order(super::SETTINGS_ORDER)
-                .build()
-        };
-    }
 }
 
 okhttp_mod_generator!(

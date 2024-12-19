@@ -2,10 +2,13 @@ use rquest::tls::Impersonate;
 
 #[tokio::main]
 async fn main() -> Result<(), rquest::Error> {
-    // Build a client to mimic Edge131
+    // Build a client to mimic Firefox133
     let client = rquest::Client::builder()
-        .impersonate(Impersonate::Edge131)
+        .impersonate(Impersonate::Firefox133)
         .build()?;
+
+    let resp = client.get("https://tls.peet.ws/api/all").send().await?;
+    println!("{}", resp.text().await?);
 
     let resp = client.get("https://tls.peet.ws/api/all").send().await?;
     println!("{}", resp.text().await?);

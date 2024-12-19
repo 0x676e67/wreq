@@ -85,6 +85,9 @@ pub trait TlsConnectExtension {
         &mut self,
         http_version: HttpVersionPref,
     ) -> TlsResult<&mut ConnectConfiguration>;
+
+    /// Configure the no session ticket for the given `ConnectConfiguration`.
+    fn configure_no_session_ticket(&mut self) -> TlsResult<&mut ConnectConfiguration>;
 }
 
 impl TlsExtension for SslConnectorBuilder {
@@ -189,12 +192,9 @@ impl TlsExtension for SslConnectorBuilder {
     fn configure_set_verify_cert_store(mut self) -> TlsResult<SslConnectorBuilder> {
         if let Ok(cert_store) = LOAD_CERTS.as_deref() {
             log::debug!("Using CA certs from webpki/native roots");
-            unsafe {
-                sv_handler(boring_sys::SSL_CTX_set1_verify_cert_store(
-                    self.as_ptr(),
-                    cert_store.as_ptr(),
-                ))?;
-            }
+            sv_handler(unsafe {
+                boring_sys::SSL_CTX_set1_verify_cert_store(self.as_ptr(), cert_store.as_ptr())
+            })?;
         } else {
             log::debug!("No CA certs provided, using system default");
             self.set_default_verify_paths()?;
@@ -232,6 +232,13 @@ impl TlsConnectExtension for ConnectConfiguration {
                 std::ptr::null(),
                 0,
             )
+        })
+        .map(|_| self)
+    }
+
+    fn configure_no_session_ticket(&mut self) -> TlsResult<&mut ConnectConfiguration> {
+        sv_handler(unsafe {
+            boring_sys::SSL_set_options(self.as_ptr(), boring_sys::SSL_OP_NO_TICKET as _) as _
         })
         .map(|_| self)
     }
