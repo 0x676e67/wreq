@@ -236,6 +236,10 @@ You can customize the `TLS`/`HTTP2` fingerprint parameters of the device. In add
 
 `OkHttp3_9`，`OkHttp3_11`，`OkHttp3_13`，`OkHttp3_14`，`OkHttp4_9`，`OkHttp4_10`，`OkHttp5`
 
+- **Firefox**
+
+`Firefox133`
+
 ## Requirement
 
 Install the environment required to build [BoringSSL](https://github.com/google/boringssl/blob/master/BUILDING.md)
