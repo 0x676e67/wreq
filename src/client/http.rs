@@ -173,11 +173,11 @@ impl ClientBuilder {
                 base_url: None,
                 builder: hyper::Client::builder(),
                 https_only: false,
+                http1_title_case_headers: false,
                 #[cfg(feature = "boring-tls")]
                 tls_info: false,
                 #[cfg(feature = "boring-tls")]
-                tls: Default::default(),
-                http1_title_case_headers: true,
+                tls: Default::default()
             },
         }
     }
