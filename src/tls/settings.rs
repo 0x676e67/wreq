@@ -6,7 +6,7 @@ use crate::{
     HttpVersionPref,
 };
 use boring::{
-    ssl::{SslConnectorBuilder, SslCurve},
+    ssl::{ExtensionType, SslConnectorBuilder, SslCurve},
     x509::store::X509Store,
 };
 use http::{HeaderMap, HeaderName};
@@ -179,13 +179,17 @@ pub struct TlsSettings {
     #[builder(default, setter(into))]
     pub record_size_limit: Option<u16>,
 
-    /// Enable three key_shares
-    #[builder(default = false)]
-    pub enable_three_key_shares: bool,
-
     /// PSk with no session ticket.
     #[builder(default = false)]
     pub psk_skip_session_ticket: bool,
+
+    /// The key shares length limit.
+    #[builder(default, setter(into))]
+    pub key_shares_length_limit: Option<u8>,
+
+    /// The extension permutation.
+    #[builder(default, setter(into))]
+    pub extension_permutation: Option<Cow<'static, [ExtensionType]>>,
 }
 
 macro_rules! impl_debug_for_tls {
@@ -226,7 +230,7 @@ impl_debug_for_tls!(
         enable_signed_cert_timestamps,
         cert_compression_algorithm,
         record_size_limit,
-        enable_three_key_shares,
+        key_shares_length_limit,
         psk_skip_session_ticket
     },
     {

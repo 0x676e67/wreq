@@ -19,7 +19,7 @@ use boring::{
 pub use conn::MaybeHttpsStream;
 use conn::{HttpsConnector, HttpsLayer, HttpsLayerSettings};
 pub use extension::{cert_compression, TlsConnectExtension, TlsExtension};
-pub use impersonate::{chrome, okhttp, safari, firefox, tls_settings, Impersonate};
+pub use impersonate::{chrome, firefox, okhttp, safari, tls_settings, Impersonate};
 pub use settings::{Http2Settings, ImpersonateSettings, RootCertsStore, TlsSettings};
 
 type TlsResult<T> = Result<T, ErrorStack>;
@@ -168,9 +168,14 @@ fn connect_layer(settings: TlsSettings) -> TlsResult<HttpsLayer> {
         connector.set_record_size_limit(record_size_limit);
     }
 
-    // Set the enabled three key_shares
-    if settings.enable_three_key_shares {
-        connector.set_enable_three_key_shares();
+    // Set the key shares length limit if it is set.
+    if let Some(limit) = settings.key_shares_length_limit {
+        connector.set_key_shares_length_limit(limit);
+    }
+
+    // Set the extension permutation if it is set.
+    if let Some(extension_permutation) = settings.extension_permutation {
+        connector.set_extension_permutation(extension_permutation.as_ref())?;
     }
 
     // Conditionally configure the TLS builder based on the "boring-tls-native-roots" feature.

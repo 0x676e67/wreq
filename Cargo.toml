@@ -118,9 +118,9 @@ ipnet = "2.10.0"
 # Optional deps...
 
 ## boring-tls
-boring = { git = "https://github.com/penumbra-x/boring2", package = "boring2", branch = "master", optional = true }
-boring-sys = { git = "https://github.com/penumbra-x/boring2", package = "boring-sys2", branch = "master", optional = true }
-tokio-boring = { git = "https://github.com/penumbra-x/boring2", package = "tokio-boring2", branch = "master", optional = true }
+boring = { package = "boring2", version = "4", optional = true }
+boring-sys = { package = "boring-sys2", version = "4", optional = true }
+tokio-boring = { package = "tokio-boring2", version = "4", optional = true }
 foreign-types = { version = "0.5.0", optional = true }
 
 # cert compression
@@ -236,8 +236,8 @@ path = "examples/impersonate_settings.rs"
 required-features = ["full"]
 
 [[example]]
-name = "psk_impersonate"
-path = "examples/psk_impersonate.rs"
+name = "impersonate_psk"
+path = "examples/impersonate_psk.rs"
 
 [[example]]
 name = "set_headers"

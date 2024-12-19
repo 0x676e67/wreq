@@ -28,7 +28,14 @@ macro_rules! firefox_tls_template {
             .enable_ech_grease(true)
             .pre_shared_key(true)
             .psk_skip_session_tickets(true)
-            .enable_three_key_shares(true)
+            .key_shares_length_limit(3)
+            .build()
+            .into()
+    }};
+    (2) => {{
+        super::FirefoxTlsSettings::builder()
+            .curves(super::OLD_CURVES)
+            .key_shares_length_limit(2)
             .build()
             .into()
     }};
@@ -47,29 +54,52 @@ macro_rules! firefox_http2_template {
             .settings_order(super::SETTINGS_ORDER)
             .build()
     }};
+    (2) => {{
+        super::Http2Settings::builder()
+            .header_table_size(65536)
+            .initial_stream_window_size(131072)
+            .max_frame_size(16384)
+            .initial_connection_window_size(12517377 + 65535)
+            .headers_priority((13, 41, false))
+            .headers_pseudo_order(super::HEADERS_PSEUDO_ORDER)
+            .settings_order(super::SETTINGS_ORDER)
+            .build()
+    }};
 }
 
 // ============== Header initializer ==============
 #[inline]
 fn header_initializer(ua: &'static str) -> HeaderMap {
     let mut headers = HeaderMap::new();
-    headers.insert("user-agent", HeaderValue::from_static(ua));
-    headers.insert("accept", HeaderValue::from_static("text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"));
-    headers.insert("accept-language", HeaderValue::from_static("en-US,en;q=0.5"));
-    headers.insert("accept-encoding", HeaderValue::from_static("gzip, deflate, br, zstd"));
-    headers.insert("upgrade-insecure-requests", HeaderValue::from_static("1"));
-    headers.insert("sec-fetch-dest", HeaderValue::from_static("document"));
-    headers.insert("sec-fetch-mode", HeaderValue::from_static("navigate"));
-    headers.insert("sec-fetch-site", HeaderValue::from_static("none"));
-    headers.insert("sec-fetch-user", HeaderValue::from_static("?1"));
-    headers.insert("priority", HeaderValue::from_static("u=0, i"));
-    headers.insert("te", HeaderValue::from_static("trailers"));
+    header_firefox_ua_with_accept!(headers, ua);
+    header_firefox_accpet_with_upgrade!(1, headers);
+    header_firefox_sec_fetch!(headers);
+    header_firefox_priority!(headers);
+    headers
+}
+
+#[inline]
+fn header_initializer_with_zstd(ua: &'static str) -> HeaderMap {
+    let mut headers = HeaderMap::new();
+    header_firefox_ua_with_accept!(headers, ua);
+    header_firefox_accpet_with_upgrade!(2, headers);
+    header_firefox_sec_fetch!(headers);
+    header_firefox_priority!(headers);
     headers
 }
 
 // ============== tls settings ==============
 mod tls {
     use crate::tls::impersonate::tls_imports::*;
+
+    pub const OLD_CURVES: &[SslCurve] = &[
+        SslCurve::X25519,
+        SslCurve::SECP256R1,
+        SslCurve::SECP384R1,
+        SslCurve::SECP521R1,
+        SslCurve::FFDHE2048,
+        SslCurve::FFDHE3072,
+    ];
 
     pub const CURVES: &[SslCurve] = &[
         SslCurve::X25519_MLKEM768,
@@ -133,6 +163,25 @@ mod tls {
 
     pub const RECORD_SIZE_LIMIT: u16 = 0x4001;
 
+    pub const EXTENSION_PERMUTATION: &[ExtensionType] = &[
+        ExtensionType::SERVER_NAME,
+        ExtensionType::EXTENDED_MASTER_SECRET,
+        ExtensionType::RENEGOTIATE,
+        ExtensionType::SUPPORTED_GROUPS,
+        ExtensionType::EC_POINT_FORMATS,
+        ExtensionType::SESSION_TICKET,
+        ExtensionType::APPLICATION_LAYER_PROTOCOL_NEGOTIATION,
+        ExtensionType::STATUS_REQUEST,
+        ExtensionType::DELEGATED_CREDENTIAL,
+        ExtensionType::KEY_SHARE,
+        ExtensionType::SUPPORTED_VERSIONS,
+        ExtensionType::SIGNATURE_ALGORITHMS,
+        ExtensionType::PSK_KEY_EXCHANGE_MODES,
+        ExtensionType::RECORD_SIZE_LIMIT,
+        ExtensionType::CERT_COMPRESSION,
+        ExtensionType::ENCRYPTED_CLIENT_HELLO,
+    ];
+
     #[derive(TypedBuilder)]
     pub struct FirefoxTlsSettings {
         // TLS curves
@@ -168,12 +217,16 @@ mod tls {
         record_size_limit: u16,
 
         // TLS enable three key shares
-        #[builder(default = true, setter(into))]
-        enable_three_key_shares: bool,
+        #[builder(default, setter(into))]
+        key_shares_length_limit: Option<u8>,
 
         // TLS cert compression algorithm
         #[builder(default, setter(into))]
         cert_compression_algorithm: Option<&'static [CertCompressionAlgorithm]>,
+
+        // TLS extension permutation
+        #[builder(default = EXTENSION_PERMUTATION, setter(into))]
+        extension_permutation: &'static [ExtensionType],
     }
 
     impl From<FirefoxTlsSettings> for TlsSettings {
@@ -190,9 +243,10 @@ mod tls {
                 .cert_compression_algorithm(val.cert_compression_algorithm.map(Cow::Borrowed))
                 .min_tls_version(TlsVersion::TLS_1_2)
                 .max_tls_version(TlsVersion::TLS_1_3)
-                .enable_three_key_shares(val.enable_three_key_shares)
+                .key_shares_length_limit(val.key_shares_length_limit)
                 .pre_shared_key(val.pre_shared_key)
                 .psk_skip_session_ticket(val.psk_skip_session_tickets)
+                .extension_permutation(Cow::Borrowed(val.extension_permutation))
                 .build()
         }
     }
@@ -225,6 +279,14 @@ firefox_mod_generator!(
     ff133,
     firefox_tls_template!(1),
     firefox_http2_template!(1),
-    header_initializer,
+    header_initializer_with_zstd,
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:133.0) Gecko/20100101 Firefox/133.0"
+);
+
+firefox_mod_generator!(
+    ff109,
+    firefox_tls_template!(2),
+    firefox_http2_template!(2),
+    header_initializer,
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/109.0"
 );
