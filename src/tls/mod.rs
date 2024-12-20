@@ -174,8 +174,13 @@ fn connect_layer(settings: TlsSettings) -> TlsResult<HttpsLayer> {
     }
 
     // Set the extension permutation if it is set.
-    if let Some(extension_permutation) = settings.extension_permutation {
-        connector.set_extension_permutation(extension_permutation.as_ref())?;
+    if let Some(extensions) = settings.extension_permutation {
+        connector.set_extension_permutation(extensions.as_ref())?;
+    }
+
+    // Set the extension permutation index if it is set.
+    if let Some(indices) = settings.extension_permutation_indices {
+        connector.set_extension_permutation_indices(indices.as_ref())?;
     }
 
     // Conditionally configure the TLS builder based on the "boring-tls-native-roots" feature.

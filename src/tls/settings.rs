@@ -191,6 +191,10 @@ pub struct TlsSettings {
     /// The extension permutation.
     #[builder(default, setter(into))]
     pub extension_permutation: Option<Cow<'static, [ExtensionType]>>,
+
+    /// The extension permutation index.
+    #[builder(default, setter(into))]
+    pub extension_permutation_indices: Option<Cow<'static, [u8]>>,
 }
 
 impl_debug!(
@@ -215,7 +219,9 @@ impl_debug!(
         cert_compression_algorithm,
         record_size_limit,
         key_shares_length_limit,
-        psk_skip_session_ticket
+        psk_skip_session_ticket,
+        extension_permutation,
+        extension_permutation_indices
     }
 );
 

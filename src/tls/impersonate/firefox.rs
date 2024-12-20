@@ -90,6 +90,8 @@ fn header_initializer_with_zstd(ua: &'static str) -> HeaderMap {
 
 // ============== tls settings ==============
 mod tls {
+    use std::sync::LazyLock;
+
     use crate::tls::impersonate::tls_imports::*;
 
     pub const OLD_CURVES: &[SslCurve] = &[
@@ -163,7 +165,7 @@ mod tls {
 
     pub const RECORD_SIZE_LIMIT: u16 = 0x4001;
 
-    pub const EXTENSION_PERMUTATION: &[ExtensionType] = &[
+    pub const EXTENSIONS: &[ExtensionType] = &[
         ExtensionType::SERVER_NAME,
         ExtensionType::EXTENDED_MASTER_SECRET,
         ExtensionType::RENEGOTIATE,
@@ -181,6 +183,20 @@ mod tls {
         ExtensionType::CERT_COMPRESSION,
         ExtensionType::ENCRYPTED_CLIENT_HELLO,
     ];
+
+    pub static EXTENSION_PERMUTATION_INDICES: LazyLock<[u8; EXTENSIONS.len()]> =
+        LazyLock::new(|| {
+            let mut indices = [0u8; EXTENSIONS.len()];
+            for (i, &ext) in EXTENSIONS.iter().enumerate() {
+                if let Some(idx) = ExtensionType::BORING_SSLEXTENSION_PERMUTATION
+                    .iter()
+                    .position(|&e| e == ext)
+                {
+                    indices[i] = idx as u8;
+                }
+            }
+            indices
+        });
 
     #[derive(TypedBuilder)]
     pub struct FirefoxTlsSettings {
@@ -225,8 +241,8 @@ mod tls {
         cert_compression_algorithm: Option<&'static [CertCompressionAlgorithm]>,
 
         // TLS extension permutation
-        #[builder(default = EXTENSION_PERMUTATION, setter(into))]
-        extension_permutation: &'static [ExtensionType],
+        #[builder(default = &*EXTENSION_PERMUTATION_INDICES, setter(into))]
+        extension_permutation_indices: &'static [u8],
     }
 
     impl From<FirefoxTlsSettings> for TlsSettings {
@@ -246,7 +262,7 @@ mod tls {
                 .key_shares_length_limit(val.key_shares_length_limit)
                 .pre_shared_key(val.pre_shared_key)
                 .psk_skip_session_ticket(val.psk_skip_session_tickets)
-                .extension_permutation(Cow::Borrowed(val.extension_permutation))
+                .extension_permutation_indices(Cow::Borrowed(val.extension_permutation_indices))
                 .build()
         }
     }
