@@ -30,11 +30,11 @@ use crate::cookie;
 #[cfg(feature = "hickory-dns")]
 use crate::dns::hickory::HickoryDnsResolver;
 use crate::dns::{gai::GaiResolver, DnsResolverWithOverrides, DynResolver, Resolve};
-use crate::error;
 use crate::into_url::try_uri;
 use crate::redirect::{self, remove_sensitive_headers};
 #[cfg(feature = "boring-tls")]
 use crate::tls::{self, BoringTlsConnector, Impersonate, ImpersonateSettings, TlsSettings};
+use crate::{error, impl_debug};
 use crate::{IntoUrl, Method, Proxy, StatusCode, Url};
 #[cfg(feature = "hickory-dns")]
 use hickory_resolver::config::LookupIpStrategy;
@@ -53,13 +53,14 @@ use log::{debug, trace};
 /// because it already uses an [`Arc`] internally.
 ///
 /// [`Rc`]: std::rc::Rc
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Client {
     inner: Arc<ClientRef>,
 }
 
 /// A `ClientBuilder` can be used to create a `Client` with custom configuration.
 #[must_use]
+#[derive(Debug)]
 pub struct ClientBuilder {
     config: Config,
 }
@@ -1734,14 +1735,6 @@ impl Client {
     }
 }
 
-impl fmt::Debug for Client {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let mut builder = f.debug_struct("Client");
-        self.inner.fmt_fields(&mut builder);
-        builder.finish()
-    }
-}
-
 impl tower_service::Service<Request> for Client {
     type Response = Response;
     type Error = crate::Error;
@@ -1770,82 +1763,27 @@ impl tower_service::Service<Request> for &'_ Client {
     }
 }
 
-impl fmt::Debug for ClientBuilder {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let mut builder = f.debug_struct("ClientBuilder");
-        self.config.fmt_fields(&mut builder);
-        builder.finish()
+impl_debug!(
+    Config,
+    {
+        accepts,
+        headers,
+        headers_order,
+        proxies,
+        redirect_policy,
+        accepts,
+        referer,
+        timeout,
+        connect_timeout,
+        https_only,
+        nodelay,
+        local_address_ipv4,
+        local_address_ipv6,
+        dns_overrides,
+        base_url,
+        builder
     }
-}
-
-impl Config {
-    fn fmt_fields(&self, f: &mut fmt::DebugStruct<'_, '_>) {
-        // Instead of deriving Debug, only print fields when their output
-        // would provide relevant or interesting data.
-
-        #[cfg(feature = "cookies")]
-        {
-            if let Some(_) = self.cookie_store {
-                f.field("cookie_store", &true);
-            }
-        }
-
-        f.field("accepts", &self.accepts);
-
-        if !self.proxies.is_empty() {
-            f.field("proxies", &self.proxies);
-        }
-
-        if !self.redirect_policy.is_default() {
-            f.field("redirect_policy", &self.redirect_policy);
-        }
-
-        if self.referer {
-            f.field("referer", &true);
-        }
-
-        f.field("default_headers", &self.headers);
-
-        if let Some(ref d) = self.connect_timeout {
-            f.field("connect_timeout", d);
-        }
-
-        if let Some(ref d) = self.timeout {
-            f.field("timeout", d);
-        }
-
-        if let Some(ref v) = self.local_address_ipv4 {
-            f.field("local_address_4", v);
-        }
-
-        if let Some(ref v) = self.local_address_ipv6 {
-            f.field("local_address_6", v);
-        }
-
-        if self.nodelay {
-            f.field("tcp_nodelay", &true);
-        }
-
-        #[cfg(feature = "boring-tls")]
-        {
-            if !self.tls.certs_verification {
-                f.field("danger_accept_invalid_certs", &true);
-            }
-
-            f.field("tls_info", &self.tls_info);
-        }
-
-        if self.https_only {
-            f.field("https_only", &true);
-        }
-
-        if !self.dns_overrides.is_empty() {
-            f.field("dns_overrides", &self.dns_overrides);
-        }
-
-        f.field("builder", &self.builder);
-    }
-}
+);
 
 #[derive(Clone)]
 struct ClientRef {
@@ -1863,40 +1801,23 @@ struct ClientRef {
     base_url: Option<Arc<Url>>,
 }
 
-impl ClientRef {
-    fn fmt_fields(&self, f: &mut fmt::DebugStruct<'_, '_>) {
-        // Instead of deriving Debug, only print fields when their output
-        // would provide relevant or interesting data.
-
-        #[cfg(feature = "cookies")]
-        {
-            if let Some(_) = self.cookie_store {
-                f.field("cookie_store", &true);
-            }
-        }
-
-        f.field("accepts", &self.accepts);
-
-        let proxies = self.hyper.get_proxies();
-        if !proxies.is_empty() {
-            f.field("proxies", &proxies);
-        }
-
-        if !self.redirect.is_default() {
-            f.field("redirect_policy", &self.redirect);
-        }
-
-        if self.referer {
-            f.field("referer", &true);
-        }
-
-        f.field("default_headers", &self.headers);
-
-        if let Some(ref d) = self.request_timeout {
-            f.field("timeout", d);
-        }
+impl_debug!(
+    ClientRef,
+    {
+        accepts,
+        headers,
+        headers_order,
+        hyper,
+        redirect,
+        referer,
+        request_timeout,
+        https_only,
+        proxies_maybe_http_auth,
+        base_url
     }
+);
 
+impl ClientRef {
     #[inline]
     fn proxy_auth(&self, dst: &Uri, headers: &mut HeaderMap) {
         if !self.proxies_maybe_http_auth {

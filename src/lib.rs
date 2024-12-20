@@ -354,6 +354,7 @@ mod connect;
 #[cfg(feature = "cookies")]
 pub mod cookie;
 pub mod dns;
+mod macros;
 mod proxy;
 pub mod redirect;
 #[cfg(feature = "boring-tls")]

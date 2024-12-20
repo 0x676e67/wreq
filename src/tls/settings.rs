@@ -2,6 +2,7 @@
 use std::borrow::Cow;
 
 use crate::{
+    impl_debug,
     tls::{cert_compression::CertCompressionAlgorithm, TlsVersion},
     HttpVersionPref,
 };
@@ -192,24 +193,7 @@ pub struct TlsSettings {
     pub extension_permutation: Option<Cow<'static, [ExtensionType]>>,
 }
 
-macro_rules! impl_debug_for_tls {
-    ($type:ty, { $($field_name:ident),* }, { $($skip_field_name:ident),* }) => {
-        impl std::fmt::Debug for $type {
-            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                let mut debug_struct = f.debug_struct(stringify!($type));
-                $(
-                    debug_struct.field(stringify!($field_name), &self.$field_name);
-                )*
-                $(
-                    let _ = &self.$skip_field_name;
-                )*
-                debug_struct.finish()
-            }
-        }
-    }
-}
-
-impl_debug_for_tls!(
+impl_debug!(
     TlsSettings,
     {
         certs_verification,
@@ -232,10 +216,6 @@ impl_debug_for_tls!(
         record_size_limit,
         key_shares_length_limit,
         psk_skip_session_ticket
-    },
-    {
-        connector,
-        root_certs_store
     }
 );
 
