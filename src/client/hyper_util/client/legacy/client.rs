@@ -103,7 +103,11 @@ macro_rules! e {
 }
 
 // We might change this... :shrug:
-type PoolKey = (http::uri::Scheme, http::uri::Authority, Option<PoolKeyExtension>);
+type PoolKey = (
+    http::uri::Scheme,
+    http::uri::Authority,
+    Option<PoolKeyExtension>,
+);
 
 enum TrySendError<B> {
     Retryable {

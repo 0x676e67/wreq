@@ -2068,7 +2068,6 @@ impl Future for Pending {
     }
 }
 
-
 impl Future for PendingRequest {
     type Output = Result<Response, crate::Error>;
 

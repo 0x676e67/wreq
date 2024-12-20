@@ -15,9 +15,9 @@ use tokio::time::Sleep;
 use url::Url;
 
 use super::body::Body;
+use super::body::ResponseBody;
 use super::decoder::{Accepts, Decoder};
 use super::hyper_util;
-use super::body::ResponseBody;
 #[cfg(feature = "cookies")]
 use crate::cookie;
 

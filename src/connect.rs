@@ -277,7 +277,9 @@ impl Connector {
         for proxy in self.proxies.as_ref() {
             if let Some(proxy_scheme) = proxy.intercept(uri) {
                 let ext = match proxy_scheme {
-                    ProxyScheme::Http { host, auth } => PoolKeyExtension::Http(Scheme::HTTP, host, auth),
+                    ProxyScheme::Http { host, auth } => {
+                        PoolKeyExtension::Http(Scheme::HTTP, host, auth)
+                    }
                     ProxyScheme::Https { host, auth } => {
                         PoolKeyExtension::Http(Scheme::HTTPS, host, auth)
                     }
