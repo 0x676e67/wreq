@@ -9,9 +9,5 @@ async fn main() -> Result<(), rquest::Error> {
 
     let resp = client.get("https://tls.peet.ws/api/all").send().await?;
     println!("{}", resp.text().await?);
-
-    let resp = client.get("https://tls.peet.ws/api/all").send().await?;
-    println!("{}", resp.text().await?);
-
     Ok(())
 }
