@@ -1666,9 +1666,6 @@ impl Client {
     fn impersonate_settings(&mut self, settings: ImpersonateSettings) -> crate::Result<()> {
         let inner = self.inner_mut();
 
-        // Clear the headers
-        inner.headers.to_mut().clear();
-
         // Set the headers
         if let Some(headers) = settings.headers {
             inner.headers = headers;
