@@ -228,6 +228,10 @@ impl_debug!(
 // ============== http2 ==============
 #[derive(TypedBuilder, Debug)]
 pub struct Http2Settings {
+    /// The initial stream id.
+    #[builder(default, setter(into))]
+    pub initial_stream_id: Option<u32>,
+
     // ============== windows update frame ==============
     /// The initial connection window size.
     #[builder(default, setter(into))]

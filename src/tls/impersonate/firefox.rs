@@ -44,6 +44,7 @@ macro_rules! firefox_tls_template {
 macro_rules! firefox_http2_template {
     (1) => {{
         super::Http2Settings::builder()
+            .initial_stream_id(3)
             .header_table_size(65536)
             .enable_push(false)
             .initial_stream_window_size(131072)

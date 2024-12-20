@@ -338,7 +338,8 @@ impl ClientBuilder {
             crate::util::convert_headers_priority(settings.http2.headers_priority);
 
         // Set the http2 preference
-        self.http2_initial_stream_window_size(settings.http2.initial_stream_window_size)
+        self.http2_initial_stream_id(settings.http2.initial_stream_id)
+            .http2_initial_stream_window_size(settings.http2.initial_stream_window_size)
             .http2_initial_connection_window_size(settings.http2.initial_connection_window_size)
             .http2_max_concurrent_streams(settings.http2.max_concurrent_streams)
             .http2_max_header_list_size(settings.http2.max_header_list_size)
@@ -857,6 +858,12 @@ impl ClientBuilder {
         }
 
         self.config.builder.http2_only(true);
+        self
+    }
+
+    /// Sets the initial stream ID for HTTP2.
+    pub fn http2_initial_stream_id(mut self, id: impl Into<Option<u32>>) -> ClientBuilder {
+        self.config.builder.http2_initial_stream_id(id);
         self
     }
 
@@ -1688,7 +1695,9 @@ impl Client {
                 crate::util::convert_headers_priority(settings.http2.headers_priority);
 
             // Set the http2 preference
-            conn.http2_initial_stream_window_size(settings.http2.initial_stream_window_size)
+            conn
+                .http2_initial_stream_id(settings.http2.initial_stream_id)
+                .http2_initial_stream_window_size(settings.http2.initial_stream_window_size)
                 .http2_initial_connection_window_size(settings.http2.initial_connection_window_size)
                 .http2_max_concurrent_streams(settings.http2.max_concurrent_streams)
                 .http2_max_header_list_size(settings.http2.max_header_list_size)
