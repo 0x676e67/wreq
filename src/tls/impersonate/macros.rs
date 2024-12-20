@@ -34,10 +34,10 @@ macro_rules! header_chrome_edge_sec_ch_ua {
 #[macro_export]
 macro_rules! header_chrome_edge_sec_fetch {
     ($headers:expr) => {
-        $headers.insert("sec-fetch-site", HeaderValue::from_static("none"));
-        $headers.insert("sec-fetch-mode", HeaderValue::from_static("navigate"));
-        $headers.insert("sec-fetch-user", HeaderValue::from_static("?1"));
         $headers.insert("sec-fetch-dest", HeaderValue::from_static("document"));
+        $headers.insert("sec-fetch-mode", HeaderValue::from_static("navigate"));
+        $headers.insert("sec-fetch-site", HeaderValue::from_static("none"));
+        $headers.insert("sec-fetch-user", HeaderValue::from_static("?1"));
     };
 }
 
@@ -46,13 +46,14 @@ macro_rules! header_chrome_edge_ua {
     ($headers:expr, $ua:expr) => {
         $headers.insert(UPGRADE_INSECURE_REQUESTS, HeaderValue::from_static("1"));
         $headers.insert(USER_AGENT, HeaderValue::from_static($ua));
-        $headers.insert(ACCEPT, HeaderValue::from_static("text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.9"));
     };
 }
+
 
 #[macro_export]
 macro_rules! header_chrome_edge_accpet {
     ($headers:expr) => {
+        $headers.insert(ACCEPT, HeaderValue::from_static("text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.9"));
         $headers.insert(
             ACCEPT_ENCODING,
             HeaderValue::from_static("gzip, deflate, br"),
@@ -64,6 +65,7 @@ macro_rules! header_chrome_edge_accpet {
 #[macro_export]
 macro_rules! header_chrome_edge_accpet_with_zstd {
     ($headers:expr) => {
+        $headers.insert(ACCEPT, HeaderValue::from_static("text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.9"));
         $headers.insert(
             ACCEPT_ENCODING,
             HeaderValue::from_static("gzip, deflate, br, zstd"),
@@ -74,18 +76,22 @@ macro_rules! header_chrome_edge_accpet_with_zstd {
 
 #[macro_export]
 macro_rules! header_firefox_sec_fetch {
-    ($headers:expr) => {
+    (1, $headers:expr) => {
         $headers.insert("sec-fetch-dest", HeaderValue::from_static("document"));
         $headers.insert("sec-fetch-mode", HeaderValue::from_static("navigate"));
         $headers.insert("sec-fetch-site", HeaderValue::from_static("none"));
         $headers.insert("sec-fetch-user", HeaderValue::from_static("?1"));
     };
+    (2, $headers:expr) => {
+        $headers.insert("sec-fetch-dest", HeaderValue::from_static("document"));
+        $headers.insert("sec-fetch-mode", HeaderValue::from_static("navigate"));
+        $headers.insert("sec-fetch-site", HeaderValue::from_static("none"));
+    };
 }
 
 #[macro_export]
-macro_rules! header_firefox_ua_with_accept {
-    ($headers:expr, $ua:expr) => {
-        $headers.insert(header::USER_AGENT, HeaderValue::from_static($ua));
+macro_rules! header_firefox_accept {
+    ($headers:expr) => {
         $headers.insert(
             header::ACCEPT,
             HeaderValue::from_static(
@@ -93,43 +99,48 @@ macro_rules! header_firefox_ua_with_accept {
             ),
         );
         $headers.insert(
-            header::ACCEPT_LANGUAGE,
-            HeaderValue::from_static("en-US,en;q=0.5"),
-        );
-    };
-}
-
-#[macro_export]
-macro_rules! header_firefox_priority {
-    ($headers:expr) => {
-        $headers.insert("priority", HeaderValue::from_static("u=0, i"));
-        $headers.insert("te", HeaderValue::from_static("trailers"));
-    };
-}
-
-#[macro_export]
-macro_rules! header_firefox_accpet_with_upgrade {
-    (1, $headers:expr) => {
-        $headers.insert(
             header::ACCEPT_ENCODING,
             HeaderValue::from_static("gzip, deflate, br"),
         );
         $headers.insert(
-            header::UPGRADE_INSECURE_REQUESTS,
-            HeaderValue::from_static("1"),
+            header::ACCEPT_LANGUAGE,
+            HeaderValue::from_static("en-US,en;q=0.5"),
         );
+
     };
-    (2, $headers:expr) => {
+}
+
+
+#[macro_export]
+macro_rules! header_firefox_accpet_with_zstd {
+    ($headers:expr) => {
+        $headers.insert(
+            header::ACCEPT,
+            HeaderValue::from_static(
+                "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            ),
+        );
         $headers.insert(
             header::ACCEPT_ENCODING,
             HeaderValue::from_static("gzip, deflate, br, zstd"),
         );
         $headers.insert(
-            header::UPGRADE_INSECURE_REQUESTS,
-            HeaderValue::from_static("1"),
+            header::ACCEPT_LANGUAGE,
+            HeaderValue::from_static("en-US,en;q=0.5"),
         );
+
     };
 }
+
+
+#[macro_export]
+macro_rules! header_firefox_ua {
+    ($headers:expr, $ua:expr) => {
+        $headers.insert(UPGRADE_INSECURE_REQUESTS, HeaderValue::from_static("1"));
+        $headers.insert(USER_AGENT, HeaderValue::from_static($ua));
+    };
+}
+
 
 #[macro_export]
 macro_rules! static_join {
