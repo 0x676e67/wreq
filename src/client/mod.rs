@@ -7,6 +7,7 @@ pub use self::upgrade::Upgraded;
 pub mod body;
 pub mod decoder;
 pub mod http;
+pub mod hyper_util;
 #[cfg(feature = "multipart")]
 pub mod multipart;
 pub(crate) mod request;

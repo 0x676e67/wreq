@@ -21,11 +21,11 @@ fn load_static_root_certs() -> Option<&'static X509Store> {
 
     match CERT_STORE.as_ref() {
         Ok(cert_store) => {
-            log::info!("Loaded root certs");
+            tracing::info!("Loaded root certs");
             Some(cert_store)
         }
         Err(err) => {
-            log::error!("Failed to load root certs: {:?}", err);
+            tracing::error!("Failed to load root certs: {:?}", err);
             None
         }
     }
@@ -37,13 +37,13 @@ fn load_dynamic_root_certs() -> Result<X509Store, ErrorStack> {
         let cert = X509::from_der(&*cert)?;
         cert_store.add_cert(cert)?;
     }
-    log::info!("Loaded dynamic root certs");
+    tracing::info!("Loaded dynamic root certs");
     Ok(cert_store.build())
 }
 
 #[tokio::main]
 async fn main() -> Result<(), rquest::Error> {
-    env_logger::init_from_env(env_logger::Env::default().default_filter_or("debug"));
+    env_logger::init_from_env(env_logger::Env::default().default_filter_or("info"));
     use_static_root_certs().await?;
     use_dynamic_root_certs().await?;
     Ok(())

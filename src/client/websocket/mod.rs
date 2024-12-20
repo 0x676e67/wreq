@@ -227,14 +227,14 @@ impl WebSocketResponse {
                     .to_str()
                     .is_ok_and(|s| s.eq_ignore_ascii_case("upgrade"))
                 {
-                    log::debug!("server responded with invalid Connection header: {header:?}");
+                    tracing::debug!("server responded with invalid Connection header: {header:?}");
                     return Err(Error::new(
                         Kind::Upgrade,
                         Some(format!("invalid connection header: {:?}", header)),
                     ));
                 }
             } else {
-                log::debug!("missing Connection header");
+                tracing::debug!("missing Connection header");
                 return Err(Error::new(Kind::Upgrade, Some("missing connection header")));
             }
 
@@ -244,14 +244,14 @@ impl WebSocketResponse {
                     .to_str()
                     .is_ok_and(|s| s.eq_ignore_ascii_case("websocket"))
                 {
-                    log::debug!("server responded with invalid Upgrade header: {header:?}");
+                    tracing::debug!("server responded with invalid Upgrade header: {header:?}");
                     return Err(Error::new(
                         Kind::Upgrade,
                         Some(format!("invalid upgrade header: {:?}", header)),
                     ));
                 }
             } else {
-                log::debug!("missing Upgrade header");
+                tracing::debug!("missing Upgrade header");
                 return Err(Error::new(Kind::Upgrade, Some("missing upgrade header")));
             }
 
@@ -261,7 +261,7 @@ impl WebSocketResponse {
                 let expected_nonce =
                     tungstenite::handshake::derive_accept_key(self.nonce.as_bytes());
                 if !header.to_str().is_ok_and(|s| s == expected_nonce) {
-                    log::debug!(
+                    tracing::debug!(
                         "server responded with invalid Sec-Websocket-Accept header: {header:?}"
                     );
                     return Err(Error::new(
@@ -270,7 +270,7 @@ impl WebSocketResponse {
                     ));
                 }
             } else {
-                log::debug!("missing Sec-Websocket-Accept header");
+                tracing::debug!("missing Sec-Websocket-Accept header");
                 return Err(Error::new(Kind::Upgrade, Some("missing accept key")));
             }
 
@@ -382,7 +382,7 @@ impl Stream for WebSocket {
                 Ok(message) => Poll::Ready(Some(Ok(message))),
                 Err(e) => {
                     // this fails only for raw frames (which are not received)
-                    log::debug!("received invalid frame: {:?}", e);
+                    tracing::debug!("received invalid frame: {:?}", e);
                     Poll::Ready(Some(Err(Error::new(
                         Kind::Body,
                         Some("unsupported websocket frame"),

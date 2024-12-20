@@ -18,7 +18,11 @@ rustdoc-args = ["--cfg", "docsrs"]
 targets = ["x86_64-unknown-linux-gnu"]
 
 [features]
-default = ["boring-tls", "boring-tls-webpki-roots"]
+default = ["boring-tls", "boring-tls-webpki-roots", "charset",
+    "gzip",
+    "brotli",
+    "zstd",
+    "deflate"]
 
 full = [
     "boring-tls",
@@ -34,15 +38,17 @@ full = [
 
 websocket = ["async-tungstenite", "tokio-util/compat"]
 
+charset = ["dep:encoding_rs"]
+
 cookies = ["cookie_crate", "cookie_store"]
 
-gzip = ["async-compression", "async-compression/gzip", "tokio-util"]
+gzip = ["dep:async-compression", "async-compression?/gzip", "dep:tokio-util"]
 
-brotli = ["async-compression", "async-compression/brotli", "tokio-util"]
+brotli = ["dep:async-compression", "async-compression?/brotli", "dep:tokio-util"]
 
-zstd = ["async-compression", "async-compression/zstd", "tokio-util"]
+zstd = ["dep:async-compression", "async-compression?/zstd", "dep:tokio-util"]
 
-deflate = ["async-compression", "async-compression/zlib", "tokio-util"]
+deflate = ["dep:async-compression", "async-compression?/zlib", "dep:tokio-util"]
 
 json = ["serde_json"]
 
@@ -50,7 +56,7 @@ multipart = ["mime_guess"]
 
 hickory-dns = ["hickory-resolver"]
 
-stream = ["tokio/fs", "tokio-util"]
+stream = ["tokio/fs", "dep:tokio-util"]
 
 socks = ["tokio-socks"]
 
@@ -84,7 +90,9 @@ boring-tls = [
 
 [dependencies]
 base64 = "0.22"
-http = "0.2"
+http = "1"
+http-body = "1"
+http-body-util = "0.1"
 url = "2.5"
 bytes = "1.0"
 serde = "1.0"
@@ -92,6 +100,7 @@ serde_urlencoded = "0.7.1"
 tower-service = "0.3"
 futures-core = { version = "0.3.0", default-features = false }
 futures-util = { version = "0.3.0", default-features = false }
+sync_wrapper = { version = "1.0", features = ["futures"] }
 
 # Optional deps...
 
@@ -100,13 +109,11 @@ serde_json = { version = "1.0", optional = true }
 ## multipart
 mime_guess = { version = "2.0", default-features = false, optional = true }
 
-encoding_rs = "0.8"
-http-body = "0.4.6"
-hyper = { package = "hyper2", version = "0.14.80", default-features = false, features = [
+encoding_rs = { version = "0.8", optional = true }
+hyper = { git = "https://github.com/penumbra-x/hyper2", branch = "main", features = [
     "http1",
     "http2",
     "client",
-    "runtime",
 ] }
 log = "0.4"
 mime = "0.3.17"
@@ -115,6 +122,11 @@ tokio = { version = "1", default-features = false, features = ["net", "time"] }
 pin-project-lite = "0.2.0"
 ipnet = "2.10.0"
 
+# hyper-util
+socket2 = { version = "0.5", features = ["all"] }
+futures-channel = { version = "0.3" }
+lru = { version = "0.12", default-features = false }
+
 # Optional deps...
 
 ## boring-tls
@@ -122,6 +134,12 @@ boring = { package = "boring2", version = "4", optional = true }
 boring-sys = { package = "boring-sys2", version = "4", optional = true }
 tokio-boring = { package = "tokio-boring2", version = "4", optional = true }
 foreign-types = { version = "0.5.0", optional = true }
+typed-builder = { version = "0.20.0", optional = true }
+
+# boring-tls session cache
+linked_hash_set = { version = "0.1", optional = true }
+tower-layer = { version = "0.3", optional = true }
+antidote = { version = "1", optional = true }
 
 # cert compression
 brotli = { version = "7", optional = true }
@@ -132,26 +150,13 @@ zstd = { version = "0.13", optional = true }
 rustls-native-certs = { version = "0.8.0", optional = true }
 webpki-root-certs = { version = "0.26.0", optional = true }
 
-# boring-tls session cache
-linked_hash_set = { version = "0.1", optional = true }
-tower-layer = { version = "0.3", optional = true }
-antidote = { version = "1", optional = true }
-
-# boring-tls extension builder
-typed-builder = { version = "0.20.0", optional = true }
-
 ## cookies
 cookie_crate = { version = "0.18", package = "cookie", optional = true }
 cookie_store = { version = "0.21", optional = true }
 
 ## compression
-async-compression = { version = "0.4.0", default-features = false, features = [
-    "tokio",
-], optional = true }
-tokio-util = { version = "0.7", default-features = false, features = [
-    "codec",
-    "io",
-], optional = true }
+async-compression = { version = "0.4.0", default-features = false, features = ["tokio"], optional = true }
+tokio-util = { version = "0.7.9", default-features = false, features = ["codec", "io"], optional = true }
 
 ## socks
 tokio-socks = { version = "0.5.2", optional = true }
@@ -169,15 +174,13 @@ windows-registry = "0.3.0"
 system-configuration = "0.6.0"
 
 [dev-dependencies]
-env_logger = "0.10.0"
-hyper = { package = "hyper2", version = "0.14.80", default-features = false, features = [
-    "stream",
+hyper = { git = "https://github.com/penumbra-x/hyper2", branch = "main", features = [
     "http1",
     "http2",
     "client",
     "server",
-    "runtime",
 ] }
+env_logger = "0.10.0"
 serde = { version = "1.0", features = ["derive"] }
 libflate = "2.0.0"
 zstd = { version = "0.13" }

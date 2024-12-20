@@ -5,13 +5,13 @@ use std::time::Duration;
 
 use http::header::CONTENT_LENGTH;
 use http::Uri;
-use hyper::ext::PoolKeyExt;
 use serde::Serialize;
 #[cfg(feature = "json")]
 use serde_json;
 
-use super::body::{Body, ImplStream};
+use super::body::Body;
 use super::http::{Client, Pending};
+use super::hyper_util::ext::PoolKeyExtension;
 #[cfg(feature = "multipart")]
 use super::multipart;
 use super::response::Response;
@@ -709,7 +709,7 @@ pub(crate) struct InnerRequest<'a> {
     method: &'a Method,
     headers: HeaderMap,
     headers_order: Option<&'a [HeaderName]>,
-    extension: Option<PoolKeyExt>,
+    extension: Option<PoolKeyExtension>,
 }
 
 impl<'a> InnerRequest<'a> {
@@ -735,15 +735,14 @@ impl<'a> InnerRequest<'a> {
 
     /// Set an extension for the request.
     #[inline]
-    pub fn extension(mut self, extension: Option<PoolKeyExt>) -> Self {
+    pub fn extension(mut self, extension: Option<PoolKeyExtension>) -> Self {
         self.extension = extension;
         self
     }
 
     /// Build and return the constructed request.
-    pub fn build(self, body: Body) -> http::Request<ImplStream> {
+    pub fn build(self, body: Body) -> http::Request<Body> {
         let mut headers = self.headers;
-        let body = body.into_stream();
 
         // Build the request
         let mut builder = hyper::Request::builder()

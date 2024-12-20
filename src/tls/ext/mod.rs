@@ -87,7 +87,7 @@ pub trait TlsConnectExtension {
     ) -> TlsResult<&mut ConnectConfiguration>;
 
     /// Configure the no session ticket for the given `ConnectConfiguration`.
-    fn configure_no_session_ticket(&mut self) -> TlsResult<&mut ConnectConfiguration>;
+    fn configure_skip_session_ticket(&mut self) -> TlsResult<&mut ConnectConfiguration>;
 }
 
 impl TlsExtension for SslConnectorBuilder {
@@ -236,7 +236,7 @@ impl TlsConnectExtension for ConnectConfiguration {
         .map(|_| self)
     }
 
-    fn configure_no_session_ticket(&mut self) -> TlsResult<&mut ConnectConfiguration> {
+    fn configure_skip_session_ticket(&mut self) -> TlsResult<&mut ConnectConfiguration> {
         sv_handler(unsafe {
             boring_sys::SSL_set_options(self.as_ptr(), boring_sys::SSL_OP_NO_TICKET as _) as _
         })

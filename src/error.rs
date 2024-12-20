@@ -3,6 +3,7 @@ use std::error::Error as StdError;
 use std::fmt;
 use std::io;
 
+use crate::client::hyper_util;
 use crate::{StatusCode, Url};
 
 /// A `Result` alias where the `Err` case is `rquest::Error`.
@@ -126,7 +127,7 @@ impl Error {
         let mut source = self.source();
 
         while let Some(err) = source {
-            if let Some(hyper_err) = err.downcast_ref::<hyper::Error>() {
+            if let Some(hyper_err) = err.downcast_ref::<hyper_util::client::legacy::Error>() {
                 if hyper_err.is_connect() {
                     return true;
                 }
@@ -296,9 +297,14 @@ pub(crate) fn upgrade<E: Into<BoxError>>(e: E) -> Error {
 
 // io::Error helpers
 
-#[allow(unused)]
-pub(crate) fn into_io(e: Error) -> io::Error {
-    e.into_io()
+#[cfg(any(
+    feature = "gzip",
+    feature = "zstd",
+    feature = "brotli",
+    feature = "deflate",
+))]
+pub(crate) fn into_io(e: BoxError) -> io::Error {
+    io::Error::new(io::ErrorKind::Other, e)
 }
 
 #[allow(unused)]
