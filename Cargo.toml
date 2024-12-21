@@ -75,6 +75,7 @@ tower-service = "0.3"
 futures-core = { version = "0.3.0", default-features = false }
 futures-util = { version = "0.3.0", default-features = false }
 sync_wrapper = { version = "1.0", features = ["futures"] }
+antidote = { version = "1" }
 
 # Optional deps...
 
@@ -112,7 +113,6 @@ typed-builder = { version = "0.20.0" }
 # boring-tls session cache
 linked_hash_set = { version = "0.1" }
 tower-layer = { version = "0.3" }
-antidote = { version = "1" }
 
 # cert compression
 brotli = { version = "7" }
@@ -129,7 +129,7 @@ cookie_store = { version = "0.21", optional = true }
 
 ## compression
 async-compression = { version = "0.4.0", default-features = false, features = ["tokio"], optional = true }
-tokio-util = { version = "0.7.9", default-features = false, features = ["codec", "io"], optional = true }
+tokio-util = { version = "0.7.0", default-features = false, features = ["codec", "io"], optional = true }
 
 ## socks
 tokio-socks = { version = "0.5.2", optional = true }
