@@ -339,12 +339,11 @@ impl ClientBuilder {
         // Set the TLS settings
         self.config.tls = settings.tls;
 
-        // Convert the headers priority to the correct type
-        let http2_headers_priority =
-            crate::util::convert_headers_priority(settings.http2.headers_priority);
-
         // Set the http2 preference
         self.config.builder.with_http2_builder(|builder| {
+            let http2_headers_priority =
+                crate::util::convert_headers_priority(settings.http2.headers_priority);
+
             builder
                 .initial_stream_id(settings.http2.initial_stream_id)
                 .initial_stream_window_size(settings.http2.initial_stream_window_size)
@@ -1547,16 +1546,14 @@ impl Client {
         let hyper = &mut inner.hyper;
 
         // Set the connector
-        let boringtls_connector = BoringTlsConnector::new(settings.tls)?;
-        hyper.with_connector(|c| c.set_connector(boringtls_connector));
+        let connector = BoringTlsConnector::new(settings.tls)?;
+        hyper.with_connector(|c| c.set_connector(connector));
 
-        // Set the conn builder
+         // Set the http2 preference
         hyper.with_http2_builder(|builder| {
-            // Convert the headers priority to the correct type
             let http2_headers_priority =
                 crate::util::convert_headers_priority(settings.http2.headers_priority);
-
-            // Set the http2 preference
+           
             builder
                 .initial_stream_id(settings.http2.initial_stream_id)
                 .initial_stream_window_size(settings.http2.initial_stream_window_size)
