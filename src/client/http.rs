@@ -844,9 +844,20 @@ impl ClientBuilder {
     }
 
     /// With http1/http2 builder
+    ///
+    /// # Example
+    /// ```
+    /// let client = rquest::Client::builder()
+    ///     .with_http_builder(|builder| {
+    ///         builder.with_http1_builder(|builder| {
+    ///             builder.http09_responses(true);
+    ///         });
+    ///     })
+    ///     .build()?;
+    /// ```
     pub fn with_http_builder<F>(mut self, f: F) -> ClientBuilder
     where
-        F: FnOnce(&mut Builder) -> &mut Builder,
+        F: FnOnce(&mut Builder),
     {
         f(&mut self.config.builder);
         self
