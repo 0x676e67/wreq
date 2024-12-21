@@ -105,7 +105,6 @@ struct Config {
     read_timeout: Option<Duration>,
     local_address_ipv6: Option<Ipv6Addr>,
     local_address_ipv4: Option<Ipv4Addr>,
-    http1_title_case_headers: bool,
     #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
     interface: Option<std::borrow::Cow<'static, str>>,
     nodelay: bool,
@@ -178,11 +177,10 @@ impl ClientBuilder {
                 dns_overrides: HashMap::new(),
                 dns_resolver: None,
                 base_url: None,
-                builder: crate::client::hyper_util::client::legacy::Builder::new(
+                builder: crate::client::hyper_util::client::legacy::Client::builder(
                     TokioExecutor::new(),
                 ),
                 https_only: false,
-                http1_title_case_headers: false,
                 #[cfg(feature = "boring-tls")]
                 tls_info: false,
                 #[cfg(feature = "boring-tls")]
@@ -276,8 +274,7 @@ impl ClientBuilder {
             .builder
             .pool_idle_timeout(config.pool_idle_timeout)
             .pool_max_idle_per_host(config.pool_max_idle_per_host)
-            .pool_max_size(config.pool_max_size)
-            .http1_title_case_headers(config.http1_title_case_headers);
+            .pool_max_size(config.pool_max_size);
 
         Ok(Client {
             inner: Arc::new(ClientRef {
@@ -347,19 +344,37 @@ impl ClientBuilder {
             crate::util::convert_headers_priority(settings.http2.headers_priority);
 
         // Set the http2 preference
-        self.http2_initial_stream_id(settings.http2.initial_stream_id)
-            .http2_initial_stream_window_size(settings.http2.initial_stream_window_size)
-            .http2_initial_connection_window_size(settings.http2.initial_connection_window_size)
-            .http2_max_concurrent_streams(settings.http2.max_concurrent_streams)
-            .http2_max_header_list_size(settings.http2.max_header_list_size)
-            .http2_header_table_size(settings.http2.header_table_size)
-            .http2_enable_push(settings.http2.enable_push)
-            .http2_max_frame_size(settings.http2.max_frame_size)
-            .http2_headers_priority(http2_headers_priority)
-            .http2_headers_pseudo_order(settings.http2.headers_pseudo_order)
-            .http2_settings_order(settings.http2.settings_order)
-            .http2_unknown_setting8(settings.http2.unknown_setting8)
-            .http2_unknown_setting9(settings.http2.unknown_setting9)
+        self.config.builder.with_http2_builder(|builder| {
+            builder
+                .initial_stream_id(settings.http2.initial_stream_id)
+                .initial_stream_window_size(settings.http2.initial_stream_window_size)
+                .initial_connection_window_size(settings.http2.initial_connection_window_size)
+                .max_concurrent_streams(settings.http2.max_concurrent_streams)
+                .header_table_size(settings.http2.header_table_size)
+                .max_frame_size(settings.http2.max_frame_size)
+                .headers_priority(http2_headers_priority)
+                .headers_pseudo_order(settings.http2.headers_pseudo_order)
+                .settings_order(settings.http2.settings_order);
+
+            if let Some(max_header_list_size) = settings.http2.max_header_list_size {
+                builder.max_header_list_size(max_header_list_size);
+            }
+
+            if let Some(enable_push) = settings.http2.enable_push {
+                builder.enable_push(enable_push);
+            }
+
+            if let Some(unknown_setting8) = settings.http2.unknown_setting8 {
+                builder.unknown_setting8(unknown_setting8);
+            }
+
+            if let Some(unknown_setting9) = settings.http2.unknown_setting9 {
+                builder.unknown_setting9(unknown_setting9);
+            }
+            builder
+        });
+
+        self
     }
 
     /// Enable Encrypted Client Hello (Secure SNI)
@@ -805,50 +820,6 @@ impl ClientBuilder {
         self
     }
 
-    /// Send headers as title case instead of lowercase.
-    pub fn http1_title_case_headers(mut self, enabled: bool) -> ClientBuilder {
-        self.config.http1_title_case_headers = enabled;
-        self
-    }
-
-    /// Set whether HTTP/1 connections will accept obsolete line folding for
-    /// header values.
-    ///
-    /// Newline codepoints (`\r` and `\n`) will be transformed to spaces when
-    /// parsing.
-    pub fn http1_allow_obsolete_multiline_headers_in_responses(
-        mut self,
-        value: bool,
-    ) -> ClientBuilder {
-        self.config
-            .builder
-            .http1_allow_obsolete_multiline_headers_in_responses(value);
-        self
-    }
-
-    /// Sets whether invalid header lines should be silently ignored in HTTP/1 responses.
-    pub fn http1_ignore_invalid_headers_in_responses(mut self, value: bool) -> ClientBuilder {
-        self.config
-            .builder
-            .http1_ignore_invalid_headers_in_responses(value);
-        self
-    }
-
-    /// Set whether HTTP/1 connections will accept spaces between header
-    /// names and the colon that follow them in responses.
-    ///
-    /// Newline codepoints (`\r` and `\n`) will be transformed to spaces when
-    /// parsing.
-    pub fn http1_allow_spaces_after_header_name_in_responses(
-        mut self,
-        value: bool,
-    ) -> ClientBuilder {
-        self.config
-            .builder
-            .http1_allow_spaces_after_header_name_in_responses(value);
-        self
-    }
-
     /// Only use HTTP/1.
     /// Default is Http/1.
     pub fn http1_only(mut self) -> ClientBuilder {
@@ -858,12 +829,6 @@ impl ClientBuilder {
         }
 
         self.config.builder.http2_only(false);
-        self
-    }
-
-    /// Allow HTTP/0.9 responses
-    pub fn http09_responses(mut self) -> ClientBuilder {
-        self.config.builder.http09_responses(true);
         self
     }
 
@@ -878,200 +843,12 @@ impl ClientBuilder {
         self
     }
 
-    /// Sets the initial stream ID for HTTP2.
-    pub fn http2_initial_stream_id(mut self, id: impl Into<Option<u32>>) -> ClientBuilder {
-        self.config
-            .builder
-            .with_http2_builder(|b| b.initial_stream_id(id));
-        self
-    }
-
-    /// Sets the `SETTINGS_INITIAL_WINDOW_SIZE` option for HTTP2 stream-level flow control.
-    ///
-    /// Default is currently 65,535 but may change internally to optimize for common uses.
-    pub fn http2_initial_stream_window_size(mut self, sz: impl Into<Option<u32>>) -> ClientBuilder {
-        self.config
-            .builder
-            .with_http2_builder(|b| b.initial_stream_window_size(sz.into()));
-        self
-    }
-
-    /// Sets the max connection-level flow control for HTTP2
-    ///
-    /// Default is currently 65,535 but may change internally to optimize for common uses.
-    pub fn http2_initial_connection_window_size(
-        mut self,
-        sz: impl Into<Option<u32>>,
-    ) -> ClientBuilder {
-        self.config
-            .builder
-            .with_http2_builder(|b| b.initial_connection_window_size(sz.into()));
-        self
-    }
-
-    /// Sets whether to use an adaptive flow control.
-    ///
-    /// Enabling this will override the limits set in `http2_initial_stream_window_size` and
-    /// `http2_initial_connection_window_size`.
-    pub fn http2_adaptive_window(mut self, enabled: bool) -> ClientBuilder {
-        self.config
-            .builder
-            .with_http2_builder(|b| b.adaptive_window(enabled));
-        self
-    }
-
-    /// Sets the maximum frame size to use for HTTP2.
-    ///
-    /// Default is currently 16,384 but may change internally to optimize for common uses.
-    pub fn http2_max_frame_size(mut self, sz: impl Into<Option<u32>>) -> ClientBuilder {
-        self.config
-            .builder
-            .with_http2_builder(|b| b.max_frame_size(sz.into()));
-        self
-    }
-
-    /// Sets the maximum concurrent streams to use for HTTP2.
-    ///
-    /// Passing `None` will do nothing.
-    pub fn http2_max_concurrent_streams(mut self, sz: impl Into<Option<u32>>) -> ClientBuilder {
-        if let Some(max) = sz.into() {
-            self.config
-                .builder
-                .with_http2_builder(|b| b.max_concurrent_streams(max));
-        }
-        self
-    }
-
-    /// Sets the max header list size to use for HTTP2.
-    ///
-    /// Passing `None` will do nothing.
-    pub fn http2_max_header_list_size(mut self, sz: impl Into<Option<u32>>) -> ClientBuilder {
-        if let Some(sz) = sz.into() {
-            self.config
-                .builder
-                .with_http2_builder(|b| b.max_header_list_size(sz));
-        }
-        self
-    }
-
-    /// Enables and disables the push feature for HTTP2.
-    ///
-    /// Passing `None` will do nothing.
-    pub fn http2_enable_push(mut self, sz: impl Into<Option<bool>>) -> ClientBuilder {
-        if let Some(sz) = sz.into() {
-            self.config
-                .builder
-                .with_http2_builder(|b| b.enable_push(sz));
-        }
-        self
-    }
-
-    /// Http2 unknown_setting8
-    pub fn http2_unknown_setting8(mut self, sz: impl Into<Option<bool>>) -> ClientBuilder {
-        if let Some(sz) = sz.into() {
-            self.config
-                .builder
-                .with_http2_builder(|b| b.unknown_setting8(sz));
-        }
-        self
-    }
-
-    /// Http2 unknown_setting9
-    pub fn http2_unknown_setting9(mut self, sz: impl Into<Option<bool>>) -> ClientBuilder {
-        if let Some(sz) = sz.into() {
-            self.config
-                .builder
-                .with_http2_builder(|b| b.unknown_setting9(sz));
-        }
-        self
-    }
-
-    /// Sets the header table size to use for HTTP2.
-    ///
-    /// Passing `None` will do nothing.
-    pub fn http2_header_table_size(mut self, sz: impl Into<Option<u32>>) -> ClientBuilder {
-        if let Some(sz) = sz.into() {
-            self.config
-                .builder
-                .with_http2_builder(|b| b.header_table_size(sz));
-        }
-        self
-    }
-
-    /// Sets the pseudo header order for HTTP2.
-    /// This is an array of 4 elements, each element is a `PseudoOrder` enum.
-    /// Default is `None`.
-    pub fn http2_headers_pseudo_order(
-        mut self,
-        order: impl Into<Option<[hyper::PseudoOrder; 4]>>,
-    ) -> ClientBuilder {
-        self.config
-            .builder
-            .with_http2_builder(|b| b.headers_pseudo_order(order.into()));
-        self
-    }
-
-    /// Sets the priority for HTTP2 headers.
-    /// Default is `None`.
-    pub fn http2_headers_priority(
-        mut self,
-        priority: impl Into<Option<hyper::StreamDependency>>,
-    ) -> ClientBuilder {
-        self.config
-            .builder
-            .with_http2_builder(|b| b.headers_priority(priority.into()));
-        self
-    }
-
-    /// Sets the settings order for HTTP2.
-    /// This is an array of 2 elements, each element is a `SettingsOrder` enum.
-    /// Default is `None`.
-    pub fn http2_settings_order(
-        mut self,
-        order: impl Into<Option<[hyper::SettingsOrder; 8]>>,
-    ) -> ClientBuilder {
-        self.config
-            .builder
-            .with_http2_builder(|b| b.settings_order(order.into()));
-        self
-    }
-
-    /// Sets an interval for HTTP2 Ping frames should be sent to keep a connection alive.
-    ///
-    /// Pass `None` to disable HTTP2 keep-alive.
-    /// Default is currently disabled.
-    pub fn http2_keep_alive_interval(
-        mut self,
-        interval: impl Into<Option<Duration>>,
-    ) -> ClientBuilder {
-        self.config
-            .builder
-            .with_http2_builder(|b| b.keep_alive_interval(interval.into()));
-        self
-    }
-
-    /// Sets a timeout for receiving an acknowledgement of the keep-alive ping.
-    ///
-    /// If the ping is not acknowledged within the timeout, the connection will be closed.
-    /// Does nothing if `http2_keep_alive_interval` is disabled.
-    /// Default is currently disabled.
-    pub fn http2_keep_alive_timeout(mut self, timeout: Duration) -> ClientBuilder {
-        self.config
-            .builder
-            .with_http2_builder(|b| b.keep_alive_timeout(timeout));
-        self
-    }
-
-    /// Sets whether HTTP2 keep-alive should apply while the connection is idle.
-    ///
-    /// If disabled, keep-alive pings are only sent while there are open request/responses streams.
-    /// If enabled, pings are also sent when no streams are active.
-    /// Does nothing if `http2_keep_alive_interval` is disabled.
-    /// Default is `false`.
-    pub fn http2_keep_alive_while_idle(mut self, enabled: bool) -> ClientBuilder {
-        self.config
-            .builder
-            .with_http2_builder(|b| b.keep_alive_while_idle(enabled));
+    /// With http1/http2 builder
+    pub fn with_http_builder<F>(mut self, f: F) -> ClientBuilder
+    where
+        F: FnOnce(&mut Builder) -> &mut Builder,
+    {
+        f(&mut self.config.builder);
         self
     }
 
@@ -1538,7 +1315,11 @@ impl Client {
 
         let in_flight = {
             let extension = self.inner.hyper.pool_key_extension(&uri);
-            let req = InnerRequest::new(version, uri, &method, headers.clone())
+            let req = InnerRequest::new()
+                .version(version)
+                .uri(uri)
+                .method(method.clone())
+                .headers(headers.clone())
                 .headers_order(self.inner.headers_order.as_deref())
                 .extension(extension)
                 .build(body);
@@ -2019,7 +1800,11 @@ impl PendingRequest {
 
         *self.as_mut().in_flight().get_mut() = {
             let extension = self.client.hyper.pool_key_extension(&uri);
-            let req = InnerRequest::new(self.version, uri, &self.method, self.headers.clone())
+            let req = InnerRequest::new()
+                .version(self.version)
+                .uri(uri)
+                .method(self.method.clone())
+                .headers(self.headers.clone())
                 .headers_order(self.client.headers_order.as_deref())
                 .extension(extension)
                 .build(body);
@@ -2262,15 +2047,14 @@ impl Future for PendingRequest {
 
                             *self.as_mut().in_flight().get_mut() = {
                                 let extension = self.client.hyper.pool_key_extension(&uri);
-                                let req = InnerRequest::new(
-                                    self.version,
-                                    uri,
-                                    &self.method,
-                                    headers.clone(),
-                                )
-                                .headers_order(self.client.headers_order.as_deref())
-                                .extension(extension)
-                                .build(body);
+                                let req = InnerRequest::new()
+                                    .version(self.version)
+                                    .uri(uri)
+                                    .method(self.method.clone())
+                                    .headers(headers.clone())
+                                    .headers_order(self.client.headers_order.as_deref())
+                                    .extension(extension)
+                                    .build(body);
                                 std::mem::swap(self.as_mut().headers(), &mut headers);
                                 ResponseFuture::Default(self.client.hyper.request(req))
                             };

@@ -28,16 +28,14 @@ type TlsResult<T> = Result<T, ErrorStack>;
 #[derive(Clone)]
 #[allow(missing_debug_implementations)]
 pub struct BoringTlsConnector {
-    connect_layer: HttpsLayer,
+    inner: HttpsLayer,
 }
 
 impl BoringTlsConnector {
     /// Create a new `BoringTlsConnector` with the given function.
     #[inline]
     pub fn new(settings: TlsSettings) -> TlsResult<BoringTlsConnector> {
-        connect_layer(settings).map(|layer| Self {
-            connect_layer: layer,
-        })
+        connect_layer(settings).map(|layer| Self { inner: layer })
     }
 
     /// Create a new `HttpsConnector` with the settings from the `HttpConnector`.
@@ -48,7 +46,7 @@ impl BoringTlsConnector {
         ws: bool,
     ) -> HttpsConnector<HttpConnector> {
         // Create the `HttpsConnector` with the given `HttpConnector` and `ConnectLayer`.
-        let mut http = HttpsConnector::with_connector_layer(http, self.connect_layer.clone());
+        let mut http = HttpsConnector::with_connector_layer(http, self.inner.clone());
         http.set_ssl_callback(move |ssl, _| {
             // Set websocket use http1 alpn proto
             if ws {

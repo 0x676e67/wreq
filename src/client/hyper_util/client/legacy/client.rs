@@ -1065,220 +1065,6 @@ impl Builder {
         self
     }
 
-    // HTTP/1 options
-
-    /// Sets the exact size of the read buffer to *always* use.
-    ///
-    /// Note that setting this option unsets the `http1_max_buf_size` option.
-    ///
-    /// Default is an adaptive read buffer.
-
-    #[cfg_attr(docsrs, doc(cfg(feature = "http1")))]
-    pub fn http1_read_buf_exact_size(&mut self, sz: usize) -> &mut Self {
-        self.h1_builder.read_buf_exact_size(Some(sz));
-        self
-    }
-
-    /// Set the maximum buffer size for the connection.
-    ///
-    /// Default is ~400kb.
-    ///
-    /// Note that setting this option unsets the `http1_read_exact_buf_size` option.
-    ///
-    /// # Panics
-    ///
-    /// The minimum value allowed is 8192. This method panics if the passed `max` is less than the minimum.
-
-    #[cfg_attr(docsrs, doc(cfg(feature = "http1")))]
-    pub fn http1_max_buf_size(&mut self, max: usize) -> &mut Self {
-        self.h1_builder.max_buf_size(max);
-        self
-    }
-
-    /// Set whether HTTP/1 connections will accept spaces between header names
-    /// and the colon that follow them in responses.
-    ///
-    /// Newline codepoints (`\r` and `\n`) will be transformed to spaces when
-    /// parsing.
-    ///
-    /// You probably don't need this, here is what [RFC 7230 Section 3.2.4.] has
-    /// to say about it:
-    ///
-    /// > No whitespace is allowed between the header field-name and colon. In
-    /// > the past, differences in the handling of such whitespace have led to
-    /// > security vulnerabilities in request routing and response handling. A
-    /// > server MUST reject any received request message that contains
-    /// > whitespace between a header field-name and colon with a response code
-    /// > of 400 (Bad Request). A proxy MUST remove any such whitespace from a
-    /// > response message before forwarding the message downstream.
-    ///
-    /// Note that this setting does not affect HTTP/2.
-    ///
-    /// Default is false.
-    ///
-    /// [RFC 7230 Section 3.2.4.]: https://tools.ietf.org/html/rfc7230#section-3.2.4
-
-    #[cfg_attr(docsrs, doc(cfg(feature = "http1")))]
-    pub fn http1_allow_spaces_after_header_name_in_responses(&mut self, val: bool) -> &mut Self {
-        self.h1_builder
-            .allow_spaces_after_header_name_in_responses(val);
-        self
-    }
-
-    /// Set whether HTTP/1 connections will accept obsolete line folding for
-    /// header values.
-    ///
-    /// You probably don't need this, here is what [RFC 7230 Section 3.2.4.] has
-    /// to say about it:
-    ///
-    /// > A server that receives an obs-fold in a request message that is not
-    /// > within a message/http container MUST either reject the message by
-    /// > sending a 400 (Bad Request), preferably with a representation
-    /// > explaining that obsolete line folding is unacceptable, or replace
-    /// > each received obs-fold with one or more SP octets prior to
-    /// > interpreting the field value or forwarding the message downstream.
-    ///
-    /// > A proxy or gateway that receives an obs-fold in a response message
-    /// > that is not within a message/http container MUST either discard the
-    /// > message and replace it with a 502 (Bad Gateway) response, preferably
-    /// > with a representation explaining that unacceptable line folding was
-    /// > received, or replace each received obs-fold with one or more SP
-    /// > octets prior to interpreting the field value or forwarding the
-    /// > message downstream.
-    ///
-    /// > A user agent that receives an obs-fold in a response message that is
-    /// > not within a message/http container MUST replace each received
-    /// > obs-fold with one or more SP octets prior to interpreting the field
-    /// > value.
-    ///
-    /// Note that this setting does not affect HTTP/2.
-    ///
-    /// Default is false.
-    ///
-    /// [RFC 7230 Section 3.2.4.]: https://tools.ietf.org/html/rfc7230#section-3.2.4
-
-    #[cfg_attr(docsrs, doc(cfg(feature = "http1")))]
-    pub fn http1_allow_obsolete_multiline_headers_in_responses(&mut self, val: bool) -> &mut Self {
-        self.h1_builder
-            .allow_obsolete_multiline_headers_in_responses(val);
-        self
-    }
-
-    /// Sets whether invalid header lines should be silently ignored in HTTP/1 responses.
-    ///
-    /// This mimics the behaviour of major browsers. You probably don't want this.
-    /// You should only want this if you are implementing a proxy whose main
-    /// purpose is to sit in front of browsers whose users access arbitrary content
-    /// which may be malformed, and they expect everything that works without
-    /// the proxy to keep working with the proxy.
-    ///
-    /// This option will prevent Hyper's client from returning an error encountered
-    /// when parsing a header, except if the error was caused by the character NUL
-    /// (ASCII code 0), as Chrome specifically always reject those.
-    ///
-    /// The ignorable errors are:
-    /// * empty header names;
-    /// * characters that are not allowed in header names, except for `\0` and `\r`;
-    /// * when `allow_spaces_after_header_name_in_responses` is not enabled,
-    ///   spaces and tabs between the header name and the colon;
-    /// * missing colon between header name and colon;
-    /// * characters that are not allowed in header values except for `\0` and `\r`.
-    ///
-    /// If an ignorable error is encountered, the parser tries to find the next
-    /// line in the input to resume parsing the rest of the headers. An error
-    /// will be emitted nonetheless if it finds `\0` or a lone `\r` while
-    /// looking for the next line.
-
-    #[cfg_attr(docsrs, doc(cfg(feature = "http1")))]
-    pub fn http1_ignore_invalid_headers_in_responses(&mut self, val: bool) -> &mut Builder {
-        self.h1_builder.ignore_invalid_headers_in_responses(val);
-        self
-    }
-
-    /// Set whether HTTP/1 connections should try to use vectored writes,
-    /// or always flatten into a single buffer.
-    ///
-    /// Note that setting this to false may mean more copies of body data,
-    /// but may also improve performance when an IO transport doesn't
-    /// support vectored writes well, such as most TLS implementations.
-    ///
-    /// Setting this to true will force hyper to use queued strategy
-    /// which may eliminate unnecessary cloning on some TLS backends
-    ///
-    /// Default is `auto`. In this mode hyper will try to guess which
-    /// mode to use
-
-    #[cfg_attr(docsrs, doc(cfg(feature = "http1")))]
-    pub fn http1_writev(&mut self, enabled: bool) -> &mut Builder {
-        self.h1_builder.writev(enabled);
-        self
-    }
-
-    /// Set whether HTTP/1 connections will write header names as title case at
-    /// the socket level.
-    ///
-    /// Note that this setting does not affect HTTP/2.
-    ///
-    /// Default is false.
-
-    #[cfg_attr(docsrs, doc(cfg(feature = "http1")))]
-    pub fn http1_title_case_headers(&mut self, val: bool) -> &mut Self {
-        self.h1_builder.title_case_headers(val);
-        self
-    }
-
-    /// Set whether to support preserving original header cases.
-    ///
-    /// Currently, this will record the original cases received, and store them
-    /// in a private extension on the `Response`. It will also look for and use
-    /// such an extension in any provided `Request`.
-    ///
-    /// Since the relevant extension is still private, there is no way to
-    /// interact with the original cases. The only effect this can have now is
-    /// to forward the cases in a proxy-like fashion.
-    ///
-    /// Note that this setting does not affect HTTP/2.
-    ///
-    /// Default is false.
-
-    #[cfg_attr(docsrs, doc(cfg(feature = "http1")))]
-    pub fn http1_preserve_header_case(&mut self, val: bool) -> &mut Self {
-        self.h1_builder.preserve_header_case(val);
-        self
-    }
-
-    /// Set the maximum number of headers.
-    ///
-    /// When a response is received, the parser will reserve a buffer to store headers for optimal
-    /// performance.
-    ///
-    /// If client receives more headers than the buffer size, the error "message header too large"
-    /// is returned.
-    ///
-    /// The headers is allocated on the stack by default, which has higher performance. After
-    /// setting this value, headers will be allocated in heap memory, that is, heap memory
-    /// allocation will occur for each response, and there will be a performance drop of about 5%.
-    ///
-    /// Note that this setting does not affect HTTP/2.
-    ///
-    /// Default is 100.
-
-    #[cfg_attr(docsrs, doc(cfg(feature = "http1")))]
-    pub fn http1_max_headers(&mut self, val: usize) -> &mut Self {
-        self.h1_builder.max_headers(val);
-        self
-    }
-
-    /// Set whether HTTP/0.9 responses should be tolerated.
-    ///
-    /// Default is false.
-
-    #[cfg_attr(docsrs, doc(cfg(feature = "http1")))]
-    pub fn http09_responses(&mut self, val: bool) -> &mut Self {
-        self.h1_builder.http09_responses(val);
-        self
-    }
-
     /// Set whether the connection **must** use HTTP/2.
     ///
     /// The destination must either allow HTTP2 Prior Knowledge, or the
@@ -1293,6 +1079,17 @@ impl Builder {
     pub fn http2_only(&mut self, val: bool) -> &mut Self {
         self.client_config.ver = if val { Ver::Http2 } else { Ver::Auto };
         self
+    }
+
+    /// With http1 builder
+    #[inline]
+    pub(crate) fn with_http1_builder<F>(&mut self, f: F)
+    where
+        F: FnOnce(
+            &mut hyper::client::conn::http1::Builder,
+        ) -> &mut hyper::client::conn::http1::Builder,
+    {
+        f(&mut self.h1_builder);
     }
 
     /// With http2 builder
@@ -1386,7 +1183,6 @@ impl Builder {
             exec: exec.clone(),
 
             h1_builder: self.h1_builder.clone(),
-
             h2_builder: self.h2_builder.clone(),
             connector,
             pool: pool::Pool::new(self.pool_config, exec, timer),
