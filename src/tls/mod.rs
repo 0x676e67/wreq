@@ -32,6 +32,7 @@ pub struct BoringTlsConnector {
     inner: HttpsLayer,
 }
 
+
 impl BoringTlsConnector {
     /// Create a new `BoringTlsConnector` with the given function.
     #[inline]
