@@ -93,7 +93,7 @@ fn header_initializer_with_zstd(ua: &'static str) -> HeaderMap {
 mod tls {
     use std::sync::LazyLock;
 
-    use crate::tls::impersonate::tls_imports::*;
+    use crate::tls::mimic::tls_imports::*;
 
     pub const OLD_CURVES: &[SslCurve] = &[
         SslCurve::X25519,
@@ -271,7 +271,7 @@ mod tls {
 
 // ============== http2 settings ==============
 mod http2 {
-    use crate::tls::impersonate::http2_imports::*;
+    use crate::tls::mimic::http2_imports::*;
 
     // ============== http2 headers priority ==============
     pub const HEADER_PRIORITY: (u32, u8, bool) = (0, 41, false);

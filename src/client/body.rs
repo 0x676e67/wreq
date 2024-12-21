@@ -195,9 +195,9 @@ impl Default for Body {
 }
 
 /*
-impl From<hyper::Body> for Body {
+impl From<hyper2::Body> for Body {
     #[inline]
-    fn from(body: hyper::Body) -> Body {
+    fn from(body: hyper2::Body) -> Body {
         Self {
             inner: Inner::Streaming {
                 body: Box::pin(WrapHyper(body)),
@@ -264,14 +264,14 @@ impl HttpBody for Body {
     fn poll_frame(
         mut self: Pin<&mut Self>,
         cx: &mut Context,
-    ) -> Poll<Option<Result<hyper::body::Frame<Self::Data>, Self::Error>>> {
+    ) -> Poll<Option<Result<hyper2::body::Frame<Self::Data>, Self::Error>>> {
         match self.inner {
             Inner::Reusable(ref mut bytes) => {
                 let out = bytes.split_off(0);
                 if out.is_empty() {
                     Poll::Ready(None)
                 } else {
-                    Poll::Ready(Some(Ok(hyper::body::Frame::data(out))))
+                    Poll::Ready(Some(Ok(hyper2::body::Frame::data(out))))
                 }
             }
             Inner::Streaming(ref mut body) => Poll::Ready(
@@ -313,9 +313,9 @@ pub(crate) fn with_read_timeout<B>(body: B, timeout: Duration) -> ReadTimeoutBod
     }
 }
 
-impl<B> hyper::body::Body for TotalTimeoutBody<B>
+impl<B> hyper2::body::Body for TotalTimeoutBody<B>
 where
-    B: hyper::body::Body,
+    B: hyper2::body::Body,
     B::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
 {
     type Data = B::Data;
@@ -324,7 +324,7 @@ where
     fn poll_frame(
         self: Pin<&mut Self>,
         cx: &mut Context,
-    ) -> Poll<Option<Result<hyper::body::Frame<Self::Data>, Self::Error>>> {
+    ) -> Poll<Option<Result<hyper2::body::Frame<Self::Data>, Self::Error>>> {
         let this = self.project();
         if let Poll::Ready(()) = this.timeout.as_mut().poll(cx) {
             return Poll::Ready(Some(Err(crate::error::body(crate::error::TimedOut))));
@@ -346,9 +346,9 @@ where
     }
 }
 
-impl<B> hyper::body::Body for ReadTimeoutBody<B>
+impl<B> hyper2::body::Body for ReadTimeoutBody<B>
 where
-    B: hyper::body::Body,
+    B: hyper2::body::Body,
     B::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
 {
     type Data = B::Data;
@@ -357,7 +357,7 @@ where
     fn poll_frame(
         self: Pin<&mut Self>,
         cx: &mut Context,
-    ) -> Poll<Option<Result<hyper::body::Frame<Self::Data>, Self::Error>>> {
+    ) -> Poll<Option<Result<hyper2::body::Frame<Self::Data>, Self::Error>>> {
         let mut this = self.project();
 
         // Start the `Sleep` if not active.
@@ -396,7 +396,7 @@ pub(crate) type ResponseBody =
 
 pub(crate) fn boxed<B>(body: B) -> ResponseBody
 where
-    B: hyper::body::Body<Data = Bytes> + Send + Sync + 'static,
+    B: hyper2::body::Body<Data = Bytes> + Send + Sync + 'static,
     B::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
 {
     use http_body_util::BodyExt;
@@ -410,7 +410,7 @@ pub(crate) fn response<B>(
     read_timeout: Option<Duration>,
 ) -> ResponseBody
 where
-    B: hyper::body::Body<Data = Bytes> + Send + Sync + 'static,
+    B: hyper2::body::Body<Data = Bytes> + Send + Sync + 'static,
     B::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
 {
     use http_body_util::BodyExt;

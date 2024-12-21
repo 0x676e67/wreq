@@ -59,8 +59,8 @@
 //! [`HttpConnector`]: HttpConnector
 //! [`Service`]: tower_service::Service
 //! [`Uri`]: ::http::Uri
-//! [`Read`]: hyper::rt::Read
-//! [`Write`]: hyper::rt::Write
+//! [`Read`]: hyper2::rt::Read
+//! [`Write`]: hyper2::rt::Write
 //! [`Connection`]: Connection
 use std::{
     fmt::{self, Formatter},
@@ -301,7 +301,7 @@ pub(super) mod sealed {
     use std::future::Future;
 
     use ::http::Uri;
-    use hyper::rt::{Read, Write};
+    use hyper2::rt::{Read, Write};
 
     use crate::client::hyper_util::service;
 

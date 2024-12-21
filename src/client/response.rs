@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use bytes::Bytes;
 use http_body_util::BodyExt;
-use hyper::{HeaderMap, StatusCode, Version};
+use hyper2::{HeaderMap, StatusCode, Version};
 use hyper_util::client::legacy::connect::HttpInfo;
 #[cfg(feature = "json")]
 use serde::de::DeserializeOwned;
@@ -28,7 +28,7 @@ use mime::Mime;
 
 /// A Response to a submitted `Request`.
 pub struct Response {
-    pub(super) res: hyper::Response<Decoder>,
+    pub(super) res: hyper2::Response<Decoder>,
     // Boxed to save space (11 words to 1 word), and it's not accessed
     // frequently internally.
     url: Box<Url>,
@@ -36,7 +36,7 @@ pub struct Response {
 
 impl Response {
     pub(super) fn new(
-        res: hyper::Response<ResponseBody>,
+        res: hyper2::Response<ResponseBody>,
         url: Url,
         accepts: Accepts,
         total_timeout: Option<Pin<Box<Sleep>>>,
@@ -48,7 +48,7 @@ impl Response {
             super::body::response(body, total_timeout, read_timeout),
             accepts,
         );
-        let res = hyper::Response::from_parts(parts, decoder);
+        let res = hyper2::Response::from_parts(parts, decoder);
 
         Response {
             res,
@@ -88,7 +88,7 @@ impl Response {
     /// - The response is compressed and automatically decoded (thus changing
     ///   the actual decoded length).
     pub fn content_length(&self) -> Option<u64> {
-        use hyper::body::Body;
+        use hyper2::body::Body;
 
         Body::size_hint(self.res.body()).exact()
     }
@@ -453,7 +453,7 @@ impl<T: Into<Body>> From<http::Response<T>> for Response {
             .remove::<ResponseUrl>()
             .unwrap_or_else(|| ResponseUrl(Url::parse("http://no.url.provided.local").unwrap()));
         let url = url.0;
-        let res = hyper::Response::from_parts(parts, decoder);
+        let res = hyper2::Response::from_parts(parts, decoder);
         Response {
             res,
             url: Box::new(url),

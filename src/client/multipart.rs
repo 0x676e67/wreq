@@ -164,7 +164,7 @@ impl Form {
         Body::stream(stream.chain(last))
     }
 
-    /// Generate a hyper::Body stream for a single Part instance of a Form request.
+    /// Generate a hyper2::Body stream for a single Part instance of a Form request.
     pub(crate) fn part_stream<T>(
         &mut self,
         name: T,

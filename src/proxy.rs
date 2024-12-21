@@ -830,7 +830,7 @@ pub(crate) fn encode_basic_auth(username: &str, password: &str) -> HeaderValue {
 }
 
 /// A helper trait to allow testing `Proxy::intercept` without having to
-/// construct `hyper::client::connect::Destination`s.
+/// construct `hyper2::client::connect::Destination`s.
 pub(crate) trait Dst {
     fn scheme(&self) -> &str;
     fn host(&self) -> &str;

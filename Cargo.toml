@@ -106,11 +106,7 @@ mime_guess = { version = "2.0", default-features = false, optional = true }
 encoding_rs = { version = "0.8", optional = true }
 http-body = "1"
 http-body-util = "0.1"
-hyper = { git = "https://github.com/penumbra-x/hyper2", branch = "main", features = [
-    "http1",
-    "http2",
-    "client",
-] }
+hyper2 = { version = "1", features = ["http1", "http2", "client"] }
 log = "0.4"
 mime = "0.3.17"
 percent-encoding = "2.3"
@@ -170,12 +166,8 @@ windows-registry = "0.3.0"
 system-configuration = "0.6.0"
 
 [dev-dependencies]
-hyper = { git = "https://github.com/penumbra-x/hyper2", branch = "main", features = [
-    "http1",
-    "http2",
-    "client",
-    "server",
-] }
+hyper = { version = "1.1.0", default-features = false, features = ["http1", "http2", "client", "server"] }
+hyper-util = { version = "0.1.10", features = ["http1", "http2", "client", "client-legacy", "server-auto", "tokio"] }
 env_logger = "0.10.0"
 serde = { version = "1.0", features = ["derive"] }
 libflate = "2.0.0"
@@ -185,7 +177,7 @@ tokio = { version = "1.0", default-features = false, features = [
     "macros",
     "rt-multi-thread",
 ] }
-futures = { version = "0.3.0", default-features = false }
+futures = { version = "0.3.0", default-features = false, features = ["std"] }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "charset", "http2", "macos-system-configuration"]}
 
 [[example]]
@@ -306,6 +298,11 @@ required-features = ["brotli"]
 name = "deflate"
 path = "tests/deflate.rs"
 required-features = ["deflate"]
+
+[[test]]
+name = "zstd"
+path = "tests/zstd.rs"
+required-features = ["zstd", "stream"]
 
 [[test]]
 name = "multipart"

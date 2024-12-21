@@ -8,7 +8,7 @@
 #![allow(missing_docs)]
 mod conn;
 mod ext;
-mod impersonate;
+mod mimic;
 mod settings;
 
 use crate::connect::HttpConnector;
@@ -19,7 +19,7 @@ use boring::{
 pub use conn::MaybeHttpsStream;
 use conn::{HttpsConnector, HttpsLayer, HttpsLayerSettings};
 pub use ext::{cert_compression, TlsConnectExtension, TlsExtension};
-pub use impersonate::{chrome, firefox, okhttp, safari, tls_settings, Impersonate};
+pub use mimic::{chrome, firefox, okhttp, safari, tls_settings, Impersonate};
 pub use settings::{Http2Settings, ImpersonateSettings, RootCertsStore, TlsSettings};
 
 type TlsResult<T> = Result<T, ErrorStack>;

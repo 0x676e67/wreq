@@ -12,7 +12,7 @@ use crate::HttpVersionPref;
 use boring::ex_data::Index;
 use boring::ssl::Ssl;
 use cache::SessionKey;
-use hyper::rt::{Read, ReadBufCursor, Write};
+use hyper2::rt::{Read, ReadBufCursor, Write};
 use std::fmt;
 use std::io::IoSlice;
 use std::pin::Pin;

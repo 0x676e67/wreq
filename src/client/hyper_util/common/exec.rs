@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-use hyper::rt::Executor;
+use hyper2::rt::Executor;
 use std::fmt;
 use std::future::Future;
 use std::pin::Pin;
@@ -43,7 +43,7 @@ impl fmt::Debug for Exec {
     }
 }
 
-impl<F> hyper::rt::Executor<F> for Exec
+impl<F> hyper2::rt::Executor<F> for Exec
 where
     F: Future<Output = ()> + Send + 'static,
 {

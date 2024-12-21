@@ -6,7 +6,7 @@ impl<T> SyncWrapper<T> {
     /// # Examples
     ///
     /// ```ignore
-    /// use hyper::common::sync_wrapper::SyncWrapper;
+    /// use hyper2::common::sync_wrapper::SyncWrapper;
     ///
     /// let wrapped = SyncWrapper::new(42);
     /// ```
@@ -27,7 +27,7 @@ impl<T> SyncWrapper<T> {
     /// # Examples
     ///
     /// ```ignore
-    /// use hyper::common::sync_wrapper::SyncWrapper;
+    /// use hyper2::common::sync_wrapper::SyncWrapper;
     ///
     /// let mut wrapped = SyncWrapper::new(42);
     /// let value = wrapped.get_mut();
@@ -51,7 +51,7 @@ impl<T> SyncWrapper<T> {
     /// # Examples
     ///
     /// ```ignore
-    /// use hyper::common::sync_wrapper::SyncWrapper;
+    /// use hyper2::common::sync_wrapper::SyncWrapper;
     ///
     /// let mut wrapped = SyncWrapper::new(42);
     /// assert_eq!(wrapped.into_inner(), 42);

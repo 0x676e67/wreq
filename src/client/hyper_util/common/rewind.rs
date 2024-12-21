@@ -1,7 +1,7 @@
 use std::{cmp, io};
 
 use bytes::{Buf, Bytes};
-use hyper::rt::{Read, ReadBufCursor, Write};
+use hyper2::rt::{Read, ReadBufCursor, Write};
 
 use std::{
     pin::Pin,

@@ -1,5 +1,4 @@
 mod support;
-use rquest;
 use support::server;
 
 #[tokio::test]
@@ -22,7 +21,7 @@ async fn cookie_response_accessor() {
             .unwrap()
     });
 
-    let client = rquest::Client::new();
+    let client = reqwest::Client::new();
 
     let url = format!("http://{}/", server.addr());
     let res = client.get(&url).send().await.unwrap();
@@ -84,7 +83,7 @@ async fn cookie_store_simple() {
             .unwrap()
     });
 
-    let client = rquest::Client::builder()
+    let client = reqwest::Client::builder()
         .cookie_store(true)
         .build()
         .unwrap();
@@ -117,7 +116,7 @@ async fn cookie_store_overwrite_existing() {
         }
     });
 
-    let client = rquest::Client::builder()
+    let client = reqwest::Client::builder()
         .cookie_store(true)
         .build()
         .unwrap();
@@ -142,7 +141,7 @@ async fn cookie_store_max_age() {
             .unwrap()
     });
 
-    let client = rquest::Client::builder()
+    let client = reqwest::Client::builder()
         .cookie_store(true)
         .build()
         .unwrap();
@@ -164,7 +163,7 @@ async fn cookie_store_expires() {
             .unwrap()
     });
 
-    let client = rquest::Client::builder()
+    let client = reqwest::Client::builder()
         .cookie_store(true)
         .build()
         .unwrap();
@@ -190,7 +189,7 @@ async fn cookie_store_path() {
         }
     });
 
-    let client = rquest::Client::builder()
+    let client = reqwest::Client::builder()
         .cookie_store(true)
         .build()
         .unwrap();

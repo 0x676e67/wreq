@@ -347,7 +347,7 @@ pub use self::client::{
 pub use self::proxy::{NoProxy, Proxy};
 
 #[cfg(feature = "boring-tls")]
-pub use hyper::{PseudoOrder, SettingsOrder};
+pub use hyper2::{PseudoOrder, SettingsOrder};
 
 mod client;
 mod connect;

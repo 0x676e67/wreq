@@ -11,7 +11,7 @@ use boring::ssl::{
 };
 use http::uri::Scheme;
 use http::Uri;
-use hyper::rt::{Read, Write};
+use hyper2::rt::{Read, Write};
 use std::error::Error;
 use std::fmt;
 use std::future::Future;

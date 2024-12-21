@@ -120,6 +120,6 @@ pub(crate) fn sort_headers(headers: &mut HeaderMap, headers_order: &[HeaderName]
 #[inline]
 pub(crate) fn convert_headers_priority(
     headers_priority: Option<(u32, u8, bool)>,
-) -> Option<hyper::StreamDependency> {
-    headers_priority.map(|(a, b, c)| hyper::StreamDependency::new(hyper::StreamId::from(a), b, c))
+) -> Option<hyper2::StreamDependency> {
+    headers_priority.map(|(a, b, c)| hyper2::StreamDependency::new(hyper2::StreamId::from(a), b, c))
 }

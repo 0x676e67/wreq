@@ -7,7 +7,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use hyper::rt::{Executor, Sleep, Timer};
+use hyper2::rt::{Executor, Sleep, Timer};
 use pin_project_lite::pin_project;
 
 /// Future executor that utilises `tokio` threads.
@@ -84,14 +84,14 @@ impl<T> TokioIo<T> {
     }
 }
 
-impl<T> hyper::rt::Read for TokioIo<T>
+impl<T> hyper2::rt::Read for TokioIo<T>
 where
     T: tokio::io::AsyncRead,
 {
     fn poll_read(
         self: Pin<&mut Self>,
         cx: &mut Context<'_>,
-        mut buf: hyper::rt::ReadBufCursor<'_>,
+        mut buf: hyper2::rt::ReadBufCursor<'_>,
     ) -> Poll<Result<(), std::io::Error>> {
         let n = unsafe {
             let mut tbuf = tokio::io::ReadBuf::uninit(buf.as_mut());
@@ -108,7 +108,7 @@ where
     }
 }
 
-impl<T> hyper::rt::Write for TokioIo<T>
+impl<T> hyper2::rt::Write for TokioIo<T>
 where
     T: tokio::io::AsyncWrite,
 {
@@ -146,7 +146,7 @@ where
 
 impl<T> tokio::io::AsyncRead for TokioIo<T>
 where
-    T: hyper::rt::Read,
+    T: hyper2::rt::Read,
 {
     fn poll_read(
         self: Pin<&mut Self>,
@@ -156,9 +156,9 @@ where
         //let init = tbuf.initialized().len();
         let filled = tbuf.filled().len();
         let sub_filled = unsafe {
-            let mut buf = hyper::rt::ReadBuf::uninit(tbuf.unfilled_mut());
+            let mut buf = hyper2::rt::ReadBuf::uninit(tbuf.unfilled_mut());
 
-            match hyper::rt::Read::poll_read(self.project().inner, cx, buf.unfilled()) {
+            match hyper2::rt::Read::poll_read(self.project().inner, cx, buf.unfilled()) {
                 Poll::Ready(Ok(())) => buf.filled().len(),
                 other => return other,
             }
@@ -178,29 +178,29 @@ where
 
 impl<T> tokio::io::AsyncWrite for TokioIo<T>
 where
-    T: hyper::rt::Write,
+    T: hyper2::rt::Write,
 {
     fn poll_write(
         self: Pin<&mut Self>,
         cx: &mut Context<'_>,
         buf: &[u8],
     ) -> Poll<Result<usize, std::io::Error>> {
-        hyper::rt::Write::poll_write(self.project().inner, cx, buf)
+        hyper2::rt::Write::poll_write(self.project().inner, cx, buf)
     }
 
     fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), std::io::Error>> {
-        hyper::rt::Write::poll_flush(self.project().inner, cx)
+        hyper2::rt::Write::poll_flush(self.project().inner, cx)
     }
 
     fn poll_shutdown(
         self: Pin<&mut Self>,
         cx: &mut Context<'_>,
     ) -> Poll<Result<(), std::io::Error>> {
-        hyper::rt::Write::poll_shutdown(self.project().inner, cx)
+        hyper2::rt::Write::poll_shutdown(self.project().inner, cx)
     }
 
     fn is_write_vectored(&self) -> bool {
-        hyper::rt::Write::is_write_vectored(&self.inner)
+        hyper2::rt::Write::is_write_vectored(&self.inner)
     }
 
     fn poll_write_vectored(
@@ -208,7 +208,7 @@ where
         cx: &mut Context<'_>,
         bufs: &[std::io::IoSlice<'_>],
     ) -> Poll<Result<usize, std::io::Error>> {
-        hyper::rt::Write::poll_write_vectored(self.project().inner, cx, bufs)
+        hyper2::rt::Write::poll_write_vectored(self.project().inner, cx, bufs)
     }
 }
 

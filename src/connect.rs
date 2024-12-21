@@ -10,7 +10,7 @@ use crate::tls::{BoringTlsConnector, MaybeHttpsStream};
 use http::header::HeaderValue;
 use http::uri::{Authority, Scheme};
 use http::Uri;
-use hyper::rt::{Read, ReadBufCursor, Write};
+use hyper2::rt::{Read, ReadBufCursor, Write};
 use tokio_boring::SslStream;
 use tower_service::Service;
 
@@ -782,7 +782,7 @@ mod boring_tls_conn {
         },
         tls::MaybeHttpsStream,
     };
-    use hyper::rt::{Read, ReadBufCursor, Write};
+    use hyper2::rt::{Read, ReadBufCursor, Write};
     use pin_project_lite::pin_project;
     use std::{
         io::{self, IoSlice},
@@ -956,7 +956,7 @@ mod socks {
 
 mod verbose {
     use crate::client::hyper_util::client::legacy::connect::{Connected, Connection};
-    use hyper::rt::{Read, ReadBufCursor, Write};
+    use hyper2::rt::{Read, ReadBufCursor, Write};
     use std::cmp::min;
     use std::fmt;
     use std::io::{self, IoSlice};
@@ -1002,7 +1002,7 @@ mod verbose {
             // TODO: This _does_ forget the `init` len, so it could result in
             // re-initializing twice. Needs upstream support, perhaps.
             // SAFETY: Passing to a ReadBuf will never de-initialize any bytes.
-            let mut vbuf = hyper::rt::ReadBuf::uninit(unsafe { buf.as_mut() });
+            let mut vbuf = hyper2::rt::ReadBuf::uninit(unsafe { buf.as_mut() });
             match Pin::new(&mut self.inner).poll_read(cx, vbuf.unfilled()) {
                 Poll::Ready(Ok(())) => {
                     log::trace!("{:08x} read: {:?}", self.id, Escape(vbuf.filled()));

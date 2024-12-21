@@ -11,7 +11,7 @@ use boring::{
     x509::store::X509Store,
 };
 use http::{HeaderMap, HeaderName};
-use hyper::{PseudoOrder, SettingsOrder};
+use hyper2::{PseudoOrder, SettingsOrder};
 use typed_builder::TypedBuilder;
 
 /// Impersonate Settings.

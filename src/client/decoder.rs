@@ -31,8 +31,8 @@ use futures_core::Stream;
 
 use bytes::Bytes;
 use http::HeaderMap;
-use hyper::body::Body as HttpBody;
-use hyper::body::Frame;
+use hyper2::body::Body as HttpBody;
+use hyper2::body::Frame;
 
 #[cfg(any(
     feature = "gzip",

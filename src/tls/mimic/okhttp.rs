@@ -5,7 +5,7 @@ use tls::*;
 macro_rules! okhttp_mod_generator {
     ($mod_name:ident, $cipher_list:expr, $header_initializer:ident, $ua:expr) => {
         pub(crate) mod $mod_name {
-            use crate::tls::{impersonate::impersonate_imports::*, okhttp::*};
+            use crate::tls::{mimic::impersonate_imports::*, okhttp::*};
 
             #[inline]
             pub fn get_settings(with_headers: bool) -> ImpersonateSettings {
@@ -59,7 +59,7 @@ fn header_initializer(ua: &'static str) -> HeaderMap {
 
 // ============== TLS settings ==============
 mod tls {
-    use crate::tls::impersonate::tls_imports::*;
+    use crate::tls::mimic::tls_imports::*;
 
     pub const CURVES: &[SslCurve] = &[SslCurve::X25519, SslCurve::SECP256R1, SslCurve::SECP384R1];
 
@@ -126,7 +126,7 @@ mod tls {
 
 // ============== Http2 settings ==============
 mod http2 {
-    use crate::tls::impersonate::http2_imports::*;
+    use crate::tls::mimic::http2_imports::*;
 
     // ============== http2 headers priority ==============
     pub const HEADER_PRIORITY: (u32, u8, bool) = (0, 255, true);

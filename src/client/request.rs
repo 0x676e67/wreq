@@ -714,7 +714,7 @@ impl<'a> InnerRequest<'a> {
     #[inline]
     pub fn new() -> Self {
         Self {
-            builder: hyper::Request::builder(),
+            builder: hyper2::Request::builder(),
             headers_order: None,
             extension: None,
         }

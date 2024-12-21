@@ -1820,7 +1820,7 @@ impl PendingRequest {
 }
 
 fn is_retryable_error(err: &(dyn std::error::Error + 'static)) -> bool {
-    use hyper::h2;
+    use hyper2::h2;
 
     // pop the legacy::Error
     let err = if let Some(err) = err.source() {

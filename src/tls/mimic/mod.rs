@@ -31,8 +31,8 @@ mod tls_imports {
 }
 
 mod http2_imports {
-    pub use hyper::PseudoOrder::{self, *};
-    pub use hyper::SettingsOrder::{self, *};
+    pub use hyper2::PseudoOrder::{self, *};
+    pub use hyper2::SettingsOrder::{self, *};
 }
 
 /// Get the connection settings for the given impersonate version
