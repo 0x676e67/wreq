@@ -1278,14 +1278,14 @@ impl Client {
         self.inner.proxy_auth(&uri, &mut headers);
 
         let in_flight = {
-            let extension = self.inner.hyper.pool_key(&uri);
+            let pool_key = self.inner.hyper.pool_key(&uri);
             let req = InnerRequest::new()
                 .uri(uri)
                 .method(method.clone())
                 .version(version)
                 .headers(headers.clone())
                 .headers_order(self.inner.headers_order.as_deref())
-                .extension(extension)
+                .pool_key(pool_key)
                 .build(body);
 
             ResponseFuture::Default(self.inner.hyper.request(req))
@@ -1676,7 +1676,7 @@ pin_project! {
         headers: HeaderMap,
         body: Option<Option<Bytes>>,
 
-        version: Version,
+        version: Option<Version>,
 
         urls: Vec<Url>,
 
@@ -1754,14 +1754,14 @@ impl PendingRequest {
         };
 
         *self.as_mut().in_flight().get_mut() = {
-            let extension = self.client.hyper.pool_key(&uri);
+            let pool_key = self.client.hyper.pool_key(&uri);
             let req = InnerRequest::new()
                 .uri(uri)
                 .method(self.method.clone())
                 .version(self.version)
                 .headers(self.headers.clone())
                 .headers_order(self.client.headers_order.as_deref())
-                .extension(extension)
+                .pool_key(pool_key)
                 .build(body);
             ResponseFuture::Default(self.client.hyper.request(req))
         };
@@ -2001,14 +2001,14 @@ impl Future for PendingRequest {
                             self.client.proxy_auth(&uri, &mut headers);
 
                             *self.as_mut().in_flight().get_mut() = {
-                                let extension = self.client.hyper.pool_key(&uri);
+                                let pool_key = self.client.hyper.pool_key(&uri);
                                 let req = InnerRequest::new()
                                     .uri(uri)
                                     .method(self.method.clone())
                                     .version(self.version)
                                     .headers(headers.clone())
                                     .headers_order(self.client.headers_order.as_deref())
-                                    .extension(extension)
+                                    .pool_key(pool_key)
                                     .build(body);
                                 std::mem::swap(self.as_mut().headers(), &mut headers);
                                 ResponseFuture::Default(self.client.hyper.request(req))

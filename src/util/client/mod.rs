@@ -30,12 +30,15 @@ use log::{debug, trace, warn};
 
 use crate::util::common;
 use crate::util::ext::PoolKeyExtension;
+use crate::HttpVersionPref;
 use connect::capture::CaptureConnectionExtension;
 use connect::HttpConnector;
 use connect::{Alpn, Connect, Connected, Connection};
 use pool::Ver;
 
 use common::{lazy as hyper_lazy, timer, Exec, Lazy, SyncWrapper};
+
+use super::ext::ConnectExtension;
 
 type BoxSendFuture = Pin<Box<dyn Future<Output = ()> + Send>>;
 
@@ -110,37 +113,72 @@ macro_rules! e {
 }
 
 // We might change this... :shrug:
-type PoolKey = (
-    http::uri::Scheme,
-    http::uri::Authority,
-    Option<PoolKeyExtension>,
-);
+type PoolKey = (Uri, Option<PoolKeyExtension>);
 
 #[derive(Clone)]
-struct Context {
-    version: Version,
+pub struct ConnectRequest {
+    uri: Uri,
+    version: Option<Version>,
     pool_key: PoolKey,
 }
 
-impl Context {
-    pub fn new(pool_key: PoolKey, version: Version) -> Self {
-        Self { pool_key, version }
-    }
-}
-
-#[derive(Debug)]
-pub struct ConnectRequest {
-    uri: Uri,
-    version: Version,
-}
-
 impl ConnectRequest {
-    pub fn new(uri: Uri, version: Version) -> Self {
-        Self { uri, version }
+    pub fn new<B>(req: &mut Request<B>, is_http_connect: bool) -> Result<ConnectRequest, Error> {
+        // Extract the http version pref and the pool key extension from the request extensions.
+        // The http version pref is used to store the http version pref.
+        // The pool key extension is used to store the pool key.
+        let (version, pool_key_extension) = {
+            (
+                req.extensions_mut()
+                    .remove::<ConnectExtension<Version>>()
+                    .map(|e| e.into_inner()),
+                req.extensions_mut()
+                    .remove::<ConnectExtension<PoolKeyExtension>>()
+                    .map(|e| e.into_inner()),
+            )
+        };
+
+        let uri = req.uri_mut();
+        let pool_key = match (uri.scheme().cloned(), uri.authority().cloned()) {
+            (Some(scheme), Some(auth)) => Ok((scheme, auth, pool_key_extension)),
+            (None, Some(auth)) if is_http_connect => {
+                let scheme = match auth.port_u16() {
+                    Some(443) => {
+                        set_scheme(uri, Scheme::HTTPS);
+                        Scheme::HTTPS
+                    }
+                    _ => {
+                        set_scheme(uri, Scheme::HTTP);
+                        Scheme::HTTP
+                    }
+                };
+                Ok((scheme, auth.clone(), pool_key_extension))
+            }
+            _ => {
+                debug!("Client requires absolute-form URIs, received: {:?}", uri);
+                Err(e!(UserAbsoluteUriRequired))
+            }
+        };
+
+        pool_key
+            .and_then(|(scheme, authority, extension)| {
+                http::uri::Builder::new()
+                    .scheme(scheme)
+                    .authority(authority)
+                    .path_and_query("/")
+                    .build()
+                    .map(|uri| (uri, extension))
+                    .map_err(|_| e!(UserAbsoluteUriRequired))
+            })
+            .map(|(uri, extension)| ConnectRequest {
+                uri: uri.clone(),
+                pool_key: (uri, extension),
+                version,
+            })
     }
 
-    pub fn version(&self) -> Version {
-        self.version
+    fn pool_key(&self) -> &PoolKey {
+        &self.pool_key
     }
 
     pub fn uri(&self) -> &Uri {
@@ -150,6 +188,10 @@ impl ConnectRequest {
     pub fn uri_mut(&mut self) -> &mut Uri {
         &mut self.uri
     }
+
+    pub fn version(&self) -> Option<Version> {
+        self.version
+    }
 }
 
 impl std::ops::Deref for ConnectRequest {
@@ -157,6 +199,12 @@ impl std::ops::Deref for ConnectRequest {
 
     fn deref(&self) -> &Self::Target {
         &self.uri
+    }
+}
+
+impl std::fmt::Debug for ConnectRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.uri)
     }
 }
 
@@ -296,25 +344,25 @@ where
             other => return ResponseFuture::error_version(other),
         };
 
-        let pool_key = match extract_domain(&mut req, is_http_connect) {
+        let ctx = match ConnectRequest::new(&mut req, is_http_connect) {
             Ok(s) => s,
             Err(err) => {
                 return ResponseFuture::new(future::err(err));
             }
         };
 
-        ResponseFuture::new(self.clone().send_request(req, pool_key))
+        ResponseFuture::new(self.clone().send_request(req, ctx))
     }
 
     async fn send_request(
         self,
         mut req: Request<B>,
-        pool_key: PoolKey,
+        ctx: ConnectRequest,
     ) -> Result<Response<hyper2::body::Incoming>, Error> {
         let uri = req.uri().clone();
 
         loop {
-            req = match self.try_send_request(req, pool_key.clone()).await {
+            req = match self.try_send_request(req, ctx.clone()).await {
                 Ok(resp) => return Ok(resp),
                 Err(TrySendError::Nope(err)) => return Err(err),
                 Err(TrySendError::Retryable {
@@ -342,13 +390,10 @@ where
     async fn try_send_request(
         &self,
         mut req: Request<B>,
-        pool_key: PoolKey,
+        ctx: ConnectRequest,
     ) -> Result<Response<hyper2::body::Incoming>, TrySendError<B>> {
         let mut pooled = self
-            .connection_for(Context {
-                version: req.version(),
-                pool_key,
-            })
+            .connection_for(ctx)
             .await
             // `connection_for` already retries checkout errors, so if
             // it returns an error, there's not much else to retry
@@ -451,7 +496,7 @@ where
 
     async fn connection_for(
         &self,
-        ctx: Context,
+        ctx: ConnectRequest,
     ) -> Result<pool::Pooled<PoolClient<B>, PoolKey>, Error> {
         loop {
             match self.one_connection_for(ctx.clone()).await {
@@ -474,7 +519,7 @@ where
 
     async fn one_connection_for(
         &self,
-        ctx: Context,
+        ctx: ConnectRequest,
     ) -> Result<pool::Pooled<PoolClient<B>, PoolKey>, ClientConnectError> {
         // Return a single connection if pooling is not enabled
         if !self.pool.is_enabled() {
@@ -566,26 +611,25 @@ where
 
     fn connect_to(
         &self,
-        ctx: Context,
+        ctx: ConnectRequest,
     ) -> impl Lazy<Output = Result<pool::Pooled<PoolClient<B>, PoolKey>, Error>> + Send + Unpin
     {
         let executor = self.exec.clone();
         let pool = self.pool.clone();
-        let pool_key = ctx.pool_key;
+        let pool_key = ctx.pool_key.clone();
 
         let h1_builder = self.h1_builder.clone();
         let h2_builder = self.h2_builder.clone();
         let ver = self.config.ver;
         let is_ver_h2 = ver == Ver::Http2;
         let connector = self.connector.clone();
-        let dst = domain_as_uri(pool_key.clone());
         hyper_lazy(move || {
             // Try to take a "connecting lock".
             //
             // If the pool_key is for HTTP/2, and there is already a
             // connection being established, then this can't take a
             // second lock. The "connect_to" future is Canceled.
-            let connecting = match pool.connecting(&pool_key, ver) {
+            let connecting = match pool.connecting(ctx.pool_key(), ver) {
                 Some(lock) => lock,
                 None => {
                     let canceled = e!(Canceled);
@@ -596,7 +640,7 @@ where
             };
             Either::Left(
                 connector
-                    .connect(connect::sealed::Internal, ConnectRequest::new(dst, ctx.version))
+                    .connect(connect::sealed::Internal, ctx)
                     .map_err(|src| e!(Connect, src))
                     .and_then(move |io| {
                         let connected = io.connected();
@@ -939,40 +983,6 @@ fn authority_form(uri: &mut Uri) {
             unreachable!("authority_form with relative uri");
         }
     };
-}
-
-fn extract_domain<B>(req: &mut Request<B>, is_http_connect: bool) -> Result<PoolKey, Error> {
-    let extension = req.extensions_mut().remove::<PoolKeyExtension>();
-    let uri = req.uri_mut();
-    match (uri.scheme().cloned(), uri.authority().cloned()) {
-        (Some(scheme), Some(auth)) => Ok((scheme, auth, extension)),
-        (None, Some(auth)) if is_http_connect => {
-            let scheme = match auth.port_u16() {
-                Some(443) => {
-                    set_scheme(uri, Scheme::HTTPS);
-                    Scheme::HTTPS
-                }
-                _ => {
-                    set_scheme(uri, Scheme::HTTP);
-                    Scheme::HTTP
-                }
-            };
-            Ok((scheme, auth.clone(), extension))
-        }
-        _ => {
-            debug!("Client requires absolute-form URIs, received: {:?}", uri);
-            Err(e!(UserAbsoluteUriRequired))
-        }
-    }
-}
-
-fn domain_as_uri((scheme, auth, _): PoolKey) -> Uri {
-    http::uri::Builder::new()
-        .scheme(scheme)
-        .authority(auth)
-        .path_and_query("/")
-        .build()
-        .expect("domain is valid Uri")
 }
 
 fn set_scheme(uri: &mut Uri, scheme: Scheme) {

@@ -202,16 +202,7 @@ impl Connector {
     pub(crate) fn pool_key(&self, uri: &Uri) -> Option<PoolKeyExtension> {
         for proxy in self.proxies.as_ref() {
             if let Some(proxy_scheme) = proxy.intercept(uri) {
-                let ext = match proxy_scheme {
-                    ProxyScheme::Http { auth, .. } | ProxyScheme::Https { auth, .. } => {
-                        PoolKeyExtension::Http(uri.clone(), auth)
-                    }
-                    #[cfg(feature = "socks")]
-                    ProxyScheme::Socks4 { addr } => PoolKeyExtension::Socks4(addr, None),
-                    #[cfg(feature = "socks")]
-                    ProxyScheme::Socks5 { addr, auth, .. } => PoolKeyExtension::Socks5(addr, auth),
-                };
-                return Some(ext);
+                return Some(PoolKeyExtension::Proxy(proxy_scheme));
             }
         }
 
@@ -219,7 +210,11 @@ impl Connector {
     }
 
     #[cfg(feature = "socks")]
-    async fn connect_socks(&self, mut dst: Uri, proxy: ProxyScheme) -> Result<Conn, BoxError> {
+    async fn connect_socks(
+        &self,
+        dst: ConnectRequest,
+        proxy: ProxyScheme,
+    ) -> Result<Conn, BoxError> {
         let dns = match proxy {
             ProxyScheme::Socks4 { .. } => socks::DnsResolve::Local,
             ProxyScheme::Socks5 {
@@ -233,15 +228,13 @@ impl Connector {
             }
         };
 
-        let ws = maybe_websocket_uri(&mut dst)?;
-
         let Inner { http, tls } = &self.inner;
         if dst.scheme() == Some(&Scheme::HTTPS) {
             let host = dst.host().ok_or(crate::error::uri_bad_host())?;
-            let conn = socks::connect(proxy, dst.clone(), dns).await?;
+            let conn = socks::connect(proxy, &dst, dns).await?;
             let conn = TokioIo::new(conn);
             let conn = TokioIo::new(conn);
-            let connector = tls.create_connector(http.clone(), ws);
+            let connector = tls.create_connector(http.clone(), dst.version());
             let setup_ssl = connector.setup_ssl(&dst, host)?;
             let io = tokio_boring::SslStreamBuilder::new(setup_ssl, conn)
                 .connect()
@@ -255,7 +248,7 @@ impl Connector {
             });
         }
 
-        socks::connect(proxy, dst, dns).await.map(|tcp| Conn {
+        socks::connect(proxy, &dst, dns).await.map(|tcp| Conn {
             inner: self.verbose.wrap(TokioIo::new(tcp)),
             is_proxy: false,
             tls_info: false,
@@ -304,18 +297,16 @@ impl Connector {
         mut dst: ConnectRequest,
         proxy_scheme: ProxyScheme,
     ) -> Result<Conn, BoxError> {
-        log::debug!("proxy({:?}) intercepts '{:?}'", proxy_scheme, dst);
+        log::debug!("proxy({:?}) intercepts '{:?}'", proxy_scheme, dst.uri());
 
-        let (proxy_dst, _auth) = match proxy_scheme {
+        let (proxy_dst, auth) = match proxy_scheme {
             ProxyScheme::Http { host, auth } => (into_uri(Scheme::HTTP, host)?, auth),
             ProxyScheme::Https { host, auth } => (into_uri(Scheme::HTTPS, host)?, auth),
             #[cfg(feature = "socks")]
-            ProxyScheme::Socks4 { .. } => return self.connect_socks(dst, proxy_scheme).await,
-            #[cfg(feature = "socks")]
-            ProxyScheme::Socks5 { .. } => return self.connect_socks(dst, proxy_scheme).await,
+            ProxyScheme::Socks4 { .. } | ProxyScheme::Socks5 { .. } => {
+                return self.connect_socks(dst, proxy_scheme).await;
+            }
         };
-
-        let auth = _auth;
 
         let Inner { http, tls } = &self.inner;
         if dst.scheme() == Some(&Scheme::HTTPS) {
@@ -742,7 +733,7 @@ mod socks {
 
     pub(super) async fn connect(
         proxy: ProxyScheme,
-        dst: Uri,
+        dst: &Uri,
         dns: DnsResolve,
     ) -> Result<TcpStream, BoxError> {
         let https = dst.scheme() == Some(&Scheme::HTTPS);

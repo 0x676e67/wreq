@@ -33,7 +33,7 @@ pub struct WebSocketRequestBuilder {
 impl WebSocketRequestBuilder {
     pub(crate) fn new(inner: RequestBuilder) -> Self {
         Self {
-            inner,
+            inner: inner.version(Version::HTTP_11),
             nonce: None,
             protocols: None,
             config: WebSocketConfig::default(),
@@ -113,9 +113,6 @@ impl WebSocketRequestBuilder {
             .nonce
             .unwrap_or_else(|| tungstenite::handshake::client::generate_key());
 
-        // prepare request
-        *request.version_mut() = Version::HTTP_11;
-
         // change the scheme
         let url = request.url_mut();
         match url.scheme() {
@@ -162,7 +159,7 @@ impl WebSocketRequestBuilder {
                 );
             }
         }
-        
+
         Ok(WebSocketResponse {
             inner: client.execute(request).await?,
             nonce,
@@ -204,6 +201,14 @@ impl WebSocketResponse {
     pub async fn into_websocket(self) -> Result<WebSocket, Error> {
         let (inner, protocol) = {
             let headers = self.inner.headers();
+
+            // Check the version
+            if !matches!(self.inner.version(), Version::HTTP_11 | Version::HTTP_10) {
+                return Err(Error::new(
+                    Kind::Upgrade,
+                    Some(format!("unexpected version: {:?}", self.inner.version())),
+                ));
+            }
 
             // Check the status code
             if self.inner.status() != StatusCode::SWITCHING_PROTOCOLS {

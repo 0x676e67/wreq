@@ -95,7 +95,7 @@ pub struct NoProxy {
 /// A particular scheme used for proxying requests.
 ///
 /// For example, HTTP vs SOCKS5
-#[derive(Clone)]
+#[derive(Clone, Hash, PartialEq, Eq)]
 pub enum ProxyScheme {
     Http {
         auth: Option<HeaderValue>,

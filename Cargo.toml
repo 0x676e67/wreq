@@ -315,6 +315,16 @@ name = "base_url"
 path = "examples/base_url.rs"
 
 [[example]]
-name = "cookie_store_with_request"
-path = "examples/cookie_store_with_request.rs"
+name = "request_with_cookie_store"
+path = "examples/request_with_cookie_store.rs"
 required-features = ["cookies"]
+
+[[example]]
+name = "request_via_proxy"
+path = "examples/request_via_proxy.rs"
+required-features = ["full"]
+
+[[example]]
+name = "request_with_version"
+path = "examples/request_with_version.rs"
+required-features = ["full"]
