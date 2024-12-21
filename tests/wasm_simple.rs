@@ -14,7 +14,7 @@ extern "C" {
 
 #[wasm_bindgen_test]
 async fn simple_example() {
-    let res = reqwest::get("https://hyper.rs")
+    let res = rquest::get("https://hyper.rs")
         .await
         .expect("http get example");
     log(&format!("Status: {}", res.status()));

@@ -17,6 +17,7 @@ use std::borrow::Cow;
 use std::future::Future;
 use std::io::{self, IoSlice};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use std::ops::Deref;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
@@ -271,7 +272,7 @@ impl Connector {
         }
 
         let mut http = tls.create_connector(http, dst.version());
-        let io = http.call(dst.uri().clone()).await?;
+        let io = http.call(dst.deref().clone()).await?;
 
         if let MaybeHttpsStream::Https(stream) = io {
             if !self.nodelay {
@@ -297,7 +298,7 @@ impl Connector {
         mut dst: ConnectRequest,
         proxy_scheme: ProxyScheme,
     ) -> Result<Conn, BoxError> {
-        log::debug!("proxy({:?}) intercepts '{:?}'", proxy_scheme, dst.uri());
+        log::debug!("proxy({:?}) intercepts '{:?}'", proxy_scheme, dst);
 
         let (proxy_dst, auth) = match proxy_scheme {
             ProxyScheme::Http { host, auth } => (into_uri(Scheme::HTTP, host)?, auth),
@@ -373,11 +374,10 @@ impl Service<ConnectRequest> for Connector {
     }
 
     fn call(&mut self, dst: ConnectRequest) -> Self::Future {
-        let uri = dst.uri();
-        log::debug!("starting new connection: {:?}", uri);
+        log::debug!("starting new connection: {:?}", dst);
         let timeout = self.timeout;
         for prox in self.proxies.iter() {
-            if let Some(proxy_scheme) = prox.intercept(uri) {
+            if let Some(proxy_scheme) = prox.intercept(dst.deref()) {
                 return Box::pin(with_timeout(
                     self.clone().connect_via_proxy(dst, proxy_scheme),
                     timeout,

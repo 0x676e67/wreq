@@ -4,7 +4,6 @@ use std::pin::Pin;
 use std::time::Duration;
 
 use bytes::Bytes;
-use http_body_util::BodyExt;
 use hyper2::{HeaderMap, StatusCode, Version};
 #[cfg(feature = "json")]
 use serde::de::DeserializeOwned;
@@ -150,7 +149,7 @@ impl Response {
     ///
     /// ```
     /// # async fn run() -> Result<(), Box<dyn std::error::Error>> {
-    /// let content = reqwest::get("http://httpbin.org/range/26")
+    /// let content = rquest::get("http://httpbin.org/range/26")
     ///     .await?
     ///     .text()
     ///     .await?;
@@ -193,7 +192,7 @@ impl Response {
     ///
     /// ```
     /// # async fn run() -> Result<(), Box<dyn std::error::Error>> {
-    /// let content = reqwest::get("http://httpbin.org/range/26")
+    /// let content = rquest::get("http://httpbin.org/range/26")
     ///     .await?
     ///     .text_with_charset("utf-8")
     ///     .await?;
@@ -231,10 +230,10 @@ impl Response {
     /// # Examples
     ///
     /// ```
-    /// # extern crate reqwest;
+    /// # extern crate rquest;
     /// # extern crate serde;
     /// #
-    /// # use reqwest::Error;
+    /// # use rquest::Error;
     /// # use serde::Deserialize;
     /// #
     /// // This `derive` requires the `serde` dependency.
@@ -244,7 +243,7 @@ impl Response {
     /// }
     ///
     /// # async fn run() -> Result<(), Error> {
-    /// let ip = reqwest::get("http://httpbin.org/ip")
+    /// let ip = rquest::get("http://httpbin.org/ip")
     ///     .await?
     ///     .json::<Ip>()
     ///     .await?;
@@ -277,7 +276,7 @@ impl Response {
     ///
     /// ```
     /// # async fn run() -> Result<(), Box<dyn std::error::Error>> {
-    /// let bytes = reqwest::get("http://httpbin.org/ip")
+    /// let bytes = rquest::get("http://httpbin.org/ip")
     ///     .await?
     ///     .bytes()
     ///     .await?;
@@ -302,7 +301,7 @@ impl Response {
     ///
     /// ```
     /// # async fn run() -> Result<(), Box<dyn std::error::Error>> {
-    /// let mut res = reqwest::get("https://hyper.rs").await?;
+    /// let mut res = rquest::get("https://hyper.rs").await?;
     ///
     /// while let Some(chunk) = res.chunk().await? {
     ///     println!("Chunk: {chunk:?}");
@@ -335,7 +334,7 @@ impl Response {
     /// use futures_util::StreamExt;
     ///
     /// # async fn run() -> Result<(), Box<dyn std::error::Error>> {
-    /// let mut stream = reqwest::get("http://httpbin.org/ip")
+    /// let mut stream = rquest::get("http://httpbin.org/ip")
     ///     .await?
     ///     .bytes_stream();
     ///
@@ -362,7 +361,7 @@ impl Response {
     /// # Example
     ///
     /// ```
-    /// # use reqwest::Response;
+    /// # use rquest::Response;
     /// fn on_response(res: Response) {
     ///     match res.error_for_status() {
     ///         Ok(_res) => (),
@@ -371,7 +370,7 @@ impl Response {
     ///             // it could be any status between 400...599
     ///             assert_eq!(
     ///                 err.status(),
-    ///                 Some(reqwest::StatusCode::BAD_REQUEST)
+    ///                 Some(rquest::StatusCode::BAD_REQUEST)
     ///             );
     ///         }
     ///     }
@@ -392,7 +391,7 @@ impl Response {
     /// # Example
     ///
     /// ```
-    /// # use reqwest::Response;
+    /// # use rquest::Response;
     /// fn on_response(res: &Response) {
     ///     match res.error_for_status_ref() {
     ///         Ok(_res) => (),
@@ -401,7 +400,7 @@ impl Response {
     ///             // it could be any status between 400...599
     ///             assert_eq!(
     ///                 err.status(),
-    ///                 Some(reqwest::StatusCode::BAD_REQUEST)
+    ///                 Some(rquest::StatusCode::BAD_REQUEST)
     ///             );
     ///         }
     ///     }
@@ -432,63 +431,5 @@ impl fmt::Debug for Response {
 impl From<Response> for Body {
     fn from(r: Response) -> Body {
         Body::wrap(r.res.into_body())
-    }
-}
-
-// I'm not sure this conversion is that useful... People should be encouraged
-// to use `http::Response`, not `reqwest::Response`.
-impl<T: Into<Body>> From<http::Response<T>> for Response {
-    fn from(r: http::Response<T>) -> Response {
-        use crate::response::ResponseUrl;
-
-        let (mut parts, body) = r.into_parts();
-        let body: super::body::Body = body.into();
-        let decoder = Decoder::detect(
-            &mut parts.headers,
-            ResponseBody::new(body.map_err(Into::into)),
-            Accepts::none(),
-        );
-        let url = parts
-            .extensions
-            .remove::<ResponseUrl>()
-            .unwrap_or_else(|| ResponseUrl(Url::parse("http://no.url.provided.local").unwrap()));
-        let url = url.0;
-        let res = hyper2::Response::from_parts(parts, decoder);
-        Response {
-            res,
-            url: Box::new(url),
-        }
-    }
-}
-
-/// A `Response` can be converted into a `http::Response`.
-// It's supposed to be the inverse of the conversion above.
-impl From<Response> for http::Response<Body> {
-    fn from(r: Response) -> http::Response<Body> {
-        let (parts, body) = r.res.into_parts();
-        let body = Body::wrap(body);
-        http::Response::from_parts(parts, body)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::Response;
-    use crate::ResponseBuilderExt;
-    use http::response::Builder;
-    use url::Url;
-
-    #[test]
-    fn test_from_http_response() {
-        let url = Url::parse("http://example.com").unwrap();
-        let response = Builder::new()
-            .status(200)
-            .url(url.clone())
-            .body("foo")
-            .unwrap();
-        let response = Response::from(response);
-
-        assert_eq!(response.status(), 200);
-        assert_eq!(*response.url(), url);
     }
 }

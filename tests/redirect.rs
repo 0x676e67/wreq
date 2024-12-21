@@ -1,12 +1,12 @@
 #![cfg(not(target_arch = "wasm32"))]
 mod support;
 use http_body_util::BodyExt;
-use reqwest::Body;
+use rquest::Body;
 use support::server;
 
 #[tokio::test]
 async fn test_redirect_301_and_302_and_303_changes_post_to_get() {
-    let client = reqwest::Client::new();
+    let client = rquest::Client::new();
     let codes = [301u16, 302, 303];
 
     for &code in &codes {
@@ -33,9 +33,9 @@ async fn test_redirect_301_and_302_and_303_changes_post_to_get() {
         let dst = format!("http://{}/{}", redirect.addr(), "dst");
         let res = client.post(&url).send().await.unwrap();
         assert_eq!(res.url().as_str(), dst);
-        assert_eq!(res.status(), reqwest::StatusCode::OK);
+        assert_eq!(res.status(), rquest::StatusCode::OK);
         assert_eq!(
-            res.headers().get(reqwest::header::SERVER).unwrap(),
+            res.headers().get(rquest::header::SERVER).unwrap(),
             &"test-dst"
         );
     }
@@ -43,7 +43,7 @@ async fn test_redirect_301_and_302_and_303_changes_post_to_get() {
 
 #[tokio::test]
 async fn test_redirect_307_and_308_tries_to_get_again() {
-    let client = reqwest::Client::new();
+    let client = rquest::Client::new();
     let codes = [307u16, 308];
     for &code in &codes {
         let redirect = server::http(move |req| async move {
@@ -69,9 +69,9 @@ async fn test_redirect_307_and_308_tries_to_get_again() {
         let dst = format!("http://{}/{}", redirect.addr(), "dst");
         let res = client.get(&url).send().await.unwrap();
         assert_eq!(res.url().as_str(), dst);
-        assert_eq!(res.status(), reqwest::StatusCode::OK);
+        assert_eq!(res.status(), rquest::StatusCode::OK);
         assert_eq!(
-            res.headers().get(reqwest::header::SERVER).unwrap(),
+            res.headers().get(rquest::header::SERVER).unwrap(),
             &"test-dst"
         );
     }
@@ -80,7 +80,7 @@ async fn test_redirect_307_and_308_tries_to_get_again() {
 #[tokio::test]
 async fn test_redirect_307_and_308_tries_to_post_again() {
     let _ = env_logger::try_init();
-    let client = reqwest::Client::new();
+    let client = rquest::Client::new();
     let codes = [307u16, 308];
     for &code in &codes {
         let redirect = server::http(move |mut req| async move {
@@ -118,9 +118,9 @@ async fn test_redirect_307_and_308_tries_to_post_again() {
         let dst = format!("http://{}/{}", redirect.addr(), "dst");
         let res = client.post(&url).body("Hello").send().await.unwrap();
         assert_eq!(res.url().as_str(), dst);
-        assert_eq!(res.status(), reqwest::StatusCode::OK);
+        assert_eq!(res.status(), rquest::StatusCode::OK);
         assert_eq!(
-            res.headers().get(reqwest::header::SERVER).unwrap(),
+            res.headers().get(rquest::header::SERVER).unwrap(),
             &"test-dst"
         );
     }
@@ -160,13 +160,13 @@ async fn test_redirect_removes_sensitive_headers() {
 
     tx.send(Some(mid_server.addr())).unwrap();
 
-    reqwest::Client::builder()
+    rquest::Client::builder()
         .build()
         .unwrap()
         .get(format!("http://{}/sensitive", mid_server.addr()))
         .header(
-            reqwest::header::COOKIE,
-            reqwest::header::HeaderValue::from_static("foo=bar"),
+            rquest::header::COOKIE,
+            rquest::header::HeaderValue::from_static("foo=bar"),
         )
         .send()
         .await
@@ -185,7 +185,7 @@ async fn test_redirect_policy_can_return_errors() {
     });
 
     let url = format!("http://{}/loop", server.addr());
-    let err = reqwest::get(&url).await.unwrap_err();
+    let err = rquest::get(&url).await.unwrap_err();
     assert!(err.is_redirect());
 }
 
@@ -202,8 +202,8 @@ async fn test_redirect_policy_can_stop_redirects_without_an_error() {
 
     let url = format!("http://{}/no-redirect", server.addr());
 
-    let res = reqwest::Client::builder()
-        .redirect(reqwest::redirect::Policy::none())
+    let res = rquest::Client::builder()
+        .redirect(rquest::redirect::Policy::none())
         .build()
         .unwrap()
         .get(&url)
@@ -212,7 +212,7 @@ async fn test_redirect_policy_can_stop_redirects_without_an_error() {
         .unwrap();
 
     assert_eq!(res.url().as_str(), url);
-    assert_eq!(res.status(), reqwest::StatusCode::FOUND);
+    assert_eq!(res.status(), rquest::StatusCode::FOUND);
 }
 
 #[tokio::test]
@@ -232,7 +232,7 @@ async fn test_referer_is_not_set_if_disabled() {
         }
     });
 
-    reqwest::Client::builder()
+    rquest::Client::builder()
         .referer(false)
         .build()
         .unwrap()
@@ -254,10 +254,10 @@ async fn test_invalid_location_stops_redirect_gh484() {
 
     let url = format!("http://{}/yikes", server.addr());
 
-    let res = reqwest::get(&url).await.unwrap();
+    let res = rquest::get(&url).await.unwrap();
 
     assert_eq!(res.url().as_str(), url);
-    assert_eq!(res.status(), reqwest::StatusCode::FOUND);
+    assert_eq!(res.status(), rquest::StatusCode::FOUND);
 }
 
 #[tokio::test]
@@ -272,7 +272,7 @@ async fn test_invalid_scheme_is_rejected() {
 
     let url = format!("http://{}/yikes", server.addr());
 
-    let err = reqwest::get(&url).await.unwrap_err();
+    let err = rquest::get(&url).await.unwrap_err();
     assert!(err.is_builder());
 }
 
@@ -298,14 +298,14 @@ async fn test_redirect_302_with_set_cookies() {
     let url = format!("http://{}/{}", server.addr(), code);
     let dst = format!("http://{}/{}", server.addr(), "dst");
 
-    let client = reqwest::ClientBuilder::new()
+    let client = rquest::ClientBuilder::new()
         .cookie_store(true)
         .build()
         .unwrap();
     let res = client.get(&url).send().await.unwrap();
 
     assert_eq!(res.url().as_str(), dst);
-    assert_eq!(res.status(), reqwest::StatusCode::OK);
+    assert_eq!(res.status(), rquest::StatusCode::OK);
 }
 
 #[tokio::test]
@@ -321,7 +321,7 @@ async fn test_redirect_https_only_enforced_gh1312() {
 
     let url = format!("https://{}/yikes", server.addr());
 
-    let res = reqwest::Client::builder()
+    let res = rquest::Client::builder()
         .danger_accept_invalid_certs(true)
         .use_rustls_tls()
         .https_only(true)

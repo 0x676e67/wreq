@@ -181,10 +181,6 @@ impl ConnectRequest {
         &self.pool_key
     }
 
-    pub fn uri(&self) -> &Uri {
-        &self.uri
-    }
-
     pub fn uri_mut(&mut self) -> &mut Uri {
         &mut self.uri
     }
@@ -265,45 +261,6 @@ where
     B::Data: Send,
     B::Error: Into<Box<dyn StdError + Send + Sync>>,
 {
-    /// Send a `GET` request to the supplied `Uri`.
-    ///
-    /// # Note
-    ///
-    /// This requires that the `Body` type have a `Default` implementation.
-    /// It *should* return an "empty" version of itself, such that
-    /// `Body::is_end_stream` is `true`.
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// #
-    /// # fn run () {
-    /// use hyper2::Uri;
-    /// use crate::util::client::Client;
-    /// use crate::util::rt::TokioExecutor;
-    /// use bytes::Bytes;
-    /// use http_body_util::Full;
-    ///
-    /// let client: Client<_, Full<Bytes>> = Client::builder(TokioExecutor::new()).build_http();
-    ///
-    /// let future = client.get(Uri::from_static("http://httpbin.org/ip"));
-    /// # }
-    /// # fn main() {}
-    /// ```
-    pub fn get(&self, uri: Uri) -> ResponseFuture
-    where
-        B: Default,
-    {
-        let body = B::default();
-        if !body.is_end_stream() {
-            warn!("default Body used for get() does not return true for is_end_stream");
-        }
-
-        let mut req = Request::new(body);
-        *req.uri_mut() = uri;
-        self.request(req)
-    }
-
     /// Send a constructed `Request` using this `Client`.
     ///
     /// # Example

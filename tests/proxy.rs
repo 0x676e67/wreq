@@ -17,8 +17,8 @@ async fn http_proxy() {
 
     let proxy = format!("http://{}", server.addr());
 
-    let res = reqwest::Client::builder()
-        .proxy(reqwest::Proxy::http(&proxy).unwrap())
+    let res = rquest::Client::builder()
+        .proxy(rquest::Proxy::http(&proxy).unwrap())
         .build()
         .unwrap()
         .get(url)
@@ -27,7 +27,7 @@ async fn http_proxy() {
         .unwrap();
 
     assert_eq!(res.url().as_str(), url);
-    assert_eq!(res.status(), reqwest::StatusCode::OK);
+    assert_eq!(res.status(), rquest::StatusCode::OK);
 }
 
 #[tokio::test]
@@ -47,9 +47,9 @@ async fn http_proxy_basic_auth() {
 
     let proxy = format!("http://{}", server.addr());
 
-    let res = reqwest::Client::builder()
+    let res = rquest::Client::builder()
         .proxy(
-            reqwest::Proxy::http(&proxy)
+            rquest::Proxy::http(&proxy)
                 .unwrap()
                 .basic_auth("Aladdin", "open sesame"),
         )
@@ -61,7 +61,7 @@ async fn http_proxy_basic_auth() {
         .unwrap();
 
     assert_eq!(res.url().as_str(), url);
-    assert_eq!(res.status(), reqwest::StatusCode::OK);
+    assert_eq!(res.status(), rquest::StatusCode::OK);
 }
 
 #[tokio::test]
@@ -81,8 +81,8 @@ async fn http_proxy_basic_auth_parsed() {
 
     let proxy = format!("http://Aladdin:open sesame@{}", server.addr());
 
-    let res = reqwest::Client::builder()
-        .proxy(reqwest::Proxy::http(&proxy).unwrap())
+    let res = rquest::Client::builder()
+        .proxy(rquest::Proxy::http(&proxy).unwrap())
         .build()
         .unwrap()
         .get(url)
@@ -91,7 +91,7 @@ async fn http_proxy_basic_auth_parsed() {
         .unwrap();
 
     assert_eq!(res.url().as_str(), url);
-    assert_eq!(res.status(), reqwest::StatusCode::OK);
+    assert_eq!(res.status(), rquest::StatusCode::OK);
 }
 
 #[tokio::test]
@@ -118,7 +118,7 @@ async fn system_http_proxy_basic_auth_parsed() {
         format!("http://Aladdin:open sesame@{}", server.addr()),
     );
 
-    let res = reqwest::Client::builder()
+    let res = rquest::Client::builder()
         .build()
         .unwrap()
         .get(url)
@@ -127,7 +127,7 @@ async fn system_http_proxy_basic_auth_parsed() {
         .unwrap();
 
     assert_eq!(res.url().as_str(), url);
-    assert_eq!(res.status(), reqwest::StatusCode::OK);
+    assert_eq!(res.status(), rquest::StatusCode::OK);
 
     // reset user setting.
     match system_proxy {
@@ -148,8 +148,8 @@ async fn test_no_proxy() {
     let url = format!("http://{}/4", server.addr());
 
     // set up proxy and use no_proxy to clear up client builder proxies.
-    let res = reqwest::Client::builder()
-        .proxy(reqwest::Proxy::http(&proxy).unwrap())
+    let res = rquest::Client::builder()
+        .proxy(rquest::Proxy::http(&proxy).unwrap())
         .no_proxy()
         .build()
         .unwrap()
@@ -159,7 +159,7 @@ async fn test_no_proxy() {
         .unwrap();
 
     assert_eq!(res.url().as_str(), &url);
-    assert_eq!(res.status(), reqwest::StatusCode::OK);
+    assert_eq!(res.status(), rquest::StatusCode::OK);
 }
 
 #[tokio::test]
@@ -179,10 +179,10 @@ async fn test_using_system_proxy() {
     env::set_var("http_proxy", format!("http://{}", server.addr()));
 
     // system proxy is used by default
-    let res = reqwest::get(url).await.unwrap();
+    let res = rquest::get(url).await.unwrap();
 
     assert_eq!(res.url().as_str(), url);
-    assert_eq!(res.status(), reqwest::StatusCode::OK);
+    assert_eq!(res.status(), rquest::StatusCode::OK);
 
     // reset user setting.
     match system_proxy {
@@ -205,8 +205,8 @@ async fn http_over_http() {
 
     let proxy = format!("http://{}", server.addr());
 
-    let res = reqwest::Client::builder()
-        .proxy(reqwest::Proxy::http(&proxy).unwrap())
+    let res = rquest::Client::builder()
+        .proxy(rquest::Proxy::http(&proxy).unwrap())
         .build()
         .unwrap()
         .get(url)
@@ -215,5 +215,5 @@ async fn http_over_http() {
         .unwrap();
 
     assert_eq!(res.url().as_str(), url);
-    assert_eq!(res.status(), reqwest::StatusCode::OK);
+    assert_eq!(res.status(), rquest::StatusCode::OK);
 }

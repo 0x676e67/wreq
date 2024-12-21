@@ -877,7 +877,7 @@ impl ClientBuilder {
     ///
     /// ```
     /// let interface = "lo";
-    /// let client = reqwest::Client::builder()
+    /// let client = rquest::Client::builder()
     ///     .interface(interface)
     ///     .build().unwrap();
     /// ```
