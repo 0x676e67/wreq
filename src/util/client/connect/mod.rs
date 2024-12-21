@@ -309,7 +309,7 @@ pub(super) mod sealed {
     use ::http::Uri;
     use hyper2::rt::{Read, Write};
 
-    use crate::client::hyper_util::service;
+    use crate::util::service;
 
     use super::Connection;
 

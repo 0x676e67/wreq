@@ -6,7 +6,7 @@ use std::time::Duration;
 use std::{collections::HashMap, convert::TryInto, net::SocketAddr};
 use std::{fmt, str};
 
-use super::hyper_util::client::connect::HttpConnector;
+use crate::util::client::connect::HttpConnector;
 use bytes::Bytes;
 use http::header::{
     Entry, HeaderMap, HeaderValue, ACCEPT, ACCEPT_ENCODING, CONTENT_ENCODING, CONTENT_LENGTH,
@@ -21,11 +21,9 @@ use std::task::{Context, Poll};
 use tokio::time::Sleep;
 
 use super::decoder::Accepts;
-use super::hyper_util::client::Builder;
 use super::request::{InnerRequest, Request, RequestBuilder};
 use super::response::Response;
-use super::{hyper_util, Body};
-use crate::client::hyper_util::rt::TokioExecutor;
+use super::Body;
 use crate::connect::Connector;
 #[cfg(feature = "cookies")]
 use crate::cookie;
@@ -34,15 +32,15 @@ use crate::dns::hickory::HickoryDnsResolver;
 use crate::dns::{gai::GaiResolver, DnsResolverWithOverrides, DynResolver, Resolve};
 use crate::into_url::try_uri;
 use crate::redirect::{self, remove_sensitive_headers};
-
 use crate::tls::{self, BoringTlsConnector, Impersonate, ImpersonateSettings, TlsSettings};
+use crate::util::{self, client::Builder, rt::TokioExecutor};
 use crate::{error, impl_debug};
 use crate::{IntoUrl, Method, Proxy, StatusCode, Url};
 #[cfg(feature = "hickory-dns")]
 use hickory_resolver::config::LookupIpStrategy;
 use log::{debug, trace};
 
-type HyperResponseFuture = hyper_util::client::ResponseFuture;
+type HyperResponseFuture = util::client::ResponseFuture;
 
 /// An asynchronous `Client` to make Requests with.
 ///
@@ -177,7 +175,7 @@ impl ClientBuilder {
                 dns_overrides: HashMap::new(),
                 dns_resolver: None,
                 base_url: None,
-                builder: crate::client::hyper_util::client::Client::builder(TokioExecutor::new()),
+                builder: crate::util::client::Client::builder(TokioExecutor::new()),
                 https_only: false,
 
                 tls_info: false,
@@ -1093,7 +1091,7 @@ impl ClientBuilder {
     }
 }
 
-type HyperClient = hyper_util::client::Client<Connector, super::Body>;
+type HyperClient = util::client::Client<Connector, super::Body>;
 
 impl Default for Client {
     fn default() -> Self {

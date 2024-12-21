@@ -27,8 +27,8 @@ use hyper2::rt::Timer;
 use hyper2::{body::Body, Method, Request, Response, Uri, Version};
 use log::{debug, trace, warn};
 
-use crate::client::hyper_util::common;
-use crate::client::hyper_util::ext::PoolKeyExtension;
+use crate::util::common;
+use crate::util::ext::PoolKeyExtension;
 use connect::capture::CaptureConnectionExtension;
 use connect::HttpConnector;
 use connect::{Alpn, Connect, Connected, Connection};

@@ -6,20 +6,20 @@ use std::time::Duration;
 use bytes::Bytes;
 use http_body_util::BodyExt;
 use hyper2::{HeaderMap, StatusCode, Version};
-use hyper_util::client::connect::HttpInfo;
 #[cfg(feature = "json")]
 use serde::de::DeserializeOwned;
 #[cfg(feature = "json")]
 use serde_json;
 use tokio::time::Sleep;
 use url::Url;
+use util::client::connect::HttpInfo;
 
 use super::body::Body;
 use super::body::ResponseBody;
 use super::decoder::{Accepts, Decoder};
-use super::hyper_util;
 #[cfg(feature = "cookies")]
 use crate::cookie;
+use crate::util;
 
 #[cfg(feature = "charset")]
 use encoding_rs::{Encoding, UTF_8};

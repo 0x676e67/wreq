@@ -5,9 +5,9 @@ mod cache;
 pub mod layer;
 
 pub use self::layer::*;
-use crate::client::hyper_util::client::connect::{Connected, Connection};
-use crate::client::hyper_util::rt::TokioIo;
 use crate::tls::TlsResult;
+use crate::util::client::connect::{Connected, Connection};
+use crate::util::rt::TokioIo;
 use crate::HttpVersionPref;
 use boring::ex_data::Index;
 use boring::ssl::Ssl;

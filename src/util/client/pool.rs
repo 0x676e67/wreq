@@ -22,7 +22,7 @@ use lru::LruCache;
 use hyper2::rt::Sleep;
 use hyper2::rt::Timer as _;
 
-use crate::client::hyper_util::common::{exec, exec::Exec, timer::Timer};
+use crate::util::common::{exec, exec::Exec, timer::Timer};
 
 // FIXME: allow() required due to `impl Trait` leaking types to this lint
 #[allow(missing_debug_implementations)]

@@ -1,9 +1,9 @@
 use self::boring_tls_conn::BoringTlsConn;
-use crate::client::hyper_util;
-use crate::client::hyper_util::client::connect::{Connected, Connection};
-use crate::client::hyper_util::ext::PoolKeyExtension;
-use crate::client::hyper_util::rt::TokioIo;
 use crate::tls::{BoringTlsConnector, MaybeHttpsStream};
+use crate::util;
+use crate::util::client::connect::{Connected, Connection};
+use crate::util::ext::PoolKeyExtension;
+use crate::util::rt::TokioIo;
 use http::header::HeaderValue;
 use http::uri::{Authority, Scheme};
 use http::Uri;
@@ -25,7 +25,7 @@ use crate::dns::DynResolver;
 use crate::error::BoxError;
 use crate::proxy::{Proxy, ProxyScheme};
 
-pub(crate) type HttpConnector = hyper_util::client::connect::HttpConnector<DynResolver>;
+pub(crate) type HttpConnector = util::client::connect::HttpConnector<DynResolver>;
 
 #[derive(Clone)]
 pub(crate) struct Connector {
@@ -609,8 +609,8 @@ async fn tunnel<T>(
 where
     T: Read + Write + Unpin,
 {
-    use hyper_util::rt::TokioIo;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use util::rt::TokioIo;
 
     let mut buf = format!(
         "\
@@ -674,11 +674,11 @@ where
 mod boring_tls_conn {
     use super::TlsInfoFactory;
     use crate::{
-        client::hyper_util::{
+        tls::MaybeHttpsStream,
+        util::{
             client::connect::{Connected, Connection},
             rt::TokioIo,
         },
-        tls::MaybeHttpsStream,
     };
     use hyper2::rt::{Read, ReadBufCursor, Write};
     use pin_project_lite::pin_project;
@@ -853,7 +853,7 @@ mod socks {
 }
 
 mod verbose {
-    use crate::client::hyper_util::client::connect::{Connected, Connection};
+    use crate::util::client::connect::{Connected, Connection};
     use hyper2::rt::{Read, ReadBufCursor, Write};
     use std::cmp::min;
     use std::fmt;

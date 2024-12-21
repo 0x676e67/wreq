@@ -1,9 +1,9 @@
 /// referrer: https://github.com/cloudflare/boring/blob/master/hyper-boring/src/lib.rs
 use super::cache::{SessionCache, SessionKey};
 use super::{key_index, HttpsLayerSettings, MaybeHttpsStream};
-use crate::client::hyper_util::client::connect::Connection;
-use crate::client::hyper_util::rt::TokioIo;
 use crate::tls::{TlsConnectExtension, TlsResult};
+use crate::util::client::connect::Connection;
+use crate::util::rt::TokioIo;
 use antidote::Mutex;
 use boring::error::ErrorStack;
 use boring::ssl::{

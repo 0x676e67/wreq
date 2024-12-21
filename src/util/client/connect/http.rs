@@ -19,7 +19,7 @@ use tokio::time::Sleep;
 
 use super::dns::{self, resolve, GaiResolver, Resolve};
 use super::{Connected, Connection};
-use crate::client::hyper_util::rt::TokioIo;
+use crate::util::rt::TokioIo;
 
 /// A connector for the `http` scheme.
 ///

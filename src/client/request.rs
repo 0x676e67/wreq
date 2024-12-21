@@ -11,13 +11,13 @@ use serde_json;
 
 use super::body::Body;
 use super::http::{Client, Pending};
-use super::hyper_util::ext::PoolKeyExtension;
 #[cfg(feature = "multipart")]
 use super::multipart;
 use super::response::Response;
 #[cfg(feature = "cookies")]
 use crate::cookie;
 use crate::header::{HeaderMap, HeaderName, HeaderValue, CONTENT_TYPE, HOST};
+use crate::util::ext::PoolKeyExtension;
 use crate::{redirect, Method, Url};
 use http::{request::Parts, Request as HttpRequest, Version};
 #[cfg(feature = "cookies")]

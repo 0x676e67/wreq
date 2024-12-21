@@ -2,7 +2,7 @@ use std::pin::Pin;
 use std::task::{self, Poll};
 use std::{fmt, io};
 
-use super::hyper_util::rt::TokioIo;
+use crate::util::rt::TokioIo;
 use futures_util::TryFutureExt;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 
