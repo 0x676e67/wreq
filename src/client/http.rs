@@ -379,7 +379,6 @@ impl ClientBuilder {
 
     /// Enable Encrypted Client Hello (Secure SNI)
     #[cfg(feature = "boring-tls")]
-    #[inline]
     pub fn enable_ech_grease(mut self, enabled: bool) -> ClientBuilder {
         self.config.tls.enable_ech_grease = enabled;
         self
@@ -387,7 +386,6 @@ impl ClientBuilder {
 
     /// Enable TLS permute_extensions
     #[cfg(feature = "boring-tls")]
-    #[inline]
     pub fn permute_extensions(mut self, enabled: bool) -> ClientBuilder {
         self.config.tls.permute_extensions = Some(enabled);
         self
@@ -395,7 +393,6 @@ impl ClientBuilder {
 
     /// Enable TLS pre_shared_key
     #[cfg(feature = "boring-tls")]
-    #[inline]
     pub fn pre_shared_key(mut self, enabled: bool) -> ClientBuilder {
         self.config.tls.pre_shared_key = enabled;
         self
@@ -497,7 +494,6 @@ impl ClientBuilder {
     ///
     /// The host header needs to be manually inserted if you want to modify its order.
     /// Otherwise it will be inserted by hyper after sorting.
-    #[inline]
     pub fn headers_order(mut self, order: impl Into<Cow<'static, [HeaderName]>>) -> ClientBuilder {
         self.config.headers_order = Some(order.into());
         self
