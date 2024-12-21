@@ -11,7 +11,7 @@ mod ext;
 mod impersonate;
 mod settings;
 
-use crate::{connect::HttpConnector, HttpVersionPref};
+use crate::connect::HttpConnector;
 use boring::{
     error::ErrorStack,
     ssl::{SslConnector, SslMethod, SslOptions, SslVersion},
@@ -28,10 +28,6 @@ type TlsResult<T> = Result<T, ErrorStack>;
 #[derive(Clone)]
 #[allow(missing_debug_implementations)]
 pub struct BoringTlsConnector {
-    tls_sni: bool,
-    enable_ech_grease: bool,
-    application_settings: bool,
-    alpn_protos: HttpVersionPref,
     connect_layer: HttpsLayer,
 }
 
@@ -39,12 +35,8 @@ impl BoringTlsConnector {
     /// Create a new `BoringTlsConnector` with the given function.
     #[inline]
     pub fn new(settings: TlsSettings) -> TlsResult<BoringTlsConnector> {
-        Ok(Self {
-            tls_sni: settings.tls_sni,
-            enable_ech_grease: settings.enable_ech_grease,
-            application_settings: settings.application_settings,
-            alpn_protos: settings.alpn_protos,
-            connect_layer: connect_layer(settings)?,
+        connect_layer(settings).map(|layer| Self {
+            connect_layer: layer,
         })
     }
 
@@ -57,26 +49,10 @@ impl BoringTlsConnector {
     ) -> HttpsConnector<HttpConnector> {
         // Create the `HttpsConnector` with the given `HttpConnector` and `ConnectLayer`.
         let mut http = HttpsConnector::with_connector_layer(http, self.connect_layer.clone());
-
-        // Set the callback to add application settings.
-        let (application_settings, enable_ech_grease, alpn_protos, tls_sni) = (
-            self.application_settings,
-            self.enable_ech_grease,
-            self.alpn_protos,
-            self.tls_sni,
-        );
-        http.set_callback(move |conf, _| {
-            conf.configure_enable_ech_grease(enable_ech_grease)?
-                .set_verify_hostname(tls_sni);
-
-            // Add application settings if it is set.
-            if application_settings {
-                conf.configure_add_application_settings(alpn_protos)?;
-            }
-
+        http.set_ssl_callback(move |ssl, _| {
             // Set websocket use http1 alpn proto
             if ws {
-                conf.set_alpn_protos(b"\x08http/1.1")?;
+                ssl.set_alpn_protos(b"\x08http/1.1")?;
             }
 
             Ok(())
@@ -213,6 +189,10 @@ fn connect_layer(settings: TlsSettings) -> TlsResult<HttpsLayer> {
         .session_cache_capacity(8)
         .session_cache(settings.pre_shared_key)
         .skip_session_ticket(settings.psk_skip_session_ticket)
+        .alpn_protos(settings.alpn_protos)
+        .application_settings(settings.application_settings)
+        .enable_ech_grease(settings.enable_ech_grease)
+        .tls_sni(settings.tls_sni)
         .build();
 
     HttpsLayer::with_connector_and_settings(connector, settings)

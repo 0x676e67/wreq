@@ -8,6 +8,7 @@ pub use self::layer::*;
 use crate::client::hyper_util::client::legacy::connect::{Connected, Connection};
 use crate::client::hyper_util::rt::TokioIo;
 use crate::tls::TlsResult;
+use crate::HttpVersionPref;
 use boring::ex_data::Index;
 use boring::ssl::Ssl;
 use cache::SessionKey;
@@ -30,6 +31,10 @@ pub struct HttpsLayerSettings {
     session_cache_capacity: usize,
     session_cache: bool,
     skip_session_ticket: bool,
+    application_settings: bool,
+    enable_ech_grease: bool,
+    alpn_protos: HttpVersionPref,
+    tls_sni: bool,
 }
 
 impl HttpsLayerSettings {
@@ -45,6 +50,10 @@ impl Default for HttpsLayerSettings {
             session_cache_capacity: 8,
             session_cache: false,
             skip_session_ticket: false,
+            application_settings: false,
+            enable_ech_grease: false,
+            tls_sni: false,
+            alpn_protos: HttpVersionPref::All,
         }
     }
 }
@@ -69,6 +78,30 @@ impl HttpsLayerSettingsBuilder {
     /// Sets whether to enable no session ticket. Defaults to `false`.
     pub fn skip_session_ticket(mut self, enable: bool) -> Self {
         self.0.skip_session_ticket = enable;
+        self
+    }
+
+    /// Sets whether to enable application settings. Defaults to `false`.
+    pub fn application_settings(mut self, enable: bool) -> Self {
+        self.0.application_settings = enable;
+        self
+    }
+
+    /// Sets whether to enable ECH grease. Defaults to `false`.
+    pub fn enable_ech_grease(mut self, enable: bool) -> Self {
+        self.0.enable_ech_grease = enable;
+        self
+    }
+
+    /// Sets whether to enable TLS SNI. Defaults to `false`.
+    pub fn tls_sni(mut self, enable: bool) -> Self {
+        self.0.tls_sni = enable;
+        self
+    }
+
+    /// Sets the ALPN protos. Defaults to `None`.
+    pub fn alpn_protos(mut self, protos: HttpVersionPref) -> Self {
+        self.0.alpn_protos = protos;
         self
     }
 

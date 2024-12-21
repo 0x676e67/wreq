@@ -50,16 +50,14 @@ where
         self.inner.setup_ssl(uri, host)
     }
 
-    /// Registers a callback which can customize the configuration of each connection.
+    /// Registers a callback which can customize the SSL context for a given URI.
     ///
-    /// Unsuitable to change verify hostflags (with `config.param_mut().set_hostflags(…)`),
-    /// as they are reset after the callback is executed. Use [`Self::set_ssl_callback`]
-    /// instead.
-    pub fn set_callback<F>(&mut self, callback: F)
+    /// This callback is executed after the callback registered by [`Self::set_callback`] is executed.
+    pub fn set_ssl_callback<F>(&mut self, callback: F)
     where
-        F: Fn(&mut ConnectConfiguration, &Uri) -> Result<(), ErrorStack> + 'static + Sync + Send,
+        F: Fn(&mut SslRef, &Uri) -> Result<(), ErrorStack> + 'static + Sync + Send,
     {
-        self.inner.callback = Some(Arc::new(callback));
+        self.inner.ssl_callback = Some(Arc::new(callback));
     }
 }
 
@@ -114,7 +112,18 @@ impl HttpsLayer {
             inner: Inner {
                 ssl: ssl.build(),
                 cache,
-                callback: None,
+                callback: Some(Arc::new(move |conf, _| {
+                    // Set ECH grease and TLS SNI.
+                    conf.configure_enable_ech_grease(settings.enable_ech_grease)?
+                        .set_verify_hostname(settings.tls_sni);
+
+                    // Add application settings if it is set.
+                    if settings.application_settings {
+                        conf.configure_add_application_settings(settings.alpn_protos)?;
+                    }
+
+                    Ok(())
+                })),
                 ssl_callback: None,
                 skip_session_ticket: settings.skip_session_ticket,
             },
