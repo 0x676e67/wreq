@@ -2031,12 +2031,28 @@ impl PendingRequest {
 }
 
 fn is_retryable_error(err: &(dyn std::error::Error + 'static)) -> bool {
+    use hyper::h2;
+
+    // pop the legacy::Error
+    let err = if let Some(err) = err.source() {
+        err
+    } else {
+        return false;
+    };
+
     if let Some(cause) = err.source() {
-        if let Some(err) = cause.downcast_ref::<hyper::h2::Error>() {
+        if let Some(err) = cause.downcast_ref::<h2::Error>() {
             // They sent us a graceful shutdown, try with a new connection!
-            return err.is_go_away()
-                && err.is_remote()
-                && err.reason() == Some(hyper::h2::Reason::NO_ERROR);
+            if err.is_go_away() && err.is_remote() && err.reason() == Some(h2::Reason::NO_ERROR) {
+                return true;
+            }
+
+            // REFUSED_STREAM was sent from the server, which is safe to retry.
+            // https://www.rfc-editor.org/rfc/rfc9113.html#section-8.7-3.2
+            if err.is_reset() && err.is_remote() && err.reason() == Some(h2::Reason::REFUSED_STREAM)
+            {
+                return true;
+            }
         }
     }
     false

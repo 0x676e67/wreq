@@ -25,7 +25,7 @@ impl HickoryDnsResolver {
         let (config, mut opts) = match system_conf::read_system_conf() {
             Ok((config, opts)) => (config, opts),
             Err(err) => {
-                tracing::debug!("error reading DNS system conf: {}", err);
+                log::debug!("error reading DNS system conf: {}", err);
                 (ResolverConfig::default(), ResolverOpts::default())
             }
         };

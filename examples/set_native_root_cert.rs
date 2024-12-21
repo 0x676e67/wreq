@@ -21,11 +21,11 @@ fn load_static_root_certs() -> Option<&'static X509Store> {
 
     match CERT_STORE.as_ref() {
         Ok(cert_store) => {
-            tracing::info!("Loaded root certs");
+            log::info!("Loaded root certs");
             Some(cert_store)
         }
         Err(err) => {
-            tracing::error!("Failed to load root certs: {:?}", err);
+            log::error!("Failed to load root certs: {:?}", err);
             None
         }
     }
@@ -37,7 +37,7 @@ fn load_dynamic_root_certs() -> Result<X509Store, ErrorStack> {
         let cert = X509::from_der(&*cert)?;
         cert_store.add_cert(cert)?;
     }
-    tracing::info!("Loaded dynamic root certs");
+    log::info!("Loaded dynamic root certs");
     Ok(cert_store.build())
 }
 
