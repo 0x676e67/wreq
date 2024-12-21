@@ -18,11 +18,7 @@ rustdoc-args = ["--cfg", "docsrs"]
 targets = ["x86_64-unknown-linux-gnu"]
 
 [features]
-default = ["boring-tls", "boring-tls-webpki-roots", "charset",
-    "gzip",
-    "brotli",
-    "zstd",
-    "deflate"]
+default = ["boring-tls", "boring-tls-webpki-roots", "charset"]
 
 full = [
     "boring-tls",
@@ -96,8 +92,8 @@ bytes = "1.0"
 serde = "1.0"
 serde_urlencoded = "0.7.1"
 tower-service = "0.3"
-futures-core = { version = "0.3.28", default-features = false }
-futures-util = { version = "0.3.28", default-features = false }
+futures-core = { version = "0.3.0", default-features = false }
+futures-util = { version = "0.3.0", default-features = false }
 sync_wrapper = { version = "1.0", features = ["futures"] }
 
 # Optional deps...

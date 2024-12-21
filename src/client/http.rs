@@ -1322,9 +1322,9 @@ impl Client {
         let in_flight = {
             let extension = self.inner.hyper.pool_key_extension(&uri);
             let req = InnerRequest::new()
-                .version(version)
                 .uri(uri)
                 .method(method.clone())
+                .version(version)
                 .headers(headers.clone())
                 .headers_order(self.inner.headers_order.as_deref())
                 .extension(extension)
@@ -1549,11 +1549,11 @@ impl Client {
         let connector = BoringTlsConnector::new(settings.tls)?;
         hyper.with_connector(|c| c.set_connector(connector));
 
-         // Set the http2 preference
+        // Set the http2 preference
         hyper.with_http2_builder(|builder| {
             let http2_headers_priority =
                 crate::util::convert_headers_priority(settings.http2.headers_priority);
-           
+
             builder
                 .initial_stream_id(settings.http2.initial_stream_id)
                 .initial_stream_window_size(settings.http2.initial_stream_window_size)
@@ -1805,9 +1805,9 @@ impl PendingRequest {
         *self.as_mut().in_flight().get_mut() = {
             let extension = self.client.hyper.pool_key_extension(&uri);
             let req = InnerRequest::new()
-                .version(self.version)
                 .uri(uri)
                 .method(self.method.clone())
+                .version(self.version)
                 .headers(self.headers.clone())
                 .headers_order(self.client.headers_order.as_deref())
                 .extension(extension)
@@ -2052,9 +2052,9 @@ impl Future for PendingRequest {
                             *self.as_mut().in_flight().get_mut() = {
                                 let extension = self.client.hyper.pool_key_extension(&uri);
                                 let req = InnerRequest::new()
-                                    .version(self.version)
                                     .uri(uri)
                                     .method(self.method.clone())
+                                    .version(self.version)
                                     .headers(headers.clone())
                                     .headers_order(self.client.headers_order.as_deref())
                                     .extension(extension)

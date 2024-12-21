@@ -7,7 +7,7 @@ async fn main() -> Result<(), rquest::Error> {
         .impersonate_skip_headers(Impersonate::Firefox133)
         .build()?;
 
-    let resp = client.get("https://api.ip.sb/ip").send().await?;
+    let resp = client.get("https://tls.peet.ws/api/all").send().await?;
     println!("{}", resp.text().await?);
     Ok(())
 }
