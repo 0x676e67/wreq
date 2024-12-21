@@ -17,7 +17,6 @@ async fn test_badssl_modern() {
     assert!(text.contains("<title>mozilla-modern.badssl.com</title>"));
 }
 
-#[cfg(feature = "boring-tls")]
 #[tokio::test]
 async fn test_badssl_self_signed() {
     let text = rquest::Client::builder()

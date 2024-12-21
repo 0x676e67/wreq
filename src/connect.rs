@@ -1,12 +1,9 @@
-#[cfg(feature = "boring-tls")]
 use self::boring_tls_conn::BoringTlsConn;
 use crate::client::hyper_util;
 use crate::client::hyper_util::client::legacy::connect::{Connected, Connection};
 use crate::client::hyper_util::ext::PoolKeyExtension;
 use crate::client::hyper_util::rt::TokioIo;
-#[cfg(feature = "boring-tls")]
 use crate::tls::{BoringTlsConnector, MaybeHttpsStream};
-#[cfg(feature = "boring-tls")]
 use http::header::HeaderValue;
 use http::uri::{Authority, Scheme};
 use http::Uri;
@@ -36,18 +33,13 @@ pub(crate) struct Connector {
     proxies: Arc<Vec<Proxy>>,
     verbose: verbose::Wrapper,
     timeout: Option<Duration>,
-    #[cfg(feature = "boring-tls")]
     nodelay: bool,
-    #[cfg(feature = "boring-tls")]
     tls_info: bool,
     pool_key_ext: Option<PoolKeyExtension>,
 }
 
 #[derive(Clone)]
 enum Inner {
-    #[cfg(not(feature = "boring-tls"))]
-    Http(HttpConnector),
-    #[cfg(feature = "boring-tls")]
     BoringTls {
         http: HttpConnector,
         tls: BoringTlsConnector,
@@ -55,51 +47,7 @@ enum Inner {
 }
 
 impl Connector {
-    #[cfg(not(feature = "boring-tls"))]
-    pub fn new(
-        mut http: HttpConnector,
-        proxies: Arc<Vec<Proxy>>,
-        local_addr_v4: Option<Ipv4Addr>,
-        local_addr_v6: Option<Ipv6Addr>,
-        #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
-        interface: Option<std::borrow::Cow<'static, str>>,
-        nodelay: bool,
-    ) -> Connector {
-        match (local_addr_v4, local_addr_v6) {
-            (Some(v4), Some(v6)) => http.set_local_addresses(v4, v6),
-            (Some(v4), None) => http.set_local_address(Some(IpAddr::from(v4))),
-            (None, Some(v6)) => http.set_local_address(Some(IpAddr::from(v6))),
-            _ => {}
-        }
-        #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
-        if let Some(ref interface) = interface {
-            http.set_interface(interface.clone());
-        }
-        http.set_nodelay(nodelay);
-
-        let mut connector = Connector {
-            inner: Inner::Http(http),
-            proxies,
-            verbose: verbose::OFF,
-            timeout: None,
-            pool_key_ext: None,
-        };
-
-        #[cfg(not(any(target_os = "android", target_os = "fuchsia", target_os = "linux")))]
-        connector.set_pool_key_ext(local_addr_v4.map(IpAddr::V4), local_addr_v6.map(IpAddr::V6));
-
-        #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
-        connector.set_pool_key_ext(
-            local_addr_v4.map(IpAddr::V4),
-            local_addr_v6.map(IpAddr::V6),
-            interface,
-        );
-
-        connector
-    }
-
     #[allow(clippy::too_many_arguments)]
-    #[cfg(feature = "boring-tls")]
     pub(crate) fn new_boring_tls(
         mut http: HttpConnector,
         tls: BoringTlsConnector,
@@ -149,9 +97,6 @@ impl Connector {
     #[inline]
     pub(crate) fn set_keepalive(&mut self, dur: Option<Duration>) {
         match &mut self.inner {
-            #[cfg(not(feature = "boring-tls"))]
-            Inner::Http(http) => http.set_keepalive(dur),
-            #[cfg(feature = "boring-tls")]
             Inner::BoringTls { http, .. } => http.set_keepalive(dur),
         }
     }
@@ -200,9 +145,6 @@ impl Connector {
         self.set_pool_key_ext(addr, None);
 
         match &mut self.inner {
-            #[cfg(not(feature = "boring-tls"))]
-            Inner::Http(http) => http.set_local_address(addr),
-            #[cfg(feature = "boring-tls")]
             Inner::BoringTls { http, .. } => http.set_local_address(addr),
         }
     }
@@ -216,9 +158,6 @@ impl Connector {
         self.set_pool_key_ext(IpAddr::V4(addr_ipv4), IpAddr::V6(addr_ipv6));
 
         match &mut self.inner {
-            #[cfg(not(feature = "boring-tls"))]
-            Inner::Http(http) => http.set_local_addresses(addr_ipv4, addr_ipv6),
-            #[cfg(feature = "boring-tls")]
             Inner::BoringTls { http, .. } => http.set_local_addresses(addr_ipv4, addr_ipv6),
         }
     }
@@ -257,14 +196,10 @@ impl Connector {
         }
 
         match &mut self.inner {
-            #[cfg(not(feature = "boring-tls"))]
-            Inner::Http(http) => http.set_interface(interface),
-            #[cfg(feature = "boring-tls")]
             Inner::BoringTls { http, .. } => http.set_interface(interface),
         };
     }
 
-    #[cfg(feature = "boring-tls")]
     #[inline]
     pub(crate) fn set_connector(&mut self, connector: BoringTlsConnector) {
         match &mut self.inner {
@@ -313,7 +248,6 @@ impl Connector {
         let ws = maybe_websocket_uri(&mut dst)?;
 
         match &self.inner {
-            #[cfg(feature = "boring-tls")]
             Inner::BoringTls { http, tls, .. } => {
                 if dst.scheme() == Some(&Scheme::HTTPS) {
                     let host = dst.host().ok_or(crate::error::uri_bad_host())?;
@@ -334,8 +268,6 @@ impl Connector {
                     });
                 }
             }
-            #[cfg(not(feature = "boring-tls"))]
-            Inner::Http(_) => (),
         }
 
         socks::connect(proxy, dst, dns).await.map(|tcp| Conn {
@@ -352,16 +284,6 @@ impl Connector {
     ) -> Result<Conn, BoxError> {
         let _ws = maybe_websocket_uri(&mut dst)?;
         match self.inner {
-            #[cfg(not(feature = "boring-tls"))]
-            Inner::Http(mut http) => {
-                let io = http.call(dst).await?;
-                Ok(Conn {
-                    inner: self.verbose.wrap(io),
-                    is_proxy,
-                    tls_info: false,
-                })
-            }
-            #[cfg(feature = "boring-tls")]
             Inner::BoringTls { http, tls } => {
                 let mut http = http.clone();
 
@@ -412,13 +334,11 @@ impl Connector {
             ProxyScheme::Socks5 { .. } => return self.connect_socks(dst, proxy_scheme).await,
         };
 
-        #[cfg(feature = "boring-tls")]
         let auth = _auth;
 
         let _ws = maybe_websocket_uri(&mut dst)?;
 
         match &self.inner {
-            #[cfg(feature = "boring-tls")]
             Inner::BoringTls { http, tls } => {
                 if dst.scheme() == Some(&Scheme::HTTPS) {
                     let host = dst.host().ok_or(crate::error::uri_bad_host())?;
@@ -443,8 +363,6 @@ impl Connector {
                     });
                 }
             }
-            #[cfg(not(feature = "boring-tls"))]
-            Inner::Http(_) => (),
         }
 
         self.connect_with_maybe_proxy(proxy_dst, true).await
@@ -542,12 +460,10 @@ impl Service<Uri> for Connector {
     }
 }
 
-#[cfg(feature = "boring-tls")]
 trait TlsInfoFactory {
     fn tls_info(&self) -> Option<crate::tls::TlsInfo>;
 }
 
-#[cfg(feature = "boring-tls")]
 impl<T: TlsInfoFactory> TlsInfoFactory for TokioIo<T> {
     fn tls_info(&self) -> Option<crate::tls::TlsInfo> {
         self.inner().tls_info()
@@ -560,7 +476,6 @@ impl TlsInfoFactory for tokio::net::TcpStream {
     }
 }
 
-#[cfg(feature = "boring-tls")]
 impl TlsInfoFactory for SslStream<TokioIo<TokioIo<tokio::net::TcpStream>>> {
     fn tls_info(&self) -> Option<crate::tls::TlsInfo> {
         let peer_certificate = self.ssl().peer_certificate().and_then(|c| c.to_der().ok());
@@ -568,7 +483,6 @@ impl TlsInfoFactory for SslStream<TokioIo<TokioIo<tokio::net::TcpStream>>> {
     }
 }
 
-#[cfg(feature = "boring-tls")]
 impl TlsInfoFactory for SslStream<TokioIo<MaybeHttpsStream<TokioIo<tokio::net::TcpStream>>>> {
     fn tls_info(&self) -> Option<crate::tls::TlsInfo> {
         self.ssl()
@@ -580,7 +494,6 @@ impl TlsInfoFactory for SslStream<TokioIo<MaybeHttpsStream<TokioIo<tokio::net::T
     }
 }
 
-#[cfg(feature = "boring-tls")]
 impl TlsInfoFactory for MaybeHttpsStream<TokioIo<tokio::net::TcpStream>> {
     fn tls_info(&self) -> Option<crate::tls::TlsInfo> {
         match self {
@@ -604,15 +517,9 @@ pub(crate) trait AsyncConn:
 
 impl<T: Read + Write + Connection + Send + Sync + Unpin + 'static> AsyncConn for T {}
 
-#[cfg(feature = "boring-tls")]
 trait AsyncConnWithInfo: AsyncConn + TlsInfoFactory {}
-#[cfg(not(feature = "boring-tls"))]
-trait AsyncConnWithInfo: AsyncConn {}
 
-#[cfg(feature = "boring-tls")]
 impl<T: AsyncConn + TlsInfoFactory> AsyncConnWithInfo for T {}
-#[cfg(not(feature = "boring-tls"))]
-impl<T: AsyncConn> AsyncConnWithInfo for T {}
 
 type BoxConn = Box<dyn AsyncConnWithInfo>;
 
@@ -633,7 +540,7 @@ pin_project! {
 impl Connection for Conn {
     fn connected(&self) -> Connected {
         let connected = self.inner.connected().proxy(self.is_proxy);
-        #[cfg(feature = "boring-tls")]
+
         if self.tls_info {
             if let Some(tls_info) = self.inner.tls_info() {
                 connected.extra(tls_info)
@@ -643,8 +550,6 @@ impl Connection for Conn {
         } else {
             connected
         }
-        #[cfg(not(feature = "boring-tls"))]
-        connected
     }
 }
 
@@ -695,7 +600,6 @@ impl Write for Conn {
 
 pub(crate) type Connecting = Pin<Box<dyn Future<Output = Result<Conn, BoxError>> + Send>>;
 
-#[cfg(feature = "boring-tls")]
 async fn tunnel<T>(
     mut conn: T,
     host: &str,
@@ -746,7 +650,7 @@ where
         let n = tokio_conn.read(&mut buf[pos..]).await?;
 
         if n == 0 {
-            return Err(tunnel_eof());
+            return Err("unexpected eof while tunneling".into());
         }
         pos += n;
 
@@ -767,12 +671,6 @@ where
     }
 }
 
-#[cfg(feature = "boring-tls")]
-fn tunnel_eof() -> BoxError {
-    "unexpected eof while tunneling".into()
-}
-
-#[cfg(feature = "boring-tls")]
 mod boring_tls_conn {
     use super::TlsInfoFactory;
     use crate::{
@@ -1074,7 +972,6 @@ mod verbose {
         }
     }
 
-    #[cfg(feature = "boring-tls")]
     impl<T: super::TlsInfoFactory> super::TlsInfoFactory for Verbose<T> {
         fn tls_info(&self) -> Option<crate::tls::TlsInfo> {
             self.inner.tls_info()

@@ -116,7 +116,7 @@ pub(crate) fn sort_headers(headers: &mut HeaderMap, headers_order: &[HeaderName]
 }
 
 // Convert the headers priority to the correct type
-#[cfg(feature = "boring-tls")]
+
 #[inline]
 pub(crate) fn convert_headers_priority(
     headers_priority: Option<(u32, u8, bool)>,

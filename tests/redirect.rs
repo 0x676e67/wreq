@@ -163,7 +163,7 @@ async fn test_redirect_removes_sensitive_headers() {
     reqwest::Client::builder()
         .build()
         .unwrap()
-        .get(&format!("http://{}/sensitive", mid_server.addr()))
+        .get(format!("http://{}/sensitive", mid_server.addr()))
         .header(
             reqwest::header::COOKIE,
             reqwest::header::HeaderValue::from_static("foo=bar"),
@@ -236,7 +236,7 @@ async fn test_referer_is_not_set_if_disabled() {
         .referer(false)
         .build()
         .unwrap()
-        .get(&format!("http://{}/no-refer", server.addr()))
+        .get(format!("http://{}/no-refer", server.addr()))
         .send()
         .await
         .unwrap();

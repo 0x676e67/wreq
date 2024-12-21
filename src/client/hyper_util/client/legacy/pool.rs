@@ -320,7 +320,6 @@ impl<'a, T: Poolable + 'a, K: Debug> IdlePopper<'a, T, K> {
             }
 
             let value = match entry.value.reserve() {
-                #[cfg(feature = "boring-tls")]
                 Reservation::Shared(to_reinsert, to_checkout) => {
                     self.list.push(Idle {
                         idle_at: Instant::now(),
@@ -355,7 +354,6 @@ impl<T: Poolable, K: Key> PoolInner<T, K> {
                 if !tx.is_canceled() {
                     let reserved = value.take().expect("value already sent");
                     let reserved = match reserved.reserve() {
-                        #[cfg(feature = "boring-tls")]
                         Reservation::Shared(to_keep, to_send) => {
                             value = Some(to_keep);
                             to_send

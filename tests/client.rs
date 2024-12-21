@@ -112,7 +112,7 @@ async fn response_text() {
     let client = Client::new();
 
     let res = client
-        .get(&format!("http://{}/text", server.addr()))
+        .get(format!("http://{}/text", server.addr()))
         .send()
         .await
         .expect("Failed to get");
@@ -130,7 +130,7 @@ async fn response_bytes() {
     let client = Client::new();
 
     let res = client
-        .get(&format!("http://{}/bytes", server.addr()))
+        .get(format!("http://{}/bytes", server.addr()))
         .send()
         .await
         .expect("Failed to get");
@@ -186,7 +186,7 @@ async fn body_pipe_response() {
     let client = Client::new();
 
     let res1 = client
-        .get(&format!("http://{}/get", server.addr()))
+        .get(format!("http://{}/get", server.addr()))
         .send()
         .await
         .expect("get1");
@@ -196,7 +196,7 @@ async fn body_pipe_response() {
 
     // and now ensure we can "pipe" the response to another request
     let res2 = client
-        .post(&format!("http://{}/pipe", server.addr()))
+        .post(format!("http://{}/pipe", server.addr()))
         .body(res1)
         .send()
         .await

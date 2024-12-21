@@ -34,7 +34,7 @@ use crate::dns::hickory::HickoryDnsResolver;
 use crate::dns::{gai::GaiResolver, DnsResolverWithOverrides, DynResolver, Resolve};
 use crate::into_url::try_uri;
 use crate::redirect::{self, remove_sensitive_headers};
-#[cfg(feature = "boring-tls")]
+
 use crate::tls::{self, BoringTlsConnector, Impersonate, ImpersonateSettings, TlsSettings};
 use crate::{error, impl_debug};
 use crate::{IntoUrl, Method, Proxy, StatusCode, Url};
@@ -119,9 +119,9 @@ struct Config {
     base_url: Option<Url>,
     builder: Builder,
     https_only: bool,
-    #[cfg(feature = "boring-tls")]
+
     tls_info: bool,
-    #[cfg(feature = "boring-tls")]
+
     tls: TlsSettings,
 }
 
@@ -181,9 +181,9 @@ impl ClientBuilder {
                     TokioExecutor::new(),
                 ),
                 https_only: false,
-                #[cfg(feature = "boring-tls")]
+
                 tls_info: false,
-                #[cfg(feature = "boring-tls")]
+
                 tls: Default::default(),
             },
         }
@@ -236,34 +236,18 @@ impl ClientBuilder {
             let mut http = HttpConnector::new_with_resolver(DynResolver::new(resolver));
             http.set_connect_timeout(config.connect_timeout);
 
-            #[cfg(feature = "boring-tls")]
-            {
-                let tls = BoringTlsConnector::new(config.tls)?;
-                Connector::new_boring_tls(
-                    http,
-                    tls,
-                    proxies,
-                    config.local_address_ipv4,
-                    config.local_address_ipv6,
-                    #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
-                    config.interface,
-                    config.nodelay,
-                    config.tls_info,
-                )
-            }
-
-            #[cfg(not(feature = "boring-tls"))]
-            {
-                Connector::new(
-                    http,
-                    proxies.clone(),
-                    config.local_address_ipv4,
-                    config.local_address_ipv6,
-                    #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
-                    config.interface,
-                    config.nodelay,
-                )
-            }
+            let tls = BoringTlsConnector::new(config.tls)?;
+            Connector::new_boring_tls(
+                http,
+                tls,
+                proxies,
+                config.local_address_ipv4,
+                config.local_address_ipv6,
+                #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
+                config.interface,
+                config.nodelay,
+                config.tls_info,
+            )
         };
 
         connector.set_timeout(config.connect_timeout);
@@ -296,7 +280,7 @@ impl ClientBuilder {
     }
 
     /// Sets the necessary values to mimic the specified impersonate version, including headers and TLS settings.
-    #[cfg(feature = "boring-tls")]
+
     #[inline]
     pub fn impersonate(self, impersonate: Impersonate) -> ClientBuilder {
         self.apply_impersonate(impersonate, true)
@@ -304,21 +288,21 @@ impl ClientBuilder {
 
     /// Sets the necessary values to mimic the specified impersonate version, skipping header configuration.
     /// This will only apply the required TLS settings.
-    #[cfg(feature = "boring-tls")]
+
     #[inline]
     pub fn impersonate_skip_headers(self, impersonate: Impersonate) -> ClientBuilder {
         self.apply_impersonate(impersonate, false)
     }
 
     /// Apply the given impersonate settings directly.
-    #[cfg(feature = "boring-tls")]
+
     #[inline]
     pub fn impersonate_settings(self, settings: ImpersonateSettings) -> ClientBuilder {
         self.apply_impersonate_settings(settings)
     }
 
     /// Private helper to configure impersonation with optional header settings.
-    #[cfg(feature = "boring-tls")]
+
     #[inline]
     fn apply_impersonate(self, impersonate: Impersonate, with_headers: bool) -> ClientBuilder {
         let settings = tls::tls_settings(impersonate, with_headers);
@@ -326,7 +310,7 @@ impl ClientBuilder {
     }
 
     /// Apply the given TLS settings and header function.
-    #[cfg(feature = "boring-tls")]
+
     fn apply_impersonate_settings(mut self, settings: ImpersonateSettings) -> ClientBuilder {
         // Set the headers if needed
         if let Some(headers) = settings.headers {
@@ -377,21 +361,21 @@ impl ClientBuilder {
     }
 
     /// Enable Encrypted Client Hello (Secure SNI)
-    #[cfg(feature = "boring-tls")]
+
     pub fn enable_ech_grease(mut self, enabled: bool) -> ClientBuilder {
         self.config.tls.enable_ech_grease = enabled;
         self
     }
 
     /// Enable TLS permute_extensions
-    #[cfg(feature = "boring-tls")]
+
     pub fn permute_extensions(mut self, enabled: bool) -> ClientBuilder {
         self.config.tls.permute_extensions = Some(enabled);
         self
     }
 
     /// Enable TLS pre_shared_key
-    #[cfg(feature = "boring-tls")]
+
     pub fn pre_shared_key(mut self, enabled: bool) -> ClientBuilder {
         self.config.tls.pre_shared_key = enabled;
         self
@@ -818,7 +802,6 @@ impl ClientBuilder {
     /// Only use HTTP/1.
     /// Default is Http/1.
     pub fn http1_only(mut self) -> ClientBuilder {
-        #[cfg(feature = "boring-tls")]
         {
             self.config.tls.alpn_protos = HttpVersionPref::Http1;
         }
@@ -829,7 +812,6 @@ impl ClientBuilder {
 
     /// Only use HTTP/2.
     pub fn http2_only(mut self) -> ClientBuilder {
-        #[cfg(feature = "boring-tls")]
         {
             self.config.tls.alpn_protos = HttpVersionPref::Http2;
         }
@@ -948,7 +930,7 @@ impl ClientBuilder {
     /// # Optional
     ///
     /// feature to be enabled.
-    #[cfg(feature = "boring-tls")]
+
     pub fn danger_accept_invalid_certs(mut self, accept_invalid_certs: bool) -> ClientBuilder {
         self.config.tls.certs_verification = !accept_invalid_certs;
         self
@@ -961,7 +943,7 @@ impl ClientBuilder {
     /// # Optional
     ///
     /// feature to be enabled.
-    #[cfg(feature = "boring-tls")]
+
     pub fn tls_sni(mut self, tls_sni: bool) -> ClientBuilder {
         self.config.tls.tls_sni = tls_sni;
         self
@@ -981,7 +963,7 @@ impl ClientBuilder {
     /// # Optional
     ///
     /// feature to be enabled.
-    #[cfg(feature = "boring-tls")]
+
     pub fn min_tls_version(mut self, version: tls::TlsVersion) -> ClientBuilder {
         self.config.tls.min_tls_version = Some(version);
         self
@@ -1001,7 +983,7 @@ impl ClientBuilder {
     /// # Optional
     ///
     /// feature to be enabled.
-    #[cfg(feature = "boring-tls")]
+
     pub fn max_tls_version(mut self, version: tls::TlsVersion) -> ClientBuilder {
         self.config.tls.max_tls_version = Some(version);
         self
@@ -1012,7 +994,7 @@ impl ClientBuilder {
     /// # Optional
     ///
     /// feature to be enabled.
-    #[cfg(feature = "boring-tls")]
+
     pub fn tls_info(mut self, tls_info: bool) -> ClientBuilder {
         self.config.tls_info = tls_info;
         self
@@ -1027,7 +1009,7 @@ impl ClientBuilder {
     }
 
     /// Set root certificate store.
-    #[cfg(feature = "boring-tls")]
+
     pub fn root_certs_store(mut self, store: impl Into<tls::RootCertsStore>) -> ClientBuilder {
         self.config.tls.root_certs_store = store.into();
         self
@@ -1508,7 +1490,7 @@ impl Client {
 
     /// Set the impersonate for this client.
     #[inline]
-    #[cfg(feature = "boring-tls")]
+
     pub fn set_impersonate(&mut self, var: Impersonate) -> crate::Result<()> {
         let settings = tls::tls_settings(var, true);
         self.set_impersonate_settings(settings)
@@ -1516,7 +1498,7 @@ impl Client {
 
     /// Set the impersonate for this client without setting the headers.
     #[inline]
-    #[cfg(feature = "boring-tls")]
+
     pub fn set_impersonate_skip_headers(&mut self, var: Impersonate) -> crate::Result<()> {
         let settings = tls::tls_settings(var, false);
         self.impersonate_settings(settings)
@@ -1524,13 +1506,13 @@ impl Client {
 
     /// Set the impersonate for this client with the given settings.
     #[inline]
-    #[cfg(feature = "boring-tls")]
+
     pub fn set_impersonate_settings(&mut self, settings: ImpersonateSettings) -> crate::Result<()> {
         self.impersonate_settings(settings)
     }
 
     /// Apply the impersonate settings to the client.
-    #[cfg(feature = "boring-tls")]
+
     #[inline]
     fn impersonate_settings(&mut self, settings: ImpersonateSettings) -> crate::Result<()> {
         let inner = self.inner_mut();

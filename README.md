@@ -10,14 +10,13 @@
 An ergonomic, all-in-one `JA3`/`JA4`/`HTTP2` fingerprint `HTTP`/`WebSocket` client.
 
 - Plain, JSON, urlencoded, multipart bodies
-- Header order
-- Redirect policy
-- Cookie store
+- Header Order
+- Redirect Policy
+- Cookie Store
+- HTTP Proxies
 - Restrict pool [connections](https://docs.rs/rquest/latest/rquest/struct.ClientBuilder.html#method.pool_max_size)
-- Proxy-level connection pool
 - `HTTPS`/`WebSocket` via [BoringSSL](https://github.com/google/boringssl)
 - Preconfigured `TLS`/`HTTP2` settings
-- `HTTP`, `HTTPS`, `SOCKS4` and `SOCKS5` proxies
 - [Changelog](https://github.com/penumbra-x/rquest/blob/main/CHANGELOG.md)
 
 Additional learning resources include:
