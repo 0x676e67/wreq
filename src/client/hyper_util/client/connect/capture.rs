@@ -19,7 +19,7 @@ pub struct CaptureConnection {
 /// [`capture_connection`] allows a caller to capture the returned [`Connected`] structure as soon
 /// as the connection is established.
 ///
-/// [`Connection`]: crate::client::legacy::connect::Connection
+/// [`Connection`]: crate::client::connect::Connection
 ///
 /// *Note*: If establishing a connection fails, [`CaptureConnection::connection_metadata`] will always return none.
 ///
@@ -30,7 +30,7 @@ pub struct CaptureConnection {
 /// established. This is ideal for situations where you are certain the connection has already
 /// been established (e.g. after the response future has already completed).
 /// ```rust
-/// use hyper_util::client::legacy::connect::capture_connection;
+/// use hyper_util::client::connect::capture_connection;
 /// let mut request = http::Request::builder()
 ///   .uri("http://foo.com")
 ///   .body(())
@@ -49,8 +49,8 @@ pub struct CaptureConnection {
 /// ```rust
 /// # #[cfg(feature  = "tokio")]
 /// # async fn example() {
-/// use hyper_util::client::legacy::connect::capture_connection;
-/// use hyper_util::client::legacy::Client;
+/// use hyper_util::client::connect::capture_connection;
+/// use hyper_util::client::Client;
 /// use hyper_util::rt::TokioExecutor;
 /// use bytes::Bytes;
 /// use http_body_util::Empty;

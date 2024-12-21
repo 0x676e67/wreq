@@ -76,7 +76,6 @@ pub enum Reservation<T> {
 
 /// Simple type alias in case the key type needs to be adjusted.
 // pub type Key = (http::uri::Scheme, http::uri::Authority); //Arc<String>;
-
 struct PoolInner<T, K: Eq + Hash> {
     // A flag that a connection is being established, and the connection
     // should be shared. This prevents making multiple HTTP/2 connections

@@ -6,7 +6,7 @@ use std::time::Duration;
 use std::{collections::HashMap, convert::TryInto, net::SocketAddr};
 use std::{fmt, str};
 
-use super::hyper_util::client::legacy::connect::HttpConnector;
+use super::hyper_util::client::connect::HttpConnector;
 use bytes::Bytes;
 use http::header::{
     Entry, HeaderMap, HeaderValue, ACCEPT, ACCEPT_ENCODING, CONTENT_ENCODING, CONTENT_LENGTH,
@@ -21,7 +21,7 @@ use std::task::{Context, Poll};
 use tokio::time::Sleep;
 
 use super::decoder::Accepts;
-use super::hyper_util::client::legacy::Builder;
+use super::hyper_util::client::Builder;
 use super::request::{InnerRequest, Request, RequestBuilder};
 use super::response::Response;
 use super::{hyper_util, Body};
@@ -42,7 +42,7 @@ use crate::{IntoUrl, Method, Proxy, StatusCode, Url};
 use hickory_resolver::config::LookupIpStrategy;
 use log::{debug, trace};
 
-type HyperResponseFuture = hyper_util::client::legacy::ResponseFuture;
+type HyperResponseFuture = hyper_util::client::ResponseFuture;
 
 /// An asynchronous `Client` to make Requests with.
 ///
@@ -177,9 +177,7 @@ impl ClientBuilder {
                 dns_overrides: HashMap::new(),
                 dns_resolver: None,
                 base_url: None,
-                builder: crate::client::hyper_util::client::legacy::Client::builder(
-                    TokioExecutor::new(),
-                ),
+                builder: crate::client::hyper_util::client::Client::builder(TokioExecutor::new()),
                 https_only: false,
 
                 tls_info: false,
@@ -213,19 +211,17 @@ impl ClientBuilder {
         let mut connector = {
             let mut resolver: Arc<dyn Resolve> = if let Some(dns_resolver) = config.dns_resolver {
                 dns_resolver
-            } else {
-                if config.hickory_dns {
-                    #[cfg(feature = "hickory-dns")]
-                    {
-                        Arc::new(HickoryDnsResolver::new(config.dns_strategy)?)
-                    }
-                    #[cfg(not(feature = "hickory-dns"))]
-                    {
-                        unreachable!("hickory-dns shouldn't be enabled unless the feature is")
-                    }
-                } else {
-                    Arc::new(GaiResolver::new())
+            } else if config.hickory_dns {
+                #[cfg(feature = "hickory-dns")]
+                {
+                    Arc::new(HickoryDnsResolver::new(config.dns_strategy)?)
                 }
+                #[cfg(not(feature = "hickory-dns"))]
+                {
+                    unreachable!("hickory-dns shouldn't be enabled unless the feature is")
+                }
+            } else {
+                Arc::new(GaiResolver::new())
             };
             if !config.dns_overrides.is_empty() {
                 resolver = Arc::new(DnsResolverWithOverrides::new(
@@ -280,7 +276,6 @@ impl ClientBuilder {
     }
 
     /// Sets the necessary values to mimic the specified impersonate version, including headers and TLS settings.
-
     #[inline]
     pub fn impersonate(self, impersonate: Impersonate) -> ClientBuilder {
         self.apply_impersonate(impersonate, true)
@@ -288,21 +283,18 @@ impl ClientBuilder {
 
     /// Sets the necessary values to mimic the specified impersonate version, skipping header configuration.
     /// This will only apply the required TLS settings.
-
     #[inline]
     pub fn impersonate_skip_headers(self, impersonate: Impersonate) -> ClientBuilder {
         self.apply_impersonate(impersonate, false)
     }
 
     /// Apply the given impersonate settings directly.
-
     #[inline]
     pub fn impersonate_settings(self, settings: ImpersonateSettings) -> ClientBuilder {
         self.apply_impersonate_settings(settings)
     }
 
     /// Private helper to configure impersonation with optional header settings.
-
     #[inline]
     fn apply_impersonate(self, impersonate: Impersonate, with_headers: bool) -> ClientBuilder {
         let settings = tls::tls_settings(impersonate, with_headers);
@@ -310,7 +302,6 @@ impl ClientBuilder {
     }
 
     /// Apply the given TLS settings and header function.
-
     fn apply_impersonate_settings(mut self, settings: ImpersonateSettings) -> ClientBuilder {
         // Set the headers if needed
         if let Some(headers) = settings.headers {
@@ -361,21 +352,18 @@ impl ClientBuilder {
     }
 
     /// Enable Encrypted Client Hello (Secure SNI)
-
     pub fn enable_ech_grease(mut self, enabled: bool) -> ClientBuilder {
         self.config.tls.enable_ech_grease = enabled;
         self
     }
 
     /// Enable TLS permute_extensions
-
     pub fn permute_extensions(mut self, enabled: bool) -> ClientBuilder {
         self.config.tls.permute_extensions = Some(enabled);
         self
     }
 
     /// Enable TLS pre_shared_key
-
     pub fn pre_shared_key(mut self, enabled: bool) -> ClientBuilder {
         self.config.tls.pre_shared_key = enabled;
         self
@@ -930,7 +918,6 @@ impl ClientBuilder {
     /// # Optional
     ///
     /// feature to be enabled.
-
     pub fn danger_accept_invalid_certs(mut self, accept_invalid_certs: bool) -> ClientBuilder {
         self.config.tls.certs_verification = !accept_invalid_certs;
         self
@@ -943,7 +930,6 @@ impl ClientBuilder {
     /// # Optional
     ///
     /// feature to be enabled.
-
     pub fn tls_sni(mut self, tls_sni: bool) -> ClientBuilder {
         self.config.tls.tls_sni = tls_sni;
         self
@@ -963,7 +949,6 @@ impl ClientBuilder {
     /// # Optional
     ///
     /// feature to be enabled.
-
     pub fn min_tls_version(mut self, version: tls::TlsVersion) -> ClientBuilder {
         self.config.tls.min_tls_version = Some(version);
         self
@@ -983,7 +968,6 @@ impl ClientBuilder {
     /// # Optional
     ///
     /// feature to be enabled.
-
     pub fn max_tls_version(mut self, version: tls::TlsVersion) -> ClientBuilder {
         self.config.tls.max_tls_version = Some(version);
         self
@@ -994,7 +978,6 @@ impl ClientBuilder {
     /// # Optional
     ///
     /// feature to be enabled.
-
     pub fn tls_info(mut self, tls_info: bool) -> ClientBuilder {
         self.config.tls_info = tls_info;
         self
@@ -1009,7 +992,6 @@ impl ClientBuilder {
     }
 
     /// Set root certificate store.
-
     pub fn root_certs_store(mut self, store: impl Into<tls::RootCertsStore>) -> ClientBuilder {
         self.config.tls.root_certs_store = store.into();
         self
@@ -1111,7 +1093,7 @@ impl ClientBuilder {
     }
 }
 
-type HyperClient = hyper_util::client::legacy::Client<Connector, super::Body>;
+type HyperClient = hyper_util::client::Client<Connector, super::Body>;
 
 impl Default for Client {
     fn default() -> Self {
@@ -1490,7 +1472,6 @@ impl Client {
 
     /// Set the impersonate for this client.
     #[inline]
-
     pub fn set_impersonate(&mut self, var: Impersonate) -> crate::Result<()> {
         let settings = tls::tls_settings(var, true);
         self.set_impersonate_settings(settings)
@@ -1498,7 +1479,6 @@ impl Client {
 
     /// Set the impersonate for this client without setting the headers.
     #[inline]
-
     pub fn set_impersonate_skip_headers(&mut self, var: Impersonate) -> crate::Result<()> {
         let settings = tls::tls_settings(var, false);
         self.impersonate_settings(settings)
@@ -1506,13 +1486,11 @@ impl Client {
 
     /// Set the impersonate for this client with the given settings.
     #[inline]
-
     pub fn set_impersonate_settings(&mut self, settings: ImpersonateSettings) -> crate::Result<()> {
         self.impersonate_settings(settings)
     }
 
     /// Apply the impersonate settings to the client.
-
     #[inline]
     fn impersonate_settings(&mut self, settings: ImpersonateSettings) -> crate::Result<()> {
         let inner = self.inner_mut();

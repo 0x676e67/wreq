@@ -41,7 +41,7 @@ pub struct HttpConnector<R = GaiResolver> {
 ///
 /// ```
 /// # fn doc(res: http::Response<()>) {
-/// use hyper_util::client::legacy::connect::HttpInfo;
+/// use hyper_util::client::connect::HttpInfo;
 ///
 /// // res = http::Response
 /// res
@@ -158,6 +158,12 @@ impl TcpKeepaliveConfig {
 
 // ===== impl HttpConnector =====
 
+impl Default for HttpConnector {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl HttpConnector {
     /// Construct a new HttpConnector.
     pub fn new() -> HttpConnector {
@@ -168,7 +174,7 @@ impl HttpConnector {
 impl<R> HttpConnector<R> {
     /// Construct a new HttpConnector.
     ///
-    /// Takes a [`Resolver`](crate::client::legacy::connect::dns#resolvers-are-services) to handle DNS lookups.
+    /// Takes a [`Resolver`](crate::client::connect::dns#resolvers-are-services) to handle DNS lookups.
     pub fn new_with_resolver(resolver: R) -> HttpConnector<R> {
         HttpConnector {
             config: Arc::new(Config {

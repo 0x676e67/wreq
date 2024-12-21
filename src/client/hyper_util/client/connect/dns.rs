@@ -99,6 +99,12 @@ impl fmt::Display for InvalidNameError {
 
 impl Error for InvalidNameError {}
 
+impl Default for GaiResolver {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl GaiResolver {
     /// Construct a new `GaiResolver`.
     pub fn new() -> Self {

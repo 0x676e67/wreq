@@ -744,10 +744,9 @@ impl<'a> InnerRequest<'a> {
     /// Set the headers for the request.
     #[inline]
     pub fn headers(mut self, mut headers: HeaderMap) -> Self {
-        self.builder.headers_mut().map(|h| {
+        if let Some(h) = self.builder.headers_mut() {
             std::mem::swap(h, &mut headers);
-            h
-        });
+        }
         self
     }
 

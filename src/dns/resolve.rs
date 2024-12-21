@@ -1,4 +1,4 @@
-use crate::client::hyper_util::client::legacy::connect::dns::Name as HyperName;
+use crate::client::hyper_util::client::connect::dns::Name as HyperName;
 use tower_service::Service;
 
 use std::collections::HashMap;

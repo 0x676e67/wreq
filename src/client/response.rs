@@ -6,7 +6,7 @@ use std::time::Duration;
 use bytes::Bytes;
 use http_body_util::BodyExt;
 use hyper2::{HeaderMap, StatusCode, Version};
-use hyper_util::client::legacy::connect::HttpInfo;
+use hyper_util::client::connect::HttpInfo;
 #[cfg(feature = "json")]
 use serde::de::DeserializeOwned;
 #[cfg(feature = "json")]

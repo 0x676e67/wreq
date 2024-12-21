@@ -5,7 +5,7 @@ mod cache;
 pub mod layer;
 
 pub use self::layer::*;
-use crate::client::hyper_util::client::legacy::connect::{Connected, Connection};
+use crate::client::hyper_util::client::connect::{Connected, Connection};
 use crate::client::hyper_util::rt::TokioIo;
 use crate::tls::TlsResult;
 use crate::HttpVersionPref;

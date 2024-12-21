@@ -1,6 +1,6 @@
 #![deny(missing_docs)]
 #![cfg_attr(docsrs, feature(doc_auto_cfg, doc_cfg))]
-
+//! Backport from: https://github.com/hyperium/hyper-util 
 //! Utilities for working with hyper.
 //!
 //! This crate is less-stable than [`hyper`](https://docs.rs/hyper). However,

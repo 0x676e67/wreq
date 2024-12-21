@@ -141,6 +141,12 @@ pub(super) enum Alpn {
     None,
 }
 
+impl Default for Connected {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Connected {
     /// Create new `Connected` type with empty metadata.
     pub fn new() -> Connected {
