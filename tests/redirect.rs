@@ -307,4 +307,3 @@ async fn test_redirect_302_with_set_cookies() {
     assert_eq!(res.url().as_str(), dst);
     assert_eq!(res.status(), rquest::StatusCode::OK);
 }
-

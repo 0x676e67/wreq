@@ -1,12 +1,12 @@
 use self::boring_tls_conn::BoringTlsConn;
 use crate::tls::{BoringTlsConnector, MaybeHttpsStream};
-use crate::util;
 use crate::util::client::connect::{Connected, Connection};
 use crate::util::client::ConnectRequest;
 use crate::util::ext::PoolKeyExtension;
 use crate::util::rt::TokioIo;
+use crate::util::{self, into_uri};
 use http::header::HeaderValue;
-use http::uri::{Authority, Scheme};
+use http::uri::Scheme;
 use http::Uri;
 use hyper2::rt::{Read, ReadBufCursor, Write};
 use tokio_boring::SslStream;
@@ -232,14 +232,12 @@ impl Connector {
         let Inner { http, tls } = &self.inner;
         if dst.scheme() == Some(&Scheme::HTTPS) {
             let host = dst.host().ok_or(crate::error::uri_bad_host())?;
+            log::trace!("socks HTTPS over proxy");
             let conn = socks::connect(proxy, &dst, dns).await?;
-            let conn = TokioIo::new(conn);
-            let conn = TokioIo::new(conn);
-            let connector = tls.create_connector(http.clone(), dst.version());
-            let setup_ssl = connector.setup_ssl(&dst, host)?;
-            let io = tokio_boring::SslStreamBuilder::new(setup_ssl, conn)
-                .connect()
-                .await?;
+
+            let http = tls.create_connector(http.clone(), dst.version());
+            let io = http.connect(&dst, host, TokioIo::new(conn)).await?;
+
             return Ok(Conn {
                 inner: self.verbose.wrap(BoringTlsConn {
                     inner: TokioIo::new(io),
@@ -271,13 +269,18 @@ impl Connector {
             http.set_nodelay(true);
         }
 
+        log::trace!("connect with maybe proxy");
         let mut http = tls.create_connector(http, dst.version());
         let io = http.call(dst.deref().clone()).await?;
 
         if let MaybeHttpsStream::Https(stream) = io {
             if !self.nodelay {
-                let stream_ref = stream.inner().get_ref();
-                stream_ref.inner().inner().set_nodelay(false)?;
+                stream
+                    .inner()
+                    .get_ref()
+                    .inner()
+                    .inner()
+                    .set_nodelay(false)?;
             }
             Ok(Conn {
                 inner: self.verbose.wrap(BoringTlsConn { inner: stream }),
@@ -316,13 +319,10 @@ impl Connector {
 
             let mut http = tls.create_connector(http.clone(), dst.version());
             let conn = http.call(proxy_dst).await?;
+
             log::trace!("tunneling HTTPS over proxy");
             let tunneled = tunnel(conn, host, port, auth).await?;
-
-            let ssl = http.setup_ssl(&dst, host)?;
-            let io = tokio_boring::SslStreamBuilder::new(ssl, TokioIo::new(tunneled))
-                .connect()
-                .await?;
+            let io = http.connect(&dst, host, tunneled).await?;
 
             return Ok(Conn {
                 inner: self.verbose.wrap(BoringTlsConn {
@@ -337,16 +337,6 @@ impl Connector {
 
         self.connect_with_maybe_proxy(dst, true).await
     }
-}
-
-fn into_uri(scheme: Scheme, host: Authority) -> Result<Uri, BoxError> {
-    // TODO: Should the `http` crate get `From<(Scheme, Authority)> for Uri`?
-    Uri::builder()
-        .scheme(scheme)
-        .authority(host)
-        .path_and_query(http::uri::PathAndQuery::from_static("/"))
-        .build()
-        .map_err(From::from)
 }
 
 async fn with_timeout<T, F>(f: F, timeout: Option<Duration>) -> Result<T, BoxError>

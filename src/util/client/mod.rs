@@ -39,6 +39,7 @@ use pool::Ver;
 use common::{lazy as hyper_lazy, timer, Exec, Lazy, SyncWrapper};
 
 use super::ext::ConnectExtension;
+use super::into_uri;
 
 type BoxSendFuture = Pin<Box<dyn Future<Output = ()> + Send>>;
 
@@ -162,11 +163,7 @@ impl ConnectRequest {
 
         pool_key
             .and_then(|(scheme, authority, extension)| {
-                http::uri::Builder::new()
-                    .scheme(scheme)
-                    .authority(authority)
-                    .path_and_query("/")
-                    .build()
+                into_uri(scheme, authority)
                     .map(|uri| (uri, extension))
                     .map_err(|_| e!(UserAbsoluteUriRequired))
             })

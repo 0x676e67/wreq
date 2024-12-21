@@ -12,6 +12,12 @@ pub mod ext;
 pub mod rt;
 pub mod service;
 
+use http::{
+    uri::{Authority, Scheme},
+    Uri,
+};
+use hyper2::{StreamDependency, StreamId};
+
 use crate::header::{Entry, HeaderMap, HeaderName, HeaderValue, OccupiedEntry};
 
 pub fn basic_auth<U, P>(username: U, password: Option<P>) -> HeaderValue
@@ -130,10 +136,20 @@ pub(crate) fn sort_headers(headers: &mut HeaderMap, headers_order: &[HeaderName]
 }
 
 // Convert the headers priority to the correct type
-
 #[inline]
 pub(crate) fn convert_headers_priority(
     headers_priority: Option<(u32, u8, bool)>,
-) -> Option<hyper2::StreamDependency> {
-    headers_priority.map(|(a, b, c)| hyper2::StreamDependency::new(hyper2::StreamId::from(a), b, c))
+) -> Option<StreamDependency> {
+    headers_priority.map(|(a, b, c)| StreamDependency::new(StreamId::from(a), b, c))
+}
+
+/// Convert a scheme and host to a URI
+#[inline]
+pub(crate) fn into_uri(scheme: Scheme, host: Authority) -> Result<Uri, http::Error> {
+    // TODO: Should the `http` crate get `From<(Scheme, Authority)> for Uri`?
+    Uri::builder()
+        .scheme(scheme)
+        .authority(host)
+        .path_and_query(http::uri::PathAndQuery::from_static("/"))
+        .build()
 }

@@ -1,6 +1,7 @@
 /// referrer: https://github.com/cloudflare/boring/blob/master/hyper-boring/src/lib.rs
 use super::cache::{SessionCache, SessionKey};
 use super::{key_index, HttpsLayerSettings, MaybeHttpsStream};
+use crate::error::BoxError;
 use crate::tls::{TlsConnectExtension, TlsResult};
 use crate::util::client::connect::Connection;
 use crate::util::rt::TokioIo;
@@ -13,8 +14,9 @@ use http::uri::Scheme;
 use http::Uri;
 use hyper2::rt::{Read, Write};
 use std::error::Error;
-use std::fmt;
+use std::fmt::{self, Debug};
 use std::future::Future;
+use tokio_boring::SslStream;
 
 use std::net;
 use std::pin::Pin;
@@ -45,11 +47,6 @@ where
         }
     }
 
-    /// Configures the SSL context for a given URI.
-    pub fn setup_ssl(&self, uri: &Uri, host: &str) -> TlsResult<Ssl> {
-        self.inner.setup_ssl(uri, host)
-    }
-
     /// Registers a callback which can customize the SSL context for a given URI.
     ///
     /// This callback is executed after the callback registered by [`Self::set_callback`] is executed.
@@ -58,6 +55,25 @@ where
         F: Fn(&mut SslRef, &Uri) -> Result<(), ErrorStack> + 'static + Sync + Send,
     {
         self.inner.ssl_callback = Some(Arc::new(callback));
+    }
+
+    /// Connects to the given URI using the given connection.
+    ///
+    /// This function is used to connect to the given URI using the given connection.
+    pub async fn connect<A>(
+        &self,
+        uri: &Uri,
+        host: &str,
+        conn: A,
+    ) -> Result<SslStream<TokioIo<A>>, BoxError>
+    where
+        A: Read + Write + Unpin + Send + Sync + Debug + 'static,
+    {
+        let ssl = self.inner.setup_ssl(uri, host)?;
+        tokio_boring::SslStreamBuilder::new(ssl, TokioIo::new(conn))
+            .connect()
+            .await
+            .map_err(Into::into)
     }
 }
 
@@ -153,7 +169,7 @@ impl Inner {
         }
 
         let key = SessionKey {
-            host: host.to_string(),
+            host: host.to_owned(),
             port: uri.port_u16().unwrap_or(443),
         };
 
@@ -239,9 +255,11 @@ where
             let ssl = inner.setup_ssl(&uri, host)?;
             let stream = tokio_boring::SslStreamBuilder::new(ssl, TokioIo::new(conn))
                 .connect()
-                .await?;
+                .await
+                .map(TokioIo::new)
+                .map(MaybeHttpsStream::Https)?;
 
-            Ok(MaybeHttpsStream::Https(TokioIo::new(stream)))
+            Ok(stream)
         };
 
         Box::pin(f)

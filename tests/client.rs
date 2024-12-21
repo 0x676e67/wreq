@@ -407,10 +407,7 @@ async fn test_tls_info() {
 // done.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn highly_concurrent_requests_to_http2_server_with_low_max_concurrent_streams() {
-    let client = rquest::Client::builder()
-        .http2_only()
-        .build()
-        .unwrap();
+    let client = rquest::Client::builder().http2_only().build().unwrap();
 
     let server = server::http_with_config(
         move |req| async move {
@@ -439,10 +436,7 @@ async fn highly_concurrent_requests_to_http2_server_with_low_max_concurrent_stre
 async fn highly_concurrent_requests_to_slow_http2_server_with_low_max_concurrent_streams() {
     use support::delay_server;
 
-    let client = rquest::Client::builder()
-        .http2_only()
-        .build()
-        .unwrap();
+    let client = rquest::Client::builder().http2_only().build().unwrap();
 
     let server = delay_server::Server::new(
         move |req| async move {
