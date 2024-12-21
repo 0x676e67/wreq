@@ -39,11 +39,9 @@ pub(crate) struct Connector {
 }
 
 #[derive(Clone)]
-enum Inner {
-    BoringTls {
-        http: HttpConnector,
-        tls: BoringTlsConnector,
-    },
+struct Inner {
+    http: HttpConnector,
+    tls: BoringTlsConnector,
 }
 
 impl Connector {
@@ -72,7 +70,7 @@ impl Connector {
         http.enforce_http(false);
 
         let mut connector = Connector {
-            inner: Inner::BoringTls { http, tls },
+            inner: Inner { http, tls },
             proxies,
             verbose: verbose::OFF,
             timeout: None,
@@ -82,10 +80,10 @@ impl Connector {
         };
 
         #[cfg(not(any(target_os = "android", target_os = "fuchsia", target_os = "linux")))]
-        connector.set_pool_key_ext(local_addr_v4.map(IpAddr::V4), local_addr_v6.map(IpAddr::V6));
+        connector.init_pool_key(local_addr_v4.map(IpAddr::V4), local_addr_v6.map(IpAddr::V6));
 
         #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
-        connector.set_pool_key_ext(
+        connector.init_pool_key(
             local_addr_v4.map(IpAddr::V4),
             local_addr_v6.map(IpAddr::V6),
             interface,
@@ -96,9 +94,7 @@ impl Connector {
 
     #[inline]
     pub(crate) fn set_keepalive(&mut self, dur: Option<Duration>) {
-        match &mut self.inner {
-            Inner::BoringTls { http, .. } => http.set_keepalive(dur),
-        }
+        self.inner.http.set_keepalive(dur);
     }
 
     #[inline]
@@ -139,31 +135,27 @@ impl Connector {
     #[inline]
     pub(crate) fn set_local_address(&mut self, addr: Option<IpAddr>) {
         #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
-        self.set_pool_key_ext(addr, None, None);
+        self.init_pool_key(addr, None, None);
 
         #[cfg(not(any(target_os = "android", target_os = "fuchsia", target_os = "linux")))]
-        self.set_pool_key_ext(addr, None);
+        self.init_pool_key(addr, None);
 
-        match &mut self.inner {
-            Inner::BoringTls { http, .. } => http.set_local_address(addr),
-        }
+        self.inner.http.set_local_address(addr);
     }
 
     #[inline]
     pub(crate) fn set_local_addresses(&mut self, addr_ipv4: Ipv4Addr, addr_ipv6: Ipv6Addr) {
         #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
-        self.set_pool_key_ext(IpAddr::V4(addr_ipv4), IpAddr::V6(addr_ipv6), None);
+        self.init_pool_key(IpAddr::V4(addr_ipv4), IpAddr::V6(addr_ipv6), None);
 
         #[cfg(not(any(target_os = "android", target_os = "fuchsia", target_os = "linux")))]
-        self.set_pool_key_ext(IpAddr::V4(addr_ipv4), IpAddr::V6(addr_ipv6));
+        self.init_pool_key(IpAddr::V4(addr_ipv4), IpAddr::V6(addr_ipv6));
 
-        match &mut self.inner {
-            Inner::BoringTls { http, .. } => http.set_local_addresses(addr_ipv4, addr_ipv6),
-        }
+        self.inner.http.set_local_addresses(addr_ipv4, addr_ipv6);
     }
 
     #[inline]
-    fn set_pool_key_ext(
+    fn init_pool_key(
         &mut self,
         addr_ipv4: impl Into<Option<IpAddr>>,
         addr_ipv6: impl Into<Option<IpAddr>>,
@@ -202,21 +194,16 @@ impl Connector {
 
     #[inline]
     pub(crate) fn set_connector(&mut self, connector: BoringTlsConnector) {
-        match &mut self.inner {
-            Inner::BoringTls { tls, .. } => *tls = connector,
-        }
+        self.inner.tls = connector;
     }
 
     #[inline]
-    pub(crate) fn pool_key_extension(&self, uri: &Uri) -> Option<PoolKeyExtension> {
+    pub(crate) fn pool_key(&self, uri: &Uri) -> Option<PoolKeyExtension> {
         for proxy in self.proxies.as_ref() {
             if let Some(proxy_scheme) = proxy.intercept(uri) {
                 let ext = match proxy_scheme {
-                    ProxyScheme::Http { host, auth } => {
-                        PoolKeyExtension::Http(Scheme::HTTP, host, auth)
-                    }
-                    ProxyScheme::Https { host, auth } => {
-                        PoolKeyExtension::Http(Scheme::HTTPS, host, auth)
+                    ProxyScheme::Http { auth, .. } | ProxyScheme::Https { auth, .. } => {
+                        PoolKeyExtension::Http(uri.clone(), auth)
                     }
                     #[cfg(feature = "socks")]
                     ProxyScheme::Socks4 { addr } => PoolKeyExtension::Socks4(addr, None),
@@ -247,27 +234,24 @@ impl Connector {
 
         let ws = maybe_websocket_uri(&mut dst)?;
 
-        match &self.inner {
-            Inner::BoringTls { http, tls, .. } => {
-                if dst.scheme() == Some(&Scheme::HTTPS) {
-                    let host = dst.host().ok_or(crate::error::uri_bad_host())?;
-                    let conn = socks::connect(proxy, dst.clone(), dns).await?;
-                    let conn = TokioIo::new(conn);
-                    let conn = TokioIo::new(conn);
-                    let connector = tls.create_connector(http.clone(), ws).await;
-                    let setup_ssl = connector.setup_ssl(&dst, host)?;
-                    let io = tokio_boring::SslStreamBuilder::new(setup_ssl, conn)
-                        .connect()
-                        .await?;
-                    return Ok(Conn {
-                        inner: self.verbose.wrap(BoringTlsConn {
-                            inner: TokioIo::new(io),
-                        }),
-                        is_proxy: false,
-                        tls_info: self.tls_info,
-                    });
-                }
-            }
+        let Inner { http, tls } = &self.inner;
+        if dst.scheme() == Some(&Scheme::HTTPS) {
+            let host = dst.host().ok_or(crate::error::uri_bad_host())?;
+            let conn = socks::connect(proxy, dst.clone(), dns).await?;
+            let conn = TokioIo::new(conn);
+            let conn = TokioIo::new(conn);
+            let connector = tls.create_connector(http.clone(), ws);
+            let setup_ssl = connector.setup_ssl(&dst, host)?;
+            let io = tokio_boring::SslStreamBuilder::new(setup_ssl, conn)
+                .connect()
+                .await?;
+            return Ok(Conn {
+                inner: self.verbose.wrap(BoringTlsConn {
+                    inner: TokioIo::new(io),
+                }),
+                is_proxy: false,
+                tls_info: self.tls_info,
+            });
         }
 
         socks::connect(proxy, dst, dns).await.map(|tcp| Conn {
@@ -283,38 +267,36 @@ impl Connector {
         is_proxy: bool,
     ) -> Result<Conn, BoxError> {
         let _ws = maybe_websocket_uri(&mut dst)?;
-        match self.inner {
-            Inner::BoringTls { http, tls } => {
-                let mut http = http.clone();
 
-                // Disable Nagle's algorithm for TLS handshake
-                //
-                // https://www.openssl.org/docs/man1.1.1/man3/SSL_connect.html#NOTES
-                if !self.nodelay && (dst.scheme() == Some(&Scheme::HTTPS)) {
-                    http.set_nodelay(true);
-                }
+        let Inner { http, tls } = &self.inner;
+        let mut http = http.clone();
 
-                let mut http = tls.create_connector(http, _ws).await;
-                let io = http.call(dst).await?;
+        // Disable Nagle's algorithm for TLS handshake
+        //
+        // https://www.openssl.org/docs/man1.1.1/man3/SSL_connect.html#NOTES
+        if !self.nodelay && (dst.scheme() == Some(&Scheme::HTTPS)) {
+            http.set_nodelay(true);
+        }
 
-                if let MaybeHttpsStream::Https(stream) = io {
-                    if !self.nodelay {
-                        let stream_ref = stream.inner().get_ref();
-                        stream_ref.inner().inner().set_nodelay(false)?;
-                    }
-                    Ok(Conn {
-                        inner: self.verbose.wrap(BoringTlsConn { inner: stream }),
-                        is_proxy,
-                        tls_info: self.tls_info,
-                    })
-                } else {
-                    Ok(Conn {
-                        inner: self.verbose.wrap(io),
-                        is_proxy,
-                        tls_info: self.tls_info,
-                    })
-                }
+        let mut http = tls.create_connector(http, _ws);
+        let io = http.call(dst).await?;
+
+        if let MaybeHttpsStream::Https(stream) = io {
+            if !self.nodelay {
+                let stream_ref = stream.inner().get_ref();
+                stream_ref.inner().inner().set_nodelay(false)?;
             }
+            Ok(Conn {
+                inner: self.verbose.wrap(BoringTlsConn { inner: stream }),
+                is_proxy,
+                tls_info: self.tls_info,
+            })
+        } else {
+            Ok(Conn {
+                inner: self.verbose.wrap(io),
+                is_proxy,
+                tls_info: self.tls_info,
+            })
         }
     }
 
@@ -338,31 +320,28 @@ impl Connector {
 
         let _ws = maybe_websocket_uri(&mut dst)?;
 
-        match &self.inner {
-            Inner::BoringTls { http, tls } => {
-                if dst.scheme() == Some(&Scheme::HTTPS) {
-                    let host = dst.host().ok_or(crate::error::uri_bad_host())?;
-                    let port = dst.port().map(|p| p.as_u16()).unwrap_or(443);
+        let Inner { http, tls } = &self.inner;
+        if dst.scheme() == Some(&Scheme::HTTPS) {
+            let host = dst.host().ok_or(crate::error::uri_bad_host())?;
+            let port = dst.port().map(|p| p.as_u16()).unwrap_or(443);
 
-                    let mut http = tls.create_connector(http.clone(), _ws).await;
-                    let conn = http.call(proxy_dst).await?;
-                    log::trace!("tunneling HTTPS over proxy");
-                    let tunneled = tunnel(conn, host, port, auth).await?;
+            let mut http = tls.create_connector(http.clone(), _ws);
+            let conn = http.call(proxy_dst).await?;
+            log::trace!("tunneling HTTPS over proxy");
+            let tunneled = tunnel(conn, host, port, auth).await?;
 
-                    let ssl = http.setup_ssl(&dst, host)?;
-                    let io = tokio_boring::SslStreamBuilder::new(ssl, TokioIo::new(tunneled))
-                        .connect()
-                        .await?;
+            let ssl = http.setup_ssl(&dst, host)?;
+            let io = tokio_boring::SslStreamBuilder::new(ssl, TokioIo::new(tunneled))
+                .connect()
+                .await?;
 
-                    return Ok(Conn {
-                        inner: self.verbose.wrap(BoringTlsConn {
-                            inner: TokioIo::new(io),
-                        }),
-                        is_proxy: false,
-                        tls_info: self.tls_info,
-                    });
-                }
-            }
+            return Ok(Conn {
+                inner: self.verbose.wrap(BoringTlsConn {
+                    inner: TokioIo::new(io),
+                }),
+                is_proxy: false,
+                tls_info: self.tls_info,
+            });
         }
 
         self.connect_with_maybe_proxy(proxy_dst, true).await

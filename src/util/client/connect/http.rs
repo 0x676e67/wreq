@@ -41,7 +41,7 @@ pub struct HttpConnector<R = GaiResolver> {
 ///
 /// ```
 /// # fn doc(res: http::Response<()>) {
-/// use hyper_util::client::connect::HttpInfo;
+/// use crate::util::client::connect::HttpInfo;
 ///
 /// // res = http::Response
 /// res

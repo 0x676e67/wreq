@@ -108,22 +108,24 @@ impl HttpsLayer {
             None
         };
 
+        let callback = Arc::new(move |conf: &mut ConnectConfiguration, _: &Uri| {
+            // Set ECH grease and TLS SNI.
+            conf.configure_enable_ech_grease(settings.enable_ech_grease)?
+                .set_verify_hostname(settings.tls_sni);
+
+            // Add application settings if it is set.
+            if settings.application_settings {
+                conf.configure_add_application_settings(settings.alpn_protos)?;
+            }
+
+            Ok(())
+        });
+
         Ok(HttpsLayer {
             inner: Inner {
                 ssl: ssl.build(),
                 cache,
-                callback: Some(Arc::new(move |conf, _| {
-                    // Set ECH grease and TLS SNI.
-                    conf.configure_enable_ech_grease(settings.enable_ech_grease)?
-                        .set_verify_hostname(settings.tls_sni);
-
-                    // Add application settings if it is set.
-                    if settings.application_settings {
-                        conf.configure_add_application_settings(settings.alpn_protos)?;
-                    }
-
-                    Ok(())
-                })),
+                callback: Some(callback),
                 ssl_callback: None,
                 skip_session_ticket: settings.skip_session_ticket,
             },

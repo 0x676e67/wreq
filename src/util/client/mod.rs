@@ -21,6 +21,7 @@ use std::time::Duration;
 
 use futures_util::future::{self, Either, FutureExt, TryFutureExt};
 use http::uri::Scheme;
+use http::Extensions;
 use hyper2::client::conn::TrySendError as ConnTrySendError;
 use hyper2::header::{HeaderValue, HOST};
 use hyper2::rt::Timer;
@@ -42,7 +43,6 @@ type BoxSendFuture = Pin<Box<dyn Future<Output = ()> + Send>>;
 ///
 /// `Client` is cheap to clone and cloning is the recommended way to share a `Client`. The
 /// underlying connection pool will be reused.
-#[cfg_attr(docsrs, doc(cfg(any(feature = "http1", feature = "http2"))))]
 pub struct Client<C, B> {
     config: Config,
     connector: C,
@@ -146,8 +146,8 @@ impl Client<(), ()> {
     /// #
     /// # fn run () {
     /// use std::time::Duration;
-    /// use hyper_util::client::Client;
-    /// use hyper_util::rt::TokioExecutor;
+    /// use crate::util::client::Client;
+    /// use crate::util::rt::TokioExecutor;
     ///
     /// let client = Client::builder(TokioExecutor::new())
     ///     .pool_idle_timeout(Duration::from_secs(30))
@@ -187,8 +187,8 @@ where
     /// #
     /// # fn run () {
     /// use hyper2::Uri;
-    /// use hyper_util::client::Client;
-    /// use hyper_util::rt::TokioExecutor;
+    /// use crate::util::client::Client;
+    /// use crate::util::rt::TokioExecutor;
     /// use bytes::Bytes;
     /// use http_body_util::Full;
     ///
@@ -220,9 +220,9 @@ where
     /// #
     /// # fn run () {
     /// use hyper2::{Method, Request};
-    /// use hyper_util::client::Client;
+    /// use crate::util::client::Client;
     /// use http_body_util::Full;
-    /// use hyper_util::rt::TokioExecutor;
+    /// use crate::util::rt::TokioExecutor;
     /// use bytes::Bytes;
     ///
     /// let client: Client<_, Full<Bytes>> = Client::builder(TokioExecutor::new()).build_http();
@@ -252,9 +252,7 @@ where
             other => return ResponseFuture::error_version(other),
         };
 
-        let ext = req.extensions_mut().remove::<PoolKeyExtension>();
-
-        let pool_key = match extract_domain(req.uri_mut(), ext, is_http_connect) {
+        let pool_key = match extract_domain(&mut req, is_http_connect) {
             Ok(s) => s,
             Err(err) => {
                 return ResponseFuture::new(future::err(err));
@@ -528,7 +526,6 @@ where
         let pool = self.pool.clone();
 
         let h1_builder = self.h1_builder.clone();
-
         let h2_builder = self.h2_builder.clone();
         let ver = self.config.ver;
         let is_ver_h2 = ver == Ver::Http2;
@@ -896,14 +893,11 @@ fn authority_form(uri: &mut Uri) {
     };
 }
 
-fn extract_domain(
-    uri: &mut Uri,
-    ext: Option<PoolKeyExtension>,
-    is_http_connect: bool,
-) -> Result<PoolKey, Error> {
-    let uri_clone = uri.clone();
-    match (uri_clone.scheme(), uri_clone.authority()) {
-        (Some(scheme), Some(auth)) => Ok((scheme.clone(), auth.clone(), ext)),
+fn extract_domain<B>(req: &mut Request<B>, is_http_connect: bool) -> Result<PoolKey, Error> {
+    let extension = req.extensions_mut().remove::<PoolKeyExtension>();
+    let uri = req.uri_mut();
+    match (uri.scheme().cloned(), uri.authority().cloned()) {
+        (Some(scheme), Some(auth)) => Ok((scheme, auth, extension)),
         (None, Some(auth)) if is_http_connect => {
             let scheme = match auth.port_u16() {
                 Some(443) => {
@@ -915,7 +909,7 @@ fn extract_domain(
                     Scheme::HTTP
                 }
             };
-            Ok((scheme, auth.clone(), ext))
+            Ok((scheme, auth.clone(), extension))
         }
         _ => {
             debug!("Client requires absolute-form URIs, received: {:?}", uri);
@@ -967,8 +961,8 @@ fn is_schema_secure(uri: &Uri) -> bool {
 /// #
 /// # fn run () {
 /// use std::time::Duration;
-/// use hyper_util::client::Client;
-/// use hyper_util::rt::TokioExecutor;
+/// use crate::util::client::Client;
+/// use crate::util::rt::TokioExecutor;
 ///
 /// let client = Client::builder(TokioExecutor::new())
 ///     .pool_idle_timeout(Duration::from_secs(30))
@@ -1029,8 +1023,8 @@ impl Builder {
     /// #
     /// # fn run () {
     /// use std::time::Duration;
-    /// use hyper_util::client::Client;
-    /// use hyper_util::rt::{TokioExecutor, TokioTimer};
+    /// use crate::util::client::Client;
+    /// use crate::util::rt::{TokioExecutor, TokioTimer};
     ///
     /// let client = Client::builder(TokioExecutor::new())
     ///     .pool_idle_timeout(Duration::from_secs(30))
@@ -1082,7 +1076,6 @@ impl Builder {
     /// Note that setting this to true prevents HTTP/1 from being allowed.
     ///
     /// Default is false.
-    #[cfg_attr(docsrs, doc(cfg(feature = "http2")))]
     pub fn http2_only(&mut self, val: bool) -> &mut Self {
         self.client_config.ver = if val { Ver::Http2 } else { Ver::Auto };
         self
@@ -1209,7 +1202,7 @@ impl fmt::Debug for Builder {
 
 impl fmt::Debug for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let mut f = f.debug_tuple("hyper_util::client::Error");
+        let mut f = f.debug_tuple("crate::util::client::Error");
         f.field(&self.kind);
         if let Some(ref cause) = self.source {
             f.field(cause);

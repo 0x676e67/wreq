@@ -6,7 +6,7 @@
 //!   `ClientBuilder`.
 
 #![allow(missing_docs)]
-mod conn;
+mod connect;
 mod ext;
 mod mimic;
 mod settings;
@@ -16,8 +16,8 @@ use boring::{
     error::ErrorStack,
     ssl::{SslConnector, SslMethod, SslOptions, SslVersion},
 };
-pub use conn::MaybeHttpsStream;
-use conn::{HttpsConnector, HttpsLayer, HttpsLayerSettings};
+pub use connect::MaybeHttpsStream;
+use connect::{HttpsConnector, HttpsLayer, HttpsLayerSettings};
 pub use ext::{cert_compression, TlsConnectExtension, TlsExtension};
 pub use mimic::{chrome, firefox, okhttp, safari, tls_settings, Impersonate};
 pub use settings::{Http2Settings, ImpersonateSettings, RootCertsStore, TlsSettings};
@@ -31,6 +31,7 @@ pub struct BoringTlsConnector {
     inner: HttpsLayer,
 }
 
+
 impl BoringTlsConnector {
     /// Create a new `BoringTlsConnector` with the given function.
     #[inline]
@@ -40,7 +41,7 @@ impl BoringTlsConnector {
 
     /// Create a new `HttpsConnector` with the settings from the `HttpConnector`.
     #[inline]
-    pub(crate) async fn create_connector(
+    pub(crate) fn create_connector(
         &self,
         http: HttpConnector,
         ws: bool,

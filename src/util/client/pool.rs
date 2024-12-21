@@ -153,17 +153,6 @@ impl<T, K: Key> Pool<T, K> {
     pub(crate) fn is_enabled(&self) -> bool {
         self.inner.is_some()
     }
-
-    #[cfg(test)]
-    pub(super) fn no_timer(&self) {
-        // Prevent an actual interval from being created for this pool...
-        {
-            let mut inner = self.inner.as_ref().unwrap().lock().unwrap();
-            assert!(inner.idle_interval_ref.is_none(), "timer already spawned");
-            let (tx, _) = oneshot::channel();
-            inner.idle_interval_ref = Some(tx);
-        }
-    }
 }
 
 impl<T: Poolable, K: Key> Pool<T, K> {
@@ -205,11 +194,6 @@ impl<T: Poolable, K: Key> Pool<T, K> {
         })
     }
 
-    #[cfg(test)]
-    fn locked(&self) -> std::sync::MutexGuard<'_, PoolInner<T, K>> {
-        self.inner.as_ref().expect("enabled").lock().expect("lock")
-    }
-
     /* Used in client/tests.rs...
     #[cfg(test)]
     pub(super) fn h1_key(&self, s: &str) -> Key {
@@ -224,7 +208,7 @@ impl<T: Poolable, K: Key> Pool<T, K> {
             .get(key)
             .map(|list| list.len())
             .unwrap_or(0)
-    }
+    }a
     */
 
     pub fn pooled(&self, mut connecting: Connecting<T, K>, value: T) -> Pooled<T, K> {

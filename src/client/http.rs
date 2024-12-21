@@ -1282,7 +1282,7 @@ impl Client {
         self.inner.proxy_auth(&uri, &mut headers);
 
         let in_flight = {
-            let extension = self.inner.hyper.pool_key_extension(&uri);
+            let extension = self.inner.hyper.pool_key(&uri);
             let req = InnerRequest::new()
                 .uri(uri)
                 .method(method.clone())
@@ -1545,9 +1545,6 @@ impl Client {
 
     /// private mut ref to inner
     fn inner_mut(&mut self) -> &mut ClientRef {
-        // If the are HttpConnector clones, this will clone the inner
-        // config. So mutating the config won't ever affect previous
-        // clones.
         Arc::make_mut(&mut self.inner)
     }
 }
@@ -1761,7 +1758,7 @@ impl PendingRequest {
         };
 
         *self.as_mut().in_flight().get_mut() = {
-            let extension = self.client.hyper.pool_key_extension(&uri);
+            let extension = self.client.hyper.pool_key(&uri);
             let req = InnerRequest::new()
                 .uri(uri)
                 .method(self.method.clone())
@@ -2008,7 +2005,7 @@ impl Future for PendingRequest {
                             self.client.proxy_auth(&uri, &mut headers);
 
                             *self.as_mut().in_flight().get_mut() = {
-                                let extension = self.client.hyper.pool_key_extension(&uri);
+                                let extension = self.client.hyper.pool_key(&uri);
                                 let req = InnerRequest::new()
                                     .uri(uri)
                                     .method(self.method.clone())
