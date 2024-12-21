@@ -9,11 +9,12 @@ use std::hash::Hash;
 use std::num::NonZero;
 use std::ops::{Deref, DerefMut};
 use std::pin::Pin;
-use std::sync::{Arc, Mutex, Weak};
+use std::sync::{Arc, Weak};
 use std::task::{self, Poll};
 
 use std::time::{Duration, Instant};
 
+use antidote::Mutex;
 use futures_channel::oneshot;
 use futures_util::ready;
 use log::{debug, trace};
@@ -171,7 +172,7 @@ impl<T: Poolable, K: Key> Pool<T, K> {
     pub fn connecting(&self, key: &K, ver: Ver) -> Option<Connecting<T, K>> {
         if ver == Ver::Http2 {
             if let Some(ref enabled) = self.inner {
-                let mut inner = enabled.lock().unwrap();
+                let mut inner = enabled.lock();
                 return if inner.connecting.insert(key.clone()) {
                     let connecting = Connecting {
                         key: key.clone(),
@@ -215,7 +216,7 @@ impl<T: Poolable, K: Key> Pool<T, K> {
         let (value, pool_ref) = if let Some(ref enabled) = self.inner {
             match value.reserve() {
                 Reservation::Shared(to_insert, to_return) => {
-                    let mut inner = enabled.lock().unwrap();
+                    let mut inner = enabled.lock();
                     inner.put(connecting.key.clone(), to_insert, enabled);
                     // Do this here instead of Drop for Connecting because we
                     // already have a lock, no need to lock the mutex twice.
@@ -543,9 +544,8 @@ impl<T: Poolable, K: Key> Drop for Pooled<T, K> {
             }
 
             if let Some(pool) = self.pool.upgrade() {
-                if let Ok(mut inner) = pool.lock() {
-                    inner.put(self.key.clone(), value, &pool);
-                }
+                let mut inner = pool.lock();
+                inner.put(self.key.clone(), value, &pool);
             } else if !value.can_share() {
                 trace!("pool dropped, dropping pooled ({:?})", self.key);
             }
@@ -629,7 +629,7 @@ impl<T: Poolable, K: Key> Checkout<T, K> {
 
     fn checkout(&mut self, cx: &mut task::Context<'_>) -> Option<Pooled<T, K>> {
         let entry = {
-            let mut inner = self.pool.inner.as_ref()?.lock().unwrap();
+            let mut inner = self.pool.inner.as_ref()?.lock();
             let expiration = Expiration::new(inner.timeout);
             let maybe_entry = inner.idle.get_mut(&self.key).and_then(|list| {
                 trace!("take? {:?}: expiration = {:?}", self.key, expiration.0);
@@ -701,7 +701,7 @@ impl<T, K: Key> Drop for Checkout<T, K> {
     fn drop(&mut self) {
         if self.waiter.take().is_some() {
             trace!("checkout dropped for {:?}", self.key);
-            if let Some(Ok(mut inner)) = self.pool.inner.as_ref().map(|i| i.lock()) {
+            if let Some(mut inner) = self.pool.inner.as_ref().map(|i| i.lock()) {
                 inner.clean_waiters(&self.key);
             }
         }
@@ -730,9 +730,8 @@ impl<T: Poolable, K: Key> Drop for Connecting<T, K> {
     fn drop(&mut self) {
         if let Some(pool) = self.pool.upgrade() {
             // No need to panic on drop, that could abort!
-            if let Ok(mut inner) = pool.lock() {
-                inner.connected(&self.key);
-            }
+            let mut inner = pool.lock();
+            inner.connected(&self.key);
         }
     }
 }
@@ -794,11 +793,10 @@ impl<T: Poolable + 'static, K: Key> Future for IdleTask<T, K> {
             *this.fut = this.timer.sleep_until(*this.deadline);
 
             if let Some(inner) = this.pool.upgrade() {
-                if let Ok(mut inner) = inner.lock() {
-                    trace!("idle interval checking for expired");
-                    inner.clear_expired();
-                    continue;
-                }
+                let mut inner = inner.lock();
+                trace!("idle interval checking for expired");
+                inner.clear_expired();
+                continue;
             }
             return Poll::Ready(());
         }
