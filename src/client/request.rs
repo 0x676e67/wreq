@@ -79,7 +79,7 @@ impl Request {
             headers: HeaderMap::new(),
             body: None,
             timeout: None,
-            version: Version::default(),
+            version: Version::HTTP_2,
             redirect: None,
             #[cfg(feature = "cookies")]
             cookie_store: None,

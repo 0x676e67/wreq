@@ -19,6 +19,7 @@ use boring::{
 pub use connect::MaybeHttpsStream;
 use connect::{HttpsConnector, HttpsLayer, HttpsLayerSettings};
 pub use ext::{cert_compression, TlsConnectExtension, TlsExtension};
+use http::Version;
 pub use mimic::{chrome, firefox, okhttp, safari, tls_settings, Impersonate};
 pub use settings::{Http2Settings, ImpersonateSettings, RootCertsStore, TlsSettings};
 
@@ -30,7 +31,6 @@ type TlsResult<T> = Result<T, ErrorStack>;
 pub struct BoringTlsConnector {
     inner: HttpsLayer,
 }
-
 
 impl BoringTlsConnector {
     /// Create a new `BoringTlsConnector` with the given function.
@@ -44,13 +44,17 @@ impl BoringTlsConnector {
     pub(crate) fn create_connector(
         &self,
         http: HttpConnector,
-        ws: bool,
+        version: Version,
     ) -> HttpsConnector<HttpConnector> {
         // Create the `HttpsConnector` with the given `HttpConnector` and `ConnectLayer`.
         let mut http = HttpsConnector::with_connector_layer(http, self.inner.clone());
         http.set_ssl_callback(move |ssl, _| {
-            // Set websocket use http1 alpn proto
-            if ws {
+            // Specify http1 alpn proto.
+            // Default is auto select http1 or http2.
+            if matches!(
+                version,
+                Version::HTTP_11 | Version::HTTP_10 | Version::HTTP_09
+            ) {
                 ssl.set_alpn_protos(b"\x08http/1.1")?;
             }
 

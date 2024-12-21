@@ -393,14 +393,14 @@ impl Proxy {
                 }
             }
             Intercept::Http(ref u) => {
-                if !in_no_proxy && (uri.scheme() == "http" || uri.scheme() == "ws") {
+                if !in_no_proxy && uri.scheme() == "http" {
                     Some(u.clone())
                 } else {
                     None
                 }
             }
             Intercept::Https(ref u) => {
-                if !in_no_proxy && (uri.scheme() == "https" || uri.scheme() == "wss") {
+                if !in_no_proxy && uri.scheme() == "https" {
                     Some(u.clone())
                 } else {
                     None

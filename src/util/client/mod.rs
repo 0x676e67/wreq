@@ -116,6 +116,50 @@ type PoolKey = (
     Option<PoolKeyExtension>,
 );
 
+#[derive(Clone)]
+struct Context {
+    version: Version,
+    pool_key: PoolKey,
+}
+
+impl Context {
+    pub fn new(pool_key: PoolKey, version: Version) -> Self {
+        Self { pool_key, version }
+    }
+}
+
+#[derive(Debug)]
+pub struct ConnectRequest {
+    uri: Uri,
+    version: Version,
+}
+
+impl ConnectRequest {
+    pub fn new(uri: Uri, version: Version) -> Self {
+        Self { uri, version }
+    }
+
+    pub fn version(&self) -> Version {
+        self.version
+    }
+
+    pub fn uri(&self) -> &Uri {
+        &self.uri
+    }
+
+    pub fn uri_mut(&mut self) -> &mut Uri {
+        &mut self.uri
+    }
+}
+
+impl std::ops::Deref for ConnectRequest {
+    type Target = Uri;
+
+    fn deref(&self) -> &Self::Target {
+        &self.uri
+    }
+}
+
 enum TrySendError<B> {
     Retryable {
         error: Error,
@@ -301,7 +345,10 @@ where
         pool_key: PoolKey,
     ) -> Result<Response<hyper2::body::Incoming>, TrySendError<B>> {
         let mut pooled = self
-            .connection_for(pool_key)
+            .connection_for(Context {
+                version: req.version(),
+                pool_key,
+            })
             .await
             // `connection_for` already retries checkout errors, so if
             // it returns an error, there's not much else to retry
@@ -404,10 +451,10 @@ where
 
     async fn connection_for(
         &self,
-        pool_key: PoolKey,
+        ctx: Context,
     ) -> Result<pool::Pooled<PoolClient<B>, PoolKey>, Error> {
         loop {
-            match self.one_connection_for(pool_key.clone()).await {
+            match self.one_connection_for(ctx.clone()).await {
                 Ok(pooled) => return Ok(pooled),
                 Err(ClientConnectError::Normal(err)) => return Err(err),
                 Err(ClientConnectError::CheckoutIsClosed(reason)) => {
@@ -427,12 +474,12 @@ where
 
     async fn one_connection_for(
         &self,
-        pool_key: PoolKey,
+        ctx: Context,
     ) -> Result<pool::Pooled<PoolClient<B>, PoolKey>, ClientConnectError> {
         // Return a single connection if pooling is not enabled
         if !self.pool.is_enabled() {
             return self
-                .connect_to(pool_key)
+                .connect_to(ctx)
                 .await
                 .map_err(ClientConnectError::Normal);
         }
@@ -450,8 +497,8 @@ where
         //   (an idle connection became available first), the started
         //   connection future is spawned into the runtime to complete,
         //   and then be inserted into the pool as an idle connection.
-        let checkout = self.pool.checkout(pool_key.clone());
-        let connect = self.connect_to(pool_key);
+        let checkout = self.pool.checkout(ctx.pool_key.clone());
+        let connect = self.connect_to(ctx);
         let is_ver_h2 = self.config.ver == Ver::Http2;
 
         // The order of the `select` is depended on below...
@@ -519,11 +566,12 @@ where
 
     fn connect_to(
         &self,
-        pool_key: PoolKey,
+        ctx: Context,
     ) -> impl Lazy<Output = Result<pool::Pooled<PoolClient<B>, PoolKey>, Error>> + Send + Unpin
     {
         let executor = self.exec.clone();
         let pool = self.pool.clone();
+        let pool_key = ctx.pool_key;
 
         let h1_builder = self.h1_builder.clone();
         let h2_builder = self.h2_builder.clone();
@@ -548,7 +596,7 @@ where
             };
             Either::Left(
                 connector
-                    .connect(connect::sealed::Internal, dst)
+                    .connect(connect::sealed::Internal, ConnectRequest::new(dst, ctx.version))
                     .map_err(|src| e!(Connect, src))
                     .and_then(move |io| {
                         let connected = io.connected();
@@ -1153,19 +1201,6 @@ impl Builder {
     pub fn set_host(&mut self, val: bool) -> &mut Self {
         self.client_config.set_host = val;
         self
-    }
-
-    /// Build a client with this configuration and the default `HttpConnector`.
-    pub fn build_http<B>(&self) -> Client<HttpConnector, B>
-    where
-        B: Body + Send,
-        B::Data: Send,
-    {
-        let mut connector = HttpConnector::new();
-        if self.pool_config.is_enabled() {
-            connector.set_keepalive(self.pool_config.idle_timeout);
-        }
-        self.build(connector)
     }
 
     /// Combine the configuration of this builder with a connector to create a `Client`.

@@ -2,6 +2,7 @@ use self::boring_tls_conn::BoringTlsConn;
 use crate::tls::{BoringTlsConnector, MaybeHttpsStream};
 use crate::util;
 use crate::util::client::connect::{Connected, Connection};
+use crate::util::client::ConnectRequest;
 use crate::util::ext::PoolKeyExtension;
 use crate::util::rt::TokioIo;
 use http::header::HeaderValue;
@@ -263,11 +264,9 @@ impl Connector {
 
     async fn connect_with_maybe_proxy(
         self,
-        mut dst: Uri,
+        dst: ConnectRequest,
         is_proxy: bool,
     ) -> Result<Conn, BoxError> {
-        let _ws = maybe_websocket_uri(&mut dst)?;
-
         let Inner { http, tls } = &self.inner;
         let mut http = http.clone();
 
@@ -278,8 +277,8 @@ impl Connector {
             http.set_nodelay(true);
         }
 
-        let mut http = tls.create_connector(http, _ws);
-        let io = http.call(dst).await?;
+        let mut http = tls.create_connector(http, dst.version());
+        let io = http.call(dst.uri().clone()).await?;
 
         if let MaybeHttpsStream::Https(stream) = io {
             if !self.nodelay {
@@ -302,7 +301,7 @@ impl Connector {
 
     async fn connect_via_proxy(
         self,
-        mut dst: Uri,
+        mut dst: ConnectRequest,
         proxy_scheme: ProxyScheme,
     ) -> Result<Conn, BoxError> {
         log::debug!("proxy({:?}) intercepts '{:?}'", proxy_scheme, dst);
@@ -318,14 +317,12 @@ impl Connector {
 
         let auth = _auth;
 
-        let _ws = maybe_websocket_uri(&mut dst)?;
-
         let Inner { http, tls } = &self.inner;
         if dst.scheme() == Some(&Scheme::HTTPS) {
             let host = dst.host().ok_or(crate::error::uri_bad_host())?;
             let port = dst.port().map(|p| p.as_u16()).unwrap_or(443);
 
-            let mut http = tls.create_connector(http.clone(), _ws);
+            let mut http = tls.create_connector(http.clone(), dst.version());
             let conn = http.call(proxy_dst).await?;
             log::trace!("tunneling HTTPS over proxy");
             let tunneled = tunnel(conn, host, port, auth).await?;
@@ -344,46 +341,10 @@ impl Connector {
             });
         }
 
-        self.connect_with_maybe_proxy(proxy_dst, true).await
+        *dst.uri_mut() = proxy_dst;
+
+        self.connect_with_maybe_proxy(dst, true).await
     }
-}
-
-/// Checks if the given URI is a WebSocket (ws or wss) URI and, if so,
-/// converts it into an HTTP or HTTPS URI.
-///
-/// This function modifies the provided URI (`dst`) if it detects a WebSocket scheme.
-/// If the scheme is "ws", it changes the URI scheme to HTTP.
-/// If the scheme is "wss", it changes the URI scheme to HTTPS.
-///
-/// Returns `true` if the URI was modified, meaning it originally had a "ws" or "wss" scheme.
-/// Returns `false` if the URI is not a WebSocket URI.
-///
-/// # Parameters:
-/// - `dst`: A mutable reference to a `Uri` that may be modified if it is a WebSocket URI.
-///
-/// # Returns:
-/// - `true`: if the URI was a WebSocket URI and was modified.
-/// - `false`: if the URI was not a WebSocket URI.
-///
-/// # Conditional compilation:
-/// This function only works if the "websocket" feature is enabled.
-#[inline]
-fn maybe_websocket_uri(dst: &mut Uri) -> Result<bool, BoxError> {
-    let ok = match (dst.scheme_str(), dst.authority()) {
-        #[cfg(feature = "websocket")]
-        (Some("ws"), Some(host)) => {
-            *dst = into_uri(Scheme::HTTP, host.clone())?;
-            true
-        }
-        #[cfg(feature = "websocket")]
-        (Some("wss"), Some(host)) => {
-            *dst = into_uri(Scheme::HTTPS, host.clone())?;
-            true
-        }
-        _ => false,
-    };
-
-    Ok(ok)
 }
 
 fn into_uri(scheme: Scheme, host: Authority) -> Result<Uri, BoxError> {
@@ -411,7 +372,7 @@ where
     }
 }
 
-impl Service<Uri> for Connector {
+impl Service<ConnectRequest> for Connector {
     type Response = Conn;
     type Error = BoxError;
     type Future = Connecting;
@@ -420,11 +381,12 @@ impl Service<Uri> for Connector {
         Poll::Ready(Ok(()))
     }
 
-    fn call(&mut self, dst: Uri) -> Self::Future {
-        log::debug!("starting new connection: {dst:?}");
+    fn call(&mut self, dst: ConnectRequest) -> Self::Future {
+        let uri = dst.uri();
+        log::debug!("starting new connection: {:?}", uri);
         let timeout = self.timeout;
         for prox in self.proxies.iter() {
-            if let Some(proxy_scheme) = prox.intercept(&dst) {
+            if let Some(proxy_scheme) = prox.intercept(uri) {
                 return Box::pin(with_timeout(
                     self.clone().connect_via_proxy(dst, proxy_scheme),
                     timeout,

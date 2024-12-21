@@ -1222,16 +1222,12 @@ impl Client {
     pub(super) fn execute_request(&self, req: Request) -> Pending {
         let (method, url, mut headers, body, timeout, version, redirect, _cookie_store) =
             req.pieces();
-        if url.scheme() != "http"
-            && url.scheme() != "https"
-            && url.scheme() != "ws"
-            && url.scheme() != "wss"
-        {
+        if url.scheme() != "http" && url.scheme() != "https" {
             return Pending::new_err(error::url_bad_scheme(url));
         }
 
         // check if we're in https_only mode and check the scheme of the current URL
-        if self.inner.https_only && url.scheme() != "https" && url.scheme() != "wss" {
+        if self.inner.https_only && url.scheme() != "https" {
             return Pending::new_err(error::url_bad_scheme(url));
         }
 

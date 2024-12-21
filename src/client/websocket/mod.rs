@@ -114,58 +114,59 @@ impl WebSocketRequestBuilder {
             .unwrap_or_else(|| tungstenite::handshake::client::generate_key());
 
         // prepare request
-        let version = request.version();
+        *request.version_mut() = Version::HTTP_11;
 
-        match version {
-            Version::HTTP_10 | Version::HTTP_11 => {
-                // HTTP 1 requires us to set some headers.
-                let headers = request.headers_mut();
+        // change the scheme
+        let url = request.url_mut();
+        match url.scheme() {
+            "ws" => {
+                url.set_scheme("http")
+                    .expect("url should accept http scheme");
+            }
+            "wss" => {
+                url.set_scheme("https")
+                    .expect("url should accept https scheme");
+            }
+            _ => {}
+        }
 
-                headers.insert(header::CONNECTION, HeaderValue::from_static("upgrade"));
-                headers.insert(header::UPGRADE, HeaderValue::from_static("websocket"));
-                headers.insert(
-                    header::SEC_WEBSOCKET_KEY,
-                    HeaderValue::from_str(&nonce)
-                        .map_err(|_| Error::new(Kind::Builder, Some("invalid key")))?,
+        // HTTP 1 requires us to set some headers.
+        let headers = request.headers_mut();
+
+        headers.insert(header::CONNECTION, HeaderValue::from_static("upgrade"));
+        headers.insert(header::UPGRADE, HeaderValue::from_static("websocket"));
+        headers.insert(
+            header::SEC_WEBSOCKET_KEY,
+            HeaderValue::from_str(&nonce)
+                .map_err(|_| Error::new(Kind::Builder, Some("invalid key")))?,
+        );
+        headers.insert(
+            header::SEC_WEBSOCKET_VERSION,
+            HeaderValue::from_static("13"),
+        );
+
+        if let Some(ref protocols) = self.protocols {
+            // sets subprotocols
+            if !protocols.is_empty() {
+                let subprotocols = protocols
+                    .iter()
+                    .map(|s| s.as_str())
+                    .collect::<Vec<&str>>()
+                    .join(", ");
+
+                request.headers_mut().insert(
+                    header::SEC_WEBSOCKET_PROTOCOL,
+                    subprotocols
+                        .parse()
+                        .map_err(|_| Error::new(Kind::Builder, Some("invalid subprotocol")))?,
                 );
-                headers.insert(
-                    header::SEC_WEBSOCKET_VERSION,
-                    HeaderValue::from_static("13"),
-                );
-
-                if let Some(ref protocols) = self.protocols {
-                    // sets subprotocols
-                    if !protocols.is_empty() {
-                        let subprotocols = protocols
-                            .iter()
-                            .map(|s| s.as_str())
-                            .collect::<Vec<&str>>()
-                            .join(", ");
-
-                        request.headers_mut().insert(
-                            header::SEC_WEBSOCKET_PROTOCOL,
-                            subprotocols.parse().map_err(|_| {
-                                Error::new(Kind::Builder, Some("invalid subprotocol"))
-                            })?,
-                        );
-                    }
-                }
             }
-
-            Version::HTTP_2 => {
-                // TODO: Implement websocket upgrade for HTTP 2.
-                return Err(Error::new(Kind::Builder, Some("HTTP2 not supported")).into());
-            }
-            _ => {
-                return Err(Error::new(Kind::Builder, Some("Unsupported HTTP version")).into());
-            }
-        };
-
+        }
+        
         Ok(WebSocketResponse {
             inner: client.execute(request).await?,
             nonce,
             protocols: self.protocols,
-            version,
             config: self.config,
         })
     }
@@ -180,7 +181,6 @@ pub struct WebSocketResponse {
     inner: Response,
     nonce: String,
     protocols: Option<Vec<String>>,
-    version: Version,
     config: WebSocketConfig,
 }
 
@@ -204,14 +204,6 @@ impl WebSocketResponse {
     pub async fn into_websocket(self) -> Result<WebSocket, Error> {
         let (inner, protocol) = {
             let headers = self.inner.headers();
-
-            // Check the version
-            if self.inner.version() != self.version {
-                return Err(Error::new(
-                    Kind::Upgrade,
-                    Some(format!("unexpected version: {:?}", self.inner.version())),
-                ));
-            }
 
             // Check the status code
             if self.inner.status() != StatusCode::SWITCHING_PROTOCOLS {

@@ -11,8 +11,7 @@ async fn http_upgrade() {
         assert_eq!(req.headers()["upgrade"], "foobar");
 
         tokio::spawn(async move {
-            let mut upgraded =
-                hyper_util::rt::TokioIo::new(hyper::upgrade::on(req).await.unwrap());
+            let mut upgraded = hyper_util::rt::TokioIo::new(hyper::upgrade::on(req).await.unwrap());
 
             let mut buf = vec![0; 7];
             upgraded.read_exact(&mut buf).await.unwrap();
