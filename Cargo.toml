@@ -231,11 +231,6 @@ name = "impersonate_skip_headers"
 path = "examples/impersonate_skip_headers.rs"
 
 [[example]]
-name = "impersonate_settings"
-path = "examples/impersonate_settings.rs"
-required-features = ["full"]
-
-[[example]]
 name = "impersonate_psk"
 path = "examples/impersonate_psk.rs"
 
