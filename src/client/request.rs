@@ -4,7 +4,7 @@ use std::future::Future;
 use std::time::Duration;
 
 use http::header::CONTENT_LENGTH;
-use http::Uri;
+use http::{request::Parts, Request as HttpRequest, Uri, Version};
 use serde::Serialize;
 #[cfg(feature = "json")]
 use serde_json;
@@ -20,7 +20,6 @@ use crate::cookie;
 use crate::header::{HeaderMap, HeaderName, HeaderValue, CONTENT_TYPE, HOST};
 use crate::util::ext::{ConnectExtension, PoolKeyExtension, VersionExtension};
 use crate::{redirect, Method, Url};
-use http::Version;
 #[cfg(feature = "cookies")]
 use std::sync::Arc;
 
@@ -646,6 +645,64 @@ pub(crate) fn extract_authority(url: &mut Url) -> Option<(String, Option<String>
     }
 
     None
+}
+
+impl<T> TryFrom<HttpRequest<T>> for Request
+where
+    T: Into<Body>,
+{
+    type Error = crate::Error;
+
+    fn try_from(req: HttpRequest<T>) -> crate::Result<Self> {
+        let (parts, body) = req.into_parts();
+        let Parts {
+            method,
+            uri,
+            headers,
+            ..
+        } = parts;
+        let url = crate::into_url::IntoUrlSealed::into_url(uri.to_string())?;
+        Ok(Request {
+            method,
+            url,
+            headers,
+            body: Some(body.into()),
+            timeout: None,
+            // TODO: Add version
+            version: None,
+            redirect: None,
+        })
+    }
+}
+
+impl TryFrom<Request> for HttpRequest<Body> {
+    type Error = crate::Error;
+
+    fn try_from(req: Request) -> crate::Result<Self> {
+        let Request {
+            method,
+            url,
+            headers,
+            body,
+            version,
+            ..
+        } = req;
+
+        let mut builder = HttpRequest::builder();
+
+        if let Some(version) = version {
+            builder = builder.version(version);
+        }
+
+        let mut req = builder
+            .method(method)
+            .uri(url.as_str())
+            .body(body.unwrap_or_else(Body::empty))
+            .map_err(crate::error::builder)?;
+
+        *req.headers_mut() = headers;
+        Ok(req)
+    }
 }
 
 /// A builder for constructing HTTP requests.
