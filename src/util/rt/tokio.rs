@@ -3,10 +3,9 @@ use std::{
     future::Future,
     pin::Pin,
     task::{Context, Poll},
-    time::{Duration, Instant},
 };
 
-use hyper2::rt::{Executor, Sleep, Timer};
+use hyper2::rt::Executor;
 use pin_project_lite::pin_project;
 
 /// Future executor that utilises `tokio` threads.
@@ -22,21 +21,6 @@ pin_project! {
     pub struct TokioIo<T> {
         #[pin]
         inner: T,
-    }
-}
-
-/// A Timer that uses the tokio runtime.
-#[non_exhaustive]
-#[derive(Default, Clone, Debug)]
-pub struct TokioTimer;
-
-// Use TokioSleep to get tokio::time::Sleep to implement Unpin.
-// see https://docs.rs/tokio/latest/tokio/time/struct.Sleep.html
-pin_project! {
-    #[derive(Debug)]
-    struct TokioSleep {
-        #[pin]
-        inner: tokio::time::Sleep,
     }
 }
 
@@ -208,43 +192,5 @@ where
         bufs: &[std::io::IoSlice<'_>],
     ) -> Poll<Result<usize, std::io::Error>> {
         hyper2::rt::Write::poll_write_vectored(self.project().inner, cx, bufs)
-    }
-}
-
-// ==== impl TokioTimer =====
-
-impl Timer for TokioTimer {
-    fn sleep(&self, duration: Duration) -> Pin<Box<dyn Sleep>> {
-        Box::pin(TokioSleep {
-            inner: tokio::time::sleep(duration),
-        })
-    }
-
-    fn sleep_until(&self, deadline: Instant) -> Pin<Box<dyn Sleep>> {
-        Box::pin(TokioSleep {
-            inner: tokio::time::sleep_until(deadline.into()),
-        })
-    }
-
-    fn reset(&self, sleep: &mut Pin<Box<dyn Sleep>>, new_deadline: Instant) {
-        if let Some(sleep) = sleep.as_mut().downcast_mut_pin::<TokioSleep>() {
-            sleep.reset(new_deadline)
-        }
-    }
-}
-
-impl Future for TokioSleep {
-    type Output = ();
-
-    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        self.project().inner.poll(cx)
-    }
-}
-
-impl Sleep for TokioSleep {}
-
-impl TokioSleep {
-    fn reset(self: Pin<&mut Self>, deadline: Instant) {
-        self.project().inner.as_mut().reset(deadline.into());
     }
 }
