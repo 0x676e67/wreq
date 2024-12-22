@@ -686,16 +686,12 @@ impl<'a> InnerRequest<'a> {
                 Version::HTTP_11 | Version::HTTP_10 | Version::HTTP_09 => {
                     self.builder = self
                         .builder
-                        .extension(ConnectExtension::new(VersionExtension(
-                            HttpVersionPref::Http1,
-                        )));
+                        .extension(ConnectExtension(VersionExtension(HttpVersionPref::Http1)));
                 }
                 Version::HTTP_2 => {
                     self.builder = self
                         .builder
-                        .extension(ConnectExtension::new(VersionExtension(
-                            HttpVersionPref::Http2,
-                        )));
+                        .extension(ConnectExtension(VersionExtension(HttpVersionPref::Http2)));
                 }
                 _ => {}
             };
@@ -723,7 +719,7 @@ impl<'a> InnerRequest<'a> {
     #[inline]
     pub fn pool_key(mut self, pool_key: Option<PoolKeyExtension>) -> Self {
         if let Some(pool_key) = pool_key {
-            self.builder = self.builder.extension(ConnectExtension::new(pool_key));
+            self.builder = self.builder.extension(ConnectExtension(pool_key));
         }
         self
     }

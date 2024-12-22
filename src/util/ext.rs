@@ -1,21 +1,18 @@
 use crate::{proxy::ProxyScheme, HttpVersionPref};
 use std::net::IpAddr;
 
+/// Extension for connect.
 #[derive(Clone)]
-pub(crate) struct ConnectExtension<T: Clone> {
-    value: T,
-}
+pub(crate) struct ConnectExtension<T: Clone>(pub T);
 
 impl<T: Clone> ConnectExtension<T> {
-    pub(crate) fn new(value: T) -> Self {
-        Self { value }
-    }
-
+    /// Get the inner value.
     pub(crate) fn into_inner(self) -> T {
-        self.value
+        self.0
     }
 }
 
+/// Extension for http version preference.
 #[derive(Debug, Clone)]
 pub(crate) struct VersionExtension(pub HttpVersionPref);
 
