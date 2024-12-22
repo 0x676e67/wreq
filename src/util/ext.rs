@@ -1,4 +1,4 @@
-use crate::proxy::ProxyScheme;
+use crate::{proxy::ProxyScheme, HttpVersionPref};
 use std::net::IpAddr;
 
 #[derive(Clone)]
@@ -16,7 +16,10 @@ impl<T: Clone> ConnectExtension<T> {
     }
 }
 
-/// Extension for pool key
+#[derive(Debug, Clone)]
+pub(crate) struct VersionExtension(pub HttpVersionPref);
+
+/// Extension for pool key suffix
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
 pub(crate) enum PoolKeyExtension {
     #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]

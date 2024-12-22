@@ -1,7 +1,7 @@
 use self::tls_conn::BoringTlsConn;
 use crate::tls::{BoringTlsConnector, MaybeHttpsStream};
 use crate::util::client::connect::{Connected, Connection};
-use crate::util::client::ConnectRequest;
+use crate::util::client::Dst;
 use crate::util::ext::PoolKeyExtension;
 use crate::util::rt::TokioIo;
 use crate::util::{self, into_uri};
@@ -210,11 +210,7 @@ impl Connector {
     }
 
     #[cfg(feature = "socks")]
-    async fn connect_socks(
-        &self,
-        dst: ConnectRequest,
-        proxy: ProxyScheme,
-    ) -> Result<Conn, BoxError> {
+    async fn connect_socks(&self, dst: Dst, proxy: ProxyScheme) -> Result<Conn, BoxError> {
         let dns = match proxy {
             ProxyScheme::Socks4 { .. } => socks::DnsResolve::Local,
             ProxyScheme::Socks5 {
@@ -253,11 +249,7 @@ impl Connector {
         })
     }
 
-    async fn connect_with_maybe_proxy(
-        self,
-        dst: ConnectRequest,
-        is_proxy: bool,
-    ) -> Result<Conn, BoxError> {
+    async fn connect_with_maybe_proxy(self, dst: Dst, is_proxy: bool) -> Result<Conn, BoxError> {
         let Inner { http, tls } = &self.inner;
         let mut http = http.clone();
 
@@ -297,7 +289,7 @@ impl Connector {
 
     async fn connect_via_proxy(
         self,
-        mut dst: ConnectRequest,
+        mut dst: Dst,
         proxy_scheme: ProxyScheme,
     ) -> Result<Conn, BoxError> {
         log::debug!("proxy({:?}) intercepts '{:?}'", proxy_scheme, dst);
@@ -332,7 +324,7 @@ impl Connector {
             });
         }
 
-        *dst.uri_mut() = proxy_dst;
+        dst.set_dst(proxy_dst);
 
         self.connect_with_maybe_proxy(dst, true).await
     }
@@ -353,7 +345,7 @@ where
     }
 }
 
-impl Service<ConnectRequest> for Connector {
+impl Service<Dst> for Connector {
     type Response = Conn;
     type Error = BoxError;
     type Future = Connecting;
@@ -362,7 +354,7 @@ impl Service<ConnectRequest> for Connector {
         Poll::Ready(Ok(()))
     }
 
-    fn call(&mut self, dst: ConnectRequest) -> Self::Future {
+    fn call(&mut self, dst: Dst) -> Self::Future {
         log::debug!("starting new connection: {:?}", dst);
         let timeout = self.timeout;
         for prox in self.proxies.iter() {

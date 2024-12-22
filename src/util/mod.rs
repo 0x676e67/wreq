@@ -12,13 +12,12 @@ pub mod ext;
 pub mod rt;
 pub mod service;
 
+use crate::header::{Entry, HeaderMap, HeaderName, HeaderValue, OccupiedEntry};
 use http::{
     uri::{Authority, Scheme},
     Uri,
 };
 use hyper2::{StreamDependency, StreamId};
-
-use crate::header::{Entry, HeaderMap, HeaderName, HeaderValue, OccupiedEntry};
 
 pub fn basic_auth<U, P>(username: U, password: Option<P>) -> HeaderValue
 where

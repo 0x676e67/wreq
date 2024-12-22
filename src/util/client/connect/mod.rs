@@ -310,7 +310,7 @@ pub(super) mod sealed {
     use ::http::Uri;
     use hyper2::rt::{Read, Write};
 
-    use crate::util::{client::ConnectRequest, service};
+    use crate::util::{client::Dst, service};
 
     use super::Connection;
 
@@ -330,11 +330,7 @@ pub(super) mod sealed {
         #[doc(hidden)]
         type _Svc: ConnectSvc;
         #[doc(hidden)]
-        fn connect(
-            self,
-            internal_only: Internal,
-            dst: ConnectRequest,
-        ) -> <Self::_Svc as ConnectSvc>::Future;
+        fn connect(self, internal_only: Internal, dst: Dst) -> <Self::_Svc as ConnectSvc>::Future;
     }
 
     pub trait ConnectSvc {
@@ -342,42 +338,42 @@ pub(super) mod sealed {
         type Error: Into<Box<dyn StdError + Send + Sync>>;
         type Future: Future<Output = Result<Self::Connection, Self::Error>> + Unpin + Send + 'static;
 
-        fn connect(self, internal_only: Internal, dst: ConnectRequest) -> Self::Future;
+        fn connect(self, internal_only: Internal, dst: Dst) -> Self::Future;
     }
 
     impl<S, T> Connect for S
     where
-        S: tower_service::Service<ConnectRequest, Response = T> + Send + 'static,
+        S: tower_service::Service<Dst, Response = T> + Send + 'static,
         S::Error: Into<Box<dyn StdError + Send + Sync>>,
         S::Future: Unpin + Send,
         T: Read + Write + Connection + Unpin + Send + 'static,
     {
         type _Svc = S;
 
-        fn connect(self, _: Internal, dst: ConnectRequest) -> service::Oneshot<S, ConnectRequest> {
+        fn connect(self, _: Internal, dst: Dst) -> service::Oneshot<S, Dst> {
             service::Oneshot::new(self, dst)
         }
     }
 
     impl<S, T> ConnectSvc for S
     where
-        S: tower_service::Service<ConnectRequest, Response = T> + Send + 'static,
+        S: tower_service::Service<Dst, Response = T> + Send + 'static,
         S::Error: Into<Box<dyn StdError + Send + Sync>>,
         S::Future: Unpin + Send,
         T: Read + Write + Connection + Unpin + Send + 'static,
     {
         type Connection = T;
         type Error = S::Error;
-        type Future = service::Oneshot<S, ConnectRequest>;
+        type Future = service::Oneshot<S, Dst>;
 
-        fn connect(self, _: Internal, dst: ConnectRequest) -> Self::Future {
+        fn connect(self, _: Internal, dst: Dst) -> Self::Future {
             service::Oneshot::new(self, dst)
         }
     }
 
     impl<S, T> Sealed for S
     where
-        S: tower_service::Service<ConnectRequest, Response = T> + Send,
+        S: tower_service::Service<Dst, Response = T> + Send,
         S::Error: Into<Box<dyn StdError + Send + Sync>>,
         S::Future: Unpin + Send,
         T: Read + Write + Connection + Unpin + Send + 'static,

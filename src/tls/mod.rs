@@ -11,7 +11,7 @@ mod ext;
 mod mimic;
 mod settings;
 
-use crate::connect::HttpConnector;
+use crate::{connect::HttpConnector, HttpVersionPref};
 use boring::{
     error::ErrorStack,
     ssl::{SslConnector, SslMethod, SslOptions, SslVersion},
@@ -20,7 +20,6 @@ pub use conn::MaybeHttpsStream;
 use conn::{HttpsConnector, HttpsLayer, HttpsLayerSettings};
 use ext::TlsExtension;
 pub use ext::{cert_compression, TlsBuilderExtension, TlsConnectExtension};
-use http::Version;
 pub use mimic::{chrome, firefox, okhttp, safari, tls_settings, Impersonate};
 pub use settings::{Http2Settings, ImpersonateSettings, RootCertsStore, TlsSettings};
 
@@ -45,7 +44,7 @@ impl BoringTlsConnector {
     pub(crate) fn create_connector(
         &self,
         http: HttpConnector,
-        version: Option<Version>,
+        version: Option<HttpVersionPref>,
     ) -> HttpsConnector<HttpConnector> {
         // Create the `HttpsConnector` with the given `HttpConnector` and `ConnectLayer`.
         let mut http = HttpsConnector::with_connector_layer(http, self.inner.clone());

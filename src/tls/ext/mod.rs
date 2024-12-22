@@ -1,5 +1,3 @@
-#![allow(missing_debug_implementations)]
-
 pub mod cert_compression;
 #[cfg(any(
     feature = "boring-tls-webpki-roots",
@@ -13,12 +11,16 @@ use ::std::os::raw::c_int;
 use boring::error::ErrorStack;
 use boring::ssl::{ConnectConfiguration, SslConnectorBuilder, SslRef, SslVerifyMode};
 use cert_compression::CertCompressionAlgorithm;
-#[cfg(any(
-    feature = "boring-tls-webpki-roots",
-    feature = "boring-tls-native-roots"
-))]
-use cert_load::{ForeignTypeRef, LOAD_CERTS};
-use http::Version;
+use foreign_types::ForeignTypeRef;
+
+// ALPN protocol for HTTP/1.1 and HTTP/2.
+const HTTP_1_ALPN: &[u8] = b"\x08http/1.1";
+const HTTP_2_ALPN: &[u8] = b"\x02h2";
+const HTTP_1_OR_2_ALPN: &[u8] = b"\x08http/1.1\x02h2";
+    
+/// Application Settings protocol for HTTP/1.1 and HTTP/2.
+const HTTP_1_APP_PROTO: &[u8] = b"http/1.1";
+const HTTP_2_APP_PROTO: &[u8] = b"h2";
 
 /// Error handler for the boringssl functions.
 fn sv_handler(r: c_int) -> TlsResult<c_int> {
@@ -75,18 +77,22 @@ pub trait TlsBuilderExtension {
 
 pub trait TlsExtension {
     /// Configure the ALPN protos for the given `SslRef`.
-    fn configure_alpn_protos(&mut self, version: Option<Version>) -> TlsResult<()>;
+    fn configure_alpn_protos(&mut self, version: Option<HttpVersionPref>) -> TlsResult<()>;
 }
 
 impl TlsExtension for SslRef {
     #[inline]
-    fn configure_alpn_protos(&mut self, version: Option<Version>) -> TlsResult<()> {
-        if let Some(Version::HTTP_11 | Version::HTTP_10 | Version::HTTP_09) = version {
-            self.set_alpn_protos(b"\x08http/1.1")?;
+    fn configure_alpn_protos(&mut self, version: Option<HttpVersionPref>) -> TlsResult<()> {
+        if let Some(HttpVersionPref::Http1) = version {
+            self.set_alpn_protos(HTTP_1_ALPN)?;
         }
 
-        if let Some(Version::HTTP_2) = version {
-            self.set_alpn_protos(b"\x08http/2.0")?;
+        if let Some(HttpVersionPref::Http2) = version {
+            self.set_alpn_protos(HTTP_2_ALPN)?;
+        }
+
+        if let Some(HttpVersionPref::All) = version {
+            self.set_alpn_protos(HTTP_1_OR_2_ALPN)?;
         }
 
         Ok(())
@@ -132,13 +138,13 @@ impl TlsBuilderExtension for SslConnectorBuilder {
     ) -> TlsResult<SslConnectorBuilder> {
         match http_version {
             HttpVersionPref::Http1 => {
-                self.set_alpn_protos(b"\x08http/1.1")?;
+                self.set_alpn_protos(HTTP_1_ALPN)?;
             }
             HttpVersionPref::Http2 => {
-                self.set_alpn_protos(b"\x02h2")?;
+                self.set_alpn_protos(HTTP_2_ALPN)?;
             }
             HttpVersionPref::All => {
-                self.set_alpn_protos(b"\x02h2\x08http/1.1")?;
+                self.set_alpn_protos(HTTP_1_OR_2_ALPN)?;
             }
         }
 
@@ -211,7 +217,7 @@ impl TlsBuilderExtension for SslConnectorBuilder {
     ))]
     #[inline]
     fn configure_set_verify_cert_store(mut self) -> TlsResult<SslConnectorBuilder> {
-        if let Ok(cert_store) = LOAD_CERTS.as_deref() {
+        if let Ok(cert_store) = cert_load::LOAD_CERTS.as_deref() {
             log::debug!("Using CA certs from webpki/native roots");
             sv_handler(unsafe {
                 boring_sys::SSL_CTX_set1_verify_cert_store(self.as_ptr(), cert_store.as_ptr())
@@ -241,8 +247,8 @@ impl TlsConnectExtension for ConnectConfiguration {
         http_version: HttpVersionPref,
     ) -> TlsResult<&mut ConnectConfiguration> {
         let (alpn, alpn_len) = match http_version {
-            HttpVersionPref::Http1 => ("http/1.1", 8),
-            HttpVersionPref::Http2 | HttpVersionPref::All => ("h2", 2),
+            HttpVersionPref::Http1 => (HTTP_1_APP_PROTO, 8),
+            HttpVersionPref::Http2 | HttpVersionPref::All => (HTTP_2_APP_PROTO, 2),
         };
 
         sv_handler(unsafe {

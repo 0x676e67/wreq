@@ -340,7 +340,7 @@ pub use self::client::{
     Body, Client, ClientBuilder, HttpVersionPref, Request, RequestBuilder, Response, Upgraded,
 };
 pub use self::proxy::{NoProxy, Proxy};
-
+pub use self::util::client::Dst;
 pub use hyper2::{PseudoOrder, SettingsOrder};
 
 mod client;
