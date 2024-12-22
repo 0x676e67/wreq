@@ -27,6 +27,7 @@ use hyper2::header::{HeaderValue, HOST};
 use hyper2::rt::Timer;
 use hyper2::{body::Body, Method, Request, Response, Uri, Version};
 use log::{debug, trace, warn};
+use sync_wrapper::SyncWrapper;
 
 use crate::util::common;
 use crate::util::ext::PoolKeyExtension;
@@ -36,7 +37,7 @@ use connect::HttpConnector;
 use connect::{Alpn, Connect, Connected, Connection};
 use pool::Ver;
 
-use common::{lazy as hyper_lazy, timer, Exec, Lazy, SyncWrapper};
+use common::{lazy as hyper_lazy, timer, Exec, Lazy};
 
 use super::ext::ConnectExtension;
 use super::into_uri;

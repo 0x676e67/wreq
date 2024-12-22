@@ -18,7 +18,8 @@ use boring::{
 };
 pub use conn::MaybeHttpsStream;
 use conn::{HttpsConnector, HttpsLayer, HttpsLayerSettings};
-pub use ext::{cert_compression, TlsConnectExtension, TlsExtension};
+use ext::TlsExtension;
+pub use ext::{cert_compression, TlsBuilderExtension, TlsConnectExtension};
 use http::Version;
 pub use mimic::{chrome, firefox, okhttp, safari, tls_settings, Impersonate};
 pub use settings::{Http2Settings, ImpersonateSettings, RootCertsStore, TlsSettings};
@@ -48,20 +49,8 @@ impl BoringTlsConnector {
     ) -> HttpsConnector<HttpConnector> {
         // Create the `HttpsConnector` with the given `HttpConnector` and `ConnectLayer`.
         let mut http = HttpsConnector::with_connector_layer(http, self.inner.clone());
-        http.set_ssl_callback(move |ssl, _| {
-            // Specify http1 alpn proto.
-            if let Some(Version::HTTP_11 | Version::HTTP_10 | Version::HTTP_09) = version {
-                ssl.set_alpn_protos(b"\x08http/1.1")?;
-            }
-
-            // Specify http2 alpn proto.
-            if let Some(Version::HTTP_2) = version {
-                ssl.set_alpn_protos(b"\x08http/2.0")?;
-            }
-
-            Ok(())
-        });
-
+        // Set the SSL callback to configure ALPN protos.
+        http.set_ssl_callback(move |ssl, _| ssl.configure_alpn_protos(version));
         http
     }
 }

@@ -11,13 +11,14 @@ use super::{TlsResult, TlsVersion};
 use crate::client::http::HttpVersionPref;
 use ::std::os::raw::c_int;
 use boring::error::ErrorStack;
-use boring::ssl::{ConnectConfiguration, SslConnectorBuilder, SslVerifyMode};
+use boring::ssl::{ConnectConfiguration, SslConnectorBuilder, SslRef, SslVerifyMode};
 use cert_compression::CertCompressionAlgorithm;
 #[cfg(any(
     feature = "boring-tls-webpki-roots",
     feature = "boring-tls-native-roots"
 ))]
 use cert_load::{ForeignTypeRef, LOAD_CERTS};
+use http::Version;
 
 /// Error handler for the boringssl functions.
 fn sv_handler(r: c_int) -> TlsResult<c_int> {
@@ -29,7 +30,7 @@ fn sv_handler(r: c_int) -> TlsResult<c_int> {
 }
 
 /// TlsExtension trait for `SslConnectorBuilder`.
-pub trait TlsExtension {
+pub trait TlsBuilderExtension {
     /// Configure the certificate verification for the given `SslConnectorBuilder`.
     fn configure_cert_verification(
         self,
@@ -72,6 +73,26 @@ pub trait TlsExtension {
     fn configure_set_verify_cert_store(self) -> TlsResult<SslConnectorBuilder>;
 }
 
+pub trait TlsExtension {
+    /// Configure the ALPN protos for the given `SslRef`.
+    fn configure_alpn_protos(&mut self, version: Option<Version>) -> TlsResult<()>;
+}
+
+impl TlsExtension for SslRef {
+    #[inline]
+    fn configure_alpn_protos(&mut self, version: Option<Version>) -> TlsResult<()> {
+        if let Some(Version::HTTP_11 | Version::HTTP_10 | Version::HTTP_09) = version {
+            self.set_alpn_protos(b"\x08http/1.1")?;
+        }
+
+        if let Some(Version::HTTP_2) = version {
+            self.set_alpn_protos(b"\x08http/2.0")?;
+        }
+
+        Ok(())
+    }
+}
+
 /// TlsConnectExtension trait for `ConnectConfiguration`.
 pub trait TlsConnectExtension {
     /// Configure the enable_ech_grease for the given `ConnectConfiguration`.
@@ -90,7 +111,7 @@ pub trait TlsConnectExtension {
     fn configure_skip_session_ticket(&mut self) -> TlsResult<&mut ConnectConfiguration>;
 }
 
-impl TlsExtension for SslConnectorBuilder {
+impl TlsBuilderExtension for SslConnectorBuilder {
     #[inline]
     fn configure_cert_verification(
         mut self,
