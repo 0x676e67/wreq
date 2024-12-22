@@ -112,7 +112,7 @@ struct WeakOpt<T>(Option<Weak<T>>);
 pub struct Config {
     pub idle_timeout: Option<Duration>,
     pub max_idle_per_host: usize,
-    pub max_pool_size: Option<NonZero<usize>>,
+    pub max_per_host: Option<NonZero<usize>>,
 }
 
 impl Config {
@@ -129,7 +129,7 @@ impl<T, K: Key> Pool<T, K> {
     {
         let exec = Exec::new(executor);
         let timer = timer.map(|t| Timer::new(t));
-        let idle = match config.max_pool_size {
+        let idle = match config.max_per_host {
             Some(max_size) => LruCache::new(max_size),
             None => LruCache::unbounded(),
         };

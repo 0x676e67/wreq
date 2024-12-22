@@ -1013,7 +1013,7 @@ impl Builder {
             pool_config: pool::Config {
                 idle_timeout: Some(Duration::from_secs(90)),
                 max_idle_per_host: usize::MAX,
-                max_pool_size: None,
+                max_per_host: None,
             },
             pool_timer: None,
         }
@@ -1069,8 +1069,8 @@ impl Builder {
     /// Sets the maximum number of connections in the pool.
     ///
     /// Default is `None` (no limit).
-    pub fn pool_max_size(&mut self, max_size: impl Into<Option<NonZeroUsize>>) -> &mut Self {
-        self.pool_config.max_pool_size = max_size.into();
+    pub fn pool_max_per_host(&mut self, max_size: impl Into<Option<NonZeroUsize>>) -> &mut Self {
+        self.pool_config.max_per_host = max_size.into();
         self
     }
 

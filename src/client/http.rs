@@ -93,7 +93,7 @@ struct Config {
     connection_verbose: bool,
     pool_idle_timeout: Option<Duration>,
     pool_max_idle_per_host: usize,
-    pool_max_size: Option<NonZeroUsize>,
+    pool_max_per_host: Option<NonZeroUsize>,
     tcp_keepalive: Option<Duration>,
     proxies: Vec<Proxy>,
     auto_sys_proxy: bool,
@@ -152,7 +152,7 @@ impl ClientBuilder {
                 connection_verbose: false,
                 pool_idle_timeout: Some(Duration::from_secs(90)),
                 pool_max_idle_per_host: usize::MAX,
-                pool_max_size: None,
+                pool_max_per_host: None,
                 // TODO: Re-enable default duration once hyper's HttpConnector is fixed
                 // to no longer error when an option fails.
                 tcp_keepalive: None,
@@ -252,7 +252,7 @@ impl ClientBuilder {
             .builder
             .pool_idle_timeout(config.pool_idle_timeout)
             .pool_max_idle_per_host(config.pool_max_idle_per_host)
-            .pool_max_size(config.pool_max_size);
+            .pool_max_per_host(config.pool_max_per_host);
 
         Ok(Client {
             inner: Arc::new(ClientRef {
@@ -780,8 +780,8 @@ impl ClientBuilder {
     }
 
     /// Sets the maximum number of connections in the pool.
-    pub fn pool_max_size(mut self, max: impl Into<Option<NonZeroUsize>>) -> ClientBuilder {
-        self.config.pool_max_size = max.into();
+    pub fn pool_max_per_host(mut self, max: impl Into<Option<NonZeroUsize>>) -> ClientBuilder {
+        self.config.pool_max_per_host = max.into();
         self
     }
 

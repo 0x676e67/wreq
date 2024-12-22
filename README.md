@@ -14,7 +14,7 @@ An ergonomic, all-in-one `JA3`/`JA4`/`HTTP2` fingerprint `HTTP`/`WebSocket` clie
 - Redirect Policy
 - Cookie Store
 - HTTP Proxies
-- Restrict pool [connections](https://docs.rs/rquest/latest/rquest/struct.ClientBuilder.html#method.pool_max_size)
+- Restrict pool [connections](https://docs.rs/rquest/latest/rquest/struct.ClientBuilder.html#method.pool_max_per_host)
 - `HTTPS`/`WebSocket` via [BoringSSL](https://github.com/google/boringssl)
 - Preconfigured `TLS`/`HTTP2` settings
 - [Changelog](https://github.com/penumbra-x/rquest/blob/main/CHANGELOG.md)
