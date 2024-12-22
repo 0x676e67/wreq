@@ -117,7 +117,7 @@ struct Config {
     base_url: Option<Url>,
     builder: Builder,
     https_only: bool,
-
+    http2_max_retry_count: usize,
     tls_info: bool,
 
     tls: TlsSettings,
@@ -177,7 +177,7 @@ impl ClientBuilder {
                 base_url: None,
                 builder: crate::util::client::Client::builder(TokioExecutor::new()),
                 https_only: false,
-
+                http2_max_retry_count: 2,
                 tls_info: false,
 
                 tls: Default::default(),
@@ -269,6 +269,7 @@ impl ClientBuilder {
                 https_only: config.https_only,
                 proxies_maybe_http_auth,
                 base_url: config.base_url.map(Arc::new),
+                http2_max_retry_count: config.http2_max_retry_count,
             }),
         })
     }
@@ -806,6 +807,12 @@ impl ClientBuilder {
         self
     }
 
+    /// Sets the maximum number of safe retries for HTTP/2 connections.
+    pub fn http2_max_retry_count(mut self, max: usize) -> ClientBuilder {
+        self.config.http2_max_retry_count = max;
+        self
+    }
+
     /// With http1/http2 builder
     ///
     /// # Example
@@ -1311,6 +1318,7 @@ impl Client {
                 version,
                 urls: Vec::new(),
                 retry_count: 0,
+                max_retry_count: self.inner.http2_max_retry_count,
                 redirect,
                 cookie_store: _cookie_store,
                 client: self.inner.clone(),
@@ -1610,6 +1618,7 @@ struct ClientRef {
     https_only: bool,
     proxies_maybe_http_auth: bool,
     base_url: Option<Arc<Url>>,
+    http2_max_retry_count: usize,
 }
 
 impl_debug!(
@@ -1681,6 +1690,7 @@ pin_project! {
         urls: Vec<Url>,
 
         retry_count: usize,
+        max_retry_count: usize,
 
         redirect: Option<redirect::Policy>,
 
@@ -1739,7 +1749,7 @@ impl PendingRequest {
             None => Body::empty(),
         };
 
-        if self.retry_count >= 2 {
+        if self.retry_count >= self.max_retry_count {
             trace!("retry count too high");
             return false;
         }
