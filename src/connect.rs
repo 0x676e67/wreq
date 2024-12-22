@@ -230,7 +230,7 @@ impl Connector {
             log::trace!("socks HTTPS over proxy");
             let conn = socks::connect(proxy, &dst, dns).await?;
 
-            let http = tls.create_connector(http.clone(), dst.version());
+            let http = tls.create_connector(http.clone(), dst.version_pref());
             let io = http.connect(&dst, host, TokioIo::new(conn)).await?;
 
             return Ok(Conn {
@@ -261,7 +261,7 @@ impl Connector {
         }
 
         log::trace!("connect with maybe proxy");
-        let mut http = tls.create_connector(http, dst.version());
+        let mut http = tls.create_connector(http, dst.version_pref());
         let io = http.call(dst.deref().clone()).await?;
 
         if let MaybeHttpsStream::Https(stream) = io {
@@ -308,7 +308,7 @@ impl Connector {
             let host = dst.host().ok_or(crate::error::uri_bad_host())?;
             let port = dst.port_u16().unwrap_or(443);
 
-            let mut http = tls.create_connector(http.clone(), dst.version());
+            let mut http = tls.create_connector(http.clone(), dst.version_pref());
             let conn = http.call(proxy_dst).await?;
 
             log::trace!("tunneling HTTPS over proxy");
