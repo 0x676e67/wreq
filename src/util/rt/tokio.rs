@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 //! Tokio IO integration for hyper
 use std::{
     future::Future,
@@ -230,6 +231,13 @@ impl Timer for TokioTimer {
         if let Some(sleep) = sleep.as_mut().downcast_mut_pin::<TokioSleep>() {
             sleep.reset(new_deadline)
         }
+    }
+}
+
+impl TokioTimer {
+    /// Create a new TokioTimer
+    pub fn new() -> Self {
+        Self {}
     }
 }
 
