@@ -671,6 +671,8 @@ where
             // TODO: Add version
             version: None,
             redirect: None,
+            #[cfg(feature = "cookies")]
+            cookie_store: None,
         })
     }
 }
