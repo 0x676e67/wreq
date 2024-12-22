@@ -10,7 +10,7 @@ use chrome::*;
 use firefox::*;
 use okhttp::*;
 use safari::*;
-use std::{fmt::Debug, str::FromStr};
+use std::fmt::Debug;
 use Impersonate::*;
 
 mod impersonate_imports {
@@ -169,6 +169,7 @@ pub enum Impersonate {
     Firefox133,
 }
 
+#[cfg(feature = "impersonate_str")]
 impl_from_str! {
     // Chrome
     (Chrome100, "chrome_100"),

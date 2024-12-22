@@ -61,6 +61,9 @@ webpki-roots = ["dep:webpki-root-certs"]
 # Optional disable internal proxy cache
 internal_proxy_sys_no_cache = []
 
+# Optional enable impersonate from str
+impersonate_str = []
+
 # Internal (PRIVATE!) features used to aid testing.
 # Don't rely on these whatsoever. They may disappear at anytime.
 

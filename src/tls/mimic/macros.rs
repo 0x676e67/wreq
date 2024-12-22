@@ -150,9 +150,10 @@ macro_rules! impersonate_match {
     }
 }
 
+#[cfg(feature = "impersonate_str")]
 macro_rules! impl_from_str {
     ($(($variant:ident, $string:expr)),* $(,)?) => {
-        impl FromStr for Impersonate {
+        impl std::str::FromStr for Impersonate {
             type Err = String;
 
             fn from_str(s: &str) -> Result<Self, Self::Err> {
