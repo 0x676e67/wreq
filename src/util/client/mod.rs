@@ -121,6 +121,7 @@ type PoolKey = (Uri, Option<PoolKeyExtension>);
 pub struct Dst {
     version: Option<VersionExtension>,
     pool_key: PoolKey,
+    next_dst: Option<Uri>,
 }
 
 impl Dst {
@@ -164,6 +165,7 @@ impl Dst {
             .map(|uri| Dst {
                 pool_key: (uri, extension),
                 version,
+                next_dst: None,
             })
             .map_err(|_| e!(UserAbsoluteUriRequired))
     }
@@ -173,9 +175,9 @@ impl Dst {
         &self.pool_key
     }
 
-    /// Set the destination of the request
-    pub fn set_dst(&mut self, uri: Uri) {
-        self.pool_key.0 = uri;
+    /// Set the next destination of the request (for proxy)
+    pub(crate) fn next_dst(&mut self, uri: Uri) {
+        self.next_dst = Some(uri);
     }
 
     /// Get the http version pref
@@ -188,7 +190,7 @@ impl std::ops::Deref for Dst {
     type Target = Uri;
 
     fn deref(&self) -> &Self::Target {
-        &self.pool_key.0
+        self.next_dst.as_ref().unwrap_or(&self.pool_key.0)
     }
 }
 

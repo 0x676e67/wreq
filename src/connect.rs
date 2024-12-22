@@ -324,7 +324,7 @@ impl Connector {
             });
         }
 
-        dst.set_dst(proxy_dst);
+        dst.next_dst(proxy_dst);
 
         self.connect_with_maybe_proxy(dst, true).await
     }
