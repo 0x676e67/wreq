@@ -165,7 +165,7 @@ mod tls {
     pub const RECORD_SIZE_LIMIT: u16 = 0x4001;
 
     pub const EXTENSION_PERMUTATION_INDICES: &[u8] = &{
-        const EXTENSIONS: [ExtensionType; 16] = [
+        const EXTENSIONS: &[ExtensionType] = &[
             ExtensionType::SERVER_NAME,
             ExtensionType::EXTENDED_MASTER_SECRET,
             ExtensionType::RENEGOTIATE,
@@ -184,9 +184,9 @@ mod tls {
             ExtensionType::ENCRYPTED_CLIENT_HELLO,
         ];
 
-        let mut indices = [0u8; 16];
+        let mut indices = [0u8; EXTENSIONS.len()];
         let mut index = 0;
-        while index < 16 {
+        while index < EXTENSIONS.len() {
             if let Some(idx) = ExtensionType::index_of(EXTENSIONS[index]) {
                 indices[index] = idx as u8;
             }
