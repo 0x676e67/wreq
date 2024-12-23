@@ -7,7 +7,7 @@ use crate::{
     HttpVersionPref,
 };
 use boring::{
-    ssl::{ExtensionType, SslConnectorBuilder, SslCurve},
+    ssl::{ExtensionType, SslCurve},
     x509::store::X509Store,
 };
 use http::{HeaderMap, HeaderName};
@@ -96,10 +96,6 @@ where
 // ============== TLS ==============
 #[derive(TypedBuilder, Default)]
 pub struct TlsSettings {
-    /// The TLS connector builder.
-    #[builder(default, setter(strip_option))]
-    pub connector: Option<SslConnectorBuilder>,
-
     /// Root certificates store.
     #[builder(default)]
     pub root_certs_store: RootCertsStore,
