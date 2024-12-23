@@ -74,7 +74,6 @@ fn header_initializer(ua: &'static str) -> HeaderMap {
     let mut headers = HeaderMap::new();
     header_firefox_accept!(headers);
     header_firefox_sec_fetch!(1, headers);
-    // headers.insert("priority", HeaderValue::from_static("u=0, i"));
     headers.insert("TE", HeaderValue::from_static("trailers"));
     header_firefox_ua!(headers, ua);
     headers
