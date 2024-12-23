@@ -72,20 +72,22 @@ macro_rules! firefox_http2_template {
 #[inline]
 fn header_initializer(ua: &'static str) -> HeaderMap {
     let mut headers = HeaderMap::new();
-    header_firefox_ua_with_accept!(headers, ua);
-    header_firefox_accpet_with_upgrade!(1, headers);
-    header_firefox_sec_fetch!(headers);
-    header_firefox_priority!(headers);
+    header_firefox_accept!(headers);
+    header_firefox_sec_fetch!(1, headers);
+    // headers.insert("priority", HeaderValue::from_static("u=0, i"));
+    headers.insert("TE", HeaderValue::from_static("trailers"));
+    header_firefox_ua!(headers, ua);
     headers
 }
 
 #[inline]
 fn header_initializer_with_zstd(ua: &'static str) -> HeaderMap {
     let mut headers = HeaderMap::new();
-    header_firefox_ua_with_accept!(headers, ua);
-    header_firefox_accpet_with_upgrade!(2, headers);
-    header_firefox_sec_fetch!(headers);
-    header_firefox_priority!(headers);
+    header_firefox_accpet_with_zstd!(headers);
+    headers.insert("priority", HeaderValue::from_static("u=0, i"));
+    header_firefox_sec_fetch!(2, headers);
+    headers.insert("TE", HeaderValue::from_static("trailers"));
+    header_firefox_ua!(headers, ua);
     headers
 }
 
