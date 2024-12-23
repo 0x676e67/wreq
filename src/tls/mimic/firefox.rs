@@ -91,8 +91,6 @@ fn header_initializer_with_zstd(ua: &'static str) -> HeaderMap {
 
 // ============== tls settings ==============
 mod tls {
-    use std::sync::LazyLock;
-
     use crate::tls::mimic::tls_imports::*;
 
     pub const OLD_CURVES: &[SslCurve] = &[
@@ -166,8 +164,8 @@ mod tls {
 
     pub const RECORD_SIZE_LIMIT: u16 = 0x4001;
 
-    pub static EXTENSION_PERMUTATION_INDICES: LazyLock<[u8; 16]> = LazyLock::new(|| {
-        let extensions = [
+    pub const EXTENSION_PERMUTATION_INDICES: &[u8] = &{
+        const EXTENSIONS: [ExtensionType; 16] = [
             ExtensionType::SERVER_NAME,
             ExtensionType::EXTENDED_MASTER_SECRET,
             ExtensionType::RENEGOTIATE,
@@ -187,17 +185,16 @@ mod tls {
         ];
 
         let mut indices = [0u8; 16];
-        for (i, &ext) in extensions.iter().enumerate() {
-            if let Some(idx) = ExtensionType::BORING_SSLEXTENSION_PERMUTATION
-                .iter()
-                .position(|&e| e == ext)
-            {
-                indices[i] = idx as u8;
+        let mut index = 0;
+        while index < 16 {
+            if let Some(idx) = ExtensionType::index_of(EXTENSIONS[index]) {
+                indices[index] = idx as u8;
             }
+            index += 1;
         }
 
         indices
-    });
+    };
 
     #[derive(TypedBuilder)]
     pub struct FirefoxTlsSettings {
@@ -242,7 +239,7 @@ mod tls {
         cert_compression_algorithm: Option<&'static [CertCompressionAlgorithm]>,
 
         // TLS extension permutation
-        #[builder(default = &*EXTENSION_PERMUTATION_INDICES, setter(into))]
+        #[builder(default = EXTENSION_PERMUTATION_INDICES, setter(into))]
         extension_permutation_indices: &'static [u8],
     }
 
