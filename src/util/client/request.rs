@@ -1,8 +1,7 @@
 #![allow(missing_debug_implementations)]
 
 use super::NetworkScheme;
-use crate::HttpVersionPref;
-use core::error::Error as StdError;
+use crate::{error::BoxError, HttpVersionPref};
 use http::{header::CONTENT_LENGTH, HeaderMap, HeaderName, HeaderValue, Method, Uri, Version};
 use http_body::Body;
 
@@ -10,7 +9,7 @@ pub struct InnerRequest<B>
 where
     B: Body + Send + 'static + Unpin,
     B::Data: Send,
-    B::Error: Into<Box<dyn StdError + Send + Sync>>,
+    B::Error: Into<BoxError>,
 {
     request: http::Request<B>,
     http_version_pref: Option<HttpVersionPref>,
@@ -21,7 +20,7 @@ impl<B> InnerRequest<B>
 where
     B: Body + Send + 'static + Unpin,
     B::Data: Send,
-    B::Error: Into<Box<dyn StdError + Send + Sync>>,
+    B::Error: Into<BoxError>,
 {
     pub fn builder<'a>() -> InnerRequestBuilder<'a> {
         InnerRequestBuilder::default()
@@ -76,13 +75,8 @@ impl<'a> InnerRequestBuilder<'a> {
     #[inline]
     pub fn version(mut self, version: impl Into<Option<Version>>) -> Self {
         if let Some(version) = version.into() {
-            let pref = match version {
-                Version::HTTP_11 | Version::HTTP_10 | Version::HTTP_09 => HttpVersionPref::Http1,
-                Version::HTTP_2 => HttpVersionPref::Http2,
-                _ => HttpVersionPref::default(),
-            };
             self.builder = self.builder.version(version);
-            self.http_version_pref = Some(pref);
+            self.http_version_pref = Some(map_version_to_pref(version));
         }
         self
     }
@@ -116,31 +110,15 @@ impl<'a> InnerRequestBuilder<'a> {
     where
         B: Body + Send + 'static + Unpin,
         B::Data: Send,
-        B::Error: Into<Box<dyn StdError + Send + Sync>>,
+        B::Error: Into<BoxError>,
     {
-        // Sort headers if headers_order is provided
         if let Some(order) = self.headers_order {
             let method = self.builder.method_ref().cloned();
             let headers_mut = self.builder.headers_mut();
 
             if let (Some(headers), Some(method)) = (headers_mut, method) {
-                {
-                    // Add CONTENT_LENGTH header if required
-                    if let Some(len) = http_body::Body::size_hint(&body).exact() {
-                        let needs_content_length = len != 0
-                            || !matches!(
-                                method,
-                                Method::GET | Method::HEAD | Method::DELETE | Method::CONNECT
-                            );
-                        if needs_content_length {
-                            headers
-                                .entry(CONTENT_LENGTH)
-                                .or_insert_with(|| HeaderValue::from(len));
-                        }
-                    }
-                    // Sort headers
-                    crate::util::sort_headers(headers, order);
-                }
+                add_content_length_header(method, &body, headers);
+                crate::util::sort_headers(headers, order);
             }
         }
 
@@ -148,6 +126,32 @@ impl<'a> InnerRequestBuilder<'a> {
             request: self.builder.body(body).expect("failed to build request"),
             http_version_pref: self.http_version_pref,
             network_scheme: self.network_scheme,
+        }
+    }
+}
+
+fn map_version_to_pref(version: Version) -> HttpVersionPref {
+    match version {
+        Version::HTTP_11 | Version::HTTP_10 | Version::HTTP_09 => HttpVersionPref::Http1,
+        Version::HTTP_2 => HttpVersionPref::Http2,
+        _ => HttpVersionPref::default(),
+    }
+}
+
+fn add_content_length_header<B>(method: Method, body: &B, headers: &mut HeaderMap)
+where
+    B: Body,
+{
+    if let Some(len) = http_body::Body::size_hint(body).exact() {
+        let needs_content_length = len != 0
+            || !matches!(
+                method,
+                Method::GET | Method::HEAD | Method::DELETE | Method::CONNECT
+            );
+        if needs_content_length {
+            headers
+                .entry(CONTENT_LENGTH)
+                .or_insert_with(|| HeaderValue::from(len));
         }
     }
 }

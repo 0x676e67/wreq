@@ -155,14 +155,14 @@ pub(crate) enum Connector {
 
 impl Connector {
     #[inline]
-    pub(crate) fn set_connector(&mut self, connector: BoringTlsConnector) {
+    pub(crate) fn set_connector(&mut self, mut connector: BoringTlsConnector) {
         match self {
             Connector::Simple(service) => {
-                service.tls = InnerTLS::Simple(connector);
+                std::mem::swap(&mut service.tls, &mut InnerTLS::Simple(connector));
             }
             Connector::WithLayers { inner_tls, .. } => {
                 if let InnerTLS::WithSharedState(tls) = inner_tls {
-                    *tls.write() = connector;
+                    std::mem::swap(&mut *tls.write(), &mut connector);
                 }
             }
         }

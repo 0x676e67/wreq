@@ -302,17 +302,17 @@ impl ClientBuilder {
     }
 
     /// Apply the given TLS settings and header function.
-    fn apply_impersonate_settings(mut self, settings: ImpersonateSettings) -> ClientBuilder {
+    fn apply_impersonate_settings(mut self, mut settings: ImpersonateSettings) -> ClientBuilder {
         // Set the headers if needed
-        if let Some(headers) = settings.headers {
-            self.config.headers = headers;
+        if let Some(mut headers) = settings.headers {
+            std::mem::swap(&mut self.config.headers, &mut headers);
         }
 
         // Set the headers order if needed
-        self.config.headers_order = settings.headers_order;
+        std::mem::swap(&mut self.config.headers_order, &mut settings.headers_order);
 
         // Set the TLS settings
-        self.config.tls = settings.tls;
+        std::mem::swap(&mut self.config.tls, &mut settings.tls);
 
         // Set the http2 preference
         self.config.builder.with_http2_builder(|builder| {
@@ -1437,7 +1437,7 @@ impl Client {
     #[cfg(feature = "cookies")]
     #[inline]
     pub fn set_cookie_provider<C: cookie::CookieStore + 'static>(&mut self, cookie_store: Arc<C>) {
-        self.inner_mut().cookie_store = Some(cookie_store as _);
+        std::mem::swap(&mut self.inner_mut().cookie_store, &mut Some(cookie_store as _));
     }
 
     /// Set the proxies for this client.
@@ -1449,7 +1449,6 @@ impl Client {
         match proxies.into() {
             Some(mut proxies) => {
                 inner.proxies_maybe_http_auth = proxies.iter().any(|p| p.maybe_has_http_auth());
-                inner.proxies.clear();
                 std::mem::swap(&mut inner.proxies, &mut proxies);
             }
             None => {
@@ -1495,18 +1494,18 @@ impl Client {
 
     /// Set the headers order for this client.
     pub fn set_headers_order(&mut self, order: impl Into<Cow<'static, [HeaderName]>>) {
-        self.inner_mut().headers_order = Some(order.into());
+        std::mem::swap(&mut self.inner_mut().headers_order, &mut Some(order.into()));
     }
 
     /// Set the redirect policy for this client.
     pub fn set_redirect(&mut self, policy: impl Into<redirect::Policy>) {
-        self.inner_mut().redirect = policy.into();
+        std::mem::swap(&mut self.inner_mut().redirect, &mut policy.into());
     }
 
     /// Set the bash url for this client.
     pub fn set_base_url<U: IntoUrl>(&mut self, url: U) {
         if let Ok(url) = url.into_url() {
-            self.inner_mut().base_url = Some(url);
+            std::mem::swap(&mut self.inner_mut().base_url, &mut Some(url));
         }
     }
 
@@ -1533,16 +1532,16 @@ impl Client {
 
     /// Apply the impersonate settings to the client.
     #[inline]
-    fn impersonate_settings(&mut self, settings: ImpersonateSettings) -> crate::Result<()> {
+    fn impersonate_settings(&mut self, mut settings: ImpersonateSettings) -> crate::Result<()> {
         let inner = self.inner_mut();
 
         // Set the headers
-        if let Some(headers) = settings.headers {
-            inner.headers = headers;
+        if let Some(mut headers) = settings.headers {
+            std::mem::swap(&mut inner.headers, &mut headers);
         }
 
         // Set the headers order if needed
-        inner.headers_order = settings.headers_order;
+        std::mem::swap(&mut inner.headers_order, &mut settings.headers_order);
 
         let hyper = &mut inner.hyper;
 
