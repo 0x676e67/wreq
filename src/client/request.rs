@@ -16,7 +16,7 @@ use super::response::Response;
 #[cfg(feature = "cookies")]
 use crate::cookie;
 use crate::header::{HeaderMap, HeaderName, HeaderValue, CONTENT_TYPE, HOST};
-use crate::{redirect, Method, Url};
+use crate::{redirect, IntoUrl, Method, Proxy, Url};
 #[cfg(feature = "cookies")]
 use std::sync::Arc;
 
@@ -30,6 +30,7 @@ type PiecesWithCookieStore = (
     Option<Version>,
     Option<redirect::Policy>,
     (),
+    Option<Proxy>,
 );
 
 #[cfg(feature = "cookies")]
@@ -42,6 +43,7 @@ type PiecesWithCookieStore = (
     Option<Version>,
     Option<redirect::Policy>,
     Option<Arc<dyn cookie::CookieStore>>,
+    Option<Proxy>,
 );
 
 /// A request which can be executed with `Client::execute()`.
@@ -55,6 +57,7 @@ pub struct Request {
     redirect: Option<redirect::Policy>,
     #[cfg(feature = "cookies")]
     cookie_store: Option<Arc<dyn cookie::CookieStore>>,
+    proxy: Option<Proxy>,
 }
 
 /// A builder to construct the properties of a `Request`.
@@ -80,6 +83,7 @@ impl Request {
             redirect: None,
             #[cfg(feature = "cookies")]
             cookie_store: None,
+            proxy: None,
         }
     }
 
@@ -184,6 +188,7 @@ impl Request {
             self.cookie_store,
             #[cfg(not(feature = "cookies"))]
             (),
+            self.proxy,
         )
     }
 }
@@ -429,6 +434,21 @@ impl RequestBuilder {
         self
     }
 
+    /// Set the proxy for this request.
+    pub fn proxy(mut self, proxy: impl IntoUrl) -> RequestBuilder {
+        if let Ok(ref mut req) = self.request {
+            if let Some(err) = proxy
+                .into_url()
+                .and_then(|proxy| Proxy::all(proxy))
+                .map(|proxy| req.proxy = Some(proxy))
+                .err()
+            {
+                self.request = Err(crate::error::builder(err));
+            }
+        }
+        self
+    }
+
     /// Set the cookie store for this request.
     #[cfg(feature = "cookies")]
     pub fn cookie_store(mut self, cookie_store: Arc<dyn cookie::CookieStore>) -> RequestBuilder {
@@ -670,6 +690,7 @@ where
             redirect: None,
             #[cfg(feature = "cookies")]
             cookie_store: None,
+            proxy: None,
         })
     }
 }

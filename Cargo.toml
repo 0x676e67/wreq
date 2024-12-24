@@ -321,3 +321,8 @@ required-features = ["cookies"]
 name = "request_with_version"
 path = "examples/request_with_version.rs"
 required-features = ["full"]
+
+[[example]]
+name = "request_via_proxy"
+path = "examples/request_via_proxy.rs"
+required-features = ["full"]

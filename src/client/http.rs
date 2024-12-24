@@ -1240,7 +1240,7 @@ impl Client {
     }
 
     pub(super) fn execute_request(&self, req: Request) -> Pending {
-        let (method, url, mut headers, body, timeout, version, redirect, _cookie_store) =
+        let (method, url, mut headers, body, timeout, version, redirect, _cookie_store, proxy) =
             req.pieces();
         if url.scheme() != "http" && url.scheme() != "https" {
             return Pending::new_err(error::url_bad_scheme(url));
@@ -1299,7 +1299,7 @@ impl Client {
 
         let in_flight = {
             let req = InnerRequest::<Body>::builder()
-                .network_scheme(self.inner.network_scheme(&uri, None))
+                .network_scheme(self.inner.network_scheme(&uri, proxy.as_ref()))
                 .uri(uri)
                 .method(method.clone())
                 .version(version)
@@ -1333,6 +1333,7 @@ impl Client {
                 max_retry_count: self.inner.http2_max_retry_count,
                 redirect,
                 cookie_store: _cookie_store,
+                proxy,
                 client: self.inner.clone(),
                 in_flight,
                 total_timeout,
@@ -1725,7 +1726,7 @@ impl ClientRef {
     }
 
     #[inline]
-    fn network_scheme(&self, uri: &Uri, request_proxy: Option<Proxy>) -> NetworkScheme {
+    fn network_scheme(&self, uri: &Uri, request_proxy: Option<&Proxy>) -> NetworkScheme {
         // If the request has no proxy, use the client's local addresses
         #[cfg(not(any(target_os = "android", target_os = "fuchsia", target_os = "linux")))]
         let mut builder = NetworkScheme::builder().iface((self.local_addr_v4, self.local_addr_v6));
@@ -1783,6 +1784,8 @@ pin_project! {
         redirect: Option<redirect::Policy>,
 
         cookie_store: CookieStoreOption,
+
+        proxy: Option<Proxy>,
 
         client: Arc<ClientRef>,
 
@@ -1853,7 +1856,7 @@ impl PendingRequest {
 
         *self.as_mut().in_flight().get_mut() = {
             let req = InnerRequest::<Body>::builder()
-                .network_scheme(self.client.network_scheme(&uri, None))
+                .network_scheme(self.client.network_scheme(&uri, self.proxy.as_ref()))
                 .uri(uri)
                 .method(self.method.clone())
                 .version(self.version)
@@ -2099,7 +2102,9 @@ impl Future for PendingRequest {
 
                             *self.as_mut().in_flight().get_mut() = {
                                 let req = InnerRequest::<Body>::builder()
-                                    .network_scheme(self.client.network_scheme(&uri, None))
+                                    .network_scheme(
+                                        self.client.network_scheme(&uri, self.proxy.as_ref()),
+                                    )
                                     .uri(uri)
                                     .method(self.method.clone())
                                     .version(self.version)
