@@ -1727,23 +1727,28 @@ impl ClientRef {
 
     #[inline]
     fn network_scheme(&self, uri: &Uri, request_proxy: Option<&Proxy>) -> NetworkScheme {
-        // If the request has no proxy, use the client's local addresses
-        #[cfg(not(any(target_os = "android", target_os = "fuchsia", target_os = "linux")))]
-        let mut builder = NetworkScheme::builder().iface((self.local_addr_v4, self.local_addr_v6));
+        // Create the NetworkScheme builder based on the target OS
+        let mut builder = {
+            // For Android, Fuchsia, and Linux systems, use the specified interface and local addresses
 
-        // Use the client's interface if it's set
-        #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
-        let mut builder = NetworkScheme::builder().iface((
-            self.interface.clone(),
-            self.local_addr_v4,
-            self.local_addr_v6,
-        ));
+            #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
+            {
+                NetworkScheme::builder().iface((
+                    self.interface.clone(),
+                    self.local_addr_v4,
+                    self.local_addr_v6,
+                ))
+            }
+            // For non-Android, non-Fuchsia, non-Linux systems, use default local addresses
+            #[cfg(not(any(target_os = "android", target_os = "fuchsia", target_os = "linux")))]
+            NetworkScheme::builder().iface((self.local_addr_v4, self.local_addr_v6))
+        };
 
-        // If the request has a proxy, use it
+        // Handle the proxy: if a request proxy is specified, use it
         if let Some(proxy_scheme) = request_proxy.and_then(|p| p.intercept(uri)) {
             builder = builder.proxy(proxy_scheme);
         } else {
-            // Otherwise, use the client's proxies
+            // If no request proxy is set, iterate over the client's proxies and use the first valid one
             for proxy in self.proxies.iter() {
                 if let Some(proxy_scheme) = proxy.intercept(uri) {
                     return builder.proxy(proxy_scheme).build();
@@ -1751,6 +1756,7 @@ impl ClientRef {
             }
         }
 
+        // Build and return the final NetworkScheme
         builder.build()
     }
 }
