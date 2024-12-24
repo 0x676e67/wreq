@@ -125,25 +125,59 @@ By default, `rquest` uses Mozilla's root certificates through the `webpki-roots`
 
 You can customize the `TLS`/`HTTP2` fingerprint parameters of the device. In addition, the basic device impersonation types are provided as follows:
 
-- **Chrome**
-
-`Chrome100`，`Chrome101`，`Chrome104`，`Chrome105`，`Chrome106`，`Chrome107`，`Chrome108`，`Chrome109`，`Chrome114`，`Chrome116`，`Chrome117`，`Chrome118`，`Chrome119`，`Chrome120`，`Chrome123`，`Chrome124`，`Chrome126`，`Chrome127`，`Chrome128`，`Chrome129`，`Chrome130`，`Chrome131`
-
-- **Edge**
-
-`Edge101`，`Edge122`，`Edge127`，`Edge131`
-
-- **Safari**
-
-`SafariIos17_2`，`SafariIos17_4_1`，`SafariIos16_5`，`Safari15_3`，`Safari15_5`，`Safari15_6_1`，`Safari16`，`Safari16_5`，`Safari17_0`，`Safari17_2_1`，`Safari17_4_1`，`Safari17_5`，`Safari18`，`SafariIPad18`, `Safari18_2`, `Safari18_1_1`
-
-- **OkHttp**
-
-`OkHttp3_9`，`OkHttp3_11`，`OkHttp3_13`，`OkHttp3_14`，`OkHttp4_9`，`OkHttp4_10`，`OkHttp5`
-
-- **Firefox**
-
-`Firefox109`, `Firefox133`
+| Browser                                                                                                                      | Version | Build         | OS               | Target Name         |
+|------------------------------------------------------------------------------------------------------------------------------|---------|---------------|------------------|---------------------|
+| ![Chrome](https://raw.githubusercontent.com/alrra/browser-logos/main/src/chrome/chrome_24x24.png "Chrome")                   | 100     | 100.0.4896.75 | Mac OS X 10_15_7 | `chrome_100`        |
+|                                                                                                                              | 101     | 101.0.4951.67 | Mac OS X 10_15_7 | `chrome_101`        |
+|                                                                                                                              | 104     | 104.0.0.0     | Mac OS X 10_15_7 | `chrome_104`        |
+|                                                                                                                              | 105     | 105.0.0.0     | Mac OS X 10_15_7 | `chrome_105`        |
+|                                                                                                                              | 106     | 106.0.0.0     | Mac OS X 10_15_7 | `chrome_106`        |
+|                                                                                                                              | 107     | 107.0.0.0     | Mac OS X 10_15_7 | `chrome_107`        |
+|                                                                                                                              | 108     | 108.0.0.0     | Mac OS X 10_15_7 | `chrome_108`        |
+|                                                                                                                              | 109     | 109.0.0.0     | Mac OS X 10_15_7 | `chrome_109`        |
+|                                                                                                                              | 114     | 114.0.0.0     | Mac OS X 10_15_7 | `chrome_114`        |
+|                                                                                                                              | 116     | 116.0.0.0     | Mac OS X 10_15_7 | `chrome_116`        |
+|                                                                                                                              | 117     | 117.0.0.0     | Mac OS X 10_15_7 | `chrome_117`        |
+|                                                                                                                              | 118     | 118.0.0.0     | Mac OS X 10_15_7 | `chrome_118`        |
+|                                                                                                                              | 119     | 119.0.0.0     | Mac OS X 10_15_7 | `chrome_119`        |
+|                                                                                                                              | 120     | 120.0.0.0     | Mac OS X 10_15_7 | `chrome_120`        |
+|                                                                                                                              | 123     | 123.0.0.0     | Mac OS X 10_15_7 | `chrome_123`        |
+|                                                                                                                              | 124     | 124.0.0.0     | Mac OS X 10_15_7 | `chrome_124`        |
+|                                                                                                                              | 126     | 126.0.0.0     | Mac OS X 10_15_7 | `chrome_126`        |
+|                                                                                                                              | 127     | 127.0.0.0     | Mac OS X 10_15_7 | `chrome_127`        |
+|                                                                                                                              | 128     | 128.0.0.0     | Mac OS X 10_15_7 | `chrome_128`        |
+|                                                                                                                              | 129     | 129.0.0.0     | Mac OS X 10_15_7 | `chrome_129`        |
+|                                                                                                                              | 130     | 130.0.0.0     | Mac OS X 10_15_7 | `chrome_130`        |
+|                                                                                                                              | 131     | 131.0.0.0     | Mac OS X 10_15_7 | `chrome_131`        |
+| ![Edge](https://raw.githubusercontent.com/alrra/browser-logos/main/src/edge/edge_24x24.png "Edge")                           | 101     | 101.0.1210.47 | Mac OS X 10_15_7 | `edge_101`          |
+|                                                                                                                              | 122     | 122.0         | Mac OS X 10_15_7 | `edge_122`          |
+|                                                                                                                              | 127     | 127.0         | Mac OS X 10_15_7 | `edge_127`          |
+|                                                                                                                              | 131     | 131.0         | Mac OS X 10_15_7 | `edge_131`          |
+| ![Firefox](https://raw.githubusercontent.com/alrra/browser-logos/main/src/firefox/firefox_24x24.png "Firefox")               | 109     | 109.0         | Windows 10       | `firefox_109`       |
+|                                                                                                                              | 133     | 133.0         | Mac OS X 10.15   | `firefox_133`       |
+| ![Safari](https://raw.githubusercontent.com/alrra/browser-logos/main/src/safari/safari_24x24.png "Safari")                   | 15.3    | 605.1.15      | Mac OS X 10_15_7 | `safari_15.3`       |
+|                                                                                                                              | 15.5    | 605.1.15      | Mac OS X 10_15_7 | `safari_15.5`       |
+|                                                                                                                              | 15.6.1  | 605.1.15      | Mac OS X 10_15_7 | `safari_15.6.1`     |
+|                                                                                                                              | 16.0    | 605.1.15      | Mac OS X 10_15_7 | `safari_16.0`       |
+|                                                                                                                              | 16.5    | 605.1.15      | Mac OS X 10_15_7 | `safari_16.5`       |
+|                                                                                                                              | 16.5    | 604.1         | iOS              | `safari_ios_16.5`   |
+|                                                                                                                              | 17.0    | 605.1.15      | Mac OS X 10_15_7 | `safari_17.0`       |
+|                                                                                                                              | 17.2.1  | 605.1.15      | Mac OS X 10_15_7 | `safari_17.2.1`     |
+|                                                                                                                              | 17.4.1  | 605.1.15      | Mac OS X 10_15_7 | `safari_17.4.1`     |
+|                                                                                                                              | 17.5    | 605.1.15      | Mac OS X 10_15_7 | `safari_17.5`       |
+|                                                                                                                              | 17.2    | 604.1         | iOS              | `safari_ios_17.2`   |
+|                                                                                                                              | 17.4.1  | 604.1         | iPadOS           | `safari_ios_17.4.1` |
+|                                                                                                                              | 18.0    | 605.1.15      | Mac OS X 10_15_7 | `safari_18.0`       |
+|                                                                                                                              | 18.0    | 604.1         | iPadOS           | `safari_ipad_18.0`  |
+|                                                                                                                              | 18.1.1  | 604.1         | iOS              | `safari_ios_18.1.1` |
+|                                                                                                                              | 18.2    | 605.1.15      | Mac OS X 10_15_7 | `safari_18.2`       |
+| ![OkHttp](https://raw.githubusercontent.com/alrra/browser-logos/main/src/android-webview/android-webview_24x24.png "OkHttp") | 3.9     | 3.9.0         | Android 5.0      | `okhttp_3.9`        |
+|                                                                                                                              | 3.11    | 3.11.0        | Android 12       | `okhttp_3.11`       |
+|                                                                                                                              | 3.13    | 3.13.0        | Android 14       | `okhttp_3.13`       |
+|                                                                                                                              | 3.14    | 3.14.0        | Android 11       | `okhttp_3.14`       |
+|                                                                                                                              | 4.9     | 4.9           | Android 11       | `okhttp_4.9`        |
+|                                                                                                                              | 4.10    | 4.10.0        | Android 13       | `okhttp_4.10`       |
+|                                                                                                                              | 5.0     | 5.0.0-alpha2  | Android 14       | `okhttp_5.0`        |
 
 > It is not supported for Firefox device that use http2 priority frames. If anyone is willing to help implement it, please submit a patch to the [h2](https://github.com/penumbra-x/h2) repository.
 
@@ -158,6 +192,17 @@ If both `OpenSSL` and `BoringSSL` are used as dependencies simultaneously, even 
 If you prefer compiling for the `musl target`, it is recommended to use the [tikv-jemallocator](https://github.com/tikv/jemallocator) memory allocator; otherwise, multithreaded performance may be suboptimal. Only available in version 0.6.0, details: https://github.com/tikv/jemallocator/pull/70
 
 ## Building
+
+| Platform         | Architecture | Notes                                            |
+|------------------|--------------|--------------------------------------------------|
+| **Linux** 🐧     | `amd64`      |                                                  |
+|                  | `aarch64`    | Needs manylinux_2_34 (Ubuntu ≥22.04, Debian ≥12) |
+|                  | `armv7`      | Needs manylinux_2_34 (Ubuntu ≥22.04, Debian ≥12) |
+| **MuslLinux** 🐧 | `amd64`      |                                                  |
+|                  | `aarch64`    |                                                  |
+| **Windows** 🪟   | `amd64`      |                                                  |
+| **macOS** 🍎     | `amd64`      |                                                  |
+|                  | `aarch64`    |                                                  |
 
 ```shell
 sudo apt-get install build-essential cmake perl pkg-config libclang-dev musl-tools -y
