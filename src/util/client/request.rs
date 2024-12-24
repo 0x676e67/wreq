@@ -27,7 +27,13 @@ where
         InnerRequestBuilder::new()
     }
 
-    pub fn split(self) -> (http::Request<B>, Option<NetworkScheme>, Option<HttpVersionPref>) {
+    pub fn split(
+        self,
+    ) -> (
+        http::Request<B>,
+        Option<NetworkScheme>,
+        Option<HttpVersionPref>,
+    ) {
         (self.request, self.network_scheme, self.http_version_pref)
     }
 }
@@ -97,7 +103,7 @@ impl<'a> InnerRequestBuilder<'a> {
         self
     }
 
-    /// Set an pool key extension for the request.
+    /// Set network scheme for the request.
     #[inline]
     pub fn network_scheme(mut self, network_scheme: impl Into<Option<NetworkScheme>>) -> Self {
         self.network_scheme = network_scheme.into();
