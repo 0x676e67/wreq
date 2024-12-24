@@ -105,12 +105,8 @@ macro_rules! header_firefox_accept {
             header::ACCEPT_LANGUAGE,
             HeaderValue::from_static("en-US,en;q=0.5"),
         );
-
     };
 }
-
-
-
 
 #[macro_export]
 macro_rules! header_firefox_accpet_with_zstd {

@@ -1,10 +1,13 @@
 /// referrer: https://github.com/cloudflare/boring/blob/master/hyper-boring/src/lib.rs
 use super::cache::{SessionCache, SessionKey};
 use super::{key_index, HttpsLayerSettings, MaybeHttpsStream};
+use crate::connect::HttpConnector;
 use crate::error::BoxError;
-use crate::tls::TlsConnectExtension;
+use crate::tls::ext::TlsExtension;
+use crate::tls::{BoringTlsConnector, TlsConnectExtension};
 use crate::util::client::connect::Connection;
 use crate::util::rt::TokioIo;
+use crate::HttpVersionPref;
 use antidote::Mutex;
 use boring::error::ErrorStack;
 use boring::ssl::{
@@ -18,12 +21,100 @@ use std::fmt::{self, Debug};
 use std::future::Future;
 use tokio_boring::SslStream;
 
-use std::net;
+use std::net::{self, IpAddr, Ipv4Addr, Ipv6Addr};
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
 use tower_layer::Layer;
 use tower_service::Service;
+
+pub(crate) struct HttpsConnectorBuilder {
+    version: Option<HttpVersionPref>,
+    http: HttpConnector,
+}
+
+#[allow(unused)]
+impl HttpsConnectorBuilder {
+    #[inline]
+    pub fn new(http: HttpConnector) -> HttpsConnectorBuilder {
+        HttpsConnectorBuilder {
+            version: None,
+            http,
+        }
+    }
+
+    #[inline]
+    pub fn with_version_pref(mut self, version: impl Into<Option<HttpVersionPref>>) -> Self {
+        self.version = version.into();
+        self
+    }
+
+    #[cfg(not(any(target_os = "android", target_os = "fuchsia", target_os = "linux")))]
+    #[inline]
+    pub fn with_iface(mut self, (ipv4, ipv6): (Option<Ipv4Addr>, Option<Ipv6Addr>)) -> Self {
+        match (ipv4, ipv6) {
+            (Some(a), Some(b)) => self.http.set_local_addresses(a, b),
+            (Some(a), None) => self.http.set_local_address(Some(IpAddr::V4(a))),
+            (None, Some(b)) => self.http.set_local_address(Some(IpAddr::V6(b))),
+            _ => (),
+        }
+        self
+    }
+
+    #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
+    #[inline]
+    pub fn with_iface(
+        mut self,
+        (interface, (address_ipv4, address_ipv6)): (
+            Option<std::borrow::Cow<'static, str>>,
+            (Option<Ipv4Addr>, Option<Ipv6Addr>),
+        ),
+    ) -> Self {
+        match (interface, address_ipv4, address_ipv6) {
+            (Some(a), Some(b), Some(c)) => {
+                self.http.set_interface(a);
+                self.http.set_local_addresses(b, c);
+            }
+            (None, Some(b), Some(c)) => {
+                self.http.set_local_addresses(b, c);
+            }
+            (Some(a), None, None) => {
+                self.http.set_interface(a);
+            }
+            (Some(a), Some(b), None) => {
+                self.http.set_interface(a);
+                self.http.set_local_address(Some(IpAddr::V4(b)));
+            }
+            (Some(a), None, Some(b)) => {
+                self.http.set_interface(a);
+                self.http.set_local_address(Some(IpAddr::V6(b)));
+            }
+            (None, Some(b), None) => {
+                self.http.set_local_address(Some(IpAddr::V4(b)));
+            }
+            (None, None, Some(c)) => {
+                self.http.set_local_address(Some(IpAddr::V6(c)));
+            }
+            _ => (),
+        }
+        self
+    }
+
+    #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
+    #[inline]
+    pub fn with_interface(&mut self, interface: std::borrow::Cow<'static, str>) {
+        match &mut self.inner {
+            Inner::BoringTls { http, .. } => http.set_interface(interface),
+        };
+    }
+
+    #[inline]
+    pub(crate) fn build(self, tls: &BoringTlsConnector) -> HttpsConnector<HttpConnector> {
+        let mut connector = HttpsConnector::with_connector_layer(self.http, tls.0.clone());
+        connector.set_ssl_callback(move |ssl, _| ssl.configure_alpn_protos(self.version));
+        connector
+    }
+}
 
 /// A Connector using BoringSSL to support `http` and `https` schemes.
 #[derive(Clone)]
@@ -32,12 +123,19 @@ pub struct HttpsConnector<T> {
     inner: Inner,
 }
 
+impl HttpsConnector<HttpConnector> {
+    /// Creates a new `HttpsConnectorBuilder`
+    pub fn builder(http: HttpConnector) -> HttpsConnectorBuilder {
+        HttpsConnectorBuilder::new(http)
+    }
+}
+
 impl<S, T> HttpsConnector<S>
 where
     S: Service<Uri, Response = T> + Send,
     S::Error: Into<Box<dyn Error + Send + Sync>>,
     S::Future: Unpin + Send + 'static,
-    T: Read + Write + Connection + Unpin + fmt::Debug + Sync + Send + 'static,
+    T: Read + Write + Connection + Unpin + Debug + Sync + Send + 'static,
 {
     /// Creates a new `HttpsConnector` with a given `HttpConnector`
     pub fn with_connector_layer(http: S, layer: HttpsLayer) -> HttpsConnector<S> {

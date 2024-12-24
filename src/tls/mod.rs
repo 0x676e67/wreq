@@ -5,20 +5,19 @@
 //! - Various parts of TLS can also be configured or even disabled on the
 //!   `ClientBuilder`.
 
+#![allow(missing_debug_implementations)]
 #![allow(missing_docs)]
 mod conn;
 mod ext;
 mod mimic;
 mod settings;
 
-use crate::{connect::HttpConnector, HttpVersionPref};
 use boring::{
     error::ErrorStack,
     ssl::{SslConnector, SslMethod, SslOptions, SslVersion},
 };
-pub use conn::MaybeHttpsStream;
-use conn::{HttpsConnector, HttpsLayer, HttpsLayerSettings};
-use ext::TlsExtension;
+pub use conn::{HttpsConnector, MaybeHttpsStream};
+use conn::{HttpsLayer, HttpsLayerSettings};
 pub use ext::{cert_compression, TlsBuilderExtension, TlsConnectExtension};
 pub use mimic::{chrome, firefox, okhttp, safari, tls_settings, Impersonate};
 pub use settings::{Http2Settings, ImpersonateSettings, RootCertsStore, TlsSettings};
@@ -27,153 +26,132 @@ type TlsResult<T> = Result<T, ErrorStack>;
 
 /// A wrapper around a `SslConnectorBuilder` that allows for additional settings.
 #[derive(Clone)]
-#[allow(missing_debug_implementations)]
-pub struct BoringTlsConnector {
-    inner: HttpsLayer,
-}
+pub struct BoringTlsConnector(HttpsLayer);
 
 impl BoringTlsConnector {
     /// Create a new `BoringTlsConnector` with the given function.
     #[inline]
     pub fn new(settings: TlsSettings) -> TlsResult<BoringTlsConnector> {
-        connect_layer(settings).map(|layer| Self { inner: layer })
-    }
+        // Create the default connector.
+        let connector = if cfg!(any(feature = "native-roots", feature = "webpki-roots")) {
+            SslConnector::no_default_verify_builder(SslMethod::tls_client())
+        } else {
+            SslConnector::builder(SslMethod::tls_client())
+        }?;
 
-    /// Create a new `HttpsConnector` with the settings from the `HttpConnector`.
-    #[inline]
-    pub(crate) fn create_connector(
-        &self,
-        http: HttpConnector,
-        version: Option<HttpVersionPref>,
-    ) -> HttpsConnector<HttpConnector> {
-        // Create the `HttpsConnector` with the given `HttpConnector` and `ConnectLayer`.
-        let mut http = HttpsConnector::with_connector_layer(http, self.inner.clone());
-        // Set the SSL callback to configure ALPN protos.
-        http.set_ssl_callback(move |ssl, _| ssl.configure_alpn_protos(version));
-        http
-    }
-}
+        // Create the `SslConnectorBuilder` and configure it.
+        let mut connector = connector
+            .configure_cert_verification(settings.certs_verification)?
+            .configure_alpn_protos(settings.alpn_protos)?
+            .configure_min_tls_version(settings.min_tls_version)?
+            .configure_max_tls_version(settings.max_tls_version)?;
 
-/// Create a new `ConnectLayer` with the given `Tls` settings.
-#[inline]
-fn connect_layer(settings: TlsSettings) -> TlsResult<HttpsLayer> {
-    // Create the default connector.
-    let connector = if cfg!(any(feature = "native-roots", feature = "webpki-roots")) {
-        SslConnector::no_default_verify_builder(SslMethod::tls_client())
-    } else {
-        SslConnector::builder(SslMethod::tls_client())
-    }?;
-
-    // Create the `SslConnectorBuilder` and configure it.
-    let mut connector = connector
-        .configure_cert_verification(settings.certs_verification)?
-        .configure_alpn_protos(settings.alpn_protos)?
-        .configure_min_tls_version(settings.min_tls_version)?
-        .configure_max_tls_version(settings.max_tls_version)?;
-
-    // Set enable ocsp stapling if it is set.
-    if settings.enable_ocsp_stapling {
-        connector.enable_ocsp_stapling();
-    }
-
-    // Set enable signed cert timestamps if it is set.
-    if settings.enable_signed_cert_timestamps {
-        connector.enable_signed_cert_timestamps();
-    }
-
-    // Set no session ticket if it is set.
-    if let Some(false) = settings.session_ticket {
-        connector.set_options(SslOptions::NO_TICKET);
-    }
-
-    // Set grease enabled if it is set.
-    if let Some(grease_enabled) = settings.grease_enabled {
-        connector.set_grease_enabled(grease_enabled);
-    }
-
-    // Set permute extensions if it is set.
-    if let Some(permute_extensions) = settings.permute_extensions {
-        connector.set_permute_extensions(permute_extensions);
-    }
-
-    // Set the curves if they are set.
-    if let Some(curves) = settings.curves.as_deref() {
-        connector.set_curves(curves)?;
-    }
-
-    // Set the signature algorithms list if it is set.
-    if let Some(sigalgs_list) = settings.sigalgs_list.as_deref() {
-        connector.set_sigalgs_list(sigalgs_list)?;
-    }
-
-    // Set the delegated credentials if it is set.
-    if let Some(delegated_credentials) = settings.delegated_credentials.as_deref() {
-        connector.set_delegated_credentials(delegated_credentials)?;
-    }
-
-    // Set the cipher list if it is set.
-    if let Some(cipher_list) = settings.cipher_list.as_deref() {
-        connector.set_cipher_list(cipher_list)?;
-    }
-
-    // Set the certificate compression algorithm if it is set.
-    if let Some(cert_compression_algorithm) = settings.cert_compression_algorithm {
-        for algorithm in cert_compression_algorithm.iter() {
-            connector = connector.configure_add_cert_compression_alg(*algorithm)?;
-        }
-    }
-
-    // Set the record size limit if it is set.
-    if let Some(record_size_limit) = settings.record_size_limit {
-        connector.set_record_size_limit(record_size_limit);
-    }
-
-    // Set the key shares length limit if it is set.
-    if let Some(limit) = settings.key_shares_length_limit {
-        connector.set_key_shares_length_limit(limit);
-    }
-
-    // Set the extension permutation if it is set.
-    if let Some(extensions) = settings.extension_permutation {
-        connector.set_extension_permutation(extensions.as_ref())?;
-    }
-
-    // Set the extension permutation index if it is set.
-    if let Some(indices) = settings.extension_permutation_indices {
-        connector.set_extension_permutation_indices(indices.as_ref())?;
-    }
-
-    // Conditionally configure the TLS builder based on the "native-roots" feature.
-    // If no custom CA cert store, use the system's native certificate store if the feature is enabled.
-    let connector = if settings.root_certs_store.is_none() {
-        // WebPKI root certificates are enabled (regardless of whether native-roots is also enabled).
-        #[cfg(any(feature = "webpki-roots", feature = "native-roots"))]
-        {
-            connector.configure_set_verify_cert_store()?
+        // Set enable ocsp stapling if it is set.
+        if settings.enable_ocsp_stapling {
+            connector.enable_ocsp_stapling();
         }
 
-        // Neither native-roots nor WebPKI roots are enabled, proceed with the default builder.
-        #[cfg(not(any(feature = "native-roots", feature = "webpki-roots")))]
-        {
-            connector
+        // Set enable signed cert timestamps if it is set.
+        if settings.enable_signed_cert_timestamps {
+            connector.enable_signed_cert_timestamps();
         }
-    } else {
-        // If a custom CA certificate store is provided, configure it.
-        connector.configure_ca_cert_store(settings.root_certs_store)?
-    };
 
-    // Create the `HttpsLayerSettings` with the default session cache capacity.
-    let settings = HttpsLayerSettings::builder()
-        .session_cache_capacity(8)
-        .session_cache(settings.pre_shared_key)
-        .skip_session_ticket(settings.psk_skip_session_ticket)
-        .alpn_protos(settings.alpn_protos)
-        .application_settings(settings.application_settings)
-        .enable_ech_grease(settings.enable_ech_grease)
-        .tls_sni(settings.tls_sni)
-        .build();
+        // Set no session ticket if it is set.
+        if let Some(false) = settings.session_ticket {
+            connector.set_options(SslOptions::NO_TICKET);
+        }
 
-    Ok(HttpsLayer::with_connector_and_settings(connector, settings))
+        // Set grease enabled if it is set.
+        if let Some(grease_enabled) = settings.grease_enabled {
+            connector.set_grease_enabled(grease_enabled);
+        }
+
+        // Set permute extensions if it is set.
+        if let Some(permute_extensions) = settings.permute_extensions {
+            connector.set_permute_extensions(permute_extensions);
+        }
+
+        // Set the curves if they are set.
+        if let Some(curves) = settings.curves.as_deref() {
+            connector.set_curves(curves)?;
+        }
+
+        // Set the signature algorithms list if it is set.
+        if let Some(sigalgs_list) = settings.sigalgs_list.as_deref() {
+            connector.set_sigalgs_list(sigalgs_list)?;
+        }
+
+        // Set the delegated credentials if it is set.
+        if let Some(delegated_credentials) = settings.delegated_credentials.as_deref() {
+            connector.set_delegated_credentials(delegated_credentials)?;
+        }
+
+        // Set the cipher list if it is set.
+        if let Some(cipher_list) = settings.cipher_list.as_deref() {
+            connector.set_cipher_list(cipher_list)?;
+        }
+
+        // Set the certificate compression algorithm if it is set.
+        if let Some(cert_compression_algorithm) = settings.cert_compression_algorithm {
+            for algorithm in cert_compression_algorithm.iter() {
+                connector = connector.configure_add_cert_compression_alg(*algorithm)?;
+            }
+        }
+
+        // Set the record size limit if it is set.
+        if let Some(record_size_limit) = settings.record_size_limit {
+            connector.set_record_size_limit(record_size_limit);
+        }
+
+        // Set the key shares length limit if it is set.
+        if let Some(limit) = settings.key_shares_length_limit {
+            connector.set_key_shares_length_limit(limit);
+        }
+
+        // Set the extension permutation if it is set.
+        if let Some(extensions) = settings.extension_permutation {
+            connector.set_extension_permutation(extensions.as_ref())?;
+        }
+
+        // Set the extension permutation index if it is set.
+        if let Some(indices) = settings.extension_permutation_indices {
+            connector.set_extension_permutation_indices(indices.as_ref())?;
+        }
+
+        // Conditionally configure the TLS builder based on the "native-roots" feature.
+        // If no custom CA cert store, use the system's native certificate store if the feature is enabled.
+        let connector = if settings.root_certs_store.is_none() {
+            // WebPKI root certificates are enabled (regardless of whether native-roots is also enabled).
+            #[cfg(any(feature = "webpki-roots", feature = "native-roots"))]
+            {
+                connector.configure_set_verify_cert_store()?
+            }
+
+            // Neither native-roots nor WebPKI roots are enabled, proceed with the default builder.
+            #[cfg(not(any(feature = "native-roots", feature = "webpki-roots")))]
+            {
+                connector
+            }
+        } else {
+            // If a custom CA certificate store is provided, configure it.
+            connector.configure_ca_cert_store(settings.root_certs_store)?
+        };
+
+        // Create the `HttpsLayerSettings` with the default session cache capacity.
+        let settings = HttpsLayerSettings::builder()
+            .session_cache_capacity(8)
+            .session_cache(settings.pre_shared_key)
+            .skip_session_ticket(settings.psk_skip_session_ticket)
+            .alpn_protos(settings.alpn_protos)
+            .application_settings(settings.application_settings)
+            .enable_ech_grease(settings.enable_ech_grease)
+            .tls_sni(settings.tls_sni)
+            .build();
+
+        Ok(Self(HttpsLayer::with_connector_and_settings(
+            connector, settings,
+        )))
+    }
 }
 
 /// A TLS protocol version.

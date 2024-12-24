@@ -3,8 +3,7 @@ use std::fmt;
 use std::future::Future;
 use std::time::Duration;
 
-use http::header::CONTENT_LENGTH;
-use http::{request::Parts, Request as HttpRequest, Uri, Version};
+use http::{request::Parts, Request as HttpRequest, Version};
 use serde::Serialize;
 #[cfg(feature = "json")]
 use serde_json;
@@ -14,11 +13,9 @@ use super::http::{Client, Pending};
 #[cfg(feature = "multipart")]
 use super::multipart;
 use super::response::Response;
-use super::HttpVersionPref;
 #[cfg(feature = "cookies")]
 use crate::cookie;
 use crate::header::{HeaderMap, HeaderName, HeaderValue, CONTENT_TYPE, HOST};
-use crate::util::ext::{ConnectExtension, PoolKeyExtension, VersionExtension};
 use crate::{redirect, Method, Url};
 #[cfg(feature = "cookies")]
 use std::sync::Arc;
@@ -704,112 +701,5 @@ impl TryFrom<Request> for HttpRequest<Body> {
 
         *req.headers_mut() = headers;
         Ok(req)
-    }
-}
-
-/// A builder for constructing HTTP requests.
-pub(crate) struct InnerRequest<'a> {
-    builder: http::request::Builder,
-    headers_order: Option<&'a [HeaderName]>,
-}
-
-impl<'a> InnerRequest<'a> {
-    /// Create a new `RequestBuilder` with required fields.
-    #[inline]
-    pub fn new() -> Self {
-        Self {
-            builder: hyper2::Request::builder(),
-            headers_order: None,
-        }
-    }
-
-    /// Set the method for the request.
-    #[inline]
-    pub fn method(mut self, method: Method) -> Self {
-        self.builder = self.builder.method(method);
-        self
-    }
-
-    /// Set the URI for the request.
-    #[inline]
-    pub fn uri(mut self, uri: Uri) -> Self {
-        self.builder = self.builder.uri(uri);
-        self
-    }
-
-    /// Set the version for the request.
-    #[inline]
-    pub fn version(mut self, version: Option<Version>) -> Self {
-        if let Some(version) = version {
-            match version {
-                Version::HTTP_11 | Version::HTTP_10 | Version::HTTP_09 => {
-                    self.builder = self
-                        .builder
-                        .extension(ConnectExtension(VersionExtension(HttpVersionPref::Http1)));
-                }
-                Version::HTTP_2 => {
-                    self.builder = self
-                        .builder
-                        .extension(ConnectExtension(VersionExtension(HttpVersionPref::Http2)));
-                }
-                _ => {}
-            };
-        }
-        self
-    }
-
-    /// Set the headers for the request.
-    #[inline]
-    pub fn headers(mut self, mut headers: HeaderMap) -> Self {
-        if let Some(h) = self.builder.headers_mut() {
-            std::mem::swap(h, &mut headers);
-        }
-        self
-    }
-
-    /// Set the headers order for the request.
-    #[inline]
-    pub fn headers_order(mut self, order: Option<&'a [HeaderName]>) -> Self {
-        self.headers_order = order;
-        self
-    }
-
-    /// Set an pool key extension for the request.
-    #[inline]
-    pub fn pool_key(mut self, pool_key: Option<PoolKeyExtension>) -> Self {
-        if let Some(pool_key) = pool_key {
-            self.builder = self.builder.extension(ConnectExtension(pool_key));
-        }
-        self
-    }
-
-    /// Build and return the constructed request.
-    pub fn build(mut self, body: Body) -> http::Request<Body> {
-        // Sort headers if headers_order is provided
-        if let Some(order) = self.headers_order {
-            let method = self.builder.method_ref().cloned();
-            let headers_mut = self.builder.headers_mut();
-            if let (Some(headers), Some(method)) = (headers_mut, method) {
-                {
-                    // Add CONTENT_LENGTH header if required
-                    if let Some(len) = http_body::Body::size_hint(&body).exact() {
-                        let needs_content_length = len != 0
-                            || !matches!(
-                                method,
-                                Method::GET | Method::HEAD | Method::DELETE | Method::CONNECT
-                            );
-                        if needs_content_length {
-                            headers
-                                .entry(CONTENT_LENGTH)
-                                .or_insert_with(|| HeaderValue::from(len));
-                        }
-                    }
-                    // Sort headers
-                    crate::util::sort_headers(headers, order);
-                }
-            }
-        }
-
-        self.builder.body(body).expect("valid request parts")
     }
 }

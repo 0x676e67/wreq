@@ -1,42 +1,35 @@
 use self::tls_conn::BoringTlsConn;
-use crate::tls::{BoringTlsConnector, MaybeHttpsStream};
+use crate::tls::{BoringTlsConnector, HttpsConnector, MaybeHttpsStream};
 use crate::util::client::connect::{Connected, Connection};
 use crate::util::client::Dst;
-use crate::util::ext::PoolKeyExtension;
 use crate::util::rt::TokioIo;
 use crate::util::{self, into_uri};
 use http::uri::Scheme;
-use http::Uri;
 use hyper2::rt::{Read, ReadBufCursor, Write};
 use tokio_boring::SslStream;
 use tower_service::Service;
 
 use pin_project_lite::pin_project;
-use std::borrow::Cow;
 use std::future::Future;
 use std::io::{self, IoSlice};
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::ops::Deref;
 use std::pin::Pin;
-use std::sync::Arc;
 use std::task::{Context, Poll};
 use std::time::Duration;
 
 use crate::dns::DynResolver;
 use crate::error::BoxError;
-use crate::proxy::{Proxy, ProxyScheme};
+use crate::proxy::ProxyScheme;
 
 pub(crate) type HttpConnector = util::client::connect::HttpConnector<DynResolver>;
 
 #[derive(Clone)]
 pub(crate) struct Connector {
     inner: Inner,
-    proxies: Arc<Vec<Proxy>>,
     verbose: verbose::Wrapper,
     timeout: Option<Duration>,
     nodelay: bool,
     tls_info: bool,
-    pool_key_ext: Option<PoolKeyExtension>,
 }
 
 #[derive(Clone)]
@@ -50,47 +43,17 @@ impl Connector {
     pub(crate) fn new_boring_tls(
         mut http: HttpConnector,
         tls: BoringTlsConnector,
-        proxies: Arc<Vec<Proxy>>,
-        local_addr_v4: Option<Ipv4Addr>,
-        local_addr_v6: Option<Ipv6Addr>,
-        #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
-        interface: Option<std::borrow::Cow<'static, str>>,
         nodelay: bool,
         tls_info: bool,
     ) -> Connector {
-        match (local_addr_v4, local_addr_v6) {
-            (Some(v4), Some(v6)) => http.set_local_addresses(v4, v6),
-            (Some(v4), None) => http.set_local_address(Some(IpAddr::from(v4))),
-            (None, Some(v6)) => http.set_local_address(Some(IpAddr::from(v6))),
-            _ => {}
-        }
-        #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
-        if let Some(ref interface) = interface {
-            http.set_interface(interface.clone());
-        }
         http.enforce_http(false);
-
-        let mut connector = Connector {
+        Connector {
             inner: Inner { http, tls },
-            proxies,
             verbose: verbose::OFF,
             timeout: None,
             nodelay,
             tls_info,
-            pool_key_ext: None,
-        };
-
-        #[cfg(not(any(target_os = "android", target_os = "fuchsia", target_os = "linux")))]
-        connector.init_pool_key(local_addr_v4.map(IpAddr::V4), local_addr_v6.map(IpAddr::V6));
-
-        #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
-        connector.init_pool_key(
-            local_addr_v4.map(IpAddr::V4),
-            local_addr_v6.map(IpAddr::V6),
-            interface,
-        );
-
-        connector
+        }
     }
 
     #[inline]
@@ -109,108 +72,12 @@ impl Connector {
     }
 
     #[inline]
-    pub(crate) fn get_proxies(&self) -> &[Proxy] {
-        self.proxies.as_ref()
-    }
-
-    #[inline]
-    pub(crate) fn set_proxies(&mut self, proxies: Cow<'static, [Proxy]>) -> Vec<Proxy> {
-        std::mem::replace(self.proxies_mut(), proxies.into_owned())
-    }
-
-    #[inline]
-    pub(crate) fn append_proxies(&mut self, proxies: Cow<'static, [Proxy]>) {
-        self.proxies_mut().extend(proxies.into_owned());
-    }
-
-    #[inline]
-    pub(crate) fn clear_proxies(&mut self) {
-        self.proxies_mut().clear();
-    }
-
-    #[inline]
-    fn proxies_mut(&mut self) -> &mut Vec<Proxy> {
-        Arc::make_mut(&mut self.proxies)
-    }
-
-    #[inline]
-    pub(crate) fn set_local_address(&mut self, addr: Option<IpAddr>) {
-        #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
-        self.init_pool_key(addr, None, None);
-
-        #[cfg(not(any(target_os = "android", target_os = "fuchsia", target_os = "linux")))]
-        self.init_pool_key(addr, None);
-
-        self.inner.http.set_local_address(addr);
-    }
-
-    #[inline]
-    pub(crate) fn set_local_addresses(&mut self, addr_ipv4: Ipv4Addr, addr_ipv6: Ipv6Addr) {
-        #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
-        self.init_pool_key(IpAddr::V4(addr_ipv4), IpAddr::V6(addr_ipv6), None);
-
-        #[cfg(not(any(target_os = "android", target_os = "fuchsia", target_os = "linux")))]
-        self.init_pool_key(IpAddr::V4(addr_ipv4), IpAddr::V6(addr_ipv6));
-
-        self.inner.http.set_local_addresses(addr_ipv4, addr_ipv6);
-    }
-
-    #[inline]
-    fn init_pool_key(
-        &mut self,
-        addr_ipv4: impl Into<Option<IpAddr>>,
-        addr_ipv6: impl Into<Option<IpAddr>>,
-        #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
-        interface: impl Into<Option<std::borrow::Cow<'static, str>>>,
-    ) {
-        if self.proxies.is_empty() {
-            let ipv4 = addr_ipv4.into();
-            let ipv6 = addr_ipv6.into();
-            match (&ipv4, &ipv6) {
-                (Some(_), Some(_)) | (None, Some(_)) | (Some(_), None) => {
-                    self.pool_key_ext = Some(PoolKeyExtension::Address(ipv4, ipv6));
-                }
-                _ =>
-                {
-                    #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
-                    if let Some(interface) = interface.into() {
-                        self.pool_key_ext = Some(PoolKeyExtension::Interface(interface));
-                    }
-                }
-            }
-        }
-    }
-
-    #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
-    #[inline]
-    pub(crate) fn set_interface(&mut self, interface: std::borrow::Cow<'static, str>) {
-        if self.proxies.is_empty() {
-            self.pool_key_ext = Some(PoolKeyExtension::Interface(interface.clone()));
-        }
-
-        match &mut self.inner {
-            Inner::BoringTls { http, .. } => http.set_interface(interface),
-        };
-    }
-
-    #[inline]
     pub(crate) fn set_connector(&mut self, connector: BoringTlsConnector) {
         self.inner.tls = connector;
     }
 
-    #[inline]
-    pub(crate) fn pool_key(&self, uri: &Uri) -> Option<PoolKeyExtension> {
-        for proxy in self.proxies.as_ref() {
-            if let Some(proxy_scheme) = proxy.intercept(uri) {
-                return Some(PoolKeyExtension::Proxy(proxy_scheme));
-            }
-        }
-
-        self.pool_key_ext.clone()
-    }
-
     #[cfg(feature = "socks")]
-    async fn connect_socks(&self, dst: Dst, proxy: ProxyScheme) -> Result<Conn, BoxError> {
+    async fn connect_socks(&self, mut dst: Dst, proxy: ProxyScheme) -> Result<Conn, BoxError> {
         let dns = match proxy {
             ProxyScheme::Socks4 { .. } => socks::DnsResolve::Local,
             ProxyScheme::Socks5 {
@@ -226,11 +93,15 @@ impl Connector {
 
         let Inner { http, tls } = &self.inner;
         if dst.scheme() == Some(&Scheme::HTTPS) {
-            let host = dst.host().ok_or(crate::error::uri_bad_host())?;
+            let http = HttpsConnector::builder(http.clone())
+                .with_version_pref(dst.version_pref())
+                .with_iface(dst.take_iface())
+                .build(tls);
+
             log::trace!("socks HTTPS over proxy");
+            let host = dst.host().ok_or(crate::error::uri_bad_host())?;
             let conn = socks::connect(proxy, &dst, dns).await?;
 
-            let http = tls.create_connector(http.clone(), dst.version_pref());
             let io = http.connect(&dst, host, TokioIo::new(conn)).await?;
 
             return Ok(Conn {
@@ -249,7 +120,11 @@ impl Connector {
         })
     }
 
-    async fn connect_with_maybe_proxy(self, dst: Dst, is_proxy: bool) -> Result<Conn, BoxError> {
+    async fn connect_with_maybe_proxy(
+        self,
+        mut dst: Dst,
+        is_proxy: bool,
+    ) -> Result<Conn, BoxError> {
         let Inner { http, tls } = &self.inner;
         let mut http = http.clone();
 
@@ -261,7 +136,10 @@ impl Connector {
         }
 
         log::trace!("connect with maybe proxy");
-        let mut http = tls.create_connector(http, dst.version_pref());
+        let mut http = HttpsConnector::builder(http)
+            .with_version_pref(dst.version_pref())
+            .with_iface(dst.take_iface())
+            .build(tls);
         let io = http.call(dst.deref().clone()).await?;
 
         if let MaybeHttpsStream::Https(stream) = io {
@@ -305,14 +183,18 @@ impl Connector {
 
         let Inner { http, tls } = &self.inner;
         if dst.scheme() == Some(&Scheme::HTTPS) {
+            let mut http = HttpsConnector::builder(http.clone())
+                .with_version_pref(dst.version_pref())
+                .with_iface(dst.take_iface())
+                .build(tls);
+
             let host = dst.host().ok_or(crate::error::uri_bad_host())?;
             let port = dst.port_u16().unwrap_or(443);
 
-            let mut http = tls.create_connector(http.clone(), dst.version_pref());
-            let conn = http.call(proxy_dst).await?;
-
             log::trace!("tunneling HTTPS over proxy");
+            let conn = http.call(proxy_dst).await?;
             let tunneled = tunnel::connect(conn, host, port, auth).await?;
+
             let io = http.connect(&dst, host, tunneled).await?;
 
             return Ok(Conn {
@@ -324,7 +206,7 @@ impl Connector {
             });
         }
 
-        dst.next_dst(proxy_dst);
+        dst.set_dst(proxy_dst);
 
         self.connect_with_maybe_proxy(dst, true).await
     }
@@ -354,16 +236,15 @@ impl Service<Dst> for Connector {
         Poll::Ready(Ok(()))
     }
 
-    fn call(&mut self, dst: Dst) -> Self::Future {
+    fn call(&mut self, mut dst: Dst) -> Self::Future {
         log::debug!("starting new connection: {:?}", dst);
         let timeout = self.timeout;
-        for prox in self.proxies.iter() {
-            if let Some(proxy_scheme) = prox.intercept(dst.deref()) {
-                return Box::pin(with_timeout(
-                    self.clone().connect_via_proxy(dst, proxy_scheme),
-                    timeout,
-                ));
-            }
+
+        if let Some(proxy_scheme) = dst.take_proxy() {
+            return Box::pin(with_timeout(
+                self.clone().connect_via_proxy(dst, proxy_scheme),
+                timeout,
+            ));
         }
 
         Box::pin(with_timeout(

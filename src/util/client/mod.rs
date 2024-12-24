@@ -9,10 +9,13 @@ pub mod connect;
 // Publicly available, but just for legacy purposes. A better pool will be
 // designed.
 mod pool;
+mod request;
+mod scheme;
 
 use std::error::Error as StdError;
 use std::fmt;
 use std::future::Future;
+use std::net::{Ipv4Addr, Ipv6Addr};
 use std::num::NonZeroUsize;
 use std::pin::Pin;
 use std::task::{self, Poll};
@@ -27,8 +30,8 @@ use hyper2::{body::Body, Method, Request, Response, Uri, Version};
 use log::{debug, trace, warn};
 use sync_wrapper::SyncWrapper;
 
+use crate::proxy::ProxyScheme;
 use crate::util::common;
-use crate::util::ext::PoolKeyExtension;
 use crate::HttpVersionPref;
 use connect::capture::CaptureConnectionExtension;
 use connect::{Alpn, Connect, Connected, Connection};
@@ -36,8 +39,9 @@ use pool::Ver;
 
 use common::{lazy as hyper_lazy, timer, Exec, Lazy};
 
-use super::ext::{ConnectExtension, VersionExtension};
 use super::into_uri;
+pub use request::InnerRequest;
+pub use scheme::NetworkScheme;
 
 type BoxSendFuture = Pin<Box<dyn Future<Output = ()> + Send>>;
 
@@ -112,36 +116,29 @@ macro_rules! e {
 }
 
 // We might change this... :shrug:
-type PoolKey = (Uri, Option<PoolKeyExtension>);
+type PoolKey = (NetworkScheme, Uri);
 
 /// Destination of the request
 ///
 /// This is used to store the destination of the request, the http version pref, and the pool key.
 #[derive(Clone)]
 pub struct Dst {
-    version: Option<VersionExtension>,
+    dst: Uri,
+    http_version_pref: HttpVersionPref,
     pool_key: PoolKey,
-    next_dst: Option<Uri>,
 }
 
 impl Dst {
     /// Create a new `Dst` from a request
-    pub fn new<B>(req: &mut Request<B>, is_http_connect: bool) -> Result<Dst, Error> {
-        let (version, extension) = {
-            (
-                req.extensions_mut()
-                    .remove::<ConnectExtension<VersionExtension>>()
-                    .map(|e| e.into_inner()),
-                req.extensions_mut()
-                    .remove::<ConnectExtension<PoolKeyExtension>>()
-                    .map(|e| e.into_inner()),
-            )
-        };
-
+    pub fn new<B>(
+        req: &mut Request<B>,
+        is_http_connect: bool,
+        network_scheme: NetworkScheme,
+        http_version_pref: HttpVersionPref,
+    ) -> Result<Dst, Error> {
         let uri = req.uri_mut();
-        let (scheme, authority, extension) = match (uri.scheme().cloned(), uri.authority().cloned())
-        {
-            (Some(scheme), Some(auth)) => (scheme, auth, extension),
+        let (scheme, auth) = match (uri.scheme().cloned(), uri.authority().cloned()) {
+            (Some(scheme), Some(auth)) => (scheme, auth),
             (None, Some(auth)) if is_http_connect => {
                 let scheme = match auth.port_u16() {
                     Some(443) => {
@@ -153,7 +150,7 @@ impl Dst {
                         Scheme::HTTP
                     }
                 };
-                (scheme, auth.clone(), extension)
+                (scheme, auth)
             }
             _ => {
                 debug!("Client requires absolute-form URIs, received: {:?}", uri);
@@ -161,11 +158,12 @@ impl Dst {
             }
         };
 
-        into_uri(scheme, authority)
+        // Convert the scheme and host to a URI
+        into_uri(scheme, auth)
             .map(|uri| Dst {
-                pool_key: (uri, extension),
-                version,
-                next_dst: None,
+                dst: uri.clone(),
+                pool_key: (network_scheme, uri),
+                http_version_pref,
             })
             .map_err(|_| e!(UserAbsoluteUriRequired))
     }
@@ -176,13 +174,35 @@ impl Dst {
     }
 
     /// Set the next destination of the request (for proxy)
-    pub(crate) fn next_dst(&mut self, uri: Uri) {
-        self.next_dst = Some(uri);
+    pub(crate) fn set_dst(&mut self, uri: Uri) {
+        self.dst = uri;
     }
 
     /// Get the http version pref
-    pub fn version_pref(&self) -> Option<HttpVersionPref> {
-        self.version.clone().map(|v| v.0)
+    pub fn version_pref(&self) -> HttpVersionPref {
+        self.http_version_pref.clone()
+    }
+
+    /// Task network scheme for iface
+    #[cfg(not(any(target_os = "android", target_os = "fuchsia", target_os = "linux")))]
+    pub fn take_iface(&mut self) -> (Option<Ipv4Addr>, Option<Ipv6Addr>) {
+        self.pool_key.0.take_iface()
+    }
+
+    #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
+    pub fn take_iface(
+        &mut self,
+    ) -> (
+        Option<std::borrow::Cow<'static, str>>,
+        Option<Ipv4Addr>,
+        Option<Ipv6Addr>,
+    ) {
+        self.pool_key.0.take_iface()
+    }
+
+    /// Take the network scheme for proxy
+    pub fn take_proxy(&mut self) -> Option<ProxyScheme> {
+        self.pool_key.0.take_proxy()
     }
 }
 
@@ -190,13 +210,13 @@ impl std::ops::Deref for Dst {
     type Target = Uri;
 
     fn deref(&self) -> &Self::Target {
-        self.next_dst.as_ref().unwrap_or(&self.pool_key.0)
+        &self.dst
     }
 }
 
 impl std::fmt::Debug for Dst {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.pool_key.0)
+        write!(f, "{}", self.dst)
     }
 }
 
@@ -282,7 +302,8 @@ where
     /// # }
     /// # fn main() {}
     /// ```
-    pub fn request(&self, mut req: Request<B>) -> ResponseFuture {
+    pub fn request(&self, req: InnerRequest<B>) -> ResponseFuture {
+        let (mut req, network_scheme, http_version_pref) = req.split();
         let is_http_connect = req.method() == Method::CONNECT;
         match req.version() {
             Version::HTTP_11 => (),
@@ -297,7 +318,7 @@ where
             other => return ResponseFuture::error_version(other),
         };
 
-        let ctx = match Dst::new(&mut req, is_http_connect) {
+        let ctx = match Dst::new(&mut req, is_http_connect, network_scheme, http_version_pref) {
             Ok(s) => s,
             Err(err) => {
                 return ResponseFuture::new(future::err(err));
@@ -689,7 +710,7 @@ where
     }
 }
 
-impl<C, B> tower_service::Service<Request<B>> for Client<C, B>
+impl<C, B> tower_service::Service<InnerRequest<B>> for Client<C, B>
 where
     C: Connect + Clone + Send + Sync + 'static,
     B: Body + Send + 'static + Unpin,
@@ -704,12 +725,12 @@ where
         Poll::Ready(Ok(()))
     }
 
-    fn call(&mut self, req: Request<B>) -> Self::Future {
+    fn call(&mut self, req: InnerRequest<B>) -> Self::Future {
         self.request(req)
     }
 }
 
-impl<C, B> tower_service::Service<Request<B>> for &'_ Client<C, B>
+impl<C, B> tower_service::Service<InnerRequest<B>> for &'_ Client<C, B>
 where
     C: Connect + Clone + Send + Sync + 'static,
     B: Body + Send + 'static + Unpin,
@@ -724,7 +745,7 @@ where
         Poll::Ready(Ok(()))
     }
 
-    fn call(&mut self, req: Request<B>) -> Self::Future {
+    fn call(&mut self, req: InnerRequest<B>) -> Self::Future {
         self.request(req)
     }
 }

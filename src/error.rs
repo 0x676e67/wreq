@@ -239,6 +239,12 @@ impl From<boring::error::ErrorStack> for Error {
     }
 }
 
+impl From<http::Error> for Error {
+    fn from(err: http::Error) -> Error {
+        Error::new(Kind::Builder, Some(format!("http error: {:?}", err)))
+    }
+}
+
 #[derive(Debug)]
 pub(crate) enum Kind {
     Builder,

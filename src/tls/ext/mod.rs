@@ -247,18 +247,11 @@ impl TlsConnectExtension for ConnectConfiguration {
 impl TlsExtension for SslRef {
     #[inline]
     fn configure_alpn_protos(&mut self, version: Option<HttpVersionPref>) -> TlsResult<()> {
-        if let Some(HttpVersionPref::Http1) = version {
-            self.set_alpn_protos(HTTP_1_ALPN)?;
+        match version {
+            Some(HttpVersionPref::Http1) => self.set_alpn_protos(HTTP_1_ALPN),
+            Some(HttpVersionPref::Http2) => self.set_alpn_protos(HTTP_2_ALPN),
+            Some(HttpVersionPref::All) => self.set_alpn_protos(HTTP_1_OR_2_ALPN),
+            None => Ok(()),
         }
-
-        if let Some(HttpVersionPref::Http2) = version {
-            self.set_alpn_protos(HTTP_2_ALPN)?;
-        }
-
-        if let Some(HttpVersionPref::All) = version {
-            self.set_alpn_protos(HTTP_1_OR_2_ALPN)?;
-        }
-
-        Ok(())
     }
 }
