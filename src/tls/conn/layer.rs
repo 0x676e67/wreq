@@ -100,14 +100,6 @@ impl HttpsConnectorBuilder {
         self
     }
 
-    #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
-    #[inline]
-    pub fn with_interface(&mut self, interface: std::borrow::Cow<'static, str>) {
-        match &mut self.inner {
-            Inner::BoringTls { http, .. } => http.set_interface(interface),
-        };
-    }
-
     #[inline]
     pub(crate) fn build(self, tls: &BoringTlsConnector) -> HttpsConnector<HttpConnector> {
         let mut connector = HttpsConnector::with_connector_layer(self.http, tls.0.clone());
