@@ -329,3 +329,8 @@ required-features = ["full"]
 name = "request_via_proxy"
 path = "examples/request_via_proxy.rs"
 required-features = ["full"]
+
+[[example]]
+name = "connect_via_lower_priority_tokio_runtime"
+path = "examples/connect_via_lower_priority_tokio_runtime.rs"
+required-features = ["full"]
