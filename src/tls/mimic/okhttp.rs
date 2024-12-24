@@ -63,7 +63,7 @@ mod tls {
 
     pub const CURVES: &[SslCurve] = &[SslCurve::X25519, SslCurve::SECP256R1, SslCurve::SECP384R1];
 
-    pub const SIGALGS_LIST: &str = static_join!(
+    pub const SIGALGS_LIST: &str = join!(
         ":",
         "ecdsa_secp256r1_sha256",
         "rsa_pss_rsae_sha256",
@@ -76,7 +76,7 @@ mod tls {
         "rsa_pkcs1_sha1"
     );
 
-    pub const CIPHER_LIST: &str = static_join!(
+    pub const CIPHER_LIST: &str = join!(
         ":",
         "TLS_AES_128_GCM_SHA256",
         "TLS_AES_256_GCM_SHA384",
@@ -149,7 +149,7 @@ mod http2 {
 
 okhttp_mod_generator!(
     okhttp3_11,
-    static_join!(
+    join!(
         ":",
         "TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256",
         "TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256",
@@ -171,7 +171,7 @@ okhttp_mod_generator!(
 
 okhttp_mod_generator!(
     okhttp3_13,
-    static_join!(
+    join!(
         ":",
         "TLS_AES_128_GCM_SHA256",
         "TLS_AES_256_GCM_SHA384",
@@ -205,7 +205,7 @@ okhttp_mod_generator!(
 
 okhttp_mod_generator!(
     okhttp3_9,
-    static_join!(
+    join!(
         ":",
         "TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256",
         "TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256",
@@ -236,7 +236,7 @@ okhttp_mod_generator!(
 
 okhttp_mod_generator!(
     okhttp4_9,
-    static_join!(
+    join!(
         ":",
         "TLS_AES_128_GCM_SHA256",
         "TLS_AES_256_GCM_SHA384",

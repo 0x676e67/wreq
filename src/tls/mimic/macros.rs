@@ -23,7 +23,7 @@ macro_rules! conditional_headers {
 }
 
 #[macro_export]
-macro_rules! header_chrome_edge_sec_ch_ua {
+macro_rules! header_chrome_sec_ch_ua {
     ($headers:expr, $ua:expr) => {
         $headers.insert("sec-ch-ua", HeaderValue::from_static($ua));
         $headers.insert("sec-ch-ua-mobile", HeaderValue::from_static("?0"));
@@ -32,7 +32,7 @@ macro_rules! header_chrome_edge_sec_ch_ua {
 }
 
 #[macro_export]
-macro_rules! header_chrome_edge_sec_fetch {
+macro_rules! header_chrome_sec_fetch {
     ($headers:expr) => {
         $headers.insert("sec-fetch-dest", HeaderValue::from_static("document"));
         $headers.insert("sec-fetch-mode", HeaderValue::from_static("navigate"));
@@ -42,7 +42,7 @@ macro_rules! header_chrome_edge_sec_fetch {
 }
 
 #[macro_export]
-macro_rules! header_chrome_edge_ua {
+macro_rules! header_chrome_ua {
     ($headers:expr, $ua:expr) => {
         $headers.insert(UPGRADE_INSECURE_REQUESTS, HeaderValue::from_static("1"));
         $headers.insert(USER_AGENT, HeaderValue::from_static($ua));
@@ -50,7 +50,7 @@ macro_rules! header_chrome_edge_ua {
 }
 
 #[macro_export]
-macro_rules! header_chrome_edge_accpet {
+macro_rules! header_chrome_accpet {
     ($headers:expr) => {
         $headers.insert(ACCEPT, HeaderValue::from_static("text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.9"));
         $headers.insert(
@@ -59,18 +59,14 @@ macro_rules! header_chrome_edge_accpet {
         );
         $headers.insert(ACCEPT_LANGUAGE, HeaderValue::from_static("en-US,en;q=0.9"));
     };
-}
-
-#[macro_export]
-macro_rules! header_chrome_edge_accpet_with_zstd {
-    ($headers:expr) => {
+    (zstd, $headers:expr) => {
         $headers.insert(ACCEPT, HeaderValue::from_static("text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.9"));
         $headers.insert(
             ACCEPT_ENCODING,
             HeaderValue::from_static("gzip, deflate, br, zstd"),
         );
         $headers.insert(ACCEPT_LANGUAGE, HeaderValue::from_static("en-US,en;q=0.9"));
-    };
+    }
 }
 
 #[macro_export]
@@ -106,11 +102,7 @@ macro_rules! header_firefox_accept {
             HeaderValue::from_static("en-US,en;q=0.5"),
         );
     };
-}
-
-#[macro_export]
-macro_rules! header_firefox_accpet_with_zstd {
-    ($headers:expr) => {
+    (zstd, $headers:expr) => {
         $headers.insert(
             header::ACCEPT,
             HeaderValue::from_static(
@@ -125,19 +117,20 @@ macro_rules! header_firefox_accpet_with_zstd {
             header::ACCEPT_LANGUAGE,
             HeaderValue::from_static("en-US,en;q=0.5"),
         );
-    };
+    }
 }
 
 #[macro_export]
 macro_rules! header_firefox_ua {
     ($headers:expr, $ua:expr) => {
+        $headers.insert(http::HeaderName::from_static("TE"), HeaderValue::from_static("trailers"));
         $headers.insert(UPGRADE_INSECURE_REQUESTS, HeaderValue::from_static("1"));
         $headers.insert(USER_AGENT, HeaderValue::from_static($ua));
     };
 }
 
 #[macro_export]
-macro_rules! static_join {
+macro_rules! join {
     ($sep:expr, $first:expr $(, $rest:expr)*) => {
         concat!($first $(, $sep, $rest)*)
     };

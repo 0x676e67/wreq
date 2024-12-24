@@ -107,31 +107,31 @@ macro_rules! chrome_http2_template {
 #[inline]
 fn header_initializer(sec_ch_ua: &'static str, ua: &'static str) -> HeaderMap {
     let mut headers = HeaderMap::new();
-    header_chrome_edge_accpet!(headers);
-    header_chrome_edge_sec_ch_ua!(headers, sec_ch_ua);
-    header_chrome_edge_sec_fetch!(headers);
-    header_chrome_edge_ua!(headers, ua);
+    header_chrome_accpet!(headers);
+    header_chrome_sec_ch_ua!(headers, sec_ch_ua);
+    header_chrome_sec_fetch!(headers);
+    header_chrome_ua!(headers, ua);
     headers
 }
 
 #[inline]
 fn header_initializer_with_zstd(sec_ch_ua: &'static str, ua: &'static str) -> HeaderMap {
     let mut headers = HeaderMap::new();
-    header_chrome_edge_accpet_with_zstd!(headers);
-    header_chrome_edge_sec_ch_ua!(headers, sec_ch_ua);
-    header_chrome_edge_sec_fetch!(headers);
-    header_chrome_edge_ua!(headers, ua);
+    header_chrome_accpet!(zstd, headers);
+    header_chrome_sec_ch_ua!(headers, sec_ch_ua);
+    header_chrome_sec_fetch!(headers);
+    header_chrome_ua!(headers, ua);
     headers
 }
 
 #[inline]
 fn header_initializer_with_zstd_priority(sec_ch_ua: &'static str, ua: &'static str) -> HeaderMap {
     let mut headers = HeaderMap::new();
-    header_chrome_edge_accpet_with_zstd!(headers);
+    header_chrome_accpet!(zstd, headers);
     headers.insert("priority", HeaderValue::from_static("u=0, i"));
-    header_chrome_edge_sec_ch_ua!(headers, sec_ch_ua);
-    header_chrome_edge_sec_fetch!(headers);
-    header_chrome_edge_ua!(headers, ua);
+    header_chrome_sec_ch_ua!(headers, sec_ch_ua);
+    header_chrome_sec_fetch!(headers);
+    header_chrome_ua!(headers, ua);
     headers
 }
 
@@ -155,7 +155,7 @@ mod tls {
         SslCurve::SECP384R1,
     ];
 
-    pub const CIPHER_LIST: &str = static_join!(
+    pub const CIPHER_LIST: &str = join!(
         ":",
         "TLS_AES_128_GCM_SHA256",
         "TLS_AES_256_GCM_SHA384",
@@ -174,7 +174,7 @@ mod tls {
         "TLS_RSA_WITH_AES_256_CBC_SHA"
     );
 
-    pub const SIGALGS_LIST: &str = static_join!(
+    pub const SIGALGS_LIST: &str = join!(
         ":",
         "ecdsa_secp256r1_sha256",
         "rsa_pss_rsae_sha256",

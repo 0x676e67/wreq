@@ -160,7 +160,7 @@ mod tls {
         SslCurve::SECP521R1,
     ];
 
-    pub const CIPHER_LIST: &str = static_join!(
+    pub const CIPHER_LIST: &str = join!(
         ":",
         "TLS_AES_128_GCM_SHA256",
         "TLS_AES_256_GCM_SHA384",
@@ -190,7 +190,7 @@ mod tls {
         "TLS_RSA_WITH_3DES_EDE_CBC_SHA"
     );
 
-    pub const NEW_CIPHER_LIST: &str = static_join!(
+    pub const NEW_CIPHER_LIST: &str = join!(
         ":",
         "TLS_AES_128_GCM_SHA256",
         "TLS_AES_256_GCM_SHA384",
@@ -214,7 +214,7 @@ mod tls {
         "TLS_RSA_WITH_3DES_EDE_CBC_SHA"
     );
 
-    pub const SIGALGS_LIST: &str = static_join!(
+    pub const SIGALGS_LIST: &str = join!(
         ":",
         "ecdsa_secp256r1_sha256",
         "rsa_pss_rsae_sha256",
@@ -229,7 +229,7 @@ mod tls {
         "rsa_pkcs1_sha1"
     );
 
-    pub const NEW_SIGALGS_LIST: &str = static_join!(
+    pub const NEW_SIGALGS_LIST: &str = join!(
         ":",
         "ecdsa_secp256r1_sha256",
         "rsa_pss_rsae_sha256",

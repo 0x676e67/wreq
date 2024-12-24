@@ -74,7 +74,6 @@ fn header_initializer(ua: &'static str) -> HeaderMap {
     let mut headers = HeaderMap::new();
     header_firefox_accept!(headers);
     header_firefox_sec_fetch!(1, headers);
-    headers.insert("TE", HeaderValue::from_static("trailers"));
     header_firefox_ua!(headers, ua);
     headers
 }
@@ -82,10 +81,9 @@ fn header_initializer(ua: &'static str) -> HeaderMap {
 #[inline]
 fn header_initializer_with_zstd(ua: &'static str) -> HeaderMap {
     let mut headers = HeaderMap::new();
-    header_firefox_accpet_with_zstd!(headers);
+    header_firefox_accept!(zstd, headers);
     headers.insert("priority", HeaderValue::from_static("u=0, i"));
     header_firefox_sec_fetch!(2, headers);
-    headers.insert("TE", HeaderValue::from_static("trailers"));
     header_firefox_ua!(headers, ua);
     headers
 }
@@ -113,7 +111,7 @@ mod tls {
         SslCurve::FFDHE3072,
     ];
 
-    pub const CIPHER_LIST: &str = static_join!(
+    pub const CIPHER_LIST: &str = join!(
         ":",
         "TLS_AES_128_GCM_SHA256",
         "TLS_CHACHA20_POLY1305_SHA256",
@@ -134,7 +132,7 @@ mod tls {
         "TLS_RSA_WITH_AES_256_CBC_SHA"
     );
 
-    pub const SIGALGS_LIST: &str = static_join!(
+    pub const SIGALGS_LIST: &str = join!(
         ":",
         "ecdsa_secp256r1_sha256",
         "ecdsa_secp384r1_sha384",
@@ -155,7 +153,7 @@ mod tls {
         CertCompressionAlgorithm::Zstd,
     ];
 
-    pub const DELEGATED_CREDENTIALS: &str = static_join!(
+    pub const DELEGATED_CREDENTIALS: &str = join!(
         ":",
         "ecdsa_secp256r1_sha256",
         "ecdsa_secp384r1_sha384",
