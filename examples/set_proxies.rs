@@ -31,10 +31,7 @@ async fn main() -> Result<(), rquest::Error> {
             println!("{}", resp.text().await?);
         }
 
-        // option clear the proxies
-        client.unset_proxies();
-
-        // option 2: append the proxies
+        // option 2:  the proxies
         {
             let proxy = rquest::Proxy::all("socks5h://abc:123@127.0.0.1:6153")?;
             client.set_proxies(vec![proxy]);

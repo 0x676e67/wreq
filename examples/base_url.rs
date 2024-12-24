@@ -17,17 +17,10 @@ async fn main() -> Result<(), rquest::Error> {
     println!("{}", resp.text().await?);
 
     // Reset the base url
-    client.set_base_url("https://tls.peet.ws")?;
+    client.set_base_url("https://tls.peet.ws");
 
     // Send a request to tls.peet.ws /api/all
     let resp = client.get("/api/all").send().await?;
-    println!("{}", resp.text().await?);
-
-    // Unset the base url
-    client.unset_base_url();
-
-    // Send a request to httpbin.org /get
-    let resp = client.get("https://httpbin.org/get").send().await?;
     println!("{}", resp.text().await?);
 
     Ok(())

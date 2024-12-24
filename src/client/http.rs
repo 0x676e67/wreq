@@ -261,13 +261,13 @@ impl ClientBuilder {
                     .build(connector_builder.build(config.connector_layers)),
                 headers: config.headers,
                 headers_order: config.headers_order,
-                redirect: Arc::new(config.redirect_policy),
+                redirect: config.redirect_policy,
                 referer: config.referer,
                 request_timeout: config.timeout,
                 read_timeout: config.read_timeout,
                 https_only: config.https_only,
                 proxies_maybe_http_auth,
-                base_url: config.base_url.map(Arc::new),
+                base_url: config.base_url,
                 http2_max_retry_count: config.http2_max_retry_count,
 
                 proxies,
@@ -1448,25 +1448,19 @@ impl Client {
     ///
     /// Returns the old proxies.
     #[inline]
-    pub fn set_proxies(&mut self, proxies: impl Into<Cow<'static, [Proxy]>>) {
-        self.apply_proxies(proxies, true);
-    }
-
-    /// Unset the proxies for this client.
-    #[inline]
-    pub fn unset_proxies(&mut self) {
-        self.inner_mut().proxies.clear();
-    }
-
-    /// Private helper to handle setting or appending proxies.
-    fn apply_proxies(&mut self, proxies: impl Into<Cow<'static, [Proxy]>>, r#override: bool) {
+    pub fn set_proxies(&mut self, proxies: impl Into<Option<Vec<Proxy>>>) {
         let inner = self.inner_mut();
-        let proxies = proxies.into();
-        inner.proxies_maybe_http_auth = proxies.iter().any(|p| p.maybe_has_http_auth());
-        if r#override {
-            inner.proxies.clear();
+        match proxies.into() {
+            Some(mut proxies) => {
+                inner.proxies_maybe_http_auth = proxies.iter().any(|p| p.maybe_has_http_auth());
+                inner.proxies.clear();
+                std::mem::swap(&mut inner.proxies, &mut proxies);
+            }
+            None => {
+                inner.proxies_maybe_http_auth = false;
+                inner.proxies.clear();
+            }
         }
-        inner.proxies.extend(proxies.into_owned());
     }
 
     /// Set that all sockets are bound to the configured address before connection.
@@ -1509,26 +1503,22 @@ impl Client {
     }
 
     /// Set the redirect policy for this client.
-    pub fn set_redirect(&mut self, policy: impl Into<Arc<redirect::Policy>>) {
+    pub fn set_redirect(&mut self, policy: impl Into<redirect::Policy>) {
         self.inner_mut().redirect = policy.into();
     }
 
     /// Set the bash url for this client.
-    pub fn set_base_url<U: IntoUrl>(&mut self, url: U) -> crate::Result<()> {
-        self.inner_mut().base_url = Some(Arc::new(url.into_url()?));
-        Ok(())
-    }
-
-    /// Unset the base url for this client.
-    pub fn unset_base_url(&mut self) {
-        self.inner_mut().base_url = None;
+    pub fn set_base_url<U: IntoUrl>(&mut self, url: U) {
+        if let Ok(url) = url.into_url() {
+            self.inner_mut().base_url = Some(url);
+        }
     }
 
     /// Set the impersonate for this client.
     #[inline]
     pub fn set_impersonate(&mut self, var: Impersonate) -> crate::Result<()> {
         let settings = tls::tls_settings(var, true);
-        self.set_impersonate_settings(settings)
+        self.impersonate_settings(settings)
     }
 
     /// Set the impersonate for this client without setting the headers.
@@ -1702,13 +1692,13 @@ struct ClientRef {
     headers: Cow<'static, HeaderMap>,
     headers_order: Option<Cow<'static, [HeaderName]>>,
     hyper: HyperClient,
-    redirect: Arc<redirect::Policy>,
+    redirect: redirect::Policy,
     referer: bool,
     request_timeout: Option<Duration>,
     read_timeout: Option<Duration>,
     https_only: bool,
     proxies_maybe_http_auth: bool,
-    base_url: Option<Arc<Url>>,
+    base_url: Option<Url>,
     http2_max_retry_count: usize,
 
     proxies: Vec<Proxy>,
