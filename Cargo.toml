@@ -74,6 +74,7 @@ url = "2.5"
 bytes = "1.0"
 serde = "1.0"
 serde_urlencoded = "0.7.1"
+tower = { version = "0.5.0", default-features = false, features = ["timeout", "util"] }
 tower-service = "0.3"
 futures-core = { version = "0.3.0", default-features = false }
 futures-util = { version = "0.3.0", default-features = false }
@@ -162,7 +163,9 @@ tokio = { version = "1.0", default-features = false, features = [
     "rt-multi-thread",
 ] }
 futures = { version = "0.3.0", default-features = false, features = ["std"] }
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "charset", "http2", "macos-system-configuration"]}
+tower = { version = "0.5.2", default-features = false, features = ["limit"] }
+num_cpus = "1.0"
+libc = "0"
 
 [[example]]
 name = "json_dynamic"

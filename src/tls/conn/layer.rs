@@ -101,8 +101,8 @@ impl HttpsConnectorBuilder {
     }
 
     #[inline]
-    pub(crate) fn build(self, tls: &BoringTlsConnector) -> HttpsConnector<HttpConnector> {
-        let mut connector = HttpsConnector::with_connector_layer(self.http, tls.0.clone());
+    pub(crate) fn build(self, tls: BoringTlsConnector) -> HttpsConnector<HttpConnector> {
+        let mut connector = HttpsConnector::with_connector_layer(self.http, tls.0);
         connector.set_ssl_callback(move |ssl, _| ssl.configure_alpn_protos(self.version));
         connector
     }

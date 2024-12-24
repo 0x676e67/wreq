@@ -4,50 +4,120 @@ use crate::util::client::connect::{Connected, Connection};
 use crate::util::client::Dst;
 use crate::util::rt::TokioIo;
 use crate::util::{self, into_uri};
+use antidote::RwLock;
 use http::uri::Scheme;
 use hyper2::rt::{Read, ReadBufCursor, Write};
+use pin_project_lite::pin_project;
+use sealed::{Conn, Unnameable};
 use tokio_boring::SslStream;
+use tower::util::{BoxCloneSyncServiceLayer, MapRequestLayer};
+use tower::{timeout::TimeoutLayer, util::BoxCloneSyncService, ServiceBuilder};
 use tower_service::Service;
 
-use pin_project_lite::pin_project;
 use std::future::Future;
 use std::io::{self, IoSlice};
 use std::pin::Pin;
+use std::sync::Arc;
 use std::task::{Context, Poll};
 use std::time::Duration;
 
 use crate::dns::DynResolver;
-use crate::error::BoxError;
+use crate::error::{cast_to_internal_error, BoxError};
 use crate::proxy::ProxyScheme;
 
 pub(crate) type HttpConnector = util::client::connect::HttpConnector<DynResolver>;
 
-#[derive(Clone)]
-pub(crate) struct Connector {
-    inner: Inner,
+pub(crate) type BoxedConnectorService = BoxCloneSyncService<Unnameable, Conn, BoxError>;
+
+pub(crate) type BoxedConnectorLayer =
+    BoxCloneSyncServiceLayer<BoxedConnectorService, Unnameable, Conn, BoxError>;
+
+pub(crate) struct ConnectorBuilder {
+    http: HttpConnector,
+    tls: BoringTlsConnector,
     verbose: verbose::Wrapper,
     timeout: Option<Duration>,
     nodelay: bool,
     tls_info: bool,
 }
 
-#[derive(Clone)]
-struct Inner {
-    http: HttpConnector,
-    tls: BoringTlsConnector,
-}
+impl ConnectorBuilder {
+    pub(crate) fn build(self, layers: Vec<BoxedConnectorLayer>) -> Connector {
+        if layers.is_empty() {
+            // we have no user-provided layers, only use concrete types
+            let base_service = ConnectorService {
+                http: self.http,
+                tls: InnerTLS::Simple(self.tls),
+                verbose: self.verbose,
+                nodelay: self.nodelay,
+                tls_info: self.tls_info,
+                timeout: self.timeout,
+            };
+            return Connector::Simple(base_service);
+        }
 
-impl Connector {
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) fn new_boring_tls(
+        let inner_tls = InnerTLS::WithSharedState(Arc::new(RwLock::new(self.tls)));
+        let mut base_service = ConnectorService {
+            http: self.http,
+            tls: inner_tls.clone(),
+            verbose: self.verbose,
+            nodelay: self.nodelay,
+            tls_info: self.tls_info,
+            timeout: self.timeout,
+        };
+
+        // If layers is empty, we have no timeout
+        let timeout = base_service.timeout.take();
+
+        // otherwise we have user provided layers
+        // so we need type erasure all the way through
+        // as well as mapping the unnameable type of the layers back to Dst for the inner service
+        let unnameable_service = ServiceBuilder::new()
+            .layer(MapRequestLayer::new(|request: Unnameable| request.0))
+            .service(base_service);
+        let mut service = BoxCloneSyncService::new(unnameable_service);
+        for layer in layers {
+            service = ServiceBuilder::new().layer(layer).service(service);
+        }
+
+        // now we handle the concrete stuff - any `connect_timeout`,
+        // plus a final map_err layer we can use to cast default tower layer
+        // errors to internal errors
+        match timeout {
+            Some(timeout) => {
+                let service = ServiceBuilder::new()
+                    .layer(TimeoutLayer::new(timeout))
+                    .service(service);
+                let service = ServiceBuilder::new()
+                    .map_err(cast_to_internal_error)
+                    .service(service);
+                let service = BoxCloneSyncService::new(service);
+                Connector::WithLayers { inner_tls, service }
+            }
+            None => {
+                // no timeout, but still map err
+                // no named timeout layer but we still map errors since
+                // we might have user-provided timeout layer
+                let service = ServiceBuilder::new().service(service);
+                let service = ServiceBuilder::new()
+                    .map_err(cast_to_internal_error)
+                    .service(service);
+                let service = BoxCloneSyncService::new(service);
+                Connector::WithLayers { inner_tls, service }
+            }
+        }
+    }
+
+    pub(crate) fn new(
         mut http: HttpConnector,
         tls: BoringTlsConnector,
         nodelay: bool,
         tls_info: bool,
-    ) -> Connector {
+    ) -> ConnectorBuilder {
         http.enforce_http(false);
-        Connector {
-            inner: Inner { http, tls },
+        ConnectorBuilder {
+            http,
+            tls,
             verbose: verbose::OFF,
             timeout: None,
             nodelay,
@@ -57,7 +127,7 @@ impl Connector {
 
     #[inline]
     pub(crate) fn set_keepalive(&mut self, dur: Option<Duration>) {
-        self.inner.http.set_keepalive(dur);
+        self.http.set_keepalive(dur);
     }
 
     #[inline]
@@ -69,12 +139,86 @@ impl Connector {
     pub(crate) fn set_verbose(&mut self, enabled: bool) {
         self.verbose.0 = enabled;
     }
+}
 
+#[derive(Clone)]
+pub(crate) enum Connector {
+    // base service, with or without an embedded timeout
+    Simple(ConnectorService),
+    // at least one custom layer along with maybe an outer timeout layer
+    // from `builder.connect_timeout()`
+    WithLayers {
+        inner_tls: InnerTLS,
+        service: BoxedConnectorService,
+    },
+}
+
+impl Connector {
     #[inline]
     pub(crate) fn set_connector(&mut self, connector: BoringTlsConnector) {
-        self.inner.tls = connector;
+        match self {
+            Connector::Simple(service) => {
+                service.tls = InnerTLS::Simple(connector);
+            }
+            Connector::WithLayers { inner_tls, .. } => {
+                if let InnerTLS::WithSharedState(tls) = inner_tls {
+                    *tls.write() = connector;
+                }
+            }
+        }
+    }
+}
+
+impl Service<Dst> for Connector {
+    type Response = Conn;
+    type Error = BoxError;
+    type Future = Connecting;
+
+    fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        match self {
+            Connector::Simple(service) => service.poll_ready(cx),
+            Connector::WithLayers { service, .. } => service.poll_ready(cx),
+        }
     }
 
+    fn call(&mut self, dst: Dst) -> Self::Future {
+        match self {
+            Connector::Simple(service) => service.call(dst),
+            Connector::WithLayers { service, .. } => service.call(Unnameable(dst)),
+        }
+    }
+}
+
+#[derive(Clone)]
+pub(crate) enum InnerTLS {
+    Simple(BoringTlsConnector),
+    WithSharedState(Arc<RwLock<BoringTlsConnector>>),
+}
+
+impl InnerTLS {
+    fn get_tls(&self) -> BoringTlsConnector {
+        match self {
+            InnerTLS::Simple(tls) => tls.clone(),
+            InnerTLS::WithSharedState(tls) => tls.read().clone(),
+        }
+    }
+}
+
+#[derive(Clone)]
+pub(crate) struct ConnectorService {
+    http: HttpConnector,
+    tls: InnerTLS,
+    verbose: verbose::Wrapper,
+    /// When there is a single timeout layer and no other layers,
+    /// we embed it directly inside our base Service::call().
+    /// This lets us avoid an extra `Box::pin` indirection layer
+    /// since `tokio::time::Timeout` is `Unpin`
+    timeout: Option<Duration>,
+    nodelay: bool,
+    tls_info: bool,
+}
+
+impl ConnectorService {
     #[cfg(feature = "socks")]
     async fn connect_socks(&self, mut dst: Dst, proxy: ProxyScheme) -> Result<Conn, BoxError> {
         let dns = match proxy {
@@ -90,12 +234,11 @@ impl Connector {
             }
         };
 
-        let Inner { http, tls } = &self.inner;
         if dst.scheme() == Some(&Scheme::HTTPS) {
-            let http = HttpsConnector::builder(http.clone())
+            let http = HttpsConnector::builder(self.http.clone())
                 .with_version_pref(dst.version_pref())
                 .with_iface(dst.take_iface())
-                .build(tls);
+                .build(self.tls.get_tls());
 
             log::trace!("socks HTTPS over proxy");
             let host = dst.host().ok_or(crate::error::uri_bad_host())?;
@@ -124,8 +267,7 @@ impl Connector {
         mut dst: Dst,
         is_proxy: bool,
     ) -> Result<Conn, BoxError> {
-        let Inner { http, tls } = &self.inner;
-        let mut http = http.clone();
+        let mut http = self.http.clone();
 
         // Disable Nagle's algorithm for TLS handshake
         //
@@ -138,7 +280,7 @@ impl Connector {
         let mut http = HttpsConnector::builder(http)
             .with_version_pref(dst.version_pref())
             .with_iface(dst.take_iface())
-            .build(tls);
+            .build(self.tls.get_tls());
         let io = http.call(dst.into()).await?;
 
         if let MaybeHttpsStream::Https(stream) = io {
@@ -180,12 +322,11 @@ impl Connector {
             }
         };
 
-        let Inner { http, tls } = &self.inner;
         if dst.scheme() == Some(&Scheme::HTTPS) {
-            let mut http = HttpsConnector::builder(http.clone())
+            let mut http = HttpsConnector::builder(self.http.clone())
                 .with_version_pref(dst.version_pref())
                 .with_iface(dst.take_iface())
-                .build(tls);
+                .build(self.tls.get_tls());
 
             let host = dst.host().ok_or(crate::error::uri_bad_host())?;
             let port = dst.port_u16().unwrap_or(443);
@@ -226,7 +367,7 @@ where
     }
 }
 
-impl Service<Dst> for Connector {
+impl Service<Dst> for ConnectorService {
     type Response = Conn;
     type Error = BoxError;
     type Future = Connecting;
@@ -237,18 +378,17 @@ impl Service<Dst> for Connector {
 
     fn call(&mut self, mut dst: Dst) -> Self::Future {
         log::debug!("starting new connection: {:?}", dst);
-        let timeout = self.timeout;
 
         if let Some(proxy_scheme) = dst.take_proxy() {
             return Box::pin(with_timeout(
                 self.clone().connect_via_proxy(dst, proxy_scheme),
-                timeout,
+                self.timeout,
             ));
         }
 
         Box::pin(with_timeout(
             self.clone().connect_with_maybe_proxy(dst, false),
-            timeout,
+            self.timeout,
         ))
     }
 }
@@ -320,78 +460,86 @@ impl<T: AsyncConn + TlsInfoFactory> AsyncConnWithInfo for T {}
 
 type BoxConn = Box<dyn AsyncConnWithInfo>;
 
-pin_project! {
-    /// Note: the `is_proxy` member means *is plain text HTTP proxy*.
-    /// This tells hyper whether the URI should be written in
-    /// * origin-form (`GET /just/a/path HTTP/1.1`), when `is_proxy == false`, or
-    /// * absolute-form (`GET http://foo.bar/and/a/path HTTP/1.1`), otherwise.
-    pub(crate) struct Conn {
-        #[pin]
-        inner: BoxConn,
-        is_proxy: bool,
-        // Only needed for __boring, but #[cfg()] on fields breaks pin_project!
-        tls_info: bool,
+pub(crate) mod sealed {
+    use super::*;
+
+    #[derive(Debug)]
+    pub struct Unnameable(pub(super) Dst);
+
+    pin_project! {
+        /// Note: the `is_proxy` member means *is plain text HTTP proxy*.
+        /// This tells hyper whether the URI should be written in
+        /// * origin-form (`GET /just/a/path HTTP/1.1`), when `is_proxy == false`, or
+        /// * absolute-form (`GET http://foo.bar/and/a/path HTTP/1.1`), otherwise.
+        #[allow(missing_debug_implementations)]
+        pub struct Conn {
+            #[pin]
+            pub(super)inner: BoxConn,
+            pub(super) is_proxy: bool,
+            // Only needed for __tls, but #[cfg()] on fields breaks pin_project!
+            pub(super) tls_info: bool,
+        }
     }
-}
 
-impl Connection for Conn {
-    fn connected(&self) -> Connected {
-        let connected = self.inner.connected().proxy(self.is_proxy);
+    impl Connection for Conn {
+        fn connected(&self) -> Connected {
+            let connected = self.inner.connected().proxy(self.is_proxy);
 
-        if self.tls_info {
-            if let Some(tls_info) = self.inner.tls_info() {
-                connected.extra(tls_info)
+            if self.tls_info {
+                if let Some(tls_info) = self.inner.tls_info() {
+                    connected.extra(tls_info)
+                } else {
+                    connected
+                }
             } else {
                 connected
             }
-        } else {
-            connected
         }
     }
-}
 
-impl Read for Conn {
-    fn poll_read(
-        self: Pin<&mut Self>,
-        cx: &mut Context,
-        buf: ReadBufCursor<'_>,
-    ) -> Poll<io::Result<()>> {
-        let this = self.project();
-        Read::poll_read(this.inner, cx, buf)
-    }
-}
-
-impl Write for Conn {
-    fn poll_write(
-        self: Pin<&mut Self>,
-        cx: &mut Context,
-        buf: &[u8],
-    ) -> Poll<Result<usize, io::Error>> {
-        let this = self.project();
-        Write::poll_write(this.inner, cx, buf)
+    impl Read for Conn {
+        fn poll_read(
+            self: Pin<&mut Self>,
+            cx: &mut Context,
+            buf: ReadBufCursor<'_>,
+        ) -> Poll<io::Result<()>> {
+            let this = self.project();
+            Read::poll_read(this.inner, cx, buf)
+        }
     }
 
-    fn poll_write_vectored(
-        self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        bufs: &[IoSlice<'_>],
-    ) -> Poll<Result<usize, io::Error>> {
-        let this = self.project();
-        Write::poll_write_vectored(this.inner, cx, bufs)
-    }
+    impl Write for Conn {
+        fn poll_write(
+            self: Pin<&mut Self>,
+            cx: &mut Context,
+            buf: &[u8],
+        ) -> Poll<Result<usize, io::Error>> {
+            let this = self.project();
+            Write::poll_write(this.inner, cx, buf)
+        }
 
-    fn is_write_vectored(&self) -> bool {
-        self.inner.is_write_vectored()
-    }
+        fn poll_write_vectored(
+            self: Pin<&mut Self>,
+            cx: &mut Context<'_>,
+            bufs: &[IoSlice<'_>],
+        ) -> Poll<Result<usize, io::Error>> {
+            let this = self.project();
+            Write::poll_write_vectored(this.inner, cx, bufs)
+        }
 
-    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), io::Error>> {
-        let this = self.project();
-        Write::poll_flush(this.inner, cx)
-    }
+        fn is_write_vectored(&self) -> bool {
+            self.inner.is_write_vectored()
+        }
 
-    fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), io::Error>> {
-        let this = self.project();
-        Write::poll_shutdown(this.inner, cx)
+        fn poll_flush(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), io::Error>> {
+            let this = self.project();
+            Write::poll_flush(this.inner, cx)
+        }
+
+        fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), io::Error>> {
+            let this = self.project();
+            Write::poll_shutdown(this.inner, cx)
+        }
     }
 }
 

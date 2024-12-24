@@ -761,7 +761,6 @@ impl<C: Clone, B> Clone for Client<C, B> {
             exec: self.exec.clone(),
 
             h1_builder: self.h1_builder.clone(),
-
             h2_builder: self.h2_builder.clone(),
             connector: self.connector.clone(),
             pool: self.pool.clone(),

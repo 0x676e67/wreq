@@ -6,6 +6,8 @@ use std::time::Duration;
 use std::{collections::HashMap, convert::TryInto, net::SocketAddr};
 use std::{fmt, str};
 
+use crate::connect::sealed::{Conn, Unnameable};
+use crate::error::BoxError;
 use crate::util::client::{InnerRequest, NetworkScheme};
 use crate::util::{
     self, client::connect::HttpConnector, client::Builder, common::Exec, rt::TokioExecutor,
@@ -23,12 +25,14 @@ use std::future::Future;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 use tokio::time::Sleep;
+use tower::util::BoxCloneSyncServiceLayer;
+use tower::{Layer, Service};
 
 use super::decoder::Accepts;
 use super::request::{Request, RequestBuilder};
 use super::response::Response;
 use super::Body;
-use crate::connect::Connector;
+use crate::connect::{BoxedConnectorLayer, BoxedConnectorService, Connector, ConnectorBuilder};
 #[cfg(feature = "cookies")]
 use crate::cookie;
 #[cfg(feature = "hickory-dns")]
@@ -122,6 +126,7 @@ struct Config {
     https_only: bool,
     http2_max_retry_count: usize,
     tls_info: bool,
+    connector_layers: Vec<BoxedConnectorLayer>,
 
     tls: TlsSettings,
 }
@@ -182,6 +187,7 @@ impl ClientBuilder {
                 https_only: false,
                 http2_max_retry_count: 2,
                 tls_info: false,
+                connector_layers: Vec::new(),
 
                 tls: Default::default(),
             },
@@ -207,7 +213,7 @@ impl ClientBuilder {
         }
         let proxies_maybe_http_auth = proxies.iter().any(|p| p.maybe_has_http_auth());
 
-        let mut connector = {
+        let mut connector_builder = {
             let mut resolver: Arc<dyn Resolve> = if let Some(dns_resolver) = config.dns_resolver {
                 dns_resolver
             } else if config.hickory_dns {
@@ -232,12 +238,12 @@ impl ClientBuilder {
             http.set_connect_timeout(config.connect_timeout);
 
             let tls = BoringTlsConnector::new(config.tls)?;
-            Connector::new_boring_tls(http, tls, config.nodelay, config.tls_info)
+            ConnectorBuilder::new(http, tls, config.nodelay, config.tls_info)
         };
 
-        connector.set_timeout(config.connect_timeout);
-        connector.set_verbose(config.connection_verbose);
-        connector.set_keepalive(config.tcp_keepalive);
+        connector_builder.set_timeout(config.connect_timeout);
+        connector_builder.set_verbose(config.connection_verbose);
+        connector_builder.set_keepalive(config.tcp_keepalive);
 
         config
             .builder
@@ -250,7 +256,9 @@ impl ClientBuilder {
                 accepts: config.accepts,
                 #[cfg(feature = "cookies")]
                 cookie_store: config.cookie_store,
-                hyper: config.builder.build(connector),
+                hyper: config
+                    .builder
+                    .build(connector_builder.build(config.connector_layers)),
                 headers: config.headers,
                 headers_order: config.headers_order,
                 redirect: Arc::new(config.redirect_policy),
@@ -1109,6 +1117,40 @@ impl ClientBuilder {
         }
         self
     }
+
+    /// Adds a new Tower [`Layer`](https://docs.rs/tower/latest/tower/trait.Layer.html) to the
+    /// base connector [`Service`](https://docs.rs/tower/latest/tower/trait.Service.html) which
+    /// is responsible for connection establishment.a
+    ///
+    /// Each subsequent invocation of this function will wrap previous layers.
+    ///
+    /// If configured, the `connect_timeout` will be the outermost layer.
+    ///
+    /// Example usage:
+    /// ```
+    /// use std::time::Duration;
+    ///
+    /// let client = rquest::Client::builder()
+    ///                      // resolved to outermost layer, meaning while we are waiting on concurrency limit
+    ///                      .connect_timeout(Duration::from_millis(200))
+    ///                      // underneath the concurrency check, so only after concurrency limit lets us through
+    ///                      .connector_layer(tower::timeout::TimeoutLayer::new(Duration::from_millis(50)))
+    ///                      .connector_layer(tower::limit::concurrency::ConcurrencyLimitLayer::new(2))
+    ///                      .build()
+    ///                      .unwrap();
+    /// ```
+    ///
+    pub fn connector_layer<L>(mut self, layer: L) -> ClientBuilder
+    where
+        L: Layer<BoxedConnectorService> + Clone + Send + Sync + 'static,
+        L::Service:
+            Service<Unnameable, Response = Conn, Error = BoxError> + Clone + Send + Sync + 'static,
+        <L::Service as Service<Unnameable>>::Future: Send + 'static,
+    {
+        let layer = BoxCloneSyncServiceLayer::new(layer);
+        self.config.connector_layers.push(layer);
+        self
+    }
 }
 
 type HyperClient = util::client::Client<Connector, super::Body>;
@@ -1408,12 +1450,6 @@ impl Client {
     #[inline]
     pub fn set_proxies(&mut self, proxies: impl Into<Cow<'static, [Proxy]>>) {
         self.apply_proxies(proxies, true);
-    }
-
-    /// Append the proxies to the client.
-    #[inline]
-    pub fn append_proxies(&mut self, proxies: impl Into<Cow<'static, [Proxy]>>) {
-        self.apply_proxies(proxies, false);
     }
 
     /// Unset the proxies for this client.
