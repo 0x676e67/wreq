@@ -64,6 +64,9 @@ internal_proxy_sys_no_cache = []
 # Optional enable impersonate from str
 impersonate_str = []
 
+# Optional enable impersonate from settings
+impersonate_settings = []
+
 # Internal (PRIVATE!) features used to aid testing.
 # Don't rely on these whatsoever. They may disappear at anytime.
 

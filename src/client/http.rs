@@ -282,26 +282,22 @@ impl ClientBuilder {
     /// Sets the necessary values to mimic the specified impersonate version, including headers and TLS settings.
     #[inline]
     pub fn impersonate(self, impersonate: Impersonate) -> ClientBuilder {
-        self.apply_impersonate(impersonate, true)
+        let settings = tls::tls_settings(impersonate, true);
+        self.apply_impersonate_settings(settings)
     }
 
     /// Sets the necessary values to mimic the specified impersonate version, skipping header configuration.
     /// This will only apply the required TLS settings.
     #[inline]
     pub fn impersonate_skip_headers(self, impersonate: Impersonate) -> ClientBuilder {
-        self.apply_impersonate(impersonate, false)
-    }
-
-    /// Apply the given impersonate settings directly.
-    #[inline]
-    pub fn impersonate_settings(self, settings: ImpersonateSettings) -> ClientBuilder {
+        let settings = tls::tls_settings(impersonate, false);
         self.apply_impersonate_settings(settings)
     }
 
-    /// Private helper to configure impersonation with optional header settings.
+    /// Apply the given impersonate settings directly.
+    #[cfg(feature = "impersonate_settings")]
     #[inline]
-    fn apply_impersonate(self, impersonate: Impersonate, with_headers: bool) -> ClientBuilder {
-        let settings = tls::tls_settings(impersonate, with_headers);
+    pub fn impersonate_settings(self, settings: ImpersonateSettings) -> ClientBuilder {
         self.apply_impersonate_settings(settings)
     }
 
@@ -1529,6 +1525,7 @@ impl Client {
     }
 
     /// Set the impersonate for this client with the given settings.
+    #[cfg(feature = "impersonate_settings")]
     #[inline]
     pub fn set_impersonate_settings(&mut self, settings: ImpersonateSettings) -> crate::Result<()> {
         self.impersonate_settings(settings)

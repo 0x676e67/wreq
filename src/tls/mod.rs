@@ -20,7 +20,11 @@ pub use conn::{HttpsConnector, MaybeHttpsStream};
 use conn::{HttpsLayer, HttpsLayerSettings};
 pub use ext::{cert_compression, TlsBuilderExtension, TlsConnectExtension};
 pub use mimic::{chrome, firefox, okhttp, safari, tls_settings, Impersonate};
-pub use settings::{Http2Settings, ImpersonateSettings, RootCertsStore, TlsSettings};
+pub use settings::RootCertsStore;
+#[cfg(feature = "impersonate_settings")]
+pub use settings::{Http2Settings, ImpersonateSettings, TlsSettings};
+#[cfg(not(feature = "impersonate_settings"))]
+pub(crate) use settings::{Http2Settings, ImpersonateSettings, TlsSettings};
 
 type TlsResult<T> = Result<T, ErrorStack>;
 

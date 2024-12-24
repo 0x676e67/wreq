@@ -14,7 +14,7 @@ use std::fmt::Debug;
 use Impersonate::*;
 
 mod impersonate_imports {
-    pub use crate::tls::{Http2Settings, ImpersonateSettings};
+    pub(crate) use crate::tls::{Http2Settings, ImpersonateSettings};
     pub use crate::*;
     pub use http::{
         header::{ACCEPT, ACCEPT_ENCODING, ACCEPT_LANGUAGE, UPGRADE_INSECURE_REQUESTS, USER_AGENT},
@@ -23,7 +23,7 @@ mod impersonate_imports {
 }
 
 mod tls_imports {
-    pub use crate::tls::{cert_compression::CertCompressionAlgorithm, TlsSettings, TlsVersion};
+    pub(crate) use crate::tls::{cert_compression::CertCompressionAlgorithm, TlsSettings, TlsVersion};
     pub use crate::*;
     pub use boring::ssl::{ExtensionType, SslCurve};
     pub use std::borrow::Cow;
