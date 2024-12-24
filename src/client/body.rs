@@ -147,10 +147,7 @@ impl Body {
     {
         use http_body_util::BodyExt;
 
-        let boxed = inner
-            .map_frame(|f| f.map_data(Into::into))
-            .map_err(Into::into)
-            .boxed();
+        let boxed = IntoBytesBody { inner }.map_err(Into::into).boxed();
 
         Body {
             inner: Inner::Streaming(boxed),
@@ -456,6 +453,42 @@ where
     }
 }
 
+// ===== impl IntoBytesBody =====
+pin_project! {
+    struct IntoBytesBody<B> {
+        #[pin]
+        inner: B,
+    }
+}
+// We can't use `map_frame()` because that loses the hint data (for good reason).
+// But we aren't transforming the data.
+impl<B> hyper2::body::Body for IntoBytesBody<B>
+where
+    B: hyper2::body::Body,
+    B::Data: Into<Bytes>,
+{
+    type Data = Bytes;
+    type Error = B::Error;
+    fn poll_frame(
+        self: Pin<&mut Self>,
+        cx: &mut Context,
+    ) -> Poll<Option<Result<hyper2::body::Frame<Self::Data>, Self::Error>>> {
+        match futures_core::ready!(self.project().inner.poll_frame(cx)) {
+            Some(Ok(f)) => Poll::Ready(Some(Ok(f.map_data(Into::into)))),
+            Some(Err(e)) => Poll::Ready(Some(Err(e))),
+            None => Poll::Ready(None),
+        }
+    }
+    #[inline]
+    fn size_hint(&self) -> http_body::SizeHint {
+        self.inner.size_hint()
+    }
+    #[inline]
+    fn is_end_stream(&self) -> bool {
+        self.inner.is_end_stream()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use http_body::Body as _;
@@ -482,5 +515,10 @@ mod tests {
         let stream_body = Body::wrap(bytes_body);
         assert!(!stream_body.is_end_stream());
         assert_eq!(stream_body.size_hint().exact(), None);
+
+        // can delegate even when wrapped
+        let stream_body = Body::wrap(empty_body);
+        assert!(stream_body.is_end_stream());
+        assert_eq!(stream_body.size_hint().exact(), Some(0));
     }
 }
