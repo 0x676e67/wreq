@@ -24,7 +24,7 @@ where
     B::Error: Into<Box<dyn StdError + Send + Sync>>,
 {
     pub fn builder<'a>() -> InnerRequestBuilder<'a> {
-        InnerRequestBuilder::new()
+        InnerRequestBuilder::default()
     }
 
     pub fn split(
@@ -48,14 +48,6 @@ pub struct InnerRequestBuilder<'a> {
 
 impl Default for InnerRequestBuilder<'_> {
     fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl<'a> InnerRequestBuilder<'a> {
-    /// Create a new `RequestBuilder` with required fields.
-    #[inline]
-    pub fn new() -> Self {
         Self {
             builder: hyper2::Request::builder(),
             http_version_pref: None,
@@ -63,7 +55,9 @@ impl<'a> InnerRequestBuilder<'a> {
             headers_order: None,
         }
     }
+}
 
+impl<'a> InnerRequestBuilder<'a> {
     /// Set the method for the request.
     #[inline]
     pub fn method(mut self, method: Method) -> Self {
