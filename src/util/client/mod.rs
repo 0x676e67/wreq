@@ -133,7 +133,7 @@ impl Dst {
     pub fn new<B>(
         req: &mut Request<B>,
         is_http_connect: bool,
-        network_scheme: NetworkScheme,
+        network_scheme: Option<NetworkScheme>,
         http_version_pref: Option<HttpVersionPref>,
     ) -> Result<Dst, Error> {
         let uri = req.uri_mut();
@@ -162,7 +162,7 @@ impl Dst {
         into_uri(scheme, auth)
             .map(|uri| Dst {
                 dst: uri.clone(),
-                pool_key: (network_scheme, uri),
+                pool_key: (network_scheme.unwrap_or_default(), uri),
                 http_version_pref,
             })
             .map_err(|_| e!(UserAbsoluteUriRequired))

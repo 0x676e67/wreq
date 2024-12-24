@@ -14,7 +14,7 @@ where
 {
     request: http::Request<B>,
     http_version_pref: Option<HttpVersionPref>,
-    network_scheme: NetworkScheme,
+    network_scheme: Option<NetworkScheme>,
 }
 
 impl<B> InnerRequest<B>
@@ -27,7 +27,7 @@ where
         InnerRequestBuilder::new()
     }
 
-    pub fn split(self) -> (http::Request<B>, NetworkScheme, Option<HttpVersionPref>) {
+    pub fn split(self) -> (http::Request<B>, Option<NetworkScheme>, Option<HttpVersionPref>) {
         (self.request, self.network_scheme, self.http_version_pref)
     }
 }
@@ -35,7 +35,7 @@ where
 /// A builder for constructing HTTP requests.
 pub struct InnerRequestBuilder<'a> {
     builder: http::request::Builder,
-    http_version: Option<HttpVersionPref>,
+    http_version_pref: Option<HttpVersionPref>,
     network_scheme: Option<NetworkScheme>,
     headers_order: Option<&'a [HeaderName]>,
 }
@@ -46,7 +46,7 @@ impl<'a> InnerRequestBuilder<'a> {
     pub fn new() -> Self {
         Self {
             builder: hyper2::Request::builder(),
-            http_version: None,
+            http_version_pref: None,
             network_scheme: None,
             headers_order: None,
         }
@@ -75,7 +75,8 @@ impl<'a> InnerRequestBuilder<'a> {
                 Version::HTTP_2 => HttpVersionPref::Http2,
                 _ => HttpVersionPref::default(),
             };
-            self.http_version = Some(pref);
+            self.builder = self.builder.version(version);
+            self.http_version_pref = Some(pref);
         }
         self
     }
@@ -98,8 +99,8 @@ impl<'a> InnerRequestBuilder<'a> {
 
     /// Set an pool key extension for the request.
     #[inline]
-    pub fn network_scheme(mut self, network_scheme: impl Into<NetworkScheme>) -> Self {
-        self.network_scheme = Some(network_scheme.into());
+    pub fn network_scheme(mut self, network_scheme: impl Into<Option<NetworkScheme>>) -> Self {
+        self.network_scheme = network_scheme.into();
         self
     }
 
@@ -139,8 +140,8 @@ impl<'a> InnerRequestBuilder<'a> {
 
         InnerRequest {
             request: self.builder.body(body).expect("failed to build request"),
-            http_version_pref: self.http_version,
-            network_scheme: self.network_scheme.unwrap_or_default(),
+            http_version_pref: self.http_version_pref,
+            network_scheme: self.network_scheme,
         }
     }
 }
