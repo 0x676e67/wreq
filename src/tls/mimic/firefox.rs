@@ -82,7 +82,10 @@ fn header_initializer(ua: &'static str) -> HeaderMap {
 fn header_initializer_with_zstd(ua: &'static str) -> HeaderMap {
     let mut headers = HeaderMap::new();
     header_firefox_accept!(zstd, headers);
-    headers.insert("priority", HeaderValue::from_static("u=0, i"));
+    headers.insert(
+        HeaderName::from_static("priority"),
+        HeaderValue::from_static("u=0, i"),
+    );
     header_firefox_sec_fetch!(2, headers);
     header_firefox_ua!(headers, ua);
     headers

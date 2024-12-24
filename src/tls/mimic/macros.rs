@@ -117,13 +117,16 @@ macro_rules! header_firefox_accept {
             header::ACCEPT_LANGUAGE,
             HeaderValue::from_static("en-US,en;q=0.5"),
         );
-    }
+    };
 }
 
 #[macro_export]
 macro_rules! header_firefox_ua {
     ($headers:expr, $ua:expr) => {
-        $headers.insert(http::HeaderName::from_static("te"), HeaderValue::from_static("trailers"));
+        $headers.insert(
+            HeaderName::from_static("te"),
+            HeaderValue::from_static("trailers"),
+        );
         $headers.insert(UPGRADE_INSECURE_REQUESTS, HeaderValue::from_static("1"));
         $headers.insert(USER_AGENT, HeaderValue::from_static($ua));
     };

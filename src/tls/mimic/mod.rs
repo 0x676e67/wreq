@@ -18,12 +18,14 @@ mod impersonate_imports {
     pub use crate::*;
     pub use http::{
         header::{ACCEPT, ACCEPT_ENCODING, ACCEPT_LANGUAGE, UPGRADE_INSECURE_REQUESTS, USER_AGENT},
-        HeaderMap, HeaderValue,
+        HeaderMap, HeaderName, HeaderValue,
     };
 }
 
 mod tls_imports {
-    pub(crate) use crate::tls::{cert_compression::CertCompressionAlgorithm, TlsSettings, TlsVersion};
+    pub(crate) use crate::tls::{
+        cert_compression::CertCompressionAlgorithm, TlsSettings, TlsVersion,
+    };
     pub use crate::*;
     pub use boring::ssl::{ExtensionType, SslCurve};
     pub use std::borrow::Cow;
