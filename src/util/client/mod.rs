@@ -124,7 +124,7 @@ type PoolKey = (NetworkScheme, Uri);
 #[derive(Clone)]
 pub struct Dst {
     dst: Uri,
-    http_version_pref: HttpVersionPref,
+    http_version_pref: Option<HttpVersionPref>,
     pool_key: PoolKey,
 }
 
@@ -134,7 +134,7 @@ impl Dst {
         req: &mut Request<B>,
         is_http_connect: bool,
         network_scheme: NetworkScheme,
-        http_version_pref: HttpVersionPref,
+        http_version_pref: Option<HttpVersionPref>,
     ) -> Result<Dst, Error> {
         let uri = req.uri_mut();
         let (scheme, auth) = match (uri.scheme().cloned(), uri.authority().cloned()) {
@@ -179,7 +179,7 @@ impl Dst {
     }
 
     /// Get the http version pref
-    pub fn version_pref(&self) -> HttpVersionPref {
+    pub fn version_pref(&self) -> Option<HttpVersionPref> {
         self.http_version_pref.clone()
     }
 

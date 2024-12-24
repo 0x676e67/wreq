@@ -13,7 +13,7 @@ where
     B::Error: Into<Box<dyn StdError + Send + Sync>>,
 {
     request: http::Request<B>,
-    http_version_pref: HttpVersionPref,
+    http_version_pref: Option<HttpVersionPref>,
     network_scheme: NetworkScheme,
 }
 
@@ -27,7 +27,7 @@ where
         InnerRequestBuilder::new()
     }
 
-    pub fn split(self) -> (http::Request<B>, NetworkScheme, HttpVersionPref) {
+    pub fn split(self) -> (http::Request<B>, NetworkScheme, Option<HttpVersionPref>) {
         (self.request, self.network_scheme, self.http_version_pref)
     }
 }
@@ -139,7 +139,7 @@ impl<'a> InnerRequestBuilder<'a> {
 
         InnerRequest {
             request: self.builder.body(body).expect("failed to build request"),
-            http_version_pref: self.http_version.unwrap_or_default(),
+            http_version_pref: self.http_version,
             network_scheme: self.network_scheme.unwrap_or_default(),
         }
     }
