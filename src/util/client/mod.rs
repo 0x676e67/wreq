@@ -180,7 +180,7 @@ impl Dst {
 
     /// Get the http version pref
     pub fn version_pref(&self) -> Option<HttpVersionPref> {
-        self.http_version_pref.clone()
+        self.http_version_pref
     }
 
     /// Task network scheme for iface
