@@ -1756,7 +1756,6 @@ impl ClientRef {
             }
         }
 
-        // Build and return the final NetworkScheme
         builder.build()
     }
 }
