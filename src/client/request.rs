@@ -398,7 +398,7 @@ impl RequestBuilder {
         );
 
         builder = match multipart.compute_length() {
-            Some(length) => builder.header(CONTENT_LENGTH, length),
+            Some(length) => builder.header(http::header::CONTENT_LENGTH, length),
             None => builder,
         };
 
