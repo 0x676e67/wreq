@@ -1,6 +1,7 @@
 use std::convert::TryFrom;
 use std::fmt;
 use std::future::Future;
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::time::Duration;
 
 use http::{request::Parts, Request as HttpRequest, Version};
@@ -16,6 +17,8 @@ use super::response::Response;
 #[cfg(feature = "cookies")]
 use crate::cookie;
 use crate::header::{HeaderMap, HeaderName, HeaderValue, CONTENT_TYPE, HOST};
+use crate::proxy::ProxyScheme;
+use crate::util::client::NetworkScheme;
 use crate::{redirect, IntoUrl, Method, Proxy, Url};
 #[cfg(feature = "cookies")]
 use std::sync::Arc;
@@ -30,7 +33,7 @@ type PiecesWithCookieStore = (
     Option<Version>,
     Option<redirect::Policy>,
     (),
-    Option<Proxy>,
+    NetworkScheme,
 );
 
 #[cfg(feature = "cookies")]
@@ -43,7 +46,7 @@ type PiecesWithCookieStore = (
     Option<Version>,
     Option<redirect::Policy>,
     Option<Arc<dyn cookie::CookieStore>>,
-    Option<Proxy>,
+    NetworkScheme,
 );
 
 /// A request which can be executed with `Client::execute()`.
@@ -57,7 +60,11 @@ pub struct Request {
     redirect: Option<redirect::Policy>,
     #[cfg(feature = "cookies")]
     cookie_store: Option<Arc<dyn cookie::CookieStore>>,
-    proxy: Option<Proxy>,
+    proxy_scheme: Option<ProxyScheme>,
+    local_addr_v4: Option<Ipv4Addr>,
+    local_addr_v6: Option<Ipv6Addr>,
+    #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
+    interface: Option<std::borrow::Cow<'static, str>>,
 }
 
 /// A builder to construct the properties of a `Request`.
@@ -83,7 +90,11 @@ impl Request {
             redirect: None,
             #[cfg(feature = "cookies")]
             cookie_store: None,
-            proxy: None,
+            proxy_scheme: None,
+            local_addr_v4: None,
+            local_addr_v6: None,
+            #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
+            interface: None,
         }
     }
 
@@ -176,6 +187,25 @@ impl Request {
     }
 
     pub(super) fn pieces(self) -> PiecesWithCookieStore {
+        // Create the NetworkScheme builder based on the target OS
+        let network_scheme = {
+            #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
+            {
+                NetworkScheme::builder()
+                    .proxy(self.proxy_scheme)
+                    .iface((
+                        self.interface.clone(),
+                        (self.local_addr_v4, self.local_addr_v6),
+                    ))
+                    .build()
+            }
+
+            #[cfg(not(any(target_os = "android", target_os = "fuchsia", target_os = "linux")))]
+            NetworkScheme::builder()
+                .proxy(self.proxy_scheme)
+                .iface((self.local_addr_v4, self.local_addr_v6))
+                .build()
+        };
         (
             self.method,
             self.url,
@@ -188,7 +218,7 @@ impl Request {
             self.cookie_store,
             #[cfg(not(feature = "cookies"))]
             (),
-            self.proxy,
+            network_scheme,
         )
     }
 }
@@ -440,11 +470,47 @@ impl RequestBuilder {
             if let Some(err) = proxy
                 .into_url()
                 .and_then(Proxy::all)
-                .map(|proxy| req.proxy = Some(proxy))
+                .map(|proxy| req.proxy_scheme = proxy.intercept(req.url()))
                 .err()
             {
                 self.request = Err(crate::error::builder(err));
             }
+        }
+        self
+    }
+
+    /// Set the local address for this request.
+    pub fn local_address(mut self, local_address: impl Into<IpAddr>) -> RequestBuilder {
+        if let Ok(ref mut req) = self.request {
+            match local_address.into() {
+                IpAddr::V4(addr) => req.local_addr_v4 = Some(addr),
+                IpAddr::V6(addr) => req.local_addr_v6 = Some(addr),
+            }
+        }
+        self
+    }
+
+    /// Set the local addresses for this request.
+    pub fn local_addresses(
+        mut self,
+        ipv4: impl Into<Ipv4Addr>,
+        ipv6: impl Into<Ipv6Addr>,
+    ) -> RequestBuilder {
+        if let Ok(ref mut req) = self.request {
+            req.local_addr_v4 = Some(ipv4.into());
+            req.local_addr_v6 = Some(ipv6.into());
+        }
+        self
+    }
+
+    /// Set the interface for this request.
+    #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
+    pub fn interface(
+        mut self,
+        interface: impl Into<std::borrow::Cow<'static, str>>,
+    ) -> RequestBuilder {
+        if let Ok(ref mut req) = self.request {
+            req.interface = Some(interface.into());
         }
         self
     }
@@ -690,7 +756,11 @@ where
             redirect: None,
             #[cfg(feature = "cookies")]
             cookie_store: None,
-            proxy: None,
+            proxy_scheme: None,
+            local_addr_v4: None,
+            local_addr_v6: None,
+            #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
+            interface: None,
         })
     }
 }

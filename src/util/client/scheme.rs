@@ -122,14 +122,24 @@ impl NetworkSchemeBuilder {
     }
 
     pub fn build(self) -> NetworkScheme {
+        #[cfg(not(any(target_os = "android", target_os = "fuchsia", target_os = "linux")))]
+        if let (None, (None, None)) = (&self.proxy, &self.addresses) {
+            return NetworkScheme::None;
+        }
+
+        #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
+        if let (None, (None, None), None) = (&self.proxy, &self.addresses, &self.interface) {
+            return NetworkScheme::None;
+        }
+
         if self.proxy.is_some() {
-            NetworkScheme::Proxy(self.proxy)
-        } else {
-            NetworkScheme::Iface {
-                #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
-                interface: self.interface,
-                addresses: self.addresses,
-            }
+            return NetworkScheme::Proxy(self.proxy);
+        }
+
+        NetworkScheme::Iface {
+            #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
+            interface: self.interface,
+            addresses: self.addresses,
         }
     }
 }
