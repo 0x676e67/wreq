@@ -4,6 +4,103 @@ All notable changes to this project will be documented in this file.
 
 ## [unreleased]
 
+### 🚀 Features
+
+- *(client)* Add `no-keepalive` for `Client`
+
+### ⚙️ Miscellaneous Tasks
+
+- Argo clippy --fix
+
+## [1.0.0-rc.3] - 2024-12-25
+
+### 🚀 Features
+
+- Optional to enable impersonate customization (#217)
+
+### ⚡ Performance
+
+- Avoiding Unnecessary Copies (#219)
+
+### ⚙️ Miscellaneous Tasks
+
+- Remove unnecessary `Arc` wrapper from `redirect`/`base_url` (#216)
+- Update macros (#218)
+- Fix clippy accidentally deleted code (#220)
+- *(util/clent)* Remove extra clones
+
+## [1.0.0-rc.2] - 2024-12-24
+
+### 🚀 Features
+
+- Allow pluggable tower layers in connector service stack (#214)
+
+### 🐛 Bug Fixes
+
+- Propagate Body::size_hint when wrapping bodies (#213)
+
+### ⚙️ Miscellaneous Tasks
+
+- Cargo clippy --fix
+- Remove `new` method for `InnerRequestBuilder` (#212)
+- Remove `clone` from `Dst`
+
+## [1.0.0-rc.1] - 2024-12-24
+
+### 🚀 Features
+
+- Hyper v1 upgrade (#187)
+- Support request setting HTTP override ALPN (#188)
+- *(client)* Add the maximum safe retry count for HTTP/2 connections (#196)
+- *(client)* Export `http1`/`http2` Builder as public API (#199)
+- *(client)* Export `http1`/`http2` Builder as public API
+- *(body)* Improve interop with hyper for `Body` type
+- *(client)* Add impl `Service<http::Request<Body>>` for `Client` (#202)
+- *(client)* Request specific proxy override (#211)
+
+### 🐛 Bug Fixes
+
+- *(http2)* Fix http2 header frame initial `stream_id` settings (#185)
+- Fix http protocol auto-negotiation (#189)
+
+### ⚙️ Miscellaneous Tasks
+
+- Remove dead code (#182)
+- Macros simplify some debug implement (#183)
+- Static calc extension permutation (#184)
+- Cargo fmt --all
+- Remove unused code (#191)
+- *(pool)* Use `Mutex` types that do not poison themselves (#192)
+- Simplified TLS TCP stream abstraction (#193)
+- Cleaned up some unnecessary code (#194)
+- Remove unused code
+- Refactor connect mod
+- Refactor connect layer detail handle (#198)
+- Remove dead code
+- Use shorter feature name
+- Deleted permutation storage
+- Remove unused code
+- Remove unused code
+- Disable the exposure of internal connect dst API (#203)
+- Removed TLS config examples to prevent misconfigurations by inexperienced users (#205)
+- By default, impersonate from a string is disabled (#206)
+- *(tls)* Compile-time calculation of extended permutation (#207)
+- *(tls)* Disable custom TLS builder (#208)
+- Refactor connect network request extension (#210)
+
+### Deps
+
+- *(tokio-util)* V0.7.0 (#190)
+
+## [0.33.5] - 2024-12-19
+
+### 🚀 Features
+
+- *(client)* Http1 sends lowercase request headers by default to improve performance (#179)
+- Add `firefox 133` impersonate (#181)
+
+## [0.33.3] - 2024-12-16
+
 ### 🐛 Bug Fixes
 
 - *(proxy)* Fix `ws`/`wss` upgrade support for `http`/`https` proxy (#176)
