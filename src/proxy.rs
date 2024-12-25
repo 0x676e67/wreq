@@ -854,6 +854,20 @@ impl Dst for Uri {
     }
 }
 
+impl Dst for Url {
+    fn scheme(&self) -> &str {
+        self.scheme()
+    }
+
+    fn host(&self) -> &str {
+        self.host_str().expect("Url should have a host")
+    }
+
+    fn port(&self) -> Option<u16> {
+        self.port()
+    }
+}
+
 /// Get system proxies information.
 ///
 /// All platforms will check for proxy settings via environment variables.

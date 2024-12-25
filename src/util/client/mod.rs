@@ -166,11 +166,6 @@ impl Dst {
             .map_err(|_| e!(UserAbsoluteUriRequired))
     }
 
-    /// Get the pool key
-    fn pool_key(&self) -> &PoolKey {
-        &self.pool_key
-    }
-
     /// Set the next destination of the request (for proxy)
     pub fn set_dst(&mut self, mut uri: Uri) {
         std::mem::swap(&mut self.pool_key.1, &mut uri);
@@ -604,7 +599,7 @@ where
             // If the pool_key is for HTTP/2, and there is already a
             // connection being established, then this can't take a
             // second lock. The "connect_to" future is Canceled.
-            let connecting = match pool.connecting(dst.pool_key(), ver) {
+            let connecting = match pool.connecting(&dst.pool_key, ver) {
                 Some(lock) => lock,
                 None => {
                     let canceled = e!(Canceled);
