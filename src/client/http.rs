@@ -1293,7 +1293,7 @@ impl Client {
             timeout,
             version,
             redirect,
-            cookie_store,
+            _cookie_store,
             network_scheme,
         ) = req.pieces();
 
@@ -1315,7 +1315,7 @@ impl Client {
         }
 
         #[cfg(feature = "cookies")]
-        let cookie_store = cookie_store
+        let cookie_store = _cookie_store
             .as_ref()
             .or_else(|| self.inner.cookie_store.as_ref());
 
@@ -1387,7 +1387,7 @@ impl Client {
                 retry_count: 0,
                 max_retry_count: self.inner.http2_max_retry_count,
                 redirect,
-                cookie_store: cookie_store.cloned(),
+                cookie_store: _cookie_store,
                 network_scheme,
                 client: self.inner.clone(),
                 in_flight,
