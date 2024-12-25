@@ -101,7 +101,7 @@ impl Response {
     /// This requires the optional `cookies` feature to be enabled.
     #[cfg(feature = "cookies")]
     #[cfg_attr(docsrs, doc(cfg(feature = "cookies")))]
-    pub fn cookies<'a>(&'a self) -> impl Iterator<Item = cookie::Cookie<'a>> + 'a {
+    pub fn cookies(&self) -> impl Iterator<Item = cookie::Cookie> {
         cookie::extract_response_cookies(self.res.headers()).filter_map(Result::ok)
     }
 

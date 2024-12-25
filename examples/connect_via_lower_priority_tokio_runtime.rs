@@ -71,7 +71,7 @@ mod background_threadpool {
             .spawn(move || {
                 let rt = tokio::runtime::Builder::new_multi_thread()
                     .thread_name("cpu-heavy-background-pool-thread")
-                    .worker_threads(num_cpus::get() as usize)
+                    .worker_threads(num_cpus::get())
                     // ref: https://github.com/tokio-rs/tokio/issues/4941
                     // consider uncommenting if seeing heavy task contention
                     // .disable_lifo_slot()
@@ -204,7 +204,7 @@ mod background_threadpool {
                     _ = tx.closed() => {
                         // receiver already dropped, don't need to do anything
                     }
-                    result = response.map_err(|err| Into::<BoxError>::into(err)) => {
+                    result = response.map_err(Into::<BoxError>::into) => {
                         // if this fails, the receiver already dropped, so we don't need to do anything
                         let _ = tx.send(result);
                     }

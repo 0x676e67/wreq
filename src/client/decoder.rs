@@ -51,7 +51,7 @@ use tokio_util::io::StreamReader;
 
 use super::body::ResponseBody;
 
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug)]
 pub(super) struct Accepts {
     #[cfg(feature = "gzip")]
     pub(super) gzip: bool,
@@ -569,6 +569,22 @@ impl Accepts {
         #[cfg(not(feature = "deflate"))]
         {
             false
+        }
+    }
+}
+
+#[allow(clippy::all)]
+impl Default for Accepts {
+    fn default() -> Accepts {
+        Accepts {
+            #[cfg(feature = "gzip")]
+            gzip: true,
+            #[cfg(feature = "brotli")]
+            brotli: true,
+            #[cfg(feature = "zstd")]
+            zstd: true,
+            #[cfg(feature = "deflate")]
+            deflate: true,
         }
     }
 }
