@@ -787,6 +787,13 @@ impl ClientBuilder {
         self
     }
 
+    /// Disable keep-alive for the client.
+    pub fn no_keepalive(mut self) -> ClientBuilder {
+        self.config.pool_max_idle_per_host = 0;
+        self.config.tcp_keepalive = None;
+        self
+    }
+
     /// Only use HTTP/1.
     /// Default is Http/1.
     pub fn http1_only(mut self) -> ClientBuilder {
