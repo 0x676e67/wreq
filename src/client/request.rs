@@ -256,11 +256,17 @@ impl RequestBuilder {
         HeaderValue: TryFrom<V>,
         <HeaderValue as TryFrom<V>>::Error: Into<http::Error>,
     {
-        self.header_sensitive(key, value, false)
+        self.header_sensitive(key, value, false, false)
     }
 
     /// Add a `Header` to this Request with ability to define if `header_value` is sensitive.
-    fn header_sensitive<K, V>(mut self, key: K, value: V, sensitive: bool) -> RequestBuilder
+    fn header_sensitive<K, V>(
+        mut self,
+        key: K,
+        value: V,
+        sensitive: bool,
+        overwrite: bool,
+    ) -> RequestBuilder
     where
         HeaderName: TryFrom<K>,
         <HeaderName as TryFrom<K>>::Error: Into<http::Error>,
@@ -278,7 +284,11 @@ impl RequestBuilder {
                         if sensitive {
                             value.set_sensitive(true);
                         }
-                        req.headers_mut().append(key, value);
+                        if overwrite {
+                            req.headers_mut().insert(key, value);
+                        } else {
+                            req.headers_mut().append(key, value);
+                        }
                     }
                     Err(e) => error = Some(crate::error::builder(e.into())),
                 },
@@ -312,7 +322,7 @@ impl RequestBuilder {
                 return self;
             }
             if let Ok(host_with_port) = authority.parse::<HeaderValue>() {
-                return self.header_sensitive(HOST, host_with_port, false);
+                return self.header_sensitive(HOST, host_with_port, false, false);
             }
         }
         self
@@ -338,7 +348,7 @@ impl RequestBuilder {
         P: fmt::Display,
     {
         let header_value = crate::util::basic_auth(username, password);
-        self.header_sensitive(crate::header::AUTHORIZATION, header_value, true)
+        self.header_sensitive(crate::header::AUTHORIZATION, header_value, true, true)
     }
 
     /// Enable HTTP bearer authentication.
@@ -347,7 +357,7 @@ impl RequestBuilder {
         T: fmt::Display,
     {
         let header_value = format!("Bearer {}", token);
-        self.header_sensitive(crate::header::AUTHORIZATION, header_value, true)
+        self.header_sensitive(crate::header::AUTHORIZATION, header_value, true, true)
     }
 
     /// Set the request body.
