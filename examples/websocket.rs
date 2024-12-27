@@ -1,17 +1,9 @@
 use futures_util::{SinkExt, StreamExt, TryStreamExt};
-use rquest::{tls::Impersonate, Client, Message};
+use rquest::Message;
 
 #[tokio::main]
 async fn main() -> Result<(), rquest::Error> {
-    // Build a client to mimic Chrome130
-    let websocket = Client::builder()
-        .impersonate(Impersonate::Chrome130)
-        .build()?
-        .websocket("wss://echo.websocket.org")
-        .send()
-        .await?
-        .into_websocket()
-        .await?;
+    let websocket = rquest::websocket("wss://echo.websocket.org").await?;
 
     let (mut tx, mut rx) = websocket.split();
 

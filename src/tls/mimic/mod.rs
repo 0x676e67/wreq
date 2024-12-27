@@ -17,9 +17,12 @@ mod impersonate_imports {
     pub(crate) use crate::tls::{Http2Settings, ImpersonateSettings};
     pub use crate::*;
     pub use http::{
-        header::{ACCEPT, ACCEPT_ENCODING, ACCEPT_LANGUAGE, UPGRADE_INSECURE_REQUESTS, USER_AGENT},
+        header::{ACCEPT, ACCEPT_LANGUAGE, UPGRADE_INSECURE_REQUESTS, USER_AGENT},
         HeaderMap, HeaderName, HeaderValue,
     };
+
+    #[cfg(all(feature = "gzip", feature = "deflate", feature = "brotli"))]
+    pub use http::header::ACCEPT_ENCODING;
 }
 
 mod tls_imports {

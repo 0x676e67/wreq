@@ -28,7 +28,7 @@ full = [
     "gzip",
     "brotli",
     "zstd",
-    "deflate"
+    "deflate",
 ]
 
 websocket = ["dep:async-tungstenite", "tokio-util/compat"]
@@ -39,7 +39,11 @@ cookies = ["dep:cookie_crate", "dep:cookie_store"]
 
 gzip = ["dep:async-compression", "async-compression?/gzip", "dep:tokio-util"]
 
-brotli = ["dep:async-compression", "async-compression?/brotli", "dep:tokio-util"]
+brotli = [
+    "dep:async-compression",
+    "async-compression?/brotli",
+    "dep:tokio-util",
+]
 
 zstd = ["dep:async-compression", "async-compression?/zstd", "dep:tokio-util"]
 
@@ -77,7 +81,10 @@ url = "2.5"
 bytes = "1.0"
 serde = "1.0"
 serde_urlencoded = "0.7.1"
-tower = { version = "0.5.0", default-features = false, features = ["timeout", "util"] }
+tower = { version = "0.5.0", default-features = false, features = [
+    "timeout",
+    "util",
+] }
 tower-service = "0.3"
 futures-core = { version = "0.3.0", default-features = false }
 futures-util = { version = "0.3.0", default-features = false }
@@ -99,7 +106,11 @@ hyper2 = { version = "1", features = ["http1", "http2", "client"] }
 log = "0.4"
 mime = "0.3.17"
 percent-encoding = "2.3"
-tokio = { version = "1", default-features = false, features = ["net", "time", "rt"] }
+tokio = { version = "1", default-features = false, features = [
+    "net",
+    "time",
+    "rt",
+] }
 pin-project-lite = "0.2.0"
 ipnet = "2.10.0"
 
@@ -111,7 +122,7 @@ lru = { version = "0.12", default-features = false }
 # Optional deps...
 
 ## boring-tls
-boring = { package = "boring2", version = "4", features = ["pq-experimental"]}
+boring = { package = "boring2", version = "4", features = ["pq-experimental"] }
 boring-sys = { package = "boring-sys2", version = "4" }
 tokio-boring = { package = "tokio-boring2", version = "4" }
 foreign-types = { version = "0.5.0" }
@@ -135,8 +146,13 @@ cookie_crate = { version = "0.18", package = "cookie", optional = true }
 cookie_store = { version = "0.21", optional = true }
 
 ## compression
-async-compression = { version = "0.4.0", default-features = false, features = ["tokio"], optional = true }
-tokio-util = { version = "0.7.0", default-features = false, features = ["codec", "io"], optional = true }
+async-compression = { version = "0.4.0", default-features = false, features = [
+    "tokio",
+], optional = true }
+tokio-util = { version = "0.7.0", default-features = false, features = [
+    "codec",
+    "io",
+], optional = true }
 
 ## socks
 tokio-socks = { version = "0.5.2", optional = true }
@@ -154,8 +170,20 @@ windows-registry = "0.3.0"
 system-configuration = "0.6.0"
 
 [dev-dependencies]
-hyper = { version = "1.1.0", default-features = false, features = ["http1", "http2", "client", "server"] }
-hyper-util = { version = "0.1.10", features = ["http1", "http2", "client", "client-legacy", "server-auto", "tokio"] }
+hyper = { version = "1.1.0", default-features = false, features = [
+    "http1",
+    "http2",
+    "client",
+    "server",
+] }
+hyper-util = { version = "0.1.10", features = [
+    "http1",
+    "http2",
+    "client",
+    "client-legacy",
+    "server-auto",
+    "tokio",
+] }
 env_logger = "0.10.0"
 serde = { version = "1.0", features = ["derive"] }
 libflate = "2.0.0"
@@ -258,11 +286,6 @@ required-features = ["webpki-roots"]
 name = "websocket"
 path = "examples/websocket.rs"
 required-features = ["websocket", "futures-util/std"]
-
-[[example]]
-name = "websocket_via_proxy"
-path = "examples/websocket_via_proxy.rs"
-required-features = ["websocket", "futures-util/std", "socks"]
 
 [[test]]
 name = "cookie"
