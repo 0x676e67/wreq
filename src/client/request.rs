@@ -404,7 +404,7 @@ impl RequestBuilder {
     pub fn multipart(self, mut multipart: multipart::Form) -> RequestBuilder {
         let mut builder = self.header(
             CONTENT_TYPE,
-            format!("multipart/form-data; boundary={}", multipart.boundary()).as_str(),
+            format!("multipart/form-data; boundary={}", multipart.boundary()),
         );
 
         builder = match multipart.compute_length() {
@@ -566,10 +566,11 @@ impl RequestBuilder {
         if let Ok(ref mut req) = self.request {
             match serde_urlencoded::to_string(form) {
                 Ok(body) => {
-                    req.headers_mut().insert(
-                        CONTENT_TYPE,
-                        HeaderValue::from_static("application/x-www-form-urlencoded"),
-                    );
+                    req.headers_mut()
+                        .entry(CONTENT_TYPE)
+                        .or_insert(HeaderValue::from_static(
+                            "application/x-www-form-urlencoded",
+                        ));
                     *req.body_mut() = Some(body.into());
                 }
                 Err(err) => error = Some(crate::error::builder(err)),
@@ -600,7 +601,8 @@ impl RequestBuilder {
                 Ok(body) => {
                     if !req.headers().contains_key(CONTENT_TYPE) {
                         req.headers_mut()
-                            .insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+                            .entry(CONTENT_TYPE)
+                            .or_insert(HeaderValue::from_static("application/json"));
                     }
                     *req.body_mut() = Some(body.into());
                 }
