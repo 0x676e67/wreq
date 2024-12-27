@@ -13,7 +13,7 @@ use foreign_types::ForeignTypeRef;
 // ALPN protocol for HTTP/1.1 and HTTP/2.
 const HTTP_1_ALPN: &[u8] = b"\x08http/1.1";
 const HTTP_2_ALPN: &[u8] = b"\x02h2";
-const HTTP_1_OR_2_ALPN: &[u8] = b"\x08http/1.1\x02h2";
+const HTTP_1_OR_2_ALPN: &[u8] = b"\x02h2\x08http/1.1";
 
 /// Application Settings protocol for HTTP/1.1 and HTTP/2.
 const HTTP_1_APP_PROTO: &[u8] = b"http/1.1";
