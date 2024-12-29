@@ -150,6 +150,7 @@ where
     /// Connects to the given URI using the given connection.
     ///
     /// This function is used to connect to the given URI using the given connection.
+    #[inline]
     pub async fn connect<A>(
         &self,
         uri: &Uri,
@@ -258,25 +259,24 @@ impl Inner {
             callback(&mut conf, uri)?;
         }
 
-        let key = SessionKey {
-            host: host.to_owned(),
-            port: uri.port_u16().unwrap_or(443),
-        };
+        if let Some(authority) = uri.authority() {
+            let key = SessionKey(authority.clone());
 
-        if let Some(ref cache) = self.cache {
-            if let Some(session) = cache.lock().get(&key) {
-                unsafe {
-                    conf.set_session(&session)?;
-                }
-
-                if self.skip_session_ticket {
-                    conf.configure_skip_session_ticket()?;
+            if let Some(ref cache) = self.cache {
+                if let Some(session) = cache.lock().get(&key) {
+                    unsafe {
+                        conf.set_session(&session)?;
+                    }
+    
+                    if self.skip_session_ticket {
+                        conf.configure_skip_session_ticket()?;
+                    }
                 }
             }
+    
+            let idx = key_index()?;
+            conf.set_ex_data(idx, key);     
         }
-
-        let idx = key_index()?;
-        conf.set_ex_data(idx, key);
 
         let mut ssl = conf.into_ssl(host)?;
 

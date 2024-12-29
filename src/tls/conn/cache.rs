@@ -1,16 +1,14 @@
 /// referrer: https://github.com/cloudflare/boring/blob/master/hyper-boring/src/cache.rs
 use boring::ssl::SslVersion;
 use boring::ssl::{SslSession, SslSessionRef};
+use http::uri::Authority;
 use linked_hash_set::LinkedHashSet;
 use std::borrow::Borrow;
 use std::collections::hash_map::{Entry, HashMap};
 use std::hash::{Hash, Hasher};
 
 #[derive(Hash, PartialEq, Eq, Clone)]
-pub struct SessionKey {
-    pub host: String,
-    pub port: u16,
-}
+pub struct SessionKey(pub Authority);
 
 #[derive(Clone)]
 struct HashSession(SslSession);
