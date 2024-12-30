@@ -1409,50 +1409,25 @@ impl Client {
     }
 
     /// Returns a `String` of the header-value of all `Cookie` in a `Url`.
-    ///
-    /// # Errors
-    ///
-    /// This method fails if there was an error parsing the cookies.
     #[cfg(feature = "cookies")]
-    pub fn get_cookies<U: IntoUrl>(&self, url: U) -> Result<Option<HeaderValue>, error::Error> {
-        // Parse the URL
-        let target_url = url.into_url()?;
-
-        // Check if the cookie_store is set
-        let result = self
-            .inner
+    pub fn get_cookies(&self, url: &Url) -> Option<HeaderValue> {
+        self.inner
             .cookie_store
             .as_ref()
-            .and_then(|cookie_store| cookie_store.cookies(&target_url));
-
-        Ok(result)
+            .and_then(|cookie_store| cookie_store.cookies(url))
     }
 
     /// Injects a 'Cookie' into the 'CookieStore' for the specified URL.
-    ///
-    /// # Errors
-    ///
-    /// This method fails if there was an error parsing the cookies.
     #[cfg(feature = "cookies")]
-    pub fn set_cookies<U: IntoUrl>(
-        &self,
-        cookies: Vec<HeaderValue>,
-        url: U,
-    ) -> Result<(), error::Error> {
-        // Parse the URL
-        let target_url = url.into_url()?;
-
-        // Check if the cookie_store is set
+    pub fn set_cookies(&self, url: &Url, cookies: Vec<HeaderValue>) {
         if let Some(ref cookie_store) = self.inner.cookie_store {
             let mut iter = cookies.iter();
-            cookie_store.set_cookies(&mut iter, &target_url);
+            cookie_store.set_cookies(&mut iter, url);
         }
-
-        Ok(())
     }
+    
     /// Set the cookie provider for this client.
     #[cfg(feature = "cookies")]
-    #[inline]
     pub fn set_cookie_provider<C>(&mut self, cookie_store: Arc<C>)
     where
         C: cookie::CookieStore + 'static,

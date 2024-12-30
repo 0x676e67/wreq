@@ -19,15 +19,17 @@ async fn main() -> Result<(), rquest::Error> {
         .cookie_store(true)
         .build()?;
 
+    let url = "https://tls.peet.ws/api/all".parse().expect("Invalid url");
+
     // Set a cookie
     client.set_cookies(
+        &url,
         vec![HeaderValue::from_static("foo=bar; Domain=tls.peet.ws")],
-        "https://tls.peet.ws/api/all",
-    )?;
+    );
 
     // Use the API you're already familiar with
     let resp = client
-        .post("https://tls.peet.ws/api/all")
+        .post(url)
         .with_host_header()
         .body("hello")
         .send()

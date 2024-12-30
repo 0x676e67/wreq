@@ -17,17 +17,19 @@ async fn main() -> Result<(), rquest::Error> {
         .impersonate(Impersonate::Chrome131)
         .build()?;
 
+    let url = "https://tls.peet.ws/api/all".parse().expect("Invalid url");
+
     // Set the headers order
     {
         client.set_headers_order(HEADER_ORDER);
-        let resp = client.get("https://tls.peet.ws/api/all").send().await?;
+        let resp = client.get(&url).send().await?;
         println!("{}", resp.text().await?);
     }
 
     // Change the impersonate to Safari18
     {
         client.set_impersonate(Impersonate::Safari18)?;
-        let resp = client.get("https://tls.peet.ws/api/all").send().await?;
+        let resp = client.get(&url).send().await?;
         println!("{}", resp.text().await?);
     }
 
@@ -42,11 +44,11 @@ async fn main() -> Result<(), rquest::Error> {
 
         // Set a cookie
         client.set_cookies(
+            &url,
             vec![HeaderValue::from_static("foo=bar; Domain=tls.peet.ws")],
-            "https://tls.peet.ws/api/all",
-        )?;
+        );
 
-        let resp = client.get("https://tls.peet.ws/api/all").send().await?;
+        let resp = client.get(&url).send().await?;
         println!("{}", resp.text().await?);
     }
 

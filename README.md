@@ -1,4 +1,4 @@
-# rquest
+# rquest - `r`ust & `quest`
 
 [![Crates.io License](https://img.shields.io/crates/l/rquest)](./LICENSE)
 ![Crates.io MSRV](https://img.shields.io/crates/msrv/rquest)
