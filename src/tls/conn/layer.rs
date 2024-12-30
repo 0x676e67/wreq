@@ -220,7 +220,7 @@ impl HttpsLayer {
         let callback = Arc::new(move |conf: &mut ConnectConfiguration, _: &Uri| {
             // Set ECH grease and TLS SNI.
             conf.configure_enable_ech_grease(settings.enable_ech_grease)?
-                .set_verify_hostname(settings.tls_sni);
+                .set_use_server_name_indication(settings.tls_sni);
 
             // Add application settings if it is set.
             if settings.application_settings {

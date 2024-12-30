@@ -1,6 +1,3 @@
-#![allow(missing_debug_implementations)]
-use std::borrow::Cow;
-
 use crate::{
     impl_debug,
     tls::{cert_compression::CertCompressionAlgorithm, TlsVersion},
@@ -9,9 +6,9 @@ use crate::{
 use boring::{ssl::SslCurve, x509::store::X509Store};
 use http::{HeaderMap, HeaderName};
 use hyper2::{PseudoOrder, SettingsOrder};
+use std::borrow::Cow;
 use typed_builder::TypedBuilder;
 
-/// Impersonate Settings.
 #[derive(TypedBuilder, Debug)]
 pub struct ImpersonateSettings {
     /// TLS settings
@@ -29,7 +26,6 @@ pub struct ImpersonateSettings {
     pub(crate) headers_order: Option<Cow<'static, [HeaderName]>>,
 }
 
-/// A root certificates store.
 #[derive(Default)]
 pub enum RootCertsStore {
     /// Use the default root certificates store.
@@ -90,7 +86,6 @@ where
     }
 }
 
-// ============== TLS ==============
 #[derive(TypedBuilder, Default)]
 pub struct TlsSettings {
     /// Root certificates store.
@@ -213,7 +208,6 @@ impl_debug!(
     }
 );
 
-// ============== http2 ==============
 #[derive(TypedBuilder, Debug)]
 pub struct Http2Settings {
     /// The initial stream id.

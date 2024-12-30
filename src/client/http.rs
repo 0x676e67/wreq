@@ -952,13 +952,9 @@ impl ClientBuilder {
         self
     }
 
-    /// Controls the use of TLS server name indication.
+    /// Configures the use of Server Name Indication (SNI) when connecting.
     ///
     /// Defaults to `true`.
-    ///
-    /// # Optional
-    ///
-    /// feature to be enabled.
     pub fn tls_sni(mut self, tls_sni: bool) -> ClientBuilder {
         self.config.tls.tls_sni = tls_sni;
         self
