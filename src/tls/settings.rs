@@ -100,6 +100,10 @@ pub struct TlsSettings {
     #[builder(default = true)]
     pub tls_sni: bool,
 
+    /// Verify hostname.
+    #[builder(default = true)]
+    pub verify_hostname: bool,
+
     /// The HTTP version preference (setting alpn).
     #[builder(default = HttpVersionPref::All)]
     pub alpn_protos: HttpVersionPref,

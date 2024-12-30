@@ -960,6 +960,20 @@ impl ClientBuilder {
         self
     }
 
+    /// Configures the use of hostname verification when connecting.
+    ///
+    /// Defaults to `true`.
+    ///
+    /// # Warning
+    ///
+    /// You should think very carefully before you use this method. If hostname verification is not
+    /// used, *any* valid certificate for *any* site will be trusted for use from any other. This
+    /// introduces a significant vulnerability to man-in-the-middle attacks.
+    pub fn verify_hostname(mut self, verify_hostname: bool) -> ClientBuilder {
+        self.config.tls.verify_hostname = verify_hostname;
+        self
+    }
+
     /// Set the minimum required TLS version for connections.
     ///
     /// By default the TLS backend's own default is used.
