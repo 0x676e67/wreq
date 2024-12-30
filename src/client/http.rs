@@ -450,11 +450,9 @@ impl ClientBuilder {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn default_headers(mut self, headers: HeaderMap) -> ClientBuilder {
+    pub fn default_headers(mut self, mut headers: HeaderMap) -> ClientBuilder {
         let headers_mut = self.config.headers.to_mut();
-        for (key, value) in headers.into_iter().filter_map(|(k, v)| k.map(|k| (k, v))) {
-            headers_mut.insert(key, value);
-        }
+        std::mem::swap(headers_mut, &mut headers);
         self
     }
 
