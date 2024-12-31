@@ -148,7 +148,7 @@ You can customize the `TLS`/`HTTP2` fingerprint parameters of the device. In add
 
 - **Firefox**
 
-`Firefox109`, `Firefox133` ,`Firefox117`
+`Firefox109`, `Firefox117`, `Firefox133`
 
 ## Requirement
 
