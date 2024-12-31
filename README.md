@@ -149,8 +149,6 @@ You can customize the `TLS`/`HTTP2` fingerprint parameters of the device. In add
 
 `Firefox109`, `Firefox133`
 
-> It is not supported for Firefox device that use http2 priority frames. If anyone is willing to help implement it, please submit a patch to the [h2](https://github.com/penumbra-x/h2) repository.
-
 ## Requirement
 
 Install the environment required to build [BoringSSL](https://github.com/google/boringssl/blob/master/BUILDING.md)
