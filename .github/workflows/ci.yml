@@ -30,6 +30,10 @@ jobs:
         with:
           strip_v: true
 
+      - name: Build
+        run: |
+          cargo build --release
+
       - name: Tag Check
         run: |
           echo "tag=${{ steps.tag.outputs.tag }}" >> $GITHUB_ENV
