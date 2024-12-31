@@ -341,7 +341,7 @@ pub use self::client::{
 };
 pub use self::proxy::{NoProxy, Proxy};
 pub use self::util::client::Dst;
-pub use hyper2::{PseudoOrder, SettingsOrder};
+pub use hyper2::{Priority, PseudoOrder, SettingsOrder, StreamDependency, StreamId};
 
 mod client;
 mod connect;
