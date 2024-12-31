@@ -16,6 +16,7 @@ An ergonomic, all-in-one `JA3`/`JA4`/`HTTP2` fingerprint `HTTP`/`WebSocket` clie
 - HTTP Proxies
 - `HTTPS`/`WebSocket` via [BoringSSL](https://github.com/cloudflare/boring)
 - Preconfigured `TLS`/`HTTP2` settings
+- Perfect minic of `Chrome`/`Safari`/`Firefox`
 
 Additional learning resources include:
 

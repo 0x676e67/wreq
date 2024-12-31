@@ -99,6 +99,7 @@ pub fn tls_settings(ver: Impersonate, with_headers: bool) -> ImpersonateSettings
         Edge131 => edge131::get_settings,
 
         Firefox109 => ff109::get_settings,
+        Firefox117 => ff117::get_settings,
         Firefox133 => ff133::get_settings
     )
 }
@@ -160,6 +161,7 @@ pub enum Impersonate {
     Edge131,
 
     Firefox109,
+    Firefox117,
     Firefox133,
 }
 
@@ -219,5 +221,6 @@ impl_from_str! {
     (Edge131, "edge_131"),
 
     (Firefox109, "firefox_109"),
+    (Firefox117, "firefox_117"),
     (Firefox133, "firefox_133"),
 }
