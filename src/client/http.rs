@@ -327,7 +327,8 @@ impl ClientBuilder {
                 .max_frame_size(settings.http2.max_frame_size)
                 .headers_priority(http2_headers_priority)
                 .headers_pseudo_order(settings.http2.headers_pseudo_order)
-                .settings_order(settings.http2.settings_order);
+                .settings_order(settings.http2.settings_order)
+                .priority(settings.http2.priority);
 
             if let Some(max_header_list_size) = settings.http2.max_header_list_size {
                 builder.max_header_list_size(max_header_list_size);
@@ -1570,7 +1571,7 @@ impl Client {
         // Set the http2 preference
         hyper.with_http2_builder(|builder| {
             let http2_headers_priority =
-                crate::util::convert_headers_priority(settings.http2.headers_priority);
+                util::convert_headers_priority(settings.http2.headers_priority);
 
             builder
                 .initial_stream_id(settings.http2.initial_stream_id)
@@ -1581,7 +1582,8 @@ impl Client {
                 .max_frame_size(settings.http2.max_frame_size)
                 .headers_priority(http2_headers_priority)
                 .headers_pseudo_order(settings.http2.headers_pseudo_order)
-                .settings_order(settings.http2.settings_order);
+                .settings_order(settings.http2.settings_order)
+                .priority(settings.http2.priority.clone());
 
             if let Some(max_header_list_size) = settings.http2.max_header_list_size {
                 builder.max_header_list_size(max_header_list_size);

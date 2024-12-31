@@ -1,5 +1,6 @@
 use super::impersonate_imports::*;
 use http2::*;
+use std::borrow::Cow;
 use tls::*;
 
 macro_rules! firefox_mod_generator {
@@ -57,6 +58,7 @@ macro_rules! firefox_http2_template {
     }};
     (2) => {{
         super::Http2Settings::builder()
+            .initial_stream_id(15)
             .header_table_size(65536)
             .initial_stream_window_size(131072)
             .max_frame_size(16384)
@@ -64,6 +66,7 @@ macro_rules! firefox_http2_template {
             .headers_priority((13, 41, false))
             .headers_pseudo_order(super::HEADERS_PSEUDO_ORDER)
             .settings_order(super::SETTINGS_ORDER)
+            .priority(Cow::Borrowed(super::PRIORITY_109.as_slice()))
             .build()
     }};
 }
@@ -257,6 +260,7 @@ mod tls {
 
 mod http2 {
     use crate::tls::mimic::http2_imports::*;
+    use hyper2::{Priority, StreamDependency, StreamId};
 
     pub const HEADER_PRIORITY: (u32, u8, bool) = (0, 41, false);
 
@@ -272,6 +276,35 @@ mod http2 {
         UnknownSetting8,
         UnknownSetting9,
     ];
+
+    pub static PRIORITY_109: LazyLock<Vec<Priority>> = LazyLock::new(|| {
+        vec![
+            Priority::new(
+                StreamId::from(3),
+                StreamDependency::new(StreamId::zero(), 200, false),
+            ),
+            Priority::new(
+                StreamId::from(5),
+                StreamDependency::new(StreamId::zero(), 100, false),
+            ),
+            Priority::new(
+                StreamId::from(7),
+                StreamDependency::new(StreamId::zero(), 0, false),
+            ),
+            Priority::new(
+                StreamId::from(9),
+                StreamDependency::new(StreamId::from(7), 0, false),
+            ),
+            Priority::new(
+                StreamId::from(11),
+                StreamDependency::new(StreamId::from(3), 0, false),
+            ),
+            Priority::new(
+                StreamId::from(13),
+                StreamDependency::new(StreamId::zero(), 240, false),
+            ),
+        ]
+    });
 }
 
 firefox_mod_generator!(

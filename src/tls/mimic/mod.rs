@@ -37,6 +37,7 @@ mod tls_imports {
 mod http2_imports {
     pub use hyper2::PseudoOrder::{self, *};
     pub use hyper2::SettingsOrder::{self, *};
+    pub use std::sync::LazyLock;
 }
 
 #[inline]

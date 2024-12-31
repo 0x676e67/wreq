@@ -5,7 +5,7 @@ use crate::{
 };
 use boring::{ssl::SslCurve, x509::store::X509Store};
 use http::{HeaderMap, HeaderName};
-use hyper2::{PseudoOrder, SettingsOrder};
+use hyper2::{Priority, PseudoOrder, SettingsOrder};
 use std::borrow::Cow;
 use typed_builder::TypedBuilder;
 
@@ -269,4 +269,9 @@ pub struct Http2Settings {
     /// The pseudo header order.
     #[builder(default, setter(into))]
     pub headers_pseudo_order: Option<[PseudoOrder; 4]>,
+
+    // ============== priority ==============
+    /// The priority of the stream.
+    #[builder(default, setter(into))]
+    pub priority: Option<Cow<'static, [Priority]>>,
 }
