@@ -66,7 +66,7 @@ macro_rules! firefox_http2_template {
             .headers_priority((13, 41, false))
             .headers_pseudo_order(super::HEADERS_PSEUDO_ORDER)
             .settings_order(super::SETTINGS_ORDER)
-            .priority(Cow::Borrowed(super::PRIORITY_109.as_slice()))
+            .priority(Cow::Borrowed(super::PRIORITY.as_slice()))
             .build()
     }};
 }
@@ -277,7 +277,7 @@ mod http2 {
         UnknownSetting9,
     ];
 
-    pub static PRIORITY_109: LazyLock<Vec<Priority>> = LazyLock::new(|| {
+    pub static PRIORITY: LazyLock<Vec<Priority>> = LazyLock::new(|| {
         vec![
             Priority::new(
                 StreamId::from(3),
