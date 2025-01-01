@@ -22,7 +22,7 @@ use typed_builder::TypedBuilder;
 
 pub use crate::mimic::Impersonate;
 pub use conn::{HttpsConnector, MaybeHttpsStream};
-pub use ext::{cert_compression, TlsBuilderExtension, TlsConnectExtension};
+pub use ext::{cert_compression, TlsBuilderExtension, TlsConnectExtension, TlsExtension};
 
 type TlsResult<T> = Result<T, ErrorStack>;
 
