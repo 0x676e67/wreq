@@ -142,6 +142,7 @@ where
     /// Registers a callback which can customize the SSL context for a given URI.
     ///
     /// This callback is executed after the callback registered by [`Self::set_ssl_callback`] is executed.
+    #[inline]
     pub fn set_ssl_callback<F>(&mut self, callback: F)
     where
         F: Fn(&mut SslRef, &Uri) -> Result<(), ErrorStack> + 'static + Sync + Send,
@@ -162,11 +163,7 @@ where
     where
         A: Read + Write + Unpin + Send + Sync + Debug + 'static,
     {
-        let ssl = self.inner.setup_ssl(uri, host)?;
-        tokio_boring::SslStreamBuilder::new(ssl, TokioIo::new(conn))
-            .connect()
-            .await
-            .map_err(Into::into)
+        self.inner.connect(uri, host, conn).await
     }
 }
 
@@ -259,6 +256,25 @@ impl<S> Layer<S> for HttpsLayer {
 }
 
 impl Inner {
+    /// Connects to the given URI using the given connection.
+    ///
+    /// This function is used to connect to the given URI using the given connection.
+    pub async fn connect<A>(
+        &self,
+        uri: &Uri,
+        host: &str,
+        conn: A,
+    ) -> Result<SslStream<TokioIo<A>>, BoxError>
+    where
+        A: Read + Write + Unpin + Send + Sync + Debug + 'static,
+    {
+        let ssl = self.setup_ssl(uri, host)?;
+        tokio_boring::SslStreamBuilder::new(ssl, TokioIo::new(conn))
+            .connect()
+            .await
+            .map_err(Into::into)
+    }
+
     fn setup_ssl(&self, uri: &Uri, host: &str) -> Result<Ssl, ErrorStack> {
         let mut conf = self.ssl.configure()?;
 
@@ -312,26 +328,20 @@ where
     }
 
     fn call(&mut self, uri: Uri) -> Self::Future {
-        let is_tls_scheme = uri
-            .scheme()
-            .map(|s| s == &Scheme::HTTPS || s.as_str() == "wss")
-            .unwrap_or(false);
+        // Early return if it is not a tls scheme
+        if uri.scheme() != Some(&Scheme::HTTPS) {
+            let connect = self.http.call(uri);
+            return Box::pin(async move {
+                let conn = connect.await.map_err(Into::into)?;
+                Ok(MaybeHttpsStream::Http(conn))
+            });
+        }
 
-        let tls_setup = if is_tls_scheme {
-            Some((self.inner.clone(), uri.clone()))
-        } else {
-            None
-        };
+        let connect = self.http.call(uri.clone());
+        let inner = self.inner.clone();
 
-        let connect = self.http.call(uri);
-
-        let f = async {
+        let f = async move {
             let conn = connect.await.map_err(Into::into)?;
-
-            let (inner, uri) = match tls_setup {
-                Some((inner, uri)) => (inner, uri),
-                None => return Ok(MaybeHttpsStream::Http(conn)),
-            };
 
             let mut host = uri.host().ok_or("URI missing host")?;
 
@@ -349,14 +359,11 @@ where
                 }
             }
 
-            let ssl = inner.setup_ssl(&uri, host)?;
-            let stream = tokio_boring::SslStreamBuilder::new(ssl, TokioIo::new(conn))
-                .connect()
+            inner
+                .connect(&uri, host, conn)
                 .await
                 .map(TokioIo::new)
-                .map(MaybeHttpsStream::Https)?;
-
-            Ok(stream)
+                .map(MaybeHttpsStream::Https)
         };
 
         Box::pin(f)
