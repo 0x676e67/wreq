@@ -14,13 +14,13 @@
 //! - Uses [BoringSSL](#tls)
 //! - HTTP [Proxies](#proxies)
 //! - [Preconfigured](#preconfigured-tls) `TLS`/`HTTP2`/`Headers` settings
-//! - Chrome / Safari / Edge / OkHttp [Fingerprint](#impersonate)
-//! - [Changelog](https://github.com/0x676e67/rquest/blob/main/CHANGELOG.md)
+//! - Perfect minic of `Chrome`/`Safari`/`Firefox` [Fingerprint](#impersonate)
+//! - [Changelog](https://github.com/penumbra-x/rquest/blob/main/CHANGELOG.md)
 //!
 //! Additional learning resources include:
 //!
-//! - [The Rust Cookbook](https://rust-lang-nursery.github.io/rust-cookbook/web/clients.html)
-//! - [Repository Examples](https://github.com/0x676e67/rquest/tree/master/examples)
+//! - [The Rust Cookbook](https://doc.rust-lang.org/stable/book/ch00-00-introduction.html)
+//! - [Repository Examples](https://github.com/penumbra-x/rquest/tree/main/examples)
 //!
 //! ## Impersonate
 //!

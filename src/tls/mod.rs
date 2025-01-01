@@ -56,7 +56,7 @@ impl BoringTlsConnector {
             connector.enable_signed_cert_timestamps();
         }
 
-        if let Some(false) = settings.session_ticket {
+        if !settings.session_ticket {
             connector.set_options(SslOptions::NO_TICKET);
         }
 

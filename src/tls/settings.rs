@@ -11,30 +11,23 @@ use typed_builder::TypedBuilder;
 
 #[derive(TypedBuilder, Debug)]
 pub struct ImpersonateSettings {
-    /// TLS settings
     pub(crate) tls: TlsSettings,
 
-    /// HTTP/2 settings.
     pub(crate) http2: Http2Settings,
 
-    /// Http headers
     #[builder(default, setter(into))]
     pub(crate) headers: Option<Cow<'static, HeaderMap>>,
 
-    /// Http headers order
     #[builder(default, setter(into))]
     pub(crate) headers_order: Option<Cow<'static, [HeaderName]>>,
 }
 
 #[derive(Default)]
 pub enum RootCertsStore {
-    /// Use owned root certificates store.
     Owned(X509Store),
 
-    /// Use static root certificates store.
     Borrowed(&'static X509Store),
 
-    /// No root certificates store.
     #[default]
     None,
 }
@@ -88,99 +81,75 @@ where
 
 #[derive(TypedBuilder, Default)]
 pub struct TlsSettings {
-    /// Root certificates store.
     #[builder(default)]
     pub root_certs_store: RootCertsStore,
 
-    /// Verify certificates.
     #[builder(default = true)]
     pub certs_verification: bool,
 
-    /// Enable TLS SNI
     #[builder(default = true)]
     pub tls_sni: bool,
 
-    /// Verify hostname.
     #[builder(default = true)]
     pub verify_hostname: bool,
 
-    /// The HTTP version preference (setting alpn).
     #[builder(default = HttpVersionPref::All)]
     pub alpn_protos: HttpVersionPref,
 
-    /// No session ticket
-    #[builder(default, setter(into))]
-    pub session_ticket: Option<bool>,
+    #[builder(default = true)]
+    pub session_ticket: bool,
 
-    /// The minimum TLS version to use.
     #[builder(default, setter(into))]
     pub min_tls_version: Option<TlsVersion>,
 
-    /// The maximum TLS version to use.
     #[builder(default, setter(into))]
     pub max_tls_version: Option<TlsVersion>,
 
-    /// Enable application settings.
     #[builder(default = false)]
     pub application_settings: bool,
 
-    /// Enable PSK.
     #[builder(default = false)]
     pub pre_shared_key: bool,
 
-    /// Enable ECH grease.
     #[builder(default = false)]
     pub enable_ech_grease: bool,
 
-    /// Permute extensions.
     #[builder(default, setter(into))]
     pub permute_extensions: Option<bool>,
 
-    /// Enable grease enabled.
     #[builder(default, setter(into))]
     pub grease_enabled: Option<bool>,
 
-    /// Enable OCSP stapling.
     #[builder(default = false)]
     pub enable_ocsp_stapling: bool,
 
-    /// The curves to use.
     #[builder(default, setter(into))]
     pub curves: Option<Cow<'static, [SslCurve]>>,
 
-    /// The signature algorithms list to use.
     #[builder(default, setter(into))]
     pub sigalgs_list: Option<Cow<'static, str>>,
 
-    /// The delegated credentials algorithm to use.
     #[builder(default, setter(into))]
     pub delegated_credentials: Option<Cow<'static, str>>,
 
-    /// The cipher list to use.
     #[builder(default, setter(into))]
     pub cipher_list: Option<Cow<'static, str>>,
 
-    /// Enable signed cert timestamps.
     #[builder(default = false)]
     pub enable_signed_cert_timestamps: bool,
 
-    /// The certificate compression algorithm to use.
     #[builder(default, setter(into))]
     pub cert_compression_algorithm: Option<Cow<'static, [CertCompressionAlgorithm]>>,
 
-    /// Set record size limit.
     #[builder(default, setter(into))]
     pub record_size_limit: Option<u16>,
 
-    /// PSk with skip session ticket.
     #[builder(default = false)]
     pub psk_skip_session_ticket: bool,
 
-    /// The key shares length limit.
     #[builder(default, setter(into))]
     pub key_shares_length_limit: Option<u8>,
 
-    /// The extension permutation index.
     #[builder(default, setter(into))]
     pub extension_permutation_indices: Option<Cow<'static, [u8]>>,
 }
@@ -215,63 +184,49 @@ impl_debug!(
 
 #[derive(TypedBuilder, Debug)]
 pub struct Http2Settings {
-    /// The initial stream id.
     #[builder(default, setter(into))]
     pub initial_stream_id: Option<u32>,
 
     // ============== windows update frame ==============
-    /// The initial connection window size.
     #[builder(default, setter(into))]
     pub initial_connection_window_size: Option<u32>,
 
     // ============== settings frame ==============
-    /// The header table size.
     #[builder(default, setter(into))]
     pub header_table_size: Option<u32>,
 
-    /// Enable push.
     #[builder(default, setter(into))]
     pub enable_push: Option<bool>,
 
-    /// The maximum concurrent streams.
     #[builder(default, setter(into))]
     pub max_concurrent_streams: Option<u32>,
 
-    /// The initial stream window size.
     #[builder(default, setter(into))]
     pub initial_stream_window_size: Option<u32>,
 
-    /// The max frame size
     #[builder(default, setter(into))]
     pub max_frame_size: Option<u32>,
 
-    /// The maximum header list size.
     #[builder(default, setter(into))]
     pub max_header_list_size: Option<u32>,
 
-    /// Unknown setting8.
     #[builder(default, setter(into))]
     pub unknown_setting8: Option<bool>,
 
-    /// Unknown setting9.
     #[builder(default, setter(into))]
     pub unknown_setting9: Option<bool>,
 
-    /// The settings order.
     #[builder(default, setter(strip_option))]
     pub settings_order: Option<[SettingsOrder; 8]>,
 
     // ============== headers frame ==============
-    /// The priority of the headers.
     #[builder(default, setter(into))]
     pub headers_priority: Option<(u32, u8, bool)>,
 
-    /// The pseudo header order.
     #[builder(default, setter(into))]
     pub headers_pseudo_order: Option<[PseudoOrder; 4]>,
 
     // ============== priority ==============
-    /// The priority of the stream.
     #[builder(default, setter(into))]
     pub priority: Option<Cow<'static, [Priority]>>,
 }
