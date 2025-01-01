@@ -111,45 +111,89 @@ impl TcpKeepaliveConfig {
         }
     }
 
-    #[cfg(not(any(
-        target_os = "aix",
-        target_os = "openbsd",
-        target_os = "redox",
-        target_os = "solaris"
-    )))]
+    #[cfg(
+        // See https://docs.rs/socket2/0.5.8/src/socket2/lib.rs.html#511-525
+        any(
+            target_os = "android",
+            target_os = "dragonfly",
+            target_os = "freebsd",
+            target_os = "fuchsia",
+            target_os = "illumos",
+            target_os = "ios",
+            target_os = "visionos",
+            target_os = "linux",
+            target_os = "macos",
+            target_os = "netbsd",
+            target_os = "tvos",
+            target_os = "watchos",
+            target_os = "windows",
+        )
+    )]
     fn ka_with_interval(ka: TcpKeepalive, interval: Duration, dirty: &mut bool) -> TcpKeepalive {
         *dirty = true;
         ka.with_interval(interval)
     }
 
-    #[cfg(any(
-        target_os = "aix",
-        target_os = "openbsd",
-        target_os = "redox",
-        target_os = "solaris"
-    ))]
+    #[cfg(not(
+        // See https://docs.rs/socket2/0.5.8/src/socket2/lib.rs.html#511-525
+       any(
+           target_os = "android",
+           target_os = "dragonfly",
+           target_os = "freebsd",
+           target_os = "fuchsia",
+           target_os = "illumos",
+           target_os = "ios",
+           target_os = "visionos",
+           target_os = "linux",
+           target_os = "macos",
+           target_os = "netbsd",
+           target_os = "tvos",
+           target_os = "watchos",
+           target_os = "windows",
+       )
+   ))]
     fn ka_with_interval(ka: TcpKeepalive, _: Duration, _: &mut bool) -> TcpKeepalive {
         ka // no-op as keepalive interval is not supported on this platform
     }
 
-    #[cfg(not(any(
-        target_os = "aix",
-        target_os = "openbsd",
-        target_os = "redox",
-        target_os = "solaris",
-        target_os = "windows"
-    )))]
+    #[cfg(
+        // See https://docs.rs/socket2/0.5.8/src/socket2/lib.rs.html#557-570
+        any(
+            target_os = "android",
+            target_os = "dragonfly",
+            target_os = "freebsd",
+            target_os = "fuchsia",
+            target_os = "illumos",
+            target_os = "ios",
+            target_os = "visionos",
+            target_os = "linux",
+            target_os = "macos",
+            target_os = "netbsd",
+            target_os = "tvos",
+            target_os = "watchos",
+        )
+    )]
     fn ka_with_retries(ka: TcpKeepalive, retries: u32, dirty: &mut bool) -> TcpKeepalive {
         *dirty = true;
         ka.with_retries(retries)
     }
 
-    #[cfg(any(
-        target_os = "aix",
-        target_os = "openbsd",
-        target_os = "redox",
-        target_os = "solaris",
-        target_os = "windows"
+    #[cfg(not(
+        // See https://docs.rs/socket2/0.5.8/src/socket2/lib.rs.html#557-570
+        any(
+            target_os = "android",
+            target_os = "dragonfly",
+            target_os = "freebsd",
+            target_os = "fuchsia",
+            target_os = "illumos",
+            target_os = "ios",
+            target_os = "visionos",
+            target_os = "linux",
+            target_os = "macos",
+            target_os = "netbsd",
+            target_os = "tvos",
+            target_os = "watchos",
+        )
     ))]
     fn ka_with_retries(ka: TcpKeepalive, _: u32, _: &mut bool) -> TcpKeepalive {
         ka // no-op as keepalive retries is not supported on this platform
