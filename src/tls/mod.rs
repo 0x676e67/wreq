@@ -10,7 +10,7 @@
 mod conn;
 mod ext;
 
-use crate::{impl_debug, tls::cert_compression::CertCompressionAlgorithm, HttpVersionPref};
+use crate::{impl_debug, HttpVersionPref};
 use boring::{
     error::ErrorStack,
     ssl::{SslConnector, SslMethod, SslOptions, SslVersion},
@@ -22,7 +22,10 @@ use typed_builder::TypedBuilder;
 
 pub use crate::mimic::Impersonate;
 pub use conn::{HttpsConnector, MaybeHttpsStream};
-pub use ext::{cert_compression, TlsBuilderExtension, TlsConnectExtension, TlsExtension};
+pub use ext::{
+    cert_compression::CertCompressionAlgorithm, TlsBuilderExtension, TlsConnectExtension,
+    TlsExtension,
+};
 
 type TlsResult<T> = Result<T, ErrorStack>;
 

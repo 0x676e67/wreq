@@ -34,9 +34,7 @@ mod impersonate_imports {
 }
 
 mod tls_imports {
-    pub(crate) use crate::tls::{
-        cert_compression::CertCompressionAlgorithm, TlsSettings, TlsVersion,
-    };
+    pub(crate) use crate::tls::{CertCompressionAlgorithm, TlsSettings, TlsVersion};
     pub use crate::HttpVersionPref;
     pub use boring::ssl::{ExtensionType, SslCurve};
     pub use std::borrow::Cow;
