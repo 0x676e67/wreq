@@ -10,13 +10,18 @@
 mod conn;
 mod ext;
 
-pub use crate::mimic::Impersonate;
+use crate::{impl_debug, tls::cert_compression::CertCompressionAlgorithm, HttpVersionPref};
 use boring::{
     error::ErrorStack,
     ssl::{SslConnector, SslMethod, SslOptions, SslVersion},
 };
-pub use conn::{HttpsConnector, MaybeHttpsStream};
+use boring::{ssl::SslCurve, x509::store::X509Store};
 use conn::{HttpsLayer, HttpsLayerSettings};
+use std::borrow::Cow;
+use typed_builder::TypedBuilder;
+
+pub use crate::mimic::Impersonate;
+pub use conn::{HttpsConnector, MaybeHttpsStream};
 pub use ext::{cert_compression, TlsBuilderExtension, TlsConnectExtension};
 
 type TlsResult<T> = Result<T, ErrorStack>;
@@ -116,13 +121,13 @@ impl BoringTlsConnector {
 
         // Create the `HttpsLayerSettings` with the default session cache capacity.
         let settings = HttpsLayerSettings::builder()
-            .session_cache_capacity(8)
             .session_cache(settings.pre_shared_key)
             .skip_session_ticket(settings.psk_skip_session_ticket)
             .alpn_protos(settings.alpn_protos)
             .application_settings(settings.application_settings)
             .enable_ech_grease(settings.enable_ech_grease)
             .tls_sni(settings.tls_sni)
+            .verify_hostname(settings.verify_hostname)
             .build();
 
         Ok(Self(HttpsLayer::with_connector_and_settings(
@@ -161,11 +166,6 @@ impl TlsInfo {
         self.peer_certificate.as_ref().map(|der| &der[..])
     }
 }
-
-use crate::{impl_debug, tls::cert_compression::CertCompressionAlgorithm, HttpVersionPref};
-use boring::{ssl::SslCurve, x509::store::X509Store};
-use std::borrow::Cow;
-use typed_builder::TypedBuilder;
 
 #[derive(Default)]
 pub enum RootCertsStore {
@@ -224,7 +224,7 @@ where
     }
 }
 
-#[derive(TypedBuilder, Default)]
+#[derive(TypedBuilder)]
 pub struct TlsSettings {
     #[builder(default)]
     pub root_certs_store: RootCertsStore,
@@ -297,6 +297,12 @@ pub struct TlsSettings {
 
     #[builder(default, setter(into))]
     pub extension_permutation_indices: Option<Cow<'static, [u8]>>,
+}
+
+impl Default for TlsSettings {
+    fn default() -> Self {
+        Self::builder().build()
+    }
 }
 
 impl_debug!(

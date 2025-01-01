@@ -53,8 +53,8 @@ impl Default for HttpsLayerSettings {
             skip_session_ticket: false,
             application_settings: false,
             enable_ech_grease: false,
-            verify_hostname: false,
-            tls_sni: false,
+            verify_hostname: true,
+            tls_sni: true,
             alpn_protos: HttpVersionPref::All,
         }
     }
@@ -95,13 +95,13 @@ impl HttpsLayerSettingsBuilder {
         self
     }
 
-    /// Sets whether to enable TLS SNI. Defaults to `false`.
+    /// Sets whether to enable TLS SNI. Defaults to `true`.
     pub fn tls_sni(mut self, enable: bool) -> Self {
         self.0.tls_sni = enable;
         self
     }
 
-    /// Sets whether to enable hostname verification. Defaults to `false`.
+    /// Sets whether to enable hostname verification. Defaults to `true`.
     pub fn verify_hostname(mut self, enable: bool) -> Self {
         self.0.verify_hostname = enable;
         self
