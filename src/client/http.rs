@@ -1365,7 +1365,7 @@ impl Client {
         self.inner.proxy_auth(&uri, &mut headers);
 
         let in_flight = {
-            let req = InnerRequest::builder()
+            let res = InnerRequest::builder()
                 .network_scheme(self.inner.network_scheme(&uri, &network_scheme))
                 .uri(uri)
                 .method(method.clone())
@@ -1374,7 +1374,10 @@ impl Client {
                 .headers_order(self.inner.headers_order.as_deref())
                 .body(body);
 
-            ResponseFuture::Default(self.inner.hyper.request(req))
+            match res {
+                Ok(req) => ResponseFuture::Default(self.inner.hyper.request(req)),
+                Err(err) => return Pending::new_err(error::builder(err)),
+            }
         };
 
         let total_timeout = timeout
@@ -1946,7 +1949,7 @@ impl PendingRequest {
         };
 
         *self.as_mut().in_flight().get_mut() = {
-            let req = InnerRequest::builder()
+            let res = InnerRequest::builder()
                 .network_scheme(self.client.network_scheme(&uri, &self.network_scheme))
                 .uri(uri)
                 .method(self.method.clone())
@@ -1954,7 +1957,13 @@ impl PendingRequest {
                 .headers(self.headers.clone())
                 .headers_order(self.client.headers_order.as_deref())
                 .body(body);
-            ResponseFuture::Default(self.client.hyper.request(req))
+
+            if let Ok(req) = res {
+                ResponseFuture::Default(self.client.hyper.request(req))
+            } else {
+                log::trace!("error request build");
+                return false;
+            }
         };
 
         true
@@ -2201,7 +2210,8 @@ impl Future for PendingRequest {
                                     .version(self.version)
                                     .headers(headers.clone())
                                     .headers_order(self.client.headers_order.as_deref())
-                                    .body(body);
+                                    .body(body)?;
+
                                 std::mem::swap(self.as_mut().headers(), &mut headers);
                                 ResponseFuture::Default(self.client.hyper.request(req))
                             };

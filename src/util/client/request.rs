@@ -5,8 +5,8 @@ use std::marker::PhantomData;
 use super::NetworkScheme;
 use crate::{error::BoxError, HttpVersionPref};
 use http::{
-    header::CONTENT_LENGTH, request::Builder, HeaderMap, HeaderName, HeaderValue, Method, Request,
-    Uri, Version,
+    header::CONTENT_LENGTH, request::Builder, Error, HeaderMap, HeaderName, HeaderValue, Method,
+    Request, Uri, Version,
 };
 use http_body::Body;
 
@@ -111,7 +111,7 @@ where
 
     /// Set the body for the request.
     #[inline]
-    pub fn body(mut self, body: B) -> InnerRequest<B> {
+    pub fn body(mut self, body: B) -> Result<InnerRequest<B>, Error> {
         if let Some(order) = self.headers_order {
             if let Some(headers) = self.builder.headers_mut() {
                 add_content_length_header(&body, headers);
@@ -119,11 +119,11 @@ where
             }
         }
 
-        InnerRequest {
-            request: self.builder.body(body).expect("failed to build request"),
+        self.builder.body(body).map(|request| InnerRequest {
+            request,
             version_pref: self.version_pref,
             network_scheme: self.network_scheme,
-        }
+        })
     }
 }
 
