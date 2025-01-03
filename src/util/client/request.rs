@@ -23,7 +23,7 @@ where
 
 impl<B> InnerRequest<B>
 where
-    B: Body + Send + 'static + Unpin,
+    B: Body + Send + Unpin + 'static,
     B::Data: Send,
     B::Error: Into<BoxError>,
 {
@@ -31,7 +31,7 @@ where
         InnerRequestBuilder {
             builder: Request::builder(),
             version_pref: None,
-            network_scheme: NetworkScheme::None,
+            network_scheme: Default::default(),
             headers_order: None,
             _body: PhantomData,
         }
@@ -113,11 +113,8 @@ where
     #[inline]
     pub fn body(mut self, body: B) -> InnerRequest<B> {
         if let Some(order) = self.headers_order {
-            let method = self.builder.method_ref().cloned();
-            let headers_mut = self.builder.headers_mut();
-
-            if let (Some(headers), Some(method)) = (headers_mut, method) {
-                add_content_length_header(method, &body, headers);
+            if let Some(headers) = self.builder.headers_mut() {
+                add_content_length_header(&body, headers);
                 crate::util::sort_headers(headers, order);
             }
         }
@@ -138,20 +135,13 @@ fn map_version_to_pref(version: Version) -> HttpVersionPref {
     }
 }
 
-fn add_content_length_header<B>(method: Method, body: &B, headers: &mut HeaderMap)
+fn add_content_length_header<B>(body: &B, headers: &mut HeaderMap)
 where
     B: Body,
 {
     if let Some(len) = http_body::Body::size_hint(body).exact() {
-        let needs_content_length = len != 0
-            || !matches!(
-                method,
-                Method::GET | Method::HEAD | Method::DELETE | Method::CONNECT
-            );
-        if needs_content_length {
-            headers
-                .entry(CONTENT_LENGTH)
-                .or_insert_with(|| HeaderValue::from(len));
-        }
+        headers
+            .entry(CONTENT_LENGTH)
+            .or_insert_with(|| HeaderValue::from(len));
     }
 }
