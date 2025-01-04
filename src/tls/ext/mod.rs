@@ -56,10 +56,7 @@ pub trait SslRefExt {
 /// TlsConnectExtension trait for `ConnectConfiguration`.
 pub trait ConnectConfigurationExt {
     /// Configure the enable_ech_grease for the given `ConnectConfiguration`.
-    fn enable_ech_grease(
-        &mut self,
-        enable: bool,
-    ) -> TlsResult<&mut ConnectConfiguration>;
+    fn enable_ech_grease(&mut self, enable: bool) -> TlsResult<&mut ConnectConfiguration>;
 
     /// Configure the ALPS for the given `ConnectConfiguration`.
     fn alps_proto(&mut self, alps: AlpsProto) -> TlsResult<&mut ConnectConfiguration>;
@@ -70,11 +67,11 @@ pub trait ConnectConfigurationExt {
 
 impl SslConnectorBuilderExt for SslConnectorBuilder {
     #[inline]
-    fn cert_verification(mut self, certs_verification: bool) -> TlsResult<SslConnectorBuilder> {
-        if !certs_verification {
-            self.set_verify(SslVerifyMode::NONE);
-        } else {
+    fn cert_verification(mut self, enable: bool) -> TlsResult<SslConnectorBuilder> {
+        if enable {
             self.set_verify(SslVerifyMode::PEER);
+        } else {
+            self.set_verify(SslVerifyMode::NONE);
         }
         Ok(self)
     }
@@ -119,10 +116,7 @@ impl SslConnectorBuilderExt for SslConnectorBuilder {
     }
 
     #[inline]
-    fn root_certs_store(
-        mut self,
-        store: RootCertsStore,
-    ) -> TlsResult<SslConnectorBuilder> {
+    fn root_certs_store(mut self, store: RootCertsStore) -> TlsResult<SslConnectorBuilder> {
         // Conditionally configure the TLS builder based on the "native-roots" feature.
         // If no custom CA cert store, use the system's native certificate store if the feature is enabled.
         match store {
@@ -166,10 +160,7 @@ impl SslConnectorBuilderExt for SslConnectorBuilder {
 
 impl ConnectConfigurationExt for ConnectConfiguration {
     #[inline]
-    fn enable_ech_grease(
-        &mut self,
-        enable: bool,
-    ) -> TlsResult<&mut ConnectConfiguration> {
+    fn enable_ech_grease(&mut self, enable: bool) -> TlsResult<&mut ConnectConfiguration> {
         unsafe { boring_sys::SSL_set_enable_ech_grease(self.as_ptr(), enable as _) }
         Ok(self)
     }
