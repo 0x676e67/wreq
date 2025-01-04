@@ -41,7 +41,7 @@ use crate::dns::{gai::GaiResolver, DnsResolverWithOverrides, DynResolver, Resolv
 use crate::into_url::try_uri;
 use crate::mimic::{self, Impersonate, ImpersonateSettings};
 use crate::redirect::{self, remove_sensitive_headers};
-use crate::tls::{self, BoringTlsConnector, TlsSettings};
+use crate::tls::{self, AlpnProtos, BoringTlsConnector, TlsSettings};
 use crate::{error, impl_debug};
 use crate::{IntoUrl, Method, Proxy, StatusCode, Url};
 #[cfg(feature = "hickory-dns")]
@@ -73,18 +73,6 @@ pub struct Client {
 #[derive(Debug)]
 pub struct ClientBuilder {
     config: Config,
-}
-
-/// A `HttpVersionPref` is used to set the HTTP version preference.
-#[derive(Debug, Clone, Copy, Default)]
-pub enum HttpVersionPref {
-    /// Prefer HTTP/1.1
-    Http1,
-    /// Prefer HTTP/2
-    Http2,
-    /// Prefer HTTP/1 and HTTP/2
-    #[default]
-    All,
 }
 
 #[cfg(feature = "cookies")]
@@ -800,7 +788,7 @@ impl ClientBuilder {
     /// Default is Http/1.
     pub fn http1_only(mut self) -> ClientBuilder {
         {
-            self.config.tls.alpn_protos = HttpVersionPref::Http1;
+            self.config.tls.alpn_protos = AlpnProtos::Http1;
         }
 
         self.config.builder.http2_only(false);
@@ -810,7 +798,7 @@ impl ClientBuilder {
     /// Only use HTTP/2.
     pub fn http2_only(mut self) -> ClientBuilder {
         {
-            self.config.tls.alpn_protos = HttpVersionPref::Http2;
+            self.config.tls.alpn_protos = AlpnProtos::Http2;
         }
 
         self.config.builder.http2_only(true);

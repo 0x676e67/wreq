@@ -10,7 +10,7 @@
 mod conn;
 mod ext;
 
-use crate::{impl_debug, HttpVersionPref};
+use crate::impl_debug;
 use boring::{
     error::ErrorStack,
     ssl::{SslConnector, SslMethod, SslOptions, SslVersion},
@@ -31,7 +31,7 @@ type TlsResult<T> = Result<T, ErrorStack>;
 
 /// A wrapper around a `HttpsLayer` that allows for additional settings.
 #[derive(Clone)]
-pub struct BoringTlsConnector(HttpsLayer);
+pub(crate) struct BoringTlsConnector(HttpsLayer);
 
 impl BoringTlsConnector {
     /// Create a new `BoringTlsConnector` with the given function.
@@ -135,6 +135,18 @@ impl TlsVersion {
     pub const TLS_1_3: TlsVersion = TlsVersion(SslVersion::TLS1_3);
 }
 
+/// A `AlpnProtos` is used to set the HTTP version preference.
+#[derive(Debug, Clone, Copy, Default)]
+pub enum AlpnProtos {
+    /// Prefer HTTP/1.1
+    Http1,
+    /// Prefer HTTP/2
+    Http2,
+    /// Prefer HTTP/1 and HTTP/2
+    #[default]
+    All,
+}
+
 /// Hyper extension carrying extra TLS layer information.
 /// Made available to clients on responses when `tls_info` is set.
 #[derive(Debug, Clone)]
@@ -214,8 +226,8 @@ pub struct TlsSettings {
     #[builder(default = true)]
     pub verify_hostname: bool,
 
-    #[builder(default = HttpVersionPref::All)]
-    pub alpn_protos: HttpVersionPref,
+    #[builder(default = AlpnProtos::All)]
+    pub alpn_protos: AlpnProtos,
 
     #[builder(default = true)]
     pub session_ticket: bool,

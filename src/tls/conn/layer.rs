@@ -4,10 +4,9 @@ use super::{key_index, HttpsLayerSettings, MaybeHttpsStream};
 use crate::connect::HttpConnector;
 use crate::error::BoxError;
 use crate::tls::ext::SslRefExt;
-use crate::tls::{BoringTlsConnector, ConnectConfigurationExt};
+use crate::tls::{AlpnProtos, BoringTlsConnector, ConnectConfigurationExt};
 use crate::util::client::connect::Connection;
 use crate::util::rt::TokioIo;
-use crate::HttpVersionPref;
 use antidote::Mutex;
 use boring::error::ErrorStack;
 use boring::ssl::{
@@ -29,7 +28,7 @@ use tower_layer::Layer;
 use tower_service::Service;
 
 pub(crate) struct HttpsConnectorBuilder {
-    version: Option<HttpVersionPref>,
+    version: Option<AlpnProtos>,
     http: HttpConnector,
 }
 
@@ -43,9 +42,9 @@ impl HttpsConnectorBuilder {
     }
 
     #[inline]
-    pub fn with_version_pref<V>(mut self, version: V) -> Self
+    pub fn with_alpn_protos<V>(mut self, version: V) -> Self
     where
-        V: Into<Option<HttpVersionPref>>,
+        V: Into<Option<AlpnProtos>>,
     {
         self.version = version.into();
         self

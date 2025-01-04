@@ -3,7 +3,7 @@
 use std::marker::PhantomData;
 
 use super::NetworkScheme;
-use crate::{error::BoxError, HttpVersionPref};
+use crate::{error::BoxError, AlpnProtos};
 use http::{
     header::CONTENT_LENGTH, request::Builder, Error, HeaderMap, HeaderName, HeaderValue, Method,
     Request, Uri, Version,
@@ -17,7 +17,7 @@ where
     B::Error: Into<BoxError>,
 {
     request: Request<B>,
-    version_pref: Option<HttpVersionPref>,
+    version_pref: Option<AlpnProtos>,
     network_scheme: NetworkScheme,
 }
 
@@ -30,14 +30,14 @@ where
     pub fn builder<'a>() -> InnerRequestBuilder<'a, B> {
         InnerRequestBuilder {
             builder: Request::builder(),
-            version_pref: None,
+            alpn_protos: None,
             network_scheme: Default::default(),
             headers_order: None,
             _body: PhantomData,
         }
     }
 
-    pub fn pieces(self) -> (Request<B>, NetworkScheme, Option<HttpVersionPref>) {
+    pub fn pieces(self) -> (Request<B>, NetworkScheme, Option<AlpnProtos>) {
         (self.request, self.network_scheme, self.version_pref)
     }
 }
@@ -50,7 +50,7 @@ where
     B::Error: Into<BoxError>,
 {
     builder: Builder,
-    version_pref: Option<HttpVersionPref>,
+    alpn_protos: Option<AlpnProtos>,
     network_scheme: NetworkScheme,
     headers_order: Option<&'a [HeaderName]>,
     _body: PhantomData<B>,
@@ -81,7 +81,7 @@ where
     pub fn version(mut self, version: impl Into<Option<Version>>) -> Self {
         if let Some(version) = version.into() {
             self.builder = self.builder.version(version);
-            self.version_pref = Some(map_version_to_pref(version));
+            self.alpn_protos = Some(map_alpn_protos(version));
         }
         self
     }
@@ -121,17 +121,17 @@ where
 
         self.builder.body(body).map(|request| InnerRequest {
             request,
-            version_pref: self.version_pref,
+            version_pref: self.alpn_protos,
             network_scheme: self.network_scheme,
         })
     }
 }
 
-fn map_version_to_pref(version: Version) -> HttpVersionPref {
+fn map_alpn_protos(version: Version) -> AlpnProtos {
     match version {
-        Version::HTTP_11 | Version::HTTP_10 | Version::HTTP_09 => HttpVersionPref::Http1,
-        Version::HTTP_2 => HttpVersionPref::Http2,
-        _ => HttpVersionPref::default(),
+        Version::HTTP_11 | Version::HTTP_10 | Version::HTTP_09 => AlpnProtos::Http1,
+        Version::HTTP_2 => AlpnProtos::Http2,
+        _ => AlpnProtos::default(),
     }
 }
 

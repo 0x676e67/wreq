@@ -32,7 +32,7 @@ use sync_wrapper::SyncWrapper;
 
 use crate::proxy::ProxyScheme;
 use crate::util::common;
-use crate::{impl_debug, HttpVersionPref};
+use crate::{impl_debug, AlpnProtos};
 use connect::capture::CaptureConnectionExtension;
 use connect::{Alpn, Connect, Connected, Connection};
 use pool::Ver;
@@ -123,7 +123,7 @@ type PoolKey = (NetworkScheme, Uri);
 /// This is used to store the destination of the request, the http version pref, and the pool key.
 #[derive(Clone)]
 pub struct Dst {
-    version_pref: Option<HttpVersionPref>,
+    alpn_protos: Option<AlpnProtos>,
     pool_key: PoolKey,
 }
 
@@ -133,7 +133,7 @@ impl Dst {
         req: &mut Request<B>,
         is_http_connect: bool,
         network_scheme: NetworkScheme,
-        version_pref: Option<HttpVersionPref>,
+        alpn_protos: Option<AlpnProtos>,
     ) -> Result<Dst, Error> {
         let uri = req.uri_mut();
         let (scheme, auth) = match (uri.scheme().cloned(), uri.authority().cloned()) {
@@ -161,7 +161,7 @@ impl Dst {
         into_uri(scheme, auth)
             .map(|uri| Dst {
                 pool_key: (network_scheme, uri),
-                version_pref,
+                alpn_protos,
             })
             .map_err(|_| e!(UserAbsoluteUriRequired))
     }
@@ -172,8 +172,8 @@ impl Dst {
     }
 
     /// Get the http version pref
-    pub fn version_pref(&self) -> Option<HttpVersionPref> {
-        self.version_pref
+    pub fn alpn_protos(&self) -> Option<AlpnProtos> {
+        self.alpn_protos
     }
 
     /// Task network scheme for iface

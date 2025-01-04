@@ -1,8 +1,7 @@
 pub mod cert_compression;
 #[cfg(any(feature = "webpki-roots", feature = "native-roots"))]
 mod cert_load;
-use super::{RootCertsStore, TlsResult, TlsVersion};
-use crate::client::http::HttpVersionPref;
+use super::{AlpnProtos, RootCertsStore, TlsResult, TlsVersion};
 use ::std::os::raw::c_int;
 use boring::error::ErrorStack;
 use boring::ssl::{ConnectConfiguration, SslConnectorBuilder, SslRef, SslVerifyMode};
@@ -30,26 +29,18 @@ fn sv_handler(r: c_int) -> TlsResult<c_int> {
 /// TlsExtension trait for `SslConnectorBuilder`.
 pub trait SslConnectorBuilderExt {
     /// Configure the certificate verification for the given `SslConnectorBuilder`.
-    fn cert_verification(
-        self,
-        certs_verification: bool,
-    ) -> TlsResult<SslConnectorBuilder>;
+    fn cert_verification(self, certs_verification: bool) -> TlsResult<SslConnectorBuilder>;
 
     /// Configure the ALPN and certificate settings for the given `SslConnectorBuilder`.
-    fn alpn_protos(self, http_version: HttpVersionPref)
-        -> TlsResult<SslConnectorBuilder>;
+    fn alpn_protos(self, http_version: AlpnProtos) -> TlsResult<SslConnectorBuilder>;
 
     /// Configure the minimum TLS version for the given `SslConnectorBuilder`.
-    fn min_tls_version(
-        self,
-        min_tls_version: Option<TlsVersion>,
-    ) -> TlsResult<SslConnectorBuilder>;
+    fn min_tls_version(self, min_tls_version: Option<TlsVersion>)
+        -> TlsResult<SslConnectorBuilder>;
 
     /// Configure the maximum TLS version for the given `SslConnectorBuilder`.
-    fn max_tls_version(
-        self,
-        max_tls_version: Option<TlsVersion>,
-    ) -> TlsResult<SslConnectorBuilder>;
+    fn max_tls_version(self, max_tls_version: Option<TlsVersion>)
+        -> TlsResult<SslConnectorBuilder>;
 
     /// Configure the certificate compression algorithm for the given `SslConnectorBuilder`.
     fn add_cert_compression_alg(
@@ -58,16 +49,13 @@ pub trait SslConnectorBuilderExt {
     ) -> TlsResult<SslConnectorBuilder>;
 
     /// Configure the RootCertsStore for the given `SslConnectorBuilder`.
-    fn root_certs_store(
-        self,
-        stroe: RootCertsStore,
-    ) -> TlsResult<SslConnectorBuilder>;
+    fn root_certs_store(self, stroe: RootCertsStore) -> TlsResult<SslConnectorBuilder>;
 }
 
 /// TlsExtension trait for `SslRef`.
 pub trait SslRefExt {
     /// Configure the ALPN protos for the given `SslRef`.
-    fn alpn_protos(&mut self, version: Option<HttpVersionPref>) -> TlsResult<()>;
+    fn alpn_protos(&mut self, version: Option<AlpnProtos>) -> TlsResult<()>;
 }
 
 /// TlsConnectExtension trait for `ConnectConfiguration`.
@@ -81,7 +69,7 @@ pub trait ConnectConfigurationExt {
     /// Configure the add_application_settings for the given `ConnectConfiguration`.
     fn add_application_settings(
         &mut self,
-        http_version: HttpVersionPref,
+        http_version: AlpnProtos,
     ) -> TlsResult<&mut ConnectConfiguration>;
 
     /// Configure the no session ticket for the given `ConnectConfiguration`.
@@ -90,10 +78,7 @@ pub trait ConnectConfigurationExt {
 
 impl SslConnectorBuilderExt for SslConnectorBuilder {
     #[inline]
-    fn cert_verification(
-        mut self,
-        certs_verification: bool,
-    ) -> TlsResult<SslConnectorBuilder> {
+    fn cert_verification(mut self, certs_verification: bool) -> TlsResult<SslConnectorBuilder> {
         if !certs_verification {
             self.set_verify(SslVerifyMode::NONE);
         } else {
@@ -103,14 +88,11 @@ impl SslConnectorBuilderExt for SslConnectorBuilder {
     }
 
     #[inline]
-    fn alpn_protos(
-        mut self,
-        http_version: HttpVersionPref,
-    ) -> TlsResult<SslConnectorBuilder> {
+    fn alpn_protos(mut self, http_version: AlpnProtos) -> TlsResult<SslConnectorBuilder> {
         let alpn = match http_version {
-            HttpVersionPref::Http1 => ALPN_HTTP_1,
-            HttpVersionPref::Http2 => ALPN_HTTP_2,
-            HttpVersionPref::All => ALPN_HTTP_1_AND_2,
+            AlpnProtos::Http1 => ALPN_HTTP_1,
+            AlpnProtos::Http2 => ALPN_HTTP_2,
+            AlpnProtos::All => ALPN_HTTP_1_AND_2,
         };
 
         self.set_alpn_protos(alpn).map(|_| self)
@@ -209,11 +191,11 @@ impl ConnectConfigurationExt for ConnectConfiguration {
     #[inline]
     fn add_application_settings(
         &mut self,
-        http_version: HttpVersionPref,
+        http_version: AlpnProtos,
     ) -> TlsResult<&mut ConnectConfiguration> {
         let asp = match http_version {
-            HttpVersionPref::Http1 => ASP_HTTP_1,
-            HttpVersionPref::Http2 | HttpVersionPref::All => ASP_HTTP_2,
+            AlpnProtos::Http1 => ASP_HTTP_1,
+            AlpnProtos::Http2 | AlpnProtos::All => ASP_HTTP_2,
         };
 
         sv_handler(unsafe {
@@ -238,11 +220,11 @@ impl ConnectConfigurationExt for ConnectConfiguration {
 
 impl SslRefExt for SslRef {
     #[inline]
-    fn alpn_protos(&mut self, version: Option<HttpVersionPref>) -> TlsResult<()> {
+    fn alpn_protos(&mut self, version: Option<AlpnProtos>) -> TlsResult<()> {
         let alpn = match version {
-            Some(HttpVersionPref::Http1) => ALPN_HTTP_1,
-            Some(HttpVersionPref::Http2) => ALPN_HTTP_2,
-            Some(HttpVersionPref::All) => ALPN_HTTP_1_AND_2,
+            Some(AlpnProtos::Http1) => ALPN_HTTP_1,
+            Some(AlpnProtos::Http2) => ALPN_HTTP_2,
+            Some(AlpnProtos::All) => ALPN_HTTP_1_AND_2,
             None => return Ok(()),
         };
 

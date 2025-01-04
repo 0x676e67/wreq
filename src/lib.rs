@@ -336,11 +336,10 @@ pub use self::client::multipart;
 pub use self::client::websocket::{
     CloseCode, Message, WebSocket, WebSocketRequestBuilder, WebSocketResponse,
 };
-pub use self::client::{
-    Body, Client, ClientBuilder, HttpVersionPref, Request, RequestBuilder, Response, Upgraded,
-};
+pub use self::client::{Body, Client, ClientBuilder, Request, RequestBuilder, Response, Upgraded};
 pub use self::mimic::Impersonate;
 pub use self::proxy::{NoProxy, Proxy};
+pub use self::tls::{AlpnProtos, RootCertsStore, TlsInfo, TlsSettings, TlsVersion};
 pub use self::util::client::Dst;
 pub use hyper2::{Priority, PseudoOrder, SettingsOrder, StreamDependency, StreamId};
 

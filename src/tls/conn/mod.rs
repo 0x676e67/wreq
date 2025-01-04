@@ -5,10 +5,9 @@ mod cache;
 pub mod layer;
 
 pub use self::layer::*;
-use crate::tls::TlsResult;
+use crate::tls::{AlpnProtos, TlsResult};
 use crate::util::client::connect::{Connected, Connection};
 use crate::util::rt::TokioIo;
-use crate::HttpVersionPref;
 use boring::ex_data::Index;
 use boring::ssl::Ssl;
 use cache::SessionKey;
@@ -35,7 +34,7 @@ pub struct HttpsLayerSettings {
     enable_ech_grease: bool,
     verify_hostname: bool,
     tls_sni: bool,
-    alpn_protos: HttpVersionPref,
+    alpn_protos: AlpnProtos,
 }
 
 impl HttpsLayerSettings {
@@ -55,7 +54,7 @@ impl Default for HttpsLayerSettings {
             enable_ech_grease: false,
             verify_hostname: true,
             tls_sni: true,
-            alpn_protos: HttpVersionPref::All,
+            alpn_protos: AlpnProtos::All,
         }
     }
 }
@@ -116,7 +115,7 @@ impl HttpsLayerSettingsBuilder {
 
     /// Sets the ALPN protos. Defaults to `None`.
     #[inline]
-    pub fn alpn_protos(mut self, protos: HttpVersionPref) -> Self {
+    pub fn alpn_protos(mut self, protos: AlpnProtos) -> Self {
         self.0.alpn_protos = protos;
         self
     }

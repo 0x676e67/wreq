@@ -233,7 +233,7 @@ impl ConnectorService {
 
         if dst.scheme() == Some(&Scheme::HTTPS) {
             let http = HttpsConnector::builder(self.http.clone())
-                .with_version_pref(dst.version_pref())
+                .with_alpn_protos(dst.alpn_protos())
                 .with_iface(dst.take_iface())
                 .build(self.tls.get_tls());
 
@@ -275,7 +275,7 @@ impl ConnectorService {
 
         log::trace!("connect with maybe proxy");
         let mut http = HttpsConnector::builder(http)
-            .with_version_pref(dst.version_pref())
+            .with_alpn_protos(dst.alpn_protos())
             .with_iface(dst.take_iface())
             .build(self.tls.get_tls());
         let io = http.call(dst.into()).await?;
@@ -321,7 +321,7 @@ impl ConnectorService {
 
         if dst.scheme() == Some(&Scheme::HTTPS) {
             let mut http = HttpsConnector::builder(self.http.clone())
-                .with_version_pref(dst.version_pref())
+                .with_alpn_protos(dst.alpn_protos())
                 .with_iface(dst.take_iface())
                 .build(self.tls.get_tls());
 

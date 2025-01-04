@@ -244,7 +244,7 @@ mod tls {
                 .record_size_limit(val.record_size_limit)
                 .enable_ocsp_stapling(true)
                 .enable_ech_grease(val.enable_ech_grease)
-                .alpn_protos(HttpVersionPref::All)
+                .alpn_protos(AlpnProtos::All)
                 .cert_compression_algorithm(val.cert_compression_algorithm.map(Cow::Borrowed))
                 .min_tls_version(TlsVersion::TLS_1_2)
                 .max_tls_version(TlsVersion::TLS_1_3)
