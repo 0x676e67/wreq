@@ -39,26 +39,9 @@ impl BoringTlsConnector {
     pub fn new(settings: TlsSettings) -> TlsResult<BoringTlsConnector> {
         // Conditionally configure the TLS builder based on the "native-roots" feature.
         // If no custom CA cert store, use the system's native certificate store if the feature is enabled.
-        let connector = if matches!(settings.root_certs_store, RootCertsStore::None) {
-            // WebPKI root certificates are enabled (regardless of whether native-roots is also enabled).
-            #[cfg(any(feature = "webpki-roots", feature = "native-roots"))]
-            {
-                SslConnector::no_default_verify_builder(SslMethod::tls_client())?
-                    .configure_set_verify_cert_store()?
-            }
 
-            // Neither native-roots nor WebPKI roots are enabled, proceed with the default builder.
-            #[cfg(not(any(feature = "webpki-roots", feature = "native-roots")))]
-            {
-                SslConnector::builder(SslMethod::tls_client())?
-            }
-        } else {
-            // If a custom root certificate store is provided, configure it.
-            SslConnector::no_default_verify_builder(SslMethod::tls_client())?
-                .configure_ca_cert_store(settings.root_certs_store)?
-        };
-
-        let mut connector = connector
+        let mut connector = SslConnector::no_default_verify_builder(SslMethod::tls_client())?
+            .configure_ca_cert_store(settings.root_certs_store)?
             .configure_cert_verification(settings.certs_verification)?
             .configure_alpn_protos(settings.alpn_protos)?
             .configure_min_tls_version(settings.min_tls_version)?

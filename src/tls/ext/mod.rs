@@ -1,8 +1,7 @@
 pub mod cert_compression;
 #[cfg(any(feature = "webpki-roots", feature = "native-roots"))]
 mod cert_load;
-use super::RootCertsStore;
-use super::{TlsResult, TlsVersion};
+use super::{RootCertsStore, TlsResult, TlsVersion};
 use crate::client::http::HttpVersionPref;
 use ::std::os::raw::c_int;
 use boring::error::ErrorStack;
@@ -63,10 +62,6 @@ pub trait TlsBuilderExtension {
         self,
         ca_cert_stroe: RootCertsStore,
     ) -> TlsResult<SslConnectorBuilder>;
-
-    /// Configure the webpki/native roots CA for the given `SslConnectorBuilder`.
-    #[cfg(any(feature = "webpki-roots", feature = "native-roots"))]
-    fn configure_set_verify_cert_store(self) -> TlsResult<SslConnectorBuilder>;
 }
 
 /// TlsExtension trait for `SslRef`.
@@ -172,7 +167,33 @@ impl TlsBuilderExtension for SslConnectorBuilder {
         mut self,
         root_certs_stroe: RootCertsStore,
     ) -> TlsResult<SslConnectorBuilder> {
+        // Conditionally configure the TLS builder based on the "native-roots" feature.
+        // If no custom CA cert store, use the system's native certificate store if the feature is enabled.
         match root_certs_stroe {
+            RootCertsStore::None => {
+                // WebPKI root certificates are enabled (regardless of whether native-roots is also enabled).
+                #[cfg(any(feature = "webpki-roots", feature = "native-roots"))]
+                {
+                    if let Ok(cert_store) = cert_load::LOAD_CERTS.as_deref() {
+                        log::debug!("Using CA certs from webpki/native roots");
+                        sv_handler(unsafe {
+                            boring_sys::SSL_CTX_set1_verify_cert_store(
+                                self.as_ptr(),
+                                cert_store.as_ptr(),
+                            )
+                        })?;
+                    } else {
+                        log::debug!("No CA certs provided, using system default");
+                        self.set_default_verify_paths()?;
+                    }
+                }
+
+                // Neither native-roots nor WebPKI roots are enabled, proceed with the default builder.
+                #[cfg(not(any(feature = "webpki-roots", feature = "native-roots")))]
+                {
+                    self.set_default_verify_paths()?;
+                }
+            }
             RootCertsStore::Owned(cert_store) => {
                 self.set_verify_cert_store(cert_store)?;
             }
@@ -181,23 +202,6 @@ impl TlsBuilderExtension for SslConnectorBuilder {
                     boring_sys::SSL_CTX_set1_verify_cert_store(self.as_ptr(), cert_store.as_ptr())
                 })?;
             }
-            _ => {}
-        }
-
-        Ok(self)
-    }
-
-    #[cfg(any(feature = "webpki-roots", feature = "native-roots"))]
-    #[inline]
-    fn configure_set_verify_cert_store(mut self) -> TlsResult<SslConnectorBuilder> {
-        if let Ok(cert_store) = cert_load::LOAD_CERTS.as_deref() {
-            log::debug!("Using CA certs from webpki/native roots");
-            sv_handler(unsafe {
-                boring_sys::SSL_CTX_set1_verify_cert_store(self.as_ptr(), cert_store.as_ptr())
-            })?;
-        } else {
-            log::debug!("No CA certs provided, using system default");
-            self.set_default_verify_paths()?;
         }
 
         Ok(self)
