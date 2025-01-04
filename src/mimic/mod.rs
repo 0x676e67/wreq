@@ -49,7 +49,8 @@ mod http2_imports {
 pub struct ImpersonateSettings {
     pub tls: TlsSettings,
 
-    pub http2: Http2Settings,
+    #[builder(default, setter(into))]
+    pub http2: Option<Http2Settings>,
 
     #[builder(default, setter(into))]
     pub headers: Option<Cow<'static, HeaderMap>>,
