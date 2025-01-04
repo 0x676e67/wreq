@@ -125,29 +125,18 @@ By default, `rquest` uses Mozilla's root certificates through the `webpki-roots`
 
 - [source code details](https://github.com/penumbra-x/rquest/blob/main/examples/set_native_root_cert.rs)
 
-## Device
+## Fingerprint
 
-You can customize the `TLS`/`HTTP2` fingerprint parameters of the device. In addition, the basic device impersonation types are provided as follows:
+- Customize TLS/HTTP2 fingerprint parameters
 
-- **Chrome**
+Supports custom TLS/HTTP2 fingerprint parameters (disabled by default). Unless you’re highly familiar with TLS and HTTP2, customization is not recommended, as it may cause unexpected issues. Basic device emulation types are provided by [default](https://github.com/penumbra-x/rquest/blob/07a18e81fdf1931e7c10bfbc23da622156a4dfae/src/mimic/mod.rs#L127).
 
-`Chrome100`，`Chrome101`，`Chrome104`，`Chrome105`，`Chrome106`，`Chrome107`，`Chrome108`，`Chrome109`，`Chrome114`，`Chrome116`，`Chrome117`，`Chrome118`，`Chrome119`，`Chrome120`，`Chrome123`，`Chrome124`，`Chrome126`，`Chrome127`，`Chrome128`，`Chrome129`，`Chrome130`，`Chrome131`
+- JA3/JA4/Akkmai Parsing
 
-- **Edge**
+As TLS encryption technology becomes more and more sophisticated and HTTP2 becomes more popular, `JA3`/`JA4`/`Akkmai` fingerprints cannot simulate browser fingerprints very well, and the parsed parameters cannot perfectly imitate the browser's `TLS`/`HTTP2` configuration fingerprints. Therefore, `rquest` has not planned to support parsing `JA3`/`JA4`/`Akkmai` fingerprint strings for simulation, but encourages users to customize the configuration according to their own situation.
 
-`Edge101`，`Edge122`，`Edge127`，`Edge131`
+Most of the `Akkmai` fingerprint strings obtained by users are not fully calculated. For example, the website: <https://tls.peet.ws/api/all>, where the Headers Frame lacks Priority and Stream ID. If I were the server, it would be easy to detect this. For details, please refer to HTTP2 Frame [Parsing](https://github.com/penumbra-x/pingly/blob/main/src/track/inspector/http2.rs)
 
-- **Safari**
-
-`SafariIos17_2`，`SafariIos17_4_1`，`SafariIos16_5`，`Safari15_3`，`Safari15_5`，`Safari15_6_1`，`Safari16`，`Safari16_5`，`Safari17_0`，`Safari17_2_1`，`Safari17_4_1`，`Safari17_5`，`Safari18`，`SafariIPad18`, `Safari18_2`, `Safari18_1_1`
-
-- **OkHttp**
-
-`OkHttp3_9`，`OkHttp3_11`，`OkHttp3_13`，`OkHttp3_14`，`OkHttp4_9`，`OkHttp4_10`，`OkHttp5`
-
-- **Firefox**
-
-`Firefox109`, `Firefox117`, `Firefox133`
 
 ## Requirement
 

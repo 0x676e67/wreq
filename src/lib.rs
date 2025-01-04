@@ -5,7 +5,7 @@
 
 //! # rquest
 //!
-//! An ergonomic, all-in-one `TLS`, `JA3`/`JA4`, and `HTTP2` fingerprint `HTTP`/`WebSocket` Client  for spoofing any browser.
+//! An ergonomic, all-in-one `TLS`, `JA3`/`JA4`, and `HTTP2` fingerprint `HTTP` Client  for spoofing any browser.
 //!
 //! - Plain bodies, [JSON](#json), [urlencoded](#forms), [multipart], [websocket](#websocket)
 //! - Header Order
