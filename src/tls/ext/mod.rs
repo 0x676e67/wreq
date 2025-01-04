@@ -1,21 +1,12 @@
 pub mod cert_compression;
 #[cfg(any(feature = "webpki-roots", feature = "native-roots"))]
 mod cert_load;
-use super::{AlpnProtos, RootCertsStore, TlsResult, TlsVersion};
+use super::{AlpnProtos, AlpsProto, RootCertsStore, TlsResult, TlsVersion};
 use ::std::os::raw::c_int;
 use boring::error::ErrorStack;
 use boring::ssl::{ConnectConfiguration, SslConnectorBuilder, SslRef, SslVerifyMode};
 use cert_compression::CertCompressionAlgorithm;
 use foreign_types::ForeignTypeRef;
-
-// ALPN protocol for HTTP/1.1 and HTTP/2.
-const ALPN_HTTP_1: &[u8] = b"\x08http/1.1";
-const ALPN_HTTP_2: &[u8] = b"\x02h2";
-const ALPN_HTTP_1_AND_2: &[u8] = b"\x02h2\x08http/1.1";
-
-/// Application Settings protocol for HTTP/1.1 and HTTP/2.
-const ASP_HTTP_1: &[u8] = b"http/1.1";
-const ASP_HTTP_2: &[u8] = b"h2";
 
 /// Error handler for the boringssl functions.
 fn sv_handler(r: c_int) -> TlsResult<c_int> {
@@ -67,10 +58,7 @@ pub trait ConnectConfigurationExt {
     ) -> TlsResult<&mut ConnectConfiguration>;
 
     /// Configure the add_application_settings for the given `ConnectConfiguration`.
-    fn add_application_settings(
-        &mut self,
-        http_version: AlpnProtos,
-    ) -> TlsResult<&mut ConnectConfiguration>;
+    fn alps_proto(&mut self, alps: AlpsProto) -> TlsResult<&mut ConnectConfiguration>;
 
     /// Configure the no session ticket for the given `ConnectConfiguration`.
     fn skip_session_ticket(&mut self) -> TlsResult<&mut ConnectConfiguration>;
@@ -88,14 +76,8 @@ impl SslConnectorBuilderExt for SslConnectorBuilder {
     }
 
     #[inline]
-    fn alpn_protos(mut self, http_version: AlpnProtos) -> TlsResult<SslConnectorBuilder> {
-        let alpn = match http_version {
-            AlpnProtos::Http1 => ALPN_HTTP_1,
-            AlpnProtos::Http2 => ALPN_HTTP_2,
-            AlpnProtos::All => ALPN_HTTP_1_AND_2,
-        };
-
-        self.set_alpn_protos(alpn).map(|_| self)
+    fn alpn_protos(mut self, alpn: AlpnProtos) -> TlsResult<SslConnectorBuilder> {
+        self.set_alpn_protos(alpn.0).map(|_| self)
     }
 
     #[inline]
@@ -189,20 +171,12 @@ impl ConnectConfigurationExt for ConnectConfiguration {
     }
 
     #[inline]
-    fn add_application_settings(
-        &mut self,
-        http_version: AlpnProtos,
-    ) -> TlsResult<&mut ConnectConfiguration> {
-        let asp = match http_version {
-            AlpnProtos::Http1 => ASP_HTTP_1,
-            AlpnProtos::Http2 | AlpnProtos::All => ASP_HTTP_2,
-        };
-
+    fn alps_proto(&mut self, alps: AlpsProto) -> TlsResult<&mut ConnectConfiguration> {
         sv_handler(unsafe {
             boring_sys::SSL_add_application_settings(
                 self.as_ptr(),
-                asp.as_ptr(),
-                asp.len(),
+                alps.as_ptr(),
+                alps.len(),
                 std::ptr::null(),
                 0,
             )
@@ -220,14 +194,12 @@ impl ConnectConfigurationExt for ConnectConfiguration {
 
 impl SslRefExt for SslRef {
     #[inline]
-    fn alpn_protos(&mut self, version: Option<AlpnProtos>) -> TlsResult<()> {
-        let alpn = match version {
-            Some(AlpnProtos::Http1) => ALPN_HTTP_1,
-            Some(AlpnProtos::Http2) => ALPN_HTTP_2,
-            Some(AlpnProtos::All) => ALPN_HTTP_1_AND_2,
+    fn alpn_protos(&mut self, alpn: Option<AlpnProtos>) -> TlsResult<()> {
+        let alpn = match alpn {
+            Some(alpn) => alpn.0,
             None => return Ok(()),
         };
 
-        self.set_alpn_protos(alpn)
+        self.set_alpn_protos(alpn).map(|_| ())
     }
 }

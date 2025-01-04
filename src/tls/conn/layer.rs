@@ -223,9 +223,9 @@ impl HttpsLayer {
             // Verify hostname
             conf.set_verify_hostname(settings.verify_hostname);
 
-            // Add application settings if it is set.
-            if settings.application_settings {
-                conf.add_application_settings(settings.alpn_protos)?;
+            // Add ALPS if it is set.
+            if let Some(alps) = settings.alps_proto {
+                conf.alps_proto(alps)?;
             }
 
             Ok(())

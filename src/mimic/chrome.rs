@@ -135,7 +135,7 @@ fn header_initializer_with_zstd_priority(sec_ch_ua: &'static str, ua: &'static s
 }
 
 mod tls {
-    use crate::mimic::tls_imports::*;
+    use crate::{mimic::tls_imports::*, tls::AlpsProto};
 
     pub const CURVES: &[SslCurve] = &[SslCurve::X25519, SslCurve::SECP256R1, SslCurve::SECP384R1];
 
@@ -198,8 +198,8 @@ mod tls {
         #[builder(default = CIPHER_LIST)]
         cipher_list: &'static str,
 
-        #[builder(default = true, setter(into))]
-        application_settings: bool,
+        #[builder(default = AlpsProto::Http2, setter(into))]
+        alps_proto: AlpsProto,
 
         #[builder(default = false, setter(into))]
         enable_ech_grease: bool,
@@ -225,7 +225,7 @@ mod tls {
                 .permute_extensions(val.permute_extensions)
                 .pre_shared_key(val.pre_shared_key)
                 .enable_ech_grease(val.enable_ech_grease)
-                .application_settings(val.application_settings)
+                .alps_proto(val.alps_proto)
                 .cert_compression_algorithm(Cow::Borrowed(CERT_COMPRESSION_ALGORITHM))
                 .build()
         }

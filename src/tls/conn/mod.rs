@@ -20,6 +20,8 @@ use std::task::{Context, Poll};
 use tokio::io;
 use tokio_boring::SslStream;
 
+use super::AlpsProto;
+
 fn key_index() -> TlsResult<Index<Ssl, SessionKey>> {
     static IDX: LazyLock<TlsResult<Index<Ssl, SessionKey>>> = LazyLock::new(Ssl::new_ex_index);
     IDX.clone()
@@ -30,10 +32,10 @@ pub struct HttpsLayerSettings {
     session_cache_capacity: usize,
     session_cache: bool,
     skip_session_ticket: bool,
-    application_settings: bool,
     enable_ech_grease: bool,
     verify_hostname: bool,
     tls_sni: bool,
+    alps_proto: Option<AlpsProto>,
     alpn_protos: AlpnProtos,
 }
 
@@ -50,7 +52,7 @@ impl Default for HttpsLayerSettings {
             session_cache_capacity: 8,
             session_cache: false,
             skip_session_ticket: false,
-            application_settings: false,
+            alps_proto: None,
             enable_ech_grease: false,
             verify_hostname: true,
             tls_sni: true,
@@ -85,10 +87,10 @@ impl HttpsLayerSettingsBuilder {
         self
     }
 
-    /// Sets whether to enable application settings. Defaults to `false`.
+    /// Sets the ALPS. Defaults to `None`.
     #[inline]
-    pub fn application_settings(mut self, enable: bool) -> Self {
-        self.0.application_settings = enable;
+    pub fn alps_proto(mut self, alps: Option<AlpsProto>) -> Self {
+        self.0.alps_proto = alps;
         self
     }
 

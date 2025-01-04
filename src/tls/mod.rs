@@ -106,7 +106,7 @@ impl BoringTlsConnector {
             .session_cache(settings.pre_shared_key)
             .skip_session_ticket(settings.psk_skip_session_ticket)
             .alpn_protos(settings.alpn_protos)
-            .application_settings(settings.application_settings)
+            .alps_proto(settings.alps_proto)
             .enable_ech_grease(settings.enable_ech_grease)
             .tls_sni(settings.tls_sni)
             .verify_hostname(settings.verify_hostname)
@@ -135,16 +135,46 @@ impl TlsVersion {
     pub const TLS_1_3: TlsVersion = TlsVersion(SslVersion::TLS1_3);
 }
 
+/// A TLS ALPN protocol.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AlpnProtos(&'static [u8]);
+
 /// A `AlpnProtos` is used to set the HTTP version preference.
-#[derive(Debug, Clone, Copy, Default)]
-pub enum AlpnProtos {
+#[allow(non_upper_case_globals)]
+impl AlpnProtos {
     /// Prefer HTTP/1.1
-    Http1,
+    pub const Http1: AlpnProtos = AlpnProtos(b"\x08http/1.1");
     /// Prefer HTTP/2
-    Http2,
+    pub const Http2: AlpnProtos = AlpnProtos(b"\x02h2");
     /// Prefer HTTP/1 and HTTP/2
-    #[default]
-    All,
+    pub const All: AlpnProtos = AlpnProtos(b"\x02h2\x08http/1.1");
+}
+
+impl Default for AlpnProtos {
+    fn default() -> Self {
+        Self::All
+    }
+}
+
+/// Application-layer protocol settings for HTTP/1.1 and HTTP/2.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AlpsProto(&'static [u8]);
+
+#[allow(non_upper_case_globals)]
+impl AlpsProto {
+    /// Application Settings protocol for HTTP/1.1
+    pub const Http1: AlpsProto = AlpsProto(b"http/1.1");
+    /// Application Settings protocol for HTTP/2
+    pub const Http2: AlpsProto = AlpsProto(b"h2");
+
+    #[inline(always)]
+    pub(crate) fn as_ptr(&self) -> *const u8 {
+        self.0.as_ptr()
+    }
+
+    pub(crate) fn len(&self) -> usize {
+        self.0.len()
+    }
 }
 
 /// Hyper extension carrying extra TLS layer information.
@@ -238,8 +268,10 @@ pub struct TlsSettings {
     #[builder(default, setter(into))]
     pub max_tls_version: Option<TlsVersion>,
 
-    #[builder(default = false)]
-    pub application_settings: bool,
+    // The ALPS extension (draft-vvv-tls-alps) allows exchanging application-layer settings
+    // in the TLS handshake for applications negotiated with ALPN.
+    #[builder(default, setter(into))]
+    pub alps_proto: Option<AlpsProto>,
 
     #[builder(default = false)]
     pub pre_shared_key: bool,
@@ -303,7 +335,7 @@ impl_debug!(
         session_ticket,
         min_tls_version,
         max_tls_version,
-        application_settings,
+        alps_proto,
         pre_shared_key,
         enable_ech_grease,
         permute_extensions,
