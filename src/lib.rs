@@ -339,7 +339,7 @@ pub use self::client::websocket::{
 pub use self::client::{Body, Client, ClientBuilder, Request, RequestBuilder, Response, Upgraded};
 pub use self::mimic::Impersonate;
 pub use self::proxy::{NoProxy, Proxy};
-pub use self::tls::{AlpnProtos, RootCertsStore, TlsInfo, TlsSettings, TlsVersion};
+pub use self::tls::{AlpnProtos, AlpsProto, RootCertsStore, TlsInfo, TlsSettings, TlsVersion};
 pub use self::util::client::Dst;
 pub use hyper2::{Priority, PseudoOrder, SettingsOrder, StreamDependency, StreamId};
 

@@ -5,7 +5,7 @@ mod cache;
 pub mod layer;
 
 pub use self::layer::*;
-use crate::tls::{AlpnProtos, TlsResult};
+use crate::tls::{AlpnProtos, AlpsProto, TlsResult};
 use crate::util::client::connect::{Connected, Connection};
 use crate::util::rt::TokioIo;
 use boring::ex_data::Index;
@@ -19,8 +19,6 @@ use std::sync::LazyLock;
 use std::task::{Context, Poll};
 use tokio::io;
 use tokio_boring::SslStream;
-
-use super::AlpsProto;
 
 fn key_index() -> TlsResult<Index<Ssl, SessionKey>> {
     static IDX: LazyLock<TlsResult<Index<Ssl, SessionKey>>> = LazyLock::new(Ssl::new_ex_index);
