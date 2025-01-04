@@ -20,23 +20,27 @@ fn sv_handler(r: c_int) -> TlsResult<c_int> {
 /// TlsExtension trait for `SslConnectorBuilder`.
 pub trait SslConnectorBuilderExt {
     /// Configure the certificate verification for the given `SslConnectorBuilder`.
-    fn cert_verification(self, certs_verification: bool) -> TlsResult<SslConnectorBuilder>;
+    fn cert_verification(self, enable: bool) -> TlsResult<SslConnectorBuilder>;
 
     /// Configure the ALPN and certificate settings for the given `SslConnectorBuilder`.
-    fn alpn_protos(self, http_version: AlpnProtos) -> TlsResult<SslConnectorBuilder>;
+    fn alpn_protos(self, alpn: AlpnProtos) -> TlsResult<SslConnectorBuilder>;
 
     /// Configure the minimum TLS version for the given `SslConnectorBuilder`.
-    fn min_tls_version(self, min_tls_version: Option<TlsVersion>)
-        -> TlsResult<SslConnectorBuilder>;
+    fn min_tls_version<V: Into<Option<TlsVersion>>>(
+        self,
+        version: V,
+    ) -> TlsResult<SslConnectorBuilder>;
 
     /// Configure the maximum TLS version for the given `SslConnectorBuilder`.
-    fn max_tls_version(self, max_tls_version: Option<TlsVersion>)
-        -> TlsResult<SslConnectorBuilder>;
+    fn max_tls_version<V: Into<Option<TlsVersion>>>(
+        self,
+        version: V,
+    ) -> TlsResult<SslConnectorBuilder>;
 
     /// Configure the certificate compression algorithm for the given `SslConnectorBuilder`.
     fn add_cert_compression_alg(
         self,
-        cert_compression_alg: CertCompressionAlgorithm,
+        alg: CertCompressionAlgorithm,
     ) -> TlsResult<SslConnectorBuilder>;
 
     /// Configure the RootCertsStore for the given `SslConnectorBuilder`.
@@ -46,7 +50,7 @@ pub trait SslConnectorBuilderExt {
 /// TlsExtension trait for `SslRef`.
 pub trait SslRefExt {
     /// Configure the ALPN protos for the given `SslRef`.
-    fn alpn_protos(&mut self, version: Option<AlpnProtos>) -> TlsResult<()>;
+    fn alpn_protos<A: Into<Option<AlpnProtos>>>(&mut self, alpn: A) -> TlsResult<()>;
 }
 
 /// TlsConnectExtension trait for `ConnectConfiguration`.
@@ -54,10 +58,10 @@ pub trait ConnectConfigurationExt {
     /// Configure the enable_ech_grease for the given `ConnectConfiguration`.
     fn enable_ech_grease(
         &mut self,
-        enable_ech_grease: bool,
+        enable: bool,
     ) -> TlsResult<&mut ConnectConfiguration>;
 
-    /// Configure the add_application_settings for the given `ConnectConfiguration`.
+    /// Configure the ALPS for the given `ConnectConfiguration`.
     fn alps_proto(&mut self, alps: AlpsProto) -> TlsResult<&mut ConnectConfiguration>;
 
     /// Configure the no session ticket for the given `ConnectConfiguration`.
@@ -81,34 +85,34 @@ impl SslConnectorBuilderExt for SslConnectorBuilder {
     }
 
     #[inline]
-    fn min_tls_version(
+    fn min_tls_version<V: Into<Option<TlsVersion>>>(
         mut self,
-        min_tls_version: Option<TlsVersion>,
+        version: V,
     ) -> TlsResult<SslConnectorBuilder> {
-        self.set_min_proto_version(min_tls_version.map(|v| v.0))
+        self.set_min_proto_version(version.into().map(|v| v.0))
             .map(|_| self)
     }
 
     #[inline]
-    fn max_tls_version(
+    fn max_tls_version<V: Into<Option<TlsVersion>>>(
         mut self,
-        max_tls_version: Option<TlsVersion>,
+        version: V,
     ) -> TlsResult<SslConnectorBuilder> {
-        self.set_max_proto_version(max_tls_version.map(|v| v.0))
+        self.set_max_proto_version(version.into().map(|v| v.0))
             .map(|_| self)
     }
 
     #[inline]
     fn add_cert_compression_alg(
         self,
-        cert_compression_alg: CertCompressionAlgorithm,
+        alg: CertCompressionAlgorithm,
     ) -> TlsResult<SslConnectorBuilder> {
         sv_handler(unsafe {
             boring_sys::SSL_CTX_add_cert_compression_alg(
                 self.as_ptr(),
-                cert_compression_alg as _,
-                cert_compression_alg.compression_fn(),
-                cert_compression_alg.decompression_fn(),
+                alg as _,
+                alg.compression_fn(),
+                alg.decompression_fn(),
             )
         })
         .map(|_| self)
@@ -117,11 +121,11 @@ impl SslConnectorBuilderExt for SslConnectorBuilder {
     #[inline]
     fn root_certs_store(
         mut self,
-        root_certs_stroe: RootCertsStore,
+        store: RootCertsStore,
     ) -> TlsResult<SslConnectorBuilder> {
         // Conditionally configure the TLS builder based on the "native-roots" feature.
         // If no custom CA cert store, use the system's native certificate store if the feature is enabled.
-        match root_certs_stroe {
+        match store {
             RootCertsStore::None => {
                 // WebPKI root certificates are enabled (regardless of whether native-roots is also enabled).
                 #[cfg(any(feature = "webpki-roots", feature = "native-roots"))]
@@ -164,9 +168,9 @@ impl ConnectConfigurationExt for ConnectConfiguration {
     #[inline]
     fn enable_ech_grease(
         &mut self,
-        enable_ech_grease: bool,
+        enable: bool,
     ) -> TlsResult<&mut ConnectConfiguration> {
-        unsafe { boring_sys::SSL_set_enable_ech_grease(self.as_ptr(), enable_ech_grease as _) }
+        unsafe { boring_sys::SSL_set_enable_ech_grease(self.as_ptr(), enable as _) }
         Ok(self)
     }
 
@@ -194,8 +198,8 @@ impl ConnectConfigurationExt for ConnectConfiguration {
 
 impl SslRefExt for SslRef {
     #[inline]
-    fn alpn_protos(&mut self, alpn: Option<AlpnProtos>) -> TlsResult<()> {
-        let alpn = match alpn {
+    fn alpn_protos<A: Into<Option<AlpnProtos>>>(&mut self, alpn: A) -> TlsResult<()> {
+        let alpn = match alpn.into() {
             Some(alpn) => alpn.0,
             None => return Ok(()),
         };
