@@ -137,16 +137,16 @@ fn header_initializer_with_zstd_priority(sec_ch_ua: &'static str, ua: &'static s
 mod tls {
     use crate::mimic::tls_imports::*;
 
-    pub const CURVES: &[SslCurve] = &[SslCurve::X25519, SslCurve::SECP256R1, SslCurve::SECP384R1];
+    pub const CURVES_1: &[SslCurve] = &[SslCurve::X25519, SslCurve::SECP256R1, SslCurve::SECP384R1];
 
-    pub const NEW_CURVES_1: &[SslCurve] = &[
+    pub const CURVES_2: &[SslCurve] = &[
         SslCurve::X25519_KYBER768_DRAFT00,
         SslCurve::X25519,
         SslCurve::SECP256R1,
         SslCurve::SECP384R1,
     ];
 
-    pub const NEW_CURVES_2: &[SslCurve] = &[
+    pub const CURVES_3: &[SslCurve] = &[
         SslCurve::X25519_MLKEM768,
         SslCurve::X25519,
         SslCurve::SECP256R1,
@@ -189,7 +189,7 @@ mod tls {
 
     #[derive(TypedBuilder)]
     pub struct ChromeTlsSettings {
-        #[builder(default = CURVES)]
+        #[builder(default = CURVES_1)]
         curves: &'static [SslCurve],
 
         #[builder(default = SIGALGS_LIST)]
@@ -388,7 +388,7 @@ mod_generator!(
 
 mod_generator!(
     v124,
-    tls_settings!(6, NEW_CURVES_1),
+    tls_settings!(6, CURVES_2),
     http2_settings!(3),
     header_initializer_with_zstd,
     r#""Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99""#,
@@ -397,7 +397,7 @@ mod_generator!(
 
 mod_generator!(
     v126,
-    tls_settings!(6, NEW_CURVES_1),
+    tls_settings!(6, CURVES_2),
     http2_settings!(3),
     header_initializer_with_zstd,
     r#""Chromium";v="126", "Google Chrome";v="126", "Not-A.Brand";v="99""#,
@@ -406,7 +406,7 @@ mod_generator!(
 
 mod_generator!(
     v127,
-    tls_settings!(6, NEW_CURVES_1),
+    tls_settings!(6, CURVES_2),
     http2_settings!(3),
     header_initializer_with_zstd,
     r#""Not/A)Brand";v="8", "Chromium";v="127", "Google Chrome";v="127""#,
@@ -415,7 +415,7 @@ mod_generator!(
 
 mod_generator!(
     v128,
-    tls_settings!(6, NEW_CURVES_1),
+    tls_settings!(6, CURVES_2),
     http2_settings!(3),
     header_initializer,
     r#""Chromium";v="128", "Google Chrome";v="128", "Not?A_Brand";v="99""#,
@@ -424,7 +424,7 @@ mod_generator!(
 
 mod_generator!(
     v129,
-    tls_settings!(6, NEW_CURVES_1),
+    tls_settings!(6, CURVES_2),
     http2_settings!(3),
     header_initializer_with_zstd_priority,
     r#""Google Chrome";v="129", "Chromium";v="129", "Not_A Brand\";v="24""#,
@@ -433,7 +433,7 @@ mod_generator!(
 
 mod_generator!(
     v130,
-    tls_settings!(6, NEW_CURVES_1),
+    tls_settings!(6, CURVES_2),
     http2_settings!(3),
     header_initializer_with_zstd_priority,
     r#""Chromium";v="130", "Google Chrome";v="130", "Not?A_Brand";v="99""#,
@@ -442,7 +442,7 @@ mod_generator!(
 
 mod_generator!(
     v131,
-    tls_settings!(6, NEW_CURVES_2),
+    tls_settings!(6, CURVES_3),
     http2_settings!(3),
     header_initializer_with_zstd_priority,
     r#""Google Chrome";v="131", "Chromium";v="131", "Not_A Brand\";v="24""#,
@@ -469,7 +469,7 @@ mod_generator!(
 
 mod_generator!(
     edge127,
-    tls_settings!(6, NEW_CURVES_1),
+    tls_settings!(6, CURVES_2),
     http2_settings!(3),
     header_initializer_with_zstd_priority,
     r#""Not)A;Brand";v="99", "Microsoft Edge";v="127", "Chromium";v="127""#,
@@ -478,7 +478,7 @@ mod_generator!(
 
 mod_generator!(
     edge131,
-    tls_settings!(6, NEW_CURVES_2),
+    tls_settings!(6, CURVES_3),
     http2_settings!(3),
     header_initializer_with_zstd_priority,
     r#""Microsoft Edge";v="131", "Chromium";v="131", "Not_A Brand";v="24""#,

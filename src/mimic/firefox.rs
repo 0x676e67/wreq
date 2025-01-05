@@ -34,7 +34,7 @@ macro_rules! tls_settings {
     }};
     (2) => {{
         FirefoxTlsSettings::builder()
-            .curves(OLD_CURVES)
+            .curves(CURVES_1)
             .key_shares_length_limit(2)
             .build()
             .into()
@@ -42,7 +42,7 @@ macro_rules! tls_settings {
     (3) => {{
         FirefoxTlsSettings::builder()
             .cipher_list(CIPHER_LIST_2)
-            .curves(OLD_CURVES)
+            .curves(CURVES_1)
             .session_ticket(false)
             .enable_ech_grease(true)
             .psk_dhe_ke(false)
@@ -120,7 +120,7 @@ fn header_initializer_with_zstd(ua: &'static str) -> HeaderMap {
 mod tls {
     use crate::mimic::tls_imports::*;
 
-    pub const OLD_CURVES: &[SslCurve] = &[
+    pub const CURVES_1: &[SslCurve] = &[
         SslCurve::X25519,
         SslCurve::SECP256R1,
         SslCurve::SECP384R1,
@@ -129,7 +129,7 @@ mod tls {
         SslCurve::FFDHE3072,
     ];
 
-    pub const CURVES: &[SslCurve] = &[
+    pub const CURVES_2: &[SslCurve] = &[
         SslCurve::X25519_MLKEM768,
         SslCurve::X25519,
         SslCurve::SECP256R1,
@@ -244,7 +244,7 @@ mod tls {
 
     #[derive(TypedBuilder)]
     pub struct FirefoxTlsSettings {
-        #[builder(default = CURVES)]
+        #[builder(default = CURVES_2)]
         curves: &'static [SslCurve],
 
         #[builder(default = SIGALGS_LIST)]
