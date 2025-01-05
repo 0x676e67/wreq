@@ -129,7 +129,7 @@ By default, `rquest` uses Mozilla's root certificates through the `webpki-roots`
 
 - Customize TLS/HTTP2 fingerprint parameters
 
-Supports custom TLS/HTTP2 fingerprint parameters (disabled by default). Unless you’re highly familiar with TLS and HTTP2, customization is not recommended, as it may cause unexpected issues. Basic device emulation types are provided by [default](https://github.com/penumbra-x/rquest/blob/07a18e81fdf1931e7c10bfbc23da622156a4dfae/src/mimic/mod.rs#L127).
+Supports custom `TLS`/`HTTP2` fingerprint parameters (disabled by default). Unless you’re highly familiar with `TLS` and `HTTP2`, customization is not recommended, as it may cause unexpected issues. Basic device emulation types are provided by [default](https://github.com/penumbra-x/rquest/blob/07a18e81fdf1931e7c10bfbc23da622156a4dfae/src/mimic/mod.rs#L127).
 
 - JA3/JA4/Akkmai Parsing
 
