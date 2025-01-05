@@ -377,7 +377,7 @@ mod_generator!(
     ff128,
     tls_settings!(3),
     http2_settings!(3),
-    header_initializer,
+    header_initializer_with_zstd,
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:128.0) Gecko/20100101 Firefox/128.0"
 );
 
