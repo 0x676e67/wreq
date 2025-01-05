@@ -14,13 +14,13 @@ use std::task::{self, Poll};
 use std::time::{Duration, Instant};
 
 use antidote::Mutex;
-use futures_channel::oneshot;
 use futures_util::ready;
 use log::{debug, trace};
 use lru::LruCache;
 
 use hyper2::rt::Sleep;
 use hyper2::rt::Timer as _;
+use tokio::sync::oneshot;
 
 use crate::util::common::{exec, exec::Exec, timer::Timer};
 
@@ -334,7 +334,7 @@ impl<T: Poolable, K: Key> PoolInner<T, K> {
         let mut value = Some(value);
         if let Some(waiters) = self.waiters.get_mut(&key) {
             while let Some(tx) = waiters.pop_front() {
-                if !tx.is_canceled() {
+                if !tx.is_closed() {
                     let reserved = value.take().expect("value already sent");
                     let reserved = match reserved.reserve() {
                         Reservation::Shared(to_keep, to_send) => {
@@ -439,7 +439,7 @@ impl<T, K: Eq + Hash> PoolInner<T, K> {
     fn clean_waiters(&mut self, key: &K) {
         let mut remove_waiters = false;
         if let Some(waiters) = self.waiters.get_mut(key) {
-            waiters.retain(|tx| !tx.is_canceled());
+            waiters.retain(|tx| !tx.is_closed());
             remove_waiters = waiters.is_empty();
         }
         if remove_waiters {

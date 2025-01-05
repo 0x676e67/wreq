@@ -116,7 +116,6 @@ ipnet = "2.10.0"
 
 # hyper util
 socket2 = { version = "0.5", features = ["all"] }
-futures-channel = { version = "0.3" }
 lru = { version = "0.12", default-features = false }
 
 # Optional deps...
