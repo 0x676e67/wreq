@@ -36,9 +36,9 @@ macro_rules! http2_settings {
             .max_concurrent_streams(1000)
             .max_header_list_size(262144)
             .header_table_size(65536)
-            .headers_priority(super::HEADER_PRIORITY)
-            .headers_pseudo_order(super::HEADERS_PSEUDO_ORDER)
-            .settings_order(super::SETTINGS_ORDER)
+            .headers_priority(HEADER_PRIORITY)
+            .headers_pseudo_order(HEADERS_PSEUDO_ORDER)
+            .settings_order(SETTINGS_ORDER)
             .build()
     };
 }
