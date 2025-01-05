@@ -15,7 +15,7 @@ An ergonomic, all-in-one `TLS`, `JA3`/`JA4`, and `HTTP2` fingerprint `HTTP` Clie
 - Cookie Store
 - HTTP Proxies
 - WebSocket Upgrade
-- HTTPS via [BoringSSL](https://github.com/cloudflare/boring)
+- HTTPS via BoringSSL
 - Preconfigured TLS and HTTP2 settings
 - Perfectly mimic Chrome, Safari, and Firefox
 
@@ -42,9 +42,9 @@ use rquest::Impersonate;
 
 #[tokio::main]
 async fn main() -> Result<(), rquest::Error> {
-    // Build a client to mimic Chrome131
+    // Build a client to mimic Firefox133
     let client = rquest::Client::builder()
-        .impersonate(Impersonate::Chrome131)
+        .impersonate(Impersonate::Firefox133)
         .build()?;
 
     // Use the API you're already familiar with
@@ -70,9 +70,9 @@ use rquest::{Impersonate, Client, Message};
 
 #[tokio::main]
 async fn main() -> Result<(), rquest::Error> {
-    // Build a client to mimic Chrome131
+    // Build a client to mimic Firefox133
     let client = Client::builder()
-        .impersonate(Impersonate::Chrome131)
+        .impersonate(Impersonate::Firefox133)
         .build()?;
 
     // Use the API you're already familiar with

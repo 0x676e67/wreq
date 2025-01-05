@@ -24,7 +24,7 @@ macro_rules! mod_generator {
 macro_rules! tls_settings {
     (1) => {{
         FirefoxTlsSettings::builder()
-            .cert_compression_algorithm(super::CERT_COMPRESSION_ALGORITHM)
+            .cert_compression_algorithm(CERT_COMPRESSION_ALGORITHM)
             .enable_ech_grease(true)
             .pre_shared_key(true)
             .psk_skip_session_tickets(true)
@@ -34,7 +34,18 @@ macro_rules! tls_settings {
     }};
     (2) => {{
         FirefoxTlsSettings::builder()
-            .curves(super::OLD_CURVES)
+            .curves(OLD_CURVES)
+            .key_shares_length_limit(2)
+            .build()
+            .into()
+    }};
+    (3) => {{
+        FirefoxTlsSettings::builder()
+            .cipher_list(CIPHER_LIST_2)
+            .curves(OLD_CURVES)
+            .session_ticket(false)
+            .enable_ech_grease(true)
+            .psk_dhe_ke(false)
             .key_shares_length_limit(2)
             .build()
             .into()
@@ -50,9 +61,9 @@ macro_rules! http2_settings {
             .initial_stream_window_size(131072)
             .max_frame_size(16384)
             .initial_connection_window_size(12517377 + 65535)
-            .headers_priority(super::HEADER_PRIORITY)
-            .headers_pseudo_order(super::HEADERS_PSEUDO_ORDER)
-            .settings_order(super::SETTINGS_ORDER)
+            .headers_priority(HEADER_PRIORITY)
+            .headers_pseudo_order(HEADERS_PSEUDO_ORDER)
+            .settings_order(SETTINGS_ORDER)
             .build()
     }};
     (2) => {{
@@ -63,9 +74,23 @@ macro_rules! http2_settings {
             .max_frame_size(16384)
             .initial_connection_window_size(12517377 + 65535)
             .headers_priority((13, 41, false))
-            .headers_pseudo_order(super::HEADERS_PSEUDO_ORDER)
-            .settings_order(super::SETTINGS_ORDER)
-            .priority(Cow::Borrowed(super::PRIORITY.as_slice()))
+            .headers_pseudo_order(HEADERS_PSEUDO_ORDER)
+            .settings_order(SETTINGS_ORDER)
+            .priority(Cow::Borrowed(PRIORITY.as_slice()))
+            .build()
+    }};
+    (3) => {{
+        Http2Settings::builder()
+            .initial_stream_id(3)
+            .header_table_size(65536)
+            .enable_push(false)
+            .max_concurrent_streams(0)
+            .initial_stream_window_size(131072)
+            .max_frame_size(16384)
+            .initial_connection_window_size(12517377 + 65535)
+            .headers_priority(HEADER_PRIORITY)
+            .headers_pseudo_order(HEADERS_PSEUDO_ORDER)
+            .settings_order(SETTINGS_ORDER)
             .build()
     }};
 }
@@ -114,7 +139,7 @@ mod tls {
         SslCurve::FFDHE3072,
     ];
 
-    pub const CIPHER_LIST: &str = join!(
+    pub const CIPHER_LIST_1: &str = join!(
         ":",
         "TLS_AES_128_GCM_SHA256",
         "TLS_CHACHA20_POLY1305_SHA256",
@@ -127,6 +152,25 @@ mod tls {
         "TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384",
         "TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA",
         "TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA",
+        "TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA",
+        "TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA",
+        "TLS_RSA_WITH_AES_128_GCM_SHA256",
+        "TLS_RSA_WITH_AES_256_GCM_SHA384",
+        "TLS_RSA_WITH_AES_128_CBC_SHA",
+        "TLS_RSA_WITH_AES_256_CBC_SHA"
+    );
+
+    pub const CIPHER_LIST_2: &str = join!(
+        ":",
+        "TLS_AES_128_GCM_SHA256",
+        "TLS_CHACHA20_POLY1305_SHA256",
+        "TLS_AES_256_GCM_SHA384",
+        "TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256",
+        "TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256",
+        "TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256",
+        "TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256",
+        "TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384",
+        "TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384",
         "TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA",
         "TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA",
         "TLS_RSA_WITH_AES_128_GCM_SHA256",
@@ -206,8 +250,11 @@ mod tls {
         #[builder(default = SIGALGS_LIST)]
         sigalgs_list: &'static str,
 
-        #[builder(default = CIPHER_LIST)]
+        #[builder(default = CIPHER_LIST_1)]
         cipher_list: &'static str,
+
+        #[builder(default = true)]
+        session_ticket: bool,
 
         #[builder(default = false, setter(into))]
         enable_ech_grease: bool,
@@ -227,6 +274,9 @@ mod tls {
         #[builder(default, setter(into))]
         key_shares_length_limit: Option<u8>,
 
+        #[builder(default = true, setter(into))]
+        psk_dhe_ke: bool,
+
         #[builder(default, setter(into))]
         cert_compression_algorithm: Option<&'static [CertCompressionAlgorithm]>,
 
@@ -240,6 +290,7 @@ mod tls {
                 .curves(Cow::Borrowed(val.curves))
                 .sigalgs_list(Cow::Borrowed(val.sigalgs_list))
                 .cipher_list(Cow::Borrowed(val.cipher_list))
+                .session_ticket(val.session_ticket)
                 .delegated_credentials(Cow::Borrowed(val.delegated_credentials))
                 .record_size_limit(val.record_size_limit)
                 .enable_ocsp_stapling(true)
@@ -251,6 +302,7 @@ mod tls {
                 .key_shares_length_limit(val.key_shares_length_limit)
                 .pre_shared_key(val.pre_shared_key)
                 .psk_skip_session_ticket(val.psk_skip_session_tickets)
+                .psk_dhe_ke(val.psk_dhe_ke)
                 .extension_permutation_indices(Cow::Borrowed(val.extension_permutation_indices))
                 .build()
         }
@@ -259,7 +311,6 @@ mod tls {
 
 mod http2 {
     use crate::mimic::http2_imports::*;
-    use hyper2::{Priority, StreamDependency, StreamId};
 
     pub const HEADER_PRIORITY: (u32, u8, bool) = (0, 41, false);
 
@@ -320,6 +371,14 @@ mod_generator!(
     http2_settings!(2),
     header_initializer,
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/117.0"
+);
+
+mod_generator!(
+    ff128,
+    tls_settings!(3),
+    http2_settings!(3),
+    header_initializer_with_zstd,
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:128.0) Gecko/20100101 Firefox/128.0"
 );
 
 mod_generator!(

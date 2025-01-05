@@ -2,9 +2,9 @@ use rquest::Impersonate;
 
 #[tokio::main]
 async fn main() -> Result<(), rquest::Error> {
-    // Build a client to mimic Firefox117
+    // Build a client to mimic Firefox128
     let client = rquest::Client::builder()
-        .impersonate(Impersonate::Firefox117)
+        .impersonate(Impersonate::Firefox128)
         .build()?;
 
     let resp = client.get("https://tls.peet.ws/api/all").send().await?;

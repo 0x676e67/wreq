@@ -4,9 +4,25 @@ All notable changes to this project will be documented in this file.
 
 ## [unreleased]
 
+### 🚀 Features
+
+- *(mimic)* Optional mimic http2 (#262)
+- *(mimic)* Add Tor browser `Firefox 128` mimic (#265)
+
+### ⚙️ Miscellaneous Tasks
+
+- Simplify http2 configuration
+
+### Deps
+
+- *(pool)* Replace `futures_channel::mpsc` with `tokio::sync::mpsc` in Hyper (#264)
+
+## [1.3.2] - 2025-01-04
+
 ### ⚙️ Miscellaneous Tasks
 
 - Rename and update access scope
+- Fix typo
 
 ## [1.3.0] - 2025-01-04
 

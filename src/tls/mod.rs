@@ -56,6 +56,10 @@ impl BoringTlsConnector {
             connector.set_options(SslOptions::NO_TICKET);
         }
 
+        if !settings.psk_dhe_ke {
+            connector.set_options(SslOptions::NO_PSK_DHE_KE);
+        }
+
         if let Some(grease_enabled) = settings.grease_enabled {
             connector.set_grease_enabled(grease_enabled);
         }
@@ -398,6 +402,11 @@ pub struct TlsSettings {
     /// Sets the context's key shares length limit.
     #[builder(default, setter(into))]
     pub key_shares_length_limit: Option<u8>,
+
+    /// Sets PSK with (EC)DHE key establishment (psk_dhe_ke)
+    /// [Reference](https://github.com/openssl/openssl/issues/13918)
+    #[builder(default = true)]
+    pub psk_dhe_ke: bool,
 
     /// Sets the context's extension permutation indices.
     #[builder(default, setter(into))]

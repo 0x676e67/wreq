@@ -33,7 +33,9 @@ mod impersonate_imports {
 }
 
 mod tls_imports {
-    pub use crate::tls::{AlpnProtos, CertCompressionAlgorithm, TlsSettings, TlsVersion};
+    pub use crate::tls::{
+        AlpnProtos, AlpsProto, CertCompressionAlgorithm, TlsSettings, TlsVersion,
+    };
     pub use boring::ssl::{ExtensionType, SslCurve};
     pub use std::borrow::Cow;
     pub use typed_builder::TypedBuilder;
@@ -42,6 +44,7 @@ mod tls_imports {
 mod http2_imports {
     pub use hyper2::PseudoOrder::{self, *};
     pub use hyper2::SettingsOrder::{self, *};
+    pub use hyper2::{Priority, StreamDependency, StreamId};
     pub use std::sync::LazyLock;
 }
 
@@ -119,6 +122,7 @@ pub fn impersonate(ver: Impersonate, with_headers: bool) -> ImpersonateSettings 
 
         Firefox109 => ff109::settings,
         Firefox117 => ff117::settings,
+        Firefox128 => ff128::settings,
         Firefox133 => ff133::settings
     )
 }
@@ -181,6 +185,7 @@ pub enum Impersonate {
 
     Firefox109,
     Firefox117,
+    Firefox128,
     Firefox133,
 }
 
@@ -241,5 +246,6 @@ impl_from_str! {
 
     (Firefox109, "firefox_109"),
     (Firefox117, "firefox_117"),
+    (Firefox128, "firefox_128"),
     (Firefox133, "firefox_133"),
 }

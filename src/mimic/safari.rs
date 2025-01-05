@@ -41,9 +41,9 @@ macro_rules! http2_settings {
             .initial_stream_window_size(2097152)
             .initial_connection_window_size(10551295)
             .max_concurrent_streams(100)
-            .headers_priority(super::HEADER_PRIORITY)
-            .headers_pseudo_order(super::HEADERS_PSEUDO_ORDER)
-            .settings_order(super::SETTINGS_ORDER)
+            .headers_priority(HEADER_PRIORITY)
+            .headers_pseudo_order(HEADERS_PSEUDO_ORDER)
+            .settings_order(SETTINGS_ORDER)
             .build()
     }};
     (2) => {{
@@ -52,9 +52,9 @@ macro_rules! http2_settings {
             .initial_connection_window_size(10551295)
             .max_concurrent_streams(100)
             .enable_push(false)
-            .headers_priority(super::HEADER_PRIORITY)
-            .headers_pseudo_order(super::HEADERS_PSEUDO_ORDER)
-            .settings_order(super::SETTINGS_ORDER)
+            .headers_priority(HEADER_PRIORITY)
+            .headers_pseudo_order(HEADERS_PSEUDO_ORDER)
+            .settings_order(SETTINGS_ORDER)
             .build()
     }};
     (3) => {{
@@ -65,9 +65,9 @@ macro_rules! http2_settings {
             .enable_push(false)
             .unknown_setting8(true)
             .unknown_setting9(true)
-            .headers_priority(super::NEW_HEADER_PRIORITY)
-            .headers_pseudo_order(super::NEW_HEADERS_PSEUDO_ORDER)
-            .settings_order(super::NEW_SETTINGS_ORDER)
+            .headers_priority(NEW_HEADER_PRIORITY)
+            .headers_pseudo_order(NEW_HEADERS_PSEUDO_ORDER)
+            .settings_order(NEW_SETTINGS_ORDER)
             .build()
     }};
     (4) => {{
@@ -75,9 +75,9 @@ macro_rules! http2_settings {
             .initial_stream_window_size(4194304)
             .initial_connection_window_size(10551295)
             .max_concurrent_streams(100)
-            .headers_priority(super::HEADER_PRIORITY)
-            .headers_pseudo_order(super::HEADERS_PSEUDO_ORDER)
-            .settings_order(super::SETTINGS_ORDER)
+            .headers_priority(HEADER_PRIORITY)
+            .headers_pseudo_order(HEADERS_PSEUDO_ORDER)
+            .settings_order(SETTINGS_ORDER)
             .build()
     }};
     (5) => {{
@@ -86,9 +86,9 @@ macro_rules! http2_settings {
             .initial_connection_window_size(10551295)
             .max_concurrent_streams(100)
             .enable_push(false)
-            .headers_priority(super::HEADER_PRIORITY)
-            .headers_pseudo_order(super::HEADERS_PSEUDO_ORDER)
-            .settings_order(super::SETTINGS_ORDER)
+            .headers_priority(HEADER_PRIORITY)
+            .headers_pseudo_order(HEADERS_PSEUDO_ORDER)
+            .settings_order(SETTINGS_ORDER)
             .build()
     }};
 }
