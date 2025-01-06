@@ -10,6 +10,7 @@ use crate::connect::sealed::{Conn, Unnameable};
 use crate::error::BoxError;
 use crate::http2::Http2Settings;
 use crate::util::client::{InnerRequest, NetworkScheme, NetworkSchemeBuilder};
+use crate::util::rt::tokio::TokioTimer;
 use crate::util::{
     self, client::connect::HttpConnector, client::Builder, common::Exec, rt::TokioExecutor,
 };
@@ -232,6 +233,8 @@ impl ClientBuilder {
 
         config
             .builder
+            .timer(TokioTimer::new())
+            .pool_timer(TokioTimer::new())
             .pool_idle_timeout(config.pool_idle_timeout)
             .pool_max_idle_per_host(config.pool_max_idle_per_host)
             .pool_max_size(config.pool_max_size);
