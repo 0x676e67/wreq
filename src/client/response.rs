@@ -425,6 +425,29 @@ impl fmt::Debug for Response {
     }
 }
 
+impl<T: Into<Body>> From<http::Response<T>> for Response {
+    fn from(r: http::Response<T>) -> Response {
+        use crate::response::ResponseUrl;
+        let (mut parts, body) = r.into_parts();
+        let body: super::body::Body = body.into();
+        let decoder = Decoder::detect(
+            &mut parts.headers,
+            ResponseBody::new(body.map_err(Into::into)),
+            Accepts::none(),
+        );
+        let url = parts
+            .extensions
+            .remove::<ResponseUrl>()
+            .unwrap_or_else(|| ResponseUrl(Url::parse("http://no.url.provided.local").unwrap()));
+        let url = url.0;
+        let res = hyper2::Response::from_parts(parts, decoder);
+        Response {
+            res,
+            url: Box::new(url),
+        }
+    }
+}
+
 /// A `Response` can be piped as the `Body` of another request.
 impl From<Response> for Body {
     fn from(r: Response) -> Body {
