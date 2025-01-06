@@ -60,7 +60,7 @@ async fn main() -> Result<(), rquest::Error> {
     }
 
     // Set the interface
-    #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
+    #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux", target_os = "macos"))]
     {
         client.set_interface("eth0");
         let resp = client.get("https://api.ip.sb/ip").send().await?;

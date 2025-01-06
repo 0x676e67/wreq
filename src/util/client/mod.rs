@@ -185,11 +185,11 @@ impl Dst {
     /// Take the network scheme for iface
     #[inline(always)]
     pub fn take_interface(&mut self) -> Option<std::borrow::Cow<'static, str>> {
-        #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
+        #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux", target_os = "macos"))]
         {
             self.pool_key.0.take_interface()
         }
-        #[cfg(not(any(target_os = "android", target_os = "fuchsia", target_os = "linux")))]
+        #[cfg(not(any(target_os = "android", target_os = "fuchsia", target_os = "linux", target_os = "macos")))]
         {
             None
         }

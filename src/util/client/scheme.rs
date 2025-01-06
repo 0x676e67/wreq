@@ -14,7 +14,7 @@ pub enum NetworkScheme {
         ///
         /// - **Supported Platforms:** Android, Fuchsia, Linux.
         /// - **Purpose:** Allows binding network traffic to a specific network interface.
-        #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
+        #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux", target_os = "macos"))]
         interface: Option<std::borrow::Cow<'static, str>>,
 
         /// Specifies IP addresses to bind sockets before establishing a connection.
@@ -63,7 +63,7 @@ impl NetworkScheme {
         }
     }
 
-    #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
+    #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux", target_os = "macos"))]
     #[inline]
     pub fn take_interface(&mut self) -> Option<std::borrow::Cow<'static, str>> {
         match self {
@@ -76,7 +76,7 @@ impl NetworkScheme {
 /// Builder for `NetworkScheme`.
 #[derive(Clone, Debug, Default)]
 pub struct NetworkSchemeBuilder {
-    #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
+    #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux", target_os = "macos"))]
     interface: Option<std::borrow::Cow<'static, str>>,
     addresses: (Option<Ipv4Addr>, Option<Ipv6Addr>),
     proxy_scheme: Option<ProxyScheme>,
@@ -105,7 +105,7 @@ impl NetworkSchemeBuilder {
     }
 
     #[inline]
-    #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
+    #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux", target_os = "macos"))]
     pub fn interface<I>(&mut self, interface: I) -> &mut Self
     where
         I: Into<std::borrow::Cow<'static, str>>,
@@ -122,12 +122,12 @@ impl NetworkSchemeBuilder {
 
     #[inline]
     pub fn build(self) -> NetworkScheme {
-        #[cfg(not(any(target_os = "android", target_os = "fuchsia", target_os = "linux")))]
+        #[cfg(not(any(target_os = "android", target_os = "fuchsia", target_os = "linux", target_os = "macos")))]
         if matches!((&self.proxy_scheme, &self.addresses), (None, (None, None))) {
             return NetworkScheme::Default;
         }
 
-        #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
+        #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux", target_os = "macos"))]
         if matches!(
             (&self.proxy_scheme, &self.addresses, &self.interface),
             (None, (None, None), None)
@@ -136,7 +136,7 @@ impl NetworkSchemeBuilder {
         }
 
         NetworkScheme::Scheme {
-            #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
+            #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux", target_os = "macos"))]
             interface: self.interface,
             addresses: self.addresses,
             proxy_scheme: self.proxy_scheme,

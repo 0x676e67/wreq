@@ -62,7 +62,7 @@ impl HttpsConnectorBuilder {
     #[inline]
     #[allow(unused_mut)]
     pub fn with_interface(mut self, _interface: Option<Cow<'static, str>>) -> Self {
-        #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
+        #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux", target_os = "macos"))]
         self.http.set_interface(_interface);
         self
     }

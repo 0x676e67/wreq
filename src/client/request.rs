@@ -514,7 +514,12 @@ impl RequestBuilder {
     }
 
     /// Set the interface for this request.
-    #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
+    #[cfg(any(
+        target_os = "android",
+        target_os = "fuchsia",
+        target_os = "linux",
+        target_os = "macos"
+    ))]
     pub fn interface<I>(mut self, interface: I) -> RequestBuilder
     where
         I: Into<std::borrow::Cow<'static, str>>,

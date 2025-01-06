@@ -865,7 +865,12 @@ impl ClientBuilder {
     ///     .interface(interface)
     ///     .build().unwrap();
     /// ```
-    #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
+    #[cfg(any(
+        target_os = "android",
+        target_os = "fuchsia",
+        target_os = "linux",
+        target_os = "macos"
+    ))]
     pub fn interface<T>(mut self, interface: T) -> ClientBuilder
     where
         T: Into<std::borrow::Cow<'static, str>>,
@@ -1492,7 +1497,12 @@ impl Client {
     }
 
     /// Bind to an interface by `SO_BINDTODEVICE`.
-    #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
+    #[cfg(any(
+        target_os = "android",
+        target_os = "fuchsia",
+        target_os = "linux",
+        target_os = "macos"
+    ))]
     #[inline]
     pub fn set_interface<T>(&mut self, interface: T)
     where

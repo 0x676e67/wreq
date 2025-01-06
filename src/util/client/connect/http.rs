@@ -76,9 +76,9 @@ struct Config {
     reuse_address: bool,
     send_buffer_size: Option<usize>,
     recv_buffer_size: Option<usize>,
-    #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
+    #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux", target_os = "macos"))]
     interface: Option<std::borrow::Cow<'static, str>>,
-    #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
+    #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux", target_os = "macos"))]
     tcp_user_timeout: Option<Duration>,
 }
 
@@ -121,7 +121,7 @@ impl TcpKeepaliveConfig {
             target_os = "illumos",
             target_os = "ios",
             target_os = "visionos",
-            target_os = "linux",
+            target_os = "linux", target_os = "macos",
             target_os = "macos",
             target_os = "netbsd",
             target_os = "tvos",
@@ -144,7 +144,7 @@ impl TcpKeepaliveConfig {
            target_os = "illumos",
            target_os = "ios",
            target_os = "visionos",
-           target_os = "linux",
+           target_os = "linux", target_os = "macos",
            target_os = "macos",
            target_os = "netbsd",
            target_os = "tvos",
@@ -166,7 +166,7 @@ impl TcpKeepaliveConfig {
             target_os = "illumos",
             target_os = "ios",
             target_os = "visionos",
-            target_os = "linux",
+            target_os = "linux", target_os = "macos",
             target_os = "macos",
             target_os = "netbsd",
             target_os = "tvos",
@@ -188,7 +188,7 @@ impl TcpKeepaliveConfig {
             target_os = "illumos",
             target_os = "ios",
             target_os = "visionos",
-            target_os = "linux",
+            target_os = "linux", target_os = "macos",
             target_os = "macos",
             target_os = "netbsd",
             target_os = "tvos",
@@ -232,9 +232,9 @@ impl<R> HttpConnector<R> {
                 reuse_address: false,
                 send_buffer_size: None,
                 recv_buffer_size: None,
-                #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
+                #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux", target_os = "macos"))]
                 interface: None,
-                #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
+                #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux", target_os = "macos"))]
                 tcp_user_timeout: None,
             }),
             resolver,
@@ -371,7 +371,7 @@ impl<R> HttpConnector<R> {
     /// This function is only available on Android、Fuchsia and Linux.
     ///
     /// [VRF]: https://www.kernel.org/doc/Documentation/networking/vrf.txt
-    #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
+    #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux", target_os = "macos"))]
     #[inline]
     pub fn set_interface<S: Into<Option<std::borrow::Cow<'static, str>>>>(
         &mut self,
@@ -382,7 +382,7 @@ impl<R> HttpConnector<R> {
     }
 
     /// Sets the value of the TCP_USER_TIMEOUT option on the socket.
-    #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
+    #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux", target_os = "macos"))]
     #[inline]
     pub fn set_tcp_user_timeout(&mut self, time: Option<Duration>) {
         self.config_mut().tcp_user_timeout = time;
@@ -784,7 +784,7 @@ fn connect(
         }
     }
 
-    #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
+    #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux", target_os = "macos"))]
     // That this only works for some socket types, particularly AF_INET sockets.
     if let Some(interface) = &config.interface {
         socket
@@ -792,7 +792,7 @@ fn connect(
             .map_err(ConnectError::m("tcp bind interface error"))?;
     }
 
-    #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
+    #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux", target_os = "macos"))]
     if let Some(tcp_user_timeout) = &config.tcp_user_timeout {
         if let Err(e) = socket.set_tcp_user_timeout(Some(*tcp_user_timeout)) {
             warn!("tcp set_tcp_user_timeout error: {}", e);
