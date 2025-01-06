@@ -1,8 +1,8 @@
 //! HTTP Cookies
 
+use antidote::RwLock;
 use std::convert::TryInto;
 use std::fmt;
-use std::sync::RwLock;
 use std::time::SystemTime;
 
 use crate::header::{HeaderValue, SET_COOKIE};
@@ -160,7 +160,7 @@ impl Jar {
             .ok()
             .map(|c| c.into_owned())
             .into_iter();
-        self.0.write().unwrap().store_response_cookies(cookies, url);
+        self.0.write().store_response_cookies(cookies, url);
     }
 }
 
@@ -169,14 +169,13 @@ impl CookieStore for Jar {
         let iter =
             cookie_headers.filter_map(|val| Cookie::parse(val).map(|c| c.0.into_owned()).ok());
 
-        self.0.write().unwrap().store_response_cookies(iter, url);
+        self.0.write().store_response_cookies(iter, url);
     }
 
     fn cookies(&self, url: &url::Url) -> Option<HeaderValue> {
         let s = self
             .0
             .read()
-            .unwrap()
             .get_request_values(url)
             .map(|(name, value)| format!("{}={}", name, value))
             .collect::<Vec<_>>()
