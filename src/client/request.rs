@@ -298,7 +298,7 @@ impl RequestBuilder {
         HeaderValue: TryFrom<V>,
         <HeaderValue as TryFrom<V>>::Error: Into<http::Error>,
     {
-        self.header_sensitive(crate::header::AUTHORIZATION, value, true, true)
+        self.header_operation(crate::header::AUTHORIZATION, value, true, true, false)
     }
 
     /// Enable HTTP basic authentication.

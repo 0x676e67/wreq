@@ -78,7 +78,7 @@ where
     /// Set the version for the request.
     #[inline]
     pub fn version(mut self, version: Option<Version>) -> Self {
-        if let Some(version) = version.into() {
+        if let Some(version) = version {
             self.builder = self.builder.version(version);
             self.alpn_protos = map_alpn_protos(version);
         }
@@ -88,9 +88,8 @@ where
     /// Set the headers for the request.
     #[inline]
     pub fn headers(mut self, mut headers: HeaderMap) -> Self {
-        self.builder
-            .headers_mut()
-            .map(|h| std::mem::swap(h, &mut headers));
+        if let Some(h) = self.builder
+            .headers_mut() { std::mem::swap(h, &mut headers) }
         self
     }
 
