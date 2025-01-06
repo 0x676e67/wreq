@@ -325,6 +325,15 @@ impl RequestBuilder {
         self
     }
 
+    /// Enable HTTP authentication.
+    pub fn auth<V>(self, value: V) -> RequestBuilder
+    where
+        HeaderValue: TryFrom<V>,
+        <HeaderValue as TryFrom<V>>::Error: Into<http::Error>,
+    {
+        self.header_sensitive(crate::header::AUTHORIZATION, value, true, true)
+    }
+
     /// Enable HTTP basic authentication.
     ///
     /// ```rust
