@@ -15,6 +15,7 @@ use boring::ssl::{
 use http::uri::Scheme;
 use http::Uri;
 use hyper2::rt::{Read, Write};
+use std::borrow::Cow;
 use std::error::Error;
 use std::fmt::Debug;
 use std::future::Future;
@@ -60,7 +61,7 @@ impl HttpsConnectorBuilder {
 
     #[inline]
     #[allow(unused_mut)]
-    pub fn with_interface(mut self, _interface: Option<std::borrow::Cow<'static, str>>) -> Self {
+    pub fn with_interface(mut self, _interface: Option<Cow<'static, str>>) -> Self {
         #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
         self.http.set_interface(_interface);
         self

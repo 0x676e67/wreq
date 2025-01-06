@@ -373,7 +373,10 @@ impl<R> HttpConnector<R> {
     /// [VRF]: https://www.kernel.org/doc/Documentation/networking/vrf.txt
     #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
     #[inline]
-    pub fn set_interface<S: Into<std::borrow::Cow<'static, str>>>(&mut self, interface: S) -> &mut Self {
+    pub fn set_interface<S: Into<Option<std::borrow::Cow<'static, str>>>>(
+        &mut self,
+        interface: S,
+    ) -> &mut Self {
         self.config_mut().interface = Some(interface.into());
         self
     }
