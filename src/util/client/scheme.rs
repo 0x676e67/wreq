@@ -99,12 +99,15 @@ impl NetworkSchemeBuilder {
     #[inline]
     pub fn build(self) -> NetworkScheme {
         #[cfg(not(any(target_os = "android", target_os = "fuchsia", target_os = "linux")))]
-        if let (None, (None, None)) = (&self.proxy_scheme, &self.addresses) {
+        if matches!((&self.proxy_scheme, &self.addresses), (None, (None, None))) {
             return NetworkScheme::Default;
         }
 
         #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
-        if let (None, (None, None), None) = (&self.proxy, &self.addresses, &self.interface) {
+        if matches!(
+            (&self.proxy_scheme, &self.addresses, &self.interface),
+            (None, (None, None), None)
+        ) {
             return NetworkScheme::Default;
         }
 
