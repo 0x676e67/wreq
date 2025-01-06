@@ -88,8 +88,9 @@ where
     /// Set the headers for the request.
     #[inline]
     pub fn headers(mut self, mut headers: HeaderMap) -> Self {
-        if let Some(h) = self.builder
-            .headers_mut() { std::mem::swap(h, &mut headers) }
+        if let Some(h) = self.builder.headers_mut() {
+            std::mem::swap(h, &mut headers)
+        }
         self
     }
 

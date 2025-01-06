@@ -1,5 +1,5 @@
-use std::net::IpAddr;
 use rquest::{redirect::Policy, Impersonate};
+use std::net::IpAddr;
 
 #[tokio::main]
 async fn main() -> Result<(), rquest::Error> {
