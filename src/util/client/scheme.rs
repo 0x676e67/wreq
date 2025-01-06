@@ -1,21 +1,44 @@
+//! Request network scheme.
 use crate::proxy::ProxyScheme;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
+/// Represents the network configuration scheme.
+///
+/// This enum defines different strategies for configuring network settings,
+/// such as binding to specific interfaces, addresses, or proxy schemes.
 #[derive(Debug, Clone, Hash, PartialEq, Eq, Default)]
 pub enum NetworkScheme {
-    /// Network scheme.
+    /// Custom network scheme with specific configurations.
     Scheme {
+        /// Specifies the network interface to bind to using `SO_BINDTODEVICE`.
+        ///
+        /// - **Supported Platforms:** Android, Fuchsia, Linux.
+        /// - **Purpose:** Allows binding network traffic to a specific network interface.
         #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
         interface: Option<std::borrow::Cow<'static, str>>,
+
+        /// Specifies IP addresses to bind sockets before establishing a connection.
+        ///
+        /// - **Tuple Structure:** `(Option<Ipv4Addr>, Option<Ipv6Addr>)`
+        /// - **Purpose:** Ensures that all sockets use the specified IP addresses
+        ///   for both IPv4 and IPv6 connections.
         addresses: (Option<Ipv4Addr>, Option<Ipv6Addr>),
+
+        /// Defines the proxy scheme for network requests.
+        ///
+        /// - **Examples:** HTTP, HTTPS, SOCKS5, SOCKS5h.
+        /// - **Purpose:** Routes network traffic through a specified proxy.
         proxy_scheme: Option<ProxyScheme>,
     },
 
-    /// No network scheme.
+    /// The default network scheme.
+    ///
+    /// - **Purpose:** Represents a standard or unconfigured network state.
     #[default]
     Default,
 }
 
+/// ==== impl NetworkScheme ====
 impl NetworkScheme {
     pub fn builder() -> NetworkSchemeBuilder {
         NetworkSchemeBuilder::default()
@@ -59,6 +82,7 @@ pub struct NetworkSchemeBuilder {
     proxy_scheme: Option<ProxyScheme>,
 }
 
+/// ==== impl NetworkSchemeBuilder ====
 impl NetworkSchemeBuilder {
     #[inline]
     pub fn address(&mut self, addr: impl Into<Option<IpAddr>>) -> &mut Self {
