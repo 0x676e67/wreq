@@ -201,11 +201,10 @@ pub enum RootCertsStore {
     Borrowed(&'static X509Store),
 
     #[default]
-    None,
+    Default,
 }
 
 /// ====== impl RootCertsStore ======
-
 macro_rules! impl_root_cert_store {
     ($($type:ty => $variant:ident),* $(,)?) => {
         $(
@@ -276,7 +275,7 @@ pub struct TlsSettings {
     ///
     /// **Usage Example:**  
     /// - Commonly used to negotiate **HTTP/2**.
-    /// Default use all protocols (HTTP/1.1/HTTP/2/HTTP/3).
+    /// - Default use all protocols (HTTP/1.1/HTTP/2/HTTP/3).
     #[builder(default = AlpnProtos::All)]
     pub alpn_protos: AlpnProtos,
 
@@ -413,8 +412,7 @@ pub struct TlsSettings {
     pub extension_permutation_indices: Option<Cow<'static, [u8]>>,
 }
 
-/// ====== impl TlsSettings ======
-
+/// ====== impl TlsSettings ======c
 impl Default for TlsSettings {
     fn default() -> Self {
         Self::builder().build()

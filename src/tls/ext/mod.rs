@@ -51,7 +51,7 @@ pub trait SslConnectorBuilderExt {
 /// SslRefExt trait for `SslRef`.
 pub trait SslRefExt {
     /// Configure the ALPN protos for the given `SslRef`.
-    fn alpn_protos<A: Into<Option<AlpnProtos>>>(&mut self, alpn: A) -> TlsResult<()>;
+    fn alpn_protos(&mut self, alpn: Option<AlpnProtos>) -> TlsResult<()>;
 }
 
 /// ConnectConfigurationExt trait for `ConnectConfiguration`.
@@ -60,7 +60,7 @@ pub trait ConnectConfigurationExt {
     fn enable_ech_grease(&mut self, enable: bool) -> TlsResult<&mut ConnectConfiguration>;
 
     /// Configure the ALPS for the given `ConnectConfiguration`.
-    fn alps_proto(&mut self, alps: AlpsProto) -> TlsResult<&mut ConnectConfiguration>;
+    fn alps_proto(&mut self, alps: Option<AlpsProto>) -> TlsResult<&mut ConnectConfiguration>;
 
     /// Configure the no session ticket for the given `ConnectConfiguration`.
     fn skip_session_ticket(&mut self) -> TlsResult<&mut ConnectConfiguration>;
@@ -121,7 +121,7 @@ impl SslConnectorBuilderExt for SslConnectorBuilder {
         // Conditionally configure the TLS builder based on the "native-roots" feature.
         // If no custom CA cert store, use the system's native certificate store if the feature is enabled.
         match store {
-            RootCertsStore::None => {
+            RootCertsStore::Default => {
                 // WebPKI root certificates are enabled (regardless of whether native-roots is also enabled).
                 #[cfg(any(feature = "webpki-roots", feature = "native-roots"))]
                 {
@@ -164,17 +164,20 @@ impl ConnectConfigurationExt for ConnectConfiguration {
     }
 
     #[inline]
-    fn alps_proto(&mut self, alps: AlpsProto) -> TlsResult<&mut ConnectConfiguration> {
-        sv_handler(unsafe {
-            ffi::SSL_add_application_settings(
-                self.as_ptr(),
-                alps.as_ptr(),
-                alps.len(),
-                std::ptr::null(),
-                0,
-            )
-        })
-        .map(|_| self)
+    fn alps_proto(&mut self, alps: Option<AlpsProto>) -> TlsResult<&mut ConnectConfiguration> {
+        if let Some(alps) = alps {
+            sv_handler(unsafe {
+                ffi::SSL_add_application_settings(
+                    self.as_ptr(),
+                    alps.as_ptr(),
+                    alps.len(),
+                    std::ptr::null(),
+                    0,
+                )
+            })?;
+        }
+
+        Ok(self)
     }
 
     #[inline]
@@ -186,8 +189,8 @@ impl ConnectConfigurationExt for ConnectConfiguration {
 
 impl SslRefExt for SslRef {
     #[inline]
-    fn alpn_protos<A: Into<Option<AlpnProtos>>>(&mut self, alpn: A) -> TlsResult<()> {
-        let alpn = match alpn.into() {
+    fn alpn_protos(&mut self, alpn: Option<AlpnProtos>) -> TlsResult<()> {
+        let alpn = match alpn {
             Some(alpn) => alpn.0,
             None => return Ok(()),
         };

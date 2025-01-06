@@ -353,3 +353,8 @@ required-features = ["full"]
 name = "connect_via_lower_priority_tokio_runtime"
 path = "examples/connect_via_lower_priority_tokio_runtime.rs"
 required-features = ["full"]
+
+[[example]]
+name = "request_with_local_address"
+path = "examples/request_with_local_address.rs"
+required-features = ["full"]

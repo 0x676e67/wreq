@@ -1,150 +1,125 @@
 use crate::proxy::ProxyScheme;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
-#[derive(Clone, Hash, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Hash, PartialEq, Eq, Default)]
 pub enum NetworkScheme {
-    /// Network scheme with an interface.
-    Iface {
+    /// Network scheme.
+    Scheme {
         #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
         interface: Option<std::borrow::Cow<'static, str>>,
         addresses: (Option<Ipv4Addr>, Option<Ipv6Addr>),
+        proxy_scheme: Option<ProxyScheme>,
     },
-
-    /// Network scheme with a proxy.
-    Proxy(Option<ProxyScheme>),
 
     /// No network scheme.
     #[default]
-    None,
+    Default,
 }
 
 impl NetworkScheme {
     pub fn builder() -> NetworkSchemeBuilder {
-        NetworkSchemeBuilder::new()
+        NetworkSchemeBuilder::default()
     }
 
-    pub fn take_proxy(&mut self) -> Option<ProxyScheme> {
+    #[inline]
+    pub fn take_proxy_scheme(&mut self) -> Option<ProxyScheme> {
         match self {
-            NetworkScheme::Proxy(proxy) => proxy.take(),
+            NetworkScheme::Scheme {
+                proxy_scheme: proxy,
+                ..
+            } => proxy.take(),
             _ => None,
         }
     }
 
-    #[cfg(not(any(target_os = "android", target_os = "fuchsia", target_os = "linux")))]
-    pub fn take_iface(&mut self) -> (Option<Ipv4Addr>, Option<Ipv6Addr>) {
+    #[inline]
+    pub fn take_addresses(&mut self) -> (Option<Ipv4Addr>, Option<Ipv6Addr>) {
         match self {
-            NetworkScheme::Iface { addresses, .. } => (addresses.0.take(), addresses.1.take()),
+            NetworkScheme::Scheme { addresses, .. } => (addresses.0.take(), addresses.1.take()),
             _ => (None, None),
         }
     }
 
     #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
-    pub fn take_iface(
-        &mut self,
-    ) -> (
-        Option<std::borrow::Cow<'static, str>>,
-        (Option<Ipv4Addr>, Option<Ipv6Addr>),
-    ) {
+    #[inline]
+    pub fn take_interface(&mut self) -> Option<std::borrow::Cow<'static, str>> {
         match self {
-            NetworkScheme::Iface {
-                interface,
-                addresses,
-            } => (interface.take(), (addresses.0.take(), addresses.1.take())),
-            _ => (None, (None, None)),
+            NetworkScheme::Scheme { interface, .. } => interface.take(),
+            _ => None,
         }
     }
 }
 
-impl std::fmt::Debug for NetworkScheme {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            NetworkScheme::Proxy(proxy) => write!(f, "proxy: {:?}", proxy),
-            #[cfg(not(any(target_os = "android", target_os = "fuchsia", target_os = "linux")))]
-            NetworkScheme::Iface { addresses, .. } => {
-                write!(f, "iface: {:?}, {:?}", addresses.0, addresses.1)
-            }
-            #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
-            NetworkScheme::Iface {
-                interface,
-                addresses,
-            } => {
-                write!(
-                    f,
-                    "iface: {:?}, {:?}, {:?}",
-                    interface, addresses.0, addresses.1
-                )
-            }
-            NetworkScheme::None => write!(f, "None"),
-        }
-    }
-}
-
-#[allow(missing_debug_implementations)]
+/// Builder for `NetworkScheme`.
+#[derive(Clone, Debug, Default)]
 pub struct NetworkSchemeBuilder {
-    addresses: (Option<Ipv4Addr>, Option<Ipv6Addr>),
     #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
     interface: Option<std::borrow::Cow<'static, str>>,
-    proxy: Option<ProxyScheme>,
+    addresses: (Option<Ipv4Addr>, Option<Ipv6Addr>),
+    proxy_scheme: Option<ProxyScheme>,
 }
 
 impl NetworkSchemeBuilder {
-    fn new() -> Self {
-        Self {
-            addresses: (None, None),
-            #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
-            interface: None,
-            proxy: None,
-        }
-    }
-
-    #[cfg(not(any(target_os = "android", target_os = "fuchsia", target_os = "linux")))]
-    pub fn iface(mut self, ipv4: Option<Ipv4Addr>, ipv6: Option<Ipv6Addr>) -> Self {
-        self.addresses = (ipv4, ipv6);
+    #[inline]
+    pub fn address(&mut self, addr: impl Into<Option<IpAddr>>) -> &mut Self {
+        self.addresses = match addr.into() {
+            Some(IpAddr::V4(addr)) => (Some(addr), None),
+            Some(IpAddr::V6(addr)) => (None, Some(addr)),
+            _ => (None, None),
+        };
         self
     }
 
+    #[inline]
+    pub fn addresses<V4, V6>(&mut self, ipv4: V4, ipv6: V6) -> &mut Self
+    where
+        V4: Into<Option<Ipv4Addr>>,
+        V6: Into<Option<Ipv6Addr>>,
+    {
+        self.addresses = (ipv4.into(), ipv6.into());
+        self
+    }
+
+    #[inline]
     #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
-    pub fn iface(
-        mut self,
-        interface: Option<std::borrow::Cow<'static, str>>,
-        addresses: (Option<Ipv4Addr>, Option<Ipv6Addr>),
-    ) -> Self {
-        self.addresses = addresses;
-        self.interface = interface;
+    pub fn interface<I>(&mut self, interface: I) -> &mut Self
+    where
+        I: Into<std::borrow::Cow<'static, str>>,
+    {
+        self.interface = Some(interface.into());
         self
     }
 
-    pub fn proxy(mut self, proxy: impl Into<Option<ProxyScheme>>) -> Self {
-        self.proxy = proxy.into();
+    #[inline]
+    pub fn proxy_scheme(&mut self, proxy: impl Into<Option<ProxyScheme>>) -> &mut Self {
+        self.proxy_scheme = proxy.into();
         self
     }
 
+    #[inline]
     pub fn build(self) -> NetworkScheme {
         #[cfg(not(any(target_os = "android", target_os = "fuchsia", target_os = "linux")))]
-        if let (None, (None, None)) = (&self.proxy, &self.addresses) {
-            return NetworkScheme::None;
+        if let (None, (None, None)) = (&self.proxy_scheme, &self.addresses) {
+            return NetworkScheme::Default;
         }
 
         #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
         if let (None, (None, None), None) = (&self.proxy, &self.addresses, &self.interface) {
-            return NetworkScheme::None;
+            return NetworkScheme::Default;
         }
 
-        if self.proxy.is_some() {
-            return NetworkScheme::Proxy(self.proxy);
-        }
-
-        NetworkScheme::Iface {
+        NetworkScheme::Scheme {
             #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
             interface: self.interface,
             addresses: self.addresses,
+            proxy_scheme: self.proxy_scheme,
         }
     }
 }
 
 impl From<Option<IpAddr>> for NetworkScheme {
     fn from(value: Option<IpAddr>) -> Self {
-        NetworkScheme::Iface {
+        NetworkScheme::Scheme {
             #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
             interface: None,
             addresses: match value {
@@ -152,42 +127,41 @@ impl From<Option<IpAddr>> for NetworkScheme {
                 Some(IpAddr::V6(b)) => (None, Some(b)),
                 _ => (None, None),
             },
+            proxy_scheme: None,
         }
     }
 }
 
 impl From<(Option<Ipv4Addr>, Option<Ipv6Addr>)> for NetworkScheme {
-    fn from(value: (Option<Ipv4Addr>, Option<Ipv6Addr>)) -> Self {
-        NetworkScheme::Iface {
-            #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
-            interface: None,
-            addresses: value,
-        }
+    fn from((v4, v6): (Option<Ipv4Addr>, Option<Ipv6Addr>)) -> Self {
+        let mut builder = NetworkScheme::builder();
+        builder.addresses(v4, v6);
+        builder.build()
     }
 }
 
 impl From<ProxyScheme> for NetworkScheme {
     fn from(value: ProxyScheme) -> Self {
-        NetworkScheme::Proxy(Some(value))
+        let mut builder = NetworkScheme::builder();
+        builder.proxy_scheme(value);
+        builder.build()
     }
 }
 
 #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
 impl From<String> for NetworkScheme {
     fn from(value: String) -> Self {
-        NetworkScheme::Iface {
-            interface: Some(std::borrow::Cow::Owned(value)),
-            addresses: (None, None),
-        }
+        let mut builder = NetworkScheme::builder();
+        builder.interface(value);
+        builder.build()
     }
 }
 
 #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
 impl From<&'static str> for NetworkScheme {
     fn from(value: &'static str) -> Self {
-        NetworkScheme::Iface {
-            interface: Some(std::borrow::Cow::Borrowed(value)),
-            addresses: (None, None),
-        }
+        let mut builder = NetworkScheme::builder();
+        builder.interface(value);
+        builder.build()
     }
 }

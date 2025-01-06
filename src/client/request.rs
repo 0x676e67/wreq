@@ -16,9 +16,8 @@ use super::multipart;
 use super::response::Response;
 #[cfg(feature = "cookies")]
 use crate::cookie;
-use crate::header::{HeaderMap, HeaderName, HeaderValue, CONTENT_TYPE, HOST};
-use crate::proxy::ProxyScheme;
-use crate::util::client::NetworkScheme;
+use crate::header::{HeaderMap, HeaderName, HeaderValue, CONTENT_TYPE};
+use crate::util::client::{NetworkScheme, NetworkSchemeBuilder};
 use crate::{redirect, IntoUrl, Method, Proxy, Url};
 #[cfg(feature = "cookies")]
 use std::sync::Arc;
@@ -60,11 +59,7 @@ pub struct Request {
     redirect: Option<redirect::Policy>,
     #[cfg(feature = "cookies")]
     cookie_store: Option<Arc<dyn cookie::CookieStore>>,
-    proxy_scheme: Option<ProxyScheme>,
-    local_addr_v4: Option<Ipv4Addr>,
-    local_addr_v6: Option<Ipv6Addr>,
-    #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
-    interface: Option<std::borrow::Cow<'static, str>>,
+    network_scheme: NetworkSchemeBuilder,
 }
 
 /// A builder to construct the properties of a `Request`.
@@ -90,11 +85,7 @@ impl Request {
             redirect: None,
             #[cfg(feature = "cookies")]
             cookie_store: None,
-            proxy_scheme: None,
-            local_addr_v4: None,
-            local_addr_v6: None,
-            #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
-            interface: None,
+            network_scheme: NetworkScheme::builder(),
         }
     }
 
@@ -187,22 +178,6 @@ impl Request {
     }
 
     pub(super) fn pieces(self) -> PiecesWithCookieStore {
-        // Create the NetworkScheme builder based on the target OS
-        let network_scheme = {
-            #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
-            {
-                NetworkScheme::builder()
-                    .proxy(self.proxy_scheme)
-                    .iface(self.interface, (self.local_addr_v4, self.local_addr_v6))
-                    .build()
-            }
-
-            #[cfg(not(any(target_os = "android", target_os = "fuchsia", target_os = "linux")))]
-            NetworkScheme::builder()
-                .proxy(self.proxy_scheme)
-                .iface(self.local_addr_v4, self.local_addr_v6)
-                .build()
-        };
         (
             self.method,
             self.url,
@@ -215,7 +190,7 @@ impl Request {
             self.cookie_store,
             #[cfg(not(feature = "cookies"))]
             (),
-            network_scheme,
+            self.network_scheme.build(),
         )
     }
 }
@@ -253,16 +228,21 @@ impl RequestBuilder {
         HeaderValue: TryFrom<V>,
         <HeaderValue as TryFrom<V>>::Error: Into<http::Error>,
     {
-        self.header_sensitive(key, value, false, false)
+        self.header_operation(key, value, false, false, false)
     }
 
-    /// Add a `Header` to this Request with ability to define if `header_value` is sensitive.
-    fn header_sensitive<K, V>(
+    /// Add a `Header` to this Request.
+    ///
+    /// `sensitive` - if true, the header value is set to sensitive
+    /// `overwrite` - if true, the header value is overwritten if it already exists
+    /// `or_insert` - if true, the header value is inserted if it does not already exist
+    fn header_operation<K, V>(
         mut self,
         key: K,
         value: V,
         sensitive: bool,
         overwrite: bool,
+        or_insert: bool,
     ) -> RequestBuilder
     where
         HeaderName: TryFrom<K>,
@@ -281,7 +261,11 @@ impl RequestBuilder {
                         if sensitive {
                             value.set_sensitive(true);
                         }
-                        if overwrite {
+
+                        // If or_insert is true, we want to skip the insertion if the header already exists
+                        if or_insert {
+                            req.headers_mut().entry(key).or_insert(value);
+                        } else if overwrite {
                             req.headers_mut().insert(key, value);
                         } else {
                             req.headers_mut().append(key, value);
@@ -308,30 +292,13 @@ impl RequestBuilder {
         self
     }
 
-    /// If the URL is not a full URL, this will append the host header to the request.
-    ///
-    /// This is useful when you want to append the host header to the request
-    /// when the URL is not a full URL.
-    pub fn with_host_header(mut self) -> RequestBuilder {
-        if let Ok(ref mut req) = self.request {
-            let authority = req.url().authority();
-            if authority.is_empty() {
-                return self;
-            }
-            if let Ok(host_with_port) = authority.parse::<HeaderValue>() {
-                return self.header_sensitive(HOST, host_with_port, false, false);
-            }
-        }
-        self
-    }
-
     /// Enable HTTP authentication.
     pub fn auth<V>(self, value: V) -> RequestBuilder
     where
         HeaderValue: TryFrom<V>,
         <HeaderValue as TryFrom<V>>::Error: Into<http::Error>,
     {
-        self.header_sensitive(crate::header::AUTHORIZATION, value, true, true)
+        self.header_operation(crate::header::AUTHORIZATION, value, true, true, false)
     }
 
     /// Enable HTTP basic authentication.
@@ -354,7 +321,13 @@ impl RequestBuilder {
         P: fmt::Display,
     {
         let header_value = crate::util::basic_auth(username, password);
-        self.header_sensitive(crate::header::AUTHORIZATION, header_value, true, true)
+        self.header_operation(
+            crate::header::AUTHORIZATION,
+            header_value,
+            true,
+            true,
+            false,
+        )
     }
 
     /// Enable HTTP bearer authentication.
@@ -363,7 +336,13 @@ impl RequestBuilder {
         T: fmt::Display,
     {
         let header_value = format!("Bearer {}", token);
-        self.header_sensitive(crate::header::AUTHORIZATION, header_value, true, true)
+        self.header_operation(
+            crate::header::AUTHORIZATION,
+            header_value,
+            true,
+            true,
+            false,
+        )
     }
 
     /// Set the request body.
@@ -408,9 +387,12 @@ impl RequestBuilder {
     #[cfg(feature = "multipart")]
     #[cfg_attr(docsrs, doc(cfg(feature = "multipart")))]
     pub fn multipart(self, mut multipart: multipart::Form) -> RequestBuilder {
-        let mut builder = self.header(
+        let mut builder = self.header_operation(
             CONTENT_TYPE,
             format!("multipart/form-data; boundary={}", multipart.boundary()),
+            false,
+            false,
+            true,
         );
 
         builder = match multipart.compute_length() {
@@ -481,52 +463,55 @@ impl RequestBuilder {
     }
 
     /// Set the proxy for this request.
-    pub fn proxy(mut self, proxy: impl IntoUrl) -> RequestBuilder {
+    pub fn proxy<U: IntoUrl>(mut self, proxy: impl IntoUrl) -> RequestBuilder {
         if let Ok(ref mut req) = self.request {
-            if let Some(err) = proxy
+            match proxy
                 .into_url()
                 .and_then(Proxy::all)
-                .map(|proxy| req.proxy_scheme = proxy.intercept(req.url()))
-                .err()
+                .map(|proxy| proxy.intercept(req.url()))
             {
-                self.request = Err(crate::error::builder(err));
+                Ok(proxy_scheme) => {
+                    req.network_scheme.proxy_scheme(proxy_scheme);
+                }
+                Err(err) => {
+                    self.request = Err(crate::error::builder(err));
+                }
             }
         }
         self
     }
 
     /// Set the local address for this request.
-    pub fn local_address(mut self, local_address: impl Into<IpAddr>) -> RequestBuilder {
+    pub fn local_address<V>(mut self, local_address: V) -> RequestBuilder
+    where
+        V: Into<Option<IpAddr>>,
+    {
         if let Ok(ref mut req) = self.request {
-            match local_address.into() {
-                IpAddr::V4(addr) => req.local_addr_v4 = Some(addr),
-                IpAddr::V6(addr) => req.local_addr_v6 = Some(addr),
-            }
+            req.network_scheme.address(local_address);
         }
         self
     }
 
     /// Set the local addresses for this request.
-    pub fn local_addresses(
-        mut self,
-        ipv4: impl Into<Ipv4Addr>,
-        ipv6: impl Into<Ipv6Addr>,
-    ) -> RequestBuilder {
+    pub fn local_addresses<V4, V6>(mut self, ipv4: V4, ipv6: V6) -> RequestBuilder
+    where
+        V4: Into<Option<Ipv4Addr>>,
+        V6: Into<Option<Ipv6Addr>>,
+    {
         if let Ok(ref mut req) = self.request {
-            req.local_addr_v4 = Some(ipv4.into());
-            req.local_addr_v6 = Some(ipv6.into());
+            req.network_scheme.addresses(ipv4, ipv6);
         }
         self
     }
 
     /// Set the interface for this request.
     #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
-    pub fn interface(
-        mut self,
-        interface: impl Into<std::borrow::Cow<'static, str>>,
-    ) -> RequestBuilder {
+    pub fn interface<I>(mut self, interface: I) -> RequestBuilder
+    where
+        I: Into<std::borrow::Cow<'static, str>>,
+    {
         if let Ok(ref mut req) = self.request {
-            req.interface = Some(interface.into());
+            req.network_builder.interface(interface);
         }
         self
     }
@@ -774,11 +759,7 @@ where
             redirect: None,
             #[cfg(feature = "cookies")]
             cookie_store: None,
-            proxy_scheme: None,
-            local_addr_v4: None,
-            local_addr_v6: None,
-            #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
-            interface: None,
+            network_scheme: NetworkScheme::builder(),
         })
     }
 }
