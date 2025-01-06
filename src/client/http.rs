@@ -1498,7 +1498,7 @@ impl Client {
     where
         T: Into<std::borrow::Cow<'static, str>>,
     {
-        inner.network_scheme.interface(interface);
+        self.inner_mut().network_scheme.interface(interface);
     }
 
     /// Set the headers order for this client.

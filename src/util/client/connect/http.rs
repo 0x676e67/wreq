@@ -77,7 +77,7 @@ struct Config {
     send_buffer_size: Option<usize>,
     recv_buffer_size: Option<usize>,
     #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
-    interface: Option<String>,
+    interface: Option<std::borrow::Cow<'static, str>>,
     #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
     tcp_user_timeout: Option<Duration>,
 }
@@ -373,7 +373,7 @@ impl<R> HttpConnector<R> {
     /// [VRF]: https://www.kernel.org/doc/Documentation/networking/vrf.txt
     #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
     #[inline]
-    pub fn set_interface<S: Into<String>>(&mut self, interface: S) -> &mut Self {
+    pub fn set_interface<S: Into<std::borrow::Cow<'static, str>>>(&mut self, interface: S) -> &mut Self {
         self.config_mut().interface = Some(interface.into());
         self
     }

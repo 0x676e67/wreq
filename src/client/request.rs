@@ -520,7 +520,7 @@ impl RequestBuilder {
         I: Into<std::borrow::Cow<'static, str>>,
     {
         if let Ok(ref mut req) = self.request {
-            req.network_builder.interface(interface);
+            req.network_scheme.interface(interface);
         }
         self
     }
