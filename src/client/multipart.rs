@@ -7,15 +7,14 @@ use std::pin::Pin;
 use std::io;
 #[cfg(feature = "stream")]
 use std::path::Path;
-#[cfg(feature = "stream")]
-use tokio::fs::File;
 
 use bytes::Bytes;
 use mime_guess::Mime;
 use percent_encoding::{self, AsciiSet, NON_ALPHANUMERIC};
+#[cfg(feature = "stream")]
+use tokio::fs::File;
 
-use futures_util::Stream;
-use futures_util::{future, stream, StreamExt};
+use futures_util::{future, stream, Stream, StreamExt};
 
 use super::Body;
 use crate::header::HeaderMap;
@@ -78,7 +77,7 @@ impl Form {
     ///
     /// ```
     /// let form = rquest::multipart::Form::new()
-    ///     .text("username", "0x676e67")
+    ///     .text("username", "seanmonstar")
     ///     .text("password", "secret");
     /// ```
     pub fn text<T, U>(self, name: T, value: U) -> Form
@@ -267,7 +266,13 @@ impl Part {
         let ext = path.extension().and_then(|ext| ext.to_str()).unwrap_or("");
         let mime = mime_guess::from_ext(ext).first_or_octet_stream();
         let file = File::open(path).await?;
-        let field = Part::stream(file).mime(mime);
+        let len = file.metadata().await.map(|m| m.len()).ok();
+        let field = match len {
+            Some(len) => Part::stream_with_length(file, len),
+            None => Part::stream(file),
+        }
+        .mime(mime);
+
         Ok(if let Some(file_name) = file_name {
             field.file_name(file_name)
         } else {
@@ -411,7 +416,7 @@ impl<P: PartProps> FormParts<P> {
                 _ => return None,
             }
         }
-        // If there is a at least one field there is a special boundary for the very last field.
+        // If there is at least one field there is a special boundary for the very last field.
         if !self.fields.is_empty() {
             length += 2 + self.boundary().len() as u64 + 4
         }
@@ -532,7 +537,7 @@ impl PercentEncoding {
         }
 
         // According to RFC7578 Section 4.2, `filename*=` syntax is invalid.
-        // See https://github.com/0x676e67/rquest/issues/419.
+        // See https://github.com/seanmonstar/reqwest/issues/419.
         if let Some(filename) = &field.file_name {
             buf.extend_from_slice(b"; filename=\"");
             let legal_filename = filename
@@ -577,7 +582,7 @@ fn gen_boundary() -> String {
     let c = random();
     let d = random();
 
-    format!("{:016x}-{:016x}-{:016x}-{:016x}", a, b, c, d)
+    format!("{a:016x}-{b:016x}-{c:016x}-{d:016x}")
 }
 
 #[cfg(test)]
@@ -654,7 +659,7 @@ mod tests {
             "START REAL\n{}\nEND REAL",
             std::str::from_utf8(&out).unwrap()
         );
-        println!("START EXPECTED\n{}\nEND EXPECTED", expected);
+        println!("START EXPECTED\n{expected}\nEND EXPECTED");
         assert_eq!(std::str::from_utf8(&out).unwrap(), expected);
     }
 
@@ -686,7 +691,7 @@ mod tests {
             "START REAL\n{}\nEND REAL",
             std::str::from_utf8(&out).unwrap()
         );
-        println!("START EXPECTED\n{}\nEND EXPECTED", expected);
+        println!("START EXPECTED\n{expected}\nEND EXPECTED");
         assert_eq!(std::str::from_utf8(&out).unwrap(), expected);
     }
 

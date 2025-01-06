@@ -119,63 +119,6 @@ async fn stream_part() {
     assert_eq!(res.status(), rquest::StatusCode::OK);
 }
 
-#[cfg(feature = "blocking")]
-#[test]
-fn blocking_file_part() {
-    let _ = env_logger::try_init();
-
-    let form = rquest::blocking::multipart::Form::new()
-        .file("foo", "Cargo.lock")
-        .unwrap();
-
-    let fcontents = std::fs::read_to_string("Cargo.lock").unwrap();
-
-    let expected_body = format!(
-        "\
-         --{0}\r\n\
-         Content-Disposition: form-data; name=\"foo\"; filename=\"Cargo.lock\"\r\n\
-         Content-Type: application/octet-stream\r\n\r\n\
-         {1}\r\n\
-         --{0}--\r\n\
-         ",
-        form.boundary(),
-        fcontents
-    );
-
-    let ct = format!("multipart/form-data; boundary={}", form.boundary());
-
-    let server = server::http(move |req| {
-        let ct = ct.clone();
-        let expected_body = expected_body.clone();
-        async move {
-            assert_eq!(req.method(), "POST");
-            assert_eq!(req.headers()["content-type"], ct);
-            // files know their exact size
-            assert_eq!(
-                req.headers()["content-length"],
-                expected_body.len().to_string()
-            );
-
-            let full = req.collect().await.unwrap().to_bytes();
-
-            assert_eq!(full, expected_body.as_bytes());
-
-            http::Response::default()
-        }
-    });
-
-    let url = format!("http://{}/multipart/2", server.addr());
-
-    let res = rquest::blocking::Client::new()
-        .post(&url)
-        .multipart(form)
-        .send()
-        .unwrap();
-
-    assert_eq!(res.url().as_str(), &url);
-    assert_eq!(res.status(), rquest::StatusCode::OK);
-}
-
 #[cfg(feature = "stream")]
 #[tokio::test]
 async fn async_impl_file_part() {

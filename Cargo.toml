@@ -227,7 +227,7 @@ required-features = ["zstd", "stream"]
 [[test]]
 name = "multipart"
 path = "tests/multipart.rs"
-required-features = ["multipart"]
+required-features = ["multipart", "stream"]
 
 [[example]]
 name = "json_dynamic"
