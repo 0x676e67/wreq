@@ -35,7 +35,7 @@ use async_compression::tokio::bufread::ZlibDecoder;
     feature = "brotli",
     feature = "deflate",
 ))]
-use futures_core::Stream;
+use futures_util::Stream;
 
 use bytes::Bytes;
 use http::HeaderMap;
@@ -336,7 +336,7 @@ impl HttpBody for Decoder {
                 Poll::Pending => Poll::Pending,
             },
             Inner::PlainText(ref mut body) => {
-                match futures_core::ready!(Pin::new(body).poll_frame(cx)) {
+                match futures_util::ready!(Pin::new(body).poll_frame(cx)) {
                     Some(Ok(frame)) => Poll::Ready(Some(Ok(frame))),
                     Some(Err(err)) => Poll::Ready(Some(Err(crate::error::decode(err)))),
                     None => Poll::Ready(None),
@@ -344,7 +344,7 @@ impl HttpBody for Decoder {
             }
             #[cfg(feature = "gzip")]
             Inner::Gzip(ref mut decoder) => {
-                match futures_core::ready!(Pin::new(&mut *decoder).poll_next(cx)) {
+                match futures_util::ready!(Pin::new(&mut *decoder).poll_next(cx)) {
                     Some(Ok(bytes)) => Poll::Ready(Some(Ok(Frame::data(bytes.freeze())))),
                     Some(Err(err)) => Poll::Ready(Some(Err(crate::error::decode_io(err)))),
                     None => {
@@ -358,7 +358,7 @@ impl HttpBody for Decoder {
             }
             #[cfg(feature = "brotli")]
             Inner::Brotli(ref mut decoder) => {
-                match futures_core::ready!(Pin::new(&mut *decoder).poll_next(cx)) {
+                match futures_util::ready!(Pin::new(&mut *decoder).poll_next(cx)) {
                     Some(Ok(bytes)) => Poll::Ready(Some(Ok(Frame::data(bytes.freeze())))),
                     Some(Err(err)) => Poll::Ready(Some(Err(crate::error::decode_io(err)))),
                     None => {
@@ -372,7 +372,7 @@ impl HttpBody for Decoder {
             }
             #[cfg(feature = "zstd")]
             Inner::Zstd(ref mut decoder) => {
-                match futures_core::ready!(Pin::new(&mut *decoder).poll_next(cx)) {
+                match futures_util::ready!(Pin::new(&mut *decoder).poll_next(cx)) {
                     Some(Ok(bytes)) => Poll::Ready(Some(Ok(Frame::data(bytes.freeze())))),
                     Some(Err(err)) => Poll::Ready(Some(Err(crate::error::decode_io(err)))),
                     None => {
@@ -386,7 +386,7 @@ impl HttpBody for Decoder {
             }
             #[cfg(feature = "deflate")]
             Inner::Deflate(ref mut decoder) => {
-                match futures_core::ready!(Pin::new(&mut *decoder).poll_next(cx)) {
+                match futures_util::ready!(Pin::new(&mut *decoder).poll_next(cx)) {
                     Some(Ok(bytes)) => Poll::Ready(Some(Ok(Frame::data(bytes.freeze())))),
                     Some(Err(err)) => Poll::Ready(Some(Err(crate::error::decode_io(err)))),
                     None => {
@@ -430,7 +430,7 @@ fn poll_inner_should_be_empty(
     // loop in case of empty frames
     let mut inner = Pin::new(inner);
     loop {
-        match futures_core::ready!(inner.as_mut().poll_next(cx)) {
+        match futures_util::ready!(inner.as_mut().poll_next(cx)) {
             // ignore any empty frames
             Some(Ok(bytes)) if bytes.is_empty() => continue,
             Some(Ok(_)) => {
@@ -467,13 +467,13 @@ impl Future for Pending {
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         use futures_util::StreamExt;
 
-        match futures_core::ready!(Pin::new(&mut self.0).poll_peek(cx)) {
+        match futures_util::ready!(Pin::new(&mut self.0).poll_peek(cx)) {
             Some(Ok(_)) => {
                 // fallthrough
             }
             Some(Err(_e)) => {
                 // error was just a ref, so we need to really poll to move it
-                return Poll::Ready(Err(futures_core::ready!(
+                return Poll::Ready(Err(futures_util::ready!(
                     Pin::new(&mut self.0).poll_next(cx)
                 )
                 .expect("just peeked Some")
@@ -536,7 +536,7 @@ where
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
         loop {
-            return match futures_core::ready!(Pin::new(&mut self.0).poll_frame(cx)) {
+            return match futures_util::ready!(Pin::new(&mut self.0).poll_frame(cx)) {
                 Some(Ok(frame)) => {
                     // skip non-data frames
                     if let Ok(buf) = frame.into_data() {

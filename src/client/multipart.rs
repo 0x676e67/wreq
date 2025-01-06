@@ -14,7 +14,7 @@ use bytes::Bytes;
 use mime_guess::Mime;
 use percent_encoding::{self, AsciiSet, NON_ALPHANUMERIC};
 
-use futures_core::Stream;
+use futures_util::Stream;
 use futures_util::{future, stream, StreamExt};
 
 use super::Body;

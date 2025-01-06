@@ -350,7 +350,7 @@ impl Response {
     /// This requires the optional `stream` feature to be enabled.
     #[cfg(feature = "stream")]
     #[cfg_attr(docsrs, doc(cfg(feature = "stream")))]
-    pub fn bytes_stream(self) -> impl futures_core::Stream<Item = crate::Result<Bytes>> {
+    pub fn bytes_stream(self) -> impl futures_util::Stream<Item = crate::Result<Bytes>> {
         super::body::DataStream(self.res.into_body())
     }
 
