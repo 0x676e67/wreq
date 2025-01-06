@@ -377,7 +377,7 @@ impl<R> HttpConnector<R> {
         &mut self,
         interface: S,
     ) -> &mut Self {
-        self.config_mut().interface = Some(interface.into());
+        self.config_mut().interface = interface.into();
         self
     }
 
