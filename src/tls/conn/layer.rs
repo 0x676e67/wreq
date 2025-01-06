@@ -28,31 +28,27 @@ use tower_layer::Layer;
 use tower_service::Service;
 
 pub(crate) struct HttpsConnectorBuilder {
-    version: Option<AlpnProtos>,
     http: HttpConnector,
+    alpn_protos: Option<AlpnProtos>,
 }
 
 impl HttpsConnectorBuilder {
     #[inline]
     pub fn new(http: HttpConnector) -> HttpsConnectorBuilder {
         HttpsConnectorBuilder {
-            version: None,
             http,
+            alpn_protos: None,
         }
     }
 
     #[inline]
-    pub fn with_alpn_protos<V>(mut self, version: V) -> Self
-    where
-        V: Into<Option<AlpnProtos>>,
-    {
-        self.version = version.into();
+    pub fn with_alpn_protos(mut self, alpn_protos: Option<AlpnProtos>) -> Self {
+        self.alpn_protos = alpn_protos;
         self
     }
 
-    #[cfg(not(any(target_os = "android", target_os = "fuchsia", target_os = "linux")))]
     #[inline]
-    pub fn with_iface(mut self, (ipv4, ipv6): (Option<Ipv4Addr>, Option<Ipv6Addr>)) -> Self {
+    pub fn with_addresses(mut self, (ipv4, ipv6): (Option<Ipv4Addr>, Option<Ipv6Addr>)) -> Self {
         match (ipv4, ipv6) {
             (Some(a), Some(b)) => self.http.set_local_addresses(a, b),
             (Some(a), None) => self.http.set_local_address(Some(IpAddr::V4(a))),
@@ -62,49 +58,18 @@ impl HttpsConnectorBuilder {
         self
     }
 
-    #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
     #[inline]
-    pub fn with_iface(
-        mut self,
-        (interface, (address_ipv4, address_ipv6)): (
-            Option<std::borrow::Cow<'static, str>>,
-            (Option<Ipv4Addr>, Option<Ipv6Addr>),
-        ),
-    ) -> Self {
-        match (interface, address_ipv4, address_ipv6) {
-            (Some(a), Some(b), Some(c)) => {
-                self.http.set_interface(a);
-                self.http.set_local_addresses(b, c);
-            }
-            (None, Some(b), Some(c)) => {
-                self.http.set_local_addresses(b, c);
-            }
-            (Some(a), None, None) => {
-                self.http.set_interface(a);
-            }
-            (Some(a), Some(b), None) => {
-                self.http.set_interface(a);
-                self.http.set_local_address(Some(IpAddr::V4(b)));
-            }
-            (Some(a), None, Some(b)) => {
-                self.http.set_interface(a);
-                self.http.set_local_address(Some(IpAddr::V6(b)));
-            }
-            (None, Some(b), None) => {
-                self.http.set_local_address(Some(IpAddr::V4(b)));
-            }
-            (None, None, Some(c)) => {
-                self.http.set_local_address(Some(IpAddr::V6(c)));
-            }
-            _ => (),
-        }
+    #[allow(unused_mut)]
+    pub fn with_interface(mut self, _interface: Option<std::borrow::Cow<'static, str>>) -> Self {
+        #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
+        self.http.set_interface(_interface);
         self
     }
 
     #[inline]
     pub(crate) fn build(self, tls: BoringTlsConnector) -> HttpsConnector<HttpConnector> {
         let mut connector = HttpsConnector::with_connector_layer(self.http, tls.0);
-        connector.set_ssl_callback(move |ssl, _| ssl.alpn_protos(self.version));
+        connector.set_ssl_callback(move |ssl, _| ssl.alpn_protos(self.alpn_protos));
         connector
     }
 }
@@ -223,10 +188,8 @@ impl HttpsLayer {
             // Verify hostname
             conf.set_verify_hostname(settings.verify_hostname);
 
-            // Add ALPS if it is set.
-            if let Some(alps) = settings.alps_proto {
-                conf.alps_proto(alps)?;
-            }
+            // Set ALPS
+            conf.alps_proto(settings.alps_proto)?;
 
             Ok(())
         });

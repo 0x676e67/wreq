@@ -234,7 +234,8 @@ impl ConnectorService {
         if dst.scheme() == Some(&Scheme::HTTPS) {
             let http = HttpsConnector::builder(self.http.clone())
                 .with_alpn_protos(dst.alpn_protos())
-                .with_iface(dst.take_iface())
+                .with_interface(dst.take_interface())
+                .with_addresses(dst.take_addresses())
                 .build(self.tls.get_tls());
 
             log::trace!("socks HTTPS over proxy");
@@ -276,7 +277,8 @@ impl ConnectorService {
         log::trace!("connect with maybe proxy");
         let mut http = HttpsConnector::builder(http)
             .with_alpn_protos(dst.alpn_protos())
-            .with_iface(dst.take_iface())
+            .with_interface(dst.take_interface())
+            .with_addresses(dst.take_addresses())
             .build(self.tls.get_tls());
         let io = http.call(dst.into()).await?;
 
@@ -322,7 +324,8 @@ impl ConnectorService {
         if dst.scheme() == Some(&Scheme::HTTPS) {
             let mut http = HttpsConnector::builder(self.http.clone())
                 .with_alpn_protos(dst.alpn_protos())
-                .with_iface(dst.take_iface())
+                .with_interface(dst.take_interface())
+                .with_addresses(dst.take_addresses())
                 .build(self.tls.get_tls());
 
             let host = dst.host().ok_or(crate::error::uri_bad_host())?;
@@ -376,7 +379,7 @@ impl Service<Dst> for ConnectorService {
     fn call(&mut self, mut dst: Dst) -> Self::Future {
         log::debug!("starting new connection: {:?}", dst);
 
-        if let Some(proxy_scheme) = dst.take_proxy() {
+        if let Some(proxy_scheme) = dst.take_proxy_scheme() {
             return Box::pin(with_timeout(
                 self.clone().connect_via_proxy(dst, proxy_scheme),
                 self.timeout,

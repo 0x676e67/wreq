@@ -41,7 +41,7 @@ use common::{lazy as hyper_lazy, timer, Exec, Lazy};
 
 use super::into_uri;
 pub use request::InnerRequest;
-pub use scheme::NetworkScheme;
+pub use scheme::{NetworkScheme, NetworkSchemeBuilder};
 
 type BoxSendFuture = Pin<Box<dyn Future<Output = ()> + Send>>;
 
@@ -177,25 +177,28 @@ impl Dst {
     }
 
     /// Take network scheme for iface
-    #[cfg(not(any(target_os = "android", target_os = "fuchsia", target_os = "linux")))]
-    pub fn take_iface(&mut self) -> (Option<Ipv4Addr>, Option<Ipv6Addr>) {
-        self.pool_key.0.take_iface()
+    #[inline(always)]
+    pub fn take_addresses(&mut self) -> (Option<Ipv4Addr>, Option<Ipv6Addr>) {
+        self.pool_key.0.take_addresses()
     }
 
     /// Take the network scheme for iface
-    #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
-    pub fn take_iface(
-        &mut self,
-    ) -> (
-        Option<std::borrow::Cow<'static, str>>,
-        (Option<Ipv4Addr>, Option<Ipv6Addr>),
-    ) {
-        self.pool_key.0.take_iface()
+    #[inline(always)]
+    pub fn take_interface(&mut self) -> Option<std::borrow::Cow<'static, str>> {
+        #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
+        {
+            self.pool_key.0.take_interface()
+        }
+        #[cfg(not(any(target_os = "android", target_os = "fuchsia", target_os = "linux")))]
+        {
+            None
+        }
     }
 
     /// Take the network scheme for proxy
-    pub fn take_proxy(&mut self) -> Option<ProxyScheme> {
-        self.pool_key.0.take_proxy()
+    #[inline(always)]
+    pub fn take_proxy_scheme(&mut self) -> Option<ProxyScheme> {
+        self.pool_key.0.take_proxy_scheme()
     }
 }
 

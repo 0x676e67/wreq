@@ -6,7 +6,6 @@ const HEADER_ORDER: &[HeaderName] = &[
     header::ACCEPT_LANGUAGE,
     header::ACCEPT_ENCODING,
     header::CONTENT_LENGTH,
-    header::HOST,
     header::COOKIE,
 ];
 
@@ -28,12 +27,7 @@ async fn main() -> Result<(), rquest::Error> {
     );
 
     // Use the API you're already familiar with
-    let resp = client
-        .post(url)
-        .with_host_header()
-        .body("hello")
-        .send()
-        .await?;
+    let resp = client.post(url).body("hello").send().await?;
     println!("{}", resp.text().await?);
 
     Ok(())

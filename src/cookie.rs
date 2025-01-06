@@ -28,7 +28,7 @@ pub struct Cookie<'a>(cookie_crate::Cookie<'a>);
 /// For more advanced scenarios, such as needing to serialize the store or
 /// manipulate it between requests, you may refer to the
 /// [rquest_cookie_store crate](https://crates.io/crates/rquest_cookie_store).
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct Jar(RwLock<cookie_store::CookieStore>);
 
 // ===== impl Cookie =====
@@ -186,5 +186,11 @@ impl CookieStore for Jar {
         }
 
         HeaderValue::from_maybe_shared(Bytes::from(s)).ok()
+    }
+}
+
+impl Default for Jar {
+    fn default() -> Self {
+        Self(RwLock::new(cookie_store::CookieStore::default()))
     }
 }

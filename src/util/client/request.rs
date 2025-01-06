@@ -1,7 +1,5 @@
 #![allow(missing_debug_implementations)]
 
-use std::marker::PhantomData;
-
 use super::NetworkScheme;
 use crate::{error::BoxError, AlpnProtos};
 use http::{
@@ -9,6 +7,7 @@ use http::{
     Request, Uri, Version,
 };
 use http_body::Body;
+use std::marker::PhantomData;
 
 pub struct InnerRequest<B>
 where
@@ -78,10 +77,10 @@ where
 
     /// Set the version for the request.
     #[inline]
-    pub fn version(mut self, version: impl Into<Option<Version>>) -> Self {
+    pub fn version(mut self, version: Option<Version>) -> Self {
         if let Some(version) = version.into() {
             self.builder = self.builder.version(version);
-            self.alpn_protos = Some(map_alpn_protos(version));
+            self.alpn_protos = map_alpn_protos(version);
         }
         self
     }
@@ -89,9 +88,9 @@ where
     /// Set the headers for the request.
     #[inline]
     pub fn headers(mut self, mut headers: HeaderMap) -> Self {
-        if let Some(h) = self.builder.headers_mut() {
-            std::mem::swap(h, &mut headers);
-        }
+        self.builder
+            .headers_mut()
+            .map(|h| std::mem::swap(h, &mut headers));
         self
     }
 
@@ -114,8 +113,8 @@ where
     pub fn body(mut self, body: B) -> Result<InnerRequest<B>, Error> {
         if let Some(order) = self.headers_order {
             if let Some(headers) = self.builder.headers_mut() {
-                add_content_length_header(&body, headers);
-                crate::util::sort_headers(headers, order);
+                add_content_length_header(headers, &body);
+                sort_headers(headers, order);
             }
         }
 
@@ -127,15 +126,17 @@ where
     }
 }
 
-fn map_alpn_protos(version: Version) -> AlpnProtos {
+fn map_alpn_protos(version: Version) -> Option<AlpnProtos> {
     match version {
-        Version::HTTP_11 | Version::HTTP_10 | Version::HTTP_09 => AlpnProtos::Http1,
-        Version::HTTP_2 => AlpnProtos::Http2,
-        _ => AlpnProtos::default(),
+        Version::HTTP_11 | Version::HTTP_10 | Version::HTTP_09 => Some(AlpnProtos::Http1),
+        Version::HTTP_2 => Some(AlpnProtos::Http2),
+        _ => None,
     }
 }
 
-fn add_content_length_header<B>(body: &B, headers: &mut HeaderMap)
+/// Add the `Content-Length` header to the request.
+#[inline]
+fn add_content_length_header<B>(headers: &mut HeaderMap, body: &B)
 where
     B: Body,
 {
@@ -144,4 +145,32 @@ where
             .entry(CONTENT_LENGTH)
             .or_insert_with(|| HeaderValue::from(len));
     }
+}
+
+/// Sort the headers in the specified order.
+///
+/// Headers in `headers_order` are sorted to the front, preserving their order.
+/// Remaining headers are appended in their original order.
+#[inline]
+fn sort_headers(headers: &mut HeaderMap, headers_order: &[HeaderName]) {
+    if headers.len() <= 1 {
+        return;
+    }
+
+    let mut sorted_headers = HeaderMap::with_capacity(headers.keys_len());
+
+    // First insert headers in the specified order
+    for (key, value) in headers_order
+        .iter()
+        .filter_map(|key| headers.remove(key).map(|value| (key, value)))
+    {
+        sorted_headers.insert(key, value);
+    }
+
+    // Then insert any remaining headers that were not ordered
+    for (key, value) in headers.drain().filter_map(|(k, v)| k.map(|k| (k, v))) {
+        sorted_headers.insert(key, value);
+    }
+
+    std::mem::swap(headers, &mut sorted_headers);
 }

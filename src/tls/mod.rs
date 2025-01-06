@@ -201,11 +201,12 @@ pub enum RootCertsStore {
     Borrowed(&'static X509Store),
 
     #[default]
-    None,
+    Default,
 }
 
 /// ====== impl RootCertsStore ======
 
+/// impl RootCertsStore
 macro_rules! impl_root_cert_store {
     ($($type:ty => $variant:ident),* $(,)?) => {
         $(
@@ -276,7 +277,7 @@ pub struct TlsSettings {
     ///
     /// **Usage Example:**  
     /// - Commonly used to negotiate **HTTP/2**.
-    /// Default use all protocols (HTTP/1.1/HTTP/2/HTTP/3).
+    ///  Default use all protocols (HTTP/1.1/HTTP/2/HTTP/3).
     #[builder(default = AlpnProtos::All)]
     pub alpn_protos: AlpnProtos,
 

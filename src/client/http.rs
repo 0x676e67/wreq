@@ -9,7 +9,7 @@ use std::{fmt, str};
 use crate::connect::sealed::{Conn, Unnameable};
 use crate::error::BoxError;
 use crate::http2::Http2Settings;
-use crate::util::client::{InnerRequest, NetworkScheme};
+use crate::util::client::{InnerRequest, NetworkScheme, NetworkSchemeBuilder};
 use crate::util::{
     self, client::connect::HttpConnector, client::Builder, common::Exec, rt::TokioExecutor,
 };
@@ -99,10 +99,7 @@ struct Config {
     referer: bool,
     timeout: Option<Duration>,
     read_timeout: Option<Duration>,
-    local_address_ipv6: Option<Ipv6Addr>,
-    local_address_ipv4: Option<Ipv4Addr>,
-    #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
-    interface: Option<std::borrow::Cow<'static, str>>,
+    network_scheme: NetworkSchemeBuilder,
     nodelay: bool,
     #[cfg(feature = "cookies")]
     cookie_store: CookieStoreOption,
@@ -161,10 +158,7 @@ impl ClientBuilder {
                 referer: true,
                 timeout: None,
                 read_timeout: None,
-                local_address_ipv6: None,
-                local_address_ipv4: None,
-                #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
-                interface: None,
+                network_scheme: NetworkScheme::builder(),
                 nodelay: true,
                 hickory_dns: cfg!(feature = "hickory-dns"),
                 #[cfg(feature = "hickory-dns")]
@@ -262,10 +256,7 @@ impl ClientBuilder {
                 http2_max_retry_count: config.http2_max_retry_count,
 
                 proxies,
-                local_addr_v4: config.local_address_ipv4,
-                local_addr_v6: config.local_address_ipv6,
-                #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
-                interface: config.interface,
+                network_scheme: config.network_scheme,
             }),
         })
     }
@@ -846,23 +837,18 @@ impl ClientBuilder {
     where
         T: Into<Option<IpAddr>>,
     {
-        match addr.into() {
-            Some(IpAddr::V4(v4)) => {
-                self.config.local_address_ipv4 = Some(v4);
-            }
-            Some(IpAddr::V6(v6)) => {
-                self.config.local_address_ipv6 = Some(v6);
-            }
-            _ => {}
-        }
+        self.config.network_scheme.address(addr);
         self
     }
 
     /// Set that all sockets are bound to the configured IPv4 or IPv6 address (depending on host's
     /// preferences) before connection.
-    pub fn local_addresses(mut self, addr_ipv4: Ipv4Addr, addr_ipv6: Ipv6Addr) -> ClientBuilder {
-        self.config.local_address_ipv4 = Some(addr_ipv4);
-        self.config.local_address_ipv6 = Some(addr_ipv6);
+    pub fn local_addresses<V4, V6>(mut self, ipv4: V4, ipv6: V6) -> ClientBuilder
+    where
+        V4: Into<Option<Ipv4Addr>>,
+        V6: Into<Option<Ipv6Addr>>,
+    {
+        self.config.network_scheme.addresses(ipv4, ipv6);
         self
     }
 
@@ -1333,7 +1319,7 @@ impl Client {
                 .method(method.clone())
                 .version(version)
                 .headers(headers.clone())
-                .headers_order(self.inner.headers_order.as_deref())
+                .headers_order(self.inner.headers_order())
                 .body(body);
 
             match res {
@@ -1487,20 +1473,19 @@ impl Client {
         T: Into<Option<IpAddr>>,
     {
         let inner = self.inner_mut();
-        match addr.into() {
-            Some(IpAddr::V4(a)) => inner.local_addr_v4 = Some(a),
-            Some(IpAddr::V6(a)) => inner.local_addr_v6 = Some(a),
-            _ => (),
-        }
+        inner.network_scheme.address(addr.into());
     }
 
     /// Set that all sockets are bound to the configured IPv4 or IPv6 address
     /// (depending on host's preferences) before connection.
     #[inline]
-    pub fn set_local_addresses(&mut self, addr_ipv4: Ipv4Addr, addr_ipv6: Ipv6Addr) {
+    pub fn set_local_addresses<V4, V6>(&mut self, ipv4: V4, ipv6: V6)
+    where
+        V4: Into<Option<Ipv4Addr>>,
+        V6: Into<Option<Ipv6Addr>>,
+    {
         let inner = self.inner_mut();
-        inner.local_addr_v4 = Some(addr_ipv4);
-        inner.local_addr_v6 = Some(addr_ipv6);
+        inner.network_scheme.addresses(ipv4, ipv6);
     }
 
     /// Bind to an interface by `SO_BINDTODEVICE`.
@@ -1510,7 +1495,7 @@ impl Client {
     where
         T: Into<std::borrow::Cow<'static, str>>,
     {
-        self.inner_mut().interface = Some(interface.into());
+        inner.network_scheme.interface(interface);
     }
 
     /// Set the headers order for this client.
@@ -1671,8 +1656,7 @@ impl_debug!(
         connect_timeout,
         https_only,
         nodelay,
-        local_address_ipv4,
-        local_address_ipv6,
+        network_scheme,
         dns_overrides,
         base_url,
         builder
@@ -1697,10 +1681,7 @@ struct ClientRef {
     http2_max_retry_count: usize,
 
     proxies: Vec<Proxy>,
-    local_addr_v4: Option<Ipv4Addr>,
-    local_addr_v6: Option<Ipv6Addr>,
-    #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
-    interface: Option<std::borrow::Cow<'static, str>>,
+    network_scheme: NetworkSchemeBuilder,
 }
 
 impl_debug!(
@@ -1749,29 +1730,13 @@ impl ClientRef {
     #[inline]
     fn network_scheme(&self, uri: &Uri, network_scheme: &NetworkScheme) -> NetworkScheme {
         match network_scheme {
-            NetworkScheme::None => {
-                // Create the NetworkScheme builder based on the target OS
-                let builder = {
-                    #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
-                    {
-                        NetworkScheme::builder().iface(
-                            self.interface.clone(),
-                            (self.local_addr_v4, self.local_addr_v6),
-                        )
-                    }
-
-                    #[cfg(not(any(
-                        target_os = "android",
-                        target_os = "fuchsia",
-                        target_os = "linux"
-                    )))]
-                    NetworkScheme::builder().iface(self.local_addr_v4, self.local_addr_v6)
-                };
+            NetworkScheme::Default => {
+                let mut builder = self.network_scheme.clone();
 
                 // iterate over the client's proxies and use the first valid one
                 for proxy in self.proxies.iter() {
                     if let Some(proxy_scheme) = proxy.intercept(uri) {
-                        return builder.proxy(proxy_scheme).build();
+                        builder.proxy_scheme(proxy_scheme);
                     }
                 }
 
@@ -1779,6 +1744,11 @@ impl ClientRef {
             }
             _ => network_scheme.clone(),
         }
+    }
+
+    #[inline(always)]
+    fn headers_order(&self) -> Option<&[HeaderName]> {
+        self.headers_order.as_deref()
     }
 }
 
@@ -1888,7 +1858,7 @@ impl PendingRequest {
                 .method(self.method.clone())
                 .version(self.version)
                 .headers(self.headers.clone())
-                .headers_order(self.client.headers_order.as_deref())
+                .headers_order(self.client.headers_order())
                 .body(body);
 
             if let Ok(req) = res {
@@ -2142,7 +2112,7 @@ impl Future for PendingRequest {
                                     .method(self.method.clone())
                                     .version(self.version)
                                     .headers(headers.clone())
-                                    .headers_order(self.client.headers_order.as_deref())
+                                    .headers_order(self.client.headers_order())
                                     .body(body)?;
 
                                 std::mem::swap(self.as_mut().headers(), &mut headers);
