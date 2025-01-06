@@ -228,6 +228,17 @@ impl RequestBuilder {
         HeaderValue: TryFrom<V>,
         <HeaderValue as TryFrom<V>>::Error: Into<http::Error>,
     {
+        self.header_operation(key, value, false, true, false)
+    }
+
+    /// Add a `Header` to append to the request.
+    pub fn header_append<K, V>(self, key: K, value: V) -> RequestBuilder
+    where
+        HeaderName: TryFrom<K>,
+        <HeaderName as TryFrom<K>>::Error: Into<http::Error>,
+        HeaderValue: TryFrom<V>,
+        <HeaderValue as TryFrom<V>>::Error: Into<http::Error>,
+    {
         self.header_operation(key, value, false, false, false)
     }
 
