@@ -158,7 +158,7 @@ async fn response_timeout() {
     let server = server::http(move |_req| {
         async {
             // immediate response, but delayed body
-            let body = reqwest::Body::wrap_stream(futures_util::stream::once(async {
+            let body = rquest::Body::wrap_stream(futures_util::stream::once(async {
                 tokio::time::sleep(Duration::from_secs(1)).await;
                 Ok::<_, std::convert::Infallible>("Hello")
             }));
@@ -167,7 +167,7 @@ async fn response_timeout() {
         }
     });
 
-    let client = reqwest::Client::builder()
+    let client = rquest::Client::builder()
         .timeout(Duration::from_millis(500))
         .no_proxy()
         .build()
@@ -218,7 +218,7 @@ async fn read_timeout_applies_to_body() {
     let server = server::http(move |_req| {
         async {
             // immediate response, but delayed body
-            let body = reqwest::Body::wrap_stream(futures_util::stream::once(async {
+            let body = rquest::Body::wrap_stream(futures_util::stream::once(async {
                 tokio::time::sleep(Duration::from_millis(300)).await;
                 Ok::<_, std::convert::Infallible>("Hello")
             }));
@@ -227,7 +227,7 @@ async fn read_timeout_applies_to_body() {
         }
     });
 
-    let client = reqwest::Client::builder()
+    let client = rquest::Client::builder()
         .read_timeout(Duration::from_millis(100))
         .no_proxy()
         .build()
@@ -262,13 +262,13 @@ async fn read_timeout_allows_slow_response_body() {
                     None
                 }
             });
-            let body = reqwest::Body::wrap_stream(slow);
+            let body = rquest::Body::wrap_stream(slow);
 
             http::Response::new(body)
         }
     });
 
-    let client = reqwest::Client::builder()
+    let client = rquest::Client::builder()
         .read_timeout(Duration::from_millis(200))
         //.timeout(Duration::from_millis(200))
         .no_proxy()

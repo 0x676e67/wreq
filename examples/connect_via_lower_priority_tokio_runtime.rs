@@ -24,7 +24,7 @@ async fn main() -> Result<(), rquest::Error> {
     let client = rquest::Client::builder()
         .connector_layer(background_threadpool::BackgroundProcessorLayer::new())
         .build()
-        .expect("should be able to build reqwest client");
+        .expect("should be able to build rquest client");
 
     let url = if let Some(url) = std::env::args().nth(1) {
         url

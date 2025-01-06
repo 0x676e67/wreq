@@ -163,7 +163,7 @@ impl Error {
     }
 }
 
-/// Converts from external types to reqwest's
+/// Converts from external types to rquest's
 /// internal equivalents.
 ///
 /// Currently only is used for `tower::timeout::error::Elapsed`.

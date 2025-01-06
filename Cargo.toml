@@ -196,6 +196,39 @@ tower = { version = "0.5.2", default-features = false, features = ["limit"] }
 num_cpus = "1.0"
 libc = "0"
 
+[lib]
+doctest = false
+
+[[test]]
+name = "cookie"
+path = "tests/cookie.rs"
+required-features = ["cookies"]
+
+[[test]]
+name = "gzip"
+path = "tests/gzip.rs"
+required-features = ["zstd", "stream"]
+
+[[test]]
+name = "brotli"
+path = "tests/brotli.rs"
+required-features = ["zstd", "stream"]
+
+[[test]]
+name = "deflate"
+path = "tests/deflate.rs"
+required-features = ["zstd", "stream"]
+
+[[test]]
+name = "zstd"
+path = "tests/zstd.rs"
+required-features = ["zstd", "stream"]
+
+[[test]]
+name = "multipart"
+path = "tests/multipart.rs"
+required-features = ["multipart"]
+
 [[example]]
 name = "json_dynamic"
 path = "examples/json_dynamic.rs"
@@ -284,36 +317,6 @@ required-features = ["webpki-roots"]
 name = "websocket"
 path = "examples/websocket.rs"
 required-features = ["websocket", "futures-util/std"]
-
-[[test]]
-name = "cookie"
-path = "tests/cookie.rs"
-required-features = ["cookies"]
-
-[[test]]
-name = "gzip"
-path = "tests/gzip.rs"
-required-features = ["zstd", "stream"]
-
-[[test]]
-name = "brotli"
-path = "tests/brotli.rs"
-required-features = ["zstd", "stream"]
-
-[[test]]
-name = "deflate"
-path = "tests/deflate.rs"
-required-features = ["zstd", "stream"]
-
-[[test]]
-name = "zstd"
-path = "tests/zstd.rs"
-required-features = ["zstd", "stream"]
-
-[[test]]
-name = "multipart"
-path = "tests/multipart.rs"
-required-features = ["multipart"]
 
 [[example]]
 name = "client"
