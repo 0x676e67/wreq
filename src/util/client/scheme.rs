@@ -152,7 +152,7 @@ impl NetworkSchemeBuilder {
     where
         I: Into<std::borrow::Cow<'static, str>>,
     {
-        self.interface = interface.into();
+        self.interface = Some(interface.into());
         self
     }
 
