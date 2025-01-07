@@ -19,6 +19,7 @@ use safari::*;
 
 use impersonate_imports::*;
 use tls_imports::TlsSettings;
+use crate::Error;
 
 mod impersonate_imports {
     pub use crate::{http2::Http2Settings, mimic::ImpersonateSettings};
@@ -63,10 +64,11 @@ pub struct ImpersonateSettings {
 }
 
 #[inline]
-pub fn impersonate(ver: Impersonate, with_headers: bool) -> ImpersonateSettings {
+pub fn impersonate(ver: Impersonate, with_headers: bool, impersonate_os: ImpersonateOs) -> Result<ImpersonateSettings, Error> {
     impersonate_match!(
         ver,
         with_headers,
+        impersonate_os,
         Chrome100 => v100::settings,
         Chrome101 => v101::settings,
         Chrome104 => v104::settings,
@@ -187,6 +189,16 @@ pub enum Impersonate {
     Firefox117,
     Firefox128,
     Firefox133,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub enum ImpersonateOs {
+    Windows,
+    #[default]
+    MacOs,
+    Linux,
+    Android,
+    Ios,
 }
 
 #[cfg(feature = "impersonate_str")]

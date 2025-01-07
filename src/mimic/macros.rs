@@ -148,12 +148,10 @@ macro_rules! join {
 }
 
 macro_rules! impersonate_match {
-    ($ver:expr, $with_headers:expr, $($variant:pat => $path:path),+) => {
+    ($ver:expr, $with_headers:expr, $os:expr, $($variant:pat => $path:expr),+) => {
         match $ver {
             $(
-                $variant => {
-                    $path($with_headers)
-                },
+                $variant => $path($with_headers, $os),
             )+
         }
     }

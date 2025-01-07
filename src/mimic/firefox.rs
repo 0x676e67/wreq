@@ -6,16 +6,18 @@ macro_rules! mod_generator {
     ($mod_name:ident, $tls_settings:expr, $http2_settings:expr, $header_initializer:ident, $ua:tt) => {
         pub(crate) mod $mod_name {
             use super::*;
+            use crate::mimic::ImpersonateOs;
+            use crate::Error;
 
             #[inline(always)]
-            pub fn settings(with_headers: bool) -> ImpersonateSettings {
-                ImpersonateSettings::builder()
+            pub fn settings(with_headers: bool, os: ImpersonateOs) -> Result<ImpersonateSettings, Error> {
+                Ok(ImpersonateSettings::builder()
                     .tls($tls_settings)
                     .http2($http2_settings)
                     .headers(conditional_headers!(with_headers, || {
                         $header_initializer($ua)
                     }))
-                    .build()
+                    .build())
             }
         }
     };
