@@ -11,6 +11,7 @@ macro_rules! mod_generator {
             use super::*;
             use crate::mimic::ImpersonateOs;
             use crate::Error;
+use crate::error::Kind;
 
             #[inline(always)]
             pub fn settings(with_headers: bool, os: ImpersonateOs) -> Result<ImpersonateSettings, Error> {
@@ -26,7 +27,10 @@ macro_rules! mod_generator {
                                 .build())
                         }
                     ),+
-                    _ => panic!("Unsupported OS"), // todo: return an error instead of panicking
+                    _ => Err(Error::new(
+                        Kind::Impersonate,
+                        Some(format!("unknown impersonate os: {:?}", os))
+                    )),
                 }
             }
         }
