@@ -261,3 +261,12 @@ impl_from_str! {
     (Firefox128, "firefox_128"),
     (Firefox133, "firefox_133"),
 }
+
+#[cfg(feature = "impersonate_str")]
+impl_os_from_str! {
+    (Windows, "windows"),
+    (MacOs, "macos"),
+    (Linux, "linux"),
+    (Android, "android"),
+    (Ios, "ios"),
+}
