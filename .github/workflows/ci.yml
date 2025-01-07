@@ -20,7 +20,7 @@ jobs:
 
       - name: Install depends
         run: |
-          sudo apt update && sudo apt install upx rename cmake build-essential -y
+          sudo apt update && sudo apt install upx rename cmake build-essential clang libclang-dev -y
 
       - uses: actions-rs/toolchain@v1
         with:
