@@ -299,11 +299,9 @@ impl ClientBuilder {
         std::mem::swap(&mut self.config.tls, &mut settings.tls);
 
         // Set the http2 preference
-        settings.http2.map(|http2| {
-            self.config
+        if let Some(http2) = settings.http2 { self.config
                 .builder
-                .with_http2_builder(|builder| apply_http2_settings(builder, http2));
-        });
+                .with_http2_builder(|builder| apply_http2_settings(builder, http2)); }
 
         self
     }
@@ -1558,11 +1556,9 @@ impl Client {
         inner.hyper.with_connector(|c| c.set_connector(connector));
 
         // Set the http2 preference
-        settings.http2.map(|http2| {
-            inner
+        if let Some(http2) = settings.http2 { inner
                 .hyper
-                .with_http2_builder(|builder| apply_http2_settings(builder, http2));
-        });
+                .with_http2_builder(|builder| apply_http2_settings(builder, http2)); }
 
         Ok(())
     }
