@@ -10,7 +10,7 @@ macro_rules! mod_generator {
             use crate::Error;
 
             #[inline(always)]
-            pub fn settings(with_headers: bool, os: ImpersonateOs) -> Result<ImpersonateSettings, Error> {
+            pub fn settings(with_headers: bool, _os: ImpersonateOs) -> Result<ImpersonateSettings, Error> {
                 Ok(ImpersonateSettings::builder()
                     .tls(tls_settings!($cipher_list))
                     .http2(http2_settings!())
