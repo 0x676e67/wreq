@@ -693,6 +693,10 @@ mod_generator!(
         (MacOs,
             r#""Not A;Brand";v="99", "Chromium";v="101", "Microsoft Edge";v="101""#,
             "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/101.0.4951.64 Safari/537.36 Edg/101.0.1210.47"
+        ),
+        (Android,
+            r#""Not A;Brand";v="99", "Chromium";v="101", "Microsoft Edge";v="101""#,
+            "Mozilla/5.0 (Linux; Android 10; ONEPLUS A6003) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/101.0.4951.41 Safari/537.36 Edg/101.0.1210.31"
         )
     ]
 );
@@ -705,6 +709,10 @@ mod_generator!(
         (MacOs,
             r#""Chromium";v="122", "Not(A:Brand";v="24", "Microsoft Edge";v="122""#,
             "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36 Edg/122.0.0.0"
+        ),
+        (Android,
+            r#""Chromium";v="122", "Not(A:Brand";v="24", "Microsoft Edge";v="122""#,
+            "Mozilla/5.0 (Linux; Android 10; Pixel 3 XL) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.6268.219 Safari/537.36 Edg/122.0.2238.82"
         )
     ]
 );
@@ -718,6 +726,10 @@ mod_generator!(
         (MacOs,
             r#""Not)A;Brand";v="99", "Microsoft Edge";v="127", "Chromium";v="127""#,
             "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36 Edg/127.0.0.0"
+        ),
+        (Android,
+            r#""Not)A;Brand";v="99", "Microsoft Edge";v="127", "Chromium";v="127""#,
+            "Mozilla/5.0 (Linux; Android 10; SM-G973F) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.6332.205 Safari/537.36 Edg/127.0.2322.67"
         )
     ]
 );
@@ -731,6 +743,10 @@ mod_generator!(
         (MacOs,
             r#""Microsoft Edge";v="131", "Chromium";v="131", "Not_A Brand";v="24""#,
             "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 Edg/131.0.0.0"
+        ),
+        (Android,
+            r#""Microsoft Edge";v="131", "Chromium";v="131", "Not_A Brand";v="24""#,
+            "Mozilla/5.0 (Linux; Android 10; HD1913) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.6778.200 Mobile Safari/537.36 EdgA/131.0.2903.87"
         )
     ]
 );
