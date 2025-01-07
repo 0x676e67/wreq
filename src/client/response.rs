@@ -431,13 +431,3 @@ impl From<Response> for Body {
         Body::wrap(r.res.into_body())
     }
 }
-
-/// A `Response` can be converted into a `http::Response`.
-// It's supposed to be the inverse of the conversion above.
-impl From<Response> for http::Response<Body> {
-    fn from(r: Response) -> http::Response<Body> {
-        let (parts, body) = r.res.into_parts();
-        let body = Body::wrap(body);
-        http::Response::from_parts(parts, body)
-    }
-}
