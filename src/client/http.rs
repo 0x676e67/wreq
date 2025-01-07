@@ -868,9 +868,9 @@ impl ClientBuilder {
     #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
     pub fn interface<T>(mut self, interface: T) -> ClientBuilder
     where
-        T: Into<Option<std::borrow::Cow<'static, str>>>,
+        T: Into<std::borrow::Cow<'static, str>>,
     {
-        self.config.network_scheme.interface(interface.into());
+        self.config.network_scheme.interface(interface);
         self
     }
 
@@ -1475,8 +1475,7 @@ impl Client {
     where
         T: Into<Option<IpAddr>>,
     {
-        let inner = self.inner_mut();
-        inner.network_scheme.address(addr.into());
+        self.inner_mut().network_scheme.address(addr.into());
     }
 
     /// Set that all sockets are bound to the configured IPv4 or IPv6 address
@@ -1487,8 +1486,7 @@ impl Client {
         V4: Into<Option<Ipv4Addr>>,
         V6: Into<Option<Ipv6Addr>>,
     {
-        let inner = self.inner_mut();
-        inner.network_scheme.addresses(ipv4, ipv6);
+        self.inner_mut().network_scheme.addresses(ipv4, ipv6);
     }
 
     /// Bind to an interface by `SO_BINDTODEVICE`.
@@ -1496,7 +1494,7 @@ impl Client {
     #[inline]
     pub fn set_interface<T>(&mut self, interface: T)
     where
-        T: Into<Option<std::borrow::Cow<'static, str>>>,
+        T: Into<std::borrow::Cow<'static, str>>,
     {
         self.inner_mut().network_scheme.interface(interface);
     }
