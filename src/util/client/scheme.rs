@@ -150,7 +150,7 @@ impl NetworkSchemeBuilder {
     #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
     pub fn interface<I>(&mut self, interface: I) -> &mut Self
     where
-        I: Into<std::borrow::Cow<'static, str>>,
+        I: Into<Option<std::borrow::Cow<'static, str>>>,
     {
         self.interface = interface.into();
         self
