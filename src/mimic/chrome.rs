@@ -123,8 +123,13 @@ fn header_initializer(sec_ch_ua: &'static str, ua: &'static str, impersonate_os:
         ImpersonateOs::Linux => "Linux",
         _ => "\"Unknown\"",
     };
+    let is_mobile = match impersonate_os {
+        ImpersonateOs::Android => true,
+        ImpersonateOs::Ios => true,
+        _ => false,
+    };
     header_chrome_accpet!(headers);
-    header_chrome_sec_ch_ua!(headers, sec_ch_ua, platform);
+    header_chrome_sec_ch_ua!(headers, sec_ch_ua, platform, is_mobile);
     header_chrome_sec_fetch!(headers);
     header_chrome_ua!(headers, ua);
     headers
@@ -137,10 +142,14 @@ fn header_initializer_with_zstd(sec_ch_ua: &'static str, ua: &'static str, imper
         ImpersonateOs::Linux => "Linux",
         _ => "\"Unknown\"",
     };
-
+    let is_mobile = match impersonate_os {
+        ImpersonateOs::Android => true,
+        ImpersonateOs::Ios => true,
+        _ => false,
+    };
     let mut headers = HeaderMap::new();
     header_chrome_accpet!(zstd, headers);
-    header_chrome_sec_ch_ua!(headers, sec_ch_ua, platform);
+    header_chrome_sec_ch_ua!(headers, sec_ch_ua, platform, is_mobile);
     header_chrome_sec_fetch!(headers);
     header_chrome_ua!(headers, ua);
     headers
@@ -153,11 +162,15 @@ fn header_initializer_with_zstd_priority(sec_ch_ua: &'static str, ua: &'static s
         ImpersonateOs::Linux => "Linux",
         _ => "\"Unknown\"",
     };
-
+    let is_mobile = match impersonate_os {
+        ImpersonateOs::Android => true,
+        ImpersonateOs::Ios => true,
+        _ => false,
+    };
     let mut headers = HeaderMap::new();
     header_chrome_accpet!(zstd, headers);
     headers.insert("priority", HeaderValue::from_static("u=0, i"));
-    header_chrome_sec_ch_ua!(headers, sec_ch_ua, platform);
+    header_chrome_sec_ch_ua!(headers, sec_ch_ua, platform, is_mobile);
     header_chrome_sec_fetch!(headers);
     header_chrome_ua!(headers, ua);
     headers
