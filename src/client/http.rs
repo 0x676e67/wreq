@@ -299,11 +299,11 @@ impl ClientBuilder {
         std::mem::swap(&mut self.config.tls, &mut settings.tls);
 
         // Set the http2 preference
-        if let Some(http2) = settings.http2 {
+        settings.http2.map(|http2| {
             self.config
                 .builder
                 .with_http2_builder(|builder| apply_http2_settings(builder, http2));
-        }
+        });
 
         self
     }
@@ -868,7 +868,7 @@ impl ClientBuilder {
     #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
     pub fn interface<T>(mut self, interface: T) -> ClientBuilder
     where
-        T: Into<std::borrow::Cow<'static, str>>,
+        T: Into<Option<std::borrow::Cow<'static, str>>>,
     {
         self.config.network_scheme.interface(interface);
         self
@@ -1496,7 +1496,7 @@ impl Client {
     #[inline]
     pub fn set_interface<T>(&mut self, interface: T)
     where
-        T: Into<std::borrow::Cow<'static, str>>,
+        T: Into<Option<std::borrow::Cow<'static, str>>>,
     {
         self.inner_mut().network_scheme.interface(interface);
     }
@@ -1510,11 +1510,8 @@ impl Client {
     }
 
     /// Set the redirect policy for this client.
-    pub fn set_redirect<T>(&mut self, policy: T)
-    where
-        T: Into<redirect::Policy>,
-    {
-        std::mem::swap(&mut self.inner_mut().redirect, &mut policy.into());
+    pub fn set_redirect(&mut self, mut policy: redirect::Policy) {
+        std::mem::swap(&mut self.inner_mut().redirect, &mut policy);
     }
 
     /// Set the bash url for this client.
@@ -1558,16 +1555,16 @@ impl Client {
         // Set the headers order if needed
         std::mem::swap(&mut inner.headers_order, &mut settings.headers_order);
 
-        let hyper = &mut inner.hyper;
-
         // Set the connector
         let connector = BoringTlsConnector::new(settings.tls)?;
-        hyper.with_connector(|c| c.set_connector(connector));
+        inner.hyper.with_connector(|c| c.set_connector(connector));
 
         // Set the http2 preference
-        if let Some(http2) = settings.http2 {
-            hyper.with_http2_builder(|builder| apply_http2_settings(builder, http2));
-        }
+        settings.http2.map(|http2| {
+            inner
+                .hyper
+                .with_http2_builder(|builder| apply_http2_settings(builder, http2));
+        });
 
         Ok(())
     }

@@ -103,8 +103,8 @@ where
 
     /// Set network scheme for the request.
     #[inline]
-    pub fn network_scheme(mut self, network_scheme: impl Into<NetworkScheme>) -> Self {
-        self.network_scheme = network_scheme.into();
+    pub fn network_scheme(mut self, network_scheme: NetworkScheme) -> Self {
+        self.network_scheme = network_scheme;
         self
     }
 
