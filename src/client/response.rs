@@ -464,3 +464,13 @@ impl From<Response> for http::Response<Body> {
         http::Response::from_parts(parts, body)
     }
 }
+
+impl From<http::Response<super::body::Body>> for Response {
+    fn from(resp: http::Response<super::body::Body>) -> Response {
+        let (parts, body) = resp.into_parts();
+        Response {
+            res: hyper2::Response::from_parts(parts, body),
+            url: Box::new(ResponseUrl::dummy()),
+        }
+    }
+}
