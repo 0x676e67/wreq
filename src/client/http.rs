@@ -868,9 +868,9 @@ impl ClientBuilder {
     #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
     pub fn interface<T>(mut self, interface: T) -> ClientBuilder
     where
-        T: Into<Option<std::borrow::Cow<'static, str>>>,
+        T: Into<std::borrow::Cow<'static, str>>,
     {
-        self.config.network_scheme.interface(interface.into());
+        self.config.network_scheme.interface(interface);
         self
     }
 
