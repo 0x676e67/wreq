@@ -11,7 +11,7 @@ macro_rules! mod_generator {
             use super::*;
             use crate::mimic::ImpersonateOs;
             use crate::Error;
-use crate::error::Kind;
+            use crate::error::Kind;
 
             #[inline(always)]
             pub fn settings(with_headers: bool, os: ImpersonateOs) -> Result<ImpersonateSettings, Error> {
@@ -122,10 +122,15 @@ macro_rules! http2_settings {
 #[inline]
 fn header_initializer(sec_ch_ua: &'static str, ua: &'static str, impersonate_os: ImpersonateOs) -> HeaderMap {
     let mut headers = HeaderMap::new();
-    let platform = match impersonate_os { // todo: other OS
+    let platform = match impersonate_os {
         ImpersonateOs::MacOs => "macOS",
         ImpersonateOs::Linux => "Linux",
-        _ => "\"Unknown\"",
+        ImpersonateOs::Windows => "Windows",
+        ImpersonateOs::Android => "Android",
+        ImpersonateOs::Ios => "iOS",
+        _ => "\"Unknown\"", // This in "Unknown" by default if the OS is not detected by chrome
+        // You can also have "Chrome OS" and "Chromium OS" if you want to implement it
+        // see https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Sec-CH-UA-Platform#directives
     };
     let is_mobile = match impersonate_os {
         ImpersonateOs::Android => true,
@@ -141,9 +146,12 @@ fn header_initializer(sec_ch_ua: &'static str, ua: &'static str, impersonate_os:
 
 #[inline]
 fn header_initializer_with_zstd(sec_ch_ua: &'static str, ua: &'static str, impersonate_os: ImpersonateOs) -> HeaderMap {
-    let platform = match impersonate_os { // todo: other OS
+    let platform = match impersonate_os {
         ImpersonateOs::MacOs => "macOS",
         ImpersonateOs::Linux => "Linux",
+        ImpersonateOs::Windows => "Windows",
+        ImpersonateOs::Android => "Android",
+        ImpersonateOs::Ios => "iOS",
         _ => "\"Unknown\"",
     };
     let is_mobile = match impersonate_os {
@@ -161,9 +169,12 @@ fn header_initializer_with_zstd(sec_ch_ua: &'static str, ua: &'static str, imper
 
 #[inline]
 fn header_initializer_with_zstd_priority(sec_ch_ua: &'static str, ua: &'static str, impersonate_os: ImpersonateOs) -> HeaderMap {
-    let platform = match impersonate_os { // todo: other OS
+    let platform = match impersonate_os {
         ImpersonateOs::MacOs => "macOS",
         ImpersonateOs::Linux => "Linux",
+        ImpersonateOs::Windows => "Windows",
+        ImpersonateOs::Android => "Android",
+        ImpersonateOs::Ios => "iOS",
         _ => "\"Unknown\"",
     };
     let is_mobile = match impersonate_os {
