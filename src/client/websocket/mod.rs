@@ -57,6 +57,7 @@ impl WebSocketRequestBuilder {
     }
 
     /// Add a set of Header to the existing ones on this Request.
+    #[deprecated(since = "1.3.5", note = "use with_builder instead")]
     pub fn header<K, V>(mut self, key: K, value: V) -> Self
     where
         HeaderName: TryFrom<K>,
@@ -71,8 +72,20 @@ impl WebSocketRequestBuilder {
     /// Add a set of Headers to the existing ones on this Request.
     ///
     /// The headers will be merged in to any already set.
+    #[deprecated(since = "1.3.5", note = "use with_builder instead")]
     pub fn headers(mut self, headers: crate::header::HeaderMap) -> Self {
         self.inner = self.inner.headers(headers);
+        self
+    }
+
+    /// With request builder
+    ///
+    /// This is a helper function to modify the request builder before sending the request.
+    pub fn with_builder<F>(mut self, f: F) -> Self
+    where
+        F: FnOnce(RequestBuilder) -> RequestBuilder,
+    {
+        self.inner = f(self.inner);
         self
     }
 
