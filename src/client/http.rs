@@ -870,7 +870,7 @@ impl ClientBuilder {
     where
         T: Into<Option<std::borrow::Cow<'static, str>>>,
     {
-        self.config.network_scheme.interface(interface);
+        self.config.network_scheme.interface(interface.into());
         self
     }
 
