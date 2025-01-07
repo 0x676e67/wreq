@@ -127,7 +127,7 @@ impl<T, K: Key> Pool<T, K> {
         M: hyper2::rt::Timer + Send + Sync + Clone + 'static,
     {
         let exec = Exec::new(executor);
-        let timer = timer.map(|t| Timer::new(t));
+        let timer = timer.map(Timer::new);
         let idle = match config.max_pool_size {
             Some(max_size) => LruCache::new(max_size),
             None => LruCache::unbounded(),
