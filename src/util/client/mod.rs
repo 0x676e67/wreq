@@ -141,7 +141,7 @@ pub struct Dst {
 impl Dst {
     /// Create a new `Dst` from a request
     pub fn new(
-        uri:&mut Uri,
+        uri: &mut Uri,
         is_http_connect: bool,
         network: NetworkScheme,
         alpn_protos: Option<AlpnProtos>,
@@ -336,7 +336,12 @@ where
             other => return ResponseFuture::error_version(other),
         };
 
-        let ctx = match Dst::new(req.uri_mut(), is_http_connect, network_scheme, http_version_pref) {
+        let ctx = match Dst::new(
+            req.uri_mut(),
+            is_http_connect,
+            network_scheme,
+            http_version_pref,
+        ) {
             Ok(s) => s,
             Err(err) => {
                 return ResponseFuture::new(future::err(err));
