@@ -3,21 +3,34 @@ use http2::*;
 use tls::*;
 
 macro_rules! mod_generator {
-    ($mod_name:ident, $tls_settings:expr, $http2_settings:expr, $header_initializer:ident, $ua:tt) => {
+    ($mod_name:ident, $tls_settings:expr, $http2_settings:expr, $header_initializer:ident, [$(
+        ($os:ident, $ua:tt)
+    ),+]) => {
         pub(crate) mod $mod_name {
             use super::*;
             use crate::mimic::ImpersonateOs;
             use crate::Error;
+            use crate::error::Kind;
 
             #[inline(always)]
             pub fn settings(with_headers: bool, os: ImpersonateOs) -> Result<ImpersonateSettings, Error> {
-                Ok(ImpersonateSettings::builder()
-                    .tls($tls_settings)
-                    .http2($http2_settings)
-                    .headers(conditional_headers!(with_headers, || {
-                        $header_initializer($ua)
-                    }))
-                    .build())
+                match os {
+                    $(
+                        ImpersonateOs::$os => {
+                            Ok(ImpersonateSettings::builder()
+                                .tls($tls_settings)
+                                .http2($http2_settings)
+                                .headers(conditional_headers!(with_headers, || {
+                                    $header_initializer($ua)
+                                }))
+                                .build())
+                        }
+                    ),+
+                    _ => Err(Error::new(
+                        Kind::Impersonate,
+                        Some(format!("unknown impersonate os: {:?}", os))
+                    )),
+                }
             }
         }
     };
@@ -364,7 +377,10 @@ mod_generator!(
     tls_settings!(2),
     http2_settings!(2),
     header_initializer,
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/109.0"
+    [
+        (Windows,
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/109.0")
+    ]
 );
 
 mod_generator!(
@@ -372,7 +388,10 @@ mod_generator!(
     tls_settings!(2),
     http2_settings!(2),
     header_initializer,
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/117.0"
+    [
+        (Windows,
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:117.0) Gecko/20100101 Firefox/117.0")
+    ]
 );
 
 mod_generator!(
@@ -380,7 +399,10 @@ mod_generator!(
     tls_settings!(3),
     http2_settings!(3),
     header_initializer_with_zstd,
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:128.0) Gecko/20100101 Firefox/128.0"
+    [
+        (MacOs,
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:128.0) Gecko/20100101 Firefox/128.0")
+    ]
 );
 
 mod_generator!(
@@ -388,5 +410,8 @@ mod_generator!(
     tls_settings!(1),
     http2_settings!(1),
     header_initializer_with_zstd,
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:133.0) Gecko/20100101 Firefox/133.0"
+    [
+        (MacOs,
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:133.0) Gecko/20100101 Firefox/133.0")
+    ]
 );
