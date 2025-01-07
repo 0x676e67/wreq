@@ -1,9 +1,26 @@
 use futures_util::{SinkExt, StreamExt, TryStreamExt};
-use rquest::Message;
+use rquest::{Client, Impersonate, Message};
 
 #[tokio::main]
 async fn main() -> Result<(), rquest::Error> {
-    let websocket = rquest::websocket("wss://echo.websocket.org").await?;
+    // Build a client to mimic Firefox133
+    let client = Client::builder()
+        .impersonate(Impersonate::Firefox133)
+        .build()?;
+
+    // Use the API you're already familiar with
+    let websocket = client
+        .websocket("wss://echo.websocket.org")
+        .with_builder(|builder| {
+            builder
+                .auth("token")
+                .body("hello")
+                .proxy("http://127.0.0.1:6152")
+        })
+        .send()
+        .await?
+        .into_websocket()
+        .await?;
 
     let (mut tx, mut rx) = websocket.split();
 
@@ -16,8 +33,9 @@ async fn main() -> Result<(), rquest::Error> {
     });
 
     while let Some(message) = rx.try_next().await? {
-        if let Message::Text(text) = message {
-            println!("received: {text}")
+        match message {
+            Message::Text(text) => println!("received: {text}"),
+            _ => {}
         }
     }
 
