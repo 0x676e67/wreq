@@ -173,13 +173,12 @@ impl Dst {
             .map(|uri| Dst {
                 alpn_protos,
                 inner: Arc::new(PoolKey::new(uri, network)),
-       
             })
             .map_err(|_| e!(UserAbsoluteUriRequired))
     }
 
     /// Set the next destination of the request (for proxy)
-    #[inline(always)] 
+    #[inline(always)]
     pub(crate) fn set_dst(&mut self, mut uri: Uri) {
         let inner = Arc::make_mut(&mut self.inner);
         std::mem::swap(&mut inner.uri, &mut uri);
