@@ -259,9 +259,11 @@ pub use url::Url;
 #[macro_use]
 mod error;
 mod into_url;
+mod response;
 
 pub use self::error::{Error, Result};
 pub use self::into_url::IntoUrl;
+pub use self::response::ResponseBuilderExt;
 
 /// Shortcut method to quickly make a `GET` request.
 ///
