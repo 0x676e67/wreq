@@ -495,7 +495,7 @@ async fn test_client_os_spoofing() {
     });
 
     let url = format!("http://{}/ua", server.addr());
-    let res = rquest::Client::builder()
+    let res = Client::builder()
         .impersonate_with_os(Impersonate::Chrome131, ImpersonateOs::Linux)
         .build()
         .expect("client builder")

@@ -24,10 +24,11 @@ macro_rules! conditional_headers {
 
 #[macro_export]
 macro_rules! header_chrome_sec_ch_ua {
-    ($headers:expr, $ua:expr) => {
+    ($headers:expr, $ua:expr, $platform:expr) => {
         $headers.insert("sec-ch-ua", HeaderValue::from_static($ua));
         $headers.insert("sec-ch-ua-mobile", HeaderValue::from_static("?0"));
-        $headers.insert("sec-ch-ua-platform", HeaderValue::from_static("\"macOS\""));
+        let platform_str = format!("\"{}\"", $platform);
+        $headers.insert("sec-ch-ua-platform", HeaderValue::from_str(&platform_str).unwrap());
     };
 }
 

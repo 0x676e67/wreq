@@ -1,6 +1,7 @@
 use crate::mimic::impersonate_imports::*;
 use http2::*;
 use tls::*;
+use crate::mimic::ImpersonateOs;
 
 macro_rules! mod_generator {
     ($mod_name:ident, $tls_settings:expr, $http2_settings:expr, $header_initializer:ident, [$(
@@ -20,7 +21,7 @@ macro_rules! mod_generator {
                                 .tls($tls_settings)
                                 .http2($http2_settings)
                                 .headers(conditional_headers!(with_headers, || {
-                                    $header_initializer($sec_ch_ua, $ua)
+                                    $header_initializer($sec_ch_ua, $ua, ImpersonateOs::$os)
                                 }))
                                 .build())
                         }
@@ -115,31 +116,48 @@ macro_rules! http2_settings {
 }
 
 #[inline]
-fn header_initializer(sec_ch_ua: &'static str, ua: &'static str) -> HeaderMap {
+fn header_initializer(sec_ch_ua: &'static str, ua: &'static str, impersonate_os: ImpersonateOs) -> HeaderMap {
     let mut headers = HeaderMap::new();
+    let platform = match impersonate_os { // todo: other OS
+        ImpersonateOs::MacOs => "macOS",
+        ImpersonateOs::Linux => "Linux",
+        _ => "\"Unknown\"",
+    };
     header_chrome_accpet!(headers);
-    header_chrome_sec_ch_ua!(headers, sec_ch_ua);
+    header_chrome_sec_ch_ua!(headers, sec_ch_ua, platform);
     header_chrome_sec_fetch!(headers);
     header_chrome_ua!(headers, ua);
     headers
 }
 
 #[inline]
-fn header_initializer_with_zstd(sec_ch_ua: &'static str, ua: &'static str) -> HeaderMap {
+fn header_initializer_with_zstd(sec_ch_ua: &'static str, ua: &'static str, impersonate_os: ImpersonateOs) -> HeaderMap {
+    let platform = match impersonate_os { // todo: other OS
+        ImpersonateOs::MacOs => "macOS",
+        ImpersonateOs::Linux => "Linux",
+        _ => "\"Unknown\"",
+    };
+
     let mut headers = HeaderMap::new();
     header_chrome_accpet!(zstd, headers);
-    header_chrome_sec_ch_ua!(headers, sec_ch_ua);
+    header_chrome_sec_ch_ua!(headers, sec_ch_ua, platform);
     header_chrome_sec_fetch!(headers);
     header_chrome_ua!(headers, ua);
     headers
 }
 
 #[inline]
-fn header_initializer_with_zstd_priority(sec_ch_ua: &'static str, ua: &'static str) -> HeaderMap {
+fn header_initializer_with_zstd_priority(sec_ch_ua: &'static str, ua: &'static str, impersonate_os: ImpersonateOs) -> HeaderMap {
+    let platform = match impersonate_os { // todo: other OS
+        ImpersonateOs::MacOs => "macOS",
+        ImpersonateOs::Linux => "Linux",
+        _ => "\"Unknown\"",
+    };
+
     let mut headers = HeaderMap::new();
     header_chrome_accpet!(zstd, headers);
     headers.insert("priority", HeaderValue::from_static("u=0, i"));
-    header_chrome_sec_ch_ua!(headers, sec_ch_ua);
+    header_chrome_sec_ch_ua!(headers, sec_ch_ua, platform);
     header_chrome_sec_fetch!(headers);
     header_chrome_ua!(headers, ua);
     headers
