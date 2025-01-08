@@ -3,6 +3,7 @@ use std::sync::LazyLock;
 use futures_util::{SinkExt, StreamExt, TryStreamExt};
 use rquest::{Client, Impersonate, Message};
 
+#[allow(unused)]
 static PROTOCOLS: LazyLock<Vec<String>> = LazyLock::new(|| {
     ["chat", "superchat"]
         .into_iter()
@@ -20,8 +21,9 @@ async fn main() -> Result<(), rquest::Error> {
     // Use the API you're already familiar with
     let websocket = client
         .websocket("wss://echo.websocket.org")
+        // optional handshake key
         .key("dGhlIHNhbXBsZSBub25jZQ==")
-        .protocols(&*PROTOCOLS)
+        // .protocols(&*PROTOCOLS)
         .with_builder(|builder| {
             builder
                 .auth("token")
