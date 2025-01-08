@@ -1367,8 +1367,15 @@ impl Client {
     }
 
     /// Get the client user agent
+    #[inline]
     pub fn user_agent(&self) -> Option<&HeaderValue> {
         self.inner.headers.get(USER_AGENT)
+    }
+
+    /// Get the reference to the headers for this client.
+    #[inline]
+    pub fn headers(&self) -> &HeaderMap {
+        &self.inner.headers
     }
 
     /// Get a mutable reference to the headers for this client.
