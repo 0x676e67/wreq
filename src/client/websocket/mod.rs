@@ -3,6 +3,7 @@ mod json;
 mod message;
 
 use std::{
+    borrow::Cow,
     ops::{Deref, DerefMut},
     pin::Pin,
     task::{Context, Poll},
@@ -26,7 +27,7 @@ pub type WebSocketStream =
 pub struct WebSocketRequestBuilder {
     inner: RequestBuilder,
     nonce: Option<String>,
-    protocols: Option<Vec<String>>,
+    protocols: Option<Cow<'static, [String]>>,
     config: WebSocketConfig,
 }
 
@@ -43,16 +44,20 @@ impl WebSocketRequestBuilder {
     /// Websocket handshake with a specified websocket key. This returns a wrapped type,
     /// so you must do this after you set up your request, and just before you send the
     /// request.
-    pub fn key<K: Into<String>>(mut self, key: K) -> Self {
-        self.nonce = Some(key.into());
+    pub fn key<K>(mut self, key: K) -> Self
+    where
+        K: Into<Cow<'static, str>>,
+    {
+        self.nonce = Some(key.into().into_owned());
         self
     }
 
     /// Sets the websocket subprotocols to request.
-    pub fn protocols(mut self, protocols: Vec<String>) -> Self {
-        if let Some(p) = self.protocols.as_mut() {
-            p.extend(protocols)
-        }
+    pub fn protocols<P>(mut self, protocols: P) -> Self
+    where
+        P: Into<Cow<'static, [String]>>,
+    {
+        self.protocols = Some(protocols.into());
         self
     }
 
@@ -170,7 +175,7 @@ impl WebSocketRequestBuilder {
 pub struct WebSocketResponse {
     inner: Response,
     nonce: String,
-    protocols: Option<Vec<String>>,
+    protocols: Option<Cow<'static, [String]>>,
     config: WebSocketConfig,
 }
 
