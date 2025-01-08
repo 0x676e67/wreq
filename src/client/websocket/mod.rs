@@ -56,28 +56,6 @@ impl WebSocketRequestBuilder {
         self
     }
 
-    /// Add a set of Header to the existing ones on this Request.
-    #[deprecated(since = "1.3.5", note = "use with_builder instead")]
-    pub fn header<K, V>(mut self, key: K, value: V) -> Self
-    where
-        HeaderName: TryFrom<K>,
-        <HeaderName as TryFrom<K>>::Error: Into<http::Error>,
-        HeaderValue: TryFrom<V>,
-        <HeaderValue as TryFrom<V>>::Error: Into<http::Error>,
-    {
-        self.inner = self.inner.header(key, value);
-        self
-    }
-
-    /// Add a set of Headers to the existing ones on this Request.
-    ///
-    /// The headers will be merged in to any already set.
-    #[deprecated(since = "1.3.5", note = "use with_builder instead")]
-    pub fn headers(mut self, headers: crate::header::HeaderMap) -> Self {
-        self.inner = self.inner.headers(headers);
-        self
-    }
-
     /// With request builder
     ///
     /// This is a helper function to modify the request builder before sending the request.
