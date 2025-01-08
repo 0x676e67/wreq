@@ -16,7 +16,7 @@ use super::response::Response;
 use crate::cookie;
 use crate::header::{HeaderMap, HeaderName, HeaderValue, CONTENT_TYPE};
 use crate::util::client::{NetworkScheme, NetworkSchemeBuilder};
-use crate::{redirect, IntoUrl, Method, Proxy, Url};
+use crate::{bind_device, redirect, IntoUrl, Method, Proxy, Url};
 #[cfg(feature = "cookies")]
 use std::sync::Arc;
 
@@ -513,17 +513,19 @@ impl RequestBuilder {
         self
     }
 
-    /// Set the interface for this request.
-    #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
-    pub fn interface<I>(mut self, interface: I) -> RequestBuilder
-    where
-        I: Into<std::borrow::Cow<'static, str>>,
-    {
-        if let Ok(ref mut req) = self.request {
-            req.network_scheme.interface(interface);
+    bind_device!(
+        item,
+        /// Set the interface for this request.
+        pub fn interface<I>(mut self, interface: I) -> RequestBuilder
+        where
+            I: Into<std::borrow::Cow<'static, str>>,
+        {
+            if let Ok(ref mut req) = self.request {
+                req.network_scheme.interface(interface);
+            }
+            self
         }
-        self
-    }
+    );
 
     /// Set the cookie store for this request.
     #[cfg(feature = "cookies")]

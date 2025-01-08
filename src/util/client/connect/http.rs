@@ -19,6 +19,7 @@ use tokio::time::Sleep;
 
 use super::dns::{self, resolve, GaiResolver, Resolve};
 use super::{Connected, Connection};
+use crate::bind_device;
 use crate::util::rt::TokioIo;
 
 /// A connector for the `http` scheme.
@@ -76,7 +77,16 @@ struct Config {
     reuse_address: bool,
     send_buffer_size: Option<usize>,
     recv_buffer_size: Option<usize>,
-    #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
+    #[cfg(any(
+        target_os = "android",
+        target_os = "fuchsia",
+        target_os = "linux",
+        target_os = "ios",
+        target_os = "visionos",
+        target_os = "macos",
+        target_os = "tvos",
+        target_os = "watchos",
+    ))]
     interface: Option<std::borrow::Cow<'static, str>>,
     #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
     tcp_user_timeout: Option<Duration>,
@@ -232,7 +242,16 @@ impl<R> HttpConnector<R> {
                 reuse_address: false,
                 send_buffer_size: None,
                 recv_buffer_size: None,
-                #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
+                #[cfg(any(
+                    target_os = "android",
+                    target_os = "fuchsia",
+                    target_os = "linux",
+                    target_os = "ios",
+                    target_os = "visionos",
+                    target_os = "macos",
+                    target_os = "tvos",
+                    target_os = "watchos",
+                ))]
                 interface: None,
                 #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
                 tcp_user_timeout: None,
@@ -371,15 +390,17 @@ impl<R> HttpConnector<R> {
     /// This function is only available on Android、Fuchsia and Linux.
     ///
     /// [VRF]: https://www.kernel.org/doc/Documentation/networking/vrf.txt
-    #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
-    #[inline]
-    pub fn set_interface<S>(&mut self, interface: S) -> &mut Self
-    where
-        S: Into<Option<std::borrow::Cow<'static, str>>>,
-    {
-        self.config_mut().interface = interface.into();
-        self
-    }
+    bind_device!(
+        item,
+        #[inline]
+        pub fn set_interface<S>(&mut self, interface: S) -> &mut Self
+        where
+            S: Into<Option<std::borrow::Cow<'static, str>>>,
+        {
+            self.config_mut().interface = interface.into();
+            self
+        }
+    );
 
     /// Sets the value of the TCP_USER_TIMEOUT option on the socket.
     #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
@@ -790,6 +811,34 @@ fn connect(
         socket
             .bind_device(Some(interface.as_bytes()))
             .map_err(ConnectError::m("tcp bind interface error"))?;
+    }
+
+    #[cfg(any(
+        target_os = "ios",
+        target_os = "visionos",
+        target_os = "macos",
+        target_os = "tvos",
+        target_os = "watchos",
+    ))]
+    /// That this only supports ios, visionos, macos, tvos, watchos
+    if let Some(interface) = &config.interface {
+        let c_interface = std::ffi::CString::new(interface.as_bytes())
+            .map_err(ConnectError::m("tcp bind interface error"))?;
+        let iface_index =
+            std::num::NonZeroU32::new(unsafe { libc::if_nametoindex(c_interface.as_ptr()) });
+
+        // If the interface is not found, it will skip the binding
+        if iface_index.is_some() {
+            if addr.is_ipv4() {
+                socket
+                    .bind_device_by_index_v4(iface_index)
+                    .map_err(ConnectError::m("tcp bind interface error"))?;
+            } else {
+                socket
+                    .bind_device_by_index_v6(iface_index)
+                    .map_err(ConnectError::m("tcp bind interface error"))?;
+            }
+        }
     }
 
     #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]

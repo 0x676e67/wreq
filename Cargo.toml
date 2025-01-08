@@ -167,6 +167,9 @@ windows-registry = "0.3.0"
 [target.'cfg(target_os = "macos")'.dependencies]
 system-configuration = "0.6.0"
 
+[target.'cfg(any(target_os = "ios", target_os = "visionos", target_os = "macos", target_os = "tvos", target_os = "watchos"))'.dependencies]
+libc = "0.2"
+
 [dev-dependencies]
 hyper = { version = "1.1.0", default-features = false, features = [
     "http1",
@@ -360,4 +363,9 @@ required-features = ["full"]
 [[example]]
 name = "request_with_local_address"
 path = "examples/request_with_local_address.rs"
+required-features = ["full"]
+
+[[example]]
+name = "request_with_interface"
+path = "examples/request_with_interface.rs"
 required-features = ["full"]

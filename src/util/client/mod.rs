@@ -176,6 +176,12 @@ impl Dst {
             .map_err(|_| e!(UserAbsoluteUriRequired))
     }
 
+    /// Get the URI
+    #[inline(always)]
+    pub fn uri(&self) -> &Uri {
+        &self.inner.uri
+    }
+
     /// Set the next destination of the request (for proxy)
     #[inline(always)]
     pub(crate) fn set_dst(&mut self, mut uri: Uri) {
@@ -198,14 +204,7 @@ impl Dst {
     /// Take the network scheme for iface
     #[inline(always)]
     pub(crate) fn take_interface(&mut self) -> Option<std::borrow::Cow<'static, str>> {
-        #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
-        {
-            Arc::make_mut(&mut self.inner).network.take_interface()
-        }
-        #[cfg(not(any(target_os = "android", target_os = "fuchsia", target_os = "linux")))]
-        {
-            None
-        }
+        Arc::make_mut(&mut self.inner).network.take_interface()
     }
 
     /// Take the network scheme for proxy

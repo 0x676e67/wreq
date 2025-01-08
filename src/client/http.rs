@@ -45,7 +45,7 @@ use crate::into_url::try_uri;
 use crate::mimic::{self, Impersonate, ImpersonateSettings};
 use crate::redirect::{self, remove_sensitive_headers};
 use crate::tls::{self, AlpnProtos, BoringTlsConnector, TlsSettings};
-use crate::{error, impl_debug};
+use crate::{bind_device, error, impl_debug};
 use crate::{IntoUrl, Method, Proxy, StatusCode, Url};
 #[cfg(feature = "hickory-dns")]
 use hickory_resolver::config::LookupIpStrategy;
@@ -824,24 +824,26 @@ impl ClientBuilder {
         self
     }
 
-    /// Bind to an interface by `SO_BINDTODEVICE`.
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// let interface = "lo";
-    /// let client = rquest::Client::builder()
-    ///     .interface(interface)
-    ///     .build().unwrap();
-    /// ```
-    #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
-    pub fn interface<T>(mut self, interface: T) -> ClientBuilder
-    where
-        T: Into<std::borrow::Cow<'static, str>>,
-    {
-        self.config.network_scheme.interface(interface);
-        self
-    }
+    bind_device!(
+        item,
+        /// Bind to an interface by `SO_BINDTODEVICE`.
+        ///
+        /// # Example
+        ///
+        /// ```
+        /// let interface = "lo";
+        /// let client = rquest::Client::builder()
+        ///     .interface(interface)
+        ///     .build().unwrap();
+        /// ```
+        pub fn interface<T>(mut self, interface: T) -> ClientBuilder
+        where
+            T: Into<std::borrow::Cow<'static, str>>,
+        {
+            self.config.network_scheme.interface(interface);
+            self
+        }
+    );
 
     /// Set that all sockets have `SO_KEEPALIVE` set with the supplied duration.
     ///
@@ -1489,15 +1491,17 @@ impl Client {
         self.inner_mut().network_scheme.addresses(ipv4, ipv6);
     }
 
-    /// Bind to an interface by `SO_BINDTODEVICE`.
-    #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
-    #[inline]
-    pub fn set_interface<T>(&mut self, interface: T)
-    where
-        T: Into<std::borrow::Cow<'static, str>>,
-    {
-        self.inner_mut().network_scheme.interface(interface);
-    }
+    bind_device!(
+        item,
+        /// Bind to an interface by `SO_BINDTODEVICE`.
+        #[inline]
+        pub fn set_interface<T>(&mut self, interface: T)
+        where
+            T: Into<std::borrow::Cow<'static, str>>,
+        {
+            self.inner_mut().network_scheme.interface(interface);
+        }
+    );
 
     /// Set the headers order for this client.
     pub fn set_headers_order<T>(&mut self, order: T)
