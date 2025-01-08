@@ -178,13 +178,13 @@ impl Dst {
 
     /// Get the URI
     #[inline(always)]
-    pub fn uri(&self) -> &Uri {
+    pub(crate) fn uri(&self) -> &Uri {
         &self.inner.uri
     }
 
     /// Set the next destination of the request (for proxy)
     #[inline(always)]
-    pub(crate) fn set_dst(&mut self, mut uri: Uri) {
+    pub(crate) fn set_uri(&mut self, mut uri: Uri) {
         let inner = Arc::make_mut(&mut self.inner);
         std::mem::swap(&mut inner.uri, &mut uri);
     }

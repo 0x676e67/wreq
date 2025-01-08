@@ -346,7 +346,7 @@ impl ConnectorService {
             });
         }
 
-        dst.set_dst(proxy_dst);
+        dst.set_uri(proxy_dst);
 
         self.connect_with_maybe_proxy(dst, true).await
     }
