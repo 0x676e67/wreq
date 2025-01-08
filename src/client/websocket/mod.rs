@@ -12,7 +12,7 @@ use crate::{error::Kind, RequestBuilder};
 use crate::{Error, Response};
 use async_tungstenite::tungstenite;
 use futures_util::{Sink, SinkExt, Stream, StreamExt};
-use http::{header, HeaderName, HeaderValue, StatusCode, Version};
+use http::{header, HeaderValue, StatusCode, Version};
 pub use message::{CloseCode, Message};
 use tokio_util::compat::TokioAsyncReadCompatExt;
 use tungstenite::protocol::WebSocketConfig;
