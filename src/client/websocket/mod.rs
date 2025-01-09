@@ -13,7 +13,7 @@ use crate::{error::Kind, RequestBuilder};
 use crate::{Error, Response};
 use async_tungstenite::tungstenite;
 use futures_util::{Sink, SinkExt, Stream, StreamExt};
-use http::{header, HeaderValue, StatusCode, Version};
+use http::{header, uri::Scheme, HeaderValue, StatusCode, Version};
 pub use message::{CloseCode, Message};
 use tokio_util::compat::TokioAsyncReadCompatExt;
 use tungstenite::protocol::WebSocketConfig;
@@ -26,7 +26,7 @@ pub type WebSocketStream =
 #[derive(Debug)]
 pub struct WebSocketRequestBuilder {
     inner: RequestBuilder,
-    nonce: Option<String>,
+    nonce: Option<Cow<'static, str>>,
     protocols: Option<Cow<'static, [String]>>,
     config: WebSocketConfig,
 }
@@ -48,7 +48,7 @@ impl WebSocketRequestBuilder {
     where
         K: Into<Cow<'static, str>>,
     {
-        self.nonce = Some(key.into().into_owned());
+        self.nonce = Some(key.into());
         self
     }
 
@@ -107,27 +107,37 @@ impl WebSocketRequestBuilder {
         let (client, request_result) = self.inner.build_split();
         let mut request = request_result?;
 
-        let nonce = self
-            .nonce
-            .unwrap_or_else(tungstenite::handshake::client::generate_key);
-
-        // change the scheme
+        // Ensure the scheme is http or https
         let url = request.url_mut();
         match url.scheme() {
-            "ws" => {
-                url.set_scheme("http")
-                    .expect("url should accept http scheme");
+            "ws" | "wss" => {
+                let new_scheme = if url.scheme() == "ws" {
+                    Scheme::HTTP.as_str()
+                } else {
+                    Scheme::HTTPS.as_str()
+                };
+                url.set_scheme(new_scheme)
+                    .expect("unexpected error setting URL scheme");
             }
-            "wss" => {
-                url.set_scheme("https")
-                    .expect("url should accept https scheme");
+            "http" | "https" => {}
+            invalid_scheme => {
+                return Err(Error::new(
+                    Kind::Builder,
+                    Some(format!(
+                        "invalid scheme: {}, expected ws or wss",
+                        invalid_scheme
+                    )),
+                ));
             }
-            _ => {}
         }
+
+        // Generate a nonce if one wasn't provided
+        let nonce = self
+            .nonce
+            .unwrap_or_else(|| Cow::Owned(tungstenite::handshake::client::generate_key()));
 
         // HTTP 1 requires us to set some headers.
         let headers = request.headers_mut();
-
         headers.insert(header::CONNECTION, HeaderValue::from_static("upgrade"));
         headers.insert(header::UPGRADE, HeaderValue::from_static("websocket"));
         headers.insert(
@@ -141,7 +151,7 @@ impl WebSocketRequestBuilder {
         );
 
         if let Some(ref protocols) = self.protocols {
-            // sets subprotocols
+            // Sets subprotocols
             if !protocols.is_empty() {
                 let subprotocols = protocols
                     .iter()
@@ -174,7 +184,7 @@ impl WebSocketRequestBuilder {
 #[derive(Debug)]
 pub struct WebSocketResponse {
     inner: Response,
-    nonce: String,
+    nonce: Cow<'static, str>,
     protocols: Option<Cow<'static, [String]>>,
     config: WebSocketConfig,
 }
