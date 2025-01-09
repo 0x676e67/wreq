@@ -1,4 +1,4 @@
-# rquest - `r`ust & `quest`
+# rquest - `r`ust & quest
 
 [![CI](https://github.com/penumbra-x/rquest/actions/workflows/ci.yml/badge.svg)](https://github.com/penumbra-x/rquest/actions/workflows/ci.yml)
 [![Crates.io License](https://img.shields.io/crates/l/rquest)](./LICENSE)

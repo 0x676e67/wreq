@@ -123,6 +123,24 @@ impl Request {
         &mut self.headers
     }
 
+    /// Get a mutable reference to the redirect policy.
+    #[inline]
+    pub fn redirect_mut(&mut self) -> &mut Option<redirect::Policy> {
+        &mut self.redirect
+    }
+
+    /// Get a mutable reference to the network scheme.
+    #[inline]
+    pub fn network_scheme_mut(&mut self) -> &mut NetworkSchemeBuilder {
+        &mut self.network_scheme
+    }
+
+    /// Get a mutable reference to the cookie store.
+    #[cfg(feature = "cookies")]
+    pub fn cookie_store_mut(&mut self) -> &mut Option<Arc<dyn cookie::CookieStore>> {
+        &mut self.cookie_store
+    }
+
     /// Get the body.
     #[inline]
     pub fn body(&self) -> Option<&Body> {
@@ -171,6 +189,12 @@ impl Request {
         *req.timeout_mut() = self.timeout().copied();
         *req.headers_mut() = self.headers().clone();
         *req.version_mut() = self.version();
+        *req.redirect_mut() = self.redirect.clone();
+        *req.network_scheme_mut() = self.network_scheme.clone();
+        #[cfg(feature = "cookies")]
+        {
+            *req.cookie_store_mut() = self.cookie_store.clone();
+        }
         req.body = body;
         Some(req)
     }
