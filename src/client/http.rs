@@ -45,7 +45,7 @@ use crate::into_url::try_uri;
 use crate::mimic::{self, Impersonate, ImpersonateSettings};
 use crate::redirect::{self, remove_sensitive_headers};
 use crate::tls::{self, AlpnProtos, BoringTlsConnector, TlsSettings};
-use crate::{bind_device, error, impl_debug};
+use crate::{cfg_bindable_device, error, impl_debug};
 use crate::{IntoUrl, Method, Proxy, StatusCode, Url};
 #[cfg(feature = "hickory-dns")]
 use hickory_resolver::config::LookupIpStrategy;
@@ -824,8 +824,8 @@ impl ClientBuilder {
         self
     }
 
-    bind_device!(
-        item,
+    cfg_bindable_device! {
+
         /// Bind to an interface by `SO_BINDTODEVICE`.
         ///
         /// # Example
@@ -838,12 +838,12 @@ impl ClientBuilder {
         /// ```
         pub fn interface<T>(mut self, interface: T) -> ClientBuilder
         where
-            T: Into<std::borrow::Cow<'static, str>>,
+            T: Into<Cow<'static, str>>,
         {
             self.config.network_scheme.interface(interface);
             self
         }
-    );
+    }
 
     /// Set that all sockets have `SO_KEEPALIVE` set with the supplied duration.
     ///
@@ -1498,17 +1498,16 @@ impl Client {
         self.inner_mut().network_scheme.addresses(ipv4, ipv6);
     }
 
-    bind_device!(
-        item,
+    cfg_bindable_device! {
         /// Bind to an interface by `SO_BINDTODEVICE`.
         #[inline]
         pub fn set_interface<T>(&mut self, interface: T)
         where
-            T: Into<std::borrow::Cow<'static, str>>,
+            T: Into<Cow<'static, str>>,
         {
             self.inner_mut().network_scheme.interface(interface);
         }
-    );
+    }
 
     /// Set the headers order for this client.
     pub fn set_headers_order<T>(&mut self, order: T)

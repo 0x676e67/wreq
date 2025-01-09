@@ -5,12 +5,12 @@
 //! in much the same way it did in hyper 0.14.
 
 pub mod connect;
+mod network;
 #[doc(hidden)]
 // Publicly available, but just for legacy purposes. A better pool will be
 // designed.
 mod pool;
 mod request;
-mod network;
 
 use std::error::Error as StdError;
 use std::fmt;
@@ -33,7 +33,7 @@ use sync_wrapper::SyncWrapper;
 
 use crate::proxy::ProxyScheme;
 use crate::util::common;
-use crate::{impl_debug, AlpnProtos};
+use crate::{cfg_bindable_device, cfg_non_bindable_device, impl_debug, AlpnProtos};
 use connect::capture::CaptureConnectionExtension;
 use connect::{Alpn, Connect, Connected, Connection};
 use pool::Ver;
@@ -41,8 +41,8 @@ use pool::Ver;
 use common::{lazy as hyper_lazy, timer, Exec, Lazy};
 
 use super::into_uri;
-pub use request::InnerRequest;
 pub use network::{NetworkScheme, NetworkSchemeBuilder};
+pub use request::InnerRequest;
 
 type BoxSendFuture = Pin<Box<dyn Future<Output = ()> + Send>>;
 
@@ -204,7 +204,11 @@ impl Dst {
     /// Take the network scheme for iface
     #[inline(always)]
     pub(crate) fn take_interface(&mut self) -> Option<std::borrow::Cow<'static, str>> {
-        Arc::make_mut(&mut self.inner).network.take_interface()
+        cfg_bindable_device! {
+            Arc::make_mut(&mut self.inner).network.take_interface()
+        }
+
+        cfg_non_bindable_device!(None)
     }
 
     /// Take the network scheme for proxy

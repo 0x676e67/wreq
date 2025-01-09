@@ -19,7 +19,7 @@ use tokio::time::Sleep;
 
 use super::dns::{self, resolve, GaiResolver, Resolve};
 use super::{Connected, Connection};
-use crate::bind_device;
+use crate::cfg_bindable_device;
 use crate::util::rt::TokioIo;
 
 /// A connector for the `http` scheme.
@@ -390,8 +390,7 @@ impl<R> HttpConnector<R> {
     /// This function is only available on Android、Fuchsia、Linux and Apple platforms.
     ///
     /// [VRF]: https://www.kernel.org/doc/Documentation/networking/vrf.txt
-    bind_device!(
-        item,
+    cfg_bindable_device! {
         #[inline]
         pub fn set_interface<S>(&mut self, interface: S) -> &mut Self
         where
@@ -400,7 +399,7 @@ impl<R> HttpConnector<R> {
             self.config_mut().interface = interface.into();
             self
         }
-    );
+    }
 
     /// Sets the value of the TCP_USER_TIMEOUT option on the socket.
     #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]

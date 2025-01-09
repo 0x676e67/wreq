@@ -1,7 +1,7 @@
 /// referrer: https://github.com/cloudflare/boring/blob/master/hyper-boring/src/lib.rs
 use super::cache::{SessionCache, SessionKey};
 use super::{key_index, HttpsLayerSettings, MaybeHttpsStream};
-use crate::bind_device;
+use crate::cfg_bindable_device;
 use crate::connect::HttpConnector;
 use crate::error::BoxError;
 use crate::tls::ext::SslRefExt;
@@ -63,7 +63,9 @@ impl HttpsConnectorBuilder {
     #[inline]
     #[allow(unused_mut)]
     pub fn with_interface(mut self, _interface: Option<Cow<'static, str>>) -> Self {
-        bind_device!(tt, self.http.set_interface(_interface));
+        cfg_bindable_device! {
+            self.http.set_interface(_interface);
+        }
         self
     }
 

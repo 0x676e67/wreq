@@ -16,7 +16,7 @@ use super::response::Response;
 use crate::cookie;
 use crate::header::{HeaderMap, HeaderName, HeaderValue, CONTENT_TYPE};
 use crate::util::client::{NetworkScheme, NetworkSchemeBuilder};
-use crate::{bind_device, redirect, IntoUrl, Method, Proxy, Url};
+use crate::{cfg_bindable_device, redirect, IntoUrl, Method, Proxy, Url};
 #[cfg(feature = "cookies")]
 use std::sync::Arc;
 
@@ -513,8 +513,7 @@ impl RequestBuilder {
         self
     }
 
-    bind_device!(
-        item,
+    cfg_bindable_device! {
         /// Set the interface for this request.
         pub fn interface<I>(mut self, interface: I) -> RequestBuilder
         where
@@ -525,7 +524,7 @@ impl RequestBuilder {
             }
             self
         }
-    );
+    }
 
     /// Set the cookie store for this request.
     #[cfg(feature = "cookies")]
