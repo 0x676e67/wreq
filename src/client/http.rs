@@ -97,7 +97,7 @@ struct Config {
     proxies: Vec<Proxy>,
     auto_sys_proxy: bool,
     redirect_policy: redirect::Policy,
-    proxy_auth_with_redirect: bool,
+    redirect_with_proxy_auth: bool,
     referer: bool,
     timeout: Option<Duration>,
     read_timeout: Option<Duration>,
@@ -156,7 +156,7 @@ impl ClientBuilder {
                 proxies: Vec::new(),
                 auto_sys_proxy: true,
                 redirect_policy: redirect::Policy::none(),
-                proxy_auth_with_redirect: false,
+                redirect_with_proxy_auth: false,
                 referer: true,
                 timeout: None,
                 read_timeout: None,
@@ -252,7 +252,7 @@ impl ClientBuilder {
                 headers: config.headers,
                 headers_order: config.headers_order,
                 redirect: config.redirect_policy,
-                proxy_auth_with_redirect: config.proxy_auth_with_redirect,
+                redirect_with_proxy_auth: config.redirect_with_proxy_auth,
                 referer: config.referer,
                 request_timeout: config.timeout,
                 read_timeout: config.read_timeout,
@@ -629,7 +629,7 @@ impl ClientBuilder {
     /// use rquest::Client;
     ///
     /// let client = Client::builder()
-    ///     .proxy_auth_with_redirect(true)
+    ///     .redirect_with_proxy_auth(true)
     ///     .build()
     ///     .unwrap();
     /// ```
@@ -639,8 +639,10 @@ impl ClientBuilder {
     /// This method assumes that the proxy credentials are already set up and
     /// available. Ensure that the Proxy-Authorization header is correctly
     /// configured before using this method.
-    pub fn proxy_auth_with_redirect(mut self, enable: bool) -> ClientBuilder {
-        self.config.proxy_auth_with_redirect = enable;
+    /// 
+    /// Default is `false`.
+    pub fn redirect_with_proxy_auth(mut self, enable: bool) -> ClientBuilder {
+        self.config.redirect_with_proxy_auth = enable;
         self
     }
 
@@ -1554,8 +1556,8 @@ impl Client {
     }
 
     /// Set the cross-origin proxy authorization for this client.
-    pub fn set_proxy_auth_with_redirect(&mut self, enabled: bool) {
-        self.inner_mut().proxy_auth_with_redirect = enabled;
+    pub fn set_redirect_with_proxy_auth(&mut self, enabled: bool) {
+        self.inner_mut().redirect_with_proxy_auth = enabled;
     }
 
     /// Set the bash url for this client.
@@ -1677,7 +1679,7 @@ struct ClientRef {
     headers_order: Option<Cow<'static, [HeaderName]>>,
     hyper: HyperClient,
     redirect: redirect::Policy,
-    proxy_auth_with_redirect: bool,
+    redirect_with_proxy_auth: bool,
     referer: bool,
     request_timeout: Option<Duration>,
     read_timeout: Option<Duration>,
@@ -2081,7 +2083,7 @@ impl Future for PendingRequest {
                                 &mut headers,
                                 &self.url,
                                 &self.urls,
-                                self.client.proxy_auth_with_redirect,
+                                self.client.redirect_with_proxy_auth,
                             );
 
                             let uri = match try_uri(&self.url) {
