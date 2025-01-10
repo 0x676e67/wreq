@@ -11,7 +11,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  windows:
+  build-windows:
     name: Windows
     runs-on: windows-latest
     environment: Windows
@@ -32,8 +32,9 @@ jobs:
         run: |
           cargo build --all-features
 
-  linux:
+  build-linux:
     name: Linux
+    needs: build-windows
     runs-on: ubuntu-latest
     environment: Linux
     steps:
