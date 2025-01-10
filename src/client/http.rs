@@ -629,7 +629,7 @@ impl ClientBuilder {
     /// use rquest::Client;
     ///
     /// let client = Client::builder()
-    ///     .proxy_auth_with_redirect()
+    ///     .proxy_auth_with_redirect(true)
     ///     .build()
     ///     .unwrap();
     /// ```
@@ -639,8 +639,8 @@ impl ClientBuilder {
     /// This method assumes that the proxy credentials are already set up and
     /// available. Ensure that the Proxy-Authorization header is correctly
     /// configured before using this method.
-    pub fn proxy_auth_with_redirect(mut self) -> ClientBuilder {
-        self.config.proxy_auth_with_redirect = true;
+    pub fn proxy_auth_with_redirect(mut self, enable: bool) -> ClientBuilder {
+        self.config.proxy_auth_with_redirect = enable;
         self
     }
 
@@ -1551,6 +1551,11 @@ impl Client {
     /// Set the redirect policy for this client.
     pub fn set_redirect(&mut self, mut policy: redirect::Policy) {
         std::mem::swap(&mut self.inner_mut().redirect, &mut policy);
+    }
+
+    /// Set the cross-origin proxy authorization for this client.
+    pub fn set_proxy_auth_with_redirect(&mut self, enabled: bool) {
+        self.inner_mut().proxy_auth_with_redirect = enabled;
     }
 
     /// Set the bash url for this client.
