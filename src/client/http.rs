@@ -43,7 +43,7 @@ use crate::dns::hickory::HickoryDnsResolver;
 use crate::dns::{gai::GaiResolver, DnsResolverWithOverrides, DynResolver, Resolve};
 use crate::into_url::try_uri;
 use crate::mimic::{self, Impersonate, ImpersonateSettings};
-use crate::redirect::{self, remove_sensitive_headers};
+use crate::redirect;
 use crate::tls::{self, AlpnProtos, BoringTlsConnector, TlsSettings};
 use crate::{cfg_bindable_device, error, impl_debug};
 use crate::{IntoUrl, Method, Proxy, StatusCode, Url};
@@ -97,6 +97,7 @@ struct Config {
     proxies: Vec<Proxy>,
     auto_sys_proxy: bool,
     redirect_policy: redirect::Policy,
+    proxy_auth_with_redirect: bool,
     referer: bool,
     timeout: Option<Duration>,
     read_timeout: Option<Duration>,
@@ -155,6 +156,7 @@ impl ClientBuilder {
                 proxies: Vec::new(),
                 auto_sys_proxy: true,
                 redirect_policy: redirect::Policy::none(),
+                proxy_auth_with_redirect: false,
                 referer: true,
                 timeout: None,
                 read_timeout: None,
@@ -250,6 +252,7 @@ impl ClientBuilder {
                 headers: config.headers,
                 headers_order: config.headers_order,
                 redirect: config.redirect_policy,
+                proxy_auth_with_redirect: config.proxy_auth_with_redirect,
                 referer: config.referer,
                 request_timeout: config.timeout,
                 read_timeout: config.read_timeout,
@@ -610,6 +613,34 @@ impl ClientBuilder {
     /// Default is `true`.
     pub fn referer(mut self, enable: bool) -> ClientBuilder {
         self.config.referer = enable;
+        self
+    }
+
+    /// Automatically handles proxy authentication during HTTP redirects for cross-origin requests.
+    ///
+    /// This method ensures that the Proxy-Authorization header is re-added to
+    /// requests after a redirect, allowing seamless proxy authentication even
+    /// during cross-origin redirects. It is useful in scenarios where the client
+    /// needs to maintain proxy authentication across multiple redirects without user intervention.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use rquest::Client;
+    ///
+    /// let client = Client::builder()
+    ///     .proxy_auth_with_redirect()
+    ///     .build()
+    ///     .unwrap();
+    /// ```
+    ///
+    /// # Note
+    ///
+    /// This method assumes that the proxy credentials are already set up and
+    /// available. Ensure that the Proxy-Authorization header is correctly
+    /// configured before using this method.
+    pub fn proxy_auth_with_redirect(mut self) -> ClientBuilder {
+        self.config.proxy_auth_with_redirect = true;
         self
     }
 
@@ -1641,6 +1672,7 @@ struct ClientRef {
     headers_order: Option<Cow<'static, [HeaderName]>>,
     hyper: HyperClient,
     redirect: redirect::Policy,
+    proxy_auth_with_redirect: bool,
     referer: bool,
     request_timeout: Option<Duration>,
     read_timeout: Option<Duration>,
@@ -2010,17 +2042,16 @@ impl Future for PendingRequest {
                     }
                     let url = self.url.clone();
                     self.as_mut().urls().push(url);
-                    let action = self
-                        .redirect
-                        .as_ref()
-                        .unwrap_or(&self.client.redirect)
-                        .check(
-                            res.status(),
-                            &self.method,
-                            &loc,
-                            &previous_method,
-                            &self.urls,
-                        );
+
+                    let redirect = self.redirect.as_ref().unwrap_or(&self.client.redirect);
+
+                    let action = redirect.check(
+                        res.status(),
+                        &self.method,
+                        &loc,
+                        &previous_method,
+                        &self.urls,
+                    );
 
                     match action {
                         redirect::ActionKind::Follow => {
@@ -2041,7 +2072,13 @@ impl Future for PendingRequest {
                             let mut headers =
                                 std::mem::replace(self.as_mut().headers(), HeaderMap::new());
 
-                            remove_sensitive_headers(&mut headers, &self.url, &self.urls);
+                            redirect::Policy::remove_sensitive_headers(
+                                &mut headers,
+                                &self.url,
+                                &self.urls,
+                                self.client.proxy_auth_with_redirect,
+                            );
+
                             let uri = match try_uri(&self.url) {
                                 Some(uri) => uri,
                                 None => {
@@ -2066,8 +2103,6 @@ impl Future for PendingRequest {
                                     add_cookie_header(&mut headers, &**cookie_store, &self.url);
                                 }
                             }
-
-                            self.client.proxy_auth(&uri, &mut headers);
 
                             *self.as_mut().in_flight().get_mut() = {
                                 let req = InnerRequest::builder()
