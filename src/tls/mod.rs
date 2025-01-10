@@ -58,6 +58,10 @@ impl BoringTlsConnector {
             connector.set_options(SslOptions::NO_PSK_DHE_KE);
         }
 
+        if !settings.renegotiation {
+            connector.set_options(SslOptions::NO_RENEGOTIATION);
+        }
+
         if let Some(grease_enabled) = settings.grease_enabled {
             connector.set_grease_enabled(grease_enabled);
         }
@@ -413,6 +417,11 @@ pub struct TlsSettings {
     #[builder(default = true)]
     pub psk_dhe_ke: bool,
 
+    /// SSL Renegotiation is enabled by default on many servers.
+    /// This setting allows the client to send a renegotiation_info extension
+    #[builder(default = true)]
+    pub renegotiation: bool,
+
     /// Sets the context's extension permutation indices.
     #[builder(default, setter(into))]
     pub extension_permutation_indices: Option<Cow<'static, [u8]>>,
@@ -442,6 +451,7 @@ impl_debug!(
         permute_extensions,
         grease_enabled,
         enable_ocsp_stapling,
+        renegotiation,
         curves,
         sigalgs_list,
         cipher_list,
