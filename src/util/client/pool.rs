@@ -219,6 +219,7 @@ impl<T: Poolable, K: Key> Pool<T, K> {
                     // Do this here instead of Drop for Connecting because we
                     // already have a lock, no need to lock the mutex twice.
                     inner.connected(&connecting.key);
+                    drop(inner);
                     // prevent the Drop of Connecting from repeating inner.connected()
                     connecting.pool = WeakOpt::none();
 
@@ -662,6 +663,9 @@ impl<T: Poolable, K: Key> Checkout<T, K> {
                     .entry(self.key.clone())
                     .or_insert_with(VecDeque::new)
                     .push_back(tx);
+
+                // We need to drop the lock before polling the receiver.
+                drop(inner);
 
                 // register the waker with this oneshot
                 assert!(Pin::new(&mut rx).poll(cx).is_pending());
