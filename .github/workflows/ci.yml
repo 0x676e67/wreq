@@ -39,7 +39,6 @@ jobs:
 
   build-macos:
     name: macOS
-    needs: build-windows
     runs-on: macos-latest
     environment: macOS
     steps:
