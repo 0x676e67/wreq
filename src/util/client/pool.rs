@@ -796,8 +796,9 @@ impl<T: Poolable + 'static, K: Key> Future for IdleTask<T, K> {
 
             if let Some(inner) = this.pool.upgrade() {
                 let mut inner = inner.lock();
-                trace!("idle interval checking for expired");
                 inner.clear_expired();
+                drop(inner);
+                trace!("idle interval checking for expired");
                 continue;
             }
             return Poll::Ready(());
