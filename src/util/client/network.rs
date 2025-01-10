@@ -237,31 +237,29 @@ impl NetworkSchemeBuilder {
         self
     }
 
-    #[inline]
-    pub fn build(self) -> NetworkScheme {
-        cfg_non_bindable_device! {
-            if matches!((&self.proxy_scheme, &self.addresses), (None, (None, None))) {
-                return NetworkScheme::Default;
-            }
-        }
-
-        cfg_non_bindable_device! {
-            NetworkScheme::Scheme {
-                addresses: self.addresses,
-                proxy_scheme: self.proxy_scheme,
-            }
-        }
-
-        cfg_bindable_device! {
-            if matches!(
-                (&self.proxy_scheme, &self.addresses, &self.interface),
-                (None, (None, None), None)
-            ) {
+    cfg_bindable_device! {
+        #[inline]
+        pub fn build(self) -> NetworkScheme {
+            if matches!((&self.proxy_scheme, &self.addresses, &self.interface), (None, (None, None), None)) {
                 return NetworkScheme::Default;
             }
 
             NetworkScheme::Scheme {
                 interface: self.interface,
+                addresses: self.addresses,
+                proxy_scheme: self.proxy_scheme,
+            }
+        }
+    }
+
+    cfg_non_bindable_device! {
+        #[inline]
+        pub fn build(self) -> NetworkScheme {
+            if matches!((&self.proxy_scheme, &self.addresses), (None, (None, None))) {
+                return NetworkScheme::Default;
+            }
+
+            NetworkScheme::Scheme {
                 addresses: self.addresses,
                 proxy_scheme: self.proxy_scheme,
             }

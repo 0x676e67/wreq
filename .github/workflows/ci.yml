@@ -11,6 +11,27 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  windows:
+    name: Windows
+    runs-on: windows-latest
+    environment: Windows
+    steps:
+      - uses: actions/checkout@v4
+  
+      - name: Install dependencies
+        if: runner.os == 'Windows'
+        run: |
+          choco install cmake -y
+          choco install strawberryperl -y
+          choco install pkgconfiglite -y
+          choco install llvm -y
+          choco install nasm -y
+        shell: cmd
+
+      - name: Build
+        run: |
+          cargo build --all-features
+
   linux:
     name: Linux
     runs-on: ubuntu-latest
