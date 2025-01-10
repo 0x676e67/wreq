@@ -13,7 +13,6 @@
 //! - [Redirect policy](#redirect-policies)
 //! - Uses [BoringSSL](#tls)
 //! - HTTP [Proxies](#proxies)
-//! - Preconfigured TLS and HTTP2 settings
 //! - Perfectly mimic Chrome, Safari, and Firefox
 //! - [Changelog](https://github.com/penumbra-x/rquest/blob/main/CHANGELOG.md)
 //!

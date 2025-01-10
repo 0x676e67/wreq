@@ -17,7 +17,6 @@ An ergonomic, all-in-one `TLS`, `JA3`/`JA4`, and `HTTP2` fingerprint HTTP Client
 - HTTP Proxies
 - WebSocket Upgrade
 - HTTPS via BoringSSL
-- Preconfigured TLS and HTTP2 settings
 - Perfectly mimic Chrome, Safari, and Firefox
 
 Additional learning resources include:
@@ -124,7 +123,7 @@ Regarding the design strategy of the connection pool, `rquest` and `reqwest` are
 
 By default, `rquest` uses Mozilla's root certificates through the `webpki-roots` crate. This is a static root certificate bundle that is not automatically updated. It also ignores any root certificates installed on the host running `rquest`, which may be a good thing or a bad thing, depending on your point of view. But you can turn off `default-features` to cancel the default certificate bundle, and the system default certificate path will be used to load the certificate. In addition, `rquest` also provides a certificate store for users to customize the update certificate.
 
-- [source code details](https://github.com/penumbra-x/rquest/blob/main/examples/set_native_root_cert.rs)
+- [examples](https://github.com/penumbra-x/rquest/blob/main/examples/set_native_root_cert.rs)
 
 ## Fingerprint
 
