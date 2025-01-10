@@ -37,7 +37,7 @@ jobs:
         run: |
           cargo build --all-features
 
-  build-macos
+  build-macos:
     name: macOS
     needs: build-windows
     runs-on: macos-latest
