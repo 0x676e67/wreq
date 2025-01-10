@@ -17,7 +17,12 @@ jobs:
     environment: Windows
     steps:
       - uses: actions/checkout@v4
-  
+
+      - uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          override: true
+
       - name: Install dependencies
         if: runner.os == 'Windows'
         run: |
@@ -32,22 +37,44 @@ jobs:
         run: |
           cargo build --all-features
 
-  build-linux:
-    name: Linux
+  build-macos
+    name: macOS
     needs: build-windows
-    runs-on: ubuntu-latest
-    environment: Linux
+    runs-on: macos-latest
+    environment: macOS
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install depends
+      - name: Install dependencies
         run: |
-          sudo apt update && sudo apt install upx rename cmake build-essential clang libclang-dev -y
+          brew update
+          brew install --formula cmake pkg-config llvm
 
       - uses: actions-rs/toolchain@v1
         with:
           toolchain: stable
           override: true
+
+      - name: Build
+        run: |
+          cargo build --all-features
+
+  build-linux:
+    name: Linux
+    needs: [build-windows, build-macos]
+    runs-on: ubuntu-latest
+    environment: Linux
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          override: true
+
+      - name: Install depends
+        run: |
+          sudo apt update && sudo apt install upx rename cmake build-essential clang libclang-dev -y
 
       - name: Get tag
         if: startsWith(github.ref, 'refs/tags/')
