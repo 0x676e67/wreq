@@ -128,9 +128,6 @@ fn header_initializer(sec_ch_ua: &'static str, ua: &'static str, impersonate_os:
         ImpersonateOs::Windows => "Windows",
         ImpersonateOs::Android => "Android",
         ImpersonateOs::Ios => "iOS",
-        _ => "\"Unknown\"", // This in "Unknown" by default if the OS is not detected by chrome
-        // You can also have "Chrome OS" and "Chromium OS" if you want to implement it
-        // see https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Sec-CH-UA-Platform#directives
     };
     let is_mobile = match impersonate_os {
         ImpersonateOs::Android => true,
@@ -152,7 +149,6 @@ fn header_initializer_with_zstd(sec_ch_ua: &'static str, ua: &'static str, imper
         ImpersonateOs::Windows => "Windows",
         ImpersonateOs::Android => "Android",
         ImpersonateOs::Ios => "iOS",
-        _ => "\"Unknown\"",
     };
     let is_mobile = match impersonate_os {
         ImpersonateOs::Android => true,
@@ -175,7 +171,6 @@ fn header_initializer_with_zstd_priority(sec_ch_ua: &'static str, ua: &'static s
         ImpersonateOs::Windows => "Windows",
         ImpersonateOs::Android => "Android",
         ImpersonateOs::Ios => "iOS",
-        _ => "\"Unknown\"",
     };
     let is_mobile = match impersonate_os {
         ImpersonateOs::Android => true,
