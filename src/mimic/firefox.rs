@@ -3,28 +3,50 @@ use http2::*;
 use tls::*;
 
 macro_rules! mod_generator {
-    ($mod_name:ident, $tls_settings:expr, $http2_settings:expr, $header_initializer:ident, [$(
-        ($os:ident, $ua:tt)
-    ),+]) => {
+    (
+        $mod_name:ident,
+        $tls_settings:expr,
+        $http2_settings:expr,
+        $header_initializer:ident,
+        [($default_os:ident, $default_ua:tt) $(, ($other_os:ident, $other_ua:tt))*]
+    ) => {
         pub(crate) mod $mod_name {
             use super::*;
             use crate::mimic::ImpersonateOs;
 
             #[inline(always)]
-            pub fn settings(with_headers: bool, os: ImpersonateOs) -> ImpersonateSettings {
-                match os {
+            pub fn settings(with_headers: bool, os_choice: ImpersonateOs) -> ImpersonateSettings {
+                match os_choice {
+                    ImpersonateOs::$default_os => {
+                        ImpersonateSettings::builder()
+                            .tls($tls_settings)
+                            .http2($http2_settings)
+                            .headers(conditional_headers!(with_headers, || {
+                                $header_initializer($default_ua)
+                            }))
+                            .build()
+                    },
                     $(
-                        ImpersonateOs::$os => {
+                        ImpersonateOs::$other_os => {
                             ImpersonateSettings::builder()
                                 .tls($tls_settings)
                                 .http2($http2_settings)
                                 .headers(conditional_headers!(with_headers, || {
-                                    $header_initializer($ua)
+                                    $header_initializer($other_ua)
                                 }))
                                 .build()
                         }
-                    ),+
-                    _ => panic!("Unsupported OS: {:?}", os),
+                    ),*
+                    // Use the default OS settings as fallback
+                    _ => {
+                        ImpersonateSettings::builder()
+                            .tls($tls_settings)
+                            .http2($http2_settings)
+                            .headers(conditional_headers!(with_headers, || {
+                                $header_initializer($default_ua)
+                            }))
+                            .build()
+                    }
                 }
             }
         }
