@@ -1398,7 +1398,9 @@ impl Client {
             }),
         }
     }
+}
 
+impl Client {
     /// Get the client user agent
     #[inline]
     pub fn user_agent(&self) -> Option<&HeaderValue> {
@@ -1633,7 +1635,7 @@ impl Client {
         Ok(self)
     }
 
-    /// private mut ref to inner
+    /// Private mut ref to inner
     #[inline(always)]
     fn inner_mut(&mut self) -> &mut ClientRef {
         Arc::make_mut(&mut self.inner)
@@ -1796,22 +1798,14 @@ pin_project! {
         url: Url,
         headers: HeaderMap,
         body: Option<Option<Bytes>>,
-
         version: Option<Version>,
-
         urls: Vec<Url>,
-
         retry_count: usize,
         max_retry_count: usize,
-
         redirect: Option<redirect::Policy>,
-
         cookie_store: CookieStoreOption,
-
         network_scheme: NetworkScheme,
-
         client: Arc<ClientRef>,
-
         #[pin]
         in_flight: ResponseFuture,
         #[pin]
@@ -1900,8 +1894,6 @@ impl PendingRequest {
 }
 
 fn is_retryable_error(err: &(dyn std::error::Error + 'static)) -> bool {
-    use hyper2::h2;
-
     // pop the legacy::Error
     let err = if let Some(err) = err.source() {
         err
@@ -1910,15 +1902,20 @@ fn is_retryable_error(err: &(dyn std::error::Error + 'static)) -> bool {
     };
 
     if let Some(cause) = err.source() {
-        if let Some(err) = cause.downcast_ref::<h2::Error>() {
+        if let Some(err) = cause.downcast_ref::<hyper2::h2::Error>() {
             // They sent us a graceful shutdown, try with a new connection!
-            if err.is_go_away() && err.is_remote() && err.reason() == Some(h2::Reason::NO_ERROR) {
+            if err.is_go_away()
+                && err.is_remote()
+                && err.reason() == Some(hyper2::h2::Reason::NO_ERROR)
+            {
                 return true;
             }
 
             // REFUSED_STREAM was sent from the server, which is safe to retry.
             // https://www.rfc-editor.org/rfc/rfc9113.html#section-8.7-3.2
-            if err.is_reset() && err.is_remote() && err.reason() == Some(h2::Reason::REFUSED_STREAM)
+            if err.is_reset()
+                && err.is_remote()
+                && err.reason() == Some(hyper2::h2::Reason::REFUSED_STREAM)
             {
                 return true;
             }
@@ -2111,6 +2108,7 @@ impl Future for PendingRequest {
                                     return Poll::Ready(Err(error::url_bad_uri(self.url.clone())));
                                 }
                             };
+
                             let body = match self.body {
                                 Some(Some(ref body)) => Body::reusable(body.clone()),
                                 _ => Body::empty(),
