@@ -9,27 +9,22 @@ macro_rules! mod_generator {
         pub(crate) mod $mod_name {
             use super::*;
             use crate::mimic::ImpersonateOs;
-            use crate::Error;
-            use crate::error::Kind;
 
             #[inline(always)]
-            pub fn settings(with_headers: bool, os: ImpersonateOs) -> Result<ImpersonateSettings, Error> {
+            pub fn settings(with_headers: bool, os: ImpersonateOs) -> ImpersonateSettings {
                 match os {
                     $(
                         ImpersonateOs::$os => {
-                            Ok(ImpersonateSettings::builder()
+                            ImpersonateSettings::builder()
                                 .tls($tls_settings)
                                 .http2($http2_settings)
                                 .headers(conditional_headers!(with_headers, || {
                                     $header_initializer($ua)
                                 }))
-                                .build())
+                                .build()
                         }
                     ),+
-                    _ => Err(Error::new(
-                        Kind::Impersonate,
-                        Some(format!("unknown impersonate os: {:?}", os))
-                    )),
+                    _ => panic!("Unsupported OS: {:?}", os),
                 }
             }
         }

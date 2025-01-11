@@ -7,15 +7,14 @@ macro_rules! mod_generator {
         pub(crate) mod $mod_name {
             use super::*;
             use crate::mimic::ImpersonateOs;
-            use crate::Error;
 
             #[inline(always)]
-            pub fn settings(with_headers: bool, _os: ImpersonateOs) -> Result<ImpersonateSettings, Error> {
-                Ok(ImpersonateSettings::builder()
+            pub fn settings(with_headers: bool, _os: ImpersonateOs) -> ImpersonateSettings {
+                ImpersonateSettings::builder()
                     .tls(tls_settings!($cipher_list))
                     .http2(http2_settings!())
                     .headers(conditional_headers!(with_headers, $header_initializer, $ua))
-                    .build())
+                    .build()
             }
         }
     };

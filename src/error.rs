@@ -209,8 +209,7 @@ impl fmt::Display for Error {
                     "HTTP status server error"
                 };
                 write!(f, "{} ({})", prefix, code)?;
-            },
-            Kind::Impersonate => f.write_str("error impersonating browser")?,
+            }
         };
 
         if let Some(url) = &self.inner.url {
@@ -265,8 +264,7 @@ pub(crate) enum Kind {
     Status(StatusCode),
     Body,
     Decode,
-    Upgrade,
-    Impersonate,
+    Upgrade
 }
 
 // constructors

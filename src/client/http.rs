@@ -45,7 +45,7 @@ use crate::into_url::try_uri;
 use crate::mimic::{self, Impersonate, ImpersonateOs, ImpersonateSettings};
 use crate::redirect::{self, remove_sensitive_headers};
 use crate::tls::{self, AlpnProtos, BoringTlsConnector, TlsSettings};
-use crate::{error, impl_debug, Error};
+use crate::{error, impl_debug};
 use crate::{IntoUrl, Method, Proxy, StatusCode, Url};
 #[cfg(feature = "hickory-dns")]
 use hickory_resolver::config::LookupIpStrategy;
@@ -266,23 +266,23 @@ impl ClientBuilder {
 
     /// Sets the necessary values to mimic the specified impersonate version, including headers and TLS settings.
     #[inline]
-    pub fn impersonate(self, impersonate: Impersonate) -> Result<ClientBuilder, Error> {
-        let settings = mimic::impersonate(impersonate, true, ImpersonateOs::default())?;
-        Ok(self.apply_impersonate_settings(settings))
+    pub fn impersonate(self, impersonate: Impersonate) -> ClientBuilder {
+        let settings = mimic::impersonate(impersonate, true, ImpersonateOs::default());
+        self.apply_impersonate_settings(settings)
     }
 
     /// Sets the necessary values to mimic the specified impersonate version, including headers, TLS settings and OS.
     #[inline]
-    pub fn impersonate_with_os(self, impersonate: Impersonate, impersonate_os: ImpersonateOs) -> Result<ClientBuilder, Error> {
-        let settings = mimic::impersonate(impersonate, true, impersonate_os)?;
-        Ok(self.apply_impersonate_settings(settings))
+    pub fn impersonate_with_os(self, impersonate: Impersonate, impersonate_os: ImpersonateOs) -> ClientBuilder {
+        let settings = mimic::impersonate(impersonate, true, impersonate_os);
+        self.apply_impersonate_settings(settings)
     }
 
     /// Sets the necessary values to mimic the specified impersonate version, skipping header configuration.
     #[inline]
-    pub fn impersonate_skip_headers(self, impersonate: Impersonate) -> Result<ClientBuilder, Error> {
-        let settings = mimic::impersonate(impersonate, false, ImpersonateOs::default())?;
-        Ok(self.apply_impersonate_settings(settings))
+    pub fn impersonate_skip_headers(self, impersonate: Impersonate) -> ClientBuilder {
+        let settings = mimic::impersonate(impersonate, false, ImpersonateOs::default());
+        self.apply_impersonate_settings(settings)
     }
 
     /// Apply the given impersonate settings directly.
@@ -1530,14 +1530,14 @@ impl Client {
     #[inline]
     pub fn set_impersonate(&mut self, var: Impersonate) -> crate::Result<()> {
         let settings = mimic::impersonate(var, true, ImpersonateOs::default());
-        self.impersonate_settings(settings?)
+        self.impersonate_settings(settings)
     }
 
     /// Set the impersonate for this client without setting the headers.
     #[inline]
     pub fn set_impersonate_skip_headers(&mut self, var: Impersonate) -> crate::Result<()> {
         let settings = mimic::impersonate(var, false, ImpersonateOs::default());
-        self.impersonate_settings(settings?)
+        self.impersonate_settings(settings)
     }
 
     /// Set the impersonate for this client with the given settings.

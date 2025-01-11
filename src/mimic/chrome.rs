@@ -4,33 +4,50 @@ use tls::*;
 use crate::mimic::ImpersonateOs;
 
 macro_rules! mod_generator {
-    ($mod_name:ident, $tls_settings:expr, $http2_settings:expr, $header_initializer:ident, [$(
-        ($os:ident, $sec_ch_ua:tt, $ua:tt)
-    ),+]) => {
+    (
+        $mod_name:ident,
+        $tls_settings:expr,
+        $http2_settings:expr,
+        $header_initializer:ident,
+        [($default_os:ident, $default_sec_ch_ua:tt, $default_ua:tt) $(, ($other_os:ident, $other_sec_ch_ua:tt, $other_ua:tt))*]
+    ) => {
         pub(crate) mod $mod_name {
             use super::*;
             use crate::mimic::ImpersonateOs;
-            use crate::Error;
-            use crate::error::Kind;
 
             #[inline(always)]
-            pub fn settings(with_headers: bool, os: ImpersonateOs) -> Result<ImpersonateSettings, Error> {
-                match os {
+            pub fn settings(with_headers: bool, os_choice: ImpersonateOs) -> ImpersonateSettings {
+                match os_choice {
+                    ImpersonateOs::$default_os => {
+                        ImpersonateSettings::builder()
+                            .tls($tls_settings)
+                            .http2($http2_settings)
+                            .headers(conditional_headers!(with_headers, || {
+                                $header_initializer($default_sec_ch_ua, $default_ua, ImpersonateOs::$default_os)
+                            }))
+                            .build()
+                    },
                     $(
-                        ImpersonateOs::$os => {
-                            Ok(ImpersonateSettings::builder()
+                        ImpersonateOs::$other_os => {
+                            ImpersonateSettings::builder()
                                 .tls($tls_settings)
                                 .http2($http2_settings)
                                 .headers(conditional_headers!(with_headers, || {
-                                    $header_initializer($sec_ch_ua, $ua, ImpersonateOs::$os)
+                                    $header_initializer($other_sec_ch_ua, $other_ua, ImpersonateOs::$other_os)
                                 }))
-                                .build())
+                                .build()
                         }
-                    ),+
-                    _ => Err(Error::new(
-                        Kind::Impersonate,
-                        Some(format!("unknown impersonate os: {:?}", os))
-                    )),
+                    ),*
+                    // Use the default OS settings as fallback
+                    _ => {
+                        ImpersonateSettings::builder()
+                            .tls($tls_settings)
+                            .http2($http2_settings)
+                            .headers(conditional_headers!(with_headers, || {
+                                $header_initializer($default_sec_ch_ua, $default_ua, ImpersonateOs::$default_os)
+                            }))
+                            .build()
+                    }
                 }
             }
         }

@@ -19,7 +19,6 @@ use safari::*;
 
 use impersonate_imports::*;
 use tls_imports::TlsSettings;
-use crate::Error;
 
 mod impersonate_imports {
     pub use crate::{http2::Http2Settings, mimic::ImpersonateSettings};
@@ -64,7 +63,7 @@ pub struct ImpersonateSettings {
 }
 
 #[inline]
-pub fn impersonate(ver: Impersonate, with_headers: bool, impersonate_os: ImpersonateOs) -> Result<ImpersonateSettings, Error> {
+pub fn impersonate(ver: Impersonate, with_headers: bool, impersonate_os: ImpersonateOs) -> ImpersonateSettings {
     impersonate_match!(
         ver,
         with_headers,
