@@ -62,9 +62,6 @@ socks = ["dep:tokio-socks"]
 native-roots = ["dep:rustls-native-certs"]
 webpki-roots = ["dep:webpki-root-certs"]
 
-# Optional disable internal proxy cache
-internal_proxy_sys_no_cache = []
-
 # Optional enable impersonate from str
 impersonate_str = []
 
