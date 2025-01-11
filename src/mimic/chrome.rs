@@ -136,21 +136,29 @@ macro_rules! http2_settings {
     }};
 }
 
-#[inline]
-fn header_initializer(sec_ch_ua: &'static str, ua: &'static str, impersonate_os: ImpersonateOs) -> HeaderMap {
-    let mut headers = HeaderMap::new();
-    let platform = match impersonate_os {
-        ImpersonateOs::MacOs => "macOS",
-        ImpersonateOs::Linux => "Linux",
-        ImpersonateOs::Windows => "Windows",
-        ImpersonateOs::Android => "Android",
-        ImpersonateOs::Ios => "iOS",
-    };
-    let is_mobile = match impersonate_os {
+fn get_impersonate_platform(impersonate_os: ImpersonateOs) -> &'static str {
+    match impersonate_os {
+        ImpersonateOs::MacOs => "\"macOS\"",
+        ImpersonateOs::Linux => "\"Linux\"",
+        ImpersonateOs::Windows => "\"Windows\"",
+        ImpersonateOs::Android => "\"Android\"",
+        ImpersonateOs::Ios => "\"iOS\"",
+    }
+}
+
+fn is_mobile(impersonate_os: ImpersonateOs) -> bool {
+    match impersonate_os {
         ImpersonateOs::Android => true,
         ImpersonateOs::Ios => true,
         _ => false,
-    };
+    }
+}
+
+#[inline]
+fn header_initializer(sec_ch_ua: &'static str, ua: &'static str, impersonate_os: ImpersonateOs) -> HeaderMap {
+    let mut headers = HeaderMap::new();
+    let platform = get_impersonate_platform(impersonate_os);
+    let is_mobile = is_mobile(impersonate_os);
     header_chrome_accpet!(headers);
     header_chrome_sec_ch_ua!(headers, sec_ch_ua, platform, is_mobile);
     header_chrome_sec_fetch!(headers);
@@ -160,18 +168,8 @@ fn header_initializer(sec_ch_ua: &'static str, ua: &'static str, impersonate_os:
 
 #[inline]
 fn header_initializer_with_zstd(sec_ch_ua: &'static str, ua: &'static str, impersonate_os: ImpersonateOs) -> HeaderMap {
-    let platform = match impersonate_os {
-        ImpersonateOs::MacOs => "macOS",
-        ImpersonateOs::Linux => "Linux",
-        ImpersonateOs::Windows => "Windows",
-        ImpersonateOs::Android => "Android",
-        ImpersonateOs::Ios => "iOS",
-    };
-    let is_mobile = match impersonate_os {
-        ImpersonateOs::Android => true,
-        ImpersonateOs::Ios => true,
-        _ => false,
-    };
+    let platform = get_impersonate_platform(impersonate_os);
+    let is_mobile = is_mobile(impersonate_os);
     let mut headers = HeaderMap::new();
     header_chrome_accpet!(zstd, headers);
     header_chrome_sec_ch_ua!(headers, sec_ch_ua, platform, is_mobile);
@@ -182,18 +180,8 @@ fn header_initializer_with_zstd(sec_ch_ua: &'static str, ua: &'static str, imper
 
 #[inline]
 fn header_initializer_with_zstd_priority(sec_ch_ua: &'static str, ua: &'static str, impersonate_os: ImpersonateOs) -> HeaderMap {
-    let platform = match impersonate_os {
-        ImpersonateOs::MacOs => "macOS",
-        ImpersonateOs::Linux => "Linux",
-        ImpersonateOs::Windows => "Windows",
-        ImpersonateOs::Android => "Android",
-        ImpersonateOs::Ios => "iOS",
-    };
-    let is_mobile = match impersonate_os {
-        ImpersonateOs::Android => true,
-        ImpersonateOs::Ios => true,
-        _ => false,
-    };
+    let platform = get_impersonate_platform(impersonate_os);
+    let is_mobile = is_mobile(impersonate_os);
     let mut headers = HeaderMap::new();
     header_chrome_accpet!(zstd, headers);
     headers.insert("priority", HeaderValue::from_static("u=0, i"));
