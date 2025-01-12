@@ -869,6 +869,20 @@ mod_generator!(
         (Android,
             r#""Not A;Brand";v="99", "Chromium";v="101", "Microsoft Edge";v="101""#,
             "Mozilla/5.0 (Linux; Android 10; ONEPLUS A6003) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/101.0.4951.41 Safari/537.36 Edg/101.0.1210.31"
+        ),
+        (Windows,
+            r#""Not A;Brand";v="99", "Chromium";v="101", "Microsoft Edge";v="101""#,
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/101.0.4951.64 Safari/537.36 Edg/101.0.1210.53"
+        ),
+        // This shouldn't exist, edge was never meant to be on linux,
+        // but I found some UAs in myip.ms (same for 122, 127 and 131)
+        (Linux,
+            r#""Not A;Brand";v="99", "Chromium";v="101", "Microsoft Edge";v="101""#,
+            "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/101.0.4951.64 Safari/537.36 Edg/101.0.1210.53"
+        ),
+        (Ios,
+            r#""Not A;Brand";v="99", "Chromium";v="101", "Microsoft Edge";v="101""#,
+            "Mozilla/5.0 (iPhone; CPU iPhone OS 17_7_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Chrome/101.0.4951.64 Mobile Safari/537.36 Edg/101.0.1210.53"
         )
     ]
 );
@@ -885,6 +899,18 @@ mod_generator!(
         (Android,
             r#""Chromium";v="122", "Not(A:Brand";v="24", "Microsoft Edge";v="122""#,
             "Mozilla/5.0 (Linux; Android 10; Pixel 3 XL) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.6268.219 Safari/537.36 Edg/122.0.2238.82"
+        ),
+        (Windows,
+            r#""Chromium";v="122", "Not(A:Brand";v="24", "Microsoft Edge";v="122""#,
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36 Edg/122.0.0.0"
+        ),
+        (Linux, // This shouldn't exist, edge was never meant to be on linux
+            r#""Chromium";v="122", "Not(A:Brand";v="24", "Microsoft Edge";v="122""#,
+            "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36 Edg/122.0.0.0"
+        ),
+        (Ios,
+            r#""Chromium";v="122", "Not(A:Brand";v="24", "Microsoft Edge";v="122""#,
+            "Mozilla/5.0 (iPhone; CPU iPhone OS 17_7_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36 Edg/122.0.0.0"
         )
     ]
 );
@@ -902,6 +928,18 @@ mod_generator!(
         (Android,
             r#""Not)A;Brand";v="99", "Microsoft Edge";v="127", "Chromium";v="127""#,
             "Mozilla/5.0 (Linux; Android 10; SM-G973F) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.6332.205 Safari/537.36 Edg/127.0.2322.67"
+        ),
+        (Windows,
+            r#""Not)A;Brand";v="99", "Microsoft Edge";v="127", "Chromium";v="127""#,
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36 Edg/127.0.0.0"
+        ),
+        (Linux, // This shouldn't exist, edge was never meant to be on linux
+            r#""Not)A;Brand";v="99", "Microsoft Edge";v="127", "Chromium";v="127""#,
+            "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36 Edg/127.0.0.0"
+        ),
+        (Ios,
+            r#""Not)A;Brand";v="99", "Microsoft Edge";v="127", "Chromium";v="127""#,
+            "Mozilla/5.0 (iPhone; CPU iPhone OS 17_7_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36 Edg/127.0.0.0"
         )
     ]
 );
@@ -919,6 +957,18 @@ mod_generator!(
         (Android,
             r#""Microsoft Edge";v="131", "Chromium";v="131", "Not_A Brand";v="24""#,
             "Mozilla/5.0 (Linux; Android 10; HD1913) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.6778.200 Mobile Safari/537.36 EdgA/131.0.2903.87"
+        ),
+        (Windows,
+            r#""Microsoft Edge";v="131", "Chromium";v="131", "Not_A Brand";v="24""#,
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 Edg/131.0.0.0"
+        ),
+        (Linux, // This shouldn't exist, edge was never meant to be on linux
+            r#""Microsoft Edge";v="131", "Chromium";v="131", "Not_A Brand";v="24""#,
+            "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 Edg/131.0.0.0"
+        ),
+        (Ios,
+            r#""Microsoft Edge";v="131", "Chromium";v="131", "Not_A Brand";v="24""#,
+            "Mozilla/5.0 (iPhone; CPU iPhone OS 17_7_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 Edg/131.0.0.0"
         )
     ]
 );
