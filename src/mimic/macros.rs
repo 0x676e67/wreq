@@ -41,7 +41,6 @@ macro_rules! header_chrome_sec_fetch {
         $headers.insert("sec-fetch-dest", HeaderValue::from_static("document"));
         $headers.insert("sec-fetch-mode", HeaderValue::from_static("navigate"));
         $headers.insert("sec-fetch-site", HeaderValue::from_static("none"));
-        $headers.insert("sec-fetch-user", HeaderValue::from_static("?1"));
     };
 }
 
@@ -82,13 +81,7 @@ macro_rules! header_chrome_accpet {
 
 #[macro_export]
 macro_rules! header_firefox_sec_fetch {
-    (1, $headers:expr) => {
-        $headers.insert("sec-fetch-dest", HeaderValue::from_static("document"));
-        $headers.insert("sec-fetch-mode", HeaderValue::from_static("navigate"));
-        $headers.insert("sec-fetch-site", HeaderValue::from_static("none"));
-        $headers.insert("sec-fetch-user", HeaderValue::from_static("?1"));
-    };
-    (2, $headers:expr) => {
+    ($headers:expr) => {
         $headers.insert("sec-fetch-dest", HeaderValue::from_static("document"));
         $headers.insert("sec-fetch-mode", HeaderValue::from_static("navigate"));
         $headers.insert("sec-fetch-site", HeaderValue::from_static("none"));

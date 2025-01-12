@@ -121,7 +121,7 @@ macro_rules! http2_settings {
 fn header_initializer(ua: &'static str) -> HeaderMap {
     let mut headers = HeaderMap::new();
     header_firefox_accept!(headers);
-    header_firefox_sec_fetch!(1, headers);
+    header_firefox_sec_fetch!(headers);
     header_firefox_ua!(headers, ua);
     headers
 }
@@ -134,7 +134,7 @@ fn header_initializer_with_zstd(ua: &'static str) -> HeaderMap {
         HeaderName::from_static("priority"),
         HeaderValue::from_static("u=0, i"),
     );
-    header_firefox_sec_fetch!(2, headers);
+    header_firefox_sec_fetch!(headers);
     header_firefox_ua!(headers, ua);
     headers
 }
