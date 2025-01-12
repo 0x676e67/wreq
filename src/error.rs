@@ -264,7 +264,7 @@ pub(crate) enum Kind {
     Status(StatusCode),
     Body,
     Decode,
-    Upgrade
+    Upgrade,
 }
 
 // constructors

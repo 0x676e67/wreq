@@ -7,8 +7,8 @@ use http::header::{CONTENT_LENGTH, CONTENT_TYPE, TRANSFER_ENCODING};
 #[cfg(feature = "json")]
 use std::collections::HashMap;
 
-use rquest::{Client, Impersonate};
 use rquest::mimic::ImpersonateOs;
+use rquest::{Client, Impersonate};
 
 #[tokio::test]
 async fn auto_headers() {
@@ -493,7 +493,10 @@ async fn test_client_os_spoofing() {
                 assert_eq!(value, "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36");
             }
             if name == "sec-ch-ua" {
-                assert_eq!(value, r#""Google Chrome";v="131", "Chromium";v="131", "Not_A Brand";v="24""#);
+                assert_eq!(
+                    value,
+                    r#""Google Chrome";v="131", "Chromium";v="131", "Not_A Brand";v="24""#
+                );
             }
             if name == "sec-ch-ua-mobile" {
                 assert_eq!(value, "?0");

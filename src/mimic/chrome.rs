@@ -1,7 +1,7 @@
 use crate::mimic::impersonate_imports::*;
+use crate::mimic::ImpersonateOs;
 use http2::*;
 use tls::*;
-use crate::mimic::ImpersonateOs;
 
 macro_rules! mod_generator {
     (
@@ -18,40 +18,33 @@ macro_rules! mod_generator {
             #[inline(always)]
             pub fn settings(with_headers: bool, os_choice: ImpersonateOs) -> ImpersonateSettings {
                 match os_choice {
-                    ImpersonateOs::$default_os => {
-                        ImpersonateSettings::builder()
-                            .tls($tls_settings)
-                            .http2($http2_settings)
-                            .headers(conditional_headers!(with_headers, || {
-                                $header_initializer($default_sec_ch_ua, $default_ua, ImpersonateOs::$default_os)
-                            }))
-                            .build()
-                    },
-                    $(
-                        ImpersonateOs::$other_os => {
-                            ImpersonateSettings::builder()
-                                .tls($tls_settings)
-                                .http2($http2_settings)
-                                .headers(conditional_headers!(with_headers, || {
-                                    $header_initializer($other_sec_ch_ua, $other_ua, ImpersonateOs::$other_os)
-                                }))
-                                .build()
-                        }
-                    ),*
+                    ImpersonateOs::$default_os => ImpersonateSettings::builder()
+                        .tls($tls_settings)
+                        .http2($http2_settings)
+                        .headers(conditional_headers!(with_headers, || {
+                            $header_initializer(
+                                $default_sec_ch_ua,
+                                $default_ua,
+                                ImpersonateOs::$default_os,
+                            )
+                        }))
+                        .build(),
                     // Use the default OS settings as fallback
-                    _ => {
-                        ImpersonateSettings::builder()
-                            .tls($tls_settings)
-                            .http2($http2_settings)
-                            .headers(conditional_headers!(with_headers, || {
-                                $header_initializer($default_sec_ch_ua, $default_ua, ImpersonateOs::$default_os)
-                            }))
-                            .build()
-                    }
+                    _ => ImpersonateSettings::builder()
+                        .tls($tls_settings)
+                        .http2($http2_settings)
+                        .headers(conditional_headers!(with_headers, || {
+                            $header_initializer(
+                                $default_sec_ch_ua,
+                                $default_ua,
+                                ImpersonateOs::$default_os,
+                            )
+                        }))
+                        .build(),
                 }
             }
         }
-    }
+    };
 }
 
 macro_rules! tls_settings {
@@ -136,56 +129,59 @@ macro_rules! http2_settings {
     }};
 }
 
-fn get_impersonate_platform(impersonate_os: ImpersonateOs) -> &'static str {
-    match impersonate_os {
-        ImpersonateOs::MacOs => "\"macOS\"",
-        ImpersonateOs::Linux => "\"Linux\"",
-        ImpersonateOs::Windows => "\"Windows\"",
-        ImpersonateOs::Android => "\"Android\"",
-        ImpersonateOs::Ios => "\"iOS\"",
-    }
-}
-
-fn is_mobile(impersonate_os: ImpersonateOs) -> bool {
-    match impersonate_os {
-        ImpersonateOs::Android => true,
-        ImpersonateOs::Ios => true,
-        _ => false,
-    }
-}
-
 #[inline]
-fn header_initializer(sec_ch_ua: &'static str, ua: &'static str, impersonate_os: ImpersonateOs) -> HeaderMap {
+fn header_initializer(
+    sec_ch_ua: &'static str,
+    ua: &'static str,
+    impersonate_os: ImpersonateOs,
+) -> HeaderMap {
     let mut headers = HeaderMap::new();
-    let platform = get_impersonate_platform(impersonate_os);
-    let is_mobile = is_mobile(impersonate_os);
     header_chrome_accpet!(headers);
-    header_chrome_sec_ch_ua!(headers, sec_ch_ua, platform, is_mobile);
+    header_chrome_sec_ch_ua!(
+        headers,
+        sec_ch_ua,
+        impersonate_os.get_impersonate_platform(),
+        impersonate_os.is_mobile()
+    );
     header_chrome_sec_fetch!(headers);
     header_chrome_ua!(headers, ua);
     headers
 }
 
 #[inline]
-fn header_initializer_with_zstd(sec_ch_ua: &'static str, ua: &'static str, impersonate_os: ImpersonateOs) -> HeaderMap {
-    let platform = get_impersonate_platform(impersonate_os);
-    let is_mobile = is_mobile(impersonate_os);
+fn header_initializer_with_zstd(
+    sec_ch_ua: &'static str,
+    ua: &'static str,
+    impersonate_os: ImpersonateOs,
+) -> HeaderMap {
     let mut headers = HeaderMap::new();
     header_chrome_accpet!(zstd, headers);
-    header_chrome_sec_ch_ua!(headers, sec_ch_ua, platform, is_mobile);
+    header_chrome_sec_ch_ua!(
+        headers,
+        sec_ch_ua,
+        impersonate_os.get_impersonate_platform(),
+        impersonate_os.is_mobile()
+    );
     header_chrome_sec_fetch!(headers);
     header_chrome_ua!(headers, ua);
     headers
 }
 
 #[inline]
-fn header_initializer_with_zstd_priority(sec_ch_ua: &'static str, ua: &'static str, impersonate_os: ImpersonateOs) -> HeaderMap {
-    let platform = get_impersonate_platform(impersonate_os);
-    let is_mobile = is_mobile(impersonate_os);
+fn header_initializer_with_zstd_priority(
+    sec_ch_ua: &'static str,
+    ua: &'static str,
+    impersonate_os: ImpersonateOs,
+) -> HeaderMap {
     let mut headers = HeaderMap::new();
     header_chrome_accpet!(zstd, headers);
     headers.insert("priority", HeaderValue::from_static("u=0, i"));
-    header_chrome_sec_ch_ua!(headers, sec_ch_ua, platform, is_mobile);
+    header_chrome_sec_ch_ua!(
+        headers,
+        sec_ch_ua,
+        impersonate_os.get_impersonate_platform(),
+        impersonate_os.is_mobile()
+    );
     header_chrome_sec_fetch!(headers);
     header_chrome_ua!(headers, ua);
     headers
@@ -860,7 +856,6 @@ mod_generator!(
         )
     ]
 );
-
 
 mod_generator!(
     edge101,

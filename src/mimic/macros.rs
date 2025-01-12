@@ -2,20 +2,14 @@
 macro_rules! conditional_headers {
     ($with_headers:expr, $initializer:expr) => {
         if $with_headers {
-            use std::borrow::Cow;
-            use std::sync::LazyLock;
-            static HEADER_INITIALIZER: LazyLock<HeaderMap> = LazyLock::new($initializer);
-            Some(Cow::Borrowed(&*HEADER_INITIALIZER))
+            Some(Cow::Owned($initializer()))
         } else {
             None
         }
     };
     ($with_headers:expr, $initializer:expr, $ua:expr) => {
         if $with_headers {
-            use std::borrow::Cow;
-            use std::sync::LazyLock;
-            static HEADER_INITIALIZER: LazyLock<HeaderMap> = LazyLock::new(|| $initializer($ua));
-            Some(Cow::Borrowed(&*HEADER_INITIALIZER))
+            Some(Cow::Owned($initializer($ua)))
         } else {
             None
         }
@@ -28,7 +22,10 @@ macro_rules! header_chrome_sec_ch_ua {
         let mobile = if $is_mobile { "?1" } else { "?0" };
         $headers.insert("sec-ch-ua", HeaderValue::from_static($ua));
         $headers.insert("sec-ch-ua-mobile", HeaderValue::from_static(mobile));
-        $headers.insert("sec-ch-ua-platform", HeaderValue::from_str($platform).unwrap());
+        $headers.insert(
+            "sec-ch-ua-platform",
+            HeaderValue::from_str($platform).unwrap(),
+        );
     };
 }
 

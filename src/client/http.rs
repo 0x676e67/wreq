@@ -900,7 +900,11 @@ impl ClientBuilder {
 
     /// Sets the necessary values to mimic the specified impersonate version, including headers, TLS settings and OS.
     #[inline]
-    pub fn impersonate_with_os(self, impersonate: Impersonate, impersonate_os: ImpersonateOs) -> ClientBuilder {
+    pub fn impersonate_with_os(
+        self,
+        impersonate: Impersonate,
+        impersonate_os: ImpersonateOs,
+    ) -> ClientBuilder {
         let settings = mimic::impersonate(impersonate, true, impersonate_os);
         self.apply_impersonate_settings(settings)
     }
@@ -914,7 +918,11 @@ impl ClientBuilder {
 
     /// Sets the necessary values to mimic the specified impersonate version, with os and skipping header configuration.
     #[inline]
-    pub fn impersonate_with_os_skip_headers(self, impersonate: Impersonate, impersonate_os: ImpersonateOs) -> ClientBuilder {
+    pub fn impersonate_with_os_skip_headers(
+        self,
+        impersonate: Impersonate,
+        impersonate_os: ImpersonateOs,
+    ) -> ClientBuilder {
         let settings = mimic::impersonate(impersonate, false, impersonate_os);
         self.apply_impersonate_settings(settings)
     }
@@ -1601,12 +1609,16 @@ impl Client {
     #[inline]
     pub fn set_impersonate(&mut self, var: Impersonate) -> crate::Result<&mut Self> {
         let settings = mimic::impersonate(var, true, ImpersonateOs::default());
-        self.impersonate_settings(settings)
+        self.apply_impersonate_settings(settings)
     }
 
     /// Set the impersonate with os for this client.
     #[inline]
-    pub fn set_impersonate_with_os(self, var: Impersonate, os: ImpersonateOs) -> crate::Result<&mut Self> {
+    pub fn set_impersonate_with_os(
+        &mut self,
+        var: Impersonate,
+        os: ImpersonateOs,
+    ) -> crate::Result<&mut Self> {
         let settings = mimic::impersonate(var, true, os);
         self.apply_impersonate_settings(settings)
     }
@@ -1620,7 +1632,11 @@ impl Client {
 
     /// Set the impersonate for this client skip setting the headers.
     #[inline]
-    pub fn set_impersonate_with_os_skip_headers(&mut self, var: Impersonate, os: ImpersonateOs) -> crate::Result<&mut Self> {
+    pub fn set_impersonate_with_os_skip_headers(
+        &mut self,
+        var: Impersonate,
+        os: ImpersonateOs,
+    ) -> crate::Result<&mut Self> {
         let settings = mimic::impersonate(var, false, os);
         self.apply_impersonate_settings(settings)
     }

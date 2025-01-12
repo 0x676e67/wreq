@@ -394,10 +394,10 @@ mod_generator!(
     tls_settings!(2),
     http2_settings!(2),
     header_initializer,
-    [
-        (Windows,
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/109.0")
-    ]
+    [(
+        Windows,
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/109.0"
+    )]
 );
 
 mod_generator!(
@@ -405,10 +405,10 @@ mod_generator!(
     tls_settings!(2),
     http2_settings!(2),
     header_initializer,
-    [
-        (Windows,
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:117.0) Gecko/20100101 Firefox/117.0")
-    ]
+    [(
+        Windows,
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:117.0) Gecko/20100101 Firefox/117.0"
+    )]
 );
 
 mod_generator!(
@@ -416,10 +416,10 @@ mod_generator!(
     tls_settings!(3),
     http2_settings!(3),
     header_initializer_with_zstd,
-    [
-        (MacOs,
-            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:128.0) Gecko/20100101 Firefox/128.0")
-    ]
+    [(
+        MacOs,
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:128.0) Gecko/20100101 Firefox/128.0"
+    )]
 );
 
 mod_generator!(
@@ -427,8 +427,8 @@ mod_generator!(
     tls_settings!(1),
     http2_settings!(1),
     header_initializer_with_zstd,
-    [
-        (MacOs,
-            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:133.0) Gecko/20100101 Firefox/133.0")
-    ]
+    [(
+        MacOs,
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:133.0) Gecko/20100101 Firefox/133.0"
+    )]
 );

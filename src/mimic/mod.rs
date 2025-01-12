@@ -63,7 +63,11 @@ pub struct ImpersonateSettings {
 }
 
 #[inline]
-pub fn impersonate(ver: Impersonate, with_headers: bool, impersonate_os: ImpersonateOs) -> ImpersonateSettings {
+pub fn impersonate(
+    ver: Impersonate,
+    with_headers: bool,
+    impersonate_os: ImpersonateOs,
+) -> ImpersonateSettings {
     impersonate_match!(
         ver,
         with_headers,
@@ -198,6 +202,24 @@ pub enum ImpersonateOs {
     Linux,
     Android,
     Ios,
+}
+
+impl ImpersonateOs {
+    #[inline]
+    fn get_impersonate_platform(&self) -> &'static str {
+        match self {
+            ImpersonateOs::MacOs => "\"macOS\"",
+            ImpersonateOs::Linux => "\"Linux\"",
+            ImpersonateOs::Windows => "\"Windows\"",
+            ImpersonateOs::Android => "\"Android\"",
+            ImpersonateOs::Ios => "\"iOS\"",
+        }
+    }
+
+    #[inline]
+    fn is_mobile(&self) -> bool {
+        matches!(self, ImpersonateOs::Android | ImpersonateOs::Ios)
+    }
 }
 
 #[cfg(feature = "impersonate_str")]
