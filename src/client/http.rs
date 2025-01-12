@@ -43,7 +43,7 @@ use crate::dns::hickory::HickoryDnsResolver;
 use crate::dns::{gai::GaiResolver, DnsResolverWithOverrides, DynResolver, Resolve};
 use crate::into_url::try_uri;
 use crate::mimic::{self, Impersonate, ImpersonateOs, ImpersonateSettings};
-use crate::redirect::{self, remove_sensitive_headers};
+use crate::redirect;
 use crate::tls::{self, AlpnProtos, BoringTlsConnector, TlsSettings};
 use crate::{cfg_bindable_device, error, impl_debug};
 use crate::{IntoUrl, Method, Proxy, StatusCode, Url};
@@ -912,6 +912,13 @@ impl ClientBuilder {
         self.apply_impersonate_settings(settings)
     }
 
+    /// Sets the necessary values to mimic the specified impersonate version, with os and skipping header configuration.
+    #[inline]
+    pub fn impersonate_with_os_skip_headers(self, impersonate: Impersonate, impersonate_os: ImpersonateOs) -> ClientBuilder {
+        let settings = mimic::impersonate(impersonate, false, impersonate_os);
+        self.apply_impersonate_settings(settings)
+    }
+
     /// Apply the given impersonate settings directly.
     #[cfg(feature = "impersonate_settings")]
     pub fn impersonate_settings(self, settings: ImpersonateSettings) -> ClientBuilder {
@@ -1592,16 +1599,30 @@ impl Client {
 
     /// Set the impersonate for this client.
     #[inline]
-    pub fn set_impersonate(&mut self, var: Impersonate) -> crate::Result<()> {
+    pub fn set_impersonate(&mut self, var: Impersonate) -> crate::Result<&mut Self> {
         let settings = mimic::impersonate(var, true, ImpersonateOs::default());
         self.impersonate_settings(settings)
     }
 
-    /// Set the impersonate for this client without setting the headers.
+    /// Set the impersonate with os for this client.
     #[inline]
-    pub fn set_impersonate_skip_headers(&mut self, var: Impersonate) -> crate::Result<()> {
+    pub fn set_impersonate_with_os(self, var: Impersonate, os: ImpersonateOs) -> crate::Result<&mut Self> {
+        let settings = mimic::impersonate(var, true, os);
+        self.apply_impersonate_settings(settings)
+    }
+
+    /// Set the impersonate for this client skip setting the headers.
+    #[inline]
+    pub fn set_impersonate_skip_headers(&mut self, var: Impersonate) -> crate::Result<&mut Self> {
         let settings = mimic::impersonate(var, false, ImpersonateOs::default());
-        self.impersonate_settings(settings)
+        self.apply_impersonate_settings(settings)
+    }
+
+    /// Set the impersonate for this client skip setting the headers.
+    #[inline]
+    pub fn set_impersonate_with_os_skip_headers(&mut self, var: Impersonate, os: ImpersonateOs) -> crate::Result<&mut Self> {
+        let settings = mimic::impersonate(var, false, os);
+        self.apply_impersonate_settings(settings)
     }
 
     /// Set the impersonate for this client with the given settings.
@@ -1611,12 +1632,12 @@ impl Client {
         &mut self,
         settings: ImpersonateSettings,
     ) -> crate::Result<&mut Self> {
-        self.impersonate_settings(settings)
+        self.apply_impersonate_settings(settings)
     }
 
     /// Apply the impersonate settings to the client.
     #[inline]
-    fn impersonate_settings(
+    fn apply_impersonate_settings(
         &mut self,
         mut settings: ImpersonateSettings,
     ) -> crate::Result<&mut Self> {
@@ -2075,15 +2096,17 @@ impl Future for PendingRequest {
                     let url = self.url.clone();
                     self.as_mut().urls().push(url);
 
-                    let redirect = self.redirect.as_ref().unwrap_or(&self.client.redirect);
-
-                    let action = redirect.check(
-                        res.status(),
-                        &self.method,
-                        &loc,
-                        &previous_method,
-                        &self.urls,
-                    );
+                    let action = self
+                        .redirect
+                        .as_ref()
+                        .unwrap_or(&self.client.redirect)
+                        .check(
+                            res.status(),
+                            &self.method,
+                            &loc,
+                            &previous_method,
+                            &self.urls,
+                        );
 
                     match action {
                         redirect::ActionKind::Follow => {
