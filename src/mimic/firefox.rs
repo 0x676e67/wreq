@@ -12,20 +12,11 @@ macro_rules! mod_generator {
     ) => {
         pub(crate) mod $mod_name {
             use super::*;
-            use crate::mimic::ImpersonateOs;
 
             #[inline(always)]
             pub fn settings(with_headers: bool, os_choice: ImpersonateOs) -> ImpersonateSettings {
+                #[allow(unreachable_patterns)]
                 match os_choice {
-                    ImpersonateOs::$default_os => {
-                        ImpersonateSettings::builder()
-                            .tls($tls_settings)
-                            .http2($http2_settings)
-                            .headers(conditional_headers!(with_headers, || {
-                                $header_initializer($default_ua)
-                            }))
-                            .build()
-                    },
                     $(
                         ImpersonateOs::$other_os => {
                             ImpersonateSettings::builder()
@@ -37,7 +28,6 @@ macro_rules! mod_generator {
                                 .build()
                         }
                     ),*
-                    // Use the default OS settings as fallback
                     _ => {
                         ImpersonateSettings::builder()
                             .tls($tls_settings)

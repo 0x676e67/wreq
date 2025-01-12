@@ -1,5 +1,4 @@
 use crate::mimic::impersonate_imports::*;
-use crate::mimic::ImpersonateOs;
 use http2::*;
 use tls::*;
 
@@ -13,23 +12,24 @@ macro_rules! mod_generator {
     ) => {
         pub(crate) mod $mod_name {
             use super::*;
-            use crate::mimic::ImpersonateOs;
 
             #[inline(always)]
             pub fn settings(with_headers: bool, os_choice: ImpersonateOs) -> ImpersonateSettings {
+                #[allow(unreachable_patterns)]
                 match os_choice {
-                    ImpersonateOs::$default_os => ImpersonateSettings::builder()
-                        .tls($tls_settings)
-                        .http2($http2_settings)
-                        .headers(conditional_headers!(with_headers, || {
-                            $header_initializer(
-                                $default_sec_ch_ua,
-                                $default_ua,
-                                ImpersonateOs::$default_os,
-                            )
-                        }))
-                        .build(),
-                    // Use the default OS settings as fallback
+                    $(
+                        ImpersonateOs::$other_os => ImpersonateSettings::builder()
+                            .tls($tls_settings)
+                            .http2($http2_settings)
+                            .headers(conditional_headers!(with_headers, || {
+                                $header_initializer(
+                                    $other_sec_ch_ua,
+                                    $other_ua,
+                                    ImpersonateOs::$other_os,
+                                )
+                            }))
+                            .build(),
+                    )*
                     _ => ImpersonateSettings::builder()
                         .tls($tls_settings)
                         .http2($http2_settings)
