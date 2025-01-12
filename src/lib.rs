@@ -13,7 +13,6 @@
 //! - [Redirect policy](#redirect-policies)
 //! - Uses [BoringSSL](#tls)
 //! - HTTP [Proxies](#proxies)
-//! - Preconfigured TLS and HTTP2 settings
 //! - Perfectly mimic Chrome, Safari, and Firefox
 //! - [Changelog](https://github.com/penumbra-x/rquest/blob/main/CHANGELOG.md)
 //!
@@ -27,12 +26,12 @@
 //! The `impersonate` module provides a way to simulate various browser fingerprints.
 //!
 //! ```rust,no_run
-//! use rquest::Impersonate;
+//! use rquest::{Client, Impersonate};
 //!
 //! #[tokio::main]
 //! async fn main() -> Result<(), rquest::Error> {
 //!     // Build a client to mimic Firefox133
-//!     let client = rquest::Client::builder()
+//!     let client = Client::builder()
 //!         .impersonate(Impersonate::Firefox133)
 //!         .build()?;
 //!
@@ -259,9 +258,11 @@ pub use url::Url;
 #[macro_use]
 mod error;
 mod into_url;
+mod response;
 
 pub use self::error::{Error, Result};
 pub use self::into_url::IntoUrl;
+pub use self::response::ResponseBuilderExt;
 
 /// Shortcut method to quickly make a `GET` request.
 ///

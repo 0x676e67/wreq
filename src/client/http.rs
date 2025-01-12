@@ -45,7 +45,7 @@ use crate::into_url::try_uri;
 use crate::mimic::{self, Impersonate, ImpersonateOs, ImpersonateSettings};
 use crate::redirect::{self, remove_sensitive_headers};
 use crate::tls::{self, AlpnProtos, BoringTlsConnector, TlsSettings};
-use crate::{error, impl_debug};
+use crate::{cfg_bindable_device, error, impl_debug};
 use crate::{IntoUrl, Method, Proxy, StatusCode, Url};
 #[cfg(feature = "hickory-dns")]
 use hickory_resolver::config::LookupIpStrategy;
@@ -97,6 +97,7 @@ struct Config {
     proxies: Vec<Proxy>,
     auto_sys_proxy: bool,
     redirect_policy: redirect::Policy,
+    redirect_with_proxy_auth: bool,
     referer: bool,
     timeout: Option<Duration>,
     read_timeout: Option<Duration>,
@@ -116,7 +117,6 @@ struct Config {
     http2_max_retry_count: usize,
     tls_info: bool,
     connector_layers: Vec<BoxedConnectorLayer>,
-
     tls: TlsSettings,
 }
 
@@ -156,6 +156,7 @@ impl ClientBuilder {
                 proxies: Vec::new(),
                 auto_sys_proxy: true,
                 redirect_policy: redirect::Policy::none(),
+                redirect_with_proxy_auth: false,
                 referer: true,
                 timeout: None,
                 read_timeout: None,
@@ -174,7 +175,6 @@ impl ClientBuilder {
                 http2_max_retry_count: 2,
                 tls_info: false,
                 connector_layers: Vec::new(),
-
                 tls: Default::default(),
             },
         }
@@ -239,17 +239,20 @@ impl ClientBuilder {
             .pool_max_idle_per_host(config.pool_max_idle_per_host)
             .pool_max_size(config.pool_max_size);
 
+        let hyper = config
+            .builder
+            .build(connector_builder.build(config.connector_layers));
+
         Ok(Client {
             inner: Arc::new(ClientRef {
                 accepts: config.accepts,
                 #[cfg(feature = "cookies")]
                 cookie_store: config.cookie_store,
-                hyper: config
-                    .builder
-                    .build(connector_builder.build(config.connector_layers)),
+                hyper,
                 headers: config.headers,
                 headers_order: config.headers_order,
                 redirect: config.redirect_policy,
+                redirect_with_proxy_auth: config.redirect_with_proxy_auth,
                 referer: config.referer,
                 request_timeout: config.timeout,
                 read_timeout: config.read_timeout,
@@ -257,83 +260,45 @@ impl ClientBuilder {
                 proxies_maybe_http_auth,
                 base_url: config.base_url,
                 http2_max_retry_count: config.http2_max_retry_count,
-
                 proxies,
                 network_scheme: config.network_scheme,
             }),
         })
     }
 
-    /// Sets the necessary values to mimic the specified impersonate version, including headers and TLS settings.
-    #[inline]
-    pub fn impersonate(self, impersonate: Impersonate) -> ClientBuilder {
-        let settings = mimic::impersonate(impersonate, true, ImpersonateOs::default());
-        self.apply_impersonate_settings(settings)
-    }
-
-    /// Sets the necessary values to mimic the specified impersonate version, including headers, TLS settings and OS.
-    #[inline]
-    pub fn impersonate_with_os(self, impersonate: Impersonate, impersonate_os: ImpersonateOs) -> ClientBuilder {
-        let settings = mimic::impersonate(impersonate, true, impersonate_os);
-        self.apply_impersonate_settings(settings)
-    }
-
-    /// Sets the necessary values to mimic the specified impersonate version, skipping header configuration.
-    #[inline]
-    pub fn impersonate_skip_headers(self, impersonate: Impersonate) -> ClientBuilder {
-        let settings = mimic::impersonate(impersonate, false, ImpersonateOs::default());
-        self.apply_impersonate_settings(settings)
-    }
-
-    /// Apply the given impersonate settings directly.
-    #[cfg(feature = "impersonate_settings")]
-    #[inline]
-    pub fn impersonate_settings(self, settings: ImpersonateSettings) -> ClientBuilder {
-        self.apply_impersonate_settings(settings)
-    }
-
-    /// Apply the given TLS settings and header function.
-    fn apply_impersonate_settings(mut self, mut settings: ImpersonateSettings) -> ClientBuilder {
-        // Set the headers if needed
-        if let Some(mut headers) = settings.headers {
-            std::mem::swap(&mut self.config.headers, &mut headers);
-        }
-
-        // Set the headers order if needed
-        std::mem::swap(&mut self.config.headers_order, &mut settings.headers_order);
-
-        // Set the TLS settings
-        std::mem::swap(&mut self.config.tls, &mut settings.tls);
-
-        // Set the http2 preference
-        if let Some(http2) = settings.http2 {
-            self.config
-                .builder
-                .with_http2_builder(|builder| apply_http2_settings(builder, http2));
-        }
-
-        self
-    }
-
-    /// Enable Encrypted Client Hello (Secure SNI)
-    pub fn enable_ech_grease(mut self, enabled: bool) -> ClientBuilder {
-        self.config.tls.enable_ech_grease = enabled;
-        self
-    }
-
-    /// Enable TLS permute_extensions
-    pub fn permute_extensions(mut self, enabled: bool) -> ClientBuilder {
-        self.config.tls.permute_extensions = Some(enabled);
-        self
-    }
-
-    /// Enable TLS pre_shared_key
-    pub fn pre_shared_key(mut self, enabled: bool) -> ClientBuilder {
-        self.config.tls.pre_shared_key = enabled;
-        self
-    }
-
     // Higher-level options
+
+    /// Sets a base URL for the client.
+    ///
+    /// The base URL will be used as the root for all relative request paths made by this client.
+    /// If a request specifies an absolute URL, it will override the base URL.
+    ///
+    /// # Parameters
+    /// - `base_url`: A value that can be converted into a URL, representing the base URL for the client.
+    ///
+    /// # Returns
+    /// Returns the `ClientBuilder` with the base URL configured. If the provided `base_url` is invalid,
+    /// an error is stored in the configuration, and the builder can no longer produce a valid client.
+    ///
+    /// # Example
+    /// ```rust
+    /// let client = Client::builder()
+    ///     .base_url("https://api.example.com")
+    ///     .build();
+    ///
+    /// let response = client.get("/users").send().await?; // Resolves to "https://api.example.com/users"
+    /// ```
+    pub fn base_url<U: IntoUrl>(mut self, base_url: U) -> ClientBuilder {
+        match base_url.into_url() {
+            Ok(base_url) => {
+                self.config.base_url = Some(base_url);
+            }
+            Err(e) => {
+                self.config.error = Some(e);
+            }
+        }
+        self
+    }
 
     /// Sets the `User-Agent` header to be used by this client.
     ///
@@ -651,6 +616,36 @@ impl ClientBuilder {
         self
     }
 
+    /// Automatically handles proxy authentication during HTTP redirects for cross-origin requests.
+    ///
+    /// This method ensures that the Proxy-Authorization header is re-added to
+    /// requests after a redirect, allowing seamless proxy authentication even
+    /// during cross-origin redirects. It is useful in scenarios where the client
+    /// needs to maintain proxy authentication across multiple redirects without user intervention.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use rquest::Client;
+    ///
+    /// let client = Client::builder()
+    ///     .redirect_with_proxy_auth(true)
+    ///     .build()
+    ///     .unwrap();
+    /// ```
+    ///
+    /// # Note
+    ///
+    /// This method assumes that the proxy credentials are already set up and
+    /// available. Ensure that the Proxy-Authorization header is correctly
+    /// configured before using this method.
+    ///
+    /// Default is `false`.
+    pub fn redirect_with_proxy_auth(mut self, enable: bool) -> ClientBuilder {
+        self.config.redirect_with_proxy_auth = enable;
+        self
+    }
+
     // Proxy options
 
     /// Add a `Proxy` to the list of proxies the `Client` will use.
@@ -862,23 +857,25 @@ impl ClientBuilder {
         self
     }
 
-    /// Bind to an interface by `SO_BINDTODEVICE`.
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// let interface = "lo";
-    /// let client = rquest::Client::builder()
-    ///     .interface(interface)
-    ///     .build().unwrap();
-    /// ```
-    #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
-    pub fn interface<T>(mut self, interface: T) -> ClientBuilder
-    where
-        T: Into<std::borrow::Cow<'static, str>>,
-    {
-        self.config.network_scheme.interface(interface);
-        self
+    cfg_bindable_device! {
+
+        /// Bind to an interface by `SO_BINDTODEVICE`.
+        ///
+        /// # Example
+        ///
+        /// ```
+        /// let interface = "lo";
+        /// let client = rquest::Client::builder()
+        ///     .interface(interface)
+        ///     .build().unwrap();
+        /// ```
+        pub fn interface<T>(mut self, interface: T) -> ClientBuilder
+        where
+            T: Into<Cow<'static, str>>,
+        {
+            self.config.network_scheme.interface(interface);
+            self
+        }
     }
 
     /// Set that all sockets have `SO_KEEPALIVE` set with the supplied duration.
@@ -889,6 +886,76 @@ impl ClientBuilder {
         D: Into<Option<Duration>>,
     {
         self.config.tcp_keepalive = val.into();
+        self
+    }
+
+    // TLS/HTTP2 mimic options
+
+    /// Sets the necessary values to mimic the specified impersonate version, including headers and TLS settings.
+    #[inline]
+    pub fn impersonate(self, impersonate: Impersonate) -> ClientBuilder {
+        let settings = mimic::impersonate(impersonate, true, ImpersonateOs::default());
+        self.apply_impersonate_settings(settings)
+    }
+
+    /// Sets the necessary values to mimic the specified impersonate version, including headers, TLS settings and OS.
+    #[inline]
+    pub fn impersonate_with_os(self, impersonate: Impersonate, impersonate_os: ImpersonateOs) -> ClientBuilder {
+        let settings = mimic::impersonate(impersonate, true, impersonate_os);
+        self.apply_impersonate_settings(settings)
+    }
+
+    /// Sets the necessary values to mimic the specified impersonate version, skipping header configuration.
+    #[inline]
+    pub fn impersonate_skip_headers(self, impersonate: Impersonate) -> ClientBuilder {
+        let settings = mimic::impersonate(impersonate, false, ImpersonateOs::default());
+        self.apply_impersonate_settings(settings)
+    }
+
+    /// Apply the given impersonate settings directly.
+    #[cfg(feature = "impersonate_settings")]
+    pub fn impersonate_settings(self, settings: ImpersonateSettings) -> ClientBuilder {
+        self.apply_impersonate_settings(settings)
+    }
+
+    /// Apply the given TLS settings and header function.
+    fn apply_impersonate_settings(mut self, mut settings: ImpersonateSettings) -> ClientBuilder {
+        // Set the headers if needed
+        if let Some(mut headers) = settings.headers {
+            std::mem::swap(&mut self.config.headers, &mut headers);
+        }
+
+        // Set the headers order if needed
+        std::mem::swap(&mut self.config.headers_order, &mut settings.headers_order);
+
+        // Set the TLS settings
+        std::mem::swap(&mut self.config.tls, &mut settings.tls);
+
+        // Set the http2 preference
+        if let Some(http2) = settings.http2 {
+            self.config
+                .builder
+                .with_http2_builder(|builder| apply_http2_settings(builder, http2));
+        }
+
+        self
+    }
+
+    /// Enable Encrypted Client Hello (Secure SNI)
+    pub fn enable_ech_grease(mut self, enabled: bool) -> ClientBuilder {
+        self.config.tls.enable_ech_grease = enabled;
+        self
+    }
+
+    /// Enable TLS permute_extensions
+    pub fn permute_extensions(mut self, enabled: bool) -> ClientBuilder {
+        self.config.tls.permute_extensions = Some(enabled);
+        self
+    }
+
+    /// Enable TLS pre_shared_key
+    pub fn pre_shared_key(mut self, enabled: bool) -> ClientBuilder {
+        self.config.tls.pre_shared_key = enabled;
         self
     }
 
@@ -996,6 +1063,8 @@ impl ClientBuilder {
         self
     }
 
+    // DNS options
+
     /// Enables the `hickory-dns` asynchronous resolver instead of the default threadpool-based `getaddrinfo`.
     ///
     /// By default, if the `hickory-dns` feature is enabled, this option is used.
@@ -1056,38 +1125,6 @@ impl ClientBuilder {
     /// still be applied on top of this resolver.
     pub fn dns_resolver<R: Resolve + 'static>(mut self, resolver: Arc<R>) -> ClientBuilder {
         self.config.dns_resolver = Some(resolver as _);
-        self
-    }
-
-    /// Sets a base URL for the client.
-    ///
-    /// The base URL will be used as the root for all relative request paths made by this client.
-    /// If a request specifies an absolute URL, it will override the base URL.
-    ///
-    /// # Parameters
-    /// - `base_url`: A value that can be converted into a URL, representing the base URL for the client.
-    ///
-    /// # Returns
-    /// Returns the `ClientBuilder` with the base URL configured. If the provided `base_url` is invalid,
-    /// an error is stored in the configuration, and the builder can no longer produce a valid client.
-    ///
-    /// # Example
-    /// ```rust
-    /// let client = Client::builder()
-    ///     .base_url("https://api.example.com")
-    ///     .build();
-    ///
-    /// let response = client.get("/users").send().await?; // Resolves to "https://api.example.com/users"
-    /// ```
-    pub fn base_url<U: IntoUrl>(mut self, base_url: U) -> ClientBuilder {
-        match base_url.into_url() {
-            Ok(base_url) => {
-                self.config.base_url = Some(base_url);
-            }
-            Err(e) => {
-                self.config.error = Some(e);
-            }
-        }
         self
     }
 
@@ -1370,10 +1407,19 @@ impl Client {
             }),
         }
     }
+}
 
+impl Client {
     /// Get the client user agent
+    #[inline]
     pub fn user_agent(&self) -> Option<&HeaderValue> {
         self.inner.headers.get(USER_AGENT)
+    }
+
+    /// Get the reference to the headers for this client.
+    #[inline]
+    pub fn headers(&self) -> &HeaderMap {
+        &self.inner.headers
     }
 
     /// Get a mutable reference to the headers for this client.
@@ -1443,7 +1489,7 @@ impl Client {
 
     /// Set the cookie provider for this client.
     #[cfg(feature = "cookies")]
-    pub fn set_cookie_provider<C>(&mut self, cookie_store: Arc<C>)
+    pub fn set_cookie_provider<C>(&mut self, cookie_store: Arc<C>) -> &mut Self
     where
         C: cookie::CookieStore + 'static,
     {
@@ -1451,11 +1497,13 @@ impl Client {
             &mut self.inner_mut().cookie_store,
             &mut Some(cookie_store as _),
         );
+
+        self
     }
 
     /// Set the proxies for this client.
     #[inline]
-    pub fn set_proxies<P>(&mut self, proxies: P)
+    pub fn set_proxies<P>(&mut self, proxies: P) -> &mut Self
     where
         P: Into<Option<Vec<Proxy>>>,
     {
@@ -1470,6 +1518,8 @@ impl Client {
                 inner.proxies.clear();
             }
         }
+
+        self
     }
 
     /// Set that all sockets are bound to the configured address before connection.
@@ -1478,52 +1528,66 @@ impl Client {
     ///
     /// Default is `None`.
     #[inline]
-    pub fn set_local_address<T>(&mut self, addr: T)
+    pub fn set_local_address<T>(&mut self, addr: T) -> &mut Self
     where
         T: Into<Option<IpAddr>>,
     {
         self.inner_mut().network_scheme.address(addr.into());
+        self
     }
 
     /// Set that all sockets are bound to the configured IPv4 or IPv6 address
     /// (depending on host's preferences) before connection.
     #[inline]
-    pub fn set_local_addresses<V4, V6>(&mut self, ipv4: V4, ipv6: V6)
+    pub fn set_local_addresses<V4, V6>(&mut self, ipv4: V4, ipv6: V6) -> &mut Self
     where
         V4: Into<Option<Ipv4Addr>>,
         V6: Into<Option<Ipv6Addr>>,
     {
         self.inner_mut().network_scheme.addresses(ipv4, ipv6);
+        self
     }
 
-    /// Bind to an interface by `SO_BINDTODEVICE`.
-    #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
-    #[inline]
-    pub fn set_interface<T>(&mut self, interface: T)
-    where
-        T: Into<std::borrow::Cow<'static, str>>,
-    {
-        self.inner_mut().network_scheme.interface(interface);
+    cfg_bindable_device! {
+        /// Bind to an interface by `SO_BINDTODEVICE`.
+        #[inline]
+        pub fn set_interface<T>(&mut self, interface: T)  -> &mut Self
+        where
+            T: Into<Cow<'static, str>>,
+        {
+            self.inner_mut().network_scheme.interface(interface);
+            self
+        }
     }
 
     /// Set the headers order for this client.
-    pub fn set_headers_order<T>(&mut self, order: T)
+    pub fn set_headers_order<T>(&mut self, order: T) -> &mut Self
     where
         T: Into<Cow<'static, [HeaderName]>>,
     {
         std::mem::swap(&mut self.inner_mut().headers_order, &mut Some(order.into()));
+        self
     }
 
     /// Set the redirect policy for this client.
-    pub fn set_redirect(&mut self, mut policy: redirect::Policy) {
+    pub fn set_redirect(&mut self, mut policy: redirect::Policy) -> &mut Self {
         std::mem::swap(&mut self.inner_mut().redirect, &mut policy);
+        self
+    }
+
+    /// Set the cross-origin proxy authorization for this client.
+    pub fn set_redirect_with_proxy_auth(&mut self, enabled: bool) -> &mut Self {
+        self.inner_mut().redirect_with_proxy_auth = enabled;
+        self
     }
 
     /// Set the bash url for this client.
-    pub fn set_base_url<U: IntoUrl>(&mut self, url: U) {
+    pub fn set_base_url<U: IntoUrl>(&mut self, url: U) -> &mut Self {
         if let Ok(url) = url.into_url() {
             std::mem::swap(&mut self.inner_mut().base_url, &mut Some(url));
         }
+
+        self
     }
 
     /// Set the impersonate for this client.
@@ -1543,13 +1607,19 @@ impl Client {
     /// Set the impersonate for this client with the given settings.
     #[cfg(feature = "impersonate_settings")]
     #[inline]
-    pub fn set_impersonate_settings(&mut self, settings: ImpersonateSettings) -> crate::Result<()> {
+    pub fn set_impersonate_settings(
+        &mut self,
+        settings: ImpersonateSettings,
+    ) -> crate::Result<&mut Self> {
         self.impersonate_settings(settings)
     }
 
     /// Apply the impersonate settings to the client.
     #[inline]
-    fn impersonate_settings(&mut self, mut settings: ImpersonateSettings) -> crate::Result<()> {
+    fn impersonate_settings(
+        &mut self,
+        mut settings: ImpersonateSettings,
+    ) -> crate::Result<&mut Self> {
         let inner = self.inner_mut();
 
         // Set the headers
@@ -1571,10 +1641,11 @@ impl Client {
                 .with_http2_builder(|builder| apply_http2_settings(builder, http2));
         }
 
-        Ok(())
+        Ok(self)
     }
 
-    /// private mut ref to inner
+    /// Private mut ref to inner
+    #[inline(always)]
     fn inner_mut(&mut self) -> &mut ClientRef {
         Arc::make_mut(&mut self.inner)
     }
@@ -1608,45 +1679,6 @@ impl tower_service::Service<Request> for &'_ Client {
     }
 }
 
-impl tower_service::Service<http::Request<Body>> for Client {
-    type Response = http::Response<Body>;
-    type Error = crate::Error;
-    type Future = MappedPending;
-
-    fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        Poll::Ready(Ok(()))
-    }
-
-    fn call(&mut self, req: http::Request<Body>) -> Self::Future {
-        match req.try_into() {
-            Ok(req) => MappedPending::new(self.execute_request(req)),
-            Err(err) => MappedPending::new(Pending::new_err(err)),
-        }
-    }
-}
-
-pin_project! {
-    pub struct MappedPending {
-        #[pin]
-        inner: Pending,
-    }
-}
-
-impl MappedPending {
-    fn new(inner: Pending) -> MappedPending {
-        Self { inner }
-    }
-}
-
-impl Future for MappedPending {
-    type Output = Result<http::Response<Body>, crate::Error>;
-
-    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let inner = self.project().inner;
-        inner.poll(cx).map_ok(Into::into)
-    }
-}
-
 impl_debug!(
     Config,
     {
@@ -1677,6 +1709,7 @@ struct ClientRef {
     headers_order: Option<Cow<'static, [HeaderName]>>,
     hyper: HyperClient,
     redirect: redirect::Policy,
+    redirect_with_proxy_auth: bool,
     referer: bool,
     request_timeout: Option<Duration>,
     read_timeout: Option<Duration>,
@@ -1684,7 +1717,6 @@ struct ClientRef {
     proxies_maybe_http_auth: bool,
     base_url: Option<Url>,
     http2_max_retry_count: usize,
-
     proxies: Vec<Proxy>,
     network_scheme: NetworkSchemeBuilder,
 }
@@ -1775,22 +1807,14 @@ pin_project! {
         url: Url,
         headers: HeaderMap,
         body: Option<Option<Bytes>>,
-
         version: Option<Version>,
-
         urls: Vec<Url>,
-
         retry_count: usize,
         max_retry_count: usize,
-
         redirect: Option<redirect::Policy>,
-
         cookie_store: CookieStoreOption,
-
         network_scheme: NetworkScheme,
-
         client: Arc<ClientRef>,
-
         #[pin]
         in_flight: ResponseFuture,
         #[pin]
@@ -1879,8 +1903,6 @@ impl PendingRequest {
 }
 
 fn is_retryable_error(err: &(dyn std::error::Error + 'static)) -> bool {
-    use hyper2::h2;
-
     // pop the legacy::Error
     let err = if let Some(err) = err.source() {
         err
@@ -1889,15 +1911,20 @@ fn is_retryable_error(err: &(dyn std::error::Error + 'static)) -> bool {
     };
 
     if let Some(cause) = err.source() {
-        if let Some(err) = cause.downcast_ref::<h2::Error>() {
+        if let Some(err) = cause.downcast_ref::<hyper2::h2::Error>() {
             // They sent us a graceful shutdown, try with a new connection!
-            if err.is_go_away() && err.is_remote() && err.reason() == Some(h2::Reason::NO_ERROR) {
+            if err.is_go_away()
+                && err.is_remote()
+                && err.reason() == Some(hyper2::h2::Reason::NO_ERROR)
+            {
                 return true;
             }
 
             // REFUSED_STREAM was sent from the server, which is safe to retry.
             // https://www.rfc-editor.org/rfc/rfc9113.html#section-8.7-3.2
-            if err.is_reset() && err.is_remote() && err.reason() == Some(h2::Reason::REFUSED_STREAM)
+            if err.is_reset()
+                && err.is_remote()
+                && err.reason() == Some(hyper2::h2::Reason::REFUSED_STREAM)
             {
                 return true;
             }
@@ -1939,7 +1966,7 @@ impl Future for PendingRequest {
         if let Some(delay) = self.as_mut().total_timeout().as_mut().as_pin_mut() {
             if let Poll::Ready(()) = delay.poll(cx) {
                 return Poll::Ready(Err(
-                    crate::error::request(crate::error::TimedOut).with_url(self.url.clone())
+                    error::request(error::TimedOut).with_url(self.url.clone())
                 ));
             }
         }
@@ -1947,7 +1974,7 @@ impl Future for PendingRequest {
         if let Some(delay) = self.as_mut().read_timeout().as_mut().as_pin_mut() {
             if let Poll::Ready(()) = delay.poll(cx) {
                 return Poll::Ready(Err(
-                    crate::error::request(crate::error::TimedOut).with_url(self.url.clone())
+                    error::request(error::TimedOut).with_url(self.url.clone())
                 ));
             }
         }
@@ -1959,9 +1986,7 @@ impl Future for PendingRequest {
                         if self.as_mut().retry_error(&e) {
                             continue;
                         }
-                        return Poll::Ready(Err(
-                            crate::error::request(e).with_url(self.url.clone())
-                        ));
+                        return Poll::Ready(Err(error::request(e).with_url(self.url.clone())));
                     }
                     Poll::Ready(Ok(res)) => res.map(super::body::boxed),
                     Poll::Pending => return Poll::Pending,
@@ -2049,17 +2074,16 @@ impl Future for PendingRequest {
                     }
                     let url = self.url.clone();
                     self.as_mut().urls().push(url);
-                    let action = self
-                        .redirect
-                        .as_ref()
-                        .unwrap_or(&self.client.redirect)
-                        .check(
-                            res.status(),
-                            &self.method,
-                            &loc,
-                            &previous_method,
-                            &self.urls,
-                        );
+
+                    let redirect = self.redirect.as_ref().unwrap_or(&self.client.redirect);
+
+                    let action = redirect.check(
+                        res.status(),
+                        &self.method,
+                        &loc,
+                        &previous_method,
+                        &self.urls,
+                    );
 
                     match action {
                         redirect::ActionKind::Follow => {
@@ -2080,13 +2104,20 @@ impl Future for PendingRequest {
                             let mut headers =
                                 std::mem::replace(self.as_mut().headers(), HeaderMap::new());
 
-                            remove_sensitive_headers(&mut headers, &self.url, &self.urls);
+                            redirect::Policy::remove_sensitive_headers(
+                                &mut headers,
+                                &self.url,
+                                &self.urls,
+                                self.client.redirect_with_proxy_auth,
+                            );
+
                             let uri = match try_uri(&self.url) {
                                 Some(uri) => uri,
                                 None => {
                                     return Poll::Ready(Err(error::url_bad_uri(self.url.clone())));
                                 }
                             };
+
                             let body = match self.body {
                                 Some(Some(ref body)) => Body::reusable(body.clone()),
                                 _ => Body::empty(),
@@ -2105,8 +2136,6 @@ impl Future for PendingRequest {
                                     add_cookie_header(&mut headers, &**cookie_store, &self.url);
                                 }
                             }
-
-                            self.client.proxy_auth(&uri, &mut headers);
 
                             *self.as_mut().in_flight().get_mut() = {
                                 let req = InnerRequest::builder()
@@ -2130,7 +2159,7 @@ impl Future for PendingRequest {
                             debug!("redirect policy disallowed redirection to '{}'", loc);
                         }
                         redirect::ActionKind::Error(err) => {
-                            return Poll::Ready(Err(crate::error::redirect(err, self.url.clone())));
+                            return Poll::Ready(Err(error::redirect(err, self.url.clone())));
                         }
                     }
                 }

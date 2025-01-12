@@ -5,12 +5,12 @@
 //! in much the same way it did in hyper 0.14.
 
 pub mod connect;
+mod network;
 #[doc(hidden)]
 // Publicly available, but just for legacy purposes. A better pool will be
 // designed.
 mod pool;
 mod request;
-mod scheme;
 
 use std::error::Error as StdError;
 use std::fmt;
@@ -18,6 +18,7 @@ use std::future::Future;
 use std::net::{Ipv4Addr, Ipv6Addr};
 use std::num::NonZeroUsize;
 use std::pin::Pin;
+use std::sync::Arc;
 use std::task::{self, Poll};
 use std::time::Duration;
 
@@ -32,7 +33,7 @@ use sync_wrapper::SyncWrapper;
 
 use crate::proxy::ProxyScheme;
 use crate::util::common;
-use crate::{impl_debug, AlpnProtos};
+use crate::{cfg_bindable_device, cfg_non_bindable_device, impl_debug, AlpnProtos};
 use connect::capture::CaptureConnectionExtension;
 use connect::{Alpn, Connect, Connected, Connection};
 use pool::Ver;
@@ -40,8 +41,8 @@ use pool::Ver;
 use common::{lazy as hyper_lazy, timer, Exec, Lazy};
 
 use super::into_uri;
+pub use network::{NetworkScheme, NetworkSchemeBuilder};
 pub use request::InnerRequest;
-pub use scheme::{NetworkScheme, NetworkSchemeBuilder};
 
 type BoxSendFuture = Pin<Box<dyn Future<Output = ()> + Send>>;
 
@@ -116,7 +117,17 @@ macro_rules! e {
 }
 
 // We might change this... :shrug:
-type PoolKey = (NetworkScheme, Uri);
+#[derive(Debug, Clone, Hash, PartialEq, Eq)]
+struct PoolKey {
+    uri: Uri,
+    network: NetworkScheme,
+}
+
+impl PoolKey {
+    fn new(uri: Uri, network: NetworkScheme) -> PoolKey {
+        PoolKey { uri, network }
+    }
+}
 
 /// Destination of the request
 ///
@@ -124,18 +135,17 @@ type PoolKey = (NetworkScheme, Uri);
 #[derive(Clone)]
 pub struct Dst {
     alpn_protos: Option<AlpnProtos>,
-    pool_key: PoolKey,
+    inner: Arc<PoolKey>,
 }
 
 impl Dst {
     /// Create a new `Dst` from a request
-    pub fn new<B>(
-        req: &mut Request<B>,
+    pub fn new(
+        uri: &mut Uri,
         is_http_connect: bool,
-        network_scheme: NetworkScheme,
+        network: NetworkScheme,
         alpn_protos: Option<AlpnProtos>,
     ) -> Result<Dst, Error> {
-        let uri = req.uri_mut();
         let (scheme, auth) = match (uri.scheme().cloned(), uri.authority().cloned()) {
             (Some(scheme), Some(auth)) => (scheme, auth),
             (None, Some(auth)) if is_http_connect => {
@@ -160,61 +170,72 @@ impl Dst {
         // Convert the scheme and host to a URI
         into_uri(scheme, auth)
             .map(|uri| Dst {
-                pool_key: (network_scheme, uri),
                 alpn_protos,
+                inner: Arc::new(PoolKey::new(uri, network)),
             })
             .map_err(|_| e!(UserAbsoluteUriRequired))
     }
 
+    /// Get the URI
+    #[inline(always)]
+    pub(crate) fn uri(&self) -> &Uri {
+        &self.inner.uri
+    }
+
     /// Set the next destination of the request (for proxy)
-    pub fn set_dst(&mut self, mut uri: Uri) {
-        std::mem::swap(&mut self.pool_key.1, &mut uri);
+    #[inline(always)]
+    pub(crate) fn set_uri(&mut self, mut uri: Uri) {
+        let inner = Arc::make_mut(&mut self.inner);
+        std::mem::swap(&mut inner.uri, &mut uri);
     }
 
     /// Get the alpn protos
-    pub fn alpn_protos(&self) -> Option<AlpnProtos> {
+    #[inline(always)]
+    pub(crate) fn alpn_protos(&self) -> Option<AlpnProtos> {
         self.alpn_protos
     }
 
     /// Take network scheme for iface
     #[inline(always)]
-    pub fn take_addresses(&mut self) -> (Option<Ipv4Addr>, Option<Ipv6Addr>) {
-        self.pool_key.0.take_addresses()
+    pub(crate) fn take_addresses(&mut self) -> (Option<Ipv4Addr>, Option<Ipv6Addr>) {
+        Arc::make_mut(&mut self.inner).network.take_addresses()
     }
 
     /// Take the network scheme for iface
     #[inline(always)]
-    pub fn take_interface(&mut self) -> Option<std::borrow::Cow<'static, str>> {
-        #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
-        {
-            self.pool_key.0.take_interface()
+    pub(crate) fn take_interface(&mut self) -> Option<std::borrow::Cow<'static, str>> {
+        cfg_bindable_device! {
+            Arc::make_mut(&mut self.inner).network.take_interface()
         }
-        #[cfg(not(any(target_os = "android", target_os = "fuchsia", target_os = "linux")))]
-        {
-            None
-        }
+
+        cfg_non_bindable_device!(None)
     }
 
     /// Take the network scheme for proxy
     #[inline(always)]
-    pub fn take_proxy_scheme(&mut self) -> Option<ProxyScheme> {
-        self.pool_key.0.take_proxy_scheme()
+    pub(crate) fn take_proxy_scheme(&mut self) -> Option<ProxyScheme> {
+        Arc::make_mut(&mut self.inner).network.take_proxy_scheme()
+    }
+
+    #[inline(always)]
+    fn pool_key(&self) -> &PoolKey {
+        &self.inner
     }
 }
 
-impl_debug!(Dst, { pool_key });
+impl_debug!(Dst, { alpn_protos, inner });
 
 impl std::ops::Deref for Dst {
     type Target = Uri;
 
     fn deref(&self) -> &Self::Target {
-        &self.pool_key.1
+        &self.inner.uri
     }
 }
 
 impl From<Dst> for Uri {
     fn from(dst: Dst) -> Self {
-        dst.pool_key.1
+        Arc::unwrap_or_clone(dst.inner).uri
     }
 }
 
@@ -306,19 +327,23 @@ where
         let (mut req, network_scheme, http_version_pref) = req.pieces();
         let is_http_connect = req.method() == Method::CONNECT;
         match req.version() {
-            Version::HTTP_11 => (),
             Version::HTTP_10 => {
                 if is_http_connect {
                     warn!("CONNECT is not allowed for HTTP/1.0");
                     return ResponseFuture::new(future::err(e!(UserUnsupportedRequestMethod)));
                 }
             }
-            Version::HTTP_2 => (),
+            Version::HTTP_11 | Version::HTTP_2 => (),
             // completely unsupported HTTP version (like HTTP/0.9)!
             other => return ResponseFuture::error_version(other),
         };
 
-        let ctx = match Dst::new(&mut req, is_http_connect, network_scheme, http_version_pref) {
+        let ctx = match Dst::new(
+            req.uri_mut(),
+            is_http_connect,
+            network_scheme,
+            http_version_pref,
+        ) {
             Ok(s) => s,
             Err(err) => {
                 return ResponseFuture::new(future::err(err));
@@ -516,7 +541,7 @@ where
         //   (an idle connection became available first), the started
         //   connection future is spawned into the runtime to complete,
         //   and then be inserted into the pool as an idle connection.
-        let checkout = self.pool.checkout(dst.pool_key.clone());
+        let checkout = self.pool.checkout(dst.pool_key().clone());
         let connect = self.connect_to(dst);
         let is_ver_h2 = self.config.ver == Ver::Http2;
 
@@ -602,7 +627,7 @@ where
             // If the pool_key is for HTTP/2, and there is already a
             // connection being established, then this can't take a
             // second lock. The "connect_to" future is Canceled.
-            let connecting = match pool.connecting(&dst.pool_key, ver) {
+            let connecting = match pool.connecting(dst.pool_key(), ver) {
                 Some(lock) => lock,
                 None => {
                     let canceled = e!(Canceled);

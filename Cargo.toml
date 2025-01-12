@@ -1,6 +1,6 @@
 [package]
 name = "rquest"
-version = "1.3.5"
+version = "1.5.0"
 description = "An ergonomic, all-in-one TLS, JA3/JA4, and HTTP2 fingerprint HTTP Client for spoofing any browser"
 keywords = ["http", "client", "websocket", "ja3", "ja4"]
 categories = ["web-programming::http-client"]
@@ -61,9 +61,6 @@ socks = ["dep:tokio-socks"]
 
 native-roots = ["dep:rustls-native-certs"]
 webpki-roots = ["dep:webpki-root-certs"]
-
-# Optional disable internal proxy cache
-internal_proxy_sys_no_cache = []
 
 # Optional enable impersonate from str
 impersonate_str = []
@@ -162,10 +159,13 @@ async-tungstenite = { version = "0.28.0", optional = true }
 hickory-resolver = { version = "0.24", optional = true }
 
 [target.'cfg(windows)'.dependencies]
-windows-registry = "0.3.0"
+windows-registry = "0.4.0"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 system-configuration = "0.6.0"
+
+[target.'cfg(any(target_os = "ios", target_os = "visionos", target_os = "macos", target_os = "tvos", target_os = "watchos"))'.dependencies]
+libc = "0.2"
 
 [dev-dependencies]
 hyper = { version = "1.1.0", default-features = false, features = [
@@ -182,7 +182,7 @@ hyper-util = { version = "0.1.10", features = [
     "server-auto",
     "tokio",
 ] }
-env_logger = "0.10.0"
+env_logger = "0.11.6"
 serde = { version = "1.0", features = ["derive"] }
 libflate = "2.0.0"
 zstd = { version = "0.13" }
@@ -324,6 +324,10 @@ path = "examples/client.rs"
 required-features = ["full"]
 
 [[example]]
+name = "client_chain"
+path = "examples/client_chain.rs"
+
+[[example]]
 name = "request_with_redirect"
 path = "examples/request_with_redirect.rs"
 required-features = ["full"]
@@ -360,4 +364,9 @@ required-features = ["full"]
 [[example]]
 name = "request_with_local_address"
 path = "examples/request_with_local_address.rs"
+required-features = ["full"]
+
+[[example]]
+name = "request_with_interface"
+path = "examples/request_with_interface.rs"
 required-features = ["full"]

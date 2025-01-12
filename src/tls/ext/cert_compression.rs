@@ -5,12 +5,16 @@ use std::{io::Read, slice};
 #[repr(u16)]
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum CertCompressionAlgorithm {
+    /// The Brotli compression algorithm.
     Brotli = ffi::TLSEXT_cert_compression_brotli as _,
+    /// The zlib compression algorithm.
     Zlib = ffi::TLSEXT_cert_compression_zlib as _,
+    /// The Zstandard compression algorithm.
     Zstd = ffi::TLSEXT_cert_compression_zstd as _,
 }
 
 impl CertCompressionAlgorithm {
+    /// Returns the compression function for the algorithm.
     pub fn compression_fn(&self) -> ffi::ssl_cert_compression_func_t {
         match &self {
             Self::Brotli => Some(brotli_compressor),
@@ -19,6 +23,7 @@ impl CertCompressionAlgorithm {
         }
     }
 
+    /// Returns the decompression function for the algorithm.
     pub fn decompression_fn(&self) -> ffi::ssl_cert_decompression_func_t {
         match &self {
             Self::Brotli => Some(brotli_decompressor),

@@ -3,16 +3,20 @@ mod json;
 mod message;
 
 use std::{
+    borrow::Cow,
     ops::{Deref, DerefMut},
     pin::Pin,
     task::{Context, Poll},
 };
 
-use crate::{error::Kind, RequestBuilder};
+use crate::{
+    error::{self, Kind},
+    RequestBuilder,
+};
 use crate::{Error, Response};
 use async_tungstenite::tungstenite;
 use futures_util::{Sink, SinkExt, Stream, StreamExt};
-use http::{header, HeaderName, HeaderValue, StatusCode, Version};
+use http::{header, uri::Scheme, HeaderValue, StatusCode, Version};
 pub use message::{CloseCode, Message};
 use tokio_util::compat::TokioAsyncReadCompatExt;
 use tungstenite::protocol::WebSocketConfig;
@@ -25,8 +29,8 @@ pub type WebSocketStream =
 #[derive(Debug)]
 pub struct WebSocketRequestBuilder {
     inner: RequestBuilder,
-    nonce: Option<String>,
-    protocols: Option<Vec<String>>,
+    nonce: Option<Cow<'static, str>>,
+    protocols: Option<Cow<'static, [String]>>,
     config: WebSocketConfig,
 }
 
@@ -43,38 +47,20 @@ impl WebSocketRequestBuilder {
     /// Websocket handshake with a specified websocket key. This returns a wrapped type,
     /// so you must do this after you set up your request, and just before you send the
     /// request.
-    pub fn key<K: Into<String>>(mut self, key: K) -> Self {
+    pub fn key<K>(mut self, key: K) -> Self
+    where
+        K: Into<Cow<'static, str>>,
+    {
         self.nonce = Some(key.into());
         self
     }
 
     /// Sets the websocket subprotocols to request.
-    pub fn protocols(mut self, protocols: Vec<String>) -> Self {
-        if let Some(p) = self.protocols.as_mut() {
-            p.extend(protocols)
-        }
-        self
-    }
-
-    /// Add a set of Header to the existing ones on this Request.
-    #[deprecated(since = "1.3.5", note = "use with_builder instead")]
-    pub fn header<K, V>(mut self, key: K, value: V) -> Self
+    pub fn protocols<P>(mut self, protocols: P) -> Self
     where
-        HeaderName: TryFrom<K>,
-        <HeaderName as TryFrom<K>>::Error: Into<http::Error>,
-        HeaderValue: TryFrom<V>,
-        <HeaderValue as TryFrom<V>>::Error: Into<http::Error>,
+        P: Into<Cow<'static, [String]>>,
     {
-        self.inner = self.inner.header(key, value);
-        self
-    }
-
-    /// Add a set of Headers to the existing ones on this Request.
-    ///
-    /// The headers will be merged in to any already set.
-    #[deprecated(since = "1.3.5", note = "use with_builder instead")]
-    pub fn headers(mut self, headers: crate::header::HeaderMap) -> Self {
-        self.inner = self.inner.headers(headers);
+        self.protocols = Some(protocols.into());
         self
     }
 
@@ -124,27 +110,31 @@ impl WebSocketRequestBuilder {
         let (client, request_result) = self.inner.build_split();
         let mut request = request_result?;
 
-        let nonce = self
-            .nonce
-            .unwrap_or_else(tungstenite::handshake::client::generate_key);
-
-        // change the scheme
+        // Ensure the scheme is http or https
         let url = request.url_mut();
         match url.scheme() {
-            "ws" => {
-                url.set_scheme("http")
-                    .expect("url should accept http scheme");
+            "ws" | "wss" => {
+                let new_scheme = if url.scheme() == "ws" {
+                    Scheme::HTTP.as_str()
+                } else {
+                    Scheme::HTTPS.as_str()
+                };
+                url.set_scheme(new_scheme)
+                    .map_err(|_| error::url_bad_scheme(url.clone()))?;
             }
-            "wss" => {
-                url.set_scheme("https")
-                    .expect("url should accept https scheme");
+            "http" | "https" => {}
+            _ => {
+                return Err(error::url_bad_scheme(url.clone()));
             }
-            _ => {}
         }
+
+        // Generate a nonce if one wasn't provided
+        let nonce = self
+            .nonce
+            .unwrap_or_else(|| Cow::Owned(tungstenite::handshake::client::generate_key()));
 
         // HTTP 1 requires us to set some headers.
         let headers = request.headers_mut();
-
         headers.insert(header::CONNECTION, HeaderValue::from_static("upgrade"));
         headers.insert(header::UPGRADE, HeaderValue::from_static("websocket"));
         headers.insert(
@@ -158,7 +148,7 @@ impl WebSocketRequestBuilder {
         );
 
         if let Some(ref protocols) = self.protocols {
-            // sets subprotocols
+            // Sets subprotocols
             if !protocols.is_empty() {
                 let subprotocols = protocols
                     .iter()
@@ -191,8 +181,8 @@ impl WebSocketRequestBuilder {
 #[derive(Debug)]
 pub struct WebSocketResponse {
     inner: Response,
-    nonce: String,
-    protocols: Option<Vec<String>>,
+    nonce: Cow<'static, str>,
+    protocols: Option<Cow<'static, [String]>>,
     config: WebSocketConfig,
 }
 

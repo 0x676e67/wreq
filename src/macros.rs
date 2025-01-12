@@ -13,3 +13,43 @@ macro_rules! impl_debug {
         }
     }
 }
+
+/// Macro to conditionally compile code for bindable devices.
+#[macro_export]
+macro_rules! cfg_bindable_device {
+    ($($tt:tt)*) => {
+        #[cfg(any(
+            target_os = "android",
+            target_os = "fuchsia",
+            target_os = "linux",
+            target_os = "ios",
+            target_os = "visionos",
+            target_os = "macos",
+            target_os = "tvos",
+            target_os = "watchos"
+        ))]
+        $(
+            $tt
+        )*
+    };
+}
+
+/// Macro to conditionally compile code for non-bindable devices.
+#[macro_export]
+macro_rules! cfg_non_bindable_device {
+    ($($tt:tt)*) => {
+        #[cfg(not(any(
+            target_os = "android",
+            target_os = "fuchsia",
+            target_os = "linux",
+            target_os = "ios",
+            target_os = "visionos",
+            target_os = "macos",
+            target_os = "tvos",
+            target_os = "watchos"
+        )))]
+        $(
+            $tt
+        )*
+    }
+}

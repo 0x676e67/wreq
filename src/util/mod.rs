@@ -12,7 +12,7 @@ pub mod service;
 
 use crate::header::{Entry, HeaderMap, HeaderValue, OccupiedEntry};
 use http::{
-    uri::{Authority, Scheme},
+    uri::{Authority, PathAndQuery, Scheme},
     Uri,
 };
 
@@ -110,6 +110,6 @@ pub(crate) fn into_uri(scheme: Scheme, host: Authority) -> Result<Uri, http::Err
     Uri::builder()
         .scheme(scheme)
         .authority(host)
-        .path_and_query(http::uri::PathAndQuery::from_static("/"))
+        .path_and_query(PathAndQuery::from_static("/"))
         .build()
 }

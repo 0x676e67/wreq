@@ -138,7 +138,7 @@ fn add_content_length_header<B>(headers: &mut HeaderMap, body: &B)
 where
     B: Body,
 {
-    if let Some(len) = http_body::Body::size_hint(body).exact() {
+    if let Some(len) = Body::size_hint(body).exact() {
         headers
             .entry(CONTENT_LENGTH)
             .or_insert_with(|| HeaderValue::from(len));

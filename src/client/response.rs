@@ -4,6 +4,7 @@ use std::pin::Pin;
 use std::time::Duration;
 
 use bytes::Bytes;
+use http_body_util::BodyExt;
 use hyper2::{HeaderMap, StatusCode, Version};
 #[cfg(feature = "json")]
 use serde::de::DeserializeOwned;
@@ -14,6 +15,7 @@ use util::client::connect::HttpInfo;
 use super::body::Body;
 use super::body::ResponseBody;
 use super::decoder::{Accepts, Decoder};
+
 #[cfg(feature = "cookies")]
 use crate::cookie;
 use crate::util;
@@ -425,10 +427,29 @@ impl fmt::Debug for Response {
     }
 }
 
-/// A `Response` can be piped as the `Body` of another request.
-impl From<Response> for Body {
-    fn from(r: Response) -> Body {
-        Body::wrap(r.res.into_body())
+// I'm not sure this conversion is that useful... People should be encouraged
+// to use `http::Response`, not `reqwest::Response`.
+impl<T: Into<Body>> From<http::Response<T>> for Response {
+    fn from(r: http::Response<T>) -> Response {
+        use crate::response::ResponseUrl;
+
+        let (mut parts, body) = r.into_parts();
+        let body: super::body::Body = body.into();
+        let decoder = Decoder::detect(
+            &mut parts.headers,
+            ResponseBody::new(body.map_err(Into::into)),
+            Accepts::none(),
+        );
+        let url = parts
+            .extensions
+            .remove::<ResponseUrl>()
+            .unwrap_or_else(|| ResponseUrl(Url::parse("http://no.url.provided.local").unwrap()));
+        let url = url.0;
+        let res = hyper2::Response::from_parts(parts, decoder);
+        Response {
+            res,
+            url: Box::new(url),
+        }
     }
 }
 
@@ -439,5 +460,34 @@ impl From<Response> for http::Response<Body> {
         let (parts, body) = r.res.into_parts();
         let body = Body::wrap(body);
         http::Response::from_parts(parts, body)
+    }
+}
+
+/// A `Response` can be piped as the `Body` of another request.
+impl From<Response> for Body {
+    fn from(r: Response) -> Body {
+        Body::wrap(r.res.into_body())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Response;
+    use crate::ResponseBuilderExt;
+    use http::response::Builder;
+    use url::Url;
+
+    #[test]
+    fn test_from_http_response() {
+        let url = Url::parse("http://example.com").unwrap();
+        let response = Builder::new()
+            .status(200)
+            .url(url.clone())
+            .body("foo")
+            .unwrap();
+        let response = Response::from(response);
+
+        assert_eq!(response.status(), 200);
+        assert_eq!(*response.url(), url);
     }
 }

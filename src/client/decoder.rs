@@ -556,7 +556,6 @@ where
 // ===== impl Accepts =====
 
 impl Accepts {
-    /*
     pub(super) fn none() -> Self {
         Accepts {
             #[cfg(feature = "gzip")]
@@ -569,7 +568,6 @@ impl Accepts {
             deflate: false,
         }
     }
-    */
 
     pub(super) fn as_str(&self) -> Option<&'static str> {
         match (

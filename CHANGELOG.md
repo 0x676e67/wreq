@@ -6,8 +6,123 @@ All notable changes to this project will be documented in this file.
 
 ### 🚀 Features
 
+- *(client)* Expose default headers as public API (#296)
+- *(multipart)* Expose a Form::into_stream() method on async multipart forms (#303)
+- *(client)* Optional cross-origin redirect proxy authentication (#304)
+- *(client)* Add chain settings of client
+- *(tls)* Optional disable SSL renegotiation (#306)
+- *(proxy)* Remove system proxy cache (#309)
+
+### 🐛 Bug Fixes
+
+- Fix `Request` `try_clone` missing variables (#301)
+
+### 🚜 Refactor
+
+- *(websocket)* Change parameters to `Cow` types for improved flexibility (#298)
+- Rename mod `scheme` with `network`
+
+### 📚 Documentation
+
+- *(tls)* Update docs
+
+### ⚡ Performance
+
+- *(pool)* Reduce lock scope to decrease contention (#308)
+
+### ⚙️ Miscellaneous Tasks
+
+- *(websocket)* Remove deprecated function (#297)
+- Simplify template macro usage for platform-specific config (#299)
+- Add `#[inline]` to `cookie_store_mut`
+- *(websocket)* Simplify URL scheme matching and error handling logic (#302)
+- Update websocket bad url handler
+- Annotating default values ​​improves maintainability
+
+### Build
+
+- *(deps)* Update env_logger requirement from 0.10.0 to 0.11.6 (#294)
+- *(deps)* Update windows-registry requirement from 0.3.0 to 0.4.0 (#295)
+- Fix conditional compilation (#307)
+
+## [1.3.6] - 2025-01-08
+
+### 🚀 Features
+
+- *(websocket)* Add `with_builder` method to modify request builder before sending (#288)
+- Support `Apple` devices to bind device interface (#293)
+
+### 🐛 Bug Fixes
+
+- *(test)* Resolve test failures due to invalid upstream certificate site
+
+### ⚡ Performance
+
+- *(pool)* Reduce `Dst` cloning overhead with `Arc` for `PoolKey` (#289)
+
+### 🧪 Testing
+
+- *(connector-layer)* Sync upstream connector layers tests (#285)
+
+### ⚙️ Miscellaneous Tasks
+
+- Improved type convert (#284)
+- Fmt code
+- Sync upstream `From<http::Response<T>> for Response`
+- Remove unused crate path prefix
+
+### ◀️ Revert
+
+- Remove `From<http::Response<T>> for Response` (#282)
+
+## [1.3.5] - 2025-01-06
+
+### 🚀 Features
+
+- *(request)* Add general HTTP authentication method (#270)
+- *(request)* Insert header differentiates between append and overwrite (#274)
+- *(multipart)* Sync upstream file multipart (#278)
+
+### 🐛 Bug Fixes
+
+- Fix migration hyper1 missing `TokioTimer` (#275)
+- *(test)* Fix proxy test
+- *(redirect)* Fix redirect test
+- *(timeout)* Fix timeout test
+
+### 📚 Documentation
+
+- Update `http2`/`network` docs (#273)
+
+### 🧪 Testing
+
+- Remove unused wasm test
+- Ignore doc test (#276)
+- *(timeout)* Ignore the test in Tunnel VPN environment (#279)
+
+### ⚙️ Miscellaneous Tasks
+
+- *(cookie)* Use `RwLock` types that do not poison themselves (#268)
+- Remove unused code
+- Cargo clippy fix all-features
+- Remove unused feature
+- Sync upstream tests
+- Add all features tests
+
+### Build
+
+- Fix linux build (#277)
+
+### Deps
+
+- Replace `futures_core` with `futures_util` (#269)
+
+## [1.3.3] - 2025-01-05
+
+### 🚀 Features
+
 - *(mimic)* Optional mimic http2 (#262)
-- *(mimic)* Add Tor browser `Firefox 128` mimic (#265)
+- *(mimic)* Add Tor browser `Firefox 128` mimic (#267)
 
 ### ⚙️ Miscellaneous Tasks
 

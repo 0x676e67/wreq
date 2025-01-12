@@ -16,7 +16,7 @@ use super::response::Response;
 use crate::cookie;
 use crate::header::{HeaderMap, HeaderName, HeaderValue, CONTENT_TYPE};
 use crate::util::client::{NetworkScheme, NetworkSchemeBuilder};
-use crate::{redirect, IntoUrl, Method, Proxy, Url};
+use crate::{cfg_bindable_device, redirect, IntoUrl, Method, Proxy, Url};
 #[cfg(feature = "cookies")]
 use std::sync::Arc;
 
@@ -123,6 +123,25 @@ impl Request {
         &mut self.headers
     }
 
+    /// Get a mutable reference to the redirect policy.
+    #[inline]
+    pub fn redirect_mut(&mut self) -> &mut Option<redirect::Policy> {
+        &mut self.redirect
+    }
+
+    /// Get a mutable reference to the network scheme.
+    #[inline]
+    pub fn network_scheme_mut(&mut self) -> &mut NetworkSchemeBuilder {
+        &mut self.network_scheme
+    }
+
+    /// Get a mutable reference to the cookie store.
+    #[cfg(feature = "cookies")]
+    #[inline]
+    pub fn cookie_store_mut(&mut self) -> &mut Option<Arc<dyn cookie::CookieStore>> {
+        &mut self.cookie_store
+    }
+
     /// Get the body.
     #[inline]
     pub fn body(&self) -> Option<&Body> {
@@ -171,6 +190,12 @@ impl Request {
         *req.timeout_mut() = self.timeout().copied();
         *req.headers_mut() = self.headers().clone();
         *req.version_mut() = self.version();
+        *req.redirect_mut() = self.redirect.clone();
+        *req.network_scheme_mut() = self.network_scheme.clone();
+        #[cfg(feature = "cookies")]
+        {
+            *req.cookie_store_mut() = self.cookie_store.clone();
+        }
         req.body = body;
         Some(req)
     }
@@ -513,16 +538,17 @@ impl RequestBuilder {
         self
     }
 
-    /// Set the interface for this request.
-    #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
-    pub fn interface<I>(mut self, interface: I) -> RequestBuilder
-    where
-        I: Into<std::borrow::Cow<'static, str>>,
-    {
-        if let Ok(ref mut req) = self.request {
-            req.network_scheme.interface(interface);
+    cfg_bindable_device! {
+        /// Set the interface for this request.
+        pub fn interface<I>(mut self, interface: I) -> RequestBuilder
+        where
+            I: Into<std::borrow::Cow<'static, str>>,
+        {
+            if let Ok(ref mut req) = self.request {
+                req.network_scheme.interface(interface);
+            }
+            self
         }
-        self
     }
 
     /// Set the cookie store for this request.

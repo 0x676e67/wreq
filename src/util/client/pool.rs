@@ -51,7 +51,6 @@ impl<T> Key for T where T: Eq + Hash + Clone + Debug + Unpin + Send + 'static {}
 
 /// A marker to identify what version a pooled connection is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-#[allow(dead_code)]
 pub enum Ver {
     Auto,
     Http2,
@@ -127,7 +126,7 @@ impl<T, K: Key> Pool<T, K> {
         M: hyper2::rt::Timer + Send + Sync + Clone + 'static,
     {
         let exec = Exec::new(executor);
-        let timer = timer.map(|t| Timer::new(t));
+        let timer = timer.map(Timer::new);
         let idle = match config.max_pool_size {
             Some(max_size) => LruCache::new(max_size),
             None => LruCache::unbounded(),
@@ -220,6 +219,7 @@ impl<T: Poolable, K: Key> Pool<T, K> {
                     // Do this here instead of Drop for Connecting because we
                     // already have a lock, no need to lock the mutex twice.
                     inner.connected(&connecting.key);
+                    drop(inner);
                     // prevent the Drop of Connecting from repeating inner.connected()
                     connecting.pool = WeakOpt::none();
 
@@ -554,7 +554,7 @@ impl<T: Poolable, K: Key> Drop for Pooled<T, K> {
     }
 }
 
-impl<T: Poolable, K: Key> fmt::Debug for Pooled<T, K> {
+impl<T: Poolable, K: Key> Debug for Pooled<T, K> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Pooled").field("key", &self.key).finish()
     }
@@ -663,6 +663,9 @@ impl<T: Poolable, K: Key> Checkout<T, K> {
                     .entry(self.key.clone())
                     .or_insert_with(VecDeque::new)
                     .push_back(tx);
+
+                // We need to drop the lock before polling the receiver.
+                drop(inner);
 
                 // register the waker with this oneshot
                 assert!(Pin::new(&mut rx).poll(cx).is_pending());
@@ -793,8 +796,9 @@ impl<T: Poolable + 'static, K: Key> Future for IdleTask<T, K> {
 
             if let Some(inner) = this.pool.upgrade() {
                 let mut inner = inner.lock();
-                trace!("idle interval checking for expired");
                 inner.clear_expired();
+                drop(inner);
+                trace!("idle interval checking for expired");
                 continue;
             }
             return Poll::Ready(());

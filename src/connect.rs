@@ -346,7 +346,7 @@ impl ConnectorService {
             });
         }
 
-        dst.set_dst(proxy_dst);
+        dst.set_uri(proxy_dst);
 
         self.connect_with_maybe_proxy(dst, true).await
     }
@@ -377,7 +377,7 @@ impl Service<Dst> for ConnectorService {
     }
 
     fn call(&mut self, mut dst: Dst) -> Self::Future {
-        log::debug!("starting new connection: {:?}", dst);
+        log::debug!("starting new connection: {:?}", dst.uri());
 
         if let Some(proxy_scheme) = dst.take_proxy_scheme() {
             return Box::pin(with_timeout(

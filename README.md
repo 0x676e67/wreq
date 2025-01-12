@@ -1,5 +1,6 @@
-# rquest - `r`ust & `quest`
+# rquest - `r`ust & quest
 
+[![CI](https://github.com/penumbra-x/rquest/actions/workflows/ci.yml/badge.svg)](https://github.com/penumbra-x/rquest/actions/workflows/ci.yml)
 [![Crates.io License](https://img.shields.io/crates/l/rquest)](./LICENSE)
 ![Crates.io MSRV](https://img.shields.io/crates/msrv/rquest)
 [![crates.io](https://img.shields.io/crates/v/rquest.svg)](https://crates.io/crates/rquest)
@@ -7,7 +8,7 @@
 
 > 🚀 Help me work seamlessly with open source sharing by [sponsoring me on GitHub](https://github.com/penumbra-x/.github/blob/main/profile/SPONSOR.md)
 
-An ergonomic, all-in-one `TLS`, `JA3`/`JA4`, and `HTTP2` fingerprint `HTTP` Client for spoofing any browser.
+An ergonomic, all-in-one `TLS`, `JA3`/`JA4`, and `HTTP2` fingerprint HTTP Client for spoofing any browser.
 
 - Plain, JSON, urlencoded, multipart bodies
 - Header Order
@@ -16,7 +17,6 @@ An ergonomic, all-in-one `TLS`, `JA3`/`JA4`, and `HTTP2` fingerprint `HTTP` Clie
 - HTTP Proxies
 - WebSocket Upgrade
 - HTTPS via BoringSSL
-- Preconfigured TLS and HTTP2 settings
 - Perfectly mimic Chrome, Safari, and Firefox
 
 Additional learning resources include:
@@ -38,12 +38,12 @@ rquest = "1.0.0"
 ```
 
 ```rust,no_run
-use rquest::Impersonate;
+use rquest::{Client, Impersonate};
 
 #[tokio::main]
 async fn main() -> Result<(), rquest::Error> {
     // Build a client to mimic Firefox133
-    let client = rquest::Client::builder()
+    let client = Client::builder()
         .impersonate(Impersonate::Firefox133)
         .build()?;
 
@@ -113,6 +113,10 @@ It also optimizes commonly used APIs and enhances compatibility with connection 
 
 Due to limited time for maintaining the synchronous APIs, only asynchronous APIs are supported. I may have to give up maintenance; if possible, please consider [sponsoring me](https://github.com/penumbra-x/.github/blob/main/profile/SPONSOR.md).
 
+## Performance
+
+`BoringSSL` is a fork of `OpenSSL` that is designed to be more secure and efficient. It is used by Google Chrome and Android, and is also used by Cloudflare. In addition to that, regarding the TLS parrot echo issue in Firefox, we haven’t encountered any serious problems with `BoringSSL` related to Golang [utls issue](https://github.com/refraction-networking/utls/issues/274).
+
 ## Connection Pool
 
 Regarding the design strategy of the connection pool, `rquest` and `reqwest` are implemented differently. `rquest` reconstructs the entire connection layer, treating each host with the same proxy or bound `IP`/`Interface` as the same connection, while `reqwest` treats each host as an independent connection. Specifically, the connection pool of `rquest` is managed based on the host and `Proxy`/`IP`/`Interface`, while the connection pool of `reqwest` is managed only by the host. In other words, when using `rquest`, you can flexibly switch between proxies, `IP` or `Interface` without affecting the management of the connection pool.
@@ -123,20 +127,45 @@ Regarding the design strategy of the connection pool, `rquest` and `reqwest` are
 
 By default, `rquest` uses Mozilla's root certificates through the `webpki-roots` crate. This is a static root certificate bundle that is not automatically updated. It also ignores any root certificates installed on the host running `rquest`, which may be a good thing or a bad thing, depending on your point of view. But you can turn off `default-features` to cancel the default certificate bundle, and the system default certificate path will be used to load the certificate. In addition, `rquest` also provides a certificate store for users to customize the update certificate.
 
-- [source code details](https://github.com/penumbra-x/rquest/blob/main/examples/set_native_root_cert.rs)
-
 ## Fingerprint
 
-- Customize TLS/HTTP2 fingerprint
+1. TLS/HTTP2 fingerprint
 
-Supports custom `TLS`/`HTTP2` fingerprint parameters (disabled by default). Unless you’re highly familiar with `TLS` and `HTTP2`, customization is not recommended, as it may cause unexpected issues. Basic device emulation types are provided by [default](https://github.com/penumbra-x/rquest/blob/07a18e81fdf1931e7c10bfbc23da622156a4dfae/src/mimic/mod.rs#L127).
+Supports custom `TLS`/`HTTP2` fingerprint parameters (disabled by default). Unless you’re highly familiar with `TLS` and `HTTP2`, customization is not recommended, as it may cause unexpected issues.
 
-- JA3/JA4/Akkmai fingerprint
+2. JA3/JA4/Akkmai fingerprint
 
 As `TLS` encryption technology becomes more and more sophisticated and HTTP2 becomes more popular, `JA3`/`JA4`/`Akkmai` fingerprints cannot simulate browser fingerprints very well, and the parsed parameters cannot perfectly imitate the browser's `TLS`/`HTTP2` configuration fingerprints. Therefore, `rquest` has not planned to support parsing `JA3`/`JA4`/`Akkmai` fingerprint strings for simulation, but encourages users to customize the configuration according to their own situation.
 
-Most of the `Akkmai` fingerprint strings obtained by users are not fully calculated. For example, the website: <https://tls.peet.ws/api/all>, where the Headers Frame lacks Priority and Stream ID. If I were the server, it would be easy to detect this. For details, please refer to HTTP2 Frame [Parsing](https://github.com/penumbra-x/pingly/blob/main/src/track/inspector/http2.rs)
+Most of the `Akkmai` fingerprint strings obtained by users are not fully calculated. For example, the [website](https://tls.peet.ws/api/all), where the Headers Frame lacks Priority and Stream ID. If I were the server, it would be easy to detect this. For details, please refer to HTTP2 [frame](https://datatracker.ietf.org/doc/html/rfc7540#section-6) [parser](https://github.com/0x676e67/pingly/blob/main/src/track/inspector/http2.rs)
 
+3. Default fingerprint
+
+<details>
+
+  <summary>Basic device emulation types are provided by default</summary>
+
+- **Chrome**
+
+`Chrome100`，`Chrome101`，`Chrome104`，`Chrome105`，`Chrome106`，`Chrome107`，`Chrome108`，`Chrome109`，`Chrome114`，`Chrome116`，`Chrome117`，`Chrome118`，`Chrome119`，`Chrome120`，`Chrome123`，`Chrome124`，`Chrome126`，`Chrome127`，`Chrome128`，`Chrome129`，`Chrome130`，`Chrome131`
+
+- **Edge**
+
+`Edge101`，`Edge122`，`Edge127`，`Edge131`
+
+- **Safari**
+
+`SafariIos17_2`，`SafariIos17_4_1`，`SafariIos16_5`，`Safari15_3`，`Safari15_5`，`Safari15_6_1`，`Safari16`，`Safari16_5`，`Safari17_0`，`Safari17_2_1`，`Safari17_4_1`，`Safari17_5`，`Safari18`，`SafariIPad18`, `Safari18_2`, `Safari18_1_1`
+
+- **OkHttp**
+
+`OkHttp3_9`，`OkHttp3_11`，`OkHttp3_13`，`OkHttp3_14`，`OkHttp4_9`，`OkHttp4_10`，`OkHttp5`
+
+- **Firefox**
+
+`Firefox109`, `Firefox117`, `Firefox128`, `Firefox133`
+
+</details>
 
 ## Requirement
 
