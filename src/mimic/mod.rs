@@ -65,13 +65,13 @@ pub struct ImpersonateSettings {
 #[inline]
 pub fn impersonate(
     ver: Impersonate,
-    with_headers: bool,
     impersonate_os: ImpersonateOs,
+    with_headers: bool,
 ) -> ImpersonateSettings {
     impersonate_match!(
         ver,
-        with_headers,
         impersonate_os,
+        with_headers,
         Chrome100 => v100::settings,
         Chrome101 => v101::settings,
         Chrome104 => v104::settings,

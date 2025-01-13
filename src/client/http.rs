@@ -910,7 +910,7 @@ impl ClientBuilder {
     /// A `ClientBuilder` instance with the applied settings.
     #[inline]
     pub fn impersonate(self, impersonate: Impersonate) -> ClientBuilder {
-        let settings = mimic::impersonate(impersonate, true, ImpersonateOs::default());
+        let settings = mimic::impersonate(impersonate, ImpersonateOs::default(), true);
         self.apply_impersonate_settings(settings)
     }
 
@@ -931,7 +931,7 @@ impl ClientBuilder {
         impersonate: Impersonate,
         impersonate_os: ImpersonateOs,
     ) -> ClientBuilder {
-        let settings = mimic::impersonate(impersonate, true, impersonate_os);
+        let settings = mimic::impersonate(impersonate, impersonate_os, true);
         self.apply_impersonate_settings(settings)
     }
 
@@ -947,7 +947,7 @@ impl ClientBuilder {
     /// A `ClientBuilder` instance with the applied settings.
     #[inline]
     pub fn impersonate_skip_headers(self, impersonate: Impersonate) -> ClientBuilder {
-        let settings = mimic::impersonate(impersonate, false, ImpersonateOs::default());
+        let settings = mimic::impersonate(impersonate, ImpersonateOs::default(), false);
         self.apply_impersonate_settings(settings)
     }
 
@@ -968,7 +968,7 @@ impl ClientBuilder {
         impersonate: Impersonate,
         impersonate_os: ImpersonateOs,
     ) -> ClientBuilder {
-        let settings = mimic::impersonate(impersonate, false, impersonate_os);
+        let settings = mimic::impersonate(impersonate, impersonate_os, false);
         self.apply_impersonate_settings(settings)
     }
 
@@ -1647,7 +1647,7 @@ impl Client {
     /// A mutable reference to the `Client` instance with the applied settings.
     #[inline]
     pub fn set_impersonate(&mut self, var: Impersonate) -> crate::Result<&mut Client> {
-        let settings = mimic::impersonate(var, true, ImpersonateOs::default());
+        let settings = mimic::impersonate(var, ImpersonateOs::default(), true);
         self.apply_impersonate_settings(settings)
     }
 
@@ -1668,7 +1668,7 @@ impl Client {
         var: Impersonate,
         os: ImpersonateOs,
     ) -> crate::Result<&mut Client> {
-        let settings = mimic::impersonate(var, true, os);
+        let settings = mimic::impersonate(var, os, true);
         self.apply_impersonate_settings(settings)
     }
 
@@ -1684,7 +1684,7 @@ impl Client {
     /// A mutable reference to the `Client` instance with the applied settings.
     #[inline]
     pub fn set_impersonate_skip_headers(&mut self, var: Impersonate) -> crate::Result<&mut Client> {
-        let settings = mimic::impersonate(var, false, ImpersonateOs::default());
+        let settings = mimic::impersonate(var, ImpersonateOs::default(), false);
         self.apply_impersonate_settings(settings)
     }
 
@@ -1705,7 +1705,7 @@ impl Client {
         var: Impersonate,
         os: ImpersonateOs,
     ) -> crate::Result<&mut Client> {
-        let settings = mimic::impersonate(var, false, os);
+        let settings = mimic::impersonate(var, os, false);
         self.apply_impersonate_settings(settings)
     }
 

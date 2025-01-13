@@ -14,7 +14,7 @@ macro_rules! mod_generator {
             use super::*;
 
             #[inline(always)]
-            pub fn settings(with_headers: bool, os_choice: ImpersonateOs) -> ImpersonateSettings {
+            pub fn settings(os_choice: ImpersonateOs, with_headers: bool) -> ImpersonateSettings {
                 #[allow(unreachable_patterns)]
                 match os_choice {
                     $(
