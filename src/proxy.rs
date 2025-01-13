@@ -376,7 +376,7 @@ impl Proxy {
         let in_no_proxy = self
             .no_proxy
             .as_ref()
-            .map_or(false, |np| np.contains(uri.host()));
+            .is_some_and(|np| np.contains(uri.host()));
         match self.intercept {
             Intercept::All(ref u) => {
                 if !in_no_proxy {

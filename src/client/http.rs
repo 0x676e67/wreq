@@ -117,6 +117,7 @@ struct Config {
     http2_max_retry_count: usize,
     tls_info: bool,
     connector_layers: Vec<BoxedConnectorLayer>,
+    http2: Option<Http2Settings>,
     tls: TlsSettings,
 }
 
@@ -170,11 +171,12 @@ impl ClientBuilder {
                 dns_overrides: HashMap::new(),
                 dns_resolver: None,
                 base_url: None,
-                builder: crate::util::client::Client::builder(TokioExecutor::new()),
+                builder: util::client::Client::builder(TokioExecutor::new()),
                 https_only: false,
                 http2_max_retry_count: 2,
                 tls_info: false,
                 connector_layers: Vec::new(),
+                http2: None,
                 tls: Default::default(),
             },
         }
@@ -237,7 +239,12 @@ impl ClientBuilder {
             .pool_timer(TokioTimer::new())
             .pool_idle_timeout(config.pool_idle_timeout)
             .pool_max_idle_per_host(config.pool_max_idle_per_host)
-            .pool_max_size(config.pool_max_size);
+            .pool_max_size(config.pool_max_size)
+            .with_http2_builder(|builder| {
+                if let Some(http2) = config.http2 {
+                    apply_http2_settings(builder, http2)
+                }
+            });
 
         let hyper = config
             .builder
@@ -935,24 +942,12 @@ impl ClientBuilder {
 
     /// Apply the given TLS settings and header function.
     fn apply_impersonate_settings(mut self, mut settings: ImpersonateSettings) -> ClientBuilder {
-        // Set the headers if needed
         if let Some(mut headers) = settings.headers {
             std::mem::swap(&mut self.config.headers, &mut headers);
         }
-
-        // Set the headers order if needed
         std::mem::swap(&mut self.config.headers_order, &mut settings.headers_order);
-
-        // Set the TLS settings
         std::mem::swap(&mut self.config.tls, &mut settings.tls);
-
-        // Set the http2 preference
-        if let Some(http2) = settings.http2 {
-            self.config
-                .builder
-                .with_http2_builder(|builder| apply_http2_settings(builder, http2));
-        }
-
+        std::mem::swap(&mut self.config.http2, &mut settings.http2);
         self
     }
 
@@ -1504,7 +1499,7 @@ impl Client {
 
     /// Set the cookie provider for this client.
     #[cfg(feature = "cookies")]
-    pub fn set_cookie_provider<C>(&mut self, cookie_store: Arc<C>) -> &mut Self
+    pub fn set_cookie_provider<C>(&mut self, cookie_store: Arc<C>) -> &mut Client
     where
         C: cookie::CookieStore + 'static,
     {
@@ -1512,13 +1507,12 @@ impl Client {
             &mut self.inner_mut().cookie_store,
             &mut Some(cookie_store as _),
         );
-
         self
     }
 
     /// Set the proxies for this client.
     #[inline]
-    pub fn set_proxies<P>(&mut self, proxies: P) -> &mut Self
+    pub fn set_proxies<P>(&mut self, proxies: P) -> &mut Client
     where
         P: Into<Option<Vec<Proxy>>>,
     {
@@ -1533,7 +1527,6 @@ impl Client {
                 inner.proxies.clear();
             }
         }
-
         self
     }
 
@@ -1543,7 +1536,7 @@ impl Client {
     ///
     /// Default is `None`.
     #[inline]
-    pub fn set_local_address<T>(&mut self, addr: T) -> &mut Self
+    pub fn set_local_address<T>(&mut self, addr: T) -> &mut Client
     where
         T: Into<Option<IpAddr>>,
     {
@@ -1554,7 +1547,7 @@ impl Client {
     /// Set that all sockets are bound to the configured IPv4 or IPv6 address
     /// (depending on host's preferences) before connection.
     #[inline]
-    pub fn set_local_addresses<V4, V6>(&mut self, ipv4: V4, ipv6: V6) -> &mut Self
+    pub fn set_local_addresses<V4, V6>(&mut self, ipv4: V4, ipv6: V6) -> &mut Client
     where
         V4: Into<Option<Ipv4Addr>>,
         V6: Into<Option<Ipv6Addr>>,
@@ -1566,7 +1559,7 @@ impl Client {
     cfg_bindable_device! {
         /// Bind to an interface by `SO_BINDTODEVICE`.
         #[inline]
-        pub fn set_interface<T>(&mut self, interface: T)  -> &mut Self
+        pub fn set_interface<T>(&mut self, interface: T)  -> &mut Client
         where
             T: Into<Cow<'static, str>>,
         {
@@ -1576,7 +1569,7 @@ impl Client {
     }
 
     /// Set the headers order for this client.
-    pub fn set_headers_order<T>(&mut self, order: T) -> &mut Self
+    pub fn set_headers_order<T>(&mut self, order: T) -> &mut Client
     where
         T: Into<Cow<'static, [HeaderName]>>,
     {
@@ -1585,29 +1578,28 @@ impl Client {
     }
 
     /// Set the redirect policy for this client.
-    pub fn set_redirect(&mut self, mut policy: redirect::Policy) -> &mut Self {
+    pub fn set_redirect(&mut self, mut policy: redirect::Policy) -> &mut Client {
         std::mem::swap(&mut self.inner_mut().redirect, &mut policy);
         self
     }
 
     /// Set the cross-origin proxy authorization for this client.
-    pub fn set_redirect_with_proxy_auth(&mut self, enabled: bool) -> &mut Self {
+    pub fn set_redirect_with_proxy_auth(&mut self, enabled: bool) -> &mut Client {
         self.inner_mut().redirect_with_proxy_auth = enabled;
         self
     }
 
     /// Set the bash url for this client.
-    pub fn set_base_url<U: IntoUrl>(&mut self, url: U) -> &mut Self {
+    pub fn set_base_url<U: IntoUrl>(&mut self, url: U) -> &mut Client {
         if let Ok(url) = url.into_url() {
             std::mem::swap(&mut self.inner_mut().base_url, &mut Some(url));
         }
-
         self
     }
 
     /// Set the impersonate for this client.
     #[inline]
-    pub fn set_impersonate(&mut self, var: Impersonate) -> crate::Result<&mut Self> {
+    pub fn set_impersonate(&mut self, var: Impersonate) -> crate::Result<&mut Client> {
         let settings = mimic::impersonate(var, true, ImpersonateOs::default());
         self.apply_impersonate_settings(settings)
     }
@@ -1618,14 +1610,14 @@ impl Client {
         &mut self,
         var: Impersonate,
         os: ImpersonateOs,
-    ) -> crate::Result<&mut Self> {
+    ) -> crate::Result<&mut Client> {
         let settings = mimic::impersonate(var, true, os);
         self.apply_impersonate_settings(settings)
     }
 
     /// Set the impersonate for this client skip setting the headers.
     #[inline]
-    pub fn set_impersonate_skip_headers(&mut self, var: Impersonate) -> crate::Result<&mut Self> {
+    pub fn set_impersonate_skip_headers(&mut self, var: Impersonate) -> crate::Result<&mut Client> {
         let settings = mimic::impersonate(var, false, ImpersonateOs::default());
         self.apply_impersonate_settings(settings)
     }
@@ -1636,7 +1628,7 @@ impl Client {
         &mut self,
         var: Impersonate,
         os: ImpersonateOs,
-    ) -> crate::Result<&mut Self> {
+    ) -> crate::Result<&mut Client> {
         let settings = mimic::impersonate(var, false, os);
         self.apply_impersonate_settings(settings)
     }
@@ -1647,7 +1639,7 @@ impl Client {
     pub fn set_impersonate_settings(
         &mut self,
         settings: ImpersonateSettings,
-    ) -> crate::Result<&mut Self> {
+    ) -> crate::Result<&mut Client> {
         self.apply_impersonate_settings(settings)
     }
 
@@ -1656,22 +1648,18 @@ impl Client {
     fn apply_impersonate_settings(
         &mut self,
         mut settings: ImpersonateSettings,
-    ) -> crate::Result<&mut Self> {
+    ) -> crate::Result<&mut Client> {
         let inner = self.inner_mut();
-
-        // Set the headers
+        
         if let Some(mut headers) = settings.headers {
             std::mem::swap(&mut inner.headers, &mut headers);
         }
 
-        // Set the headers order if needed
         std::mem::swap(&mut inner.headers_order, &mut settings.headers_order);
 
-        // Set the connector
         let connector = BoringTlsConnector::new(settings.tls)?;
         inner.hyper.with_connector(|c| c.set_connector(connector));
 
-        // Set the http2 preference
         if let Some(http2) = settings.http2 {
             inner
                 .hyper

@@ -102,10 +102,10 @@ impl NetworkScheme {
         #[inline]
         pub fn take_interface(&mut self) -> Option<std::borrow::Cow<'static, str>> {
             {
-                return match self {
+                match self {
                     NetworkScheme::Scheme { interface, .. } => interface.take(),
                     _ => None,
-                };
+                }
             }
         }
     }
