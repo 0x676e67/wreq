@@ -898,14 +898,33 @@ impl ClientBuilder {
 
     // TLS/HTTP2 mimic options
 
-    /// Sets the necessary values to mimic the specified impersonate version, including headers and TLS settings.
+    /// Configures the client to mimic the specified impersonate version.
+    /// This includes setting the necessary headers and TLS settings.
+    ///
+    /// # Arguments
+    ///
+    /// * `impersonate` - The impersonate version to mimic.
+    ///
+    /// # Returns
+    ///
+    /// A `ClientBuilder` instance with the applied settings.
     #[inline]
     pub fn impersonate(self, impersonate: Impersonate) -> ClientBuilder {
         let settings = mimic::impersonate(impersonate, true, ImpersonateOs::default());
         self.apply_impersonate_settings(settings)
     }
 
-    /// Sets the necessary values to mimic the specified impersonate version, including headers, TLS settings and OS.
+    /// Configures the client to mimic the specified impersonate version with a specific OS.
+    /// This includes setting the necessary headers, TLS settings, and OS.
+    ///
+    /// # Arguments
+    ///
+    /// * `impersonate` - The impersonate version to mimic.
+    /// * `impersonate_os` - The OS to mimic.
+    ///
+    /// # Returns
+    ///
+    /// A `ClientBuilder` instance with the applied settings.
     #[inline]
     pub fn impersonate_with_os(
         self,
@@ -916,14 +935,33 @@ impl ClientBuilder {
         self.apply_impersonate_settings(settings)
     }
 
-    /// Sets the necessary values to mimic the specified impersonate version, skipping header configuration.
+    /// Configures the client to mimic the specified impersonate version, skipping header configuration.
+    /// This includes setting the necessary TLS settings.
+    ///
+    /// # Arguments
+    ///
+    /// * `impersonate` - The impersonate version to mimic.
+    ///
+    /// # Returns
+    ///
+    /// A `ClientBuilder` instance with the applied settings.
     #[inline]
     pub fn impersonate_skip_headers(self, impersonate: Impersonate) -> ClientBuilder {
         let settings = mimic::impersonate(impersonate, false, ImpersonateOs::default());
         self.apply_impersonate_settings(settings)
     }
 
-    /// Sets the necessary values to mimic the specified impersonate version, with os and skipping header configuration.
+    /// Configures the client to mimic the specified impersonate version with a specific OS, skipping header configuration.
+    /// This includes setting the necessary TLS settings and OS.
+    ///
+    /// # Arguments
+    ///
+    /// * `impersonate` - The impersonate version to mimic.
+    /// * `impersonate_os` - The OS to mimic.
+    ///
+    /// # Returns
+    ///
+    /// A `ClientBuilder` instance with the applied settings.
     #[inline]
     pub fn impersonate_with_os_skip_headers(
         self,
@@ -1597,14 +1635,33 @@ impl Client {
         self
     }
 
-    /// Set the impersonate for this client.
+    /// Set the impersonate version for this client.
+    /// This includes setting the necessary headers and TLS settings.
+    ///
+    /// # Arguments
+    ///
+    /// * `var` - The impersonate version to set.
+    ///
+    /// # Returns
+    ///
+    /// A mutable reference to the `Client` instance with the applied settings.
     #[inline]
     pub fn set_impersonate(&mut self, var: Impersonate) -> crate::Result<&mut Client> {
         let settings = mimic::impersonate(var, true, ImpersonateOs::default());
         self.apply_impersonate_settings(settings)
     }
 
-    /// Set the impersonate with os for this client.
+    /// Set the impersonate version with a specific OS for this client.
+    /// This includes setting the necessary headers, TLS settings, and OS.
+    ///
+    /// # Arguments
+    ///
+    /// * `var` - The impersonate version to set.
+    /// * `os` - The OS to set.
+    ///
+    /// # Returns
+    ///
+    /// A mutable reference to the `Client` instance with the applied settings.
     #[inline]
     pub fn set_impersonate_with_os(
         &mut self,
@@ -1615,14 +1672,33 @@ impl Client {
         self.apply_impersonate_settings(settings)
     }
 
-    /// Set the impersonate for this client skip setting the headers.
+    /// Set the impersonate version for this client, skipping header configuration.
+    /// This includes setting the necessary TLS settings.
+    ///
+    /// # Arguments
+    ///
+    /// * `var` - The impersonate version to set.
+    ///
+    /// # Returns
+    ///
+    /// A mutable reference to the `Client` instance with the applied settings.
     #[inline]
     pub fn set_impersonate_skip_headers(&mut self, var: Impersonate) -> crate::Result<&mut Client> {
         let settings = mimic::impersonate(var, false, ImpersonateOs::default());
         self.apply_impersonate_settings(settings)
     }
 
-    /// Set the impersonate for this client skip setting the headers.
+    /// Set the impersonate version with a specific OS for this client, skipping header configuration.
+    /// This includes setting the necessary TLS settings and OS.
+    ///
+    /// # Arguments
+    ///
+    /// * `var` - The impersonate version to set.
+    /// * `os` - The OS to set.
+    ///
+    /// # Returns
+    ///
+    /// A mutable reference to the `Client` instance with the applied settings.
     #[inline]
     pub fn set_impersonate_with_os_skip_headers(
         &mut self,
@@ -1650,7 +1726,7 @@ impl Client {
         mut settings: ImpersonateSettings,
     ) -> crate::Result<&mut Client> {
         let inner = self.inner_mut();
-        
+
         if let Some(mut headers) = settings.headers {
             std::mem::swap(&mut inner.headers, &mut headers);
         }
