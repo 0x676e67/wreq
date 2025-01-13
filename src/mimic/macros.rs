@@ -170,12 +170,12 @@ macro_rules! impl_from_str {
 #[cfg(feature = "impersonate_str")]
 macro_rules! impl_os_from_str {
     ($(($variant:ident, $string:expr)),* $(,)?) => {
-        impl std::str::FromStr for ImpersonateOs {
+        impl std::str::FromStr for ImpersonateOS {
             type Err = String;
 
             fn from_str(s: &str) -> Result<Self, Self::Err> {
                 match s {
-                    $( $string => Ok(ImpersonateOs::$variant), )*
+                    $( $string => Ok(ImpersonateOS::$variant), )*
                     _ => Err(format!("Unknown impersonate os: {}", s)),
                 }
             }

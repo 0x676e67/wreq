@@ -8,7 +8,7 @@ macro_rules! mod_generator {
             use super::*;
 
             #[inline(always)]
-            pub fn settings(_: ImpersonateOs, with_headers: bool) -> ImpersonateSettings {
+            pub fn settings(_: ImpersonateOS, with_headers: bool) -> ImpersonateSettings {
                 ImpersonateSettings::builder()
                     .tls(tls_settings!($cipher_list))
                     .http2(http2_settings!())

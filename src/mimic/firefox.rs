@@ -14,11 +14,11 @@ macro_rules! mod_generator {
             use super::*;
 
             #[inline(always)]
-            pub fn settings(os_choice: ImpersonateOs, with_headers: bool) -> ImpersonateSettings {
+            pub fn settings(os_choice: ImpersonateOS, with_headers: bool) -> ImpersonateSettings {
                 #[allow(unreachable_patterns)]
                 match os_choice {
                     $(
-                        ImpersonateOs::$other_os => {
+                        ImpersonateOS::$other_os => {
                             ImpersonateSettings::builder()
                                 .tls($tls_settings)
                                 .http2($http2_settings)
@@ -388,7 +388,7 @@ mod_generator!(
         (Windows,
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/109.0"
         ),
-        (MacOs,
+        (MacOS,
             "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_17; rv:109.0) Gecko/20000101 Firefox/109.0"
         ),
         (Android,
@@ -397,7 +397,7 @@ mod_generator!(
         (Linux,
             "Mozilla/5.0 (X11; Linux i686; rv:109.0) Gecko/20100101 Firefox/109.0"
         ),
-        (Ios,
+        (IOS,
             "Mozilla/5.0 (iPad; CPU OS 13_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) FxiOS/109.0 Mobile/15E148 Safari/605.1.15"
         )
     ]
@@ -412,7 +412,7 @@ mod_generator!(
         (Windows,
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:117.0) Gecko/20100101 Firefox/117.0"
         ),
-        (MacOs,
+        (MacOS,
             "Mozilla/5.0 (Macintosh; Intel Mac OS X 11_16_1; rv:117.0) Gecko/20010101 Firefox/117.0"
         ),
         (Android,
@@ -421,7 +421,7 @@ mod_generator!(
         (Linux,
             "Mozilla/5.0 (X11; Linux i686; rv:117.0) Gecko/20100101 Firefox/117.0"
         ),
-        (Ios,
+        (IOS,
             "Mozilla/5.0 (iPhone; CPU iPhone OS 14_7_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) FxiOS/117.0 Mobile/15E148 Safari/605.1.15"
         )
     ]
@@ -442,7 +442,7 @@ mod_generator!(
         (Android,
             "Mozilla/5.0 (Android 13; Mobile; rv:128.0) Gecko/128.0 Firefox/128.0"
         ),
-        (Ios,
+        (IOS,
             "Mozilla/5.0 (iPhone; CPU iPhone OS 17_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) FxiOS/128.0 Mobile/15E148 Safari/605.1.15"
         ),
         (Linux,
@@ -469,7 +469,7 @@ mod_generator!(
         (Linux,
             "Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:133.0) Gecko/20100101 Firefox/133.0"
         ),
-        (Ios,
+        (IOS,
             "Mozilla/5.0 (iPhone; CPU iPhone OS 18_2_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) FxiOS/133.4 Mobile/15E148 Safari/605.1.15"
         )
     ]

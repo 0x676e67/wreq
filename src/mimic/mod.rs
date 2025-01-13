@@ -21,7 +21,7 @@ use impersonate_imports::*;
 use tls_imports::TlsSettings;
 
 mod impersonate_imports {
-    pub use crate::{http2::Http2Settings, mimic::ImpersonateOs, mimic::ImpersonateSettings};
+    pub use crate::{http2::Http2Settings, mimic::ImpersonateOS, mimic::ImpersonateSettings};
     pub use http::{
         header::{ACCEPT, ACCEPT_LANGUAGE, UPGRADE_INSECURE_REQUESTS, USER_AGENT},
         HeaderMap, HeaderName, HeaderValue,
@@ -65,7 +65,7 @@ pub struct ImpersonateSettings {
 #[inline]
 pub fn impersonate(
     ver: Impersonate,
-    impersonate_os: ImpersonateOs,
+    impersonate_os: ImpersonateOS,
     with_headers: bool,
 ) -> ImpersonateSettings {
     impersonate_match!(
@@ -195,30 +195,30 @@ pub enum Impersonate {
 }
 
 #[derive(Clone, Copy, Debug, Default)]
-pub enum ImpersonateOs {
+pub enum ImpersonateOS {
     Windows,
     #[default]
-    MacOs,
+    MacOS,
     Linux,
     Android,
-    Ios,
+    IOS,
 }
 
-impl ImpersonateOs {
+impl ImpersonateOS {
     #[inline]
     fn get_impersonate_platform(&self) -> &'static str {
         match self {
-            ImpersonateOs::MacOs => "\"macOS\"",
-            ImpersonateOs::Linux => "\"Linux\"",
-            ImpersonateOs::Windows => "\"Windows\"",
-            ImpersonateOs::Android => "\"Android\"",
-            ImpersonateOs::Ios => "\"iOS\"",
+            ImpersonateOS::MacOS => "\"macOS\"",
+            ImpersonateOS::Linux => "\"Linux\"",
+            ImpersonateOS::Windows => "\"Windows\"",
+            ImpersonateOS::Android => "\"Android\"",
+            ImpersonateOS::IOS => "\"iOS\"",
         }
     }
 
     #[inline]
     fn is_mobile(&self) -> bool {
-        matches!(self, ImpersonateOs::Android | ImpersonateOs::Ios)
+        matches!(self, ImpersonateOS::Android | ImpersonateOS::IOS)
     }
 }
 
@@ -286,8 +286,8 @@ impl_from_str! {
 #[cfg(feature = "impersonate_str")]
 impl_os_from_str! {
     (Windows, "windows"),
-    (MacOs, "macos"),
+    (MacOS, "macos"),
     (Linux, "linux"),
     (Android, "android"),
-    (Ios, "ios"),
+    (IOS, "ios"),
 }

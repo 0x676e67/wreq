@@ -7,7 +7,7 @@ use http::header::{CONTENT_LENGTH, CONTENT_TYPE, TRANSFER_ENCODING};
 #[cfg(feature = "json")]
 use std::collections::HashMap;
 
-use rquest::mimic::ImpersonateOs;
+use rquest::mimic::ImpersonateOS;
 use rquest::{Client, Impersonate};
 
 #[tokio::test]
@@ -510,7 +510,7 @@ async fn test_client_os_spoofing() {
 
     let url = format!("http://{}/ua", server.addr());
     let res = Client::builder()
-        .impersonate_with_os(Impersonate::Chrome131, ImpersonateOs::Linux)
+        .impersonate_with_os(Impersonate::Chrome131, ImpersonateOS::Linux)
         .build()
         .expect("Unable to build client")
         .get(&url)
