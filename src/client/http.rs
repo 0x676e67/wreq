@@ -334,7 +334,7 @@ impl ClientBuilder {
             Ok(value) => {
                 self.config
                     .headers
-                    .get_or_insert_default()
+                    .get_or_insert_with(Default::default)
                     .insert(USER_AGENT, value);
             }
             Err(e) => {
