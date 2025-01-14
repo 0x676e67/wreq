@@ -73,6 +73,7 @@ async fn test_accept_encoding_header_is_not_changed_if_set() {
 
     let res = client
         .get(format!("http://{}/accept-encoding", server.addr()))
+        .header(rquest::header::ACCEPT, "*/*")
         .header(
             rquest::header::ACCEPT_ENCODING,
             rquest::header::HeaderValue::from_static("identity"),

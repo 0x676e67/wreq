@@ -51,6 +51,7 @@ async fn auto_headers() {
         .build()
         .unwrap()
         .get(&url)
+        .header(rquest::header::ACCEPT, "*/*")
         .send()
         .await
         .unwrap();
