@@ -44,7 +44,7 @@ use crate::dns::{gai::GaiResolver, DnsResolverWithOverrides, DynResolver, Resolv
 use crate::into_url::try_uri;
 use crate::mimic::{self, Impersonate, ImpersonateOS, ImpersonateSettings};
 use crate::redirect;
-use crate::tls::{self, AlpnProtos, BoringTlsConnector, TlsSettings};
+use crate::tls::{self, AlpnProtos, BoringTlsConnector};
 use crate::{cfg_bindable_device, error, impl_debug};
 use crate::{IntoUrl, Method, Proxy, StatusCode, Url};
 #[cfg(feature = "hickory-dns")]
@@ -86,8 +86,6 @@ type CookieStoreOption = ();
 struct Config {
     // NOTE: When adding a new field, update `fmt::Debug for ClientBuilder`
     accepts: Accepts,
-    headers: Option<HeaderMap>,
-    headers_order: Option<Cow<'static, [HeaderName]>>,
     connect_timeout: Option<Duration>,
     connection_verbose: bool,
     pool_idle_timeout: Option<Duration>,
@@ -117,8 +115,7 @@ struct Config {
     http2_max_retry_count: usize,
     tls_info: bool,
     connector_layers: Vec<BoxedConnectorLayer>,
-    http2: Option<Http2Settings>,
-    tls: TlsSettings,
+    settings: ImpersonateSettings,
 }
 
 impl Default for ClientBuilder {
@@ -136,8 +133,6 @@ impl ClientBuilder {
             config: Config {
                 error: None,
                 accepts: Accepts::default(),
-                headers: None,
-                headers_order: None,
                 connect_timeout: None,
                 connection_verbose: false,
                 pool_idle_timeout: Some(Duration::from_secs(90)),
@@ -168,8 +163,7 @@ impl ClientBuilder {
                 http2_max_retry_count: 2,
                 tls_info: false,
                 connector_layers: Vec::new(),
-                http2: None,
-                tls: Default::default(),
+                settings: ImpersonateSettings::default(),
             },
         }
     }
@@ -217,7 +211,7 @@ impl ClientBuilder {
             let mut http = HttpConnector::new_with_resolver(DynResolver::new(resolver));
             http.set_connect_timeout(config.connect_timeout);
 
-            let tls = BoringTlsConnector::new(config.tls)?;
+            let tls = BoringTlsConnector::new(config.settings.tls)?;
             ConnectorBuilder::new(http, tls, config.nodelay, config.tls_info)
         };
 
@@ -233,7 +227,7 @@ impl ClientBuilder {
             .pool_max_idle_per_host(config.pool_max_idle_per_host)
             .pool_max_size(config.pool_max_size)
             .with_http2_builder(|builder| {
-                if let Some(http2) = config.http2 {
+                if let Some(http2) = config.settings.http2 {
                     apply_http2_settings(builder, http2)
                 }
             });
@@ -248,8 +242,8 @@ impl ClientBuilder {
                 #[cfg(feature = "cookies")]
                 cookie_store: config.cookie_store,
                 hyper,
-                headers: config.headers.unwrap_or_default(),
-                headers_order: config.headers_order,
+                headers: config.settings.headers.unwrap_or_default(),
+                headers_order: config.settings.headers_order,
                 redirect: config.redirect_policy,
                 redirect_with_proxy_auth: config.redirect_with_proxy_auth,
                 referer: config.referer,
@@ -327,6 +321,7 @@ impl ClientBuilder {
         match value.try_into() {
             Ok(value) => {
                 self.config
+                    .settings
                     .headers
                     .get_or_insert_with(Default::default)
                     .insert(USER_AGENT, value);
@@ -383,7 +378,7 @@ impl ClientBuilder {
     /// # }
     /// ```
     pub fn default_headers(mut self, headers: HeaderMap) -> ClientBuilder {
-        std::mem::swap(&mut self.config.headers, &mut Some(headers));
+        std::mem::swap(&mut self.config.settings.headers, &mut Some(headers));
         self
     }
 
@@ -394,7 +389,7 @@ impl ClientBuilder {
     /// The host header needs to be manually inserted if you want to modify its order.
     /// Otherwise it will be inserted by hyper after sorting.
     pub fn headers_order(mut self, order: impl Into<Cow<'static, [HeaderName]>>) -> ClientBuilder {
-        self.config.headers_order = Some(order.into());
+        self.config.settings.headers_order = Some(order.into());
         self
     }
 
@@ -756,10 +751,9 @@ impl ClientBuilder {
     }
 
     /// Only use HTTP/1.
-    /// Default is Http/1.
     pub fn http1_only(mut self) -> ClientBuilder {
         {
-            self.config.tls.alpn_protos = AlpnProtos::Http1;
+            self.config.settings.tls.alpn_protos = AlpnProtos::Http1;
         }
 
         self.config.builder.http2_only(false);
@@ -769,7 +763,7 @@ impl ClientBuilder {
     /// Only use HTTP/2.
     pub fn http2_only(mut self) -> ClientBuilder {
         {
-            self.config.tls.alpn_protos = AlpnProtos::Http2;
+            self.config.settings.tls.alpn_protos = AlpnProtos::Http2;
         }
 
         self.config.builder.http2_only(true);
@@ -782,7 +776,11 @@ impl ClientBuilder {
         self
     }
 
-    /// With http1 builder
+    /// Configures the HTTP/1 builder with the provided closure.
+    ///
+    /// This method allows you to customize the HTTP/1 builder by passing a closure
+    /// that modifies the builder. The closure receives a mutable reference to the
+    /// HTTP/1 builder, allowing you to set various options.
     ///
     /// # Example
     /// ```
@@ -792,6 +790,14 @@ impl ClientBuilder {
     ///     })
     ///     .build()?;
     /// ```
+    ///
+    /// # Arguments
+    ///
+    /// * `f` - A closure that takes a mutable reference to an `http1::Builder` and modifies it.
+    ///
+    /// # Returns
+    ///
+    /// * `ClientBuilder` - The modified client builder.
     pub fn with_http1_builder<F>(mut self, f: F) -> ClientBuilder
     where
         F: FnOnce(&mut http1::Builder),
@@ -800,7 +806,11 @@ impl ClientBuilder {
         self
     }
 
-    /// With http2 builder
+    /// Configures the HTTP/2 builder with the provided closure.
+    ///
+    /// This method allows you to customize the HTTP/2 builder by passing a closure
+    /// that modifies the builder. The closure receives a mutable reference to the
+    /// HTTP/2 builder, allowing you to set various options.
     ///
     /// # Example
     /// ```
@@ -810,6 +820,14 @@ impl ClientBuilder {
     ///     })
     ///     .build()?;
     /// ```
+    ///
+    /// # Arguments
+    ///
+    /// * `f` - A closure that takes a mutable reference to an `http2::Builder<Exec>` and modifies it.
+    ///
+    /// # Returns
+    ///
+    /// * `ClientBuilder` - The modified client builder.
     pub fn with_http2_builder<F>(mut self, f: F) -> ClientBuilder
     where
         F: FnOnce(&mut http2::Builder<Exec>),
@@ -973,29 +991,27 @@ impl ClientBuilder {
     }
 
     /// Apply the given TLS settings and header function.
+    #[inline(always)]
     fn apply_impersonate_settings(mut self, mut settings: ImpersonateSettings) -> ClientBuilder {
-        std::mem::swap(&mut self.config.headers, &mut settings.headers);
-        std::mem::swap(&mut self.config.headers_order, &mut settings.headers_order);
-        std::mem::swap(&mut self.config.tls, &mut settings.tls);
-        std::mem::swap(&mut self.config.http2, &mut settings.http2);
+        std::mem::swap(&mut self.config.settings, &mut settings);
         self
     }
 
     /// Enable Encrypted Client Hello (Secure SNI)
     pub fn enable_ech_grease(mut self, enabled: bool) -> ClientBuilder {
-        self.config.tls.enable_ech_grease = enabled;
+        self.config.settings.tls.enable_ech_grease = enabled;
         self
     }
 
     /// Enable TLS permute_extensions
     pub fn permute_extensions(mut self, enabled: bool) -> ClientBuilder {
-        self.config.tls.permute_extensions = Some(enabled);
+        self.config.settings.tls.permute_extensions = Some(enabled);
         self
     }
 
     /// Enable TLS pre_shared_key
     pub fn pre_shared_key(mut self, enabled: bool) -> ClientBuilder {
-        self.config.tls.pre_shared_key = enabled;
+        self.config.settings.tls.pre_shared_key = enabled;
         self
     }
 
@@ -1015,7 +1031,7 @@ impl ClientBuilder {
     ///
     /// feature to be enabled.
     pub fn danger_accept_invalid_certs(mut self, accept_invalid_certs: bool) -> ClientBuilder {
-        self.config.tls.certs_verification = !accept_invalid_certs;
+        self.config.settings.tls.certs_verification = !accept_invalid_certs;
         self
     }
 
@@ -1023,7 +1039,7 @@ impl ClientBuilder {
     ///
     /// Defaults to `true`.
     pub fn tls_sni(mut self, tls_sni: bool) -> ClientBuilder {
-        self.config.tls.tls_sni = tls_sni;
+        self.config.settings.tls.tls_sni = tls_sni;
         self
     }
 
@@ -1037,7 +1053,7 @@ impl ClientBuilder {
     /// used, *any* valid certificate for *any* site will be trusted for use from any other. This
     /// introduces a significant vulnerability to man-in-the-middle attacks.
     pub fn verify_hostname(mut self, verify_hostname: bool) -> ClientBuilder {
-        self.config.tls.verify_hostname = verify_hostname;
+        self.config.settings.tls.verify_hostname = verify_hostname;
         self
     }
 
@@ -1056,7 +1072,7 @@ impl ClientBuilder {
     ///
     /// feature to be enabled.
     pub fn min_tls_version(mut self, version: tls::TlsVersion) -> ClientBuilder {
-        self.config.tls.min_tls_version = Some(version);
+        self.config.settings.tls.min_tls_version = Some(version);
         self
     }
 
@@ -1075,7 +1091,7 @@ impl ClientBuilder {
     ///
     /// feature to be enabled.
     pub fn max_tls_version(mut self, version: tls::TlsVersion) -> ClientBuilder {
-        self.config.tls.max_tls_version = Some(version);
+        self.config.settings.tls.max_tls_version = Some(version);
         self
     }
 
@@ -1099,7 +1115,7 @@ impl ClientBuilder {
 
     /// Set root certificate store.
     pub fn root_certs_store(mut self, store: impl Into<tls::RootCertsStore>) -> ClientBuilder {
-        self.config.tls.root_certs_store = store.into();
+        self.config.settings.tls.root_certs_store = store.into();
         self
     }
 
@@ -1847,8 +1863,6 @@ impl_debug!(
     Config,
     {
         accepts,
-        headers,
-        headers_order,
         proxies,
         redirect_policy,
         accepts,
@@ -1860,7 +1874,8 @@ impl_debug!(
         network_scheme,
         dns_overrides,
         base_url,
-        builder
+        builder,
+        settings
     }
 );
 

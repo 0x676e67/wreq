@@ -48,7 +48,7 @@ mod http2_imports {
     pub use std::sync::LazyLock;
 }
 
-#[derive(typed_builder::TypedBuilder, Debug)]
+#[derive(typed_builder::TypedBuilder, Default, Debug)]
 pub struct ImpersonateSettings {
     #[builder(setter(into))]
     pub tls: TlsSettings,

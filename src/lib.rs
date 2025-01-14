@@ -332,9 +332,6 @@ pub use self::client::websocket::{
     CloseCode, Message, WebSocket, WebSocketRequestBuilder, WebSocketResponse,
 };
 pub use self::client::{Body, Client, ClientBuilder, Request, RequestBuilder, Response, Upgraded};
-#[cfg(not(feature = "impersonate_settings"))]
-pub use self::mimic::{Impersonate, ImpersonateOS};
-#[cfg(feature = "impersonate_settings")]
 pub use self::mimic::{Impersonate, ImpersonateOS, ImpersonateSettings};
 pub use self::proxy::{NoProxy, Proxy};
 pub use self::tls::{
