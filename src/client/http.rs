@@ -16,8 +16,8 @@ use crate::util::{
 };
 use bytes::Bytes;
 use http::header::{
-    Entry, HeaderMap, HeaderValue, ACCEPT, ACCEPT_ENCODING, CONTENT_ENCODING, CONTENT_LENGTH,
-    CONTENT_TYPE, LOCATION, PROXY_AUTHORIZATION, RANGE, REFERER, TRANSFER_ENCODING, USER_AGENT,
+    Entry, HeaderMap, HeaderValue, ACCEPT_ENCODING, CONTENT_ENCODING, CONTENT_LENGTH, CONTENT_TYPE,
+    LOCATION, PROXY_AUTHORIZATION, RANGE, REFERER, TRANSFER_ENCODING, USER_AGENT,
 };
 use http::uri::Scheme;
 use http::{HeaderName, Uri, Version};
@@ -187,12 +187,6 @@ impl ClientBuilder {
             return Err(err);
         }
 
-        let headers = config.headers.unwrap_or_else(|| {
-            let mut headers = HeaderMap::with_capacity(2);
-            headers.insert(ACCEPT, HeaderValue::from_static("*/*"));
-            headers
-        });
-
         let mut proxies = config.proxies;
         if config.auto_sys_proxy {
             proxies.push(Proxy::system());
@@ -254,7 +248,7 @@ impl ClientBuilder {
                 #[cfg(feature = "cookies")]
                 cookie_store: config.cookie_store,
                 hyper,
-                headers,
+                headers: config.headers.unwrap_or_default(),
                 headers_order: config.headers_order,
                 redirect: config.redirect_policy,
                 redirect_with_proxy_auth: config.redirect_with_proxy_auth,
