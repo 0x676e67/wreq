@@ -1,7 +1,7 @@
 use std::borrow::Cow;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::num::NonZeroUsize;
-use std::sync::{Arc, LazyLock};
+use std::sync::Arc;
 use std::time::Duration;
 use std::{collections::HashMap, convert::TryInto, net::SocketAddr};
 use std::{fmt, str};
@@ -86,7 +86,7 @@ type CookieStoreOption = ();
 struct Config {
     // NOTE: When adding a new field, update `fmt::Debug for ClientBuilder`
     accepts: Accepts,
-    headers: Cow<'static, HeaderMap>,
+    headers: Option<HeaderMap>,
     headers_order: Option<Cow<'static, [HeaderName]>>,
     connect_timeout: Option<Duration>,
     connection_verbose: bool,
@@ -132,19 +132,11 @@ impl ClientBuilder {
     ///
     /// This is the same as `Client::builder()`.
     pub fn new() -> ClientBuilder {
-        // NOTE: This is a hack to ensure that the default headers are always the same
-        // across all instances of ClientBuilder.
-        static DEFAULT_HEADERS: LazyLock<HeaderMap> = LazyLock::new(|| {
-            let mut headers = HeaderMap::with_capacity(2);
-            headers.insert(ACCEPT, HeaderValue::from_static("*/*"));
-            headers
-        });
-
         ClientBuilder {
             config: Config {
                 error: None,
                 accepts: Accepts::default(),
-                headers: Cow::Borrowed(&*DEFAULT_HEADERS),
+                headers: None,
                 headers_order: None,
                 connect_timeout: None,
                 connection_verbose: false,
@@ -194,6 +186,12 @@ impl ClientBuilder {
         if let Some(err) = config.error {
             return Err(err);
         }
+
+        let headers = config.headers.unwrap_or_else(|| {
+            let mut headers = HeaderMap::with_capacity(2);
+            headers.insert(ACCEPT, HeaderValue::from_static("*/*"));
+            headers
+        });
 
         let mut proxies = config.proxies;
         if config.auto_sys_proxy {
@@ -256,7 +254,7 @@ impl ClientBuilder {
                 #[cfg(feature = "cookies")]
                 cookie_store: config.cookie_store,
                 hyper,
-                headers: config.headers,
+                headers,
                 headers_order: config.headers_order,
                 redirect: config.redirect_policy,
                 redirect_with_proxy_auth: config.redirect_with_proxy_auth,
@@ -334,7 +332,10 @@ impl ClientBuilder {
     {
         match value.try_into() {
             Ok(value) => {
-                self.config.headers.to_mut().insert(USER_AGENT, value);
+                self.config
+                    .headers
+                    .get_or_insert_default()
+                    .insert(USER_AGENT, value);
             }
             Err(e) => {
                 self.config.error = Some(crate::error::builder(e.into()));
@@ -387,9 +388,8 @@ impl ClientBuilder {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn default_headers(mut self, mut headers: HeaderMap) -> ClientBuilder {
-        let headers_mut = self.config.headers.to_mut();
-        std::mem::swap(headers_mut, &mut headers);
+    pub fn default_headers(mut self, headers: HeaderMap) -> ClientBuilder {
+        std::mem::swap(&mut self.config.headers, &mut Some(headers));
         self
     }
 
@@ -980,9 +980,7 @@ impl ClientBuilder {
 
     /// Apply the given TLS settings and header function.
     fn apply_impersonate_settings(mut self, mut settings: ImpersonateSettings) -> ClientBuilder {
-        if let Some(mut headers) = settings.headers {
-            std::mem::swap(&mut self.config.headers, &mut headers);
-        }
+        std::mem::swap(&mut self.config.headers, &mut settings.headers);
         std::mem::swap(&mut self.config.headers_order, &mut settings.headers_order);
         std::mem::swap(&mut self.config.tls, &mut settings.tls);
         std::mem::swap(&mut self.config.http2, &mut settings.http2);
@@ -1484,7 +1482,7 @@ impl Client {
     ///
     /// A mutable reference to the `HeaderMap` containing the headers for this client.
     pub fn headers_mut(&mut self) -> &mut HeaderMap {
-        self.inner_mut().headers.to_mut()
+        &mut self.inner_mut().headers
     }
 
     /// Returns a `String` of the header-value of all `Cookie` in a `Url`.
@@ -1877,7 +1875,7 @@ struct ClientRef {
     accepts: Accepts,
     #[cfg(feature = "cookies")]
     cookie_store: Option<Arc<dyn cookie::CookieStore>>,
-    headers: Cow<'static, HeaderMap>,
+    headers: HeaderMap,
     headers_order: Option<Cow<'static, [HeaderName]>>,
     hyper: HyperClient,
     redirect: redirect::Policy,

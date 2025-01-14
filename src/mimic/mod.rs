@@ -57,21 +57,17 @@ pub struct ImpersonateSettings {
     pub http2: Option<Http2Settings>,
 
     #[builder(default, setter(into))]
-    pub headers: Option<Cow<'static, HeaderMap>>,
+    pub headers: Option<HeaderMap>,
 
     #[builder(default, setter(into))]
     pub headers_order: Option<Cow<'static, [HeaderName]>>,
 }
 
 #[inline]
-pub fn impersonate(
-    ver: Impersonate,
-    impersonate_os: ImpersonateOS,
-    with_headers: bool,
-) -> ImpersonateSettings {
+pub fn impersonate(ver: Impersonate, os: ImpersonateOS, with_headers: bool) -> ImpersonateSettings {
     impersonate_match!(
         ver,
-        impersonate_os,
+        os,
         with_headers,
         Chrome100 => v100::settings,
         Chrome101 => v101::settings,

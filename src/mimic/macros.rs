@@ -2,20 +2,14 @@
 macro_rules! conditional_headers {
     ($with_headers:expr, $initializer:expr) => {
         if $with_headers {
-            use std::borrow::Cow;
-            use std::sync::LazyLock;
-            static HEADER_INITIALIZER: LazyLock<HeaderMap> = LazyLock::new($initializer);
-            Some(Cow::Borrowed(&*HEADER_INITIALIZER))
+            Some($initializer())
         } else {
             None
         }
     };
     ($with_headers:expr, $initializer:expr, $ua:expr) => {
         if $with_headers {
-            use std::borrow::Cow;
-            use std::sync::LazyLock;
-            static HEADER_INITIALIZER: LazyLock<HeaderMap> = LazyLock::new(|| $initializer($ua));
-            Some(Cow::Borrowed(&*HEADER_INITIALIZER))
+            Some($initializer($ua))
         } else {
             None
         }
