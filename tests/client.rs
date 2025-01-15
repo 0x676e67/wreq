@@ -7,7 +7,7 @@ use http::header::{CONTENT_LENGTH, CONTENT_TYPE, TRANSFER_ENCODING};
 #[cfg(feature = "json")]
 use std::collections::HashMap;
 
-use rquest::{Client, Impersonate, ImpersonateArgs, ImpersonateOS};
+use rquest::{Client, Impersonate, ImpersonateOS};
 
 #[tokio::test]
 async fn auto_headers() {
@@ -511,7 +511,7 @@ async fn test_client_os_spoofing() {
     let url = format!("http://{}/ua", server.addr());
     let res = Client::builder()
         .impersonate(
-            ImpersonateArgs::builder()
+            Impersonate::builder()
                 .impersonate(Impersonate::Chrome131)
                 .impersonate_os(ImpersonateOS::Linux)
                 .skip_http2(true)

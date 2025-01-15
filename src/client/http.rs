@@ -41,7 +41,7 @@ use crate::cookie;
 #[cfg(feature = "hickory-dns")]
 use crate::dns::hickory::HickoryDnsResolver;
 use crate::dns::{gai::GaiResolver, DnsResolverWithOverrides, DynResolver, Resolve};
-use crate::imp::{self, ImpersonateArgs, ImpersonateSettings};
+use crate::imp::ImpersonateSettings;
 use crate::into_url::try_uri;
 use crate::redirect;
 use crate::tls::{self, AlpnProtos, BoringTlsConnector};
@@ -910,35 +910,33 @@ impl ClientBuilder {
 
     // TLS/HTTP2 impersonate options
 
-    /// Configures the client to impersonate the specified impersonate version.
-    /// This includes setting the necessary headers and TLS settings.
+    /// Configures the client to impersonate the specified version or configuration.
+    ///
+    /// This method sets the necessary headers and TLS settings to impersonate the specified version
+    /// or configuration. It allows the client to mimic the behavior of different versions or setups,
+    /// which can be useful for testing or ensuring compatibility with various environments.
     ///
     /// # Arguments
     ///
-    /// * `impersonate` - The impersonate version to impersonate.
+    /// * `var` - The impersonate context, which can be either an `Impersonate` enum variant or an `ImpersonateSettings` instance.
     ///
     /// # Returns
     ///
-    /// A `ClientBuilder` instance with the applied settings.
+    /// * `ClientBuilder` - The modified client builder with the applied impersonation settings.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// let client = rquest::Client::builder()
+    ///     .impersonate(Impersonate::Firefox128)
+    ///     .build()?;
+    /// ```
     #[inline]
-    pub fn impersonate<M>(self, var: M) -> ClientBuilder
+    pub fn impersonate<I>(mut self, var: I) -> ClientBuilder
     where
-        M: Into<ImpersonateArgs>,
+        I: Into<ImpersonateSettings>,
     {
-        let settings = imp::impersonate(var.into());
-        self.apply_impersonate_settings(settings)
-    }
-
-    /// Apply the given impersonate settings directly.
-    #[cfg(feature = "impersonate_settings")]
-    pub fn impersonate_settings(self, settings: ImpersonateSettings) -> ClientBuilder {
-        self.apply_impersonate_settings(settings)
-    }
-
-    /// Apply the given TLS settings and header function.
-    #[inline(always)]
-    fn apply_impersonate_settings(mut self, mut settings: ImpersonateSettings) -> ClientBuilder {
-        std::mem::swap(&mut self.config.settings, &mut settings);
+        std::mem::swap(&mut self.config.settings, &mut var.into());
         self
     }
 
@@ -1657,7 +1655,7 @@ pub struct ClientMut<'c> {
     inner: &'c mut ClientRef,
 }
 
-impl<'a> ClientMut<'a> {
+impl<'c> ClientMut<'c> {
     /// Sets the base URL for this client.
     ///
     /// # Arguments
@@ -1667,7 +1665,7 @@ impl<'a> ClientMut<'a> {
     /// # Returns
     ///
     /// A mutable reference to the `Client` instance with the applied base URL.
-    pub fn base_url<U: IntoUrl>(&mut self, url: U) -> &mut ClientMut<'a> {
+    pub fn base_url<U: IntoUrl>(&mut self, url: U) -> &mut ClientMut<'c> {
         if let Ok(url) = url.into_url() {
             std::mem::swap(&mut self.inner.base_url, &mut Some(url));
         }
@@ -1692,7 +1690,7 @@ impl<'a> ClientMut<'a> {
     /// # Returns
     ///
     /// A mutable reference to the `Client` instance with the applied headers order.
-    pub fn headers_order<T>(&mut self, order: T) -> &mut ClientMut<'a>
+    pub fn headers_order<T>(&mut self, order: T) -> &mut ClientMut<'c>
     where
         T: Into<Cow<'static, [HeaderName]>>,
     {
@@ -1709,7 +1707,7 @@ impl<'a> ClientMut<'a> {
     /// # Returns
     ///
     /// A mutable reference to the `Client` instance with the applied redirect policy.
-    pub fn redirect(&mut self, mut policy: redirect::Policy) -> &mut ClientMut<'a> {
+    pub fn redirect(&mut self, mut policy: redirect::Policy) -> &mut ClientMut<'c> {
         std::mem::swap(&mut self.inner.redirect, &mut policy);
         self
     }
@@ -1723,14 +1721,14 @@ impl<'a> ClientMut<'a> {
     /// # Returns
     ///
     /// A mutable reference to the `Client` instance with the applied setting.
-    pub fn redirect_with_proxy_auth(&mut self, enabled: bool) -> &mut ClientMut<'a> {
+    pub fn redirect_with_proxy_auth(&mut self, enabled: bool) -> &mut ClientMut<'c> {
         self.inner.redirect_with_proxy_auth = enabled;
         self
     }
 
     /// Set the cookie provider for this client.
     #[cfg(feature = "cookies")]
-    pub fn cookie_provider<C>(&mut self, cookie_store: Arc<C>) -> &mut ClientMut<'a>
+    pub fn cookie_provider<C>(&mut self, cookie_store: Arc<C>) -> &mut ClientMut<'c>
     where
         C: cookie::CookieStore + 'static,
     {
@@ -1751,7 +1749,7 @@ impl<'a> ClientMut<'a> {
     ///
     /// A mutable reference to the `Client` instance with the applied proxy settings.
     #[inline]
-    pub fn proxies<P>(&mut self, proxies: P) -> &mut ClientMut<'a>
+    pub fn proxies<P>(&mut self, proxies: P) -> &mut ClientMut<'c>
     where
         P: Into<Option<Vec<Proxy>>>,
     {
@@ -1775,7 +1773,7 @@ impl<'a> ClientMut<'a> {
     ///
     /// Default is `None`.
     #[inline]
-    pub fn local_address<T>(&mut self, addr: T) -> &mut ClientMut<'a>
+    pub fn local_address<T>(&mut self, addr: T) -> &mut ClientMut<'c>
     where
         T: Into<Option<IpAddr>>,
     {
@@ -1786,7 +1784,7 @@ impl<'a> ClientMut<'a> {
     /// Set that all sockets are bound to the configured IPv4 or IPv6 address
     /// (depending on host's preferences) before connection.
     #[inline]
-    pub fn local_addresses<V4, V6>(&mut self, ipv4: V4, ipv6: V6) -> &mut ClientMut<'a>
+    pub fn local_addresses<V4, V6>(&mut self, ipv4: V4, ipv6: V6) -> &mut ClientMut<'c>
     where
         V4: Into<Option<Ipv4Addr>>,
         V6: Into<Option<Ipv6Addr>>,
@@ -1798,7 +1796,7 @@ impl<'a> ClientMut<'a> {
     cfg_bindable_device! {
         /// Bind to an interface by `SO_BINDTODEVICE`.
         #[inline]
-        pub fn interface<T>(&mut self, interface: T)  -> &mut ClientMut<'a>
+        pub fn interface<T>(&mut self, interface: T)  -> &mut ClientMut<'c>
         where
             T: Into<Cow<'static, str>>,
         {
@@ -1810,51 +1808,31 @@ impl<'a> ClientMut<'a> {
     /// Set the impersonate version for this client.
     /// This includes setting the necessary headers and TLS settings.
     ///
+    /// This method sets the necessary headers and TLS settings to impersonate the specified version
+    /// or configuration. It allows the client to mimic the behavior of different versions or setups,
+    /// which can be useful for testing or ensuring compatibility with various environments.
+    ///
     /// # Arguments
     ///
-    /// * `var` - The impersonate version to set.
+    /// * `var` - The impersonate context, which can be either an `Impersonate` enum variant or an `ImpersonateSettings` instance.
     ///
     /// # Returns
     ///
     /// A mutable reference to the `Client` instance with the applied settings.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// let mut client = rquest::Client::new();
+    /// client.as_mut().impersonate(Impersonate::Firefox128);
+    /// ```
     #[inline]
-    pub fn impersonate<M>(&mut self, var: M) -> &mut ClientMut<'a>
+    pub fn impersonate<I>(&mut self, var: I) -> &mut ClientMut<'c>
     where
-        M: Into<ImpersonateArgs>,
+        I: Into<ImpersonateSettings>,
     {
-        let settings = imp::impersonate(var.into());
-        self.apply_impersonate_settings(settings)
-    }
+        let mut settings = var.into();
 
-    /// Sets the impersonate settings for this client with the given settings.
-    ///
-    /// # Arguments
-    ///
-    /// * `settings` - The `ImpersonateSettings` to apply.
-    ///
-    /// # Returns
-    ///
-    /// A mutable reference to the `Client` instance with the applied settings.
-    #[cfg(feature = "impersonate_settings")]
-    #[inline]
-    pub fn impersonate_settings(&mut self, settings: ImpersonateSettings) -> &mut ClientMut<'a> {
-        self.apply_impersonate_settings(settings)
-    }
-
-    /// Applies the given impersonate settings to the client.
-    ///
-    /// # Arguments
-    ///
-    /// * `settings` - The `ImpersonateSettings` to apply.
-    ///
-    /// # Returns
-    ///
-    /// A mutable reference to the `Client` instance with the applied settings.
-    #[inline]
-    fn apply_impersonate_settings(
-        &mut self,
-        mut settings: ImpersonateSettings,
-    ) -> &mut ClientMut<'a> {
         if let Some(mut headers) = settings.headers {
             std::mem::swap(&mut self.inner.headers, &mut headers);
         }

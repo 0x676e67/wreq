@@ -68,9 +68,6 @@ internal_proxy_sys_no_cache = []
 # Optional enable impersonate from str
 impersonate_str = []
 
-# Optional enable impersonate from settings
-impersonate_settings = []
-
 [dependencies]
 base64 = "0.22"
 http = "1"
@@ -253,10 +250,6 @@ name = "simple"
 path = "examples/simple.rs"
 
 [[example]]
-name = "impersonate"
-path = "examples/impersonate.rs"
-
-[[example]]
 name = "hickory_dns"
 path = "examples/hickory_dns.rs"
 required-features = ["hickory-dns"]
@@ -267,13 +260,20 @@ path = "examples/headers_order.rs"
 required-features = ["cookies"]
 
 [[example]]
+name = "impersonate"
+path = "examples/impersonate.rs"
+
+[[example]]
+name = "impersonate_builder"
+path = "examples/impersonate_builder.rs"
+
+[[example]]
 name = "impersonate_psk"
 path = "examples/impersonate_psk.rs"
 
 [[example]]
 name = "impersonate_settings"
 path = "examples/impersonate_settings.rs"
-required-features = ["impersonate_settings"]
 
 [[example]]
 name = "set_headers"

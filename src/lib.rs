@@ -332,7 +332,7 @@ pub use self::client::websocket::{
     CloseCode, Message, WebSocket, WebSocketRequestBuilder, WebSocketResponse,
 };
 pub use self::client::{Body, Client, ClientBuilder, Request, RequestBuilder, Response, Upgraded};
-pub use self::imp::{Impersonate, ImpersonateArgs, ImpersonateOS, ImpersonateSettings};
+pub use self::imp::{Impersonate, ImpersonateBuilder, ImpersonateOS, ImpersonateSettings};
 pub use self::proxy::{NoProxy, Proxy};
 pub use self::tls::{
     AlpnProtos, AlpsProtos, CertCompressionAlgorithm, RootCertsStore, TlsInfo, TlsSettings,

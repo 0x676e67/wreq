@@ -49,33 +49,109 @@ mod http2_imports {
     pub use std::sync::LazyLock;
 }
 
-#[derive(TypedBuilder, Debug)]
-pub struct ImpersonateArgs {
-    #[builder(setter(into))]
+/// A builder for impersonate settings.
+pub struct ImpersonateBuilder {
     impersonate: Impersonate,
-
-    #[builder(default, setter(into))]
     impersonate_os: ImpersonateOS,
-
-    #[builder(default = false)]
     skip_http2: bool,
-
-    #[builder(default = false)]
     skip_headers: bool,
 }
 
 /// ========= Impersonate impls =========
-impl From<Impersonate> for ImpersonateArgs {
-    fn from(impersonate: Impersonate) -> Self {
-        ImpersonateArgs {
-            impersonate,
-            impersonate_os: Default::default(),
-            skip_http2: false,
-            skip_headers: false,
-        }
+impl ImpersonateBuilder {
+    #[inline]
+    pub fn impersonate(mut self, impersonate: Impersonate) -> Self {
+        self.impersonate = impersonate;
+        self
+    }
+
+    #[inline]
+    pub fn impersonate_os(mut self, impersonate_os: ImpersonateOS) -> Self {
+        self.impersonate_os = impersonate_os;
+        self
+    }
+
+    #[inline]
+    pub fn skip_http2(mut self, skip_http2: bool) -> Self {
+        self.skip_http2 = skip_http2;
+        self
+    }
+
+    #[inline]
+    pub fn skip_headers(mut self, skip_headers: bool) -> Self {
+        self.skip_headers = skip_headers;
+        self
+    }
+
+    #[inline]
+    pub fn build(self) -> ImpersonateSettings {
+        impersonate_match!(
+            self.impersonate,
+            self.impersonate_os,
+            self.skip_http2,
+            self.skip_headers,
+            Chrome100 => v100::settings,
+            Chrome101 => v101::settings,
+            Chrome104 => v104::settings,
+            Chrome105 => v105::settings,
+            Chrome106 => v106::settings,
+            Chrome107 => v107::settings,
+            Chrome108 => v108::settings,
+            Chrome109 => v109::settings,
+            Chrome114 => v114::settings,
+            Chrome116 => v116::settings,
+            Chrome117 => v117::settings,
+            Chrome118 => v118::settings,
+            Chrome119 => v119::settings,
+            Chrome120 => v120::settings,
+            Chrome123 => v123::settings,
+            Chrome124 => v124::settings,
+            Chrome126 => v126::settings,
+            Chrome127 => v127::settings,
+            Chrome128 => v128::settings,
+            Chrome129 => v129::settings,
+            Chrome130 => v130::settings,
+            Chrome131 => v131::settings,
+
+            SafariIos17_2 => safari_ios_17_2::settings,
+            SafariIos17_4_1 => safari_ios_17_4_1::settings,
+            SafariIos16_5 => safari_ios_16_5::settings,
+            Safari15_3 => safari15_3::settings,
+            Safari15_5 => safari15_5::settings,
+            Safari15_6_1 => safari15_6_1::settings,
+            Safari16 => safari16::settings,
+            Safari16_5 => safari16_5::settings,
+            Safari17_0 => safari17_0::settings,
+            Safari17_2_1 => safari17_2_1::settings,
+            Safari17_4_1 => safari17_4_1::settings,
+            Safari17_5 => safari17_5::settings,
+            Safari18 => safari18::settings,
+            SafariIPad18 => safari_ipad_18::settings,
+            Safari18_2 => safari18_2::settings,
+            SafariIos18_1_1 => safari_ios_18_1_1::settings,
+
+            OkHttp3_9 => okhttp3_9::settings,
+            OkHttp3_11 => okhttp3_11::settings,
+            OkHttp3_13 => okhttp3_13::settings,
+            OkHttp3_14 => okhttp3_14::settings,
+            OkHttp4_9 => okhttp4_9::settings,
+            OkHttp4_10 => okhttp4_10::settings,
+            OkHttp5 => okhttp5::settings,
+
+            Edge101 => edge101::settings,
+            Edge122 => edge122::settings,
+            Edge127 => edge127::settings,
+            Edge131 => edge131::settings,
+
+            Firefox109 => ff109::settings,
+            Firefox117 => ff117::settings,
+            Firefox128 => ff128::settings,
+            Firefox133 => ff133::settings
+        )
     }
 }
 
+/// A struct for impersonate settings.
 #[derive(TypedBuilder, Default, Debug)]
 pub struct ImpersonateSettings {
     #[builder(setter(into))]
@@ -91,71 +167,11 @@ pub struct ImpersonateSettings {
     pub headers_order: Option<Cow<'static, [HeaderName]>>,
 }
 
-#[inline]
-pub fn impersonate(var: ImpersonateArgs) -> ImpersonateSettings {
-    impersonate_match!(
-        var.impersonate,
-        var.impersonate_os,
-        var.skip_http2,
-        var.skip_headers,
-        Chrome100 => v100::settings,
-        Chrome101 => v101::settings,
-        Chrome104 => v104::settings,
-        Chrome105 => v105::settings,
-        Chrome106 => v106::settings,
-        Chrome107 => v107::settings,
-        Chrome108 => v108::settings,
-        Chrome109 => v109::settings,
-        Chrome114 => v114::settings,
-        Chrome116 => v116::settings,
-        Chrome117 => v117::settings,
-        Chrome118 => v118::settings,
-        Chrome119 => v119::settings,
-        Chrome120 => v120::settings,
-        Chrome123 => v123::settings,
-        Chrome124 => v124::settings,
-        Chrome126 => v126::settings,
-        Chrome127 => v127::settings,
-        Chrome128 => v128::settings,
-        Chrome129 => v129::settings,
-        Chrome130 => v130::settings,
-        Chrome131 => v131::settings,
-
-        SafariIos17_2 => safari_ios_17_2::settings,
-        SafariIos17_4_1 => safari_ios_17_4_1::settings,
-        SafariIos16_5 => safari_ios_16_5::settings,
-        Safari15_3 => safari15_3::settings,
-        Safari15_5 => safari15_5::settings,
-        Safari15_6_1 => safari15_6_1::settings,
-        Safari16 => safari16::settings,
-        Safari16_5 => safari16_5::settings,
-        Safari17_0 => safari17_0::settings,
-        Safari17_2_1 => safari17_2_1::settings,
-        Safari17_4_1 => safari17_4_1::settings,
-        Safari17_5 => safari17_5::settings,
-        Safari18 => safari18::settings,
-        SafariIPad18 => safari_ipad_18::settings,
-        Safari18_2 => safari18_2::settings,
-        SafariIos18_1_1 => safari_ios_18_1_1::settings,
-
-        OkHttp3_9 => okhttp3_9::settings,
-        OkHttp3_11 => okhttp3_11::settings,
-        OkHttp3_13 => okhttp3_13::settings,
-        OkHttp3_14 => okhttp3_14::settings,
-        OkHttp4_9 => okhttp4_9::settings,
-        OkHttp4_10 => okhttp4_10::settings,
-        OkHttp5 => okhttp5::settings,
-
-        Edge101 => edge101::settings,
-        Edge122 => edge122::settings,
-        Edge127 => edge127::settings,
-        Edge131 => edge131::settings,
-
-        Firefox109 => ff109::settings,
-        Firefox117 => ff117::settings,
-        Firefox128 => ff128::settings,
-        Firefox133 => ff133::settings
-    )
+/// ========= ImpersonateSettings impls =========
+impl From<Impersonate> for ImpersonateSettings {
+    fn from(impersonate: Impersonate) -> Self {
+        Impersonate::builder().impersonate(impersonate).build()
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -218,6 +234,19 @@ pub enum Impersonate {
     Firefox117,
     Firefox128,
     Firefox133,
+}
+
+/// ======== Impersonate impls ========
+impl Impersonate {
+    #[inline]
+    pub fn builder() -> ImpersonateBuilder {
+        ImpersonateBuilder {
+            impersonate: Default::default(),
+            impersonate_os: Default::default(),
+            skip_http2: false,
+            skip_headers: false,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default)]
