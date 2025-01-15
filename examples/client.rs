@@ -79,11 +79,6 @@ async fn main() -> Result<(), rquest::Error> {
         println!("{}", resp.text().await?);
     }
 
-    // ⚠️ Note: Methods like `set_impersonate` and `set_impersonate_without_headers` will reset all client settings,
-    // including proxies, header information, and more. Use them carefully.
-    // When using methods such as `set_headers_order`, `headers_mut`, `set_impersonate`, `set_impersonate_without_headers`,
-    // `set_interface`, `set_local_address`, `set_local_addresses`, or `set_proxies`,
-    // changes will only affect the current `Client` instance.
     // If you need to preserve the original settings, you can clone the `Client`.
     // Cloning a `Client` is cheap, and while modifications won't affect the original `Client` instance,
     // they will share the same connection pool.
