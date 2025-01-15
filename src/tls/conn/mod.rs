@@ -63,14 +63,6 @@ impl Default for HttpsLayerSettings {
 pub struct HttpsLayerSettingsBuilder(HttpsLayerSettings);
 
 impl HttpsLayerSettingsBuilder {
-    /// Sets maximum number of sessions to cache. Session capacity is per session key (domain).
-    /// Defaults to 8.
-    #[inline]
-    pub fn session_cache_capacity(mut self, capacity: usize) -> Self {
-        self.0.session_cache_capacity = capacity;
-        self
-    }
-
     /// Sets whether to enable session caching. Defaults to `false`.
     #[inline]
     pub fn session_cache(mut self, enable: bool) -> Self {

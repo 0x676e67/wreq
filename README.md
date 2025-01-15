@@ -17,7 +17,7 @@ An ergonomic, all-in-one `TLS`, `JA3`/`JA4`, and `HTTP2` fingerprint HTTP Client
 - HTTP Proxies
 - WebSocket Upgrade
 - HTTPS via BoringSSL
-- Perfectly mimic Chrome, Safari, and Firefox
+- Perfectly impersonate Chrome, Safari, and Firefox
 
 Additional learning resources include:
 
@@ -42,7 +42,7 @@ use rquest::{Client, Impersonate};
 
 #[tokio::main]
 async fn main() -> Result<(), rquest::Error> {
-    // Build a client to mimic Firefox133
+    // Build a client to impersonate Firefox133
     let client = Client::builder()
         .impersonate(Impersonate::Firefox133)
         .build()?;
@@ -70,7 +70,7 @@ use rquest::{Impersonate, Client, Message};
 
 #[tokio::main]
 async fn main() -> Result<(), rquest::Error> {
-    // Build a client to mimic Firefox133
+    // Build a client to impersonate Firefox133
     let client = Client::builder()
         .impersonate(Impersonate::Firefox133)
         .build()?;

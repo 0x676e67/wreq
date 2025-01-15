@@ -13,7 +13,7 @@
 //! - [Redirect policy](#redirect-policies)
 //! - Uses [BoringSSL](#tls)
 //! - HTTP [Proxies](#proxies)
-//! - Perfectly mimic Chrome, Safari, and Firefox
+//! - Perfectly impersonate Chrome, Safari, and Firefox
 //! - [Changelog](https://github.com/penumbra-x/rquest/blob/main/CHANGELOG.md)
 //!
 //! Additional learning resources include:
@@ -30,7 +30,7 @@
 //!
 //! #[tokio::main]
 //! async fn main() -> Result<(), rquest::Error> {
-//!     // Build a client to mimic Firefox133
+//!     // Build a client to impersonate Firefox133
 //!     let client = Client::builder()
 //!         .impersonate(Impersonate::Firefox133)
 //!         .build()?;
@@ -53,7 +53,7 @@
 //!
 //! #[tokio::main]
 //! async fn main() -> Result<(), rquest::Error> {
-//!     // Build a client to mimic Firefox133
+//!     // Build a client to impersonate Firefox133
 //!     let websocket = Client::builder()
 //!         .impersonate(Impersonate::Firefox133)
 //!         .build()?
@@ -332,7 +332,7 @@ pub use self::client::websocket::{
     CloseCode, Message, WebSocket, WebSocketRequestBuilder, WebSocketResponse,
 };
 pub use self::client::{Body, Client, ClientBuilder, Request, RequestBuilder, Response, Upgraded};
-pub use self::mimic::{Impersonate, ImpersonateOS, ImpersonateSettings};
+pub use self::imp::{Impersonate, ImpersonateArgs, ImpersonateOS, ImpersonateSettings};
 pub use self::proxy::{NoProxy, Proxy};
 pub use self::tls::{
     AlpnProtos, AlpsProtos, CertCompressionAlgorithm, RootCertsStore, TlsInfo, TlsSettings,
@@ -358,7 +358,7 @@ mod macros;
 mod proxy;
 pub mod redirect;
 
-pub mod http2;
-pub mod mimic;
-pub mod tls;
+mod http2;
+mod imp;
+mod tls;
 mod util;

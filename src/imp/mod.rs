@@ -1,4 +1,4 @@
-//! Mimic settings for different browsers.
+//! Impersonate settings for different browsers.
 #![allow(missing_debug_implementations)]
 #![allow(missing_docs)]
 
@@ -10,6 +10,7 @@ mod okhttp;
 mod safari;
 
 use http::{HeaderMap, HeaderName};
+use typed_builder::TypedBuilder;
 use Impersonate::*;
 
 use chrome::*;
@@ -21,7 +22,7 @@ use impersonate_imports::*;
 use tls_imports::TlsSettings;
 
 mod impersonate_imports {
-    pub use crate::{http2::Http2Settings, mimic::ImpersonateOS, mimic::ImpersonateSettings};
+    pub use crate::{http2::Http2Settings, imp::ImpersonateOS, imp::ImpersonateSettings};
     pub use http::{
         header::{ACCEPT, ACCEPT_LANGUAGE, UPGRADE_INSECURE_REQUESTS, USER_AGENT},
         HeaderMap, HeaderName, HeaderValue,
@@ -48,7 +49,34 @@ mod http2_imports {
     pub use std::sync::LazyLock;
 }
 
-#[derive(typed_builder::TypedBuilder, Default, Debug)]
+#[derive(TypedBuilder, Debug)]
+pub struct ImpersonateArgs {
+    #[builder(setter(into))]
+    impersonate: Impersonate,
+
+    #[builder(default, setter(into))]
+    impersonate_os: ImpersonateOS,
+
+    #[builder(default = false)]
+    skip_http2: bool,
+
+    #[builder(default = false)]
+    skip_headers: bool,
+}
+
+/// ========= Impersonate impls =========
+impl From<Impersonate> for ImpersonateArgs {
+    fn from(impersonate: Impersonate) -> Self {
+        ImpersonateArgs {
+            impersonate,
+            impersonate_os: Default::default(),
+            skip_http2: false,
+            skip_headers: false,
+        }
+    }
+}
+
+#[derive(TypedBuilder, Default, Debug)]
 pub struct ImpersonateSettings {
     #[builder(setter(into))]
     pub tls: TlsSettings,
@@ -64,11 +92,12 @@ pub struct ImpersonateSettings {
 }
 
 #[inline]
-pub fn impersonate(ver: Impersonate, os: ImpersonateOS, with_headers: bool) -> ImpersonateSettings {
+pub fn impersonate(var: ImpersonateArgs) -> ImpersonateSettings {
     impersonate_match!(
-        ver,
-        os,
-        with_headers,
+        var.impersonate,
+        var.impersonate_os,
+        var.skip_http2,
+        var.skip_headers,
         Chrome100 => v100::settings,
         Chrome101 => v101::settings,
         Chrome104 => v104::settings,
@@ -201,9 +230,11 @@ pub enum ImpersonateOS {
     IOS,
 }
 
+
+/// ======== ImpersonateOS impls ========
 impl ImpersonateOS {
     #[inline]
-    fn get_impersonate_platform(&self) -> &'static str {
+    fn platform(&self) -> &'static str {
         match self {
             ImpersonateOS::MacOS => "\"macOS\"",
             ImpersonateOS::Linux => "\"Linux\"",

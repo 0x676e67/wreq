@@ -11,7 +11,7 @@ const HEADER_ORDER: &[HeaderName] = &[
 
 #[tokio::main]
 async fn main() -> Result<(), rquest::Error> {
-    // Build a client to mimic Chrome131
+    // Build a client to impersonate Chrome131
     let client = rquest::Client::builder()
         .impersonate(Impersonate::Chrome131)
         .headers_order(HEADER_ORDER)

@@ -2,7 +2,7 @@ use rquest::{Client, Impersonate};
 
 #[tokio::main]
 async fn main() -> Result<(), rquest::Error> {
-    // Build a client to mimic Edge131
+    // Build a client to impersonate Edge131
     let mut client = Client::builder()
         .impersonate(Impersonate::Edge131)
         .base_url("https://httpbin.org")
@@ -17,7 +17,7 @@ async fn main() -> Result<(), rquest::Error> {
     println!("{}", resp.text().await?);
 
     // Reset the base url
-    client.set_base_url("https://tls.peet.ws");
+    client.as_mut().base_url("https://tls.peet.ws");
 
     // Send a request to tls.peet.ws /api/all
     let resp = client.get("/api/all").send().await?;

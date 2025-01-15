@@ -13,7 +13,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let url = Url::parse("https://google.com/")?;
 
-    // Build a client to mimic Safari18
+    // Build a client to impersonate Safari18
     let client = rquest::Client::builder()
         .impersonate(Impersonate::Safari18)
         .redirect(Policy::default())

@@ -2,7 +2,7 @@ use rquest::{Client, Impersonate};
 
 #[tokio::main]
 async fn main() -> Result<(), rquest::Error> {
-    // Build a client to mimic Chrome130
+    // Build a client to impersonate Chrome130
     #[cfg(any(
         target_os = "android",
         target_os = "fuchsia",
@@ -42,7 +42,7 @@ async fn main() -> Result<(), rquest::Error> {
         target_os = "tvos",
         target_os = "watchos"
     ))]
-    client.set_interface("eth1");
+    client.as_mut().interface("eth1");
 
     let resp = client.get("https://api.ip.sb/ip").send().await?;
     println!("{}", resp.text().await?);

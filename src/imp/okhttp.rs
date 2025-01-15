@@ -8,12 +8,16 @@ macro_rules! mod_generator {
             use super::*;
 
             #[inline(always)]
-            pub fn settings(_: ImpersonateOS, with_headers: bool) -> ImpersonateSettings {
+            pub fn settings(
+                _: ImpersonateOS,
+                skip_http2: bool,
+                skip_headers: bool,
+            ) -> ImpersonateSettings {
                 ImpersonateSettings::builder()
                     .tls(tls_settings!($cipher_list))
-                    .http2(http2_settings!())
+                    .http2(conditional_http2!(skip_http2, http2_settings!()))
                     .headers(conditional_headers!(
-                        with_headers,
+                        skip_headers,
                         super::header_initializer,
                         $ua
                     ))
@@ -61,7 +65,7 @@ fn header_initializer(ua: &'static str) -> HeaderMap {
 }
 
 mod tls {
-    use crate::mimic::tls_imports::*;
+    use crate::imp::tls_imports::*;
 
     pub const CURVES: &[SslCurve] = &[SslCurve::X25519, SslCurve::SECP256R1, SslCurve::SECP384R1];
 
@@ -124,7 +128,7 @@ mod tls {
 }
 
 mod http2 {
-    use crate::mimic::http2_imports::*;
+    use crate::imp::http2_imports::*;
 
     pub const HEADER_PRIORITY: (u32, u8, bool) = (0, 255, true);
 

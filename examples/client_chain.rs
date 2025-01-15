@@ -21,16 +21,17 @@ async fn main() -> Result<(), rquest::Error> {
         header::COOKIE,
     ];
 
-    // Build a client to mimic Chrome131
+    // Build a client to impersonate Chrome131
     let mut client = Client::builder()
         .impersonate(Impersonate::Chrome131)
         .build()?;
 
     client
-        .set_impersonate(Impersonate::Safari18)?
-        .set_headers_order(HEADER_ORDER)
-        .set_interface("utun4")
-        .set_base_url("https://tls.peet.ws");
+        .as_mut()
+        .impersonate(Impersonate::Safari18)
+        .headers_order(HEADER_ORDER)
+        .interface("utun4")
+        .base_url("https://tls.peet.ws");
 
     let text = client.get("/api/all").send().await?.text().await?;
 

@@ -1,4 +1,4 @@
-use crate::mimic::impersonate_imports::*;
+use crate::imp::impersonate_imports::*;
 use http2::*;
 use tls::*;
 
@@ -14,14 +14,14 @@ macro_rules! mod_generator {
             use super::*;
 
             #[inline(always)]
-            pub fn settings(os_choice: ImpersonateOS, with_headers: bool) -> ImpersonateSettings {
+            pub fn settings(os_choice: ImpersonateOS, skip_http2: bool, skip_headers: bool) -> ImpersonateSettings {
                 #[allow(unreachable_patterns)]
                 match os_choice {
                     $(
                         ImpersonateOS::$other_os => ImpersonateSettings::builder()
                             .tls($tls_settings)
-                            .http2($http2_settings)
-                            .headers(conditional_headers!(with_headers, || {
+                            .http2(conditional_http2!(skip_http2, $http2_settings))
+                            .headers(conditional_headers!(skip_headers, || {
                                 $header_initializer(
                                     $other_sec_ch_ua,
                                     $other_ua,
@@ -32,8 +32,8 @@ macro_rules! mod_generator {
                     )*
                     _ => ImpersonateSettings::builder()
                         .tls($tls_settings)
-                        .http2($http2_settings)
-                        .headers(conditional_headers!(with_headers, || {
+                        .http2(conditional_http2!(skip_http2, $http2_settings))
+                        .headers(conditional_headers!(skip_headers, || {
                             $header_initializer(
                                 $default_sec_ch_ua,
                                 $default_ua,
@@ -133,7 +133,7 @@ fn header_initializer(
     header_chrome_sec_ch_ua!(
         headers,
         sec_ch_ua,
-        impersonate_os.get_impersonate_platform(),
+        impersonate_os.platform(),
         impersonate_os.is_mobile()
     );
     header_chrome_sec_fetch!(headers);
@@ -152,7 +152,7 @@ fn header_initializer_with_zstd(
     header_chrome_sec_ch_ua!(
         headers,
         sec_ch_ua,
-        impersonate_os.get_impersonate_platform(),
+        impersonate_os.platform(),
         impersonate_os.is_mobile()
     );
     header_chrome_sec_fetch!(headers);
@@ -172,7 +172,7 @@ fn header_initializer_with_zstd_priority(
     header_chrome_sec_ch_ua!(
         headers,
         sec_ch_ua,
-        impersonate_os.get_impersonate_platform(),
+        impersonate_os.platform(),
         impersonate_os.is_mobile()
     );
     header_chrome_sec_fetch!(headers);
@@ -181,7 +181,7 @@ fn header_initializer_with_zstd_priority(
 }
 
 mod tls {
-    use crate::mimic::tls_imports::*;
+    use crate::imp::tls_imports::*;
 
     pub const CURVES_1: &[SslCurve] = &[SslCurve::X25519, SslCurve::SECP256R1, SslCurve::SECP384R1];
 
@@ -279,7 +279,7 @@ mod tls {
 }
 
 mod http2 {
-    use crate::mimic::http2_imports::*;
+    use crate::imp::http2_imports::*;
 
     pub const HEADER_PRIORITY: (u32, u8, bool) = (0, 255, true);
 

@@ -3,7 +3,7 @@ use rquest::Impersonate;
 
 #[tokio::main]
 async fn main() -> Result<(), rquest::Error> {
-    // Build a client to mimic Chrome131
+    // Build a client to impersonate Chrome131
     let mut client = rquest::Client::builder()
         .impersonate(Impersonate::Chrome131)
         .build()?;
@@ -15,7 +15,8 @@ async fn main() -> Result<(), rquest::Error> {
     // Set a header
     {
         client
-            .headers_mut()
+            .as_mut()
+            .headers()
             .insert(header::ACCEPT, HeaderValue::from_static("application/json"));
         let resp = client.get("https://tls.peet.ws/api/all").send().await?;
         println!("{}", resp.text().await?);

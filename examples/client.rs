@@ -12,7 +12,7 @@ const HEADER_ORDER: &[HeaderName] = &[
 
 #[tokio::main]
 async fn main() -> Result<(), rquest::Error> {
-    // Build a client to mimic Chrome131
+    // Build a client to impersonate Chrome131
     let mut client = Client::builder()
         .impersonate(Impersonate::Chrome131)
         .build()?;
@@ -21,25 +21,26 @@ async fn main() -> Result<(), rquest::Error> {
 
     // Set the headers order
     {
-        client.set_headers_order(HEADER_ORDER);
+        client.as_mut().headers_order(HEADER_ORDER);
         let resp = client.get(&url).send().await?;
         println!("{}", resp.text().await?);
     }
 
     // Change the impersonate to Safari18
     {
-        client.set_impersonate(Impersonate::Safari18)?;
+        client.as_mut().impersonate(Impersonate::Safari18);
         let resp = client.get(&url).send().await?;
         println!("{}", resp.text().await?);
     }
 
     // Change the impersonate to Edge127 without setting the headers
     {
-        client.set_impersonate_skip_headers(Impersonate::Edge127)?;
+        client.as_mut().impersonate(Impersonate::Edge127);
 
         // Set a header
         client
-            .headers_mut()
+            .as_mut()
+            .headers()
             .insert(header::ACCEPT, HeaderValue::from_static("application/json"));
 
         // Set a cookie
@@ -54,7 +55,9 @@ async fn main() -> Result<(), rquest::Error> {
 
     // Set the local address
     {
-        client.set_local_address(Some(Ipv4Addr::new(172, 20, 10, 2).into()));
+        client
+            .as_mut()
+            .local_address(Some(Ipv4Addr::new(172, 20, 10, 2).into()));
         let resp = client.get("https://api.ip.sb/ip").send().await?;
         println!("{}", resp.text().await?);
     }
@@ -71,7 +74,7 @@ async fn main() -> Result<(), rquest::Error> {
         target_os = "watchos"
     ))]
     {
-        client.set_interface("eth0");
+        client.as_mut().interface("eth0");
         let resp = client.get("https://api.ip.sb/ip").send().await?;
         println!("{}", resp.text().await?);
     }
@@ -89,7 +92,7 @@ async fn main() -> Result<(), rquest::Error> {
     // Set the impersonate to Chrome131
     // Expected: Chrome131
     {
-        client2.set_impersonate(Impersonate::Chrome131)?;
+        client2.as_mut().impersonate(Impersonate::Chrome131);
         let resp = client2.get("https://api.ip.sb/ip").send().await?;
         println!("{}", resp.text().await?);
     }

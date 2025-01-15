@@ -12,28 +12,28 @@ static HEADER_ORDER: [HeaderName; 6] = [
 
 #[tokio::main]
 async fn main() -> Result<(), rquest::Error> {
-    // Build a client to mimic Chrome131
+    // Build a client to impersonate Chrome131
     let mut client = rquest::Client::builder()
         .impersonate(Impersonate::Chrome131)
         .build()?;
 
     // Set the headers order
     {
-        client.set_headers_order(&HEADER_ORDER);
+        client.as_mut().headers_order(&HEADER_ORDER);
         let resp = client.get("https://tls.peet.ws/api/all").send().await?;
         println!("{}", resp.text().await?);
     }
 
     // Change the impersonate to Safari18
     {
-        client.set_impersonate(Impersonate::Safari18)?;
+        client.as_mut().impersonate(Impersonate::Safari18);
         let resp = client.get("https://tls.peet.ws/api/all").send().await?;
         println!("{}", resp.text().await?);
     }
 
     // Change the impersonate to Edge127 without setting the headers
     {
-        client.set_impersonate_skip_headers(Impersonate::Edge127)?;
+        client.as_mut().impersonate(Impersonate::Edge127);
         let resp = client.get("https://tls.peet.ws/api/all").send().await?;
         println!("{}", resp.text().await?);
     }

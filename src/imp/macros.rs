@@ -1,17 +1,28 @@
 #[macro_export]
 macro_rules! conditional_headers {
-    ($with_headers:expr, $initializer:expr) => {
-        if $with_headers {
-            Some($initializer())
-        } else {
+    ($skip_headers:expr, $initializer:expr) => {
+        if $skip_headers {
             None
+        } else {
+            Some($initializer())
         }
     };
-    ($with_headers:expr, $initializer:expr, $ua:expr) => {
-        if $with_headers {
-            Some($initializer($ua))
-        } else {
+    ($skip_headers:expr, $initializer:expr, $ua:expr) => {
+        if $skip_headers {
             None
+        } else {
+            Some($initializer($ua))
+        }
+    };
+}
+
+#[macro_export]
+macro_rules! conditional_http2 {
+    ($skip_http2:expr, $http2:expr) => {
+        if $skip_http2 {
+            None
+        } else {
+            Some($http2)
         }
     };
 }
@@ -136,10 +147,10 @@ macro_rules! join {
 }
 
 macro_rules! impersonate_match {
-    ($ver:expr, $with_headers:expr, $os:expr, $($variant:pat => $path:expr),+) => {
+    ($ver:expr, $os:expr, $skip_http2:expr, $skip_headers:expr, $($variant:pat => $path:expr),+) => {
         match $ver {
             $(
-                $variant => $path($with_headers, $os),
+                $variant => $path($os, $skip_http2, $skip_headers),
             )+
         }
     }

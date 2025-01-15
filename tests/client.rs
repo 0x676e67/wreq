@@ -7,8 +7,7 @@ use http::header::{CONTENT_LENGTH, CONTENT_TYPE, TRANSFER_ENCODING};
 #[cfg(feature = "json")]
 use std::collections::HashMap;
 
-use rquest::mimic::ImpersonateOS;
-use rquest::{Client, Impersonate};
+use rquest::{Client, Impersonate, ImpersonateArgs, ImpersonateOS};
 
 #[tokio::test]
 async fn auto_headers() {
@@ -382,7 +381,7 @@ async fn test_tls_info() {
         .send()
         .await
         .expect("response");
-    let tls_info = resp.extensions().get::<rquest::tls::TlsInfo>();
+    let tls_info = resp.extensions().get::<rquest::TlsInfo>();
     assert!(tls_info.is_some());
     let tls_info = tls_info.unwrap();
     let peer_certificate = tls_info.peer_certificate();
@@ -397,7 +396,7 @@ async fn test_tls_info() {
         .send()
         .await
         .expect("response");
-    let tls_info = resp.extensions().get::<rquest::tls::TlsInfo>();
+    let tls_info = resp.extensions().get::<rquest::TlsInfo>();
     assert!(tls_info.is_none());
 }
 
@@ -511,7 +510,13 @@ async fn test_client_os_spoofing() {
 
     let url = format!("http://{}/ua", server.addr());
     let res = Client::builder()
-        .impersonate_with_os(Impersonate::Chrome131, ImpersonateOS::Linux)
+        .impersonate(
+            ImpersonateArgs::builder()
+                .impersonate(Impersonate::Chrome131)
+                .impersonate_os(ImpersonateOS::Linux)
+                .skip_http2(true)
+                .build(),
+        )
         .build()
         .expect("Unable to build client")
         .get(&url)

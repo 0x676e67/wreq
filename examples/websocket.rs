@@ -13,7 +13,7 @@ static PROTOCOLS: LazyLock<Vec<String>> = LazyLock::new(|| {
 
 #[tokio::main]
 async fn main() -> Result<(), rquest::Error> {
-    // Build a client to mimic Firefox133
+    // Build a client to impersonate Firefox133
     let client = Client::builder()
         .impersonate(Impersonate::Firefox133)
         .build()?;
