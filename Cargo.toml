@@ -83,6 +83,7 @@ tower-service = "0.3"
 futures-util = { version = "0.3.0", default-features = false }
 sync_wrapper = { version = "1.0", features = ["futures"] }
 antidote = { version = "1" }
+typed-builder = { version = "0.20.0" }
 
 # Optional deps...
 
@@ -116,11 +117,7 @@ boring2 = { version = "4", features = ["pq-experimental"] }
 boring-sys2 = "4" 
 tokio-boring2 = "4"
 foreign-types = { version = "0.5.0" }
-typed-builder = { version = "0.20.0" }
-
-# boring-tls session cache
 linked_hash_set = { version = "0.1" }
-tower-layer = { version = "0.3" }
 
 # cert compression
 brotli = { version = "7" }

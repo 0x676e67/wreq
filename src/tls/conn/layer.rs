@@ -24,7 +24,6 @@ use tokio_boring2::SslStream;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
-use tower_layer::Layer;
 use tower_service::Service;
 
 /// A Connector using BoringSSL to support `http` and `https` schemes.
@@ -155,17 +154,6 @@ impl HttpsLayer {
                 ssl_callback: None,
                 skip_session_ticket: settings.skip_session_ticket,
             },
-        }
-    }
-}
-
-impl<S> Layer<S> for HttpsLayer {
-    type Service = HttpsConnector<S>;
-
-    fn layer(&self, inner: S) -> HttpsConnector<S> {
-        HttpsConnector {
-            http: inner,
-            inner: self.inner.clone(),
         }
     }
 }
