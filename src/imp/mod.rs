@@ -60,14 +60,20 @@ pub struct ImpersonateBuilder {
 /// ========= Impersonate impls =========
 impl ImpersonateBuilder {
     #[inline]
-    pub fn impersonate(mut self, impersonate: Impersonate) -> Self {
-        self.impersonate = impersonate;
+    pub fn impersonate<I>(mut self, impersonate: I) -> Self
+    where
+        I: Into<Impersonate>,
+    {
+        self.impersonate = impersonate.into();
         self
     }
 
     #[inline]
-    pub fn impersonate_os(mut self, impersonate_os: ImpersonateOS) -> Self {
-        self.impersonate_os = impersonate_os;
+    pub fn impersonate_os<I>(mut self, impersonate_os: I) -> Self
+    where
+        I: Into<ImpersonateOS>,
+    {
+        self.impersonate_os = impersonate_os.into();
         self
     }
 

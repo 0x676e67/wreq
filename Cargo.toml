@@ -266,6 +266,7 @@ path = "examples/impersonate.rs"
 [[example]]
 name = "impersonate_builder"
 path = "examples/impersonate_builder.rs"
+required-features = ["impersonate_str"]
 
 [[example]]
 name = "impersonate_psk"

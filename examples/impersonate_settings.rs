@@ -204,8 +204,8 @@ async fn main() -> Result<(), rquest::Error> {
 
     // Build a client with impersonate settings
     let client = Client::builder()
-        .danger_accept_invalid_certs(true)
         .impersonate(settings)
+        .danger_accept_invalid_certs(true)
         .build()?;
 
     // Use the API you're already familiar with

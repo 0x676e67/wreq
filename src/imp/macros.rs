@@ -159,13 +159,11 @@ macro_rules! impersonate_match {
 #[cfg(feature = "impersonate_str")]
 macro_rules! impl_from_str {
     ($(($variant:ident, $string:expr)),* $(,)?) => {
-        impl std::str::FromStr for Impersonate {
-            type Err = String;
-
-            fn from_str(s: &str) -> Result<Self, Self::Err> {
+        impl From<&str> for Impersonate {
+            fn from(s: &str) -> Self {
                 match s {
-                    $( $string => Ok(Impersonate::$variant), )*
-                    _ => Err(format!("Unknown impersonate version: {}", s)),
+                    $( $string => Impersonate::$variant, )*
+                    _ => Impersonate::default(),
                 }
             }
         }
@@ -175,13 +173,11 @@ macro_rules! impl_from_str {
 #[cfg(feature = "impersonate_str")]
 macro_rules! impl_os_from_str {
     ($(($variant:ident, $string:expr)),* $(,)?) => {
-        impl std::str::FromStr for ImpersonateOS {
-            type Err = String;
-
-            fn from_str(s: &str) -> Result<Self, Self::Err> {
+        impl From<&str> for ImpersonateOS {
+            fn from(s: &str) -> Self {
                 match s {
-                    $( $string => Ok(ImpersonateOS::$variant), )*
-                    _ => Err(format!("Unknown impersonate os: {}", s)),
+                    $( $string => ImpersonateOS::$variant, )*
+                    _ => ImpersonateOS::default(),
                 }
             }
         }
