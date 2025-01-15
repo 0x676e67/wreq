@@ -234,9 +234,9 @@ impl ConnectorService {
 
         if dst.scheme() == Some(&Scheme::HTTPS) {
             let http = HttpsConnector::builder(self.http.clone())
-                .with_alpn_protos(dst.alpn_protos())
-                .with_interface(dst.take_interface())
-                .with_addresses(dst.take_addresses())
+                .alpn_protos(dst.alpn_protos())
+                .interface(dst.take_interface())
+                .addresses(dst.take_addresses())
                 .build(self.tls.get_tls());
 
             log::trace!("socks HTTPS over proxy");
@@ -277,9 +277,9 @@ impl ConnectorService {
 
         log::trace!("connect with maybe proxy");
         let mut http = HttpsConnector::builder(http)
-            .with_alpn_protos(dst.alpn_protos())
-            .with_interface(dst.take_interface())
-            .with_addresses(dst.take_addresses())
+            .alpn_protos(dst.alpn_protos())
+            .interface(dst.take_interface())
+            .addresses(dst.take_addresses())
             .build(self.tls.get_tls());
         let io = http.call(dst.into()).await?;
 
@@ -324,9 +324,9 @@ impl ConnectorService {
 
         if dst.scheme() == Some(&Scheme::HTTPS) {
             let mut http = HttpsConnector::builder(self.http.clone())
-                .with_alpn_protos(dst.alpn_protos())
-                .with_interface(dst.take_interface())
-                .with_addresses(dst.take_addresses())
+                .alpn_protos(dst.alpn_protos())
+                .interface(dst.take_interface())
+                .addresses(dst.take_addresses())
                 .build(self.tls.get_tls());
 
             let host = dst.host().ok_or(crate::error::uri_bad_host())?;

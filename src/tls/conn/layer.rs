@@ -1,11 +1,10 @@
 /// referrer: https://github.com/cloudflare/boring/blob/master/hyper-boring/src/lib.rs
 use super::cache::{SessionCache, SessionKey};
-use super::{key_index, HttpsLayerSettings, MaybeHttpsStream};
-use crate::cfg_bindable_device;
+use super::{key_index, HttpsConnectorBuilder, HttpsLayerSettings, MaybeHttpsStream};
 use crate::connect::HttpConnector;
 use crate::error::BoxError;
-use crate::tls::ext::SslRefExt;
-use crate::tls::{AlpnProtos, BoringTlsConnector, ConnectConfigurationExt};
+
+use crate::tls::ConnectConfigurationExt;
 use crate::util::client::connect::Connection;
 use crate::util::rt::TokioIo;
 use antidote::Mutex;
@@ -16,66 +15,17 @@ use boring2::ssl::{
 use http::uri::Scheme;
 use http::Uri;
 use hyper2::rt::{Read, Write};
-use std::borrow::Cow;
 use std::error::Error;
 use std::fmt::Debug;
 use std::future::Future;
+use std::net::Ipv6Addr;
 use tokio_boring2::SslStream;
 
-use std::net::{self, IpAddr, Ipv4Addr, Ipv6Addr};
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
 use tower_layer::Layer;
 use tower_service::Service;
-
-pub(crate) struct HttpsConnectorBuilder {
-    http: HttpConnector,
-    alpn_protos: Option<AlpnProtos>,
-}
-
-impl HttpsConnectorBuilder {
-    #[inline]
-    pub fn new(http: HttpConnector) -> HttpsConnectorBuilder {
-        HttpsConnectorBuilder {
-            http,
-            alpn_protos: None,
-        }
-    }
-
-    #[inline]
-    pub fn with_alpn_protos(mut self, alpn_protos: Option<AlpnProtos>) -> Self {
-        self.alpn_protos = alpn_protos;
-        self
-    }
-
-    #[inline]
-    pub fn with_addresses(mut self, (ipv4, ipv6): (Option<Ipv4Addr>, Option<Ipv6Addr>)) -> Self {
-        match (ipv4, ipv6) {
-            (Some(a), Some(b)) => self.http.set_local_addresses(a, b),
-            (Some(a), None) => self.http.set_local_address(Some(IpAddr::V4(a))),
-            (None, Some(b)) => self.http.set_local_address(Some(IpAddr::V6(b))),
-            _ => (),
-        }
-        self
-    }
-
-    #[inline]
-    #[allow(unused_mut)]
-    pub fn with_interface(mut self, _interface: Option<Cow<'static, str>>) -> Self {
-        cfg_bindable_device! {
-            self.http.set_interface(_interface);
-        }
-        self
-    }
-
-    #[inline]
-    pub(crate) fn build(self, tls: BoringTlsConnector) -> HttpsConnector<HttpConnector> {
-        let mut connector = HttpsConnector::with_connector_layer(self.http, tls.0);
-        connector.set_ssl_callback(move |ssl, _| ssl.alpn_protos(self.alpn_protos));
-        connector
-    }
-}
 
 /// A Connector using BoringSSL to support `http` and `https` schemes.
 #[derive(Clone)]
@@ -320,7 +270,7 @@ where
                 let mut chars = host.chars();
 
                 if let (Some('['), Some(']')) = (chars.next(), chars.last()) {
-                    if host[1..last].parse::<net::Ipv6Addr>().is_ok() {
+                    if host[1..last].parse::<Ipv6Addr>().is_ok() {
                         host = &host[1..last];
                     }
                 }

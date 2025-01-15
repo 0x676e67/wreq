@@ -230,7 +230,6 @@ pub enum ImpersonateOS {
     IOS,
 }
 
-
 /// ======== ImpersonateOS impls ========
 impl ImpersonateOS {
     #[inline]
