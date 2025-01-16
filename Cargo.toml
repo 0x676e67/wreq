@@ -117,9 +117,9 @@ lru = { version = "0.12", default-features = false }
 # Optional deps...
 
 ## boring-tls
-boring = { package = "boring2", version = "4", features = ["pq-experimental"] }
-boring-sys = { package = "boring-sys2", version = "4" }
-tokio-boring = { package = "tokio-boring2", version = "4" }
+boring = { package = "boring2", version = "4.13.0", features = ["pq-experimental"] }
+boring-sys = { package = "boring-sys2", version = "4.13.0" }
+tokio-boring = { package = "tokio-boring2", version = "4.13.0" }
 foreign-types = { version = "0.5.0" }
 typed-builder = { version = "0.20.0" }
 
@@ -153,7 +153,7 @@ tokio-util = { version = "0.7.0", default-features = false, features = [
 tokio-socks = { version = "0.5.2", optional = true }
 
 ## websocket
-async-tungstenite = { version = "0.28.0", optional = true }
+async-tungstenite = { version = "0.28.2", optional = true }
 
 ## hickory-dns
 hickory-resolver = { version = "0.24", optional = true }
