@@ -135,11 +135,11 @@ By default, `rquest` uses Mozilla's root certificates through the `webpki-roots`
 
 Supports custom `TLS`/`HTTP2` fingerprint parameters (disabled by default). Unless you’re highly familiar with `TLS` and `HTTP2`, customization is not recommended, as it may cause unexpected issues.
 
-2. JA3/JA4/Akkmai fingerprint
+2. JA3/JA4/Akamai fingerprint
 
-As `TLS` encryption technology becomes more and more sophisticated and HTTP2 becomes more popular, `JA3`/`JA4`/`Akkmai` fingerprints cannot simulate browser fingerprints very well, and the parsed parameters cannot perfectly imitate the browser's `TLS`/`HTTP2` configuration fingerprints. Therefore, `rquest` has not planned to support parsing `JA3`/`JA4`/`Akkmai` fingerprint strings for simulation, but encourages users to customize the configuration according to their own situation.
+As `TLS` encryption technology becomes more and more sophisticated and HTTP2 becomes more popular, `JA3`/`JA4`/`Akamai` fingerprints cannot simulate browser fingerprints very well, and the parsed parameters cannot perfectly imitate the browser's `TLS`/`HTTP2` configuration fingerprints. Therefore, `rquest` has not planned to support parsing `JA3`/`JA4`/`Akamai` fingerprint strings for simulation, but encourages users to customize the configuration according to their own situation.
 
-Most of the `Akkmai` fingerprint strings obtained by users are not fully calculated. For example, the [website](https://tls.peet.ws/api/all), where the Headers Frame lacks Priority and Stream ID. If I were the server, it would be easy to detect this. For details, please refer to HTTP2 [frame](https://datatracker.ietf.org/doc/html/rfc7540#section-6) [parser](https://github.com/0x676e67/pingly/blob/main/src/track/inspector/http2.rs)
+Most of the `Akamai` fingerprint strings obtained by users are not fully calculated. For example, the [website](https://tls.peet.ws/api/all), where the Headers Frame lacks Priority and Stream ID. If I were the server, it would be easy to detect this. For details, please refer to HTTP2 [frame](https://datatracker.ietf.org/doc/html/rfc7540#section-6) [parser](https://github.com/0x676e67/pingly/blob/main/src/track/inspector/http2.rs)
 
 3. Default fingerprint
 
