@@ -98,7 +98,7 @@ mime_guess = { version = "2.0", default-features = false, optional = true }
 encoding_rs = { version = "0.8", optional = true }
 http-body = "1"
 http-body-util = "0.1"
-hyper2 = { version = "1", features = ["http1", "http2", "client"] }
+hyper2 = { version = "1.5.0", features = ["http1", "http2", "client"] }
 log = "0.4"
 mime = "0.3.17"
 percent-encoding = "2.3"
