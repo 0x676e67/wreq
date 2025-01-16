@@ -109,28 +109,25 @@ tokio = { version = "1", default-features = false, features = [
 ] }
 pin-project-lite = "0.2.0"
 ipnet = "2.10.0"
+typed-builder = { version = "0.20.0" }
 
 # hyper util
 socket2 = { version = "0.5", features = ["all"] }
 lru = { version = "0.12", default-features = false }
-
-# Optional deps...
 
 ## boring-tls
 boring = { package = "boring2", version = "4.13.0", features = ["pq-experimental"] }
 boring-sys = { package = "boring-sys2", version = "4.13.0" }
 tokio-boring = { package = "tokio-boring2", version = "4.13.0" }
 foreign-types = { version = "0.5.0" }
-typed-builder = { version = "0.20.0" }
-
-# boring-tls session cache
 linked_hash_set = { version = "0.1" }
-tower-layer = { version = "0.3" }
 
 # cert compression
 brotli = { version = "7" }
 flate2 = { version = "1" }
 zstd = { version = "0.13" }
+
+# Optional deps...
 
 # tls root certs
 rustls-native-certs = { version = "0.8.0", optional = true }
