@@ -120,24 +120,26 @@ impl fmt::Debug for NetworkScheme {
                     addresses,
                     proxy_scheme,
                 } => {
+                    write!(f, "{{")?;
+
                     // Only print the interface value if it is Some and not None
                     if let Some(interface) = interface {
-                        write!(f, "interface={:?},", interface)?;
+                        write!(f, " interface={:?},", interface)?;
                     }
 
                     // Only print the IPv4 address value if it is Some and not None
                     if let Some(v4) = &addresses.0 {
-                        write!(f, "ipv4={:?},", v4)?;
+                        write!(f, " ipv4={:?},", v4)?;
                     }
 
                     // Only print the IPv6 address value if it is Some and not None
                     if let Some(v6) = &addresses.1 {
-                        write!(f, "ipv6={:?}),", v6)?;
+                        write!(f, " ipv6={:?}),", v6)?;
                     }
 
                     // Only print the proxy_scheme value if it is Some and not None
                     if let Some(proxy) = proxy_scheme {
-                        write!(f, "proxy={:?}", proxy)?;
+                        write!(f, " proxy={:?},", proxy)?;
                     }
 
                     write!(f, "}}")
@@ -154,22 +156,24 @@ impl fmt::Debug for NetworkScheme {
                     addresses,
                     proxy_scheme,
                 } => {
+                    write!(f, "{{ ")?;
+
                     // Only print the IPv4 address value if it is Some and not None
                     if let Some(v4) = &addresses.0 {
-                        write!(f, "ipv4={:?},", v4)?;
+                        write!(f, " ipv4={:?},", v4)?;
                     }
 
                     // Only print the IPv6 address value if it is Some and not None
                     if let Some(v6) = &addresses.1 {
-                        write!(f, "ipv6={:?}),", v6)?;
+                        write!(f, " ipv6={:?}),", v6)?;
                     }
 
                     // Only print the proxy_scheme value if it is Some and not None
                     if let Some(proxy) = proxy_scheme {
-                        write!(f, "proxy={:?}", proxy)?;
+                        write!(f, " proxy={:?},", proxy)?;
                     }
 
-                    write!(f, "}}")
+                    write!(f, " }}")
                 }
                 NetworkScheme::Default => {
                     write!(f, "default")
