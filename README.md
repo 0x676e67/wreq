@@ -1,4 +1,4 @@
-[![CI](https://github.com/penumbra-x/rquest/actions/workflows/ci.yml/badge.svg)](https://github.com/penumbra-x/rquest/actions/workflows/ci.yml)
+[![CI](https://github.com/penumbra-x/rquest/actions/workflows/ci.yml/badge.svg)](https://github.com/0x676e67/rquest/actions/workflows/ci.yml)
 [![Crates.io License](https://img.shields.io/crates/l/rquest)](./LICENSE)
 ![Crates.io MSRV](https://img.shields.io/crates/msrv/rquest)
 [![crates.io](https://img.shields.io/crates/v/rquest.svg)](https://crates.io/crates/rquest)
@@ -6,9 +6,9 @@
 
 # rquest - `r`ust & quest
 
-> 🚀 Help me work seamlessly with open source sharing by [sponsoring me on GitHub](https://github.com/penumbra-x/.github/blob/main/profile/SPONSOR.md)
+> 🚀 Help me work seamlessly with open source sharing by [sponsoring me on GitHub](https://github.com/0x676e67/0x676e67/blob/main/SPONSOR.md)
 
-An ergonomic, all-in-one `TLS`, `JA3`/`JA4`, and `HTTP2` fingerprint HTTP Client for spoofing any browser.
+An ergonomic, all-in-one `TLS`, `JA3`/`JA4`, and `HTTP2` fingerprint HTTP Client for spoof any browser.
 
 ## Features
 
@@ -24,7 +24,7 @@ An ergonomic, all-in-one `TLS`, `JA3`/`JA4`, and `HTTP2` fingerprint HTTP Client
 Additional learning resources include:
 
 - [API Documentation](https://docs.rs/rquest)
-- [Repository Examples](https://github.com/penumbra-x/rquest/tree/main/examples)
+- [Repository Examples](https://github.com/0x676e67/rquest/tree/main/examples)
 
 ## Usage
 

@@ -1,7 +1,7 @@
 [package]
 name = "rquest"
 version = "1.5.2"
-description = "An ergonomic, all-in-one TLS, JA3/JA4, and HTTP2 fingerprint HTTP Client for spoofing any browser"
+description = "An ergonomic, all-in-one TLS, JA3/JA4, and HTTP2 fingerprint HTTP Client for spoof any browser"
 keywords = ["http", "client", "websocket", "ja3", "ja4"]
 categories = ["web-programming::http-client"]
 repository = "https://github.com/0x676e67/rquest"
@@ -96,7 +96,7 @@ mime_guess = { version = "2.0", default-features = false, optional = true }
 encoding_rs = { version = "0.8", optional = true }
 http-body = "1"
 http-body-util = "0.1"
-hyper2 = { version = "1", features = ["http1", "http2", "client"] }
+hyper2 = { version = "1.5.0", features = ["http1", "http2", "client"] }
 log = "0.4"
 mime = "0.3.17"
 percent-encoding = "2.3"
