@@ -173,7 +173,7 @@ impl fmt::Debug for NetworkScheme {
                         write!(f, " proxy={:?},", proxy)?;
                     }
 
-                    write!(f, " }}")
+                    write!(f, "}}")
                 }
                 NetworkScheme::Default => {
                     write!(f, "default")
