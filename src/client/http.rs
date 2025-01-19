@@ -1612,7 +1612,7 @@ impl_debug!(
     }
 );
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 struct ClientRef {
     accepts: Accepts,
     #[cfg(feature = "cookies")]
