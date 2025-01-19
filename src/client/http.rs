@@ -1360,16 +1360,18 @@ impl Client {
             None => (None, Body::empty()),
         };
 
-        self.inner.proxy_auth(&uri, &mut headers);
+        self.proxy_auth(&uri, &mut headers);
+
+        let network_scheme = self.network_scheme(&uri, network_scheme);
 
         let in_flight = {
             let res = InnerRequest::builder()
-                .network_scheme(self.inner.network_scheme(&uri, &network_scheme))
+                .network_scheme(network_scheme.clone())
                 .uri(uri)
                 .method(method.clone())
                 .version(version)
                 .headers(headers.clone())
-                .headers_order(self.inner.headers_order())
+                .headers_order(self.inner.headers_order.as_deref())
                 .body(body);
 
             match res {
@@ -1408,6 +1410,51 @@ impl Client {
                 read_timeout_fut,
                 read_timeout: self.inner.read_timeout,
             }),
+        }
+    }
+
+    #[inline]
+    fn proxy_auth(&self, dst: &Uri, headers: &mut HeaderMap) {
+        if !self.inner.proxies_maybe_http_auth {
+            return;
+        }
+
+        // Only set the header here if the destination scheme is 'http',
+        // since otherwise, the header will be included in the CONNECT tunnel
+        // request instead.
+        if dst.scheme() != Some(&Scheme::HTTP) || headers.contains_key(PROXY_AUTHORIZATION) {
+            return;
+        }
+
+        // Find the first proxy that matches the destination URI
+        // If a matching proxy provides an HTTP basic auth header, insert it into the headers
+        if let Some(header) = self
+            .inner
+            .proxies
+            .iter()
+            .find(|proxy| proxy.maybe_has_http_auth() && proxy.is_match(dst))
+            .and_then(|proxy| proxy.http_basic_auth(dst))
+        {
+            headers.insert(PROXY_AUTHORIZATION, header);
+        }
+    }
+
+    #[inline]
+    fn network_scheme(&self, uri: &Uri, default: NetworkScheme) -> NetworkScheme {
+        match default {
+            NetworkScheme::Default => {
+                let mut builder = self.inner.network_scheme.clone();
+
+                // iterate over the client's proxies and use the first valid one
+                for proxy in self.inner.proxies.iter() {
+                    if let Some(proxy_scheme) = proxy.intercept(uri) {
+                        builder.proxy_scheme(proxy_scheme);
+                    }
+                }
+
+                builder.build()
+            }
+            _ => default,
         }
     }
 }
@@ -1565,7 +1612,7 @@ impl_debug!(
     }
 );
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 struct ClientRef {
     accepts: Accepts,
     #[cfg(feature = "cookies")]
@@ -1599,60 +1646,11 @@ impl_debug!(
         read_timeout,
         https_only,
         proxies_maybe_http_auth,
-        base_url
+        base_url,
+        proxies,
+        network_scheme
     }
 );
-
-impl ClientRef {
-    #[inline]
-    fn proxy_auth(&self, dst: &Uri, headers: &mut HeaderMap) {
-        if !self.proxies_maybe_http_auth {
-            return;
-        }
-
-        // Only set the header here if the destination scheme is 'http',
-        // since otherwise, the header will be included in the CONNECT tunnel
-        // request instead.
-        if dst.scheme() != Some(&Scheme::HTTP) || headers.contains_key(PROXY_AUTHORIZATION) {
-            return;
-        }
-
-        // Find the first proxy that matches the destination URI
-        // If a matching proxy provides an HTTP basic auth header, insert it into the headers
-        if let Some(header) = self
-            .proxies
-            .iter()
-            .find(|proxy| proxy.maybe_has_http_auth() && proxy.is_match(dst))
-            .and_then(|proxy| proxy.http_basic_auth(dst))
-        {
-            headers.insert(PROXY_AUTHORIZATION, header);
-        }
-    }
-
-    #[inline]
-    fn network_scheme(&self, uri: &Uri, network_scheme: &NetworkScheme) -> NetworkScheme {
-        match network_scheme {
-            NetworkScheme::Default => {
-                let mut builder = self.network_scheme.clone();
-
-                // iterate over the client's proxies and use the first valid one
-                for proxy in self.proxies.iter() {
-                    if let Some(proxy_scheme) = proxy.intercept(uri) {
-                        builder.proxy_scheme(proxy_scheme);
-                    }
-                }
-
-                builder.build()
-            }
-            _ => network_scheme.clone(),
-        }
-    }
-
-    #[inline(always)]
-    fn headers_order(&self) -> Option<&[HeaderName]> {
-        self.headers_order.as_deref()
-    }
-}
 
 #[derive(Debug)]
 pub struct ClientMut<'c> {
@@ -1956,12 +1954,12 @@ impl PendingRequest {
 
         *self.as_mut().in_flight().get_mut() = {
             let res = InnerRequest::builder()
-                .network_scheme(self.client.network_scheme(&uri, &self.network_scheme))
+                .network_scheme(self.network_scheme.clone())
                 .uri(uri)
                 .method(self.method.clone())
                 .version(self.version)
                 .headers(self.headers.clone())
-                .headers_order(self.client.headers_order())
+                .headers_order(self.client.headers_order.as_deref())
                 .body(body);
 
             if let Ok(req) = res {
@@ -2215,14 +2213,12 @@ impl Future for PendingRequest {
 
                             *self.as_mut().in_flight().get_mut() = {
                                 let req = InnerRequest::builder()
-                                    .network_scheme(
-                                        self.client.network_scheme(&uri, &self.network_scheme),
-                                    )
+                                    .network_scheme(self.network_scheme.clone())
                                     .uri(uri)
                                     .method(self.method.clone())
                                     .version(self.version)
                                     .headers(headers.clone())
-                                    .headers_order(self.client.headers_order())
+                                    .headers_order(self.client.headers_order.as_deref())
                                     .body(body)?;
 
                                 std::mem::swap(self.as_mut().headers(), &mut headers);
