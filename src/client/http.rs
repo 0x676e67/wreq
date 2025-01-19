@@ -1384,10 +1384,9 @@ impl Client {
             .map(tokio::time::sleep)
             .map(Box::pin);
 
-        let read_timeout_fut = read_timeout
-            .or(self.inner.read_timeout)
-            .map(tokio::time::sleep)
-            .map(Box::pin);
+        let read_timeout = read_timeout.or(self.inner.read_timeout);
+
+        let read_timeout_fut = read_timeout.map(tokio::time::sleep).map(Box::pin);
 
         Pending {
             inner: PendingInner::Request(PendingRequest {
