@@ -1406,7 +1406,7 @@ impl Client {
                 in_flight,
                 total_timeout,
                 read_timeout_fut,
-                read_timeout: self.inner.read_timeout,
+                read_timeout,
             }),
         }
     }
