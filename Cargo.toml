@@ -63,7 +63,7 @@ native-roots = ["dep:rustls-native-certs"]
 webpki-roots = ["dep:webpki-root-certs"]
 
 # Optional enable http2 tracing
-http2-tracing = ["hyper2/tracing"]
+http2-tracing = ["hyper2/http2-tracing"]
 
 # Optional disable internal proxy cache
 internal_proxy_sys_no_cache = []
