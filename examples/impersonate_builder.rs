@@ -5,9 +5,7 @@ async fn main() -> Result<(), rquest::Error> {
     // Build a client to impersonate Firefox128
     let impersonate = Impersonate::builder()
         .impersonate(Impersonate::Firefox128)
-        // or .impersonate("firefox_128")
         .impersonate_os(ImpersonateOS::Windows)
-        // or .impersonate_os("ios")
         .skip_headers(true)
         .build();
 

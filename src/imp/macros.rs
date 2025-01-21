@@ -155,31 +155,3 @@ macro_rules! impersonate_match {
         }
     }
 }
-
-#[cfg(feature = "impersonate_str")]
-macro_rules! impl_from_str {
-    ($(($variant:ident, $string:expr)),* $(,)?) => {
-        impl From<&str> for Impersonate {
-            fn from(s: &str) -> Self {
-                match s {
-                    $( $string => Impersonate::$variant, )*
-                    _ => Impersonate::default(),
-                }
-            }
-        }
-    };
-}
-
-#[cfg(feature = "impersonate_str")]
-macro_rules! impl_os_from_str {
-    ($(($variant:ident, $string:expr)),* $(,)?) => {
-        impl From<&str> for ImpersonateOS {
-            fn from(s: &str) -> Self {
-                match s {
-                    $( $string => ImpersonateOS::$variant, )*
-                    _ => ImpersonateOS::default(),
-                }
-            }
-        }
-    };
-}

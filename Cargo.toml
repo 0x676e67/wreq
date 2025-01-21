@@ -68,9 +68,6 @@ http2-tracing = ["hyper2/http2-tracing"]
 # Optional disable internal proxy cache
 internal_proxy_sys_no_cache = []
 
-# Optional enable impersonate from str
-impersonate_str = []
-
 [dependencies]
 base64 = "0.22"
 http = "1"
