@@ -73,7 +73,7 @@ base64 = "0.22"
 http = "1"
 url = "2.5"
 bytes = "1.0"
-serde = "1.0"
+serde = { version = "1.0", features = ["derive"] }
 serde_urlencoded = "0.7.1"
 tower = { version = "0.5.2", default-features = false, features = [
     "timeout",

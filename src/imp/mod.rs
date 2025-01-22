@@ -10,6 +10,7 @@ mod okhttp;
 mod safari;
 
 use http::{HeaderMap, HeaderName};
+use serde::{Deserialize, Serialize};
 use typed_builder::TypedBuilder;
 use Impersonate::*;
 
@@ -60,20 +61,14 @@ pub struct ImpersonateBuilder {
 /// ========= Impersonate impls =========
 impl ImpersonateBuilder {
     #[inline]
-    pub fn impersonate<I>(mut self, impersonate: I) -> Self
-    where
-        I: Into<Impersonate>,
-    {
-        self.impersonate = impersonate.into();
+    pub fn impersonate(mut self, impersonate: Impersonate) -> Self {
+        self.impersonate = impersonate;
         self
     }
 
     #[inline]
-    pub fn impersonate_os<I>(mut self, impersonate_os: I) -> Self
-    where
-        I: Into<ImpersonateOS>,
-    {
-        self.impersonate_os = impersonate_os.into();
+    pub fn impersonate_os(mut self, impersonate_os: ImpersonateOS) -> Self {
+        self.impersonate_os = impersonate_os;
         self
     }
 
@@ -180,7 +175,8 @@ impl From<Impersonate> for ImpersonateSettings {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Impersonate {
     Chrome100,
     Chrome101,
@@ -255,7 +251,8 @@ impl Impersonate {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum ImpersonateOS {
     Windows,
     #[default]
