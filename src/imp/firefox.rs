@@ -47,7 +47,7 @@ macro_rules! tls_settings {
             .enable_ech_grease(true)
             .pre_shared_key(true)
             .psk_skip_session_tickets(true)
-            .key_shares_length_limit(3)
+            .key_shares_limit(3)
             .cert_compression_algorithm(CERT_COMPRESSION_ALGORITHM)
             .build()
     };
@@ -55,7 +55,7 @@ macro_rules! tls_settings {
         FirefoxTlsSettings::builder()
             .cipher_list($cipher_list)
             .curves($curves)
-            .key_shares_length_limit(2)
+            .key_shares_limit(2)
             .build()
     };
     (3, $cipher_list:expr, $curves:expr) => {
@@ -65,7 +65,7 @@ macro_rules! tls_settings {
             .session_ticket(false)
             .enable_ech_grease(true)
             .psk_dhe_ke(false)
-            .key_shares_length_limit(2)
+            .key_shares_limit(2)
             .build()
     };
 }
@@ -290,7 +290,7 @@ mod tls {
         record_size_limit: u16,
 
         #[builder(default, setter(into))]
-        key_shares_length_limit: Option<u8>,
+        key_shares_limit: Option<u8>,
 
         #[builder(default = true, setter(into))]
         psk_dhe_ke: bool,
@@ -317,7 +317,7 @@ mod tls {
                 .cert_compression_algorithm(val.cert_compression_algorithm.map(Cow::Borrowed))
                 .min_tls_version(TlsVersion::TLS_1_2)
                 .max_tls_version(TlsVersion::TLS_1_3)
-                .key_shares_length_limit(val.key_shares_length_limit)
+                .key_shares_limit(val.key_shares_limit)
                 .pre_shared_key(val.pre_shared_key)
                 .psk_skip_session_ticket(val.psk_skip_session_tickets)
                 .psk_dhe_ke(val.psk_dhe_ke)

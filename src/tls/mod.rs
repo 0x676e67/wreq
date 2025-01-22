@@ -95,8 +95,8 @@ impl BoringTlsConnector {
             connector.set_record_size_limit(record_size_limit);
         }
 
-        if let Some(limit) = settings.key_shares_length_limit {
-            connector.set_key_shares_length_limit(limit);
+        if let Some(limit) = settings.key_shares_limit {
+            connector.set_key_shares_limit(limit);
         }
 
         if let Some(indices) = settings.extension_permutation_indices {
@@ -371,7 +371,7 @@ pub struct TlsSettings {
 
     /// Sets the context's key shares length limit.
     #[builder(default, setter(into))]
-    pub key_shares_length_limit: Option<u8>,
+    pub key_shares_limit: Option<u8>,
 
     /// Sets PSK with (EC)DHE key establishment (psk_dhe_ke)
     /// [Reference](https://github.com/openssl/openssl/issues/13918)
@@ -457,7 +457,7 @@ impl_debug!(
         enable_signed_cert_timestamps,
         cert_compression_algorithm,
         record_size_limit,
-        key_shares_length_limit,
+        key_shares_limit,
         psk_skip_session_ticket,
         extension_permutation_indices
     }
