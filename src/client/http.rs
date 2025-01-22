@@ -1058,7 +1058,7 @@ impl ClientBuilder {
     }
 
     /// Set root certificate store.
-    pub fn root_certs_store<S>(mut self, store: S) -> ClientBuilder
+    pub fn root_cert_store<S>(mut self, store: S) -> ClientBuilder
     where
         S: Into<RootCertStore>,
     {

@@ -12,9 +12,14 @@ async fn main() -> Result<(), rquest::Error> {
     // Set the redirect policy
     client.as_mut().redirect(Policy::default());
 
-    let resp = client.get("http://google.com/").send().await?;
+    let text = client
+        .get("http://google.com/")
+        .send()
+        .await?
+        .text()
+        .await?;
 
-    println!("{}", resp.text().await?);
+    println!("{}", text);
 
     Ok(())
 }

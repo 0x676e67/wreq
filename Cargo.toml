@@ -312,11 +312,6 @@ path = "examples/websocket.rs"
 required-features = ["websocket", "futures-util/std"]
 
 [[example]]
-name = "client"
-path = "examples/client.rs"
-required-features = ["full"]
-
-[[example]]
 name = "client_chain"
 path = "examples/client_chain.rs"
 

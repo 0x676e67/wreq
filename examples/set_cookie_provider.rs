@@ -22,8 +22,8 @@ async fn main() -> Result<(), rquest::Error> {
     );
 
     // Use the API you're already familiar with
-    let resp = client.get(url).send().await?;
-    println!("{}", resp.text().await?);
+    let resp = client.get(url).send().await?.text().await?;
+    println!("{}", resp);
 
     Ok(())
 }

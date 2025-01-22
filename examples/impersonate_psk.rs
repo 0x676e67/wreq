@@ -12,8 +12,13 @@ async fn main() -> Result<(), rquest::Error> {
     let _ = client.get("https://tls.peet.ws/api/all").send().await?;
 
     // Now, let's impersonate a PSK
-    let resp = client.get("https://tls.peet.ws/api/all").send().await?;
-    println!("{}", resp.text().await?);
+    let text = client
+        .get("https://tls.peet.ws/api/all")
+        .send()
+        .await?
+        .text()
+        .await?;
+    println!("{}", text);
 
     Ok(())
 }

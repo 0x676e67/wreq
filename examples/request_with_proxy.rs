@@ -13,9 +13,10 @@ async fn main() -> Result<(), rquest::Error> {
         .get("https://tls.peet.ws/api/all")
         .proxy("http://127.0.0.1:6152")
         .send()
+        .await?
+        .text()
         .await?;
-
-    println!("{}", resp.text().await?);
+    println!("{}", resp);
 
     Ok(())
 }

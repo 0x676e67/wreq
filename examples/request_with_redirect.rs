@@ -13,9 +13,10 @@ async fn main() -> Result<(), rquest::Error> {
         .get("http://google.com/")
         .redirect(Policy::default())
         .send()
+        .await?
+        .text()
         .await?;
-
-    println!("{}", resp.text().await?);
+    println!("{}", resp);
 
     Ok(())
 }

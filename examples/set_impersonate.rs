@@ -18,25 +18,14 @@ async fn main() -> Result<(), rquest::Error> {
         .build()?;
 
     // Set the headers order
-    {
-        client.as_mut().headers_order(&HEADER_ORDER);
-        let resp = client.get("https://tls.peet.ws/api/all").send().await?;
-        println!("{}", resp.text().await?);
-    }
+    client.as_mut().headers_order(&HEADER_ORDER);
+    let resp = client.get("https://tls.peet.ws/api/all").send().await?;
+    println!("{}", resp.text().await?);
 
     // Change the impersonate to Safari18
-    {
-        client.as_mut().impersonate(Impersonate::Safari18);
-        let resp = client.get("https://tls.peet.ws/api/all").send().await?;
-        println!("{}", resp.text().await?);
-    }
-
-    // Change the impersonate to Edge127 without setting the headers
-    {
-        client.as_mut().impersonate(Impersonate::Edge127);
-        let resp = client.get("https://tls.peet.ws/api/all").send().await?;
-        println!("{}", resp.text().await?);
-    }
+    client.as_mut().impersonate(Impersonate::Safari18);
+    let resp = client.get("https://tls.peet.ws/api/all").send().await?;
+    println!("{}", resp.text().await?);
 
     Ok(())
 }

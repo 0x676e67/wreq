@@ -31,10 +31,9 @@ async fn main() -> Result<(), rquest::Error> {
             println!("{}", resp.text().await?);
         }
 
-        // option 2:  the proxies
+        // option 2:  clear the proxies
         {
-            let proxy = rquest::Proxy::all("socks5h://abc:123@127.0.0.1:6153")?;
-            client.as_mut().proxies(vec![proxy]);
+            client.as_mut().proxies(None);
 
             let resp = client.get("https://api.ip.sb/ip").send().await?;
             println!("{}", resp.text().await?);
