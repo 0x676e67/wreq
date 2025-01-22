@@ -75,11 +75,7 @@ jobs:
         run: |
           sudo apt update && sudo apt install cmake build-essential clang libclang-dev -y
 
-      - name: Build
-        run: |
-          cargo build --all-features
-
-      - name: Tests
+      - name: Build & Tests
         run: |
           cargo test --all-features
 
