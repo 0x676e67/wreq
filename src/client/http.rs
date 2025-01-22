@@ -46,7 +46,7 @@ use crate::into_url::try_uri;
 use crate::{cfg_bindable_device, error, impl_debug};
 use crate::{
     redirect,
-    tls::{AlpnProtos, BoringTlsConnector, RootCertsStore, TlsVersion},
+    tls::{AlpnProtos, BoringTlsConnector, RootCertStore, TlsVersion},
 };
 use crate::{IntoUrl, Method, Proxy, StatusCode, Url};
 #[cfg(feature = "hickory-dns")]
@@ -1060,7 +1060,7 @@ impl ClientBuilder {
     /// Set root certificate store.
     pub fn root_certs_store<S>(mut self, store: S) -> ClientBuilder
     where
-        S: Into<RootCertsStore>,
+        S: Into<RootCertStore>,
     {
         self.config.settings.tls.root_certs_store = store.into();
         self

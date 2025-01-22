@@ -1,12 +1,10 @@
-pub mod cert_compression;
-#[cfg(any(feature = "webpki-roots", feature = "native-roots"))]
-mod cert_load;
-use super::{AlpnProtos, AlpsProtos, RootCertsStore, TlsResult, TlsVersion};
+mod cert;
+use super::{AlpnProtos, AlpsProtos, RootCertStore, TlsResult, TlsVersion};
 use ::std::os::raw::c_int;
 use boring2::error::ErrorStack;
 use boring2::ssl::{ConnectConfiguration, SslConnectorBuilder, SslRef, SslVerifyMode};
 use boring_sys2 as ffi;
-use cert_compression::CertCompressionAlgorithm;
+pub use cert::{compression::CertCompressionAlgorithm, load};
 use foreign_types::ForeignTypeRef;
 
 /// Error handler for the boringssl functions.
@@ -45,7 +43,7 @@ pub trait SslConnectorBuilderExt {
     ) -> TlsResult<SslConnectorBuilder>;
 
     /// Configure the RootCertsStore for the given `SslConnectorBuilder`.
-    fn root_certs_store(self, stroe: RootCertsStore) -> TlsResult<SslConnectorBuilder>;
+    fn root_certs_store(self, stroe: RootCertStore) -> TlsResult<SslConnectorBuilder>;
 }
 
 /// SslRefExt trait for `SslRef`.
@@ -117,15 +115,15 @@ impl SslConnectorBuilderExt for SslConnectorBuilder {
     }
 
     #[inline]
-    fn root_certs_store(mut self, store: RootCertsStore) -> TlsResult<SslConnectorBuilder> {
+    fn root_certs_store(mut self, store: RootCertStore) -> TlsResult<SslConnectorBuilder> {
         // Conditionally configure the TLS builder based on the "native-roots" feature.
         // If no custom CA cert store, use the system's native certificate store if the feature is enabled.
         match store {
-            RootCertsStore::Default => {
+            RootCertStore::Default => {
                 // WebPKI root certificates are enabled (regardless of whether native-roots is also enabled).
                 #[cfg(any(feature = "webpki-roots", feature = "native-roots"))]
                 {
-                    if let Ok(cert_store) = cert_load::LOAD_CERTS.as_deref() {
+                    if let Some(cert_store) = load::LOAD_CERTS.as_deref() {
                         log::debug!("Using CA certs from webpki/native roots");
                         sv_handler(unsafe {
                             ffi::SSL_CTX_set1_verify_cert_store(self.as_ptr(), cert_store.as_ptr())
@@ -142,10 +140,10 @@ impl SslConnectorBuilderExt for SslConnectorBuilder {
                     self.set_default_verify_paths()?;
                 }
             }
-            RootCertsStore::Owned(cert_store) => {
+            RootCertStore::Owned(cert_store) => {
                 self.set_verify_cert_store(cert_store)?;
             }
-            RootCertsStore::Borrowed(cert_store) => {
+            RootCertStore::Borrowed(cert_store) => {
                 sv_handler(unsafe {
                     ffi::SSL_CTX_set1_verify_cert_store(self.as_ptr(), cert_store.as_ptr())
                 })?;

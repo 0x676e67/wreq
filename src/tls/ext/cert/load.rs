@@ -3,23 +3,31 @@ use boring2::x509::{store::X509StoreBuilder, X509};
 use boring2::{error::ErrorStack, x509::store::X509Store};
 use std::sync::LazyLock;
 
-pub static LOAD_CERTS: LazyLock<Result<X509Store, crate::Error>> = LazyLock::new(|| {
+pub static LOAD_CERTS: LazyLock<Option<X509Store>> = LazyLock::new(|| {
     #[cfg(feature = "webpki-roots")]
-    {
+    let res = {
         load_certs_from_source(
             webpki_root_certs::TLS_SERVER_ROOT_CERTS
                 .iter()
                 .map(|c| X509::from_der(c)),
         )
-    }
+    };
 
     #[cfg(all(feature = "native-roots", not(feature = "webpki-roots")))]
-    {
+    let res = {
         load_certs_from_source(
             rustls_native_certs::load_native_certs()
                 .iter()
                 .map(|c| X509::from_der(&*c)),
         )
+    };
+
+    match res {
+        Ok(store) => Some(store),
+        Err(err) => {
+            log::error!("tls failed to load root certificates: {err}");
+            None
+        }
     }
 });
 

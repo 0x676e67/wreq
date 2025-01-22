@@ -20,8 +20,7 @@ use typed_builder::TypedBuilder;
 
 pub use conn::{HttpsConnector, MaybeHttpsStream};
 pub use ext::{
-    cert_compression::CertCompressionAlgorithm, ConnectConfigurationExt, SslConnectorBuilderExt,
-    SslRefExt,
+    CertCompressionAlgorithm, ConnectConfigurationExt, SslConnectorBuilderExt, SslRefExt,
 };
 
 type TlsResult<T> = Result<T, ErrorStack>;
@@ -197,7 +196,7 @@ impl TlsInfo {
 /// The root certificate store.
 #[allow(missing_debug_implementations)]
 #[derive(Default)]
-pub enum RootCertsStore {
+pub enum RootCertStore {
     /// An owned `X509Store`.
     Owned(X509Store),
 
@@ -213,7 +212,7 @@ pub enum RootCertsStore {
 macro_rules! impl_root_cert_store {
     ($($type:ty => $variant:ident),* $(,)?) => {
         $(
-            impl From<$type> for RootCertsStore {
+            impl From<$type> for RootCertStore {
                 fn from(store: $type) -> Self {
                     Self::$variant(store)
                 }
@@ -223,7 +222,7 @@ macro_rules! impl_root_cert_store {
 
     ($($type:ty => $variant:ident, $unwrap:expr),* $(,)?) => {
         $(
-            impl From<$type> for RootCertsStore {
+            impl From<$type> for RootCertStore {
                 fn from(store: $type) -> Self {
                     $unwrap(store).map(Self::$variant).unwrap_or_default()
                 }
@@ -242,7 +241,7 @@ impl_root_cert_store!(
     Option<&'static X509Store> => Borrowed, |s| s,
 );
 
-impl<F> From<F> for RootCertsStore
+impl<F> From<F> for RootCertStore
 where
     F: Fn() -> Option<&'static X509Store>,
 {
@@ -259,8 +258,8 @@ where
 pub struct TlsSettings {
     /// The root certificate store.
     /// Default use system's native certificate store.
-    #[builder(default = RootCertsStore::Default)]
-    pub root_certs_store: RootCertsStore,
+    #[builder(default = RootCertStore::Default)]
+    pub root_certs_store: RootCertStore,
 
     /// SSL may authenticate either endpoint with an X.509 certificate.
     /// Typically this is used to authenticate the server to the client.
