@@ -258,6 +258,62 @@ pub use self::error::{Error, Result};
 pub use self::into_url::IntoUrl;
 pub use self::response::ResponseBuilderExt;
 
+/// Macro to implement Debug for a type, skipping certain fields.
+#[macro_export]
+macro_rules! impl_debug {
+    ($type:ty, { $($field_name:ident),* }) => {
+        impl std::fmt::Debug for $type {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                let mut debug_struct = f.debug_struct(stringify!($type));
+                $(
+                    debug_struct.field(stringify!($field_name), &self.$field_name);
+                )*
+                debug_struct.finish()
+            }
+        }
+    }
+}
+
+/// Macro to conditionally compile code for bindable devices.
+#[macro_export]
+macro_rules! cfg_bindable_device {
+    ($($tt:tt)*) => {
+        #[cfg(any(
+            target_os = "android",
+            target_os = "fuchsia",
+            target_os = "linux",
+            target_os = "ios",
+            target_os = "visionos",
+            target_os = "macos",
+            target_os = "tvos",
+            target_os = "watchos"
+        ))]
+        $(
+            $tt
+        )*
+    };
+}
+
+/// Macro to conditionally compile code for non-bindable devices.
+#[macro_export]
+macro_rules! cfg_non_bindable_device {
+    ($($tt:tt)*) => {
+        #[cfg(not(any(
+            target_os = "android",
+            target_os = "fuchsia",
+            target_os = "linux",
+            target_os = "ios",
+            target_os = "visionos",
+            target_os = "macos",
+            target_os = "tvos",
+            target_os = "watchos"
+        )))]
+        $(
+            $tt
+        )*
+    }
+}
+
 /// Shortcut method to quickly make a `GET` request.
 ///
 /// See also the methods on the [`rquest::Response`](./struct.Response.html)
@@ -354,7 +410,6 @@ mod connect;
 #[cfg(feature = "cookies")]
 pub mod cookie;
 pub mod dns;
-mod macros;
 mod proxy;
 pub mod redirect;
 
