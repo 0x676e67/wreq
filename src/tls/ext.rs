@@ -1,10 +1,9 @@
-mod cert;
+use super::cert::{compression::CertCompressionAlgorithm, load, RootCertStore};
 use super::{AlpnProtos, AlpsProtos, TlsResult, TlsVersion};
 use ::std::os::raw::c_int;
 use boring2::error::ErrorStack;
 use boring2::ssl::{ConnectConfiguration, SslConnectorBuilder, SslRef, SslVerifyMode};
 use boring_sys2 as ffi;
-pub use cert::{compression::CertCompressionAlgorithm, load, RootCertStore};
 use foreign_types::ForeignTypeRef;
 
 /// Error handler for the boringssl functions.

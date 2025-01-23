@@ -5,6 +5,7 @@
 //! - Various parts of TLS can also be configured or even disabled on the
 //!   `ClientBuilder`.
 
+mod cert;
 mod conn;
 mod ext;
 
@@ -18,11 +19,9 @@ use conn::{HttpsLayer, HttpsLayerSettings};
 use std::borrow::Cow;
 use typed_builder::TypedBuilder;
 
+pub use cert::{compression::CertCompressionAlgorithm, RootCertStore};
 pub use conn::{HttpsConnector, MaybeHttpsStream};
-pub use ext::{
-    CertCompressionAlgorithm, ConnectConfigurationExt, RootCertStore, SslConnectorBuilderExt,
-    SslRefExt,
-};
+pub use ext::{ConnectConfigurationExt, SslConnectorBuilderExt, SslRefExt};
 
 type TlsResult<T> = Result<T, ErrorStack>;
 
