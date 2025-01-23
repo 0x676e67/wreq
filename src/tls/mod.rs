@@ -25,6 +25,15 @@ pub use ext::{ConnectConfigurationExt, SslConnectorBuilderExt, SslRefExt};
 
 type TlsResult<T> = Result<T, ErrorStack>;
 
+/// Error handler for the boringssl functions.
+fn sv_handler(r: ::std::os::raw::c_int) -> TlsResult<::std::os::raw::c_int> {
+    if r == 0 {
+        Err(ErrorStack::get())
+    } else {
+        Ok(r)
+    }
+}
+
 /// A wrapper around a `HttpsLayer` that allows for additional settings.
 #[derive(Clone)]
 pub(crate) struct BoringTlsConnector(HttpsLayer);
@@ -34,7 +43,7 @@ impl BoringTlsConnector {
     #[inline]
     pub fn new(settings: TlsSettings) -> TlsResult<BoringTlsConnector> {
         let mut connector = SslConnector::no_default_verify_builder(SslMethod::tls_client())?
-            .root_certs_store(settings.root_certs_store)?
+            .root_cert_store(settings.root_certs_store)?
             .cert_verification(settings.certs_verification)?
             .alpn_protos(settings.alpn_protos)?
             .min_tls_version(settings.min_tls_version)?
