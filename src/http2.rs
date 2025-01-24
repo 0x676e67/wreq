@@ -1,5 +1,5 @@
 //! HTTP/2 settings.
-use hyper2::{Priority, PseudoOrder, SettingsOrder};
+use hyper2::{Priority, PseudoOrder, SettingsOrder, StreamDependency, StreamId};
 use std::borrow::Cow;
 use typed_builder::TypedBuilder;
 
@@ -83,8 +83,8 @@ pub struct Http2Settings {
     ///
     /// - **Structure:** `(stream_dependency, weight, exclusive_flag)`
     /// - **Purpose:** Specifies how header frames are prioritized during transmission.
-    #[builder(default, setter(into))]
-    pub headers_priority: Option<(u32, u8, bool)>,
+    #[builder(default, setter(transform = |input: impl IntoStreamDependency| Some(input.into())))]
+    pub headers_priority: Option<StreamDependency>,
 
     /// The order of pseudo-header fields.
     ///
@@ -100,4 +100,33 @@ pub struct Http2Settings {
     /// - **Purpose:** Defines stream dependencies and priorities.
     #[builder(default, setter(strip_option, into))]
     pub priority: Option<Cow<'static, [Priority]>>,
+}
+
+/// A trait for converting various types into a `StreamDependency`.
+///
+/// This trait is used to provide a unified way to convert different types
+/// into a `StreamDependency` instance.
+pub trait IntoStreamDependency {
+    /// Converts the implementing type into a `StreamDependency`.
+    fn into(self) -> StreamDependency;
+}
+
+/// Implements `IntoStreamDependency` for a tuple of `(u32, u8, bool)`.
+///
+/// This implementation allows a tuple containing a stream ID, weight, and
+/// exclusive flag to be converted into a `StreamDependency`.
+impl IntoStreamDependency for (u32, u8, bool) {
+    fn into(self) -> StreamDependency {
+        StreamDependency::new(StreamId::from(self.0), self.1, self.2)
+    }
+}
+
+/// Implements `IntoStreamDependency` for `StreamDependency`.
+///
+/// This implementation allows a `StreamDependency` to be converted into
+/// itself, which is useful for cases where a generic conversion is needed.
+impl IntoStreamDependency for StreamDependency {
+    fn into(self) -> StreamDependency {
+        self
+    }
 }

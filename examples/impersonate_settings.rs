@@ -137,7 +137,7 @@ async fn main() -> Result<(), rquest::Error> {
         .initial_stream_window_size(131072)
         .max_frame_size(16384)
         .initial_connection_window_size(12517377 + 65535)
-        .headers_priority((13, 41, false))
+        .headers_priority(StreamDependency::new(StreamId::from(13), 41, false))
         .headers_pseudo_order([Method, Scheme, Authority, Path])
         .settings_order([
             HeaderTableSize,

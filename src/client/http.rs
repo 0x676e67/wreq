@@ -22,7 +22,6 @@ use http::header::{
 use http::uri::Scheme;
 use http::{HeaderName, Uri, Version};
 use hyper2::client::conn::{http1, http2};
-use hyper2::{StreamDependency, StreamId};
 use pin_project_lite::pin_project;
 use std::future::Future;
 use std::pin::Pin;
@@ -2278,10 +2277,6 @@ fn add_cookie_header(headers: &mut HeaderMap, cookie_store: &dyn cookie::CookieS
 }
 
 fn apply_http2_settings(builder: &mut http2::Builder<Exec>, http2: Http2Settings) {
-    let http2_headers_priority = http2
-        .headers_priority
-        .map(|(a, b, c)| StreamDependency::new(StreamId::from(a), b, c));
-
     builder
         .initial_stream_id(http2.initial_stream_id)
         .initial_stream_window_size(http2.initial_stream_window_size)
@@ -2289,7 +2284,7 @@ fn apply_http2_settings(builder: &mut http2::Builder<Exec>, http2: Http2Settings
         .max_concurrent_streams(http2.max_concurrent_streams)
         .header_table_size(http2.header_table_size)
         .max_frame_size(http2.max_frame_size)
-        .headers_priority(http2_headers_priority)
+        .headers_priority(http2.headers_priority)
         .headers_pseudo_order(http2.headers_pseudo_order)
         .settings_order(http2.settings_order)
         .priority(http2.priority);
