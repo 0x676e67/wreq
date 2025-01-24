@@ -1,6 +1,6 @@
 # rquest - `r`ust & quest
 
-[![CI](https://github.com/penumbra-x/rquest/actions/workflows/ci.yml/badge.svg)](https://github.com/0x676e67/rquest/actions/workflows/ci.yml)
+[![CI](https://github.com/0x676e67/rquest/actions/workflows/ci.yml/badge.svg)](https://github.com/0x676e67/rquest/actions/workflows/ci.yml)
 [![Crates.io License](https://img.shields.io/crates/l/rquest)](./LICENSE)
 ![Crates.io MSRV](https://img.shields.io/crates/msrv/rquest)
 [![crates.io](https://img.shields.io/crates/v/rquest.svg)](https://crates.io/crates/rquest)
@@ -116,7 +116,7 @@ The fork optimizes commonly used APIs and enhances compatibility with connection
 
 Overall, excluding unstable features, **`rquest`** is a superset of reqwest, offering simpler and more practical APIs while also fixing HTTP version negotiation [issues](https://github.com/seanmonstar/reqwest/issues/2116) in requests.
 
-As synchronous APIs are not actively maintained due to time constraints, only asynchronous APIs are supported. Maintenance may be discontinued in the future; if you find this project helpful, please consider [sponsoring me](https://github.com/penumbra-x/.github/blob/main/profile/SPONSOR.md).
+As synchronous APIs are not actively maintained due to time constraints, only asynchronous APIs are supported. Maintenance may be discontinued in the future; if you find this project helpful, please consider [sponsoring me](https://github.com/0x676e67/.github/blob/main/profile/SPONSOR.md).
 
 ## Performance
 
@@ -190,15 +190,15 @@ sudo apt-get install build-essential cmake perl pkg-config libclang-dev musl-too
 cargo build --release
 ```
 
-You can also use [this GitHub Actions workflow](https://github.com/penumbra-x/rquest/blob/main/.github/compilation-guide/build.yml) to compile your project on **Linux**, **Windows**, and **macOS**.
+You can also use [this GitHub Actions workflow](https://github.com/0x676e67/rquest/blob/main/.github/compilation-guide/build.yml) to compile your project on **Linux**, **Windows**, and **macOS**.
 
 ## Contributing
 
-If you would like to submit your contribution, please open a [Pull Request](https://github.com/penumbra-x/rquest/pulls).
+If you would like to submit your contribution, please open a [Pull Request](https://github.com/0x676e67/rquest/pulls).
 
 ## Getting help
 
-Your question might already be answered on the [issues](https://github.com/penumbra-x/rquest/issues)
+Your question might already be answered on the [issues](https://github.com/0x676e67/rquest/issues)
 
 ## License
 

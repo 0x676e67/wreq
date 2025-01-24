@@ -14,12 +14,12 @@
 //! - Uses [BoringSSL](#tls)
 //! - HTTP [Proxies](#proxies)
 //! - Perfectly impersonate Chrome, Safari, and Firefox
-//! - [Changelog](https://github.com/penumbra-x/rquest/blob/main/CHANGELOG.md)
+//! - [Changelog](https://github.com/0x676e67/rquest/blob/main/CHANGELOG.md)
 //!
 //! Additional learning resources include:
 //!
 //! - [The Rust Cookbook](https://doc.rust-lang.org/stable/book/ch00-00-introduction.html)
-//! - [Repository Examples](https://github.com/penumbra-x/rquest/tree/main/examples)
+//! - [Repository Examples](https://github.com/0x676e67/rquest/tree/main/examples)
 //!
 //! ## Impersonate
 //!
