@@ -451,18 +451,35 @@ macro_rules! impl_into_cert_compression_algorithm_for_arrays {
 
 impl_into_cert_compression_algorithm_for_types!(
     &'static [CertCompressionAlgorithm] => |s| Some(Cow::Borrowed(s)),
-    Option<&'static [CertCompressionAlgorithm]> => |s: Option<&'static [CertCompressionAlgorithm]>| s.map(Cow::Borrowed),
+    Option<&'static [CertCompressionAlgorithm]> => |s: Option<&'static [CertCompressionAlgorithm]>| s.map(Cow::Borrowed)
+);
+
+impl_into_cert_compression_algorithm_for_types!(
     Cow<'static, [CertCompressionAlgorithm]> => |s| Some(s),
-    Option<Cow<'static, [CertCompressionAlgorithm]>> => |s| s,
+    Option<Cow<'static, [CertCompressionAlgorithm]>> => |s| s
+);
+
+impl_into_cert_compression_algorithm_for_types!(
+    &'static CertCompressionAlgorithm => |s: &'static CertCompressionAlgorithm| Some(Cow::Owned(vec![*s])),
+    Option<&'static CertCompressionAlgorithm> => |s: Option<&'static CertCompressionAlgorithm>| s.map(|alg| Cow::Owned(vec![*alg]))
+);
+
+impl_into_cert_compression_algorithm_for_types!(
     CertCompressionAlgorithm => |s| Some(Cow::Owned(vec![s])),
-    Option<CertCompressionAlgorithm> => |s: Option<CertCompressionAlgorithm>| s.map(|alg| Cow::Owned(vec![alg])),
+    Option<CertCompressionAlgorithm> => |s: Option<CertCompressionAlgorithm>| s.map(|alg| Cow::Owned(vec![alg]))
+);
+
+impl_into_cert_compression_algorithm_for_types!(
     Vec<CertCompressionAlgorithm> => |s| Some(Cow::Owned(s)),
     Option<Vec<CertCompressionAlgorithm>> => |s: Option<Vec<CertCompressionAlgorithm>>| s.map(Cow::Owned)
 );
 
 impl_into_cert_compression_algorithm_for_arrays!(
     &'static [CertCompressionAlgorithm; N] => |s: &'static [CertCompressionAlgorithm; N]| Some(Cow::Borrowed(&s[..])),
-    Option<&'static [CertCompressionAlgorithm; N]> => |s: Option<&'static [CertCompressionAlgorithm; N]>| s.map(|s| Cow::Borrowed(&s[..])),
+    Option<&'static [CertCompressionAlgorithm; N]> => |s: Option<&'static [CertCompressionAlgorithm; N]>| s.map(|s| Cow::Borrowed(&s[..]))
+);
+
+impl_into_cert_compression_algorithm_for_arrays!(
     [CertCompressionAlgorithm; N] => |s: [CertCompressionAlgorithm; N]| Some(Cow::Owned(s.to_vec())),
     Option<[CertCompressionAlgorithm; N]> => |s: Option<[CertCompressionAlgorithm; N]>| s.map(|arr| Cow::Owned(arr.to_vec()))
 );
