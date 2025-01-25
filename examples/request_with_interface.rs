@@ -2,7 +2,7 @@ use rquest::{Client, Impersonate};
 
 #[tokio::main]
 async fn main() -> Result<(), rquest::Error> {
-    env_logger::init_from_env(env_logger::Env::default().default_filter_or("debug"));
+    env_logger::init_from_env(env_logger::Env::default().default_filter_or("trace"));
 
     // Build a client to impersonate Firefox128
     let client = Client::builder()
@@ -16,6 +16,7 @@ async fn main() -> Result<(), rquest::Error> {
         .await?
         .text()
         .await?;
+
     println!("{}", text);
 
     Ok(())

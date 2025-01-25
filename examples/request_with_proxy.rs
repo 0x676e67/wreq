@@ -16,6 +16,7 @@ async fn main() -> Result<(), rquest::Error> {
         .await?
         .text()
         .await?;
+
     println!("{}", resp);
 
     Ok(())

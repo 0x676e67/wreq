@@ -7,7 +7,15 @@ async fn main() -> Result<(), rquest::Error> {
         .impersonate(Impersonate::Firefox128)
         .build()?;
 
-    let resp = client.get("https://tls.peet.ws/api/all").send().await?;
-    println!("{}", resp.text().await?);
+    // Use the API you're already familiar with
+    let text = client
+        .get("https://tls.peet.ws/api/all")
+        .send()
+        .await?
+        .text()
+        .await?;
+
+    println!("{}", text);
+
     Ok(())
 }

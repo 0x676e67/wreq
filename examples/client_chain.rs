@@ -34,7 +34,6 @@ async fn main() -> Result<(), rquest::Error> {
         .base_url("https://tls.peet.ws");
 
     let text = client.get("/api/all").send().await?.text().await?;
-
     println!("{}", text);
 
     Ok(())

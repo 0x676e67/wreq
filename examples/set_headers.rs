@@ -17,6 +17,8 @@ async fn main() -> Result<(), rquest::Error> {
         .as_mut()
         .headers()
         .insert(header::ACCEPT, HeaderValue::from_static("application/json"));
+
+    // Use the API you're already familiar with
     let resp = client.get("https://tls.peet.ws/api/all").send().await?;
     println!("{}", resp.text().await?);
 
