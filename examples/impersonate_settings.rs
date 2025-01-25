@@ -6,7 +6,6 @@ use rquest::{
 use rquest::{Client, ImpersonateSettings};
 use rquest::{Http2Settings, PseudoOrder::*, SettingsOrder::*};
 use rquest::{Priority, StreamDependency, StreamId};
-use std::borrow::Cow;
 
 // ============== TLS Extension Algorithms ==============
 
@@ -119,7 +118,7 @@ async fn main() -> Result<(), rquest::Error> {
         .cipher_list(CIPHER_LIST)
         .sigalgs_list(SIGALGS_LIST)
         .delegated_credentials(DELEGATED_CREDENTIALS)
-        .cert_compression_algorithm(Cow::Borrowed(CERT_COMPRESSION_ALGORITHM))
+        .cert_compression_algorithm(CERT_COMPRESSION_ALGORITHM)
         .record_size_limit(RECORD_SIZE_LIMIT)
         .alpn_protos(AlpnProtos::All)
         .alps_protos(AlpsProtos::Http2)

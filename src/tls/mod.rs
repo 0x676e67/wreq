@@ -369,7 +369,7 @@ pub struct TlsSettings {
     pub sigalgs_list: Option<Cow<'static, str>>,
 
     /// Certificates in TLS 1.3 can be compressed [RFC 8879](https://datatracker.ietf.org/doc/html/rfc8879).
-    #[builder(default, setter(into))]
+    #[builder(default, setter(transform = |input: impl IntoCertCompressionAlgorithm| input.into()))]
     pub cert_compression_algorithm: Option<Cow<'static, [CertCompressionAlgorithm]>>,
 
     /// Sets the context's extension permutation indices.
@@ -413,3 +413,52 @@ impl_debug!(
         extension_permutation_indices
     }
 );
+
+/// A trait for converting various types into an optional `Cow` containing a slice of `CertCompressionAlgorithm`.
+///
+/// This trait is used to provide a unified way to convert different types
+/// into an optional `Cow` containing a slice of `CertCompressionAlgorithm`.
+pub trait IntoCertCompressionAlgorithm {
+    /// Converts the implementing type into an optional `Cow` containing a slice of `CertCompressionAlgorithm`.
+    fn into(self) -> Option<Cow<'static, [CertCompressionAlgorithm]>>;
+}
+
+/// Implements `IntoCertCompressionAlgorithm` for a static slice of `CertCompressionAlgorithm`.
+///
+/// This implementation allows a static slice of `CertCompressionAlgorithm` to be converted
+/// into an optional `Cow` containing a borrowed slice of `CertCompressionAlgorithm`.
+impl IntoCertCompressionAlgorithm for &'static [CertCompressionAlgorithm] {
+    fn into(self) -> Option<Cow<'static, [CertCompressionAlgorithm]>> {
+        Some(Cow::Borrowed(&self))
+    }
+}
+
+/// Implements `IntoCertCompressionAlgorithm` for a `Cow` containing a slice of `CertCompressionAlgorithm`.
+///
+/// This implementation allows a `Cow` containing a slice of `CertCompressionAlgorithm` to be converted
+/// into an optional `Cow` containing the same slice of `CertCompressionAlgorithm`.
+impl IntoCertCompressionAlgorithm for Cow<'static, [CertCompressionAlgorithm]> {
+    fn into(self) -> Option<Cow<'static, [CertCompressionAlgorithm]>> {
+        Some(self)
+    }
+}
+
+/// Implements `IntoCertCompressionAlgorithm` for an optional static slice of `CertCompressionAlgorithm`.
+///
+/// This implementation allows an optional static slice of `CertCompressionAlgorithm` to be converted
+/// into an optional `Cow` containing a borrowed slice of `CertCompressionAlgorithm`.
+impl IntoCertCompressionAlgorithm for Option<&'static [CertCompressionAlgorithm]> {
+    fn into(self) -> Option<Cow<'static, [CertCompressionAlgorithm]>> {
+        self.map(Cow::Borrowed)
+    }
+}
+
+/// Implements `IntoCertCompressionAlgorithm` for an optional `Cow` containing a slice of `CertCompressionAlgorithm`.
+///
+/// This implementation allows an optional `Cow` containing a slice of `CertCompressionAlgorithm` to be converted
+/// into an optional `Cow` containing the same slice of `CertCompressionAlgorithm`.
+impl IntoCertCompressionAlgorithm for Option<Cow<'static, [CertCompressionAlgorithm]>> {
+    fn into(self) -> Option<Cow<'static, [CertCompressionAlgorithm]>> {
+        self
+    }
+}
