@@ -7,7 +7,7 @@ async fn main() -> Result<(), rquest::Error> {
         .impersonate(Impersonate::Firefox128)
         .impersonate_os(ImpersonateOS::Windows)
         .skip_http2(false)
-        .skip_headers(true)
+        .skip_headers(false)
         .build();
 
     // Apply the impersonate to the client

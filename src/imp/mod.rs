@@ -59,31 +59,72 @@ pub struct ImpersonateBuilder {
 
 /// ========= Impersonate impls =========
 impl ImpersonateBuilder {
-    #[inline]
+    /// Sets the impersonate value.
+    ///
+    /// # Arguments
+    ///
+    /// * `impersonate` - The impersonate value to set.
+    ///
+    /// # Returns
+    ///
+    /// The updated `ImpersonateBuilder` instance.
+    #[inline(always)]
     pub fn impersonate(mut self, impersonate: Impersonate) -> Self {
         self.impersonate = impersonate;
         self
     }
 
-    #[inline]
+    /// Sets the operating system to impersonate.
+    ///
+    /// # Arguments
+    ///
+    /// * `impersonate_os` - The operating system to impersonate.
+    ///
+    /// # Returns
+    ///
+    /// The updated `ImpersonateBuilder` instance.
+    #[inline(always)]
     pub fn impersonate_os(mut self, impersonate_os: ImpersonateOS) -> Self {
         self.impersonate_os = impersonate_os;
         self
     }
 
-    #[inline]
+    /// Sets whether to skip HTTP/2.
+    ///
+    /// # Arguments
+    ///
+    /// * `skip_http2` - A boolean indicating whether to skip HTTP/2.
+    ///
+    /// # Returns
+    ///
+    /// The updated `ImpersonateBuilder` instance.
+    #[inline(always)]
     pub fn skip_http2(mut self, skip_http2: bool) -> Self {
         self.skip_http2 = skip_http2;
         self
     }
 
-    #[inline]
+
+    /// Sets whether to skip headers.
+    ///
+    /// # Arguments
+    ///
+    /// * `skip_headers` - A boolean indicating whether to skip headers.
+    ///
+    /// # Returns
+    ///
+    /// The updated `ImpersonateBuilder` instance.
+    #[inline(always)]
     pub fn skip_headers(mut self, skip_headers: bool) -> Self {
         self.skip_headers = skip_headers;
         self
     }
 
-    #[inline]
+    /// Builds the `ImpersonateSettings` instance.
+    ///
+    /// # Returns
+    ///
+    /// The constructed `ImpersonateSettings` instance.
     pub fn build(self) -> ImpersonateSettings {
         impersonate_match!(
             self.impersonate,
