@@ -423,7 +423,8 @@ pub trait IntoCertCompressionAlgorithm {
     fn into(self) -> Option<Cow<'static, [CertCompressionAlgorithm]>>;
 }
 
-macro_rules! impl_into_cert_compression_algorithm {
+// Macro to implement IntoCertCompressionAlgorithm for various types
+macro_rules! impl_into_cert_compression_algorithm_for_types {
     ($($t:ty => $body:expr),*) => {
         $(
             impl IntoCertCompressionAlgorithm for $t {
@@ -435,7 +436,8 @@ macro_rules! impl_into_cert_compression_algorithm {
     };
 }
 
-macro_rules! impl_into_cert_compression_algorithm1 {
+// Macro to implement IntoCertCompressionAlgorithm for const-sized arrays
+macro_rules! impl_into_cert_compression_algorithm_for_arrays {
     ($($t:ty => $body:expr),*) => {
         $(
             impl<const N: usize> IntoCertCompressionAlgorithm for $t {
@@ -447,7 +449,7 @@ macro_rules! impl_into_cert_compression_algorithm1 {
     };
 }
 
-impl_into_cert_compression_algorithm!(
+impl_into_cert_compression_algorithm_for_types!(
     &'static [CertCompressionAlgorithm] => |s| Some(Cow::Borrowed(s)),
     Option<&'static [CertCompressionAlgorithm]> => |s: Option<&'static [CertCompressionAlgorithm]>| s.map(Cow::Borrowed),
     Cow<'static, [CertCompressionAlgorithm]> => |s| Some(s),
@@ -458,7 +460,7 @@ impl_into_cert_compression_algorithm!(
     Option<Vec<CertCompressionAlgorithm>> => |s: Option<Vec<CertCompressionAlgorithm>>| s.map(Cow::Owned)
 );
 
-impl_into_cert_compression_algorithm1!(
+impl_into_cert_compression_algorithm_for_arrays!(
     &'static [CertCompressionAlgorithm; N] => |s: &'static [CertCompressionAlgorithm; N]| Some(Cow::Borrowed(&s[..])),
     Option<&'static [CertCompressionAlgorithm; N]> => |s: Option<&'static [CertCompressionAlgorithm; N]>| s.map(|s| Cow::Borrowed(&s[..])),
     [CertCompressionAlgorithm; N] => |s: [CertCompressionAlgorithm; N]| Some(Cow::Owned(s.to_vec())),
