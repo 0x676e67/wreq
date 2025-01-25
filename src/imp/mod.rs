@@ -104,7 +104,6 @@ impl ImpersonateBuilder {
         self
     }
 
-
     /// Sets whether to skip headers.
     ///
     /// # Arguments
