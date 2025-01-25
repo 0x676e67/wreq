@@ -423,7 +423,6 @@ pub trait IntoCertCompressionAlgorithm {
     fn into(self) -> Option<Cow<'static, [CertCompressionAlgorithm]>>;
 }
 
-// Macro to implement IntoCertCompressionAlgorithm for various types
 macro_rules! impl_into_cert_compression_algorithm {
     ($($t:ty => $body:expr),*) => {
         $(
@@ -436,34 +435,32 @@ macro_rules! impl_into_cert_compression_algorithm {
     };
 }
 
-// Use the macro to implement IntoCertCompressionAlgorithm for various types
+macro_rules! impl_into_cert_compression_algorithm1 {
+    ($($t:ty => $body:expr),*) => {
+        $(
+            impl<const N: usize> IntoCertCompressionAlgorithm for $t {
+                fn into(self) -> Option<Cow<'static, [CertCompressionAlgorithm]>> {
+                    $body(self)
+                }
+            }
+        )*
+    };
+}
+
 impl_into_cert_compression_algorithm!(
-    CertCompressionAlgorithm => |s| Some(Cow::Owned(vec![s])),
-    Option<CertCompressionAlgorithm> => |s: Option<CertCompressionAlgorithm>| s.map(|alg| Cow::Owned(vec![alg])),
     &'static [CertCompressionAlgorithm] => |s| Some(Cow::Borrowed(s)),
     Option<&'static [CertCompressionAlgorithm]> => |s: Option<&'static [CertCompressionAlgorithm]>| s.map(Cow::Borrowed),
     Cow<'static, [CertCompressionAlgorithm]> => |s| Some(s),
     Option<Cow<'static, [CertCompressionAlgorithm]>> => |s| s,
+    CertCompressionAlgorithm => |s| Some(Cow::Owned(vec![s])),
+    Option<CertCompressionAlgorithm> => |s: Option<CertCompressionAlgorithm>| s.map(|alg| Cow::Owned(vec![alg])),
     Vec<CertCompressionAlgorithm> => |s| Some(Cow::Owned(s)),
     Option<Vec<CertCompressionAlgorithm>> => |s: Option<Vec<CertCompressionAlgorithm>>| s.map(Cow::Owned)
 );
 
-/// Implements `IntoCertCompressionAlgorithm` for a fixed-size array of `CertCompressionAlgorithm`.
-///
-/// This implementation allows a fixed-size array of `CertCompressionAlgorithm` to be converted
-/// into an optional `Cow` containing an owned slice of `CertCompressionAlgorithm`.
-impl<const N: usize> IntoCertCompressionAlgorithm for [CertCompressionAlgorithm; N] {
-    fn into(self) -> Option<Cow<'static, [CertCompressionAlgorithm]>> {
-        Some(Cow::Owned(self.to_vec()))
-    }
-}
-
-/// Implements `IntoCertCompressionAlgorithm` for an optional fixed-size array of `CertCompressionAlgorithm`.
-///
-/// This implementation allows an optional fixed-size array of `CertCompressionAlgorithm` to be converted
-/// into an optional `Cow` containing an owned slice of `CertCompressionAlgorithm`.
-impl<const N: usize> IntoCertCompressionAlgorithm for &'static [CertCompressionAlgorithm; N] {
-    fn into(self) -> Option<Cow<'static, [CertCompressionAlgorithm]>> {
-        Some(Cow::Borrowed(self))
-    }
-}
+impl_into_cert_compression_algorithm1!(
+    &'static [CertCompressionAlgorithm; N] => |s: &'static [CertCompressionAlgorithm; N]| Some(Cow::Borrowed(&s[..])),
+    Option<&'static [CertCompressionAlgorithm; N]> => |s: Option<&'static [CertCompressionAlgorithm; N]>| s.map(|s| Cow::Borrowed(&s[..])),
+    [CertCompressionAlgorithm; N] => |s: [CertCompressionAlgorithm; N]| Some(Cow::Owned(s.to_vec())),
+    Option<[CertCompressionAlgorithm; N]> => |s: Option<[CertCompressionAlgorithm; N]>| s.map(|arr| Cow::Owned(arr.to_vec()))
+);
