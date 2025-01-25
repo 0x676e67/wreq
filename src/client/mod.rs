@@ -1,5 +1,5 @@
 pub use self::body::Body;
-pub use self::http::{Client, ClientBuilder};
+pub use self::http::{Client, ClientBuilder, ClientMut};
 pub use self::request::{Request, RequestBuilder};
 pub use self::response::Response;
 pub use self::upgrade::Upgraded;

@@ -1647,12 +1647,24 @@ impl_debug!(
     }
 );
 
+/// A mutable reference to a `ClientRef`.
+///
+/// This struct provides methods to mutate the state of a `ClientRef`.
 #[derive(Debug)]
 pub struct ClientMut<'c> {
     inner: &'c mut ClientRef,
 }
 
 impl<'c> ClientMut<'c> {
+    /// Retrieves a mutable reference to the headers for this client.
+    ///
+    /// # Returns
+    ///
+    /// A mutable reference to the `HeaderMap` containing the headers for this client.
+    pub fn headers(&mut self) -> &mut HeaderMap {
+        &mut self.inner.headers
+    }
+
     /// Sets the base URL for this client.
     ///
     /// # Arguments
@@ -1667,15 +1679,6 @@ impl<'c> ClientMut<'c> {
             std::mem::swap(&mut self.inner.base_url, &mut Some(url));
         }
         self
-    }
-
-    /// Retrieves a mutable reference to the headers for this client.
-    ///
-    /// # Returns
-    ///
-    /// A mutable reference to the `HeaderMap` containing the headers for this client.
-    pub fn headers(&mut self) -> &mut HeaderMap {
-        &mut self.inner.headers
     }
 
     /// Sets the headers order for this client.
