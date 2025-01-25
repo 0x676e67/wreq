@@ -83,7 +83,7 @@ pub struct Http2Settings {
     ///
     /// - **Structure:** `(stream_dependency, weight, exclusive_flag)`
     /// - **Purpose:** Specifies how header frames are prioritized during transmission.
-    #[builder(default, setter(transform = |input: impl IntoStreamDependency| Some(input.into())))]
+    #[builder(default, setter(transform = |input: impl IntoStreamDependency| input.into()))]
     pub headers_priority: Option<StreamDependency>,
 
     /// The order of pseudo-header fields.
@@ -102,31 +102,31 @@ pub struct Http2Settings {
     pub priority: Option<Cow<'static, [Priority]>>,
 }
 
-/// A trait for converting various types into a `StreamDependency`.
+/// A trait for converting various types into an optional `StreamDependency`.
 ///
 /// This trait is used to provide a unified way to convert different types
-/// into a `StreamDependency` instance.
+/// into an optional `StreamDependency` instance.
 pub trait IntoStreamDependency {
-    /// Converts the implementing type into a `StreamDependency`.
-    fn into(self) -> StreamDependency;
+    /// Converts the implementing type into an optional `StreamDependency`.
+    fn into(self) -> Option<StreamDependency>;
 }
 
-/// Implements `IntoStreamDependency` for a tuple of `(u32, u8, bool)`.
-///
-/// This implementation allows a tuple containing a stream ID, weight, and
-/// exclusive flag to be converted into a `StreamDependency`.
-impl IntoStreamDependency for (u32, u8, bool) {
-    fn into(self) -> StreamDependency {
-        StreamDependency::new(StreamId::from(self.0), self.1, self.2)
-    }
+// Macro to implement IntoStreamDependency for various types
+macro_rules! impl_into_stream_dependency {
+    ($($t:ty => $body:expr),*) => {
+        $(
+            impl IntoStreamDependency for $t {
+                fn into(self) -> Option<StreamDependency> {
+                    $body(self)
+                }
+            }
+        )*
+    };
 }
 
-/// Implements `IntoStreamDependency` for `StreamDependency`.
-///
-/// This implementation allows a `StreamDependency` to be converted into
-/// itself, which is useful for cases where a generic conversion is needed.
-impl IntoStreamDependency for StreamDependency {
-    fn into(self) -> StreamDependency {
-        self
-    }
-}
+impl_into_stream_dependency!(
+    (u32, u8, bool) => |(id, weight, exclusive)| Some(StreamDependency::new(StreamId::from(id), weight, exclusive)),
+    Option<(u32, u8, bool)> => |opt: Option<(u32, u8, bool)>| opt.map(|(id, weight, exclusive)| StreamDependency::new(StreamId::from(id), weight, exclusive)),
+    StreamDependency => |dep| Some(dep),
+    Option<StreamDependency> => |opt| opt
+);
