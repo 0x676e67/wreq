@@ -438,12 +438,12 @@ macro_rules! impl_into_cert_compression_algorithm {
 
 // Use the macro to implement IntoCertCompressionAlgorithm for various types
 impl_into_cert_compression_algorithm!(
-    &'static [CertCompressionAlgorithm] => |s| Some(Cow::Borrowed(s)),
-    Cow<'static, [CertCompressionAlgorithm]> => |s| Some(s),
-    Option<&'static [CertCompressionAlgorithm]> => |s: Option<&'static [CertCompressionAlgorithm]>| s.map(Cow::Borrowed),
-    Option<Cow<'static, [CertCompressionAlgorithm]>> => |s| s,
     CertCompressionAlgorithm => |s| Some(Cow::Owned(vec![s])),
     Option<CertCompressionAlgorithm> => |s: Option<CertCompressionAlgorithm>| s.map(|alg| Cow::Owned(vec![alg])),
+    &'static [CertCompressionAlgorithm] => |s| Some(Cow::Borrowed(s)),
+    Option<&'static [CertCompressionAlgorithm]> => |s: Option<&'static [CertCompressionAlgorithm]>| s.map(Cow::Borrowed),
+    Cow<'static, [CertCompressionAlgorithm]> => |s| Some(s),
+    Option<Cow<'static, [CertCompressionAlgorithm]>> => |s| s,
     Vec<CertCompressionAlgorithm> => |s| Some(Cow::Owned(s)),
     Option<Vec<CertCompressionAlgorithm>> => |s: Option<Vec<CertCompressionAlgorithm>>| s.map(Cow::Owned)
 );
