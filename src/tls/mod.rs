@@ -423,42 +423,47 @@ pub trait IntoCertCompressionAlgorithm {
     fn into(self) -> Option<Cow<'static, [CertCompressionAlgorithm]>>;
 }
 
-/// Implements `IntoCertCompressionAlgorithm` for a static slice of `CertCompressionAlgorithm`.
+// Macro to implement IntoCertCompressionAlgorithm for various types
+macro_rules! impl_into_cert_compression_algorithm {
+    ($($t:ty => $body:expr),*) => {
+        $(
+            impl IntoCertCompressionAlgorithm for $t {
+                fn into(self) -> Option<Cow<'static, [CertCompressionAlgorithm]>> {
+                    $body(self)
+                }
+            }
+        )*
+    };
+}
+
+// Use the macro to implement IntoCertCompressionAlgorithm for various types
+impl_into_cert_compression_algorithm!(
+    &'static [CertCompressionAlgorithm] => |s| Some(Cow::Borrowed(s)),
+    Cow<'static, [CertCompressionAlgorithm]> => |s| Some(s),
+    Option<&'static [CertCompressionAlgorithm]> => |s: Option<&'static [CertCompressionAlgorithm]>| s.map(Cow::Borrowed),
+    Option<Cow<'static, [CertCompressionAlgorithm]>> => |s| s,
+    CertCompressionAlgorithm => |s| Some(Cow::Owned(vec![s])),
+    Option<CertCompressionAlgorithm> => |s: Option<CertCompressionAlgorithm>| s.map(|alg| Cow::Owned(vec![alg])),
+    Vec<CertCompressionAlgorithm> => |s| Some(Cow::Owned(s)),
+    Option<Vec<CertCompressionAlgorithm>> => |s: Option<Vec<CertCompressionAlgorithm>>| s.map(Cow::Owned)
+);
+
+/// Implements `IntoCertCompressionAlgorithm` for a fixed-size array of `CertCompressionAlgorithm`.
 ///
-/// This implementation allows a static slice of `CertCompressionAlgorithm` to be converted
-/// into an optional `Cow` containing a borrowed slice of `CertCompressionAlgorithm`.
-impl IntoCertCompressionAlgorithm for &'static [CertCompressionAlgorithm] {
+/// This implementation allows a fixed-size array of `CertCompressionAlgorithm` to be converted
+/// into an optional `Cow` containing an owned slice of `CertCompressionAlgorithm`.
+impl<const N: usize> IntoCertCompressionAlgorithm for [CertCompressionAlgorithm; N] {
     fn into(self) -> Option<Cow<'static, [CertCompressionAlgorithm]>> {
-        Some(Cow::Borrowed(&self))
+        Some(Cow::Owned(self.to_vec()))
     }
 }
 
-/// Implements `IntoCertCompressionAlgorithm` for a `Cow` containing a slice of `CertCompressionAlgorithm`.
+/// Implements `IntoCertCompressionAlgorithm` for an optional fixed-size array of `CertCompressionAlgorithm`.
 ///
-/// This implementation allows a `Cow` containing a slice of `CertCompressionAlgorithm` to be converted
-/// into an optional `Cow` containing the same slice of `CertCompressionAlgorithm`.
-impl IntoCertCompressionAlgorithm for Cow<'static, [CertCompressionAlgorithm]> {
+/// This implementation allows an optional fixed-size array of `CertCompressionAlgorithm` to be converted
+/// into an optional `Cow` containing an owned slice of `CertCompressionAlgorithm`.
+impl<const N: usize> IntoCertCompressionAlgorithm for &'static [CertCompressionAlgorithm; N] {
     fn into(self) -> Option<Cow<'static, [CertCompressionAlgorithm]>> {
-        Some(self)
-    }
-}
-
-/// Implements `IntoCertCompressionAlgorithm` for an optional static slice of `CertCompressionAlgorithm`.
-///
-/// This implementation allows an optional static slice of `CertCompressionAlgorithm` to be converted
-/// into an optional `Cow` containing a borrowed slice of `CertCompressionAlgorithm`.
-impl IntoCertCompressionAlgorithm for Option<&'static [CertCompressionAlgorithm]> {
-    fn into(self) -> Option<Cow<'static, [CertCompressionAlgorithm]>> {
-        self.map(Cow::Borrowed)
-    }
-}
-
-/// Implements `IntoCertCompressionAlgorithm` for an optional `Cow` containing a slice of `CertCompressionAlgorithm`.
-///
-/// This implementation allows an optional `Cow` containing a slice of `CertCompressionAlgorithm` to be converted
-/// into an optional `Cow` containing the same slice of `CertCompressionAlgorithm`.
-impl IntoCertCompressionAlgorithm for Option<Cow<'static, [CertCompressionAlgorithm]>> {
-    fn into(self) -> Option<Cow<'static, [CertCompressionAlgorithm]>> {
-        self
+        Some(Cow::Borrowed(self))
     }
 }
