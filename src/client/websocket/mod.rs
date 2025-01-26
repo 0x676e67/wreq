@@ -420,7 +420,7 @@ impl Stream for WebSocket {
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         loop {
-            match self.inner.poll_next_unpin(cx) {
+            return match self.inner.poll_next_unpin(cx) {
                 Poll::Pending => Poll::Pending,
                 Poll::Ready(None) => Poll::Ready(None),
                 Poll::Ready(Some(Err(error))) => Poll::Ready(Some(Err(error.into()))),
@@ -435,7 +435,7 @@ impl Stream for WebSocket {
                         ))))
                     }
                 },
-            }
+            };
         }
     }
 }
