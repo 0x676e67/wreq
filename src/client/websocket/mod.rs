@@ -16,7 +16,7 @@ use crate::{
 use crate::{Error, Response};
 use async_tungstenite::tungstenite;
 use futures_util::{Sink, SinkExt, Stream, StreamExt};
-use http::{header, uri::Scheme, HeaderValue, StatusCode, Version};
+use http::{header, uri::Scheme, HeaderMap, HeaderName, HeaderValue, StatusCode, Version};
 pub use message::{CloseCode, Message};
 use tokio_util::compat::TokioAsyncReadCompatExt;
 use tungstenite::protocol::WebSocketConfig;
@@ -30,7 +30,7 @@ pub type WebSocketStream =
 pub struct WebSocketRequestBuilder {
     inner: RequestBuilder,
     nonce: Option<Cow<'static, str>>,
-    protocols: Option<Cow<'static, [String]>>,
+    protocols: Option<Vec<Cow<'static, str>>>,
     config: WebSocketConfig,
 }
 
@@ -92,14 +92,16 @@ impl WebSocketRequestBuilder {
     ///
     /// ```
     /// let request = WebSocketRequestBuilder::new(builder)
-    ///     .protocols(vec!["protocol1".to_string(), "protocol2".to_string()])
+    ///     .protocols(["protocol1", "protocol2"])
     ///     .build();
     /// ```
     pub fn protocols<P>(mut self, protocols: P) -> Self
     where
-        P: Into<Cow<'static, [String]>>,
+        P: IntoIterator,
+        P::Item: Into<Cow<'static, str>>,
     {
-        self.protocols = Some(protocols.into());
+        let protocols = protocols.into_iter().map(Into::into).collect();
+        self.protocols = Some(protocols);
         self
     }
 
@@ -216,7 +218,7 @@ impl WebSocketRequestBuilder {
             if !protocols.is_empty() {
                 let subprotocols = protocols
                     .iter()
-                    .map(|s| s.as_str())
+                    .map(|s| s.as_ref())
                     .collect::<Vec<&str>>()
                     .join(", ");
 
@@ -249,7 +251,7 @@ impl WebSocketRequestBuilder {
 pub struct WebSocketResponse {
     inner: Response,
     nonce: Cow<'static, str>,
-    protocols: Option<Cow<'static, [String]>>,
+    protocols: Option<Vec<Cow<'static, str>>>,
     config: WebSocketConfig,
 }
 
@@ -274,7 +276,6 @@ impl WebSocketResponse {
         let (inner, protocol) = {
             let headers = self.inner.headers();
 
-            // Check the version
             if !matches!(self.inner.version(), Version::HTTP_11 | Version::HTTP_10) {
                 return Err(Error::new(
                     Kind::Upgrade,
@@ -282,7 +283,6 @@ impl WebSocketResponse {
                 ));
             }
 
-            // Check the status code
             if self.inner.status() != StatusCode::SWITCHING_PROTOCOLS {
                 return Err(Error::new(
                     Kind::Upgrade,
@@ -290,60 +290,36 @@ impl WebSocketResponse {
                 ));
             }
 
-            // Check the connection header
-            if let Some(header) = headers.get(header::CONNECTION) {
-                if !header
-                    .to_str()
-                    .is_ok_and(|s| s.eq_ignore_ascii_case("upgrade"))
-                {
-                    log::debug!("server responded with invalid Connection header: {header:?}");
-                    return Err(Error::new(
-                        Kind::Upgrade,
-                        Some(format!("invalid connection header: {:?}", header)),
-                    ));
-                }
-            } else {
+            if !header_contains(self.inner.headers(), header::CONNECTION, "upgrade") {
                 log::debug!("missing Connection header");
                 return Err(Error::new(Kind::Upgrade, Some("missing connection header")));
             }
 
-            // Check the upgrade header
-            if let Some(header) = headers.get(header::UPGRADE) {
-                if !header
-                    .to_str()
-                    .is_ok_and(|s| s.eq_ignore_ascii_case("websocket"))
-                {
-                    log::debug!("server responded with invalid Upgrade header: {header:?}");
-                    return Err(Error::new(
-                        Kind::Upgrade,
-                        Some(format!("invalid upgrade header: {:?}", header)),
-                    ));
-                }
-            } else {
-                log::debug!("missing Upgrade header");
-                return Err(Error::new(Kind::Upgrade, Some("missing upgrade header")));
+            if !header_eq(self.inner.headers(), header::UPGRADE, "websocket") {
+                log::debug!("server responded with invalid Upgrade header");
+                return Err(Error::new(Kind::Upgrade, Some("invalid upgrade header")));
             }
 
-            // Check the accept key
-            if let Some(header) = headers.get(header::SEC_WEBSOCKET_ACCEPT) {
-                // Check the accept key
-                let expected_nonce =
-                    tungstenite::handshake::derive_accept_key(self.nonce.as_bytes());
-                if !header.to_str().is_ok_and(|s| s == expected_nonce) {
-                    log::debug!(
-                        "server responded with invalid Sec-Websocket-Accept header: {header:?}"
-                    );
-                    return Err(Error::new(
-                        Kind::Upgrade,
-                        Some(format!("invalid accept key: {:?}", header)),
-                    ));
+            match headers.get(header::SEC_WEBSOCKET_ACCEPT) {
+                Some(header) => {
+                    if !header.to_str().is_ok_and(|s| {
+                        s == tungstenite::handshake::derive_accept_key(self.nonce.as_bytes())
+                    }) {
+                        log::debug!(
+                            "server responded with invalid Sec-Websocket-Accept header: {header:?}"
+                        );
+                        return Err(Error::new(
+                            Kind::Upgrade,
+                            Some(format!("invalid accept key: {:?}", header)),
+                        ));
+                    }
                 }
-            } else {
-                log::debug!("missing Sec-Websocket-Accept header");
-                return Err(Error::new(Kind::Upgrade, Some("missing accept key")));
+                None => {
+                    log::debug!("missing Sec-Websocket-Accept header");
+                    return Err(Error::new(Kind::Upgrade, Some("missing accept key")));
+                }
             }
 
-            // Ensure the server responded with the requested protocol
             let protocol = headers
                 .get(header::SEC_WEBSOCKET_PROTOCOL)
                 .and_then(|v| v.to_str().ok())
@@ -369,7 +345,7 @@ impl WebSocketResponse {
                 }
                 (false, Some(protocol)) => {
                     if let Some(ref protocols) = self.protocols {
-                        if !protocols.contains(protocol) {
+                        if protocols.iter().find(|p| *p == protocol).is_none() {
                             // the responded protocol is none which we requested
                             return Err(Error::new(
                                 Kind::Status(self.res.status()),
@@ -404,6 +380,28 @@ impl WebSocketResponse {
         };
 
         Ok(WebSocket { inner, protocol })
+    }
+}
+
+fn header_eq(headers: &HeaderMap, key: HeaderName, value: &'static str) -> bool {
+    if let Some(header) = headers.get(&key) {
+        header.as_bytes().eq_ignore_ascii_case(value.as_bytes())
+    } else {
+        false
+    }
+}
+
+fn header_contains(headers: &HeaderMap, key: HeaderName, value: &'static str) -> bool {
+    let header = if let Some(header) = headers.get(&key) {
+        header
+    } else {
+        return false;
+    };
+
+    if let Ok(header) = std::str::from_utf8(header.as_bytes()) {
+        header.to_ascii_lowercase().contains(value)
+    } else {
+        false
     }
 }
 
