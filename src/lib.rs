@@ -396,7 +396,7 @@ pub use self::tls::{
     AlpnProtos, AlpsProtos, CertCompressionAlgorithm, RootCertStore, TlsInfo, TlsSettings,
     TlsVersion,
 };
-pub use self::util::client::Dst;
+pub use self::util::client::{Dst, Http1Builder, Http2Builder};
 pub use boring2::{
     ssl::{ExtensionType, SslCurve},
     x509::{

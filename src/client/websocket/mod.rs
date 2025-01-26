@@ -105,38 +105,6 @@ impl WebSocketRequestBuilder {
         self
     }
 
-    /// Modifies the request builder before sending the request.
-    ///
-    /// This method allows you to customize the `RequestBuilder` by passing a closure
-    /// that modifies it. The closure receives the current `RequestBuilder` and returns
-    /// a modified `RequestBuilder`. This can be useful for setting additional headers,
-    /// configuring timeouts, or making other adjustments to the request.
-    ///
-    /// # Arguments
-    ///
-    /// * `f` - A closure that takes a `RequestBuilder` and returns a modified `RequestBuilder`.
-    ///
-    /// # Returns
-    ///
-    /// * `Self` - The modified instance with the updated `RequestBuilder`.
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// let client = rquest::Client::builder()
-    ///     .with_builder(|builder| {
-    ///         builder.header("X-Custom-Header", "value")
-    ///     })
-    ///     .build()?;
-    /// ```
-    pub fn with_builder<F>(mut self, f: F) -> Self
-    where
-        F: FnOnce(RequestBuilder) -> RequestBuilder,
-    {
-        self.inner = f(self.inner);
-        self
-    }
-
     /// Sets the websocket max_frame_size configuration.
     pub fn max_frame_size(mut self, max_frame_size: usize) -> Self {
         self.config.max_frame_size = Some(max_frame_size);
@@ -164,6 +132,28 @@ impl WebSocketRequestBuilder {
     /// Sets the websocket accept_unmasked_frames configuration.
     pub fn accept_unmasked_frames(mut self, accept_unmasked_frames: bool) -> Self {
         self.config.accept_unmasked_frames = accept_unmasked_frames;
+        self
+    }
+
+    /// Modifies the request builder before sending the request.
+    ///
+    /// This method allows you to customize the `RequestBuilder` by passing a closure
+    /// that modifies it. The closure receives the current `RequestBuilder` and returns
+    /// a modified `RequestBuilder`. This can be useful for setting additional headers,
+    /// configuring timeouts, or making other adjustments to the request.
+    ///
+    /// # Arguments
+    ///
+    /// * `f` - A closure that takes a `RequestBuilder` and returns a modified `RequestBuilder`.
+    ///
+    /// # Returns
+    ///
+    /// * `Self` - The modified instance with the updated `RequestBuilder`.
+    pub fn builder<F>(mut self, f: F) -> Self
+    where
+        F: FnOnce(RequestBuilder) -> RequestBuilder,
+    {
+        self.inner = f(self.inner);
         self
     }
 

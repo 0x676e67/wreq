@@ -9,11 +9,11 @@ use std::{fmt, str};
 use crate::connect::sealed::{Conn, Unnameable};
 use crate::error::BoxError;
 use crate::http2::Http2Settings;
-use crate::util::client::{InnerRequest, NetworkScheme, NetworkSchemeBuilder};
-use crate::util::rt::tokio::TokioTimer;
-use crate::util::{
-    self, client::connect::HttpConnector, client::Builder, common::Exec, rt::TokioExecutor,
+use crate::util::client::{
+    Http1Builder, Http2Builder, InnerRequest, NetworkScheme, NetworkSchemeBuilder,
 };
+use crate::util::rt::tokio::TokioTimer;
+use crate::util::{self, client::connect::HttpConnector, client::Builder, rt::TokioExecutor};
 use bytes::Bytes;
 use http::header::{
     Entry, HeaderMap, HeaderValue, ACCEPT_ENCODING, CONTENT_ENCODING, CONTENT_LENGTH, CONTENT_TYPE,
@@ -21,7 +21,6 @@ use http::header::{
 };
 use http::uri::Scheme;
 use http::{HeaderName, Uri, Version};
-use hyper2::client::conn::{http1, http2};
 use pin_project_lite::pin_project;
 use std::future::Future;
 use std::pin::Pin;
@@ -226,12 +225,12 @@ impl ClientBuilder {
             .pool_timer(TokioTimer::new())
             .pool_idle_timeout(config.pool_idle_timeout)
             .pool_max_idle_per_host(config.pool_max_idle_per_host)
-            .pool_max_size(config.pool_max_size)
-            .with_http2_builder(|builder| {
-                if let Some(http2) = config.settings.http2 {
-                    apply_http2_settings(builder, http2)
-                }
-            });
+            .pool_max_size(config.pool_max_size);
+
+        if let Some(settings) = config.settings.http2 {
+            let builder = config.builder.http2();
+            apply_http2_settings(builder, settings)
+        }
 
         let hyper = config
             .builder
@@ -753,20 +752,14 @@ impl ClientBuilder {
 
     /// Only use HTTP/1.
     pub fn http1_only(mut self) -> ClientBuilder {
-        {
-            self.config.settings.tls.alpn_protos = AlpnProtos::Http1;
-        }
-
+        self.config.settings.tls.alpn_protos = AlpnProtos::Http1;
         self.config.builder.http2_only(false);
         self
     }
 
     /// Only use HTTP/2.
     pub fn http2_only(mut self) -> ClientBuilder {
-        {
-            self.config.settings.tls.alpn_protos = AlpnProtos::Http2;
-        }
-
+        self.config.settings.tls.alpn_protos = AlpnProtos::Http2;
         self.config.builder.http2_only(true);
         self
     }
@@ -786,24 +779,24 @@ impl ClientBuilder {
     /// # Example
     /// ```
     /// let client = rquest::Client::builder()
-    ///     .with_http1_builder(|builder| {
-    ///         builder.http09_responses(true);
+    ///     .http1(|http1| {
+    ///         http1.http09_responses(true);
     ///     })
     ///     .build()?;
     /// ```
     ///
     /// # Arguments
     ///
-    /// * `f` - A closure that takes a mutable reference to an `http1::Builder` and modifies it.
+    /// * `f` - A closure that takes a mutable reference to an `Http1Builder` and modifies it.
     ///
     /// # Returns
     ///
     /// * `ClientBuilder` - The modified client builder.
-    pub fn with_http1_builder<F>(mut self, f: F) -> ClientBuilder
+    pub fn http1<F>(mut self, f: F) -> ClientBuilder
     where
-        F: FnOnce(&mut http1::Builder),
+        F: FnOnce(Http1Builder<'_>),
     {
-        self.config.builder.with_http1_builder(f);
+        f(self.config.builder.http1());
         self
     }
 
@@ -816,24 +809,24 @@ impl ClientBuilder {
     /// # Example
     /// ```
     /// let client = rquest::Client::builder()
-    ///     .with_http2_builder(|builder| {
-    ///         builder.initial_stream_id(3);
+    ///     .http2(|http2| {
+    ///         http2.initial_stream_id(3);
     ///     })
     ///     .build()?;
     /// ```
     ///
     /// # Arguments
     ///
-    /// * `f` - A closure that takes a mutable reference to an `http2::Builder<Exec>` and modifies it.
+    /// * `f` - A closure that takes a mutable reference to an `Http2Builder` and modifies it.
     ///
     /// # Returns
     ///
     /// * `ClientBuilder` - The modified client builder.
-    pub fn with_http2_builder<F>(mut self, f: F) -> ClientBuilder
+    pub fn http2<F>(mut self, f: F) -> ClientBuilder
     where
-        F: FnOnce(&mut http2::Builder<Exec>),
+        F: FnOnce(Http2Builder<'_>),
     {
-        self.config.builder.with_http2_builder(f);
+        f(self.config.builder.http2());
         self
     }
 
@@ -1849,10 +1842,9 @@ impl<'c> ClientMut<'c> {
             );
         }
 
-        if let Some(http2) = settings.http2 {
-            self.inner
-                .hyper
-                .with_http2_builder(|builder| apply_http2_settings(builder, http2));
+        if let Some(settings) = settings.http2 {
+            let builder = self.inner.hyper.http2();
+            apply_http2_settings(builder, settings);
         }
 
         self
@@ -2279,7 +2271,7 @@ fn add_cookie_header(headers: &mut HeaderMap, cookie_store: &dyn cookie::CookieS
     }
 }
 
-fn apply_http2_settings(builder: &mut http2::Builder<Exec>, http2: Http2Settings) {
+fn apply_http2_settings(mut builder: Http2Builder<'_>, http2: Http2Settings) {
     builder
         .initial_stream_id(http2.initial_stream_id)
         .initial_stream_window_size(http2.initial_stream_window_size)

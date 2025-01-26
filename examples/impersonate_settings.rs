@@ -1,7 +1,7 @@
 use http::{header, HeaderMap, HeaderName, HeaderValue};
 use rquest::{
-    join, AlpnProtos, AlpsProtos, CertCompressionAlgorithm, ExtensionType, SslCurve, TlsSettings,
-    TlsVersion,
+    join, AlpnProtos, AlpsProtos, CertCompressionAlgorithm, ExtensionType, Http1Builder,
+    Http2Builder, SslCurve, TlsSettings, TlsVersion,
 };
 use rquest::{Client, ImpersonateSettings};
 use rquest::{Http2Settings, PseudoOrder::*, SettingsOrder::*};
@@ -207,6 +207,8 @@ async fn main() -> Result<(), rquest::Error> {
     let client = Client::builder()
         .impersonate(settings)
         .danger_accept_invalid_certs(true)
+        .http1(http1_configuration)
+        .http2(http2_configuration)
         .build()?;
 
     // Use the API you're already familiar with
@@ -220,4 +222,14 @@ async fn main() -> Result<(), rquest::Error> {
     println!("{}", text);
 
     Ok(())
+}
+
+/// Http1 configuration.
+fn http1_configuration(mut builder: Http1Builder<'_>) {
+    builder.title_case_headers(true);
+}
+
+/// Http2 configuration.
+fn http2_configuration(mut builder: Http2Builder<'_>) {
+    builder.unknown_setting8(true);
 }

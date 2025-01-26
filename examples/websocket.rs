@@ -11,7 +11,7 @@ async fn main() -> Result<(), rquest::Error> {
     // Use the API you're already familiar with
     let websocket = client
         .websocket("wss://echo.websocket.org")
-        .with_builder(|builder| {
+        .builder(|builder| {
             // We can also set HTTP options here
             builder
                 .proxy("http://127.0.0.1:6152")

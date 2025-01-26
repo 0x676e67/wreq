@@ -17,6 +17,7 @@ use std::fmt;
 use std::future::Future;
 use std::net::{Ipv4Addr, Ipv6Addr};
 use std::num::NonZeroUsize;
+use std::ops::{Deref, DerefMut};
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{self, Poll};
@@ -726,12 +727,11 @@ where
         connector(&mut self.connector);
     }
 
-    /// Set the connection builder for the client.
-    pub(crate) fn with_http2_builder<F>(&mut self, builder: F)
-    where
-        F: FnOnce(&mut hyper2::client::conn::http2::Builder<Exec>),
-    {
-        builder(&mut self.h2_builder);
+    /// Http2 configuration.
+    pub(crate) fn http2(&mut self) -> Http2Builder<'_> {
+        Http2Builder {
+            inner: &mut self.h2_builder,
+        }
     }
 }
 
@@ -1008,6 +1008,46 @@ fn is_schema_secure(uri: &Uri) -> bool {
         .unwrap_or_default()
 }
 
+/// Http1 part of builder.
+#[derive(Debug)]
+pub struct Http1Builder<'a> {
+    inner: &'a mut hyper2::client::conn::http1::Builder,
+}
+
+impl Deref for Http1Builder<'_> {
+    type Target = hyper2::client::conn::http1::Builder;
+
+    fn deref(&self) -> &Self::Target {
+        self.inner
+    }
+}
+
+impl DerefMut for Http1Builder<'_> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.inner
+    }
+}
+
+/// Http2 part of builder.
+#[derive(Debug)]
+pub struct Http2Builder<'a> {
+    inner: &'a mut hyper2::client::conn::http2::Builder<Exec>,
+}
+
+impl<'a> Deref for Http2Builder<'a> {
+    type Target = hyper2::client::conn::http2::Builder<Exec>;
+
+    fn deref(&self) -> &Self::Target {
+        self.inner
+    }
+}
+
+impl<'a> DerefMut for Http2Builder<'a> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.inner
+    }
+}
+
 /// A builder to configure a new [`Client`](Client).
 ///
 /// # Example
@@ -1129,26 +1169,6 @@ impl Builder {
         self
     }
 
-    /// With http1 builder
-    #[inline]
-    pub fn with_http1_builder<F>(&mut self, f: F) -> &mut Self
-    where
-        F: FnOnce(&mut hyper2::client::conn::http1::Builder),
-    {
-        f(&mut self.h1_builder);
-        self
-    }
-
-    /// With http2 builder
-    #[inline]
-    pub fn with_http2_builder<F>(&mut self, f: F) -> &mut Self
-    where
-        F: FnOnce(&mut hyper2::client::conn::http2::Builder<Exec>),
-    {
-        f(&mut self.h2_builder);
-        self
-    }
-
     /// Provide a timer to be used for h2
     ///
     /// See the documentation of [`h2::client::Builder::timer`] for more
@@ -1218,6 +1238,24 @@ impl Builder {
             h2_builder: self.h2_builder.clone(),
             connector,
             pool: pool::Pool::new(self.pool_config, exec, timer),
+        }
+    }
+}
+
+impl Builder {
+    /// Http1 configuration.
+    #[inline]
+    pub fn http1(&mut self) -> Http1Builder<'_> {
+        Http1Builder {
+            inner: &mut self.h1_builder,
+        }
+    }
+
+    /// Http2 configuration.
+    #[inline]
+    pub fn http2(&mut self) -> Http2Builder<'_> {
+        Http2Builder {
+            inner: &mut self.h2_builder,
         }
     }
 }
