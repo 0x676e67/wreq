@@ -419,21 +419,23 @@ impl Stream for WebSocket {
     type Item = Result<Message, Error>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        match self.inner.poll_next_unpin(cx) {
-            Poll::Pending => Poll::Pending,
-            Poll::Ready(None) => Poll::Ready(None),
-            Poll::Ready(Some(Err(error))) => Poll::Ready(Some(Err(error.into()))),
-            Poll::Ready(Some(Ok(message))) => match message.try_into() {
-                Ok(message) => Poll::Ready(Some(Ok(message))),
-                Err(e) => {
-                    // this fails only for raw frames (which are not received)
-                    log::debug!("received invalid frame: {:?}", e);
-                    Poll::Ready(Some(Err(Error::new(
-                        Kind::Body,
-                        Some("unsupported websocket frame"),
-                    ))))
-                }
-            },
+        loop {
+            match self.inner.poll_next_unpin(cx) {
+                Poll::Pending => Poll::Pending,
+                Poll::Ready(None) => Poll::Ready(None),
+                Poll::Ready(Some(Err(error))) => Poll::Ready(Some(Err(error.into()))),
+                Poll::Ready(Some(Ok(message))) => match message.try_into() {
+                    Ok(message) => Poll::Ready(Some(Ok(message))),
+                    Err(e) => {
+                        // this fails only for raw frames (which are not received)
+                        log::debug!("received invalid frame: {:?}", e);
+                        Poll::Ready(Some(Err(Error::new(
+                            Kind::Body,
+                            Some("unsupported websocket frame"),
+                        ))))
+                    }
+                },
+            }
         }
     }
 }
