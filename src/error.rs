@@ -237,6 +237,12 @@ impl From<async_tungstenite::tungstenite::Error> for Error {
     }
 }
 
+impl From<http::header::InvalidHeaderValue> for Error {
+    fn from(err: http::header::InvalidHeaderValue) -> Error {
+        Error::new(Kind::Builder, Some(err))
+    }
+}
+
 #[cfg(feature = "json")]
 impl From<serde_json::Error> for Error {
     fn from(err: serde_json::Error) -> Error {

@@ -14,7 +14,7 @@ use crate::{
     RequestBuilder,
 };
 use crate::{Error, Response};
-use async_tungstenite::tungstenite;
+use async_tungstenite::tungstenite::{self, protocol};
 use futures_util::{Sink, SinkExt, Stream, StreamExt};
 use http::{header, uri::Scheme, HeaderMap, HeaderName, HeaderValue, StatusCode, Version};
 pub use message::{CloseCode, Message};
@@ -149,7 +149,7 @@ impl WebSocketRequestBuilder {
     /// # Returns
     ///
     /// * `Self` - The modified instance with the updated `RequestBuilder`.
-    pub fn with_builder<F>(mut self, f: F) -> Self
+    pub fn configure_request<F>(mut self, f: F) -> Self
     where
         F: FnOnce(RequestBuilder) -> RequestBuilder,
     {
@@ -192,11 +192,7 @@ impl WebSocketRequestBuilder {
         let headers = request.headers_mut();
         headers.insert(header::CONNECTION, HeaderValue::from_static("upgrade"));
         headers.insert(header::UPGRADE, HeaderValue::from_static("websocket"));
-        headers.insert(
-            header::SEC_WEBSOCKET_KEY,
-            HeaderValue::from_str(&nonce)
-                .map_err(|_| Error::new(Kind::Builder, Some("invalid key")))?,
-        );
+        headers.insert(header::SEC_WEBSOCKET_KEY, HeaderValue::from_str(&nonce)?);
         headers.insert(
             header::SEC_WEBSOCKET_VERSION,
             HeaderValue::from_static("13"),
@@ -212,12 +208,9 @@ impl WebSocketRequestBuilder {
                     .collect::<Vec<&str>>()
                     .join(", ");
 
-                request.headers_mut().insert(
-                    header::SEC_WEBSOCKET_PROTOCOL,
-                    subprotocols
-                        .parse()
-                        .map_err(|_| Error::new(Kind::Builder, Some("invalid subprotocol")))?,
-                );
+                request
+                    .headers_mut()
+                    .insert(header::SEC_WEBSOCKET_PROTOCOL, subprotocols.parse()?);
             }
         }
 
@@ -264,19 +257,20 @@ impl WebSocketResponse {
     /// handshake was successful.
     pub async fn into_websocket(self) -> Result<WebSocket, Error> {
         let (inner, protocol) = {
+            let status = self.inner.status();
             let headers = self.inner.headers();
 
-            if !matches!(self.inner.version(), Version::HTTP_11 | Version::HTTP_10) {
+            if !matches!(self.inner.version(), Version::HTTP_10 | Version::HTTP_11) {
                 return Err(Error::new(
                     Kind::Upgrade,
                     Some(format!("unexpected version: {:?}", self.inner.version())),
                 ));
             }
 
-            if self.inner.status() != StatusCode::SWITCHING_PROTOCOLS {
+            if status != StatusCode::SWITCHING_PROTOCOLS {
                 return Err(Error::new(
                     Kind::Upgrade,
-                    Some(format!("unexpected status code: {}", self.inner.status())),
+                    Some(format!("unexpected status code: {}", status)),
                 ));
             }
 
@@ -310,16 +304,10 @@ impl WebSocketResponse {
                 }
             }
 
-            let protocol = headers
-                .get(header::SEC_WEBSOCKET_PROTOCOL)
-                .and_then(|v| v.to_str().ok())
-                .map(ToOwned::to_owned);
+            let protocol = headers.get(header::SEC_WEBSOCKET_PROTOCOL).cloned();
 
             match (
-                self.protocols
-                    .as_ref()
-                    .map(|p| p.is_empty())
-                    .unwrap_or(true),
+                self.protocols.as_ref().map_or(true, |p| p.is_empty()),
                 &protocol,
             ) {
                 (true, None) => {
@@ -334,20 +322,18 @@ impl WebSocketResponse {
                     ));
                 }
                 (false, Some(protocol)) => {
-                    if let Some(ref protocols) = self.protocols {
-                        if protocols.iter().find(|p| *p == protocol).is_none() {
+                    if let Some((protocols, protocol)) = self.protocols.zip(protocol.to_str().ok())
+                    {
+                        if !protocols.contains(&Cow::Borrowed(protocol)) {
                             // the responded protocol is none which we requested
                             return Err(Error::new(
-                                Kind::Status(self.res.status()),
+                                Kind::Status(status),
                                 Some(format!("invalid protocol: {}", protocol)),
                             ));
                         }
                     } else {
                         // we didn't request any protocols but got one anyway
-                        return Err(Error::new(
-                            Kind::Status(self.res.status()),
-                            Some("invalid protocol"),
-                        ));
+                        return Err(Error::new(Kind::Status(status), Some("invalid protocol")));
                     }
                 }
                 (true, Some(_)) => {
@@ -359,9 +345,9 @@ impl WebSocketResponse {
                 }
             }
 
-            let inner = async_tungstenite::WebSocketStream::from_raw_socket(
+            let inner = WebSocketStream::from_raw_socket(
                 self.inner.upgrade().await?.compat(),
-                async_tungstenite::tungstenite::protocol::Role::Client,
+                protocol::Role::Client,
                 Some(self.config),
             )
             .await;
@@ -373,6 +359,7 @@ impl WebSocketResponse {
     }
 }
 
+/// Checks if the header value is equal to the given value.
 fn header_eq(headers: &HeaderMap, key: HeaderName, value: &'static str) -> bool {
     if let Some(header) = headers.get(&key) {
         header.as_bytes().eq_ignore_ascii_case(value.as_bytes())
@@ -381,6 +368,7 @@ fn header_eq(headers: &HeaderMap, key: HeaderName, value: &'static str) -> bool 
     }
 }
 
+/// Checks if the header value contains the given value.
 fn header_contains(headers: &HeaderMap, key: HeaderName, value: &'static str) -> bool {
     let header = if let Some(header) = headers.get(&key) {
         header
@@ -399,13 +387,13 @@ fn header_contains(headers: &HeaderMap, key: HeaderName, value: &'static str) ->
 #[derive(Debug)]
 pub struct WebSocket {
     inner: WebSocketStream,
-    protocol: Option<String>,
+    protocol: Option<HeaderValue>,
 }
 
 impl WebSocket {
     /// Returns the protocol negotiated during the handshake.
-    pub fn protocol(&self) -> Option<&str> {
-        self.protocol.as_deref()
+    pub fn protocol(&self) -> Option<&HeaderValue> {
+        self.protocol.as_ref()
     }
 
     /// Closes the connection with a given code and (optional) reason.
@@ -422,8 +410,8 @@ impl WebSocket {
                 code: code.into(),
                 reason: reason.unwrap_or_default().into(),
             }))
-            .await?;
-        Ok(())
+            .await
+            .map_err(Into::into)
     }
 }
 
