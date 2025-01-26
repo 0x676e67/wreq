@@ -149,7 +149,7 @@ impl WebSocketRequestBuilder {
     /// # Returns
     ///
     /// * `Self` - The modified instance with the updated `RequestBuilder`.
-    pub fn builder<F>(mut self, f: F) -> Self
+    pub fn with_builder<F>(mut self, f: F) -> Self
     where
         F: FnOnce(RequestBuilder) -> RequestBuilder,
     {
