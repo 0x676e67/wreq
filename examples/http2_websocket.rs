@@ -1,8 +1,7 @@
-use std::time::Duration;
-
 use futures_util::{SinkExt, StreamExt, TryStreamExt};
 use http::header;
 use rquest::{Client, Impersonate, Message, RequestBuilder};
+use std::time::Duration;
 
 #[tokio::main]
 async fn main() -> Result<(), rquest::Error> {
@@ -20,10 +19,11 @@ async fn main() -> Result<(), rquest::Error> {
     let websocket = client
         .websocket("wss://127.0.0.1:3000/ws")
         .configure_request(configure_request)
+        .http2_only()
         .send()
         .await?;
 
-    assert_eq!(websocket.version(), http::Version::HTTP_11);
+    assert_eq!(websocket.version(), http::Version::HTTP_2);
 
     let (mut tx, mut rx) = websocket.into_websocket().await?.split();
 

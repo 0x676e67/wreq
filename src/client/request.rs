@@ -32,6 +32,7 @@ type PiecesWithCookieStore = (
     Option<redirect::Policy>,
     (),
     NetworkScheme,
+    Option<hyper2::ext::Protocol>,
 );
 
 #[cfg(feature = "cookies")]
@@ -46,6 +47,7 @@ type PiecesWithCookieStore = (
     Option<redirect::Policy>,
     Option<Arc<dyn cookie::CookieStore>>,
     NetworkScheme,
+    Option<hyper2::ext::Protocol>,
 );
 
 /// A request which can be executed with `Client::execute()`.
@@ -61,6 +63,7 @@ pub struct Request {
     #[cfg(feature = "cookies")]
     cookie_store: Option<Arc<dyn cookie::CookieStore>>,
     network_scheme: NetworkSchemeBuilder,
+    protocol: Option<hyper2::ext::Protocol>,
 }
 
 /// A builder to construct the properties of a `Request`.
@@ -88,6 +91,7 @@ impl Request {
             #[cfg(feature = "cookies")]
             cookie_store: None,
             network_scheme: NetworkScheme::builder(),
+            protocol: None,
         }
     }
 
@@ -194,6 +198,12 @@ impl Request {
         &mut self.version
     }
 
+    /// Set the mutable reference to the protocol.
+    #[inline]
+    pub fn protocol_mut(&mut self) -> &mut Option<hyper2::ext::Protocol> {
+        &mut self.protocol
+    }
+
     /// Attempt to clone the request.
     ///
     /// `None` is returned if the request can not be cloned, i.e. if the body is a stream.
@@ -232,6 +242,7 @@ impl Request {
             #[cfg(not(feature = "cookies"))]
             (),
             self.network_scheme.build(),
+            self.protocol,
         )
     }
 }
@@ -824,6 +835,7 @@ where
             #[cfg(feature = "cookies")]
             cookie_store: None,
             network_scheme: NetworkScheme::builder(),
+            protocol: None,
         })
     }
 }

@@ -7,7 +7,7 @@ use http::{
     Request, Uri, Version,
 };
 use http_body::Body;
-use std::marker::PhantomData;
+use std::{any::Any, marker::PhantomData};
 
 pub struct InnerRequest<B>
 where
@@ -98,6 +98,18 @@ where
     #[inline]
     pub fn headers_order(mut self, order: Option<&'a [HeaderName]>) -> Self {
         self.headers_order = order;
+        self
+    }
+
+    /// Set the extension for the request.
+    #[inline]
+    pub fn extension<T>(mut self, extension: Option<T>) -> Self
+    where
+        T: Clone + Any + Send + Sync + 'static,
+    {
+        if let Some(extension) = extension {
+            self.builder = self.builder.extension(extension);
+        }
         self
     }
 

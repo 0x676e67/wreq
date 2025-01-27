@@ -16,13 +16,21 @@ use crate::{
 use crate::{Error, Response};
 use async_tungstenite::tungstenite::{self, protocol};
 use futures_util::{Sink, SinkExt, Stream, StreamExt};
-use http::{header, uri::Scheme, HeaderMap, HeaderName, HeaderValue, StatusCode, Version};
+use http::{header, uri::Scheme, HeaderMap, HeaderName, HeaderValue, Method, StatusCode, Version};
 pub use message::{CloseCode, Message};
 use tokio_util::compat::TokioAsyncReadCompatExt;
 use tungstenite::protocol::WebSocketConfig;
 
 pub type WebSocketStream =
     async_tungstenite::WebSocketStream<tokio_util::compat::Compat<crate::Upgraded>>;
+
+/// A marker to identify what version a connection is.
+#[derive(Debug, Default)]
+pub enum Ver {
+    #[default]
+    Http1,
+    Http2,
+}
 
 /// Wrapper for [`RequestBuilder`] that performs the
 /// websocket handshake when sent.
@@ -32,6 +40,7 @@ pub struct WebSocketRequestBuilder {
     nonce: Option<Cow<'static, str>>,
     protocols: Option<Vec<Cow<'static, str>>>,
     config: WebSocketConfig,
+    ver: Ver,
 }
 
 impl WebSocketRequestBuilder {
@@ -41,6 +50,7 @@ impl WebSocketRequestBuilder {
             nonce: None,
             protocols: None,
             config: WebSocketConfig::default(),
+            ver: Ver::Http1,
         }
     }
 
@@ -157,13 +167,16 @@ impl WebSocketRequestBuilder {
         self
     }
 
+    /// Sets the HTTP version to HTTP/2 for the WebSocket connection.
+    pub fn http2_only(mut self) -> Self {
+        self.ver = Ver::Http2;
+        self
+    }
+
     /// Sends the request and returns and [`WebSocketResponse`].
     pub async fn send(self) -> Result<WebSocketResponse, Error> {
         let (client, request) = self.inner.build_split();
         let mut request = request?;
-
-        // Ensure the request is HTTP 1.1
-        *request.version_mut() = Some(Version::HTTP_11);
 
         // Ensure the scheme is http or https
         let url = request.url_mut();
@@ -183,20 +196,35 @@ impl WebSocketRequestBuilder {
             }
         }
 
-        // Generate a nonce if one wasn't provided
-        let nonce = self
-            .nonce
-            .unwrap_or_else(|| Cow::Owned(tungstenite::handshake::client::generate_key()));
-
-        // HTTP 1 requires us to set some headers.
         let headers = request.headers_mut();
-        headers.insert(header::CONNECTION, HeaderValue::from_static("upgrade"));
-        headers.insert(header::UPGRADE, HeaderValue::from_static("websocket"));
-        headers.insert(header::SEC_WEBSOCKET_KEY, HeaderValue::from_str(&nonce)?);
         headers.insert(
             header::SEC_WEBSOCKET_VERSION,
             HeaderValue::from_static("13"),
         );
+
+        // Ensure the request is HTTP 1.1/HTTP 2
+        let nonce = match self.ver {
+            Ver::Http1 => {
+                // Generate a nonce if one wasn't provided
+                let nonce = self
+                    .nonce
+                    .unwrap_or_else(|| Cow::Owned(tungstenite::handshake::client::generate_key()));
+
+                headers.insert(header::CONNECTION, HeaderValue::from_static("upgrade"));
+                headers.insert(header::UPGRADE, HeaderValue::from_static("websocket"));
+                headers.insert(header::SEC_WEBSOCKET_KEY, HeaderValue::from_str(&nonce)?);
+
+                *request.method_mut() = Method::GET;
+                *request.version_mut() = Some(Version::HTTP_11);
+                Some(nonce)
+            }
+            Ver::Http2 => {
+                *request.method_mut() = Method::CONNECT;
+                *request.version_mut() = Some(Version::HTTP_2);
+                *request.protocol_mut() = Some(hyper2::ext::Protocol::from_static("websocket"));
+                None
+            }
+        };
 
         // Set websocket subprotocols
         if let Some(ref protocols) = self.protocols {
@@ -222,6 +250,7 @@ impl WebSocketRequestBuilder {
                 nonce,
                 protocols: self.protocols,
                 config: self.config,
+                var: self.ver,
             })
     }
 }
@@ -233,9 +262,10 @@ impl WebSocketRequestBuilder {
 #[derive(Debug)]
 pub struct WebSocketResponse {
     inner: Response,
-    nonce: Cow<'static, str>,
+    nonce: Option<Cow<'static, str>>,
     protocols: Option<Vec<Cow<'static, str>>>,
     config: WebSocketConfig,
+    var: Ver,
 }
 
 impl Deref for WebSocketResponse {
@@ -260,47 +290,64 @@ impl WebSocketResponse {
             let status = self.inner.status();
             let headers = self.inner.headers();
 
-            if !matches!(self.inner.version(), Version::HTTP_10 | Version::HTTP_11) {
+            if !matches!(
+                self.inner.version(),
+                Version::HTTP_10 | Version::HTTP_11 | Version::HTTP_2
+            ) {
                 return Err(Error::new(
                     Kind::Upgrade,
                     Some(format!("unexpected version: {:?}", self.inner.version())),
                 ));
             }
 
-            if status != StatusCode::SWITCHING_PROTOCOLS {
-                return Err(Error::new(
-                    Kind::Upgrade,
-                    Some(format!("unexpected status code: {}", status)),
-                ));
-            }
-
-            if !header_contains(self.inner.headers(), header::CONNECTION, "upgrade") {
-                log::debug!("missing Connection header");
-                return Err(Error::new(Kind::Upgrade, Some("missing connection header")));
-            }
-
-            if !header_eq(self.inner.headers(), header::UPGRADE, "websocket") {
-                log::debug!("server responded with invalid Upgrade header");
-                return Err(Error::new(Kind::Upgrade, Some("invalid upgrade header")));
-            }
-
-            match headers.get(header::SEC_WEBSOCKET_ACCEPT) {
-                Some(header) => {
-                    if !header.to_str().is_ok_and(|s| {
-                        s == tungstenite::handshake::derive_accept_key(self.nonce.as_bytes())
-                    }) {
-                        log::debug!(
-                            "server responded with invalid Sec-Websocket-Accept header: {header:?}"
-                        );
+            match self.var {
+                Ver::Http1 => {
+                    if status != StatusCode::SWITCHING_PROTOCOLS {
+                        let body = self.inner.text().await?;
                         return Err(Error::new(
                             Kind::Upgrade,
-                            Some(format!("invalid accept key: {:?}", header)),
+                            Some(format!("unexpected status code: {}", body)),
                         ));
                     }
+
+                    if !header_contains(self.inner.headers(), header::CONNECTION, "upgrade") {
+                        log::debug!("missing Connection header");
+                        return Err(Error::new(Kind::Upgrade, Some("missing connection header")));
+                    }
+
+                    if !header_eq(self.inner.headers(), header::UPGRADE, "websocket") {
+                        log::debug!("server responded with invalid Upgrade header");
+                        return Err(Error::new(Kind::Upgrade, Some("invalid upgrade header")));
+                    }
+
+                    match self.nonce.zip(headers.get(header::SEC_WEBSOCKET_ACCEPT)) {
+                        Some((nonce, header)) => {
+                            if !header.to_str().is_ok_and(|s| {
+                                s == tungstenite::handshake::derive_accept_key(nonce.as_bytes())
+                            }) {
+                                log::debug!(
+                            "server responded with invalid Sec-Websocket-Accept header: {header:?}"
+                        );
+                                return Err(Error::new(
+                                    Kind::Upgrade,
+                                    Some(format!("invalid accept key: {:?}", header)),
+                                ));
+                            }
+                        }
+                        None => {
+                            log::debug!("missing Sec-Websocket-Accept header");
+                            return Err(Error::new(Kind::Upgrade, Some("missing accept key")));
+                        }
+                    }
                 }
-                None => {
-                    log::debug!("missing Sec-Websocket-Accept header");
-                    return Err(Error::new(Kind::Upgrade, Some("missing accept key")));
+                Ver::Http2 => {
+                    if status != StatusCode::OK {
+                        let body = self.inner.text().await?;
+                        return Err(Error::new(
+                            Kind::Upgrade,
+                            Some(format!("unexpected status code: {}", body)),
+                        ));
+                    }
                 }
             }
 
@@ -317,7 +364,7 @@ impl WebSocketResponse {
                 (false, None) => {
                     // server didn't reply with a protocol
                     return Err(Error::new(
-                        Kind::Status(self.res.status()),
+                        Kind::Status(self.inner.status()),
                         Some("missing protocol"),
                     ));
                 }
@@ -339,7 +386,7 @@ impl WebSocketResponse {
                 (true, Some(_)) => {
                     // we didn't request any protocols but got one anyway
                     return Err(Error::new(
-                        Kind::Status(self.res.status()),
+                        Kind::Status(self.inner.status()),
                         Some("invalid protocol"),
                     ));
                 }

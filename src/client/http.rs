@@ -1298,6 +1298,7 @@ impl Client {
             redirect,
             _cookie_store,
             network_scheme,
+            protocal,
         ) = req.pieces();
 
         if url.scheme() != "http" && url.scheme() != "https" {
@@ -1357,12 +1358,13 @@ impl Client {
 
         let in_flight = {
             let res = InnerRequest::builder()
-                .network_scheme(network_scheme.clone())
                 .uri(uri)
                 .method(method.clone())
                 .version(version)
                 .headers(headers.clone())
                 .headers_order(self.inner.headers_order.as_deref())
+                .network_scheme(network_scheme.clone())
+                .extension(protocal)
                 .body(body);
 
             match res {
@@ -1944,12 +1946,12 @@ impl PendingRequest {
 
         *self.as_mut().in_flight().get_mut() = {
             let res = InnerRequest::builder()
-                .network_scheme(self.network_scheme.clone())
                 .uri(uri)
                 .method(self.method.clone())
                 .version(self.version)
                 .headers(self.headers.clone())
                 .headers_order(self.client.headers_order.as_deref())
+                .network_scheme(self.network_scheme.clone())
                 .body(body);
 
             if let Ok(req) = res {
@@ -2203,12 +2205,12 @@ impl Future for PendingRequest {
 
                             *self.as_mut().in_flight().get_mut() = {
                                 let req = InnerRequest::builder()
-                                    .network_scheme(self.network_scheme.clone())
                                     .uri(uri)
                                     .method(self.method.clone())
                                     .version(self.version)
                                     .headers(headers.clone())
                                     .headers_order(self.client.headers_order.as_deref())
+                                    .network_scheme(self.network_scheme.clone())
                                     .body(body)?;
 
                                 std::mem::swap(self.as_mut().headers(), &mut headers);
