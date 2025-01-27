@@ -189,8 +189,9 @@ tower = { version = "0.5.2", default-features = false, features = ["limit"] }
 num_cpus = "1.0"
 libc = "0.2"
 
-tracing = { version = "0.1" }
-tracing-subscriber = { version = "0.3.19"}
+env_logger = "0.11.6"
+tracing = "0.1"
+tracing-subscriber = "0.3.19"
 
 [lib]
 doctest = false
