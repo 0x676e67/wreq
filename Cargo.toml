@@ -360,3 +360,8 @@ required-features = ["full"]
 name = "request_with_interface"
 path = "examples/request_with_interface.rs"
 required-features = ["full"]
+
+[[example]]
+name = "http2_websocket"
+path = "examples/http2_websocket.rs"
+required-features = ["websocket", "http2-tracing"]
