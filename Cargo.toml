@@ -311,7 +311,7 @@ required-features = ["native-roots", "webpki-roots"]
 [[example]]
 name = "websocket"
 path = "examples/websocket.rs"
-required-features = ["websocket", "futures-util/std"]
+required-features = ["websocket", "http2-tracing", "futures-util/std"]
 
 [[example]]
 name = "client_chain"
@@ -364,4 +364,4 @@ required-features = ["full"]
 [[example]]
 name = "http2_websocket"
 path = "examples/http2_websocket.rs"
-required-features = ["websocket", "http2-tracing"]
+required-features = ["websocket", "http2-tracing", "futures-util/std"]
