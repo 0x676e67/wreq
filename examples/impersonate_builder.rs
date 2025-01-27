@@ -2,7 +2,9 @@ use rquest::{Client, Impersonate, ImpersonateOS};
 
 #[tokio::main]
 async fn main() -> Result<(), rquest::Error> {
-    env_logger::init_from_env(env_logger::Env::default().default_filter_or("trace"));
+    tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::TRACE)
+        .init();
 
     // Build a client to impersonate Firefox128
     let impersonate = Impersonate::builder()

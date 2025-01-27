@@ -9,7 +9,9 @@ use url::Url;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    env_logger::init_from_env(env_logger::Env::default().default_filter_or("trace"));
+    tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::TRACE)
+        .init();
 
     let url = Url::parse("https://google.com/")?;
 
