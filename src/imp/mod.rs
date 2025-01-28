@@ -214,66 +214,145 @@ impl From<Impersonate> for ImpersonateSettings {
     }
 }
 
+/// Represents different browser versions for impersonation.
+///
+/// The `Impersonate` enum provides variants for different browser versions that can be used
+/// to impersonate HTTP requests. Each variant corresponds to a specific browser version.
+///
+/// # Naming Convention
+///
+/// The naming convention for the variants follows the pattern `browser_version`, where
+/// `browser` is the name of the browser (e.g., `chrome`, `firefox`, `safari`) and `version`
+/// is the version number. For example, `Chrome100` represents Chrome version 100.
+///
+/// The serialized names of the variants use underscores to separate the browser name and
+/// version number, following the pattern `browser_version`. For example, `Chrome100` is
+/// serialized as `"chrome_100"`.
+///
+/// # Examples
+///
+/// ```rust
+/// use rquest::Impersonate;
+///
+/// let impersonate = Impersonate::Chrome100;
+/// let serialized = serde_json::to_string(&impersonate).unwrap();
+/// assert_eq!(serialized, "\"chrome_100\"");
+///
+/// let deserialized: Impersonate = serde_json::from_str(&serialized).unwrap();
+/// assert_eq!(deserialized, Impersonate::Chrome100);
+/// ```
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize)]
-#[serde(rename_all = "snake_case")]
 pub enum Impersonate {
+    #[serde(rename = "chrome_100")]
     Chrome100,
+    #[serde(rename = "chrome_101")]
     Chrome101,
+    #[serde(rename = "chrome_104")]
     Chrome104,
+    #[serde(rename = "chrome_105")]
     Chrome105,
+    #[serde(rename = "chrome_106")]
     Chrome106,
+    #[serde(rename = "chrome_107")]
     Chrome107,
+    #[serde(rename = "chrome_108")]
     Chrome108,
+    #[serde(rename = "chrome_109")]
     Chrome109,
+    #[serde(rename = "chrome_114")]
     Chrome114,
+    #[serde(rename = "chrome_116")]
     Chrome116,
+    #[serde(rename = "chrome_117")]
     Chrome117,
+    #[serde(rename = "chrome_118")]
     Chrome118,
+    #[serde(rename = "chrome_119")]
     Chrome119,
+    #[serde(rename = "chrome_120")]
     Chrome120,
+    #[serde(rename = "chrome_123")]
     Chrome123,
+    #[serde(rename = "chrome_124")]
     Chrome124,
+    #[serde(rename = "chrome_126")]
     Chrome126,
+    #[serde(rename = "chrome_127")]
     Chrome127,
+    #[serde(rename = "chrome_128")]
     Chrome128,
+    #[serde(rename = "chrome_129")]
     Chrome129,
+    #[serde(rename = "chrome_130")]
     Chrome130,
+    #[serde(rename = "chrome_131")]
     #[default]
     Chrome131,
 
+    #[serde(rename = "safari_ios_17.2")]
     SafariIos17_2,
+    #[serde(rename = "safari_ios_17.4.1")]
     SafariIos17_4_1,
+    #[serde(rename = "safari_ios_16.5")]
     SafariIos16_5,
+    #[serde(rename = "safari_15.3")]
     Safari15_3,
+    #[serde(rename = "safari_15.5")]
     Safari15_5,
+    #[serde(rename = "safari_15.6.1")]
     Safari15_6_1,
+    #[serde(rename = "safari_16")]
     Safari16,
+    #[serde(rename = "safari_16.5")]
     Safari16_5,
+    #[serde(rename = "safari_17.0")]
     Safari17_0,
+    #[serde(rename = "safari_17.2.1")]
     Safari17_2_1,
+    #[serde(rename = "safari_17.4.1")]
     Safari17_4_1,
+    #[serde(rename = "safari_17.5")]
     Safari17_5,
+    #[serde(rename = "safari_18")]
     Safari18,
+    #[serde(rename = "safari_ipad_18")]
     SafariIPad18,
+    #[serde(rename = "safari_18.2")]
     Safari18_2,
+    #[serde(rename = "safari_ios_18.1.1")]
     SafariIos18_1_1,
 
+    #[serde(rename = "okhttp_3.9")]
     OkHttp3_9,
+    #[serde(rename = "okhttp_3.11")]
     OkHttp3_11,
+    #[serde(rename = "okhttp_3.13")]
     OkHttp3_13,
+    #[serde(rename = "okhttp_3.14")]
     OkHttp3_14,
+    #[serde(rename = "okhttp_4.9")]
     OkHttp4_9,
+    #[serde(rename = "okhttp_4.10")]
     OkHttp4_10,
+    #[serde(rename = "okhttp_5")]
     OkHttp5,
 
+    #[serde(rename = "edge_101")]
     Edge101,
+    #[serde(rename = "edge_122")]
     Edge122,
+    #[serde(rename = "edge_127")]
     Edge127,
+    #[serde(rename = "edge_131")]
     Edge131,
 
+    #[serde(rename = "firefox_109")]
     Firefox109,
+    #[serde(rename = "firefox_117")]
     Firefox117,
+    #[serde(rename = "firefox_128")]
     Firefox128,
+    #[serde(rename = "firefox_133")]
     Firefox133,
 }
 
@@ -290,14 +369,43 @@ impl Impersonate {
     }
 }
 
+/// Represents different operating systems for impersonation.
+///
+/// The `ImpersonateOS` enum provides variants for different operating systems that can be used
+/// to impersonate HTTP requests. Each variant corresponds to a specific operating system.
+///
+/// # Naming Convention
+///
+/// The naming convention for the variants follows the pattern `os_name`, where
+/// `os_name` is the name of the operating system (e.g., `windows`, `macos`, `linux`, `android`, `ios`).
+///
+/// The serialized names of the variants use lowercase letters to represent the operating system names.
+/// For example, `Windows` is serialized as `"windows"`.
+///
+/// # Examples
+///
+/// ```rust
+/// use rquest::ImpersonateOS;
+///
+/// let impersonate_os = ImpersonateOS::Windows;
+/// let serialized = serde_json::to_string(&impersonate_os).unwrap();
+/// assert_eq!(serialized, "\"windows\"");
+///
+/// let deserialized: ImpersonateOS = serde_json::from_str(&serialized).unwrap();
+/// assert_eq!(deserialized, ImpersonateOS::Windows);
+/// ```
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize)]
-#[serde(rename_all = "snake_case")]
 pub enum ImpersonateOS {
+    #[serde(rename = "windows")]
     Windows,
+    #[serde(rename = "macos")]
     #[default]
     MacOS,
+    #[serde(rename = "linux")]
     Linux,
+    #[serde(rename = "android")]
     Android,
+    #[serde(rename = "ios")]
     IOS,
 }
 
