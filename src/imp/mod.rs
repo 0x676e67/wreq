@@ -241,7 +241,7 @@ impl From<Impersonate> for ImpersonateSettings {
 /// let deserialized: Impersonate = serde_json::from_str(&serialized).unwrap();
 /// assert_eq!(deserialized, Impersonate::Chrome100);
 /// ```
-#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
 pub enum Impersonate {
     #[serde(rename = "chrome_100")]
     Chrome100,
@@ -394,7 +394,7 @@ impl Impersonate {
 /// let deserialized: ImpersonateOS = serde_json::from_str(&serialized).unwrap();
 /// assert_eq!(deserialized, ImpersonateOS::Windows);
 /// ```
-#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
 pub enum ImpersonateOS {
     #[serde(rename = "windows")]
     Windows,
@@ -425,5 +425,45 @@ impl ImpersonateOS {
     #[inline]
     fn is_mobile(&self) -> bool {
         matches!(self, ImpersonateOS::Android | ImpersonateOS::IOS)
+    }
+}
+
+#[cfg(feature = "json")]
+mod tests {
+    use super::{Impersonate, ImpersonateOS};
+    use serde_json::{json, Value};
+
+    #[test]
+    fn test_impersonate_serde() {
+        let imp = Impersonate::Chrome100;
+        let json = json!({
+            "imp": imp,
+        });
+
+        let serialized1 = serde_json::to_string(&json).unwrap();
+        assert_eq!(serialized1, r#"{"imp":"chrome_100"}"#);
+
+        let serialized2 = serde_json::to_value(&imp).unwrap();
+        assert_eq!(serialized2, "chrome_100");
+
+        let deserialized: Value = serde_json::from_str(&serialized1).unwrap();
+        assert_eq!(deserialized, json);
+    }
+
+    #[test]
+    fn test_impersonate_os_serde() {
+        let os = ImpersonateOS::Windows;
+        let json = json!({
+            "os": os
+        });
+
+        let serialized1 = serde_json::to_string(&json).unwrap();
+        assert_eq!(serialized1, r#"{"os":"windows"}"#);
+
+        let serialized2 = serde_json::to_value(&os).unwrap();
+        assert_eq!(serialized2, "windows");
+
+        let deserialized: Value = serde_json::from_str(&serialized1).unwrap();
+        assert_eq!(deserialized, json);
     }
 }
