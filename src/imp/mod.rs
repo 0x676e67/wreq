@@ -430,12 +430,11 @@ impl ImpersonateOS {
 
 #[cfg(feature = "json")]
 mod tests {
-    use super::{Impersonate, ImpersonateOS};
-    use serde_json::{json, Value};
-
     #[test]
     fn test_impersonate_serde() {
-        let imp = Impersonate::Chrome100;
+        use serde_json::{json, Value};
+
+        let imp = super::Impersonate::Chrome100;
         let json = json!({
             "imp": imp,
         });
@@ -443,7 +442,7 @@ mod tests {
         let serialized1 = serde_json::to_string(&json).unwrap();
         assert_eq!(serialized1, r#"{"imp":"chrome_100"}"#);
 
-        let serialized2 = serde_json::to_value(&imp).unwrap();
+        let serialized2 = serde_json::to_value(imp).unwrap();
         assert_eq!(serialized2, "chrome_100");
 
         let deserialized: Value = serde_json::from_str(&serialized1).unwrap();
@@ -452,7 +451,9 @@ mod tests {
 
     #[test]
     fn test_impersonate_os_serde() {
-        let os = ImpersonateOS::Windows;
+        use serde_json::{json, Value};
+
+        let os = super::ImpersonateOS::Windows;
         let json = json!({
             "os": os
         });
@@ -460,7 +461,7 @@ mod tests {
         let serialized1 = serde_json::to_string(&json).unwrap();
         assert_eq!(serialized1, r#"{"os":"windows"}"#);
 
-        let serialized2 = serde_json::to_value(&os).unwrap();
+        let serialized2 = serde_json::to_value(os).unwrap();
         assert_eq!(serialized2, "windows");
 
         let deserialized: Value = serde_json::from_str(&serialized1).unwrap();
