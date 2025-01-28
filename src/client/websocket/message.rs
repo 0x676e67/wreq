@@ -22,6 +22,7 @@ impl Utf8Bytes {
     }
 
     /// Returns as a byte slice.
+    #[inline(always)]
     pub(super) fn into_tungstenite(self) -> ts::Utf8Bytes {
         self.0
     }
