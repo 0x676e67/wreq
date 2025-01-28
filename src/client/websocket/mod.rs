@@ -168,21 +168,17 @@ impl WebSocketRequestBuilder {
 
         // Ensure the scheme is http or https
         let url = request.url_mut();
-        match url.scheme() {
-            "ws" | "wss" => {
-                let new_scheme = if url.scheme() == "ws" {
-                    Scheme::HTTP.as_str()
-                } else {
-                    Scheme::HTTPS.as_str()
-                };
-                url.set_scheme(new_scheme)
-                    .map_err(|_| error::url_bad_scheme(url.clone()))?;
-            }
-            "http" | "https" => {}
+        let new_scheme = match url.scheme() {
+            "ws" => Scheme::HTTP.as_str(),
+            "wss" => Scheme::HTTPS.as_str(),
             _ => {
                 return Err(error::url_bad_scheme(url.clone()));
             }
-        }
+        };
+
+        // Update the scheme
+        url.set_scheme(new_scheme)
+            .map_err(|_| error::url_bad_scheme(url.clone()))?;
 
         // Get the version of the request
         // If the version is not set, use the default version
