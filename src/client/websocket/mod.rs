@@ -14,15 +14,14 @@ use crate::{
     RequestBuilder,
 };
 use crate::{Error, Response};
-use async_tungstenite::tungstenite::{self, protocol};
 use futures_util::{Sink, SinkExt, Stream, StreamExt};
 use http::{header, uri::Scheme, HeaderMap, HeaderName, HeaderValue, Method, StatusCode, Version};
-pub use message::{CloseCode, Message};
-use tokio_util::compat::TokioAsyncReadCompatExt;
+pub use message::{CloseCode, CloseFrame, Message, Utf8Bytes};
+use tokio_tungstenite::tungstenite::{self, protocol};
 use tungstenite::protocol::WebSocketConfig;
 
-pub type WebSocketStream =
-    async_tungstenite::WebSocketStream<tokio_util::compat::Compat<crate::Upgraded>>;
+/// A WebSocket stream.
+pub type WebSocketStream = tokio_tungstenite::WebSocketStream<crate::Upgraded>;
 
 /// Wrapper for [`RequestBuilder`] that performs the
 /// websocket handshake when sent.
@@ -32,17 +31,16 @@ pub struct WebSocketRequestBuilder {
     accept_key: Option<Cow<'static, str>>,
     protocols: Option<Vec<Cow<'static, str>>>,
     config: WebSocketConfig,
-    ver: Version,
 }
 
 impl WebSocketRequestBuilder {
-    pub(crate) fn new(inner: RequestBuilder) -> Self {
+    /// Creates a new WebSocket request builder.
+    pub fn new(inner: RequestBuilder) -> Self {
         Self {
             inner,
             accept_key: None,
             protocols: None,
             config: WebSocketConfig::default(),
-            ver: Version::HTTP_11,
         }
     }
 
@@ -126,6 +124,19 @@ impl WebSocketRequestBuilder {
         self
     }
 
+    /// Configures the WebSocket connection to use HTTP/2.
+    ///
+    /// This method sets the HTTP version to HTTP/2 for the WebSocket connection.
+    /// If the server does not support HTTP/2 WebSocket connections, the connection attempt will fail.
+    ///
+    /// # Returns
+    ///
+    /// * `Self` - The modified instance with the HTTP version set to HTTP/2.
+    pub fn use_http2(mut self) -> Self {
+        self.inner = self.inner.version(Version::HTTP_2);
+        self
+    }
+
     /// Modifies the request builder before sending the request.
     ///
     /// This method allows you to customize the `RequestBuilder` by passing a closure
@@ -145,12 +156,6 @@ impl WebSocketRequestBuilder {
         F: FnOnce(RequestBuilder) -> RequestBuilder,
     {
         self.inner = f(self.inner);
-        self
-    }
-
-    /// Sets the HTTP version to HTTP/2 for the WebSocket connection.
-    pub fn http2_only(mut self) -> Self {
-        self.ver = Version::HTTP_2;
         self
     }
 
@@ -179,7 +184,7 @@ impl WebSocketRequestBuilder {
 
         // Get the version of the request
         // If the version is not set, use the default version
-        let version = request.version().unwrap_or(self.ver);
+        let version = request.version().unwrap_or(Version::HTTP_11);
 
         // Set the headers for the websocket handshake
         let headers = request.headers_mut();
@@ -213,7 +218,7 @@ impl WebSocketRequestBuilder {
             _ => {
                 return Err(Error::new(
                     Kind::Upgrade,
-                    Some(format!("unsupported version: {:?}", self.ver)),
+                    Some(format!("unsupported version: {:?}", version)),
                 ));
             }
         };
@@ -242,7 +247,7 @@ impl WebSocketRequestBuilder {
                 nonce,
                 protocols: self.protocols,
                 config: self.config,
-                var: self.ver,
+                version,
             })
     }
 }
@@ -257,7 +262,7 @@ pub struct WebSocketResponse {
     nonce: Option<Cow<'static, str>>,
     protocols: Option<Vec<Cow<'static, str>>>,
     config: WebSocketConfig,
-    var: Version,
+    version: Version,
 }
 
 impl Deref for WebSocketResponse {
@@ -292,7 +297,7 @@ impl WebSocketResponse {
                 ));
             }
 
-            match self.var {
+            match self.version {
                 Version::HTTP_10 | Version::HTTP_11 => {
                     if status != StatusCode::SWITCHING_PROTOCOLS {
                         let body = self.inner.text().await?;
@@ -337,7 +342,7 @@ impl WebSocketResponse {
                 _ => {
                     return Err(Error::new(
                         Kind::Upgrade,
-                        Some(format!("unsupported version: {:?}", self.var)),
+                        Some(format!("unsupported version: {:?}", self.version)),
                     ));
                 }
             }
@@ -383,8 +388,9 @@ impl WebSocketResponse {
                 }
             }
 
+            let upgraded = self.inner.upgrade().await?;
             let inner = WebSocketStream::from_raw_socket(
-                self.inner.upgrade().await?.compat(),
+                upgraded,
                 protocol::Role::Client,
                 Some(self.config),
             )
@@ -429,24 +435,35 @@ pub struct WebSocket {
 }
 
 impl WebSocket {
-    /// Returns the protocol negotiated during the handshake.
+    /// Receive another message.
+    ///
+    /// Returns `None` if the stream has closed.
+    pub async fn recv(&mut self) -> Option<Result<Message, Error>> {
+        self.next().await
+    }
+
+    /// Send a message.
+    pub async fn send(&mut self, msg: Message) -> Result<(), Error> {
+        self.inner
+            .send(msg.into_tungstenite())
+            .await
+            .map_err(Into::into)
+    }
+
+    /// Return the selected WebSocket subprotocol, if one has been chosen.
     pub fn protocol(&self) -> Option<&HeaderValue> {
         self.protocol.as_ref()
     }
 
     /// Closes the connection with a given code and (optional) reason.
-    ///
-    /// # WASM
-    ///
-    /// On wasm `code` must be [`CloseCode::Normal`], [`CloseCode::Iana(_)`],
-    /// or [`CloseCode::Library(_)`]. Furthermore `reason` must be at most 123
-    /// bytes long. Otherwise the call to [`close`][Self::close] will fail.
-    pub async fn close(self, code: CloseCode, reason: Option<&str>) -> Result<(), Error> {
+    pub async fn close(self, code: CloseCode, reason: Option<Utf8Bytes>) -> Result<(), Error> {
         let mut inner = self.inner;
         inner
             .close(Some(tungstenite::protocol::CloseFrame {
-                code: code.into(),
-                reason: reason.unwrap_or_default().into(),
+                code: code.0.into(),
+                reason: reason
+                    .unwrap_or(Utf8Bytes::from_static("Goodbye"))
+                    .into_tungstenite(),
             }))
             .await
             .map_err(Into::into)
@@ -458,22 +475,15 @@ impl Stream for WebSocket {
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         loop {
-            return match self.inner.poll_next_unpin(cx) {
-                Poll::Pending => Poll::Pending,
-                Poll::Ready(None) => Poll::Ready(None),
-                Poll::Ready(Some(Err(error))) => Poll::Ready(Some(Err(error.into()))),
-                Poll::Ready(Some(Ok(message))) => match message.try_into() {
-                    Ok(message) => Poll::Ready(Some(Ok(message))),
-                    Err(e) => {
-                        // this fails only for raw frames (which are not received)
-                        log::debug!("received invalid frame: {:?}", e);
-                        Poll::Ready(Some(Err(Error::new(
-                            Kind::Body,
-                            Some("unsupported websocket frame"),
-                        ))))
+            match futures_util::ready!(self.inner.poll_next_unpin(cx)) {
+                Some(Ok(msg)) => {
+                    if let Some(msg) = Message::from_tungstenite(msg) {
+                        return Poll::Ready(Some(Ok(msg)));
                     }
-                },
-            };
+                }
+                Some(Err(err)) => return Poll::Ready(Some(Err(Error::new(Kind::Body, Some(err))))),
+                None => return Poll::Ready(None),
+            }
         }
     }
 }
@@ -482,60 +492,20 @@ impl Sink<Message> for WebSocket {
     type Error = Error;
 
     fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        self.inner.poll_ready_unpin(cx).map_err(Into::into)
+        Pin::new(&mut self.inner).poll_ready(cx).map_err(Into::into)
     }
 
     fn start_send(mut self: Pin<&mut Self>, item: Message) -> Result<(), Self::Error> {
-        self.inner.start_send_unpin(item.into()).map_err(Into::into)
+        Pin::new(&mut self.inner)
+            .start_send(item.into_tungstenite())
+            .map_err(Into::into)
     }
 
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        self.inner.poll_flush_unpin(cx).map_err(Into::into)
+        Pin::new(&mut self.inner).poll_flush(cx).map_err(Into::into)
     }
 
     fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        self.inner.poll_close_unpin(cx).map_err(Into::into)
-    }
-}
-
-impl TryFrom<tungstenite::Message> for Message {
-    type Error = tungstenite::Message;
-
-    fn try_from(value: tungstenite::Message) -> Result<Self, Self::Error> {
-        match value {
-            tungstenite::Message::Text(text) => Ok(Self::Text(text)),
-            tungstenite::Message::Binary(data) => Ok(Self::Binary(data)),
-            tungstenite::Message::Ping(data) => Ok(Self::Ping(data)),
-            tungstenite::Message::Pong(data) => Ok(Self::Pong(data)),
-            tungstenite::Message::Close(Some(tungstenite::protocol::CloseFrame {
-                code,
-                reason,
-            })) => Ok(Self::Close {
-                code: code.into(),
-                reason: Some(reason.into_owned()),
-            }),
-            tungstenite::Message::Close(None) => Ok(Self::Close {
-                code: CloseCode::default(),
-                reason: None,
-            }),
-            tungstenite::Message::Frame(_) => Err(value),
-        }
-    }
-}
-
-impl From<Message> for tungstenite::Message {
-    fn from(value: Message) -> Self {
-        match value {
-            Message::Text(text) => Self::Text(text),
-            Message::Binary(data) => Self::Binary(data),
-            Message::Ping(data) => Self::Ping(data),
-            Message::Pong(data) => Self::Pong(data),
-            Message::Close { code, reason } => {
-                Self::Close(Some(tungstenite::protocol::CloseFrame {
-                    code: code.into(),
-                    reason: reason.unwrap_or_default().into(),
-                }))
-            }
-        }
+        Pin::new(&mut self.inner).poll_close(cx).map_err(Into::into)
     }
 }

@@ -1,245 +1,412 @@
-use async_tungstenite::tungstenite;
+use crate::Error;
+use bytes::Bytes;
+use tokio_tungstenite::tungstenite as ts;
 
-/// A `WebSocket` message, which can be a text string or binary data.
-#[derive(Clone, Debug)]
-pub enum Message {
-    /// A text `WebSocket` message.
-    Text(String),
+/// UTF-8 wrapper for [Bytes].
+///
+/// An [Utf8Bytes] is always guaranteed to contain valid UTF-8.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Utf8Bytes(ts::Utf8Bytes);
 
-    /// A binary `WebSocket` message.
-    Binary(Vec<u8>),
-
-    /// A ping message with the specified payload.
-    ///
-    /// The payload here must have a length less than 125 bytes.
-    Ping(Vec<u8>),
-
-    /// A pong message with the specified payload.
-    ///
-    /// The payload here must have a length less than 125 bytes.
-    Pong(Vec<u8>),
-
-    /// A close message.
-    ///
-    /// Sending this will not close the connection. Use [`WebSocket::close`] for this.
-    /// Though the remote peer will likely close the connection after receiving this.
-    ///
-    /// [`WebSocket::close`]: crate::WebSocket::close
-    Close {
-        /// The close code.
-        code: CloseCode,
-        /// The reason for closing the connection.
-        reason: Option<String>,
-    },
-}
-
-impl From<String> for Message {
+impl Utf8Bytes {
+    /// Creates from a static str.
     #[inline]
-    fn from(value: String) -> Self {
-        Self::Text(value)
+    pub const fn from_static(str: &'static str) -> Self {
+        Self(ts::Utf8Bytes::from_static(str))
+    }
+
+    /// Returns as a string slice.
+    #[inline]
+    pub fn as_str(&self) -> &str {
+        self.0.as_str()
+    }
+
+    /// Returns as a byte slice.
+    pub(super) fn into_tungstenite(self) -> ts::Utf8Bytes {
+        self.0
     }
 }
 
-impl From<&str> for Message {
+impl std::ops::Deref for Utf8Bytes {
+    type Target = str;
+
+    /// ```
+    /// /// Example fn that takes a str slice
+    /// fn a(s: &str) {}
+    ///
+    /// let data = axum::extract::ws::Utf8Bytes::from_static("foo123");
+    ///
+    /// // auto-deref as arg
+    /// a(&data);
+    ///
+    /// // deref to str methods
+    /// assert_eq!(data.len(), 6);
+    /// ```
     #[inline]
-    fn from(value: &str) -> Self {
-        Self::from(value.to_owned())
+    fn deref(&self) -> &Self::Target {
+        self.as_str()
+    }
+}
+
+impl std::fmt::Display for Utf8Bytes {
+    #[inline]
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl TryFrom<Bytes> for Utf8Bytes {
+    type Error = std::str::Utf8Error;
+
+    #[inline]
+    fn try_from(bytes: Bytes) -> Result<Self, Self::Error> {
+        Ok(Self(bytes.try_into()?))
+    }
+}
+
+impl TryFrom<Vec<u8>> for Utf8Bytes {
+    type Error = std::str::Utf8Error;
+
+    #[inline]
+    fn try_from(v: Vec<u8>) -> Result<Self, Self::Error> {
+        Ok(Self(v.try_into()?))
+    }
+}
+
+impl From<String> for Utf8Bytes {
+    #[inline]
+    fn from(s: String) -> Self {
+        Self(s.into())
+    }
+}
+
+impl From<&str> for Utf8Bytes {
+    #[inline]
+    fn from(s: &str) -> Self {
+        Self(s.into())
+    }
+}
+
+impl From<&String> for Utf8Bytes {
+    #[inline]
+    fn from(s: &String) -> Self {
+        Self(s.into())
+    }
+}
+
+impl From<Utf8Bytes> for Bytes {
+    #[inline]
+    fn from(Utf8Bytes(bytes): Utf8Bytes) -> Self {
+        bytes.into()
+    }
+}
+
+impl<T> PartialEq<T> for Utf8Bytes
+where
+    for<'a> &'a str: PartialEq<T>,
+{
+    /// ```
+    /// let payload = axum::extract::ws::Utf8Bytes::from_static("foo123");
+    /// assert_eq!(payload, "foo123");
+    /// assert_eq!(payload, "foo123".to_string());
+    /// assert_eq!(payload, &"foo123".to_string());
+    /// assert_eq!(payload, std::borrow::Cow::from("foo123"));
+    /// ```
+    #[inline]
+    fn eq(&self, other: &T) -> bool {
+        self.as_str() == *other
+    }
+}
+
+/// Status code used to indicate why an endpoint is closing the WebSocket connection.
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct CloseCode(pub u16);
+
+impl CloseCode {
+    //! Constants for [`CloseCode`]s.
+    //!
+    //! [`CloseCode`]: super::CloseCode
+
+    /// Indicates a normal closure, meaning that the purpose for which the connection was
+    /// established has been fulfilled.
+    pub const NORMAL: CloseCode = CloseCode(1000);
+
+    /// Indicates that an endpoint is "going away", such as a server going down or a browser having
+    /// navigated away from a page.
+    pub const AWAY: CloseCode = CloseCode(1001);
+
+    /// Indicates that an endpoint is terminating the connection due to a protocol error.
+    pub const PROTOCOL: CloseCode = CloseCode(1002);
+
+    /// Indicates that an endpoint is terminating the connection because it has received a type of
+    /// data that it cannot accept.
+    ///
+    /// For example, an endpoint MAY send this if it understands only text data, but receives a binary message.
+    pub const UNSUPPORTED: CloseCode = CloseCode(1003);
+
+    /// Indicates that no status code was included in a closing frame.
+    pub const STATUS: CloseCode = CloseCode(1005);
+
+    /// Indicates an abnormal closure.
+    pub const ABNORMAL: CloseCode = CloseCode(1006);
+
+    /// Indicates that an endpoint is terminating the connection because it has received data
+    /// within a message that was not consistent with the type of the message.
+    ///
+    /// For example, an endpoint received non-UTF-8 RFC3629 data within a text message.
+    pub const INVALID: CloseCode = CloseCode(1007);
+
+    /// Indicates that an endpoint is terminating the connection because it has received a message
+    /// that violates its policy.
+    ///
+    /// This is a generic status code that can be returned when there is
+    /// no other more suitable status code (e.g., `UNSUPPORTED` or `SIZE`) or if there is a need to
+    /// hide specific details about the policy.
+    pub const POLICY: CloseCode = CloseCode(1008);
+
+    /// Indicates that an endpoint is terminating the connection because it has received a message
+    /// that is too big for it to process.
+    pub const SIZE: CloseCode = CloseCode(1009);
+
+    /// Indicates that an endpoint (client) is terminating the connection because the server
+    /// did not respond to extension negotiation correctly.
+    ///
+    /// Specifically, the client has expected the server to negotiate one or more extension(s),
+    /// but the server didn't return them in the response message of the WebSocket handshake.
+    /// The list of extensions that are needed should be given as the reason for closing.
+    /// Note that this status code is not used by the server,
+    /// because it can fail the WebSocket handshake instead.
+    pub const EXTENSION: CloseCode = CloseCode(1010);
+
+    /// Indicates that a server is terminating the connection because it encountered an unexpected
+    /// condition that prevented it from fulfilling the request.
+    pub const ERROR: CloseCode = CloseCode(1011);
+
+    /// Indicates that the server is restarting.
+    pub const RESTART: CloseCode = CloseCode(1012);
+
+    /// Indicates that the server is overloaded and the client should either connect to a different
+    /// IP (when multiple targets exist), or reconnect to the same IP when a user has performed an
+    /// action.
+    pub const AGAIN: CloseCode = CloseCode(1013);
+}
+
+impl From<CloseCode> for u16 {
+    fn from(code: CloseCode) -> u16 {
+        code.0
+    }
+}
+
+/// A struct representing the close command.
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct CloseFrame {
+    /// The reason as a code.
+    pub code: CloseCode,
+    /// The reason as text string.
+    pub reason: Utf8Bytes,
+}
+
+/// A WebSocket message.
+//
+// This code comes from https://github.com/snapview/tungstenite-rs/blob/master/src/protocol/message.rs and is under following license:
+// Copyright (c) 2017 Alexey Galakhov
+// Copyright (c) 2016 Jason Housley
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in
+// all copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+// THE SOFTWARE.
+#[derive(Debug, Eq, PartialEq, Clone)]
+pub enum Message {
+    /// A text WebSocket message
+    Text(Utf8Bytes),
+    /// A binary WebSocket message
+    Binary(Bytes),
+    /// A ping message with the specified payload
+    ///
+    /// The payload here must have a length less than 125 bytes.
+    ///
+    /// Ping messages will be automatically responded to by the server, so you do not have to worry
+    /// about dealing with them yourself.
+    Ping(Bytes),
+    /// A pong message with the specified payload
+    ///
+    /// The payload here must have a length less than 125 bytes.
+    ///
+    /// Pong messages will be automatically sent to the client if a ping message is received, so
+    /// you do not have to worry about constructing them yourself unless you want to implement a
+    /// [unidirectional heartbeat](https://tools.ietf.org/html/rfc6455#section-5.5.3).
+    Pong(Bytes),
+    /// A close message with the optional close frame.
+    ///
+    /// You may "uncleanly" close a WebSocket connection at any time
+    /// by simply dropping the [`WebSocket`].
+    /// However, you may also use the graceful closing protocol, in which
+    /// 1. peer A sends a close frame, and does not send any further messages;
+    /// 2. peer B responds with a close frame, and does not send any further messages;
+    /// 3. peer A processes the remaining messages sent by peer B, before finally
+    /// 4. both peers close the connection.
+    ///
+    /// After sending a close frame,
+    /// you may still read messages,
+    /// but attempts to send another message will error.
+    /// After receiving a close frame,
+    /// axum will automatically respond with a close frame if necessary
+    /// (you do not have to deal with this yourself).
+    /// Since no further messages will be received,
+    /// you may either do nothing
+    /// or explicitly drop the connection.
+    Close(Option<CloseFrame>),
+}
+
+impl Message {
+    /// Converts this `Message` into a `tungstenite::Message`.
+    ///
+    /// This method transforms the current `Message` instance into its corresponding
+    /// `tungstenite::Message` representation. This is useful when you need to work
+    /// with the `tungstenite` library directly.
+    ///
+    /// # Returns
+    ///
+    /// A `tungstenite::Message` instance that represents the current `Message`.
+    pub(super) fn into_tungstenite(self) -> ts::Message {
+        match self {
+            Self::Text(text) => ts::Message::Text(text.into_tungstenite()),
+            Self::Binary(binary) => ts::Message::Binary(binary),
+            Self::Ping(ping) => ts::Message::Ping(ping),
+            Self::Pong(pong) => ts::Message::Pong(pong),
+            Self::Close(Some(close)) => ts::Message::Close(Some(ts::protocol::CloseFrame {
+                code: ts::protocol::frame::coding::CloseCode::from(close.code.0),
+                reason: close.reason.into_tungstenite(),
+            })),
+            Self::Close(None) => ts::Message::Close(None),
+        }
+    }
+
+    /// Converts a `tungstenite::Message` into an `Option<Message>`.
+    ///
+    /// This method transforms a given `tungstenite::Message` into its corresponding
+    /// `Message` representation. This is useful when you need to convert messages
+    /// received from the `tungstenite` library into the `Message` type used by this
+    /// library.
+    ///
+    /// # Arguments
+    ///
+    /// * `message` - The `tungstenite::Message` to convert.
+    ///
+    /// # Returns
+    ///
+    /// An `Option<Message>` instance that represents the given `tungstenite::Message`.
+    /// Returns `None` if the message is a `Frame` frame, as recommended by the
+    /// `tungstenite` maintainers.
+    pub(super) fn from_tungstenite(message: ts::Message) -> Option<Self> {
+        match message {
+            ts::Message::Text(text) => Some(Self::Text(Utf8Bytes(text))),
+            ts::Message::Binary(binary) => Some(Self::Binary(binary)),
+            ts::Message::Ping(ping) => Some(Self::Ping(ping)),
+            ts::Message::Pong(pong) => Some(Self::Pong(pong)),
+            ts::Message::Close(Some(close)) => Some(Self::Close(Some(CloseFrame {
+                code: CloseCode(close.code.into()),
+                reason: Utf8Bytes(close.reason),
+            }))),
+            ts::Message::Close(None) => Some(Self::Close(None)),
+            // we can ignore `Frame` frames as recommended by the tungstenite maintainers
+            // https://github.com/snapview/tungstenite-rs/issues/268
+            ts::Message::Frame(_) => None,
+        }
+    }
+
+    /// Consume the WebSocket and return it as binary data.
+    pub fn into_data(self) -> Bytes {
+        match self {
+            Self::Text(string) => Bytes::from(string),
+            Self::Binary(data) | Self::Ping(data) | Self::Pong(data) => data,
+            Self::Close(None) => Bytes::new(),
+            Self::Close(Some(frame)) => Bytes::from(frame.reason),
+        }
+    }
+
+    /// Attempt to consume the WebSocket message and convert it to a Utf8Bytes.
+    pub fn into_text(self) -> Result<Utf8Bytes, Error> {
+        match self {
+            Self::Text(string) => Ok(string),
+            Self::Binary(data) | Self::Ping(data) | Self::Pong(data) => {
+                Utf8Bytes::try_from(data).map_err(Into::into)
+            }
+            Self::Close(None) => Ok(Utf8Bytes::default()),
+            Self::Close(Some(frame)) => Ok(frame.reason),
+        }
+    }
+
+    /// Attempt to get a &str from the WebSocket message,
+    /// this will try to convert binary data to utf8.
+    pub fn to_text(&self) -> Result<&str, Error> {
+        match *self {
+            Self::Text(ref string) => Ok(string.as_str()),
+            Self::Binary(ref data) | Self::Ping(ref data) | Self::Pong(ref data) => {
+                std::str::from_utf8(data).map_err(Into::into)
+            }
+            Self::Close(None) => Ok(""),
+            Self::Close(Some(ref frame)) => Ok(&frame.reason),
+        }
+    }
+
+    /// Create a new text WebSocket message from a stringable.
+    pub fn text<S>(string: S) -> Message
+    where
+        S: Into<Utf8Bytes>,
+    {
+        Message::Text(string.into())
+    }
+
+    /// Create a new binary WebSocket message by converting to `Bytes`.
+    pub fn binary<B>(bin: B) -> Message
+    where
+        B: Into<Bytes>,
+    {
+        Message::Binary(bin.into())
+    }
+}
+
+impl From<String> for Message {
+    fn from(string: String) -> Self {
+        Message::Text(string.into())
+    }
+}
+
+impl<'s> From<&'s str> for Message {
+    fn from(string: &'s str) -> Self {
+        Message::Text(string.into())
+    }
+}
+
+impl<'b> From<&'b [u8]> for Message {
+    fn from(data: &'b [u8]) -> Self {
+        Message::Binary(Bytes::copy_from_slice(data))
     }
 }
 
 impl From<Vec<u8>> for Message {
-    #[inline]
-    fn from(value: Vec<u8>) -> Self {
-        Self::Binary(value)
+    fn from(data: Vec<u8>) -> Self {
+        Message::Binary(data.into())
     }
 }
 
-impl From<&[u8]> for Message {
-    #[inline]
-    fn from(value: &[u8]) -> Self {
-        Self::from(value.to_vec())
-    }
-}
-
-/// Status code used to indicate why an endpoint is closing the `WebSocket`
-/// connection.[1]
-///
-/// [1]: https://datatracker.ietf.org/doc/html/rfc6455
-#[derive(Debug, Default, Eq, PartialEq, Clone, Copy)]
-#[non_exhaustive]
-pub enum CloseCode {
-    /// Indicates a normal closure, meaning that the purpose for
-    /// which the connection was established has been fulfilled.
-    #[default]
-    Normal,
-
-    /// Indicates that an endpoint is "going away", such as a server
-    /// going down or a browser having navigated away from a page.
-    Away,
-
-    /// Indicates that an endpoint is terminating the connection due
-    /// to a protocol error.
-    Protocol,
-
-    /// Indicates that an endpoint is terminating the connection
-    /// because it has received a type of data it cannot accept (e.g., an
-    /// endpoint that understands only text data MAY send this if it
-    /// receives a binary message).
-    Unsupported,
-
-    /// Indicates that no status code was included in a closing frame. This
-    /// close code makes it possible to use a single method, `on_close` to
-    /// handle even cases where no close code was provided.
-    Status,
-
-    /// Indicates an abnormal closure. If the abnormal closure was due to an
-    /// error, this close code will not be used. Instead, the `on_error` method
-    /// of the handler will be called with the error. However, if the connection
-    /// is simply dropped, without an error, this close code will be sent to the
-    /// handler.
-    Abnormal,
-
-    /// Indicates that an endpoint is terminating the connection
-    /// because it has received data within a message that was not
-    /// consistent with the type of the message (e.g., non-UTF-8 \[RFC3629\]
-    /// data within a text message).
-    Invalid,
-
-    /// Indicates that an endpoint is terminating the connection
-    /// because it has received a message that violates its policy.  This
-    /// is a generic status code that can be returned when there is no
-    /// other more suitable status code (e.g., Unsupported or Size) or if there
-    /// is a need to hide specific details about the policy.
-    Policy,
-
-    /// Indicates that an endpoint is terminating the connection
-    /// because it has received a message that is too big for it to
-    /// process.
-    Size,
-
-    /// Indicates that an endpoint (client) is terminating the
-    /// connection because it has expected the server to negotiate one or
-    /// more extension, but the server didn't return them in the response
-    /// message of the `WebSocket` handshake.  The list of extensions that
-    /// are needed should be given as the reason for closing.
-    /// Note that this status code is not used by the server, because it
-    /// can fail the `WebSocket` handshake instead.
-    Extension,
-
-    /// Indicates that a server is terminating the connection because
-    /// it encountered an unexpected condition that prevented it from
-    /// fulfilling the request.
-    Error,
-
-    /// Indicates that the server is restarting. A client may choose to
-    /// reconnect, and if it does, it should use a randomized delay of 5-30
-    /// seconds between attempts.
-    Restart,
-
-    /// Indicates that the server is overloaded and the client should either
-    /// connect to a different IP (when multiple targets exist), or
-    /// reconnect to the same IP when a user has performed an action.
-    Again,
-
-    /// Indicates that the connection was closed due to a failure to perform a
-    /// TLS handshake (e.g., the server certificate can't be verified). This
-    /// is a reserved value and MUST NOT be set as a status code in a Close
-    /// control frame by an endpoint.
-    Tls,
-
-    /// Reserved status codes.
-    Reserved(u16),
-
-    /// Reserved for use by libraries, frameworks, and applications. These
-    /// status codes are registered directly with IANA. The interpretation of
-    /// these codes is undefined by the `WebSocket` protocol.
-    Iana(u16),
-
-    /// Reserved for private use. These can't be registered and can be used by
-    /// prior agreements between `WebSocket` applications. The interpretation of
-    /// these codes is undefined by the `WebSocket` protocol.
-    Library(u16),
-
-    /// Unused / invalid status codes.
-    Bad(u16),
-}
-
-impl CloseCode {
-    /// Check if this `CloseCode` is allowed.
-    #[must_use]
-    pub const fn is_allowed(self) -> bool {
-        !matches!(
-            self,
-            Self::Bad(_) | Self::Reserved(_) | Self::Status | Self::Abnormal | Self::Tls
-        )
-    }
-}
-
-impl std::fmt::Display for CloseCode {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        let code: u16 = (*self).into();
-        write!(f, "{code}")
-    }
-}
-
-impl From<CloseCode> for u16 {
-    fn from(code: CloseCode) -> Self {
-        match code {
-            CloseCode::Normal => 1000,
-            CloseCode::Away => 1001,
-            CloseCode::Protocol => 1002,
-            CloseCode::Unsupported => 1003,
-            CloseCode::Status => 1005,
-            CloseCode::Abnormal => 1006,
-            CloseCode::Invalid => 1007,
-            CloseCode::Policy => 1008,
-            CloseCode::Size => 1009,
-            CloseCode::Extension => 1010,
-            CloseCode::Error => 1011,
-            CloseCode::Restart => 1012,
-            CloseCode::Again => 1013,
-            CloseCode::Tls => 1015,
-            CloseCode::Reserved(code)
-            | CloseCode::Iana(code)
-            | CloseCode::Library(code)
-            | CloseCode::Bad(code) => code,
-        }
-    }
-}
-
-impl From<u16> for CloseCode {
-    fn from(code: u16) -> Self {
-        match code {
-            1000 => Self::Normal,
-            1001 => Self::Away,
-            1002 => Self::Protocol,
-            1003 => Self::Unsupported,
-            1005 => Self::Status,
-            1006 => Self::Abnormal,
-            1007 => Self::Invalid,
-            1008 => Self::Policy,
-            1009 => Self::Size,
-            1010 => Self::Extension,
-            1011 => Self::Error,
-            1012 => Self::Restart,
-            1013 => Self::Again,
-            1015 => Self::Tls,
-            1016..=2999 => Self::Reserved(code),
-            3000..=3999 => Self::Iana(code),
-            4000..=4999 => Self::Library(code),
-            _ => Self::Bad(code),
-        }
-    }
-}
-
-impl From<tungstenite::protocol::frame::coding::CloseCode> for CloseCode {
-    fn from(value: tungstenite::protocol::frame::coding::CloseCode) -> Self {
-        u16::from(value).into()
-    }
-}
-
-impl From<CloseCode> for tungstenite::protocol::frame::coding::CloseCode {
-    fn from(value: CloseCode) -> Self {
-        u16::from(value).into()
+impl From<Message> for Vec<u8> {
+    fn from(msg: Message) -> Self {
+        msg.into_data().to_vec()
     }
 }

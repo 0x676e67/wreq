@@ -385,7 +385,8 @@ doc_comment::doctest!("../README.md");
 pub use self::client::multipart;
 #[cfg(feature = "websocket")]
 pub use self::client::websocket::{
-    CloseCode, Message, WebSocket, WebSocketRequestBuilder, WebSocketResponse,
+    CloseCode, CloseFrame, Message, Utf8Bytes, WebSocket, WebSocketRequestBuilder,
+    WebSocketResponse,
 };
 pub use self::client::{
     Body, Client, ClientBuilder, ClientMut, Request, RequestBuilder, Response, Upgraded,
