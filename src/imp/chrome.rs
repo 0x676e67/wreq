@@ -5,8 +5,8 @@ use tls::*;
 macro_rules! mod_generator {
     (
         $mod_name:ident,
-        $tls_settings:expr,
-        $http2_settings:expr,
+        $tls_config:expr,
+        $http2_config:expr,
         $header_initializer:ident,
         [($default_os:ident, $default_sec_ch_ua:tt, $default_ua:tt) $(, ($other_os:ident, $other_sec_ch_ua:tt, $other_ua:tt))*]
     ) => {
@@ -14,13 +14,13 @@ macro_rules! mod_generator {
             use super::*;
 
             #[inline(always)]
-            pub fn http_config(os_choice: ImpersonateOS, skip_http2: bool, skip_headers: bool) -> HttpConfig {
+            pub fn http_config(os_choice: ImpersonateOS, skip_http2: bool, skip_headers: bool) -> HttpContext {
                 #[allow(unreachable_patterns)]
                 match os_choice {
                     $(
-                        ImpersonateOS::$other_os => HttpConfig::builder()
-                            .tls_config($tls_settings)
-                            .http2_config(conditional_http2!(skip_http2, $http2_settings))
+                        ImpersonateOS::$other_os => HttpContext::builder()
+                            .tls_config($tls_config)
+                            .http2_config(conditional_http2!(skip_http2, $http2_config))
                             .default_headers(conditional_headers!(skip_headers, || {
                                 $header_initializer(
                                     $other_sec_ch_ua,
@@ -30,9 +30,9 @@ macro_rules! mod_generator {
                             }))
                             .build(),
                     )*
-                    _ => HttpConfig::builder()
-                        .tls_config($tls_settings)
-                        .http2_config(conditional_http2!(skip_http2, $http2_settings))
+                    _ => HttpContext::builder()
+                        .tls_config($tls_config)
+                        .http2_config(conditional_http2!(skip_http2, $http2_config))
                         .default_headers(conditional_headers!(skip_headers, || {
                             $header_initializer(
                                 $default_sec_ch_ua,
@@ -47,33 +47,31 @@ macro_rules! mod_generator {
     };
 }
 
-macro_rules! tls_settings {
+macro_rules! tls_config {
     (1) => {
-        ChromeTlsSettings::builder().build()
+        ChromeTlsConfig::builder().build()
     };
     (2) => {
-        ChromeTlsSettings::builder().enable_ech_grease(true).build()
+        ChromeTlsConfig::builder().enable_ech_grease(true).build()
     };
     (3) => {
-        ChromeTlsSettings::builder()
-            .permute_extensions(true)
-            .build()
+        ChromeTlsConfig::builder().permute_extensions(true).build()
     };
     (4) => {
-        ChromeTlsSettings::builder()
+        ChromeTlsConfig::builder()
             .permute_extensions(true)
             .enable_ech_grease(true)
             .build()
     };
     (5) => {
-        ChromeTlsSettings::builder()
+        ChromeTlsConfig::builder()
             .permute_extensions(true)
             .enable_ech_grease(true)
             .pre_shared_key(true)
             .build()
     };
     (6, $curves:expr) => {
-        ChromeTlsSettings::builder()
+        ChromeTlsConfig::builder()
             .curves($curves)
             .permute_extensions(true)
             .pre_shared_key(true)
@@ -82,7 +80,7 @@ macro_rules! tls_settings {
     };
 }
 
-macro_rules! http2_settings {
+macro_rules! http2_config {
     (1) => {
         Http2Config::builder()
             .initial_stream_window_size(6291456)
@@ -234,7 +232,7 @@ mod tls {
         &[CertCompressionAlgorithm::Brotli];
 
     #[derive(TypedBuilder)]
-    pub struct ChromeTlsSettings {
+    pub struct ChromeTlsConfig {
         #[builder(default = CURVES_1)]
         curves: &'static [SslCurve],
 
@@ -257,8 +255,8 @@ mod tls {
         pre_shared_key: bool,
     }
 
-    impl From<ChromeTlsSettings> for TlsConfig {
-        fn from(val: ChromeTlsSettings) -> Self {
+    impl From<ChromeTlsConfig> for TlsConfig {
+        fn from(val: ChromeTlsConfig) -> Self {
             TlsConfig::builder()
                 .grease_enabled(true)
                 .enable_ocsp_stapling(true)
@@ -299,8 +297,8 @@ mod http2 {
 
 mod_generator!(
     v100,
-    tls_settings!(1),
-    http2_settings!(1),
+    tls_config!(1),
+    http2_config!(1),
     header_initializer,
     [
         (MacOS,
@@ -328,8 +326,8 @@ mod_generator!(
 
 mod_generator!(
     v101,
-    tls_settings!(1),
-    http2_settings!(1),
+    tls_config!(1),
+    http2_config!(1),
     header_initializer,
     [
         (MacOS,
@@ -357,8 +355,8 @@ mod_generator!(
 
 mod_generator!(
     v104,
-    tls_settings!(1),
-    http2_settings!(1),
+    tls_config!(1),
+    http2_config!(1),
     header_initializer,
     [
         (MacOS,
@@ -386,8 +384,8 @@ mod_generator!(
 
 mod_generator!(
     v105,
-    tls_settings!(2),
-    http2_settings!(1),
+    tls_config!(2),
+    http2_config!(1),
     header_initializer,
     [
         (MacOS,
@@ -415,8 +413,8 @@ mod_generator!(
 
 mod_generator!(
     v106,
-    tls_settings!(3),
-    http2_settings!(2),
+    tls_config!(3),
+    http2_config!(2),
     header_initializer,
     [
         (MacOS,
@@ -444,8 +442,8 @@ mod_generator!(
 
 mod_generator!(
     v107,
-    tls_settings!(3),
-    http2_settings!(2),
+    tls_config!(3),
+    http2_config!(2),
     header_initializer,
     [
         (MacOS,
@@ -473,8 +471,8 @@ mod_generator!(
 
 mod_generator!(
     v108,
-    tls_settings!(3),
-    http2_settings!(2),
+    tls_config!(3),
+    http2_config!(2),
     header_initializer,
     [
         (MacOS,
@@ -502,8 +500,8 @@ mod_generator!(
 
 mod_generator!(
     v109,
-    tls_settings!(3),
-    http2_settings!(2),
+    tls_config!(3),
+    http2_config!(2),
     header_initializer,
     [
         (MacOS,
@@ -531,8 +529,8 @@ mod_generator!(
 
 mod_generator!(
     v114,
-    tls_settings!(3),
-    http2_settings!(2),
+    tls_config!(3),
+    http2_config!(2),
     header_initializer,
     [
         (MacOS,
@@ -556,8 +554,8 @@ mod_generator!(
 
 mod_generator!(
     v116,
-    tls_settings!(4),
-    http2_settings!(2),
+    tls_config!(4),
+    http2_config!(2),
     header_initializer,
     [
         (MacOS,
@@ -585,8 +583,8 @@ mod_generator!(
 
 mod_generator!(
     v117,
-    tls_settings!(5),
-    http2_settings!(3),
+    tls_config!(5),
+    http2_config!(3),
     header_initializer,
     [
         (MacOS,
@@ -614,8 +612,8 @@ mod_generator!(
 
 mod_generator!(
     v118,
-    tls_settings!(4),
-    http2_settings!(3),
+    tls_config!(4),
+    http2_config!(3),
     header_initializer,
     [
         (MacOS,
@@ -643,8 +641,8 @@ mod_generator!(
 
 mod_generator!(
     v119,
-    tls_settings!(4),
-    http2_settings!(3),
+    tls_config!(4),
+    http2_config!(3),
     header_initializer,
     [
         (MacOS,
@@ -672,8 +670,8 @@ mod_generator!(
 
 mod_generator!(
     v120,
-    tls_settings!(5),
-    http2_settings!(3),
+    tls_config!(5),
+    http2_config!(3),
     header_initializer,
     [
         (MacOS,
@@ -701,8 +699,8 @@ mod_generator!(
 
 mod_generator!(
     v123,
-    tls_settings!(5),
-    http2_settings!(3),
+    tls_config!(5),
+    http2_config!(3),
     header_initializer_with_zstd,
     [
         (MacOS,
@@ -726,8 +724,8 @@ mod_generator!(
 
 mod_generator!(
     v124,
-    tls_settings!(6, CURVES_2),
-    http2_settings!(3),
+    tls_config!(6, CURVES_2),
+    http2_config!(3),
     header_initializer_with_zstd,
     [
         (MacOS,
@@ -755,8 +753,8 @@ mod_generator!(
 
 mod_generator!(
     v126,
-    tls_settings!(6, CURVES_2),
-    http2_settings!(3),
+    tls_config!(6, CURVES_2),
+    http2_config!(3),
     header_initializer_with_zstd,
     [
         (MacOS,
@@ -784,8 +782,8 @@ mod_generator!(
 
 mod_generator!(
     v127,
-    tls_settings!(6, CURVES_2),
-    http2_settings!(3),
+    tls_config!(6, CURVES_2),
+    http2_config!(3),
     header_initializer_with_zstd,
     [
         (MacOS,
@@ -813,8 +811,8 @@ mod_generator!(
 
 mod_generator!(
     v128,
-    tls_settings!(6, CURVES_2),
-    http2_settings!(3),header_initializer,
+    tls_config!(6, CURVES_2),
+    http2_config!(3),header_initializer,
     [
         (MacOS,
             r#""Chromium";v="128", "Google Chrome";v="128", "Not?A_Brand";v="99""#,
@@ -841,8 +839,8 @@ mod_generator!(
 
 mod_generator!(
     v129,
-    tls_settings!(6, CURVES_2),
-    http2_settings!(3),
+    tls_config!(6, CURVES_2),
+    http2_config!(3),
     header_initializer_with_zstd_priority,
     [
         (MacOS,
@@ -870,8 +868,8 @@ mod_generator!(
 
 mod_generator!(
     v130,
-    tls_settings!(6, CURVES_2),
-    http2_settings!(3),
+    tls_config!(6, CURVES_2),
+    http2_config!(3),
     header_initializer_with_zstd_priority,
     [
         (MacOS,
@@ -899,8 +897,8 @@ mod_generator!(
 
 mod_generator!(
     v131,
-    tls_settings!(6, CURVES_3),
-    http2_settings!(3),
+    tls_config!(6, CURVES_3),
+    http2_config!(3),
     header_initializer_with_zstd_priority,
     [
         (MacOS,
@@ -928,8 +926,8 @@ mod_generator!(
 
 mod_generator!(
     edge101,
-    tls_settings!(1),
-    http2_settings!(1),header_initializer,
+    tls_config!(1),
+    http2_config!(1),header_initializer,
     [
         (MacOS,
             r#""Not A;Brand";v="99", "Chromium";v="101", "Microsoft Edge";v="101""#,
@@ -958,8 +956,8 @@ mod_generator!(
 
 mod_generator!(
     edge122,
-    tls_settings!(5),
-    http2_settings!(3),header_initializer,
+    tls_config!(5),
+    http2_config!(3),header_initializer,
     [
         (MacOS,
             r#""Chromium";v="122", "Not(A:Brand";v="24", "Microsoft Edge";v="122""#,
@@ -987,8 +985,8 @@ mod_generator!(
 
 mod_generator!(
     edge127,
-    tls_settings!(6, CURVES_2),
-    http2_settings!(3),
+    tls_config!(6, CURVES_2),
+    http2_config!(3),
     header_initializer_with_zstd_priority,
     [
         (MacOS,
@@ -1017,8 +1015,8 @@ mod_generator!(
 
 mod_generator!(
     edge131,
-    tls_settings!(6, CURVES_3),
-    http2_settings!(3),
+    tls_config!(6, CURVES_3),
+    http2_config!(3),
     header_initializer_with_zstd_priority,
     [
         (MacOS,

@@ -1,10 +1,12 @@
 pub use self::body::Body;
-pub use self::http::{Client, ClientBuilder, ClientMut, HttpConfig};
+pub use self::context::{HttpContext, HttpContextProvider};
+pub use self::http::{Client, ClientBuilder, ClientMut};
 pub use self::request::{Request, RequestBuilder};
 pub use self::response::Response;
 pub use self::upgrade::Upgraded;
 
 pub mod body;
+pub mod context;
 pub mod decoder;
 pub mod http;
 #[cfg(feature = "multipart")]

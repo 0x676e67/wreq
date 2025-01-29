@@ -389,11 +389,12 @@ pub use self::client::websocket::{
     WebSocketResponse,
 };
 pub use self::client::{
-    Body, Client, ClientBuilder, ClientMut, HttpConfig, Request, RequestBuilder, Response, Upgraded,
+    Body, Client, ClientBuilder, ClientMut, HttpContext, HttpContextProvider, Request,
+    RequestBuilder, Response, Upgraded,
 };
 pub use self::http1::Http1Config;
 pub use self::http2::Http2Config;
-pub use self::imp::{Impersonate, ImpersonateBuilder, ImpersonateOS};
+pub use self::imp::{Impersonate, ImpersonateOS, ImpersonateOption};
 pub use self::proxy::{NoProxy, Proxy};
 pub use self::tls::{
     AlpnProtos, AlpsProtos, CertCompressionAlgorithm, RootCertStore, TlsConfig, TlsInfo, TlsVersion,

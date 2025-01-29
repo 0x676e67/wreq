@@ -1,4 +1,4 @@
-use rquest::{Client, Impersonate, ImpersonateOS};
+use rquest::{Client, Impersonate, ImpersonateOS, ImpersonateOption};
 
 #[tokio::main]
 async fn main() -> Result<(), rquest::Error> {
@@ -7,17 +7,16 @@ async fn main() -> Result<(), rquest::Error> {
         .init();
 
     // Build a client to impersonate Firefox128
-    let http_config = Impersonate::builder()
+    let impersonate = ImpersonateOption::builder()
         .impersonate(Impersonate::Firefox128)
         .impersonate_os(ImpersonateOS::Windows)
-        .skip_http2(false)
-        .skip_headers(false)
+        .skip_http2(true)
         .build();
 
     // Apply the impersonate to the client
     let client = Client::builder()
-        .impersonate(http_config)
-        .http2_only()
+        .impersonate(impersonate)
+        .http1_only()
         .build()?;
 
     // Use the API you're already familiar with

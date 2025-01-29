@@ -5,8 +5,8 @@ use tls::*;
 macro_rules! mod_generator {
     (
         $mod_name:ident,
-        $tls_settings:expr,
-        $http2_settings:expr,
+        $tls_config:expr,
+        $http2_config:expr,
         $header_initializer:ident,
         [($default_os:ident, $default_ua:tt) $(, ($other_os:ident, $other_ua:tt))*]
     ) => {
@@ -14,22 +14,22 @@ macro_rules! mod_generator {
             use super::*;
 
             #[inline(always)]
-            pub fn http_config(os_choice: ImpersonateOS, skip_http2: bool, skip_headers: bool) -> HttpConfig {
+            pub fn http_config(os_choice: ImpersonateOS, skip_http2: bool, skip_headers: bool) -> HttpContext {
                 #[allow(unreachable_patterns)]
                 match os_choice {
                     $(
                         ImpersonateOS::$other_os => {
-                            HttpConfig::builder()
-                                .tls_config($tls_settings)
-                                .http2_config(conditional_http2!(skip_http2, $http2_settings))
+                            HttpContext::builder()
+                                .tls_config($tls_config)
+                                .http2_config(conditional_http2!(skip_http2, $http2_config))
                                 .default_headers(conditional_headers!(skip_headers, $header_initializer, $other_ua))
                                 .build()
                         }
                     ),*
                     _ => {
-                        HttpConfig::builder()
-                            .tls_config($tls_settings)
-                            .http2_config(conditional_http2!(skip_http2, $http2_settings))
+                        HttpContext::builder()
+                            .tls_config($tls_config)
+                            .http2_config(conditional_http2!(skip_http2, $http2_config))
                             .default_headers(conditional_headers!(skip_headers, $header_initializer, $default_ua))
                             .build()
                     }
@@ -39,9 +39,9 @@ macro_rules! mod_generator {
     };
 }
 
-macro_rules! tls_settings {
+macro_rules! tls_config {
     (1, $cipher_list:expr, $curves:expr) => {
-        FirefoxTlsSettings::builder()
+        FirefoxTlsConfig::builder()
             .cipher_list($cipher_list)
             .curves($curves)
             .enable_ech_grease(true)
@@ -52,14 +52,14 @@ macro_rules! tls_settings {
             .build()
     };
     (2, $cipher_list:expr, $curves:expr) => {
-        FirefoxTlsSettings::builder()
+        FirefoxTlsConfig::builder()
             .cipher_list($cipher_list)
             .curves($curves)
             .key_shares_limit(2)
             .build()
     };
     (3, $cipher_list:expr, $curves:expr) => {
-        FirefoxTlsSettings::builder()
+        FirefoxTlsConfig::builder()
             .cipher_list($cipher_list)
             .curves($curves)
             .session_ticket(false)
@@ -70,7 +70,7 @@ macro_rules! tls_settings {
     };
 }
 
-macro_rules! http2_settings {
+macro_rules! http2_config {
     (1) => {
         Http2Config::builder()
             .initial_stream_id(3)
@@ -261,7 +261,7 @@ mod tls {
     };
 
     #[derive(TypedBuilder)]
-    pub struct FirefoxTlsSettings {
+    pub struct FirefoxTlsConfig {
         #[builder(default = SIGALGS_LIST)]
         sigalgs_list: &'static str,
 
@@ -302,8 +302,8 @@ mod tls {
         extension_permutation_indices: &'static [u8],
     }
 
-    impl From<FirefoxTlsSettings> for TlsConfig {
-        fn from(val: FirefoxTlsSettings) -> Self {
+    impl From<FirefoxTlsConfig> for TlsConfig {
+        fn from(val: FirefoxTlsConfig) -> Self {
             TlsConfig::builder()
                 .curves(val.curves)
                 .sigalgs_list(val.sigalgs_list)
@@ -377,8 +377,8 @@ mod http2 {
 
 mod_generator!(
     ff109,
-    tls_settings!(2, CIPHER_LIST_1, CURVES_1),
-    http2_settings!(2),
+    tls_config!(2, CIPHER_LIST_1, CURVES_1),
+    http2_config!(2),
     header_initializer,
     [
         (Windows,
@@ -401,8 +401,8 @@ mod_generator!(
 
 mod_generator!(
     ff117,
-    tls_settings!(2, CIPHER_LIST_1, CURVES_1),
-    http2_settings!(2),
+    tls_config!(2, CIPHER_LIST_1, CURVES_1),
+    http2_config!(2),
     header_initializer,
     [
         (Windows,
@@ -425,8 +425,8 @@ mod_generator!(
 
 mod_generator!(
     ff128,
-    tls_settings!(3, CIPHER_LIST_2, CURVES_1),
-    http2_settings!(3),
+    tls_config!(3, CIPHER_LIST_2, CURVES_1),
+    http2_config!(3),
     header_initializer_with_zstd,
     [
         (MacOs,
@@ -449,8 +449,8 @@ mod_generator!(
 
 mod_generator!(
     ff133,
-    tls_settings!(1, CIPHER_LIST_1, CURVES_2),
-    http2_settings!(1),
+    tls_config!(1, CIPHER_LIST_1, CURVES_2),
+    http2_config!(1),
     header_initializer_with_zstd,
     [
         (MacOs,

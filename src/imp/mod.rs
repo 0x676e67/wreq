@@ -9,8 +9,9 @@ mod firefox;
 mod okhttp;
 mod safari;
 
-use crate::HttpConfig;
+use crate::{HttpContext, HttpContextProvider};
 use serde::{Deserialize, Serialize};
+use typed_builder::TypedBuilder;
 use Impersonate::*;
 
 use chrome::*;
@@ -19,7 +20,7 @@ use okhttp::*;
 use safari::*;
 
 mod impersonate_imports {
-    pub use crate::{Http2Config, HttpConfig, ImpersonateOS};
+    pub use crate::{Http2Config, HttpContext, ImpersonateOS};
     pub use http::{
         header::{ACCEPT, ACCEPT_LANGUAGE, UPGRADE_INSECURE_REQUESTS, USER_AGENT},
         HeaderMap, HeaderName, HeaderValue,
@@ -40,148 +41,6 @@ mod http2_imports {
     pub use hyper2::SettingsOrder::{self, *};
     pub use hyper2::{Priority, StreamDependency, StreamId};
     pub use std::sync::LazyLock;
-}
-
-/// A builder for impersonate http_config.
-pub struct ImpersonateBuilder {
-    impersonate: Impersonate,
-    impersonate_os: ImpersonateOS,
-    skip_http2: bool,
-    skip_headers: bool,
-}
-
-/// ========= Impersonate impls =========
-impl ImpersonateBuilder {
-    /// Sets the impersonate value.
-    ///
-    /// # Arguments
-    ///
-    /// * `impersonate` - The impersonate value to set.
-    ///
-    /// # Returns
-    ///
-    /// The updated `ImpersonateBuilder` instance.
-    #[inline(always)]
-    pub fn impersonate(mut self, impersonate: Impersonate) -> Self {
-        self.impersonate = impersonate;
-        self
-    }
-
-    /// Sets the operating system to impersonate.
-    ///
-    /// # Arguments
-    ///
-    /// * `impersonate_os` - The operating system to impersonate.
-    ///
-    /// # Returns
-    ///
-    /// The updated `ImpersonateBuilder` instance.
-    #[inline(always)]
-    pub fn impersonate_os(mut self, impersonate_os: ImpersonateOS) -> Self {
-        self.impersonate_os = impersonate_os;
-        self
-    }
-
-    /// Sets whether to skip HTTP/2.
-    ///
-    /// # Arguments
-    ///
-    /// * `skip_http2` - A boolean indicating whether to skip HTTP/2.
-    ///
-    /// # Returns
-    ///
-    /// The updated `ImpersonateBuilder` instance.
-    #[inline(always)]
-    pub fn skip_http2(mut self, skip_http2: bool) -> Self {
-        self.skip_http2 = skip_http2;
-        self
-    }
-
-    /// Sets whether to skip headers.
-    ///
-    /// # Arguments
-    ///
-    /// * `skip_headers` - A boolean indicating whether to skip headers.
-    ///
-    /// # Returns
-    ///
-    /// The updated `ImpersonateBuilder` instance.
-    #[inline(always)]
-    pub fn skip_headers(mut self, skip_headers: bool) -> Self {
-        self.skip_headers = skip_headers;
-        self
-    }
-
-    /// Builds the `HttpConfig` instance.
-    ///
-    /// # Returns
-    ///
-    /// The constructed `HttpConfig` instance.
-    pub fn build(self) -> HttpConfig {
-        impersonate_match!(
-            self.impersonate,
-            self.impersonate_os,
-            self.skip_http2,
-            self.skip_headers,
-            Chrome100 => v100::http_config,
-            Chrome101 => v101::http_config,
-            Chrome104 => v104::http_config,
-            Chrome105 => v105::http_config,
-            Chrome106 => v106::http_config,
-            Chrome107 => v107::http_config,
-            Chrome108 => v108::http_config,
-            Chrome109 => v109::http_config,
-            Chrome114 => v114::http_config,
-            Chrome116 => v116::http_config,
-            Chrome117 => v117::http_config,
-            Chrome118 => v118::http_config,
-            Chrome119 => v119::http_config,
-            Chrome120 => v120::http_config,
-            Chrome123 => v123::http_config,
-            Chrome124 => v124::http_config,
-            Chrome126 => v126::http_config,
-            Chrome127 => v127::http_config,
-            Chrome128 => v128::http_config,
-            Chrome129 => v129::http_config,
-            Chrome130 => v130::http_config,
-            Chrome131 => v131::http_config,
-
-            SafariIos17_2 => safari_ios_17_2::http_config,
-            SafariIos17_4_1 => safari_ios_17_4_1::http_config,
-            SafariIos16_5 => safari_ios_16_5::http_config,
-            Safari15_3 => safari15_3::http_config,
-            Safari15_5 => safari15_5::http_config,
-            Safari15_6_1 => safari15_6_1::http_config,
-            Safari16 => safari16::http_config,
-            Safari16_5 => safari16_5::http_config,
-            Safari17_0 => safari17_0::http_config,
-            Safari17_2_1 => safari17_2_1::http_config,
-            Safari17_4_1 => safari17_4_1::http_config,
-            Safari17_5 => safari17_5::http_config,
-            Safari18 => safari18::http_config,
-            SafariIPad18 => safari_ipad_18::http_config,
-            Safari18_2 => safari18_2::http_config,
-            SafariIos18_1_1 => safari_ios_18_1_1::http_config,
-
-            OkHttp3_9 => okhttp3_9::http_config,
-            OkHttp3_11 => okhttp3_11::http_config,
-            OkHttp3_13 => okhttp3_13::http_config,
-            OkHttp3_14 => okhttp3_14::http_config,
-            OkHttp4_9 => okhttp4_9::http_config,
-            OkHttp4_10 => okhttp4_10::http_config,
-            OkHttp5 => okhttp5::http_config,
-
-            Edge101 => edge101::http_config,
-            Edge122 => edge122::http_config,
-            Edge127 => edge127::http_config,
-            Edge131 => edge131::http_config,
-
-            Firefox109 => ff109::http_config,
-            Firefox117 => ff117::http_config,
-            Firefox128 => ff128::http_config,
-            Firefox133 => ff133::http_config
-        )
-    }
 }
 
 /// Represents different browser versions for impersonation.
@@ -327,15 +186,12 @@ pub enum Impersonate {
 }
 
 /// ======== Impersonate impls ========
-impl Impersonate {
-    #[inline]
-    pub fn builder() -> ImpersonateBuilder {
-        ImpersonateBuilder {
-            impersonate: Default::default(),
-            impersonate_os: Default::default(),
-            skip_http2: false,
-            skip_headers: false,
-        }
+impl HttpContextProvider for Impersonate {
+    fn context(self) -> HttpContext {
+        ImpersonateOption::builder()
+            .impersonate(self)
+            .build()
+            .context()
     }
 }
 
@@ -395,6 +251,94 @@ impl ImpersonateOS {
     #[inline]
     fn is_mobile(&self) -> bool {
         matches!(self, ImpersonateOS::Android | ImpersonateOS::IOS)
+    }
+}
+
+#[derive(Default, TypedBuilder)]
+pub struct ImpersonateOption {
+    /// The browser version to impersonate.
+    #[builder(default)]
+    impersonate: Impersonate,
+
+    /// The operating system.
+    #[builder(default)]
+    impersonate_os: ImpersonateOS,
+
+    /// Whether to skip HTTP/2.
+    #[builder(default = false)]
+    skip_http2: bool,
+
+    /// Whether to skip headers.
+    #[builder(default = false)]
+    skip_headers: bool,
+}
+
+/// ======== ImpersonateOption impls ========
+impl HttpContextProvider for ImpersonateOption {
+    fn context(self) -> HttpContext {
+        impersonate_match!(
+            self.impersonate,
+            self.impersonate_os,
+            self.skip_http2,
+            self.skip_headers,
+            Chrome100 => v100::http_config,
+            Chrome101 => v101::http_config,
+            Chrome104 => v104::http_config,
+            Chrome105 => v105::http_config,
+            Chrome106 => v106::http_config,
+            Chrome107 => v107::http_config,
+            Chrome108 => v108::http_config,
+            Chrome109 => v109::http_config,
+            Chrome114 => v114::http_config,
+            Chrome116 => v116::http_config,
+            Chrome117 => v117::http_config,
+            Chrome118 => v118::http_config,
+            Chrome119 => v119::http_config,
+            Chrome120 => v120::http_config,
+            Chrome123 => v123::http_config,
+            Chrome124 => v124::http_config,
+            Chrome126 => v126::http_config,
+            Chrome127 => v127::http_config,
+            Chrome128 => v128::http_config,
+            Chrome129 => v129::http_config,
+            Chrome130 => v130::http_config,
+            Chrome131 => v131::http_config,
+
+            SafariIos17_2 => safari_ios_17_2::http_config,
+            SafariIos17_4_1 => safari_ios_17_4_1::http_config,
+            SafariIos16_5 => safari_ios_16_5::http_config,
+            Safari15_3 => safari15_3::http_config,
+            Safari15_5 => safari15_5::http_config,
+            Safari15_6_1 => safari15_6_1::http_config,
+            Safari16 => safari16::http_config,
+            Safari16_5 => safari16_5::http_config,
+            Safari17_0 => safari17_0::http_config,
+            Safari17_2_1 => safari17_2_1::http_config,
+            Safari17_4_1 => safari17_4_1::http_config,
+            Safari17_5 => safari17_5::http_config,
+            Safari18 => safari18::http_config,
+            SafariIPad18 => safari_ipad_18::http_config,
+            Safari18_2 => safari18_2::http_config,
+            SafariIos18_1_1 => safari_ios_18_1_1::http_config,
+
+            OkHttp3_9 => okhttp3_9::http_config,
+            OkHttp3_11 => okhttp3_11::http_config,
+            OkHttp3_13 => okhttp3_13::http_config,
+            OkHttp3_14 => okhttp3_14::http_config,
+            OkHttp4_9 => okhttp4_9::http_config,
+            OkHttp4_10 => okhttp4_10::http_config,
+            OkHttp5 => okhttp5::http_config,
+
+            Edge101 => edge101::http_config,
+            Edge122 => edge122::http_config,
+            Edge127 => edge127::http_config,
+            Edge131 => edge131::http_config,
+
+            Firefox109 => ff109::http_config,
+            Firefox117 => ff117::http_config,
+            Firefox128 => ff128::http_config,
+            Firefox133 => ff133::http_config
+        )
     }
 }
 

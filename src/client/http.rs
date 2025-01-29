@@ -27,12 +27,11 @@ use std::task::{Context, Poll};
 use tokio::time::Sleep;
 use tower::util::BoxCloneSyncServiceLayer;
 use tower::{Layer, Service};
-use typed_builder::TypedBuilder;
 
 use super::decoder::Accepts;
 use super::request::{Request, RequestBuilder};
 use super::response::Response;
-use super::Body;
+use super::{Body, HttpContext, HttpContextProvider};
 use crate::connect::{BoxedConnectorLayer, BoxedConnectorService, Connector, ConnectorBuilder};
 #[cfg(feature = "cookies")]
 use crate::cookie;
@@ -40,10 +39,10 @@ use crate::cookie;
 use crate::dns::hickory::{HickoryDnsResolver, LookupIpStrategy};
 use crate::dns::{gai::GaiResolver, DnsResolverWithOverrides, DynResolver, Resolve};
 use crate::into_url::try_uri;
-use crate::{cfg_bindable_device, error, impl_debug, Http1Config, Http2Config, Impersonate};
+use crate::{cfg_bindable_device, error, impl_debug, Http1Config, Http2Config};
 use crate::{
     redirect,
-    tls::{AlpnProtos, BoringTlsConnector, RootCertStore, TlsConfig, TlsVersion},
+    tls::{AlpnProtos, BoringTlsConnector, RootCertStore, TlsVersion},
 };
 use crate::{IntoUrl, Method, Proxy, StatusCode, Url};
 use log::{debug, trace};
@@ -80,71 +79,6 @@ type CookieStoreOption = Option<Arc<dyn cookie::CookieStore>>;
 #[cfg(not(feature = "cookies"))]
 type CookieStoreOption = ();
 
-/// A `Client` HTTP configuration.
-///
-/// The `HttpConfig` struct provides various configuration options for the HTTP client.
-/// These settings allow you to customize the behavior of the HTTP client, including
-/// TLS settings, HTTP/1 and HTTP/2 configurations, default headers, and header order.
-///
-/// # Fields
-///
-/// * `tls_config` - The TLS configuration settings for the HTTP client.
-/// * `http1_config` - Optional configuration settings for HTTP/1 connections.
-/// * `http2_config` - Optional configuration settings for HTTP/2 connections.
-/// * `default_headers` - Optional default headers to include in every request.
-/// * `headers_order` - Optional order of headers to be used in requests.
-#[derive(TypedBuilder, Default, Debug)]
-pub struct HttpConfig {
-    /// The TLS configuration settings for the HTTP client.
-    #[builder(setter(into))]
-    tls_config: TlsConfig,
-
-    /// Optional configuration settings for HTTP/1 connections.
-    #[builder(default, setter(into))]
-    http1_config: Option<Http1Config>,
-
-    /// Optional configuration settings for HTTP/2 connections.
-    #[builder(default, setter(into))]
-    http2_config: Option<Http2Config>,
-
-    /// Optional default headers to include in every request.
-    #[builder(default, setter(into))]
-    default_headers: Option<HeaderMap>,
-
-    /// Optional order of headers to be used in requests.
-    #[builder(default, setter(strip_option, into))]
-    headers_order: Option<Cow<'static, [HeaderName]>>,
-}
-
-/// Converts an `Impersonate` enum variant into an `HttpConfig` instance.
-///
-/// This implementation allows you to create an `HttpConfig` from an `Impersonate` variant.
-/// It sets the necessary configuration for the specified impersonation, including TLS and HTTP settings.
-///
-/// # Arguments
-///
-/// * `impersonate` - The `Impersonate` enum variant to convert into an `HttpConfig`.
-///
-/// # Returns
-///
-/// * `HttpConfig` - The resulting `HttpConfig` instance with the applied impersonation settings.
-///
-/// # Example
-///
-/// ```rust
-/// use rquest::{Impersonate, HttpConfig};
-///
-/// let config: HttpConfig = Impersonate::Chrome100.into();
-/// ```
-impl From<Impersonate> for HttpConfig {
-    fn from(impersonate: Impersonate) -> Self {
-        Impersonate::builder()
-            .impersonate(impersonate)
-            .impersonate_os(Default::default())
-            .build()
-    }
-}
-
 struct Config {
     // NOTE: When adding a new field, update `fmt::Debug for ClientBuilder`
     accepts: Accepts,
@@ -177,7 +111,7 @@ struct Config {
     tls_info: bool,
     connector_layers: Vec<BoxedConnectorLayer>,
     builder: Builder,
-    http_config: HttpConfig,
+    http_context: HttpContext,
 }
 
 impl Default for ClientBuilder {
@@ -225,7 +159,7 @@ impl ClientBuilder {
                 http2_max_retry_count: 2,
                 tls_info: false,
                 connector_layers: Vec::new(),
-                http_config: HttpConfig::default(),
+                http_context: HttpContext::default(),
             },
         }
     }
@@ -249,7 +183,10 @@ impl ClientBuilder {
         }
         let proxies_maybe_http_auth = proxies.iter().any(|p| p.maybe_has_http_auth());
 
-        let http2_only = matches!(config.http_config.tls_config.alpn_protos, AlpnProtos::Http2);
+        let http2_only = matches!(
+            config.http_context.tls_config.alpn_protos,
+            AlpnProtos::Http2
+        );
 
         config
             .builder
@@ -260,12 +197,12 @@ impl ClientBuilder {
             .pool_max_idle_per_host(config.pool_max_idle_per_host)
             .pool_max_size(config.pool_max_size);
 
-        if let Some(http1_config) = config.http_config.http1_config {
+        if let Some(http1_config) = config.http_context.http1_config {
             let builder = config.builder.http1();
             apply_http1_config(builder, http1_config);
         }
 
-        if let Some(http2_config) = config.http_config.http2_config {
+        if let Some(http2_config) = config.http_context.http2_config {
             let builder = config.builder.http2();
             apply_http2_config(builder, http2_config)
         }
@@ -294,7 +231,7 @@ impl ClientBuilder {
             let mut http = HttpConnector::new_with_resolver(DynResolver::new(resolver));
             http.set_connect_timeout(config.connect_timeout);
 
-            let tls = BoringTlsConnector::new(config.http_config.tls_config)?;
+            let tls = BoringTlsConnector::new(config.http_context.tls_config)?;
             ConnectorBuilder::new(http, tls, config.nodelay, config.tls_info)
         };
 
@@ -312,8 +249,8 @@ impl ClientBuilder {
                 #[cfg(feature = "cookies")]
                 cookie_store: config.cookie_store,
                 hyper,
-                headers: config.http_config.default_headers.unwrap_or_default(),
-                headers_order: config.http_config.headers_order,
+                headers: config.http_context.default_headers.unwrap_or_default(),
+                headers_order: config.http_context.headers_order,
                 redirect: config.redirect_policy,
                 redirect_with_proxy_auth: config.redirect_with_proxy_auth,
                 referer: config.referer,
@@ -391,7 +328,7 @@ impl ClientBuilder {
         match value.try_into() {
             Ok(value) => {
                 self.config
-                    .http_config
+                    .http_context
                     .default_headers
                     .get_or_insert_with(Default::default)
                     .insert(USER_AGENT, value);
@@ -449,7 +386,7 @@ impl ClientBuilder {
     /// ```
     pub fn default_headers(mut self, headers: HeaderMap) -> ClientBuilder {
         std::mem::swap(
-            &mut self.config.http_config.default_headers,
+            &mut self.config.http_context.default_headers,
             &mut Some(headers),
         );
         self
@@ -462,7 +399,7 @@ impl ClientBuilder {
     /// The host header needs to be manually inserted if you want to modify its order.
     /// Otherwise it will be inserted by hyper after sorting.
     pub fn headers_order(mut self, order: impl Into<Cow<'static, [HeaderName]>>) -> ClientBuilder {
-        self.config.http_config.headers_order = Some(order.into());
+        self.config.http_context.headers_order = Some(order.into());
         self
     }
 
@@ -825,13 +762,13 @@ impl ClientBuilder {
 
     /// Only use HTTP/1.
     pub fn http1_only(mut self) -> ClientBuilder {
-        self.config.http_config.tls_config.alpn_protos = AlpnProtos::Http1;
+        self.config.http_context.tls_config.alpn_protos = AlpnProtos::Http1;
         self
     }
 
     /// Only use HTTP/2.
     pub fn http2_only(mut self) -> ClientBuilder {
-        self.config.http_config.tls_config.alpn_protos = AlpnProtos::Http2;
+        self.config.http_context.tls_config.alpn_protos = AlpnProtos::Http2;
         self
     }
 
@@ -974,22 +911,22 @@ impl ClientBuilder {
 
     // TLS/HTTP2 impersonate options
 
-    /// Configures the client to impersonate the specified version or configuration.
+    /// Configures the client builder to impersonate the specified HTTP context.
     ///
-    /// This method sets the necessary headers and TLS config to impersonate the specified version
-    /// or configuration. It allows the client to mimic the behavior of different versions or setups,
-    /// which can be useful for testing or ensuring compatibility with various environments.
+    /// This method sets the necessary headers, HTTP/1 and HTTP/2 configurations, and TLS config
+    /// to use the specified HTTP context. It allows the client to mimic the behavior of different
+    /// versions or setups, which can be useful for testing or ensuring compatibility with various environments.
     ///
     /// The configuration set by this method will have the highest priority, overriding any other
-    /// config that may have been previously set, including those set by the `http2` or `http1` methods.
+    /// config that may have been previously set.
     ///
     /// # Arguments
     ///
-    /// * `var` - The impersonate context, which can be either an `Impersonate` enum variant or an `HttpConfig` instance.
+    /// * `provider` - The HTTP context provider, which can be any type that implements the `HttpContextProvider` trait.
     ///
     /// # Returns
     ///
-    /// * `ClientBuilder` - The modified client builder with the applied impersonation config.
+    /// * `ClientBuilder` - The modified client builder with the applied HTTP context.
     ///
     /// # Example
     ///
@@ -998,32 +935,33 @@ impl ClientBuilder {
     ///
     /// let client = Client::builder()
     ///     .impersonate(Impersonate::Firefox128)
-    ///     .build()?;
+    ///     .build()
+    ///     .unwrap();
     /// ```
     #[inline]
-    pub fn impersonate<I>(mut self, var: I) -> ClientBuilder
+    pub fn impersonate<P>(mut self, provider: P) -> ClientBuilder
     where
-        I: Into<HttpConfig>,
+        P: HttpContextProvider,
     {
-        std::mem::swap(&mut self.config.http_config, &mut var.into());
+        std::mem::swap(&mut self.config.http_context, &mut provider.context());
         self
     }
 
     /// Enable Encrypted Client Hello (Secure SNI)
     pub fn enable_ech_grease(mut self, enabled: bool) -> ClientBuilder {
-        self.config.http_config.tls_config.enable_ech_grease = enabled;
+        self.config.http_context.tls_config.enable_ech_grease = enabled;
         self
     }
 
     /// Enable TLS permute_extensions
     pub fn permute_extensions(mut self, enabled: bool) -> ClientBuilder {
-        self.config.http_config.tls_config.permute_extensions = Some(enabled);
+        self.config.http_context.tls_config.permute_extensions = Some(enabled);
         self
     }
 
     /// Enable TLS pre_shared_key
     pub fn pre_shared_key(mut self, enabled: bool) -> ClientBuilder {
-        self.config.http_config.tls_config.pre_shared_key = enabled;
+        self.config.http_context.tls_config.pre_shared_key = enabled;
         self
     }
 
@@ -1043,7 +981,7 @@ impl ClientBuilder {
     ///
     /// feature to be enabled.
     pub fn danger_accept_invalid_certs(mut self, accept_invalid_certs: bool) -> ClientBuilder {
-        self.config.http_config.tls_config.certs_verification = !accept_invalid_certs;
+        self.config.http_context.tls_config.certs_verification = !accept_invalid_certs;
         self
     }
 
@@ -1051,7 +989,7 @@ impl ClientBuilder {
     ///
     /// Defaults to `true`.
     pub fn tls_sni(mut self, tls_sni: bool) -> ClientBuilder {
-        self.config.http_config.tls_config.tls_sni = tls_sni;
+        self.config.http_context.tls_config.tls_sni = tls_sni;
         self
     }
 
@@ -1065,7 +1003,7 @@ impl ClientBuilder {
     /// used, *any* valid certificate for *any* site will be trusted for use from any other. This
     /// introduces a significant vulnerability to man-in-the-middle attacks.
     pub fn verify_hostname(mut self, verify_hostname: bool) -> ClientBuilder {
-        self.config.http_config.tls_config.verify_hostname = verify_hostname;
+        self.config.http_context.tls_config.verify_hostname = verify_hostname;
         self
     }
 
@@ -1084,7 +1022,7 @@ impl ClientBuilder {
     ///
     /// feature to be enabled.
     pub fn min_tls_version(mut self, version: TlsVersion) -> ClientBuilder {
-        self.config.http_config.tls_config.min_tls_version = Some(version);
+        self.config.http_context.tls_config.min_tls_version = Some(version);
         self
     }
 
@@ -1103,7 +1041,7 @@ impl ClientBuilder {
     ///
     /// feature to be enabled.
     pub fn max_tls_version(mut self, version: TlsVersion) -> ClientBuilder {
-        self.config.http_config.tls_config.max_tls_version = Some(version);
+        self.config.http_context.tls_config.max_tls_version = Some(version);
         self
     }
 
@@ -1130,7 +1068,7 @@ impl ClientBuilder {
     where
         S: Into<RootCertStore>,
     {
-        self.config.http_config.tls_config.root_certs_store = store.into();
+        self.config.http_context.tls_config.root_certs_store = store.into();
         self
     }
 
@@ -1674,7 +1612,7 @@ impl_debug!(
         dns_overrides,
         base_url,
         builder,
-        http_config
+        http_context
     }
 );
 
@@ -1876,58 +1814,62 @@ impl<'c> ClientMut<'c> {
         }
     }
 
-    /// Set the impersonate version for this client.
-    /// This includes setting the necessary headers and TLS config.
+    /// Configures the client to impersonate the specified HTTP context.
     ///
-    /// This method sets the necessary headers and TLS config to impersonate the specified version
-    /// or configuration. It allows the client to mimic the behavior of different versions or setups,
-    /// which can be useful for testing or ensuring compatibility with various environments.
+    /// This method sets the necessary headers, HTTP/1 and HTTP/2 configurations, and TLS config
+    /// to use the specified HTTP context. It allows the client to mimic the behavior of different
+    /// versions or setups, which can be useful for testing or ensuring compatibility with various environments.
+    ///
+    /// The configuration set by this method will have the highest priority, overriding any other
+    /// config that may have been previously set.
     ///
     /// # Arguments
     ///
-    /// * `var` - The impersonate context, which can be either an `Impersonate` enum variant or an `HttpConfig` instance.
+    /// * `provider` - The HTTP context provider, which can be any type that implements the `HttpContextProvider` trait.
     ///
     /// # Returns
     ///
-    /// A mutable reference to the `Client` instance with the applied config.
+    /// * `&mut ClientMut<'c>` - The modified client with the applied HTTP context.
     ///
     /// # Example
     ///
-    /// ```
-    /// let mut client = rquest::Client::new();
-    /// client.as_mut().impersonate(Impersonate::Firefox128);
+    /// ```rust
+    /// use rquest::{Client, Impersonate};
+    ///
+    /// let mut client = Client::builder().build().unwrap();
+    /// client.impersonate(Impersonate::Firefox128);
     /// ```
     #[inline]
-    pub fn impersonate<I>(&mut self, var: I) -> &mut ClientMut<'c>
+    pub fn impersonate<P>(&mut self, provider: P) -> &mut ClientMut<'c>
     where
-        I: Into<HttpConfig>,
+        P: HttpContextProvider,
     {
-        let mut config = var.into();
+        let context = provider.context();
+        let inner = &mut self.inner;
 
-        if let Some(mut headers) = config.default_headers {
-            std::mem::swap(&mut self.inner.headers, &mut headers);
+        if let Some(mut headers) = context.default_headers {
+            std::mem::swap(&mut inner.headers, &mut headers);
         }
 
-        std::mem::swap(&mut self.inner.headers_order, &mut config.headers_order);
-
-        if let Some(http1_config) = config.http1_config {
-            let builder = self.inner.hyper.http1();
-            apply_http1_config(builder, http1_config);
+        if let Some(headers_order) = context.headers_order {
+            std::mem::swap(&mut inner.headers_order, &mut Some(headers_order));
         }
 
-        if let Some(http2_config) = config.http2_config {
-            let builder = self.inner.hyper.http2();
-            apply_http2_config(builder, http2_config);
+        if let Some(http1_config) = context.http1_config {
+            apply_http1_config(inner.hyper.http1(), http1_config);
         }
 
-        if let Ok(connector) = BoringTlsConnector::new(config.tls_config) {
-            self.inner
-                .hyper
-                .with_connector(|c| c.set_connector(connector));
-        } else {
-            log::warn!(
-                "Failed to create BoringTlsConnector, TLS impersonation will not be applied"
-            );
+        if let Some(http2_config) = context.http2_config {
+            apply_http2_config(inner.hyper.http2(), http2_config);
+        }
+
+        match BoringTlsConnector::new(context.tls_config) {
+            Ok(connector) => {
+                inner.hyper.connector_mut().set_connector(connector);
+            }
+            Err(err) => {
+                log::warn!("Failed to create BoringTlsConnector: {}", err)
+            }
         }
 
         self

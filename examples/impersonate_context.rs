@@ -3,7 +3,7 @@ use rquest::{
     join, AlpnProtos, AlpsProtos, CertCompressionAlgorithm, ExtensionType, Http1Builder,
     Http1Config, Http2Builder, SslCurve, TlsConfig, TlsVersion,
 };
-use rquest::{Client, HttpConfig};
+use rquest::{Client, HttpContext};
 use rquest::{Http2Config, PseudoOrder::*, SettingsOrder::*};
 use rquest::{Priority, StreamDependency, StreamId};
 
@@ -124,10 +124,10 @@ async fn main() -> Result<(), rquest::Error> {
         .delegated_credentials(DELEGATED_CREDENTIALS)
         .cert_compression_algorithm(CERT_COMPRESSION_ALGORITHM)
         .record_size_limit(RECORD_SIZE_LIMIT)
-        .alpn_protos(AlpnProtos::All)
-        .alps_protos(AlpsProtos::Http2)
         .pre_shared_key(true)
         .enable_ech_grease(true)
+        .alpn_protos(AlpnProtos::All)
+        .alps_protos(AlpsProtos::Http2)
         .min_tls_version(TlsVersion::TLS_1_0)
         .max_tls_version(TlsVersion::TLS_1_3)
         .extension_permutation_indices(EXTENSION_PERMUTATION_INDICES)
@@ -203,8 +203,8 @@ async fn main() -> Result<(), rquest::Error> {
         headers
     };
 
-    // Create Http config
-    let config = HttpConfig::builder()
+    // Create Http context
+    let context = HttpContext::builder()
         .tls_config(tls)
         .http1_config(http1)
         .http2_config(http2)
@@ -214,8 +214,7 @@ async fn main() -> Result<(), rquest::Error> {
 
     // Build a client with impersonate config
     let client = Client::builder()
-        .impersonate(config)
-        .danger_accept_invalid_certs(true)
+        .impersonate(context)
         .http1(http1_configuration)
         .http2(http2_configuration)
         .build()?;

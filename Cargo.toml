@@ -264,16 +264,12 @@ name = "impersonate"
 path = "examples/impersonate.rs"
 
 [[example]]
-name = "impersonate_builder"
-path = "examples/impersonate_builder.rs"
+name = "impersonate_option"
+path = "examples/impersonate_option.rs"
 
 [[example]]
-name = "impersonate_psk"
-path = "examples/impersonate_psk.rs"
-
-[[example]]
-name = "impersonate_config"
-path = "examples/impersonate_config.rs"
+name = "impersonate_context"
+path = "examples/impersonate_context.rs"
 
 [[example]]
 name = "set_headers"

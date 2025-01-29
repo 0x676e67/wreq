@@ -12,10 +12,10 @@ macro_rules! mod_generator {
                 _: ImpersonateOS,
                 skip_http2: bool,
                 skip_headers: bool,
-            ) -> HttpConfig {
-                HttpConfig::builder()
-                    .tls_config(tls_settings!($cipher_list))
-                    .http2_config(conditional_http2!(skip_http2, http2_settings!()))
+            ) -> HttpContext {
+                HttpContext::builder()
+                    .tls_config(tls_config!($cipher_list))
+                    .http2_config(conditional_http2!(skip_http2, http2_config!()))
                     .default_headers(conditional_headers!(
                         skip_headers,
                         super::header_initializer,
@@ -27,15 +27,13 @@ macro_rules! mod_generator {
     };
 }
 
-macro_rules! tls_settings {
+macro_rules! tls_config {
     ($cipher_list:expr) => {
-        OkHttpTlsSettings::builder()
-            .cipher_list($cipher_list)
-            .build()
+        OkHttpTlsConfig::builder().cipher_list($cipher_list).build()
     };
 }
 
-macro_rules! http2_settings {
+macro_rules! http2_config {
     () => {
         Http2Config::builder()
             .initial_stream_window_size(6291456)
@@ -103,7 +101,7 @@ mod tls {
     );
 
     #[derive(TypedBuilder)]
-    pub struct OkHttpTlsSettings {
+    pub struct OkHttpTlsConfig {
         #[builder(default = CURVES)]
         curves: &'static [SslCurve],
 
@@ -113,8 +111,8 @@ mod tls {
         cipher_list: &'static str,
     }
 
-    impl From<OkHttpTlsSettings> for TlsConfig {
-        fn from(val: OkHttpTlsSettings) -> Self {
+    impl From<OkHttpTlsConfig> for TlsConfig {
+        fn from(val: OkHttpTlsConfig) -> Self {
             TlsConfig::builder()
                 .enable_ocsp_stapling(true)
                 .curves(val.curves)
