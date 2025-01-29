@@ -34,92 +34,92 @@ fn sv_handler(r: ::std::os::raw::c_int) -> TlsResult<::std::os::raw::c_int> {
     }
 }
 
-/// A wrapper around a `HttpsLayer` that allows for additional settings.
+/// A wrapper around a `HttpsLayer` that allows for additional config.
 #[derive(Clone)]
 pub(crate) struct BoringTlsConnector(HttpsLayer);
 
 impl BoringTlsConnector {
     /// Create a new `BoringTlsConnector` with the given function.
     #[inline]
-    pub fn new(settings: TlsSettings) -> TlsResult<BoringTlsConnector> {
+    pub fn new(config: TlsConfig) -> TlsResult<BoringTlsConnector> {
         let mut connector = SslConnector::no_default_verify_builder(SslMethod::tls_client())?
-            .root_cert_store(settings.root_certs_store)?
-            .cert_verification(settings.certs_verification)?
-            .alpn_protos(settings.alpn_protos)?
-            .min_tls_version(settings.min_tls_version)?
-            .max_tls_version(settings.max_tls_version)?;
+            .root_cert_store(config.root_certs_store)?
+            .cert_verification(config.certs_verification)?
+            .alpn_protos(config.alpn_protos)?
+            .min_tls_version(config.min_tls_version)?
+            .max_tls_version(config.max_tls_version)?;
 
-        if settings.enable_ocsp_stapling {
+        if config.enable_ocsp_stapling {
             connector.enable_ocsp_stapling();
         }
 
-        if settings.enable_signed_cert_timestamps {
+        if config.enable_signed_cert_timestamps {
             connector.enable_signed_cert_timestamps();
         }
 
-        if !settings.session_ticket {
+        if !config.session_ticket {
             connector.set_options(SslOptions::NO_TICKET);
         }
 
-        if !settings.psk_dhe_ke {
+        if !config.psk_dhe_ke {
             connector.set_options(SslOptions::NO_PSK_DHE_KE);
         }
 
-        if !settings.renegotiation {
+        if !config.renegotiation {
             connector.set_options(SslOptions::NO_RENEGOTIATION);
         }
 
-        if let Some(grease_enabled) = settings.grease_enabled {
+        if let Some(grease_enabled) = config.grease_enabled {
             connector.set_grease_enabled(grease_enabled);
         }
 
-        if let Some(permute_extensions) = settings.permute_extensions {
+        if let Some(permute_extensions) = config.permute_extensions {
             connector.set_permute_extensions(permute_extensions);
         }
 
-        if let Some(curves) = settings.curves.as_deref() {
+        if let Some(curves) = config.curves.as_deref() {
             connector.set_curves(curves)?;
         }
 
-        if let Some(sigalgs_list) = settings.sigalgs_list.as_deref() {
+        if let Some(sigalgs_list) = config.sigalgs_list.as_deref() {
             connector.set_sigalgs_list(sigalgs_list)?;
         }
 
-        if let Some(delegated_credentials) = settings.delegated_credentials.as_deref() {
+        if let Some(delegated_credentials) = config.delegated_credentials.as_deref() {
             connector.set_delegated_credentials(delegated_credentials)?;
         }
 
-        if let Some(cipher_list) = settings.cipher_list.as_deref() {
+        if let Some(cipher_list) = config.cipher_list.as_deref() {
             connector.set_cipher_list(cipher_list)?;
         }
 
-        if let Some(cert_compression_algorithm) = settings.cert_compression_algorithm {
+        if let Some(cert_compression_algorithm) = config.cert_compression_algorithm {
             for algorithm in cert_compression_algorithm.iter() {
                 connector = connector.add_cert_compression_alg(*algorithm)?;
             }
         }
 
-        if let Some(record_size_limit) = settings.record_size_limit {
+        if let Some(record_size_limit) = config.record_size_limit {
             connector.set_record_size_limit(record_size_limit);
         }
 
-        if let Some(limit) = settings.key_shares_limit {
+        if let Some(limit) = config.key_shares_limit {
             connector.set_key_shares_limit(limit);
         }
 
-        if let Some(indices) = settings.extension_permutation_indices {
+        if let Some(indices) = config.extension_permutation_indices {
             connector.set_extension_permutation_indices(indices.as_ref())?;
         }
 
         // Create the `HttpsLayerSettings` with the default session cache capacity.
         let settings = HttpsLayerSettings::builder()
-            .session_cache(settings.pre_shared_key)
-            .skip_session_ticket(settings.psk_skip_session_ticket)
-            .alpn_protos(settings.alpn_protos)
-            .alps_protos(settings.alps_protos)
-            .enable_ech_grease(settings.enable_ech_grease)
-            .tls_sni(settings.tls_sni)
-            .verify_hostname(settings.verify_hostname)
+            .session_cache(config.pre_shared_key)
+            .skip_session_ticket(config.psk_skip_session_ticket)
+            .alpn_protos(config.alpn_protos)
+            .alps_protos(config.alps_protos)
+            .enable_ech_grease(config.enable_ech_grease)
+            .tls_sni(config.tls_sni)
+            .verify_hostname(config.verify_hostname)
             .build();
 
         Ok(Self(HttpsLayer::with_connector_and_settings(
@@ -207,7 +207,7 @@ impl TlsInfo {
 /// This struct defines various parameters to fine-tune the behavior of a TLS connection,
 /// including the root certificate store, certificate verification, ALPN protocols, and more.
 #[derive(TypedBuilder)]
-pub struct TlsSettings {
+pub struct TlsConfig {
     /// The root certificate store.
     /// Default use system's native certificate store.
     #[builder(default = RootCertStore::Default)]
@@ -378,14 +378,14 @@ pub struct TlsSettings {
 }
 
 /// ====== impl TlsSettings ======c
-impl Default for TlsSettings {
+impl Default for TlsConfig {
     fn default() -> Self {
         Self::builder().build()
     }
 }
 
 impl_debug!(
-    TlsSettings,
+    TlsConfig,
     {
         certs_verification,
         tls_sni,

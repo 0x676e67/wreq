@@ -14,14 +14,14 @@ macro_rules! mod_generator {
             use super::*;
 
             #[inline(always)]
-            pub fn settings(os_choice: ImpersonateOS, skip_http2: bool, skip_headers: bool) -> ImpersonateSettings {
+            pub fn http_config(os_choice: ImpersonateOS, skip_http2: bool, skip_headers: bool) -> HttpConfig {
                 #[allow(unreachable_patterns)]
                 match os_choice {
                     $(
-                        ImpersonateOS::$other_os => ImpersonateSettings::builder()
-                            .tls($tls_settings)
-                            .http2(conditional_http2!(skip_http2, $http2_settings))
-                            .headers(conditional_headers!(skip_headers, || {
+                        ImpersonateOS::$other_os => HttpConfig::builder()
+                            .tls_config($tls_settings)
+                            .http2_config(conditional_http2!(skip_http2, $http2_settings))
+                            .default_headers(conditional_headers!(skip_headers, || {
                                 $header_initializer(
                                     $other_sec_ch_ua,
                                     $other_ua,
@@ -30,10 +30,10 @@ macro_rules! mod_generator {
                             }))
                             .build(),
                     )*
-                    _ => ImpersonateSettings::builder()
-                        .tls($tls_settings)
-                        .http2(conditional_http2!(skip_http2, $http2_settings))
-                        .headers(conditional_headers!(skip_headers, || {
+                    _ => HttpConfig::builder()
+                        .tls_config($tls_settings)
+                        .http2_config(conditional_http2!(skip_http2, $http2_settings))
+                        .default_headers(conditional_headers!(skip_headers, || {
                             $header_initializer(
                                 $default_sec_ch_ua,
                                 $default_ua,
@@ -84,7 +84,7 @@ macro_rules! tls_settings {
 
 macro_rules! http2_settings {
     (1) => {
-        Http2Settings::builder()
+        Http2Config::builder()
             .initial_stream_window_size(6291456)
             .initial_connection_window_size(15728640)
             .max_concurrent_streams(1000)
@@ -96,7 +96,7 @@ macro_rules! http2_settings {
             .build()
     };
     (2) => {
-        Http2Settings::builder()
+        Http2Config::builder()
             .initial_stream_window_size(6291456)
             .initial_connection_window_size(15728640)
             .max_concurrent_streams(1000)
@@ -109,7 +109,7 @@ macro_rules! http2_settings {
             .build()
     };
     (3) => {
-        Http2Settings::builder()
+        Http2Config::builder()
             .initial_stream_window_size(6291456)
             .initial_connection_window_size(15728640)
             .max_header_list_size(262144)
@@ -257,9 +257,9 @@ mod tls {
         pre_shared_key: bool,
     }
 
-    impl From<ChromeTlsSettings> for TlsSettings {
+    impl From<ChromeTlsSettings> for TlsConfig {
         fn from(val: ChromeTlsSettings) -> Self {
-            TlsSettings::builder()
+            TlsConfig::builder()
                 .grease_enabled(true)
                 .enable_ocsp_stapling(true)
                 .enable_signed_cert_timestamps(true)

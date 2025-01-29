@@ -8,15 +8,15 @@ macro_rules! mod_generator {
             use super::*;
 
             #[inline(always)]
-            pub fn settings(
+            pub fn http_config(
                 _: ImpersonateOS,
                 skip_http2: bool,
                 skip_headers: bool,
-            ) -> ImpersonateSettings {
-                ImpersonateSettings::builder()
-                    .tls($tls_settings)
-                    .http2(conditional_http2!(skip_http2, $http2_settings))
-                    .headers(conditional_headers!(skip_headers, $header_initializer, $ua))
+            ) -> HttpConfig {
+                HttpConfig::builder()
+                    .tls_config($tls_settings)
+                    .http2_config(conditional_http2!(skip_http2, $http2_settings))
+                    .default_headers(conditional_headers!(skip_headers, $header_initializer, $ua))
                     .build()
             }
         }
@@ -39,7 +39,7 @@ macro_rules! tls_settings {
 
 macro_rules! http2_settings {
     (1) => {
-        Http2Settings::builder()
+        Http2Config::builder()
             .initial_stream_window_size(2097152)
             .initial_connection_window_size(10551295)
             .max_concurrent_streams(100)
@@ -49,7 +49,7 @@ macro_rules! http2_settings {
             .build()
     };
     (2) => {
-        Http2Settings::builder()
+        Http2Config::builder()
             .initial_stream_window_size(2097152)
             .initial_connection_window_size(10551295)
             .max_concurrent_streams(100)
@@ -60,7 +60,7 @@ macro_rules! http2_settings {
             .build()
     };
     (3) => {
-        Http2Settings::builder()
+        Http2Config::builder()
             .initial_stream_window_size(2097152)
             .initial_connection_window_size(10485760)
             .max_concurrent_streams(100)
@@ -73,7 +73,7 @@ macro_rules! http2_settings {
             .build()
     };
     (4) => {
-        Http2Settings::builder()
+        Http2Config::builder()
             .initial_stream_window_size(4194304)
             .initial_connection_window_size(10551295)
             .max_concurrent_streams(100)
@@ -83,7 +83,7 @@ macro_rules! http2_settings {
             .build()
     };
     (5) => {
-        Http2Settings::builder()
+        Http2Config::builder()
             .initial_stream_window_size(4194304)
             .initial_connection_window_size(10551295)
             .max_concurrent_streams(100)
@@ -260,9 +260,9 @@ mod tls {
         cipher_list: &'static str,
     }
 
-    impl From<SafariTlsSettings> for TlsSettings {
+    impl From<SafariTlsSettings> for TlsConfig {
         fn from(val: SafariTlsSettings) -> Self {
-            TlsSettings::builder()
+            TlsConfig::builder()
                 .session_ticket(false)
                 .grease_enabled(true)
                 .enable_ocsp_stapling(true)

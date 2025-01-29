@@ -14,23 +14,23 @@ macro_rules! mod_generator {
             use super::*;
 
             #[inline(always)]
-            pub fn settings(os_choice: ImpersonateOS, skip_http2: bool, skip_headers: bool) -> ImpersonateSettings {
+            pub fn http_config(os_choice: ImpersonateOS, skip_http2: bool, skip_headers: bool) -> HttpConfig {
                 #[allow(unreachable_patterns)]
                 match os_choice {
                     $(
                         ImpersonateOS::$other_os => {
-                            ImpersonateSettings::builder()
-                                .tls($tls_settings)
-                                .http2(conditional_http2!(skip_http2, $http2_settings))
-                                .headers(conditional_headers!(skip_headers, $header_initializer, $other_ua))
+                            HttpConfig::builder()
+                                .tls_config($tls_settings)
+                                .http2_config(conditional_http2!(skip_http2, $http2_settings))
+                                .default_headers(conditional_headers!(skip_headers, $header_initializer, $other_ua))
                                 .build()
                         }
                     ),*
                     _ => {
-                        ImpersonateSettings::builder()
-                            .tls($tls_settings)
-                            .http2(conditional_http2!(skip_http2, $http2_settings))
-                            .headers(conditional_headers!(skip_headers, $header_initializer, $default_ua))
+                        HttpConfig::builder()
+                            .tls_config($tls_settings)
+                            .http2_config(conditional_http2!(skip_http2, $http2_settings))
+                            .default_headers(conditional_headers!(skip_headers, $header_initializer, $default_ua))
                             .build()
                     }
                 }
@@ -72,7 +72,7 @@ macro_rules! tls_settings {
 
 macro_rules! http2_settings {
     (1) => {
-        Http2Settings::builder()
+        Http2Config::builder()
             .initial_stream_id(3)
             .header_table_size(65536)
             .enable_push(false)
@@ -85,7 +85,7 @@ macro_rules! http2_settings {
             .build()
     };
     (2) => {
-        Http2Settings::builder()
+        Http2Config::builder()
             .initial_stream_id(15)
             .header_table_size(65536)
             .initial_stream_window_size(131072)
@@ -98,7 +98,7 @@ macro_rules! http2_settings {
             .build()
     };
     (3) => {
-        Http2Settings::builder()
+        Http2Config::builder()
             .initial_stream_id(3)
             .header_table_size(65536)
             .enable_push(false)
@@ -302,9 +302,9 @@ mod tls {
         extension_permutation_indices: &'static [u8],
     }
 
-    impl From<FirefoxTlsSettings> for TlsSettings {
+    impl From<FirefoxTlsSettings> for TlsConfig {
         fn from(val: FirefoxTlsSettings) -> Self {
-            TlsSettings::builder()
+            TlsConfig::builder()
                 .curves(val.curves)
                 .sigalgs_list(val.sigalgs_list)
                 .cipher_list(val.cipher_list)

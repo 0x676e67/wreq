@@ -10,7 +10,7 @@ pub trait SslConnectorBuilderExt {
     /// Configure the certificate verification for the given `SslConnectorBuilder`.
     fn cert_verification(self, enable: bool) -> TlsResult<SslConnectorBuilder>;
 
-    /// Configure the ALPN and certificate settings for the given `SslConnectorBuilder`.
+    /// Configure the ALPN and certificate config for the given `SslConnectorBuilder`.
     fn alpn_protos(self, alpn: AlpnProtos) -> TlsResult<SslConnectorBuilder>;
 
     /// Configure the minimum TLS version for the given `SslConnectorBuilder`.

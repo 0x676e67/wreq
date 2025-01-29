@@ -1,10 +1,10 @@
 use http::{header, HeaderMap, HeaderName, HeaderValue};
 use rquest::{
     join, AlpnProtos, AlpsProtos, CertCompressionAlgorithm, ExtensionType, Http1Builder,
-    Http2Builder, SslCurve, TlsSettings, TlsVersion,
+    Http1Config, Http2Builder, SslCurve, TlsConfig, TlsVersion,
 };
-use rquest::{Client, ImpersonateSettings};
-use rquest::{Http2Settings, PseudoOrder::*, SettingsOrder::*};
+use rquest::{Client, HttpConfig};
+use rquest::{Http2Config, PseudoOrder::*, SettingsOrder::*};
 use rquest::{Priority, StreamDependency, StreamId};
 
 // ============== TLS Extension Algorithms ==============
@@ -116,8 +116,8 @@ async fn main() -> Result<(), rquest::Error> {
         .with_max_level(tracing::Level::TRACE)
         .init();
 
-    // TLS settings
-    let tls = TlsSettings::builder()
+    // TLS config
+    let tls = TlsConfig::builder()
         .curves(CURVES)
         .cipher_list(CIPHER_LIST)
         .sigalgs_list(SIGALGS_LIST)
@@ -133,8 +133,14 @@ async fn main() -> Result<(), rquest::Error> {
         .extension_permutation_indices(EXTENSION_PERMUTATION_INDICES)
         .build();
 
-    // HTTP/2 settings
-    let http2 = Http2Settings::builder()
+    // HTTP/1 config
+    let http1 = Http1Config::builder()
+        .allow_obsolete_multiline_headers_in_responses(true)
+        .max_headers(100)
+        .build();
+
+    // HTTP/2 config
+    let http2 = Http2Config::builder()
         .initial_stream_id(15)
         .header_table_size(65536)
         .initial_stream_window_size(131072)
@@ -180,7 +186,7 @@ async fn main() -> Result<(), rquest::Error> {
         ])
         .build();
 
-    // Headers
+    // Default headers
     let headers = {
         let mut headers = HeaderMap::new();
         headers.insert(header::USER_AGENT, HeaderValue::from_static("rquest"));
@@ -197,17 +203,18 @@ async fn main() -> Result<(), rquest::Error> {
         headers
     };
 
-    // Create impersonate settings
-    let settings = ImpersonateSettings::builder()
-        .tls(tls)
-        .http2(http2)
-        .headers(headers)
+    // Create Http config
+    let config = HttpConfig::builder()
+        .tls_config(tls)
+        .http1_config(http1)
+        .http2_config(http2)
+        .default_headers(headers)
         .headers_order(HEADER_ORDER)
         .build();
 
-    // Build a client with impersonate settings
+    // Build a client with impersonate config
     let client = Client::builder()
-        .impersonate(settings)
+        .impersonate(config)
         .danger_accept_invalid_certs(true)
         .http1(http1_configuration)
         .http2(http2_configuration)

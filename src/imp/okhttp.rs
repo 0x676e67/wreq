@@ -8,15 +8,15 @@ macro_rules! mod_generator {
             use super::*;
 
             #[inline(always)]
-            pub fn settings(
+            pub fn http_config(
                 _: ImpersonateOS,
                 skip_http2: bool,
                 skip_headers: bool,
-            ) -> ImpersonateSettings {
-                ImpersonateSettings::builder()
-                    .tls(tls_settings!($cipher_list))
-                    .http2(conditional_http2!(skip_http2, http2_settings!()))
-                    .headers(conditional_headers!(
+            ) -> HttpConfig {
+                HttpConfig::builder()
+                    .tls_config(tls_settings!($cipher_list))
+                    .http2_config(conditional_http2!(skip_http2, http2_settings!()))
+                    .default_headers(conditional_headers!(
                         skip_headers,
                         super::header_initializer,
                         $ua
@@ -37,7 +37,7 @@ macro_rules! tls_settings {
 
 macro_rules! http2_settings {
     () => {
-        Http2Settings::builder()
+        Http2Config::builder()
             .initial_stream_window_size(6291456)
             .initial_connection_window_size(15728640)
             .max_concurrent_streams(1000)
@@ -113,9 +113,9 @@ mod tls {
         cipher_list: &'static str,
     }
 
-    impl From<OkHttpTlsSettings> for TlsSettings {
+    impl From<OkHttpTlsSettings> for TlsConfig {
         fn from(val: OkHttpTlsSettings) -> Self {
-            TlsSettings::builder()
+            TlsConfig::builder()
                 .enable_ocsp_stapling(true)
                 .curves(val.curves)
                 .sigalgs_list(val.sigalgs_list)

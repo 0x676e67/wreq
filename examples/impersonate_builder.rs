@@ -7,7 +7,7 @@ async fn main() -> Result<(), rquest::Error> {
         .init();
 
     // Build a client to impersonate Firefox128
-    let impersonate = Impersonate::builder()
+    let http_config = Impersonate::builder()
         .impersonate(Impersonate::Firefox128)
         .impersonate_os(ImpersonateOS::Windows)
         .skip_http2(false)
@@ -16,7 +16,7 @@ async fn main() -> Result<(), rquest::Error> {
 
     // Apply the impersonate to the client
     let client = Client::builder()
-        .impersonate(impersonate)
+        .impersonate(http_config)
         .http2_only()
         .build()?;
 

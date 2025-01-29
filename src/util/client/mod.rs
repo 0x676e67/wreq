@@ -727,6 +727,13 @@ where
         connector(&mut self.connector);
     }
 
+    /// Http1 configuration.
+    pub(crate) fn http1(&mut self) -> Http1Builder<'_> {
+        Http1Builder {
+            inner: &mut self.h1_builder,
+        }
+    }
+
     /// Http2 configuration.
     pub(crate) fn http2(&mut self) -> Http2Builder<'_> {
         Http2Builder {

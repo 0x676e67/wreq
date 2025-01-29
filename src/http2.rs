@@ -1,14 +1,14 @@
-//! HTTP/2 settings.
+//! HTTP/2 config.
 use hyper2::{Priority, PseudoOrder, SettingsOrder, StreamDependency, StreamId};
 use std::borrow::Cow;
 use typed_builder::TypedBuilder;
 
-/// Configuration settings for an HTTP/2 connection.
+/// Configuration config for an HTTP/2 connection.
 ///
 /// This struct defines various parameters to fine-tune the behavior of an HTTP/2 connection,
-/// including stream management, window sizes, frame limits, and header settings.
-#[derive(TypedBuilder, Debug)]
-pub struct Http2Settings {
+/// including stream management, window sizes, frame limits, and header config.
+#[derive(Clone, Debug, TypedBuilder)]
+pub struct Http2Config {
     /// The initial stream ID for HTTP/2 communication.
     ///
     /// - **Purpose:** Identifies the starting stream ID for client-server communication.

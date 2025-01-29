@@ -389,13 +389,12 @@ pub use self::client::websocket::{
     WebSocketResponse,
 };
 pub use self::client::{
-    Body, Client, ClientBuilder, ClientMut, Request, RequestBuilder, Response, Upgraded,
+    Body, Client, ClientBuilder, ClientMut, HttpConfig, Request, RequestBuilder, Response, Upgraded,
 };
-pub use self::imp::{Impersonate, ImpersonateBuilder, ImpersonateOS, ImpersonateSettings};
+pub use self::imp::{Impersonate, ImpersonateBuilder, ImpersonateOS};
 pub use self::proxy::{NoProxy, Proxy};
 pub use self::tls::{
-    AlpnProtos, AlpsProtos, CertCompressionAlgorithm, RootCertStore, TlsInfo, TlsSettings,
-    TlsVersion,
+    AlpnProtos, AlpsProtos, CertCompressionAlgorithm, RootCertStore, TlsConfig, TlsInfo, TlsVersion,
 };
 pub use self::util::client::{Dst, Http1Builder, Http2Builder};
 pub use boring2::{
@@ -405,7 +404,8 @@ pub use boring2::{
         X509,
     },
 };
-pub use http2::Http2Settings;
+pub use http1::Http1Config;
+pub use http2::Http2Config;
 pub use hyper2::{Priority, PseudoOrder, SettingsOrder, StreamDependency, StreamId};
 
 mod client;
@@ -416,6 +416,7 @@ pub mod dns;
 mod proxy;
 pub mod redirect;
 
+mod http1;
 mod http2;
 mod imp;
 mod tls;

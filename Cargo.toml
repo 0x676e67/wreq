@@ -272,8 +272,8 @@ name = "impersonate_psk"
 path = "examples/impersonate_psk.rs"
 
 [[example]]
-name = "impersonate_settings"
-path = "examples/impersonate_settings.rs"
+name = "impersonate_config"
+path = "examples/impersonate_config.rs"
 
 [[example]]
 name = "set_headers"

@@ -1,5 +1,5 @@
-use rquest::{join, SslCurve, TlsSettings};
-use rquest::{Client, ImpersonateSettings};
+use rquest::{join, SslCurve, TlsConfig};
+use rquest::{Client, HttpConfig};
 
 #[tokio::test]
 async fn test_badssl_modern() {
@@ -49,9 +49,9 @@ const CURVES: &[SslCurve] = &[
 async fn test_3des_support() -> Result<(), rquest::Error> {
     let client = Client::builder()
         .impersonate(
-            ImpersonateSettings::builder()
-                .tls(
-                    TlsSettings::builder()
+            HttpConfig::builder()
+                .tls_config(
+                    TlsConfig::builder()
                         .curves(CURVES)
                         .cipher_list(join!(
                             ":",
@@ -82,9 +82,9 @@ async fn test_3des_support() -> Result<(), rquest::Error> {
 async fn test_firefox_7x_100_cipher() -> Result<(), rquest::Error> {
     let client = Client::builder()
         .impersonate(
-            ImpersonateSettings::builder()
-                .tls(
-                    TlsSettings::builder()
+            HttpConfig::builder()
+                .tls_config(
+                    TlsConfig::builder()
                         .curves(CURVES)
                         .cipher_list(join!(
                             ":",
