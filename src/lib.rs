@@ -391,6 +391,8 @@ pub use self::client::websocket::{
 pub use self::client::{
     Body, Client, ClientBuilder, ClientMut, HttpConfig, Request, RequestBuilder, Response, Upgraded,
 };
+pub use self::http1::Http1Config;
+pub use self::http2::Http2Config;
 pub use self::imp::{Impersonate, ImpersonateBuilder, ImpersonateOS};
 pub use self::proxy::{NoProxy, Proxy};
 pub use self::tls::{
@@ -404,8 +406,6 @@ pub use boring2::{
         X509,
     },
 };
-pub use http1::Http1Config;
-pub use http2::Http2Config;
 pub use hyper2::{Priority, PseudoOrder, SettingsOrder, StreamDependency, StreamId};
 
 mod client;
