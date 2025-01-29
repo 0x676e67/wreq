@@ -8,15 +8,15 @@ macro_rules! mod_generator {
             use super::*;
 
             #[inline(always)]
-            pub fn http_config(
-                _: ImpersonateOS,
-                skip_http2: bool,
-                skip_headers: bool,
-            ) -> HttpContext {
+            pub fn http_context(option: ImpersonateOption) -> HttpContext {
                 HttpContext::builder()
                     .tls_config($tls_config)
-                    .http2_config(conditional_http2!(skip_http2, $http2_config))
-                    .default_headers(conditional_headers!(skip_headers, $header_initializer, $ua))
+                    .http2_config(conditional_http2!(option.skip_http2, $http2_config))
+                    .default_headers(conditional_headers!(
+                        option.skip_headers,
+                        $header_initializer,
+                        $ua
+                    ))
                     .build()
             }
         }

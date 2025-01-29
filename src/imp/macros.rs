@@ -147,10 +147,10 @@ macro_rules! join {
 }
 
 macro_rules! impersonate_match {
-    ($ver:expr, $os:expr, $skip_http2:expr, $skip_headers:expr, $($variant:pat => $path:expr),+) => {
+    ($ver:expr, $opt:expr, $($variant:pat => $path:expr),+) => {
         match $ver {
             $(
-                $variant => $path($os, $skip_http2, $skip_headers),
+                $variant => $path($opt),
             )+
         }
     }

@@ -1,4 +1,4 @@
-//! Impersonate http_config for different browsers.
+//! Impersonate http_context for different browsers.
 #![allow(missing_debug_implementations)]
 #![allow(missing_docs)]
 
@@ -12,7 +12,6 @@ mod safari;
 use crate::{HttpContext, HttpContextProvider};
 use serde::{Deserialize, Serialize};
 use typed_builder::TypedBuilder;
-use Impersonate::*;
 
 use chrome::*;
 use firefox::*;
@@ -20,7 +19,7 @@ use okhttp::*;
 use safari::*;
 
 mod impersonate_imports {
-    pub use crate::{Http2Config, HttpContext, ImpersonateOS};
+    pub use crate::{Http2Config, HttpContext, ImpersonateOS, ImpersonateOption};
     pub use http::{
         header::{ACCEPT, ACCEPT_LANGUAGE, UPGRADE_INSECURE_REQUESTS, USER_AGENT},
         HeaderMap, HeaderName, HeaderValue,
@@ -278,66 +277,65 @@ impl HttpContextProvider for ImpersonateOption {
     fn context(self) -> HttpContext {
         impersonate_match!(
             self.impersonate,
-            self.impersonate_os,
-            self.skip_http2,
-            self.skip_headers,
-            Chrome100 => v100::http_config,
-            Chrome101 => v101::http_config,
-            Chrome104 => v104::http_config,
-            Chrome105 => v105::http_config,
-            Chrome106 => v106::http_config,
-            Chrome107 => v107::http_config,
-            Chrome108 => v108::http_config,
-            Chrome109 => v109::http_config,
-            Chrome114 => v114::http_config,
-            Chrome116 => v116::http_config,
-            Chrome117 => v117::http_config,
-            Chrome118 => v118::http_config,
-            Chrome119 => v119::http_config,
-            Chrome120 => v120::http_config,
-            Chrome123 => v123::http_config,
-            Chrome124 => v124::http_config,
-            Chrome126 => v126::http_config,
-            Chrome127 => v127::http_config,
-            Chrome128 => v128::http_config,
-            Chrome129 => v129::http_config,
-            Chrome130 => v130::http_config,
-            Chrome131 => v131::http_config,
+            self,
 
-            SafariIos17_2 => safari_ios_17_2::http_config,
-            SafariIos17_4_1 => safari_ios_17_4_1::http_config,
-            SafariIos16_5 => safari_ios_16_5::http_config,
-            Safari15_3 => safari15_3::http_config,
-            Safari15_5 => safari15_5::http_config,
-            Safari15_6_1 => safari15_6_1::http_config,
-            Safari16 => safari16::http_config,
-            Safari16_5 => safari16_5::http_config,
-            Safari17_0 => safari17_0::http_config,
-            Safari17_2_1 => safari17_2_1::http_config,
-            Safari17_4_1 => safari17_4_1::http_config,
-            Safari17_5 => safari17_5::http_config,
-            Safari18 => safari18::http_config,
-            SafariIPad18 => safari_ipad_18::http_config,
-            Safari18_2 => safari18_2::http_config,
-            SafariIos18_1_1 => safari_ios_18_1_1::http_config,
+            Impersonate::Chrome100 => v100::http_context,
+            Impersonate::Chrome101 => v101::http_context,
+            Impersonate::Chrome104 => v104::http_context,
+            Impersonate::Chrome105 => v105::http_context,
+            Impersonate::Chrome106 => v106::http_context,
+            Impersonate::Chrome107 => v107::http_context,
+            Impersonate::Chrome108 => v108::http_context,
+            Impersonate::Chrome109 => v109::http_context,
+            Impersonate::Chrome114 => v114::http_context,
+            Impersonate::Chrome116 => v116::http_context,
+            Impersonate::Chrome117 => v117::http_context,
+            Impersonate::Chrome118 => v118::http_context,
+            Impersonate::Chrome119 => v119::http_context,
+            Impersonate::Chrome120 => v120::http_context,
+            Impersonate::Chrome123 => v123::http_context,
+            Impersonate::Chrome124 => v124::http_context,
+            Impersonate::Chrome126 => v126::http_context,
+            Impersonate::Chrome127 => v127::http_context,
+            Impersonate::Chrome128 => v128::http_context,
+            Impersonate::Chrome129 => v129::http_context,
+            Impersonate::Chrome130 => v130::http_context,
+            Impersonate::Chrome131 => v131::http_context,
 
-            OkHttp3_9 => okhttp3_9::http_config,
-            OkHttp3_11 => okhttp3_11::http_config,
-            OkHttp3_13 => okhttp3_13::http_config,
-            OkHttp3_14 => okhttp3_14::http_config,
-            OkHttp4_9 => okhttp4_9::http_config,
-            OkHttp4_10 => okhttp4_10::http_config,
-            OkHttp5 => okhttp5::http_config,
+            Impersonate::SafariIos17_2 => safari_ios_17_2::http_context,
+            Impersonate::SafariIos17_4_1 => safari_ios_17_4_1::http_context,
+            Impersonate::SafariIos16_5 => safari_ios_16_5::http_context,
+            Impersonate::Safari15_3 => safari15_3::http_context,
+            Impersonate::Safari15_5 => safari15_5::http_context,
+            Impersonate::Safari15_6_1 => safari15_6_1::http_context,
+            Impersonate::Safari16 => safari16::http_context,
+            Impersonate::Safari16_5 => safari16_5::http_context,
+            Impersonate::Safari17_0 => safari17_0::http_context,
+            Impersonate::Safari17_2_1 => safari17_2_1::http_context,
+            Impersonate::Safari17_4_1 => safari17_4_1::http_context,
+            Impersonate::Safari17_5 => safari17_5::http_context,
+            Impersonate::Safari18 => safari18::http_context,
+            Impersonate::SafariIPad18 => safari_ipad_18::http_context,
+            Impersonate::Safari18_2 => safari18_2::http_context,
+            Impersonate::SafariIos18_1_1 => safari_ios_18_1_1::http_context,
 
-            Edge101 => edge101::http_config,
-            Edge122 => edge122::http_config,
-            Edge127 => edge127::http_config,
-            Edge131 => edge131::http_config,
+            Impersonate::OkHttp3_9 => okhttp3_9::http_context,
+            Impersonate::OkHttp3_11 => okhttp3_11::http_context,
+            Impersonate::OkHttp3_13 => okhttp3_13::http_context,
+            Impersonate::OkHttp3_14 => okhttp3_14::http_context,
+            Impersonate::OkHttp4_9 => okhttp4_9::http_context,
+            Impersonate::OkHttp4_10 => okhttp4_10::http_context,
+            Impersonate::OkHttp5 => okhttp5::http_context,
 
-            Firefox109 => ff109::http_config,
-            Firefox117 => ff117::http_config,
-            Firefox128 => ff128::http_config,
-            Firefox133 => ff133::http_config
+            Impersonate::Edge101 => edge101::http_context,
+            Impersonate::Edge122 => edge122::http_context,
+            Impersonate::Edge127 => edge127::http_context,
+            Impersonate::Edge131 => edge131::http_context,
+
+            Impersonate::Firefox109 => ff109::http_context,
+            Impersonate::Firefox117 => ff117::http_context,
+            Impersonate::Firefox128 => ff128::http_context,
+            Impersonate::Firefox133 => ff133::http_context
         )
     }
 }

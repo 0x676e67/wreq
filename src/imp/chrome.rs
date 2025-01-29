@@ -14,14 +14,14 @@ macro_rules! mod_generator {
             use super::*;
 
             #[inline(always)]
-            pub fn http_config(os_choice: ImpersonateOS, skip_http2: bool, skip_headers: bool) -> HttpContext {
+            pub fn http_context(option: ImpersonateOption) -> HttpContext {
                 #[allow(unreachable_patterns)]
-                match os_choice {
+                match option.impersonate_os {
                     $(
                         ImpersonateOS::$other_os => HttpContext::builder()
                             .tls_config($tls_config)
-                            .http2_config(conditional_http2!(skip_http2, $http2_config))
-                            .default_headers(conditional_headers!(skip_headers, || {
+                            .http2_config(conditional_http2!(option.skip_http2, $http2_config))
+                            .default_headers(conditional_headers!(option.skip_headers, || {
                                 $header_initializer(
                                     $other_sec_ch_ua,
                                     $other_ua,
@@ -32,8 +32,8 @@ macro_rules! mod_generator {
                     )*
                     _ => HttpContext::builder()
                         .tls_config($tls_config)
-                        .http2_config(conditional_http2!(skip_http2, $http2_config))
-                        .default_headers(conditional_headers!(skip_headers, || {
+                        .http2_config(conditional_http2!(option.skip_http2, $http2_config))
+                        .default_headers(conditional_headers!(option.skip_headers, || {
                             $header_initializer(
                                 $default_sec_ch_ua,
                                 $default_ua,

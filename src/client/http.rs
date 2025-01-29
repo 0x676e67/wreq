@@ -1,51 +1,60 @@
 use std::borrow::Cow;
+use std::future::Future;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::num::NonZeroUsize;
+use std::pin::Pin;
 use std::sync::Arc;
+use std::task::{Context, Poll};
 use std::time::Duration;
 use std::{collections::HashMap, convert::TryInto, net::SocketAddr};
 use std::{fmt, str};
 
-use crate::connect::sealed::{Conn, Unnameable};
-use crate::error::BoxError;
-use crate::util::client::{
-    Http1Builder, Http2Builder, InnerRequest, NetworkScheme, NetworkSchemeBuilder,
+use crate::connect::{
+    sealed::{Conn, Unnameable},
+    BoxedConnectorLayer, BoxedConnectorService, Connector, ConnectorBuilder,
 };
-use crate::util::rt::tokio::TokioTimer;
-use crate::util::{self, client::connect::HttpConnector, client::Builder, rt::TokioExecutor};
-use bytes::Bytes;
-use http::header::{
-    Entry, HeaderMap, HeaderValue, ACCEPT_ENCODING, CONTENT_ENCODING, CONTENT_LENGTH, CONTENT_TYPE,
-    LOCATION, PROXY_AUTHORIZATION, RANGE, REFERER, TRANSFER_ENCODING, USER_AGENT,
-};
-use http::uri::Scheme;
-use http::{HeaderName, Uri, Version};
-use pin_project_lite::pin_project;
-use std::future::Future;
-use std::pin::Pin;
-use std::task::{Context, Poll};
-use tokio::time::Sleep;
-use tower::util::BoxCloneSyncServiceLayer;
-use tower::{Layer, Service};
-
-use super::decoder::Accepts;
-use super::request::{Request, RequestBuilder};
-use super::response::Response;
-use super::{Body, HttpContext, HttpContextProvider};
-use crate::connect::{BoxedConnectorLayer, BoxedConnectorService, Connector, ConnectorBuilder};
 #[cfg(feature = "cookies")]
 use crate::cookie;
 #[cfg(feature = "hickory-dns")]
 use crate::dns::hickory::{HickoryDnsResolver, LookupIpStrategy};
 use crate::dns::{gai::GaiResolver, DnsResolverWithOverrides, DynResolver, Resolve};
+use crate::error::BoxError;
 use crate::into_url::try_uri;
+use crate::util::{
+    self,
+    client::{
+        connect::HttpConnector, Builder, Http1Builder, Http2Builder, InnerRequest, NetworkScheme,
+        NetworkSchemeBuilder,
+    },
+    rt::{tokio::TokioTimer, TokioExecutor},
+};
 use crate::{cfg_bindable_device, error, impl_debug, Http1Config, Http2Config};
 use crate::{
     redirect,
     tls::{AlpnProtos, BoringTlsConnector, RootCertStore, TlsVersion},
 };
 use crate::{IntoUrl, Method, Proxy, StatusCode, Url};
+
+use super::decoder::Accepts;
+use super::request::{Request, RequestBuilder};
+use super::response::Response;
+use super::{Body, HttpContext, HttpContextProvider};
+
+use bytes::Bytes;
+use http::{
+    header::{
+        Entry, HeaderMap, HeaderValue, ACCEPT_ENCODING, CONTENT_ENCODING, CONTENT_LENGTH,
+        CONTENT_TYPE, LOCATION, PROXY_AUTHORIZATION, RANGE, REFERER, TRANSFER_ENCODING, USER_AGENT,
+    },
+    uri::Scheme,
+    HeaderName, Uri, Version,
+};
 use log::{debug, trace};
+use pin_project_lite::pin_project;
+
+use tokio::time::Sleep;
+use tower::util::BoxCloneSyncServiceLayer;
+use tower::{Layer, Service};
 
 type HyperResponseFuture = util::client::ResponseFuture;
 
