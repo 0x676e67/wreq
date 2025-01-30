@@ -102,7 +102,7 @@ mime = "0.3.17"
 percent-encoding = "2.3"
 tokio = { version = "1", default-features = false, features = ["net","time"] }
 pin-project-lite = "0.2.0"
-ipnet = "2.10.0"
+ipnet = "2.11.0"
 
 # hyper util
 socket2 = { version = "0.5", features = ["all"] }
