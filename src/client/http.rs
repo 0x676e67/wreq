@@ -23,8 +23,8 @@ use crate::into_url::try_uri;
 use crate::util::{
     self,
     client::{
-        connect::HttpConnector, Builder, Http1Builder, Http2Builder, InnerRequest, NetworkScheme,
-        NetworkSchemeBuilder,
+        connect::HttpConnector, Builder, Client as HyperClient, Http1Builder, Http2Builder,
+        InnerRequest, NetworkScheme, NetworkSchemeBuilder,
     },
     rt::{tokio::TokioTimer, TokioExecutor},
 };
@@ -168,7 +168,7 @@ impl ClientBuilder {
                 dns_overrides: HashMap::new(),
                 dns_resolver: None,
                 base_url: None,
-                builder: util::client::Client::builder(TokioExecutor::new()),
+                builder: HyperClient::builder(TokioExecutor::new()),
                 https_only: false,
                 http2_max_retry_count: 2,
                 tls_info: false,
@@ -1177,8 +1177,6 @@ impl ClientBuilder {
     }
 }
 
-type HyperClient = util::client::Client<Connector, super::Body>;
-
 impl Default for Client {
     fn default() -> Self {
         Self::new()
@@ -1630,7 +1628,7 @@ struct ClientRef {
     cookie_store: Option<Arc<dyn cookie::CookieStore>>,
     headers: HeaderMap,
     headers_order: Option<Cow<'static, [HeaderName]>>,
-    hyper: HyperClient,
+    hyper: HyperClient<Connector, super::Body>,
     redirect: redirect::Policy,
     redirect_with_proxy_auth: bool,
     referer: bool,
