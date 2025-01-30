@@ -207,17 +207,7 @@ impl ClientBuilder {
             .pool_max_idle_per_host(config.pool_max_idle_per_host)
             .pool_max_size(config.pool_max_size);
 
-        if let Some(http1_config) = config.http_context.http1_config {
-            let builder = config.builder.http1();
-            apply_http1_config(builder, http1_config);
-        }
-
-        if let Some(http2_config) = config.http_context.http2_config {
-            let builder = config.builder.http2();
-            apply_http2_config(builder, http2_config)
-        }
-
-        let mut connector_builder = {
+        let connector = {
             let mut resolver: Arc<dyn Resolve> = if let Some(dns_resolver) = config.dns_resolver {
                 dns_resolver
             } else if config.hickory_dns {
@@ -242,23 +232,19 @@ impl ClientBuilder {
             http.set_connect_timeout(config.connect_timeout);
 
             let tls = BoringTlsConnector::new(config.http_context.tls_config)?;
-            ConnectorBuilder::new(http, tls, config.nodelay, config.tls_info)
+            let mut builder = ConnectorBuilder::new(http, tls, config.nodelay, config.tls_info);
+            builder.set_timeout(config.connect_timeout);
+            builder.set_verbose(config.connection_verbose);
+            builder.set_keepalive(config.tcp_keepalive);
+            builder.build(config.connector_layers)
         };
-
-        connector_builder.set_timeout(config.connect_timeout);
-        connector_builder.set_verbose(config.connection_verbose);
-        connector_builder.set_keepalive(config.tcp_keepalive);
-
-        let hyper = config
-            .builder
-            .build(connector_builder.build(config.connector_layers));
 
         Ok(Client {
             inner: Arc::new(ClientRef {
                 accepts: config.accepts,
                 #[cfg(feature = "cookies")]
                 cookie_store: config.cookie_store,
-                hyper,
+                hyper: config.builder.build(connector),
                 headers: config.http_context.default_headers.unwrap_or_default(),
                 headers_order: config.http_context.headers_order,
                 redirect: config.redirect_policy,
@@ -927,9 +913,6 @@ impl ClientBuilder {
     /// to use the specified HTTP context. It allows the client to mimic the behavior of different
     /// versions or setups, which can be useful for testing or ensuring compatibility with various environments.
     ///
-    /// The configuration set by this method will have the highest priority, overriding any other
-    /// config that may have been previously set.
-    ///
     /// # Arguments
     ///
     /// * `provider` - The HTTP context provider, which can be any type that implements the `HttpContextProvider` trait.
@@ -948,12 +931,20 @@ impl ClientBuilder {
     ///     .build()
     ///     .unwrap();
     /// ```
-    #[inline]
     pub fn impersonate<P>(mut self, provider: P) -> ClientBuilder
     where
         P: HttpContextProvider,
     {
-        std::mem::swap(&mut self.config.http_context, &mut provider.context());
+        let mut http_context = provider.context();
+        if let Some(http1_config) = http_context.http1_config.take() {
+            let builder = self.config.builder.http1();
+            apply_http1_config(builder, http1_config);
+        }
+        if let Some(http2_config) = http_context.http2_config.take() {
+            let builder = self.config.builder.http2();
+            apply_http2_config(builder, http2_config)
+        }
+        std::mem::swap(&mut self.config.http_context, &mut http_context);
         self
     }
 
@@ -1849,7 +1840,6 @@ impl<'c> ClientMut<'c> {
     /// let mut client = Client::builder().build().unwrap();
     /// client.impersonate(Impersonate::Firefox128);
     /// ```
-    #[inline]
     pub fn impersonate<P>(&mut self, provider: P) -> &mut ClientMut<'c>
     where
         P: HttpContextProvider,
