@@ -28,7 +28,7 @@ use crate::util::{
     },
     rt::{tokio::TokioTimer, TokioExecutor},
 };
-use crate::{cfg_bindable_device, error, impl_debug, Http1Config, Http2Config};
+use crate::{cfg_bindable_device, error, impl_debug, Http1Config, Http2Config, TlsConfig};
 use crate::{
     redirect,
     tls::{AlpnProtos, BoringTlsConnector, RootCertStore, TlsVersion},
@@ -38,7 +38,7 @@ use crate::{IntoUrl, Method, Proxy, StatusCode, Url};
 use super::decoder::Accepts;
 use super::request::{Request, RequestBuilder};
 use super::response::Response;
-use super::{Body, HttpContext, HttpContextProvider};
+use super::{Body, HttpContextProvider};
 
 use bytes::Bytes;
 use http::{
@@ -91,6 +91,8 @@ pub struct ClientBuilder {
 
 struct Config {
     // NOTE: When adding a new field, update `fmt::Debug for ClientBuilder`
+    headers: HeaderMap,
+    headers_order: Option<Cow<'static, [HeaderName]>>,
     accepts: Accepts,
     connect_timeout: Option<Duration>,
     connection_verbose: bool,
@@ -121,7 +123,7 @@ struct Config {
     tls_info: bool,
     connector_layers: Vec<BoxedConnectorLayer>,
     builder: Builder,
-    http_context: HttpContext,
+    tls_config: TlsConfig,
 }
 
 impl Default for ClientBuilder {
@@ -138,6 +140,8 @@ impl ClientBuilder {
         ClientBuilder {
             config: Config {
                 error: None,
+                headers: HeaderMap::new(),
+                headers_order: None,
                 accepts: Accepts::default(),
                 connect_timeout: None,
                 connection_verbose: false,
@@ -169,7 +173,7 @@ impl ClientBuilder {
                 http2_max_retry_count: 2,
                 tls_info: false,
                 connector_layers: Vec::new(),
-                http_context: HttpContext::default(),
+                tls_config: TlsConfig::default(),
             },
         }
     }
@@ -193,10 +197,7 @@ impl ClientBuilder {
         }
         let proxies_maybe_http_auth = proxies.iter().any(|p| p.maybe_has_http_auth());
 
-        let http2_only = matches!(
-            config.http_context.tls_config.alpn_protos,
-            AlpnProtos::Http2
-        );
+        let http2_only = matches!(config.tls_config.alpn_protos, AlpnProtos::Http2);
 
         config
             .builder
@@ -231,7 +232,7 @@ impl ClientBuilder {
             let mut http = HttpConnector::new_with_resolver(DynResolver::new(resolver));
             http.set_connect_timeout(config.connect_timeout);
 
-            let tls = BoringTlsConnector::new(config.http_context.tls_config)?;
+            let tls = BoringTlsConnector::new(config.tls_config)?;
             let mut builder = ConnectorBuilder::new(http, tls, config.nodelay, config.tls_info);
             builder.set_timeout(config.connect_timeout);
             builder.set_verbose(config.connection_verbose);
@@ -245,8 +246,8 @@ impl ClientBuilder {
                 #[cfg(feature = "cookies")]
                 cookie_store: config.cookie_store,
                 hyper: config.builder.build(connector),
-                headers: config.http_context.default_headers.unwrap_or_default(),
-                headers_order: config.http_context.headers_order,
+                headers: config.headers,
+                headers_order: config.headers_order,
                 redirect: config.redirect_policy,
                 redirect_with_proxy_auth: config.redirect_with_proxy_auth,
                 referer: config.referer,
@@ -323,11 +324,7 @@ impl ClientBuilder {
     {
         match value.try_into() {
             Ok(value) => {
-                self.config
-                    .http_context
-                    .default_headers
-                    .get_or_insert_with(Default::default)
-                    .insert(USER_AGENT, value);
+                self.config.headers.insert(USER_AGENT, value);
             }
             Err(e) => {
                 self.config.error = Some(crate::error::builder(e.into()));
@@ -380,11 +377,8 @@ impl ClientBuilder {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn default_headers(mut self, headers: HeaderMap) -> ClientBuilder {
-        std::mem::swap(
-            &mut self.config.http_context.default_headers,
-            &mut Some(headers),
-        );
+    pub fn default_headers(mut self, mut headers: HeaderMap) -> ClientBuilder {
+        std::mem::swap(&mut self.config.headers, &mut headers);
         self
     }
 
@@ -395,7 +389,7 @@ impl ClientBuilder {
     /// The host header needs to be manually inserted if you want to modify its order.
     /// Otherwise it will be inserted by hyper after sorting.
     pub fn headers_order(mut self, order: impl Into<Cow<'static, [HeaderName]>>) -> ClientBuilder {
-        self.config.http_context.headers_order = Some(order.into());
+        std::mem::swap(&mut self.config.headers_order, &mut Some(order.into()));
         self
     }
 
@@ -758,13 +752,13 @@ impl ClientBuilder {
 
     /// Only use HTTP/1.
     pub fn http1_only(mut self) -> ClientBuilder {
-        self.config.http_context.tls_config.alpn_protos = AlpnProtos::Http1;
+        self.config.tls_config.alpn_protos = AlpnProtos::Http1;
         self
     }
 
     /// Only use HTTP/2.
     pub fn http2_only(mut self) -> ClientBuilder {
-        self.config.http_context.tls_config.alpn_protos = AlpnProtos::Http2;
+        self.config.tls_config.alpn_protos = AlpnProtos::Http2;
         self
     }
 
@@ -936,6 +930,15 @@ impl ClientBuilder {
         P: HttpContextProvider,
     {
         let mut http_context = provider.context();
+
+        if let Some(mut headers) = http_context.default_headers {
+            std::mem::swap(&mut self.config.headers, &mut headers);
+        }
+
+        if let Some(headers_order) = http_context.headers_order {
+            std::mem::swap(&mut self.config.headers_order, &mut Some(headers_order));
+        }
+
         if let Some(http1_config) = http_context.http1_config.take() {
             let builder = self.config.builder.http1();
             apply_http1_config(builder, http1_config);
@@ -944,25 +947,26 @@ impl ClientBuilder {
             let builder = self.config.builder.http2();
             apply_http2_config(builder, http2_config)
         }
-        std::mem::swap(&mut self.config.http_context, &mut http_context);
+
+        std::mem::swap(&mut self.config.tls_config, &mut http_context.tls_config);
         self
     }
 
     /// Enable Encrypted Client Hello (Secure SNI)
     pub fn enable_ech_grease(mut self, enabled: bool) -> ClientBuilder {
-        self.config.http_context.tls_config.enable_ech_grease = enabled;
+        self.config.tls_config.enable_ech_grease = enabled;
         self
     }
 
     /// Enable TLS permute_extensions
     pub fn permute_extensions(mut self, enabled: bool) -> ClientBuilder {
-        self.config.http_context.tls_config.permute_extensions = Some(enabled);
+        self.config.tls_config.permute_extensions = Some(enabled);
         self
     }
 
     /// Enable TLS pre_shared_key
     pub fn pre_shared_key(mut self, enabled: bool) -> ClientBuilder {
-        self.config.http_context.tls_config.pre_shared_key = enabled;
+        self.config.tls_config.pre_shared_key = enabled;
         self
     }
 
@@ -982,7 +986,7 @@ impl ClientBuilder {
     ///
     /// feature to be enabled.
     pub fn danger_accept_invalid_certs(mut self, accept_invalid_certs: bool) -> ClientBuilder {
-        self.config.http_context.tls_config.certs_verification = !accept_invalid_certs;
+        self.config.tls_config.certs_verification = !accept_invalid_certs;
         self
     }
 
@@ -990,7 +994,7 @@ impl ClientBuilder {
     ///
     /// Defaults to `true`.
     pub fn tls_sni(mut self, tls_sni: bool) -> ClientBuilder {
-        self.config.http_context.tls_config.tls_sni = tls_sni;
+        self.config.tls_config.tls_sni = tls_sni;
         self
     }
 
@@ -1004,7 +1008,7 @@ impl ClientBuilder {
     /// used, *any* valid certificate for *any* site will be trusted for use from any other. This
     /// introduces a significant vulnerability to man-in-the-middle attacks.
     pub fn verify_hostname(mut self, verify_hostname: bool) -> ClientBuilder {
-        self.config.http_context.tls_config.verify_hostname = verify_hostname;
+        self.config.tls_config.verify_hostname = verify_hostname;
         self
     }
 
@@ -1023,7 +1027,7 @@ impl ClientBuilder {
     ///
     /// feature to be enabled.
     pub fn min_tls_version(mut self, version: TlsVersion) -> ClientBuilder {
-        self.config.http_context.tls_config.min_tls_version = Some(version);
+        self.config.tls_config.min_tls_version = Some(version);
         self
     }
 
@@ -1042,7 +1046,7 @@ impl ClientBuilder {
     ///
     /// feature to be enabled.
     pub fn max_tls_version(mut self, version: TlsVersion) -> ClientBuilder {
-        self.config.http_context.tls_config.max_tls_version = Some(version);
+        self.config.tls_config.max_tls_version = Some(version);
         self
     }
 
@@ -1069,7 +1073,7 @@ impl ClientBuilder {
     where
         S: Into<RootCertStore>,
     {
-        self.config.http_context.tls_config.root_certs_store = store.into();
+        self.config.tls_config.root_certs_store = store.into();
         self
     }
 
@@ -1601,6 +1605,8 @@ impl_debug!(
     Config,
     {
         accepts,
+        headers,
+        headers_order,
         proxies,
         redirect_policy,
         accepts,
@@ -1613,7 +1619,7 @@ impl_debug!(
         dns_overrides,
         base_url,
         builder,
-        http_context
+        tls_config
     }
 );
 
