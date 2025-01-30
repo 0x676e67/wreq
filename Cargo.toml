@@ -106,7 +106,7 @@ ipnet = "2.11.0"
 
 # hyper util
 socket2 = { version = "0.5", features = ["all"] }
-lru = { version = "0.12", default-features = false }
+lru = { version = "0.13", default-features = false }
 
 ## boring-tls
 boring2 = { version = "4.14.0", features = ["pq-experimental"] }
