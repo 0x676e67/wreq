@@ -1911,7 +1911,7 @@ impl<'c> ClientMut<'c> {
     /// Private method to load the inner `ClientRef` and return a mutable reference to it.
     #[inline]
     fn load_inner(&mut self) -> &mut ClientRef {
-        self.in
+        self.inner_ref
             .get_or_insert_with(|| (**self.inner.load()).clone())
     }
 
