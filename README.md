@@ -132,7 +132,17 @@ sudo apt-get install build-essential cmake perl pkg-config libclang-dev musl-too
 cargo build --release
 ```
 
-You can also use [this GitHub Actions workflow](https://github.com/0x676e67/rquest/blob/main/.github/compilation-guide/build.yml) to compile your project on **Linux**, **Windows**, and **macOS**.
+**Supported Platforms:**
+
+- **Linux:** amd64, aarch64, armv7
+
+- **muslLinux:** amd64, aarch64
+
+- **Windows:** amd64
+
+- **macOS:** amd64, aarch64
+
+Alternatively, you can use [this GitHub Actions workflow](https://github.com/0x676e67/rquest/blob/main/.github/compilation-guide/build.yml) to build the project on **Linux**, **Windows**, and **macOS**.
 
 ## Contribution
 
