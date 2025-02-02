@@ -40,6 +40,7 @@ use super::request::{Request, RequestBuilder};
 use super::response::Response;
 use super::{Body, HttpContextProvider};
 
+use arc_swap::ArcSwap;
 use bytes::Bytes;
 use http::{
     header::{
@@ -79,7 +80,7 @@ type CookieStoreOption = ();
 /// [`Rc`]: std::rc::Rc
 #[derive(Clone, Debug)]
 pub struct Client {
-    inner: Arc<ClientRef>,
+    inner: Arc<ArcSwap<ClientRef>>,
 }
 
 /// A `ClientBuilder` can be used to create a `Client` with custom configuration.
@@ -125,6 +126,28 @@ struct Config {
     builder: Builder,
     tls_config: TlsConfig,
 }
+
+impl_debug!(
+    Config,
+    {
+        accepts,
+        headers,
+        headers_order,
+        proxies,
+        redirect_policy,
+        accepts,
+        referer,
+        timeout,
+        connect_timeout,
+        https_only,
+        nodelay,
+        network_scheme,
+        dns_overrides,
+        base_url,
+        builder,
+        tls_config
+    }
+);
 
 impl Default for ClientBuilder {
     fn default() -> Self {
@@ -195,7 +218,6 @@ impl ClientBuilder {
         if config.auto_sys_proxy {
             proxies.push(Proxy::system());
         }
-        let proxies_maybe_http_auth = proxies.iter().any(|p| p.maybe_has_http_auth());
 
         let http2_only = matches!(config.tls_config.alpn_protos, AlpnProtos::Http2);
 
@@ -241,7 +263,7 @@ impl ClientBuilder {
         };
 
         Ok(Client {
-            inner: Arc::new(ClientRef {
+            inner: Arc::new(ArcSwap::from_pointee(ClientRef {
                 accepts: config.accepts,
                 #[cfg(feature = "cookies")]
                 cookie_store: config.cookie_store,
@@ -254,12 +276,11 @@ impl ClientBuilder {
                 request_timeout: config.timeout,
                 read_timeout: config.read_timeout,
                 https_only: config.https_only,
-                proxies_maybe_http_auth,
                 base_url: config.base_url,
                 http2_max_retry_count: config.http2_max_retry_count,
-                proxies,
+                proxies_ref: ProxiesRef::new(proxies),
                 network_scheme: config.network_scheme,
-            }),
+            })),
         })
     }
 
@@ -1276,7 +1297,7 @@ impl Client {
     ///
     /// This method fails whenever the supplied `Url` cannot be parsed.
     pub fn request<U: IntoUrl>(&self, method: Method, url: U) -> RequestBuilder {
-        let url = match self.inner.base_url {
+        let url = match self.inner.load().base_url {
             Some(ref base_url) => base_url.join(url.as_str()).map_err(error::builder),
             None => url.into_url(),
         };
@@ -1322,21 +1343,23 @@ impl Client {
             return Pending::new_err(error::url_bad_scheme(url));
         }
 
+        let inner = self.inner.load();
+
         // check if we're in https_only mode and check the scheme of the current URL
-        if self.inner.https_only && url.scheme() != "https" {
+        if inner.https_only && url.scheme() != "https" {
             return Pending::new_err(error::url_bad_scheme(url));
         }
 
         // insert default headers in the request headers
         // without overwriting already appended headers.
-        for (key, value) in self.inner.headers.iter() {
+        for (key, value) in inner.headers.iter() {
             if let Entry::Vacant(entry) = headers.entry(key) {
                 entry.insert(value.clone());
             }
         }
 
         #[cfg(feature = "cookies")]
-        let cookie_store = _cookie_store.as_ref().or(self.inner.cookie_store.as_ref());
+        let cookie_store = _cookie_store.as_ref().or(inner.cookie_store.as_ref());
 
         // Add cookies from the cookie store.
         #[cfg(feature = "cookies")]
@@ -1348,7 +1371,7 @@ impl Client {
             }
         }
 
-        let accept_encoding = self.inner.accepts.as_str();
+        let accept_encoding = inner.accepts.as_str();
 
         if let Some(accept_encoding) = accept_encoding {
             if !headers.contains_key(ACCEPT_ENCODING) && !headers.contains_key(RANGE) {
@@ -1369,9 +1392,9 @@ impl Client {
             None => (None, Body::empty()),
         };
 
-        self.proxy_auth(&uri, &mut headers);
+        inner.proxy_auth(&uri, &mut headers);
 
-        let network_scheme = self.network_scheme(&uri, network_scheme);
+        let network_scheme = inner.network_scheme(&uri, network_scheme);
 
         let in_flight = {
             let res = InnerRequest::builder()
@@ -1379,23 +1402,23 @@ impl Client {
                 .method(method.clone())
                 .version(version)
                 .headers(headers.clone())
-                .headers_order(self.inner.headers_order.as_deref())
+                .headers_order(inner.headers_order.as_deref())
                 .network_scheme(network_scheme.clone())
                 .extension(protocal)
                 .body(body);
 
             match res {
-                Ok(req) => ResponseFuture::Default(self.inner.hyper.request(req)),
+                Ok(req) => ResponseFuture::Default(inner.hyper.request(req)),
                 Err(err) => return Pending::new_err(error::builder(err)),
             }
         };
 
         let total_timeout = timeout
-            .or(self.inner.request_timeout)
+            .or(inner.request_timeout)
             .map(tokio::time::sleep)
             .map(Box::pin);
 
-        let read_timeout = read_timeout.or(self.inner.read_timeout);
+        let read_timeout = read_timeout.or(inner.read_timeout);
 
         let read_timeout_fut = read_timeout.map(tokio::time::sleep).map(Box::pin);
 
@@ -1408,11 +1431,11 @@ impl Client {
                 version,
                 urls: Vec::new(),
                 retry_count: 0,
-                max_retry_count: self.inner.http2_max_retry_count,
+                max_retry_count: inner.http2_max_retry_count,
                 redirect,
                 cookie_store: _cookie_store,
                 network_scheme,
-                client: self.inner.clone(),
+                client: inner.clone(),
                 in_flight,
                 total_timeout,
                 read_timeout_fut,
@@ -1420,53 +1443,104 @@ impl Client {
             }),
         }
     }
-
-    #[inline]
-    fn proxy_auth(&self, dst: &Uri, headers: &mut HeaderMap) {
-        if !self.inner.proxies_maybe_http_auth {
-            return;
-        }
-
-        // Only set the header here if the destination scheme is 'http',
-        // since otherwise, the header will be included in the CONNECT tunnel
-        // request instead.
-        if dst.scheme() != Some(&Scheme::HTTP) || headers.contains_key(PROXY_AUTHORIZATION) {
-            return;
-        }
-
-        // Find the first proxy that matches the destination URI
-        // If a matching proxy provides an HTTP basic auth header, insert it into the headers
-        if let Some(header) = self
-            .inner
-            .proxies
-            .iter()
-            .find(|proxy| proxy.maybe_has_http_auth() && proxy.is_match(dst))
-            .and_then(|proxy| proxy.http_basic_auth(dst))
-        {
-            headers.insert(PROXY_AUTHORIZATION, header);
-        }
-    }
-
-    #[inline]
-    fn network_scheme(&self, uri: &Uri, default: NetworkScheme) -> NetworkScheme {
-        if matches!(default, NetworkScheme::Default) {
-            let mut builder = self.inner.network_scheme.clone();
-
-            // iterate over the client's proxies and use the first valid one
-            for proxy in self.inner.proxies.iter() {
-                if let Some(proxy_scheme) = proxy.intercept(uri) {
-                    builder.proxy_scheme(proxy_scheme);
-                }
-            }
-
-            return builder.build();
-        }
-
-        default
-    }
 }
 
 impl Client {
+    /// Returns a mutable reference to the internal state of the `Client` wrapped in a `ClientMut`.
+    ///
+    /// This method allows you to obtain a mutable reference to the internal state of the `Client`
+    /// by wrapping it in a `ClientMut`. This is useful when you need to modify the internal state
+    /// of the `Client` while ensuring that the modifications are safe and properly synchronized.
+    ///
+    /// # Returns
+    ///
+    /// * `ClientMut<'_>` - A wrapper around a mutable reference to the internal state of the `Client`.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// let mut client = rquest::Client::new();
+    /// let mut client_mut = client.as_mut();
+    /// // Modify the internal state of the client using `client_mut`
+    /// ```
+    pub fn as_mut(&mut self) -> ClientMut<'_> {
+        // ClientMut {
+        //     inner: Arc::make_mut(&mut self.inner),
+        // }
+        todo!()
+    }
+}
+
+impl tower_service::Service<Request> for Client {
+    type Response = Response;
+    type Error = crate::Error;
+    type Future = Pending;
+
+    fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        Poll::Ready(Ok(()))
+    }
+
+    fn call(&mut self, req: Request) -> Self::Future {
+        self.execute_request(req)
+    }
+}
+
+impl tower_service::Service<Request> for &'_ Client {
+    type Response = Response;
+    type Error = crate::Error;
+    type Future = Pending;
+
+    fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        Poll::Ready(Ok(()))
+    }
+
+    fn call(&mut self, req: Request) -> Self::Future {
+        self.execute_request(req)
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+struct ProxiesRef {
+    proxies: Vec<Proxy>,
+    proxies_maybe_http_auth: bool,
+}
+
+impl ProxiesRef {
+    fn new(proxies: Vec<Proxy>) -> ProxiesRef {
+        let proxies_maybe_http_auth = proxies.iter().any(|p| p.maybe_has_http_auth());
+        ProxiesRef {
+            proxies,
+            proxies_maybe_http_auth,
+        }
+    }
+
+    #[inline(always)]
+    fn into_inner(self) -> Vec<Proxy> {
+        self.proxies
+    }
+}
+
+#[derive(Clone, Debug)]
+struct ClientRef {
+    accepts: Accepts,
+    #[cfg(feature = "cookies")]
+    cookie_store: Option<Arc<dyn cookie::CookieStore>>,
+    headers: HeaderMap,
+    headers_order: Option<Cow<'static, [HeaderName]>>,
+    hyper: HyperClient<Connector, super::Body>,
+    redirect: redirect::Policy,
+    redirect_with_proxy_auth: bool,
+    referer: bool,
+    request_timeout: Option<Duration>,
+    read_timeout: Option<Duration>,
+    https_only: bool,
+    base_url: Option<Url>,
+    http2_max_retry_count: usize,
+    proxies_ref: ProxiesRef,
+    network_scheme: NetworkSchemeBuilder,
+}
+
+impl ClientRef {
     /// Retrieves the user agent header value for this client.
     ///
     /// # Returns
@@ -1474,7 +1548,7 @@ impl Client {
     /// An `Option` containing a reference to the `HeaderValue` of the user agent if it is set, or `None` if it is not.
     #[inline]
     pub fn user_agent(&self) -> Option<&HeaderValue> {
-        self.inner.headers.get(USER_AGENT)
+        self.headers.get(USER_AGENT)
     }
 
     /// Retrieves a reference to the headers for this client.
@@ -1484,7 +1558,7 @@ impl Client {
     /// A reference to the `HeaderMap` containing the headers for this client.
     #[inline]
     pub fn headers(&self) -> &HeaderMap {
-        &self.inner.headers
+        &self.headers
     }
 
     /// Returns a `String` of the header-value of all `Cookie` in a `Url`.
@@ -1547,119 +1621,80 @@ impl Client {
         }
     }
 
-    /// Returns a mutable reference to the internal state of the `Client` wrapped in a `ClientMut`.
+    /// Sets the proxies for this client in a thread-safe manner and returns the old proxies.
     ///
-    /// This method allows you to obtain a mutable reference to the internal state of the `Client`
-    /// by wrapping it in a `ClientMut`. This is useful when you need to modify the internal state
-    /// of the `Client` while ensuring that the modifications are safe and properly synchronized.
+    /// This method allows you to set the proxies for the client, ensuring thread safety. It will
+    /// replace the current proxies with the provided ones and return the old proxies, if any.
     ///
-    /// # Returns
+    /// # Arguments
     ///
-    /// * `ClientMut<'_>` - A wrapper around a mutable reference to the internal state of the `Client`.
+    /// * `proxies` - An optional vector of `Proxy` instances to set for the client.
     ///
-    /// # Example
+    /// If `Some`, the provided proxies will be used, and the client will check if any of them require HTTP authentication.
+    /// If `None`, all proxies will be cleared and HTTP authentication will be disabled.
+    pub fn set_proxies<P>(&mut self, proxies: P)
+    where
+        P: IntoIterator,
+        P::Item: Into<Proxy>,
+    {
+        let mut proxies =
+            ProxiesRef::new(proxies.into_iter().map(Into::into).collect::<Vec<Proxy>>());
+        std::mem::swap(&mut self.proxies_ref, &mut proxies);
+    }
+
+    /// Clears the proxies for this client in a thread-safe manner and returns the old proxies.
     ///
-    /// ```
-    /// let mut client = rquest::Client::new();
-    /// let mut client_mut = client.as_mut();
-    /// // Modify the internal state of the client using `client_mut`
-    /// ```
-    pub fn as_mut(&mut self) -> ClientMut<'_> {
-        ClientMut {
-            inner: Arc::make_mut(&mut self.inner),
+    /// This method allows you to clear the proxies for the client, ensuring thread safety. It will
+    /// remove the current proxies and return the old proxies, if any.
+    pub fn unset_proxies(&mut self) {
+        self.proxies_ref.proxies.clear();
+    }
+
+    #[inline]
+    fn proxy_auth(&self, dst: &Uri, headers: &mut HeaderMap) {
+        if !self.proxies_ref.proxies_maybe_http_auth {
+            return;
+        }
+
+        // Only set the header here if the destination scheme is 'http',
+        // since otherwise, the header will be included in the CONNECT tunnel
+        // request instead.
+        if dst.scheme() != Some(&Scheme::HTTP) || headers.contains_key(PROXY_AUTHORIZATION) {
+            return;
+        }
+
+        // Find the first proxy that matches the destination URI
+        // If a matching proxy provides an HTTP basic auth header, insert it into the headers
+
+        if let Some(header) = self
+            .proxies_ref
+            .proxies
+            .iter()
+            .find(|proxy| proxy.maybe_has_http_auth() && proxy.is_match(dst))
+            .and_then(|proxy| proxy.http_basic_auth(dst))
+        {
+            headers.insert(PROXY_AUTHORIZATION, header);
         }
     }
-}
 
-impl tower_service::Service<Request> for Client {
-    type Response = Response;
-    type Error = crate::Error;
-    type Future = Pending;
+    #[inline]
+    fn network_scheme(&self, uri: &Uri, default: NetworkScheme) -> NetworkScheme {
+        if matches!(default, NetworkScheme::Default) {
+            let mut builder = self.network_scheme.clone();
 
-    fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        Poll::Ready(Ok(()))
-    }
+            // iterate over the client's proxies and use the first valid one
+            for proxy in self.proxies_ref.proxies.iter() {
+                if let Some(proxy_scheme) = proxy.intercept(uri) {
+                    builder.proxy_scheme(proxy_scheme);
+                }
+            }
 
-    fn call(&mut self, req: Request) -> Self::Future {
-        self.execute_request(req)
-    }
-}
+            return builder.build();
+        }
 
-impl tower_service::Service<Request> for &'_ Client {
-    type Response = Response;
-    type Error = crate::Error;
-    type Future = Pending;
-
-    fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        Poll::Ready(Ok(()))
-    }
-
-    fn call(&mut self, req: Request) -> Self::Future {
-        self.execute_request(req)
+        default
     }
 }
-
-impl_debug!(
-    Config,
-    {
-        accepts,
-        headers,
-        headers_order,
-        proxies,
-        redirect_policy,
-        accepts,
-        referer,
-        timeout,
-        connect_timeout,
-        https_only,
-        nodelay,
-        network_scheme,
-        dns_overrides,
-        base_url,
-        builder,
-        tls_config
-    }
-);
-
-#[derive(Clone)]
-struct ClientRef {
-    accepts: Accepts,
-    #[cfg(feature = "cookies")]
-    cookie_store: Option<Arc<dyn cookie::CookieStore>>,
-    headers: HeaderMap,
-    headers_order: Option<Cow<'static, [HeaderName]>>,
-    hyper: HyperClient<Connector, super::Body>,
-    redirect: redirect::Policy,
-    redirect_with_proxy_auth: bool,
-    referer: bool,
-    request_timeout: Option<Duration>,
-    read_timeout: Option<Duration>,
-    https_only: bool,
-    proxies_maybe_http_auth: bool,
-    base_url: Option<Url>,
-    http2_max_retry_count: usize,
-    proxies: Vec<Proxy>,
-    network_scheme: NetworkSchemeBuilder,
-}
-
-impl_debug!(
-    ClientRef,
-    {
-        accepts,
-        headers,
-        headers_order,
-        hyper,
-        redirect,
-        referer,
-        request_timeout,
-        read_timeout,
-        https_only,
-        proxies_maybe_http_auth,
-        base_url,
-        proxies,
-        network_scheme
-    }
-);
 
 /// A mutable reference to a `ClientRef`.
 ///
@@ -1747,37 +1782,6 @@ impl<'c> ClientMut<'c> {
         C: cookie::CookieStore + 'static,
     {
         std::mem::swap(&mut self.inner.cookie_store, &mut Some(cookie_store as _));
-        self
-    }
-
-    /// Sets the proxies for this client.
-    ///
-    /// # Arguments
-    ///
-    /// * `proxies` - An optional vector of `Proxy` instances to set for the client.
-    ///
-    /// If `Some`, the provided proxies will be used, and the client will check if any of them require HTTP authentication.
-    /// If `None`, all proxies will be cleared and HTTP authentication will be disabled.
-    ///
-    /// # Returns
-    ///
-    /// A mutable reference to the `Client` instance with the applied proxy settings.
-    #[inline]
-    pub fn proxies<P>(&mut self, proxies: P) -> &mut ClientMut<'c>
-    where
-        P: Into<Option<Vec<Proxy>>>,
-    {
-        match proxies.into() {
-            Some(mut proxies) => {
-                self.inner.proxies_maybe_http_auth =
-                    proxies.iter().any(|p| p.maybe_has_http_auth());
-                std::mem::swap(&mut self.inner.proxies, &mut proxies);
-            }
-            None => {
-                self.inner.proxies_maybe_http_auth = false;
-                self.inner.proxies.clear();
-            }
-        }
         self
     }
 

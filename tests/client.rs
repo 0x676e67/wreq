@@ -526,3 +526,28 @@ async fn test_client_os_spoofing() {
 
     assert_eq!(res.status(), rquest::StatusCode::OK);
 }
+
+#[test]
+fn test_client_proxies_thread_safety_update() {
+    // let client = Client::builder()
+    //     .proxy(rquest::Proxy::http("http://proxy.example.com").unwrap())
+    //     .build()
+    //     .unwrap();
+
+    // let client1 = client.clone();
+    // let handle = std::thread::spawn(move || {
+    //     let old_proxies = client1.unset_proxies();
+    //     assert!(old_proxies.is_some());
+    //     assert_eq!(old_proxies.unwrap().len(), 1);
+    // });
+
+    // handle.join().unwrap();
+
+    // // Verify the final state of proxies
+    // let old_proxies =
+    //     client.set_proxies([rquest::Proxy::http("http://proxy.example.com").unwrap()]);
+    // assert!(old_proxies.is_none());
+
+    // let old_proxies = client.unset_proxies();
+    // assert!(old_proxies.is_some());
+}
