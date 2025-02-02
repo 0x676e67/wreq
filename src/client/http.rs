@@ -28,7 +28,7 @@ use crate::util::{
     },
     rt::{tokio::TokioTimer, TokioExecutor},
 };
-use crate::{cfg_bindable_device, error, impl_debug, Http1Config, Http2Config, TlsConfig};
+use crate::{cfg_bindable_device, error, impl_debug, Error, Http1Config, Http2Config, TlsConfig};
 use crate::{
     redirect,
     tls::{AlpnProtos, BoringTlsConnector, RootCertStore, TlsVersion},
@@ -1538,6 +1538,7 @@ impl Client {
         ClientMut {
             inner: self.inner.as_ref(),
             inner_ref: None,
+            error: None,
         }
     }
 }
@@ -1683,6 +1684,7 @@ impl_debug!(ClientRef,{
 pub struct ClientMut<'c> {
     inner: &'c ArcSwap<ClientRef>,
     inner_ref: Option<ClientRef>,
+    error: Option<crate::Error>,
 }
 
 impl<'c> ClientMut<'c> {
@@ -1735,7 +1737,10 @@ impl<'c> ClientMut<'c> {
     where
         T: Into<Cow<'static, [HeaderName]>>,
     {
-        std::mem::swap(&mut self.load_inner().headers_order, &mut Some(order.into()));
+        std::mem::swap(
+            &mut self.load_inner().headers_order,
+            &mut Some(order.into()),
+        );
         self
     }
 
@@ -1901,7 +1906,10 @@ impl<'c> ClientMut<'c> {
                 inner.hyper.connector_mut().set_connector(connector);
             }
             Err(err) => {
-                log::warn!("Failed to create BoringTlsConnector: {}", err)
+                self.error = Some(error::builder(format!(
+                    "Failed to create BoringTlsConnector: {}",
+                    err
+                )))
             }
         }
 
@@ -1917,10 +1925,16 @@ impl<'c> ClientMut<'c> {
 
     /// Applies the changes made to the `ClientMut` to the `Client`.
     #[inline]
-    pub fn apply(self) {
+    pub fn apply(self) -> Result<(), Error> {
+        if let Some(err) = self.error {
+            return Err(err);
+        }
+
         if let Some(inner_ref) = self.inner_ref {
             self.inner.store(Arc::new(inner_ref));
         }
+
+        Ok(())
     }
 }
 

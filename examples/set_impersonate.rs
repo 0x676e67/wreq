@@ -8,7 +8,7 @@ async fn main() -> Result<(), rquest::Error> {
         .build()?;
 
     // Change the impersonate to Safari18
-    client.as_mut().impersonate(Impersonate::Safari18).apply();
+    client.as_mut().impersonate(Impersonate::Safari18).apply()?;
     let resp = client.get("https://tls.peet.ws/api/all").send().await?;
     println!("{}", resp.text().await?);
 

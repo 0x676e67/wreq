@@ -19,7 +19,7 @@ async fn main() -> Result<(), rquest::Error> {
         .build()?;
 
     // Set the interface to eth1
-    client.as_mut().interface("eth1").apply();
+    client.as_mut().interface("eth1").apply()?;
 
     // Use the API you're already familiar with
     let resp = client.get("https://api.ip.sb/ip").send().await?;

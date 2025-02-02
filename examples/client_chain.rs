@@ -32,7 +32,7 @@ async fn main() -> Result<(), rquest::Error> {
         .headers_order(HEADER_ORDER)
         .interface("utun4")
         .base_url("https://tls.peet.ws")
-        .apply();
+        .apply()?;
 
     let text = client.get("/api/all").send().await?.text().await?;
     println!("{}", text);

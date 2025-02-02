@@ -16,7 +16,7 @@ async fn main() -> Result<(), rquest::Error> {
     client
         .as_mut()
         .local_address(IpAddr::from([172, 200, 10, 2]))
-        .apply();
+        .apply()?;
 
     // Use the API you're already familiar with
     let resp = client.get("https://api.ip.sb/ip").send().await?;

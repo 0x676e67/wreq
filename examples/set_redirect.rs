@@ -12,7 +12,7 @@ async fn main() -> Result<(), rquest::Error> {
         .build()?;
 
     // Set the redirect policy
-    client.as_mut().redirect(Policy::default()).apply();
+    client.as_mut().redirect(Policy::default()).apply()?;
 
     // Use the API you're already familiar with
     let text = client
