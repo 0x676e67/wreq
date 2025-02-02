@@ -1536,8 +1536,8 @@ impl Client {
     /// ```
     pub fn as_mut(&self) -> ClientMut<'_> {
         ClientMut {
-            inner: &self.inner,
-            inner_ref: (**self.inner.load()).clone(),
+            inner: self.inner.as_ref(),
+            inner_ref: None,
         }
     }
 }
@@ -1681,8 +1681,8 @@ impl_debug!(ClientRef,{
 /// This struct provides methods to mutate the state of a `ClientRef`.
 #[derive(Debug)]
 pub struct ClientMut<'c> {
-    inner: &'c Arc<ArcSwap<ClientRef>>,
-    inner_ref: ClientRef,
+    inner: &'c ArcSwap<ClientRef>,
+    inner_ref: Option<ClientRef>,
 }
 
 impl<'c> ClientMut<'c> {
@@ -1702,7 +1702,7 @@ impl<'c> ClientMut<'c> {
     where
         F: FnOnce(&mut HeaderMap),
     {
-        f(&mut self.inner_ref.headers);
+        f(&mut self.load_inner().headers);
         self
     }
 
@@ -1717,7 +1717,7 @@ impl<'c> ClientMut<'c> {
     /// A mutable reference to the `Client` instance with the applied base URL.
     pub fn base_url<U: IntoUrl>(mut self, url: U) -> ClientMut<'c> {
         if let Ok(url) = url.into_url() {
-            std::mem::swap(&mut self.inner_ref.base_url, &mut Some(url));
+            std::mem::swap(&mut self.load_inner().base_url, &mut Some(url));
         }
         self
     }
@@ -1735,7 +1735,7 @@ impl<'c> ClientMut<'c> {
     where
         T: Into<Cow<'static, [HeaderName]>>,
     {
-        std::mem::swap(&mut self.inner_ref.headers_order, &mut Some(order.into()));
+        std::mem::swap(&mut self.load_inner().headers_order, &mut Some(order.into()));
         self
     }
 
@@ -1749,7 +1749,7 @@ impl<'c> ClientMut<'c> {
     ///
     /// A mutable reference to the `Client` instance with the applied redirect policy.
     pub fn redirect(mut self, mut policy: redirect::Policy) -> ClientMut<'c> {
-        std::mem::swap(&mut self.inner_ref.redirect, &mut policy);
+        std::mem::swap(&mut self.load_inner().redirect, &mut policy);
         self
     }
 
@@ -1763,7 +1763,7 @@ impl<'c> ClientMut<'c> {
     ///
     /// A mutable reference to the `Client` instance with the applied setting.
     pub fn redirect_with_proxy_auth(mut self, enabled: bool) -> ClientMut<'c> {
-        self.inner_ref.redirect_with_proxy_auth = enabled;
+        self.load_inner().redirect_with_proxy_auth = enabled;
         self
     }
 
@@ -1774,7 +1774,7 @@ impl<'c> ClientMut<'c> {
         C: cookie::CookieStore + 'static,
     {
         std::mem::swap(
-            &mut self.inner_ref.cookie_store,
+            &mut self.load_inner().cookie_store,
             &mut Some(cookie_store as _),
         );
         self
@@ -1790,7 +1790,7 @@ impl<'c> ClientMut<'c> {
     where
         T: Into<Option<IpAddr>>,
     {
-        self.inner_ref.network_scheme.address(addr.into());
+        self.load_inner().network_scheme.address(addr.into());
         self
     }
 
@@ -1802,7 +1802,7 @@ impl<'c> ClientMut<'c> {
         V4: Into<Option<Ipv4Addr>>,
         V6: Into<Option<Ipv6Addr>>,
     {
-        self.inner_ref.network_scheme.addresses(ipv4, ipv6);
+        self.load_inner().network_scheme.addresses(ipv4, ipv6);
         self
     }
 
@@ -1813,7 +1813,7 @@ impl<'c> ClientMut<'c> {
         where
             T: Into<Cow<'static, str>>,
         {
-            self.inner_ref.network_scheme.interface(interface);
+            self.load_inner().network_scheme.interface(interface);
             self
         }
     }
@@ -1834,9 +1834,8 @@ impl<'c> ClientMut<'c> {
         P: IntoIterator,
         P::Item: Into<Proxy>,
     {
-        let mut proxies =
-            Proxies::new(proxies.into_iter().map(Into::into).collect::<Vec<Proxy>>());
-        std::mem::swap(&mut self.inner_ref.proxies, &mut proxies);
+        let mut proxies = Proxies::new(proxies.into_iter().map(Into::into).collect::<Vec<Proxy>>());
+        std::mem::swap(&mut self.load_inner().proxies, &mut proxies);
         self
     }
 
@@ -1845,7 +1844,7 @@ impl<'c> ClientMut<'c> {
     /// This method allows you to clear the proxies for the client, ensuring thread safety. It will
     /// remove the current proxies and return the old proxies, if any.
     pub fn unset_proxies(mut self) -> ClientMut<'c> {
-        self.inner_ref.proxies.clear();
+        self.load_inner().proxies.clear();
         self
     }
 
@@ -1879,7 +1878,7 @@ impl<'c> ClientMut<'c> {
         P: HttpContextProvider,
     {
         let context = provider.context();
-        let inner = &mut self.inner_ref;
+        let inner = &mut self.load_inner();
 
         if let Some(mut headers) = context.default_headers {
             std::mem::swap(&mut inner.headers, &mut headers);
@@ -1909,9 +1908,19 @@ impl<'c> ClientMut<'c> {
         self
     }
 
+    /// Private method to load the inner `ClientRef` and return a mutable reference to it.
+    #[inline]
+    fn load_inner(&mut self) -> &mut ClientRef {
+        self.in
+            .get_or_insert_with(|| (**self.inner.load()).clone())
+    }
+
     /// Applies the changes made to the `ClientMut` to the `Client`.
+    #[inline]
     pub fn apply(self) {
-        self.inner.store(Arc::new(self.inner_ref));
+        if let Some(inner_ref) = self.inner_ref {
+            self.inner.store(Arc::new(inner_ref));
+        }
     }
 }
 
