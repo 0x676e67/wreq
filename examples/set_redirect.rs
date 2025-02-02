@@ -7,12 +7,12 @@ async fn main() -> Result<(), rquest::Error> {
         .init();
 
     // Build a client to impersonate Safari18
-    let mut client = rquest::Client::builder()
+    let client = rquest::Client::builder()
         .impersonate(Impersonate::Safari18)
         .build()?;
 
     // Set the redirect policy
-    client.as_mut().redirect(Policy::default());
+    client.as_mut().redirect(Policy::default()).apply();
 
     // Use the API you're already familiar with
     let text = client
