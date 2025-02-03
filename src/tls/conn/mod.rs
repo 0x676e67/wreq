@@ -87,8 +87,9 @@ pub struct HttpsLayerSettings {
     enable_ech_grease: bool,
     verify_hostname: bool,
     tls_sni: bool,
-    alps_protos: Option<AlpsProtos>,
     alpn_protos: AlpnProtos,
+    alps_protos: Option<AlpsProtos>,
+    alps_use_new_codepoint: bool,
 }
 
 impl HttpsLayerSettings {
@@ -107,8 +108,9 @@ impl Default for HttpsLayerSettings {
             enable_ech_grease: false,
             verify_hostname: true,
             tls_sni: true,
-            alps_protos: None,
             alpn_protos: AlpnProtos::All,
+            alps_protos: None,
+            alps_use_new_codepoint: false,
         }
     }
 }
@@ -163,6 +165,13 @@ impl HttpsLayerSettingsBuilder {
     #[inline]
     pub fn alps_protos(mut self, alps: Option<AlpsProtos>) -> Self {
         self.0.alps_protos = alps;
+        self
+    }
+
+    /// Sets whether to use the new ALPS codepoint. Defaults to `false`.
+    #[inline]
+    pub fn alps_use_new_codepoint(mut self, enable: bool) -> Self {
+        self.0.alps_use_new_codepoint = enable;
         self
     }
 
