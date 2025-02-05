@@ -195,7 +195,7 @@ impl Dst {
 
     #[inline(always)]
     pub(crate) fn is_h2(&self) -> bool {
-        self.alpn_protos.map_or(false, |a| a == AlpnProtos::Http2)
+        self.alpn_protos == Some(AlpnProtos::Http2)
     }
 
     #[inline(always)]
