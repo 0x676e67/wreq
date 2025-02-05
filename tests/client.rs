@@ -3,7 +3,10 @@ mod support;
 
 use support::server;
 
-use http::header::{CONTENT_LENGTH, CONTENT_TYPE, TRANSFER_ENCODING};
+use http::{
+    header::{CONTENT_LENGTH, CONTENT_TYPE, TRANSFER_ENCODING},
+    Version,
+};
 #[cfg(feature = "json")]
 use std::collections::HashMap;
 
@@ -322,25 +325,6 @@ async fn overridden_dns_resolution_with_hickory_dns_multiple() {
     assert_eq!("Hello", text);
 }
 
-#[tokio::test]
-#[ignore = "Needs TLS support in the test server"]
-async fn http2_upgrade() {
-    let server = server::http(move |_| async move { http::Response::default() });
-
-    let url = format!("https://localhost:{}", server.addr().port());
-    let res = rquest::Client::builder()
-        .danger_accept_invalid_certs(true)
-        .build()
-        .expect("client builder")
-        .get(&url)
-        .send()
-        .await
-        .expect("request");
-
-    assert_eq!(res.status(), rquest::StatusCode::OK);
-    assert_eq!(res.version(), rquest::Version::HTTP_2);
-}
-
 #[test]
 #[cfg(feature = "json")]
 fn add_json_default_content_type_if_not_set_manually() {
@@ -525,4 +509,51 @@ async fn test_client_os_spoofing() {
         .expect("request");
 
     assert_eq!(res.status(), rquest::StatusCode::OK);
+}
+
+#[tokio::test]
+async fn default_http_version() {
+    let server = server::http(move |_| async move { http::Response::default() });
+
+    let resp = rquest::Client::builder()
+        .build()
+        .unwrap()
+        .get(format!("http://{}", server.addr()))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.version(), rquest::Version::HTTP_11);
+}
+
+#[tokio::test]
+async fn http1_version() {
+    let server = server::http(move |_| async move { http::Response::default() });
+
+    let resp = rquest::Client::builder()
+        .build()
+        .unwrap()
+        .get(format!("http://{}", server.addr()))
+        .version(Version::HTTP_11)
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.version(), rquest::Version::HTTP_11);
+}
+
+#[tokio::test]
+async fn http2_version() {
+    let server = server::http(move |_| async move { http::Response::default() });
+
+    let resp = rquest::Client::builder()
+        .build()
+        .unwrap()
+        .get(format!("http://{}", server.addr()))
+        .version(Version::HTTP_2)
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.version(), rquest::Version::HTTP_2);
 }

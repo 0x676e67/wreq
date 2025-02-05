@@ -177,32 +177,32 @@ impl Dst {
             .map_err(|_| e!(UserAbsoluteUriRequired))
     }
 
-    /// Get the URI
     #[inline(always)]
     pub(crate) fn uri(&self) -> &Uri {
         &self.inner.uri
     }
 
-    /// Set the next destination of the request (for proxy)
     #[inline(always)]
     pub(crate) fn set_uri(&mut self, mut uri: Uri) {
         let inner = Arc::make_mut(&mut self.inner);
         std::mem::swap(&mut inner.uri, &mut uri);
     }
 
-    /// Get the alpn protos
     #[inline(always)]
     pub(crate) fn alpn_protos(&self) -> Option<AlpnProtos> {
         self.alpn_protos
     }
 
-    /// Take network scheme for iface
+    #[inline(always)]
+    pub(crate) fn is_h2(&self) -> bool {
+        self.alpn_protos.map_or(false, |a| a == AlpnProtos::Http2)
+    }
+
     #[inline(always)]
     pub(crate) fn take_addresses(&mut self) -> (Option<Ipv4Addr>, Option<Ipv6Addr>) {
         Arc::make_mut(&mut self.inner).network.take_addresses()
     }
 
-    /// Take the network scheme for iface
     #[inline(always)]
     pub(crate) fn take_interface(&mut self) -> Option<std::borrow::Cow<'static, str>> {
         cfg_bindable_device! {
@@ -212,7 +212,6 @@ impl Dst {
         cfg_non_bindable_device!(None)
     }
 
-    /// Take the network scheme for proxy
     #[inline(always)]
     pub(crate) fn take_proxy_scheme(&mut self) -> Option<ProxyScheme> {
         Arc::make_mut(&mut self.inner).network.take_proxy_scheme()
@@ -325,7 +324,7 @@ where
     /// # fn main() {}
     /// ```
     pub fn request(&self, req: InnerRequest<B>) -> ResponseFuture {
-        let (mut req, network_scheme, http_version_pref) = req.pieces();
+        let (mut req, network_scheme, alpn_protos) = req.pieces();
         let is_http_connect = req.method() == Method::CONNECT;
         match req.version() {
             Version::HTTP_10 => {
@@ -339,12 +338,7 @@ where
             other => return ResponseFuture::error_version(other),
         };
 
-        let ctx = match Dst::new(
-            req.uri_mut(),
-            is_http_connect,
-            network_scheme,
-            http_version_pref,
-        ) {
+        let ctx = match Dst::new(req.uri_mut(), is_http_connect, network_scheme, alpn_protos) {
             Ok(s) => s,
             Err(err) => {
                 return ResponseFuture::new(future::err(err));
@@ -619,7 +613,11 @@ where
 
         let h1_builder = self.h1_builder.clone();
         let h2_builder = self.h2_builder.clone();
-        let ver = self.config.ver;
+        let ver = if dst.is_h2() {
+            Ver::Http2
+        } else {
+            self.config.ver
+        };
         let is_ver_h2 = ver == Ver::Http2;
         let connector = self.connector.clone();
         hyper_lazy(move || {

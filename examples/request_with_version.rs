@@ -19,7 +19,7 @@ async fn main() -> Result<(), rquest::Error> {
         .send()
         .await?;
 
-    println!("{:?}", resp.version());
+    assert_eq!(resp.version(), Version::HTTP_11);
     println!("{}", resp.text().await?);
 
     Ok(())
