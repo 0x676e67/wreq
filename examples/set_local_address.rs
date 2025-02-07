@@ -14,7 +14,7 @@ async fn main() -> Result<(), rquest::Error> {
 
     // Set the local address to `172.200.10.2`
     client
-        .client_mut()
+        .as_mut()
         .local_address(IpAddr::from([172, 200, 10, 2]))
         .apply()?;
 

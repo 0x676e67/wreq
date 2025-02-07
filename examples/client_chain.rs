@@ -27,7 +27,7 @@ async fn main() -> Result<(), rquest::Error> {
         .build()?;
 
     client
-        .client_mut()
+        .as_mut()
         .impersonate(Impersonate::Safari18)
         .headers_order(HEADER_ORDER)
         .interface("utun4")

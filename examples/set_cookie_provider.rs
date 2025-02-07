@@ -16,12 +16,12 @@ async fn main() -> Result<(), rquest::Error> {
 
     // Set cookie provider
     client
-        .client_mut()
+        .as_mut()
         .cookie_provider(Arc::new(Jar::default()))
         .apply()?;
 
     // Set a cookie
-    client.client_ref().set_cookies(
+    client.as_ref().set_cookies(
         &url,
         vec![HeaderValue::from_static("foo=bar; Domain=tls.peet.ws")],
     );

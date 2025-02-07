@@ -1460,10 +1460,10 @@ impl Client {
     ///
     /// ```
     /// let client = rquest::Client::new();
-    /// let client_ref = client.client_ref();
-    /// // Access the internal state of the client using `client_ref`
+    /// let as_ref = client.as_ref();
+    /// // Access the internal state of the client using `as_ref`
     /// ```
-    pub fn client_ref(&self) -> ClientRef {
+    pub fn as_ref(&self) -> ClientRef {
         ClientRef {
             inner: self.inner.load(),
         }
@@ -1483,10 +1483,10 @@ impl Client {
     ///
     /// ```
     /// let mut client = rquest::Client::new();
-    /// let mut client_mut = client.client_mut();
-    /// // Modify the internal state of the client using `client_mut`
+    /// let mut as_mut = client.as_mut();
+    /// // Modify the internal state of the client using `as_mut`
     /// ```
-    pub fn client_mut(&self) -> ClientMut<'_> {
+    pub fn as_mut(&self) -> ClientMut<'_> {
         ClientMut {
             inner: self.inner.as_ref(),
             inner_ref: (**self.inner.load()).clone(),
@@ -1658,9 +1658,9 @@ impl_debug!(ClientInner,{
 ///
 /// ```rust
 /// let client = rquest::Client::new();
-/// let client_ref = client.as_ref();
-/// // Access the internal state of the client using `client_ref`
-/// let headers = client_ref.headers();
+/// let as_ref = client.as_ref();
+/// // Access the internal state of the client using `as_ref`
+/// let headers = as_ref.headers();
 /// ```
 #[derive(Debug)]
 pub struct ClientRef {
