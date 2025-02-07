@@ -1,7 +1,7 @@
 use super::cert::{compression::CertCompressionAlgorithm, RootCertStore};
 use super::{sv_handler, AlpnProtos, AlpsProtos, TlsResult, TlsVersion};
 
-use boring2::ssl::{ConnectConfiguration, SslConnectorBuilder, SslRef, SslVerifyMode};
+use boring2::ssl::{ConnectConfiguration, SslConnectorBuilder, SslOptions, SslRef, SslVerifyMode};
 use boring_sys2 as ffi;
 use foreign_types::ForeignTypeRef;
 
@@ -117,7 +117,10 @@ impl SslConnectorBuilderExt for SslConnectorBuilder {
 impl ConnectConfigurationExt for ConnectConfiguration {
     #[inline]
     fn enable_ech_grease(&mut self, enable: bool) -> TlsResult<&mut ConnectConfiguration> {
-        unsafe { ffi::SSL_set_enable_ech_grease(self.as_ptr(), enable as _) }
+        if enable {
+            self.set_enable_ech_grease(enable);
+        }
+
         Ok(self)
     }
 
@@ -128,20 +131,10 @@ impl ConnectConfigurationExt for ConnectConfiguration {
         new_endpoint: bool,
     ) -> TlsResult<&mut ConnectConfiguration> {
         if let Some(alps) = alps {
-            sv_handler(unsafe {
-                ffi::SSL_add_application_settings(
-                    self.as_ptr(),
-                    alps.as_ptr(),
-                    alps.len(),
-                    std::ptr::null(),
-                    0,
-                )
-            })?;
+            self.add_application_settings(alps.0)?;
 
             if new_endpoint {
-                unsafe {
-                    ffi::SSL_set_alps_use_new_codepoint(self.as_ptr(), new_endpoint as _);
-                }
+                self.set_alps_use_new_codepoint(new_endpoint);
             }
         }
 
@@ -150,8 +143,7 @@ impl ConnectConfigurationExt for ConnectConfiguration {
 
     #[inline]
     fn skip_session_ticket(&mut self) -> TlsResult<&mut ConnectConfiguration> {
-        sv_handler(unsafe { ffi::SSL_set_options(self.as_ptr(), ffi::SSL_OP_NO_TICKET as _) as _ })
-            .map(|_| self)
+        self.set_options(SslOptions::NO_TICKET).map(|_| self)
     }
 }
 

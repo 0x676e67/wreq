@@ -176,16 +176,6 @@ impl AlpsProtos {
     pub const HTTP1: AlpsProtos = AlpsProtos(b"http/1.1");
     /// Application Settings protocol for HTTP/2
     pub const HTTP2: AlpsProtos = AlpsProtos(b"h2");
-
-    #[inline(always)]
-    pub(crate) fn as_ptr(&self) -> *const u8 {
-        self.0.as_ptr()
-    }
-
-    #[inline(always)]
-    pub(crate) fn len(&self) -> usize {
-        self.0.len()
-    }
 }
 
 /// Hyper extension carrying extra TLS layer information.
