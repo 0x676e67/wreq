@@ -109,15 +109,9 @@ socket2 = { version = "0.5", features = ["all"] }
 lru = { version = "0.13", default-features = false }
 
 ## boring-tls
-boring2 = { version = "4.15.1", features = ["pq-experimental"] }
-boring-sys2 = { version = "4.15.1", features = ["pq-experimental"] }
-tokio-boring2 = { version = "4.15.1", features = ["pq-experimental"] }
+boring2 = { version = "4.15.2", features = ["pq-experimental", "cert-compression"] }
+tokio-boring2 = { version = "4.15.2", features = ["pq-experimental"] }
 linked_hash_set = "0.1"
-
-## cert compression
-brotli = "7"
-flate2 = "1"
-zstd = "0.13"
 
 # Optional deps...
 

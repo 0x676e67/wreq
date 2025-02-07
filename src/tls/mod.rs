@@ -13,26 +13,17 @@ use crate::impl_debug;
 use boring2::ssl::SslCurve;
 use boring2::{
     error::ErrorStack,
-    ssl::{SslConnector, SslMethod, SslOptions, SslVersion},
+    ssl::{CertCompressionAlgorithm, SslConnector, SslMethod, SslOptions, SslVersion},
 };
 use conn::{HttpsLayer, HttpsLayerSettings};
 use std::borrow::Cow;
 use typed_builder::TypedBuilder;
 
-pub use cert::{compression::CertCompressionAlgorithm, RootCertStore};
+pub use cert::RootCertStore;
 pub use conn::{HttpsConnector, MaybeHttpsStream};
 pub use ext::{ConnectConfigurationExt, SslConnectorBuilderExt, SslRefExt};
 
 type TlsResult<T> = Result<T, ErrorStack>;
-
-/// Error handler for the boringssl functions.
-fn sv_handler(r: ::std::os::raw::c_int) -> TlsResult<::std::os::raw::c_int> {
-    if r == 0 {
-        Err(ErrorStack::get())
-    } else {
-        Ok(r)
-    }
-}
 
 /// A wrapper around a `HttpsLayer` that allows for additional config.
 #[derive(Clone)]
@@ -95,7 +86,7 @@ impl BoringTlsConnector {
 
         if let Some(cert_compression_algorithm) = config.cert_compression_algorithm {
             for algorithm in cert_compression_algorithm.iter() {
-                connector = connector.add_cert_compression_alg(*algorithm)?;
+                connector = connector.add_cert_compression_algorithm(*algorithm)?;
             }
         }
 

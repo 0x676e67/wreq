@@ -1,10 +1,8 @@
-pub mod compression;
 #[cfg(any(feature = "webpki-roots", feature = "native-roots"))]
 mod load;
 
-use super::{sv_handler, TlsResult};
+use super::TlsResult;
 use boring2::{ssl::SslConnectorBuilder, x509::store::X509Store};
-use boring_sys2 as ffi;
 
 /// The root certificate store.
 #[allow(missing_debug_implementations)]
@@ -32,14 +30,9 @@ impl RootCertStore {
                 // WebPKI root certificates are enabled (regardless of whether native-roots is also enabled).
                 #[cfg(any(feature = "webpki-roots", feature = "native-roots"))]
                 {
-                    if let Some(cert_store) = load::LOAD_CERTS.as_deref() {
+                    if let Some(cert_store) = load::LOAD_CERTS.as_ref() {
                         log::debug!("Using CA certs from webpki/native roots");
-                        sv_handler(unsafe {
-                            ffi::SSL_CTX_set1_verify_cert_store(
-                                builder.as_ptr(),
-                                cert_store as *const _ as *mut _,
-                            )
-                        })?;
+                        builder.set_verify_cert_store_ref(cert_store)?;
                     } else {
                         log::debug!("No CA certs provided, using system default");
                         builder.set_default_verify_paths()?;
@@ -56,12 +49,7 @@ impl RootCertStore {
                 builder.set_verify_cert_store(cert_store)?;
             }
             RootCertStore::Borrowed(cert_store) => {
-                sv_handler(unsafe {
-                    ffi::SSL_CTX_set1_verify_cert_store(
-                        builder.as_ptr(),
-                        cert_store as *const _ as *mut _,
-                    )
-                })?;
+                builder.set_verify_cert_store_ref(cert_store)?;
             }
         }
 

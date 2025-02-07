@@ -1,8 +1,10 @@
-use super::cert::{compression::CertCompressionAlgorithm, RootCertStore};
-use super::{sv_handler, AlpnProtos, AlpsProtos, TlsResult, TlsVersion};
+use super::cert::RootCertStore;
+use super::{AlpnProtos, AlpsProtos, TlsResult, TlsVersion};
 
-use boring2::ssl::{ConnectConfiguration, SslConnectorBuilder, SslOptions, SslRef, SslVerifyMode};
-use boring_sys2 as ffi;
+use boring2::ssl::{
+    CertCompressionAlgorithm, ConnectConfiguration, SslConnectorBuilder, SslOptions, SslRef,
+    SslVerifyMode,
+};
 
 /// SslConnectorBuilderExt trait for `SslConnectorBuilder`.
 pub trait SslConnectorBuilderExt {
@@ -25,7 +27,7 @@ pub trait SslConnectorBuilderExt {
     ) -> TlsResult<SslConnectorBuilder>;
 
     /// Configure the certificate compression algorithm for the given `SslConnectorBuilder`.
-    fn add_cert_compression_alg(
+    fn add_cert_compression_algorithm(
         self,
         alg: CertCompressionAlgorithm,
     ) -> TlsResult<SslConnectorBuilder>;
@@ -88,25 +90,16 @@ impl SslConnectorBuilderExt for SslConnectorBuilder {
     }
 
     #[inline]
-    fn add_cert_compression_alg(
-        self,
+    fn add_cert_compression_algorithm(
+        mut self,
         alg: CertCompressionAlgorithm,
     ) -> TlsResult<SslConnectorBuilder> {
-        sv_handler(unsafe {
-            ffi::SSL_CTX_add_cert_compression_alg(
-                self.as_ptr(),
-                alg as _,
-                alg.compression_fn(),
-                alg.decompression_fn(),
-            )
-        })
-        .map(|_| self)
+        self.add_cert_compression_alg(alg).map(|_| self)
     }
 
     #[inline]
     fn root_cert_store(mut self, store: RootCertStore) -> TlsResult<SslConnectorBuilder> {
-        store.apply(&mut self)?;
-        Ok(self)
+        store.apply(&mut self).map(|_| self)
     }
 }
 
