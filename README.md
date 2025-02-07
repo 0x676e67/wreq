@@ -55,12 +55,6 @@ async fn main() -> Result<(), rquest::Error> {
 }
 ```
 
-## Overview
-
-This project is a fork of [reqwest](https://github.com/seanmonstar/reqwest), similar to how [BoringSSL](https://github.com/cloudflare/boring) is a fork of OpenSSL. It optimizes commonly used APIs and enhances compatibility with connection pools, making it easier to switch proxies, IP addresses, and interfaces. Projects using reqwest can be migrated to rquest with minimal changes.
-
-Overall, **`rquest`** is a superset of reqwest, offering simpler and more practical APIs while also fixing HTTP version negotiation [issues](https://github.com/seanmonstar/reqwest/issues/2116).
-
 ## Performance
 
 `BoringSSL` is a fork of `OpenSSL` designed for security and efficiency, used by Google Chrome, Android, and Cloudflare. We haven't encountered serious issues with `BoringSSL` related to the Golang [utls issue](https://github.com/refraction-networking/utls/issues/274).
@@ -70,6 +64,7 @@ By default, `HTTP2` tracing is turned off, reducing performance overhead by 15%.
 ## Connection Pool
 
 The client can configure the maximum number of connection pools. Request manages connections based on `Host` and `Proxy`/`IP`/`Interface`, and can flexibly switch between them.
+
 - `Interface` refers to the network interface of the device, such as `wlan0` or `eth0`.
 
 ## Root Certificate
@@ -118,11 +113,9 @@ By default, `rquest` uses Mozilla's root certificates through the `webpki-roots`
 
     </details>
 
-## Requirements
+## Building
 
 Do not compile with packages that depend on `openssl-sys`; it links with the same prefix symbol as `boring-sys`, which can cause [link failures](https://github.com/cloudflare/boring/issues/197) and other problems. Even if compilation succeeds, using both `openssl-sys` and `boring-sys` as dependencies can cause memory segmentation faults.
-
-## Building
 
 Install the dependencies required to build [BoringSSL](https://github.com/google/boringssl/blob/master/BUILDING.md#build-prerequisites)
 
