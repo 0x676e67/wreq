@@ -1803,20 +1803,6 @@ impl<'c> ClientMut<'c> {
         self
     }
 
-    /// Sets the redirect policy for this client.
-    ///
-    /// # Arguments
-    ///
-    /// * `policy` - The redirect policy to set.
-    ///
-    /// # Returns
-    ///
-    /// A mutable reference to the `Client` instance with the applied redirect policy.
-    pub fn redirect(mut self, mut policy: redirect::Policy) -> ClientMut<'c> {
-        std::mem::swap(&mut self.inner_ref.redirect, &mut policy);
-        self
-    }
-
     /// Set the cookie provider for this client.
     #[cfg(feature = "cookies")]
     pub fn cookie_provider<C>(mut self, cookie_store: Arc<C>) -> ClientMut<'c>
