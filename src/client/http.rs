@@ -1541,6 +1541,25 @@ impl Client {
             error: None,
         }
     }
+
+    /// Clones the `Client` into a new instance.
+    ///
+    /// This method creates a new instance of the `Client` by cloning its internal state.
+    /// The cloned client will have the same configuration and state as the original client,
+    /// but it will be a separate instance that can be used independently.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// let client = rquest::Client::new();
+    /// let cloned_client = client.cloned();
+    /// // Use the cloned client independently
+    /// ```
+    pub fn cloned(&self) -> Self {
+        Self {
+            inner: Arc::new(ArcSwap::from_pointee((**self.inner.load()).clone())),
+        }
+    }
 }
 
 impl tower_service::Service<Request> for Client {
