@@ -389,7 +389,7 @@ pub use self::client::websocket::{
     WebSocketResponse,
 };
 pub use self::client::{
-    Body, Client, ClientBuilder, ClientMut, HttpContext, HttpContextProvider, Request,
+    Body, Client, ClientBuilder, ClientMut, ClientRef, HttpContext, HttpContextProvider, Request,
     RequestBuilder, Response, Upgraded,
 };
 pub use self::http1::Http1Config;
