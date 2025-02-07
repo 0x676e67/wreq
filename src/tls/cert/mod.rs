@@ -57,7 +57,10 @@ impl RootCertStore {
             }
             RootCertStore::Borrowed(cert_store) => {
                 sv_handler(unsafe {
-                    ffi::SSL_CTX_set1_verify_cert_store(builder.as_ptr(), cert_store as *const _ as *mut _)
+                    ffi::SSL_CTX_set1_verify_cert_store(
+                        builder.as_ptr(),
+                        cert_store as *const _ as *mut _,
+                    )
                 })?;
             }
         }
