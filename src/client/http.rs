@@ -1865,7 +1865,7 @@ impl<'c> ClientMut<'c> {
     ///
     /// If `Some`, the provided proxies will be used, and the client will check if any of them require HTTP authentication.
     /// If `None`, all proxies will be cleared and HTTP authentication will be disabled.
-    pub fn set_proxies<P>(mut self, proxies: P) -> ClientMut<'c>
+    pub fn proxies<P>(mut self, proxies: P) -> ClientMut<'c>
     where
         P: IntoIterator,
         P::Item: Into<Proxy>,
