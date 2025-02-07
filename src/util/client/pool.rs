@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::convert::Infallible;
 use std::error::Error as StdError;
@@ -192,23 +190,6 @@ impl<T: Poolable, K: Key> Pool<T, K> {
             pool: WeakOpt::none(),
         })
     }
-
-    /* Used in client/tests.rs...
-    #[cfg(test)]
-    pub(super) fn h1_key(&self, s: &str) -> Key {
-        Arc::new(s.to_string())
-    }
-
-    #[cfg(test)]
-    pub(super) fn idle_count(&self, key: &Key) -> usize {
-        self
-            .locked()
-            .idle
-            .get(key)
-            .map(|list| list.len())
-            .unwrap_or(0)
-    }a
-    */
 
     pub fn pooled(&self, mut connecting: Connecting<T, K>, value: T) -> Pooled<T, K> {
         let (value, pool_ref) = if let Some(ref enabled) = self.inner {

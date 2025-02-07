@@ -242,7 +242,7 @@ mod tls {
         #[builder(default = CIPHER_LIST)]
         cipher_list: &'static str,
 
-        #[builder(default = AlpsProtos::Http2, setter(into))]
+        #[builder(default = AlpsProtos::HTTP2, setter(into))]
         alps_protos: AlpsProtos,
 
         #[builder(default = false, setter(into))]

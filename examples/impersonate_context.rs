@@ -127,7 +127,7 @@ async fn main() -> Result<(), rquest::Error> {
         .pre_shared_key(true)
         .enable_ech_grease(true)
         .alpn_protos(AlpnProtos::All)
-        .alps_protos(AlpsProtos::Http2)
+        .alps_protos(AlpsProtos::HTTP2)
         .min_tls_version(TlsVersion::TLS_1_0)
         .max_tls_version(TlsVersion::TLS_1_3)
         .extension_permutation_indices(EXTENSION_PERMUTATION_INDICES)

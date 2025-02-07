@@ -117,6 +117,7 @@ impl BoringTlsConnector {
             .skip_session_ticket(config.psk_skip_session_ticket)
             .alpn_protos(config.alpn_protos)
             .alps_protos(config.alps_protos)
+            .alps_use_new_codepoint(config.alps_use_new_codepoint)
             .enable_ech_grease(config.enable_ech_grease)
             .tls_sni(config.tls_sni)
             .verify_hostname(config.verify_hostname)
@@ -170,12 +171,11 @@ impl Default for AlpnProtos {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AlpsProtos(&'static [u8]);
 
-#[allow(non_upper_case_globals)]
 impl AlpsProtos {
     /// Application Settings protocol for HTTP/1.1
-    pub const Http1: AlpsProtos = AlpsProtos(b"http/1.1");
+    pub const HTTP1: AlpsProtos = AlpsProtos(b"http/1.1");
     /// Application Settings protocol for HTTP/2
-    pub const Http2: AlpsProtos = AlpsProtos(b"h2");
+    pub const HTTP2: AlpsProtos = AlpsProtos(b"h2");
 
     #[inline(always)]
     pub(crate) fn as_ptr(&self) -> *const u8 {
@@ -245,6 +245,14 @@ pub struct TlsConfig {
     /// This is specifically for applications negotiated via **ALPN**.
     #[builder(default, setter(into))]
     pub alps_protos: Option<AlpsProtos>,
+
+    /// Switching to a new codepoint for TLS ALPS extension to allow adding more data
+    /// in the ACCEPT_CH HTTP/2 and HTTP/3 frame. The ACCEPT_CH HTTP/2 frame with the
+    /// existing TLS ALPS extension had an arithmetic overflow bug in Chrome ALPS decoder.
+    /// It limits the capability to add more than 128 bytes data (in theory, the problem
+    /// range is 128 bytes to 255 bytes) to the ACCEPT_CH frame.
+    #[builder(default = false)]
+    pub alps_use_new_codepoint: bool,
 
     /// **Session Tickets** (RFC 5077) allow **session resumption** without the need for server-side state.
     ///

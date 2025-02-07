@@ -11,82 +11,196 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  build:
-    runs-on: ${{ matrix.os }}
+  linux:
+    name: Build Linux (GNU)
+    runs-on: ubuntu-latest
     strategy:
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-        architecture: [x86_64]
-    name: Build on ${{ matrix.os }} for ${{ matrix.architecture }}
-
+        include:
+          - target: x86_64
+            target_triple: x86_64-unknown-linux-gnu
+            apt_packages: ""
+            custom_env: {}
+          - target: aarch64
+            target_triple: aarch64-unknown-linux-gnu
+            apt_packages: crossbuild-essential-arm64
+            custom_env:
+              CFLAGS_aarch64_unknown_linux_gnu: -D__ARM_ARCH=8
+              CC: aarch64-linux-gnu-gcc
+              CXX: aarch64-linux-gnu-g++
+              CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-g++
+              RUSTC_LINKER: aarch64-linux-gnu-g++
+          - target: armv7
+            target_triple: armv7-unknown-linux-gnueabihf
+            apt_packages: crossbuild-essential-armhf
+            custom_env:
+              CC: arm-linux-gnueabihf-gcc
+              CXX: arm-linux-gnueabihf-g++
+              CARGO_TARGET_ARMV7_UNKNOWN_LINUX_GNUEABIHF_LINKER: arm-linux-gnueabihf-g++
+              RUSTC_LINKER: arm-linux-gnueabihf-g++
     steps:
-    - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-    - name: Install dependencies on Ubuntu
-      if: runner.os == 'Linux'
-      run: |
-        sudo apt-get update
-        sudo apt-get install build-essential cmake perl pkg-config libclang-dev musl-tools -y
+      - name: Install base dependencies on Ubuntu
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake perl pkg-config libclang-dev musl-tools
 
-    - name: Install dependencies on macOS
-      if: runner.os == 'macOS'
-      run: |
-        brew update
-        brew install --formula cmake pkg-config llvm
+      - name: Install target-specific APT dependencies
+        if: ${{ matrix.apt_packages != '' }}
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ${{ matrix.apt_packages }}
 
-    - name: Install dependencies on Windows
-      if: runner.os == 'Windows'
-      run: |
-        choco install cmake -y
-        choco install strawberryperl -y
-        choco install pkgconfiglite -y
-        choco install llvm -y
-        choco install nasm -y
-      shell: cmd
+      - name: Add Rust target
+        run: rustup target add ${{ matrix.target_triple }}
 
-    - name: Build on Windows/macOS
-      if: runner.os != 'Linux'
-      run: cargo build --release
+      - name: Build for ${{ matrix.target }}
+        env: ${{ matrix.custom_env }}
+        run: cargo build --release --target ${{ matrix.target_triple }}
 
-    - name: Build on Linux
-      if: runner.os == 'Linux'
-      run: |
-        cargo build --release
-        docker pull messense/rust-musl-cross:x86_64-musl
-        docker run --rm -v "$(pwd)":/home/rust/src messense/rust-musl-cross:x86_64-musl cargo build --release
+      - name: Archive build artifacts
+        run: |
+          cd target/${{ matrix.target_triple }}/release
+          zip -r ../../../build-linux-${{ matrix.target }}.zip *
+        working-directory: ${{ github.workspace }}
 
-    - name: Archive build artifacts on macOS
-      if: runner.os == 'macOS'
-      run: |
-        cd target/release
-        zip -r ../../build-${{ runner.os }}-${{ matrix.architecture }}.zip *
-      working-directory: ${{ github.workspace }}
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-linux-${{ matrix.target }}
+          path: build-linux-${{ matrix.target }}.zip
 
-    - name: Archive build artifacts on Linux
-      if: runner.os == 'Linux'
-      run: |
-        cd target/release
-        zip -r ../../build-${{ runner.os }}-${{ matrix.architecture }}.zip *
-        cd ../x86_64-unknown-linux-musl/release
-        zip -r ../../../build-x86_64-unknown-linux-musl.zip *
-      working-directory: ${{ github.workspace }}
+  musllinux:
+    name: Build Linux (musl)
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - target: x86_64
+            target_triple: x86_64-unknown-linux-musl
+            package: x86_64-linux-musl-cross
+            apt_packages: ""
+            custom_env:
+              CC: x86_64-linux-musl-gcc
+              CXX: x86_64-linux-musl-gcc
+              CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER: x86_64-linux-musl-g++
+              RUSTC_LINKER: x86_64-linux-musl-g++
+          - target: aarch64
+            target_triple: aarch64-unknown-linux-musl
+            package: aarch64-linux-musl-cross
+            apt_packages: crossbuild-essential-arm64
+            custom_env:
+              CC: aarch64-linux-musl-gcc
+              CXX: aarch64-linux-musl-gcc
+              CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER: aarch64-linux-musl-g++
+              RUSTC_LINKER: aarch64-linux-musl-g++
+    steps:
+      - uses: actions/checkout@v4
 
-    - name: Archive build artifacts on Windows
-      if: runner.os == 'Windows'
-      shell: pwsh
-      run: |
-        Compress-Archive -Path 'target\release\*' -DestinationPath "build-${{ runner.os }}-${{ matrix.architecture }}.zip" -CompressionLevel Optimal -Force
-      working-directory: ${{ github.workspace }}
+      - name: Install base dependencies on Ubuntu
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake perl pkg-config libclang-dev musl-tools
 
-    - name: Upload build artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: build-${{ matrix.os }}-${{ matrix.architecture }}
-        path: build-${{ runner.os }}-${{ matrix.architecture }}.zip
+      - name: Install target-specific APT dependencies
+        if: ${{ matrix.apt_packages != '' }}
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ${{ matrix.apt_packages }}
 
-    - name: Upload x86_64-unknown-linux-musl Linux build artifact
-      if: runner.os == 'Linux'
-      uses: actions/upload-artifact@v4
-      with:
-        name: build-x86_64-unknown-linux-musl
-        path: build-x86_64-unknown-linux-musl.zip
+      - name: Prepare musl cross-compiler
+        run: |
+          curl -O http://musl.cc/${{ matrix.package }}.tgz
+          tar xzf ${{ matrix.package }}.tgz -C /opt
+          echo "/opt/${{ matrix.package }}/bin/" >> $GITHUB_PATH
+
+      - name: Add Rust target
+        run: rustup target add ${{ matrix.target_triple }}
+
+      - name: Build for ${{ matrix.target }}
+        env: ${{ matrix.custom_env }}
+        run: cargo build --release --target ${{ matrix.target_triple }}
+
+      - name: Archive build artifacts
+        run: |
+          cd target/${{ matrix.target_triple }}/release
+          zip -r ../../../build-musllinux-${{ matrix.target }}.zip *
+        working-directory: ${{ github.workspace }}
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-musllinux-${{ matrix.target }}
+          path: build-musllinux-${{ matrix.target }}.zip
+
+  windows:
+    name: Build Windows
+    runs-on: windows-latest
+    strategy:
+      matrix:
+        target: [x86_64]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies on Windows
+        run: |
+          choco install cmake -y
+          choco install strawberryperl -y
+          choco install pkgconfiglite -y
+          choco install llvm -y
+          choco install nasm -y
+        shell: cmd
+
+      - name: Build on Windows
+        run: cargo build --release
+
+      - name: Archive build artifacts
+        shell: pwsh
+        run: |
+          Compress-Archive -Path 'target\release\*' -DestinationPath "build-windows-${{ matrix.target }}.zip" -CompressionLevel Optimal -Force
+        working-directory: ${{ github.workspace }}
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-windows-${{ matrix.target }}
+          path: build-windows-${{ matrix.target }}.zip
+
+  macos:
+    name: Build macOS
+    strategy:
+      matrix:
+        include:
+          - target: x86_64
+            runner: macos-latest
+            target_triple: x86_64-apple-darwin
+          - target: aarch64
+            runner: macos-latest
+            target_triple: aarch64-apple-darwin
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies on macOS
+        run: |
+          brew update
+          brew install --formula cmake pkg-config llvm
+
+      - name: Add Rust target
+        run: rustup target add ${{ matrix.target_triple }}
+
+      - name: Build for ${{ matrix.target }}
+        run: cargo build --release --target ${{ matrix.target_triple }}
+
+      - name: Archive build artifacts
+        run: |
+          cd target/${{ matrix.target_triple }}/release
+          zip -r ../../../build-macos-${{ matrix.target }}.zip *
+        working-directory: ${{ github.workspace }}
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-macos-${{ matrix.target }}
+          path: build-macos-${{ matrix.target }}.zip

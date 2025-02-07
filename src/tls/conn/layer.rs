@@ -141,7 +141,7 @@ impl HttpsLayer {
             conf.set_verify_hostname(settings.verify_hostname);
 
             // Set ALPS
-            conf.alps_protos(settings.alps_protos)?;
+            conf.alps_protos(settings.alps_protos, settings.alps_use_new_codepoint)?;
 
             Ok(())
         });
