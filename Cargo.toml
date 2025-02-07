@@ -311,11 +311,6 @@ path = "examples/request_with_redirect.rs"
 required-features = ["full"]
 
 [[example]]
-name = "set_redirect"
-path = "examples/set_redirect.rs"
-required-features = ["full"]
-
-[[example]]
 name = "base_url"
 path = "examples/base_url.rs"
 
