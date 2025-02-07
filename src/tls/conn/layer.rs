@@ -131,14 +131,14 @@ impl HttpsLayer {
         };
 
         let callback = Arc::new(move |conf: &mut ConnectConfiguration, _: &Uri| {
-            // Set ECH grease
-            conf.enable_ech_grease(settings.enable_ech_grease)?;
-
             // Use server name indication
             conf.set_use_server_name_indication(settings.tls_sni);
 
             // Verify hostname
             conf.set_verify_hostname(settings.verify_hostname);
+
+            // Set ECH grease
+            conf.set_enable_ech_grease(settings.enable_ech_grease);
 
             // Set ALPS
             conf.alps_protos(settings.alps_protos, settings.alps_use_new_codepoint)?;

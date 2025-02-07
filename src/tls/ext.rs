@@ -42,9 +42,6 @@ pub trait SslRefExt {
 
 /// ConnectConfigurationExt trait for `ConnectConfiguration`.
 pub trait ConnectConfigurationExt {
-    /// Configure the enable_ech_grease for the given `ConnectConfiguration`.
-    fn enable_ech_grease(&mut self, enable: bool) -> TlsResult<&mut ConnectConfiguration>;
-
     /// Configure the ALPS for the given `ConnectConfiguration`.
     fn alps_protos(
         &mut self,
@@ -114,15 +111,6 @@ impl SslConnectorBuilderExt for SslConnectorBuilder {
 }
 
 impl ConnectConfigurationExt for ConnectConfiguration {
-    #[inline]
-    fn enable_ech_grease(&mut self, enable: bool) -> TlsResult<&mut ConnectConfiguration> {
-        if enable {
-            self.set_enable_ech_grease(enable);
-        }
-
-        Ok(self)
-    }
-
     #[inline]
     fn alps_protos(
         &mut self,
