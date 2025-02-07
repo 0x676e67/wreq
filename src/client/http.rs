@@ -1758,20 +1758,6 @@ impl<'c> ClientMut<'c> {
         self
     }
 
-    /// Sets the cross-origin proxy authorization for this client.
-    ///
-    /// # Arguments
-    ///
-    /// * `enabled` - A boolean indicating whether cross-origin proxy authorization is enabled.
-    ///
-    /// # Returns
-    ///
-    /// A mutable reference to the `Client` instance with the applied setting.
-    pub fn redirect_with_proxy_auth(mut self, enabled: bool) -> ClientMut<'c> {
-        self.load_inner().redirect_with_proxy_auth = enabled;
-        self
-    }
-
     /// Set the cookie provider for this client.
     #[cfg(feature = "cookies")]
     pub fn cookie_provider<C>(mut self, cookie_store: Arc<C>) -> ClientMut<'c>

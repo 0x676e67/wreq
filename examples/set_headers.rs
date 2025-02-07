@@ -15,9 +15,7 @@ async fn main() -> Result<(), rquest::Error> {
     // Set a header
     client
         .as_mut()
-        .headers(|headers| {
-            headers.insert(header::ACCEPT, HeaderValue::from_static("application/json"));
-        })
+        .headers(update_headers)
         .apply()?;
 
     // Use the API you're already familiar with
@@ -25,4 +23,8 @@ async fn main() -> Result<(), rquest::Error> {
     println!("{}", resp.text().await?);
 
     Ok(())
+}
+
+fn update_headers(headers: &mut http::HeaderMap) {
+    headers.insert(header::ACCEPT, HeaderValue::from_static("application/json"));
 }
