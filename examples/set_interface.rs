@@ -13,13 +13,13 @@ use rquest::{Client, Impersonate};
 #[tokio::main]
 async fn main() -> Result<(), rquest::Error> {
     // Build a client to impersonate Chrome130
-    let mut client = Client::builder()
+    let client = Client::builder()
         .impersonate(Impersonate::Chrome130)
         .interface("eth0")
         .build()?;
 
     // Set the interface to eth1
-    client.as_mut().interface("eth1");
+    client.as_mut().interface("eth1").apply()?;
 
     // Use the API you're already familiar with
     let resp = client.get("https://api.ip.sb/ip").send().await?;

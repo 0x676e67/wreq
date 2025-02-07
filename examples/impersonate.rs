@@ -4,7 +4,7 @@ use rquest::Impersonate;
 async fn main() -> Result<(), rquest::Error> {
     // Build a client to impersonate Firefox128
     let client = rquest::Client::builder()
-        .impersonate(Impersonate::Firefox128)
+        .impersonate(Impersonate::Chrome131)
         .build()?;
 
     // Use the API you're already familiar with

@@ -7,7 +7,7 @@ async fn main() -> Result<(), rquest::Error> {
         .init();
 
     // Build a client to impersonate Edge131
-    let mut client = Client::builder()
+    let client = Client::builder()
         .impersonate(Impersonate::Edge131)
         .base_url("https://httpbin.org")
         .build()?;
@@ -21,7 +21,7 @@ async fn main() -> Result<(), rquest::Error> {
     println!("{}", resp.text().await?);
 
     // Reset the base url
-    client.as_mut().base_url("https://tls.peet.ws");
+    client.as_mut().base_url("https://tls.peet.ws").apply()?;
 
     // Send a request to tls.peet.ws /api/all
     let resp = client.get("/api/all").send().await?;

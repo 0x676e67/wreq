@@ -22,7 +22,7 @@ async fn main() -> Result<(), rquest::Error> {
     ];
 
     // Build a client to impersonate Chrome131
-    let mut client = Client::builder()
+    let client = Client::builder()
         .impersonate(Impersonate::Chrome131)
         .build()?;
 
@@ -31,7 +31,8 @@ async fn main() -> Result<(), rquest::Error> {
         .impersonate(Impersonate::Safari18)
         .headers_order(HEADER_ORDER)
         .interface("utun4")
-        .base_url("https://tls.peet.ws");
+        .base_url("https://tls.peet.ws")
+        .apply()?;
 
     let text = client.get("/api/all").send().await?.text().await?;
     println!("{}", text);

@@ -4,7 +4,7 @@ use std::net::IpAddr;
 #[tokio::main]
 async fn main() -> Result<(), rquest::Error> {
     // Build a client to impersonate Chrome130
-    let mut client = rquest::Client::builder()
+    let client = rquest::Client::builder()
         .impersonate(Impersonate::Chrome130)
         .build()?;
 
@@ -15,7 +15,8 @@ async fn main() -> Result<(), rquest::Error> {
     // Set the local address to `172.200.10.2`
     client
         .as_mut()
-        .local_address(IpAddr::from([172, 200, 10, 2]));
+        .local_address(IpAddr::from([172, 200, 10, 2]))
+        .apply()?;
 
     // Use the API you're already familiar with
     let resp = client.get("https://api.ip.sb/ip").send().await?;

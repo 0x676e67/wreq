@@ -20,11 +20,6 @@ An ergonomic, all-in-one HTTP client for spoofing any browser with `TLS`, `JA3`/
 - HTTPS via BoringSSL
 - Perfectly Chrome, Safari, and Firefox
 
-Additional learning resources include:
-
-- [API Documentation](https://docs.rs/rquest)
-- [Repository Examples](https://github.com/0x676e67/rquest/tree/main/examples)
-
 ## Example
 
 This asynchronous example uses [Tokio](https://tokio.rs) and enables some optional features. Your `Cargo.toml` could look like this:
@@ -131,7 +126,7 @@ If you would like to submit your contribution, please open a [Pull Request](http
 
 ## License
 
-Apache-2.0 [LICENSE](LICENSE)
+Licensed under either of Apache-2.0 [License](LICENSE)
 
 ## Accolades
 
