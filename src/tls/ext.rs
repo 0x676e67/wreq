@@ -3,7 +3,6 @@ use super::{sv_handler, AlpnProtos, AlpsProtos, TlsResult, TlsVersion};
 
 use boring2::ssl::{ConnectConfiguration, SslConnectorBuilder, SslOptions, SslRef, SslVerifyMode};
 use boring_sys2 as ffi;
-use foreign_types::ForeignTypeRef;
 
 /// SslConnectorBuilderExt trait for `SslConnectorBuilder`.
 pub trait SslConnectorBuilderExt {

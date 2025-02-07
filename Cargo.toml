@@ -104,7 +104,7 @@ tokio = { version = "1", default-features = false, features = ["net","time"] }
 pin-project-lite = "0.2.0"
 ipnet = "2.11.0"
 
-# hyper util
+## util
 socket2 = { version = "0.5", features = ["all"] }
 lru = { version = "0.13", default-features = false }
 
@@ -112,10 +112,9 @@ lru = { version = "0.13", default-features = false }
 boring2 = { version = "4.15.1", features = ["pq-experimental"] }
 boring-sys2 = { version = "4.15.1", features = ["pq-experimental"] }
 tokio-boring2 = { version = "4.15.1", features = ["pq-experimental"] }
-foreign-types = "0.5.0"
 linked_hash_set = "0.1"
 
-# cert compression
+## cert compression
 brotli = "7"
 flate2 = "1"
 zstd = "0.13"
