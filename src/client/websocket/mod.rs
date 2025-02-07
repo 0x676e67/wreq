@@ -18,6 +18,7 @@ use crate::{
 use crate::{Error, Response};
 use futures_util::{Sink, SinkExt, Stream, StreamExt};
 use http::{header, uri::Scheme, HeaderMap, HeaderName, HeaderValue, Method, StatusCode, Version};
+use hyper2::ext::Protocol;
 pub use message::{CloseCode, CloseFrame, Message, Utf8Bytes};
 use tokio_tungstenite::tungstenite::{self, protocol};
 use tungstenite::protocol::WebSocketConfig;
@@ -191,6 +192,10 @@ impl WebSocketRequestBuilder {
             HeaderValue::from_static("13"),
         );
 
+        const UPGRADE_HEADER: HeaderValue = HeaderValue::from_static("websocket");
+        const CONNECTION_HEADER: HeaderValue = HeaderValue::from_static("upgrade");
+        const EXTENSION_PROTOCOL: Protocol = Protocol::from_static("websocket");
+
         // Ensure the request is HTTP 1.1/HTTP 2
         let nonce = match version {
             Version::HTTP_10 | Version::HTTP_11 => {
@@ -199,8 +204,8 @@ impl WebSocketRequestBuilder {
                     .accept_key
                     .unwrap_or_else(|| Cow::Owned(tungstenite::handshake::client::generate_key()));
 
-                headers.insert(header::CONNECTION, HeaderValue::from_static("upgrade"));
-                headers.insert(header::UPGRADE, HeaderValue::from_static("websocket"));
+                headers.insert(header::UPGRADE, UPGRADE_HEADER);
+                headers.insert(header::CONNECTION, CONNECTION_HEADER);
                 headers.insert(header::SEC_WEBSOCKET_KEY, HeaderValue::from_str(&nonce)?);
 
                 *request.method_mut() = Method::GET;
@@ -210,7 +215,7 @@ impl WebSocketRequestBuilder {
             Version::HTTP_2 => {
                 *request.method_mut() = Method::CONNECT;
                 *request.version_mut() = Some(Version::HTTP_2);
-                *request.protocol_mut() = Some(hyper2::ext::Protocol::from_static("websocket"));
+                *request.protocol_mut() = Some(EXTENSION_PROTOCOL);
                 None
             }
             _ => {

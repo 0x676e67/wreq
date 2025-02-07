@@ -18,7 +18,7 @@ An ergonomic, all-in-one HTTP client for spoofing any browser with `TLS`, `JA3`/
 - HTTP Proxies
 - WebSocket Upgrade
 - HTTPS via BoringSSL
-- Perfectly impersonate Chrome, Safari, and Firefox
+- Perfectly Chrome, Safari, and Firefox
 
 Additional learning resources include:
 
@@ -32,7 +32,7 @@ This asynchronous example uses [Tokio](https://tokio.rs) and enables some option
 ```toml
 [dependencies]
 tokio = { version = "1", features = ["full"] }
-rquest = "3.0.0"
+rquest = "2.0.0"
 ```
 
 And then the code:
@@ -57,9 +57,9 @@ async fn main() -> Result<(), rquest::Error> {
 
 ## Performance
 
-`BoringSSL` is a fork of `OpenSSL` designed for security and efficiency, used by Google Chrome, Android, and Cloudflare. We haven't encountered serious issues with `BoringSSL` related to the Golang [utls issue](https://github.com/refraction-networking/utls/issues/274).
+BoringSSL is a fork of OpenSSL designed for security and efficiency, used by Google Chrome, Android, and Cloudflare. We haven't encountered serious issues with BoringSSL related to the Golang utls [issue](https://github.com/refraction-networking/utls/issues/274).
 
-By default, `HTTP2` tracing is turned off, reducing performance overhead by 15%. For more information, see issue: <https://github.com/hyperium/h2/issues/713>
+By default, HTTP2 tracing is turned off, reducing performance overhead by 15%. For more information, see [issue](https://github.com/hyperium/h2/issues/713).
 
 ## Connection Pool
 
@@ -73,15 +73,13 @@ By default, `rquest` uses Mozilla's root certificates through the `webpki-roots`
 
 ## Fingerprint
 
-- **TLS/HTTP2 Fingerprint**
-
-  Supports custom `TLS`/`HTTP2` fingerprint parameters. Customization is not recommended unless you are highly familiar with `TLS` and `HTTP2`, as it may cause unexpected issues.
-
 - **JA3/JA4/Akamai Fingerprint**
 
-  `JA3`/`JA4`/`Akamai` fingerprints cannot accurately simulate browser fingerprints due to the sophistication of `TLS` encryption and the popularity of HTTP2. `rquest` does not plan to support parsing these fingerprint strings for simulation. Users are encouraged to customize the configuration according to their own needs.
+  Supports custom `TLS`/`HTTP2` fingerprint parameters. Customization is not recommended unless you are highly familiar with TLS and HTTP2, as it may cause unexpected issues.
 
-  Note: Many `Akamai` fingerprint strings are incomplete. For example, the [website](https://tls.peet.ws/api/all) lacks Priority and Stream ID in the Headers Frame, making it easy to detect. For details, refer to the `HTTP2` frame [parser](https://github.com/0x676e67/pingly/blob/main/src/track/inspector/http2.rs).
+  `JA3`/`JA4`/`Akamai` fingerprints cannot accurately simulate browser fingerprints due to the sophistication of TLS encryption and the popularity of HTTP2. `rquest` does not plan to support parsing these fingerprint strings for simulation. Users are encouraged to customize the configuration according to their own needs.
+
+  Note: Many `Akamai` fingerprint strings are incomplete. For example, the [website](https://tls.peet.ws/api/all) lacks Priority and Stream ID in the Headers Frame, making it easy to detect. For details, refer to the HTTP2 frame [parser](https://github.com/0x676e67/pingly/blob/main/src/track/inspector/http2.rs).
 
 - **Device Fingerprint**
 
@@ -115,7 +113,7 @@ By default, `rquest` uses Mozilla's root certificates through the `webpki-roots`
 
 ## Building
 
-Do not compile with packages that depend on `openssl-sys`; it links with the same prefix symbol as `boring-sys`, which can cause [link failures](https://github.com/cloudflare/boring/issues/197) and other problems. Even if compilation succeeds, using both `openssl-sys` and `boring-sys` as dependencies can cause memory segmentation faults.
+Do not compile with packages that depend on openssl-sys; it links with the same prefix symbol as boring-sys, which can cause [link failures](https://github.com/cloudflare/boring/issues/197) and other problems. Even if compilation succeeds, using both `openssl-sys` and `boring-sys` as dependencies can cause memory segmentation faults.
 
 Install the dependencies required to build [BoringSSL](https://github.com/google/boringssl/blob/master/BUILDING.md#build-prerequisites)
 
