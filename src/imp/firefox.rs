@@ -313,7 +313,7 @@ mod tls {
                 .record_size_limit(val.record_size_limit)
                 .enable_ocsp_stapling(true)
                 .enable_ech_grease(val.enable_ech_grease)
-                .alpn_protos(AlpnProtos::All)
+                .alpn_protos(AlpnProtos::ALL)
                 .min_tls_version(TlsVersion::TLS_1_2)
                 .max_tls_version(TlsVersion::TLS_1_3)
                 .key_shares_limit(val.key_shares_limit)

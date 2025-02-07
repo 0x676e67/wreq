@@ -108,7 +108,7 @@ impl Default for HttpsLayerSettings {
             enable_ech_grease: false,
             verify_hostname: true,
             tls_sni: true,
-            alpn_protos: AlpnProtos::All,
+            alpn_protos: AlpnProtos::ALL,
             alps_protos: None,
             alps_use_new_codepoint: false,
         }

@@ -396,12 +396,10 @@ pub use self::http1::Http1Config;
 pub use self::http2::Http2Config;
 pub use self::imp::{Impersonate, ImpersonateOS, ImpersonateOption};
 pub use self::proxy::{NoProxy, Proxy};
-pub use self::tls::{
-    AlpnProtos, AlpsProtos, CertCompressionAlgorithm, RootCertStore, TlsConfig, TlsInfo, TlsVersion,
-};
+pub use self::tls::{AlpnProtos, AlpsProtos, RootCertStore, TlsConfig, TlsInfo, TlsVersion};
 pub use self::util::client::{Dst, Http1Builder, Http2Builder};
 pub use boring2::{
-    ssl::{ExtensionType, SslCurve},
+    ssl::{CertCompressionAlgorithm, ExtensionType, SslCurve},
     x509::{
         store::{X509Store, X509StoreBuilder},
         X509,

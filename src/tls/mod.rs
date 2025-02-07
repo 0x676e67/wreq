@@ -13,26 +13,17 @@ use crate::impl_debug;
 use boring2::ssl::SslCurve;
 use boring2::{
     error::ErrorStack,
-    ssl::{SslConnector, SslMethod, SslOptions, SslVersion},
+    ssl::{CertCompressionAlgorithm, SslConnector, SslMethod, SslOptions, SslVersion},
 };
 use conn::{HttpsLayer, HttpsLayerSettings};
 use std::borrow::Cow;
 use typed_builder::TypedBuilder;
 
-pub use cert::{compression::CertCompressionAlgorithm, RootCertStore};
+pub use cert::RootCertStore;
 pub use conn::{HttpsConnector, MaybeHttpsStream};
 pub use ext::{ConnectConfigurationExt, SslConnectorBuilderExt, SslRefExt};
 
 type TlsResult<T> = Result<T, ErrorStack>;
-
-/// Error handler for the boringssl functions.
-fn sv_handler(r: ::std::os::raw::c_int) -> TlsResult<::std::os::raw::c_int> {
-    if r == 0 {
-        Err(ErrorStack::get())
-    } else {
-        Ok(r)
-    }
-}
 
 /// A wrapper around a `HttpsLayer` that allows for additional config.
 #[derive(Clone)]
@@ -95,7 +86,7 @@ impl BoringTlsConnector {
 
         if let Some(cert_compression_algorithm) = config.cert_compression_algorithm {
             for algorithm in cert_compression_algorithm.iter() {
-                connector = connector.add_cert_compression_alg(*algorithm)?;
+                connector = connector.add_cert_compression_algorithm(*algorithm)?;
             }
         }
 
@@ -151,19 +142,18 @@ impl TlsVersion {
 pub struct AlpnProtos(&'static [u8]);
 
 /// A `AlpnProtos` is used to set the HTTP version preference.
-#[allow(non_upper_case_globals)]
 impl AlpnProtos {
     /// Prefer HTTP/1.1
-    pub const Http1: AlpnProtos = AlpnProtos(b"\x08http/1.1");
+    pub const HTTP1: AlpnProtos = AlpnProtos(b"\x08http/1.1");
     /// Prefer HTTP/2
-    pub const Http2: AlpnProtos = AlpnProtos(b"\x02h2");
+    pub const HTTP2: AlpnProtos = AlpnProtos(b"\x02h2");
     /// Prefer HTTP/1 and HTTP/2
-    pub const All: AlpnProtos = AlpnProtos(b"\x02h2\x08http/1.1");
+    pub const ALL: AlpnProtos = AlpnProtos(b"\x02h2\x08http/1.1");
 }
 
 impl Default for AlpnProtos {
     fn default() -> Self {
-        Self::All
+        Self::ALL
     }
 }
 
@@ -226,7 +216,7 @@ pub struct TlsConfig {
     /// **Usage Example:**
     /// - Commonly used to negotiate **HTTP/2**.
     /// - Default use all protocols (HTTP/1.1/HTTP/2/HTTP/3).
-    #[builder(default = AlpnProtos::All)]
+    #[builder(default = AlpnProtos::ALL)]
     pub alpn_protos: AlpnProtos,
 
     /// The **ALPS extension** (*draft-vvv-tls-alps*) enables exchanging

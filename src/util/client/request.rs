@@ -138,8 +138,8 @@ where
 
 fn map_alpn_protos(version: Version) -> Option<AlpnProtos> {
     match version {
-        Version::HTTP_11 | Version::HTTP_10 | Version::HTTP_09 => Some(AlpnProtos::Http1),
-        Version::HTTP_2 => Some(AlpnProtos::Http2),
+        Version::HTTP_11 | Version::HTTP_10 | Version::HTTP_09 => Some(AlpnProtos::HTTP1),
+        Version::HTTP_2 => Some(AlpnProtos::HTTP2),
         _ => None,
     }
 }

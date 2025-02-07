@@ -126,7 +126,7 @@ async fn main() -> Result<(), rquest::Error> {
         .record_size_limit(RECORD_SIZE_LIMIT)
         .pre_shared_key(true)
         .enable_ech_grease(true)
-        .alpn_protos(AlpnProtos::All)
+        .alpn_protos(AlpnProtos::ALL)
         .alps_protos(AlpsProtos::HTTP2)
         .min_tls_version(TlsVersion::TLS_1_0)
         .max_tls_version(TlsVersion::TLS_1_3)

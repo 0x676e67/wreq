@@ -110,15 +110,9 @@ socket2 = { version = "0.5", features = ["all"] }
 lru = { version = "0.13", default-features = false }
 
 ## boring-tls
-boring2 = { version = "4.15.1", features = ["pq-experimental"] }
-boring-sys2 = { version = "4.15.1", features = ["pq-experimental"] }
-tokio-boring2 = { version = "4.15.1", features = ["pq-experimental"] }
+boring2 = { version = "4.15.2", features = ["pq-experimental", "cert-compression"] }
+tokio-boring2 = { version = "4.15.2", features = ["pq-experimental"] }
 linked_hash_set = "0.1"
-
-## cert compression
-brotli = "7"
-flate2 = "1"
-zstd = "0.13"
 
 # Optional deps...
 
@@ -175,6 +169,7 @@ hyper-util = { version = "0.1.10", features = [
 serde = { version = "1.0", features = ["derive"] }
 libflate = "2.0.0"
 zstd = { version = "0.13" }
+brotli = { package = "brotli", version = "6.0.0" }
 doc-comment = "0.3"
 tokio = { version = "1.0", default-features = false, features = [
     "macros",
