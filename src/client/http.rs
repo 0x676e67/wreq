@@ -40,7 +40,7 @@ use super::request::{Request, RequestBuilder};
 use super::response::Response;
 use super::{Body, HttpContextProvider};
 
-use arc_swap::ArcSwap;
+use arc_swap::{ArcSwap, Guard};
 use bytes::Bytes;
 use http::{
     header::{
@@ -80,7 +80,7 @@ type CookieStoreOption = ();
 /// [`Rc`]: std::rc::Rc
 #[derive(Clone, Debug)]
 pub struct Client {
-    inner: Arc<ArcSwap<ClientRef>>,
+    inner: Arc<ArcSwap<ClientInner>>,
 }
 
 /// A `ClientBuilder` can be used to create a `Client` with custom configuration.
@@ -263,7 +263,7 @@ impl ClientBuilder {
         };
 
         Ok(Client {
-            inner: Arc::new(ArcSwap::from_pointee(ClientRef {
+            inner: Arc::new(ArcSwap::from_pointee(ClientInner {
                 accepts: config.accepts,
                 #[cfg(feature = "cookies")]
                 cookie_store: config.cookie_store,
@@ -1446,74 +1446,26 @@ impl Client {
 }
 
 impl Client {
-    /// Retrieves a reference to the headers for this client.
+    /// Returns a reference to the internal state of the `Client` wrapped in a `ClientRef`.
+    ///
+    /// This method allows you to obtain a reference to the internal state of the `Client`
+    /// by wrapping it in a `ClientRef`. This is useful when you need to access the internal state
+    /// of the `Client` without modifying it, ensuring that the access is safe and properly synchronized.
     ///
     /// # Returns
     ///
-    /// A reference to the `HeaderMap` containing the headers for this client.
-    #[inline]
-    pub fn headers(&self) -> http::HeaderMap {
-        self.inner.load().headers.clone()
-    }
-
-    /// Returns a `String` of the header-value of all `Cookie` in a `Url`.
-    #[cfg(feature = "cookies")]
-    pub fn get_cookies(&self, url: &Url) -> Option<HeaderValue> {
-        self.inner
-            .load()
-            .cookie_store
-            .as_ref()
-            .and_then(|cookie_store| cookie_store.cookies(url))
-    }
-
-    /// Injects a 'Cookie' into the 'CookieStore' for the specified URL.
+    /// * `ClientRef` - A wrapper around a reference to the internal state of the `Client`.
     ///
-    /// This method accepts a collection of cookies, which can be either an owned
-    /// vector (`Vec<HeaderValue>`) or a reference to a slice (`&[HeaderValue]`).
-    /// It will convert the collection into an iterator and pass it to the
-    /// `cookie_store` for processing.
+    /// # Example
     ///
-    /// # Parameters
-    /// - `url`: The URL associated with the cookies to be set.
-    /// - `cookies`: A collection of `HeaderValue` items, either by reference or owned.
-    ///
-    /// This method ensures that cookies are only set if at least one cookie
-    /// exists in the collection.
-    #[cfg(feature = "cookies")]
-    pub fn set_cookies<C>(&self, url: &Url, cookies: C)
-    where
-        C: AsRef<[HeaderValue]>,
-    {
-        if let Some(ref cookie_store) = self.inner.load().cookie_store {
-            let mut cookies = cookies.as_ref().iter().peekable();
-            if cookies.peek().is_some() {
-                cookie_store.set_cookies(&mut cookies, url);
-            }
-        }
-    }
-
-    /// Injects a 'Cookie' into the 'CookieStore' for the specified URL, using references to `HeaderValue`.
-    ///
-    /// This method accepts a collection of cookies by reference, which can be either a slice (`&[&'a HeaderValue]`).
-    /// It will map each reference to the value of `HeaderValue` and pass the resulting iterator to the `cookie_store`
-    /// for processing.
-    ///
-    /// # Parameters
-    /// - `url`: The URL associated with the cookies to be set.
-    /// - `cookies`: A collection of references to `HeaderValue` items.
-    ///
-    /// This method ensures that cookies are only set if at least one cookie
-    /// exists in the collection.
-    #[cfg(feature = "cookies")]
-    pub fn set_cookies_by_ref<'a, C>(&self, url: &Url, cookies: C)
-    where
-        C: AsRef<[&'a HeaderValue]>,
-    {
-        if let Some(ref cookie_store) = self.inner.load().cookie_store {
-            let mut cookies = cookies.as_ref().iter().copied().peekable();
-            if cookies.peek().is_some() {
-                cookie_store.set_cookies(&mut cookies, url);
-            }
+    /// ```
+    /// let client = rquest::Client::new();
+    /// let client_ref = client.client_ref();
+    /// // Access the internal state of the client using `client_ref`
+    /// ```
+    pub fn client_ref(&self) -> ClientRef {
+        ClientRef {
+            inner: self.inner.load(),
         }
     }
 
@@ -1531,13 +1483,13 @@ impl Client {
     ///
     /// ```
     /// let mut client = rquest::Client::new();
-    /// let mut client_mut = client.as_mut();
+    /// let mut client_mut = client.client_mut();
     /// // Modify the internal state of the client using `client_mut`
     /// ```
-    pub fn as_mut(&self) -> ClientMut<'_> {
+    pub fn client_mut(&self) -> ClientMut<'_> {
         ClientMut {
             inner: self.inner.as_ref(),
-            inner_ref: None,
+            inner_ref: (**self.inner.load()).clone(),
             error: None,
         }
     }
@@ -1613,7 +1565,7 @@ impl Proxies {
 }
 
 #[derive(Clone)]
-struct ClientRef {
+struct ClientInner {
     accepts: Accepts,
     #[cfg(feature = "cookies")]
     cookie_store: Option<Arc<dyn cookie::CookieStore>>,
@@ -1632,7 +1584,7 @@ struct ClientRef {
     network_scheme: NetworkSchemeBuilder,
 }
 
-impl ClientRef {
+impl ClientInner {
     #[inline]
     fn proxy_auth(&self, dst: &Uri, headers: &mut HeaderMap) {
         if !self.proxies.proxies_maybe_http_auth {
@@ -1679,7 +1631,7 @@ impl ClientRef {
     }
 }
 
-impl_debug!(ClientRef,{
+impl_debug!(ClientInner,{
     accepts,
     headers,
     headers_order,
@@ -1696,13 +1648,104 @@ impl_debug!(ClientRef,{
     network_scheme
 });
 
+/// A reference to a `Client` instance.
+///
+/// This struct provides methods to interact with a `Client` instance in a thread-safe manner.
+/// It allows you to access the internal state of the `Client` without modifying it, ensuring
+/// that the access is safe and properly synchronized.
+///
+/// # Example
+///
+/// ```rust
+/// let client = rquest::Client::new();
+/// let client_ref = client.as_ref();
+/// // Access the internal state of the client using `client_ref`
+/// let headers = client_ref.headers();
+/// ```
+#[derive(Debug)]
+pub struct ClientRef {
+    inner: Guard<Arc<ClientInner>>,
+}
+
+impl ClientRef {
+    /// Retrieves a reference to the headers for this client.
+    ///
+    /// # Returns
+    ///
+    /// A reference to the `HeaderMap` containing the headers for this client.
+    #[inline]
+    pub fn headers(&self) -> &http::HeaderMap {
+        &self.inner.headers
+    }
+
+    /// Returns a `String` of the header-value of all `Cookie` in a `Url`.
+    #[cfg(feature = "cookies")]
+    pub fn get_cookies(&self, url: &Url) -> Option<HeaderValue> {
+        self.inner
+            .cookie_store
+            .as_ref()
+            .and_then(|cookie_store| cookie_store.cookies(url))
+    }
+
+    /// Injects a 'Cookie' into the 'CookieStore' for the specified URL.
+    ///
+    /// This method accepts a collection of cookies, which can be either an owned
+    /// vector (`Vec<HeaderValue>`) or a reference to a slice (`&[HeaderValue]`).
+    /// It will convert the collection into an iterator and pass it to the
+    /// `cookie_store` for processing.
+    ///
+    /// # Parameters
+    /// - `url`: The URL associated with the cookies to be set.
+    /// - `cookies`: A collection of `HeaderValue` items, either by reference or owned.
+    ///
+    /// This method ensures that cookies are only set if at least one cookie
+    /// exists in the collection.
+    #[cfg(feature = "cookies")]
+    pub fn set_cookies<C>(&self, url: &Url, cookies: C)
+    where
+        C: AsRef<[HeaderValue]>,
+    {
+        if let Some(ref cookie_store) = self.inner.cookie_store {
+            let mut cookies = cookies.as_ref().iter().peekable();
+            if cookies.peek().is_some() {
+                cookie_store.set_cookies(&mut cookies, url);
+            }
+        }
+    }
+
+    /// Injects a 'Cookie' into the 'CookieStore' for the specified URL, using references to `HeaderValue`.
+    ///
+    /// This method accepts a collection of cookies by reference, which can be either a slice (`&[&'a HeaderValue]`).
+    /// It will map each reference to the value of `HeaderValue` and pass the resulting iterator to the `cookie_store`
+    /// for processing.
+    ///
+    /// # Parameters
+    /// - `url`: The URL associated with the cookies to be set.
+    /// - `cookies`: A collection of references to `HeaderValue` items.
+    ///
+    /// This method ensures that cookies are only set if at least one cookie
+    /// exists in the collection.
+    #[cfg(feature = "cookies")]
+    pub fn set_cookies_by_ref<'a, C>(&self, url: &Url, cookies: C)
+    where
+        C: AsRef<[&'a HeaderValue]>,
+    {
+        if let Some(ref cookie_store) = self.inner.cookie_store {
+            let mut cookies = cookies.as_ref().iter().copied().peekable();
+            if cookies.peek().is_some() {
+                cookie_store.set_cookies(&mut cookies, url);
+            }
+        }
+    }
+}
+
 /// A mutable reference to a `ClientRef`.
 ///
 /// This struct provides methods to mutate the state of a `ClientRef`.
 #[derive(Debug)]
 pub struct ClientMut<'c> {
-    inner: &'c ArcSwap<ClientRef>,
-    inner_ref: Option<ClientRef>,
+    inner: &'c ArcSwap<ClientInner>,
+    inner_ref: ClientInner,
     error: Option<crate::Error>,
 }
 
@@ -1723,7 +1766,7 @@ impl<'c> ClientMut<'c> {
     where
         F: FnOnce(&mut HeaderMap),
     {
-        f(&mut self.load_inner().headers);
+        f(&mut self.inner_ref.headers);
         self
     }
 
@@ -1738,7 +1781,7 @@ impl<'c> ClientMut<'c> {
     /// A mutable reference to the `Client` instance with the applied base URL.
     pub fn base_url<U: IntoUrl>(mut self, url: U) -> ClientMut<'c> {
         if let Ok(url) = url.into_url() {
-            std::mem::swap(&mut self.load_inner().base_url, &mut Some(url));
+            std::mem::swap(&mut self.inner_ref.base_url, &mut Some(url));
         }
         self
     }
@@ -1756,10 +1799,7 @@ impl<'c> ClientMut<'c> {
     where
         T: Into<Cow<'static, [HeaderName]>>,
     {
-        std::mem::swap(
-            &mut self.load_inner().headers_order,
-            &mut Some(order.into()),
-        );
+        std::mem::swap(&mut self.inner_ref.headers_order, &mut Some(order.into()));
         self
     }
 
@@ -1773,7 +1813,7 @@ impl<'c> ClientMut<'c> {
     ///
     /// A mutable reference to the `Client` instance with the applied redirect policy.
     pub fn redirect(mut self, mut policy: redirect::Policy) -> ClientMut<'c> {
-        std::mem::swap(&mut self.load_inner().redirect, &mut policy);
+        std::mem::swap(&mut self.inner_ref.redirect, &mut policy);
         self
     }
 
@@ -1784,7 +1824,7 @@ impl<'c> ClientMut<'c> {
         C: cookie::CookieStore + 'static,
     {
         std::mem::swap(
-            &mut self.load_inner().cookie_store,
+            &mut self.inner_ref.cookie_store,
             &mut Some(cookie_store as _),
         );
         self
@@ -1800,7 +1840,7 @@ impl<'c> ClientMut<'c> {
     where
         T: Into<Option<IpAddr>>,
     {
-        self.load_inner().network_scheme.address(addr.into());
+        self.inner_ref.network_scheme.address(addr.into());
         self
     }
 
@@ -1812,7 +1852,7 @@ impl<'c> ClientMut<'c> {
         V4: Into<Option<Ipv4Addr>>,
         V6: Into<Option<Ipv6Addr>>,
     {
-        self.load_inner().network_scheme.addresses(ipv4, ipv6);
+        self.inner_ref.network_scheme.addresses(ipv4, ipv6);
         self
     }
 
@@ -1823,7 +1863,7 @@ impl<'c> ClientMut<'c> {
         where
             T: Into<Cow<'static, str>>,
         {
-            self.load_inner().network_scheme.interface(interface);
+            self.inner_ref.network_scheme.interface(interface);
             self
         }
     }
@@ -1845,7 +1885,7 @@ impl<'c> ClientMut<'c> {
         P::Item: Into<Proxy>,
     {
         let mut proxies = Proxies::new(proxies.into_iter().map(Into::into).collect::<Vec<Proxy>>());
-        std::mem::swap(&mut self.load_inner().proxies, &mut proxies);
+        std::mem::swap(&mut self.inner_ref.proxies, &mut proxies);
         self
     }
 
@@ -1854,7 +1894,7 @@ impl<'c> ClientMut<'c> {
     /// This method allows you to clear the proxies for the client, ensuring thread safety. It will
     /// remove the current proxies and return the old proxies, if any.
     pub fn unset_proxies(mut self) -> ClientMut<'c> {
-        self.load_inner().proxies.clear();
+        self.inner_ref.proxies.clear();
         self
     }
 
@@ -1888,27 +1928,29 @@ impl<'c> ClientMut<'c> {
         P: HttpContextProvider,
     {
         let context = provider.context();
-        let inner = &mut self.load_inner();
 
         if let Some(mut headers) = context.default_headers {
-            std::mem::swap(&mut inner.headers, &mut headers);
+            std::mem::swap(&mut self.inner_ref.headers, &mut headers);
         }
 
         if let Some(headers_order) = context.headers_order {
-            std::mem::swap(&mut inner.headers_order, &mut Some(headers_order));
+            std::mem::swap(&mut self.inner_ref.headers_order, &mut Some(headers_order));
         }
 
         if let Some(http1_config) = context.http1_config {
-            apply_http1_config(inner.hyper.http1(), http1_config);
+            apply_http1_config(self.inner_ref.hyper.http1(), http1_config);
         }
 
         if let Some(http2_config) = context.http2_config {
-            apply_http2_config(inner.hyper.http2(), http2_config);
+            apply_http2_config(self.inner_ref.hyper.http2(), http2_config);
         }
 
         match BoringTlsConnector::new(context.tls_config) {
             Ok(connector) => {
-                inner.hyper.connector_mut().set_connector(connector);
+                self.inner_ref
+                    .hyper
+                    .connector_mut()
+                    .set_connector(connector);
             }
             Err(err) => {
                 self.error = Some(error::builder(format!(
@@ -1921,13 +1963,6 @@ impl<'c> ClientMut<'c> {
         self
     }
 
-    /// Private method to load the inner `ClientRef` and return a mutable reference to it.
-    #[inline]
-    fn load_inner(&mut self) -> &mut ClientRef {
-        self.inner_ref
-            .get_or_insert_with(|| (**self.inner.load()).clone())
-    }
-
     /// Applies the changes made to the `ClientMut` to the `Client`.
     #[inline]
     pub fn apply(self) -> Result<(), Error> {
@@ -1935,9 +1970,7 @@ impl<'c> ClientMut<'c> {
             return Err(err);
         }
 
-        if let Some(inner_ref) = self.inner_ref {
-            self.inner.store(Arc::new(inner_ref));
-        }
+        self.inner.store(Arc::new(self.inner_ref));
 
         Ok(())
     }
@@ -1968,7 +2001,7 @@ pin_project! {
         redirect: Option<redirect::Policy>,
         cookie_store: CookieStoreOption,
         network_scheme: NetworkScheme,
-        client: Arc<ClientRef>,
+        client: Arc<ClientInner>,
         #[pin]
         in_flight: ResponseFuture,
         #[pin]

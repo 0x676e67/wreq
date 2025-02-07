@@ -21,7 +21,10 @@ async fn main() -> Result<(), rquest::Error> {
     println!("{}", resp.text().await?);
 
     // Reset the base url
-    client.as_mut().base_url("https://tls.peet.ws").apply()?;
+    client
+        .client_mut()
+        .base_url("https://tls.peet.ws")
+        .apply()?;
 
     // Send a request to tls.peet.ws /api/all
     let resp = client.get("/api/all").send().await?;
