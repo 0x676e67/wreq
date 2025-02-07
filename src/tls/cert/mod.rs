@@ -5,7 +5,6 @@ mod load;
 use super::{sv_handler, TlsResult};
 use boring2::{ssl::SslConnectorBuilder, x509::store::X509Store};
 use boring_sys2 as ffi;
-use foreign_types::ForeignTypeRef;
 
 /// The root certificate store.
 #[allow(missing_debug_implementations)]
@@ -38,7 +37,7 @@ impl RootCertStore {
                         sv_handler(unsafe {
                             ffi::SSL_CTX_set1_verify_cert_store(
                                 builder.as_ptr(),
-                                cert_store.as_ptr(),
+                                cert_store as *const _ as *mut _,
                             )
                         })?;
                     } else {
@@ -58,7 +57,10 @@ impl RootCertStore {
             }
             RootCertStore::Borrowed(cert_store) => {
                 sv_handler(unsafe {
-                    ffi::SSL_CTX_set1_verify_cert_store(builder.as_ptr(), cert_store.as_ptr())
+                    ffi::SSL_CTX_set1_verify_cert_store(
+                        builder.as_ptr(),
+                        cert_store as *const _ as *mut _,
+                    )
                 })?;
             }
         }
