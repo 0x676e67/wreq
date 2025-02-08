@@ -122,7 +122,7 @@ struct Config {
     https_only: bool,
     http2_max_retry_count: usize,
     tls_info: bool,
-    connector_layers: Vec<BoxedConnectorLayer>,
+    connector_layers: Option<Vec<BoxedConnectorLayer>>,
     builder: Builder,
     tls_config: TlsConfig,
 }
@@ -195,7 +195,7 @@ impl ClientBuilder {
                 https_only: false,
                 http2_max_retry_count: 2,
                 tls_info: false,
-                connector_layers: Vec::new(),
+                connector_layers: None,
                 tls_config: TlsConfig::default(),
             },
         }
@@ -1193,7 +1193,10 @@ impl ClientBuilder {
         <L::Service as Service<Unnameable>>::Future: Send + 'static,
     {
         let layer = BoxCloneSyncServiceLayer::new(layer);
-        self.config.connector_layers.push(layer);
+        self.config
+            .connector_layers
+            .get_or_insert_default()
+            .push(layer);
         self
     }
 }

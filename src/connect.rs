@@ -40,73 +40,71 @@ pub(crate) struct ConnectorBuilder {
 }
 
 impl ConnectorBuilder {
-    pub(crate) fn build(self, layers: Vec<BoxedConnectorLayer>) -> Connector {
-        if layers.is_empty() {
-            // we have no user-provided layers, only use concrete types
-            let base_service = ConnectorService {
-                http: self.http,
-                tls: self.tls,
-                verbose: self.verbose,
-                nodelay: self.nodelay,
-                tls_info: self.tls_info,
-                timeout: self.timeout,
-            };
-            return Connector::Simple(base_service);
-        }
-
+    pub(crate) fn build<L>(self, layers: L) -> Connector
+    where
+        L: Into<Option<Vec<BoxedConnectorLayer>>>,
+    {
         let base_service = ConnectorService {
             http: self.http,
             tls: self.tls,
             verbose: self.verbose,
             nodelay: self.nodelay,
             tls_info: self.tls_info,
-            timeout: None,
+            timeout: self.timeout,
         };
 
-        // otherwise we have user provided layers
-        // so we need type erasure all the way through
-        // as well as mapping the unnameable type of the layers back to Dst for the inner service
-        let service = layers.iter().fold(
-            BoxCloneSyncService::new(
-                ServiceBuilder::new()
-                    .layer(MapRequestLayer::new(|request: Unnameable| request.0))
-                    .service(base_service.clone()),
-            ),
-            |service, layer| ServiceBuilder::new().layer(layer).service(service),
-        );
+        match layers.into() {
+            Some(layers) => {
+                // otherwise we have user provided layers
+                // so we need type erasure all the way through
+                // as well as mapping the unnameable type of the layers back to Dst for the inner service
+                let service = layers.iter().fold(
+                    BoxCloneSyncService::new(
+                        ServiceBuilder::new()
+                            .layer(MapRequestLayer::new(|request: Unnameable| request.0))
+                            .service(base_service.clone()),
+                    ),
+                    |service, layer| ServiceBuilder::new().layer(layer).service(service),
+                );
 
-        // now we handle the concrete stuff - any `connect_timeout`,
-        // plus a final map_err layer we can use to cast default tower layer
-        // errors to internal errors
-        match self.timeout {
-            Some(timeout) => {
-                let service = ServiceBuilder::new()
-                    .layer(TimeoutLayer::new(timeout))
-                    .service(service);
-                let service = ServiceBuilder::new()
-                    .map_err(cast_to_internal_error)
-                    .service(service);
-                let service = BoxCloneSyncService::new(service);
-                Connector::WithLayers {
-                    layers,
-                    base_service,
-                    service,
+                // now we handle the concrete stuff - any `connect_timeout`,
+                // plus a final map_err layer we can use to cast default tower layer
+                // errors to internal errors
+                match self.timeout {
+                    Some(timeout) => {
+                        let service = ServiceBuilder::new()
+                            .layer(TimeoutLayer::new(timeout))
+                            .service(service);
+                        let service = ServiceBuilder::new()
+                            .map_err(cast_to_internal_error)
+                            .service(service);
+                        let service = BoxCloneSyncService::new(service);
+                        Connector::WithLayers {
+                            layers,
+                            base_service,
+                            service,
+                        }
+                    }
+                    None => {
+                        // no timeout, but still map err
+                        // no named timeout layer but we still map errors since
+                        // we might have user-provided timeout layer
+                        let service = ServiceBuilder::new().service(service);
+                        let service = ServiceBuilder::new()
+                            .map_err(cast_to_internal_error)
+                            .service(service);
+                        let service = BoxCloneSyncService::new(service);
+                        Connector::WithLayers {
+                            layers,
+                            base_service,
+                            service,
+                        }
+                    }
                 }
             }
             None => {
-                // no timeout, but still map err
-                // no named timeout layer but we still map errors since
-                // we might have user-provided timeout layer
-                let service = ServiceBuilder::new().service(service);
-                let service = ServiceBuilder::new()
-                    .map_err(cast_to_internal_error)
-                    .service(service);
-                let service = BoxCloneSyncService::new(service);
-                Connector::WithLayers {
-                    layers,
-                    base_service,
-                    service,
-                }
+                // we have no user-provided layers, only use concrete types
+                Connector::Simple(base_service)
             }
         }
     }
