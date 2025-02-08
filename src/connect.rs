@@ -74,9 +74,7 @@ impl ConnectorBuilder {
                     .layer(MapRequestLayer::new(|request: Unnameable| request.0))
                     .service(base_service.clone()),
             ),
-            |service, layer| {
-                BoxCloneSyncService::new(ServiceBuilder::new().layer(layer).service(service))
-            },
+            |service, layer| ServiceBuilder::new().layer(layer).service(service),
         );
 
         // now we handle the concrete stuff - any `connect_timeout`,
