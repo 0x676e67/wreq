@@ -18,7 +18,7 @@ rustdoc-args = ["--cfg", "docsrs"]
 targets = ["x86_64-unknown-linux-gnu"]
 
 [features]
-default = ["webpki-roots", "charset"]
+default = ["webpki-roots", "charset", "macos-system-configuration"]
 
 full = [
     "json",
@@ -60,7 +60,11 @@ stream = ["tokio/fs", "dep:tokio-util"]
 socks = ["dep:tokio-socks"]
 
 native-roots = ["dep:rustls-native-certs"]
+
 webpki-roots = ["dep:webpki-root-certs"]
+
+# Use the system's proxy configuration.
+macos-system-configuration = ["dep:system-configuration"]
 
 # Optional enable http2 tracing
 http2-tracing = ["hyper2/http2-tracing"]
@@ -146,7 +150,7 @@ hickory-resolver = { version = "0.24", optional = true }
 windows-registry = "0.4.0"
 
 [target.'cfg(target_os = "macos")'.dependencies]
-system-configuration = "0.6.0"
+system-configuration = { version = "0.6.0", optional = true }
 
 [target.'cfg(any(target_os = "ios", target_os = "visionos", target_os = "macos", target_os = "tvos", target_os = "watchos"))'.dependencies]
 libc = "0.2"
