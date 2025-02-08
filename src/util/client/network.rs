@@ -106,22 +106,22 @@ impl NetworkScheme {
 
 impl fmt::Debug for NetworkScheme {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        #[cfg(any(
-            target_os = "android",
-            target_os = "fuchsia",
-            target_os = "linux",
-            all(
-                feature = "apple-bindable-device",
-                any(
-                    target_os = "ios",
-                    target_os = "visionos",
-                    target_os = "macos",
-                    target_os = "tvos",
-                    target_os = "watchos",
-                )
-            )
-        ))]
         match self {
+            #[cfg(any(
+                target_os = "android",
+                target_os = "fuchsia",
+                target_os = "linux",
+                all(
+                    feature = "apple-bindable-device",
+                    any(
+                        target_os = "ios",
+                        target_os = "visionos",
+                        target_os = "macos",
+                        target_os = "tvos",
+                        target_os = "watchos",
+                    )
+                )
+            ))]
             NetworkScheme::Scheme {
                 interface,
                 addresses,
@@ -151,27 +151,21 @@ impl fmt::Debug for NetworkScheme {
 
                 write!(f, "}}")
             }
-            NetworkScheme::Default => {
-                write!(f, "default")
-            }
-        }
-
-        #[cfg(not(any(
-            target_os = "android",
-            target_os = "fuchsia",
-            target_os = "linux",
-            all(
-                feature = "apple-bindable-device",
-                any(
-                    target_os = "ios",
-                    target_os = "visionos",
-                    target_os = "macos",
-                    target_os = "tvos",
-                    target_os = "watchos",
+            #[cfg(not(any(
+                target_os = "android",
+                target_os = "fuchsia",
+                target_os = "linux",
+                all(
+                    feature = "apple-bindable-device",
+                    any(
+                        target_os = "ios",
+                        target_os = "visionos",
+                        target_os = "macos",
+                        target_os = "tvos",
+                        target_os = "watchos",
+                    )
                 )
-            )
-        )))]
-        match self {
+            )))]
             NetworkScheme::Scheme {
                 addresses,
                 proxy_scheme,
@@ -277,61 +271,62 @@ impl NetworkSchemeBuilder {
         self
     }
 
-    #[cfg(any(
-        target_os = "android",
-        target_os = "fuchsia",
-        target_os = "linux",
-        all(
-            feature = "apple-bindable-device",
-            any(
-                target_os = "ios",
-                target_os = "visionos",
-                target_os = "macos",
-                target_os = "tvos",
-                target_os = "watchos",
-            )
-        )
-    ))]
     #[inline]
     pub fn build(self) -> NetworkScheme {
-        if matches!(
-            (&self.proxy_scheme, &self.addresses, &self.interface),
-            (None, (None, None), None)
-        ) {
-            return NetworkScheme::Default;
-        }
-
-        NetworkScheme::Scheme {
-            interface: self.interface,
-            addresses: self.addresses,
-            proxy_scheme: self.proxy_scheme,
-        }
-    }
-
-    #[cfg(not(any(
-        target_os = "android",
-        target_os = "fuchsia",
-        target_os = "linux",
-        all(
-            feature = "apple-bindable-device",
-            any(
-                target_os = "ios",
-                target_os = "visionos",
-                target_os = "macos",
-                target_os = "tvos",
-                target_os = "watchos",
+        #[cfg(any(
+            target_os = "android",
+            target_os = "fuchsia",
+            target_os = "linux",
+            all(
+                feature = "apple-bindable-device",
+                any(
+                    target_os = "ios",
+                    target_os = "visionos",
+                    target_os = "macos",
+                    target_os = "tvos",
+                    target_os = "watchos",
+                )
             )
-        )
-    )))]
-    #[inline]
-    pub fn build(self) -> NetworkScheme {
-        if matches!((&self.proxy_scheme, &self.addresses), (None, (None, None))) {
-            return NetworkScheme::Default;
+        ))]
+        {
+            if matches!(
+                (&self.proxy_scheme, &self.addresses, &self.interface),
+                (None, (None, None), None)
+            ) {
+                return NetworkScheme::Default;
+            }
+
+            NetworkScheme::Scheme {
+                interface: self.interface,
+                addresses: self.addresses,
+                proxy_scheme: self.proxy_scheme,
+            }
         }
 
-        NetworkScheme::Scheme {
-            addresses: self.addresses,
-            proxy_scheme: self.proxy_scheme,
+        #[cfg(not(any(
+            target_os = "android",
+            target_os = "fuchsia",
+            target_os = "linux",
+            all(
+                feature = "apple-bindable-device",
+                any(
+                    target_os = "ios",
+                    target_os = "visionos",
+                    target_os = "macos",
+                    target_os = "tvos",
+                    target_os = "watchos",
+                )
+            )
+        )))]
+        {
+            if matches!((&self.proxy_scheme, &self.addresses), (None, (None, None))) {
+                return NetworkScheme::Default;
+            }
+
+            NetworkScheme::Scheme {
+                addresses: self.addresses,
+                proxy_scheme: self.proxy_scheme,
+            }
         }
     }
 }
