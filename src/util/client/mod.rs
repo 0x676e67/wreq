@@ -34,7 +34,7 @@ use sync_wrapper::SyncWrapper;
 
 use crate::proxy::ProxyScheme;
 use crate::util::common;
-use crate::{cfg_bindable_device, cfg_non_bindable_device, impl_debug, AlpnProtos};
+use crate::{impl_debug, AlpnProtos};
 use connect::capture::CaptureConnectionExtension;
 use connect::{Alpn, Connect, Connected, Connection};
 use pool::Ver;
@@ -200,11 +200,41 @@ impl Dst {
 
     #[inline(always)]
     pub(crate) fn take_interface(&mut self) -> Option<std::borrow::Cow<'static, str>> {
-        cfg_bindable_device! {
+        #[cfg(any(
+            target_os = "android",
+            target_os = "fuchsia",
+            target_os = "linux",
+            all(
+                feature = "apple-bindable-device",
+                any(
+                    target_os = "ios",
+                    target_os = "visionos",
+                    target_os = "macos",
+                    target_os = "tvos",
+                    target_os = "watchos",
+                )
+            )
+        ))]
+        {
             Arc::make_mut(&mut self.inner).network.take_interface()
         }
 
-        cfg_non_bindable_device!(None)
+        #[cfg(not(any(
+            target_os = "android",
+            target_os = "fuchsia",
+            target_os = "linux",
+            all(
+                feature = "apple-bindable-device",
+                any(
+                    target_os = "ios",
+                    target_os = "visionos",
+                    target_os = "macos",
+                    target_os = "tvos",
+                    target_os = "watchos",
+                )
+            )
+        )))]
+        None
     }
 
     #[inline(always)]

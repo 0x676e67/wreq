@@ -132,13 +132,8 @@ cookie_crate = { version = "0.18", package = "cookie", optional = true }
 cookie_store = { version = "0.21", optional = true }
 
 ## compression
-async-compression = { version = "0.4.0", default-features = false, features = [
-    "tokio",
-], optional = true }
-tokio-util = { version = "0.7.0", default-features = false, features = [
-    "codec",
-    "io",
-], optional = true }
+async-compression = { version = "0.4.0", default-features = false, features = ["tokio"], optional = true }
+tokio-util = { version = "0.7.0", default-features = false, features = ["codec","io"], optional = true }
 
 ## socks
 tokio-socks = { version = "0.5.2", optional = true }
@@ -175,8 +170,8 @@ hyper-util = { version = "0.1.10", features = [
 ] }
 serde = { version = "1.0", features = ["derive"] }
 libflate = "2.0.0"
-zstd = { version = "0.13" }
-brotli = { version = "7.0.0" }
+zstd = "0.13"
+brotli = "7.0.0"
 doc-comment = "0.3"
 tokio = { version = "1.0", default-features = false, features = [
     "macros",

@@ -28,7 +28,7 @@ use crate::util::{
     },
     rt::{tokio::TokioTimer, TokioExecutor},
 };
-use crate::{cfg_bindable_device, error, impl_debug, Http1Config, Http2Config, TlsConfig};
+use crate::{error, impl_debug, Http1Config, Http2Config, TlsConfig};
 use crate::{
     redirect,
     tls::{AlpnProtos, BoringTlsConnector, RootCertStore, TlsVersion},
@@ -853,24 +853,38 @@ impl ClientBuilder {
         self
     }
 
-    cfg_bindable_device! {
-        /// Bind to an interface by `SO_BINDTODEVICE`.
-        ///
-        /// # Example
-        ///
-        /// ```
-        /// let interface = "lo";
-        /// let client = rquest::Client::builder()
-        ///     .interface(interface)
-        ///     .build().unwrap();
-        /// ```
-        pub fn interface<T>(mut self, interface: T) -> ClientBuilder
-        where
-            T: Into<Cow<'static, str>>,
-        {
-            self.config.network_scheme.interface(interface);
-            self
-        }
+    /// Bind to an interface by `SO_BINDTODEVICE`.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// let interface = "lo";
+    /// let client = rquest::Client::builder()
+    ///     .interface(interface)
+    ///     .build().unwrap();
+    /// ```
+    #[cfg(any(
+        target_os = "android",
+        target_os = "fuchsia",
+        target_os = "linux",
+        all(
+            feature = "apple-bindable-device",
+            any(
+                target_os = "ios",
+                target_os = "visionos",
+                target_os = "macos",
+                target_os = "tvos",
+                target_os = "watchos",
+            )
+        )
+    ))]
+    #[cfg_attr(docsrs, feature = "apple-bindable-device")]
+    pub fn interface<T>(mut self, interface: T) -> ClientBuilder
+    where
+        T: Into<Cow<'static, str>>,
+    {
+        self.config.network_scheme.interface(interface);
+        self
     }
 
     /// Set that all sockets have `SO_KEEPALIVE` set with the supplied duration.
@@ -1784,16 +1798,29 @@ impl<'c> ClientMut<'c> {
         self
     }
 
-    cfg_bindable_device! {
-        /// Bind to an interface by `SO_BINDTODEVICE`.
-        #[inline]
-        pub fn interface<T>(mut self, interface: T)  -> ClientMut<'c>
-        where
-            T: Into<Cow<'static, str>>,
-        {
-            self.inner_ref.network_scheme.interface(interface);
-            self
-        }
+    /// Bind to an interface by `SO_BINDTODEVICE`.
+    #[cfg(any(
+        target_os = "android",
+        target_os = "fuchsia",
+        target_os = "linux",
+        all(
+            feature = "apple-bindable-device",
+            any(
+                target_os = "ios",
+                target_os = "visionos",
+                target_os = "macos",
+                target_os = "tvos",
+                target_os = "watchos",
+            )
+        )
+    ))]
+    #[inline]
+    pub fn interface<T>(mut self, interface: T) -> ClientMut<'c>
+    where
+        T: Into<Cow<'static, str>>,
+    {
+        self.inner_ref.network_scheme.interface(interface);
+        self
     }
 
     /// Sets the proxies for this client in a thread-safe manner and returns the old proxies.

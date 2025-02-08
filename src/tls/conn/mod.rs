@@ -6,7 +6,6 @@ mod layer;
 
 pub use self::layer::*;
 use super::BoringTlsConnector;
-use crate::cfg_bindable_device;
 use crate::connect::HttpConnector;
 use crate::tls::ext::SslRefExt;
 use crate::tls::{AlpnProtos, AlpsProtos, TlsResult};
@@ -65,9 +64,22 @@ impl HttpsConnectorBuilder {
     #[inline]
     #[allow(unused_mut)]
     pub fn interface(mut self, _interface: Option<Cow<'static, str>>) -> Self {
-        cfg_bindable_device! {
-            self.http.set_interface(_interface);
-        }
+        #[cfg(any(
+            target_os = "android",
+            target_os = "fuchsia",
+            target_os = "linux",
+            all(
+                feature = "apple-bindable-device",
+                any(
+                    target_os = "ios",
+                    target_os = "visionos",
+                    target_os = "macos",
+                    target_os = "tvos",
+                    target_os = "watchos",
+                )
+            )
+        ))]
+        self.http.set_interface(_interface);
         self
     }
 

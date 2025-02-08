@@ -16,7 +16,7 @@ use super::response::Response;
 use crate::cookie;
 use crate::header::{HeaderMap, HeaderName, HeaderValue, CONTENT_TYPE};
 use crate::util::client::{NetworkScheme, NetworkSchemeBuilder};
-use crate::{cfg_bindable_device, redirect, IntoUrl, Method, Proxy, Url};
+use crate::{redirect, IntoUrl, Method, Proxy, Url};
 #[cfg(feature = "cookies")]
 use std::sync::Arc;
 
@@ -579,17 +579,31 @@ impl RequestBuilder {
         self
     }
 
-    cfg_bindable_device! {
-        /// Set the interface for this request.
-        pub fn interface<I>(mut self, interface: I) -> RequestBuilder
-        where
-            I: Into<std::borrow::Cow<'static, str>>,
-        {
-            if let Ok(ref mut req) = self.request {
-                req.network_scheme.interface(interface);
-            }
-            self
+    /// Set the interface for this request.
+    #[cfg(any(
+        target_os = "android",
+        target_os = "fuchsia",
+        target_os = "linux",
+        all(
+            feature = "apple-bindable-device",
+            any(
+                target_os = "ios",
+                target_os = "visionos",
+                target_os = "macos",
+                target_os = "tvos",
+                target_os = "watchos",
+            )
+        )
+    ))]
+    #[cfg_attr(docsrs, feature = "apple-bindable-device")]
+    pub fn interface<I>(mut self, interface: I) -> RequestBuilder
+    where
+        I: Into<std::borrow::Cow<'static, str>>,
+    {
+        if let Ok(ref mut req) = self.request {
+            req.network_scheme.interface(interface);
         }
+        self
     }
 
     /// Set the cookie store for this request.
