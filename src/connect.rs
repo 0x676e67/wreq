@@ -248,7 +248,7 @@ impl ConnectorService {
                 .alpn_protos(dst.alpn_protos())
                 .interface(dst.take_interface())
                 .addresses(dst.take_addresses())
-                .build(self.tls);
+                .build(self.tls.clone());
 
             log::trace!("socks HTTPS over proxy");
             let host = dst.host().ok_or(crate::error::uri_bad_host())?;
