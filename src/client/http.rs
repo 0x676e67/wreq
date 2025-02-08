@@ -18,7 +18,7 @@ use crate::cookie;
 #[cfg(feature = "hickory-dns")]
 use crate::dns::hickory::{HickoryDnsResolver, LookupIpStrategy};
 use crate::dns::{gai::GaiResolver, DnsResolverWithOverrides, DynResolver, Resolve};
-use crate::error::BoxError;
+use crate::error::{BoxError, Error};
 use crate::into_url::try_uri;
 use crate::util::{
     self,
@@ -28,7 +28,7 @@ use crate::util::{
     },
     rt::{tokio::TokioTimer, TokioExecutor},
 };
-use crate::{cfg_bindable_device, error, impl_debug, Error, Http1Config, Http2Config, TlsConfig};
+use crate::{cfg_bindable_device, error, impl_debug, Http1Config, Http2Config, TlsConfig};
 use crate::{
     redirect,
     tls::{AlpnProtos, BoringTlsConnector, RootCertStore, TlsVersion},
@@ -113,7 +113,7 @@ struct Config {
     #[cfg(feature = "cookies")]
     cookie_store: CookieStoreOption,
     hickory_dns: bool,
-    error: Option<crate::Error>,
+    error: Option<Error>,
     dns_overrides: HashMap<String, Vec<SocketAddr>>,
     dns_resolver: Option<Arc<dyn Resolve>>,
     #[cfg(feature = "hickory-dns")]
@@ -1280,10 +1280,7 @@ impl Client {
     ///
     /// This method fails if there was an error while sending request,
     /// redirect loop was detected or redirect limit was exhausted.
-    pub fn execute(
-        &self,
-        request: Request,
-    ) -> impl Future<Output = Result<Response, crate::Error>> {
+    pub fn execute(&self, request: Request) -> impl Future<Output = Result<Response, Error>> {
         self.execute_request(request)
     }
 
@@ -1480,7 +1477,7 @@ impl Client {
 
 impl tower_service::Service<Request> for Client {
     type Response = Response;
-    type Error = crate::Error;
+    type Error = Error;
     type Future = Pending;
 
     fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
@@ -1494,7 +1491,7 @@ impl tower_service::Service<Request> for Client {
 
 impl tower_service::Service<Request> for &'_ Client {
     type Response = Response;
-    type Error = crate::Error;
+    type Error = Error;
     type Future = Pending;
 
     fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
@@ -1707,7 +1704,7 @@ impl ClientRef {
 pub struct ClientMut<'c> {
     inner: &'c ArcSwap<ClientInner>,
     inner_ref: ClientInner,
-    error: Option<crate::Error>,
+    error: Option<Error>,
 }
 
 impl<'c> ClientMut<'c> {
@@ -1916,7 +1913,7 @@ pin_project! {
 
 enum PendingInner {
     Request(PendingRequest),
-    Error(Option<crate::Error>),
+    Error(Option<Error>),
 }
 
 pin_project! {
@@ -2052,7 +2049,7 @@ fn is_retryable_error(err: &(dyn std::error::Error + 'static)) -> bool {
 }
 
 impl Pending {
-    pub(super) fn new_err(err: crate::Error) -> Pending {
+    pub(super) fn new_err(err: Error) -> Pending {
         Pending {
             inner: PendingInner::Error(Some(err)),
         }
@@ -2064,7 +2061,7 @@ impl Pending {
 }
 
 impl Future for Pending {
-    type Output = Result<Response, crate::Error>;
+    type Output = Result<Response, Error>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let inner = self.inner();
@@ -2078,7 +2075,7 @@ impl Future for Pending {
 }
 
 impl Future for PendingRequest {
-    type Output = Result<Response, crate::Error>;
+    type Output = Result<Response, Error>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         if let Some(delay) = self.as_mut().total_timeout().as_mut().as_pin_mut() {
