@@ -1502,6 +1502,7 @@ impl Client {
     /// This method creates a new instance of the `Client` by cloning its internal state.
     /// The cloned client will have the same configuration and state as the original client,
     /// but it will be a separate instance that can be used independently.
+    /// Note that this will still share the connection pool with the original `Client`.
     ///
     /// # Example
     ///
