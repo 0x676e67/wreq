@@ -1362,7 +1362,7 @@ impl Client {
         }
 
         #[cfg(feature = "cookies")]
-        let cookie_store = _cookie_store.as_ref().or(inner.cookie_store.as_ref());
+        let cookie_store = _cookie_store.as_ref().or(client.cookie_store.as_ref());
 
         // Add cookies from the cookie store.
         #[cfg(feature = "cookies")]
