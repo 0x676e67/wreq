@@ -61,7 +61,7 @@ impl NetworkScheme {
         NetworkSchemeBuilder::default()
     }
 
-    #[inline]
+    #[inline(always)]
     pub fn take_proxy_scheme(&mut self) -> Option<ProxyScheme> {
         match self {
             NetworkScheme::Scheme {
@@ -72,7 +72,7 @@ impl NetworkScheme {
         }
     }
 
-    #[inline]
+    #[inline(always)]
     pub fn take_addresses(&mut self) -> (Option<Ipv4Addr>, Option<Ipv6Addr>) {
         match self {
             NetworkScheme::Scheme { addresses, .. } => (addresses.0.take(), addresses.1.take()),
@@ -95,13 +95,11 @@ impl NetworkScheme {
             )
         )
     ))]
-    #[inline]
+    #[inline(always)]
     pub fn take_interface(&mut self) -> Option<std::borrow::Cow<'static, str>> {
-        {
-            match self {
-                NetworkScheme::Scheme { interface, .. } => interface.take(),
-                _ => None,
-            }
+        match self {
+            NetworkScheme::Scheme { interface, .. } => interface.take(),
+            _ => None,
         }
     }
 }
