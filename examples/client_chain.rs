@@ -33,7 +33,12 @@ async fn main() -> Result<(), rquest::Error> {
         .interface("utun4")
         .apply()?;
 
-    let text = client.get("/api/all").send().await?.text().await?;
+    let text = client
+        .get("https://tls.peet.ws/api/all")
+        .send()
+        .await?
+        .text()
+        .await?;
     println!("{}", text);
 
     Ok(())
