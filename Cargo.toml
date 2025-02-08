@@ -311,10 +311,6 @@ path = "examples/request_with_redirect.rs"
 required-features = ["full"]
 
 [[example]]
-name = "base_url"
-path = "examples/base_url.rs"
-
-[[example]]
 name = "request_with_cookie_store"
 path = "examples/request_with_cookie_store.rs"
 required-features = ["cookies"]

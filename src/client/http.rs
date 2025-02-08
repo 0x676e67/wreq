@@ -118,7 +118,6 @@ struct Config {
     dns_resolver: Option<Arc<dyn Resolve>>,
     #[cfg(feature = "hickory-dns")]
     dns_strategy: Option<LookupIpStrategy>,
-    base_url: Option<Url>,
     https_only: bool,
     http2_max_retry_count: usize,
     tls_info: bool,
@@ -143,7 +142,6 @@ impl_debug!(
         nodelay,
         network_scheme,
         dns_overrides,
-        base_url,
         builder,
         tls_config
     }
@@ -190,7 +188,6 @@ impl ClientBuilder {
                 cookie_store: None,
                 dns_overrides: HashMap::new(),
                 dns_resolver: None,
-                base_url: None,
                 builder: HyperClient::builder(TokioExecutor::new()),
                 https_only: false,
                 http2_max_retry_count: 2,
@@ -276,7 +273,6 @@ impl ClientBuilder {
                 request_timeout: config.timeout,
                 read_timeout: config.read_timeout,
                 https_only: config.https_only,
-                base_url: config.base_url,
                 http2_max_retry_count: config.http2_max_retry_count,
                 proxies: Proxies::new(proxies),
                 network_scheme: config.network_scheme,
@@ -285,38 +281,6 @@ impl ClientBuilder {
     }
 
     // Higher-level options
-
-    /// Sets a base URL for the client.
-    ///
-    /// The base URL will be used as the root for all relative request paths made by this client.
-    /// If a request specifies an absolute URL, it will override the base URL.
-    ///
-    /// # Parameters
-    /// - `base_url`: A value that can be converted into a URL, representing the base URL for the client.
-    ///
-    /// # Returns
-    /// Returns the `ClientBuilder` with the base URL configured. If the provided `base_url` is invalid,
-    /// an error is stored in the configuration, and the builder can no longer produce a valid client.
-    ///
-    /// # Example
-    /// ```rust
-    /// let client = Client::builder()
-    ///     .base_url("https://api.example.com")
-    ///     .build();
-    ///
-    /// let response = client.get("/users").send().await?; // Resolves to "https://api.example.com/users"
-    /// ```
-    pub fn base_url<U: IntoUrl>(mut self, base_url: U) -> ClientBuilder {
-        match base_url.into_url() {
-            Ok(base_url) => {
-                self.config.base_url = Some(base_url);
-            }
-            Err(e) => {
-                self.config.error = Some(e);
-            }
-        }
-        self
-    }
 
     /// Sets the `User-Agent` header to be used by this client.
     ///
@@ -1300,11 +1264,7 @@ impl Client {
     ///
     /// This method fails whenever the supplied `Url` cannot be parsed.
     pub fn request<U: IntoUrl>(&self, method: Method, url: U) -> RequestBuilder {
-        let url = match self.inner.load().base_url {
-            Some(ref base_url) => base_url.join(url.as_str()).map_err(error::builder),
-            None => url.into_url(),
-        };
-        let req = url.map(move |url| Request::new(method, url));
+        let req = url.into_url().map(move |url| Request::new(method, url));
         RequestBuilder::new(self.clone(), req)
     }
 
@@ -1582,7 +1542,6 @@ struct ClientInner {
     request_timeout: Option<Duration>,
     read_timeout: Option<Duration>,
     https_only: bool,
-    base_url: Option<Url>,
     http2_max_retry_count: usize,
     proxies: Proxies,
     network_scheme: NetworkSchemeBuilder,
@@ -1645,7 +1604,6 @@ impl_debug!(ClientInner,{
     request_timeout,
     read_timeout,
     https_only,
-    base_url,
     http2_max_retry_count,
     proxies,
     network_scheme
@@ -1770,22 +1728,6 @@ impl<'c> ClientMut<'c> {
         F: FnOnce(&mut HeaderMap),
     {
         f(&mut self.inner_ref.headers);
-        self
-    }
-
-    /// Sets the base URL for this client.
-    ///
-    /// # Arguments
-    ///
-    /// * `url` - The base URL to set.
-    ///
-    /// # Returns
-    ///
-    /// A mutable reference to the `Client` instance with the applied base URL.
-    pub fn base_url<U: IntoUrl>(mut self, url: U) -> ClientMut<'c> {
-        if let Ok(url) = url.into_url() {
-            std::mem::swap(&mut self.inner_ref.base_url, &mut Some(url));
-        }
         self
     }
 
