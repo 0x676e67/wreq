@@ -1195,7 +1195,7 @@ impl ClientBuilder {
         let layer = BoxCloneSyncServiceLayer::new(layer);
         self.config
             .connector_layers
-            .get_or_insert_default()
+            .get_or_insert_with(Vec::new)
             .push(layer);
         self
     }
