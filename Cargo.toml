@@ -66,6 +66,9 @@ webpki-roots = ["dep:webpki-root-certs"]
 # Use the system's proxy configuration.
 macos-system-configuration = ["dep:system-configuration"]
 
+# Use the Apple platform's network device binding.
+apple-bindable-device = ["dep:libc"]
+
 # Optional enable http2 tracing
 http2-tracing = ["hyper2/http2-tracing"]
 
@@ -153,7 +156,7 @@ windows-registry = "0.4.0"
 system-configuration = { version = "0.6.0", optional = true }
 
 [target.'cfg(any(target_os = "ios", target_os = "visionos", target_os = "macos", target_os = "tvos", target_os = "watchos"))'.dependencies]
-libc = "0.2"
+libc = { version = "0.2", optional = true }
 
 [dev-dependencies]
 hyper = { version = "1.1.0", default-features = false, features = [
@@ -308,6 +311,7 @@ required-features = ["websocket", "http2-tracing", "futures-util/std"]
 [[example]]
 name = "client_chain"
 path = "examples/client_chain.rs"
+required-features = ["apple-bindable-device"]
 
 [[example]]
 name = "request_with_redirect"

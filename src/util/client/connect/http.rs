@@ -812,12 +812,15 @@ fn connect(
             .map_err(ConnectError::m("tcp bind interface error"))?;
     }
 
-    #[cfg(any(
-        target_os = "ios",
-        target_os = "visionos",
-        target_os = "macos",
-        target_os = "tvos",
-        target_os = "watchos",
+    #[cfg(all(
+        feature = "apple-bindable-device",
+        any(
+            target_os = "ios",
+            target_os = "visionos",
+            target_os = "macos",
+            target_os = "tvos",
+            target_os = "watchos",
+        )
     ))]
     /// That this only supports ios, visionos, macos, tvos, watchos
     if let Some(interface) = &config.interface {

@@ -30,7 +30,7 @@ async fn main() -> Result<(), rquest::Error> {
         .as_mut()
         .impersonate(Impersonate::Safari18)
         .headers_order(HEADER_ORDER)
-        .interface("utun4")
+        .interface("utun6")
         .apply()?;
 
     let text = client

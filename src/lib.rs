@@ -286,11 +286,16 @@ macro_rules! cfg_bindable_device {
             target_os = "android",
             target_os = "fuchsia",
             target_os = "linux",
-            target_os = "ios",
-            target_os = "visionos",
-            target_os = "macos",
-            target_os = "tvos",
-            target_os = "watchos"
+            all(
+                feature = "apple-bindable-device",
+                any(
+                    target_os = "ios",
+                    target_os = "visionos",
+                    target_os = "macos",
+                    target_os = "tvos",
+                    target_os = "watchos",
+                )
+            )
         ))]
         $(
             $tt
@@ -306,11 +311,16 @@ macro_rules! cfg_non_bindable_device {
             target_os = "android",
             target_os = "fuchsia",
             target_os = "linux",
-            target_os = "ios",
-            target_os = "visionos",
-            target_os = "macos",
-            target_os = "tvos",
-            target_os = "watchos"
+            all(
+                feature = "apple-bindable-device",
+                any(
+                    target_os = "ios",
+                    target_os = "visionos",
+                    target_os = "macos",
+                    target_os = "tvos",
+                    target_os = "watchos",
+                )
+            )
         )))]
         $(
             $tt
