@@ -392,8 +392,7 @@ pub use self::client::{
     Body, Client, ClientBuilder, ClientMut, ClientRef, HttpContext, HttpContextProvider, Request,
     RequestBuilder, Response, Upgraded,
 };
-pub use self::http1::Http1Config;
-pub use self::http2::Http2Config;
+pub use self::conf::{Http1Config, Http2Config};
 pub use self::imp::{Impersonate, ImpersonateOS, ImpersonateOption};
 pub use self::proxy::{NoProxy, Proxy};
 pub use self::tls::{AlpnProtos, AlpsProtos, RootCertStore, TlsConfig, TlsInfo, TlsVersion};
@@ -415,8 +414,7 @@ pub mod dns;
 mod proxy;
 pub mod redirect;
 
-mod http1;
-mod http2;
+mod conf;
 mod imp;
 mod tls;
 mod util;
