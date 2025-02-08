@@ -255,11 +255,11 @@ impl ClientBuilder {
             http.set_connect_timeout(config.connect_timeout);
 
             let tls = BoringTlsConnector::new(config.tls_config)?;
-            let mut builder = ConnectorBuilder::new(http, tls, config.nodelay, config.tls_info);
-            builder.set_timeout(config.connect_timeout);
-            builder.set_verbose(config.connection_verbose);
-            builder.set_keepalive(config.tcp_keepalive);
-            builder.build(config.connector_layers)
+            ConnectorBuilder::new(http, tls, config.nodelay, config.tls_info)
+                .timeout(config.connect_timeout)
+                .keepalive(config.tcp_keepalive)
+                .verbose(config.connection_verbose)
+                .build(config.connector_layers)
         };
 
         Ok(Client {

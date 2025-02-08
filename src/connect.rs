@@ -4,7 +4,6 @@ use crate::util::client::connect::{Connected, Connection};
 use crate::util::client::Dst;
 use crate::util::rt::TokioIo;
 use crate::util::{self, into_uri};
-use antidote::RwLock;
 use http::uri::Scheme;
 use hyper2::rt::{Read, ReadBufCursor, Write};
 use pin_project_lite::pin_project;
@@ -17,7 +16,6 @@ use tower_service::Service;
 use std::future::Future;
 use std::io::{self, IoSlice};
 use std::pin::Pin;
-use std::sync::Arc;
 use std::task::{Context, Poll};
 use std::time::Duration;
 
@@ -47,35 +45,39 @@ impl ConnectorBuilder {
             // we have no user-provided layers, only use concrete types
             let base_service = ConnectorService {
                 http: self.http,
-                tls: InnerTLS::Simple(self.tls),
+                tls: self.tls,
                 verbose: self.verbose,
                 nodelay: self.nodelay,
                 tls_info: self.tls_info,
                 timeout: self.timeout,
+                keepalive: None,
             };
             return Connector::Simple(base_service);
         }
 
-        let inner_tls = InnerTLS::WithSharedState(Arc::new(RwLock::new(self.tls)));
         let base_service = ConnectorService {
             http: self.http,
-            tls: inner_tls.clone(),
+            tls: self.tls,
             verbose: self.verbose,
             nodelay: self.nodelay,
             tls_info: self.tls_info,
             timeout: None,
+            keepalive: None,
         };
 
         // otherwise we have user provided layers
         // so we need type erasure all the way through
         // as well as mapping the unnameable type of the layers back to Dst for the inner service
-        let unnameable_service = ServiceBuilder::new()
-            .layer(MapRequestLayer::new(|request: Unnameable| request.0))
-            .service(base_service);
-        let mut service = BoxCloneSyncService::new(unnameable_service);
-        for layer in layers {
-            service = ServiceBuilder::new().layer(layer).service(service);
-        }
+        let service = layers.iter().fold(
+            BoxCloneSyncService::new(
+                ServiceBuilder::new()
+                    .layer(MapRequestLayer::new(|request: Unnameable| request.0))
+                    .service(base_service.clone()),
+            ),
+            |service, layer| {
+                BoxCloneSyncService::new(ServiceBuilder::new().layer(layer).service(service))
+            },
+        );
 
         // now we handle the concrete stuff - any `connect_timeout`,
         // plus a final map_err layer we can use to cast default tower layer
@@ -89,7 +91,11 @@ impl ConnectorBuilder {
                     .map_err(cast_to_internal_error)
                     .service(service);
                 let service = BoxCloneSyncService::new(service);
-                Connector::WithLayers { inner_tls, service }
+                Connector::WithLayers {
+                    layers,
+                    base_service,
+                    service,
+                }
             }
             None => {
                 // no timeout, but still map err
@@ -100,7 +106,11 @@ impl ConnectorBuilder {
                     .map_err(cast_to_internal_error)
                     .service(service);
                 let service = BoxCloneSyncService::new(service);
-                Connector::WithLayers { inner_tls, service }
+                Connector::WithLayers {
+                    layers,
+                    base_service,
+                    service,
+                }
             }
         }
     }
@@ -123,18 +133,21 @@ impl ConnectorBuilder {
     }
 
     #[inline]
-    pub(crate) fn set_keepalive(&mut self, dur: Option<Duration>) {
+    pub(crate) fn keepalive(mut self, dur: Option<Duration>) -> ConnectorBuilder {
         self.http.set_keepalive(dur);
+        self
     }
 
     #[inline]
-    pub(crate) fn set_timeout(&mut self, timeout: Option<Duration>) {
+    pub(crate) fn timeout(mut self, timeout: Option<Duration>) -> ConnectorBuilder {
         self.timeout = timeout;
+        self
     }
 
     #[inline]
-    pub(crate) fn set_verbose(&mut self, enabled: bool) {
+    pub(crate) fn verbose(mut self, enabled: bool) -> ConnectorBuilder {
         self.verbose.0 = enabled;
+        self
     }
 }
 
@@ -145,22 +158,35 @@ pub(crate) enum Connector {
     // at least one custom layer along with maybe an outer timeout layer
     // from `builder.connect_timeout()`
     WithLayers {
-        inner_tls: InnerTLS,
+        layers: Vec<BoxedConnectorLayer>,
         service: BoxedConnectorService,
+        base_service: ConnectorService,
     },
 }
 
 impl Connector {
-    #[inline]
     pub(crate) fn set_connector(&mut self, mut connector: BoringTlsConnector) {
         match self {
             Connector::Simple(service) => {
-                std::mem::swap(&mut service.tls, &mut InnerTLS::Simple(connector));
+                std::mem::swap(&mut service.tls, &mut connector);
             }
-            Connector::WithLayers { inner_tls, .. } => {
-                if let InnerTLS::WithSharedState(tls) = inner_tls {
-                    std::mem::swap(&mut *tls.write(), &mut connector);
-                }
+            Connector::WithLayers {
+                layers,
+                base_service,
+                ..
+            } => {
+                let mut connector = ConnectorBuilder::new(
+                    base_service.http.clone(),
+                    connector,
+                    base_service.nodelay,
+                    base_service.tls_info,
+                )
+                .timeout(base_service.timeout)
+                .keepalive(base_service.keepalive)
+                .verbose(base_service.verbose.0)
+                .build(std::mem::take(layers));
+
+                std::mem::swap(self, &mut connector);
             }
         }
     }
@@ -187,31 +213,16 @@ impl Service<Dst> for Connector {
 }
 
 #[derive(Clone)]
-pub(crate) enum InnerTLS {
-    Simple(BoringTlsConnector),
-    WithSharedState(Arc<RwLock<BoringTlsConnector>>),
-}
-
-impl InnerTLS {
-    #[inline(always)]
-    fn get_tls(&self) -> BoringTlsConnector {
-        match self {
-            InnerTLS::Simple(tls) => tls.clone(),
-            InnerTLS::WithSharedState(tls) => tls.read().clone(),
-        }
-    }
-}
-
-#[derive(Clone)]
 pub(crate) struct ConnectorService {
     http: HttpConnector,
-    tls: InnerTLS,
+    tls: BoringTlsConnector,
     verbose: verbose::Wrapper,
     /// When there is a single timeout layer and no other layers,
     /// we embed it directly inside our base Service::call().
     /// This lets us avoid an extra `Box::pin` indirection layer
     /// since `tokio::time::Timeout` is `Unpin`
     timeout: Option<Duration>,
+    keepalive: Option<Duration>,
     nodelay: bool,
     tls_info: bool,
 }
@@ -280,7 +291,7 @@ impl ConnectorService {
             .alpn_protos(dst.alpn_protos())
             .interface(dst.take_interface())
             .addresses(dst.take_addresses())
-            .build(self.tls.get_tls());
+            .build(self.tls);
         let io = http.call(dst.into()).await?;
 
         if let MaybeHttpsStream::Https(stream) = io {
@@ -327,7 +338,7 @@ impl ConnectorService {
                 .alpn_protos(dst.alpn_protos())
                 .interface(dst.take_interface())
                 .addresses(dst.take_addresses())
-                .build(self.tls.get_tls());
+                .build(self.tls);
 
             let host = dst.host().ok_or(crate::error::uri_bad_host())?;
             let port = dst.port_u16().unwrap_or(443);
