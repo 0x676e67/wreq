@@ -1166,13 +1166,13 @@ impl Builder {
         self
     }
 
-    /// Provide a timer to be used for h2
+    /// Provide a timer to be used for http2
     ///
-    /// See the documentation of [`h2::client::Builder::timer`] for more
+    /// See the documentation of [`http2::client::Builder::timer`] for more
     /// details.
     ///
-    /// [`h2::client::Builder::timer`]: https://docs.rs/h2/client/struct.Builder.html#method.timer
-    pub fn timer<M>(&mut self, timer: M) -> &mut Self
+    /// [`http2::client::Builder::timer`]: https://docs.rs/http2/latest/http2/client/struct.Builder.html#method.timer
+    pub fn http2_timer<M>(&mut self, timer: M) -> &mut Self
     where
         M: Timer + Send + Sync + 'static,
     {

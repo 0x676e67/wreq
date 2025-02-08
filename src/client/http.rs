@@ -224,7 +224,7 @@ impl ClientBuilder {
         config
             .builder
             .http2_only(http2_only)
-            .timer(TokioTimer::new())
+            .http2_timer(TokioTimer::new())
             .pool_timer(TokioTimer::new())
             .pool_idle_timeout(config.pool_idle_timeout)
             .pool_max_idle_per_host(config.pool_max_idle_per_host)
