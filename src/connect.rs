@@ -223,7 +223,12 @@ impl ConnectorService {
     #[cfg(feature = "socks")]
     async fn connect_socks(&self, mut dst: Dst, proxy: ProxyScheme) -> Result<Conn, BoxError> {
         let dns = match proxy {
-            ProxyScheme::Socks4 { .. } => socks::DnsResolve::Local,
+            ProxyScheme::Socks4 {
+                remote_dns: false, ..
+            } => socks::DnsResolve::Local,
+            ProxyScheme::Socks4 {
+                remote_dns: true, ..
+            } => socks::DnsResolve::Proxy,
             ProxyScheme::Socks5 {
                 remote_dns: false, ..
             } => socks::DnsResolve::Local,
@@ -777,7 +782,7 @@ mod socks {
         }
 
         match proxy {
-            ProxyScheme::Socks4 { addr } => {
+            ProxyScheme::Socks4 { addr, .. } => {
                 let stream = Socks4Stream::connect(addr, (host.as_str(), port))
                     .await
                     .map_err(|e| format!("socks connect error: {e}"))?;

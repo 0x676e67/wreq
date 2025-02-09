@@ -82,10 +82,7 @@ url = "2.5"
 bytes = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_urlencoded = "0.7.1"
-tower = { version = "0.5.2", default-features = false, features = [
-    "timeout",
-    "util",
-] }
+tower = { version = "0.5.2", default-features = false, features = ["timeout","util"] }
 tower-service = "0.3"
 futures-util = { version = "0.3.0", default-features = false }
 sync_wrapper = { version = "1.0", features = ["futures"] }
@@ -104,6 +101,8 @@ encoding_rs = { version = "0.8", optional = true }
 http-body = "1"
 http-body-util = "0.1"
 hyper2 = { version = "1.5.0", features = ["http1", "http2", "client"] }
+socket2 = { version = "0.5", features = ["all"] }
+lru = { version = "0.13", default-features = false }
 log = "0.4"
 mime = "0.3.17"
 percent-encoding = "2.3"
@@ -111,10 +110,6 @@ tokio = { version = "1", default-features = false, features = ["net","time"] }
 pin-project-lite = "0.2.0"
 ipnet = "2.11.0"
 arc-swap = "1.7.0"
-
-## util
-socket2 = { version = "0.5", features = ["all"] }
-lru = { version = "0.13", default-features = false }
 
 ## boring-tls
 boring2 = { version = "4.15.2", features = ["pq-experimental", "cert-compression"] }
