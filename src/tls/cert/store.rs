@@ -34,7 +34,7 @@ impl RootCertStore {
         C: IntoIterator,
         C::Item: AsRef<[u8]>,
     {
-        Self::load_certs_from_iter(certs.into_iter(), X509::from_der)
+        Self::load_certs_from_iter(certs, X509::from_der)
     }
 
     /// Creates a new `RootCertStore` from a collection of PEM-encoded certificates.
@@ -52,7 +52,7 @@ impl RootCertStore {
         C: IntoIterator,
         C::Item: AsRef<[u8]>,
     {
-        Self::load_certs_from_iter(certs.into_iter(), X509::from_pem)
+        Self::load_certs_from_iter(certs, X509::from_pem)
     }
 
     /// Creates a new `RootCertStore` from a PEM-encoded certificate file.
