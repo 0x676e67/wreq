@@ -55,6 +55,23 @@ impl RootCertStore {
         Self::load_certs_from_iter(certs, X509::from_pem)
     }
 
+    /// Creates a new `RootCertStore` from a PEM-encoded certificate stack.
+    ///
+    /// # Parameters
+    ///
+    /// - `certs`: A PEM-encoded certificate stack.
+    ///
+    /// # Returns
+    ///
+    /// A `TlsResult` containing the new `RootCertStore`.
+    #[inline]
+    pub fn from_pem_stack<C>(certs: C) -> Result<RootCertStore, Error>
+    where
+        C: AsRef<[u8]>,
+    {
+        Self::load_certs(certs, X509::stack_from_pem)
+    }
+
     /// Creates a new `RootCertStore` from a PEM-encoded certificate file.
     ///
     /// This method reads the file at the specified path, expecting it to contain a PEM-encoded
@@ -74,22 +91,6 @@ impl RootCertStore {
     {
         let data = std::fs::read(path).map_err(error::builder)?;
         Self::from_pem_stack(data)
-    }
-
-    /// Creates a new `RootCertStore` from a PEM-encoded certificate stack.
-    ///
-    /// # Parameters
-    ///
-    /// - `certs`: A PEM-encoded certificate stack.
-    ///
-    /// # Returns
-    ///
-    /// A `TlsResult` containing the new `RootCertStore`.
-    pub fn from_pem_stack<C>(certs: C) -> Result<RootCertStore, Error>
-    where
-        C: AsRef<[u8]>,
-    {
-        Self::load_certs(certs, X509::stack_from_pem)
     }
 
     /// Parses a provided byte slice into multiple certificates and adds them into a new `RootCertStore`.
