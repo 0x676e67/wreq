@@ -11,17 +11,14 @@ use std::{
     task::{Context, Poll},
 };
 
-use crate::{
-    error::{self, Kind},
-    RequestBuilder,
-};
-use crate::{Error, Response};
+use crate::{error, Error, RequestBuilder, Response};
 use futures_util::{Sink, SinkExt, Stream, StreamExt};
 use http::{header, uri::Scheme, HeaderMap, HeaderName, HeaderValue, Method, StatusCode, Version};
 use hyper2::ext::Protocol;
-pub use message::{CloseCode, CloseFrame, Message, Utf8Bytes};
 use tokio_tungstenite::tungstenite::{self, protocol};
 use tungstenite::protocol::WebSocketConfig;
+
+pub use message::{CloseCode, CloseFrame, Message, Utf8Bytes};
 
 /// A WebSocket stream.
 pub type WebSocketStream = tokio_tungstenite::WebSocketStream<crate::Upgraded>;
@@ -219,10 +216,10 @@ impl WebSocketRequestBuilder {
                 None
             }
             _ => {
-                return Err(Error::new(
-                    Kind::Upgrade,
-                    Some(format!("unsupported version: {:?}", version)),
-                ));
+                return Err(error::upgrade(format!(
+                    "unsupported version: {:?}",
+                    version
+                )));
             }
         };
 
@@ -294,28 +291,25 @@ impl WebSocketResponse {
                 self.inner.version(),
                 Version::HTTP_10 | Version::HTTP_11 | Version::HTTP_2
             ) {
-                return Err(Error::new(
-                    Kind::Upgrade,
-                    Some(format!("unexpected version: {:?}", self.inner.version())),
-                ));
+                return Err(error::upgrade(format!(
+                    "unexpected version: {:?}",
+                    self.inner.version()
+                )));
             }
 
             match self.version {
                 Version::HTTP_10 | Version::HTTP_11 => {
                     if status != StatusCode::SWITCHING_PROTOCOLS {
                         let body = self.inner.text().await?;
-                        return Err(Error::new(
-                            Kind::Upgrade,
-                            Some(format!("unexpected status code: {}", body)),
-                        ));
+                        return Err(error::upgrade(format!("unexpected status code: {}", body)));
                     }
 
                     if !header_contains(self.inner.headers(), header::CONNECTION, "upgrade") {
-                        return Err(Error::new(Kind::Upgrade, Some("missing connection header")));
+                        return Err(error::upgrade("missing connection header"));
                     }
 
                     if !header_eq(self.inner.headers(), header::UPGRADE, "websocket") {
-                        return Err(Error::new(Kind::Upgrade, Some("invalid upgrade header")));
+                        return Err(error::upgrade("invalid upgrade header"));
                     }
 
                     match self
@@ -326,30 +320,30 @@ impl WebSocketResponse {
                             if !header.to_str().is_ok_and(|s| {
                                 s == tungstenite::handshake::derive_accept_key(nonce.as_bytes())
                             }) {
-                                return Err(Error::new(
-                                    Kind::Upgrade,
-                                    Some(format!("invalid accept key: {:?}", header)),
-                                ));
+                                return Err(error::upgrade(format!(
+                                    "invalid accept key: {:?}",
+                                    header
+                                )));
                             }
                         }
                         None => {
-                            return Err(Error::new(Kind::Upgrade, Some("missing accept key")));
+                            return Err(error::upgrade("missing accept key"));
                         }
                     }
                 }
                 Version::HTTP_2 => {
                     if status != StatusCode::OK {
-                        return Err(Error::new(
-                            Kind::Upgrade,
-                            Some(format!("unexpected status code: {}", status)),
-                        ));
+                        return Err(error::upgrade(format!(
+                            "unexpected status code: {}",
+                            status
+                        )));
                     }
                 }
                 _ => {
-                    return Err(Error::new(
-                        Kind::Upgrade,
-                        Some(format!("unsupported version: {:?}", self.version)),
-                    ));
+                    return Err(error::upgrade(format!(
+                        "unsupported version: {:?}",
+                        self.version
+                    )));
                 }
             }
 
@@ -365,32 +359,23 @@ impl WebSocketResponse {
                 }
                 (false, None) => {
                     // server didn't reply with a protocol
-                    return Err(Error::new(
-                        Kind::Status(self.inner.status()),
-                        Some("missing protocol"),
-                    ));
+                    return Err(error::upgrade("missing protocol"));
                 }
                 (false, Some(protocol)) => {
                     if let Some((protocols, protocol)) = self.protocols.zip(protocol.to_str().ok())
                     {
                         if !protocols.contains(&Cow::Borrowed(protocol)) {
                             // the responded protocol is none which we requested
-                            return Err(Error::new(
-                                Kind::Status(status),
-                                Some(format!("invalid protocol: {}", protocol)),
-                            ));
+                            return Err(error::upgrade(format!("invalid protocol: {}", protocol)));
                         }
                     } else {
                         // we didn't request any protocols but got one anyway
-                        return Err(Error::new(Kind::Status(status), Some("invalid protocol")));
+                        return Err(error::upgrade("invalid protocol"));
                     }
                 }
                 (true, Some(_)) => {
                     // we didn't request any protocols but got one anyway
-                    return Err(Error::new(
-                        Kind::Status(self.inner.status()),
-                        Some("invalid protocol"),
-                    ));
+                    return Err(error::upgrade("invalid protocol"));
                 }
             }
 
@@ -487,7 +472,7 @@ impl Stream for WebSocket {
                         return Poll::Ready(Some(Ok(msg)));
                     }
                 }
-                Some(Err(err)) => return Poll::Ready(Some(Err(Error::new(Kind::Body, Some(err))))),
+                Some(Err(err)) => return Poll::Ready(Some(Err(error::body(err)))),
                 None => return Poll::Ready(None),
             }
         }

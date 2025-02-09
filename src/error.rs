@@ -302,6 +302,10 @@ pub(crate) fn redirect<E: Into<BoxError>>(e: E, url: Url) -> Error {
     Error::new(Kind::Redirect, Some(e)).with_url(url)
 }
 
+pub(crate) fn upgrade<E: Into<BoxError>>(e: E) -> Error {
+    Error::new(Kind::Upgrade, Some(e))
+}
+
 pub(crate) fn status_code(url: Url, status: StatusCode) -> Error {
     Error::new(Kind::Status(status), None::<Error>).with_url(url)
 }
@@ -316,10 +320,6 @@ pub(crate) fn url_bad_uri(url: Url) -> Error {
 
 pub(crate) fn uri_bad_host() -> Error {
     Error::new(Kind::Builder, Some("no host in url"))
-}
-
-pub(crate) fn upgrade<E: Into<BoxError>>(e: E) -> Error {
-    Error::new(Kind::Upgrade, Some(e))
 }
 
 // io::Error helpers
