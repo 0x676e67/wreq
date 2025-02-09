@@ -1,4 +1,4 @@
-use super::{AlpnProtos, AlpsProtos, RootCertStore, TlsVersion};
+use super::{AlpnProtos, AlpsProtos, RootCertStoreProvider, TlsVersion};
 use crate::impl_debug;
 use boring2::ssl::{CertCompressionAlgorithm, SslCurve};
 use std::borrow::Cow;
@@ -12,8 +12,8 @@ use typed_builder::TypedBuilder;
 pub struct TlsConfig {
     /// The root certificate store.
     /// Default use system's native certificate store.
-    #[builder(default = RootCertStore::Default)]
-    pub root_certs_store: RootCertStore,
+    #[builder(default = RootCertStoreProvider::Default)]
+    pub root_certs_store: RootCertStoreProvider,
 
     /// SSL may authenticate either endpoint with an X.509 certificate.
     /// Typically this is used to authenticate the server to the client.

@@ -1,4 +1,4 @@
-use super::cert::RootCertStore;
+use super::cert::RootCertStoreProvider;
 use super::{AlpnProtos, AlpsProtos, TlsResult, TlsVersion};
 
 use boring2::ssl::{
@@ -33,7 +33,7 @@ pub trait SslConnectorBuilderExt {
     ) -> TlsResult<SslConnectorBuilder>;
 
     /// Configure the RootCertsStore for the given `SslConnectorBuilder`.
-    fn root_cert_store(self, stroe: RootCertStore) -> TlsResult<SslConnectorBuilder>;
+    fn root_cert_store(self, stroe: RootCertStoreProvider) -> TlsResult<SslConnectorBuilder>;
 }
 
 /// SslRefExt trait for `SslRef`.
@@ -98,8 +98,8 @@ impl SslConnectorBuilderExt for SslConnectorBuilder {
     }
 
     #[inline]
-    fn root_cert_store(mut self, store: RootCertStore) -> TlsResult<SslConnectorBuilder> {
-        store.apply(&mut self).map(|_| self)
+    fn root_cert_store(mut self, store: RootCertStoreProvider) -> TlsResult<SslConnectorBuilder> {
+        store.apply_to_builder(&mut self).map(|_| self)
     }
 }
 

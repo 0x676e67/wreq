@@ -1,5 +1,5 @@
 use rquest::Client;
-use rquest::{Error, X509Store, X509StoreBuilder, X509};
+use rquest::{Error, RootCertStore};
 use std::sync::LazyLock;
 
 #[tokio::main]
@@ -13,37 +13,24 @@ async fn main() -> Result<(), rquest::Error> {
 }
 
 /// Loads statically the root certificates from the webpki certificate store.
-fn load_static_root_certs() -> Option<&'static X509Store> {
-    static CERT_STORE: LazyLock<Result<X509Store, Error>> = LazyLock::new(|| {
-        let mut cert_store = X509StoreBuilder::new()?;
-        for cert in webpki_root_certs::TLS_SERVER_ROOT_CERTS {
-            let cert = X509::from_der(cert)?;
-            cert_store.add_cert(cert)?;
+fn load_static_root_certs() -> Option<&'static RootCertStore> {
+    static LOAD_CERTS: LazyLock<Option<RootCertStore>> = LazyLock::new(|| {
+        match RootCertStore::from_der_certificates(webpki_root_certs::TLS_SERVER_ROOT_CERTS) {
+            Ok(store) => Some(store),
+            Err(err) => {
+                log::error!("tls failed to load root certificates: {err}");
+                None
+            }
         }
-        Ok(cert_store.build())
     });
 
-    match CERT_STORE.as_ref() {
-        Ok(cert_store) => {
-            log::info!("Loaded root certs");
-            Some(cert_store)
-        }
-        Err(err) => {
-            log::error!("Failed to load root certs: {:?}", err);
-            None
-        }
-    }
+    LOAD_CERTS.as_ref()
 }
 
 /// Loads dynamically the root certificates from the native certificate store.
-fn load_dynamic_root_certs() -> Result<X509Store, Error> {
-    let mut cert_store = X509StoreBuilder::new()?;
-    for cert in rustls_native_certs::load_native_certs().certs {
-        let cert = X509::from_der(&cert)?;
-        cert_store.add_cert(cert)?;
-    }
+fn load_dynamic_root_certs() -> Result<RootCertStore, Error> {
     log::info!("Loaded dynamic root certs");
-    Ok(cert_store.build())
+    RootCertStore::from_der_certificates(rustls_native_certs::load_native_certs().certs)
 }
 
 async fn use_static_root_certs() -> Result<(), rquest::Error> {

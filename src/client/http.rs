@@ -31,7 +31,7 @@ use crate::util::{
 use crate::{error, impl_debug, Http1Config, Http2Config, TlsConfig};
 use crate::{
     redirect,
-    tls::{AlpnProtos, BoringTlsConnector, RootCertStore, TlsVersion},
+    tls::{AlpnProtos, BoringTlsConnector, RootCertStoreProvider, TlsVersion},
 };
 use crate::{IntoUrl, Method, Proxy, StatusCode, Url};
 
@@ -1070,7 +1070,7 @@ impl ClientBuilder {
     /// Set root certificate store.
     pub fn root_cert_store<S>(mut self, store: S) -> ClientBuilder
     where
-        S: Into<RootCertStore>,
+        S: Into<RootCertStoreProvider>,
     {
         self.config.tls_config.root_certs_store = store.into();
         self

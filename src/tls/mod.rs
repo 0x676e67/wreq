@@ -18,7 +18,10 @@ use conn::{HttpsLayer, HttpsLayerSettings};
 
 pub use self::conn::{HttpsConnector, MaybeHttpsStream};
 pub use self::ext::{ConnectConfigurationExt, SslConnectorBuilderExt, SslRefExt};
-pub use self::{cert::RootCertStore, conf::TlsConfig};
+pub use self::{
+    cert::{RootCertStore, RootCertStoreProvider},
+    conf::TlsConfig,
+};
 
 type TlsResult<T> = Result<T, ErrorStack>;
 
