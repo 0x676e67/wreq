@@ -15,7 +15,7 @@ async fn main() -> Result<(), rquest::Error> {
 /// Loads statically the root certificates from the webpki certificate store.
 fn load_static_root_certs() -> Option<&'static RootCertStore> {
     static LOAD_CERTS: LazyLock<Option<RootCertStore>> = LazyLock::new(|| {
-        match RootCertStore::from_der_certificates(webpki_root_certs::TLS_SERVER_ROOT_CERTS) {
+        match RootCertStore::from_der_certs(webpki_root_certs::TLS_SERVER_ROOT_CERTS) {
             Ok(store) => Some(store),
             Err(err) => {
                 log::error!("tls failed to load root certificates: {err}");
@@ -30,7 +30,7 @@ fn load_static_root_certs() -> Option<&'static RootCertStore> {
 /// Loads dynamically the root certificates from the native certificate store.
 fn load_dynamic_root_certs() -> Result<RootCertStore, Error> {
     log::info!("Loaded dynamic root certs");
-    RootCertStore::from_der_certificates(rustls_native_certs::load_native_certs().certs)
+    RootCertStore::from_der_certs(rustls_native_certs::load_native_certs().certs)
 }
 
 async fn use_static_root_certs() -> Result<(), rquest::Error> {
