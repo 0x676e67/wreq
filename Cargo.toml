@@ -106,7 +106,11 @@ lru = { version = "0.13", default-features = false }
 log = "0.4"
 mime = "0.3.17"
 percent-encoding = "2.3"
-tokio = { version = "1", default-features = false, features = ["net","time"] }
+tokio = { version = "1", default-features = false, features = [
+    "net",
+    "time",
+    "rt",
+] }
 pin-project-lite = "0.2.0"
 ipnet = "2.11.0"
 arc-swap = "1.7.0"
