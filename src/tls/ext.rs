@@ -32,8 +32,8 @@ pub trait SslConnectorBuilderExt {
         alg: CertCompressionAlgorithm,
     ) -> TlsResult<SslConnectorBuilder>;
 
-    /// Configure the RootCertsStore for the given `SslConnectorBuilder`.
-    fn root_cert_store(self, stroe: RootCertStoreProvider) -> TlsResult<SslConnectorBuilder>;
+    /// Configure the RootCertStoreProvider for the given `SslConnectorBuilder`.
+    fn root_cert_store(self, provider: RootCertStoreProvider) -> TlsResult<SslConnectorBuilder>;
 }
 
 /// SslRefExt trait for `SslRef`.
@@ -98,8 +98,11 @@ impl SslConnectorBuilderExt for SslConnectorBuilder {
     }
 
     #[inline]
-    fn root_cert_store(mut self, store: RootCertStoreProvider) -> TlsResult<SslConnectorBuilder> {
-        store.apply_to_builder(&mut self).map(|_| self)
+    fn root_cert_store(
+        mut self,
+        provider: RootCertStoreProvider,
+    ) -> TlsResult<SslConnectorBuilder> {
+        provider.apply_to_builder(&mut self).map(|_| self)
     }
 }
 

@@ -21,17 +21,6 @@ pub struct RootCertStore(X509Store);
 
 /// ====== impl RootCertStore ======
 impl RootCertStore {
-    /// Creates a new `RootCertStore` with default paths.
-    ///
-    /// # Returns
-    ///
-    /// A `TlsResult` containing the new `RootCertStore`.
-    pub fn new_with_default_paths() -> Result<RootCertStore, Error> {
-        let mut builder = X509StoreBuilder::new()?;
-        builder.set_default_paths()?;
-        Ok(RootCertStore(builder.build()))
-    }
-
     /// Creates a new `RootCertStore` from a collection of PEM-encoded certificates.
     ///
     /// # Parameters
