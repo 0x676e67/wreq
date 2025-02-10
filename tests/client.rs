@@ -474,12 +474,12 @@ async fn test_client_os_spoofing() {
     let server = server::http(move |req| async move {
         for (name, value) in req.headers() {
             if name == "user-agent" {
-                assert_eq!(value, "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36");
+                assert_eq!(value, "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36");
             }
             if name == "sec-ch-ua" {
                 assert_eq!(
                     value,
-                    r#""Google Chrome";v="131", "Chromium";v="131", "Not_A Brand";v="24""#
+                    r#""Not(A:Brand";v="99", "Google Chrome";v="133", "Chromium";v="133""#
                 );
             }
             if name == "sec-ch-ua-mobile" {
@@ -496,7 +496,7 @@ async fn test_client_os_spoofing() {
     let res = Client::builder()
         .impersonate(
             ImpersonateOption::builder()
-                .impersonate(Impersonate::Chrome131)
+                .impersonate(Impersonate::Chrome133)
                 .impersonate_os(ImpersonateOS::Linux)
                 .skip_http2(true)
                 .build(),
