@@ -129,19 +129,29 @@ struct Config {
 impl_debug!(
     Config,
     {
-        accepts,
         headers,
         headers_order,
-        proxies,
-        redirect_policy,
         accepts,
+        connect_timeout,
+        connection_verbose,
+        pool_idle_timeout,
+        pool_max_idle_per_host,
+        pool_max_size,
+        tcp_keepalive,
+        proxies,
+        auto_sys_proxy,
+        redirect_policy,
+        redirect_with_proxy_auth,
         referer,
         timeout,
-        connect_timeout,
-        https_only,
-        nodelay,
+        read_timeout,
         network_scheme,
+        nodelay,
+        hickory_dns,
         dns_overrides,
+        https_only,
+        http2_max_retry_count,
+        tls_info,
         builder,
         tls_config
     }
@@ -1539,7 +1549,7 @@ impl Proxies {
     }
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 struct ClientInner {
     accepts: Accepts,
     #[cfg(feature = "cookies")]
@@ -1603,22 +1613,6 @@ impl ClientInner {
         default
     }
 }
-
-impl_debug!(ClientInner,{
-    accepts,
-    headers,
-    headers_order,
-    hyper,
-    redirect,
-    redirect_with_proxy_auth,
-    referer,
-    request_timeout,
-    read_timeout,
-    https_only,
-    http2_max_retry_count,
-    proxies,
-    network_scheme
-});
 
 /// A reference to a `ClientInner` instance.
 ///
