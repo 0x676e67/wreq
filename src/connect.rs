@@ -241,11 +241,7 @@ impl ConnectorService {
         };
 
         if dst.scheme() == Some(&Scheme::HTTPS) {
-            let http = HttpsConnector::builder(self.http.clone())
-                .alpn_protos(dst.alpn_protos())
-                .interface(dst.take_interface())
-                .addresses(dst.take_addresses())
-                .build(self.tls.clone());
+            let http = HttpsConnector::new(self.http.clone(), self.tls.clone(), &mut dst);
 
             log::trace!("socks HTTPS over proxy");
             let host = dst.host().ok_or(crate::error::uri_bad_host())?;
@@ -284,11 +280,7 @@ impl ConnectorService {
         }
 
         log::trace!("connect with maybe proxy");
-        let mut http = HttpsConnector::builder(http)
-            .alpn_protos(dst.alpn_protos())
-            .interface(dst.take_interface())
-            .addresses(dst.take_addresses())
-            .build(self.tls);
+        let mut http = HttpsConnector::new(http, self.tls, &mut dst);
         let io = http.call(dst.into()).await?;
 
         if let MaybeHttpsStream::Https(stream) = io {
@@ -331,11 +323,7 @@ impl ConnectorService {
         };
 
         if dst.scheme() == Some(&Scheme::HTTPS) {
-            let mut http = HttpsConnector::builder(self.http.clone())
-                .alpn_protos(dst.alpn_protos())
-                .interface(dst.take_interface())
-                .addresses(dst.take_addresses())
-                .build(self.tls);
+            let mut http = HttpsConnector::new(self.http.clone(), self.tls, &mut dst);
 
             let host = dst.host().ok_or(crate::error::uri_bad_host())?;
             let port = dst.port_u16().unwrap_or(443);

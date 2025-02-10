@@ -1,92 +1,28 @@
 //! Hyper SSL support via BoringSSL.
-#![allow(missing_debug_implementations)]
 mod boring;
 mod cache;
 
-pub use self::boring::*;
-use crate::connect::HttpConnector;
-use crate::tls::ext::SslRefExt;
 use crate::tls::{AlpnProtos, AlpsProtos, TlsResult};
 use crate::util::client::connect::{Connected, Connection};
 use crate::util::rt::TokioIo;
+
 use boring2::ex_data::Index;
 use boring2::ssl::Ssl;
 use cache::SessionKey;
 use hyper2::rt::{Read, ReadBufCursor, Write};
-use std::borrow::Cow;
 use std::fmt;
 use std::io::IoSlice;
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::pin::Pin;
 use std::sync::LazyLock;
 use std::task::{Context, Poll};
 use tokio::io;
 use tokio_boring2::SslStream;
 
+pub use self::boring::{BoringTlsConnector, HttpsConnector};
+
 fn key_index() -> TlsResult<Index<Ssl, SessionKey>> {
     static IDX: LazyLock<TlsResult<Index<Ssl, SessionKey>>> = LazyLock::new(Ssl::new_ex_index);
     IDX.clone()
-}
-
-pub(crate) struct HttpsConnectorBuilder {
-    http: HttpConnector,
-    alpn_protos: Option<AlpnProtos>,
-}
-
-impl HttpsConnectorBuilder {
-    #[inline]
-    pub fn new(http: HttpConnector) -> HttpsConnectorBuilder {
-        HttpsConnectorBuilder {
-            http,
-            alpn_protos: None,
-        }
-    }
-
-    #[inline]
-    pub fn alpn_protos(mut self, alpn_protos: Option<AlpnProtos>) -> Self {
-        self.alpn_protos = alpn_protos;
-        self
-    }
-
-    #[inline]
-    pub fn addresses(mut self, (ipv4, ipv6): (Option<Ipv4Addr>, Option<Ipv6Addr>)) -> Self {
-        match (ipv4, ipv6) {
-            (Some(a), Some(b)) => self.http.set_local_addresses(a, b),
-            (Some(a), None) => self.http.set_local_address(Some(IpAddr::V4(a))),
-            (None, Some(b)) => self.http.set_local_address(Some(IpAddr::V6(b))),
-            _ => (),
-        }
-        self
-    }
-
-    #[inline]
-    #[allow(unused_mut)]
-    pub fn interface(mut self, _interface: Option<Cow<'static, str>>) -> Self {
-        #[cfg(any(
-            target_os = "android",
-            target_os = "fuchsia",
-            target_os = "linux",
-            all(
-                feature = "apple-bindable-device",
-                any(
-                    target_os = "ios",
-                    target_os = "visionos",
-                    target_os = "macos",
-                    target_os = "tvos",
-                    target_os = "watchos",
-                )
-            )
-        ))]
-        self.http.set_interface(_interface);
-        self
-    }
-
-    #[inline]
-    pub(crate) fn build(self, tls: BoringTlsConnector) -> HttpsConnector<HttpConnector> {
-        let mut connector = HttpsConnector::with_connector(self.http, tls);
-        connector.set_ssl_callback(move |ssl, _| ssl.alpn_protos(self.alpn_protos));
-        connector
-    }
 }
 
 /// Settings for [`BoringTlsConnector`]

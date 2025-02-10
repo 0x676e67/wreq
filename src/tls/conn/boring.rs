@@ -1,9 +1,10 @@
 /// referrer: https://github.com/cloudflare/boring/blob/master/hyper-boring/src/lib.rs
 use super::cache::{SessionCache, SessionKey};
-use super::{key_index, HttpsConnectorBuilder, MaybeHttpsStream, TlsSettings};
+use super::{key_index, MaybeHttpsStream, TlsSettings};
 
 use crate::connect::HttpConnector;
 use crate::error::BoxError;
+use crate::tls::ext::SslRefExt;
 use crate::tls::{ConnectConfigurationExt, SslConnectorBuilderExt, TlsConfig, TlsResult};
 use crate::util::client::connect::Connection;
 use crate::util::rt::TokioIo;
@@ -24,7 +25,7 @@ use tower_service::Service;
 use std::error::Error;
 use std::fmt::Debug;
 use std::future::Future;
-use std::net::Ipv6Addr;
+use std::net::{IpAddr, Ipv6Addr};
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
@@ -37,9 +38,40 @@ pub struct HttpsConnector<T> {
 }
 
 impl HttpsConnector<HttpConnector> {
-    /// Creates a new `HttpsConnectorBuilder`
-    pub fn builder(http: HttpConnector) -> HttpsConnectorBuilder {
-        HttpsConnectorBuilder::new(http)
+    /// Creates a new `HttpsConnector`
+    pub fn new(
+        mut http: HttpConnector,
+        connector: BoringTlsConnector,
+        dst: &mut crate::Dst,
+    ) -> HttpsConnector<HttpConnector> {
+        match dst.take_addresses() {
+            (Some(a), Some(b)) => http.set_local_addresses(a, b),
+            (Some(a), None) => http.set_local_address(Some(IpAddr::V4(a))),
+            (None, Some(b)) => http.set_local_address(Some(IpAddr::V6(b))),
+            _ => (),
+        }
+
+        #[cfg(any(
+            target_os = "android",
+            target_os = "fuchsia",
+            target_os = "linux",
+            all(
+                feature = "apple-bindable-device",
+                any(
+                    target_os = "ios",
+                    target_os = "visionos",
+                    target_os = "macos",
+                    target_os = "tvos",
+                    target_os = "watchos",
+                )
+            )
+        ))]
+        http.set_interface(dst.take_interface());
+
+        let alpn = dst.alpn_protos();
+        let mut connector = HttpsConnector::with_connector(http, connector);
+        connector.set_ssl_callback(move |ssl, _| ssl.alpn_protos(alpn));
+        connector
     }
 }
 

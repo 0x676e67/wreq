@@ -198,43 +198,24 @@ impl Dst {
         Arc::make_mut(&mut self.inner).network.take_addresses()
     }
 
+    #[cfg(any(
+        target_os = "android",
+        target_os = "fuchsia",
+        target_os = "linux",
+        all(
+            feature = "apple-bindable-device",
+            any(
+                target_os = "ios",
+                target_os = "visionos",
+                target_os = "macos",
+                target_os = "tvos",
+                target_os = "watchos",
+            )
+        )
+    ))]
     #[inline(always)]
     pub(crate) fn take_interface(&mut self) -> Option<std::borrow::Cow<'static, str>> {
-        #[cfg(any(
-            target_os = "android",
-            target_os = "fuchsia",
-            target_os = "linux",
-            all(
-                feature = "apple-bindable-device",
-                any(
-                    target_os = "ios",
-                    target_os = "visionos",
-                    target_os = "macos",
-                    target_os = "tvos",
-                    target_os = "watchos",
-                )
-            )
-        ))]
-        {
-            Arc::make_mut(&mut self.inner).network.take_interface()
-        }
-
-        #[cfg(not(any(
-            target_os = "android",
-            target_os = "fuchsia",
-            target_os = "linux",
-            all(
-                feature = "apple-bindable-device",
-                any(
-                    target_os = "ios",
-                    target_os = "visionos",
-                    target_os = "macos",
-                    target_os = "tvos",
-                    target_os = "watchos",
-                )
-            )
-        )))]
-        None
+        Arc::make_mut(&mut self.inner).network.take_interface()
     }
 
     #[inline(always)]
