@@ -1549,7 +1549,7 @@ impl Proxies {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 struct ClientInner {
     accepts: Accepts,
     #[cfg(feature = "cookies")]
@@ -1613,6 +1613,22 @@ impl ClientInner {
         default
     }
 }
+
+impl_debug!(ClientInner,{
+    accepts,
+    headers,
+    headers_order,
+    hyper,
+    redirect,
+    redirect_with_proxy_auth,
+    referer,
+    request_timeout,
+    read_timeout,
+    https_only,
+    http2_max_retry_count,
+    proxies,
+    network_scheme
+});
 
 /// A reference to a `ClientInner` instance.
 ///
