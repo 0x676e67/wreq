@@ -1,11 +1,9 @@
 //! Hyper SSL support via BoringSSL.
 #![allow(missing_debug_implementations)]
-#![allow(missing_docs)]
+mod boring;
 mod cache;
-mod layer;
 
-pub use self::layer::*;
-use super::BoringTlsConnector;
+pub use self::boring::*;
 use crate::connect::HttpConnector;
 use crate::tls::ext::SslRefExt;
 use crate::tls::{AlpnProtos, AlpsProtos, TlsResult};
@@ -85,14 +83,14 @@ impl HttpsConnectorBuilder {
 
     #[inline]
     pub(crate) fn build(self, tls: BoringTlsConnector) -> HttpsConnector<HttpConnector> {
-        let mut connector = HttpsConnector::with_connector_layer(self.http, tls.0);
+        let mut connector = HttpsConnector::with_connector(self.http, tls);
         connector.set_ssl_callback(move |ssl, _| ssl.alpn_protos(self.alpn_protos));
         connector
     }
 }
 
-/// Settings for [`HttpsLayer`]
-pub struct HttpsLayerSettings {
+/// Settings for [`BoringTlsConnector`]
+pub struct TlsSettings {
     session_cache_capacity: usize,
     session_cache: bool,
     skip_session_ticket: bool,
@@ -104,14 +102,14 @@ pub struct HttpsLayerSettings {
     alps_use_new_codepoint: bool,
 }
 
-impl HttpsLayerSettings {
-    /// Constructs an [`HttpsLayerSettingsBuilder`] for configuring settings
-    pub fn builder() -> HttpsLayerSettingsBuilder {
-        HttpsLayerSettingsBuilder(HttpsLayerSettings::default())
+impl TlsSettings {
+    /// Constructs an [`TlsSettingsBuilder`] for configuring settings
+    pub fn builder() -> TlsSettingsBuilder {
+        TlsSettingsBuilder(TlsSettings::default())
     }
 }
 
-impl Default for HttpsLayerSettings {
+impl Default for TlsSettings {
     fn default() -> Self {
         Self {
             session_cache_capacity: 8,
@@ -127,10 +125,10 @@ impl Default for HttpsLayerSettings {
     }
 }
 
-/// Builder for [`HttpsLayerSettings`]
-pub struct HttpsLayerSettingsBuilder(HttpsLayerSettings);
+/// Builder for [`TlsSettings`]
+pub struct TlsSettingsBuilder(TlsSettings);
 
-impl HttpsLayerSettingsBuilder {
+impl TlsSettingsBuilder {
     /// Sets whether to enable session caching. Defaults to `false`.
     #[inline]
     pub fn session_cache(mut self, enable: bool) -> Self {
@@ -187,9 +185,9 @@ impl HttpsLayerSettingsBuilder {
         self
     }
 
-    /// Consumes the builder, returning a new [`HttpsLayerSettings`]
+    /// Consumes the builder, returning a new [`TlsSettings`]
     #[inline]
-    pub fn build(self) -> HttpsLayerSettings {
+    pub fn build(self) -> TlsSettings {
         self.0
     }
 }
