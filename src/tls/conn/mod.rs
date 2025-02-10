@@ -46,7 +46,6 @@ pub struct HandshakeSettings {
     enable_ech_grease: bool,
 
     /// Sets whether to enable hostname verification. Defaults to `true`.
-
     #[builder(default = true)]
     verify_hostname: bool,
 
