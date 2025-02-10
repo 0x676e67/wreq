@@ -2,7 +2,7 @@
 mod boring;
 mod cache;
 
-use crate::tls::{AlpnProtos, AlpsProtos, TlsResult};
+use crate::tls::{AlpsProtos, TlsResult};
 use crate::util::client::connect::{Connected, Connection};
 use crate::util::rt::TokioIo;
 
@@ -17,6 +17,7 @@ use std::sync::LazyLock;
 use std::task::{Context, Poll};
 use tokio::io;
 use tokio_boring2::SslStream;
+use typed_builder::TypedBuilder;
 
 pub use self::boring::{BoringTlsConnector, HttpsConnector};
 
@@ -26,106 +27,40 @@ fn key_index() -> TlsResult<Index<Ssl, SessionKey>> {
 }
 
 /// Settings for [`BoringTlsConnector`]
-pub struct TlsSettings {
+#[derive(TypedBuilder)]
+pub struct HandshakeSettings {
+    /// Sets whether to enable session caching capacity. Defaults to `8`.
+    #[builder(default = 8)]
     session_cache_capacity: usize,
-    session_cache: bool,
-    skip_session_ticket: bool,
-    enable_ech_grease: bool,
-    verify_hostname: bool,
-    tls_sni: bool,
-    alpn_protos: AlpnProtos,
-    alps_protos: Option<AlpsProtos>,
-    alps_use_new_codepoint: bool,
-}
 
-impl TlsSettings {
-    /// Constructs an [`TlsSettingsBuilder`] for configuring settings
-    pub fn builder() -> TlsSettingsBuilder {
-        TlsSettingsBuilder(TlsSettings::default())
-    }
-}
-
-impl Default for TlsSettings {
-    fn default() -> Self {
-        Self {
-            session_cache_capacity: 8,
-            session_cache: false,
-            skip_session_ticket: false,
-            enable_ech_grease: false,
-            verify_hostname: true,
-            tls_sni: true,
-            alpn_protos: AlpnProtos::ALL,
-            alps_protos: None,
-            alps_use_new_codepoint: false,
-        }
-    }
-}
-
-/// Builder for [`TlsSettings`]
-pub struct TlsSettingsBuilder(TlsSettings);
-
-impl TlsSettingsBuilder {
     /// Sets whether to enable session caching. Defaults to `false`.
-    #[inline]
-    pub fn session_cache(mut self, enable: bool) -> Self {
-        self.0.session_cache = enable;
-        self
-    }
+    #[builder(default = false)]
+    session_cache: bool,
 
     /// Sets whether to enable no session ticket. Defaults to `false`.
-    #[inline]
-    pub fn skip_session_ticket(mut self, enable: bool) -> Self {
-        self.0.skip_session_ticket = enable;
-        self
-    }
+    #[builder(default = false)]
+    skip_session_ticket: bool,
 
     /// Sets whether to enable ECH grease. Defaults to `false`.
-    #[inline]
-    pub fn enable_ech_grease(mut self, enable: bool) -> Self {
-        self.0.enable_ech_grease = enable;
-        self
-    }
-
-    /// Sets whether to enable TLS SNI. Defaults to `true`.
-    #[inline]
-    pub fn tls_sni(mut self, enable: bool) -> Self {
-        self.0.tls_sni = enable;
-        self
-    }
+    #[builder(default = false)]
+    enable_ech_grease: bool,
 
     /// Sets whether to enable hostname verification. Defaults to `true`.
-    #[inline]
-    pub fn verify_hostname(mut self, enable: bool) -> Self {
-        self.0.verify_hostname = enable;
-        self
-    }
 
-    /// Sets the ALPN protos. Defaults to `None`.
-    #[inline]
-    pub fn alpn_protos(mut self, protos: AlpnProtos) -> Self {
-        self.0.alpn_protos = protos;
-        self
-    }
+    #[builder(default = true)]
+    verify_hostname: bool,
+
+    /// Sets whether to enable TLS SNI. Defaults to `true`.
+    #[builder(default = true)]
+    tls_sni: bool,
 
     /// Sets the ALPS. Defaults to `None`.
-    #[inline]
-    pub fn alps_protos(mut self, alps: Option<AlpsProtos>) -> Self {
-        self.0.alps_protos = alps;
-        self
-    }
+    #[builder(default = None)]
+    alps_protos: Option<AlpsProtos>,
 
     /// Sets whether to use the new ALPS codepoint. Defaults to `false`.
-    #[inline]
-    pub fn alps_use_new_codepoint(mut self, enable: bool) -> Self {
-        self.0.alps_use_new_codepoint = enable;
-        self
-    }
-
-    /// Consumes the builder, returning a new [`TlsSettings`]
-    #[inline]
-    pub fn build(self) -> TlsSettings {
-        self.0
-    }
+    #[builder(default = false)]
+    alps_use_new_codepoint: bool,
 }
 
 /// A stream which may be wrapped with TLS.

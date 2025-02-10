@@ -1,6 +1,6 @@
 /// referrer: https://github.com/cloudflare/boring/blob/master/hyper-boring/src/lib.rs
 use super::cache::{SessionCache, SessionKey};
-use super::{key_index, MaybeHttpsStream, TlsSettings};
+use super::{key_index, HandshakeSettings, MaybeHttpsStream};
 
 use crate::connect::HttpConnector;
 use crate::error::BoxError;
@@ -44,6 +44,10 @@ impl HttpsConnector<HttpConnector> {
         connector: BoringTlsConnector,
         dst: &mut crate::Dst,
     ) -> HttpsConnector<HttpConnector> {
+        // Get the ALPN protocols from the destination
+        let alpn_protos = dst.alpn_protos();
+
+        // Set the local address and interface
         match dst.take_addresses() {
             (Some(a), Some(b)) => http.set_local_addresses(a, b),
             (Some(a), None) => http.set_local_address(Some(IpAddr::V4(a))),
@@ -51,6 +55,7 @@ impl HttpsConnector<HttpConnector> {
             _ => (),
         }
 
+        // Set the interface
         #[cfg(any(
             target_os = "android",
             target_os = "fuchsia",
@@ -68,9 +73,8 @@ impl HttpsConnector<HttpConnector> {
         ))]
         http.set_interface(dst.take_interface());
 
-        let alpn = dst.alpn_protos();
         let mut connector = HttpsConnector::with_connector(http, connector);
-        connector.set_ssl_callback(move |ssl, _| ssl.alpn_protos(alpn));
+        connector.set_ssl_callback(move |ssl, _| ssl.alpn_protos(alpn_protos));
         connector
     }
 }
@@ -210,10 +214,9 @@ impl BoringTlsConnector {
         }
 
         // Create the `TlsSettings` with the default session cache capacity.
-        let settings = TlsSettings::builder()
+        let settings = HandshakeSettings::builder()
             .session_cache(config.pre_shared_key)
             .skip_session_ticket(config.psk_skip_session_ticket)
-            .alpn_protos(config.alpn_protos)
             .alps_protos(config.alps_protos)
             .alps_use_new_codepoint(config.alps_use_new_codepoint)
             .enable_ech_grease(config.enable_ech_grease)
@@ -229,7 +232,7 @@ impl BoringTlsConnector {
     /// Creates a new `BoringTlsConnector` with settings
     fn with_connector_and_settings(
         mut ssl: SslConnectorBuilder,
-        settings: TlsSettings,
+        settings: HandshakeSettings,
     ) -> BoringTlsConnector {
         // If the session cache is disabled, we don't need to set up any callbacks.
         let cache = if settings.session_cache {
