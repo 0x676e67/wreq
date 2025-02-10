@@ -1,5 +1,4 @@
 use super::{AlpnProtos, AlpsProtos, RootCertStoreProvider, TlsVersion};
-use crate::impl_debug;
 use boring2::ssl::{CertCompressionAlgorithm, SslCurve};
 use std::borrow::Cow;
 use typed_builder::TypedBuilder;
@@ -8,7 +7,7 @@ use typed_builder::TypedBuilder;
 ///
 /// This struct defines various parameters to fine-tune the behavior of a TLS connection,
 /// including the root certificate store, certificate verification, ALPN protocols, and more.
-#[derive(TypedBuilder)]
+#[derive(Debug, TypedBuilder)]
 pub struct TlsConfig {
     /// The root certificate store.
     /// Default use system's native certificate store.
@@ -193,36 +192,6 @@ impl Default for TlsConfig {
         Self::builder().build()
     }
 }
-
-impl_debug!(
-    TlsConfig,
-    {
-        certs_verification,
-        tls_sni,
-        verify_hostname,
-        alpn_protos,
-        session_ticket,
-        min_tls_version,
-        max_tls_version,
-        alps_protos,
-        psk_dhe_ke,
-        pre_shared_key,
-        enable_ech_grease,
-        permute_extensions,
-        grease_enabled,
-        enable_ocsp_stapling,
-        renegotiation,
-        curves,
-        sigalgs_list,
-        cipher_list,
-        enable_signed_cert_timestamps,
-        cert_compression_algorithm,
-        record_size_limit,
-        key_shares_limit,
-        psk_skip_session_ticket,
-        extension_permutation_indices
-    }
-);
 
 /// A trait for converting various types into an optional `Cow` containing a slice of `CertCompressionAlgorithm`.
 ///

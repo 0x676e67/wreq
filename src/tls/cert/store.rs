@@ -255,6 +255,16 @@ impl RootCertStoreProvider {
     }
 }
 
+impl std::fmt::Debug for RootCertStoreProvider {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            RootCertStoreProvider::Owned(_) => f.debug_tuple("Owned").finish(),
+            RootCertStoreProvider::Borrowed(_) => f.debug_tuple("Borrowed").finish(),
+            RootCertStoreProvider::Default => f.debug_tuple("Default").finish(),
+        }
+    }
+}
+
 macro_rules! impl_root_cert_store {
     ($($type:ty => $variant:ident),* $(,)?) => {
         $(
