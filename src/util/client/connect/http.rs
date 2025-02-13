@@ -81,7 +81,7 @@ struct Config {
         target_os = "fuchsia",
         target_os = "linux",
         all(
-            feature = "apple-bindable-device",
+            feature = "apple-network-device-binding",
             any(
                 target_os = "ios",
                 target_os = "visionos",
@@ -251,7 +251,7 @@ impl<R> HttpConnector<R> {
                     target_os = "fuchsia",
                     target_os = "linux",
                     all(
-                        feature = "apple-bindable-device",
+                        feature = "apple-network-device-binding",
                         any(
                             target_os = "ios",
                             target_os = "visionos",
@@ -404,7 +404,7 @@ impl<R> HttpConnector<R> {
         target_os = "fuchsia",
         target_os = "linux",
         all(
-            feature = "apple-bindable-device",
+            feature = "apple-network-device-binding",
             any(
                 target_os = "ios",
                 target_os = "visionos",
@@ -835,7 +835,7 @@ fn connect(
     }
 
     #[cfg(all(
-        feature = "apple-bindable-device",
+        feature = "apple-network-device-binding",
         any(
             target_os = "ios",
             target_os = "visionos",

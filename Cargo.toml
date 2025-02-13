@@ -67,7 +67,7 @@ webpki-roots = ["dep:webpki-root-certs"]
 macos-system-configuration = ["dep:system-configuration"]
 
 # Use the Apple platform's network device binding.
-apple-bindable-device = ["dep:libc"]
+apple-network-device-binding = ["dep:libc"]
 
 # Optional enable http2 tracing
 http2-tracing = ["hyper2/http2-tracing"]
@@ -301,7 +301,7 @@ required-features = ["websocket", "http2-tracing", "futures-util/std"]
 [[example]]
 name = "client_chain"
 path = "examples/client_chain.rs"
-required-features = ["apple-bindable-device"]
+required-features = ["apple-network-device-binding"]
 
 [[example]]
 name = "request_with_redirect"

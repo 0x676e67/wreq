@@ -22,7 +22,7 @@ pub enum NetworkScheme {
             target_os = "fuchsia",
             target_os = "linux",
             all(
-                feature = "apple-bindable-device",
+                feature = "apple-network-device-binding",
                 any(
                     target_os = "ios",
                     target_os = "visionos",
@@ -85,7 +85,7 @@ impl NetworkScheme {
         target_os = "fuchsia",
         target_os = "linux",
         all(
-            feature = "apple-bindable-device",
+            feature = "apple-network-device-binding",
             any(
                 target_os = "ios",
                 target_os = "visionos",
@@ -112,7 +112,7 @@ impl fmt::Debug for NetworkScheme {
                 target_os = "fuchsia",
                 target_os = "linux",
                 all(
-                    feature = "apple-bindable-device",
+                    feature = "apple-network-device-binding",
                     any(
                         target_os = "ios",
                         target_os = "visionos",
@@ -156,7 +156,7 @@ impl fmt::Debug for NetworkScheme {
                 target_os = "fuchsia",
                 target_os = "linux",
                 all(
-                    feature = "apple-bindable-device",
+                    feature = "apple-network-device-binding",
                     any(
                         target_os = "ios",
                         target_os = "visionos",
@@ -204,7 +204,7 @@ pub struct NetworkSchemeBuilder {
         target_os = "fuchsia",
         target_os = "linux",
         all(
-            feature = "apple-bindable-device",
+            feature = "apple-network-device-binding",
             any(
                 target_os = "ios",
                 target_os = "visionos",
@@ -246,7 +246,7 @@ impl NetworkSchemeBuilder {
         target_os = "fuchsia",
         target_os = "linux",
         all(
-            feature = "apple-bindable-device",
+            feature = "apple-network-device-binding",
             any(
                 target_os = "ios",
                 target_os = "visionos",
@@ -278,7 +278,7 @@ impl NetworkSchemeBuilder {
             target_os = "fuchsia",
             target_os = "linux",
             all(
-                feature = "apple-bindable-device",
+                feature = "apple-network-device-binding",
                 any(
                     target_os = "ios",
                     target_os = "visionos",
@@ -308,7 +308,7 @@ impl NetworkSchemeBuilder {
             target_os = "fuchsia",
             target_os = "linux",
             all(
-                feature = "apple-bindable-device",
+                feature = "apple-network-device-binding",
                 any(
                     target_os = "ios",
                     target_os = "visionos",

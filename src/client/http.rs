@@ -878,7 +878,7 @@ impl ClientBuilder {
         target_os = "fuchsia",
         target_os = "linux",
         all(
-            feature = "apple-bindable-device",
+            feature = "apple-network-device-binding",
             any(
                 target_os = "ios",
                 target_os = "visionos",
@@ -888,7 +888,7 @@ impl ClientBuilder {
             )
         )
     ))]
-    #[cfg_attr(docsrs, feature = "apple-bindable-device")]
+    #[cfg_attr(docsrs, feature = "apple-network-device-binding")]
     pub fn interface<T>(mut self, interface: T) -> ClientBuilder
     where
         T: Into<Cow<'static, str>>,
@@ -1814,7 +1814,7 @@ impl<'c> ClientMut<'c> {
         target_os = "fuchsia",
         target_os = "linux",
         all(
-            feature = "apple-bindable-device",
+            feature = "apple-network-device-binding",
             any(
                 target_os = "ios",
                 target_os = "visionos",
