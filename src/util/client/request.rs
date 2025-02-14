@@ -111,8 +111,13 @@ where
     /// Set the body for the request.
     #[inline]
     pub fn body(mut self, body: B) -> Result<InnerRequest<B>, Error> {
-        if let Some((order, headers)) = self.headers_order.zip(self.builder.headers_mut()) {
-            add_content_length_header(headers, &body);
+        if let Some((method, (order, headers))) = self
+            .builder
+            .method_ref()
+            .cloned()
+            .zip(self.headers_order.zip(self.builder.headers_mut()))
+        {
+            add_content_length_header(method, headers, &body);
             sort_headers(headers, order);
         }
 
@@ -124,6 +129,7 @@ where
     }
 }
 
+/// Map the HTTP version to the ALPN protocols.
 fn map_alpn_protos(version: Version) -> Option<AlpnProtos> {
     match version {
         Version::HTTP_11 | Version::HTTP_10 | Version::HTTP_09 => Some(AlpnProtos::Http1),
@@ -134,15 +140,26 @@ fn map_alpn_protos(version: Version) -> Option<AlpnProtos> {
 
 /// Add the `Content-Length` header to the request.
 #[inline]
-fn add_content_length_header<B>(headers: &mut HeaderMap, body: &B)
+fn add_content_length_header<B>(method: Method, headers: &mut HeaderMap, body: &B)
 where
     B: Body,
 {
     if let Some(len) = Body::size_hint(body).exact() {
-        headers
-            .entry(CONTENT_LENGTH)
-            .or_insert_with(|| HeaderValue::from(len));
+        if len != 0 || method_has_defined_payload_semantics(method) {
+            headers
+                .entry(CONTENT_LENGTH)
+                .or_insert_with(|| HeaderValue::from(len));
+        }
     }
+}
+
+/// Check if the method has defined payload semantics.
+#[inline]
+pub(super) fn method_has_defined_payload_semantics(method: Method) -> bool {
+    !matches!(
+        method,
+        Method::GET | Method::HEAD | Method::DELETE | Method::CONNECT
+    )
 }
 
 /// Sort the headers in the specified order.
