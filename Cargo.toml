@@ -1,7 +1,7 @@
 [package]
 name = "rquest"
 version = "3.0.0"
-description = "An ergonomic, all-in-one HTTP Client for spoofing any browser with TLS, JA3/JA4, and HTTP2 fingerprints"
+description = "An ergonomic, all-in-one HTTP client for emulating any browser with TLS, JA3/JA4, and HTTP2 fingerprints"
 keywords = ["http", "client", "websocket", "ja3", "ja4"]
 categories = ["web-programming::http-client"]
 repository = "https://github.com/0x676e67/rquest"
@@ -18,7 +18,7 @@ rustdoc-args = ["--cfg", "docsrs"]
 targets = ["x86_64-unknown-linux-gnu"]
 
 [features]
-default = ["webpki-roots", "charset", "macos-system-configuration"]
+default = ["webpki-roots", "charset", "macos-system-configuration", "emulation"]
 
 full = [
     "json",
@@ -29,7 +29,10 @@ full = [
     "brotli",
     "zstd",
     "deflate",
+    "emulation",
 ]
+
+emulation = []
 
 websocket = ["dep:tokio-tungstenite"]
 
@@ -248,16 +251,19 @@ path = "examples/headers_order.rs"
 required-features = ["cookies"]
 
 [[example]]
-name = "impersonate"
-path = "examples/impersonate.rs"
+name = "emulation"
+path = "examples/emulation.rs"
+required-features = ["emulation"]
 
 [[example]]
-name = "impersonate_option"
-path = "examples/impersonate_option.rs"
+name = "emulation_option"
+path = "examples/emulation_option.rs"
+required-features = ["emulation"]
 
 [[example]]
-name = "impersonate_context"
-path = "examples/impersonate_context.rs"
+name = "emulation_context"
+path = "examples/emulation_context.rs"
+required-features = ["emulation"]
 
 [[example]]
 name = "set_headers"
@@ -287,6 +293,11 @@ required-features = ["brotli"]
 name = "set_interface"
 path = "examples/set_interface.rs"
 required-features = ["brotli", "apple-network-device-binding"]
+
+[[example]]
+name = "set_emulation"
+path = "examples/set_emulation.rs"
+required-features = ["emulation"]
 
 [[example]]
 name = "set_root_cert_store"
@@ -331,14 +342,14 @@ required-features = ["full"]
 [[example]]
 name = "request_with_interface"
 path = "examples/request_with_interface.rs"
-required-features = ["full"]
+required-features = ["full", "apple-network-device-binding"]
 
 [[example]]
 name = "http1_websocket"
 path = "examples/http1_websocket.rs"
-required-features = ["websocket", "futures-util/std"]
+required-features = ["emulation","websocket", "futures-util/std"]
 
 [[example]]
 name = "http2_websocket"
 path = "examples/http2_websocket.rs"
-required-features = ["websocket", "http2-tracing", "futures-util/std"]
+required-features = ["emulation","websocket", "http2-tracing", "futures-util/std"]

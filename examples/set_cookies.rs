@@ -1,13 +1,13 @@
 use http::HeaderValue;
-use rquest::Impersonate;
+use rquest::Emulation;
 
 #[tokio::main]
 async fn main() -> Result<(), rquest::Error> {
     env_logger::init_from_env(env_logger::Env::default().default_filter_or("debug"));
 
-    // Build a client to impersonate Chrome133
+    // Build a client to emulation Chrome133
     let client = rquest::Client::builder()
-        .impersonate(Impersonate::Chrome133)
+        .emulation(Emulation::Chrome133)
         .cookie_store(true)
         .build()?;
 

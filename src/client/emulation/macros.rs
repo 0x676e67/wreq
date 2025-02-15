@@ -146,7 +146,7 @@ macro_rules! join {
     };
 }
 
-macro_rules! impersonate_match {
+macro_rules! emulation_match {
     ($ver:expr, $opt:expr, $($variant:pat => $path:expr),+) => {
         match $ver {
             $(

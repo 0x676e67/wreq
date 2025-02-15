@@ -143,7 +143,7 @@ All notable changes to this project will be documented in this file.
 - Add `read_timeout` option with override support in Request (#334)
 - Remove impersonate from str feature (#350)
 - Add tests for `3DES` and `DH2048` cipher support (#351)
-- `Impersonate`/`ImpersonateOS` impl serde (#352)
+- `Impersonate`/`EmulationOS` impl serde (#352)
 - Rename `RootCertsStore` to `RootCertStore` (#353)
 
 ### 🐛 Bug Fixes

@@ -908,9 +908,9 @@ impl ClientBuilder {
         self
     }
 
-    // TLS/HTTP2 impersonate options
+    // TLS/HTTP2 emulation options
 
-    /// Configures the client builder to impersonate the specified HTTP context.
+    /// Configures the client builder to emulation the specified HTTP context.
     ///
     /// This method sets the necessary headers, HTTP/1 and HTTP/2 configurations, and TLS config
     /// to use the specified HTTP context. It allows the client to mimic the behavior of different
@@ -927,14 +927,14 @@ impl ClientBuilder {
     /// # Example
     ///
     /// ```rust
-    /// use rquest::{Client, Impersonate};
+    /// use rquest::{Client, Emulation};
     ///
     /// let client = Client::builder()
-    ///     .impersonate(Impersonate::Firefox128)
+    ///     .emulation(Emulation::Firefox128)
     ///     .build()
     ///     .unwrap();
     /// ```
-    pub fn impersonate<P>(mut self, provider: P) -> ClientBuilder
+    pub fn emulation<P>(mut self, provider: P) -> ClientBuilder
     where
         P: HttpContextProvider,
     {
@@ -1863,7 +1863,7 @@ impl<'c> ClientMut<'c> {
         self
     }
 
-    /// Configures the client to impersonate the specified HTTP context.
+    /// Configures the client to emulation the specified HTTP context.
     ///
     /// This method sets the necessary headers, HTTP/1 and HTTP/2 configurations, and TLS config
     /// to use the specified HTTP context. It allows the client to mimic the behavior of different
@@ -1883,12 +1883,12 @@ impl<'c> ClientMut<'c> {
     /// # Example
     ///
     /// ```rust
-    /// use rquest::{Client, Impersonate};
+    /// use rquest::{Client, Emulation};
     ///
     /// let mut client = Client::builder().build().unwrap();
-    /// client.impersonate(Impersonate::Firefox128);
+    /// client.emulation(Emulation::Firefox128);
     /// ```
-    pub fn impersonate<P>(mut self, provider: P) -> ClientMut<'c>
+    pub fn emulation<P>(mut self, provider: P) -> ClientMut<'c>
     where
         P: HttpContextProvider,
     {

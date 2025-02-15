@@ -13,7 +13,7 @@
 //! - [Redirect policy](#redirect-policies)
 //! - Uses [BoringSSL](#tls)
 //! - HTTP [Proxies](#proxies)
-//! - Perfectly impersonate Chrome, Safari, and Firefox
+//! - Perfectly emulation Chrome, Safari, and Firefox
 //! - [Changelog](https://github.com/0x676e67/rquest/blob/main/CHANGELOG.md)
 //!
 //! Additional learning resources include:
@@ -21,18 +21,18 @@
 //! - [The Rust Cookbook](https://doc.rust-lang.org/stable/book/ch00-00-introduction.html)
 //! - [Repository Examples](https://github.com/0x676e67/rquest/tree/main/examples)
 //!
-//! ## Impersonate
+//! ## Emulation
 //!
-//! The `impersonate` module provides a way to simulate various browser fingerprints.
+//! The `emulation` module provides a way to simulate various browser fingerprints.
 //!
 //! ```rust,no_run
-//! use rquest::{Client, Impersonate};
+//! use rquest::{Client, Emulation};
 //!
 //! #[tokio::main]
 //! async fn main() -> Result<(), rquest::Error> {
-//!     // Build a client to impersonate Firefox133
+//!     // Build a client to emulation Firefox133
 //!     let client = Client::builder()
-//!         .impersonate(Impersonate::Firefox133)
+//!         .emulation(Emulation::Firefox133)
 //!         .build()?;
 //!
 //!     // Use the API you're already familiar with
@@ -49,13 +49,13 @@
 //!
 //! ```rust,no_run
 //! use futures_util::{SinkExt, StreamExt, TryStreamExt};
-//! use rquest::{Client, Impersonate, Message, Utf8Bytes};
+//! use rquest::{Client, Emulation, Message, Utf8Bytes};
 //!
 //! #[tokio::main]
 //! async fn main() -> Result<(), rquest::Error> {
-//!     // Build a client to impersonate Firefox133
+//!     // Build a client to emulation Firefox133
 //!     let websocket = Client::builder()
-//!         .impersonate(Impersonate::Firefox133)
+//!         .emulation(Emulation::Firefox133)
 //!         .build()?
 //!         .websocket("wss://echo.websocket.org")
 //!         .send()
@@ -345,6 +345,8 @@ fn _assert_impls() {
 #[cfg(test)]
 doc_comment::doctest!("../README.md");
 
+#[cfg(feature = "emulation")]
+pub use self::client::emulation::{Emulation, EmulationOS, EmulationOption};
 #[cfg(feature = "multipart")]
 pub use self::client::multipart;
 #[cfg(feature = "websocket")]
@@ -356,7 +358,6 @@ pub use self::client::{
     Body, Client, ClientBuilder, ClientMut, ClientRef, Http1Config, Http2Config, HttpContext,
     HttpContextProvider, Request, RequestBuilder, Response, Upgraded,
 };
-pub use self::imp::{Impersonate, ImpersonateOS, ImpersonateOption};
 pub use self::proxy::{NoProxy, Proxy};
 pub use self::tls::{
     AlpnProtos, AlpsProtos, RootCertStore, RootCertStoreProvider, TlsConfig, TlsInfo, TlsVersion,
@@ -373,6 +374,5 @@ pub mod dns;
 mod proxy;
 pub mod redirect;
 
-mod imp;
 mod tls;
 mod util;

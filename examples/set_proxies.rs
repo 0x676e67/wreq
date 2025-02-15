@@ -1,4 +1,4 @@
-use rquest::{Client, Impersonate};
+use rquest::{Client, Emulation};
 
 #[tokio::main]
 async fn main() -> Result<(), rquest::Error> {
@@ -6,9 +6,9 @@ async fn main() -> Result<(), rquest::Error> {
         .with_max_level(tracing::Level::TRACE)
         .init();
 
-    // Build a client to impersonate Chrome130
+    // Build a client to emulation Chrome130
     let client = Client::builder()
-        .impersonate(Impersonate::Chrome130)
+        .emulation(Emulation::Chrome130)
         .no_proxy()
         .build()?;
 

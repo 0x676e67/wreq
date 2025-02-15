@@ -1,4 +1,4 @@
-use rquest::{Client, Impersonate, ImpersonateOS, ImpersonateOption};
+use rquest::{Client, Emulation, EmulationOS, EmulationOption};
 
 #[tokio::main]
 async fn main() -> Result<(), rquest::Error> {
@@ -6,16 +6,16 @@ async fn main() -> Result<(), rquest::Error> {
         .with_max_level(tracing::Level::TRACE)
         .init();
 
-    // Build a client to impersonate Firefox128
-    let impersonate = ImpersonateOption::builder()
-        .impersonate(Impersonate::Firefox128)
-        .impersonate_os(ImpersonateOS::Windows)
+    // Build a client to emulation Firefox128
+    let emulation = EmulationOption::builder()
+        .emulation(Emulation::Firefox128)
+        .emulation_os(EmulationOS::Windows)
         .skip_http2(true)
         .build();
 
-    // Apply the impersonate to the client
+    // Apply the emulation to the client
     let client = Client::builder()
-        .impersonate(impersonate)
+        .emulation(emulation)
         .http1_only()
         .build()?;
 

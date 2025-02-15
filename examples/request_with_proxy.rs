@@ -1,4 +1,4 @@
-use rquest::Impersonate;
+use rquest::Emulation;
 
 #[tokio::main]
 async fn main() -> Result<(), rquest::Error> {
@@ -6,9 +6,9 @@ async fn main() -> Result<(), rquest::Error> {
         .with_max_level(tracing::Level::TRACE)
         .init();
 
-    // Build a client to impersonate Firefox133
+    // Build a client to emulation Firefox133
     let client = rquest::Client::builder()
-        .impersonate(Impersonate::Firefox133)
+        .emulation(Emulation::Firefox133)
         .build()?;
 
     let resp = client

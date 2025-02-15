@@ -1,11 +1,11 @@
-use rquest::Impersonate;
+use rquest::Emulation;
 use std::net::IpAddr;
 
 #[tokio::main]
 async fn main() -> Result<(), rquest::Error> {
-    // Build a client to impersonate Chrome130
+    // Build a client to emulation Chrome130
     let client = rquest::Client::builder()
-        .impersonate(Impersonate::Chrome130)
+        .emulation(Emulation::Chrome130)
         .build()?;
 
     // Use the API you're already familiar with

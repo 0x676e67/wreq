@@ -3,7 +3,7 @@ use std::sync::Arc;
 use rquest::{
     cookie::{CookieStore, Jar},
     redirect::Policy,
-    Impersonate,
+    Emulation,
 };
 use url::Url;
 
@@ -15,9 +15,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let url = Url::parse("https://google.com/")?;
 
-    // Build a client to impersonate Safari18
+    // Build a client to emulation Safari18
     let client = rquest::Client::builder()
-        .impersonate(Impersonate::Safari18)
+        .emulation(Emulation::Safari18)
         .build()?;
 
     // Create a cookie store

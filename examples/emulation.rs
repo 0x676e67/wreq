@@ -1,10 +1,10 @@
-use rquest::Impersonate;
+use rquest::Emulation;
 
 #[tokio::main]
 async fn main() -> Result<(), rquest::Error> {
-    // Build a client to impersonate Chrome133
+    // Build a client to emulation Chrome133
     let client = rquest::Client::builder()
-        .impersonate(Impersonate::Chrome133)
+        .emulation(Emulation::Chrome133)
         .build()?;
 
     // Use the API you're already familiar with

@@ -1,15 +1,23 @@
-use rquest::{Client, Impersonate};
+use rquest::{Client, Emulation};
 
+#[cfg(any(
+    target_os = "android",
+    target_os = "fuchsia",
+    target_os = "linux",
+    target_os = "ios",
+    target_os = "visionos",
+    target_os = "macos",
+    target_os = "tvos",
+    target_os = "watchos"
+))]
 #[tokio::main]
 async fn main() -> Result<(), rquest::Error> {
     tracing_subscriber::fmt()
         .with_max_level(tracing::Level::TRACE)
         .init();
 
-    // Build a client to impersonate Firefox128
-    let client = Client::builder()
-        .impersonate(Impersonate::Firefox128)
-        .build()?;
+    // Build a client to emulation Firefox128
+    let client = Client::builder().emulation(Emulation::Firefox128).build()?;
 
     let text = client
         .get("https://api.ip.sb/ip")
@@ -23,3 +31,15 @@ async fn main() -> Result<(), rquest::Error> {
 
     Ok(())
 }
+
+#[cfg(not(any(
+    target_os = "android",
+    target_os = "fuchsia",
+    target_os = "linux",
+    target_os = "ios",
+    target_os = "visionos",
+    target_os = "macos",
+    target_os = "tvos",
+    target_os = "watchos"
+)))]
+fn main() {}

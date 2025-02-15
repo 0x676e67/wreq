@@ -212,9 +212,9 @@ async fn main() -> Result<(), rquest::Error> {
         .headers_order(HEADER_ORDER)
         .build();
 
-    // Build a client with impersonate config
+    // Build a client with emulation config
     let client = Client::builder()
-        .impersonate(context)
+        .emulation(context)
         .http1(http1_configuration)
         .http2(http2_configuration)
         .build()?;

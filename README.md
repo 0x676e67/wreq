@@ -7,7 +7,7 @@
 
 > 🚀 Help me work seamlessly with open source sharing by [sponsoring me on GitHub](https://github.com/0x676e67/0x676e67/blob/main/SPONSOR.md)
 
-An ergonomic, all-in-one HTTP client for spoofing any browser with `TLS`, `JA3`/`JA4`, and `HTTP2` fingerprints.
+An ergonomic, all-in-one HTTP client for emulating any browser with TLS, JA3/JA4, and HTTP2 fingerprints.
 
 ## Features
 
@@ -18,7 +18,7 @@ An ergonomic, all-in-one HTTP client for spoofing any browser with `TLS`, `JA3`/
 - HTTP Proxies
 - WebSocket Upgrade
 - HTTPS via BoringSSL
-- Perfectly Chrome, Safari, and Firefox
+- Perfectly emulation Chrome, Safari, and Firefox
 
 ## Example
 
@@ -33,13 +33,13 @@ rquest = "2.0.0"
 And then the code:
 
 ```rust,no_run
-use rquest::{Client, Impersonate};
+use rquest::{Client, Emulation};
 
 #[tokio::main]
 async fn main() -> Result<(), rquest::Error> {
-    // Build a client to impersonate Firefox133
+    // Build a client to emulation Firefox133
     let client = Client::builder()
-        .impersonate(Impersonate::Firefox133)
+        .emulation(Emulation::Firefox133)
         .build()?;
 
     // Use the API you're already familiar with
@@ -53,7 +53,7 @@ async fn main() -> Result<(), rquest::Error> {
 ## FFI bindings
 
 - [rnet](https://github.com/0x676e67/rnet): Python HTTP client with a touch of black magic.
-- [ktor-impersonate](https://github.com/rushiiMachine/ktor-impersonate): KMP Ktor engine bindings for `rquest` to spoof JA3/JA4/H2 fingerprints.
+- [ktor-emulation](https://github.com/rushiiMachine/ktor-emulation): KMP Ktor engine bindings for `rquest` to spoof JA3/JA4/H2 fingerprints.
 
 ## Emulation
 

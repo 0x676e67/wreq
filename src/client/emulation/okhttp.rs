@@ -1,4 +1,4 @@
-use super::impersonate_imports::*;
+use super::emulation_imports::*;
 use http2::*;
 use tls::*;
 
@@ -8,7 +8,7 @@ macro_rules! mod_generator {
             use super::*;
 
             #[inline(always)]
-            pub fn http_context(option: ImpersonateOption) -> HttpContext {
+            pub fn http_context(option: EmulationOption) -> HttpContext {
                 HttpContext::builder()
                     .tls_config(tls_config!($cipher_list))
                     .http2_config(conditional_http2!(option.skip_http2, http2_config!()))
@@ -59,7 +59,7 @@ fn header_initializer(ua: &'static str) -> HeaderMap {
 }
 
 mod tls {
-    use crate::imp::tls_imports::*;
+    use super::super::tls_imports::*;
 
     pub const CURVES: &[SslCurve] = &[SslCurve::X25519, SslCurve::SECP256R1, SslCurve::SECP384R1];
 
@@ -122,7 +122,7 @@ mod tls {
 }
 
 mod http2 {
-    use crate::imp::http2_imports::*;
+    use super::super::http2_imports::*;
 
     pub const HEADER_PRIORITY: (u32, u8, bool) = (0, 255, true);
 

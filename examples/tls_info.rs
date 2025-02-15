@@ -1,12 +1,7 @@
-use rquest::Impersonate;
-
 #[tokio::main]
 async fn main() -> Result<(), rquest::Error> {
-    // Build a client to impersonate Edge127
-    let client = rquest::Client::builder()
-        .impersonate(Impersonate::Edge127)
-        .tls_info(true)
-        .build()?;
+    // Build a client to emulation Edge127
+    let client = rquest::Client::builder().tls_info(true).build()?;
 
     // Use the API you're already familiar with
     let resp = client.get("https://tls.peet.ws/api/all").send().await?;

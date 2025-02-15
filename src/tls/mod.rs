@@ -6,7 +6,7 @@
 //!   `ClientBuilder`.
 
 mod cert;
-mod conf;
+mod config;
 mod conn;
 mod ext;
 
@@ -16,7 +16,7 @@ pub use self::conn::{BoringTlsConnector, HttpsConnector, MaybeHttpsStream};
 pub use self::ext::{ConnectConfigurationExt, SslConnectorBuilderExt};
 pub use self::{
     cert::{RootCertStore, RootCertStoreProvider},
-    conf::TlsConfig,
+    config::TlsConfig,
 };
 
 type TlsResult<T> = Result<T, ErrorStack>;

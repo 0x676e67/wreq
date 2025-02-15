@@ -1,5 +1,5 @@
 use http::Version;
-use rquest::{redirect::Policy, Impersonate};
+use rquest::{redirect::Policy, Emulation};
 
 #[tokio::main]
 async fn main() -> Result<(), rquest::Error> {
@@ -7,9 +7,9 @@ async fn main() -> Result<(), rquest::Error> {
         .with_max_level(tracing::Level::TRACE)
         .init();
 
-    // Build a client to impersonate Safari18
+    // Build a client to emulation Safari18
     let client = rquest::Client::builder()
-        .impersonate(Impersonate::Safari18)
+        .emulation(Emulation::Safari18)
         .build()?;
 
     let resp = client

@@ -1,5 +1,5 @@
-use rquest::{join, SslCurve, TlsConfig};
 use rquest::{Client, HttpContext};
+use rquest::{SslCurve, TlsConfig};
 
 #[tokio::test]
 async fn test_badssl_modern() {
@@ -48,16 +48,12 @@ const CURVES: &[SslCurve] = &[
 #[tokio::test]
 async fn test_3des_support() -> Result<(), rquest::Error> {
     let client = Client::builder()
-        .impersonate(
+        .emulation(
             HttpContext::builder()
                 .tls_config(
                     TlsConfig::builder()
                         .curves(CURVES)
-                        .cipher_list(join!(
-                            ":",
-                            "TLS_ECDHE_ECDSA_WITH_3DES_EDE_CBC_SHA",
-                            "TLS_ECDHE_RSA_WITH_3DES_EDE_CBC_SHA"
-                        ))
+                        .cipher_list("TLS_ECDHE_ECDSA_WITH_3DES_EDE_CBC_SHA:TLS_ECDHE_RSA_WITH_3DES_EDE_CBC_SHA")
                         .build(),
                 )
                 .build(),
@@ -81,18 +77,12 @@ async fn test_3des_support() -> Result<(), rquest::Error> {
 #[tokio::test]
 async fn test_firefox_7x_100_cipher() -> Result<(), rquest::Error> {
     let client = Client::builder()
-        .impersonate(
+        .emulation(
             HttpContext::builder()
                 .tls_config(
                     TlsConfig::builder()
                         .curves(CURVES)
-                        .cipher_list(join!(
-                            ":",
-                            "TLS_DHE_RSA_WITH_AES_128_CBC_SHA",
-                            "TLS_DHE_RSA_WITH_AES_256_CBC_SHA",
-                            "TLS_DHE_RSA_WITH_AES_128_CBC_SHA256",
-                            "TLS_DHE_RSA_WITH_AES_256_CBC_SHA256"
-                        ))
+                        .cipher_list("TLS_DHE_RSA_WITH_AES_128_CBC_SHA:TLS_DHE_RSA_WITH_AES_256_CBC_SHA:TLS_DHE_RSA_WITH_AES_128_CBC_SHA256:TLS_DHE_RSA_WITH_AES_256_CBC_SHA256")
                         .build(),
                 )
                 .build(),

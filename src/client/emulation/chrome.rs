@@ -1,4 +1,4 @@
-use crate::imp::impersonate_imports::*;
+use super::emulation_imports::*;
 use http2::*;
 use tls::*;
 
@@ -14,18 +14,18 @@ macro_rules! mod_generator {
             use super::*;
 
             #[inline(always)]
-            pub fn http_context(option: ImpersonateOption) -> HttpContext {
+            pub fn http_context(option: EmulationOption) -> HttpContext {
                 #[allow(unreachable_patterns)]
-                match option.impersonate_os {
+                match option.emulation_os {
                     $(
-                        ImpersonateOS::$other_os => HttpContext::builder()
+                        EmulationOS::$other_os => HttpContext::builder()
                             .tls_config($tls_config)
                             .http2_config(conditional_http2!(option.skip_http2, $http2_config))
                             .default_headers(conditional_headers!(option.skip_headers, || {
                                 $header_initializer(
                                     $other_sec_ch_ua,
                                     $other_ua,
-                                    ImpersonateOS::$other_os,
+                                    EmulationOS::$other_os,
                                 )
                             }))
                             .build(),
@@ -37,7 +37,7 @@ macro_rules! mod_generator {
                             $header_initializer(
                                 $default_sec_ch_ua,
                                 $default_ua,
-                                ImpersonateOS::$default_os,
+                                EmulationOS::$default_os,
                             )
                         }))
                         .build(),
@@ -133,15 +133,15 @@ macro_rules! http2_config {
 fn header_initializer(
     sec_ch_ua: &'static str,
     ua: &'static str,
-    impersonate_os: ImpersonateOS,
+    emulation_os: EmulationOS,
 ) -> HeaderMap {
     let mut headers = HeaderMap::new();
     header_chrome_accpet!(headers);
     header_chrome_sec_ch_ua!(
         headers,
         sec_ch_ua,
-        impersonate_os.platform(),
-        impersonate_os.is_mobile()
+        emulation_os.platform(),
+        emulation_os.is_mobile()
     );
     header_chrome_sec_fetch!(headers);
     header_chrome_ua!(headers, ua);
@@ -152,15 +152,15 @@ fn header_initializer(
 fn header_initializer_with_zstd(
     sec_ch_ua: &'static str,
     ua: &'static str,
-    impersonate_os: ImpersonateOS,
+    emulation_os: EmulationOS,
 ) -> HeaderMap {
     let mut headers = HeaderMap::new();
     header_chrome_accpet!(zstd, headers);
     header_chrome_sec_ch_ua!(
         headers,
         sec_ch_ua,
-        impersonate_os.platform(),
-        impersonate_os.is_mobile()
+        emulation_os.platform(),
+        emulation_os.is_mobile()
     );
     header_chrome_sec_fetch!(headers);
     header_chrome_ua!(headers, ua);
@@ -171,7 +171,7 @@ fn header_initializer_with_zstd(
 fn header_initializer_with_zstd_priority(
     sec_ch_ua: &'static str,
     ua: &'static str,
-    impersonate_os: ImpersonateOS,
+    emulation_os: EmulationOS,
 ) -> HeaderMap {
     let mut headers = HeaderMap::new();
     header_chrome_accpet!(zstd, headers);
@@ -179,8 +179,8 @@ fn header_initializer_with_zstd_priority(
     header_chrome_sec_ch_ua!(
         headers,
         sec_ch_ua,
-        impersonate_os.platform(),
-        impersonate_os.is_mobile()
+        emulation_os.platform(),
+        emulation_os.is_mobile()
     );
     header_chrome_sec_fetch!(headers);
     header_chrome_ua!(headers, ua);
@@ -188,7 +188,7 @@ fn header_initializer_with_zstd_priority(
 }
 
 mod tls {
-    use crate::imp::tls_imports::*;
+    use super::super::tls_imports::*;
 
     pub const CURVES_1: &[SslCurve] = &[SslCurve::X25519, SslCurve::SECP256R1, SslCurve::SECP384R1];
 
@@ -290,7 +290,7 @@ mod tls {
 }
 
 mod http2 {
-    use crate::imp::http2_imports::*;
+    use super::super::http2_imports::*;
 
     pub const HEADER_PRIORITY: (u32, u8, bool) = (0, 255, true);
 

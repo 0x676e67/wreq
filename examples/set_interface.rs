@@ -1,4 +1,4 @@
-use rquest::{Client, Impersonate};
+use rquest::{Client, Emulation};
 
 #[cfg(any(
     target_os = "android",
@@ -12,9 +12,9 @@ use rquest::{Client, Impersonate};
 ))]
 #[tokio::main]
 async fn main() -> Result<(), rquest::Error> {
-    // Build a client to impersonate Chrome130
+    // Build a client to emulation Chrome130
     let client = Client::builder()
-        .impersonate(Impersonate::Chrome130)
+        .emulation(Emulation::Chrome130)
         .interface("eth0")
         .build()?;
 

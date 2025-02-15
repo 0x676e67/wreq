@@ -7,10 +7,12 @@ use http::{
     header::{CONTENT_LENGTH, CONTENT_TYPE, TRANSFER_ENCODING},
     Version,
 };
+use rquest::Client;
 #[cfg(feature = "json")]
 use std::collections::HashMap;
 
-use rquest::{Client, Impersonate, ImpersonateOS, ImpersonateOption};
+#[cfg(feature = "emulation")]
+use rquest::{Emulation, EmulationOS, EmulationOption};
 
 #[tokio::test]
 async fn auto_headers() {
@@ -470,6 +472,7 @@ async fn close_connection_after_idle_timeout() {
 }
 
 #[tokio::test]
+#[cfg(feature = "emulation")]
 async fn test_client_os_spoofing() {
     let server = server::http(move |req| async move {
         for (name, value) in req.headers() {
@@ -494,10 +497,10 @@ async fn test_client_os_spoofing() {
 
     let url = format!("http://{}/ua", server.addr());
     let res = Client::builder()
-        .impersonate(
-            ImpersonateOption::builder()
-                .impersonate(Impersonate::Chrome133)
-                .impersonate_os(ImpersonateOS::Linux)
+        .emulation(
+            EmulationOption::builder()
+                .emulation(Emulation::Chrome133)
+                .emulation_os(EmulationOS::Linux)
                 .skip_http2(true)
                 .build(),
         )
