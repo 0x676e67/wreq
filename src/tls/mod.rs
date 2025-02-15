@@ -39,7 +39,7 @@ impl TlsVersion {
 }
 
 /// A TLS ALPN protocol.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
 pub struct AlpnProtos(&'static [u8]);
 
 /// A `AlpnProtos` is used to set the HTTP version preference.

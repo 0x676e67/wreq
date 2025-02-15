@@ -34,7 +34,7 @@ use sync_wrapper::SyncWrapper;
 
 use crate::proxy::ProxyScheme;
 use crate::util::common;
-use crate::{impl_debug, AlpnProtos};
+use crate::AlpnProtos;
 use connect::capture::CaptureConnectionExtension;
 use connect::{Alpn, Connect, Connected, Connection};
 use pool::Ver;
@@ -121,21 +121,25 @@ macro_rules! e {
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
 struct PoolKey {
     uri: Uri,
+    alpn_protos: Option<AlpnProtos>,
     network: NetworkScheme,
 }
 
 impl PoolKey {
-    fn new(uri: Uri, network: NetworkScheme) -> PoolKey {
-        PoolKey { uri, network }
+    fn new(uri: Uri, alpn_protos: Option<AlpnProtos>, network: NetworkScheme) -> PoolKey {
+        PoolKey {
+            uri,
+            alpn_protos,
+            network,
+        }
     }
 }
 
 /// Destination of the request
 ///
 /// This is used to store the destination of the request, the http version pref, and the pool key.
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct Dst {
-    alpn_protos: Option<AlpnProtos>,
     inner: Arc<PoolKey>,
 }
 
@@ -171,8 +175,7 @@ impl Dst {
         // Convert the scheme and host to a URI
         into_uri(scheme, auth)
             .map(|uri| Dst {
-                alpn_protos,
-                inner: Arc::new(PoolKey::new(uri, network)),
+                inner: Arc::new(PoolKey::new(uri, alpn_protos, network)),
             })
             .map_err(|_| e!(UserAbsoluteUriRequired))
     }
@@ -190,7 +193,12 @@ impl Dst {
 
     #[inline(always)]
     pub(crate) fn alpn_protos(&self) -> Option<AlpnProtos> {
-        self.alpn_protos
+        self.inner.alpn_protos
+    }
+
+    #[inline(always)]
+    pub(crate) fn is_h2(&self) -> bool {
+        self.inner.alpn_protos == Some(AlpnProtos::HTTP2)
     }
 
     #[inline(always)]
@@ -228,8 +236,6 @@ impl Dst {
         &self.inner
     }
 }
-
-impl_debug!(Dst, { alpn_protos, inner });
 
 impl std::ops::Deref for Dst {
     type Target = Uri;
@@ -619,7 +625,7 @@ where
 
         let h1_builder = self.h1_builder.clone();
         let h2_builder = self.h2_builder.clone();
-        let ver = if dst.alpn_protos == Some(AlpnProtos::HTTP2) {
+        let ver = if dst.is_h2() {
             Ver::Http2
         } else {
             self.config.ver
