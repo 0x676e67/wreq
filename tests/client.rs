@@ -526,3 +526,28 @@ async fn test_client_os_spoofing() {
 
     assert_eq!(res.status(), rquest::StatusCode::OK);
 }
+
+#[tokio::test]
+async fn pool_cache() {
+    let client = rquest::Client::default();
+    let url = "https://httpbin.org/get";
+    let resp = client
+        .get(url)
+        .version(http::Version::HTTP_2)
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), rquest::StatusCode::OK);
+    assert_eq!(resp.version(), http::Version::HTTP_2);
+
+    let resp = client
+        .get(url)
+        .version(http::Version::HTTP_11)
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), rquest::StatusCode::OK);
+    assert_eq!(resp.version(), http::Version::HTTP_11);
+}

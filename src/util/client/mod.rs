@@ -120,12 +120,17 @@ macro_rules! e {
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
 struct PoolKey {
     uri: Uri,
+    version: Version,
     network: NetworkScheme,
 }
 
 impl PoolKey {
-    fn new(uri: Uri, network: NetworkScheme) -> PoolKey {
-        PoolKey { uri, network }
+    fn new(uri: Uri, version: Version, network: NetworkScheme) -> PoolKey {
+        PoolKey {
+            uri,
+            version,
+            network,
+        }
     }
 }
 
@@ -143,6 +148,7 @@ impl Dst {
     pub fn new(
         uri: &mut Uri,
         is_http_connect: bool,
+        version: Version,
         network: NetworkScheme,
         alpn_protos: Option<AlpnProtos>,
     ) -> Result<Dst, Error> {
@@ -171,7 +177,7 @@ impl Dst {
         into_uri(scheme, auth)
             .map(|uri| Dst {
                 alpn_protos,
-                inner: Arc::new(PoolKey::new(uri, network)),
+                inner: Arc::new(PoolKey::new(uri, version, network)),
             })
             .map_err(|_| e!(UserAbsoluteUriRequired))
     }
@@ -326,7 +332,8 @@ where
     pub fn request(&self, req: InnerRequest<B>) -> ResponseFuture {
         let (mut req, network_scheme, http_version_pref) = req.pieces();
         let is_http_connect = req.method() == Method::CONNECT;
-        match req.version() {
+        let version = req.version();
+        match version {
             Version::HTTP_10 => {
                 if is_http_connect {
                     warn!("CONNECT is not allowed for HTTP/1.0");
@@ -341,6 +348,7 @@ where
         let ctx = match Dst::new(
             req.uri_mut(),
             is_http_connect,
+            version,
             network_scheme,
             http_version_pref,
         ) {
