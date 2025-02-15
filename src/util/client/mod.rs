@@ -125,16 +125,6 @@ struct PoolKey {
     network: NetworkScheme,
 }
 
-impl PoolKey {
-    fn new(uri: Uri, alpn_protos: Option<AlpnProtos>, network: NetworkScheme) -> PoolKey {
-        PoolKey {
-            uri,
-            alpn_protos,
-            network,
-        }
-    }
-}
-
 /// Destination of the request
 ///
 /// This is used to store the destination of the request, the http version pref, and the pool key.
@@ -175,7 +165,11 @@ impl Dst {
         // Convert the scheme and host to a URI
         into_uri(scheme, auth)
             .map(|uri| Dst {
-                inner: Arc::new(PoolKey::new(uri, alpn_protos, network)),
+                inner: Arc::new(PoolKey {
+                    uri,
+                    alpn_protos,
+                    network,
+                }),
             })
             .map_err(|_| e!(UserAbsoluteUriRequired))
     }
