@@ -11,7 +11,7 @@ use rquest::Client;
 #[cfg(feature = "json")]
 use std::collections::HashMap;
 
-#[cfg(feature = "emulation")]
+#[cfg(feature = "emulation-device")]
 use rquest::{Emulation, EmulationOS, EmulationOption};
 
 #[tokio::test]
@@ -472,8 +472,8 @@ async fn close_connection_after_idle_timeout() {
 }
 
 #[tokio::test]
-#[cfg(feature = "emulation")]
-async fn test_client_os_spoofing() {
+#[cfg(feature = "emulation-device")]
+async fn test_client_emulation_device() {
     let server = server::http(move |req| async move {
         for (name, value) in req.headers() {
             if name == "user-agent" {
