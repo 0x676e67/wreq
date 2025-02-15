@@ -25,7 +25,7 @@ async fn main() -> Result<(), rquest::Error> {
     // Use the API you're already familiar with
     let websocket = client
         .websocket("wss://127.0.0.1:3000/ws")
-        .configure_request(configure_request)
+        .header(header::USER_AGENT, env!("CARGO_PKG_NAME"))
         .use_http2()
         .send()
         .await?;
@@ -54,11 +54,4 @@ async fn main() -> Result<(), rquest::Error> {
     }
 
     Ok(())
-}
-
-/// We can also set HTTP options here
-fn configure_request(builder: RequestBuilder) -> RequestBuilder {
-    builder
-        .header(header::USER_AGENT, env!("CARGO_PKG_NAME"))
-        .timeout(Duration::from_secs(10))
 }
