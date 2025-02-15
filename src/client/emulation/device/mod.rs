@@ -1,4 +1,4 @@
-//! Emulation emulation for different browsers.
+//! Emulation for different browsers.
 #![allow(missing_debug_implementations)]
 #![allow(missing_docs)]
 
