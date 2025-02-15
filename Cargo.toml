@@ -261,8 +261,8 @@ path = "examples/emulation_option.rs"
 required-features = ["emulation"]
 
 [[example]]
-name = "emulation_context"
-path = "examples/emulation_context.rs"
+name = "emulation_provider"
+path = "examples/emulation_provider.rs"
 required-features = ["emulation"]
 
 [[example]]
