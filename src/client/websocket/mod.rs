@@ -6,15 +6,18 @@ mod message;
 
 use std::{
     borrow::Cow,
+    fmt,
+    net::{IpAddr, Ipv4Addr, Ipv6Addr},
     ops::{Deref, DerefMut},
     pin::Pin,
     task::{Context, Poll},
 };
 
-use crate::{error, Error, RequestBuilder, Response};
+use crate::{error, Error, IntoUrl, RequestBuilder, Response};
 use futures_util::{Sink, SinkExt, Stream, StreamExt};
 use http::{header, uri::Scheme, HeaderMap, HeaderName, HeaderValue, Method, StatusCode, Version};
 use hyper2::ext::Protocol;
+use serde::Serialize;
 use tokio_tungstenite::tungstenite::{self, protocol};
 use tungstenite::protocol::WebSocketConfig;
 
@@ -137,25 +140,120 @@ impl WebSocketRequestBuilder {
         self
     }
 
-    /// Modifies the request builder before sending the request.
-    ///
-    /// This method allows you to customize the `RequestBuilder` by passing a closure
-    /// that modifies it. The closure receives the current `RequestBuilder` and returns
-    /// a modified `RequestBuilder`. This can be useful for setting additional headers,
-    /// configuring timeouts, or making other adjustments to the request.
-    ///
-    /// # Arguments
-    ///
-    /// * `f` - A closure that takes a `RequestBuilder` and returns a modified `RequestBuilder`.
-    ///
-    /// # Returns
-    ///
-    /// * `Self` - The modified instance with the updated `RequestBuilder`.
-    pub fn configure_request<F>(mut self, f: F) -> Self
+    /// Add a `Header` to this Request.
+    pub fn header<K, V>(mut self, key: K, value: V) -> Self
     where
-        F: FnOnce(RequestBuilder) -> RequestBuilder,
+        HeaderName: TryFrom<K>,
+        <HeaderName as TryFrom<K>>::Error: Into<http::Error>,
+        HeaderValue: TryFrom<V>,
+        <HeaderValue as TryFrom<V>>::Error: Into<http::Error>,
     {
-        self.inner = f(self.inner);
+        self.inner = self.inner.header(key, value);
+        self
+    }
+
+    /// Add a `Header` to append to the request.
+    pub fn header_append<K, V>(mut self, key: K, value: V) -> Self
+    where
+        HeaderName: TryFrom<K>,
+        <HeaderName as TryFrom<K>>::Error: Into<http::Error>,
+        HeaderValue: TryFrom<V>,
+        <HeaderValue as TryFrom<V>>::Error: Into<http::Error>,
+    {
+        self.inner = self.inner.header_append(key, value);
+        self
+    }
+
+    /// Add a set of Headers to the existing ones on this Request.
+    ///
+    /// The headers will be merged in to any already set.
+    pub fn headers(mut self, headers: HeaderMap) -> Self {
+        self.inner = self.inner.headers(headers);
+        self
+    }
+
+    /// Enable HTTP authentication.
+    pub fn auth<V>(mut self, value: V) -> Self
+    where
+        HeaderValue: TryFrom<V>,
+        <HeaderValue as TryFrom<V>>::Error: Into<http::Error>,
+    {
+        self.inner = self.inner.auth(value);
+        self
+    }
+
+    /// Enable HTTP basic authentication.
+    pub fn basic_auth<U, P>(mut self, username: U, password: Option<P>) -> Self
+    where
+        U: fmt::Display,
+        P: fmt::Display,
+    {
+        self.inner = self.inner.basic_auth(username, password);
+        self
+    }
+
+    /// Enable HTTP bearer authentication.
+    pub fn bearer_auth<T>(mut self, token: T) -> Self
+    where
+        T: fmt::Display,
+    {
+        self.inner = self.inner.bearer_auth(token);
+        self
+    }
+
+    /// Modify the query string of the URL.
+    pub fn query<T: Serialize + ?Sized>(mut self, query: &T) -> Self {
+        self.inner = self.inner.query(query);
+        self
+    }
+
+    /// Set the proxy for this request.
+    pub fn proxy<U: IntoUrl>(mut self, proxy: U) -> Self {
+        self.inner = self.inner.proxy(proxy);
+        self
+    }
+
+    /// Set the local address for this request.
+    pub fn local_address<V>(mut self, local_address: V) -> Self
+    where
+        V: Into<Option<IpAddr>>,
+    {
+        self.inner = self.inner.local_address(local_address);
+        self
+    }
+
+    /// Set the local addresses for this request.
+    pub fn local_addresses<V4, V6>(mut self, ipv4: V4, ipv6: V6) -> Self
+    where
+        V4: Into<Option<Ipv4Addr>>,
+        V6: Into<Option<Ipv6Addr>>,
+    {
+        self.inner = self.inner.local_addresses(ipv4, ipv6);
+        self
+    }
+
+    /// Set the interface for this request.
+    #[cfg(any(
+        target_os = "android",
+        target_os = "fuchsia",
+        target_os = "linux",
+        all(
+            feature = "apple-network-device-binding",
+            any(
+                target_os = "ios",
+                target_os = "visionos",
+                target_os = "macos",
+                target_os = "tvos",
+                target_os = "watchos",
+            )
+        )
+    ))]
+    #[cfg_attr(docsrs, feature = "apple-network-device-binding")]
+    pub fn interface<I>(mut self, interface: I) -> Self
+    where
+        I: Into<std::borrow::Cow<'static, str>>,
+    {
+        self.inner = self.inner.interface(interface);
         self
     }
 

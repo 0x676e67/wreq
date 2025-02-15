@@ -18,7 +18,7 @@ rustdoc-args = ["--cfg", "docsrs"]
 targets = ["x86_64-unknown-linux-gnu"]
 
 [features]
-default = ["webpki-roots", "charset", "macos-system-configuration"]
+default = ["webpki-roots", "charset", "macos-system-configuration", "websocket"]
 
 full = [
     "json",
@@ -286,17 +286,12 @@ required-features = ["brotli"]
 [[example]]
 name = "set_interface"
 path = "examples/set_interface.rs"
-required-features = ["brotli"]
+required-features = ["brotli", "apple-network-device-binding"]
 
 [[example]]
 name = "set_root_cert_store"
 path = "examples/set_root_cert_store.rs"
 required-features = ["native-roots", "webpki-roots"]
-
-[[example]]
-name = "websocket"
-path = "examples/websocket.rs"
-required-features = ["websocket", "http2-tracing", "futures-util/std"]
 
 [[example]]
 name = "client_chain"
@@ -337,6 +332,11 @@ required-features = ["full"]
 name = "request_with_interface"
 path = "examples/request_with_interface.rs"
 required-features = ["full"]
+
+[[example]]
+name = "http1_websocket"
+path = "examples/http1_websocket.rs"
+required-features = ["websocket", "futures-util/std"]
 
 [[example]]
 name = "http2_websocket"
