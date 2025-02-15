@@ -1,4 +1,4 @@
-use rquest::{Client, HttpContext};
+use rquest::{Client, EmulationProvider};
 use rquest::{SslCurve, TlsConfig};
 
 #[tokio::test]
@@ -49,7 +49,7 @@ const CURVES: &[SslCurve] = &[
 async fn test_3des_support() -> Result<(), rquest::Error> {
     let client = Client::builder()
         .emulation(
-            HttpContext::builder()
+            EmulationProvider::builder()
                 .tls_config(
                     TlsConfig::builder()
                         .curves(CURVES)
@@ -78,7 +78,7 @@ async fn test_3des_support() -> Result<(), rquest::Error> {
 async fn test_firefox_7x_100_cipher() -> Result<(), rquest::Error> {
     let client = Client::builder()
         .emulation(
-            HttpContext::builder()
+            EmulationProvider::builder()
                 .tls_config(
                     TlsConfig::builder()
                         .curves(CURVES)

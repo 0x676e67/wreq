@@ -14,11 +14,11 @@ macro_rules! mod_generator {
             use super::*;
 
             #[inline(always)]
-            pub fn http_context(option: EmulationOption) -> HttpContext {
+            pub fn http_context(option: EmulationOption) -> EmulationProvider {
                 #[allow(unreachable_patterns)]
                 match option.emulation_os {
                     $(
-                        EmulationOS::$other_os => HttpContext::builder()
+                        EmulationOS::$other_os => EmulationProvider::builder()
                             .tls_config($tls_config)
                             .http2_config(conditional_http2!(option.skip_http2, $http2_config))
                             .default_headers(conditional_headers!(option.skip_headers, || {
@@ -30,7 +30,7 @@ macro_rules! mod_generator {
                             }))
                             .build(),
                     )*
-                    _ => HttpContext::builder()
+                    _ => EmulationProvider::builder()
                         .tls_config($tls_config)
                         .http2_config(conditional_http2!(option.skip_http2, $http2_config))
                         .default_headers(conditional_headers!(option.skip_headers, || {

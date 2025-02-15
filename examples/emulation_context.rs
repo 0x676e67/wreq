@@ -3,7 +3,7 @@ use rquest::{
     join, AlpnProtos, AlpsProtos, CertCompressionAlgorithm, ExtensionType, Http1Builder,
     Http1Config, Http2Builder, SslCurve, TlsConfig, TlsVersion,
 };
-use rquest::{Client, HttpContext};
+use rquest::{Client, EmulationProvider};
 use rquest::{Http2Config, PseudoOrder::*, SettingsOrder::*};
 use rquest::{Priority, StreamDependency, StreamId};
 
@@ -204,7 +204,7 @@ async fn main() -> Result<(), rquest::Error> {
     };
 
     // Create Http context
-    let context = HttpContext::builder()
+    let context = EmulationProvider::builder()
         .tls_config(tls)
         .http1_config(http1)
         .http2_config(http2)

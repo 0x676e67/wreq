@@ -3,19 +3,19 @@ use http::{HeaderMap, HeaderName};
 use std::borrow::Cow;
 use typed_builder::TypedBuilder;
 
-/// Trait defining the interface for providing an `HttpContext`.
+/// Trait defining the interface for providing an `EmulationProvider`.
 ///
-/// The `HttpContextProvider` trait is designed to be implemented by types that can provide
-/// an `HttpContext` instance. This trait abstracts the creation and configuration of
-/// `HttpContext`, allowing different types to offer their own specific configurations.
-pub trait HttpContextProvider {
-    /// Provides an `HttpContext` instance.
-    fn context(self) -> HttpContext;
+/// The `EmulationProviderFactory` trait is designed to be implemented by types that can provide
+/// an `EmulationProvider` instance. This trait abstracts the creation and configuration of
+/// `EmulationProvider`, allowing different types to offer their own specific configurations.
+pub trait EmulationProviderFactory {
+    /// Provides an `EmulationProvider` instance.
+    fn emulation(self) -> EmulationProvider;
 }
 
 /// HTTP connection context that manages both HTTP and TLS configurations.
 ///
-/// The `HttpContext` provides a complete environment for HTTP connections,
+/// The `EmulationProvider` provides a complete environment for HTTP connections,
 /// including both HTTP-specific settings and the underlying TLS configuration.
 /// This unified context ensures consistent behavior across connections.
 ///
@@ -25,7 +25,7 @@ pub trait HttpContextProvider {
 /// - **HTTP Settings**: Controls HTTP/1 and HTTP/2 behaviors
 /// - **Header Management**: Handles default headers and their ordering
 #[derive(TypedBuilder, Default, Debug)]
-pub struct HttpContext {
+pub struct EmulationProvider {
     /// TLS configuration for secure connections
     #[builder(setter(into))]
     pub(crate) tls_config: TlsConfig,
@@ -47,9 +47,9 @@ pub struct HttpContext {
     pub(crate) headers_order: Option<Cow<'static, [HeaderName]>>,
 }
 
-/// Implement `HttpContextProvider` for `HttpContext`.
-impl HttpContextProvider for HttpContext {
-    fn context(self) -> HttpContext {
+/// Implement `EmulationProviderFactory` for `EmulationProvider`.
+impl EmulationProviderFactory for EmulationProvider {
+    fn emulation(self) -> EmulationProvider {
         self
     }
 }

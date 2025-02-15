@@ -38,7 +38,7 @@ use crate::{IntoUrl, Method, Proxy, StatusCode, Url};
 use super::decoder::Accepts;
 use super::request::{Request, RequestBuilder};
 use super::response::Response;
-use super::{Body, HttpContextProvider};
+use super::{Body, EmulationProviderFactory};
 
 use arc_swap::{ArcSwap, Guard};
 use bytes::Bytes;
@@ -918,7 +918,7 @@ impl ClientBuilder {
     ///
     /// # Arguments
     ///
-    /// * `provider` - The HTTP context provider, which can be any type that implements the `HttpContextProvider` trait.
+    /// * `provider` - The HTTP context provider, which can be any type that implements the `EmulationProvider2` trait.
     ///
     /// # Returns
     ///
@@ -936,9 +936,9 @@ impl ClientBuilder {
     /// ```
     pub fn emulation<P>(mut self, provider: P) -> ClientBuilder
     where
-        P: HttpContextProvider,
+        P: EmulationProviderFactory,
     {
-        let mut http_context = provider.context();
+        let mut http_context = provider.emulation();
 
         if let Some(mut headers) = http_context.default_headers {
             std::mem::swap(&mut self.config.headers, &mut headers);
@@ -1874,7 +1874,7 @@ impl<'c> ClientMut<'c> {
     ///
     /// # Arguments
     ///
-    /// * `provider` - The HTTP context provider, which can be any type that implements the `HttpContextProvider` trait.
+    /// * `provider` - The HTTP context provider, which can be any type that implements the `EmulationProvider2` trait.
     ///
     /// # Returns
     ///
@@ -1890,9 +1890,9 @@ impl<'c> ClientMut<'c> {
     /// ```
     pub fn emulation<P>(mut self, provider: P) -> ClientMut<'c>
     where
-        P: HttpContextProvider,
+        P: EmulationProviderFactory,
     {
-        let context = provider.context();
+        let context = provider.emulation();
 
         if let Some(mut headers) = context.default_headers {
             std::mem::swap(&mut self.inner_ref.headers, &mut headers);

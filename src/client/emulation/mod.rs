@@ -9,7 +9,7 @@ mod firefox;
 mod okhttp;
 mod safari;
 
-use crate::{HttpContext, HttpContextProvider};
+use crate::{EmulationProvider, EmulationProviderFactory};
 use serde::{Deserialize, Serialize};
 use typed_builder::TypedBuilder;
 
@@ -19,7 +19,7 @@ use okhttp::*;
 use safari::*;
 
 mod emulation_imports {
-    pub use crate::{EmulationOS, EmulationOption, Http2Config, HttpContext};
+    pub use crate::{EmulationOS, EmulationOption, EmulationProvider, Http2Config};
     pub use http::{
         header::{ACCEPT, ACCEPT_LANGUAGE, UPGRADE_INSECURE_REQUESTS, USER_AGENT},
         HeaderMap, HeaderName, HeaderValue,
@@ -189,9 +189,12 @@ pub enum Emulation {
 }
 
 /// ======== Emulation impls ========
-impl HttpContextProvider for Emulation {
-    fn context(self) -> HttpContext {
-        EmulationOption::builder().emulation(self).build().context()
+impl EmulationProviderFactory for Emulation {
+    fn emulation(self) -> EmulationProvider {
+        EmulationOption::builder()
+            .emulation(self)
+            .build()
+            .emulation()
     }
 }
 
@@ -274,8 +277,8 @@ pub struct EmulationOption {
 }
 
 /// ======== EmulationOption impls ========
-impl HttpContextProvider for EmulationOption {
-    fn context(self) -> HttpContext {
+impl EmulationProviderFactory for EmulationOption {
+    fn emulation(self) -> EmulationProvider {
         emulation_match!(
             self.emulation,
             self,
