@@ -8,7 +8,7 @@ macro_rules! mod_generator {
             use super::*;
 
             #[inline(always)]
-            pub fn http_context(option: EmulationOption) -> EmulationProvider {
+            pub fn emulation(option: EmulationOption) -> EmulationProvider {
                 EmulationProvider::builder()
                     .tls_config($tls_config)
                     .http2_config(conditional_http2!(option.skip_http2, $http2_config))

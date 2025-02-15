@@ -938,26 +938,26 @@ impl ClientBuilder {
     where
         P: EmulationProviderFactory,
     {
-        let mut http_context = provider.emulation();
+        let mut emulation = provider.emulation();
 
-        if let Some(mut headers) = http_context.default_headers {
+        if let Some(mut headers) = emulation.default_headers {
             std::mem::swap(&mut self.config.headers, &mut headers);
         }
 
-        if let Some(headers_order) = http_context.headers_order {
+        if let Some(headers_order) = emulation.headers_order {
             std::mem::swap(&mut self.config.headers_order, &mut Some(headers_order));
         }
 
-        if let Some(http1_config) = http_context.http1_config.take() {
+        if let Some(http1_config) = emulation.http1_config.take() {
             let builder = self.config.builder.http1();
             apply_http1_config(builder, http1_config);
         }
-        if let Some(http2_config) = http_context.http2_config.take() {
+        if let Some(http2_config) = emulation.http2_config.take() {
             let builder = self.config.builder.http2();
             apply_http2_config(builder, http2_config)
         }
 
-        std::mem::swap(&mut self.config.tls_config, &mut http_context.tls_config);
+        std::mem::swap(&mut self.config.tls_config, &mut emulation.tls_config);
         self
     }
 

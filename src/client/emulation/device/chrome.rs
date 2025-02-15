@@ -14,7 +14,7 @@ macro_rules! mod_generator {
             use super::*;
 
             #[inline(always)]
-            pub fn http_context(option: EmulationOption) -> EmulationProvider {
+            pub fn emulation(option: EmulationOption) -> EmulationProvider {
                 #[allow(unreachable_patterns)]
                 match option.emulation_os {
                     $(
