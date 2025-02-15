@@ -1,6 +1,6 @@
 pub use self::body::Body;
 pub use self::config::{Http1Config, Http2Config};
-pub use self::context::{EmulationProvider, EmulationProviderFactory};
+pub use self::emulation::{EmulationProvider, EmulationProviderFactory};
 pub use self::http::{Client, ClientBuilder, ClientMut, ClientRef};
 pub use self::request::{Request, RequestBuilder};
 pub use self::response::Response;
@@ -8,9 +8,7 @@ pub use self::upgrade::Upgraded;
 
 pub mod body;
 mod config;
-pub mod context;
 pub mod decoder;
-#[cfg(feature = "emulation")]
 pub mod emulation;
 pub mod http;
 #[cfg(feature = "multipart")]
