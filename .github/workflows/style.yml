@@ -1,0 +1,26 @@
+name: Style
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  
+  style:
+    name: Style
+    runs-on: ubuntu-latest
+    environment: Linux
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          override: true
+
+      - name: Style check
+        run: cargo fmt --all -- --check
+
+      - name: Clippy check
+        run: cargo clippy --all-targets --all-features
