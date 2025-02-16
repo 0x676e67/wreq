@@ -2,7 +2,11 @@
 mod support;
 use support::server;
 
-use std::env;
+use std::{env, sync::LazyLock};
+use tokio::sync::Mutex;
+
+// serialize tests that read from / write to environment variables
+static HTTP_PROXY_ENV_MUTEX: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
 #[tokio::test]
 async fn http_proxy() {
@@ -95,6 +99,51 @@ async fn http_proxy_basic_auth_parsed() {
 }
 
 #[tokio::test]
+async fn system_http_proxy_basic_auth_parsed() {
+    let url = "http://hyper.rs/prox";
+    let server = server::http(move |req| {
+        assert_eq!(req.method(), "GET");
+        assert_eq!(req.uri(), url);
+        assert_eq!(req.headers()["host"], "hyper.rs");
+        assert_eq!(
+            req.headers()["proxy-authorization"],
+            "Basic QWxhZGRpbjpvcGVuIHNlc2FtZQ=="
+        );
+
+        async { http::Response::default() }
+    });
+
+    // avoid races with other tests that change "http_proxy"
+    let _env_lock = HTTP_PROXY_ENV_MUTEX.lock().await;
+
+    // save system setting first.
+    let system_proxy = env::var("http_proxy");
+
+    // set-up http proxy.
+    env::set_var(
+        "http_proxy",
+        format!("http://Aladdin:open sesame@{}", server.addr()),
+    );
+
+    let res = rquest::Client::builder()
+        .build()
+        .unwrap()
+        .get(url)
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(res.url().as_str(), url);
+    assert_eq!(res.status(), rquest::StatusCode::OK);
+
+    // reset user setting.
+    match system_proxy {
+        Err(_) => env::remove_var("http_proxy"),
+        Ok(proxy) => env::set_var("http_proxy", proxy),
+    }
+}
+
+#[tokio::test]
 async fn test_no_proxy() {
     let server = server::http(move |req| {
         assert_eq!(req.method(), "GET");
@@ -130,6 +179,9 @@ async fn test_using_system_proxy() {
 
         async { http::Response::default() }
     });
+
+    // avoid races with other tests that change "http_proxy"
+    let _env_lock = HTTP_PROXY_ENV_MUTEX.lock().await;
 
     // save system setting first.
     let system_proxy = env::var("http_proxy");
