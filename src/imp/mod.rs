@@ -152,6 +152,7 @@ impl ImpersonateBuilder {
             Chrome129 => v129::settings,
             Chrome130 => v130::settings,
             Chrome131 => v131::settings,
+            Chrome133 => v133::settings,
 
             SafariIos17_2 => safari_ios_17_2::settings,
             SafariIos17_4_1 => safari_ios_17_4_1::settings,
@@ -238,8 +239,9 @@ pub enum Impersonate {
     Chrome128,
     Chrome129,
     Chrome130,
-    #[default]
     Chrome131,
+    #[default]
+    Chrome133,
 
     SafariIos17_2,
     SafariIos17_4_1,

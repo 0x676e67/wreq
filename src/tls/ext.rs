@@ -47,7 +47,11 @@ pub trait ConnectConfigurationExt {
     fn enable_ech_grease(&mut self, enable: bool) -> TlsResult<&mut ConnectConfiguration>;
 
     /// Configure the ALPS for the given `ConnectConfiguration`.
-    fn alps_protos(&mut self, alps: Option<AlpsProtos>) -> TlsResult<&mut ConnectConfiguration>;
+    fn alps_protos(
+        &mut self,
+        alps: Option<AlpsProtos>,
+        new_endpoint: bool,
+    ) -> TlsResult<&mut ConnectConfiguration>;
 
     /// Configure the no session ticket for the given `ConnectConfiguration`.
     fn skip_session_ticket(&mut self) -> TlsResult<&mut ConnectConfiguration>;
@@ -118,17 +122,18 @@ impl ConnectConfigurationExt for ConnectConfiguration {
     }
 
     #[inline]
-    fn alps_protos(&mut self, alps: Option<AlpsProtos>) -> TlsResult<&mut ConnectConfiguration> {
+    fn alps_protos(
+        &mut self,
+        alps: Option<AlpsProtos>,
+        new_endpoint: bool,
+    ) -> TlsResult<&mut ConnectConfiguration> {
         if let Some(alps) = alps {
-            sv_handler(unsafe {
-                ffi::SSL_add_application_settings(
-                    self.as_ptr(),
-                    alps.as_ptr(),
-                    alps.len(),
-                    std::ptr::null(),
-                    0,
-                )
-            })?;
+            self.add_application_settings(alps.0)?;
+
+            // By default, the old endpoint is used. Avoid unnecessary FFI calls.
+            if new_endpoint {
+                self.set_alps_use_new_codepoint(new_endpoint);
+            }
         }
 
         Ok(self)

@@ -80,6 +80,15 @@ macro_rules! tls_settings {
             .enable_ech_grease(true)
             .build()
     };
+    (7, $curves:expr) => {
+        ChromeTlsSettings::builder()
+            .curves($curves)
+            .permute_extensions(true)
+            .pre_shared_key(true)
+            .enable_ech_grease(true)
+            .alps_use_new_codepoint(true)
+            .build()
+    };
 }
 
 macro_rules! http2_settings {
@@ -255,6 +264,9 @@ mod tls {
 
         #[builder(default = false, setter(into))]
         pre_shared_key: bool,
+
+        #[builder(default = false, setter(into))]
+        alps_use_new_codepoint: bool,
     }
 
     impl From<ChromeTlsSettings> for TlsSettings {
@@ -272,6 +284,7 @@ mod tls {
                 .pre_shared_key(val.pre_shared_key)
                 .enable_ech_grease(val.enable_ech_grease)
                 .alps_protos(val.alps_protos)
+                .alps_use_new_codepoint(val.alps_use_new_codepoint)
                 .cert_compression_algorithm(CERT_COMPRESSION_ALGORITHM)
                 .build()
         }
@@ -1041,6 +1054,35 @@ mod_generator!(
         (IOS,
             r#""Microsoft Edge";v="131", "Chromium";v="131", "Not_A Brand";v="24""#,
             "Mozilla/5.0 (iPhone; CPU iPhone OS 17_7_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 Edg/131.0.0.0"
+        )
+    ]
+);
+
+mod_generator!(
+    v133,
+    tls_settings!(7, CURVES_3),
+    http2_settings!(3),
+    header_initializer_with_zstd_priority,
+    [
+        (MacOS,
+            r#""Not(A:Brand";v="99", "Google Chrome";v="133", "Chromium";v="133""#,
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36"
+        ),
+        (Linux,
+            r#""Not(A:Brand";v="99", "Google Chrome";v="133", "Chromium";v="133""#,
+            "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36"
+        ),
+        (Android,
+            r#""Not(A:Brand";v="99", "Google Chrome";v="133", "Chromium";v="133""#,
+            "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Mobile Safari/537.36"
+        ),
+        (Windows,
+            r#""Not(A:Brand";v="99", "Google Chrome";v="133", "Chromium";v="133""#,
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36"
+        ),
+        (IOS,
+            r#""Not(A:Brand";v="99", "Google Chrome";v="133", "Chromium";v="133""#,
+            "Mozilla/5.0 (iPhone; CPU iPhone OS 17_7 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/133.0.6943.33 Mobile/15E148 Safari/604.1"
         )
     ]
 );
