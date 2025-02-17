@@ -116,7 +116,7 @@ By default, `rquest` uses Mozilla's root certificates through the `webpki-roots`
 
   - **Firefox**
 
-    `Firefox109`, `Firefox117`, `Firefox128`, `Firefox133`, `Firefox135`
+    `Firefox109`, `Firefox117`, `Firefox128`, `Firefox133`, `Firefox135`, `FirefoxAndroid135`
 
     </details>
 

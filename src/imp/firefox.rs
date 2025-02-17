@@ -74,11 +74,21 @@ macro_rules! tls_settings {
             .curves($curves)
             .enable_ech_grease(true)
             .enable_signed_cert_timestamps(true)
-            .session_ticket(false)
+            .session_ticket(true)
             .pre_shared_key(true)
             .psk_skip_session_tickets(true)
             .key_shares_limit(3)
-            .psk_dhe_ke(false)
+            .cert_compression_algorithm(CERT_COMPRESSION_ALGORITHM)
+            .build()
+    };
+    (5, $cipher_list:expr, $curves:expr) => {
+        FirefoxTlsSettings::builder()
+            .cipher_list($cipher_list)
+            .curves($curves)
+            .enable_ech_grease(true)
+            .pre_shared_key(true)
+            .psk_skip_session_tickets(true)
+            .key_shares_limit(2)
             .cert_compression_algorithm(CERT_COMPRESSION_ALGORITHM)
             .build()
     };
@@ -118,6 +128,19 @@ macro_rules! http2_settings {
             .enable_push(false)
             .max_concurrent_streams(0)
             .initial_stream_window_size(131072)
+            .max_frame_size(16384)
+            .initial_connection_window_size(12517377 + 65535)
+            .headers_priority(HEADER_PRIORITY)
+            .headers_pseudo_order(HEADERS_PSEUDO_ORDER)
+            .settings_order(SETTINGS_ORDER)
+            .build()
+    };
+    (4) => {
+        Http2Settings::builder()
+            .initial_stream_id(3)
+            .header_table_size(4096)
+            .enable_push(false)
+            .initial_stream_window_size(32768)
             .max_frame_size(16384)
             .initial_connection_window_size(12517377 + 65535)
             .headers_priority(HEADER_PRIORITY)
@@ -509,4 +532,15 @@ mod_generator!(
             "Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:133.0) Gecko/20100101 Firefox/135.0"
         )
     ]
+);
+
+mod_generator!(
+    ff_android_135,
+    tls_settings!(5, CIPHER_LIST_1, CURVES_1),
+    http2_settings!(4),
+    header_initializer_with_zstd,
+    [(
+        Android,
+        "Mozilla/5.0 (Android 13; Mobile; rv:133.0) Gecko/20100101 Firefox/135.0"
+    )]
 );
