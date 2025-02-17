@@ -68,6 +68,20 @@ macro_rules! tls_settings {
             .key_shares_limit(2)
             .build()
     };
+    (4, $cipher_list:expr, $curves:expr) => {
+        FirefoxTlsSettings::builder()
+            .cipher_list($cipher_list)
+            .curves($curves)
+            .enable_ech_grease(true)
+            .enable_signed_cert_timestamps(true)
+            .session_ticket(false)
+            .pre_shared_key(true)
+            .psk_skip_session_tickets(true)
+            .key_shares_limit(3)
+            .psk_dhe_ke(false)
+            .cert_compression_algorithm(CERT_COMPRESSION_ALGORITHM)
+            .build()
+    };
 }
 
 macro_rules! http2_settings {
@@ -239,6 +253,7 @@ mod tls {
             ExtensionType::APPLICATION_LAYER_PROTOCOL_NEGOTIATION,
             ExtensionType::STATUS_REQUEST,
             ExtensionType::DELEGATED_CREDENTIAL,
+            ExtensionType::CERTIFICATE_TIMESTAMP,
             ExtensionType::KEY_SHARE,
             ExtensionType::SUPPORTED_VERSIONS,
             ExtensionType::SIGNATURE_ALGORITHMS,
@@ -278,6 +293,9 @@ mod tls {
         enable_ech_grease: bool,
 
         #[builder(default = false, setter(into))]
+        enable_signed_cert_timestamps: bool,
+
+        #[builder(default = false, setter(into))]
         pre_shared_key: bool,
 
         #[builder(default = false, setter(into))]
@@ -313,6 +331,7 @@ mod tls {
                 .record_size_limit(val.record_size_limit)
                 .enable_ocsp_stapling(true)
                 .enable_ech_grease(val.enable_ech_grease)
+                .enable_signed_cert_timestamps(val.enable_signed_cert_timestamps)
                 .alpn_protos(AlpnProtos::All)
                 .min_tls_version(TlsVersion::TLS_1_2)
                 .max_tls_version(TlsVersion::TLS_1_3)
@@ -429,7 +448,7 @@ mod_generator!(
     http2_settings!(3),
     header_initializer_with_zstd,
     [
-        (MacOs,
+        (MacOS,
             "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:128.0) Gecko/20100101 Firefox/128.0"
         ),
         (Windows,
@@ -453,7 +472,7 @@ mod_generator!(
     http2_settings!(1),
     header_initializer_with_zstd,
     [
-        (MacOs,
+        (MacOS,
             "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:133.0) Gecko/20100101 Firefox/133.0"
         ),
         (Android,
@@ -467,6 +486,24 @@ mod_generator!(
         ),
         (IOS,
             "Mozilla/5.0 (iPhone; CPU iPhone OS 18_2_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) FxiOS/133.4 Mobile/15E148 Safari/605.1.15"
+        )
+    ]
+);
+
+mod_generator!(
+    ff135,
+    tls_settings!(4, CIPHER_LIST_1, CURVES_2),
+    http2_settings!(1),
+    header_initializer_with_zstd,
+    [
+        (MacOS,
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:133.0) Gecko/20100101 Firefox/135.0"
+        ),
+        (Windows,
+            "Mozilla/5.0 (Windows NT 10.0; rv:133.0) Gecko/20100101 Firefox/135.0"
+        ),
+        (Linux,
+            "Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:133.0) Gecko/20100101 Firefox/135.0"
         )
     ]
 );
