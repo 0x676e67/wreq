@@ -496,13 +496,16 @@ mod_generator!(
     http2_settings!(1),
     header_initializer_with_zstd,
     [
-        (MacOS,
+        (
+            MacOS,
             "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:133.0) Gecko/20100101 Firefox/135.0"
         ),
-        (Windows,
+        (
+            Windows,
             "Mozilla/5.0 (Windows NT 10.0; rv:133.0) Gecko/20100101 Firefox/135.0"
         ),
-        (Linux,
+        (
+            Linux,
             "Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:133.0) Gecko/20100101 Firefox/135.0"
         )
     ]
