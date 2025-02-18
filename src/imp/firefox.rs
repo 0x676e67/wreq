@@ -92,6 +92,18 @@ macro_rules! tls_settings {
             .cert_compression_algorithm(CERT_COMPRESSION_ALGORITHM)
             .build()
     };
+    (6, $cipher_list:expr, $curves:expr) => {
+        FirefoxTlsSettings::builder()
+            .cipher_list($cipher_list)
+            .curves($curves)
+            .enable_ech_grease(true)
+            .enable_signed_cert_timestamps(true)
+            .session_ticket(false)
+            .psk_dhe_ke(false)
+            .key_shares_limit(3)
+            .cert_compression_algorithm(CERT_COMPRESSION_ALGORITHM)
+            .build()
+    };
 }
 
 macro_rules! http2_settings {
@@ -535,6 +547,27 @@ mod_generator!(
 );
 
 mod_generator!(
+    ff_private_135,
+    tls_settings!(6, CIPHER_LIST_1, CURVES_2),
+    http2_settings!(1),
+    header_initializer_with_zstd,
+    [
+        (
+            MacOS,
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:133.0) Gecko/20100101 Firefox/135.0"
+        ),
+        (
+            Windows,
+            "Mozilla/5.0 (Windows NT 10.0; rv:133.0) Gecko/20100101 Firefox/135.0"
+        ),
+        (
+            Linux,
+            "Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:133.0) Gecko/20100101 Firefox/135.0"
+        )
+    ]
+);
+
+mod_generator!(
     ff_android_135,
     tls_settings!(5, CIPHER_LIST_1, CURVES_1),
     http2_settings!(4),
@@ -544,4 +577,3 @@ mod_generator!(
         "Mozilla/5.0 (Android 13; Mobile; rv:133.0) Gecko/20100101 Firefox/135.0"
     )]
 );
-

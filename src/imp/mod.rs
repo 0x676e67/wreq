@@ -189,6 +189,7 @@ impl ImpersonateBuilder {
             Firefox128 => ff128::settings,
             Firefox133 => ff133::settings,
             Firefox135 => ff135::settings,
+            FirefoxPrivate135 => ff_private_135::settings,
             FirefoxAndroid135 => ff_android_135::settings
         )
     }
@@ -280,6 +281,7 @@ pub enum Impersonate {
     Firefox128,
     Firefox133,
     Firefox135,
+    FirefoxPrivate135,
     FirefoxAndroid135,
 }
 
