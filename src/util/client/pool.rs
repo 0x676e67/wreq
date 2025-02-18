@@ -8,11 +8,10 @@ use std::num::NonZero;
 use std::ops::{Deref, DerefMut};
 use std::pin::Pin;
 use std::sync::{Arc, Weak};
-use std::task::{self, Poll};
+use std::task::{self, ready, Poll};
 use std::time::{Duration, Instant};
 
 use antidote::Mutex;
-use futures_util::ready;
 use log::{debug, trace};
 use lru::LruCache;
 

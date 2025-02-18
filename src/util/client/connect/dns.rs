@@ -21,7 +21,7 @@
 //! });
 //! ```
 use std::error::Error;
-use std::future::Future;
+use std::future::{self, Future};
 use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6, ToSocketAddrs};
 use std::pin::Pin;
 use std::str::FromStr;
@@ -298,6 +298,6 @@ pub(super) async fn resolve<R>(resolver: &mut R, name: Name) -> Result<R::Addrs,
 where
     R: Resolve,
 {
-    futures_util::future::poll_fn(|cx| resolver.poll_ready(cx)).await?;
+    future::poll_fn(|cx| resolver.poll_ready(cx)).await?;
     resolver.resolve(name).await
 }
