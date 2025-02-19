@@ -1,5 +1,7 @@
 mod support;
+use http::HeaderValue;
 use support::server;
+use url::Url;
 
 #[tokio::test]
 async fn cookie_response_accessor() {
@@ -200,4 +202,34 @@ async fn cookie_store_path() {
 
     let url = format!("http://{}/subpath", server.addr());
     client.get(&url).send().await.unwrap();
+}
+
+#[tokio::test]
+async fn cookie_get_set() {
+    let server = server::http(move |req| async move {
+        assert_eq!(
+            req.headers().get("cookie"),
+            Some(&HeaderValue::from_static("key1=val1"))
+        );
+        http::Response::builder()
+            .header("Set-Cookie", "key2=val2")
+            .body(Default::default())
+            .unwrap()
+    });
+
+    let client = rquest::Client::builder()
+        .cookie_store(true)
+        .build()
+        .unwrap();
+
+    let url: Url = format!("http://{}/", server.addr()).parse().unwrap();
+
+    client
+        .as_ref()
+        .set_cookies(&url, [HeaderValue::from_static("key1=val1")]);
+
+    let _ = client.get(&url).send().await.unwrap();
+
+    let cookies = client.as_ref().get_cookies(&url).unwrap();
+    assert_eq!(cookies.to_str().unwrap(), "key1=val1; key2=val2");
 }
