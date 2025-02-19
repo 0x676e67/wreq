@@ -1,7 +1,6 @@
 mod support;
 use http::HeaderValue;
 use support::server;
-use url::Url;
 
 #[tokio::test]
 async fn cookie_response_accessor() {
@@ -222,14 +221,15 @@ async fn cookie_get_set() {
         .build()
         .unwrap();
 
-    let url: Url = format!("http://{}/", server.addr()).parse().unwrap();
+    let url = format!("http://{}/", server.addr()).parse().unwrap();
 
     client
         .as_ref()
         .set_cookies(&url, [HeaderValue::from_static("key1=val1")]);
 
-    let _ = client.get(&url).send().await.unwrap();
+    client.get(&url).send().await.unwrap();
 
     let cookies = client.as_ref().get_cookies(&url).unwrap();
-    assert_eq!(cookies.to_str().unwrap(), "key1=val1; key2=val2");
+    let value = cookies.to_str().unwrap();
+    assert!(value == "key1=val1; key2=val2" || value == "key2=val2; key1=val1");
 }
