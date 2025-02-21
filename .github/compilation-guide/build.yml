@@ -112,6 +112,15 @@ jobs:
               CXX: i686-linux-musl-g++
               CARGO_TARGET_I686_UNKNOWN_LINUX_MUSL_LINKER: i686-linux-musl-g++
               RUSTC_LINKER: i686-linux-musl-g++
+          - target: armv7
+            target_triple: armv7-unknown-linux-musleabihf
+            package: armv7l-linux-musleabihf-cross
+            apt_packages: crossbuild-essential-armhf
+            custom_env:
+              CC: armv7l-linux-musleabihf-gcc
+              CXX: armv7l-linux-musleabihf-g++
+              CARGO_TARGET_ARMV7_UNKNOWN_LINUX_MUSLEABIHF_LINKER: armv7l-linux-musleabihf-g++
+              RUSTC_LINKER: armv7l-linux-musleabihf-g++
 
     steps:
       - uses: actions/checkout@v4
