@@ -21,6 +21,14 @@ jobs:
             target_triple: x86_64-unknown-linux-gnu
             apt_packages: ""
             custom_env: {}
+          - target: i686
+            target_triple: i686-unknown-linux-gnu
+            apt_packages: crossbuild-essential-i386
+            custom_env:
+              CC: i686-linux-gnu-gcc
+              CXX: i686-linux-gnu-g++
+              CARGO_TARGET_I686_UNKNOWN_LINUX_GNU_LINKER: i686-linux-gnu-g++
+              RUSTC_LINKER: i686-linux-gnu-g++
           - target: aarch64
             target_triple: aarch64-unknown-linux-gnu
             apt_packages: crossbuild-essential-arm64
@@ -83,7 +91,7 @@ jobs:
             apt_packages: ""
             custom_env:
               CC: x86_64-linux-musl-gcc
-              CXX: x86_64-linux-musl-gcc
+              CXX: x86_64-linux-musl-g++
               CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER: x86_64-linux-musl-g++
               RUSTC_LINKER: x86_64-linux-musl-g++
           - target: aarch64
@@ -92,9 +100,19 @@ jobs:
             apt_packages: crossbuild-essential-arm64
             custom_env:
               CC: aarch64-linux-musl-gcc
-              CXX: aarch64-linux-musl-gcc
+              CXX: aarch64-linux-musl-g++
               CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER: aarch64-linux-musl-g++
               RUSTC_LINKER: aarch64-linux-musl-g++
+          - target: i686
+            target_triple: i686-unknown-linux-musl
+            package: i686-linux-musl-cross
+            apt_packages: crossbuild-essential-i386
+            custom_env:
+              CC: i686-linux-musl-gcc
+              CXX: i686-linux-musl-g++
+              CARGO_TARGET_I686_UNKNOWN_LINUX_MUSL_LINKER: i686-linux-musl-g++
+              RUSTC_LINKER: i686-linux-musl-g++
+
     steps:
       - uses: actions/checkout@v4
 
@@ -139,7 +157,11 @@ jobs:
     runs-on: windows-latest
     strategy:
       matrix:
-        target: [x86_64]
+        include:
+          - target: x86_64
+            target_triple: x86_64-pc-windows-msvc
+          - target: i686
+            target_triple: i686-pc-windows-msvc
     steps:
       - uses: actions/checkout@v4
 
@@ -153,12 +175,12 @@ jobs:
         shell: cmd
 
       - name: Build on Windows
-        run: cargo build --release
+        run: cargo build --release --target ${{ matrix.target_triple }}
 
       - name: Archive build artifacts
         shell: pwsh
         run: |
-          Compress-Archive -Path 'target\release\*' -DestinationPath "build-windows-${{ matrix.target }}.zip" -CompressionLevel Optimal -Force
+          Compress-Archive -Path 'target\${{ matrix.target_triple }}\release\*' -DestinationPath "build-windows-${{ matrix.target }}.zip" -CompressionLevel Optimal -Force
         working-directory: ${{ github.workspace }}
 
       - name: Upload build artifact
