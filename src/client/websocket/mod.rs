@@ -103,6 +103,12 @@ impl WebSocketRequestBuilder {
         self
     }
 
+    /// Sets the websocket read_buffer_size configuration.
+    pub fn read_buffer_size(mut self, read_buffer_size: usize) -> Self {
+        self.config.read_buffer_size = read_buffer_size;
+        self
+    }
+
     /// Sets the websocket write_buffer_size configuration.
     pub fn write_buffer_size(mut self, write_buffer_size: usize) -> Self {
         self.config.write_buffer_size = write_buffer_size;
