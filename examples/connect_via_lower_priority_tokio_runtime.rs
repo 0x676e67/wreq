@@ -243,7 +243,7 @@ mod background_threadpool {
             // now poll on the receiver end of the oneshot to get the result
             match this.rx.poll(cx) {
                 Poll::Ready(v) => match v {
-                    Ok(v) => Poll::Ready(v.map_err(Into::into)),
+                    Ok(v) => Poll::Ready(v),
                     Err(err) => Poll::Ready(Err(Box::new(err) as BoxError)),
                 },
                 Poll::Pending => Poll::Pending,
