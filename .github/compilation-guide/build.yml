@@ -78,6 +78,7 @@ jobs:
         with:
           name: build-linux-${{ matrix.target }}
           path: build-linux-${{ matrix.target }}.zip
+          retention-days: 1
 
   musllinux:
     name: Build Linux (musl)
@@ -160,6 +161,7 @@ jobs:
         with:
           name: build-musllinux-${{ matrix.target }}
           path: build-musllinux-${{ matrix.target }}.zip
+          retention-days: 1
 
   windows:
     name: Build Windows
@@ -197,6 +199,7 @@ jobs:
         with:
           name: build-windows-${{ matrix.target }}
           path: build-windows-${{ matrix.target }}.zip
+          retention-days: 1
 
   macos:
     name: Build macOS
@@ -235,3 +238,4 @@ jobs:
         with:
           name: build-macos-${{ matrix.target }}
           path: build-macos-${{ matrix.target }}.zip
+          retention-days: 1
