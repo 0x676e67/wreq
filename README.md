@@ -101,7 +101,7 @@ sudo apt-get install build-essential cmake perl pkg-config libclang-dev musl-too
 cargo build --release
 ```
 
-This GitHub Actions [workflow](https://github.com/0x676e67/rquest/blob/main/.github/compilation-guide/build.yml) can be used to compile the project on **Linux**, **Windows**, and **macOS**.
+This GitHub Actions [workflow](https://github.com/0x676e67/rquest/blob/master/.github/compilation-guide/build.yml) can be used to compile the project on **Linux**, **Windows**, and **macOS**.
 
 ## License
 
