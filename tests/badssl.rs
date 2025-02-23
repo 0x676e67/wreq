@@ -112,3 +112,13 @@ async fn test_firefox_7x_100_cipher() -> Result<(), rquest::Error> {
 
     Ok(())
 }
+
+#[tokio::test]
+async fn test_alps_new_endpoint() -> Result<(), rquest::Error> {
+    let client = rquest::Client::builder()
+        .impersonate(rquest::Impersonate::Chrome133)
+        .build()?;
+
+    let _ = client.get("https://google.com").send().await?;
+    Ok(())
+}
