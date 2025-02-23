@@ -102,3 +102,14 @@ async fn test_firefox_7x_100_cipher() -> Result<(), rquest::Error> {
 
     Ok(())
 }
+
+#[cfg(feature = "emulation-device")]
+#[tokio::test]
+async fn test_alps_new_endpoint() -> Result<(), rquest::Error> {
+    let client = rquest::Client::builder()
+        .emulation(rquest::Emulation::Chrome133)
+        .build()?;
+
+    let _ = client.get("https://google.com").send().await?;
+    Ok(())
+}
