@@ -185,7 +185,9 @@ jobs:
           choco install nasm -y
         shell: cmd
 
-      - name: Build on Windows
+      - name: Build on Windows with Static Linking
+        env:
+          RUSTFLAGS: "-C target-feature=+crt-static"
         run: cargo build --release --target ${{ matrix.target_triple }}
 
       - name: Archive build artifacts
