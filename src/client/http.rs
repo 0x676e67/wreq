@@ -1430,26 +1430,103 @@ impl Client {
 }
 
 impl Client {
-    /// Returns a reference to the internal state of the `Client` wrapped in a `ClientRef`.
+    /// Retrieves the `User-Agent` header for this client.
     ///
-    /// This method allows you to obtain a reference to the internal state of the `Client`
-    /// by wrapping it in a `ClientRef`. This is useful when you need to access the internal state
-    /// of the `Client` without modifying it, ensuring that the access is safe and properly synchronized.
+    /// This method returns the `User-Agent` header value if it is set for this client.
     ///
     /// # Returns
     ///
-    /// * `ClientRef` - A wrapper around a reference to the internal state of the `Client`.
+    /// An `Option<HeaderValue>` containing the `User-Agent` header value if it is set, or `None` if it is not.
+    #[inline]
+    pub fn user_agent(&self) -> Option<HeaderValue> {
+        self.headers().remove(USER_AGENT)
+    }
+
+    /// Retrieves a headers for this client.
     ///
-    /// # Example
+    /// This method returns a `HeaderMap` containing the headers for this client.
+    /// Note that this operation involves cloning the headers, which can be
+    /// expensive if the header map is large.
     ///
-    /// ```
-    /// let client = rquest::Client::new();
-    /// let as_ref = client.as_ref();
-    /// // Access the internal state of the client using `as_ref`
-    /// ```
-    pub fn as_ref(&self) -> ClientRef {
-        ClientRef {
-            inner: self.inner.load(),
+    /// # Returns
+    ///
+    /// A `HeaderMap` containing the headers for this client.
+    #[inline]
+    pub fn headers(&self) -> HeaderMap {
+        self.inner.load().headers.clone()
+    }
+
+    /// Returns a `String` of the header-value of all `Cookie` in a `Url`.
+    #[cfg(feature = "cookies")]
+    pub fn get_cookies(&self, url: &Url) -> Option<HeaderValue> {
+        self.inner
+            .load()
+            .cookie_store
+            .as_ref()
+            .and_then(|cookie_store| cookie_store.cookies(url))
+    }
+
+    /// Injects a 'Cookie' into the 'CookieStore' for the specified URL.
+    ///
+    /// This method accepts a collection of cookies, which can be either an owned
+    /// vector (`Vec<HeaderValue>`) or a reference to a slice (`&[HeaderValue]`).
+    /// It will convert the collection into an iterator and pass it to the
+    /// `cookie_store` for processing.
+    ///
+    /// # Parameters
+    /// - `url`: The URL associated with the cookies to be set.
+    /// - `cookies`: A collection of `HeaderValue` items, either by reference or owned.
+    ///
+    /// This method ensures that cookies are only set if at least one cookie
+    /// exists in the collection.
+    #[cfg(feature = "cookies")]
+    pub fn set_cookies<C>(&self, url: &Url, cookies: C)
+    where
+        C: AsRef<[HeaderValue]>,
+    {
+        if let Some(ref cookie_store) = self.inner.load().cookie_store {
+            let mut cookies = cookies.as_ref().iter().peekable();
+            if cookies.peek().is_some() {
+                cookie_store.set_cookies(&mut cookies, url);
+            }
+        }
+    }
+
+    /// Removes a cookie from the `CookieStore` for the specified URL.
+    ///
+    /// This method deletes a cookie with the given name from the client's `CookieStore`
+    /// for the specified URL. It can be useful in scenarios where you want to remove
+    /// specific cookies to reset the client's state or ensure that certain cookies are
+    /// not sent with subsequent requests.
+    ///
+    /// # Parameters
+    ///
+    /// - `url`: The URL associated with the cookie to be removed.
+    /// - `name`: The name of the cookie to be removed.
+    ///
+    /// # Note
+    ///
+    /// This method requires the `cookies` feature to be enabled.
+    #[cfg(feature = "cookies")]
+    pub fn remove_cookie(&self, url: &Url, name: &str) {
+        if let Some(ref cookie_store) = self.inner.load().cookie_store {
+            cookie_store.remove_cookie(url, name);
+        }
+    }
+
+    /// Clears all cookies from the `CookieStore`.
+    ///
+    /// This method removes all cookies stored in the client's `CookieStore`.
+    /// It can be useful in scenarios where you want to reset the client's state
+    /// or ensure that no cookies are sent with subsequent requests.
+    ///
+    /// # Note
+    ///
+    /// This method requires the `cookies` feature to be enabled.
+    #[cfg(feature = "cookies")]
+    pub fn clear_cookies(&self) {
+        if let Some(ref cookie_store) = self.inner.load().cookie_store {
+            cookie_store.clear();
         }
     }
 
@@ -1535,10 +1612,10 @@ struct Proxies {
 
 impl Proxies {
     fn new(proxies: Vec<Proxy>) -> Proxies {
-        let proxies_maybe_http_auth = proxies.iter().any(|p| p.maybe_has_http_auth());
+        let maybe_http_auth = proxies.iter().any(|p| p.maybe_has_http_auth());
         Proxies {
             inner: proxies,
-            maybe_http_auth: proxies_maybe_http_auth,
+            maybe_http_auth,
         }
     }
 
@@ -1629,110 +1706,6 @@ impl_debug!(ClientInner,{
     proxies,
     network_scheme
 });
-
-/// A reference to a `ClientInner` instance.
-///
-/// This struct provides methods to interact with a `ClientInner` instance in a thread-safe manner.
-/// It allows you to access the internal state of the `ClientInner` without modifying it, ensuring
-/// that the access is safe and properly synchronized.
-///
-/// # Example
-///
-/// ```rust
-/// let client = rquest::Client::new();
-/// let as_ref = client.as_ref();
-/// // Access the internal state of the client using `as_ref`
-/// let headers = as_ref.headers();
-/// ```
-#[derive(Debug)]
-pub struct ClientRef {
-    inner: Guard<Arc<ClientInner>>,
-}
-
-impl ClientRef {
-    /// Retrieves a reference to the headers for this client.
-    ///
-    /// # Returns
-    ///
-    /// A reference to the `HeaderMap` containing the headers for this client.
-    #[inline]
-    pub fn headers(&self) -> &http::HeaderMap {
-        &self.inner.headers
-    }
-
-    /// Returns a `String` of the header-value of all `Cookie` in a `Url`.
-    #[cfg(feature = "cookies")]
-    pub fn get_cookies(&self, url: &Url) -> Option<HeaderValue> {
-        self.inner
-            .cookie_store
-            .as_ref()
-            .and_then(|cookie_store| cookie_store.cookies(url))
-    }
-
-    /// Injects a 'Cookie' into the 'CookieStore' for the specified URL.
-    ///
-    /// This method accepts a collection of cookies, which can be either an owned
-    /// vector (`Vec<HeaderValue>`) or a reference to a slice (`&[HeaderValue]`).
-    /// It will convert the collection into an iterator and pass it to the
-    /// `cookie_store` for processing.
-    ///
-    /// # Parameters
-    /// - `url`: The URL associated with the cookies to be set.
-    /// - `cookies`: A collection of `HeaderValue` items, either by reference or owned.
-    ///
-    /// This method ensures that cookies are only set if at least one cookie
-    /// exists in the collection.
-    #[cfg(feature = "cookies")]
-    pub fn set_cookies<C>(&self, url: &Url, cookies: C)
-    where
-        C: AsRef<[HeaderValue]>,
-    {
-        if let Some(ref cookie_store) = self.inner.cookie_store {
-            let mut cookies = cookies.as_ref().iter().peekable();
-            if cookies.peek().is_some() {
-                cookie_store.set_cookies(&mut cookies, url);
-            }
-        }
-    }
-
-    /// Removes a cookie from the `CookieStore` for the specified URL.
-    ///
-    /// This method deletes a cookie with the given name from the client's `CookieStore`
-    /// for the specified URL. It can be useful in scenarios where you want to remove
-    /// specific cookies to reset the client's state or ensure that certain cookies are
-    /// not sent with subsequent requests.
-    ///
-    /// # Parameters
-    ///
-    /// - `url`: The URL associated with the cookie to be removed.
-    /// - `name`: The name of the cookie to be removed.
-    ///
-    /// # Note
-    ///
-    /// This method requires the `cookies` feature to be enabled.
-    #[cfg(feature = "cookies")]
-    pub fn remove_cookie(&self, url: &Url, name: &str) {
-        if let Some(ref cookie_store) = self.inner.cookie_store {
-            cookie_store.remove_cookie(url, name);
-        }
-    }
-
-    /// Clears all cookies from the `CookieStore`.
-    ///
-    /// This method removes all cookies stored in the client's `CookieStore`.
-    /// It can be useful in scenarios where you want to reset the client's state
-    /// or ensure that no cookies are sent with subsequent requests.
-    ///
-    /// # Note
-    ///
-    /// This method requires the `cookies` feature to be enabled.
-    #[cfg(feature = "cookies")]
-    pub fn clear_cookies(&self) {
-        if let Some(ref cookie_store) = self.inner.cookie_store {
-            cookie_store.clear();
-        }
-    }
-}
 
 /// A mutable reference to a `ClientInner`.
 ///

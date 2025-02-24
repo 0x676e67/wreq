@@ -3,8 +3,6 @@ use rquest::Emulation;
 
 #[tokio::main]
 async fn main() -> Result<(), rquest::Error> {
-    env_logger::init_from_env(env_logger::Env::default().default_filter_or("debug"));
-
     // Build a client to emulation Chrome133
     let client = rquest::Client::builder()
         .emulation(Emulation::Chrome133)
@@ -14,14 +12,7 @@ async fn main() -> Result<(), rquest::Error> {
     let url = "https://tls.peet.ws/api/all".parse().expect("Invalid url");
 
     // Set a cookie
-    client.as_ref().set_cookies(
-        &url,
-        vec![HeaderValue::from_static("foo=bar; Domain=tls.peet.ws")],
-    );
-
-    // Get cookies
-    let cookies = client.as_ref().get_cookies(&url);
-    println!("{:?}", cookies);
+    client.set_cookies(&url, [HeaderValue::from_static("foo=bar")]);
 
     // Use the API you're already familiar with
     let resp = client.get(url).send().await?;

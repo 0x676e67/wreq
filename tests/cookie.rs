@@ -223,13 +223,11 @@ async fn cookie_get_set() {
 
     let url = format!("http://{}/", server.addr()).parse().unwrap();
 
-    client
-        .as_ref()
-        .set_cookies(&url, [HeaderValue::from_static("key1=val1")]);
+    client.set_cookies(&url, [HeaderValue::from_static("key1=val1")]);
 
     client.get(&url).send().await.unwrap();
 
-    let cookies = client.as_ref().get_cookies(&url).unwrap();
+    let cookies = client.get_cookies(&url).unwrap();
     let value = cookies.to_str().unwrap();
     assert!(value == "key1=val1; key2=val2" || value == "key2=val2; key1=val1");
 }
@@ -252,13 +250,13 @@ async fn clear_cookies() {
     let url = format!("http://{}/", server.addr()).parse().unwrap();
     client.get(&url).send().await.unwrap();
 
-    let cookies = client.as_ref().get_cookies(&url).unwrap();
+    let cookies = client.get_cookies(&url).unwrap();
     let value = cookies.to_str().unwrap();
     assert!(value == "key=val");
 
-    client.as_ref().clear_cookies();
+    client.clear_cookies();
 
-    let cookies = client.as_ref().get_cookies(&url);
+    let cookies = client.get_cookies(&url);
     assert!(cookies.is_none());
 }
 
@@ -280,25 +278,23 @@ async fn remove_cookie() {
     let url = format!("http://{}/", server.addr()).parse().unwrap();
     client.get(&url).send().await.unwrap();
 
-    let cookies = client.as_ref().get_cookies(&url).unwrap();
+    let cookies = client.get_cookies(&url).unwrap();
     let value = cookies.to_str().unwrap();
     assert!(value == "key=val");
 
-    client.as_ref().remove_cookie(&url, "key");
+    client.remove_cookie(&url, "key");
 
-    let cookies = client.as_ref().get_cookies(&url);
+    let cookies = client.get_cookies(&url);
     assert!(cookies.is_none());
 
     let url = "https://google.com".parse().unwrap();
-    client
-        .as_ref()
-        .set_cookies(&url, [HeaderValue::from_static("key=val")]);
-    let cookies = client.as_ref().get_cookies(&url).unwrap();
+    client.set_cookies(&url, [HeaderValue::from_static("key=val")]);
+    let cookies = client.get_cookies(&url).unwrap();
     let value = cookies.to_str().unwrap();
     assert!(value == "key=val");
 
-    client.as_ref().remove_cookie(&url, "key");
+    client.remove_cookie(&url, "key");
 
-    let cookies = client.as_ref().get_cookies(&url);
+    let cookies = client.get_cookies(&url);
     assert!(cookies.is_none());
 }
