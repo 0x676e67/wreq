@@ -104,7 +104,6 @@ struct Config {
     proxies: Vec<Proxy>,
     auto_sys_proxy: bool,
     redirect_policy: redirect::Policy,
-    redirect_with_proxy_auth: bool,
     referer: bool,
     timeout: Option<Duration>,
     read_timeout: Option<Duration>,
@@ -141,7 +140,6 @@ impl_debug!(
         proxies,
         auto_sys_proxy,
         redirect_policy,
-        redirect_with_proxy_auth,
         referer,
         timeout,
         read_timeout,
@@ -185,7 +183,6 @@ impl ClientBuilder {
                 proxies: Vec::new(),
                 auto_sys_proxy: true,
                 redirect_policy: redirect::Policy::none(),
-                redirect_with_proxy_auth: false,
                 referer: true,
                 timeout: None,
                 read_timeout: None,
@@ -278,7 +275,6 @@ impl ClientBuilder {
                 headers: config.headers,
                 headers_order: config.headers_order,
                 redirect: config.redirect_policy,
-                redirect_with_proxy_auth: config.redirect_with_proxy_auth,
                 referer: config.referer,
                 request_timeout: config.timeout,
                 read_timeout: config.read_timeout,
@@ -604,36 +600,6 @@ impl ClientBuilder {
     /// Default is `true`.
     pub fn referer(mut self, enable: bool) -> ClientBuilder {
         self.config.referer = enable;
-        self
-    }
-
-    /// Automatically handles proxy authentication during HTTP redirects for cross-origin requests.
-    ///
-    /// This method ensures that the Proxy-Authorization header is re-added to
-    /// requests after a redirect, allowing seamless proxy authentication even
-    /// during cross-origin redirects. It is useful in scenarios where the client
-    /// needs to maintain proxy authentication across multiple redirects without user intervention.
-    ///
-    /// # Example
-    ///
-    /// ```rust
-    /// use rquest::Client;
-    ///
-    /// let client = Client::builder()
-    ///     .redirect_with_proxy_auth(true)
-    ///     .build()
-    ///     .unwrap();
-    /// ```
-    ///
-    /// # Note
-    ///
-    /// This method assumes that the proxy credentials are already set up and
-    /// available. Ensure that the Proxy-Authorization header is correctly
-    /// configured before using this method.
-    ///
-    /// Default is `false`.
-    pub fn redirect_with_proxy_auth(mut self, enable: bool) -> ClientBuilder {
-        self.config.redirect_with_proxy_auth = enable;
         self
     }
 
@@ -1635,7 +1601,6 @@ struct ClientInner {
     headers_order: Option<Cow<'static, [HeaderName]>>,
     hyper: HyperClient<Connector, super::Body>,
     redirect: redirect::Policy,
-    redirect_with_proxy_auth: bool,
     referer: bool,
     request_timeout: Option<Duration>,
     read_timeout: Option<Duration>,
@@ -1697,7 +1662,6 @@ impl_debug!(ClientInner,{
     headers_order,
     hyper,
     redirect,
-    redirect_with_proxy_auth,
     referer,
     request_timeout,
     read_timeout,
@@ -2248,7 +2212,6 @@ impl Future for PendingRequest {
                                 &mut headers,
                                 &self.url,
                                 &self.urls,
-                                self.client.redirect_with_proxy_auth,
                             );
 
                             let uri = match try_uri(&self.url) {

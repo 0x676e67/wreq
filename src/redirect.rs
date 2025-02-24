@@ -160,12 +160,7 @@ impl Policy {
         .inner
     }
 
-    pub(crate) fn remove_sensitive_headers(
-        headers: &mut HeaderMap,
-        next: &Url,
-        previous: &[Url],
-        cross_proxy_auth: bool,
-    ) {
+    pub(crate) fn remove_sensitive_headers(headers: &mut HeaderMap, next: &Url, previous: &[Url]) {
         if let Some(previous) = previous.last() {
             let cross_host = next.host_str() != previous.host_str()
                 || next.port_or_known_default() != previous.port_or_known_default();
@@ -173,9 +168,7 @@ impl Policy {
                 headers.remove(AUTHORIZATION);
                 headers.remove(COOKIE);
                 headers.remove("cookie2");
-                if !cross_proxy_auth {
-                    headers.remove(PROXY_AUTHORIZATION);
-                }
+                headers.remove(PROXY_AUTHORIZATION);
                 headers.remove(WWW_AUTHENTICATE);
             }
         }
@@ -389,41 +382,13 @@ fn test_remove_sensitive_headers() {
     let mut prev = vec![Url::parse("http://initial-domain.com/new_path").unwrap()];
     let mut filtered_headers = headers.clone();
 
-    Policy::remove_sensitive_headers(&mut headers, &next, &prev, false);
+    Policy::remove_sensitive_headers(&mut headers, &next, &prev);
     assert_eq!(headers, filtered_headers);
 
     prev.push(Url::parse("http://new-domain.com/path").unwrap());
     filtered_headers.remove(AUTHORIZATION);
     filtered_headers.remove(COOKIE);
 
-    Policy::remove_sensitive_headers(&mut headers, &next, &prev, false);
-    assert_eq!(headers, filtered_headers);
-}
-
-#[test]
-fn test_proxy_auth_redirect_headers() {
-    use hyper2::header::{HeaderValue, ACCEPT, AUTHORIZATION, COOKIE};
-
-    let mut headers = HeaderMap::new();
-    headers.insert(ACCEPT, HeaderValue::from_static("*/*"));
-    headers.insert(AUTHORIZATION, HeaderValue::from_static("let me in"));
-    headers.insert(
-        PROXY_AUTHORIZATION,
-        HeaderValue::from_static("let me in proxy"),
-    );
-    headers.insert(COOKIE, HeaderValue::from_static("foo=bar"));
-
-    let next = Url::parse("http://initial-domain.com/path").unwrap();
-    let mut prev = vec![Url::parse("http://initial-domain.com/new_path").unwrap()];
-    let mut filtered_headers = headers.clone();
-
-    Policy::remove_sensitive_headers(&mut headers, &next, &prev, true);
-    assert_eq!(headers, filtered_headers);
-
-    prev.push(Url::parse("http://new-domain.com/path").unwrap());
-    filtered_headers.remove(AUTHORIZATION);
-    filtered_headers.remove(COOKIE);
-
-    Policy::remove_sensitive_headers(&mut headers, &next, &prev, true);
+    Policy::remove_sensitive_headers(&mut headers, &next, &prev);
     assert_eq!(headers, filtered_headers);
 }
