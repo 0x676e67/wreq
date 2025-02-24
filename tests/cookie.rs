@@ -233,3 +233,31 @@ async fn cookie_get_set() {
     let value = cookies.to_str().unwrap();
     assert!(value == "key1=val1; key2=val2" || value == "key2=val2; key1=val1");
 }
+
+#[tokio::test]
+async fn clear_cookies() {
+    let server = server::http(move |req| async move {
+        assert_eq!(req.headers().get("cookie"), None);
+        http::Response::builder()
+            .header("Set-Cookie", "key=val")
+            .body(Default::default())
+            .unwrap()
+    });
+
+    let client = rquest::Client::builder()
+        .cookie_store(true)
+        .build()
+        .unwrap();
+
+    let url = format!("http://{}/", server.addr()).parse().unwrap();
+    client.get(&url).send().await.unwrap();
+
+    let cookies = client.as_ref().get_cookies(&url).unwrap();
+    let value = cookies.to_str().unwrap();
+    assert!(value == "key=val");
+
+    client.as_ref().clear_cookies();
+
+    let cookies = client.as_ref().get_cookies(&url);
+    assert!(cookies.is_none());
+}
