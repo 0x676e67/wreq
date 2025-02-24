@@ -1689,7 +1689,9 @@ impl ClientRef {
     {
         if let Some(ref cookie_store) = self.inner.cookie_store {
             let mut cookies = cookies.as_ref().iter().peekable();
-            cookie_store.set_cookies(&mut cookies, url);
+            if cookies.peek().is_some() {
+                cookie_store.set_cookies(&mut cookies, url);
+            }
         }
     }
 
@@ -1712,7 +1714,9 @@ impl ClientRef {
     {
         if let Some(ref cookie_store) = self.inner.cookie_store {
             let mut cookies = cookies.as_ref().iter().copied().peekable();
-            cookie_store.set_cookies(&mut cookies, url);
+            if cookies.peek().is_some() {
+                cookie_store.set_cookies(&mut cookies, url);
+            }
         }
     }
 
