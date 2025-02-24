@@ -638,6 +638,7 @@ impl ClientBuilder {
     /// configured before using this method.
     ///
     /// Default is `false`.
+    #[deprecated(since = "2.2.0")]
     pub fn redirect_with_proxy_auth(mut self, enable: bool) -> ClientBuilder {
         self.config.redirect_with_proxy_auth = enable;
         self
