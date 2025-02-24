@@ -1522,6 +1522,10 @@ impl Client {
     ///
     /// This method ensures that cookies are only set if at least one cookie
     /// exists in the collection.
+    #[deprecated(
+        since = "2.2.0",
+        note = "Please use `set_cookies` with a collection of `HeaderValue` instead."
+    )]
     #[cfg(feature = "cookies")]
     pub fn set_cookies_by_ref<'a, C>(&self, url: &Url, cookies: C)
     where
