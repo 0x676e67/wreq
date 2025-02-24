@@ -1695,6 +1695,28 @@ impl ClientRef {
         }
     }
 
+    /// Removes a cookie from the `CookieStore` for the specified URL.
+    ///
+    /// This method deletes a cookie with the given name from the client's `CookieStore`
+    /// for the specified URL. It can be useful in scenarios where you want to remove
+    /// specific cookies to reset the client's state or ensure that certain cookies are
+    /// not sent with subsequent requests.
+    ///
+    /// # Parameters
+    ///
+    /// - `url`: The URL associated with the cookie to be removed.
+    /// - `name`: The name of the cookie to be removed.
+    ///
+    /// # Note
+    ///
+    /// This method requires the `cookies` feature to be enabled.
+    #[cfg(feature = "cookies")]
+    pub fn remove_cookie(&self, url: &Url, name: &str) {
+        if let Some(ref cookie_store) = self.inner.cookie_store {
+            cookie_store.remove_cookie(url, name);
+        }
+    }
+
     /// Clears all cookies from the `CookieStore`.
     ///
     /// This method removes all cookies stored in the client's `CookieStore`.

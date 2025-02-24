@@ -12,6 +12,8 @@ use bytes::Bytes;
 pub trait CookieStore: Send + Sync {
     /// Store a set of Set-Cookie header values received from `url`
     fn set_cookies(&self, cookie_headers: &mut dyn Iterator<Item = &HeaderValue>, url: &url::Url);
+    /// Remove a Cookie value in the store for `url` and `name`
+    fn remove_cookie(&self, _url: &url::Url, _name: &str) {}
     /// Get any Cookie values in the store for `url`
     fn cookies(&self, url: &url::Url) -> Option<HeaderValue>;
     /// Remove all cookies from the store.
@@ -169,6 +171,12 @@ impl CookieStore for Jar {
             cookie_headers.filter_map(|val| Cookie::parse(val).map(|c| c.0.into_owned()).ok());
 
         self.0.write().store_response_cookies(iter, url);
+    }
+
+    fn remove_cookie(&self, url: &url::Url, name: &str) {
+        if let Some(domain) = url.host_str() {
+            self.0.write().remove(domain, url.path(), name);
+        }
     }
 
     fn cookies(&self, url: &url::Url) -> Option<HeaderValue> {

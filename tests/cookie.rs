@@ -261,3 +261,44 @@ async fn clear_cookies() {
     let cookies = client.as_ref().get_cookies(&url);
     assert!(cookies.is_none());
 }
+
+#[tokio::test]
+async fn remove_cookie() {
+    let server = server::http(move |req| async move {
+        assert_eq!(req.headers().get("cookie"), None);
+        http::Response::builder()
+            .header("Set-Cookie", "key=val")
+            .body(Default::default())
+            .unwrap()
+    });
+
+    let client = rquest::Client::builder()
+        .cookie_store(true)
+        .build()
+        .unwrap();
+
+    let url = format!("http://{}/", server.addr()).parse().unwrap();
+    client.get(&url).send().await.unwrap();
+
+    let cookies = client.as_ref().get_cookies(&url).unwrap();
+    let value = cookies.to_str().unwrap();
+    assert!(value == "key=val");
+
+    client.as_ref().remove_cookie(&url, "key");
+
+    let cookies = client.as_ref().get_cookies(&url);
+    assert!(cookies.is_none());
+
+    let url = "https://google.com".parse().unwrap();
+    client
+        .as_ref()
+        .set_cookies(&url, [HeaderValue::from_static("key=val")]);
+    let cookies = client.as_ref().get_cookies(&url).unwrap();
+    let value = cookies.to_str().unwrap();
+    assert!(value == "key=val");
+
+    client.as_ref().remove_cookie(&url, "key");
+
+    let cookies = client.as_ref().get_cookies(&url);
+    assert!(cookies.is_none());
+}
