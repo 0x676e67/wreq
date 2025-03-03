@@ -986,7 +986,8 @@ impl Intercept {
             Intercept::All(s) | Intercept::Http(s) | Intercept::Https(s) => {
                 s.set_custom_http_headers(headers)
             }
-            Intercept::System(_) | Intercept::Custom(_) => unimplemented!(),
+            Intercept::System(_) => unimplemented!(),
+            Intercept::Custom(_) => {}
         }
     }
 }
