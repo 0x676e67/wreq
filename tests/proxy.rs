@@ -234,3 +234,39 @@ async fn http_over_http() {
     assert_eq!(res.url().as_str(), url);
     assert_eq!(res.status(), rquest::StatusCode::OK);
 }
+
+#[tokio::test]
+async fn http_proxy_custom_headers() {
+    let url = "http://hyper.rs/prox";
+    let server = server::http(move |req| {
+        assert_eq!(req.method(), "GET");
+        assert_eq!(req.uri(), url);
+        assert_eq!(req.headers()["host"], "hyper.rs");
+        assert_eq!(
+            req.headers()["proxy-authorization"],
+            "Basic QWxhZGRpbjpvcGVuIHNlc2FtZQ=="
+        );
+        assert_eq!(req.headers()["x-custom-header"], "value");
+
+        async { http::Response::default() }
+    });
+
+    let proxy = format!("http://Aladdin:open sesame@{}", server.addr());
+
+    let proxy = rquest::Proxy::http(&proxy).unwrap().custom_http_headers({
+        let mut headers = http::HeaderMap::new();
+        headers.insert("x-custom-header", "value".parse().unwrap());
+        headers
+    });
+    let res = rquest::Client::builder()
+        .proxy(proxy)
+        .build()
+        .unwrap()
+        .get(url)
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(res.url().as_str(), url);
+    assert_eq!(res.status(), rquest::StatusCode::OK);
+}

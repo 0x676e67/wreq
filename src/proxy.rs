@@ -130,6 +130,16 @@ impl ProxyScheme {
             _ => None,
         }
     }
+
+    fn maybe_http_headers(&self) -> Option<&HeaderMap> {
+        match self {
+            ProxyScheme::Http { headers, .. } | ProxyScheme::Https { headers, .. } => {
+                headers.as_ref()
+            }
+            #[cfg(feature = "socks")]
+            _ => None,
+        }
+    }
 }
 
 /// This implementation of `Hash` for `ProxyScheme` was improved based on the code
@@ -501,6 +511,13 @@ impl Proxy {
                 custom.call(uri).and_then(|s| s.maybe_http_auth().cloned())
             }
             Intercept::Https(_) => None,
+        }
+    }
+
+    pub(crate) fn http_headers(&self) -> Option<HeaderMap> {
+        match &self.intercept {
+            Intercept::All(p) | Intercept::Http(p) => p.maybe_http_headers().cloned(),
+            _ => None,
         }
     }
 

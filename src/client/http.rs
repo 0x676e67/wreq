@@ -1604,19 +1604,28 @@ impl ClientInner {
         // Only set the header here if the destination scheme is 'http',
         // since otherwise, the header will be included in the CONNECT tunnel
         // request instead.
-        if dst.scheme() != Some(&Scheme::HTTP) || headers.contains_key(PROXY_AUTHORIZATION) {
+        if dst.scheme() != Some(&Scheme::HTTP) {
+            return;
+        }
+
+        if headers.contains_key(PROXY_AUTHORIZATION) {
             return;
         }
 
         // Find the first proxy that matches the destination URI
         // If a matching proxy provides an HTTP basic auth header, insert it into the headers
-        if let Some(header) = self
-            .proxies
-            .iter()
-            .find(|proxy| proxy.maybe_has_http_auth() && proxy.is_match(dst))
-            .and_then(|proxy| proxy.http_basic_auth(dst))
-        {
-            headers.insert(PROXY_AUTHORIZATION, header);
+        for proxy in self.proxies.iter() {
+            if proxy.is_match(dst) {
+                if let Some(header) = proxy.http_basic_auth(dst) {
+                    headers.insert(PROXY_AUTHORIZATION, header);
+                }
+
+                if let Some(http_headers) = proxy.http_headers() {
+                    headers.extend(http_headers);
+                }
+
+                break;
+            }
         }
     }
 
