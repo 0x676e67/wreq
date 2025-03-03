@@ -26,11 +26,12 @@
 //! The `emulation` module provides a way to simulate various browser fingerprints.
 //!
 //! ```rust,no_run
-//! use rquest::{Client, Emulation};
+//! use rquest::Client;
+//! use rquest_util::Emulation;
 //!
 //! #[tokio::main]
 //! async fn main() -> Result<(), rquest::Error> {
-//!     // Build a client to emulation Firefox133
+//!     // Build a client
 //!     let client = Client::builder()
 //!         .emulation(Emulation::Firefox133)
 //!         .build()?;
@@ -49,11 +50,12 @@
 //!
 //! ```rust,no_run
 //! use futures_util::{SinkExt, StreamExt, TryStreamExt};
-//! use rquest::{Client, Emulation, Message, Utf8Bytes};
+//! use rquest_util::Emulation;
+//! use rquest::{Client, Message, Utf8Bytes};
 //!
 //! #[tokio::main]
 //! async fn main() -> Result<(), rquest::Error> {
-//!     // Build a client to emulation Firefox133
+//!     // Build a client
 //!     let websocket = Client::builder()
 //!         .emulation(Emulation::Firefox133)
 //!         .build()?
@@ -345,8 +347,6 @@ fn _assert_impls() {
 #[cfg(test)]
 doc_comment::doctest!("../README.md");
 
-#[cfg(feature = "emulation-device")]
-pub use self::client::emulation::{Emulation, EmulationOS, EmulationOption};
 #[cfg(feature = "multipart")]
 pub use self::client::multipart;
 #[cfg(feature = "websocket")]

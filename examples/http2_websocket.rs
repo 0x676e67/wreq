@@ -7,7 +7,7 @@
 
 use futures_util::{SinkExt, StreamExt, TryStreamExt};
 use http::header;
-use rquest::{Client, Emulation, Message, Utf8Bytes};
+use rquest::{Client, Message, Utf8Bytes};
 
 #[tokio::main]
 async fn main() -> Result<(), rquest::Error> {
@@ -15,9 +15,8 @@ async fn main() -> Result<(), rquest::Error> {
         .with_max_level(tracing::Level::TRACE)
         .init();
 
-    // Build a client to emulation Firefox133
+    // Build a client
     let client = Client::builder()
-        .emulation(Emulation::Firefox133)
         .danger_accept_invalid_certs(true)
         .build()?;
 

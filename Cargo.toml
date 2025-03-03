@@ -1,6 +1,6 @@
 [package]
 name = "rquest"
-version = "3.0.0"
+version = "3.0.1-rc1"
 description = "An ergonomic, all-in-one HTTP client for emulating any browser with TLS, JA3/JA4, and HTTP2 fingerprints"
 keywords = ["http", "client", "websocket", "ja3", "ja4"]
 categories = ["web-programming::http-client"]
@@ -18,7 +18,7 @@ rustdoc-args = ["--cfg", "docsrs"]
 targets = ["x86_64-unknown-linux-gnu"]
 
 [features]
-default = ["webpki-roots", "charset", "macos-system-configuration", "emulation-device"]
+default = ["webpki-roots", "charset", "macos-system-configuration"]
 
 full = [
     "json",
@@ -31,7 +31,6 @@ full = [
     "deflate",
 ]
 
-emulation-device = []
 
 websocket = ["dep:tokio-tungstenite"]
 
@@ -249,19 +248,8 @@ path = "examples/headers_order.rs"
 required-features = ["cookies"]
 
 [[example]]
-name = "emulation"
-path = "examples/emulation.rs"
-required-features = ["emulation-device"]
-
-[[example]]
-name = "emulation_option"
-path = "examples/emulation_option.rs"
-required-features = ["emulation-device"]
-
-[[example]]
 name = "emulation_provider"
 path = "examples/emulation_provider.rs"
-required-features = ["emulation-device"]
 
 [[example]]
 name = "set_headers"
@@ -291,11 +279,6 @@ required-features = ["brotli"]
 name = "set_interface"
 path = "examples/set_interface.rs"
 required-features = ["brotli", "apple-network-device-binding"]
-
-[[example]]
-name = "set_emulation"
-path = "examples/set_emulation.rs"
-required-features = ["emulation-device"]
 
 [[example]]
 name = "set_root_cert_store"
@@ -345,9 +328,9 @@ required-features = ["full", "apple-network-device-binding"]
 [[example]]
 name = "http1_websocket"
 path = "examples/http1_websocket.rs"
-required-features = ["emulation-device","websocket", "futures-util/std"]
+required-features = ["websocket", "futures-util/std"]
 
 [[example]]
 name = "http2_websocket"
 path = "examples/http2_websocket.rs"
-required-features = ["emulation-device","websocket", "http2-tracing", "futures-util/std"]
+required-features = ["websocket", "http2-tracing", "futures-util/std"]

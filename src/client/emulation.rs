@@ -1,8 +1,3 @@
-#[cfg(feature = "emulation-device")]
-mod device;
-
-#[cfg(feature = "emulation-device")]
-pub use self::device::{Emulation, EmulationOS, EmulationOption};
 use crate::{Http1Config, Http2Config, TlsConfig};
 use http::{HeaderMap, HeaderName};
 use std::borrow::Cow;

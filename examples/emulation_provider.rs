@@ -1,13 +1,19 @@
 use http::{header, HeaderMap, HeaderName, HeaderValue};
 use rquest::{
-    join, AlpnProtos, AlpsProtos, CertCompressionAlgorithm, ExtensionType, Http1Builder,
-    Http1Config, Http2Builder, SslCurve, TlsConfig, TlsVersion,
+    AlpnProtos, AlpsProtos, CertCompressionAlgorithm, ExtensionType, Http1Builder, Http1Config,
+    Http2Builder, SslCurve, TlsConfig, TlsVersion,
 };
 use rquest::{Client, EmulationProvider};
 use rquest::{Http2Config, PseudoOrder::*, SettingsOrder::*};
 use rquest::{Priority, StreamDependency, StreamId};
 
 // ============== TLS Extension Algorithms ==============
+
+macro_rules! join {
+    ($sep:expr, $first:expr $(, $rest:expr)*) => {
+        concat!($first $(, $sep, $rest)*)
+    };
+}
 
 const CURVES: &[SslCurve] = &[
     SslCurve::X25519,

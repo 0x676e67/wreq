@@ -894,6 +894,7 @@ impl ClientBuilder {
     ///
     /// ```rust
     /// use rquest::{Client, Emulation};
+    /// use rquest_util::Emulation;
     ///
     /// let client = Client::builder()
     ///     .emulation(Emulation::Firefox128)

@@ -1,4 +1,4 @@
-use rquest::{Client, Emulation};
+use rquest::Client;
 
 #[tokio::main]
 async fn main() -> Result<(), rquest::Error> {
@@ -6,11 +6,8 @@ async fn main() -> Result<(), rquest::Error> {
         .with_max_level(tracing::Level::TRACE)
         .init();
 
-    // Build a client to emulation Chrome130
-    let client = Client::builder()
-        .emulation(Emulation::Chrome130)
-        .no_proxy()
-        .build()?;
+    // Build a client
+    let client = Client::builder().no_proxy().build()?;
 
     // Set the proxies
     let proxy = rquest::Proxy::all("socks5h://127.0.0.1:6153")?;

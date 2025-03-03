@@ -1,4 +1,4 @@
-use rquest::{Client, Emulation};
+use rquest::Client;
 
 #[cfg(any(
     target_os = "android",
@@ -16,8 +16,8 @@ async fn main() -> Result<(), rquest::Error> {
         .with_max_level(tracing::Level::TRACE)
         .init();
 
-    // Build a client to emulation Firefox128
-    let client = Client::builder().emulation(Emulation::Firefox128).build()?;
+    // Build a client
+    let client = Client::builder().build()?;
 
     let text = client
         .get("https://api.ip.sb/ip")

@@ -1,4 +1,4 @@
-use rquest::{Client, Emulation};
+use rquest::Client;
 
 #[cfg(any(
     target_os = "android",
@@ -12,11 +12,8 @@ use rquest::{Client, Emulation};
 ))]
 #[tokio::main]
 async fn main() -> Result<(), rquest::Error> {
-    // Build a client to emulation Chrome130
-    let client = Client::builder()
-        .emulation(Emulation::Chrome130)
-        .interface("eth0")
-        .build()?;
+    // Build a client
+    let client = Client::builder().interface("eth0").build()?;
 
     // Set the interface to eth1
     client.as_mut().interface("eth1").apply()?;

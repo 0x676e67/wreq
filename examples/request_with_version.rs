@@ -1,5 +1,5 @@
 use http::Version;
-use rquest::{redirect::Policy, Emulation};
+use rquest::redirect::Policy;
 
 #[tokio::main]
 async fn main() -> Result<(), rquest::Error> {
@@ -7,10 +7,8 @@ async fn main() -> Result<(), rquest::Error> {
         .with_max_level(tracing::Level::TRACE)
         .init();
 
-    // Build a client to emulation Safari18
-    let client = rquest::Client::builder()
-        .emulation(Emulation::Safari18)
-        .build()?;
+    // Build a client
+    let client = rquest::Client::builder().build()?;
 
     let resp = client
         .get("http://google.com/")

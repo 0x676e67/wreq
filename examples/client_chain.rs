@@ -11,7 +11,7 @@
 #[tokio::main]
 async fn main() -> Result<(), rquest::Error> {
     use http::{header, HeaderName};
-    use rquest::{Client, Emulation};
+    use rquest::Client;
 
     const HEADER_ORDER: &[HeaderName] = &[
         header::ACCEPT_LANGUAGE,
@@ -21,12 +21,11 @@ async fn main() -> Result<(), rquest::Error> {
         header::COOKIE,
     ];
 
-    // Build a client to emulation Chrome133
-    let client = Client::builder().emulation(Emulation::Chrome133).build()?;
+    // Build a client
+    let client = Client::builder().build()?;
 
     client
         .as_mut()
-        .emulation(Emulation::Safari18)
         .headers_order(HEADER_ORDER)
         .interface("utun6")
         .apply()?;

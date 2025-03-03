@@ -1,5 +1,4 @@
 use http::{header, HeaderName, HeaderValue};
-use rquest::Emulation;
 
 const HEADER_ORDER: &[HeaderName] = &[
     header::USER_AGENT,
@@ -11,9 +10,8 @@ const HEADER_ORDER: &[HeaderName] = &[
 
 #[tokio::main]
 async fn main() -> Result<(), rquest::Error> {
-    // Build a client to emulation Chrome133
+    // Build a client
     let client = rquest::Client::builder()
-        .emulation(Emulation::Chrome133)
         .headers_order(HEADER_ORDER)
         .cookie_store(true)
         .build()?;

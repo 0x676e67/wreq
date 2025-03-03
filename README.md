@@ -28,17 +28,19 @@ This asynchronous example uses [Tokio](https://tokio.rs) and enables some option
 ```toml
 [dependencies]
 tokio = { version = "1", features = ["full"] }
-rquest = "2.0.0"
+rquest = "3.0.1-rc1"
+rquest_util = "0.2.0-rc1"
 ```
 
 And then the code:
 
 ```rust,no_run
-use rquest::{Client, Emulation};
+use rquest::Client;
+use rquest_util::Emulation;
 
 #[tokio::main]
 async fn main() -> Result<(), rquest::Error> {
-    // Build a client to emulation Firefox133
+    // Build a client
     let client = Client::builder()
         .emulation(Emulation::Firefox133)
         .build()?;

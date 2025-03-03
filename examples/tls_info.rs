@@ -1,6 +1,6 @@
 #[tokio::main]
 async fn main() -> Result<(), rquest::Error> {
-    // Build a client to emulation Edge127
+    // Build a client
     let client = rquest::Client::builder().tls_info(true).build()?;
 
     // Use the API you're already familiar with

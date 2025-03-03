@@ -1,14 +1,11 @@
 use http::HeaderValue;
 use rquest::cookie::Jar;
-use rquest::Emulation;
 use std::sync::Arc;
 
 #[tokio::main]
 async fn main() -> Result<(), rquest::Error> {
-    // Build a client to emulation Chrome133
-    let client = rquest::Client::builder()
-        .emulation(Emulation::Chrome133)
-        .build()?;
+    // Build a client
+    let client = rquest::Client::builder().build()?;
 
     let url = "https://tls.peet.ws/api/all".parse().expect("Invalid url");
 
