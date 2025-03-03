@@ -656,6 +656,12 @@ mod tunnel {
     use hyper2::rt::{Read, Write};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
+    const USER_AGENT: HeaderValue = HeaderValue::from_static(concat!(
+        env!("CARGO_PKG_NAME"),
+        "/",
+        env!("CARGO_PKG_VERSION")
+    ));
+
     pub(super) async fn connect<T>(
         mut conn: T,
         host: &str,
@@ -675,13 +681,6 @@ mod tunnel {
         )
         .into_bytes();
 
-        // user-agent
-        buf.extend_from_slice(b"User-Agent: ");
-        buf.extend_from_slice(env!("CARGO_PKG_NAME").as_bytes());
-        buf.extend_from_slice(b"/");
-        buf.extend_from_slice(env!("CARGO_PKG_VERSION").as_bytes());
-        buf.extend_from_slice(b"\r\n");
-
         // proxy-authorization
         if let Some(value) = auth {
             log::debug!("tunnel to {}:{} using basic auth", host, port);
@@ -691,13 +690,22 @@ mod tunnel {
         }
 
         // headers
-        if let Some(headers) = headers {
+        if let Some(mut headers) = headers {
+            headers
+                .entry(http::header::USER_AGENT)
+                .or_insert(USER_AGENT);
+
             for (name, value) in headers.iter() {
                 buf.extend_from_slice(name.as_str().as_bytes());
                 buf.extend_from_slice(b": ");
                 buf.extend_from_slice(value.as_bytes());
                 buf.extend_from_slice(b"\r\n");
             }
+        } else {
+            // user-agent
+            buf.extend_from_slice(b"User-Agent: ");
+            buf.extend_from_slice(USER_AGENT.as_bytes());
+            buf.extend_from_slice(b"\r\n");
         }
 
         // headers end
