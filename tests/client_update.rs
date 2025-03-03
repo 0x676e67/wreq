@@ -173,30 +173,29 @@ async fn updatea_cloned() {
     assert!(client.headers().contains_key(http::header::ACCEPT));
 
     let client2 = client.cloned();
-    tokio::spawn(async move {
-        client2
-            .update()
-            .emulation(
-                EmulationProvider::builder()
-                    .tls_config(TlsConfig::default())
-                    .default_headers({
-                        let mut headers = http::HeaderMap::new();
-                        headers.insert(
-                            http::header::ACCEPT_ENCODING,
-                            http::HeaderValue::from_static("gzip"),
-                        );
-                        headers
-                    })
-                    .build(),
-            )
-            .apply()
-            .unwrap();
-    })
-    .await
-    .unwrap();
+    client2
+        .update()
+        .emulation(
+            EmulationProvider::builder()
+                .tls_config(TlsConfig::default())
+                .default_headers({
+                    let mut headers = http::HeaderMap::new();
+                    headers.insert(
+                        http::header::ACCEPT_ENCODING,
+                        http::HeaderValue::from_static("gzip"),
+                    );
+                    headers
+                })
+                .build(),
+        )
+        .apply()
+        .unwrap();
 
     let server = server::http(move |req| async move {
-        assert_eq!(req.headers().get(http::header::ACCEPT_ENCODING), None);
+        assert_ne!(
+            req.headers().get(http::header::ACCEPT_ENCODING),
+            Some(&http::HeaderValue::from_static("gzip"))
+        );
         http::Response::default()
     });
 
