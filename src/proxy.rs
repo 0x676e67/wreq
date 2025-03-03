@@ -983,8 +983,10 @@ impl Intercept {
 
     fn set_custom_http_headers(&mut self, headers: HeaderMap) {
         match self {
-            Intercept::Http(s) | Intercept::Https(s) => s.set_custom_http_headers(headers),
-            _ => {}
+            Intercept::All(s) | Intercept::Http(s) | Intercept::Https(s) => {
+                s.set_custom_http_headers(headers)
+            }
+            Intercept::System(_) | Intercept::Custom(_) => unimplemented!(),
         }
     }
 }
