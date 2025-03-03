@@ -31,7 +31,6 @@ full = [
     "deflate",
 ]
 
-
 websocket = ["dep:tokio-tungstenite"]
 
 charset = ["dep:encoding_rs"]

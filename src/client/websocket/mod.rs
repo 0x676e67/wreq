@@ -450,7 +450,7 @@ impl WebSocketResponse {
             let protocol = headers.get(header::SEC_WEBSOCKET_PROTOCOL).cloned();
 
             match (
-                self.protocols.as_ref().map_or(true, |p| p.is_empty()),
+                self.protocols.as_ref().is_none_or(|p| p.is_empty()),
                 &protocol,
             ) {
                 (true, None) => {

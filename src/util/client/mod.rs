@@ -609,7 +609,7 @@ where
         }
     }
 
-    fn connect_to<'a>(
+    fn connect_to(
         &self,
         dst: Dst,
     ) -> impl Lazy<Output = Result<pool::Pooled<PoolClient<B>, PoolKey>, Error>> + Send + Unpin + 'static
