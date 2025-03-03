@@ -313,9 +313,17 @@ impl ConnectorService {
     ) -> Result<Conn, BoxError> {
         log::debug!("proxy({:?}) intercepts '{:?}'", proxy_scheme, dst.uri());
 
-        let (proxy_dst, auth) = match proxy_scheme {
-            ProxyScheme::Http { host, auth } => (into_uri(Scheme::HTTP, host)?, auth),
-            ProxyScheme::Https { host, auth } => (into_uri(Scheme::HTTPS, host)?, auth),
+        let (proxy_dst, auth, headers) = match proxy_scheme {
+            ProxyScheme::Http {
+                host,
+                auth,
+                headers,
+            } => (into_uri(Scheme::HTTP, host)?, auth, headers),
+            ProxyScheme::Https {
+                host,
+                auth,
+                headers,
+            } => (into_uri(Scheme::HTTPS, host)?, auth, headers),
             #[cfg(feature = "socks")]
             ProxyScheme::Socks4 { .. } | ProxyScheme::Socks5 { .. } => {
                 return self.connect_socks(dst, proxy_scheme).await;
@@ -330,7 +338,7 @@ impl ConnectorService {
 
             log::trace!("tunneling HTTPS over proxy");
             let conn = http.call(proxy_dst).await?;
-            let tunneled = tunnel::connect(conn, host, port, auth).await?;
+            let tunneled = tunnel::connect(conn, host, port, auth, headers).await?;
 
             let io = http.connect(&dst, host, tunneled).await?;
 
@@ -644,7 +652,7 @@ mod tls_conn {
 mod tunnel {
     use super::BoxError;
     use crate::util::rt::TokioIo;
-    use http::HeaderValue;
+    use http::{HeaderMap, HeaderValue};
     use hyper2::rt::{Read, Write};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
@@ -653,6 +661,7 @@ mod tunnel {
         host: &str,
         port: u16,
         auth: Option<HeaderValue>,
+        headers: Option<HeaderMap>,
     ) -> Result<T, BoxError>
     where
         T: Read + Write + Unpin,
@@ -679,6 +688,16 @@ mod tunnel {
             buf.extend_from_slice(b"Proxy-Authorization: ");
             buf.extend_from_slice(value.as_bytes());
             buf.extend_from_slice(b"\r\n");
+        }
+
+        // headers
+        if let Some(headers) = headers {
+            for (name, value) in headers.iter() {
+                buf.extend_from_slice(name.as_str().as_bytes());
+                buf.extend_from_slice(b": ");
+                buf.extend_from_slice(value.as_bytes());
+                buf.extend_from_slice(b"\r\n");
+            }
         }
 
         // headers end

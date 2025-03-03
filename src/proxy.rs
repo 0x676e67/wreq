@@ -1,4 +1,5 @@
 use std::fmt;
+use std::hash::Hash;
 #[cfg(feature = "socks")]
 use std::net::SocketAddr;
 use std::sync::{Arc, LazyLock};
@@ -6,6 +7,7 @@ use std::sync::{Arc, LazyLock};
 use crate::Url;
 use crate::into_url::{IntoUrl, IntoUrlSealed};
 
+use http::HeaderMap;
 use http::{Uri, header::HeaderValue};
 use ipnet::IpNet;
 use percent_encoding::percent_decode;
@@ -98,15 +100,17 @@ pub struct NoProxy {
 /// A particular scheme used for proxying requests.
 ///
 /// For example, HTTP vs SOCKS5
-#[derive(Clone, Hash, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub enum ProxyScheme {
     Http {
         auth: Option<HeaderValue>,
         host: http::uri::Authority,
+        headers: Option<HeaderMap>,
     },
     Https {
         auth: Option<HeaderValue>,
         host: http::uri::Authority,
+        headers: Option<HeaderMap>,
     },
     #[cfg(feature = "socks")]
     Socks4 { addr: SocketAddr, remote_dns: bool },
@@ -124,6 +128,39 @@ impl ProxyScheme {
             ProxyScheme::Http { auth, .. } | ProxyScheme::Https { auth, .. } => auth.as_ref(),
             #[cfg(feature = "socks")]
             _ => None,
+        }
+    }
+}
+
+impl Hash for ProxyScheme {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        match self {
+            ProxyScheme::Http { host, auth, .. } => {
+                "http".hash(state);
+                host.hash(state);
+                auth.hash(state);
+            }
+            ProxyScheme::Https { host, auth, .. } => {
+                "https".hash(state);
+                host.hash(state);
+                auth.hash(state);
+            }
+            #[cfg(feature = "socks")]
+            ProxyScheme::Socks4 { addr, remote_dns } => {
+                "socks4".hash(state);
+                addr.hash(state);
+                remote_dns.hash(state);
+            }
+            #[cfg(feature = "socks")]
+            ProxyScheme::Socks5 {
+                addr,
+                auth,
+                remote_dns,
+            } => {
+                "socks5".hash(state);
+                addr.hash(state);
+                auth.hash(state);
+            }
         }
     }
 }
@@ -582,6 +619,7 @@ impl ProxyScheme {
         Ok(ProxyScheme::Http {
             auth: None,
             host: host.parse().map_err(crate::error::builder)?,
+            headers: None,
         })
     }
 
@@ -590,6 +628,7 @@ impl ProxyScheme {
         Ok(ProxyScheme::Https {
             auth: None,
             host: host.parse().map_err(crate::error::builder)?,
+            headers: None,
         })
     }
 
@@ -771,8 +810,12 @@ impl ProxyScheme {
 impl fmt::Debug for ProxyScheme {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            ProxyScheme::Http { auth: _auth, host } => write!(f, "http://{}", host),
-            ProxyScheme::Https { auth: _auth, host } => write!(f, "https://{}", host),
+            ProxyScheme::Http {
+                auth: _auth, host, ..
+            } => write!(f, "http://{}", host),
+            ProxyScheme::Https {
+                auth: _auth, host, ..
+            } => write!(f, "https://{}", host),
             #[cfg(feature = "socks")]
             ProxyScheme::Socks4 { addr, remote_dns } => {
                 let h = if *remote_dns { "a" } else { "" };
