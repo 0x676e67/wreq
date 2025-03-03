@@ -160,7 +160,7 @@ impl ProxyScheme {
 /// key-value pairs and hashing each pair.
 impl Hash for ProxyScheme {
     #[inline]
-    fn hash<H: Hasher>(&self, state: &mut H) -> () {
+    fn hash<H: Hasher>(&self, state: &mut H) {
         let self_discr = ::std::mem::discriminant(self);
         Hash::hash(&self_discr, state);
         match self {
