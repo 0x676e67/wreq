@@ -59,6 +59,9 @@ jobs:
         with:
           toolchain: stable
           override: true
+      - name: Install NASM
+        run: |
+          choco install nasm -y
       - name: Build
         run: |
           cargo build --all-features
