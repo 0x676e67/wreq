@@ -7,7 +7,7 @@
 use std::fmt;
 use std::{error::Error as StdError, sync::Arc};
 
-use crate::header::{HeaderMap, AUTHORIZATION, COOKIE, PROXY_AUTHORIZATION, WWW_AUTHENTICATE};
+use crate::header::{AUTHORIZATION, COOKIE, HeaderMap, PROXY_AUTHORIZATION, WWW_AUTHENTICATE};
 use http::Method;
 use hyper2::StatusCode;
 
@@ -371,7 +371,7 @@ fn test_redirect_custom_policy_methods() {
 
 #[test]
 fn test_remove_sensitive_headers() {
-    use hyper2::header::{HeaderValue, ACCEPT, AUTHORIZATION, COOKIE};
+    use hyper2::header::{ACCEPT, AUTHORIZATION, COOKIE, HeaderValue};
 
     let mut headers = HeaderMap::new();
     headers.insert(ACCEPT, HeaderValue::from_static("*/*"));

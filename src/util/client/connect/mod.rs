@@ -66,8 +66,8 @@
 use std::{
     fmt::{self, Formatter},
     sync::{
-        atomic::{AtomicBool, Ordering},
         Arc,
+        atomic::{AtomicBool, Ordering},
     },
 };
 
@@ -80,7 +80,7 @@ mod http;
 
 pub(crate) mod capture;
 #[allow(unused)]
-pub use capture::{capture_connection, CaptureConnection};
+pub use capture::{CaptureConnection, capture_connection};
 
 pub use self::sealed::Connect;
 

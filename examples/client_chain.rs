@@ -10,7 +10,7 @@
 ))]
 #[tokio::main]
 async fn main() -> Result<(), rquest::Error> {
-    use http::{header, HeaderName};
+    use http::{HeaderName, header};
     use rquest::Client;
 
     const HEADER_ORDER: &[HeaderName] = &[

@@ -14,7 +14,7 @@ use percent_encoding::{self, AsciiSet, NON_ALPHANUMERIC};
 #[cfg(feature = "stream")]
 use tokio::fs::File;
 
-use futures_util::{future, stream, Stream, StreamExt};
+use futures_util::{Stream, StreamExt, future, stream};
 
 use super::Body;
 use crate::header::HeaderMap;

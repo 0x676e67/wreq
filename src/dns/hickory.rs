@@ -3,7 +3,7 @@
 use super::{Addrs, Name, Resolve, Resolving};
 pub use hickory_resolver::config::LookupIpStrategy;
 use hickory_resolver::config::{ResolverConfig, ResolverOpts};
-use hickory_resolver::{lookup_ip::LookupIpIntoIter, system_conf, TokioAsyncResolver};
+use hickory_resolver::{TokioAsyncResolver, lookup_ip::LookupIpIntoIter, system_conf};
 use std::net::SocketAddr;
 use std::sync::Arc;
 

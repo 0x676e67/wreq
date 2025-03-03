@@ -120,10 +120,12 @@ async fn system_http_proxy_basic_auth_parsed() {
     let system_proxy = env::var("http_proxy");
 
     // set-up http proxy.
-    env::set_var(
-        "http_proxy",
-        format!("http://Aladdin:open sesame@{}", server.addr()),
-    );
+    unsafe {
+        env::set_var(
+            "http_proxy",
+            format!("http://Aladdin:open sesame@{}", server.addr()),
+        )
+    }
 
     let res = rquest::Client::builder()
         .build()
@@ -137,9 +139,11 @@ async fn system_http_proxy_basic_auth_parsed() {
     assert_eq!(res.status(), rquest::StatusCode::OK);
 
     // reset user setting.
-    match system_proxy {
-        Err(_) => env::remove_var("http_proxy"),
-        Ok(proxy) => env::set_var("http_proxy", proxy),
+    unsafe {
+        match system_proxy {
+            Err(_) => env::remove_var("http_proxy"),
+            Ok(proxy) => env::set_var("http_proxy", proxy),
+        }
     }
 }
 
@@ -186,8 +190,9 @@ async fn test_using_system_proxy() {
     // save system setting first.
     let system_proxy = env::var("http_proxy");
     // set-up http proxy.
-    env::set_var("http_proxy", format!("http://{}", server.addr()));
-
+    unsafe {
+        env::set_var("http_proxy", format!("http://{}", server.addr()));
+    }
     // system proxy is used by default
     let res = rquest::get(url).await.unwrap();
 
@@ -195,9 +200,11 @@ async fn test_using_system_proxy() {
     assert_eq!(res.status(), rquest::StatusCode::OK);
 
     // reset user setting.
-    match system_proxy {
-        Err(_) => env::remove_var("http_proxy"),
-        Ok(proxy) => env::set_var("http_proxy", proxy),
+    unsafe {
+        match system_proxy {
+            Err(_) => env::remove_var("http_proxy"),
+            Ok(proxy) => env::set_var("http_proxy", proxy),
+        }
     }
 }
 

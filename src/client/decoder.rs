@@ -7,7 +7,7 @@ use std::fmt;
 ))]
 use std::future::Future;
 use std::pin::Pin;
-use std::task::{ready, Context, Poll};
+use std::task::{Context, Poll, ready};
 
 #[cfg(any(
     feature = "gzip",
@@ -435,7 +435,7 @@ fn poll_inner_should_be_empty(
             Some(Ok(_)) => {
                 return Poll::Ready(Some(Err(crate::error::decode(
                     "there are extra bytes after body has been decompressed",
-                ))))
+                ))));
             }
             Some(Err(err)) => return Poll::Ready(Some(Err(crate::error::decode_io(err)))),
             None => return Poll::Ready(None),
@@ -450,7 +450,7 @@ fn poll_inner_should_be_empty(
     feature = "deflate",
 ))]
 fn empty() -> ResponseBody {
-    use http_body_util::{combinators::BoxBody, BodyExt, Empty};
+    use http_body_util::{BodyExt, Empty, combinators::BoxBody};
     BoxBody::new(Empty::new().map_err(|never| match never {}))
 }
 

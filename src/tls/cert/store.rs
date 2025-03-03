@@ -1,11 +1,11 @@
 #![allow(missing_debug_implementations)]
-use crate::{error, tls::TlsResult, Error};
+use crate::{Error, error, tls::TlsResult};
 use boring2::{
     error::ErrorStack,
     ssl::SslConnectorBuilder,
     x509::{
-        store::{X509Store, X509StoreBuilder},
         X509,
+        store::{X509Store, X509StoreBuilder},
     },
 };
 use std::path::Path;

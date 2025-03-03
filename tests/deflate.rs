@@ -40,10 +40,12 @@ async fn test_deflate_empty_body() {
 async fn test_accept_header_is_not_changed_if_set() {
     let server = server::http(move |req| async move {
         assert_eq!(req.headers()["accept"], "application/json");
-        assert!(req.headers()["accept-encoding"]
-            .to_str()
-            .unwrap()
-            .contains("deflate"));
+        assert!(
+            req.headers()["accept-encoding"]
+                .to_str()
+                .unwrap()
+                .contains("deflate")
+        );
         http::Response::default()
     });
 
@@ -114,10 +116,12 @@ async fn deflate_case(response_size: usize, chunk_size: usize) {
     response.extend(&deflated_content);
 
     let server = server::http(move |req| {
-        assert!(req.headers()["accept-encoding"]
-            .to_str()
-            .unwrap()
-            .contains("deflate"));
+        assert!(
+            req.headers()["accept-encoding"]
+                .to_str()
+                .unwrap()
+                .contains("deflate")
+        );
 
         let deflated = deflated_content.clone();
         async move {

@@ -39,10 +39,12 @@ async fn test_zstd_empty_body() {
 async fn test_accept_header_is_not_changed_if_set() {
     let server = server::http(move |req| async move {
         assert_eq!(req.headers()["accept"], "application/json");
-        assert!(req.headers()["accept-encoding"]
-            .to_str()
-            .unwrap()
-            .contains("zstd"));
+        assert!(
+            req.headers()["accept-encoding"]
+                .to_str()
+                .unwrap()
+                .contains("zstd")
+        );
         http::Response::default()
     });
 
@@ -108,10 +110,12 @@ async fn zstd_case(response_size: usize, chunk_size: usize) {
     response.extend(&zstded_content);
 
     let server = server::http(move |req| {
-        assert!(req.headers()["accept-encoding"]
-            .to_str()
-            .unwrap()
-            .contains("zstd"));
+        assert!(
+            req.headers()["accept-encoding"]
+                .to_str()
+                .unwrap()
+                .contains("zstd")
+        );
 
         let zstded = zstded_content.clone();
         async move {

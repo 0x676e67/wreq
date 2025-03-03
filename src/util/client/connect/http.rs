@@ -6,7 +6,7 @@ use std::marker::PhantomData;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::pin::Pin;
 use std::sync::Arc;
-use std::task::{self, ready, Poll};
+use std::task::{self, Poll, ready};
 use std::time::Duration;
 
 use futures_util::future::Either;
@@ -17,7 +17,7 @@ use socket2::TcpKeepalive;
 use tokio::net::{TcpSocket, TcpStream};
 use tokio::time::Sleep;
 
-use super::dns::{self, resolve, GaiResolver, Resolve};
+use super::dns::{self, GaiResolver, Resolve, resolve};
 use super::{Connected, Connection};
 use crate::util::rt::TokioIo;
 
@@ -118,11 +118,7 @@ impl TcpKeepaliveConfig {
         if let Some(retries) = self.retries {
             ka = Self::ka_with_retries(ka, retries, &mut dirty)
         };
-        if dirty {
-            Some(ka)
-        } else {
-            None
-        }
+        if dirty { Some(ka) } else { None }
     }
 
     #[cfg(
@@ -502,7 +498,7 @@ fn get_host_port<'u>(config: &Config, dst: &'u Uri) -> Result<(&'u str, u16), Co
             return Err(ConnectError {
                 msg: INVALID_MISSING_HOST.into(),
                 cause: None,
-            })
+            });
         }
     };
     let port = match dst.port() {

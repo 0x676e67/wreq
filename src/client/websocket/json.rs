@@ -1,6 +1,6 @@
 use crate::{Error, Message};
 use bytes::Bytes;
-use serde::{de::DeserializeOwned, Serialize};
+use serde::{Serialize, de::DeserializeOwned};
 
 use super::Utf8Bytes;
 

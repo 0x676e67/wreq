@@ -26,20 +26,20 @@ use std::time::Duration;
 use futures_util::future::{self, Either, FutureExt, TryFutureExt};
 use http::uri::Scheme;
 use hyper2::client::conn::TrySendError as ConnTrySendError;
-use hyper2::header::{HeaderValue, HOST};
+use hyper2::header::{HOST, HeaderValue};
 use hyper2::rt::Timer;
-use hyper2::{body::Body, Method, Request, Response, Uri, Version};
+use hyper2::{Method, Request, Response, Uri, Version, body::Body};
 use log::{debug, trace, warn};
 use sync_wrapper::SyncWrapper;
 
+use crate::AlpnProtos;
 use crate::proxy::ProxyScheme;
 use crate::util::common;
-use crate::AlpnProtos;
 use connect::capture::CaptureConnectionExtension;
 use connect::{Alpn, Connect, Connected, Connection};
 use pool::Ver;
 
-use common::{lazy as hyper_lazy, timer, Exec, Lazy};
+use common::{Exec, Lazy, lazy as hyper_lazy, timer};
 
 use super::into_uri;
 pub use network::{NetworkScheme, NetworkSchemeBuilder};
@@ -452,7 +452,7 @@ where
                         e!(SendRequest, err.into_error())
                             .with_connect_info(pooled.conn_info.clone()),
                     ))
-                }
+                };
             }
         };
 
@@ -609,10 +609,10 @@ where
         }
     }
 
-    fn connect_to(
+    fn connect_to<'a>(
         &self,
         dst: Dst,
-    ) -> impl Lazy<Output = Result<pool::Pooled<PoolClient<B>, PoolKey>, Error>> + Send + Unpin
+    ) -> impl Lazy<Output = Result<pool::Pooled<PoolClient<B>, PoolKey>, Error>> + Send + Unpin + 'static
     {
         let executor = self.exec.clone();
         let pool = self.pool.clone();

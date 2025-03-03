@@ -4,8 +4,8 @@ mod support;
 use support::server;
 
 use http::{
-    header::{CONTENT_LENGTH, CONTENT_TYPE, TRANSFER_ENCODING},
     Version,
+    header::{CONTENT_LENGTH, CONTENT_TYPE, TRANSFER_ENCODING},
 };
 use rquest::Client;
 #[cfg(feature = "json")]
@@ -19,28 +19,36 @@ async fn auto_headers() {
         assert_eq!(req.headers()["accept"], "*/*");
         assert_eq!(req.headers().get("user-agent"), None);
         if cfg!(feature = "gzip") {
-            assert!(req.headers()["accept-encoding"]
-                .to_str()
-                .unwrap()
-                .contains("gzip"));
+            assert!(
+                req.headers()["accept-encoding"]
+                    .to_str()
+                    .unwrap()
+                    .contains("gzip")
+            );
         }
         if cfg!(feature = "brotli") {
-            assert!(req.headers()["accept-encoding"]
-                .to_str()
-                .unwrap()
-                .contains("br"));
+            assert!(
+                req.headers()["accept-encoding"]
+                    .to_str()
+                    .unwrap()
+                    .contains("br")
+            );
         }
         if cfg!(feature = "zstd") {
-            assert!(req.headers()["accept-encoding"]
-                .to_str()
-                .unwrap()
-                .contains("zstd"));
+            assert!(
+                req.headers()["accept-encoding"]
+                    .to_str()
+                    .unwrap()
+                    .contains("zstd")
+            );
         }
         if cfg!(feature = "deflate") {
-            assert!(req.headers()["accept-encoding"]
-                .to_str()
-                .unwrap()
-                .contains("deflate"));
+            assert!(
+                req.headers()["accept-encoding"]
+                    .to_str()
+                    .unwrap()
+                    .contains("deflate")
+            );
         }
 
         http::Response::default()
@@ -462,10 +470,12 @@ async fn close_connection_after_idle_timeout() {
 
     tokio::time::sleep(std::time::Duration::from_secs(2)).await;
 
-    assert!(server
-        .events()
-        .iter()
-        .any(|e| matches!(e, server::Event::ConnectionClosed)));
+    assert!(
+        server
+            .events()
+            .iter()
+            .any(|e| matches!(e, server::Event::ConnectionClosed))
+    );
 }
 
 #[tokio::test]

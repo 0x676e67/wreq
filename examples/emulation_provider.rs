@@ -1,4 +1,4 @@
-use http::{header, HeaderMap, HeaderName, HeaderValue};
+use http::{HeaderMap, HeaderName, HeaderValue, header};
 use rquest::{
     AlpnProtos, AlpsProtos, CertCompressionAlgorithm, ExtensionType, Http1Builder, Http1Config,
     Http2Builder, SslCurve, TlsConfig, TlsVersion,

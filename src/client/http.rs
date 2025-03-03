@@ -10,30 +10,30 @@ use std::{collections::HashMap, convert::TryInto, net::SocketAddr};
 use std::{fmt, str};
 
 use crate::connect::{
-    sealed::{Conn, Unnameable},
     BoxedConnectorLayer, BoxedConnectorService, Connector, ConnectorBuilder,
+    sealed::{Conn, Unnameable},
 };
 #[cfg(feature = "cookies")]
 use crate::cookie;
 #[cfg(feature = "hickory-dns")]
 use crate::dns::hickory::{HickoryDnsResolver, LookupIpStrategy};
-use crate::dns::{gai::GaiResolver, DnsResolverWithOverrides, DynResolver, Resolve};
+use crate::dns::{DnsResolverWithOverrides, DynResolver, Resolve, gai::GaiResolver};
 use crate::error::{BoxError, Error};
 use crate::into_url::try_uri;
 use crate::util::{
     self,
     client::{
-        connect::HttpConnector, Builder, Client as HyperClient, Http1Builder, Http2Builder,
-        InnerRequest, NetworkScheme, NetworkSchemeBuilder,
+        Builder, Client as HyperClient, Http1Builder, Http2Builder, InnerRequest, NetworkScheme,
+        NetworkSchemeBuilder, connect::HttpConnector,
     },
-    rt::{tokio::TokioTimer, TokioExecutor},
+    rt::{TokioExecutor, tokio::TokioTimer},
 };
-use crate::{error, impl_debug, Http1Config, Http2Config, TlsConfig};
+use crate::{Http1Config, Http2Config, TlsConfig, error, impl_debug};
+use crate::{IntoUrl, Method, Proxy, StatusCode, Url};
 use crate::{
     redirect,
     tls::{AlpnProtos, BoringTlsConnector, RootCertStoreProvider, TlsVersion},
 };
-use crate::{IntoUrl, Method, Proxy, StatusCode, Url};
 
 use super::decoder::Accepts;
 use super::request::{Request, RequestBuilder};
@@ -43,12 +43,12 @@ use super::{Body, EmulationProviderFactory};
 use arc_swap::{ArcSwap, Guard};
 use bytes::Bytes;
 use http::{
+    HeaderName, Uri, Version,
     header::{
-        Entry, HeaderMap, HeaderValue, ACCEPT_ENCODING, CONTENT_ENCODING, CONTENT_LENGTH,
-        CONTENT_TYPE, LOCATION, PROXY_AUTHORIZATION, RANGE, REFERER, TRANSFER_ENCODING, USER_AGENT,
+        ACCEPT_ENCODING, CONTENT_ENCODING, CONTENT_LENGTH, CONTENT_TYPE, Entry, HeaderMap,
+        HeaderValue, LOCATION, PROXY_AUTHORIZATION, RANGE, REFERER, TRANSFER_ENCODING, USER_AGENT,
     },
     uri::Scheme,
-    HeaderName, Uri, Version,
 };
 use log::{debug, trace};
 use pin_project_lite::pin_project;
@@ -2030,8 +2030,8 @@ impl Future for Pending {
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let inner = self.inner();
         match inner.get_mut() {
-            PendingInner::Request(ref mut req) => Pin::new(req).poll(cx),
-            PendingInner::Error(ref mut err) => Poll::Ready(Err(err
+            PendingInner::Request(req) => Pin::new(req).poll(cx),
+            PendingInner::Error(err) => Poll::Ready(Err(err
                 .take()
                 .expect("Pending error polled more than once"))),
         }

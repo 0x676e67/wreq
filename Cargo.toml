@@ -9,8 +9,8 @@ documentation = "https://docs.rs/rquest"
 authors = ["0x676e67 <gngppz@gmail.com>"]
 readme = "README.md"
 license = "Apache-2.0"
-edition = "2021"
-rust-version = "1.80"
+edition = "2024"
+rust-version = "1.85"
 
 [package.metadata.docs.rs]
 all-features = true

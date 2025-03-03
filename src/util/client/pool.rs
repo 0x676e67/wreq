@@ -8,7 +8,7 @@ use std::num::NonZero;
 use std::ops::{Deref, DerefMut};
 use std::pin::Pin;
 use std::sync::{Arc, Weak};
-use std::task::{self, ready, Poll};
+use std::task::{self, Poll, ready};
 use std::time::{Duration, Instant};
 
 use antidote::Mutex;

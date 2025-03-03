@@ -10,12 +10,12 @@ use std::{
     net::{IpAddr, Ipv4Addr, Ipv6Addr},
     ops::{Deref, DerefMut},
     pin::Pin,
-    task::{ready, Context, Poll},
+    task::{Context, Poll, ready},
 };
 
-use crate::{error, Error, IntoUrl, RequestBuilder, Response};
+use crate::{Error, IntoUrl, RequestBuilder, Response, error};
 use futures_util::{Sink, SinkExt, Stream, StreamExt};
-use http::{header, uri::Scheme, HeaderMap, HeaderName, HeaderValue, Method, StatusCode, Version};
+use http::{HeaderMap, HeaderName, HeaderValue, Method, StatusCode, Version, header, uri::Scheme};
 use hyper2::ext::Protocol;
 use serde::Serialize;
 use tokio_tungstenite::tungstenite::{self, protocol};

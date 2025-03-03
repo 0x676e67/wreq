@@ -12,8 +12,8 @@ pub mod service;
 
 use crate::header::{Entry, HeaderMap, HeaderValue, OccupiedEntry};
 use http::{
-    uri::{Authority, PathAndQuery, Scheme},
     Uri,
+    uri::{Authority, PathAndQuery, Scheme},
 };
 
 pub fn basic_auth<U, P>(username: U, password: Option<P>) -> HeaderValue

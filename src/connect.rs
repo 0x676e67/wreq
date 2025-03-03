@@ -1,7 +1,7 @@
 use self::tls_conn::BoringTlsConn;
 use crate::tls::{BoringTlsConnector, HttpsConnector, MaybeHttpsStream};
-use crate::util::client::connect::{Connected, Connection};
 use crate::util::client::Dst;
+use crate::util::client::connect::{Connected, Connection};
 use crate::util::rt::TokioIo;
 use crate::util::{self, into_uri};
 use http::uri::Scheme;
@@ -10,7 +10,7 @@ use pin_project_lite::pin_project;
 use sealed::{Conn, Unnameable};
 use tokio_boring2::SslStream;
 use tower::util::{BoxCloneSyncServiceLayer, MapRequestLayer};
-use tower::{timeout::TimeoutLayer, util::BoxCloneSyncService, ServiceBuilder};
+use tower::{ServiceBuilder, timeout::TimeoutLayer, util::BoxCloneSyncService};
 use tower_service::Service;
 
 use std::future::Future;
@@ -20,7 +20,7 @@ use std::task::{Context, Poll};
 use std::time::Duration;
 
 use crate::dns::DynResolver;
-use crate::error::{cast_to_internal_error, BoxError};
+use crate::error::{BoxError, cast_to_internal_error};
 use crate::proxy::ProxyScheme;
 
 pub(crate) type HttpConnector = util::client::connect::HttpConnector<DynResolver>;

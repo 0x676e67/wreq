@@ -1,7 +1,7 @@
 use std::fmt;
 use std::future::Future;
 use std::pin::Pin;
-use std::task::{ready, Context, Poll};
+use std::task::{Context, Poll, ready};
 use std::time::Duration;
 
 use bytes::Bytes;

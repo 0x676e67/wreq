@@ -41,10 +41,12 @@ async fn test_gzip_empty_body() {
 async fn test_accept_header_is_not_changed_if_set() {
     let server = server::http(move |req| async move {
         assert_eq!(req.headers()["accept"], "application/json");
-        assert!(req.headers()["accept-encoding"]
-            .to_str()
-            .unwrap()
-            .contains("gzip"));
+        assert!(
+            req.headers()["accept-encoding"]
+                .to_str()
+                .unwrap()
+                .contains("gzip")
+        );
         http::Response::default()
     });
 
@@ -115,10 +117,12 @@ async fn gzip_case(response_size: usize, chunk_size: usize) {
     response.extend(&gzipped_content);
 
     let server = server::http(move |req| {
-        assert!(req.headers()["accept-encoding"]
-            .to_str()
-            .unwrap()
-            .contains("gzip"));
+        assert!(
+            req.headers()["accept-encoding"]
+                .to_str()
+                .unwrap()
+                .contains("gzip")
+        );
 
         let gzipped = gzipped_content.clone();
         async move {

@@ -4,7 +4,7 @@ use std::future::Future;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::time::Duration;
 
-use http::{request::Parts, Request as HttpRequest, Version};
+use http::{Request as HttpRequest, Version, request::Parts};
 use serde::Serialize;
 
 use super::body::Body;
@@ -14,9 +14,9 @@ use super::multipart;
 use super::response::Response;
 #[cfg(feature = "cookies")]
 use crate::cookie;
-use crate::header::{HeaderMap, HeaderName, HeaderValue, CONTENT_TYPE};
+use crate::header::{CONTENT_TYPE, HeaderMap, HeaderName, HeaderValue};
 use crate::util::client::{NetworkScheme, NetworkSchemeBuilder};
-use crate::{redirect, IntoUrl, Method, Proxy, Url};
+use crate::{IntoUrl, Method, Proxy, Url, redirect};
 #[cfg(feature = "cookies")]
 use std::sync::Arc;
 

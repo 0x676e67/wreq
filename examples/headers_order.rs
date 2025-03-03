@@ -1,4 +1,4 @@
-use http::{header, HeaderName, HeaderValue};
+use http::{HeaderName, HeaderValue, header};
 
 const HEADER_ORDER: &[HeaderName] = &[
     header::USER_AGENT,

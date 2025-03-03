@@ -3,10 +3,10 @@ use std::fmt;
 use std::net::SocketAddr;
 use std::sync::{Arc, LazyLock};
 
-use crate::into_url::{IntoUrl, IntoUrlSealed};
 use crate::Url;
+use crate::into_url::{IntoUrl, IntoUrlSealed};
 
-use http::{header::HeaderValue, Uri};
+use http::{Uri, header::HeaderValue};
 use ipnet::IpNet;
 use percent_encoding::percent_decode;
 use std::collections::HashMap;
@@ -805,11 +805,11 @@ enum Intercept {
 impl Intercept {
     fn set_basic_auth(&mut self, username: &str, password: &str) {
         match self {
-            Intercept::All(ref mut s)
-            | Intercept::Http(ref mut s)
-            | Intercept::Https(ref mut s) => s.set_basic_auth(username, password),
+            Intercept::All(s) | Intercept::Http(s) | Intercept::Https(s) => {
+                s.set_basic_auth(username, password)
+            }
             Intercept::System(_) => unimplemented!(),
-            Intercept::Custom(ref mut custom) => {
+            Intercept::Custom(custom) => {
                 let header = encode_basic_auth(username, password);
                 custom.auth = Some(header);
             }
@@ -818,11 +818,11 @@ impl Intercept {
 
     fn set_custom_http_auth(&mut self, header_value: HeaderValue) {
         match self {
-            Intercept::All(ref mut s)
-            | Intercept::Http(ref mut s)
-            | Intercept::Https(ref mut s) => s.set_custom_http_auth(header_value),
+            Intercept::All(s) | Intercept::Http(s) | Intercept::Https(s) => {
+                s.set_custom_http_auth(header_value)
+            }
             Intercept::System(_) => unimplemented!(),
-            Intercept::Custom(ref mut custom) => {
+            Intercept::Custom(custom) => {
                 custom.auth = Some(header_value);
             }
         }
@@ -1132,11 +1132,7 @@ fn extract_type_prefix(address: &str) -> Option<&str> {
             let prefix = &address[..indice];
             let contains_banned = prefix.contains([':', '/']);
 
-            if !contains_banned {
-                Some(prefix)
-            } else {
-                None
-            }
+            if !contains_banned { Some(prefix) } else { None }
         }
     } else {
         None

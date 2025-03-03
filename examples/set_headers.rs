@@ -1,4 +1,4 @@
-use http::{header, HeaderValue};
+use http::{HeaderValue, header};
 
 #[tokio::main]
 async fn main() -> Result<(), rquest::Error> {

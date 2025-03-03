@@ -1,7 +1,7 @@
 #![cfg(not(target_arch = "wasm32"))]
 mod support;
 use http_body_util::BodyExt;
-use rquest::{redirect::Policy, Body};
+use rquest::{Body, redirect::Policy};
 use support::server;
 
 #[tokio::test]

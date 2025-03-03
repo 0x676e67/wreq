@@ -1,6 +1,6 @@
 /// referrer: https://github.com/cloudflare/boring/blob/master/hyper-boring/src/lib.rs
 use super::cache::{SessionCache, SessionKey};
-use super::{key_index, HandshakeSettings, MaybeHttpsStream};
+use super::{HandshakeSettings, MaybeHttpsStream, key_index};
 
 use crate::connect::HttpConnector;
 use crate::error::BoxError;
@@ -15,8 +15,8 @@ use boring2::ssl::{
     ConnectConfiguration, Ssl, SslConnector, SslConnectorBuilder, SslMethod, SslOptions, SslRef,
     SslSessionCacheMode,
 };
-use http::uri::Scheme;
 use http::Uri;
+use http::uri::Scheme;
 use hyper2::rt::{Read, Write};
 
 use tokio_boring2::SslStream;

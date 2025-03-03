@@ -1,10 +1,10 @@
 #![allow(missing_debug_implementations)]
 
 use super::NetworkScheme;
-use crate::{error::BoxError, AlpnProtos};
+use crate::{AlpnProtos, error::BoxError};
 use http::{
-    header::CONTENT_LENGTH, request::Builder, Error, HeaderMap, HeaderName, HeaderValue, Method,
-    Request, Uri, Version,
+    Error, HeaderMap, HeaderName, HeaderValue, Method, Request, Uri, Version,
+    header::CONTENT_LENGTH, request::Builder,
 };
 use http_body::Body;
 use std::{any::Any, marker::PhantomData};
