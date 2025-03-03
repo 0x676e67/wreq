@@ -63,6 +63,8 @@ async fn main() -> Result<(), rquest::Error> {
 
   In fact, most device models have the same `TLS`/`HTTP2` configuration, except that the `User-Agent` is changed.
 
+  Device emulation is maintained by [rquest-util](https://github.com/0x676e67/rquest-util).
+
     <details>
 
     <summary>Default device emulation types</summary>
