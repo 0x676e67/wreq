@@ -924,12 +924,8 @@ impl ProxyScheme {
 impl fmt::Debug for ProxyScheme {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            ProxyScheme::Http {
-                auth: _auth, host, ..
-            } => write!(f, "http://{}", host),
-            ProxyScheme::Https {
-                auth: _auth, host, ..
-            } => write!(f, "https://{}", host),
+            ProxyScheme::Http { host, .. } => write!(f, "http://{}", host),
+            ProxyScheme::Https { host, .. } => write!(f, "https://{}", host),
             #[cfg(feature = "socks")]
             ProxyScheme::Socks4 { addr, remote_dns } => {
                 let h = if *remote_dns { "a" } else { "" };
