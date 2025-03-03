@@ -1,4 +1,4 @@
-use rquest::{Client, EmulationProvider};
+use rquest::{AlpsProtos, Client, EmulationProvider, TlsVersion};
 use rquest::{SslCurve, TlsConfig};
 
 #[tokio::test]
@@ -108,11 +108,19 @@ async fn test_alps_new_endpoint() -> Result<(), rquest::Error> {
     let client = rquest::Client::builder()
         .emulation(
             EmulationProvider::builder()
-                .tls_config(TlsConfig::builder().alps_use_new_codepoint(true).build())
+                .tls_config(
+                    TlsConfig::builder()
+                        .min_tls_version(TlsVersion::TLS_1_2)
+                        .max_tls_version(TlsVersion::TLS_1_3)
+                        .alps_protos(AlpsProtos::HTTP2)
+                        .alps_use_new_codepoint(true)
+                        .build(),
+                )
                 .build(),
         )
         .build()?;
 
-    let _ = client.get("https://google.com").send().await?;
+    let resp = client.get("https://www.google.com").send().await?;
+    assert!(resp.status().is_success());
     Ok(())
 }
