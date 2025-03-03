@@ -254,7 +254,7 @@ impl WebSocketRequestBuilder {
             )
         )
     ))]
-    #[cfg_attr(docsrs, feature = "apple-network-device-binding")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "apple-network-device-binding")))]
     pub fn interface<I>(mut self, interface: I) -> Self
     where
         I: Into<std::borrow::Cow<'static, str>>,

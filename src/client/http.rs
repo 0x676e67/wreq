@@ -855,7 +855,7 @@ impl ClientBuilder {
             )
         )
     ))]
-    #[cfg_attr(docsrs, feature = "apple-network-device-binding")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "apple-network-device-binding")))]
     pub fn interface<T>(mut self, interface: T) -> ClientBuilder
     where
         T: Into<Cow<'static, str>>,
