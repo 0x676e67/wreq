@@ -27,15 +27,14 @@ jobs:
 
   docs:
     name: Docs
-    needs: [test]
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-      - name: Check documentation
+      - uses: actions/checkout@v4
+      - uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          override: true
+      - name: Build docs
         run: cargo doc --document-private-items --all-features
 
   tests:
