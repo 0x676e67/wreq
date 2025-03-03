@@ -11,7 +11,7 @@ async fn main() -> Result<(), rquest::Error> {
 
     // Set cookie provider
     client
-        .as_mut()
+        .update()
         .cookie_provider(Arc::new(Jar::default()))
         .apply()?;
 

@@ -1497,25 +1497,29 @@ impl Client {
         }
     }
 
-    /// Returns a mutable reference to the internal state of the `Client` wrapped in a `ClientMut`.
+    /// Returns a `ClientUpdate` instance to modify the internal state of the `Client`.
     ///
-    /// This method allows you to obtain a mutable reference to the internal state of the `Client`
-    /// by wrapping it in a `ClientMut`. This is useful when you need to modify the internal state
-    /// of the `Client` while ensuring that the modifications are safe and properly synchronized.
+    /// This method allows you to obtain a `ClientUpdate` instance, which provides methods
+    /// to mutate the internal state of the `Client`. This is useful when you need to modify
+    /// the client's configuration or state after it has been created.
     ///
     /// # Returns
     ///
-    /// * `ClientMut<'_>` - A wrapper around a mutable reference to the internal state of the `Client`.
+    /// A `ClientUpdate<'_>` instance that can be used to modify the internal state of the `Client`.
     ///
     /// # Example
     ///
+    /// ```rust
+    /// let client = rquest::Client::new();
+    /// client.update()
+    ///     .headers(|headers| {
+    ///         headers.insert("X-Custom-Header", HeaderValue::from_static("value"));
+    ///     })
+    ///     .apply()
+    ///     .unwrap();
     /// ```
-    /// let mut client = rquest::Client::new();
-    /// let mut as_mut = client.as_mut();
-    /// // Modify the internal state of the client using `as_mut`
-    /// ```
-    pub fn as_mut(&self) -> ClientMut<'_> {
-        ClientMut {
+    pub fn update(&self) -> ClientUpdate<'_> {
+        ClientUpdate {
             inner: self.inner.as_ref(),
             inner_ref: (**self.inner.load()).clone(),
             error: None,
@@ -1676,13 +1680,13 @@ impl_debug!(ClientInner,{
 ///
 /// This struct provides methods to mutate the state of a `ClientInner`.
 #[derive(Debug)]
-pub struct ClientMut<'c> {
+pub struct ClientUpdate<'c> {
     inner: &'c ArcSwap<ClientInner>,
     inner_ref: ClientInner,
     error: Option<Error>,
 }
 
-impl<'c> ClientMut<'c> {
+impl<'c> ClientUpdate<'c> {
     /// Modifies the headers for this client using the provided closure.
     ///
     /// This method allows you to modify the headers for the client in a flexible way by providing a closure
@@ -1695,7 +1699,7 @@ impl<'c> ClientMut<'c> {
     /// # Returns
     ///
     /// * `ClientMut<'c>` - The modified client with the updated headers.
-    pub fn headers<F>(mut self, f: F) -> ClientMut<'c>
+    pub fn headers<F>(mut self, f: F) -> ClientUpdate<'c>
     where
         F: FnOnce(&mut HeaderMap),
     {
@@ -1712,7 +1716,7 @@ impl<'c> ClientMut<'c> {
     /// # Returns
     ///
     /// A mutable reference to the `Client` instance with the applied headers order.
-    pub fn headers_order<T>(mut self, order: T) -> ClientMut<'c>
+    pub fn headers_order<T>(mut self, order: T) -> ClientUpdate<'c>
     where
         T: Into<Cow<'static, [HeaderName]>>,
     {
@@ -1722,7 +1726,7 @@ impl<'c> ClientMut<'c> {
 
     /// Set the cookie provider for this client.
     #[cfg(feature = "cookies")]
-    pub fn cookie_provider<C>(mut self, cookie_store: Arc<C>) -> ClientMut<'c>
+    pub fn cookie_provider<C>(mut self, cookie_store: Arc<C>) -> ClientUpdate<'c>
     where
         C: cookie::CookieStore + 'static,
     {
@@ -1739,7 +1743,7 @@ impl<'c> ClientMut<'c> {
     ///
     /// Default is `None`.
     #[inline]
-    pub fn local_address<T>(mut self, addr: T) -> ClientMut<'c>
+    pub fn local_address<T>(mut self, addr: T) -> ClientUpdate<'c>
     where
         T: Into<Option<IpAddr>>,
     {
@@ -1750,7 +1754,7 @@ impl<'c> ClientMut<'c> {
     /// Set that all sockets are bound to the configured IPv4 or IPv6 address
     /// (depending on host's preferences) before connection.
     #[inline]
-    pub fn local_addresses<V4, V6>(mut self, ipv4: V4, ipv6: V6) -> ClientMut<'c>
+    pub fn local_addresses<V4, V6>(mut self, ipv4: V4, ipv6: V6) -> ClientUpdate<'c>
     where
         V4: Into<Option<Ipv4Addr>>,
         V6: Into<Option<Ipv6Addr>>,
@@ -1776,7 +1780,7 @@ impl<'c> ClientMut<'c> {
         )
     ))]
     #[inline]
-    pub fn interface<T>(mut self, interface: T) -> ClientMut<'c>
+    pub fn interface<T>(mut self, interface: T) -> ClientUpdate<'c>
     where
         T: Into<Cow<'static, str>>,
     {
@@ -1795,7 +1799,7 @@ impl<'c> ClientMut<'c> {
     ///
     /// If `Some`, the provided proxies will be used, and the client will check if any of them require HTTP authentication.
     /// If `None`, all proxies will be cleared and HTTP authentication will be disabled.
-    pub fn proxies<P>(mut self, proxies: P) -> ClientMut<'c>
+    pub fn proxies<P>(mut self, proxies: P) -> ClientUpdate<'c>
     where
         P: IntoIterator,
         P::Item: Into<Proxy>,
@@ -1809,7 +1813,7 @@ impl<'c> ClientMut<'c> {
     ///
     /// This method allows you to clear the proxies for the client, ensuring thread safety. It will
     /// remove the current proxies and return the old proxies, if any.
-    pub fn unset_proxies(mut self) -> ClientMut<'c> {
+    pub fn unset_proxies(mut self) -> ClientUpdate<'c> {
         self.inner_ref.proxies.clear();
         self
     }
@@ -1839,7 +1843,7 @@ impl<'c> ClientMut<'c> {
     /// let mut client = Client::builder().build().unwrap();
     /// client.emulation(Emulation::Firefox128);
     /// ```
-    pub fn emulation<P>(mut self, factory: P) -> ClientMut<'c>
+    pub fn emulation<P>(mut self, factory: P) -> ClientUpdate<'c>
     where
         P: EmulationProviderFactory,
     {

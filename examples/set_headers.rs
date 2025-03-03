@@ -10,7 +10,7 @@ async fn main() -> Result<(), rquest::Error> {
     println!("{}", resp.text().await?);
 
     // Set a header
-    client.as_mut().headers(update_headers).apply()?;
+    client.update().headers(update_headers).apply()?;
 
     // Use the API you're already familiar with
     let resp = client.get("https://tls.peet.ws/api/all").send().await?;

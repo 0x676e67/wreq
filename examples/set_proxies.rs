@@ -11,12 +11,12 @@ async fn main() -> Result<(), rquest::Error> {
 
     // Set the proxies
     let proxy = rquest::Proxy::all("socks5h://127.0.0.1:6153")?;
-    client.as_mut().proxies(vec![proxy]).apply()?;
+    client.update().proxies(vec![proxy]).apply()?;
     let resp = client.get("https://api.ip.sb/ip").send().await?;
     println!("{}", resp.text().await?);
 
     // Unset the proxies
-    client.as_mut().unset_proxies().apply()?;
+    client.update().unset_proxies().apply()?;
     let resp = client.get("https://api.ip.sb/ip").send().await?;
     println!("{}", resp.text().await?);
     Ok(())

@@ -25,7 +25,7 @@ async fn main() -> Result<(), rquest::Error> {
     let client = Client::builder().build()?;
 
     client
-        .as_mut()
+        .update()
         .headers_order(HEADER_ORDER)
         .interface("utun6")
         .apply()?;

@@ -355,7 +355,7 @@ pub use self::client::websocket::{
     WebSocketResponse,
 };
 pub use self::client::{
-    Body, Client, ClientBuilder, ClientMut, EmulationProvider, EmulationProviderFactory,
+    Body, Client, ClientBuilder, ClientUpdate, EmulationProvider, EmulationProviderFactory,
     Http1Config, Http2Config, Request, RequestBuilder, Response, Upgraded,
 };
 pub use self::proxy::{NoProxy, Proxy};
