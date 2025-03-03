@@ -1122,7 +1122,7 @@ fn parse_platform_values_impl(platform_values: String) -> SystemProxyMap {
 }
 
 /// Extract the protocol from the given address, if present
-/// For example, "https://example.com" will return Some("https")
+/// For example, "<https://example.com>" will return Some("https")
 #[cfg(any(target_os = "windows", target_os = "macos"))]
 fn extract_type_prefix(address: &str) -> Option<&str> {
     if let Some(indice) = address.find("://") {

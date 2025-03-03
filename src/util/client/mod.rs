@@ -1056,7 +1056,7 @@ impl DerefMut for Http2Builder<'_> {
     }
 }
 
-/// A builder to configure a new [`Client`](Client).
+/// A builder to configure a new [`Client`].
 ///
 /// # Example
 ///

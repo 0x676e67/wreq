@@ -316,7 +316,7 @@ pub(super) mod sealed {
 
     /// Connect to a destination, returning an IO transport.
     ///
-    /// A connector receives a [`Uri`](::http::Uri) and returns a `Future` of the
+    /// A connector receives a [`Uri`] and returns a `Future` of the
     /// ready connection.
     ///
     /// # Trait Alias

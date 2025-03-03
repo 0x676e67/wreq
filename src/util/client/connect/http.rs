@@ -27,7 +27,7 @@ use crate::util::rt::TokioIo;
 ///
 /// # Note
 ///
-/// Sets the [`HttpInfo`](HttpInfo) value on responses, which includes
+/// Sets the [`HttpInfo`] value on responses, which includes
 /// transport information such as the remote socket address used.
 #[derive(Clone)]
 pub struct HttpConnector<R = GaiResolver> {
@@ -55,7 +55,7 @@ pub struct HttpConnector<R = GaiResolver> {
 ///
 /// # Note
 ///
-/// If a different connector is used besides [`HttpConnector`](HttpConnector),
+/// If a different connector is used besides [`HttpConnector`],
 /// this value will not exist in the extensions. Consult that specific
 /// connector to see what "extra" information it might provide to responses.
 #[derive(Clone, Debug)]
@@ -232,7 +232,7 @@ impl HttpConnector {
 impl<R> HttpConnector<R> {
     /// Construct a new HttpConnector.
     ///
-    /// Takes a [`Resolver`](crate::client::connect::dns#resolvers-are-services) to handle DNS lookups.
+    /// Takes a [`Resolver`](crate::util::client::connect::dns#resolvers-are-services) to handle DNS lookups.
     pub fn new_with_resolver(resolver: R) -> HttpConnector<R> {
         HttpConnector {
             config: Arc::new(Config {

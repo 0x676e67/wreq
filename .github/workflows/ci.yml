@@ -25,6 +25,19 @@ jobs:
       - name: Clippy check
         run: cargo clippy --all-targets --all-features
 
+  docs:
+    name: Docs
+    needs: [test]
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Check documentation
+        run: cargo doc --document-private-items --all-features
+
   tests:
     name: Tests
     runs-on: ubuntu-latest
@@ -36,18 +49,6 @@ jobs:
           override: true
       - name: Tests
         run: cargo test --all-features
-
-  docs:
-    name: Docs
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions-rs/toolchain@v1
-        with:
-          toolchain: stable
-          override: true
-      - name: Build docs
-        run: cargo doc --all-features
 
   windows:
     name: Windows
