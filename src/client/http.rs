@@ -1398,7 +1398,7 @@ impl Client {
     /// An `Option<HeaderValue>` containing the `User-Agent` header value if it is set, or `None` if it is not.
     #[inline]
     pub fn user_agent(&self) -> Option<HeaderValue> {
-        self.headers().remove(USER_AGENT)
+        self.inner.load().headers.get(USER_AGENT).cloned()
     }
 
     /// Retrieves a headers for this client.
