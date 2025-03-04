@@ -1274,22 +1274,6 @@ impl Client {
     }
 
     pub(super) fn execute_request(&self, req: Request) -> Pending {
-        #[cfg(any(feature = "cookies", feature = "cookies-abstract"))]
-        let (
-            method,
-            url,
-            mut headers,
-            body,
-            timeout,
-            read_timeout,
-            version,
-            redirect,
-            cookie_store,
-            network_scheme,
-            protocal,
-        ) = req.pieces();
-
-        #[cfg(not(any(feature = "cookies", feature = "cookies-abstract")))]
         let (
             method,
             url,
@@ -1325,7 +1309,7 @@ impl Client {
         // Add cookies from the cookie store.
         #[cfg(any(feature = "cookies", feature = "cookies-abstract"))]
         {
-            if let Some(cookie_store) = cookie_store.as_ref().or(client.cookie_store.as_ref()) {
+            if let Some(cookie_store) = client.cookie_store.as_ref() {
                 if headers.get(crate::header::COOKIE).is_none() {
                     add_cookie_header(&mut headers, &**cookie_store, &url);
                 }
@@ -1393,8 +1377,6 @@ impl Client {
                 retry_count: 0,
                 max_retry_count: client.http2_max_retry_count,
                 redirect,
-                #[cfg(any(feature = "cookies", feature = "cookies-abstract"))]
-                cookie_store,
                 network_scheme,
                 client,
                 in_flight,
@@ -1898,32 +1880,6 @@ enum PendingInner {
     Error(Option<Error>),
 }
 
-#[cfg(any(feature = "cookies", feature = "cookies-abstract"))]
-pin_project! {
-    struct PendingRequest {
-        method: Method,
-        url: Url,
-        headers: HeaderMap,
-        body: Option<Option<Bytes>>,
-        version: Option<Version>,
-        urls: Vec<Url>,
-        retry_count: usize,
-        max_retry_count: usize,
-        redirect: Option<redirect::Policy>,
-        cookie_store: Option<Arc<dyn cookie::CookieStore>>,
-        network_scheme: NetworkScheme,
-        client: Guard<Arc<ClientInner>>,
-        #[pin]
-        in_flight: ResponseFuture,
-        #[pin]
-        total_timeout: Option<Pin<Box<Sleep>>>,
-        #[pin]
-        read_timeout_fut: Option<Pin<Box<Sleep>>>,
-        read_timeout: Option<Duration>,
-    }
-}
-
-#[cfg(not(any(feature = "cookies", feature = "cookies-abstract")))]
 pin_project! {
     struct PendingRequest {
         method: Method,
@@ -2116,14 +2072,8 @@ impl Future for PendingRequest {
             };
 
             #[cfg(any(feature = "cookies", feature = "cookies-abstract"))]
-            let cookie_store = self
-                .cookie_store
-                .as_ref()
-                .or(self.client.cookie_store.as_ref());
-
-            #[cfg(any(feature = "cookies", feature = "cookies-abstract"))]
             {
-                if let Some(cookie_store) = cookie_store {
+                if let Some(cookie_store) = self.client.cookie_store.as_ref() {
                     let mut cookies =
                         cookie::extract_response_cookie_headers(res.headers()).peekable();
                     if cookies.peek().is_some() {
@@ -2246,16 +2196,10 @@ impl Future for PendingRequest {
                                 _ => Body::empty(),
                             };
 
-                            #[cfg(any(feature = "cookies", feature = "cookies-abstract"))]
-                            let cookie_store = self
-                                .cookie_store
-                                .as_ref()
-                                .or_else(|| self.client.cookie_store.as_ref());
-
                             // Add cookies from the cookie store.
                             #[cfg(any(feature = "cookies", feature = "cookies-abstract"))]
                             {
-                                if let Some(cookie_store) = cookie_store {
+                                if let Some(cookie_store) = self.client.cookie_store.as_ref() {
                                     add_cookie_header(&mut headers, &**cookie_store, &self.url);
                                 }
                             }
