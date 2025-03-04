@@ -12,43 +12,13 @@ use super::http::{Client, Pending};
 #[cfg(feature = "multipart")]
 use super::multipart;
 use super::response::Response;
-#[cfg(feature = "cookies")]
+#[cfg(any(feature = "cookies", feature = "cookies-abstract"))]
 use crate::cookie;
 use crate::header::{CONTENT_TYPE, HeaderMap, HeaderName, HeaderValue};
 use crate::util::client::{NetworkScheme, NetworkSchemeBuilder};
 use crate::{IntoUrl, Method, Proxy, Url, redirect};
-#[cfg(feature = "cookies")]
+#[cfg(any(feature = "cookies", feature = "cookies-abstract"))]
 use std::sync::Arc;
-
-#[cfg(not(feature = "cookies"))]
-type PiecesWithCookieStore = (
-    Method,
-    Url,
-    HeaderMap,
-    Option<Body>,
-    Option<Duration>,
-    Option<Duration>,
-    Option<Version>,
-    Option<redirect::Policy>,
-    (),
-    NetworkScheme,
-    Option<hyper2::ext::Protocol>,
-);
-
-#[cfg(feature = "cookies")]
-type PiecesWithCookieStore = (
-    Method,
-    Url,
-    HeaderMap,
-    Option<Body>,
-    Option<Duration>,
-    Option<Duration>,
-    Option<Version>,
-    Option<redirect::Policy>,
-    Option<Arc<dyn cookie::CookieStore>>,
-    NetworkScheme,
-    Option<hyper2::ext::Protocol>,
-);
 
 /// A request which can be executed with `Client::execute()`.
 pub struct Request {
@@ -60,7 +30,7 @@ pub struct Request {
     read_timeout: Option<Duration>,
     version: Option<Version>,
     redirect: Option<redirect::Policy>,
-    #[cfg(feature = "cookies")]
+    #[cfg(any(feature = "cookies", feature = "cookies-abstract"))]
     cookie_store: Option<Arc<dyn cookie::CookieStore>>,
     network_scheme: NetworkSchemeBuilder,
     protocol: Option<hyper2::ext::Protocol>,
@@ -88,7 +58,7 @@ impl Request {
             read_timeout: None,
             version: None,
             redirect: None,
-            #[cfg(feature = "cookies")]
+            #[cfg(any(feature = "cookies", feature = "cookies-abstract"))]
             cookie_store: None,
             network_scheme: NetworkScheme::builder(),
             protocol: None,
@@ -144,7 +114,7 @@ impl Request {
     }
 
     /// Get a mutable reference to the cookie store.
-    #[cfg(feature = "cookies")]
+    #[cfg(any(feature = "cookies", feature = "cookies-abstract"))]
     #[inline]
     pub fn cookie_store_mut(&mut self) -> &mut Option<Arc<dyn cookie::CookieStore>> {
         &mut self.cookie_store
@@ -219,7 +189,7 @@ impl Request {
         *req.version_mut() = self.version();
         *req.redirect_mut() = self.redirect.clone();
         *req.network_scheme_mut() = self.network_scheme.clone();
-        #[cfg(feature = "cookies")]
+        #[cfg(any(feature = "cookies", feature = "cookies-abstract"))]
         {
             *req.cookie_store_mut() = self.cookie_store.clone();
         }
@@ -227,7 +197,21 @@ impl Request {
         Some(req)
     }
 
-    pub(super) fn pieces(self) -> PiecesWithCookieStore {
+    #[cfg(not(any(feature = "cookies", feature = "cookies-abstract")))]
+    pub(super) fn pieces(
+        self,
+    ) -> (
+        Method,
+        Url,
+        HeaderMap,
+        Option<Body>,
+        Option<Duration>,
+        Option<Duration>,
+        Option<Version>,
+        Option<redirect::Policy>,
+        NetworkScheme,
+        Option<hyper2::ext::Protocol>,
+    ) {
         (
             self.method,
             self.url,
@@ -237,10 +221,37 @@ impl Request {
             self.read_timeout,
             self.version,
             self.redirect,
-            #[cfg(feature = "cookies")]
+            self.network_scheme.build(),
+            self.protocol,
+        )
+    }
+
+    #[cfg(any(feature = "cookies", feature = "cookies-abstract"))]
+    pub(super) fn pieces(
+        self,
+    ) -> (
+        Method,
+        Url,
+        HeaderMap,
+        Option<Body>,
+        Option<Duration>,
+        Option<Duration>,
+        Option<Version>,
+        Option<redirect::Policy>,
+        Option<Arc<dyn cookie::CookieStore>>,
+        NetworkScheme,
+        Option<hyper2::ext::Protocol>,
+    ) {
+        (
+            self.method,
+            self.url,
+            self.headers,
+            self.body,
+            self.timeout,
+            self.read_timeout,
+            self.version,
+            self.redirect,
             self.cookie_store,
-            #[cfg(not(feature = "cookies"))]
-            (),
             self.network_scheme.build(),
             self.protocol,
         )
@@ -607,7 +618,7 @@ impl RequestBuilder {
     }
 
     /// Set the cookie store for this request.
-    #[cfg(feature = "cookies")]
+    #[cfg(any(feature = "cookies", feature = "cookies-abstract"))]
     pub fn cookie_store(mut self, cookie_store: Arc<dyn cookie::CookieStore>) -> RequestBuilder {
         if let Ok(ref mut req) = self.request {
             req.cookie_store = Some(cookie_store);
@@ -846,7 +857,7 @@ where
             // TODO: Add version
             version: None,
             redirect: None,
-            #[cfg(feature = "cookies")]
+            #[cfg(any(feature = "cookies", feature = "cookies-abstract"))]
             cookie_store: None,
             network_scheme: NetworkScheme::builder(),
             protocol: None,

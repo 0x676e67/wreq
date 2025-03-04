@@ -368,7 +368,7 @@ pub use hyper2::{Priority, PseudoOrder, SettingsOrder, StreamDependency, StreamI
 
 mod client;
 mod connect;
-#[cfg(feature = "cookies")]
+#[cfg(any(feature = "cookies", feature = "cookies-abstract"))]
 pub mod cookie;
 pub mod dns;
 mod proxy;

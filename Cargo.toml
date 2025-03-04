@@ -35,7 +35,9 @@ websocket = ["dep:tokio-tungstenite"]
 
 charset = ["dep:encoding_rs"]
 
-cookies = ["dep:cookie_crate", "dep:cookie_store"]
+cookies = ["cookies-abstract", "dep:cookie_store"]
+
+cookies-abstract = ["dep:cookie_crate"]
 
 gzip = ["dep:async-compression", "async-compression?/gzip", "dep:tokio-util"]
 

@@ -1,12 +1,12 @@
 //! HTTP Cookies
 
+#[cfg(feature = "cookies")]
 use antidote::RwLock;
 use std::convert::TryInto;
 use std::fmt;
 use std::time::SystemTime;
 
 use crate::header::{HeaderValue, SET_COOKIE};
-use bytes::Bytes;
 
 /// Actions for a persistent cookie store providing session support.
 pub trait CookieStore: Send + Sync {
@@ -32,11 +32,11 @@ pub struct Cookie<'a>(cookie_crate::Cookie<'a>);
 /// For more advanced scenarios, such as needing to serialize the store or
 /// manipulate it between requests, you may refer to the
 /// [rquest_cookie_store crate](https://crates.io/crates/rquest_cookie_store).
+#[cfg(feature = "cookies")]
 #[derive(Debug)]
 pub struct Jar(RwLock<cookie_store::CookieStore>);
 
 // ===== impl Cookie =====
-
 impl<'a> Cookie<'a> {
     fn parse(value: &'a HeaderValue) -> Result<Cookie<'a>, CookieParseError> {
         std::str::from_utf8(value.as_bytes())
@@ -139,7 +139,7 @@ impl fmt::Display for CookieParseError {
 impl std::error::Error for CookieParseError {}
 
 // ===== impl Jar =====
-
+#[cfg(feature = "cookies")]
 impl Jar {
     /// Add a cookie to this jar.
     ///
@@ -165,6 +165,7 @@ impl Jar {
     }
 }
 
+#[cfg(feature = "cookies")]
 impl CookieStore for Jar {
     fn set_cookies(&self, cookie_headers: &mut dyn Iterator<Item = &HeaderValue>, url: &url::Url) {
         let iter =
@@ -192,7 +193,7 @@ impl CookieStore for Jar {
             return None;
         }
 
-        HeaderValue::from_maybe_shared(Bytes::from(s)).ok()
+        HeaderValue::from_maybe_shared(bytes::Bytes::from(s)).ok()
     }
 
     fn clear(&self) {
@@ -200,6 +201,7 @@ impl CookieStore for Jar {
     }
 }
 
+#[cfg(feature = "cookies")]
 impl Default for Jar {
     fn default() -> Self {
         Self(RwLock::new(cookie_store::CookieStore::default()))
