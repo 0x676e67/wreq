@@ -2,4 +2,4 @@
 mod load;
 mod store;
 
-pub use self::store::{RootCertStore, RootCertStoreProvider};
+pub use self::store::{RootCertStore, RootCertStoreBuilder, RootCertStoreProvider};

@@ -10,27 +10,199 @@ use boring2::{
 };
 use std::path::Path;
 
+/// A builder for constructing a `RootCertStore`.
+///
+/// This builder provides methods to add certificates to the store from various formats,
+/// and to set default paths for the certificate store. Once all desired certificates
+/// have been added, the `build` method can be used to create the `RootCertStore`.
+///
+/// # Example
+///
+/// ```rust
+/// use rquest::RootCertStore;
+///
+/// let store = RootCertStore::builder()
+///     .add_der_cert(&der_cert)
+///     .add_pem_cert(&pem_cert)
+///     .set_default_paths()
+///     .build()?;
+/// ```
+pub struct RootCertStoreBuilder {
+    builder: Result<X509StoreBuilder, Error>,
+}
+
+impl RootCertStoreBuilder {
+    /// Adds a DER-encoded certificate to the certificate store.
+    ///
+    /// # Parameters
+    ///
+    /// - `cert`: A reference to a byte slice containing the DER-encoded certificate.
+    pub fn add_der_cert<C>(mut self, cert: C) -> Self
+    where
+        C: AsRef<[u8]>,
+    {
+        if let Ok(ref mut builder) = self.builder {
+            if let Some(err) = X509::from_der(cert.as_ref())
+                .and_then(|cert| builder.add_cert(cert))
+                .map_err(error::builder)
+                .err()
+            {
+                self.builder = Err(err);
+            }
+        }
+        self
+    }
+
+    /// Adds a PEM-encoded certificate to the certificate store.
+    ///
+    /// # Parameters
+    ///
+    /// - `cert`: A reference to a byte slice containing the PEM-encoded certificate.
+    pub fn add_pem_cert<C>(mut self, cert: C) -> Self
+    where
+        C: AsRef<[u8]>,
+    {
+        if let Ok(ref mut builder) = self.builder {
+            if let Some(err) = X509::from_pem(cert.as_ref())
+                .and_then(|cert| builder.add_cert(cert))
+                .map_err(error::builder)
+                .err()
+            {
+                self.builder = Err(err);
+            }
+        }
+        self
+    }
+
+    /// Adds multiple DER-encoded certificates to the certificate store.
+    ///
+    /// # Parameters
+    ///
+    /// - `certs`: An iterator over DER-encoded certificates.
+    pub fn add_der_certs<C>(mut self, certs: C) -> Self
+    where
+        C: IntoIterator,
+        C::Item: AsRef<[u8]>,
+    {
+        if let Ok(ref mut builder) = self.builder {
+            let certs = filter_map_certs(certs, X509::from_der);
+            if let Some(err) = process_certs(certs, builder).err() {
+                self.builder = Err(err);
+            }
+        }
+        self
+    }
+
+    /// Adds multiple PEM-encoded certificates to the certificate store.
+    ///
+    /// # Parameters
+    ///
+    /// - `certs`: An iterator over PEM-encoded certificates.
+    pub fn add_pem_certs<C>(mut self, certs: C) -> Self
+    where
+        C: IntoIterator,
+        C::Item: AsRef<[u8]>,
+    {
+        if let Ok(ref mut builder) = self.builder {
+            let certs = filter_map_certs(certs, X509::from_pem);
+            if let Some(err) = process_certs(certs, builder).err() {
+                self.builder = Err(err);
+            }
+        }
+        self
+    }
+
+    /// Adds a PEM-encoded certificate stack to the certificate store.
+    ///
+    /// # Parameters
+    ///
+    /// - `certs`: A PEM-encoded certificate stack.
+    pub fn add_stack_pem_certs<C>(mut self, certs: C) -> Self
+    where
+        C: AsRef<[u8]>,
+    {
+        if let Ok(ref mut builder) = self.builder {
+            if let Some(err) = X509::stack_from_pem(certs.as_ref())
+                .map_err(error::builder)
+                .and_then(|certs| process_certs(certs.into_iter(), builder))
+                .err()
+            {
+                self.builder = Err(err);
+            }
+        }
+        self
+    }
+
+    /// Adds PEM-encoded certificates from a file to the certificate store.
+    ///
+    /// This method reads the file at the specified path, expecting it to contain a PEM-encoded
+    /// certificate stack, and then adds the certificates to the store.
+    ///
+    /// # Parameters
+    ///
+    /// - `path`: A reference to a path of the PEM file.
+    pub fn add_file_pem_certs<P>(mut self, path: P) -> Self
+    where
+        P: AsRef<Path>,
+    {
+        match std::fs::read(path) {
+            Ok(data) => return self.add_stack_pem_certs(data),
+            Err(err) => {
+                self.builder = Err(error::builder(err));
+            }
+        }
+        self
+    }
+
+    /// Load certificates from their default locations.
+    ///
+    /// These locations are read from the `SSL_CERT_FILE` and `SSL_CERT_DIR`
+    /// environment variables if present, or defaults specified at OpenSSL
+    /// build time otherwise.
+    pub fn set_default_paths(mut self) -> Self {
+        if let Ok(ref mut builder) = self.builder {
+            if let Some(err) = builder.set_default_paths().err() {
+                self.builder = Err(error::builder(err));
+            }
+        }
+        self
+    }
+
+    /// Constructs the `RootCertStore`.
+    ///
+    /// This method finalizes the builder and constructs the `RootCertStore`
+    /// containing all the added certificates.
+    #[inline]
+    pub fn build(self) -> Result<RootCertStore, Error> {
+        self.builder.map(|builder| RootCertStore(builder.build()))
+    }
+}
+
 /// A collection of certificates Store.
 pub struct RootCertStore(X509Store);
 
 /// ====== impl RootCertStore ======
 impl RootCertStore {
+    /// Creates a new `RootCertStoreBuilder`.
+    #[inline]
+    pub fn builder() -> RootCertStoreBuilder {
+        RootCertStoreBuilder {
+            builder: X509StoreBuilder::new().map_err(error::builder),
+        }
+    }
+
     /// Creates a new `RootCertStore` from a collection of DER-encoded certificates.
     ///
     /// # Parameters
     ///
     /// - `certs`: An iterator over DER-encoded certificates.
-    ///
-    /// # Returns
-    ///
-    /// A `TlsResult` containing the new `RootCertStore`.
     #[inline]
     pub fn from_der_certs<C>(certs: C) -> Result<RootCertStore, Error>
     where
         C: IntoIterator,
         C::Item: AsRef<[u8]>,
     {
-        Self::load_certs_from_iter(certs, X509::from_der)
+        load_certs_from_iter(certs, X509::from_der)
     }
 
     /// Creates a new `RootCertStore` from a collection of PEM-encoded certificates.
@@ -38,17 +210,13 @@ impl RootCertStore {
     /// # Parameters
     ///
     /// - `certs`: An iterator over PEM-encoded certificates.
-    ///
-    /// # Returns
-    ///
-    /// A `TlsResult` containing the new `RootCertStore`.
     #[inline]
     pub fn from_pem_certs<C>(certs: C) -> Result<RootCertStore, Error>
     where
         C: IntoIterator,
         C::Item: AsRef<[u8]>,
     {
-        Self::load_certs_from_iter(certs, X509::from_pem)
+        load_certs_from_iter(certs, X509::from_pem)
     }
 
     /// Creates a new `RootCertStore` from a PEM-encoded certificate stack.
@@ -56,16 +224,12 @@ impl RootCertStore {
     /// # Parameters
     ///
     /// - `certs`: A PEM-encoded certificate stack.
-    ///
-    /// # Returns
-    ///
-    /// A `TlsResult` containing the new `RootCertStore`.
     #[inline]
     pub fn from_pem_stack<C>(certs: C) -> Result<RootCertStore, Error>
     where
         C: AsRef<[u8]>,
     {
-        Self::load_certs(certs, X509::stack_from_pem)
+        load_certs_from_stack(certs, X509::stack_from_pem)
     }
 
     /// Creates a new `RootCertStore` from a PEM-encoded certificate file.
@@ -76,11 +240,7 @@ impl RootCertStore {
     /// # Parameters
     ///
     /// - `path`: A reference to a path of the PEM file.
-    ///
-    /// # Returns
-    ///
-    /// A `TlsResult` containing the new `RootCertStore` if successful, or an error if the file
-    /// cannot be read or parsed.
+    #[inline]
     pub fn from_pem_file<P>(path: P) -> Result<RootCertStore, Error>
     where
         P: AsRef<Path>,
@@ -88,123 +248,69 @@ impl RootCertStore {
         let data = std::fs::read(path).map_err(error::builder)?;
         Self::from_pem_stack(data)
     }
+}
 
-    /// Parses a provided byte slice into multiple certificates and adds them into a new `RootCertStore`.
-    ///
-    /// This method uses the supplied parsing function to convert the input byte slice
-    /// into a vector of certificates. It then iterates over the certificates and attempts
-    /// to add each certificate to an `X509StoreBuilder`.
-    ///
-    /// The method keeps track of the number of certificates successfully added (valid)
-    /// and those that failed (invalid). If no certificates are successfully added while
-    /// having seen some errors, it falls back to setting the default certificate paths.
-    ///
-    /// # Parameters
-    ///
-    /// - `certs`: A byte slice containing the encoded certificates.
-    /// - `x509`: A function that parses the byte slice into a `Vec<X509>`.
-    ///
-    /// # Returns
-    ///
-    /// A `Result` containing the new `RootCertStore` constructed from the added certificates,
-    /// or an error if parsing or building the certificate store fails.
-    fn load_certs<C, F>(certs: C, x509: F) -> Result<RootCertStore, Error>
-    where
-        C: AsRef<[u8]>,
-        F: Fn(&[u8]) -> Result<Vec<X509>, ErrorStack>,
-    {
-        let mut cert_store = X509StoreBuilder::new()?;
+fn load_certs_from_iter<C, F>(certs: C, x509: F) -> Result<RootCertStore, Error>
+where
+    C: IntoIterator,
+    C::Item: AsRef<[u8]>,
+    F: Fn(&[u8]) -> Result<X509, ErrorStack> + 'static,
+{
+    let mut store = X509StoreBuilder::new()?;
+    let certs = filter_map_certs(certs, x509);
+    process_certs(certs.into_iter(), &mut store).map(|_| RootCertStore(store.build()))
+}
 
-        let certs = x509(certs.as_ref())?;
-        let (valid_count, invalid_count) = Self::process_certs(certs.into_iter(), &mut cert_store);
+fn load_certs_from_stack<C, F>(certs: C, x509: F) -> Result<RootCertStore, Error>
+where
+    C: AsRef<[u8]>,
+    F: Fn(&[u8]) -> Result<Vec<X509>, ErrorStack>,
+{
+    let mut store = X509StoreBuilder::new()?;
+    let certs = x509(certs.as_ref())?;
+    process_certs(certs.into_iter(), &mut store).map(|_| RootCertStore(store.build()))
+}
 
-        if valid_count == 0 && invalid_count > 0 {
-            log::warn!("all certificates are invalid");
-            cert_store.set_default_paths()?;
-        }
-
-        Ok(RootCertStore(cert_store.build()))
-    }
-
-    /// Parses certificates from an iterator of byte slices and adds them to a new `RootCertStore`.
-    ///
-    /// This method works for cases where certificates are provided as an iterator.
-    /// Each item is parsed individually using the supplied parsing function.
-    /// Successfully parsed certificates are then added to an `X509StoreBuilder`
-    /// with the outcome (success or failure) being recorded.
-    ///
-    /// If none of the certificates is successfully added but some attempted additions failed,
-    /// the method falls back to setting the system’s default certificate paths.
-    ///
-    /// # Parameters
-    ///
-    /// - `certs`: An iterator where each element is a byte slice representing an encoded certificate.
-    /// - `x509`: A function that parses a certificate from the provided byte slice.
-    ///
-    /// # Returns
-    ///
-    /// A `Result` containing the constructed `RootCertStore` on success,
-    /// or an error if the parsing or building process fails.
-    fn load_certs_from_iter<C, F>(certs: C, x509: F) -> Result<RootCertStore, Error>
-    where
-        C: IntoIterator,
-        C::Item: AsRef<[u8]>,
-        F: Fn(&[u8]) -> Result<X509, ErrorStack>,
-    {
-        let mut cert_store = X509StoreBuilder::new()?;
-
-        let certs = certs
-            .into_iter()
-            .filter_map(|data| match x509(data.as_ref()) {
-                Ok(cert) => Some(cert),
-                Err(err) => {
-                    log::debug!("tls failed to parse certificate: {err:?}");
-                    None
-                }
-            });
-        let (valid_count, invalid_count) = Self::process_certs(certs, &mut cert_store);
-
-        if valid_count == 0 && invalid_count > 0 {
-            log::warn!("all certificates are invalid");
-            cert_store.set_default_paths()?;
-        }
-
-        Ok(RootCertStore(cert_store.build()))
-    }
-
-    /// Processes an iterator of parsed certificates by attempting to add each one to the certificate store.
-    ///
-    /// For each certificate in the provided iterator, this method attempts to add it to the given
-    /// `X509StoreBuilder`. It records the number of successful additions (`valid_count`)
-    /// and the number of failures (`invalid_count`). This information is used by the calling functions
-    /// to determine whether to fall back to using the default certificate paths.
-    ///
-    /// # Parameters
-    ///
-    /// - `iter`: An iterator over parsed certificates (`X509`).
-    /// - `cert_store`: A mutable reference to an `X509StoreBuilder` where certificates are added.
-    ///
-    /// # Returns
-    ///
-    /// A tuple `(valid_count, invalid_count)` where:
-    /// - `valid_count` is the number of certificates successfully added.
-    /// - `invalid_count` is the number of certificates that failed to be added.
-    fn process_certs<I>(iter: I, cert_store: &mut X509StoreBuilder) -> (i32, i32)
-    where
-        I: Iterator<Item = X509>,
-    {
-        let mut valid_count = 0;
-        let mut invalid_count = 0;
-        for cert in iter {
-            if cert_store.add_cert(cert).is_ok() {
+fn process_certs<I>(iter: I, store: &mut X509StoreBuilder) -> Result<(), Error>
+where
+    I: Iterator<Item = X509>,
+{
+    let mut valid_count = 0;
+    let mut invalid_count = 0;
+    for cert in iter {
+        match store.add_cert(cert) {
+            Ok(_) => {
                 valid_count += 1;
-            } else {
+            }
+            Err(_) => {
                 invalid_count += 1;
-                log::debug!("tls failed to add certificate");
+                log::warn!("tls failed to add certificate");
             }
         }
-        (valid_count, invalid_count)
     }
+
+    if valid_count == 0 && invalid_count > 0 {
+        return Err(error::builder("all certificates are invalid"));
+    }
+
+    Ok(())
+}
+
+fn filter_map_certs<C, F>(certs: C, f: F) -> impl Iterator<Item = X509>
+where
+    C: IntoIterator,
+    C::Item: AsRef<[u8]>,
+    F: Fn(&[u8]) -> Result<X509, ErrorStack> + 'static,
+{
+    certs
+        .into_iter()
+        .filter_map(move |data| match f(data.as_ref()) {
+            Ok(cert) => Some(cert),
+            Err(err) => {
+                log::warn!("tls failed to parse certificate: {err:?}");
+                None
+            }
+        })
 }
 
 /// The root certificate store.

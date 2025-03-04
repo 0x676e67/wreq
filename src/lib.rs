@@ -360,7 +360,8 @@ pub use self::client::{
 };
 pub use self::proxy::{NoProxy, Proxy};
 pub use self::tls::{
-    AlpnProtos, AlpsProtos, RootCertStore, RootCertStoreProvider, TlsConfig, TlsInfo, TlsVersion,
+    AlpnProtos, AlpsProtos, RootCertStore, RootCertStoreBuilder, RootCertStoreProvider, TlsConfig,
+    TlsInfo, TlsVersion,
 };
 pub use self::util::client::{Dst, Http1Builder, Http2Builder};
 pub use boring2::ssl::{CertCompressionAlgorithm, ExtensionType, SslCurve};
