@@ -45,8 +45,8 @@ use bytes::Bytes;
 use http::{
     HeaderName, Uri, Version,
     header::{
-        ACCEPT_ENCODING, CONTENT_ENCODING, CONTENT_LENGTH, CONTENT_TYPE, Entry, HeaderMap,
-        HeaderValue, LOCATION, PROXY_AUTHORIZATION, RANGE, REFERER, TRANSFER_ENCODING, USER_AGENT,
+        CONTENT_ENCODING, CONTENT_LENGTH, CONTENT_TYPE, Entry, HeaderMap, HeaderValue, LOCATION,
+        PROXY_AUTHORIZATION, REFERER, TRANSFER_ENCODING, USER_AGENT,
     },
     uri::Scheme,
 };
@@ -1323,11 +1323,18 @@ impl Client {
             }
         }
 
-        let accept_encoding = client.accepts.as_str();
-
-        if let Some(accept_encoding) = accept_encoding {
+        #[cfg(any(
+            feature = "gzip",
+            feature = "brotli",
+            feature = "zstd",
+            feature = "deflate"
+        ))]
+        if let Some(accept_encoding) = client.accepts.as_str() {
             if !headers.contains_key(ACCEPT_ENCODING) && !headers.contains_key(RANGE) {
-                headers.insert(ACCEPT_ENCODING, HeaderValue::from_static(accept_encoding));
+                headers.insert(
+                    crate::header::ACCEPT_ENCODING,
+                    crate::HeaderValue::from_static(accept_encoding),
+                );
             }
         }
 
