@@ -16,7 +16,6 @@ mod request;
 use std::error::Error as StdError;
 use std::fmt;
 use std::future::Future;
-
 use std::num::NonZeroUsize;
 use std::ops::{Deref, DerefMut};
 use std::pin::Pin;
@@ -220,7 +219,7 @@ where
     /// # fn main() {}
     /// ```
     pub fn request(&self, req: InnerRequest<B>) -> ResponseFuture {
-        let (mut req, network_scheme, version) = req.pieces();
+        let (mut req, version, network_scheme) = req.pieces();
         let is_http_connect = req.method() == Method::CONNECT;
         match req.version() {
             Version::HTTP_10 => {

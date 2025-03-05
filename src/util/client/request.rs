@@ -83,8 +83,8 @@ where
     ///
     /// let (req, network_scheme, version) = request.pieces();
     /// ```
-    pub fn pieces(self) -> (Request<B>, NetworkScheme, Option<Version>) {
-        (self.request, self.network_scheme, self.version)
+    pub fn pieces(self) -> (Request<B>, Option<Version>, NetworkScheme) {
+        (self.request, self.version, self.network_scheme)
     }
 }
 
