@@ -105,12 +105,12 @@ pub enum ProxyScheme {
     Http {
         auth: Option<HeaderValue>,
         host: http::uri::Authority,
-        headers: Option<HeaderMap>,
+        headers: Option<Arc<HeaderMap>>,
     },
     Https {
         auth: Option<HeaderValue>,
         host: http::uri::Authority,
-        headers: Option<HeaderMap>,
+        headers: Option<Arc<HeaderMap>>,
     },
     #[cfg(feature = "socks")]
     Socks4 { addr: SocketAddr, remote_dns: bool },
@@ -134,7 +134,7 @@ impl ProxyScheme {
     fn maybe_http_headers(&self) -> Option<&HeaderMap> {
         match self {
             ProxyScheme::Http { headers, .. } | ProxyScheme::Https { headers, .. } => {
-                headers.as_ref()
+                headers.as_deref()
             }
             #[cfg(feature = "socks")]
             _ => None,
@@ -836,12 +836,12 @@ impl ProxyScheme {
             ProxyScheme::Http {
                 ref mut headers, ..
             } => {
-                *headers = Some(custom_headers);
+                *headers = Some(Arc::new(custom_headers));
             }
             ProxyScheme::Https {
                 ref mut headers, ..
             } => {
-                *headers = Some(custom_headers);
+                *headers = Some(Arc::new(custom_headers));
             }
             #[cfg(feature = "socks")]
             ProxyScheme::Socks4 { .. } => {

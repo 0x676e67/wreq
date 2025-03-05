@@ -1,7 +1,7 @@
 #![allow(missing_debug_implementations)]
 
 use super::NetworkScheme;
-use crate::{AlpnProtos, error::BoxError};
+use crate::error::BoxError;
 use http::{
     Error, HeaderMap, HeaderName, HeaderValue, Method, Request, Uri, Version,
     header::CONTENT_LENGTH, request::Builder,
@@ -9,6 +9,15 @@ use http::{
 use http_body::Body;
 use std::{any::Any, marker::PhantomData};
 
+/// Represents an HTTP request with additional metadata.
+///
+/// The `InnerRequest` struct encapsulates an HTTP request along with additional
+/// metadata such as the HTTP version and network scheme. It provides methods
+/// to build and manipulate the request.
+///
+/// # Type Parameters
+///
+/// - `B`: The body type of the request, which must implement the `Body` trait.
 pub struct InnerRequest<B>
 where
     B: Body + Send + Unpin + 'static,
@@ -16,7 +25,7 @@ where
     B::Error: Into<BoxError>,
 {
     request: Request<B>,
-    alpn_protos: Option<AlpnProtos>,
+    version: Option<Version>,
     network_scheme: NetworkScheme,
 }
 
@@ -26,22 +35,68 @@ where
     B::Data: Send,
     B::Error: Into<BoxError>,
 {
+    /// Creates a new `InnerRequestBuilder`.
+    ///
+    /// This method returns a builder that can be used to construct an `InnerRequest`.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use rquest::util::client::request::InnerRequest;
+    /// use http::Method;
+    ///
+    /// let request = InnerRequest::builder()
+    ///     .method(Method::GET)
+    ///     .uri("http://example.com".parse().unwrap())
+    ///     .body(())
+    ///     .unwrap();
+    /// ```
     pub fn builder<'a>() -> InnerRequestBuilder<'a, B> {
         InnerRequestBuilder {
             builder: Request::builder(),
-            alpn_protos: None,
+            version: None,
             network_scheme: Default::default(),
             headers_order: None,
             _body: PhantomData,
         }
     }
 
-    pub fn pieces(self) -> (Request<B>, NetworkScheme, Option<AlpnProtos>) {
-        (self.request, self.network_scheme, self.alpn_protos)
+    /// Decomposes the `InnerRequest` into its components.
+    ///
+    /// This method returns a tuple containing the request, network scheme, and HTTP version.
+    ///
+    /// # Returns
+    ///
+    /// A tuple `(Request<B>, NetworkScheme, Option<Version>)` containing the components of the request.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use rquest::util::client::request::InnerRequest;
+    /// use http::Method;
+    ///
+    /// let request = InnerRequest::builder()
+    ///     .method(Method::GET)
+    ///     .uri("http://example.com".parse().unwrap())
+    ///     .body(())
+    ///     .unwrap();
+    ///
+    /// let (req, network_scheme, version) = request.pieces();
+    /// ```
+    pub fn pieces(self) -> (Request<B>, NetworkScheme, Option<Version>) {
+        (self.request, self.network_scheme, self.version)
     }
 }
 
 /// A builder for constructing HTTP requests.
+///
+/// The `InnerRequestBuilder` struct provides a fluent interface for building
+/// `InnerRequest` instances. It allows setting various properties of the request,
+/// such as the method, URI, headers, and body.
+///
+/// # Type Parameters
+///
+/// - `B`: The body type of the request, which must implement the `Body` trait.
 pub struct InnerRequestBuilder<'a, B>
 where
     B: Body + Send + Unpin + 'static,
@@ -49,7 +104,7 @@ where
     B::Error: Into<BoxError>,
 {
     builder: Builder,
-    alpn_protos: Option<AlpnProtos>,
+    version: Option<Version>,
     network_scheme: NetworkScheme,
     headers_order: Option<&'a [HeaderName]>,
     _body: PhantomData<B>,
@@ -61,31 +116,66 @@ where
     B::Data: Send,
     B::Error: Into<BoxError>,
 {
-    /// Set the method for the request.
+    /// Sets the method for the request.
+    ///
+    /// # Arguments
+    ///
+    /// * `method` - The HTTP method to be used for the request.
+    ///
+    /// # Returns
+    ///
+    /// The updated `InnerRequestBuilder`.
     #[inline]
     pub fn method(mut self, method: Method) -> Self {
         self.builder = self.builder.method(method);
         self
     }
 
-    /// Set the URI for the request.
+    /// Sets the URI for the request.
+    ///
+    /// # Arguments
+    ///
+    /// * `uri` - The URI to be used for the request.
+    ///
+    /// # Returns
+    ///
+    /// The updated `InnerRequestBuilder`.
     #[inline]
     pub fn uri(mut self, uri: Uri) -> Self {
         self.builder = self.builder.uri(uri);
         self
     }
 
-    /// Set the version for the request.
+    /// Sets the version for the request.
+    ///
+    /// # Arguments
+    ///
+    /// * `version` - The HTTP version to be used for the request.
+    ///
+    /// # Returns
+    ///
+    /// The updated `InnerRequestBuilder`.
     #[inline]
     pub fn version(mut self, version: Option<Version>) -> Self {
         if let Some(version) = version {
             self.builder = self.builder.version(version);
-            self.alpn_protos = map_alpn_protos(version);
+            // `Request` defaults to HTTP/1.1 as the version.
+            // We don't know if the user has specified a version,
+            // so we need to record it here for TLS ALPN negotiation.
+            self.version = Some(version);
         }
         self
     }
 
-    /// Set the headers for the request.
+    /// Sets the headers for the request.
+    ///
+    /// # Arguments
+    ///
+    /// * `headers` - The headers to be used for the request.
+    ///
+    /// # Returns
+    ///
+    /// The updated `InnerRequestBuilder`.
     #[inline]
     pub fn headers(mut self, mut headers: HeaderMap) -> Self {
         if let Some(h) = self.builder.headers_mut() {
@@ -94,14 +184,30 @@ where
         self
     }
 
-    /// Set the headers order for the request.
+    /// Sets the headers order for the request.
+    ///
+    /// # Arguments
+    ///
+    /// * `order` - The order in which headers should be sent.
+    ///
+    /// # Returns
+    ///
+    /// The updated `InnerRequestBuilder`.
     #[inline]
     pub fn headers_order(mut self, order: Option<&'a [HeaderName]>) -> Self {
         self.headers_order = order;
         self
     }
 
-    /// Set the extension for the request.
+    /// Sets an extension for the request.
+    ///
+    /// # Arguments
+    ///
+    /// * `extension` - The extension to be added to the request.
+    ///
+    /// # Returns
+    ///
+    /// The updated `InnerRequestBuilder`.
     #[inline]
     pub fn extension<T>(mut self, extension: Option<T>) -> Self
     where
@@ -113,14 +219,30 @@ where
         self
     }
 
-    /// Set network scheme for the request.
+    /// Sets the network scheme for the request.
+    ///
+    /// # Arguments
+    ///
+    /// * `network_scheme` - The network scheme to be used for the request.
+    ///
+    /// # Returns
+    ///
+    /// The updated `InnerRequestBuilder`.
     #[inline]
     pub fn network_scheme(mut self, network_scheme: NetworkScheme) -> Self {
         self.network_scheme = network_scheme;
         self
     }
 
-    /// Set the body for the request.
+    /// Sets the body for the request.
+    ///
+    /// # Arguments
+    ///
+    /// * `body` - The body to be used for the request.
+    ///
+    /// # Returns
+    ///
+    /// A `Result` containing the constructed `InnerRequest` or an `Error`.
     #[inline]
     pub fn body(mut self, body: B) -> Result<InnerRequest<B>, Error> {
         if let Some((method, (headers_order, headers))) = self
@@ -135,22 +257,19 @@ where
 
         self.builder.body(body).map(|request| InnerRequest {
             request,
-            alpn_protos: self.alpn_protos,
+            version: self.version,
             network_scheme: self.network_scheme,
         })
     }
 }
 
-/// Map the HTTP version to the ALPN protocols.
-fn map_alpn_protos(version: Version) -> Option<AlpnProtos> {
-    match version {
-        Version::HTTP_11 | Version::HTTP_10 | Version::HTTP_09 => Some(AlpnProtos::HTTP1),
-        Version::HTTP_2 => Some(AlpnProtos::HTTP2),
-        _ => None,
-    }
-}
-
-/// Add the `Content-Length` header to the request.
+/// Adds the `Content-Length` header to the request.
+///
+/// # Arguments
+///
+/// * `method` - The HTTP method of the request.
+/// * `headers` - The headers of the request.
+/// * `body` - The body of the request.
 #[inline]
 fn add_content_length_header<B>(method: Method, headers: &mut HeaderMap, body: &B)
 where
@@ -165,7 +284,15 @@ where
     }
 }
 
-/// Check if the method has defined payload semantics.
+/// Checks if the method has defined payload semantics.
+///
+/// # Arguments
+///
+/// * `method` - The HTTP method to check.
+///
+/// # Returns
+///
+/// `true` if the method has defined payload semantics, otherwise `false`.
 #[inline]
 pub(super) fn method_has_defined_payload_semantics(method: Method) -> bool {
     !matches!(
@@ -174,10 +301,15 @@ pub(super) fn method_has_defined_payload_semantics(method: Method) -> bool {
     )
 }
 
-/// Sort the headers in the specified order.
+/// Sorts the headers in the specified order.
 ///
 /// Headers in `headers_order` are sorted to the front, preserving their order.
 /// Remaining headers are appended in their original order.
+///
+/// # Arguments
+///
+/// * `headers` - The headers to be sorted.
+/// * `headers_order` - The order in which headers should be sent.
 #[inline]
 fn sort_headers(headers: &mut HeaderMap, headers_order: &[HeaderName]) {
     if headers.len() <= 1 {

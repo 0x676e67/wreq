@@ -654,6 +654,7 @@ mod tunnel {
     use crate::util::rt::TokioIo;
     use http::{HeaderMap, HeaderValue};
     use hyper2::rt::{Read, Write};
+    use std::sync::Arc;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     const USER_AGENT: HeaderValue = HeaderValue::from_static(concat!(
@@ -667,7 +668,7 @@ mod tunnel {
         host: &str,
         port: u16,
         auth: Option<HeaderValue>,
-        headers: Option<HeaderMap>,
+        headers: Option<Arc<HeaderMap>>,
     ) -> Result<T, BoxError>
     where
         T: Read + Write + Unpin,
@@ -690,10 +691,8 @@ mod tunnel {
         }
 
         // headers
-        if let Some(mut headers) = headers {
-            headers
-                .entry(http::header::USER_AGENT)
-                .or_insert(USER_AGENT);
+        if let Some(headers) = headers {
+            add_user_agent_if_missing(&mut buf, &headers);
 
             for (name, value) in headers.iter() {
                 buf.extend_from_slice(name.as_str().as_bytes());
@@ -702,10 +701,7 @@ mod tunnel {
                 buf.extend_from_slice(b"\r\n");
             }
         } else {
-            // user-agent
-            buf.extend_from_slice(b"User-Agent: ");
-            buf.extend_from_slice(USER_AGENT.as_bytes());
-            buf.extend_from_slice(b"\r\n");
+            add_user_agent(&mut buf);
         }
 
         // headers end
@@ -740,6 +736,20 @@ mod tunnel {
             } else {
                 return Err("unsuccessful tunnel".into());
             }
+        }
+    }
+
+    #[inline]
+    fn add_user_agent(buf: &mut Vec<u8>) {
+        buf.extend_from_slice(b"User-Agent: ");
+        buf.extend_from_slice(USER_AGENT.as_bytes());
+        buf.extend_from_slice(b"\r\n");
+    }
+
+    #[inline]
+    fn add_user_agent_if_missing(buf: &mut Vec<u8>, headers: &HeaderMap) {
+        if headers.get(http::header::USER_AGENT).is_none() {
+            add_user_agent(buf);
         }
     }
 }

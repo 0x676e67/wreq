@@ -5,6 +5,7 @@
 //! in much the same way it did in hyper 0.14.
 
 pub mod connect;
+mod dst;
 mod network;
 #[doc(hidden)]
 // Publicly available, but just for legacy purposes. A better pool will be
@@ -15,11 +16,10 @@ mod request;
 use std::error::Error as StdError;
 use std::fmt;
 use std::future::Future;
-use std::net::{Ipv4Addr, Ipv6Addr};
+
 use std::num::NonZeroUsize;
 use std::ops::{Deref, DerefMut};
 use std::pin::Pin;
-use std::sync::Arc;
 use std::task::{self, Poll};
 use std::time::Duration;
 
@@ -33,7 +33,6 @@ use log::{debug, trace, warn};
 use sync_wrapper::SyncWrapper;
 
 use crate::AlpnProtos;
-use crate::proxy::ProxyScheme;
 use crate::util::common;
 use connect::capture::CaptureConnectionExtension;
 use connect::{Alpn, Connect, Connected, Connection};
@@ -41,7 +40,7 @@ use pool::Ver;
 
 use common::{Exec, Lazy, lazy as hyper_lazy, timer};
 
-use super::into_uri;
+pub use dst::Dst;
 pub use network::{NetworkScheme, NetworkSchemeBuilder};
 pub use request::InnerRequest;
 
@@ -89,6 +88,17 @@ pub struct Error {
     connect_info: Option<Connected>,
 }
 
+impl From<http::Error> for Error {
+    #[inline]
+    fn from(err: http::Error) -> Error {
+        Error {
+            kind: ErrorKind::UserAbsoluteUriRequired,
+            source: Some(err.into()),
+            connect_info: None,
+        }
+    }
+}
+
 #[derive(Debug)]
 enum ErrorKind {
     Canceled,
@@ -121,128 +131,8 @@ macro_rules! e {
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
 struct PoolKey {
     uri: Uri,
-    alpn_protos: Option<AlpnProtos>,
+    alpn: Option<AlpnProtos>,
     network: NetworkScheme,
-}
-
-/// Destination of the request
-///
-/// This is used to store the destination of the request, the http version pref, and the pool key.
-#[derive(Debug, Clone)]
-pub struct Dst {
-    inner: Arc<PoolKey>,
-}
-
-impl Dst {
-    /// Create a new `Dst` from a request
-    pub fn new(
-        uri: &mut Uri,
-        is_http_connect: bool,
-        network: NetworkScheme,
-        alpn_protos: Option<AlpnProtos>,
-    ) -> Result<Dst, Error> {
-        let (scheme, auth) = match (uri.scheme().cloned(), uri.authority().cloned()) {
-            (Some(scheme), Some(auth)) => (scheme, auth),
-            (None, Some(auth)) if is_http_connect => {
-                let scheme = match auth.port_u16() {
-                    Some(443) => {
-                        set_scheme(uri, Scheme::HTTPS);
-                        Scheme::HTTPS
-                    }
-                    _ => {
-                        set_scheme(uri, Scheme::HTTP);
-                        Scheme::HTTP
-                    }
-                };
-                (scheme, auth)
-            }
-            _ => {
-                debug!("Client requires absolute-form URIs, received: {:?}", uri);
-                return Err(e!(UserAbsoluteUriRequired));
-            }
-        };
-
-        // Convert the scheme and host to a URI
-        into_uri(scheme, auth)
-            .map(|uri| Dst {
-                inner: Arc::new(PoolKey {
-                    uri,
-                    alpn_protos,
-                    network,
-                }),
-            })
-            .map_err(|_| e!(UserAbsoluteUriRequired))
-    }
-
-    #[inline(always)]
-    pub(crate) fn uri(&self) -> &Uri {
-        &self.inner.uri
-    }
-
-    #[inline(always)]
-    pub(crate) fn set_uri(&mut self, mut uri: Uri) {
-        let inner = Arc::make_mut(&mut self.inner);
-        std::mem::swap(&mut inner.uri, &mut uri);
-    }
-
-    #[inline(always)]
-    pub(crate) fn alpn_protos(&self) -> Option<AlpnProtos> {
-        self.inner.alpn_protos
-    }
-
-    #[inline(always)]
-    pub(crate) fn is_h2(&self) -> bool {
-        self.inner.alpn_protos == Some(AlpnProtos::HTTP2)
-    }
-
-    #[inline(always)]
-    pub(crate) fn take_addresses(&mut self) -> (Option<Ipv4Addr>, Option<Ipv6Addr>) {
-        Arc::make_mut(&mut self.inner).network.take_addresses()
-    }
-
-    #[cfg(any(
-        target_os = "android",
-        target_os = "fuchsia",
-        target_os = "linux",
-        all(
-            feature = "apple-network-device-binding",
-            any(
-                target_os = "ios",
-                target_os = "visionos",
-                target_os = "macos",
-                target_os = "tvos",
-                target_os = "watchos",
-            )
-        )
-    ))]
-    #[inline(always)]
-    pub(crate) fn take_interface(&mut self) -> Option<std::borrow::Cow<'static, str>> {
-        Arc::make_mut(&mut self.inner).network.take_interface()
-    }
-
-    #[inline(always)]
-    pub(crate) fn take_proxy_scheme(&mut self) -> Option<ProxyScheme> {
-        Arc::make_mut(&mut self.inner).network.take_proxy_scheme()
-    }
-
-    #[inline(always)]
-    fn pool_key(&self) -> &PoolKey {
-        &self.inner
-    }
-}
-
-impl std::ops::Deref for Dst {
-    type Target = Uri;
-
-    fn deref(&self) -> &Self::Target {
-        &self.inner.uri
-    }
-}
-
-impl From<Dst> for Uri {
-    fn from(dst: Dst) -> Self {
-        Arc::unwrap_or_clone(dst.inner).uri
-    }
 }
 
 enum TrySendError<B> {
@@ -330,7 +220,7 @@ where
     /// # fn main() {}
     /// ```
     pub fn request(&self, req: InnerRequest<B>) -> ResponseFuture {
-        let (mut req, network_scheme, alpn_protos) = req.pieces();
+        let (mut req, network_scheme, version) = req.pieces();
         let is_http_connect = req.method() == Method::CONNECT;
         match req.version() {
             Version::HTTP_10 => {
@@ -344,7 +234,7 @@ where
             other => return ResponseFuture::error_version(other),
         };
 
-        let ctx = match Dst::new(req.uri_mut(), is_http_connect, network_scheme, alpn_protos) {
+        let ctx = match Dst::new(req.uri_mut(), is_http_connect, network_scheme, version) {
             Ok(s) => s,
             Err(err) => {
                 return ResponseFuture::new(future::err(err));
@@ -619,7 +509,7 @@ where
 
         let h1_builder = self.h1_builder.clone();
         let h2_builder = self.h2_builder.clone();
-        let ver = if dst.is_h2() {
+        let ver = if dst.only_http2() {
             Ver::Http2
         } else {
             self.config.ver
