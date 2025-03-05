@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::convert::TryFrom;
 use std::fmt;
 use std::future::Future;
@@ -21,6 +22,7 @@ pub struct Request {
     method: Method,
     url: Url,
     headers: HeaderMap,
+    headers_order: Option<Cow<'static, [HeaderName]>>,
     body: Option<Body>,
     timeout: Option<Duration>,
     read_timeout: Option<Duration>,
@@ -47,6 +49,7 @@ impl Request {
             method,
             url,
             headers: HeaderMap::new(),
+            headers_order: None,
             body: None,
             timeout: None,
             read_timeout: None,
@@ -85,6 +88,12 @@ impl Request {
     #[inline]
     pub fn headers(&self) -> &HeaderMap {
         &self.headers
+    }
+
+    /// Get the headers order.
+    #[inline]
+    pub fn headers_order(&self) -> Option<&Cow<'static, [HeaderName]>> {
+        self.headers_order.as_ref()
     }
 
     /// Get a mutable reference to the headers.
@@ -185,6 +194,7 @@ impl Request {
         Method,
         Url,
         HeaderMap,
+        Option<Cow<'static, [HeaderName]>>,
         Option<Body>,
         Option<Duration>,
         Option<Duration>,
@@ -197,6 +207,7 @@ impl Request {
             self.method,
             self.url,
             self.headers,
+            self.headers_order,
             self.body,
             self.timeout,
             self.read_timeout,
@@ -309,9 +320,20 @@ impl RequestBuilder {
     /// Add a set of Headers to the existing ones on this Request.
     ///
     /// The headers will be merged in to any already set.
-    pub fn headers(mut self, headers: crate::header::HeaderMap) -> RequestBuilder {
+    pub fn headers(mut self, headers: HeaderMap) -> RequestBuilder {
         if let Ok(ref mut req) = self.request {
             crate::util::replace_headers(req.headers_mut(), headers);
+        }
+        self
+    }
+
+    /// Add a set of Headers order to the existing ones on this Request.
+    pub fn headers_order<H>(mut self, headers_order: H) -> RequestBuilder
+    where
+        H: Into<Cow<'static, [HeaderName]>>,
+    {
+        if let Ok(ref mut req) = self.request {
+            req.headers_order = Some(headers_order.into());
         }
         self
     }
@@ -792,6 +814,7 @@ where
             method,
             url,
             headers,
+            headers_order: None,
             body: Some(body.into()),
             timeout: None,
             read_timeout: None,

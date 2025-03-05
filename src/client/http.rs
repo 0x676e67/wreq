@@ -1285,6 +1285,7 @@ impl Client {
             method,
             url,
             mut headers,
+            headers_order,
             body,
             timeout,
             read_timeout,
@@ -1348,12 +1349,16 @@ impl Client {
 
         let network_scheme = client.network_scheme(&uri, network_scheme);
         let in_flight = {
+            let headers_order = headers_order
+                .as_deref()
+                .or_else(|| client.headers_order.as_deref());
+
             let res = InnerRequest::builder()
                 .uri(uri)
                 .method(method.clone())
                 .version(version)
                 .headers(headers.clone())
-                .headers_order(client.headers_order.as_deref())
+                .headers_order(headers_order)
                 .network_scheme(network_scheme.clone())
                 .extension(protocal)
                 .body(body);
@@ -1378,6 +1383,7 @@ impl Client {
                 method,
                 url,
                 headers,
+                headers_order,
                 body: reusable,
                 version,
                 urls: Vec::new(),
@@ -1892,6 +1898,7 @@ pin_project! {
         method: Method,
         url: Url,
         headers: HeaderMap,
+        headers_order: Option<Cow<'static, [HeaderName]>>,
         body: Option<Option<Bytes>>,
         version: Option<Version>,
         urls: Vec<Url>,
@@ -1915,24 +1922,36 @@ enum ResponseFuture {
 }
 
 impl PendingRequest {
+    #[inline]
     fn in_flight(self: Pin<&mut Self>) -> Pin<&mut ResponseFuture> {
         self.project().in_flight
     }
 
+    #[inline]
     fn total_timeout(self: Pin<&mut Self>) -> Pin<&mut Option<Pin<Box<Sleep>>>> {
         self.project().total_timeout
     }
 
+    #[inline]
     fn read_timeout(self: Pin<&mut Self>) -> Pin<&mut Option<Pin<Box<Sleep>>>> {
         self.project().read_timeout_fut
     }
 
+    #[inline]
     fn urls(self: Pin<&mut Self>) -> &mut Vec<Url> {
         self.project().urls
     }
 
+    #[inline]
     fn headers(self: Pin<&mut Self>) -> &mut HeaderMap {
         self.project().headers
+    }
+
+    #[inline]
+    fn headers_order(&self) -> Option<&[HeaderName]> {
+        self.headers_order
+            .as_deref()
+            .or_else(|| self.client.headers_order.as_deref())
     }
 
     fn retry_error(mut self: Pin<&mut Self>, err: &(dyn std::error::Error + 'static)) -> bool {
@@ -1971,7 +1990,7 @@ impl PendingRequest {
                 .method(self.method.clone())
                 .version(self.version)
                 .headers(self.headers.clone())
-                .headers_order(self.client.headers_order.as_deref())
+                .headers_order(self.headers_order())
                 .network_scheme(self.network_scheme.clone())
                 .body(body);
 
@@ -2217,7 +2236,7 @@ impl Future for PendingRequest {
                                     .method(self.method.clone())
                                     .version(self.version)
                                     .headers(headers.clone())
-                                    .headers_order(self.client.headers_order.as_deref())
+                                    .headers_order(self.headers_order())
                                     .network_scheme(self.network_scheme.clone())
                                     .body(body)?;
 
