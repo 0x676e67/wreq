@@ -33,7 +33,7 @@
 //! async fn main() -> Result<(), rquest::Error> {
 //!     // Build a client
 //!     let client = Client::builder()
-//!         .emulation(Emulation::Firefox133)
+//!         .emulation(Emulation::Firefox135)
 //!         .build()?;
 //!
 //!     // Use the API you're already familiar with
@@ -57,7 +57,7 @@
 //! async fn main() -> Result<(), rquest::Error> {
 //!     // Build a client
 //!     let websocket = Client::builder()
-//!         .emulation(Emulation::Firefox133)
+//!         .emulation(Emulation::Firefox135)
 //!         .build()?
 //!         .websocket("wss://echo.websocket.org")
 //!         .send()
@@ -211,6 +211,14 @@
 //! ```bash
 //! export https_proxy=socks5://127.0.0.1:1086
 //! ```
+//! 
+//! * `http://` is the scheme for http proxy
+//! * `https://` is the scheme for https proxy
+//! * `socks4://` is the scheme for socks4 proxy
+//! * `socks4a://` is the scheme for socks4a proxy
+//! * `socks5://` is the scheme for socks5 proxy
+//! * `socks5h://` is the scheme for socks5h proxy
+//! 
 //! ## TLS
 //!
 //! By default, clients will utilize BoringSSL transport layer security to connect to HTTPS targets.
@@ -223,8 +231,10 @@
 //! The following are a list of [Cargo features][cargo-features] that can be
 //! enabled or disabled:
 //!
+//! - **full**: Enables all optional features.
 //! - **websocket**: Provides websocket support.
 //! - **cookies**: Provides cookie session support.
+//! - **cookies-abstract**: Provides abstract cookie session support.
 //! - **gzip**: Provides response body gzip decompression.
 //! - **brotli**: Provides response body brotli decompression.
 //! - **zstd**: Provides response body zstd decompression.
@@ -235,6 +245,11 @@
 //! - **socks**: Provides SOCKS5 proxy support.
 //! - **hickory-dns**: Enables a hickory-dns async resolver instead of default
 //!   threadpool using `getaddrinfo`.
+//! - **native-roots**: Use the native system root certificate store.
+//! - **webpki-roots**: Use the webpki-roots crate for root certificates.
+//! - **apple-network-device-binding**: Use the Apple Network Device Binding
+//! - **http2-tracing**: Enable HTTP/2 tracing.
+//! - **internal_proxy_sys_no_cache**: Use the internal proxy system with no cache.
 //!
 //! [hyper]: http://hyper.rs
 //! [client]: ./struct.Client.html
@@ -244,7 +259,6 @@
 //! [serde]: http://serde.rs
 //! [redirect]: crate::redirect
 //! [Proxy]: ./struct.Proxy.html
-//! [preconfigured]: ./struct.ClientBuilder.html#method.use_preconfigured_tls
 //! [cargo-features]: https://doc.rust-lang.org/stable/cargo/reference/manifest.html#the-features-section
 
 #[cfg(feature = "hickory-dns")]
@@ -337,8 +351,14 @@ fn _assert_impls() {
 
     assert_send::<Request>();
     assert_send::<RequestBuilder>();
+    #[cfg(feature = "websocket")]
+    assert_send::<WebSocketRequestBuilder>();
 
     assert_send::<Response>();
+    #[cfg(feature = "websocket")]
+    assert_send::<WebSocketResponse>();
+    #[cfg(feature = "websocket")]
+    assert_send::<WebSocket>();
 
     assert_send::<Error>();
     assert_sync::<Error>();

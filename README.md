@@ -16,7 +16,7 @@ An ergonomic all-in-one HTTP client for browser emulation with TLS, JA3/JA4, and
 - Header Order
 - Redirect Policy
 - Cookie Store
-- HTTP Proxies
+- Rotating Proxies
 - WebSocket Upgrade
 - HTTPS via BoringSSL
 - Perfectly Chrome, Safari, and Firefox
@@ -28,8 +28,8 @@ This asynchronous example utilizes [Tokio](https://tokio.rs) with optional featu
 ```toml
 [dependencies]
 tokio = { version = "1", features = ["full"] }
-rquest = "3.0.1-rc1"
-rquest_util = "0.2.0-rc1"
+rquest = "3.0.1-rc3"
+rquest-util = "0.2.0-rc1"
 ```
 
 And then the code:
@@ -42,7 +42,7 @@ use rquest_util::Emulation;
 async fn main() -> Result<(), rquest::Error> {
     // Build a client
     let client = Client::builder()
-        .emulation(Emulation::Firefox133)
+        .emulation(Emulation::Firefox135)
         .build()?;
 
     // Use the API you're already familiar with
