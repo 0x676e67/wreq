@@ -1330,10 +1330,12 @@ impl Client {
             feature = "deflate"
         ))]
         if let Some(accept_encoding) = client.accepts.as_str() {
-            if !headers.contains_key(ACCEPT_ENCODING) && !headers.contains_key(RANGE) {
+            if !headers.contains_key(crate::header::ACCEPT_ENCODING)
+                && !headers.contains_key(crate::header::RANGE)
+            {
                 headers.insert(
                     crate::header::ACCEPT_ENCODING,
-                    crate::HeaderValue::from_static(accept_encoding),
+                    HeaderValue::from_static(accept_encoding),
                 );
             }
         }
