@@ -229,26 +229,23 @@ impl ClientBuilder {
             .pool_max_size(config.pool_max_size);
 
         let connector = {
-            let mut resolver: Arc<dyn Resolve> = if let Some(dns_resolver) = config.dns_resolver {
-                dns_resolver
-            } else if config.hickory_dns {
+            let mut resolver: Arc<dyn Resolve> = match config.dns_resolver {
+                Some(dns_resolver) => dns_resolver,
                 #[cfg(feature = "hickory-dns")]
-                {
+                None if config.hickory_dns => {
                     Arc::new(HickoryDnsResolver::new(config.dns_strategy)?)
                 }
                 #[cfg(not(feature = "hickory-dns"))]
-                {
-                    unreachable!("hickory-dns shouldn't be enabled unless the feature is")
-                }
-            } else {
-                Arc::new(GaiResolver::new())
+                None => Arc::new(GaiResolver::new()),
             };
+
             if !config.dns_overrides.is_empty() {
                 resolver = Arc::new(DnsResolverWithOverrides::new(
                     resolver,
                     config.dns_overrides,
                 ));
             }
+            
             let mut http = HttpConnector::new_with_resolver(DynResolver::new(resolver));
             http.set_connect_timeout(config.connect_timeout);
 
