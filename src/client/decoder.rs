@@ -565,7 +565,13 @@ impl Accepts {
         }
     }
 
-    #[allow(dead_code)]
+    #[cfg(any(
+        feature = "gzip",
+        feature = "brotli",
+        feature = "zstd",
+        feature = "deflate",
+        test
+    ))]
     pub(super) const fn as_str(&self) -> Option<&'static str> {
         match (
             self.is_gzip(),
@@ -592,18 +598,22 @@ impl Accepts {
         }
     }
 
+    #[cfg(any(feature = "gzip", test))]
     const fn is_gzip(&self) -> bool {
         cfg!(feature = "gzip")
     }
 
+    #[cfg(any(feature = "brotli", test))]
     const fn is_brotli(&self) -> bool {
         cfg!(feature = "brotli")
     }
 
+    #[cfg(any(feature = "zstd", test))]
     const fn is_zstd(&self) -> bool {
         cfg!(feature = "zstd")
     }
 
+    #[cfg(any(feature = "deflate", test))]
     const fn is_deflate(&self) -> bool {
         cfg!(feature = "deflate")
     }
