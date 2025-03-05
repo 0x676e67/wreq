@@ -1,6 +1,6 @@
 [package]
 name = "rquest"
-version = "3.0.1-rc3"
+version = "3.0.1"
 description = "An ergonomic all-in-one HTTP client for browser emulation with TLS, JA3/JA4, and HTTP/2 fingerprinting"
 keywords = ["http", "client", "websocket", "ja3", "ja4"]
 categories = ["web-programming::http-client"]

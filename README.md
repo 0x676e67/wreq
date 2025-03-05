@@ -28,8 +28,8 @@ This asynchronous example utilizes [Tokio](https://tokio.rs) with optional featu
 ```toml
 [dependencies]
 tokio = { version = "1", features = ["full"] }
-rquest = "3.0.1-rc3"
-rquest-util = "0.2.0-rc1"
+rquest = "3.0.1"
+rquest-util = "0.2.0"
 ```
 
 And then the code:
