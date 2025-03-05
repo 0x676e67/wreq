@@ -211,14 +211,14 @@
 //! ```bash
 //! export https_proxy=socks5://127.0.0.1:1086
 //! ```
-//! 
+//!
 //! * `http://` is the scheme for http proxy
 //! * `https://` is the scheme for https proxy
 //! * `socks4://` is the scheme for socks4 proxy
 //! * `socks4a://` is the scheme for socks4a proxy
 //! * `socks5://` is the scheme for socks5 proxy
 //! * `socks5h://` is the scheme for socks5h proxy
-//! 
+//!  
 //! ## TLS
 //!
 //! By default, clients will utilize BoringSSL transport layer security to connect to HTTPS targets.
