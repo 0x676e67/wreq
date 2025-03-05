@@ -235,7 +235,6 @@ impl ClientBuilder {
                 None if config.hickory_dns => {
                     Arc::new(HickoryDnsResolver::new(config.dns_strategy)?)
                 }
-                #[cfg(not(feature = "hickory-dns"))]
                 None => Arc::new(GaiResolver::new()),
             };
 
@@ -245,7 +244,7 @@ impl ClientBuilder {
                     config.dns_overrides,
                 ));
             }
-            
+
             let mut http = HttpConnector::new_with_resolver(DynResolver::new(resolver));
             http.set_connect_timeout(config.connect_timeout);
 
