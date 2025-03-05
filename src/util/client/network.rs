@@ -64,10 +64,7 @@ impl NetworkScheme {
     #[inline(always)]
     pub fn take_proxy_scheme(&mut self) -> Option<ProxyScheme> {
         match self {
-            NetworkScheme::Scheme {
-                proxy_scheme: proxy,
-                ..
-            } => proxy.take(),
+            NetworkScheme::Scheme { proxy_scheme, .. } => proxy_scheme.take(),
             _ => None,
         }
     }
@@ -75,7 +72,10 @@ impl NetworkScheme {
     #[inline(always)]
     pub fn take_addresses(&mut self) -> (Option<Ipv4Addr>, Option<Ipv6Addr>) {
         match self {
-            NetworkScheme::Scheme { addresses, .. } => (addresses.0.take(), addresses.1.take()),
+            NetworkScheme::Scheme {
+                addresses: (ipv4, ipv6),
+                ..
+            } => (ipv4.take(), ipv6.take()),
             _ => (None, None),
         }
     }
@@ -107,82 +107,55 @@ impl NetworkScheme {
 impl fmt::Debug for NetworkScheme {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            #[cfg(any(
-                target_os = "android",
-                target_os = "fuchsia",
-                target_os = "linux",
-                all(
-                    feature = "apple-network-device-binding",
-                    any(
-                        target_os = "ios",
-                        target_os = "visionos",
-                        target_os = "macos",
-                        target_os = "tvos",
-                        target_os = "watchos",
-                    )
-                )
-            ))]
             NetworkScheme::Scheme {
+                #[cfg(any(
+                    target_os = "android",
+                    target_os = "fuchsia",
+                    target_os = "linux",
+                    all(
+                        feature = "apple-network-device-binding",
+                        any(
+                            target_os = "ios",
+                            target_os = "visionos",
+                            target_os = "macos",
+                            target_os = "tvos",
+                            target_os = "watchos",
+                        )
+                    )
+                ))]
                 interface,
                 addresses,
                 proxy_scheme,
             } => {
                 write!(f, "{{")?;
 
-                // Only print the interface value if it is Some and not None
+                #[cfg(any(
+                    target_os = "android",
+                    target_os = "fuchsia",
+                    target_os = "linux",
+                    all(
+                        feature = "apple-network-device-binding",
+                        any(
+                            target_os = "ios",
+                            target_os = "visionos",
+                            target_os = "macos",
+                            target_os = "tvos",
+                            target_os = "watchos",
+                        )
+                    )
+                ))]
                 if let Some(interface) = interface {
                     write!(f, " interface={:?},", interface)?;
                 }
 
-                // Only print the IPv4 address value if it is Some and not None
                 if let Some(v4) = &addresses.0 {
                     write!(f, " ipv4={:?},", v4)?;
                 }
 
-                // Only print the IPv6 address value if it is Some and not None
                 if let Some(v6) = &addresses.1 {
-                    write!(f, " ipv6={:?}),", v6)?;
+                    write!(f, " ipv6={:?},", v6)?;
                 }
 
-                // Only print the proxy_scheme value if it is Some and not None
-                if let Some(proxy) = proxy_scheme {
-                    write!(f, " proxy={:?},", proxy)?;
-                }
-
-                write!(f, "}}")
-            }
-            #[cfg(not(any(
-                target_os = "android",
-                target_os = "fuchsia",
-                target_os = "linux",
-                all(
-                    feature = "apple-network-device-binding",
-                    any(
-                        target_os = "ios",
-                        target_os = "visionos",
-                        target_os = "macos",
-                        target_os = "tvos",
-                        target_os = "watchos",
-                    )
-                )
-            )))]
-            NetworkScheme::Scheme {
-                addresses,
-                proxy_scheme,
-            } => {
-                write!(f, "{{ ")?;
-
-                // Only print the IPv4 address value if it is Some and not None
-                if let Some(v4) = &addresses.0 {
-                    write!(f, " ipv4={:?},", v4)?;
-                }
-
-                // Only print the IPv6 address value if it is Some and not None
-                if let Some(v6) = &addresses.1 {
-                    write!(f, " ipv6={:?}),", v6)?;
-                }
-
-                // Only print the proxy_scheme value if it is Some and not None
                 if let Some(proxy) = proxy_scheme {
                     write!(f, " proxy={:?},", proxy)?;
                 }
