@@ -81,7 +81,7 @@ internal_proxy_sys_no_cache = []
 base64 = "0.22"
 http = "1"
 url = "2.5"
-bytes = "1.0"
+bytes = "1.10.1"
 serde = { version = "1.0", features = ["derive"] }
 serde_urlencoded = "0.7.1"
 tower = { version = "0.5.2", default-features = false, features = ["timeout","util"] }
