@@ -136,6 +136,7 @@ async fn main() -> Result<(), rquest::Error> {
         .alps_protos(AlpsProtos::HTTP2)
         .min_tls_version(TlsVersion::TLS_1_0)
         .max_tls_version(TlsVersion::TLS_1_3)
+        .random_aes_hw_override(true)
         .extension_permutation_indices(EXTENSION_PERMUTATION_INDICES)
         .build();
 
@@ -195,7 +196,7 @@ async fn main() -> Result<(), rquest::Error> {
     // Default headers
     let headers = {
         let mut headers = HeaderMap::new();
-        headers.insert(header::USER_AGENT, HeaderValue::from_static("rquest"));
+        headers.insert(header::USER_AGENT, HeaderValue::from_static("Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:136.0) Gecko/20100101 Firefox/136.0"));
         headers.insert(
             header::ACCEPT_LANGUAGE,
             HeaderValue::from_static("en-US,en;q=0.9"),
@@ -204,7 +205,6 @@ async fn main() -> Result<(), rquest::Error> {
             header::ACCEPT_ENCODING,
             HeaderValue::from_static("gzip, deflate, br"),
         );
-        headers.insert(header::HOST, HeaderValue::from_static("tls.peet.ws"));
         headers.insert(header::COOKIE, HeaderValue::from_static("foo=bar"));
         headers
     };
@@ -227,7 +227,7 @@ async fn main() -> Result<(), rquest::Error> {
 
     // Use the API you're already familiar with
     let text = client
-        .get("https://tls.peet.ws/api/all")
+        .get("https://tls.browserleaks.com")
         .send()
         .await?
         .text()

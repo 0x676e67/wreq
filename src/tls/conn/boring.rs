@@ -213,6 +213,10 @@ impl BoringTlsConnector {
             connector.set_extension_permutation_indices(indices.as_ref())?;
         }
 
+        if let Some(aes_hw_override) = config.aes_hw_override {
+            connector.set_aes_hw_override(aes_hw_override);
+        }
+
         // Create the `TlsSettings` with the default session cache capacity.
         let settings = HandshakeSettings::builder()
             .session_cache(config.pre_shared_key)
@@ -222,6 +226,7 @@ impl BoringTlsConnector {
             .enable_ech_grease(config.enable_ech_grease)
             .tls_sni(config.tls_sni)
             .verify_hostname(config.verify_hostname)
+            .random_aes_hw_override(config.random_aes_hw_override)
             .build();
 
         Ok(BoringTlsConnector::with_connector_and_settings(
@@ -265,6 +270,9 @@ impl BoringTlsConnector {
 
             // Set ECH grease
             conf.set_enable_ech_grease(settings.enable_ech_grease);
+
+            // Set AES hardware override
+            conf.set_random_aes_hw_override(settings.random_aes_hw_override);
 
             // Set ALPS
             conf.alps_protos(settings.alps_protos, settings.alps_use_new_codepoint)?;

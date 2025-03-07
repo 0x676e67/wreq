@@ -60,6 +60,10 @@ pub struct HandshakeSettings {
     /// Sets whether to use the new ALPS codepoint. Defaults to `false`.
     #[builder(default = false)]
     alps_use_new_codepoint: bool,
+
+    /// Sets whether the random aes hardware override should be enabled.
+    #[builder(default = false)]
+    random_aes_hw_override: bool,
 }
 
 /// A stream which may be wrapped with TLS.

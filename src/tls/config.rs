@@ -184,6 +184,16 @@ pub struct TlsConfig {
     /// Sets the context's extension permutation indices.
     #[builder(default, setter(strip_option, into))]
     pub extension_permutation_indices: Option<Cow<'static, [u8]>>,
+
+    /// Sets whether the aes hardware override should be enabled.
+    /// Only for ECH extension
+    #[builder(default, setter(into))]
+    pub aes_hw_override: Option<bool>,
+
+    /// Sets whether the random aes hardware override should be enabled.
+    /// Only for ECH extension
+    #[builder(default, setter(into))]
+    pub random_aes_hw_override: bool,
 }
 
 /// ====== impl TlsSettings ======c

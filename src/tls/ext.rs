@@ -53,6 +53,9 @@ pub trait ConnectConfigurationExt {
 
     /// Configure the no session ticket for the given `ConnectConfiguration`.
     fn skip_session_ticket(&mut self) -> TlsResult<&mut ConnectConfiguration>;
+
+    /// Configure the random aes hardware override for the given `ConnectConfiguration`.
+    fn set_random_aes_hw_override(&mut self, enable: bool);
 }
 
 impl SslConnectorBuilderExt for SslConnectorBuilder {
@@ -128,6 +131,14 @@ impl ConnectConfigurationExt for ConnectConfiguration {
     #[inline]
     fn skip_session_ticket(&mut self) -> TlsResult<&mut ConnectConfiguration> {
         self.set_options(SslOptions::NO_TICKET).map(|_| self)
+    }
+
+    #[inline]
+    fn set_random_aes_hw_override(&mut self, enable: bool) {
+        if enable {
+            let random_bool = (crate::util::fast_random() % 2) == 0;
+            self.set_aes_hw_override(random_bool);
+        }
     }
 }
 
