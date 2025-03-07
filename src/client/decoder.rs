@@ -493,7 +493,11 @@ impl Future for Pending {
             #[cfg(feature = "zstd")]
             DecoderType::Zstd => Poll::Ready(Ok(Inner::Zstd(Box::pin(
                 FramedRead::new(
-                    ZstdDecoder::new(StreamReader::new(_body)),
+                    {
+                        let mut d = ZstdDecoder::new(StreamReader::new(_body));
+                        d.multiple_members(true);
+                        d
+                    },
                     BytesCodec::new(),
                 )
                 .fuse(),

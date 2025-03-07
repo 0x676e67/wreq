@@ -215,6 +215,11 @@ name = "multipart"
 path = "tests/multipart.rs"
 required-features = ["multipart", "stream"]
 
+[[test]]
+name = "client_update"
+path = "tests/client_update.rs"
+required-features = ["full"]
+
 [[example]]
 name = "json_dynamic"
 path = "examples/json_dynamic.rs"
