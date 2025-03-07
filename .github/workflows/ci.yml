@@ -56,7 +56,7 @@ jobs:
           tool: cargo-nextest
       - name: Tests
         shell: bash
-        run: cargo nextest run --locked --workspace --all-features
+        run: cargo nextest run --workspace --all-features
 
   windows:
     name: Windows
