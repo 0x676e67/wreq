@@ -89,7 +89,6 @@ impl ConnectorBuilder {
                         // no timeout, but still map err
                         // no named timeout layer but we still map errors since
                         // we might have user-provided timeout layer
-                        let service = ServiceBuilder::new().service(service);
                         let service = ServiceBuilder::new()
                             .map_err(cast_to_internal_error)
                             .service(service);
