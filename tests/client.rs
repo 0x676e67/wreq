@@ -526,9 +526,9 @@ async fn http2_version() {
 }
 
 #[tokio::test]
-async fn pool_cache() {
+async fn connection_pool_cache() {
     let client = rquest::Client::default();
-    let url = "https://httpbin.org/get";
+    let url = "https://hyper.rs";
 
     let resp = client
         .get(url)
