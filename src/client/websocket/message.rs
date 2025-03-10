@@ -364,7 +364,9 @@ impl Message {
             Self::Close(Some(ref frame)) => Ok(&frame.reason),
         }
     }
+}
 
+impl Message {
     /// Create a new text WebSocket message from a stringable.
     pub fn text<S>(string: S) -> Message
     where
@@ -379,6 +381,30 @@ impl Message {
         B: Into<Bytes>,
     {
         Message::Binary(bin.into())
+    }
+
+    /// Create a new ping WebSocket message by converting to `Bytes`.
+    pub fn ping<B>(bin: B) -> Message
+    where
+        B: Into<Bytes>,
+    {
+        Message::Ping(bin.into())
+    }
+
+    /// Create a new pong WebSocket message by converting to `Bytes`.
+    pub fn pong<B>(bin: B) -> Message
+    where
+        B: Into<Bytes>,
+    {
+        Message::Pong(bin.into())
+    }
+
+    /// Create a new close WebSocket message with an optional close frame.
+    pub fn close<C>(close: C) -> Message
+    where
+        C: Into<Option<CloseFrame>>,
+    {
+        Message::Close(close.into())
     }
 }
 

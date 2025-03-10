@@ -7,7 +7,7 @@
 
 use futures_util::{SinkExt, StreamExt, TryStreamExt};
 use http::header;
-use rquest::{Client, Message, Utf8Bytes};
+use rquest::{Client, Message};
 
 #[tokio::main]
 async fn main() -> Result<(), rquest::Error> {
@@ -34,12 +34,7 @@ async fn main() -> Result<(), rquest::Error> {
 
     tokio::spawn(async move {
         for i in 1..11 {
-            if let Err(err) = tx
-                .send(Message::Text(Utf8Bytes::from(format!(
-                    "Hello, World! #{i}"
-                ))))
-                .await
-            {
+            if let Err(err) = tx.send(Message::text(format!("Hello, World! #{i}"))).await {
                 eprintln!("failed to send message: {err}");
             }
         }
