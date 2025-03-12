@@ -1526,6 +1526,7 @@ impl Client {
     ///     .apply()
     ///     .unwrap();
     /// ```
+    #[inline]
     pub fn update(&self) -> ClientUpdate<'_> {
         ClientUpdate {
             inner: (self.inner.as_ref(), (**self.inner.load()).clone()),
@@ -1547,6 +1548,7 @@ impl Client {
     /// let cloned_client = client.cloned();
     /// // Use the cloned client independently
     /// ```
+    #[inline]
     pub fn cloned(&self) -> Self {
         Self {
             inner: Arc::new(ArcSwap::from_pointee((**self.inner.load()).clone())),
@@ -1709,6 +1711,7 @@ impl<'c> ClientUpdate<'c> {
     /// # Returns
     ///
     /// A mutable reference to the `Client` instance with the applied headers order.
+    #[inline]
     pub fn headers_order<T>(mut self, order: T) -> ClientUpdate<'c>
     where
         T: Into<Cow<'static, [HeaderName]>>,
@@ -1719,6 +1722,7 @@ impl<'c> ClientUpdate<'c> {
 
     /// Set the cookie provider for this client.
     #[cfg(any(feature = "cookies", feature = "cookies-abstract"))]
+    #[inline]
     pub fn cookie_provider<C>(mut self, cookie_store: Arc<C>) -> ClientUpdate<'c>
     where
         C: cookie::CookieStore + 'static,
@@ -1789,6 +1793,7 @@ impl<'c> ClientUpdate<'c> {
     ///
     /// If `Some`, the provided proxies will be used, and the client will check if any of them require HTTP authentication.
     /// If `None`, all proxies will be cleared and HTTP authentication will be disabled.
+    #[inline]
     pub fn proxies<P>(mut self, proxies: P) -> ClientUpdate<'c>
     where
         P: IntoIterator,
@@ -1804,6 +1809,7 @@ impl<'c> ClientUpdate<'c> {
     ///
     /// This method allows you to clear the proxies for the client, ensuring thread safety. It will
     /// remove the current proxies and return the old proxies, if any.
+    #[inline]
     pub fn unset_proxies(mut self) -> ClientUpdate<'c> {
         self.inner.1.proxies.clear();
         self.inner.1.proxies_maybe_http_auth = false;
@@ -1924,22 +1930,27 @@ enum ResponseFuture {
 }
 
 impl PendingRequest {
+    #[inline]
     fn in_flight(self: Pin<&mut Self>) -> Pin<&mut ResponseFuture> {
         self.project().in_flight
     }
 
+    #[inline]
     fn total_timeout(self: Pin<&mut Self>) -> Pin<&mut Option<Pin<Box<Sleep>>>> {
         self.project().total_timeout
     }
 
+    #[inline]
     fn read_timeout(self: Pin<&mut Self>) -> Pin<&mut Option<Pin<Box<Sleep>>>> {
         self.project().read_timeout_fut
     }
 
+    #[inline]
     fn urls(self: Pin<&mut Self>) -> &mut Vec<Url> {
         self.project().urls
     }
 
+    #[inline]
     fn headers(self: Pin<&mut Self>) -> &mut HeaderMap {
         self.project().headers
     }
