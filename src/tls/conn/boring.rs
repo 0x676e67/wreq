@@ -13,7 +13,7 @@ use antidote::Mutex;
 use boring2::error::ErrorStack;
 use boring2::ssl::{
     ConnectConfiguration, Ssl, SslConnector, SslConnectorBuilder, SslMethod, SslOptions, SslRef,
-    SslSessionCacheMode,
+    SslSessionCacheMode, SslVerifyMode,
 };
 use http::Uri;
 use http::uri::Scheme;
@@ -134,6 +134,7 @@ struct Inner {
     cache: Option<Arc<Mutex<SessionCache>>>,
     callback: Option<Callback>,
     ssl_callback: Option<SslCallback>,
+    ssl_verify: Option<SslVerifyMode>,
     skip_session_ticket: bool,
 }
 
@@ -286,8 +287,18 @@ impl BoringTlsConnector {
                 cache,
                 callback: Some(callback),
                 ssl_callback: None,
+                ssl_verify: None,
                 skip_session_ticket: settings.skip_session_ticket,
             },
+        }
+    }
+
+    /// Sets the SSL certificate verification.
+    pub fn set_verify(&mut self, verify: bool) {
+        if verify {
+            self.inner.ssl_verify = Some(SslVerifyMode::PEER);
+        } else {
+            self.inner.ssl_verify = Some(SslVerifyMode::NONE);
         }
     }
 }
@@ -336,6 +347,10 @@ impl Inner {
 
             let idx = key_index()?;
             conf.set_ex_data(idx, key);
+        }
+
+        if let Some(verify) = self.ssl_verify {
+            conf.set_verify(verify);
         }
 
         let mut ssl = conf.into_ssl(host)?;

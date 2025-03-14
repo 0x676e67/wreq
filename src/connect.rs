@@ -182,6 +182,13 @@ impl Connector {
             }
         }
     }
+
+    pub(crate) fn set_verify(&mut self, verify: bool) {
+        match self {
+            Connector::Simple(service) => service.tls.set_verify(verify),
+            Connector::WithLayers { base_service, .. } => base_service.tls.set_verify(verify),
+        }
+    }
 }
 
 impl Service<Dst> for Connector {

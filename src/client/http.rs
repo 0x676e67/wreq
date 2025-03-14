@@ -1844,12 +1844,13 @@ impl<'c> ClientUpdate<'c> {
     ///
     /// This method allows you to configure whether the client should accept invalid certificates.
     /// By default, certificate validation is enabled, and invalid certificates will be rejected.
-    ///
-    /// # Note
-    ///
-    /// This setting will only take effect if `emulation` has been initialized.
     #[inline]
     pub fn danger_accept_invalid_certs(mut self, accept_invalid_certs: bool) -> ClientUpdate<'c> {
+        self.inner
+            .1
+            .hyper
+            .connector_mut()
+            .set_verify(!accept_invalid_certs);
         if let Some(emulation) = self.emulation.as_mut() {
             emulation.tls_config.certs_verification = !accept_invalid_certs;
         }
