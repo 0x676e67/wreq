@@ -1379,8 +1379,8 @@ impl Client {
                 body: reusable,
                 version,
                 urls: Vec::new(),
-                retry_count: 0,
-                max_retry_count: client.http2_max_retry_count,
+                http2_retry_count: 0,
+                http2_max_retry_count: client.http2_max_retry_count,
                 redirect,
                 network_scheme,
                 client,
@@ -1914,8 +1914,8 @@ pin_project! {
         body: Option<Option<Bytes>>,
         version: Option<Version>,
         urls: Vec<Url>,
-        retry_count: usize,
-        max_retry_count: usize,
+        http2_retry_count: usize,
+        http2_max_retry_count: usize,
         redirect: Option<redirect::Policy>,
         network_scheme: NetworkScheme,
         client: Guard<Arc<ClientInner>>,
@@ -1975,11 +1975,11 @@ impl PendingRequest {
             None => Body::empty(),
         };
 
-        if self.retry_count >= self.max_retry_count {
+        if self.http2_retry_count >= self.http2_max_retry_count {
             trace!("retry count too high");
             return false;
         }
-        self.retry_count += 1;
+        self.http2_retry_count += 1;
 
         let uri = match try_uri(&self.url) {
             Some(uri) => uri,
