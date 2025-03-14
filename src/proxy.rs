@@ -255,6 +255,34 @@ impl<S: IntoUrl> IntoProxyScheme for S {
     }
 }
 
+impl IntoProxyScheme for ProxyScheme {
+    #[inline(always)]
+    fn into_proxy_scheme(self) -> crate::Result<ProxyScheme> {
+        Ok(self)
+    }
+}
+
+/// Trait used for converting into a proxy. This trait supports
+/// parsing from a URL-like type, whilst also supporting proxy
+/// built directly using the factory methods.
+pub trait IntoProxy {
+    fn into_proxy(self) -> crate::Result<Proxy>;
+}
+
+impl<S: IntoProxyScheme> IntoProxy for S {
+    #[inline(always)]
+    fn into_proxy(self) -> crate::Result<Proxy> {
+        self.into_proxy_scheme().and_then(Proxy::all)
+    }
+}
+
+impl IntoProxy for Proxy {
+    #[inline(always)]
+    fn into_proxy(self) -> crate::Result<Proxy> {
+        Ok(self)
+    }
+}
+
 // These bounds are accidentally leaked by the blanket impl of IntoProxyScheme
 // for all types that implement IntoUrl. So, this function exists to detect
 // if we were to break those bounds for a user.
@@ -264,11 +292,9 @@ fn _implied_bounds() {
     fn url<T: IntoUrl>(t: T) {
         prox(t);
     }
-}
 
-impl IntoProxyScheme for ProxyScheme {
-    fn into_proxy_scheme(self) -> crate::Result<ProxyScheme> {
-        Ok(self)
+    fn prox2<T: IntoProxy + IntoProxyScheme>(t: T) {
+        prox(t);
     }
 }
 

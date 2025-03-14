@@ -13,8 +13,9 @@ use super::http::{Client, Pending};
 use super::multipart;
 use super::response::Response;
 use crate::header::{CONTENT_TYPE, HeaderMap, HeaderName, HeaderValue};
+use crate::proxy::IntoProxy;
 use crate::util::client::{NetworkScheme, NetworkSchemeBuilder};
-use crate::{IntoUrl, Method, Proxy, Url, redirect};
+use crate::{Method, Url, redirect};
 
 /// A request which can be executed with `Client::execute()`.
 pub struct Request {
@@ -499,15 +500,38 @@ impl RequestBuilder {
     }
 
     /// Set the proxy for this request.
-    pub fn proxy<U: IntoUrl>(mut self, proxy: U) -> RequestBuilder {
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rquest::Client;
+    /// use rquest::Proxy;
+    ///
+    /// let client = Client::new();
+    /// let proxy = Proxy::all("http://hyper.rs/prox")?.basic_auth("Aladdin", "open sesame");
+    ///
+    /// let resp = client
+    ///     .get("https://tls.peet.ws/api/all")
+    ///     .proxy(proxy)
+    ///     .send()
+    ///     .await?;
+    ///
+    /// let resp = client
+    ///     .get("https://tls.peet.ws/api/all")
+    ///     .proxy("http://hyper.rs/prox")
+    ///     .send()
+    ///     .await?;
+    /// ```
+    pub fn proxy<P>(mut self, proxy: P) -> RequestBuilder
+    where
+        P: IntoProxy,
+    {
         if let Ok(ref mut req) = self.request {
-            match proxy
-                .into_url()
-                .and_then(Proxy::all)
-                .map(|proxy| proxy.intercept(req.url()))
-            {
-                Ok(proxy_scheme) => {
-                    req.network_scheme.proxy_scheme(proxy_scheme);
+            match proxy.into_proxy() {
+                Ok(proxy) => {
+                    if let Some(proxy_scheme) = proxy.intercept(req.url()) {
+                        req.network_scheme.proxy_scheme(proxy_scheme);
+                    }
                 }
                 Err(err) => {
                     self.request = Err(crate::error::builder(err));
