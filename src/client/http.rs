@@ -20,6 +20,7 @@ use crate::dns::hickory::{HickoryDnsResolver, LookupIpStrategy};
 use crate::dns::{DnsResolverWithOverrides, DynResolver, Resolve, gai::GaiResolver};
 use crate::error::{BoxError, Error};
 use crate::into_url::try_uri;
+use crate::proxy::IntoProxy;
 use crate::util::{
     self,
     client::{
@@ -617,9 +618,30 @@ impl ClientBuilder {
     /// # Note
     ///
     /// Adding a proxy will disable the automatic usage of the "system" proxy.
-    pub fn proxy(mut self, proxy: Proxy) -> ClientBuilder {
-        self.config.proxies.push(proxy);
-        self.config.auto_sys_proxy = false;
+    ///
+    /// # Example
+    /// ```
+    /// use reqwest::Client;
+    /// use reqwest::Proxy;
+    ///
+    /// let proxy = Proxy::http("http://proxy:8080").unwrap();
+    /// let client = Client::builder().proxy(proxy).build().unwrap();
+    ///
+    /// let client = Client::builder().proxy("http://proxy2:8080").build().unwrap();
+    /// ```
+    pub fn proxy<P>(mut self, proxy: P) -> ClientBuilder
+    where
+        P: IntoProxy,
+    {
+        match proxy.into_proxy() {
+            Ok(proxy) => {
+                self.config.proxies.push(proxy);
+                self.config.auto_sys_proxy = false;
+            }
+            Err(e) => {
+                self.config.error = Some(e);
+            }
+        }
         self
     }
 
