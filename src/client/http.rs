@@ -887,14 +887,6 @@ impl ClientBuilder {
     /// to use the specified HTTP context. It allows the client to mimic the behavior of different
     /// versions or setups, which can be useful for testing or ensuring compatibility with various environments.
     ///
-    /// # Arguments
-    ///
-    /// * `provider` - The HTTP context provider, which can be any type that implements the `EmulationProvider2` trait.
-    ///
-    /// # Returns
-    ///
-    /// * `ClientBuilder` - The modified client builder with the applied HTTP context.
-    ///
     /// # Example
     ///
     /// ```rust
@@ -924,6 +916,7 @@ impl ClientBuilder {
             let builder = self.config.builder.http1();
             apply_http1_config(builder, http1_config);
         }
+
         if let Some(http2_config) = emulation.http2_config.take() {
             let builder = self.config.builder.http2();
             apply_http2_config(builder, http2_config)
@@ -978,17 +971,6 @@ impl ClientBuilder {
     /// Set the minimum required TLS version for connections.
     ///
     /// By default the TLS backend's own default is used.
-    ///
-    /// # Errors
-    ///
-    /// A value of `tls::Version::TLS_1_3` will cause an error with the
-    /// `native-tls`/`default-tls` backend. This does not mean the version
-    /// isn't supported, just that it can't be set as a minimum due to
-    /// technical limitations.
-    ///
-    /// # Optional
-    ///
-    /// feature to be enabled.
     pub fn min_tls_version(mut self, version: TlsVersion) -> ClientBuilder {
         self.config.tls_config.min_tls_version = Some(version);
         self
@@ -997,17 +979,6 @@ impl ClientBuilder {
     /// Set the maximum allowed TLS version for connections.
     ///
     /// By default there's no maximum.
-    ///
-    /// # Errors
-    ///
-    /// A value of `tls::Version::TLS_1_3` will cause an error with the
-    /// `native-tls`/`default-tls` backend. This does not mean the version
-    /// isn't supported, just that it can't be set as a maximum due to
-    /// technical limitations.
-    ///
-    /// # Optional
-    ///
-    /// feature to be enabled.
     pub fn max_tls_version(mut self, version: TlsVersion) -> ClientBuilder {
         self.config.tls_config.max_tls_version = Some(version);
         self
@@ -1665,17 +1636,7 @@ pub struct ClientUpdate<'c> {
 
 impl<'c> ClientUpdate<'c> {
     /// Modifies the headers for this client using the provided closure.
-    ///
-    /// This method allows you to modify the headers for the client in a flexible way by providing a closure
-    /// that takes a mutable reference to the `HeaderMap`. The closure can then modify the headers as needed.
-    ///
-    /// # Arguments
-    ///
-    /// * `f` - A closure that takes a mutable reference to the `HeaderMap` and modifies it.
-    ///
-    /// # Returns
-    ///
-    /// * `ClientUpdate<'c>` - The modified client with the updated headers.
+    #[inline]
     pub fn headers<F>(mut self, f: F) -> ClientUpdate<'c>
     where
         F: FnOnce(&mut HeaderMap),
@@ -1685,14 +1646,6 @@ impl<'c> ClientUpdate<'c> {
     }
 
     /// Sets the headers order for this client.
-    ///
-    /// # Arguments
-    ///
-    /// * `order` - The order of the headers to set.
-    ///
-    /// # Returns
-    ///
-    /// A mutable reference to the `Client` instance with the applied headers order.
     #[inline]
     pub fn headers_order<T>(mut self, order: T) -> ClientUpdate<'c>
     where
@@ -1714,10 +1667,6 @@ impl<'c> ClientUpdate<'c> {
     }
 
     /// Set that all sockets are bound to the configured address before connection.
-    ///
-    /// If `None`, the sockets will not be bound.
-    ///
-    /// Default is `None`.
     #[inline]
     pub fn local_address<T>(mut self, addr: T) -> ClientUpdate<'c>
     where
@@ -1768,13 +1717,6 @@ impl<'c> ClientUpdate<'c> {
     ///
     /// This method allows you to set the proxies for the client, ensuring thread safety. It will
     /// replace the current proxies with the provided ones and return the old proxies, if any.
-    ///
-    /// # Arguments
-    ///
-    /// * `proxies` - An optional vector of `Proxy` instances to set for the client.
-    ///
-    /// If `Some`, the provided proxies will be used, and the client will check if any of them require HTTP authentication.
-    /// If `None`, all proxies will be cleared and HTTP authentication will be disabled.
     #[inline]
     pub fn proxies<P>(mut self, proxies: P) -> ClientUpdate<'c>
     where
@@ -1806,23 +1748,6 @@ impl<'c> ClientUpdate<'c> {
     ///
     /// The configuration set by this method will have the highest priority, overriding any other
     /// config that may have been previously set.
-    ///
-    /// # Arguments
-    ///
-    /// * `provider` - The HTTP context provider, which can be any type that implements the `EmulationProvider2` trait.
-    ///
-    /// # Returns
-    ///
-    /// * `&mut ClientUpdate<'c>` - The modified client with the applied HTTP context.
-    ///
-    /// # Example
-    ///
-    /// ```rust
-    /// use rquest::{Client, Emulation};
-    ///
-    /// let mut client = Client::builder().build().unwrap();
-    /// client.emulation(Emulation::Firefox128);
-    /// ```
     pub fn emulation<P>(mut self, factory: P) -> ClientUpdate<'c>
     where
         P: EmulationProviderFactory,
