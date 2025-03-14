@@ -38,7 +38,7 @@ use crate::{
 use super::decoder::Accepts;
 use super::request::{Request, RequestBuilder};
 use super::response::Response;
-use super::{Body, EmulationProviderFactory};
+use super::{Body, EmulationProvider, EmulationProviderFactory};
 
 use arc_swap::{ArcSwap, Guard};
 use bytes::Bytes;
@@ -910,26 +910,33 @@ impl ClientBuilder {
     where
         P: EmulationProviderFactory,
     {
+        let config = &mut self.config;
         let mut emulation = factory.emulation();
 
+        // Apply the default headers
         if let Some(mut headers) = emulation.default_headers {
-            std::mem::swap(&mut self.config.headers, &mut headers);
+            std::mem::swap(&mut config.headers, &mut headers);
         }
 
+        // Apply the headers order
         if let Some(headers_order) = emulation.headers_order {
-            std::mem::swap(&mut self.config.headers_order, &mut Some(headers_order));
+            std::mem::swap(&mut config.headers_order, &mut Some(headers_order));
         }
 
+        // Apply http1 configuration
         if let Some(http1_config) = emulation.http1_config.take() {
-            let builder = self.config.builder.http1();
+            let builder = config.builder.http1();
             apply_http1_config(builder, http1_config);
         }
+
+        // Apply http2 configuration
         if let Some(http2_config) = emulation.http2_config.take() {
-            let builder = self.config.builder.http2();
+            let builder = config.builder.http2();
             apply_http2_config(builder, http2_config)
         }
 
-        std::mem::swap(&mut self.config.tls_config, &mut emulation.tls_config);
+        // Apply the TLS configuration
+        std::mem::swap(&mut config.tls_config, &mut emulation.tls_config);
         self
     }
 
@@ -1530,7 +1537,7 @@ impl Client {
     pub fn update(&self) -> ClientUpdate<'_> {
         ClientUpdate {
             inner: (self.inner.as_ref(), (**self.inner.load()).clone()),
-            error: None,
+            emulation: None,
         }
     }
 
@@ -1678,7 +1685,7 @@ impl_debug!(ClientInner,{
 #[derive(Debug)]
 pub struct ClientUpdate<'c> {
     inner: (&'c ArcSwap<ClientInner>, ClientInner),
-    error: Option<Error>,
+    emulation: Option<EmulationProvider>,
 }
 
 impl<'c> ClientUpdate<'c> {
@@ -1824,65 +1831,79 @@ impl<'c> ClientUpdate<'c> {
     ///
     /// The configuration set by this method will have the highest priority, overriding any other
     /// config that may have been previously set.
-    ///
-    /// # Arguments
-    ///
-    /// * `provider` - The HTTP context provider, which can be any type that implements the `EmulationProvider2` trait.
-    ///
-    /// # Returns
-    ///
-    /// * `&mut ClientUpdate<'c>` - The modified client with the applied HTTP context.
-    ///
-    /// # Example
-    ///
-    /// ```rust
-    /// use rquest::{Client, Emulation};
-    ///
-    /// let mut client = Client::builder().build().unwrap();
-    /// client.emulation(Emulation::Firefox128);
-    /// ```
+    #[inline]
     pub fn emulation<P>(mut self, factory: P) -> ClientUpdate<'c>
     where
         P: EmulationProviderFactory,
     {
-        let emulation = factory.emulation();
+        self.emulation = Some(factory.emulation());
+        self
+    }
 
-        if let Some(mut headers) = emulation.default_headers {
-            std::mem::swap(&mut self.inner.1.headers, &mut headers);
+    /// Controls the use of certificate validation.
+    ///
+    /// This method allows you to configure whether the client should accept invalid certificates.
+    /// By default, certificate validation is enabled, and invalid certificates will be rejected.
+    ///
+    /// # Note
+    ///
+    /// This setting will only take effect if `emulation` has been initialized.
+    #[inline]
+    pub fn danger_accept_invalid_certs(mut self, accept_invalid_certs: bool) -> ClientUpdate<'c> {
+        if let Some(emulation) = self.emulation.as_mut() {
+            emulation.tls_config.certs_verification = !accept_invalid_certs;
         }
+        self
+    }
 
-        if let Some(headers_order) = emulation.headers_order {
-            std::mem::swap(&mut self.inner.1.headers_order, &mut Some(headers_order));
+    /// Set the root certificate store.
+    ///
+    /// This method allows you to configure the root certificate store to be used by the client.
+    /// The root certificate store is used to validate the server's certificate during the TLS handshake.
+    ///
+    /// # Note
+    ///
+    /// This setting will only take effect if `emulation` has been initialized.
+    #[inline]
+    pub fn root_cert_store<S>(mut self, store: S) -> ClientUpdate<'c>
+    where
+        S: Into<RootCertStoreProvider>,
+    {
+        if let Some(emulation) = self.emulation.as_mut() {
+            emulation.tls_config.root_certs_store = store.into();
         }
-
-        if let Some(http1_config) = emulation.http1_config {
-            apply_http1_config(self.inner.1.hyper.http1(), http1_config);
-        }
-
-        if let Some(http2_config) = emulation.http2_config {
-            apply_http2_config(self.inner.1.hyper.http2(), http2_config);
-        }
-
-        match BoringTlsConnector::new(emulation.tls_config) {
-            Ok(connector) => {
-                self.inner.1.hyper.connector_mut().set_connector(connector);
-            }
-            Err(err) => {
-                self.error = Some(error::builder(format!(
-                    "failed to create BoringTlsConnector: {}",
-                    err
-                )))
-            }
-        }
-
         self
     }
 
     /// Applies the changes made to the `ClientUpdate` to the `Client`.
     #[inline]
-    pub fn apply(self) -> Result<(), Error> {
-        if let Some(err) = self.error {
-            return Err(err);
+    pub fn apply(mut self) -> Result<(), Error> {
+        let inner = &mut self.inner.1;
+
+        if let Some(emulation) = self.emulation.take() {
+            // Apply the default headers
+            if let Some(mut headers) = emulation.default_headers {
+                std::mem::swap(&mut inner.headers, &mut headers);
+            }
+
+            // Apply the headers order
+            if let Some(headers_order) = emulation.headers_order {
+                std::mem::swap(&mut inner.headers_order, &mut Some(headers_order));
+            }
+
+            // Apply the HTTP/1 configuration
+            if let Some(http1_config) = emulation.http1_config {
+                apply_http1_config(inner.hyper.http1(), http1_config);
+            }
+
+            // Apply the HTTP/2 configuration
+            if let Some(http2_config) = emulation.http2_config {
+                apply_http2_config(inner.hyper.http2(), http2_config);
+            }
+
+            // Apply the TLS connector
+            let connector = BoringTlsConnector::new(emulation.tls_config)?;
+            inner.hyper.connector_mut().set_connector(connector);
         }
 
         self.inner.0.store(Arc::new(self.inner.1));
