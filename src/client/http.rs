@@ -933,24 +933,6 @@ impl ClientBuilder {
         self
     }
 
-    /// Enable Encrypted Client Hello (Secure SNI)
-    pub fn enable_ech_grease(mut self, enabled: bool) -> ClientBuilder {
-        self.config.tls_config.enable_ech_grease = enabled;
-        self
-    }
-
-    /// Enable TLS permute_extensions
-    pub fn permute_extensions(mut self, enabled: bool) -> ClientBuilder {
-        self.config.tls_config.permute_extensions = Some(enabled);
-        self
-    }
-
-    /// Enable TLS pre_shared_key
-    pub fn pre_shared_key(mut self, enabled: bool) -> ClientBuilder {
-        self.config.tls_config.pre_shared_key = enabled;
-        self
-    }
-
     /// Controls the use of certificate validation.
     ///
     /// Defaults to `false`.
