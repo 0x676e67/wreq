@@ -97,6 +97,12 @@ impl<'a> Cookie<'a> {
             None | Some(cookie_crate::Expiration::Session) => None,
         }
     }
+
+    /// Returns the cookie as owned.
+    pub fn into_owned(self) -> Cookie<'static> {
+        Cookie(self.0.into_owned())
+    }
+
 }
 
 impl fmt::Debug for Cookie<'_> {
