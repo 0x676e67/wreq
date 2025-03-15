@@ -102,7 +102,6 @@ impl<'a> Cookie<'a> {
     pub fn into_owned(self) -> Cookie<'static> {
         Cookie(self.0.into_owned())
     }
-
 }
 
 impl fmt::Debug for Cookie<'_> {
