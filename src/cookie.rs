@@ -15,7 +15,7 @@ pub trait CookieStore: Send + Sync {
     fn set_cookies(&self, cookie_headers: &mut dyn Iterator<Item = &HeaderValue>, url: &url::Url);
 
     /// Store a cookie into the store for `url`
-    fn set_cookie<'c>(&self, _url: &url::Url, _cookie: Box<dyn IntoCookie + Send + Sync + 'c>) {}
+    fn set_cookie(&self, _url: &url::Url, _cookie: &dyn IntoCookie) {}
 
     /// Get any Cookie values in the store for `url`
     fn cookies(&self, url: &url::Url) -> Option<HeaderValue>;
@@ -30,7 +30,7 @@ pub trait CookieStore: Send + Sync {
 /// A trait for types that can be converted into a `Cookie`.
 pub trait IntoCookie {
     /// Convert into a `Cookie`.
-    fn into_cookie(self: Box<Self>) -> Result<Cookie<'static>, crate::Error>;
+    fn into(&self) -> Result<Cookie<'_>, crate::Error>;
 }
 
 /// A single HTTP cookie.
@@ -257,22 +257,22 @@ pub(crate) fn extract_response_cookies(
 // ===== impl IntoCookie =====
 impl IntoCookie for &str {
     #[inline]
-    fn into_cookie(self: Box<Self>) -> Result<Cookie<'static>, crate::Error> {
-        Cookie::parse(self.as_bytes()).map(|c| c.into_owned())
+    fn into(&self) -> Result<Cookie<'_>, crate::Error> {
+        Cookie::parse(self.as_bytes())
     }
 }
 
 impl IntoCookie for &HeaderValue {
     #[inline]
-    fn into_cookie(self: Box<Self>) -> Result<Cookie<'static>, crate::Error> {
-        Cookie::parse(self.as_bytes()).map(|c| c.into_owned())
+    fn into(&self) -> Result<Cookie<'_>, crate::Error> {
+        Cookie::parse(self.as_bytes())
     }
 }
 
 impl IntoCookie for Cookie<'_> {
     #[inline]
-    fn into_cookie(self: Box<Self>) -> Result<Cookie<'static>, crate::Error> {
-        Ok(self.into_owned())
+    fn into(&self) -> Result<Cookie<'_>, crate::Error> {
+        Ok(self.clone())
     }
 }
 
@@ -328,8 +328,8 @@ impl CookieStore for Jar {
         HeaderValue::from_maybe_shared(bytes::Bytes::from(s)).ok()
     }
 
-    fn set_cookie<'c>(&self, url: &url::Url, cookie: Box<dyn IntoCookie + Send + Sync + 'c>) {
-        if let Ok(cookie) = cookie.into_cookie() {
+    fn set_cookie<'c>(&self, url: &url::Url, cookie: &dyn IntoCookie) {
+        if let Ok(cookie) = cookie.into() {
             let _ = self.0.write().insert_raw(&cookie.0, url);
         }
     }

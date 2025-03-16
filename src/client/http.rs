@@ -1453,10 +1453,10 @@ impl Client {
     #[cfg(any(feature = "cookies", feature = "cookies-abstract"))]
     pub fn set_cookie<'c, C>(&self, url: &Url, cookie: C)
     where
-        C: cookie::IntoCookie + Send + Sync + 'c,
+        C: cookie::IntoCookie + 'c,
     {
         if let Some(ref cookie_store) = self.inner.load().cookie_store {
-            cookie_store.set_cookie(url, Box::new(cookie));
+            cookie_store.set_cookie(url, &cookie);
         }
     }
 
