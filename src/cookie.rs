@@ -151,12 +151,6 @@ impl<'a> Cookie<'a> {
     }
 }
 
-impl ToString for Cookie<'_> {
-    fn to_string(&self) -> String {
-        self.0.to_string()
-    }
-}
-
 impl fmt::Debug for Cookie<'_> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         self.0.fmt(f)
