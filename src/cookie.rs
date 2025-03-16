@@ -1,21 +1,26 @@
 //! HTTP Cookies
 
+use crate::header::{HeaderValue, SET_COOKIE};
 #[cfg(feature = "cookies")]
 use antidote::RwLock;
 use std::convert::TryInto;
 use std::fmt;
 use std::time::SystemTime;
 
-use crate::header::{HeaderValue, SET_COOKIE};
-
 /// Actions for a persistent cookie store providing session support.
 pub trait CookieStore: Send + Sync {
     /// Store a set of Set-Cookie header values received from `url`
     fn set_cookies(&self, cookie_headers: &mut dyn Iterator<Item = &HeaderValue>, url: &url::Url);
-    /// Remove a Cookie value in the store for `url` and `name`
-    fn remove_cookie(&self, _url: &url::Url, _name: &str) {}
+
     /// Get any Cookie values in the store for `url`
     fn cookies(&self, url: &url::Url) -> Option<HeaderValue>;
+
+    /// Insert a cookie into the store for `url`
+    fn insert(&self, _url: &url::Url, _cookie_header: &HeaderValue) {}
+
+    /// Remove a Cookie value in the store for `url` and `name`
+    fn remove(&self, _url: &url::Url, _name: &str) {}
+
     /// Remove all cookies from the store.
     fn clear(&self) {}
 }
@@ -172,12 +177,6 @@ impl CookieStore for Jar {
         self.0.write().store_response_cookies(iter, url);
     }
 
-    fn remove_cookie(&self, url: &url::Url, name: &str) {
-        if let Some(domain) = url.host_str() {
-            self.0.write().remove(domain, url.path(), name);
-        }
-    }
-
     fn cookies(&self, url: &url::Url) -> Option<HeaderValue> {
         let s = self
             .0
@@ -192,6 +191,20 @@ impl CookieStore for Jar {
         }
 
         HeaderValue::from_maybe_shared(bytes::Bytes::from(s)).ok()
+    }
+
+    fn insert(&self, url: &url::Url, cookie_header: &HeaderValue) {
+        if let Ok(s) = std::str::from_utf8(cookie_header.as_bytes()) {
+            if let Ok(cookie) = cookie_crate::Cookie::parse(s) {
+                let _ = self.0.write().insert_raw(&cookie.into_owned(), url);
+            }
+        }
+    }
+
+    fn remove(&self, url: &url::Url, name: &str) {
+        if let Some(domain) = url.host_str() {
+            self.0.write().remove(domain, url.path(), name);
+        }
     }
 
     fn clear(&self) {
