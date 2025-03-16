@@ -1445,6 +1445,21 @@ impl Client {
         }
     }
 
+    /// Inserts a cookie into the `CookieStore` for the specified URL.
+    ///
+    /// # Note
+    ///
+    /// This method requires the `cookies` feature to be enabled.
+    #[cfg(any(feature = "cookies", feature = "cookies-abstract"))]
+    pub fn insert_cookie<C>(&self, url: &Url, cookie: C)
+    where
+        C: AsRef<HeaderValue>,
+    {
+        if let Some(ref cookie_store) = self.inner.load().cookie_store {
+            cookie_store.insert(url, cookie.as_ref());
+        }
+    }
+
     /// Removes a cookie from the `CookieStore` for the specified URL.
     ///
     /// This method deletes a cookie with the given name from the client's `CookieStore`
@@ -1463,7 +1478,7 @@ impl Client {
     #[cfg(any(feature = "cookies", feature = "cookies-abstract"))]
     pub fn remove_cookie(&self, url: &Url, name: &str) {
         if let Some(ref cookie_store) = self.inner.load().cookie_store {
-            cookie_store.remove_cookie(url, name);
+            cookie_store.remove(url, name);
         }
     }
 
