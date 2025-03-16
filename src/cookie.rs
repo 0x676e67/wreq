@@ -3,6 +3,8 @@
 use crate::header::{HeaderValue, SET_COOKIE};
 #[cfg(feature = "cookies")]
 use antidote::RwLock;
+pub use cookie_crate::{Expiration, SameSite, time::Duration};
+use std::borrow::Cow;
 use std::convert::TryInto;
 use std::fmt;
 use std::time::SystemTime;
@@ -13,7 +15,7 @@ pub trait CookieStore: Send + Sync {
     fn set_cookies(&self, cookie_headers: &mut dyn Iterator<Item = &HeaderValue>, url: &url::Url);
 
     /// Store a cookie into the store for `url`
-    fn set_cookie(&self, _url: &url::Url, _cookie_header: &HeaderValue) {}
+    fn set_cookie<'c>(&self, _url: &url::Url, _cookie: Box<dyn IntoCookie + Send + Sync + 'c>) {}
 
     /// Get any Cookie values in the store for `url`
     fn cookies(&self, url: &url::Url) -> Option<HeaderValue>;
@@ -25,8 +27,19 @@ pub trait CookieStore: Send + Sync {
     fn clear(&self) {}
 }
 
+/// A trait for types that can be converted into a `Cookie`.
+pub trait IntoCookie {
+    /// Convert into a `Cookie`.
+    fn into_cookie(self: Box<Self>) -> Result<Cookie<'static>, crate::Error>;
+}
+
 /// A single HTTP cookie.
+#[derive(Clone)]
 pub struct Cookie<'a>(cookie_crate::Cookie<'a>);
+
+/// A builder for a `Cookie`.
+#[derive(Clone)]
+pub struct CookieBuilder<'a>(cookie_crate::CookieBuilder<'a>);
 
 /// A good default `CookieStore` implementation.
 ///
@@ -39,60 +52,91 @@ pub struct Jar(RwLock<cookie_store::CookieStore>);
 
 // ===== impl Cookie =====
 impl<'a> Cookie<'a> {
-    fn parse(value: &'a HeaderValue) -> Result<Cookie<'a>, CookieParseError> {
-        std::str::from_utf8(value.as_bytes())
+    /// Parse a `Cookie` from a `&[u8]`.
+    pub fn parse(value: &'a [u8]) -> Result<Cookie<'a>, crate::Error> {
+        std::str::from_utf8(value)
             .map_err(cookie_crate::ParseError::from)
             .and_then(cookie_crate::Cookie::parse)
-            .map_err(CookieParseError)
             .map(Cookie)
+            .map_err(Into::into)
+    }
+
+    /// Creates a new `CookieBuilder` instance from the given name and value.
+    #[inline(always)]
+    pub fn builder<N, V>(name: N, value: V) -> CookieBuilder<'a>
+    where
+        N: Into<Cow<'a, str>>,
+        V: Into<Cow<'a, str>>,
+    {
+        CookieBuilder::new(name, value)
+    }
+
+    /// Creates a new `Cookie` instance from the given name and value.
+    #[inline(always)]
+    pub fn new<N, V>(name: N, value: V) -> Cookie<'a>
+    where
+        N: Into<Cow<'a, str>>,
+        V: Into<Cow<'a, str>>,
+    {
+        Cookie(cookie_crate::Cookie::new(name, value))
     }
 
     /// The name of the cookie.
+    #[inline(always)]
     pub fn name(&self) -> &str {
         self.0.name()
     }
 
     /// The value of the cookie.
+    #[inline(always)]
     pub fn value(&self) -> &str {
         self.0.value()
     }
 
     /// Returns true if the 'HttpOnly' directive is enabled.
+    #[inline(always)]
     pub fn http_only(&self) -> bool {
         self.0.http_only().unwrap_or(false)
     }
 
     /// Returns true if the 'Secure' directive is enabled.
+    #[inline(always)]
     pub fn secure(&self) -> bool {
         self.0.secure().unwrap_or(false)
     }
 
     /// Returns true if  'SameSite' directive is 'Lax'.
+    #[inline(always)]
     pub fn same_site_lax(&self) -> bool {
         self.0.same_site() == Some(cookie_crate::SameSite::Lax)
     }
 
     /// Returns true if  'SameSite' directive is 'Strict'.
+    #[inline(always)]
     pub fn same_site_strict(&self) -> bool {
         self.0.same_site() == Some(cookie_crate::SameSite::Strict)
     }
 
     /// Returns the path directive of the cookie, if set.
+    #[inline(always)]
     pub fn path(&self) -> Option<&str> {
         self.0.path()
     }
 
     /// Returns the domain directive of the cookie, if set.
+    #[inline(always)]
     pub fn domain(&self) -> Option<&str> {
         self.0.domain()
     }
 
     /// Get the Max-Age information.
+    #[inline(always)]
     pub fn max_age(&self) -> Option<std::time::Duration> {
         self.0.max_age().and_then(|d| d.try_into().ok())
     }
 
     /// The cookie expiration time.
+    #[inline(always)]
     pub fn expires(&self) -> Option<SystemTime> {
         match self.0.expires() {
             Some(cookie_crate::Expiration::DateTime(offset)) => Some(SystemTime::from(offset)),
@@ -101,6 +145,7 @@ impl<'a> Cookie<'a> {
     }
 
     /// Returns the cookie as owned.
+    #[inline(always)]
     pub fn into_owned(self) -> Cookie<'static> {
         Cookie(self.0.into_owned())
     }
@@ -118,6 +163,88 @@ impl fmt::Debug for Cookie<'_> {
     }
 }
 
+// ===== impl CookieBuilder =====
+impl<'c> CookieBuilder<'c> {
+    /// Creates a new `CookieBuilder` instance from the given name and value.
+    pub fn new<N, V>(name: N, value: V) -> Self
+    where
+        N: Into<Cow<'c, str>>,
+        V: Into<Cow<'c, str>>,
+    {
+        CookieBuilder(cookie_crate::CookieBuilder::new(name, value))
+    }
+
+    /// Set the 'HttpOnly' directive.
+    #[inline(always)]
+    pub fn http_only(mut self, enabled: bool) -> Self {
+        self.0 = self.0.http_only(enabled);
+        self
+    }
+
+    /// Set the 'Secure' directive.
+    #[inline(always)]
+    pub fn secure(mut self, enabled: bool) -> Self {
+        self.0 = self.0.secure(enabled);
+        self
+    }
+
+    /// Set the 'SameSite' directive.
+    #[inline(always)]
+    pub fn same_site(mut self, same_site: cookie_crate::SameSite) -> Self {
+        self.0 = self.0.same_site(same_site);
+        self
+    }
+
+    /// Set the path directive.
+    #[inline(always)]
+    pub fn path<P>(mut self, path: P) -> Self
+    where
+        P: Into<Cow<'c, str>>,
+    {
+        self.0 = self.0.path(path);
+        self
+    }
+
+    /// Set the domain directive.
+    #[inline(always)]
+    pub fn domain<D>(mut self, domain: D) -> Self
+    where
+        D: Into<Cow<'c, str>>,
+    {
+        self.0 = self.0.domain(domain);
+        self
+    }
+
+    /// Set the Max-Age directive.
+    #[inline(always)]
+    pub fn max_age(mut self, max_age: Duration) -> Self {
+        self.0 = self.0.max_age(max_age);
+        self
+    }
+
+    /// Set the expiration time.
+    #[inline(always)]
+    pub fn expires<E>(mut self, expires: E) -> Self
+    where
+        E: Into<Expiration>,
+    {
+        self.0 = self.0.expires(expires);
+        self
+    }
+
+    /// Build the `Cookie`.
+    #[inline(always)]
+    pub fn build(self) -> Cookie<'c> {
+        Cookie(self.0.build())
+    }
+}
+
+impl fmt::Debug for CookieBuilder<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
 pub(crate) fn extract_response_cookie_headers(
     headers: &hyper2::HeaderMap,
 ) -> impl Iterator<Item = &'_ HeaderValue> {
@@ -126,26 +253,34 @@ pub(crate) fn extract_response_cookie_headers(
 
 pub(crate) fn extract_response_cookies(
     headers: &hyper2::HeaderMap,
-) -> impl Iterator<Item = Result<Cookie<'_>, CookieParseError>> {
-    headers.get_all(SET_COOKIE).iter().map(Cookie::parse)
+) -> impl Iterator<Item = Result<Cookie<'_>, crate::Error>> {
+    headers
+        .get_all(SET_COOKIE)
+        .iter()
+        .map(|val| Cookie::parse(val.as_bytes()))
 }
 
-/// Error representing a parse failure of a 'Set-Cookie' header.
-pub(crate) struct CookieParseError(cookie_crate::ParseError);
-
-impl fmt::Debug for CookieParseError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        self.0.fmt(f)
+// ===== impl IntoCookie =====
+impl IntoCookie for &str {
+    #[inline]
+    fn into_cookie(self: Box<Self>) -> Result<Cookie<'static>, crate::Error> {
+        Cookie::parse(self.as_bytes()).map(|c| c.into_owned())
     }
 }
 
-impl fmt::Display for CookieParseError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        self.0.fmt(f)
+impl IntoCookie for &HeaderValue {
+    #[inline]
+    fn into_cookie(self: Box<Self>) -> Result<Cookie<'static>, crate::Error> {
+        Cookie::parse(self.as_bytes()).map(|c| c.into_owned())
     }
 }
 
-impl std::error::Error for CookieParseError {}
+impl IntoCookie for Cookie<'_> {
+    #[inline]
+    fn into_cookie(self: Box<Self>) -> Result<Cookie<'static>, crate::Error> {
+        Ok(self.into_owned())
+    }
+}
 
 // ===== impl Jar =====
 #[cfg(feature = "cookies")]
@@ -177,8 +312,8 @@ impl Jar {
 #[cfg(feature = "cookies")]
 impl CookieStore for Jar {
     fn set_cookies(&self, cookie_headers: &mut dyn Iterator<Item = &HeaderValue>, url: &url::Url) {
-        let iter =
-            cookie_headers.filter_map(|val| Cookie::parse(val).map(|c| c.0.into_owned()).ok());
+        let iter = cookie_headers
+            .filter_map(|val| Cookie::parse(val.as_bytes()).map(|c| c.0.into_owned()).ok());
 
         self.0.write().store_response_cookies(iter, url);
     }
@@ -199,11 +334,9 @@ impl CookieStore for Jar {
         HeaderValue::from_maybe_shared(bytes::Bytes::from(s)).ok()
     }
 
-    fn set_cookie(&self, url: &url::Url, cookie_header: &HeaderValue) {
-        if let Ok(s) = std::str::from_utf8(cookie_header.as_bytes()) {
-            if let Ok(cookie) = cookie_crate::Cookie::parse(s) {
-                let _ = self.0.write().insert_raw(&cookie.into_owned(), url);
-            }
+    fn set_cookie<'c>(&self, url: &url::Url, cookie: Box<dyn IntoCookie + Send + Sync + 'c>) {
+        if let Ok(cookie) = cookie.into_cookie() {
+            let _ = self.0.write().insert_raw(&cookie.0, url);
         }
     }
 

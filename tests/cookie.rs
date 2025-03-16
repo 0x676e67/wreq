@@ -1,5 +1,6 @@
 mod support;
 use http::HeaderValue;
+use rquest::cookie::{self, Cookie};
 use support::server;
 
 #[tokio::test]
@@ -261,7 +262,7 @@ async fn clear_cookies() {
 }
 
 #[tokio::test]
-async fn insert_cookie() {
+async fn set_cookie() {
     let server = server::http(move |req| async move {
         assert_eq!(req.headers().get("cookie"), None);
         http::Response::builder()
@@ -281,12 +282,37 @@ async fn insert_cookie() {
     let cookies = client.get_cookies(&url).unwrap();
     let value = cookies.to_str().unwrap();
     assert!(value == "key=val");
+    client.clear_cookies();
 
     let url = "https://google.com".parse().unwrap();
-    client.set_cookie(&url, &HeaderValue::from_static("key=val"));
+    let cookie = HeaderValue::from_static("key1=val1");
+    client.set_cookie(&url, &cookie);
     let cookies = client.get_cookies(&url).unwrap();
     let value = cookies.to_str().unwrap();
-    assert!(value == "key=val");
+    assert!(value == "key1=val1");
+    client.clear_cookies();
+
+    let cookie = Cookie::new("key3", "val3");
+    client.set_cookie(&url, cookie);
+    let cookies = client.get_cookies(&url).unwrap();
+    let value = cookies.to_str().unwrap();
+    assert!(value == "key3=val3");
+    client.clear_cookies();
+
+    let cookie = Cookie::builder("key4", "val4")
+        .domain("google.com")
+        .path("/")
+        .secure(true)
+        .http_only(true)
+        .max_age(cookie::Duration::hours(1))
+        .same_site(cookie::SameSite::Strict)
+        .build();
+
+    client.set_cookie(&url, cookie);
+    // The built-in cookie store implementation ignores some cookie attributes
+    let cookies = client.get_cookies(&url).unwrap();
+    let value = cookies.to_str().unwrap();
+    assert!(value == "key4=val4");
 }
 
 #[tokio::test]
