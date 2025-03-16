@@ -12,11 +12,11 @@ pub trait CookieStore: Send + Sync {
     /// Store a set of Set-Cookie header values received from `url`
     fn set_cookies(&self, cookie_headers: &mut dyn Iterator<Item = &HeaderValue>, url: &url::Url);
 
+    /// Store a cookie into the store for `url`
+    fn set_cookie(&self, _url: &url::Url, _cookie_header: &HeaderValue) {}
+
     /// Get any Cookie values in the store for `url`
     fn cookies(&self, url: &url::Url) -> Option<HeaderValue>;
-
-    /// Insert a cookie into the store for `url`
-    fn insert(&self, _url: &url::Url, _cookie_header: &HeaderValue) {}
 
     /// Remove a Cookie value in the store for `url` and `name`
     fn remove(&self, _url: &url::Url, _name: &str) {}
@@ -193,7 +193,7 @@ impl CookieStore for Jar {
         HeaderValue::from_maybe_shared(bytes::Bytes::from(s)).ok()
     }
 
-    fn insert(&self, url: &url::Url, cookie_header: &HeaderValue) {
+    fn set_cookie(&self, url: &url::Url, cookie_header: &HeaderValue) {
         if let Ok(s) = std::str::from_utf8(cookie_header.as_bytes()) {
             if let Ok(cookie) = cookie_crate::Cookie::parse(s) {
                 let _ = self.0.write().insert_raw(&cookie.into_owned(), url);

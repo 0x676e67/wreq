@@ -1451,12 +1451,9 @@ impl Client {
     ///
     /// This method requires the `cookies` feature to be enabled.
     #[cfg(any(feature = "cookies", feature = "cookies-abstract"))]
-    pub fn insert_cookie<C>(&self, url: &Url, cookie: C)
-    where
-        C: AsRef<HeaderValue>,
-    {
+    pub fn set_cookie(&self, url: &Url, cookie: &HeaderValue) {
         if let Some(ref cookie_store) = self.inner.load().cookie_store {
-            cookie_store.insert(url, cookie.as_ref());
+            cookie_store.set_cookie(url, cookie);
         }
     }
 
