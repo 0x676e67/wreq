@@ -30,7 +30,7 @@ pub trait CookieStore: Send + Sync {
 /// A trait for types that can be converted into a `Cookie`.
 pub trait IntoCookie {
     /// Convert into a `Cookie`.
-    fn into(&self) -> Result<Cookie<'_>, crate::Error>;
+    fn into(&self) -> Result<Cow<'_, Cookie<'_>>, crate::Error>;
 }
 
 /// A single HTTP cookie.
@@ -257,22 +257,36 @@ pub(crate) fn extract_response_cookies(
 // ===== impl IntoCookie =====
 impl IntoCookie for &str {
     #[inline]
-    fn into(&self) -> Result<Cookie<'_>, crate::Error> {
-        Cookie::parse(self.as_bytes())
+    fn into(&self) -> Result<Cow<'_, Cookie<'_>>, crate::Error> {
+        Cookie::parse(self.as_bytes()).map(Cow::Owned)
     }
 }
 
 impl IntoCookie for &HeaderValue {
     #[inline]
-    fn into(&self) -> Result<Cookie<'_>, crate::Error> {
-        Cookie::parse(self.as_bytes())
+    fn into(&self) -> Result<Cow<'_, Cookie<'_>>, crate::Error> {
+        Cookie::parse(self.as_bytes()).map(Cow::Owned)
+    }
+}
+
+impl IntoCookie for HeaderValue {
+    #[inline]
+    fn into(&self) -> Result<Cow<'_, Cookie<'_>>, crate::Error> {
+        Cookie::parse(self.as_bytes()).map(Cow::Owned)
+    }
+}
+
+impl IntoCookie for &Cookie<'_> {
+    #[inline]
+    fn into(&self) -> Result<Cow<'_, Cookie<'_>>, crate::Error> {
+        Ok(Cow::Borrowed(self))
     }
 }
 
 impl IntoCookie for Cookie<'_> {
     #[inline]
-    fn into(&self) -> Result<Cookie<'_>, crate::Error> {
-        Ok(self.clone())
+    fn into(&self) -> Result<Cow<'_, Cookie<'_>>, crate::Error> {
+        Ok(Cow::Borrowed(self))
     }
 }
 

@@ -292,6 +292,12 @@ async fn set_cookie() {
     assert!(value == "key1=val1");
     client.clear_cookies();
 
+    client.set_cookie(&url, cookie);
+    let cookies = client.get_cookies(&url).unwrap();
+    let value = cookies.to_str().unwrap();
+    assert!(value == "key1=val1");
+    client.clear_cookies();
+
     let cookie = Cookie::new("key3", "val3");
     client.set_cookie(&url, cookie);
     let cookies = client.get_cookies(&url).unwrap();
@@ -308,11 +314,19 @@ async fn set_cookie() {
         .same_site(cookie::SameSite::Strict)
         .build();
 
+    client.set_cookie(&url, &cookie);
+    // The built-in cookie store implementation ignores some cookie attributes
+    let cookies = client.get_cookies(&url).unwrap();
+    let value = cookies.to_str().unwrap();
+    assert!(value == "key4=val4");
+    client.clear_cookies();
+
     client.set_cookie(&url, cookie);
     // The built-in cookie store implementation ignores some cookie attributes
     let cookies = client.get_cookies(&url).unwrap();
     let value = cookies.to_str().unwrap();
     assert!(value == "key4=val4");
+    client.clear_cookies();
 }
 
 #[tokio::test]
