@@ -255,14 +255,14 @@ pub(crate) fn extract_response_cookies(
 impl IntoCookie for &HeaderValue {
     #[inline]
     fn into(&self) -> Result<Cow<'_, Cookie<'_>>, crate::Error> {
-        Cookie::parse(self.as_bytes()).map(Cow::Owned)
+        Cookie::parse(self).map(Cow::Owned)
     }
 }
 
 impl IntoCookie for HeaderValue {
     #[inline]
     fn into(&self) -> Result<Cow<'_, Cookie<'_>>, crate::Error> {
-        Cookie::parse(self.as_bytes()).map(Cow::Owned)
+        Cookie::parse(self).map(Cow::Owned)
     }
 }
 
