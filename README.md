@@ -14,8 +14,8 @@ An ergonomic all-in-one HTTP client for browser emulation with TLS, JA3/JA4, and
 
 - Plain bodies, JSON, urlencoded, multipart
 - Header Order
-- Redirect Policy
 - Cookie Store
+- Redirect Policy
 - Rotating Proxies
 - WebSocket Upgrade
 - HTTPS via BoringSSL

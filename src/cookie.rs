@@ -12,7 +12,7 @@ use std::time::SystemTime;
 /// Actions for a persistent cookie store providing session support.
 pub trait CookieStore: Send + Sync {
     /// Store a set of Set-Cookie header values received from `url`
-    fn set_cookies(&self, cookie_headers: &mut dyn Iterator<Item = &HeaderValue>, url: &url::Url);
+    fn set_cookies(&self, url: &url::Url, cookie_headers: &mut dyn Iterator<Item = &HeaderValue>);
 
     /// Store a cookie into the store for `url`
     fn set_cookie(&self, _url: &url::Url, _cookie: &dyn IntoCookie) {}
@@ -20,10 +20,10 @@ pub trait CookieStore: Send + Sync {
     /// Get any Cookie values in the store for `url`
     fn cookies(&self, url: &url::Url) -> Option<HeaderValue>;
 
-    /// Remove a Cookie value in the store for `url` and `name`
+    /// Removes a Cookie value in the store for `url` and `name`
     fn remove(&self, _url: &url::Url, _name: &str) {}
 
-    /// Remove all cookies from the store.
+    /// Clear all cookies from the store.
     fn clear(&self) {}
 }
 
@@ -319,7 +319,7 @@ impl Jar {
 
 #[cfg(feature = "cookies")]
 impl CookieStore for Jar {
-    fn set_cookies(&self, cookie_headers: &mut dyn Iterator<Item = &HeaderValue>, url: &url::Url) {
+    fn set_cookies(&self, url: &url::Url, cookie_headers: &mut dyn Iterator<Item = &HeaderValue>) {
         let iter = cookie_headers
             .filter_map(|val| Cookie::parse(val.as_bytes()).map(|c| c.0.into_owned()).ok());
 
