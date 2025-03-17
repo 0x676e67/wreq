@@ -52,9 +52,12 @@ pub struct Jar(RwLock<cookie_store::CookieStore>);
 
 // ===== impl Cookie =====
 impl<'a> Cookie<'a> {
-    /// Parse a `Cookie` from a `&[u8]`.
-    pub fn parse(value: &'a [u8]) -> Result<Cookie<'a>, crate::Error> {
-        std::str::from_utf8(value)
+    /// Parse a `Cookie` from a `AsRef<[u8]>`.
+    pub fn parse<V>(value: &'a V) -> Result<Cookie<'a>, crate::Error>
+    where
+        V: AsRef<[u8]> + ?Sized,
+    {
+        std::str::from_utf8(value.as_ref())
             .map_err(cookie_crate::ParseError::from)
             .and_then(cookie_crate::Cookie::parse)
             .map(Cookie)
@@ -255,13 +258,6 @@ pub(crate) fn extract_response_cookies(
 }
 
 // ===== impl IntoCookie =====
-impl IntoCookie for &str {
-    #[inline]
-    fn into(&self) -> Result<Cow<'_, Cookie<'_>>, crate::Error> {
-        Cookie::parse(self.as_bytes()).map(Cow::Owned)
-    }
-}
-
 impl IntoCookie for &HeaderValue {
     #[inline]
     fn into(&self) -> Result<Cow<'_, Cookie<'_>>, crate::Error> {

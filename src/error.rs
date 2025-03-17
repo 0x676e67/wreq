@@ -288,7 +288,7 @@ impl From<http::Error> for Error {
 #[cfg(feature = "cookies-abstract")]
 impl From<cookie_crate::ParseError> for Error {
     fn from(err: cookie_crate::ParseError) -> Error {
-        Error::new(Kind::Builder, Some(err))
+        Error::new(Kind::Decode, Some(err))
     }
 }
 
