@@ -1,6 +1,6 @@
 mod support;
 use http::HeaderValue;
-use rquest::cookie::{self, Cookie};
+use rquest::cookie::{self, Cookie, CookieStore, Jar};
 use support::server;
 
 #[tokio::test]
@@ -366,4 +366,23 @@ async fn remove_cookie() {
 
     let cookies = client.get_cookies(&url);
     assert!(cookies.is_none());
+}
+
+#[tokio::test]
+async fn cookie_string_format() {
+    let url = "https://google.com".parse::<url::Url>().unwrap();
+    let cookie = Cookie::builder("key", "val")
+        .domain("google.com")
+        .path("/")
+        .secure(true)
+        .http_only(true)
+        .max_age(cookie::Duration::hours(1))
+        .same_site(cookie::SameSite::Strict)
+        .build();
+
+    let jar = Jar::default();
+    jar.set_cookie(&url, &cookie);
+    let cookies = jar.cookies(&url).unwrap();
+    let value = cookies.to_str().unwrap();
+    assert_eq!(value, "key=val");
 }

@@ -34,11 +34,11 @@ pub trait IntoCookie {
 }
 
 /// A single HTTP cookie.
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct Cookie<'a>(cookie_crate::Cookie<'a>);
 
 /// A builder for a `Cookie`.
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct CookieBuilder<'a>(cookie_crate::CookieBuilder<'a>);
 
 /// A good default `CookieStore` implementation.
@@ -154,7 +154,7 @@ impl<'a> Cookie<'a> {
     }
 }
 
-impl fmt::Debug for Cookie<'_> {
+impl fmt::Display for Cookie<'_> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         self.0.fmt(f)
     }
@@ -233,12 +233,6 @@ impl<'c> CookieBuilder<'c> {
     #[inline(always)]
     pub fn build(self) -> Cookie<'c> {
         Cookie(self.0.build())
-    }
-}
-
-impl fmt::Debug for CookieBuilder<'_> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        self.0.fmt(f)
     }
 }
 
