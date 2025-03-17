@@ -18,8 +18,8 @@ An ergonomic all-in-one HTTP client for browser emulation with TLS, JA3/JA4, and
 - Redirect Policy
 - Rotating Proxies
 - WebSocket Upgrade
-- HTTPS via BoringSSL
-- Emulation Fingerprint
+- HTTPS via [BoringSSL](#building)
+- [Emulation](#emulation) Fingerprint
 
 ## Example
 
