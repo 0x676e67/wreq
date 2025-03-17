@@ -245,10 +245,7 @@ pub(crate) fn extract_response_cookie_headers(
 pub(crate) fn extract_response_cookies(
     headers: &hyper2::HeaderMap,
 ) -> impl Iterator<Item = Result<Cookie<'_>, crate::Error>> {
-    headers
-        .get_all(SET_COOKIE)
-        .iter()
-        .map(|val| Cookie::parse(val.as_bytes()))
+    headers.get_all(SET_COOKIE).iter().map(Cookie::parse)
 }
 
 // ===== impl IntoCookie =====
