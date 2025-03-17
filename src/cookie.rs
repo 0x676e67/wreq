@@ -3,7 +3,7 @@
 use crate::header::{HeaderValue, SET_COOKIE};
 #[cfg(feature = "cookies")]
 use antidote::RwLock;
-pub use cookie_crate::{Expiration, SameSite, time::Duration};
+pub use cookie_crate::{Cookie as RawCookie, Expiration, SameSite, time::Duration};
 use std::borrow::Cow;
 use std::convert::TryInto;
 use std::fmt;
@@ -35,7 +35,7 @@ pub trait IntoCookie {
 
 /// A single HTTP cookie.
 #[derive(Debug, Clone)]
-pub struct Cookie<'a>(cookie_crate::Cookie<'a>);
+pub struct Cookie<'a>(RawCookie<'a>);
 
 /// A builder for a `Cookie`.
 #[derive(Debug, Clone)]
@@ -59,7 +59,7 @@ impl<'a> Cookie<'a> {
     {
         std::str::from_utf8(value.as_ref())
             .map_err(cookie_crate::ParseError::from)
-            .and_then(cookie_crate::Cookie::parse)
+            .and_then(RawCookie::parse)
             .map(Cookie)
             .map_err(Into::into)
     }
@@ -81,7 +81,7 @@ impl<'a> Cookie<'a> {
         N: Into<Cow<'a, str>>,
         V: Into<Cow<'a, str>>,
     {
-        Cookie(cookie_crate::Cookie::new(name, value))
+        Cookie(RawCookie::new(name, value))
     }
 
     /// The name of the cookie.
@@ -151,6 +151,12 @@ impl<'a> Cookie<'a> {
     #[inline(always)]
     pub fn into_owned(self) -> Cookie<'static> {
         Cookie(self.0.into_owned())
+    }
+
+    /// Returns the inner `cookie_crate::Cookie` instance.
+    #[inline(always)]
+    pub fn into_inner(self) -> RawCookie<'a> {
+        self.0
     }
 }
 
@@ -296,7 +302,7 @@ impl Jar {
     /// // and now add to a `ClientBuilder`?
     /// ```
     pub fn add_cookie_str(&self, cookie: &str, url: &url::Url) {
-        let cookies = cookie_crate::Cookie::parse(cookie)
+        let cookies = RawCookie::parse(cookie)
             .ok()
             .map(|c| c.into_owned())
             .into_iter();
