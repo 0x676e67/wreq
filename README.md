@@ -8,18 +8,18 @@
 
 > 🚀 Help me work seamlessly with open source sharing by [sponsoring me on GitHub](https://github.com/0x676e67/0x676e67/blob/main/SPONSOR.md)
 
-An ergonomic all-in-one HTTP client for browser emulation with TLS, JA3/JA4, and HTTP/2 fingerprinting.
+An ergonomic all-in-one HTTP client for browser emulation with TLS, JA3/JA4, and HTTP/2 fingerprints.
 
 ## Features
 
 - Plain bodies, JSON, urlencoded, multipart
-- Header Order
 - Cookie Store
+- Header Order
 - Redirect Policy
 - Rotating Proxies
 - WebSocket Upgrade
 - HTTPS via BoringSSL
-- Perfectly Chrome, Safari, and Firefox
+- Emulation Fingerprint
 
 ## Example
 

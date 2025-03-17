@@ -5,17 +5,16 @@
 
 //! # rquest
 //!
-//! An ergonomic all-in-one HTTP client for browser emulation with TLS, JA3/JA4, and HTTP/2 fingerprinting.
+//! An ergonomic all-in-one HTTP client for browser emulation with TLS, JA3/JA4, and HTTP/2 fingerprints.
 //!
 //! - Plain bodies, [JSON](#json), [urlencoded](#forms), [multipart]
-//! - Header Order
 //! - Cookies Store
+//! - Header Order
 //! - [Redirect policy](#redirect-policies)
-//! - HTTP [Proxies](#proxies)
+//! - Rotating [Proxies](#proxies)
 //! - [WebSocket](#websocket) Upgrade
 //! - HTTPS via [BoringSSL](#tls)
-//! - Perfectly Chrome, Safari, and Firefox
-//! - [Changelog](https://github.com/0x676e67/rquest/blob/main/CHANGELOG.md)
+//! - [Emulation](#emulation) Fingerprint
 //!
 //! Additional learning resources include:
 //!
