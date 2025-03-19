@@ -402,11 +402,8 @@ impl Proxy {
             Proxy::new(Intercept::System(SYS_PROXIES.clone()))
         };
 
-        #[cfg(not(target_os = "windows"))]
-        {
-            proxy.no_proxy = NoProxy::from_env();
-        }
-
+        proxy.no_proxy = NoProxy::from_env();
+        
         #[cfg(target_os = "windows")]
         {
             // Only read from windows registry proxy settings if not available from an enviroment
