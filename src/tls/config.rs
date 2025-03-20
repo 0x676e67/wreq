@@ -196,7 +196,7 @@ pub struct TlsConfig {
     pub random_aes_hw_override: bool,
 }
 
-/// ====== impl TlsSettings ======c
+/// ====== impl TlsConfig ======
 impl Default for TlsConfig {
     fn default() -> Self {
         Self::builder().build()

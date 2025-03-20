@@ -217,7 +217,7 @@ impl BoringTlsConnector {
             connector.set_aes_hw_override(aes_hw_override);
         }
 
-        // Create the `TlsSettings` with the default session cache capacity.
+        // Create the `HandshakeSettings` with the default session cache capacity.
         let settings = HandshakeSettings::builder()
             .session_cache(config.pre_shared_key)
             .skip_session_ticket(config.psk_skip_session_ticket)

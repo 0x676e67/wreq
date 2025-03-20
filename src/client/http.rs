@@ -39,7 +39,7 @@ use crate::{
 use super::decoder::Accepts;
 use super::request::{Request, RequestBuilder};
 use super::response::Response;
-use super::{Body, EmulationProviderFactory};
+use super::{Body, EmulationProvider, EmulationProviderFactory};
 
 use arc_swap::{ArcSwap, Guard};
 use bytes::Bytes;
@@ -127,9 +127,16 @@ struct Config {
     dns_strategy: Option<LookupIpStrategy>,
     https_only: bool,
     http2_max_retry_count: usize,
-    tls_info: bool,
     connector_layers: Option<Vec<BoxedConnectorLayer>>,
     builder: Builder,
+    tls_info: bool,
+    tls_sni: bool,
+    verify_hostname: bool,
+    certs_verification: bool,
+    root_certs_store: RootCertStoreProvider,
+    alpn_protos: AlpnProtos,
+    min_tls_version: Option<TlsVersion>,
+    max_tls_version: Option<TlsVersion>,
     tls_config: TlsConfig,
 }
 
@@ -157,8 +164,15 @@ impl_debug!(
         dns_overrides,
         https_only,
         http2_max_retry_count,
-        tls_info,
         builder,
+        tls_info,
+        tls_sni,
+        verify_hostname,
+        certs_verification,
+        root_certs_store,
+        alpn_protos,
+        min_tls_version,
+        max_tls_version,
         tls_config
     }
 );
@@ -206,8 +220,15 @@ impl ClientBuilder {
                 builder: HyperClient::builder(TokioExecutor::new()),
                 https_only: false,
                 http2_max_retry_count: 2,
-                tls_info: false,
                 connector_layers: None,
+                tls_info: false,
+                tls_sni: true,
+                alpn_protos: AlpnProtos::default(),
+                verify_hostname: true,
+                certs_verification: true,
+                root_certs_store: RootCertStoreProvider::Default,
+                min_tls_version: None,
+                max_tls_version: None,
                 tls_config: TlsConfig::default(),
             },
         }
@@ -232,7 +253,7 @@ impl ClientBuilder {
         }
         let proxies_maybe_http_auth = proxies.iter().any(Proxy::maybe_has_http_auth);
 
-        let http2_only = matches!(config.tls_config.alpn_protos, AlpnProtos::HTTP2);
+        let http2_only = matches!(config.alpn_protos, AlpnProtos::HTTP2);
         config
             .builder
             .http2_only(http2_only)
@@ -262,7 +283,18 @@ impl ClientBuilder {
             let mut http = HttpConnector::new_with_resolver(DynResolver::new(resolver));
             http.set_connect_timeout(config.connect_timeout);
 
-            let tls = BoringTlsConnector::new(config.tls_config)?;
+            let tls = {
+                let mut tls_config = config.tls_config;
+                tls_config.alpn_protos = config.alpn_protos;
+                tls_config.tls_sni = config.tls_sni;
+                tls_config.verify_hostname = config.verify_hostname;
+                tls_config.certs_verification = config.certs_verification;
+                tls_config.root_certs_store = config.root_certs_store;
+                tls_config.min_tls_version = config.min_tls_version;
+                tls_config.max_tls_version = config.max_tls_version;
+                BoringTlsConnector::new(tls_config)?
+            };
+
             ConnectorBuilder::new(http, tls, config.nodelay, config.tls_info)
                 .timeout(config.connect_timeout)
                 .keepalive(config.tcp_keepalive)
@@ -967,7 +999,16 @@ impl ClientBuilder {
     ///
     /// feature to be enabled.
     pub fn danger_accept_invalid_certs(mut self, accept_invalid_certs: bool) -> ClientBuilder {
-        self.config.tls_config.certs_verification = !accept_invalid_certs;
+        self.config.certs_verification = !accept_invalid_certs;
+        self
+    }
+
+    /// Set root certificate store.
+    pub fn root_cert_store<S>(mut self, store: S) -> ClientBuilder
+    where
+        S: Into<RootCertStoreProvider>,
+    {
+        self.config.root_certs_store = store.into();
         self
     }
 
@@ -975,7 +1016,7 @@ impl ClientBuilder {
     ///
     /// Defaults to `true`.
     pub fn tls_sni(mut self, tls_sni: bool) -> ClientBuilder {
-        self.config.tls_config.tls_sni = tls_sni;
+        self.config.tls_sni = tls_sni;
         self
     }
 
@@ -989,7 +1030,7 @@ impl ClientBuilder {
     /// used, *any* valid certificate for *any* site will be trusted for use from any other. This
     /// introduces a significant vulnerability to man-in-the-middle attacks.
     pub fn verify_hostname(mut self, verify_hostname: bool) -> ClientBuilder {
-        self.config.tls_config.verify_hostname = verify_hostname;
+        self.config.verify_hostname = verify_hostname;
         self
     }
 
@@ -997,7 +1038,7 @@ impl ClientBuilder {
     ///
     /// By default the TLS backend's own default is used.
     pub fn min_tls_version(mut self, version: TlsVersion) -> ClientBuilder {
-        self.config.tls_config.min_tls_version = Some(version);
+        self.config.min_tls_version = Some(version);
         self
     }
 
@@ -1005,7 +1046,7 @@ impl ClientBuilder {
     ///
     /// By default there's no maximum.
     pub fn max_tls_version(mut self, version: TlsVersion) -> ClientBuilder {
-        self.config.tls_config.max_tls_version = Some(version);
+        self.config.max_tls_version = Some(version);
         self
     }
 
@@ -1016,15 +1057,6 @@ impl ClientBuilder {
     /// feature to be enabled.
     pub fn tls_info(mut self, tls_info: bool) -> ClientBuilder {
         self.config.tls_info = tls_info;
-        self
-    }
-
-    /// Set root certificate store.
-    pub fn root_cert_store<S>(mut self, store: S) -> ClientBuilder
-    where
-        S: Into<RootCertStoreProvider>,
-    {
-        self.config.tls_config.root_certs_store = store.into();
         self
     }
 
@@ -1523,7 +1555,7 @@ impl Client {
     pub fn update(&self) -> ClientUpdate<'_> {
         ClientUpdate {
             inner: (self.inner.as_ref(), (**self.inner.load()).clone()),
-            error: None,
+            emulation: None,
         }
     }
 
@@ -1671,7 +1703,7 @@ impl_debug!(ClientInner,{
 #[derive(Debug)]
 pub struct ClientUpdate<'c> {
     inner: (&'c ArcSwap<ClientInner>, ClientInner),
-    error: Option<Error>,
+    emulation: Option<EmulationProvider>,
 }
 
 impl<'c> ClientUpdate<'c> {
@@ -1788,48 +1820,71 @@ impl<'c> ClientUpdate<'c> {
     ///
     /// The configuration set by this method will have the highest priority, overriding any other
     /// config that may have been previously set.
+    #[inline]
     pub fn emulation<P>(mut self, factory: P) -> ClientUpdate<'c>
     where
         P: EmulationProviderFactory,
     {
         let emulation = factory.emulation();
+        self.emulation = Some(emulation);
+        self
+    }
 
-        if let Some(mut headers) = emulation.default_headers {
-            std::mem::swap(&mut self.inner.1.headers, &mut headers);
+    /// Controls the use of certificate validation.
+    ///
+    /// Defaults to `false`.
+    ///
+    /// # Warning
+    ///
+    /// You should think very carefully before using this method. If
+    /// invalid certificates are trusted, *any* certificate for *any* site
+    /// will be trusted for use. This includes expired certificates. This
+    /// introduces significant vulnerabilities, and should only be used
+    /// as a last resort.
+    ///
+    /// # Optional
+    ///
+    /// feature to be enabled.
+    pub fn danger_accept_invalid_certs(mut self, accept_invalid_certs: bool) -> ClientUpdate<'c> {
+        if let Some(emulation) = self.emulation.as_mut() {
+            emulation.tls_config.certs_verification = !accept_invalid_certs;
         }
+        self
+    }
 
-        if let Some(headers_order) = emulation.headers_order {
-            std::mem::swap(&mut self.inner.1.headers_order, &mut Some(headers_order));
+    /// Set root certificate store.
+    pub fn root_cert_store<S>(mut self, store: S) -> ClientUpdate<'c>
+    where
+        S: Into<RootCertStoreProvider>,
+    {
+        if let Some(emulation) = self.emulation.as_mut() {
+            emulation.tls_config.root_certs_store = store.into();
         }
-
-        if let Some(http1_config) = emulation.http1_config {
-            apply_http1_config(self.inner.1.hyper.http1(), http1_config);
-        }
-
-        if let Some(http2_config) = emulation.http2_config {
-            apply_http2_config(self.inner.1.hyper.http2(), http2_config);
-        }
-
-        match BoringTlsConnector::new(emulation.tls_config) {
-            Ok(connector) => {
-                self.inner.1.hyper.connector_mut().set_connector(connector);
-            }
-            Err(err) => {
-                self.error = Some(error::builder(format!(
-                    "failed to create BoringTlsConnector: {}",
-                    err
-                )))
-            }
-        }
-
         self
     }
 
     /// Applies the changes made to the `ClientUpdate` to the `Client`.
     #[inline]
-    pub fn apply(self) -> Result<(), Error> {
-        if let Some(err) = self.error {
-            return Err(err);
+    pub fn apply(mut self) -> Result<(), Error> {
+        if let Some(emulation) = self.emulation {
+            if let Some(mut headers) = emulation.default_headers {
+                std::mem::swap(&mut self.inner.1.headers, &mut headers);
+            }
+
+            if let Some(headers_order) = emulation.headers_order {
+                std::mem::swap(&mut self.inner.1.headers_order, &mut Some(headers_order));
+            }
+
+            if let Some(http1_config) = emulation.http1_config {
+                apply_http1_config(self.inner.1.hyper.http1(), http1_config);
+            }
+
+            if let Some(http2_config) = emulation.http2_config {
+                apply_http2_config(self.inner.1.hyper.http2(), http2_config);
+            }
+
+            let connector = BoringTlsConnector::new(emulation.tls_config)?;
+            self.inner.1.hyper.connector_mut().set_connector(connector);
         }
 
         self.inner.0.store(Arc::new(self.inner.1));
