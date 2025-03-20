@@ -204,3 +204,24 @@ async fn updatea_cloned() {
     assert!(resp.status().is_success());
     assert!(!client.headers().contains_key(http::header::ACCEPT_ENCODING));
 }
+
+#[tokio::test]
+async fn update_ssl_verify() {
+    let client = rquest::Client::builder()
+        .danger_accept_invalid_certs(true)
+        .no_proxy()
+        .build()
+        .unwrap();
+
+    let res = client.get("https://self-signed.badssl.com/").send().await;
+    assert!(res.is_ok());
+
+    client
+        .update()
+        .emulation(EmulationProvider::default())
+        .apply()
+        .unwrap();
+
+    let res = client.get("https://self-signed.badssl.com/").send().await;
+    assert!(res.is_ok());
+}

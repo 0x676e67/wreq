@@ -319,6 +319,7 @@ impl ClientBuilder {
                 proxies,
                 proxies_maybe_http_auth,
                 network_scheme: config.network_scheme,
+                certs_verification: config.certs_verification,
             })),
         })
     }
@@ -961,24 +962,29 @@ impl ClientBuilder {
     {
         let mut emulation = factory.emulation();
 
+        // apply default headers
         if let Some(mut headers) = emulation.default_headers {
             std::mem::swap(&mut self.config.headers, &mut headers);
         }
 
+        // apply headers order
         if let Some(headers_order) = emulation.headers_order {
             std::mem::swap(&mut self.config.headers_order, &mut Some(headers_order));
         }
 
+        // apply http1 config
         if let Some(http1_config) = emulation.http1_config.take() {
             let builder = self.config.builder.http1();
             apply_http1_config(builder, http1_config);
         }
 
+        // apply http2 config
         if let Some(http2_config) = emulation.http2_config.take() {
             let builder = self.config.builder.http2();
             apply_http2_config(builder, http2_config)
         }
 
+        // apply tls config
         std::mem::swap(&mut self.config.tls_config, &mut emulation.tls_config);
         self
     }
@@ -1003,7 +1009,22 @@ impl ClientBuilder {
         self
     }
 
-    /// Set root certificate store.
+    /// Sets the root certificate store for the client.
+    ///
+    /// This method allows you to specify a custom root certificate store to be used
+    /// for TLS connections. By default, the system's root certificate store is used.
+    ///
+    /// # Parameters
+    ///
+    /// - `store`: The root certificate store to use. This can be a custom implementation
+    ///   of the `RootCertStoreProvider` trait or one of the predefined options.
+    ///
+    /// # Notes
+    ///
+    /// - Using a custom root certificate store can be useful in scenarios where you need
+    ///   to trust specific certificates that are not included in the system's default store.
+    /// - Ensure that the provided root certificate store is properly configured to avoid
+    ///   potential security risks.
     pub fn root_cert_store<S>(mut self, store: S) -> ClientBuilder
     where
         S: Into<RootCertStoreProvider>,
@@ -1554,7 +1575,8 @@ impl Client {
     #[inline]
     pub fn update(&self) -> ClientUpdate<'_> {
         ClientUpdate {
-            inner: (self.inner.as_ref(), (**self.inner.load()).clone()),
+            inner: self.inner.as_ref(),
+            current: (**self.inner.load()).clone(),
             emulation: None,
         }
     }
@@ -1626,6 +1648,7 @@ struct ClientInner {
     proxies: Vec<Proxy>,
     proxies_maybe_http_auth: bool,
     network_scheme: NetworkSchemeBuilder,
+    certs_verification: bool,
 }
 
 impl ClientInner {
@@ -1694,7 +1717,8 @@ impl_debug!(ClientInner,{
     https_only,
     http2_max_retry_count,
     proxies,
-    network_scheme
+    network_scheme,
+    certs_verification
 });
 
 /// A mutable reference to a `ClientInner`.
@@ -1702,7 +1726,8 @@ impl_debug!(ClientInner,{
 /// This struct provides methods to mutate the state of a `ClientInner`.
 #[derive(Debug)]
 pub struct ClientUpdate<'c> {
-    inner: (&'c ArcSwap<ClientInner>, ClientInner),
+    inner: &'c ArcSwap<ClientInner>,
+    current: ClientInner,
     emulation: Option<EmulationProvider>,
 }
 
@@ -1713,7 +1738,7 @@ impl<'c> ClientUpdate<'c> {
     where
         F: FnOnce(&mut HeaderMap),
     {
-        f(&mut self.inner.1.headers);
+        f(&mut self.current.headers);
         self
     }
 
@@ -1723,7 +1748,7 @@ impl<'c> ClientUpdate<'c> {
     where
         T: Into<Cow<'static, [HeaderName]>>,
     {
-        std::mem::swap(&mut self.inner.1.headers_order, &mut Some(order.into()));
+        std::mem::swap(&mut self.current.headers_order, &mut Some(order.into()));
         self
     }
 
@@ -1734,7 +1759,7 @@ impl<'c> ClientUpdate<'c> {
     where
         C: cookie::CookieStore + 'static,
     {
-        std::mem::swap(&mut self.inner.1.cookie_store, &mut Some(cookie_store as _));
+        std::mem::swap(&mut self.current.cookie_store, &mut Some(cookie_store as _));
         self
     }
 
@@ -1744,7 +1769,7 @@ impl<'c> ClientUpdate<'c> {
     where
         T: Into<Option<IpAddr>>,
     {
-        self.inner.1.network_scheme.address(addr.into());
+        self.current.network_scheme.address(addr.into());
         self
     }
 
@@ -1756,7 +1781,7 @@ impl<'c> ClientUpdate<'c> {
         V4: Into<Option<Ipv4Addr>>,
         V6: Into<Option<Ipv6Addr>>,
     {
-        self.inner.1.network_scheme.addresses(ipv4, ipv6);
+        self.current.network_scheme.addresses(ipv4, ipv6);
         self
     }
 
@@ -1781,7 +1806,7 @@ impl<'c> ClientUpdate<'c> {
     where
         T: Into<Cow<'static, str>>,
     {
-        self.inner.1.network_scheme.interface(interface);
+        self.current.network_scheme.interface(interface);
         self
     }
 
@@ -1796,8 +1821,8 @@ impl<'c> ClientUpdate<'c> {
         P::Item: Into<Proxy>,
     {
         let proxies = proxies.into_iter().map(Into::into).collect::<Vec<Proxy>>();
-        self.inner.1.proxies_maybe_http_auth = proxies.iter().any(Proxy::maybe_has_http_auth);
-        self.inner.1.proxies = proxies;
+        self.current.proxies_maybe_http_auth = proxies.iter().any(Proxy::maybe_has_http_auth);
+        self.current.proxies = proxies;
         self
     }
 
@@ -1807,8 +1832,8 @@ impl<'c> ClientUpdate<'c> {
     /// remove the current proxies and return the old proxies, if any.
     #[inline]
     pub fn unset_proxies(mut self) -> ClientUpdate<'c> {
-        self.inner.1.proxies.clear();
-        self.inner.1.proxies_maybe_http_auth = false;
+        self.current.proxies.clear();
+        self.current.proxies_maybe_http_auth = false;
         self
     }
 
@@ -1830,65 +1855,40 @@ impl<'c> ClientUpdate<'c> {
         self
     }
 
-    /// Controls the use of certificate validation.
-    ///
-    /// Defaults to `false`.
-    ///
-    /// # Warning
-    ///
-    /// You should think very carefully before using this method. If
-    /// invalid certificates are trusted, *any* certificate for *any* site
-    /// will be trusted for use. This includes expired certificates. This
-    /// introduces significant vulnerabilities, and should only be used
-    /// as a last resort.
-    ///
-    /// # Optional
-    ///
-    /// feature to be enabled.
-    pub fn danger_accept_invalid_certs(mut self, accept_invalid_certs: bool) -> ClientUpdate<'c> {
-        if let Some(emulation) = self.emulation.as_mut() {
-            emulation.tls_config.certs_verification = !accept_invalid_certs;
-        }
-        self
-    }
-
-    /// Set root certificate store.
-    pub fn root_cert_store<S>(mut self, store: S) -> ClientUpdate<'c>
-    where
-        S: Into<RootCertStoreProvider>,
-    {
-        if let Some(emulation) = self.emulation.as_mut() {
-            emulation.tls_config.root_certs_store = store.into();
-        }
-        self
-    }
-
     /// Applies the changes made to the `ClientUpdate` to the `Client`.
     #[inline]
-    pub fn apply(mut self) -> Result<(), Error> {
-        if let Some(emulation) = self.emulation {
+    pub fn apply(self) -> Result<(), Error> {
+        let mut current = self.current;
+
+        if let Some(mut emulation) = self.emulation {
+            // apply default headers
             if let Some(mut headers) = emulation.default_headers {
-                std::mem::swap(&mut self.inner.1.headers, &mut headers);
+                std::mem::swap(&mut current.headers, &mut headers);
             }
 
+            // apply headers order
             if let Some(headers_order) = emulation.headers_order {
-                std::mem::swap(&mut self.inner.1.headers_order, &mut Some(headers_order));
+                std::mem::swap(&mut current.headers_order, &mut Some(headers_order));
             }
 
+            // apply http1 config
             if let Some(http1_config) = emulation.http1_config {
-                apply_http1_config(self.inner.1.hyper.http1(), http1_config);
+                apply_http1_config(current.hyper.http1(), http1_config);
             }
 
+            // apply http2 config
             if let Some(http2_config) = emulation.http2_config {
-                apply_http2_config(self.inner.1.hyper.http2(), http2_config);
+                apply_http2_config(current.hyper.http2(), http2_config);
             }
+
+            // apply tls certs verification
+            emulation.tls_config.certs_verification = current.certs_verification;
 
             let connector = BoringTlsConnector::new(emulation.tls_config)?;
-            self.inner.1.hyper.connector_mut().set_connector(connector);
+            current.hyper.connector_mut().set_connector(connector);
         }
 
-        self.inner.0.store(Arc::new(self.inner.1));
-        Ok(())
+        Ok(self.inner.store(Arc::new(current)))
     }
 }
 
