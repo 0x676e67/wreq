@@ -37,7 +37,7 @@ pub struct TlsConfig {
     /// **Usage Example:**
     /// - Commonly used to negotiate **HTTP/2**.
     /// - Default use all protocols (HTTP/1.1/HTTP/2/HTTP/3).
-    #[builder(default = AlpnProtos::ALL)]
+    #[builder(default = AlpnProtos::default())]
     pub alpn_protos: AlpnProtos,
 
     /// The **ALPS extension** (*draft-vvv-tls-alps*) enables exchanging

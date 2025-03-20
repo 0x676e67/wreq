@@ -771,13 +771,13 @@ impl ClientBuilder {
 
     /// Only use HTTP/1.
     pub fn http1_only(mut self) -> ClientBuilder {
-        self.config.tls_config.alpn_protos = AlpnProtos::HTTP1;
+        self.config.alpn_protos = AlpnProtos::HTTP1;
         self
     }
 
     /// Only use HTTP/2.
     pub fn http2_only(mut self) -> ClientBuilder {
-        self.config.tls_config.alpn_protos = AlpnProtos::HTTP2;
+        self.config.alpn_protos = AlpnProtos::HTTP2;
         self
     }
 
