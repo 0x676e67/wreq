@@ -1888,7 +1888,8 @@ impl<'c> ClientUpdate<'c> {
             current.hyper.connector_mut().set_connector(connector);
         }
 
-        Ok(self.inner.store(Arc::new(current)))
+        self.inner.store(Arc::new(current));
+        Ok(())
     }
 }
 

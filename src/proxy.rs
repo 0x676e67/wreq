@@ -1603,7 +1603,7 @@ mod tests {
         // Let other threads run now
         drop(_lock);
 
-        assert_eq!(baseline_proxies.contains_key("http"), false);
+        assert!(!baseline_proxies.contains_key("http"));
 
         let p = &valid_proxies["http"];
         assert_eq!(p.scheme(), "http");
