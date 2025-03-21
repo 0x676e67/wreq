@@ -335,9 +335,7 @@ impl RootCertStoreProvider {
         // Conditionally configure the TLS builder based on the "native-roots" feature.
         // If no custom CA cert store, use the system's native certificate store if the feature is enabled.
         match self {
-            RootCertStoreProvider::Owned(cert_store) => {
-                builder.set_verify_cert_store(cert_store.0)
-            },
+            RootCertStoreProvider::Owned(cert_store) => builder.set_verify_cert_store(cert_store.0),
             RootCertStoreProvider::Borrowed(cert_store) => {
                 builder.set_verify_cert_store_ref(&cert_store.0)
             }
