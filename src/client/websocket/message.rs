@@ -15,6 +15,16 @@ impl Utf8Bytes {
         Self(ts::Utf8Bytes::from_static(str))
     }
 
+    /// Creates from a [`Bytes`] object without checking the encoding.
+    ///
+    /// # Safety
+    ///
+    /// The bytes passed in must be valid UTF-8.
+    #[inline]
+    pub fn from_bytes_unchecked(bytes: Bytes) -> Self {
+        Self(unsafe { ts::Utf8Bytes::from_bytes_unchecked(bytes) })
+    }
+
     /// Returns as a string slice.
     #[inline]
     pub fn as_str(&self) -> &str {
