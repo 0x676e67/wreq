@@ -289,7 +289,7 @@ impl ClientBuilder {
                 tls_config.tls_sni = config.tls_sni;
                 tls_config.verify_hostname = config.verify_hostname;
                 tls_config.certs_verification = config.certs_verification;
-                tls_config.root_certs_store = config.root_certs_store;
+                tls_config.root_certs_store = config.root_certs_store.clone();
                 tls_config.min_tls_version = config.min_tls_version;
                 tls_config.max_tls_version = config.max_tls_version;
                 BoringTlsConnector::new(tls_config)?
@@ -320,6 +320,7 @@ impl ClientBuilder {
                 proxies_maybe_http_auth,
                 network_scheme: config.network_scheme,
                 certs_verification: config.certs_verification,
+                root_certs_store: config.root_certs_store,
             })),
         })
     }
@@ -1649,6 +1650,7 @@ struct ClientInner {
     proxies_maybe_http_auth: bool,
     network_scheme: NetworkSchemeBuilder,
     certs_verification: bool,
+    root_certs_store: RootCertStoreProvider,
 }
 
 impl ClientInner {
@@ -1883,6 +1885,9 @@ impl<'c> ClientUpdate<'c> {
 
             // apply tls certs verification
             emulation.tls_config.certs_verification = current.certs_verification;
+
+            // apply tls certs verify store
+            emulation.tls_config.root_certs_store = current.root_certs_store.clone();
 
             let connector = BoringTlsConnector::new(emulation.tls_config)?;
             current.hyper.connector_mut().set_connector(connector);

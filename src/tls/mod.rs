@@ -5,7 +5,7 @@
 //! - Various parts of TLS can also be configured or even disabled on the
 //!   `ClientBuilder`.
 
-mod cert;
+mod certs;
 mod config;
 mod conn;
 mod ext;
@@ -15,7 +15,7 @@ use boring2::{error::ErrorStack, ssl::SslVersion};
 pub use self::conn::{BoringTlsConnector, HttpsConnector, MaybeHttpsStream};
 pub use self::ext::{ConnectConfigurationExt, SslConnectorBuilderExt};
 pub use self::{
-    cert::{RootCertStore, RootCertStoreBuilder, RootCertStoreProvider},
+    certs::{RootCertStore, RootCertStoreBuilder, RootCertStoreProvider},
     config::TlsConfig,
 };
 

@@ -1,4 +1,4 @@
-use super::cert::RootCertStoreProvider;
+use super::certs::RootCertStoreProvider;
 use super::{AlpnProtos, AlpsProtos, TlsResult, TlsVersion};
 
 use boring2::ssl::{
