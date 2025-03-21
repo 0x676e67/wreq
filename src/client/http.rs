@@ -1017,7 +1017,7 @@ impl ClientBuilder {
         self
     }
 
-    /// Configures SSL certificate pinning for the client.
+    /// Configures SSL/TLS certificate pinning for the client.
     ///
     /// This method allows you to specify a set of PEM-encoded certificates that the client
     /// will pin to, ensuring that only these certificates are trusted during SSL/TLS connections.
