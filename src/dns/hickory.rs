@@ -26,25 +26,22 @@ impl HickoryDnsResolver {
     where
         S: Into<Option<LookupIpStrategy>>,
     {
-        let ip_strategy = strategy.into().unwrap_or(LookupIpStrategy::Ipv4AndIpv6);
-        let resolver = match TokioResolver::builder_tokio() {
-            Ok(mut resolver) => {
-                resolver.options_mut().ip_strategy = ip_strategy;
-                resolver.build()
-            }
+        let mut resolver = match TokioResolver::builder_tokio() {
+            Ok(resolver) => resolver,
             Err(err) => {
                 log::debug!("error reading DNS system conf: {}", err);
-                let mut resolver = TokioResolver::builder_with_config(
+                TokioResolver::builder_with_config(
                     ResolverConfig::default(),
                     TokioConnectionProvider::default(),
-                );
-                resolver.options_mut().ip_strategy = ip_strategy;
-                resolver.build()
+                )
             }
         };
 
+        resolver.options_mut().ip_strategy =
+            strategy.into().unwrap_or(LookupIpStrategy::Ipv4AndIpv6);
+
         Ok(Self {
-            state: Arc::new(resolver),
+            state: Arc::new(resolver.build()),
         })
     }
 }
