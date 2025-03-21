@@ -208,7 +208,7 @@ async fn updatea_cloned() {
 #[tokio::test]
 async fn update_ssl_verify() {
     let client = rquest::Client::builder()
-        .cert_verification(true)
+        .cert_verification(false)
         .no_proxy()
         .build()
         .unwrap();

@@ -7,7 +7,7 @@ use std::time::Duration;
 async fn main() -> Result<(), rquest::Error> {
     // Build a client
     let client = Client::builder()
-        .cert_verification(true)
+        .cert_verification(false)
         .connect_timeout(Duration::from_secs(10))
         .build()?;
 
