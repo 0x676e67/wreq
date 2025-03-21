@@ -9,28 +9,28 @@ use boring2::{
 };
 use std::{fmt::Debug, path::Path};
 
-/// A builder for constructing a `RootCertStore`.
+/// A builder for constructing a `CertStore`.
 ///
 /// This builder provides methods to add certificates to the store from various formats,
 /// and to set default paths for the certificate store. Once all desired certificates
-/// have been added, the `build` method can be used to create the `RootCertStore`.
+/// have been added, the `build` method can be used to create the `CertStore`.
 ///
 /// # Example
 ///
 /// ```rust
-/// use rquest::RootCertStore;
+/// use rquest::CertStore;
 ///
-/// let store = RootCertStore::builder()
+/// let store = CertStore::builder()
 ///     .add_der_cert(&der_cert)
 ///     .add_pem_cert(&pem_cert)
 ///     .set_default_paths()
 ///     .build()?;
 /// ```
-pub struct RootCertStoreBuilder {
+pub struct CertStoreBuilder {
     builder: Result<X509StoreBuilder, Error>,
 }
 
-impl RootCertStoreBuilder {
+impl CertStoreBuilder {
     /// Adds a DER-encoded certificate to the certificate store.
     ///
     /// # Parameters
@@ -167,43 +167,43 @@ impl RootCertStoreBuilder {
         self
     }
 
-    /// Constructs the `RootCertStore`.
+    /// Constructs the `CertStore`.
     ///
-    /// This method finalizes the builder and constructs the `RootCertStore`
+    /// This method finalizes the builder and constructs the `CertStore`
     /// containing all the added certificates.
     #[inline]
-    pub fn build(self) -> Result<RootCertStore, Error> {
-        self.builder.map(|builder| RootCertStore(builder.build()))
+    pub fn build(self) -> Result<CertStore, Error> {
+        self.builder.map(|builder| CertStore(builder.build()))
     }
 }
 
 /// A collection of certificates Store.
 #[derive(Clone)]
-pub struct RootCertStore(X509Store);
+pub struct CertStore(X509Store);
 
-impl Debug for RootCertStore {
+impl Debug for CertStore {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("RootCertStore").finish()
+        f.debug_struct("CertStore").finish()
     }
 }
 
-/// ====== impl RootCertStore ======
-impl RootCertStore {
-    /// Creates a new `RootCertStoreBuilder`.
+/// ====== impl CertStore ======
+impl CertStore {
+    /// Creates a new `CertStoreBuilder`.
     #[inline]
-    pub fn builder() -> RootCertStoreBuilder {
-        RootCertStoreBuilder {
+    pub fn builder() -> CertStoreBuilder {
+        CertStoreBuilder {
             builder: X509StoreBuilder::new().map_err(error::builder),
         }
     }
 
-    /// Creates a new `RootCertStore` from a collection of DER-encoded certificates.
+    /// Creates a new `CertStore` from a collection of DER-encoded certificates.
     ///
     /// # Parameters
     ///
     /// - `certs`: An iterator over DER-encoded certificates.
     #[inline]
-    pub fn from_der_certs<C>(certs: C) -> Result<RootCertStore, Error>
+    pub fn from_der_certs<C>(certs: C) -> Result<CertStore, Error>
     where
         C: IntoIterator,
         C::Item: AsRef<[u8]>,
@@ -211,13 +211,13 @@ impl RootCertStore {
         load_certs_from_iter(certs, X509::from_der)
     }
 
-    /// Creates a new `RootCertStore` from a collection of PEM-encoded certificates.
+    /// Creates a new `CertStore` from a collection of PEM-encoded certificates.
     ///
     /// # Parameters
     ///
     /// - `certs`: An iterator over PEM-encoded certificates.
     #[inline]
-    pub fn from_pem_certs<C>(certs: C) -> Result<RootCertStore, Error>
+    pub fn from_pem_certs<C>(certs: C) -> Result<CertStore, Error>
     where
         C: IntoIterator,
         C::Item: AsRef<[u8]>,
@@ -225,29 +225,29 @@ impl RootCertStore {
         load_certs_from_iter(certs, X509::from_pem)
     }
 
-    /// Creates a new `RootCertStore` from a PEM-encoded certificate stack.
+    /// Creates a new `CertStore` from a PEM-encoded certificate stack.
     ///
     /// # Parameters
     ///
     /// - `certs`: A PEM-encoded certificate stack.
     #[inline]
-    pub fn from_pem_stack<C>(certs: C) -> Result<RootCertStore, Error>
+    pub fn from_pem_stack<C>(certs: C) -> Result<CertStore, Error>
     where
         C: AsRef<[u8]>,
     {
         load_certs_from_stack(certs, X509::stack_from_pem)
     }
 
-    /// Creates a new `RootCertStore` from a PEM-encoded certificate file.
+    /// Creates a new `CertStore` from a PEM-encoded certificate file.
     ///
     /// This method reads the file at the specified path, expecting it to contain a PEM-encoded
-    /// certificate stack, and then constructs a `RootCertStore` from it.
+    /// certificate stack, and then constructs a `CertStore` from it.
     ///
     /// # Parameters
     ///
     /// - `path`: A reference to a path of the PEM file.
     #[inline]
-    pub fn from_pem_file<P>(path: P) -> Result<RootCertStore, Error>
+    pub fn from_pem_file<P>(path: P) -> Result<CertStore, Error>
     where
         P: AsRef<Path>,
     {
@@ -264,7 +264,7 @@ impl RootCertStore {
     }
 }
 
-fn load_certs_from_iter<C, F>(certs: C, x509: F) -> Result<RootCertStore, Error>
+fn load_certs_from_iter<C, F>(certs: C, x509: F) -> Result<CertStore, Error>
 where
     C: IntoIterator,
     C::Item: AsRef<[u8]>,
@@ -272,17 +272,17 @@ where
 {
     let mut store = X509StoreBuilder::new()?;
     let certs = filter_map_certs(certs, x509);
-    process_certs(certs.into_iter(), &mut store).map(|_| RootCertStore(store.build()))
+    process_certs(certs.into_iter(), &mut store).map(|_| CertStore(store.build()))
 }
 
-fn load_certs_from_stack<C, F>(certs: C, x509: F) -> Result<RootCertStore, Error>
+fn load_certs_from_stack<C, F>(certs: C, x509: F) -> Result<CertStore, Error>
 where
     C: AsRef<[u8]>,
     F: Fn(&[u8]) -> Result<Vec<X509>, ErrorStack>,
 {
     let mut store = X509StoreBuilder::new()?;
     let certs = x509(certs.as_ref())?;
-    process_certs(certs.into_iter(), &mut store).map(|_| RootCertStore(store.build()))
+    process_certs(certs.into_iter(), &mut store).map(|_| CertStore(store.build()))
 }
 
 fn process_certs<I>(iter: I, store: &mut X509StoreBuilder) -> Result<(), Error>

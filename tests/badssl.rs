@@ -21,7 +21,7 @@ async fn test_badssl_modern() {
 #[tokio::test]
 async fn test_badssl_self_signed() {
     let text = rquest::Client::builder()
-        .danger_accept_invalid_certs(true)
+        .cert_verification(true)
         .no_proxy()
         .build()
         .unwrap()
@@ -58,7 +58,7 @@ async fn test_3des_support() -> Result<(), rquest::Error> {
                 )
                 .build(),
         )
-        .danger_accept_invalid_certs(true)
+        .cert_verification(true)
         .build()?;
 
     // Check if the client can connect to the 3des.badssl.com
@@ -87,7 +87,7 @@ async fn test_firefox_7x_100_cipher() -> Result<(), rquest::Error> {
                 )
                 .build(),
         )
-        .danger_accept_invalid_certs(true)
+        .cert_verification(true)
         .build()?;
 
     // Check if the client can connect to the dh2048.badssl.com

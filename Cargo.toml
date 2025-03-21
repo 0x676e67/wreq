@@ -288,8 +288,8 @@ path = "examples/set_interface.rs"
 required-features = ["brotli", "apple-network-device-binding"]
 
 [[example]]
-name = "set_root_cert_store"
-path = "examples/set_root_cert_store.rs"
+name = "set_cert_store"
+path = "examples/set_cert_store.rs"
 required-features = ["native-roots", "webpki-roots"]
 
 [[example]]

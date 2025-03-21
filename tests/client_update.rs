@@ -1,7 +1,7 @@
 #![cfg(not(target_arch = "wasm32"))]
 mod support;
 
-use rquest::{EmulationProvider, RootCertStore, TlsConfig};
+use rquest::{CertStore, EmulationProvider, TlsConfig};
 use support::server;
 
 #[tokio::test]
@@ -208,7 +208,7 @@ async fn updatea_cloned() {
 #[tokio::test]
 async fn update_ssl_verify() {
     let client = rquest::Client::builder()
-        .danger_accept_invalid_certs(true)
+        .cert_verification(true)
         .no_proxy()
         .build()
         .unwrap();
@@ -228,13 +228,13 @@ async fn update_ssl_verify() {
 
 #[tokio::test]
 async fn update_ssl_certs_verify_stroe() {
-    let store = RootCertStore::builder()
+    let store = CertStore::builder()
         .add_pem_cert(include_bytes!("certs/badssl.pem"))
         .build()
         .unwrap();
 
     let client = rquest::Client::builder()
-        .root_cert_store(store)
+        .cert_store(store)
         .no_proxy()
         .build()
         .unwrap();

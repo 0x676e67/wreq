@@ -145,8 +145,8 @@ impl BoringTlsConnector {
     /// Creates a new `BoringTlsConnector` with the given `TlsConfig`.
     pub fn new(config: TlsConfig) -> TlsResult<BoringTlsConnector> {
         let mut connector = SslConnector::no_default_verify_builder(SslMethod::tls_client())?
-            .root_cert_store(config.root_certs_store)?
-            .cert_verification(config.certs_verification)?
+            .cert_store(config.cert_store)?
+            .cert_verification(config.cert_verification)?
             .alpn_protos(config.alpn_protos)?
             .min_tls_version(config.min_tls_version)?
             .max_tls_version(config.max_tls_version)?;

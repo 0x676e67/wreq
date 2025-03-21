@@ -30,7 +30,7 @@ use crate::util::{
     },
     rt::{TokioExecutor, tokio::TokioTimer},
 };
-use crate::{Http1Config, Http2Config, RootCertStore, TlsConfig, error};
+use crate::{CertStore, Http1Config, Http2Config, TlsConfig, error};
 use crate::{IntoUrl, Method, Proxy, StatusCode, Url};
 use crate::{
     redirect,
@@ -134,8 +134,8 @@ struct Config {
     alpn_protos: Option<AlpnProtos>,
     tls_sni: Option<bool>,
     verify_hostname: Option<bool>,
-    certs_verification: Option<bool>,
-    root_certs_store: Option<Cow<'static, RootCertStore>>,
+    cert_verification: Option<bool>,
+    cert_store: Option<Cow<'static, CertStore>>,
     min_tls_version: Option<TlsVersion>,
     max_tls_version: Option<TlsVersion>,
     tls_config: Option<TlsConfig>,
@@ -169,8 +169,8 @@ impl_debug!(
         tls_info,
         tls_sni,
         verify_hostname,
-        certs_verification,
-        root_certs_store,
+        cert_verification,
+        cert_store,
         alpn_protos,
         min_tls_version,
         max_tls_version,
@@ -226,8 +226,8 @@ impl ClientBuilder {
                 tls_sni: None,
                 alpn_protos: None,
                 verify_hostname: None,
-                certs_verification: None,
-                root_certs_store: None,
+                cert_verification: None,
+                cert_store: None,
                 min_tls_version: None,
                 max_tls_version: None,
                 tls_config: None,
@@ -298,12 +298,12 @@ impl ClientBuilder {
                     tls_config.verify_hostname = verify_hostname;
                 }
 
-                if let Some(certs_verification) = config.certs_verification {
-                    tls_config.certs_verification = certs_verification;
+                if let Some(cert_verification) = config.cert_verification {
+                    tls_config.cert_verification = cert_verification;
                 }
 
-                if config.root_certs_store.is_some() {
-                    tls_config.root_certs_store = config.root_certs_store.clone();
+                if config.cert_store.is_some() {
+                    tls_config.cert_store = config.cert_store.clone();
                 }
 
                 if config.min_tls_version.is_some() {
@@ -344,8 +344,8 @@ impl ClientBuilder {
                 alpn_protos: config.alpn_protos,
                 tls_sni: config.tls_sni,
                 verify_hostname: config.verify_hostname,
-                certs_verification: config.certs_verification,
-                root_certs_store: config.root_certs_store,
+                cert_verification: config.cert_verification,
+                root_cert_store: config.cert_store,
                 min_tls_version: config.min_tls_version,
                 max_tls_version: config.max_tls_version,
             })),
@@ -1019,7 +1019,7 @@ impl ClientBuilder {
 
     /// Controls the use of certificate validation.
     ///
-    /// Defaults to `false`.
+    /// Defaults to `true`.
     ///
     /// # Warning
     ///
@@ -1028,36 +1028,32 @@ impl ClientBuilder {
     /// will be trusted for use. This includes expired certificates. This
     /// introduces significant vulnerabilities, and should only be used
     /// as a last resort.
-    ///
-    /// # Optional
-    ///
-    /// feature to be enabled.
-    pub fn danger_accept_invalid_certs(mut self, accept_invalid_certs: bool) -> ClientBuilder {
-        self.config.certs_verification = Some(!accept_invalid_certs);
+    pub fn cert_verification(mut self, cert_verification: bool) -> ClientBuilder {
+        self.config.cert_verification = Some(cert_verification);
         self
     }
 
-    /// Sets the root certificate store for the client.
+    /// Sets the verify certificate store for the client.
     ///
-    /// This method allows you to specify a custom root certificate store to be used
-    /// for TLS connections. By default, the system's root certificate store is used.
+    /// This method allows you to specify a custom verify certificate store to be used
+    /// for TLS connections. By default, the system's verify certificate store is used.
     ///
     /// # Parameters
     ///
-    /// - `store`: The root certificate store to use. This can be a custom implementation
-    ///   of the `RootCertStoreProvider` trait or one of the predefined options.
+    /// - `store`: The verify certificate store to use. This can be a custom implementation
+    ///   of the `IntoRootCertStore` trait or one of the predefined options.
     ///
     /// # Notes
     ///
-    /// - Using a custom root certificate store can be useful in scenarios where you need
+    /// - Using a custom verify certificate store can be useful in scenarios where you need
     ///   to trust specific certificates that are not included in the system's default store.
-    /// - Ensure that the provided root certificate store is properly configured to avoid
+    /// - Ensure that the provided verify certificate store is properly configured to avoid
     ///   potential security risks.
-    pub fn root_cert_store<S>(mut self, store: S) -> ClientBuilder
+    pub fn cert_store<S>(mut self, store: S) -> ClientBuilder
     where
         S: IntoRootCertStore,
     {
-        self.config.root_certs_store = store.into();
+        self.config.cert_store = store.into();
         self
     }
 
@@ -1679,8 +1675,8 @@ struct ClientInner {
     alpn_protos: Option<AlpnProtos>,
     tls_sni: Option<bool>,
     verify_hostname: Option<bool>,
-    certs_verification: Option<bool>,
-    root_certs_store: Option<Cow<'static, RootCertStore>>,
+    cert_verification: Option<bool>,
+    root_cert_store: Option<Cow<'static, CertStore>>,
     min_tls_version: Option<TlsVersion>,
     max_tls_version: Option<TlsVersion>,
 }
@@ -1752,7 +1748,7 @@ impl_debug!(ClientInner,{
     http2_max_retry_count,
     proxies,
     network_scheme,
-    certs_verification
+    cert_verification
 });
 
 /// A mutable reference to a `ClientInner`.
@@ -1929,12 +1925,12 @@ impl<'c> ClientUpdate<'c> {
                     tls_config.verify_hostname = verify_hostname;
                 }
 
-                if let Some(certs_verification) = current.certs_verification {
-                    tls_config.certs_verification = certs_verification;
+                if let Some(cert_verification) = current.cert_verification {
+                    tls_config.cert_verification = cert_verification;
                 }
 
-                if current.root_certs_store.is_some() {
-                    tls_config.root_certs_store = current.root_certs_store.clone();
+                if current.root_cert_store.is_some() {
+                    tls_config.cert_store = current.root_cert_store.clone();
                 }
 
                 if current.min_tls_version.is_some() {

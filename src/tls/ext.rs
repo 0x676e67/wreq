@@ -1,4 +1,4 @@
-use super::{AlpnProtos, AlpsProtos, RootCertStore, TlsResult, TlsVersion};
+use super::{AlpnProtos, AlpsProtos, CertStore, TlsResult, TlsVersion};
 use crate::tls::certs::LOAD_CERTS;
 use boring2::ssl::{
     CertCompressionAlgorithm, ConnectConfiguration, SslConnectorBuilder, SslOptions, SslRef,
@@ -32,10 +32,10 @@ pub trait SslConnectorBuilderExt {
         alg: CertCompressionAlgorithm,
     ) -> TlsResult<SslConnectorBuilder>;
 
-    /// Configure the RootCertStoreProvider for the given `SslConnectorBuilder`.
-    fn root_cert_store(
+    /// Configure the CertStore for the given `SslConnectorBuilder`.
+    fn cert_store(
         self,
-        provider: Option<Cow<'static, RootCertStore>>,
+        provider: Option<Cow<'static, CertStore>>,
     ) -> TlsResult<SslConnectorBuilder>;
 }
 
@@ -104,9 +104,9 @@ impl SslConnectorBuilderExt for SslConnectorBuilder {
     }
 
     #[inline]
-    fn root_cert_store(
+    fn cert_store(
         mut self,
-        store: Option<Cow<'static, RootCertStore>>,
+        store: Option<Cow<'static, CertStore>>,
     ) -> TlsResult<SslConnectorBuilder> {
         if let Some(store) = store {
             match store {

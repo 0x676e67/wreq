@@ -1,4 +1,4 @@
-use super::{AlpnProtos, AlpsProtos, RootCertStore, TlsVersion};
+use super::{AlpnProtos, AlpsProtos, CertStore, TlsVersion};
 use boring2::ssl::{CertCompressionAlgorithm, SslCurve};
 use std::borrow::Cow;
 use typed_builder::TypedBuilder;
@@ -12,13 +12,13 @@ pub struct TlsConfig {
     /// The root certificate store.
     /// Default use system's native certificate store.
     #[builder(default, setter(transform = |input: impl IntoRootCertStore| input.into()))]
-    pub root_certs_store: Option<Cow<'static, RootCertStore>>,
+    pub cert_store: Option<Cow<'static, CertStore>>,
 
     /// SSL may authenticate either endpoint with an X.509 certificate.
     /// Typically this is used to authenticate the server to the client.
     /// These functions configure certificate verification.
     #[builder(default = true)]
-    pub certs_verification: bool,
+    pub cert_verification: bool,
 
     /// The server_name extension (RFC 3546) allows the client to advertise the
     /// name of the server it is connecting to. This is used in virtual hosting
@@ -203,19 +203,19 @@ impl Default for TlsConfig {
     }
 }
 
-/// A trait for converting various types into an optional `Cow` containing a `RootCertStore`.
+/// A trait for converting various types into an optional `Cow` containing a `CertStore`.
 ///
 /// This trait is used to provide a unified way to convert different types
-/// into an optional `Cow` containing a `RootCertStore`.
+/// into an optional `Cow` containing a `CertStore`.
 pub trait IntoRootCertStore {
-    fn into(self) -> Option<Cow<'static, RootCertStore>>;
+    fn into(self) -> Option<Cow<'static, CertStore>>;
 }
 
 macro_rules! impl_into_root_cert_store_for_types {
     ($($t:ty => $body:expr),*) => {
         $(
             impl IntoRootCertStore for $t {
-                fn into(self) -> Option<Cow<'static, RootCertStore>> {
+                fn into(self) -> Option<Cow<'static, CertStore>> {
                     $body(self)
                 }
             }
@@ -224,13 +224,13 @@ macro_rules! impl_into_root_cert_store_for_types {
 }
 
 impl_into_root_cert_store_for_types!(
-    &'static RootCertStore => |s| Some(Cow::Borrowed(s)),
-    Option<&'static RootCertStore> => |s: Option<&'static RootCertStore>| s.map(Cow::Borrowed)
+    &'static CertStore => |s| Some(Cow::Borrowed(s)),
+    Option<&'static CertStore> => |s: Option<&'static CertStore>| s.map(Cow::Borrowed)
 );
 
 impl_into_root_cert_store_for_types!(
-    RootCertStore => |s| Some(Cow::Owned(s)),
-    Option<RootCertStore> => |s: Option<RootCertStore>| s.map(Cow::Owned)
+    CertStore => |s| Some(Cow::Owned(s)),
+    Option<CertStore> => |s: Option<CertStore>| s.map(Cow::Owned)
 );
 
 /// A trait for converting various types into an optional `Cow` containing a slice of `CertCompressionAlgorithm`.

@@ -6,7 +6,7 @@ use rquest::{Client, Message};
 async fn main() -> Result<(), rquest::Error> {
     // Build a client
     let client = Client::builder()
-        .danger_accept_invalid_certs(true)
+        .cert_verification(true)
         .build()?;
 
     // Use the API you're already familiar with
