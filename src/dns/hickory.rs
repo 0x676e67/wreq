@@ -2,8 +2,9 @@
 
 use super::{Addrs, Name, Resolve, Resolving};
 pub use hickory_resolver::config::LookupIpStrategy;
-use hickory_resolver::config::{ResolverConfig, ResolverOpts};
-use hickory_resolver::{TokioAsyncResolver, lookup_ip::LookupIpIntoIter, system_conf};
+use hickory_resolver::config::ResolverConfig;
+use hickory_resolver::name_server::TokioConnectionProvider;
+use hickory_resolver::{TokioResolver, lookup_ip::LookupIpIntoIter};
 use std::net::SocketAddr;
 use std::sync::Arc;
 
@@ -13,7 +14,7 @@ pub struct HickoryDnsResolver {
     /// Since we might not have been called in the context of a
     /// Tokio Runtime in initialization, so we must delay the actual
     /// construction of the resolver.
-    state: Arc<TokioAsyncResolver>,
+    state: Arc<TokioResolver>,
 }
 
 impl HickoryDnsResolver {
@@ -25,16 +26,25 @@ impl HickoryDnsResolver {
     where
         S: Into<Option<LookupIpStrategy>>,
     {
-        let (config, mut opts) = match system_conf::read_system_conf() {
-            Ok((config, opts)) => (config, opts),
+        let ip_strategy = strategy.into().unwrap_or(LookupIpStrategy::Ipv4AndIpv6);
+        let resolver = match TokioResolver::builder_tokio() {
+            Ok(mut resolver) => {
+                resolver.options_mut().ip_strategy = ip_strategy;
+                resolver.build()
+            }
             Err(err) => {
                 log::debug!("error reading DNS system conf: {}", err);
-                (ResolverConfig::default(), ResolverOpts::default())
+                let mut resolver = TokioResolver::builder_with_config(
+                    ResolverConfig::default(),
+                    TokioConnectionProvider::default(),
+                );
+                resolver.options_mut().ip_strategy = ip_strategy;
+                resolver.build()
             }
         };
-        opts.ip_strategy = strategy.into().unwrap_or(LookupIpStrategy::Ipv4AndIpv6);
+
         Ok(Self {
-            state: Arc::new(TokioAsyncResolver::tokio(config, opts)),
+            state: Arc::new(resolver),
         })
     }
 }

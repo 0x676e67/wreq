@@ -292,6 +292,13 @@ impl From<cookie_crate::ParseError> for Error {
     }
 }
 
+#[cfg(feature = "hickory-dns")]
+impl From<hickory_resolver::ResolveError> for Error {
+    fn from(err: hickory_resolver::ResolveError) -> Error {
+        Error::new(Kind::Builder, Some(err))
+    }
+}
+
 #[derive(Debug)]
 pub(crate) enum Kind {
     Builder,
