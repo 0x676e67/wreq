@@ -1,10 +1,10 @@
-use super::certs::RootCertStoreProvider;
-use super::{AlpnProtos, AlpsProtos, TlsResult, TlsVersion};
-
+use super::{AlpnProtos, AlpsProtos, RootCertStore, TlsResult, TlsVersion};
+use crate::tls::certs::LOAD_CERTS;
 use boring2::ssl::{
     CertCompressionAlgorithm, ConnectConfiguration, SslConnectorBuilder, SslOptions, SslRef,
     SslVerifyMode,
 };
+use std::borrow::Cow;
 
 /// SslConnectorBuilderExt trait for `SslConnectorBuilder`.
 pub trait SslConnectorBuilderExt {
@@ -33,7 +33,10 @@ pub trait SslConnectorBuilderExt {
     ) -> TlsResult<SslConnectorBuilder>;
 
     /// Configure the RootCertStoreProvider for the given `SslConnectorBuilder`.
-    fn root_cert_store(self, provider: RootCertStoreProvider) -> TlsResult<SslConnectorBuilder>;
+    fn root_cert_store(
+        self,
+        provider: Option<Cow<'static, RootCertStore>>,
+    ) -> TlsResult<SslConnectorBuilder>;
 }
 
 /// SslRefExt trait for `SslRef`.
@@ -103,9 +106,38 @@ impl SslConnectorBuilderExt for SslConnectorBuilder {
     #[inline]
     fn root_cert_store(
         mut self,
-        provider: RootCertStoreProvider,
+        store: Option<Cow<'static, RootCertStore>>,
     ) -> TlsResult<SslConnectorBuilder> {
-        provider.apply_to_builder(&mut self).map(|_| self)
+        if let Some(store) = store {
+            match store {
+                Cow::Borrowed(store) => {
+                    self.set_verify_cert_store_ref(store.as_ref())?;
+                }
+                Cow::Owned(store) => {
+                    self.set_verify_cert_store(store.into_inner())?;
+                }
+            }
+        } else {
+            // WebPKI root certificates are enabled (regardless of whether native-roots is also enabled).
+            #[cfg(any(feature = "webpki-roots", feature = "native-roots"))]
+            {
+                if let Some(cert_store) = LOAD_CERTS.as_ref() {
+                    log::debug!("Using CA certs from webpki/native roots");
+                    self.set_verify_cert_store_ref(cert_store.as_ref())?;
+                } else {
+                    log::debug!("No CA certs provided, using system default");
+                    self.set_default_verify_paths()?;
+                }
+            }
+
+            // Neither native-roots nor WebPKI roots are enabled, proceed with the default builder.
+            #[cfg(not(any(feature = "webpki-roots", feature = "native-roots")))]
+            {
+                builder.set_default_verify_paths()?;
+            }
+        }
+
+        Ok(self)
     }
 }
 

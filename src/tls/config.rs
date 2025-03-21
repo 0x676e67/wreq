@@ -1,4 +1,4 @@
-use super::{AlpnProtos, AlpsProtos, RootCertStoreProvider, TlsVersion};
+use super::{AlpnProtos, AlpsProtos, RootCertStore, TlsVersion};
 use boring2::ssl::{CertCompressionAlgorithm, SslCurve};
 use std::borrow::Cow;
 use typed_builder::TypedBuilder;
@@ -11,8 +11,8 @@ use typed_builder::TypedBuilder;
 pub struct TlsConfig {
     /// The root certificate store.
     /// Default use system's native certificate store.
-    #[builder(default = RootCertStoreProvider::Default)]
-    pub root_certs_store: RootCertStoreProvider,
+    #[builder(default, setter(transform = |input: impl IntoRootCertStore| input.into()))]
+    pub root_certs_store: Option<Cow<'static, RootCertStore>>,
 
     /// SSL may authenticate either endpoint with an X.509 certificate.
     /// Typically this is used to authenticate the server to the client.
@@ -203,6 +203,36 @@ impl Default for TlsConfig {
     }
 }
 
+/// A trait for converting various types into an optional `Cow` containing a `RootCertStore`.
+///
+/// This trait is used to provide a unified way to convert different types
+/// into an optional `Cow` containing a `RootCertStore`.
+pub trait IntoRootCertStore {
+    fn into(self) -> Option<Cow<'static, RootCertStore>>;
+}
+
+macro_rules! impl_into_root_cert_store_for_types {
+    ($($t:ty => $body:expr),*) => {
+        $(
+            impl IntoRootCertStore for $t {
+                fn into(self) -> Option<Cow<'static, RootCertStore>> {
+                    $body(self)
+                }
+            }
+        )*
+    };
+}
+
+impl_into_root_cert_store_for_types!(
+    &'static RootCertStore => |s| Some(Cow::Borrowed(s)),
+    Option<&'static RootCertStore> => |s: Option<&'static RootCertStore>| s.map(Cow::Borrowed)
+);
+
+impl_into_root_cert_store_for_types!(
+    RootCertStore => |s| Some(Cow::Owned(s)),
+    Option<RootCertStore> => |s: Option<RootCertStore>| s.map(Cow::Owned)
+);
+
 /// A trait for converting various types into an optional `Cow` containing a slice of `CertCompressionAlgorithm`.
 ///
 /// This trait is used to provide a unified way to convert different types
@@ -212,7 +242,6 @@ pub trait IntoCertCompressionAlgorithm {
     fn into(self) -> Option<Cow<'static, [CertCompressionAlgorithm]>>;
 }
 
-// Macro to implement IntoCertCompressionAlgorithm for various types
 macro_rules! impl_into_cert_compression_algorithm_for_types {
     ($($t:ty => $body:expr),*) => {
         $(
@@ -225,7 +254,6 @@ macro_rules! impl_into_cert_compression_algorithm_for_types {
     };
 }
 
-// Macro to implement IntoCertCompressionAlgorithm for const-sized arrays
 macro_rules! impl_into_cert_compression_algorithm_for_arrays {
     ($($t:ty => $body:expr),*) => {
         $(

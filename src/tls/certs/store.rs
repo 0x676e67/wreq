@@ -1,14 +1,13 @@
 #![allow(missing_debug_implementations)]
-use crate::{Error, error, tls::TlsResult};
+use crate::{Error, error};
 use boring2::{
     error::ErrorStack,
-    ssl::SslConnectorBuilder,
     x509::{
         X509,
         store::{X509Store, X509StoreBuilder},
     },
 };
-use std::path::Path;
+use std::{fmt::Debug, path::Path};
 
 /// A builder for constructing a `RootCertStore`.
 ///
@@ -182,6 +181,12 @@ impl RootCertStoreBuilder {
 #[derive(Clone)]
 pub struct RootCertStore(X509Store);
 
+impl Debug for RootCertStore {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RootCertStore").finish()
+    }
+}
+
 /// ====== impl RootCertStore ======
 impl RootCertStore {
     /// Creates a new `RootCertStoreBuilder`.
@@ -249,6 +254,14 @@ impl RootCertStore {
         let data = std::fs::read(path).map_err(error::builder)?;
         Self::from_pem_stack(data)
     }
+
+    pub(crate) fn as_ref(&self) -> &X509Store {
+        &self.0
+    }
+
+    pub(crate) fn into_inner(self) -> X509Store {
+        self.0
+    }
 }
 
 fn load_certs_from_iter<C, F>(certs: C, x509: F) -> Result<RootCertStore, Error>
@@ -312,103 +325,4 @@ where
                 None
             }
         })
-}
-
-/// The root certificate store.
-#[derive(Default, Clone)]
-pub enum RootCertStoreProvider {
-    /// An owned `X509Store`.
-    Owned(RootCertStore),
-
-    /// A borrowed `X509Store`.
-    Borrowed(&'static RootCertStore),
-
-    /// Use the system's native certificate store.
-    #[default]
-    Default,
-}
-
-/// ====== impl RootCertStoreProvider ======
-impl RootCertStoreProvider {
-    /// Applies the root certificate store to the TLS builder.
-    pub(crate) fn apply_to_builder(self, builder: &mut SslConnectorBuilder) -> TlsResult<()> {
-        // Conditionally configure the TLS builder based on the "native-roots" feature.
-        // If no custom CA cert store, use the system's native certificate store if the feature is enabled.
-        match self {
-            RootCertStoreProvider::Owned(cert_store) => builder.set_verify_cert_store(cert_store.0),
-            RootCertStoreProvider::Borrowed(cert_store) => {
-                builder.set_verify_cert_store_ref(&cert_store.0)
-            }
-            RootCertStoreProvider::Default => {
-                // WebPKI root certificates are enabled (regardless of whether native-roots is also enabled).
-                #[cfg(any(feature = "webpki-roots", feature = "native-roots"))]
-                {
-                    if let Some(cert_store) = super::load::LOAD_CERTS.as_ref() {
-                        log::debug!("Using CA certs from webpki/native roots");
-                        builder.set_verify_cert_store_ref(&cert_store.0)
-                    } else {
-                        log::debug!("No CA certs provided, using system default");
-                        builder.set_default_verify_paths()
-                    }
-                }
-
-                // Neither native-roots nor WebPKI roots are enabled, proceed with the default builder.
-                #[cfg(not(any(feature = "webpki-roots", feature = "native-roots")))]
-                {
-                    builder.set_default_verify_paths()
-                }
-            }
-        }
-    }
-}
-
-impl std::fmt::Debug for RootCertStoreProvider {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            RootCertStoreProvider::Owned(_) => f.debug_tuple("Owned").finish(),
-            RootCertStoreProvider::Borrowed(_) => f.debug_tuple("Borrowed").finish(),
-            RootCertStoreProvider::Default => f.debug_tuple("Default").finish(),
-        }
-    }
-}
-
-macro_rules! impl_root_cert_store {
-    ($($type:ty => $variant:ident),* $(,)?) => {
-        $(
-            impl From<$type> for RootCertStoreProvider {
-                fn from(store: $type) -> Self {
-                    Self::$variant(store)
-                }
-            }
-        )*
-    };
-
-    ($($type:ty => $variant:ident, $unwrap:expr),* $(,)?) => {
-        $(
-            impl From<$type> for RootCertStoreProvider {
-                fn from(store: $type) -> Self {
-                    $unwrap(store).map(Self::$variant).unwrap_or_default()
-                }
-            }
-        )*
-    };
-}
-
-impl_root_cert_store!(
-    RootCertStore => Owned,
-    &'static RootCertStore => Borrowed,
-);
-
-impl_root_cert_store!(
-    Option<RootCertStore> => Owned, |s| s,
-    Option<&'static RootCertStore> => Borrowed, |s| s,
-);
-
-impl<F> From<F> for RootCertStoreProvider
-where
-    F: Fn() -> Option<&'static RootCertStore>,
-{
-    fn from(func: F) -> Self {
-        func().map(Self::Borrowed).unwrap_or_default()
-    }
 }

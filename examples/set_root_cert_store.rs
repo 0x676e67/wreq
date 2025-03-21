@@ -52,7 +52,7 @@ fn load_dynamic_root_certs() -> Result<RootCertStore, Error> {
 
 async fn use_static_root_certs() -> Result<(), rquest::Error> {
     let client = Client::builder()
-        .root_cert_store(load_static_root_certs)
+        .root_cert_store(load_static_root_certs())
         .build()?;
 
     let text = client
@@ -86,7 +86,7 @@ async fn use_dynamic_root_certs() -> Result<(), rquest::Error> {
 
 async fn use_system_root_certs() -> Result<(), rquest::Error> {
     let client = Client::builder()
-        .root_cert_store(load_system_root_certs)
+        .root_cert_store(load_system_root_certs())
         .build()?;
 
     let text = client

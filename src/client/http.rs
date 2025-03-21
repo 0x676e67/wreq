@@ -21,6 +21,7 @@ use crate::dns::{DnsResolverWithOverrides, DynResolver, Resolve, gai::GaiResolve
 use crate::error::{BoxError, Error};
 use crate::into_url::try_uri;
 use crate::proxy::IntoProxy;
+use crate::tls::IntoRootCertStore;
 use crate::util::{
     self,
     client::{
@@ -29,11 +30,11 @@ use crate::util::{
     },
     rt::{TokioExecutor, tokio::TokioTimer},
 };
-use crate::{Http1Config, Http2Config, TlsConfig, error};
+use crate::{Http1Config, Http2Config, RootCertStore, TlsConfig, error};
 use crate::{IntoUrl, Method, Proxy, StatusCode, Url};
 use crate::{
     redirect,
-    tls::{AlpnProtos, BoringTlsConnector, RootCertStoreProvider, TlsVersion},
+    tls::{AlpnProtos, BoringTlsConnector, TlsVersion},
 };
 
 use super::decoder::Accepts;
@@ -134,7 +135,7 @@ struct Config {
     tls_sni: Option<bool>,
     verify_hostname: Option<bool>,
     certs_verification: Option<bool>,
-    root_certs_store: Option<RootCertStoreProvider>,
+    root_certs_store: Option<Cow<'static, RootCertStore>>,
     min_tls_version: Option<TlsVersion>,
     max_tls_version: Option<TlsVersion>,
     tls_config: Option<TlsConfig>,
@@ -301,8 +302,8 @@ impl ClientBuilder {
                     tls_config.certs_verification = certs_verification;
                 }
 
-                if let Some(root_certs_store) = config.root_certs_store.as_ref() {
-                    tls_config.root_certs_store = root_certs_store.clone();
+                if config.root_certs_store.is_some() {
+                    tls_config.root_certs_store = config.root_certs_store.clone();
                 }
 
                 if config.min_tls_version.is_some() {
@@ -1054,9 +1055,9 @@ impl ClientBuilder {
     ///   potential security risks.
     pub fn root_cert_store<S>(mut self, store: S) -> ClientBuilder
     where
-        S: Into<RootCertStoreProvider>,
+        S: IntoRootCertStore,
     {
-        self.config.root_certs_store = Some(store.into());
+        self.config.root_certs_store = store.into();
         self
     }
 
@@ -1679,7 +1680,7 @@ struct ClientInner {
     tls_sni: Option<bool>,
     verify_hostname: Option<bool>,
     certs_verification: Option<bool>,
-    root_certs_store: Option<RootCertStoreProvider>,
+    root_certs_store: Option<Cow<'static, RootCertStore>>,
     min_tls_version: Option<TlsVersion>,
     max_tls_version: Option<TlsVersion>,
 }
@@ -1932,8 +1933,8 @@ impl<'c> ClientUpdate<'c> {
                     tls_config.certs_verification = certs_verification;
                 }
 
-                if let Some(root_certs_store) = current.root_certs_store.as_ref() {
-                    tls_config.root_certs_store = root_certs_store.clone();
+                if current.root_certs_store.is_some() {
+                    tls_config.root_certs_store = current.root_certs_store.clone();
                 }
 
                 if current.min_tls_version.is_some() {

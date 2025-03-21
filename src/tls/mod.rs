@@ -15,8 +15,8 @@ use boring2::{error::ErrorStack, ssl::SslVersion};
 pub use self::conn::{BoringTlsConnector, HttpsConnector, MaybeHttpsStream};
 pub use self::ext::{ConnectConfigurationExt, SslConnectorBuilderExt};
 pub use self::{
-    certs::{RootCertStore, RootCertStoreBuilder, RootCertStoreProvider},
-    config::TlsConfig,
+    certs::{RootCertStore, RootCertStoreBuilder},
+    config::{IntoRootCertStore, TlsConfig},
 };
 
 type TlsResult<T> = Result<T, ErrorStack>;
