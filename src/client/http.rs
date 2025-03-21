@@ -130,14 +130,14 @@ struct Config {
     connector_layers: Option<Vec<BoxedConnectorLayer>>,
     builder: Builder,
     tls_info: bool,
-    tls_sni: bool,
-    verify_hostname: bool,
-    certs_verification: bool,
-    root_certs_store: RootCertStoreProvider,
-    alpn_protos: AlpnProtos,
+    alpn_protos: Option<AlpnProtos>,
+    tls_sni: Option<bool>,
+    verify_hostname: Option<bool>,
+    certs_verification: Option<bool>,
+    root_certs_store: Option<RootCertStoreProvider>,
     min_tls_version: Option<TlsVersion>,
     max_tls_version: Option<TlsVersion>,
-    tls_config: TlsConfig,
+    tls_config: Option<TlsConfig>,
 }
 
 impl_debug!(
@@ -222,14 +222,14 @@ impl ClientBuilder {
                 http2_max_retry_count: 2,
                 connector_layers: None,
                 tls_info: false,
-                tls_sni: true,
-                alpn_protos: AlpnProtos::default(),
-                verify_hostname: true,
-                certs_verification: true,
-                root_certs_store: RootCertStoreProvider::Default,
+                tls_sni: None,
+                alpn_protos: None,
+                verify_hostname: None,
+                certs_verification: None,
+                root_certs_store: None,
                 min_tls_version: None,
                 max_tls_version: None,
-                tls_config: TlsConfig::default(),
+                tls_config: None,
             },
         }
     }
@@ -241,7 +241,7 @@ impl ClientBuilder {
     /// This method fails if a TLS backend cannot be initialized, or the resolver
     /// cannot load the system configuration.
     pub fn build(self) -> crate::Result<Client> {
-        let mut config = self.config;
+        let mut config = self.config;     
 
         if let Some(err) = config.error {
             return Err(err);
@@ -253,10 +253,9 @@ impl ClientBuilder {
         }
         let proxies_maybe_http_auth = proxies.iter().any(Proxy::maybe_has_http_auth);
 
-        let http2_only = matches!(config.alpn_protos, AlpnProtos::HTTP2);
         config
             .builder
-            .http2_only(http2_only)
+            .http2_only(matches!(config.alpn_protos, Some(AlpnProtos::HTTP2)))
             .http2_timer(TokioTimer::new())
             .pool_timer(TokioTimer::new())
             .pool_idle_timeout(config.pool_idle_timeout)
@@ -284,14 +283,36 @@ impl ClientBuilder {
             http.set_connect_timeout(config.connect_timeout);
 
             let tls = {
-                let mut tls_config = config.tls_config;
-                tls_config.alpn_protos = config.alpn_protos;
-                tls_config.tls_sni = config.tls_sni;
-                tls_config.verify_hostname = config.verify_hostname;
-                tls_config.certs_verification = config.certs_verification;
-                tls_config.root_certs_store = config.root_certs_store.clone();
-                tls_config.min_tls_version = config.min_tls_version;
-                tls_config.max_tls_version = config.max_tls_version;
+                let mut tls_config = config.tls_config.unwrap_or_default();
+
+                if let Some(alpn_protos) = config.alpn_protos {
+                    tls_config.alpn_protos = alpn_protos;
+                }
+
+                if let Some(tls_sni) = config.tls_sni {
+                    tls_config.tls_sni = tls_sni;
+                }
+
+                if let Some(verify_hostname) = config.verify_hostname {
+                    tls_config.verify_hostname = verify_hostname;
+                }
+
+                if let Some(certs_verification) = config.certs_verification {
+                    tls_config.certs_verification = certs_verification;
+                }
+
+                if let Some(root_certs_store) = config.root_certs_store.as_ref() {
+                    tls_config.root_certs_store = root_certs_store.clone();
+                }
+
+                if config.min_tls_version.is_some() {
+                    tls_config.min_tls_version = config.min_tls_version;
+                }
+
+                if config.max_tls_version.is_some() {
+                    tls_config.max_tls_version = config.max_tls_version;
+                }
+
                 BoringTlsConnector::new(tls_config)?
             };
 
@@ -319,8 +340,13 @@ impl ClientBuilder {
                 proxies,
                 proxies_maybe_http_auth,
                 network_scheme: config.network_scheme,
+                alpn_protos: config.alpn_protos,
+                tls_sni: config.tls_sni,
+                verify_hostname: config.verify_hostname,
                 certs_verification: config.certs_verification,
                 root_certs_store: config.root_certs_store,
+                min_tls_version: config.min_tls_version,
+                max_tls_version: config.max_tls_version,
             })),
         })
     }
@@ -773,13 +799,13 @@ impl ClientBuilder {
 
     /// Only use HTTP/1.
     pub fn http1_only(mut self) -> ClientBuilder {
-        self.config.alpn_protos = AlpnProtos::HTTP1;
+        self.config.alpn_protos = Some(AlpnProtos::HTTP1);
         self
     }
 
     /// Only use HTTP/2.
     pub fn http2_only(mut self) -> ClientBuilder {
-        self.config.alpn_protos = AlpnProtos::HTTP2;
+        self.config.alpn_protos = Some(AlpnProtos::HTTP2);
         self
     }
 
@@ -1006,7 +1032,7 @@ impl ClientBuilder {
     ///
     /// feature to be enabled.
     pub fn danger_accept_invalid_certs(mut self, accept_invalid_certs: bool) -> ClientBuilder {
-        self.config.certs_verification = !accept_invalid_certs;
+        self.config.certs_verification = Some(!accept_invalid_certs);
         self
     }
 
@@ -1030,7 +1056,7 @@ impl ClientBuilder {
     where
         S: Into<RootCertStoreProvider>,
     {
-        self.config.root_certs_store = store.into();
+        self.config.root_certs_store = Some(store.into());
         self
     }
 
@@ -1038,7 +1064,7 @@ impl ClientBuilder {
     ///
     /// Defaults to `true`.
     pub fn tls_sni(mut self, tls_sni: bool) -> ClientBuilder {
-        self.config.tls_sni = tls_sni;
+        self.config.tls_sni = Some(tls_sni);
         self
     }
 
@@ -1052,7 +1078,7 @@ impl ClientBuilder {
     /// used, *any* valid certificate for *any* site will be trusted for use from any other. This
     /// introduces a significant vulnerability to man-in-the-middle attacks.
     pub fn verify_hostname(mut self, verify_hostname: bool) -> ClientBuilder {
-        self.config.verify_hostname = verify_hostname;
+        self.config.verify_hostname = Some(verify_hostname);
         self
     }
 
@@ -1649,8 +1675,13 @@ struct ClientInner {
     proxies: Vec<Proxy>,
     proxies_maybe_http_auth: bool,
     network_scheme: NetworkSchemeBuilder,
-    certs_verification: bool,
-    root_certs_store: RootCertStoreProvider,
+    alpn_protos: Option<AlpnProtos>,
+    tls_sni: Option<bool>,
+    verify_hostname: Option<bool>,
+    certs_verification: Option<bool>,
+    root_certs_store: Option<RootCertStoreProvider>,
+    min_tls_version: Option<TlsVersion>,
+    max_tls_version: Option<TlsVersion>,
 }
 
 impl ClientInner {
@@ -1862,7 +1893,7 @@ impl<'c> ClientUpdate<'c> {
     pub fn apply(self) -> Result<(), Error> {
         let mut current = self.current;
 
-        if let Some(mut emulation) = self.emulation {
+        if let Some(emulation) = self.emulation {
             // apply default headers
             if let Some(mut headers) = emulation.default_headers {
                 std::mem::swap(&mut current.headers, &mut headers);
@@ -1883,14 +1914,39 @@ impl<'c> ClientUpdate<'c> {
                 apply_http2_config(current.hyper.http2(), http2_config);
             }
 
-            // apply tls certs verification
-            emulation.tls_config.certs_verification = current.certs_verification;
+            // apply tls config
+            if let Some(mut tls_config) = emulation.tls_config {
+                if let Some(alpn_protos) = current.alpn_protos {
+                    tls_config.alpn_protos = alpn_protos;
+                }
 
-            // apply tls certs verify store
-            emulation.tls_config.root_certs_store = current.root_certs_store.clone();
+                if let Some(tls_sni) = current.tls_sni {
+                    tls_config.tls_sni = tls_sni;
+                }
 
-            let connector = BoringTlsConnector::new(emulation.tls_config)?;
-            current.hyper.connector_mut().set_connector(connector);
+                if let Some(verify_hostname) = current.verify_hostname {
+                    tls_config.verify_hostname = verify_hostname;
+                }
+
+                if let Some(certs_verification) = current.certs_verification {
+                    tls_config.certs_verification = certs_verification;
+                }
+
+                if let Some(root_certs_store) = current.root_certs_store.as_ref() {
+                    tls_config.root_certs_store = root_certs_store.clone();
+                }
+
+                if current.min_tls_version.is_some() {
+                    tls_config.min_tls_version = current.min_tls_version;
+                }
+
+                if current.max_tls_version.is_some() {
+                    tls_config.max_tls_version = current.max_tls_version;
+                }
+
+                let connector = BoringTlsConnector::new(tls_config)?;
+                current.hyper.connector_mut().set_connector(connector);
+            }
         }
 
         self.inner.store(Arc::new(current));
