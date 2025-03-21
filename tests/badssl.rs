@@ -198,3 +198,14 @@ async fn test_aes_hw_override() -> Result<(), rquest::Error> {
     assert!(!text.contains("ChaCha20Poly1305"));
     Ok(())
 }
+
+#[tokio::test]
+async fn ssl_pinning() -> Result<(), rquest::Error> {
+    let client = rquest::Client::builder()
+        .ssl_pinning([include_bytes!("certs/badssl.pem")])
+        .build()?;
+
+    let resp = client.get("https://self-signed.badssl.com/").send().await?;
+    assert!(resp.status().is_success());
+    Ok(())
+}
