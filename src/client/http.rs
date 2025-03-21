@@ -241,7 +241,7 @@ impl ClientBuilder {
     /// This method fails if a TLS backend cannot be initialized, or the resolver
     /// cannot load the system configuration.
     pub fn build(self) -> crate::Result<Client> {
-        let mut config = self.config;     
+        let mut config = self.config;
 
         if let Some(err) = config.error {
             return Err(err);
