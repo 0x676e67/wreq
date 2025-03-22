@@ -207,5 +207,8 @@ async fn ssl_pinning() -> Result<(), rquest::Error> {
 
     let resp = client.get("https://self-signed.badssl.com/").send().await?;
     assert!(resp.status().is_success());
+
+    let res = client.get("https://www.google.com").send().await;
+    assert!(res.is_err());
     Ok(())
 }
