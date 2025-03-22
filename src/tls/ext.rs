@@ -1,5 +1,4 @@
-use super::{AlpnProtos, AlpsProtos, CertStore, TlsResult, TlsVersion};
-use crate::tls::certs::LOAD_CERTS;
+use super::{AlpnProtos, AlpsProtos, CertStore, TlsResult, TlsVersion, certs::LOAD_CERTS};
 use boring2::ssl::{
     CertCompressionAlgorithm, ConnectConfiguration, SslConnectorBuilder, SslOptions, SslRef,
     SslVerifyMode,

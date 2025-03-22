@@ -238,65 +238,41 @@ impl_into_root_cert_store_for_types!(
 /// This trait is used to provide a unified way to convert different types
 /// into an optional `Cow` containing a slice of `CertCompressionAlgorithm`.
 pub trait IntoCertCompressionAlgorithm {
-    /// Converts the implementing type into an optional `Cow` containing a slice of `CertCompressionAlgorithm`.
     fn into(self) -> Option<Cow<'static, [CertCompressionAlgorithm]>>;
 }
 
-macro_rules! impl_into_cert_compression_algorithm_for_types {
-    ($($t:ty => $body:expr),*) => {
-        $(
-            impl IntoCertCompressionAlgorithm for $t {
-                fn into(self) -> Option<Cow<'static, [CertCompressionAlgorithm]>> {
-                    $body(self)
-                }
+macro_rules! impl_into_cert_compression_algorithm {
+    ($($t:ty => $body:expr),* $(,)?) => {
+        $(impl IntoCertCompressionAlgorithm for $t {
+            fn into(self) -> Option<Cow<'static, [CertCompressionAlgorithm]>> {
+                $body(self)
             }
-        )*
+        })*
     };
 }
 
-macro_rules! impl_into_cert_compression_algorithm_for_arrays {
-    ($($t:ty => $body:expr),*) => {
-        $(
-            impl<const N: usize> IntoCertCompressionAlgorithm for $t {
-                fn into(self) -> Option<Cow<'static, [CertCompressionAlgorithm]>> {
-                    $body(self)
-                }
-            }
-        )*
-    };
-}
-
-impl_into_cert_compression_algorithm_for_types!(
+impl_into_cert_compression_algorithm!(
     &'static [CertCompressionAlgorithm] => |s| Some(Cow::Borrowed(s)),
-    Option<&'static [CertCompressionAlgorithm]> => |s: Option<&'static [CertCompressionAlgorithm]>| s.map(Cow::Borrowed)
-);
-
-impl_into_cert_compression_algorithm_for_types!(
     Cow<'static, [CertCompressionAlgorithm]> => Some,
-    Option<Cow<'static, [CertCompressionAlgorithm]>> => |s| s
-);
-
-impl_into_cert_compression_algorithm_for_types!(
     &'static CertCompressionAlgorithm => |s: &'static CertCompressionAlgorithm| Some(Cow::Owned(vec![*s])),
-    Option<&'static CertCompressionAlgorithm> => |s: Option<&'static CertCompressionAlgorithm>| s.map(|alg| Cow::Owned(vec![*alg]))
-);
-
-impl_into_cert_compression_algorithm_for_types!(
     CertCompressionAlgorithm => |s| Some(Cow::Owned(vec![s])),
-    Option<CertCompressionAlgorithm> => |s: Option<CertCompressionAlgorithm>| s.map(|alg| Cow::Owned(vec![alg]))
-);
-
-impl_into_cert_compression_algorithm_for_types!(
     Vec<CertCompressionAlgorithm> => |s| Some(Cow::Owned(s)),
-    Option<Vec<CertCompressionAlgorithm>> => |s: Option<Vec<CertCompressionAlgorithm>>| s.map(Cow::Owned)
 );
 
-impl_into_cert_compression_algorithm_for_arrays!(
-    &'static [CertCompressionAlgorithm; N] => |s: &'static [CertCompressionAlgorithm; N]| Some(Cow::Borrowed(&s[..])),
-    Option<&'static [CertCompressionAlgorithm; N]> => |s: Option<&'static [CertCompressionAlgorithm; N]>| s.map(|s| Cow::Borrowed(&s[..]))
-);
+impl<const N: usize> IntoCertCompressionAlgorithm for &'static [CertCompressionAlgorithm; N] {
+    fn into(self) -> Option<Cow<'static, [CertCompressionAlgorithm]>> {
+        Some(Cow::Borrowed(self))
+    }
+}
 
-impl_into_cert_compression_algorithm_for_arrays!(
-    [CertCompressionAlgorithm; N] => |s: [CertCompressionAlgorithm; N]| Some(Cow::Owned(s.to_vec())),
-    Option<[CertCompressionAlgorithm; N]> => |s: Option<[CertCompressionAlgorithm; N]>| s.map(|arr| Cow::Owned(arr.to_vec()))
-);
+impl<const N: usize> IntoCertCompressionAlgorithm for [CertCompressionAlgorithm; N] {
+    fn into(self) -> Option<Cow<'static, [CertCompressionAlgorithm]>> {
+        Some(Cow::Owned(self.to_vec()))
+    }
+}
+
+impl<T: IntoCertCompressionAlgorithm> IntoCertCompressionAlgorithm for Option<T> {
+    fn into(self) -> Option<Cow<'static, [CertCompressionAlgorithm]>> {
+        self.and_then(|v| v.into())
+    }
+}

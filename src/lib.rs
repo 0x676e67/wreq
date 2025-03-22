@@ -92,7 +92,7 @@
 //! ```
 //!
 //! ## Making a GET request
-//! 
+//!
 //! Making a GET request is simple.
 //!
 //! ```rust
