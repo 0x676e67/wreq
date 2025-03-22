@@ -211,27 +211,26 @@ pub trait IntoCertStore {
     fn into(self) -> Option<Cow<'static, CertStore>>;
 }
 
-macro_rules! impl_into_root_cert_store_for_types {
-    ($($t:ty => $body:expr),*) => {
-        $(
-            impl IntoCertStore for $t {
-                fn into(self) -> Option<Cow<'static, CertStore>> {
-                    $body(self)
-                }
+macro_rules! impl_into_cert_store {
+    ($($t:ty => $body:expr),* $(,)?) => {
+        $(impl IntoCertStore for $t {
+            fn into(self) -> Option<Cow<'static, CertStore>> {
+                $body(self)
             }
-        )*
+        })*
     };
 }
 
-impl_into_root_cert_store_for_types!(
+impl_into_cert_store!(
     &'static CertStore => |s| Some(Cow::Borrowed(s)),
-    Option<&'static CertStore> => |s: Option<&'static CertStore>| s.map(Cow::Borrowed)
+    CertStore => |s| Some(Cow::Owned(s))
 );
 
-impl_into_root_cert_store_for_types!(
-    CertStore => |s| Some(Cow::Owned(s)),
-    Option<CertStore> => |s: Option<CertStore>| s.map(Cow::Owned)
-);
+impl<T: IntoCertStore> IntoCertStore for Option<T> {
+    fn into(self) -> Option<Cow<'static, CertStore>> {
+        self.and_then(|v| v.into())
+    }
+}
 
 /// A trait for converting various types into an optional `Cow` containing a slice of `CertCompressionAlgorithm`.
 ///
