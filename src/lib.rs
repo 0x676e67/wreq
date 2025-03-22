@@ -92,11 +92,11 @@
 //!
 //! ## Making a GET request
 //!
-//! For a single request, you can use the [`get`][get] shortcut method.
-//!
 //! ```rust
 //! # async fn run() -> Result<(), rquest::Error> {
-//! let body = rquest::get("https://www.rust-lang.org")
+//! let body = rquest::Client::new()
+//!     .get("https://www.rust-lang.org")
+//!     .send()
 //!     .await?
 //!     .text()
 //!     .await?;

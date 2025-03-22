@@ -157,7 +157,9 @@ impl Response {
     ///
     /// ```
     /// # async fn run() -> Result<(), Box<dyn std::error::Error>> {
-    /// let content = rquest::get("http://httpbin.org/range/26")
+    /// let content = rquest::Client::new()
+    ///     .get("http://httpbin.org/range/26")
+    ///     .send()
     ///     .await?
     ///     .text()
     ///     .await?;
@@ -200,7 +202,9 @@ impl Response {
     ///
     /// ```
     /// # async fn run() -> Result<(), Box<dyn std::error::Error>> {
-    /// let content = rquest::get("http://httpbin.org/range/26")
+    /// let content = rquest::Client::new()
+    ///     .get("http://httpbin.org/range/26")
+    ///     .send()
     ///     .await?
     ///     .text_with_charset("utf-8")
     ///     .await?;
@@ -251,7 +255,9 @@ impl Response {
     /// }
     ///
     /// # async fn run() -> Result<(), Error> {
-    /// let ip = rquest::get("http://httpbin.org/ip")
+    /// let ip = rquest::Client::new()
+    ///     .get("http://httpbin.org/ip")
+    ///     .send()
     ///     .await?
     ///     .json::<Ip>()
     ///     .await?;
@@ -284,7 +290,9 @@ impl Response {
     ///
     /// ```
     /// # async fn run() -> Result<(), Box<dyn std::error::Error>> {
-    /// let bytes = rquest::get("http://httpbin.org/ip")
+    /// let bytes = rquest::Client::new()
+    ///     .get("http://httpbin.org/ip")
+    ///     .send()
     ///     .await?
     ///     .bytes()
     ///     .await?;
@@ -309,7 +317,7 @@ impl Response {
     ///
     /// ```
     /// # async fn run() -> Result<(), Box<dyn std::error::Error>> {
-    /// let mut res = rquest::get("https://hyper.rs").await?;
+    /// let mut res = rquest::Client::new().get("https://hyper.rs").send().await?;
     ///
     /// while let Some(chunk) = res.chunk().await? {
     ///     println!("Chunk: {chunk:?}");
@@ -342,7 +350,9 @@ impl Response {
     /// use futures_util::StreamExt;
     ///
     /// # async fn run() -> Result<(), Box<dyn std::error::Error>> {
-    /// let mut stream = rquest::get("http://httpbin.org/ip")
+    /// let mut stream = rquest::Client::new()
+    ///     .get("http://httpbin.org/ip")
+    ///     .send()
     ///     .await?
     ///     .bytes_stream();
     ///
