@@ -73,17 +73,17 @@ jobs:
           toolchain: stable
           override: true
       - name: Test --no-default-features
-        run: cargo test --no-default-features
+        run: cargo nextest run --workspace --no-default-features
       - name: Test webpki-roots feature
-        run: cargo test --no-default-features --features webpki-roots
+        run: cargo nextest run --workspace --no-default-features --features webpki-roots
       - name: Test native-roots feature
-        run: cargo test --no-default-features --features native-roots
+        run: cargo nextest run --workspace --no-default-features --features native-roots
       - name: Test webpki-roots and native-roots features
-        run: cargo test --no-default-features --features webpki-roots,native-roots
+        run: cargo nextest run --workspace --no-default-features --features webpki-roots,native-roots
       - name: Test cookies feature
-        run: cargo test --features cookies
+        run: cargo nextest run --workspace --features cookies
       - name: Test cookies-abstract feature
-        run: cargo test --features cookies-abstract
+        run: cargo nextest run --workspace --features cookies-abstract
   
   windows:
     name: Windows
