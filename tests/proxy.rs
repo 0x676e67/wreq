@@ -194,7 +194,7 @@ async fn test_using_system_proxy() {
         env::set_var("http_proxy", format!("http://{}", server.addr()));
     }
     // system proxy is used by default
-    let res = rquest::get(url).await.unwrap();
+    let res = rquest::Client::new().get(url).send().await.unwrap();
 
     assert_eq!(res.url().as_str(), url);
     assert_eq!(res.status(), rquest::StatusCode::OK);

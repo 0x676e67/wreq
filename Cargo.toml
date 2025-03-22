@@ -240,10 +240,6 @@ name = "form"
 path = "examples/form.rs"
 
 [[example]]
-name = "simple"
-path = "examples/simple.rs"
-
-[[example]]
 name = "hickory_dns"
 path = "examples/hickory_dns.rs"
 required-features = ["hickory-dns"]

@@ -276,7 +276,7 @@ async fn test_invalid_location_stops_redirect_gh484() {
 
     let url = format!("http://{}/yikes", server.addr());
 
-    let res = rquest::get(&url).await.unwrap();
+    let res = rquest::Client::new().get(&url).send().await.unwrap();
 
     assert_eq!(res.url().as_str(), url);
     assert_eq!(res.status(), rquest::StatusCode::FOUND);

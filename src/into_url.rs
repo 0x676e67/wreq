@@ -119,7 +119,7 @@ mod tests {
     async fn execute_request_rejects_invalid_hostname() {
         let url_str = "https://{{hostname}}/";
         let url = url::Url::parse(url_str).unwrap();
-        let result = crate::get(url).await;
+        let result = crate::Client::new().get(url).send().await;
 
         assert!(result.is_err());
         let err = result.err().unwrap();
