@@ -193,22 +193,22 @@ required-features = ["cookies"]
 [[test]]
 name = "gzip"
 path = "tests/gzip.rs"
-required-features = ["zstd", "stream"]
+required-features = ["gzip", "stream"]
 
 [[test]]
 name = "brotli"
 path = "tests/brotli.rs"
-required-features = ["zstd", "stream"]
-
-[[test]]
-name = "deflate"
-path = "tests/deflate.rs"
-required-features = ["zstd", "stream"]
+required-features = ["brotli", "stream"]
 
 [[test]]
 name = "zstd"
 path = "tests/zstd.rs"
 required-features = ["zstd", "stream"]
+
+[[test]]
+name = "deflate"
+path = "tests/deflate.rs"
+required-features = ["deflate", "stream"]
 
 [[test]]
 name = "multipart"
