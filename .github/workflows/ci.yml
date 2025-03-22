@@ -72,6 +72,9 @@ jobs:
         with:
           toolchain: stable
           override: true
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest
       - name: Test --no-default-features
         run: cargo nextest run --workspace --no-default-features
       - name: Test webpki-roots feature
