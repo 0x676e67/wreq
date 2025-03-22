@@ -136,7 +136,7 @@ tokio-util = { version = "0.7.0", default-features = false, features = ["codec",
 tokio-socks = { version = "0.5.2", optional = true }
 
 ## websocket
-tokio-tungstenite = { version = "0.26.0", default-features = false, features = ["handshake"], optional = true }
+tokio-tungstenite = { version = "0.26.2", default-features = false, features = ["handshake"], optional = true }
 
 ## hickory-dns
 hickory-resolver = { version = "0.25", optional = true }
