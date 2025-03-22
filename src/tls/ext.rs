@@ -1,4 +1,6 @@
-use super::{AlpnProtos, AlpsProtos, CertStore, TlsResult, TlsVersion, certs::LOAD_CERTS};
+#[cfg(any(feature = "webpki-roots", feature = "native-roots"))]
+use super::certs::LOAD_CERTS;
+use super::{AlpnProtos, AlpsProtos, CertStore, TlsResult, TlsVersion};
 use boring2::ssl::{
     CertCompressionAlgorithm, ConnectConfiguration, SslConnectorBuilder, SslOptions, SslRef,
     SslVerifyMode,
@@ -132,7 +134,7 @@ impl SslConnectorBuilderExt for SslConnectorBuilder {
             // Neither native-roots nor WebPKI roots are enabled, proceed with the default builder.
             #[cfg(not(any(feature = "webpki-roots", feature = "native-roots")))]
             {
-                builder.set_default_verify_paths()?;
+                self.set_default_verify_paths()?;
             }
         }
 

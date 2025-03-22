@@ -63,6 +63,28 @@ jobs:
         shell: bash
         run: cargo nextest run --workspace --all-features
 
+  features-tests:
+    name: Features
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          override: true
+      - name: Test --no-default-features
+        run: cargo test --no-default-features
+      - name: Test webpki-roots feature
+        run: cargo test --no-default-features --features webpki-roots
+      - name: Test native-roots feature
+        run: cargo test --no-default-features --features native-roots
+      - name: Test webpki-roots and native-roots features
+        run: cargo test --no-default-features --features webpki-roots,native-roots
+      - name: Test cookies feature
+        run: cargo test --features cookies
+      - name: Test cookies-abstract feature
+        run: cargo test --features cookies-abstract
+  
   windows:
     name: Windows
     runs-on: windows-latest
@@ -96,7 +118,7 @@ jobs:
 
   linux:
     name: Linux
-    needs: [style, tests, docs, windows, macos]
+    needs: [style, tests, docs, features-tests, windows, macos]
     runs-on: ubuntu-latest
     environment: Linux
     if: startsWith(github.ref, 'refs/tags/')
