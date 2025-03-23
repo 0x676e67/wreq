@@ -1,11 +1,14 @@
 #![cfg(not(target_arch = "wasm32"))]
 mod support;
 
+use http_body_util::BodyExt;
 use support::server;
 
 use http::{
-    Version,
-    header::{CONTENT_LENGTH, CONTENT_TYPE, TRANSFER_ENCODING},
+    HeaderMap, Version,
+    header::{
+        AUTHORIZATION, CACHE_CONTROL, CONTENT_LENGTH, CONTENT_TYPE, REFERER, TRANSFER_ENCODING,
+    },
 };
 use rquest::Client;
 #[cfg(feature = "json")]
@@ -68,6 +71,79 @@ async fn auto_headers() {
     assert_eq!(res.url().as_str(), &url);
     assert_eq!(res.status(), rquest::StatusCode::OK);
     assert_eq!(res.remote_addr(), Some(server.addr()));
+}
+
+#[tokio::test]
+async fn test_headers_order_and_requests() {
+    use http::{HeaderName, HeaderValue};
+    use rquest::Client;
+    use rquest::header::{ACCEPT, CONTENT_TYPE, USER_AGENT};
+
+    let server = server::http(move |req| async move {
+        assert_eq!(req.method(), "POST");
+
+        // 确保 headers 按照 headers_order 的顺序
+        let expected_headers = vec![
+            ("user-agent", "my-test-client"),
+            ("accept", "*/*"),
+            ("content-type", "application/json"),
+            ("authorization", "Bearer test-token"),
+            ("referer", "https://example.com"),
+            ("cache-control", "no-cache"),
+        ];
+
+        for (i, (expected_key, expected_value)) in expected_headers.iter().enumerate() {
+            let (key, value) = req.headers().iter().nth(i).unwrap();
+            assert_eq!(key.as_str(), *expected_key);
+            assert_eq!(value.as_bytes(), expected_value.as_bytes());
+        }
+
+        let full: Vec<u8> = req
+            .into_body()
+            .collect()
+            .await
+            .expect("must succeed")
+            .to_bytes()
+            .to_vec();
+
+        assert_eq!(full, br#"{"message":"hello"}"#);
+
+        http::Response::default()
+    });
+
+    let url = format!("http://{}/test", server.addr());
+
+    let client = Client::builder()
+        .no_proxy()
+        .default_headers({
+            let mut headers = HeaderMap::new();
+            headers.insert(ACCEPT, HeaderValue::from_static("*/*"));
+            headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+            headers.insert(USER_AGENT, HeaderValue::from_static("my-test-client"));
+            headers.insert(AUTHORIZATION, HeaderValue::from_static("Bearer test-token"));
+            headers.insert(REFERER, HeaderValue::from_static("https://example.com"));
+            headers.insert(CACHE_CONTROL, HeaderValue::from_static("no-cache"));
+            headers
+        })
+        .headers_order(vec![
+            HeaderName::from_static("user-agent"),
+            HeaderName::from_static("accept"),
+            HeaderName::from_static("content-type"),
+            HeaderName::from_static("authorization"),
+            HeaderName::from_static("referer"),
+            HeaderName::from_static("cache-control"),
+        ])
+        .build()
+        .unwrap();
+
+    let res = client
+        .post(&url)
+        .body(r#"{"message":"hello"}"#)
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(res.status(), rquest::StatusCode::OK);
 }
 
 #[tokio::test]

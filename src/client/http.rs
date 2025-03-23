@@ -1416,20 +1416,23 @@ impl Client {
             protocal,
         ) = req.pieces();
 
-        if url.scheme() != "http" && url.scheme() != "https" {
+        let scheme = url.scheme();
+
+        // check if the scheme is supported
+        if scheme != "http" && scheme != "https" {
             return Pending::new_err(error::url_bad_scheme(url));
         }
 
-        let client = self.inner.load();
+        let inner = self.inner.load();
 
         // check if we're in https_only mode and check the scheme of the current URL
-        if client.https_only && url.scheme() != "https" {
+        if inner.https_only && scheme != "https" {
             return Pending::new_err(error::url_bad_scheme(url));
         }
 
         // insert default headers in the request headers
         // without overwriting already appended headers.
-        for (key, value) in client.headers.iter() {
+        for (key, value) in inner.headers.iter() {
             if let Entry::Vacant(entry) = headers.entry(key) {
                 entry.insert(value.clone());
             }
@@ -1437,11 +1440,9 @@ impl Client {
 
         // Add cookies from the cookie store.
         #[cfg(any(feature = "cookies", feature = "cookies-abstract"))]
-        {
-            if let Some(cookie_store) = client.cookie_store.as_ref() {
-                if headers.get(crate::header::COOKIE).is_none() {
-                    add_cookie_header(&mut headers, &**cookie_store, &url);
-                }
+        if let Some(cookie_store) = inner.cookie_store.as_ref() {
+            if !headers.contains_key(crate::header::COOKIE) {
+                add_cookie_header(&mut headers, &**cookie_store, &url);
             }
         }
 
@@ -1451,7 +1452,7 @@ impl Client {
             feature = "zstd",
             feature = "deflate"
         ))]
-        if let Some(accept_encoding) = client.accepts.as_str() {
+        if let Some(accept_encoding) = inner.accepts.as_str() {
             if !headers.contains_key(crate::header::ACCEPT_ENCODING)
                 && !headers.contains_key(crate::header::RANGE)
             {
@@ -1475,33 +1476,31 @@ impl Client {
             None => (None, Body::empty()),
         };
 
-        client.proxy_auth(&uri, &mut headers);
+        inner.proxy_auth(&uri, &mut headers);
 
-        let network_scheme = client.network_scheme(&uri, network_scheme);
+        let network_scheme = inner.network_scheme(&uri, network_scheme);
         let in_flight = {
             let res = InnerRequest::builder()
                 .uri(uri)
                 .method(method.clone())
-                .version(version)
                 .headers(headers.clone())
-                .headers_order(client.headers_order.as_deref())
+                .headers_order(inner.headers_order.as_deref())
+                .version(version)
                 .network_scheme(network_scheme.clone())
                 .extension(protocal)
                 .body(body);
 
             match res {
-                Ok(req) => ResponseFuture::Default(client.hyper.request(req)),
+                Ok(req) => ResponseFuture::Default(inner.hyper.request(req)),
                 Err(err) => return Pending::new_err(error::builder(err)),
             }
         };
 
         let total_timeout = timeout
-            .or(client.request_timeout)
+            .or(inner.request_timeout)
             .map(tokio::time::sleep)
             .map(Box::pin);
-
-        let read_timeout = read_timeout.or(client.read_timeout);
-
+        let read_timeout = read_timeout.or(inner.read_timeout);
         let read_timeout_fut = read_timeout.map(tokio::time::sleep).map(Box::pin);
 
         Pending {
@@ -1513,10 +1512,10 @@ impl Client {
                 version,
                 urls: Vec::new(),
                 http2_retry_count: 0,
-                http2_max_retry_count: client.http2_max_retry_count,
+                http2_max_retry_count: inner.http2_max_retry_count,
                 redirect,
                 network_scheme,
-                client,
+                client: inner,
                 in_flight,
                 total_timeout,
                 read_timeout_fut,
@@ -2117,9 +2116,9 @@ impl PendingRequest {
             let res = InnerRequest::builder()
                 .uri(uri)
                 .method(self.method.clone())
-                .version(self.version)
                 .headers(self.headers.clone())
                 .headers_order(self.client.headers_order.as_deref())
+                .version(self.version)
                 .network_scheme(self.network_scheme.clone())
                 .body(body);
 
@@ -2133,37 +2132,6 @@ impl PendingRequest {
 
         true
     }
-}
-
-fn is_retryable_error(err: &(dyn std::error::Error + 'static)) -> bool {
-    // pop the legacy::Error
-    let err = if let Some(err) = err.source() {
-        err
-    } else {
-        return false;
-    };
-
-    if let Some(cause) = err.source() {
-        if let Some(err) = cause.downcast_ref::<hyper2::h2::Error>() {
-            // They sent us a graceful shutdown, try with a new connection!
-            if err.is_go_away()
-                && err.is_remote()
-                && err.reason() == Some(hyper2::h2::Reason::NO_ERROR)
-            {
-                return true;
-            }
-
-            // REFUSED_STREAM was sent from the server, which is safe to retry.
-            // https://www.rfc-editor.org/rfc/rfc9113.html#section-8.7-3.2
-            if err.is_reset()
-                && err.is_remote()
-                && err.reason() == Some(hyper2::h2::Reason::REFUSED_STREAM)
-            {
-                return true;
-            }
-        }
-    }
-    false
 }
 
 impl Pending {
@@ -2187,7 +2155,7 @@ impl Future for Pending {
             PendingInner::Request(req) => Pin::new(req).poll(cx),
             PendingInner::Error(err) => Poll::Ready(Err(err
                 .take()
-                .expect("Pending error polled more than once"))),
+                .unwrap_or_else(|| error::request("Pending error polled more than once")))),
         }
     }
 }
@@ -2353,19 +2321,17 @@ impl Future for PendingRequest {
 
                             // Add cookies from the cookie store.
                             #[cfg(any(feature = "cookies", feature = "cookies-abstract"))]
-                            {
-                                if let Some(cookie_store) = self.client.cookie_store.as_ref() {
-                                    add_cookie_header(&mut headers, &**cookie_store, &self.url);
-                                }
+                            if let Some(cookie_store) = self.client.cookie_store.as_ref() {
+                                add_cookie_header(&mut headers, &**cookie_store, &self.url);
                             }
 
                             *self.as_mut().in_flight().get_mut() = {
                                 let req = InnerRequest::builder()
                                     .uri(uri)
                                     .method(self.method.clone())
-                                    .version(self.version)
                                     .headers(headers.clone())
                                     .headers_order(self.client.headers_order.as_deref())
+                                    .version(self.version)
                                     .network_scheme(self.network_scheme.clone())
                                     .body(body)?;
 
@@ -2408,6 +2374,37 @@ impl fmt::Debug for Pending {
             PendingInner::Error(ref err) => f.debug_struct("Pending").field("error", err).finish(),
         }
     }
+}
+
+fn is_retryable_error(err: &(dyn std::error::Error + 'static)) -> bool {
+    // pop the legacy::Error
+    let err = if let Some(err) = err.source() {
+        err
+    } else {
+        return false;
+    };
+
+    if let Some(cause) = err.source() {
+        if let Some(err) = cause.downcast_ref::<hyper2::h2::Error>() {
+            // They sent us a graceful shutdown, try with a new connection!
+            if err.is_go_away()
+                && err.is_remote()
+                && err.reason() == Some(hyper2::h2::Reason::NO_ERROR)
+            {
+                return true;
+            }
+
+            // REFUSED_STREAM was sent from the server, which is safe to retry.
+            // https://www.rfc-editor.org/rfc/rfc9113.html#section-8.7-3.2
+            if err.is_reset()
+                && err.is_remote()
+                && err.reason() == Some(hyper2::h2::Reason::REFUSED_STREAM)
+            {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 fn make_referer(next: &Url, previous: &Url) -> Option<HeaderValue> {

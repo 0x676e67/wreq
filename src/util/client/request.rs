@@ -245,11 +245,11 @@ where
     /// A `Result` containing the constructed `InnerRequest` or an `Error`.
     #[inline]
     pub fn body(mut self, body: B) -> Result<InnerRequest<B>, Error> {
-        if let Some((method, (headers_order, headers))) = self
+        if let Some((method, (headers, headers_order))) = self
             .builder
             .method_ref()
             .cloned()
-            .zip(self.headers_order.zip(self.builder.headers_mut()))
+            .zip(self.builder.headers_mut().zip(self.headers_order))
         {
             add_content_length_header(method, headers, &body);
             sort_headers(headers, headers_order);
@@ -316,20 +316,139 @@ fn sort_headers(headers: &mut HeaderMap, headers_order: &[HeaderName]) {
         return;
     }
 
+    // Create a new header map to store the sorted headers
     let mut sorted_headers = HeaderMap::with_capacity(headers.keys_len());
 
     // First insert headers in the specified order
-    for (key, value) in headers_order
-        .iter()
-        .filter_map(|key| headers.remove(key).map(|value| (key, value)))
-    {
-        sorted_headers.insert(key, value);
+    for key in headers_order {
+        if let Some(value) = headers.remove(key) {
+            sorted_headers.insert(key.clone(), value);
+        }
     }
 
     // Then insert any remaining headers that were not ordered
-    for (key, value) in headers.drain().filter_map(|(k, v)| k.map(|k| (k, v))) {
-        sorted_headers.insert(key, value);
+    for (key, value) in headers.drain() {
+        if let Some(key) = key {
+            sorted_headers.insert(key, value);
+        }
     }
 
     std::mem::swap(headers, &mut sorted_headers);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use http::header::{HeaderMap, HeaderName, HeaderValue};
+
+    #[test]
+    fn test_sort_headers() {
+        let mut headers = HeaderMap::new();
+        headers.insert("b-header", HeaderValue::from_static("b"));
+        headers.insert("a-header", HeaderValue::from_static("a"));
+        headers.insert("c-header", HeaderValue::from_static("c"));
+        headers.insert("extra-header", HeaderValue::from_static("extra"));
+
+        let headers_order = [
+            HeaderName::from_static("a-header"),
+            HeaderName::from_static("b-header"),
+            HeaderName::from_static("c-header"),
+        ];
+
+        sort_headers(&mut headers, &headers_order);
+
+        let mut iter = headers.iter();
+
+        assert_eq!(
+            iter.next(),
+            Some((
+                &HeaderName::from_static("a-header"),
+                &HeaderValue::from_static("a")
+            ))
+        );
+        assert_eq!(
+            iter.next(),
+            Some((
+                &HeaderName::from_static("b-header"),
+                &HeaderValue::from_static("b")
+            ))
+        );
+        assert_eq!(
+            iter.next(),
+            Some((
+                &HeaderName::from_static("c-header"),
+                &HeaderValue::from_static("c")
+            ))
+        );
+        assert_eq!(
+            iter.next(),
+            Some((
+                &HeaderName::from_static("extra-header"),
+                &HeaderValue::from_static("extra")
+            ))
+        );
+        assert_eq!(iter.next(), None);
+    }
+
+    #[test]
+    fn test_sort_headers_partial_match() {
+        let mut headers = HeaderMap::new();
+        headers.insert("x-header", HeaderValue::from_static("x"));
+        headers.insert("y-header", HeaderValue::from_static("y"));
+
+        let headers_order = [
+            HeaderName::from_static("y-header"),
+            HeaderName::from_static("z-header"),
+        ];
+
+        sort_headers(&mut headers, &headers_order);
+
+        let mut iter = headers.iter();
+
+        assert_eq!(
+            iter.next(),
+            Some((
+                &HeaderName::from_static("y-header"),
+                &HeaderValue::from_static("y")
+            ))
+        );
+        assert_eq!(
+            iter.next(),
+            Some((
+                &HeaderName::from_static("x-header"),
+                &HeaderValue::from_static("x")
+            ))
+        );
+        assert_eq!(iter.next(), None);
+    }
+
+    #[test]
+    fn test_sort_headers_empty() {
+        let mut headers = HeaderMap::new();
+        let headers_order: [HeaderName; 0] = [];
+
+        sort_headers(&mut headers, &headers_order);
+
+        assert!(headers.is_empty());
+    }
+
+    #[test]
+    fn test_sort_headers_no_ordering() {
+        let mut headers = HeaderMap::new();
+        headers.insert("random-header", HeaderValue::from_static("random"));
+
+        let headers_order: [HeaderName; 0] = [];
+
+        sort_headers(&mut headers, &headers_order);
+
+        let mut iter = headers.iter();
+        assert_eq!(
+            iter.next(),
+            Some((
+                &HeaderName::from_static("random-header"),
+                &HeaderValue::from_static("random")
+            ))
+        );
+        assert_eq!(iter.next(), None);
+    }
 }
