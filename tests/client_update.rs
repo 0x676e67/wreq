@@ -77,7 +77,6 @@ async fn test_headers_order_and_requests() {
     let server = server::http(move |req| async move {
         assert_eq!(req.method(), "POST");
 
-        // 确保 headers 按照 headers_order 的顺序
         let expected_headers = vec![
             ("user-agent", "my-test-client"),
             ("accept", "*/*"),
