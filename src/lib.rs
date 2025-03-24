@@ -10,8 +10,9 @@
 //! - Plain bodies, [JSON](#json), [urlencoded](#forms), [multipart]
 //! - Cookies Store
 //! - Header Order
-//! - [Redirect policy](#redirect-policies)
+//! - [Redirect Policy](#redirect-policies)
 //! - Rotating [Proxies](#proxies)
+//! - [Certificate Store](#certificate-store)
 //! - [WebSocket](#websocket) Upgrade
 //! - HTTPS via [BoringSSL](#tls)
 //! - HTTP/2 over TLS [Emulation](#emulation)
@@ -228,6 +229,15 @@
 //!
 //! - Various parts of TLS can also be configured or even disabled on the
 //!   `ClientBuilder`.
+//!
+//! ## Certificate Store
+//!
+//! By default, rquest uses Mozilla's root certificates through the webpki-roots crate.
+//! This static root certificate bundle is not automatically updated and ignores any root certificates installed on the host.
+//! You can disable default-features to use the system's default certificate path.
+//! Additionally, rquest provides a certificate store for users to customize and update certificates.
+//!
+//! Custom Certificate Store verification supports Root CA certificates, peer certificates, and self-signed certificate SSL pinning.
 //!
 //! ## Optional Features
 //!
