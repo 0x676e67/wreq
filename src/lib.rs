@@ -14,7 +14,7 @@
 //! - Rotating [Proxies](#proxies)
 //! - [WebSocket](#websocket) Upgrade
 //! - HTTPS via [BoringSSL](#tls)
-//! - [Emulation](#emulation) Fingerprint
+//! - TLS/HTTP2 [Emulation](#emulation)
 //!
 //! Additional learning resources include:
 //!
@@ -23,7 +23,7 @@
 //!
 //! ## Emulation
 //!
-//! The `emulation` module provides a way to simulate various browser fingerprints.
+//! The `emulation` module provides a way to simulate various browser TLS/HTTP2 fingerprints.
 //!
 //! ```rust,no_run
 //! use rquest::Client;
