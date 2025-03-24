@@ -237,6 +237,7 @@
 //! - **full**: Enables all optional features.
 //! - **websocket**: Provides websocket support.
 //! - **cookies**: Provides cookie session support.
+//! - **cookies-preserve-order**: uses [indexmap::IndexMap](https://docs.rs/indexmap/latest/indexmap/map/struct.IndexMap.html) in lieu of [HashMap](https://doc.rust-lang.org/std/collections/struct.HashMap.html)  internally, so cookies are maintained in insertion/creation order.
 //! - **cookies-abstract**: Provides abstract cookie session support.
 //! - **gzip**: Provides response body gzip decompression.
 //! - **brotli**: Provides response body brotli decompression.
