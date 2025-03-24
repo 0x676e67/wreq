@@ -14,7 +14,7 @@
 //! - Rotating [Proxies](#proxies)
 //! - [WebSocket](#websocket) Upgrade
 //! - HTTPS via [BoringSSL](#tls)
-//! - TLS/HTTP2 [Emulation](#emulation)
+//! - HTTP/2 over TLS [Emulation](#emulation)
 //!
 //! Additional learning resources include:
 //!

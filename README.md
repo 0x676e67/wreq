@@ -19,7 +19,7 @@ An ergonomic all-in-one HTTP client for browser emulation with TLS, JA3/JA4, and
 - Rotating Proxies
 - WebSocket Upgrade
 - HTTPS via BoringSSL
-- TLS/HTTP2 Emulation
+- HTTP/2 over TLS Emulation
 
 ## Example
 
