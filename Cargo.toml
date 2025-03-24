@@ -104,10 +104,10 @@ mime_guess = { version = "2.0", default-features = false, optional = true }
 encoding_rs = { version = "0.8", optional = true }
 http-body = "1"
 http-body-util = "0.1"
-hyper2 = { version = "1.5.0", features = ["http1", "http2", "client"] }
-socket2 = { version = "0.5", features = ["all"] }
+hyper2 = { version = "1.5.5", features = ["http1", "http2", "client"] }
+socket2 = { version = "0.5.8", features = ["all"] }
 lru = { version = "0.13", default-features = false }
-log = "0.4"
+log = "0.4.27"
 mime = "0.3.17"
 percent-encoding = "2.3"
 tokio = { version = "1", default-features = false, features = ["net","time","rt"] }
@@ -141,7 +141,7 @@ tokio-socks = { version = "0.5.2", optional = true }
 tokio-tungstenite = { version = "0.26.2", default-features = false, features = ["handshake"], optional = true }
 
 ## hickory-dns
-hickory-resolver = { version = "0.25", optional = true }
+hickory-resolver = { version = "0.25.1", optional = true }
 
 [target.'cfg(windows)'.dependencies]
 windows-registry = "0.5.0"
