@@ -13,7 +13,7 @@ use std::{
     task::{Context, Poll, ready},
 };
 
-use crate::{Error, IntoUrl, RequestBuilder, Response, error};
+use crate::{Error, RequestBuilder, Response, error, proxy::IntoProxy};
 use futures_util::{Sink, SinkExt, Stream, StreamExt};
 use http::{HeaderMap, HeaderName, HeaderValue, Method, StatusCode, Version, header, uri::Scheme};
 use hyper2::ext::Protocol;
@@ -214,7 +214,7 @@ impl WebSocketRequestBuilder {
     }
 
     /// Set the proxy for this request.
-    pub fn proxy<U: IntoUrl>(mut self, proxy: U) -> Self {
+    pub fn proxy<U: IntoProxy>(mut self, proxy: U) -> Self {
         self.inner = self.inner.proxy(proxy);
         self
     }
