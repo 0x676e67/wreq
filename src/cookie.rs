@@ -324,7 +324,7 @@ impl CookieStore for Jar {
         let mut iter = lock.get_request_values(url);
 
         let (first_name, first_value) = iter.next()?;
-        
+
         let mut cookie = String::with_capacity(32);
         cookie.push_str(first_name);
         cookie.push('=');
