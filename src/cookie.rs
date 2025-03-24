@@ -320,19 +320,22 @@ impl CookieStore for Jar {
     }
 
     fn cookies(&self, url: &url::Url) -> Option<HeaderValue> {
-        let s = self
-            .0
-            .read()
-            .get_request_values(url)
-            .map(|(name, value)| format!("{}={}", name, value))
-            .collect::<Vec<_>>()
-            .join("; ");
+        let lock = self.0.read();
+        let mut iter = lock.get_request_values(url);
 
-        if s.is_empty() {
-            return None;
+        let (first_name, first_value) = iter.next()?;
+        let mut cookie = String::with_capacity(32);
+        cookie.push_str(&first_name);
+        cookie.push('=');
+        cookie.push_str(&first_value);
+        for (name, value) in iter {
+            cookie.push_str("; ");
+            cookie.push_str(&name);
+            cookie.push('=');
+            cookie.push_str(&value);
         }
 
-        HeaderValue::from_maybe_shared(bytes::Bytes::from(s)).ok()
+        HeaderValue::from_maybe_shared(bytes::Bytes::from(cookie)).ok()
     }
 
     fn set_cookie<'c>(&self, url: &url::Url, cookie: &dyn IntoCookie) {
