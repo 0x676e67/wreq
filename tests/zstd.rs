@@ -571,3 +571,25 @@ async fn test_connection_reuse_with_chunked_fragmented_multiple_frames_in_one_ch
         peer_addrs
     );
 }
+
+#[tokio::test]
+async fn disable_compression_request() {
+    let _ = env_logger::try_init();
+
+    let server = server::http(move |req| {
+        assert_eq!(req.headers().get("accept-encoding"), None);
+        async { http::Response::default() }
+    });
+
+    let url = format!("http://{}/compress", server.addr());
+
+    let res = rquest::Client::new()
+        .get(&url)
+        .allow_compression(false)
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(res.url().as_str(), &url);
+    assert_eq!(res.status(), rquest::StatusCode::OK);
+}

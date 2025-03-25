@@ -27,6 +27,7 @@ pub struct Request {
     read_timeout: Option<Duration>,
     version: Option<Version>,
     redirect: Option<redirect::Policy>,
+    allow_compression: bool,
     network_scheme: NetworkSchemeBuilder,
     protocol: Option<hyper2::ext::Protocol>,
 }
@@ -53,6 +54,12 @@ impl Request {
             read_timeout: None,
             version: None,
             redirect: None,
+            allow_compression: cfg!(any(
+                feature = "gzip",
+                feature = "brotli",
+                feature = "deflate",
+                feature = "zstd"
+            )),
             network_scheme: NetworkScheme::builder(),
             protocol: None,
         }
@@ -98,6 +105,18 @@ impl Request {
     #[inline]
     pub fn redirect_mut(&mut self) -> &mut Option<redirect::Policy> {
         &mut self.redirect
+    }
+
+    /// Get a mutable reference to the allow_compression policy.
+    #[cfg(any(
+        feature = "gzip",
+        feature = "brotli",
+        feature = "deflate",
+        feature = "zstd"
+    ))]
+    #[inline]
+    pub fn allow_compression_mut(&mut self) -> &mut bool {
+        &mut self.allow_compression
     }
 
     /// Get a mutable reference to the network scheme.
@@ -174,6 +193,15 @@ impl Request {
         *req.headers_mut() = self.headers().clone();
         *req.version_mut() = self.version();
         *req.redirect_mut() = self.redirect.clone();
+        #[cfg(any(
+            feature = "gzip",
+            feature = "brotli",
+            feature = "deflate",
+            feature = "zstd"
+        ))]
+        {
+            *req.allow_compression_mut() = self.allow_compression;
+        }
         *req.network_scheme_mut() = self.network_scheme.clone();
         *req.protocol_mut() = self.protocol.clone();
         req.body = body;
@@ -192,6 +220,7 @@ impl Request {
         Option<Duration>,
         Option<Version>,
         Option<redirect::Policy>,
+        bool,
         NetworkScheme,
         Option<hyper2::ext::Protocol>,
     ) {
@@ -204,6 +233,7 @@ impl Request {
             self.read_timeout,
             self.version,
             self.redirect,
+            self.allow_compression,
             self.network_scheme.build(),
             self.protocol,
         )
@@ -500,6 +530,23 @@ impl RequestBuilder {
     pub fn redirect(mut self, policy: redirect::Policy) -> RequestBuilder {
         if let Ok(ref mut req) = self.request {
             req.redirect = Some(policy)
+        }
+        self
+    }
+
+    /// Sets if this request will announce that it accepts compression.
+    ///
+    /// This value defaults to true. Note that this only lets the browser know that this request supports
+    /// compression, the server might choose not to compress the content.
+    #[cfg(any(
+        feature = "gzip",
+        feature = "brotli",
+        feature = "deflate",
+        feature = "zstd"
+    ))]
+    pub fn allow_compression(mut self, allow_compression: bool) -> Self {
+        if let Ok(ref mut req) = self.request {
+            req.allow_compression = allow_compression
         }
         self
     }
@@ -827,6 +874,12 @@ where
             // TODO: Add version
             version: None,
             redirect: None,
+            allow_compression: cfg!(any(
+                feature = "gzip",
+                feature = "brotli",
+                feature = "deflate",
+                feature = "zstd"
+            )),
             network_scheme: NetworkScheme::builder(),
             protocol: None,
         })
