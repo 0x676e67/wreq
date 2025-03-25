@@ -135,7 +135,6 @@ async fn test_headers_order_with_client() {
             HeaderName::from_static("authorization"),
             HeaderName::from_static("referer"),
             HeaderName::from_static("cookie"),
-            HeaderName::from_static("cookie"),
             HeaderName::from_static("cache-control"),
         ])
         .build()
@@ -202,7 +201,6 @@ async fn test_headers_order_with_request() {
             HeaderName::from_static("content-type"),
             HeaderName::from_static("authorization"),
             HeaderName::from_static("referer"),
-            HeaderName::from_static("cookie"),
             HeaderName::from_static("cookie"),
             HeaderName::from_static("cache-control"),
         ])

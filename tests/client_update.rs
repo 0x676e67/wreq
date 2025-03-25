@@ -125,7 +125,6 @@ async fn test_headers_order_with_client_update() {
             HeaderName::from_static("user-agent"),
             HeaderName::from_static("accept"),
             HeaderName::from_static("cookie"),
-            HeaderName::from_static("cookie"),
             HeaderName::from_static("content-type"),
             HeaderName::from_static("authorization"),
             HeaderName::from_static("referer"),
