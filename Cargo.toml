@@ -41,6 +41,8 @@ cookies-abstract = ["dep:cookie_crate"]
 
 cookies-preserve-order = ["cookie_store/preserve_order"]
 
+cookies-multiple = []
+
 gzip = ["dep:async-compression", "async-compression?/gzip", "dep:tokio-util"]
 
 brotli = [

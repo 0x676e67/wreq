@@ -20,6 +20,18 @@ pub trait CookieStore: Send + Sync {
     /// Get any Cookie values in the store for `url`
     fn cookies(&self, url: &url::Url) -> Option<HeaderValue>;
 
+    /// Get any Cookie values in the store for `url` as separate `HeaderValue`s
+    #[cfg(feature = "cookies-multiple")]
+    fn cookies_multiple(&self, url: &url::Url) -> Option<Vec<HeaderValue>> {
+        self.cookies(url).and_then(|val| {
+            val.to_str().ok().map(|s| {
+                s.split(';')
+                    .filter_map(|s| HeaderValue::from_str(s.trim()).ok())
+                    .collect()
+            })
+        })
+    }
+
     /// Removes a Cookie value in the store for `url` and `name`
     fn remove(&self, _url: &url::Url, _name: &str) {}
 
@@ -337,6 +349,21 @@ impl CookieStore for Jar {
         }
 
         HeaderValue::from_maybe_shared(bytes::Bytes::from(cookie)).ok()
+    }
+
+    #[cfg(feature = "cookies-multiple")]
+    fn cookies_multiple(&self, url: &url::Url) -> Option<Vec<HeaderValue>> {
+        let cookies = self
+            .0
+            .read()
+            .get_request_values(url)
+            .filter_map(|(name, value)| {
+                HeaderValue::from_maybe_shared(bytes::Bytes::from(format!("{}={}", name, value)))
+                    .ok()
+            })
+            .collect();
+
+        Some(cookies)
     }
 
     fn set_cookie<'c>(&self, url: &url::Url, cookie: &dyn IntoCookie) {
