@@ -175,6 +175,7 @@ impl Request {
         *req.version_mut() = self.version();
         *req.redirect_mut() = self.redirect.clone();
         *req.network_scheme_mut() = self.network_scheme.clone();
+        *req.protocol_mut() = self.protocol.clone();
         req.body = body;
         Some(req)
     }
