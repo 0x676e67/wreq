@@ -236,6 +236,8 @@ impl RequestBuilder {
     }
 
     /// Add a `Header` to this Request.
+    ///
+    /// If the header is already present, the value will be replaced.
     pub fn header<K, V>(self, key: K, value: V) -> RequestBuilder
     where
         HeaderName: TryFrom<K>,
@@ -247,6 +249,8 @@ impl RequestBuilder {
     }
 
     /// Add a `Header` to append to the request.
+    ///
+    /// The new header is always appended to the request, even if the header already exists.
     pub fn header_append<K, V>(self, key: K, value: V) -> RequestBuilder
     where
         HeaderName: TryFrom<K>,
