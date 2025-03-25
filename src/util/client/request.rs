@@ -320,16 +320,17 @@ fn sort_headers(headers: &mut HeaderMap, headers_order: &[HeaderName]) {
     let mut sorted_headers = HeaderMap::with_capacity(headers.keys_len());
 
     // First insert headers in the specified order
-    for key in headers_order {
-        if let Some(value) = headers.remove(key) {
-            sorted_headers.insert(key.clone(), value);
+    for name in headers_order {
+        for value in headers.get_all(name) {
+            sorted_headers.append(name.clone(), value.clone());
         }
+        headers.remove(name);
     }
 
     // Then insert any remaining headers that were not ordered
     for (key, value) in headers.drain() {
         if let Some(key) = key {
-            sorted_headers.insert(key, value);
+            sorted_headers.append(key, value);
         }
     }
 

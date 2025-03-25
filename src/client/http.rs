@@ -47,7 +47,7 @@ use bytes::Bytes;
 use http::{
     HeaderName, Uri, Version,
     header::{
-        CONTENT_ENCODING, CONTENT_LENGTH, CONTENT_TYPE, Entry, HeaderMap, HeaderValue, LOCATION,
+        CONTENT_ENCODING, CONTENT_LENGTH, CONTENT_TYPE, HeaderMap, HeaderValue, LOCATION,
         PROXY_AUTHORIZATION, REFERER, TRANSFER_ENCODING, USER_AGENT,
     },
     uri::Scheme,
@@ -1423,24 +1423,26 @@ impl Client {
             return Pending::new_err(error::url_bad_scheme(url));
         }
 
-        let inner = self.inner.load();
+        let client = self.inner.load();
 
         // check if we're in https_only mode and check the scheme of the current URL
-        if inner.https_only && scheme != "https" {
+        if client.https_only && scheme != "https" {
             return Pending::new_err(error::url_bad_scheme(url));
         }
 
         // insert default headers in the request headers
         // without overwriting already appended headers.
-        for (key, value) in inner.headers.iter() {
-            if let Entry::Vacant(entry) = headers.entry(key) {
-                entry.insert(value.clone());
+        for name in client.headers.keys() {
+            if !headers.contains_key(name) {
+                for value in client.headers.get_all(name) {
+                    headers.append(name, value.clone());
+                }
             }
         }
 
         // Add cookies from the cookie store.
         #[cfg(any(feature = "cookies", feature = "cookies-abstract"))]
-        if let Some(cookie_store) = inner.cookie_store.as_ref() {
+        if let Some(cookie_store) = client.cookie_store.as_ref() {
             if !headers.contains_key(crate::header::COOKIE) {
                 add_cookie_header(&mut headers, &**cookie_store, &url);
             }
@@ -1452,7 +1454,7 @@ impl Client {
             feature = "zstd",
             feature = "deflate"
         ))]
-        if let Some(accept_encoding) = inner.accepts.as_str() {
+        if let Some(accept_encoding) = client.accepts.as_str() {
             if !headers.contains_key(crate::header::ACCEPT_ENCODING)
                 && !headers.contains_key(crate::header::RANGE)
             {
@@ -1476,31 +1478,31 @@ impl Client {
             None => (None, Body::empty()),
         };
 
-        inner.proxy_auth(&uri, &mut headers);
+        client.proxy_auth(&uri, &mut headers);
 
-        let network_scheme = inner.network_scheme(&uri, network_scheme);
+        let network_scheme = client.network_scheme(&uri, network_scheme);
         let in_flight = {
             let res = InnerRequest::builder()
                 .uri(uri)
                 .method(method.clone())
                 .headers(headers.clone())
-                .headers_order(inner.headers_order.as_deref())
+                .headers_order(client.headers_order.as_deref())
                 .version(version)
                 .network_scheme(network_scheme.clone())
                 .extension(protocal)
                 .body(body);
 
             match res {
-                Ok(req) => ResponseFuture::Default(inner.hyper.request(req)),
+                Ok(req) => ResponseFuture::Default(client.hyper.request(req)),
                 Err(err) => return Pending::new_err(error::builder(err)),
             }
         };
 
         let total_timeout = timeout
-            .or(inner.request_timeout)
+            .or(client.request_timeout)
             .map(tokio::time::sleep)
             .map(Box::pin);
-        let read_timeout = read_timeout.or(inner.read_timeout);
+        let read_timeout = read_timeout.or(client.read_timeout);
         let read_timeout_fut = read_timeout.map(tokio::time::sleep).map(Box::pin);
 
         Pending {
@@ -1512,10 +1514,10 @@ impl Client {
                 version,
                 urls: Vec::new(),
                 http2_retry_count: 0,
-                http2_max_retry_count: inner.http2_max_retry_count,
+                http2_max_retry_count: client.http2_max_retry_count,
                 redirect,
                 network_scheme,
-                client: inner,
+                client,
                 in_flight,
                 total_timeout,
                 read_timeout_fut,
