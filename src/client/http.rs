@@ -2409,16 +2409,16 @@ fn make_referer(next: &Url, previous: &Url) -> Option<HeaderValue> {
 
 #[cfg(any(feature = "cookies", feature = "cookies-abstract"))]
 fn add_cookie_header(headers: &mut HeaderMap, cookie_store: &dyn cookie::CookieStore, url: &Url) {
-    #[cfg(not(feature = "cookies-multiple"))]
-    if let Some(header) = cookie_store.cookies(url) {
-        headers.insert(crate::header::COOKIE, header);
-    }
-
     #[cfg(feature = "cookies-multiple")]
     if let Some(cookies) = cookie_store.cookies_multiple(url) {
         for header in cookies {
             headers.append(crate::header::COOKIE, header);
         }
+        return;
+    }
+
+    if let Some(header) = cookie_store.cookies(url) {
+        headers.insert(crate::header::COOKIE, header);
     }
 }
 

@@ -22,14 +22,8 @@ pub trait CookieStore: Send + Sync {
 
     /// Get any Cookie values in the store for `url` as separate `HeaderValue`s
     #[cfg(feature = "cookies-multiple")]
-    fn cookies_multiple(&self, url: &url::Url) -> Option<Vec<HeaderValue>> {
-        self.cookies(url).and_then(|val| {
-            val.to_str().ok().map(|s| {
-                s.split(';')
-                    .filter_map(|s| HeaderValue::from_str(s.trim()).ok())
-                    .collect()
-            })
-        })
+    fn cookies_multiple(&self, _url: &url::Url) -> Option<Vec<HeaderValue>> {
+        None
     }
 
     /// Removes a Cookie value in the store for `url` and `name`
