@@ -2411,16 +2411,20 @@ fn add_cookie_header(
     headers: &mut HeaderMap,
     url: &Url,
 ) {
-    #[cfg(feature = "cookies-multiple")]
-    if let Some(cookies) = cookie_store.cookies_multiple(url) {
-        for header in cookies {
-            headers.append(crate::header::COOKIE, header);
-        }
-
-        return;
-    }
-
     if let Some(header) = cookie_store.cookies(url) {
+        #[cfg(feature = "cookies-multiple")]
+        header
+            .as_bytes()
+            .split(|b| *b == b';')
+            .filter_map(|s| {
+                let s = s.strip_prefix(b" ").unwrap_or(s);
+                HeaderValue::from_bytes(s).ok()
+            })
+            .for_each(|header| {
+                headers.append(crate::header::COOKIE, header);
+            });
+
+        #[cfg(not(feature = "cookies-multiple"))]
         headers.insert(crate::header::COOKIE, header);
     }
 }
