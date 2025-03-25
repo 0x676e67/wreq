@@ -1412,10 +1412,12 @@ impl Client {
             read_timeout,
             version,
             redirect,
+            _allow_compression,
             network_scheme,
             protocal,
         ) = req.pieces();
 
+        // get the scheme of the URL
         let scheme = url.scheme();
 
         // check if the scheme is supported
@@ -1440,36 +1442,32 @@ impl Client {
             }
         }
 
-        // Add cookies from the cookie store.
+        // add cookies from the cookie store.
         #[cfg(any(feature = "cookies", feature = "cookies-abstract"))]
         if let Some(cookie_store) = client.cookie_store.as_ref() {
             if !headers.contains_key(crate::header::COOKIE) {
-                add_cookie_header(&mut headers, &**cookie_store, &url);
+                add_cookie_header(cookie_store, &mut headers, &url);
             }
         }
 
+        // add accept-encoding header
         #[cfg(any(
             feature = "gzip",
             feature = "brotli",
             feature = "zstd",
             feature = "deflate"
         ))]
-        if let Some(accept_encoding) = client.accepts.as_str() {
-            if !headers.contains_key(crate::header::ACCEPT_ENCODING)
-                && !headers.contains_key(crate::header::RANGE)
-            {
-                headers.insert(
-                    crate::header::ACCEPT_ENCODING,
-                    HeaderValue::from_static(accept_encoding),
-                );
-            }
+        if _allow_compression {
+            add_accpet_encoding_header(&client.accepts, &mut headers);
         }
 
+        // parse Uri from the Url
         let uri = match try_uri(&url) {
             Some(uri) => uri,
             None => return Pending::new_err(error::url_bad_uri(url)),
         };
 
+        // reuse the body if possible
         let (reusable, body) = match body {
             Some(body) => {
                 let (reusable, body) = body.try_reuse();
@@ -2323,7 +2321,7 @@ impl Future for PendingRequest {
                             // Add cookies from the cookie store.
                             #[cfg(any(feature = "cookies", feature = "cookies-abstract"))]
                             if let Some(cookie_store) = self.client.cookie_store.as_ref() {
-                                add_cookie_header(&mut headers, &**cookie_store, &self.url);
+                                add_cookie_header(cookie_store, &mut headers, &self.url);
                             }
 
                             *self.as_mut().in_flight().get_mut() = {
@@ -2408,9 +2406,32 @@ fn make_referer(next: &Url, previous: &Url) -> Option<HeaderValue> {
 }
 
 #[cfg(any(feature = "cookies", feature = "cookies-abstract"))]
-fn add_cookie_header(headers: &mut HeaderMap, cookie_store: &dyn cookie::CookieStore, url: &Url) {
+fn add_cookie_header(
+    cookie_store: &Arc<dyn cookie::CookieStore>,
+    headers: &mut HeaderMap,
+    url: &Url,
+) {
     if let Some(header) = cookie_store.cookies(url) {
         headers.insert(crate::header::COOKIE, header);
+    }
+}
+
+#[cfg(any(
+    feature = "gzip",
+    feature = "brotli",
+    feature = "zstd",
+    feature = "deflate"
+))]
+fn add_accpet_encoding_header(accepts: &Accepts, headers: &mut HeaderMap) {
+    if let Some(accept_encoding) = accepts.as_str() {
+        if !headers.contains_key(crate::header::ACCEPT_ENCODING)
+            && !headers.contains_key(crate::header::RANGE)
+        {
+            headers.insert(
+                crate::header::ACCEPT_ENCODING,
+                HeaderValue::from_static(accept_encoding),
+            );
+        }
     }
 }
 
