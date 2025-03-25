@@ -7,8 +7,14 @@ async fn main() -> Result<(), rquest::Error> {
 
     let url = "https://tls.peet.ws/api/all".parse().expect("Invalid url");
 
-    // Set a cookie
-    client.set_cookies(&url, [HeaderValue::from_static("foo=bar")]);
+    // Set cookies
+    client.set_cookies(
+        &url,
+        [
+            HeaderValue::from_static("foo1=bar1"),
+            HeaderValue::from_static("foo2=bar2"),
+        ],
+    );
 
     // Use the API you're already familiar with
     let resp = client.get(url).send().await?;
