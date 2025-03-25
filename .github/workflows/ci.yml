@@ -74,6 +74,8 @@ jobs:
         run: cargo nextest run --workspace --features cookies
       - name: Test cookies-abstract feature
         run: cargo nextest run --workspace --features cookies-abstract
+      - name: Test cookies cookies cookies-preserve-order feature
+        run: cargo nextest run --workspace --features cookies,cookies-preserve-order
       - name: Test --features gzip,stream
         run: cargo nextest run --workspace --features gzip,stream
       - name: Test --features brotli,stream
