@@ -192,7 +192,7 @@ doctest = false
 [[test]]
 name = "cookie"
 path = "tests/cookie.rs"
-required-features = ["cookies"]
+required-features = ["cookies", "cookies-multiple", "cookies-preserve-order"]
 
 [[test]]
 name = "gzip"

@@ -205,7 +205,7 @@ async fn cookie_store_path() {
 }
 
 #[tokio::test]
-async fn cookie_get_set() {
+async fn cookie_setter() {
     let server = server::http(move |req| async move {
         assert_eq!(
             req.headers().get("cookie"),
@@ -385,4 +385,27 @@ async fn cookie_string_format() {
     let cookies = jar.cookies(&url).unwrap();
     let value = cookies.to_str().unwrap();
     assert_eq!(value, "key=val");
+}
+
+#[tokio::test]
+async fn multiple_cookies() {
+    let server = server::http(move |req| async move {
+        let mut cookies = req.headers().get_all("cookie").iter();
+        assert_eq!(cookies.next(), Some(&HeaderValue::from_static("key1=val1")));
+        assert_eq!(cookies.next(), Some(&HeaderValue::from_static("key2=val2")));
+        http::Response::default()
+    });
+
+    let client = rquest::Client::builder()
+        .cookie_store(true)
+        .build()
+        .unwrap();
+
+    let url = format!("http://{}/", server.addr()).parse().unwrap();
+    client.set_cookies(&url, [
+        HeaderValue::from_static("key1=val1"),
+        HeaderValue::from_static("key2=val2"),
+    ]);
+
+    client.get(&url).send().await.unwrap();
 }
