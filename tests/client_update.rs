@@ -77,11 +77,11 @@ async fn test_headers_order_with_client_update() {
         let expected_headers = vec![
             ("user-agent", "my-test-client"),
             ("accept", "*/*"),
+            ("cookie", "cookie1=cookie1"),
+            ("cookie", "cookie2=cookie2"),
             ("content-type", "application/json"),
             ("authorization", "Bearer test-token"),
             ("referer", "https://example.com"),
-            ("cookie", "cookie1=cookie1"),
-            ("cookie", "cookie2=cookie2"),
             ("cache-control", "no-cache"),
         ];
 
@@ -117,18 +117,18 @@ async fn test_headers_order_with_client_update() {
             headers.insert(USER_AGENT, HeaderValue::from_static("my-test-client"));
             headers.insert(AUTHORIZATION, HeaderValue::from_static("Bearer test-token"));
             headers.insert(REFERER, HeaderValue::from_static("https://example.com"));
+            headers.insert(CACHE_CONTROL, HeaderValue::from_static("no-cache"));
             headers.append("cookie", HeaderValue::from_static("cookie1=cookie1"));
             headers.append("cookie", HeaderValue::from_static("cookie2=cookie2"));
-            headers.insert(CACHE_CONTROL, HeaderValue::from_static("no-cache"));
         })
         .headers_order(vec![
             HeaderName::from_static("user-agent"),
             HeaderName::from_static("accept"),
+            HeaderName::from_static("cookie"),
+            HeaderName::from_static("cookie"),
             HeaderName::from_static("content-type"),
             HeaderName::from_static("authorization"),
             HeaderName::from_static("referer"),
-            HeaderName::from_static("cookie"),
-            HeaderName::from_static("cookie"),
             HeaderName::from_static("cache-control"),
         ])
         .apply()
