@@ -402,10 +402,13 @@ async fn multiple_cookies() {
         .unwrap();
 
     let url = format!("http://{}/", server.addr()).parse().unwrap();
-    client.set_cookies(&url, [
-        HeaderValue::from_static("key1=val1"),
-        HeaderValue::from_static("key2=val2"),
-    ]);
+    client.set_cookies(
+        &url,
+        [
+            HeaderValue::from_static("key1=val1"),
+            HeaderValue::from_static("key2=val2"),
+        ],
+    );
 
     client.get(&url).send().await.unwrap();
 }
