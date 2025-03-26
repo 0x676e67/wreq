@@ -21,6 +21,7 @@ use std::{fmt::Debug, path::Path};
 /// use rquest::CertStore;
 ///
 /// let store = CertStore::builder()
+///     .add_cert(&der_or_pem_cert)
 ///     .add_der_cert(&der_cert)
 ///     .add_pem_cert(&pem_cert)
 ///     .set_default_paths()
@@ -31,6 +32,27 @@ pub struct CertStoreBuilder {
 }
 
 impl CertStoreBuilder {
+    /// Adds a DER/PEM-encoded certificate to the certificate store.
+    ///
+    /// # Parameters
+    ///
+    /// - `cert`: A reference to a byte slice containing the DER/PEM-encoded certificate.
+    pub fn add_cert<C>(mut self, cert: C) -> Self
+    where
+        C: AsRef<[u8]>,
+    {
+        if let Ok(ref mut builder) = self.builder {
+            if let Some(err) = detect_cert_parser(cert.as_ref())
+                .and_then(|cert| builder.add_cert(cert))
+                .map_err(error::builder)
+                .err()
+            {
+                self.builder = Err(err);
+            }
+        }
+        self
+    }
+
     /// Adds a DER-encoded certificate to the certificate store.
     ///
     /// # Parameters
@@ -67,6 +89,25 @@ impl CertStoreBuilder {
                 .map_err(error::builder)
                 .err()
             {
+                self.builder = Err(err);
+            }
+        }
+        self
+    }
+
+    /// Adds multiple DER/PEM-encoded certificates to the certificate store.
+    ///
+    /// # Parameters
+    ///
+    /// - `certs`: An iterator over DER/PEM-encoded certificates.
+    pub fn add_certs<C>(mut self, certs: C) -> Self
+    where
+        C: IntoIterator,
+        C::Item: AsRef<[u8]>,
+    {
+        if let Ok(ref mut builder) = self.builder {
+            let certs = filter_map_certs(certs, detect_cert_parser);
+            if let Some(err) = process_certs(certs, builder).err() {
                 self.builder = Err(err);
             }
         }
@@ -197,6 +238,20 @@ impl CertStore {
         }
     }
 
+    /// Creates a new `CertStore` from a collection of DER/PEM-encoded certificates.
+    ///
+    /// # Parameters
+    ///
+    /// - `certs`: An iterator over DER/PEM-encoded certificates.
+    #[inline]
+    pub fn from_certs<C>(certs: C) -> Result<CertStore, Error>
+    where
+        C: IntoIterator,
+        C::Item: AsRef<[u8]>,
+    {
+        load_certs_from_iter(certs, detect_cert_parser)
+    }
+
     /// Creates a new `CertStore` from a collection of DER-encoded certificates.
     ///
     /// # Parameters
@@ -325,4 +380,30 @@ where
                 None
             }
         })
+}
+
+#[inline]
+fn detect_cert_parser(data: &[u8]) -> Result<X509, ErrorStack> {
+    let parser = if data.len() >= 10 {
+        // Quick check: if data starts with "-----BEGIN"
+        if data.starts_with(b"-----BEGIN") {
+            X509::from_pem
+        } else {
+            // Try to skip leading whitespace
+            let start = data
+                .iter()
+                .position(|&b| !b.is_ascii_whitespace())
+                .unwrap_or(0);
+
+            if data[start..].starts_with(b"-----BEGIN") {
+                X509::from_pem
+            } else {
+                X509::from_der
+            }
+        }
+    } else {
+        X509::from_der
+    };
+
+    parser(data)
 }

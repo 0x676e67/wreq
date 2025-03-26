@@ -1075,7 +1075,7 @@ impl ClientBuilder {
         C: IntoIterator,
         C::Item: AsRef<[u8]>,
     {
-        match CertStore::from_pem_certs(certs) {
+        match CertStore::from_certs(certs) {
             Ok(store) => {
                 self.config.cert_store = Some(Cow::Owned(store));
             }
