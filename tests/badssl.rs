@@ -212,6 +212,7 @@ async fn ssl_pinning() {
         .send()
         .await
         .unwrap();
+
     let peer_cert_der = resp
         .extensions()
         .get::<TlsInfo>()
