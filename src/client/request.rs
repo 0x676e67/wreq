@@ -671,6 +671,7 @@ impl RequestBuilder {
     /// This method fails if the passed value cannot be serialized into
     /// url encoded format
     pub fn form<T: Serialize + ?Sized>(mut self, form: &T) -> RequestBuilder {
+        let mut error = None;
         if let Ok(ref mut req) = self.request {
             match serde_urlencoded::to_string(form) {
                 Ok(body) => {
@@ -681,8 +682,11 @@ impl RequestBuilder {
                         ));
                     *req.body_mut() = Some(body.into());
                 }
-                Err(err) => self.request = Err(crate::error::builder(err)),
+                Err(err) => error = Some(crate::error::builder(err)),
             }
+        }
+        if let Some(err) = error {
+            self.request = Err(err);
         }
         self
     }
@@ -700,6 +704,7 @@ impl RequestBuilder {
     #[cfg(feature = "json")]
     #[cfg_attr(docsrs, doc(cfg(feature = "json")))]
     pub fn json<T: Serialize + ?Sized>(mut self, json: &T) -> RequestBuilder {
+        let mut error = None;
         if let Ok(ref mut req) = self.request {
             match serde_json::to_vec(json) {
                 Ok(body) => {
@@ -708,8 +713,11 @@ impl RequestBuilder {
                         .or_insert(HeaderValue::from_static("application/json"));
                     *req.body_mut() = Some(body.into());
                 }
-                Err(err) => self.request = Err(crate::error::builder(err)),
+                Err(err) => error = Some(crate::error::builder(err)),
             }
+        }
+        if let Some(err) = error {
+            self.request = Err(err);
         }
         self
     }
