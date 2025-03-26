@@ -1,4 +1,4 @@
-use rquest::{AlpsProtos, Client, EmulationProvider, TlsVersion};
+use rquest::{AlpsProtos, Client, EmulationProvider, TlsInfo, TlsVersion};
 use rquest::{SslCurve, TlsConfig};
 
 #[tokio::test]
@@ -200,15 +200,42 @@ async fn test_aes_hw_override() -> Result<(), rquest::Error> {
 }
 
 #[tokio::test]
-async fn ssl_pinning() -> Result<(), rquest::Error> {
+async fn ssl_pinning() {
     let client = rquest::Client::builder()
-        .ssl_pinning([include_bytes!("certs/badssl.pem")])
-        .build()?;
+        .cert_verification(false)
+        .tls_info(true)
+        .build()
+        .unwrap();
 
-    let resp = client.get("https://self-signed.badssl.com/").send().await?;
+    let resp = client
+        .get("https://self-signed.badssl.com/")
+        .send()
+        .await
+        .unwrap();
+
+    let peer_cert_der = resp
+        .extensions()
+        .get::<TlsInfo>()
+        .and_then(|info| info.peer_certificate())
+        .unwrap();
+
+    let peer_cert = boring2::x509::X509::from_der(peer_cert_der)
+        .unwrap()
+        .to_pem()
+        .unwrap();
+
+    let client = rquest::Client::builder()
+        .ssl_pinning([peer_cert])
+        .build()
+        .unwrap();
+
+    let resp = client
+        .get("https://self-signed.badssl.com/")
+        .send()
+        .await
+        .unwrap();
     assert!(resp.status().is_success());
 
     let res = client.get("https://www.google.com").send().await;
     assert!(res.is_err());
-    Ok(())
 }

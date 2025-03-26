@@ -3,7 +3,7 @@ mod support;
 
 use http::header::{AUTHORIZATION, CACHE_CONTROL, REFERER};
 use http_body_util::BodyExt;
-use rquest::{CertStore, EmulationProvider, TlsConfig};
+use rquest::{CertStore, EmulationProvider, TlsConfig, TlsInfo};
 use support::server;
 
 #[tokio::test]
@@ -308,8 +308,26 @@ async fn update_ssl_verify() {
 
 #[tokio::test]
 async fn update_ssl_certs_verify_stroe() {
+    let client = rquest::Client::builder()
+        .cert_verification(false)
+        .tls_info(true)
+        .build()
+        .unwrap();
+
+    let resp = client
+        .get("https://self-signed.badssl.com/")
+        .send()
+        .await
+        .unwrap();
+
+    let peer_cert_der = resp
+        .extensions()
+        .get::<TlsInfo>()
+        .and_then(|info| info.peer_certificate())
+        .unwrap();
+
     let store = CertStore::builder()
-        .add_pem_cert(include_bytes!("certs/badssl.pem"))
+        .add_der_cert(peer_cert_der)
         .build()
         .unwrap();
 
