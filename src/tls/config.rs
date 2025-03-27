@@ -208,6 +208,7 @@ impl Default for TlsConfig {
 /// This trait is used to provide a unified way to convert different types
 /// into an optional `Cow` containing a `CertStore`.
 pub trait IntoCertStore {
+    /// Converts the given value into an optional `Cow` containing a `CertStore`.
     fn into(self) -> Option<Cow<'static, CertStore>>;
 }
 

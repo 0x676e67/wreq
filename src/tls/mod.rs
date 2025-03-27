@@ -10,14 +10,12 @@ mod conn;
 mod ext;
 mod x509;
 
-use boring2::{error::ErrorStack, ssl::SslVersion};
-
-pub use self::conn::{BoringTlsConnector, HttpsConnector, MaybeHttpsStream};
-pub use self::ext::{ConnectConfigurationExt, SslConnectorBuilderExt};
+pub(crate) use self::conn::{BoringTlsConnector, HttpsConnector, MaybeHttpsStream};
 pub use self::{
     config::{IntoCertStore, TlsConfig},
     x509::{CertStore, CertStoreBuilder},
 };
+use boring2::{error::ErrorStack, ssl::SslVersion};
 
 type TlsResult<T> = Result<T, ErrorStack>;
 
