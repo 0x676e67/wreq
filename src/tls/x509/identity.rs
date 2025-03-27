@@ -124,3 +124,18 @@ impl Identity {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod test {
+    use super::Identity;
+
+    #[test]
+    fn identity_from_pkcs12_der_invalid() {
+        Identity::from_pkcs12_der(b"not der", "nope").unwrap_err();
+    }
+
+    #[test]
+    fn identity_from_pkcs8_pem_invalid() {
+        Identity::from_pkcs8_pem(b"not pem", b"not key").unwrap_err();
+    }
+}
