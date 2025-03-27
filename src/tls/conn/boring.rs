@@ -4,8 +4,8 @@ use super::{HandshakeSettings, MaybeHttpsStream, key_index};
 
 use crate::connect::HttpConnector;
 use crate::error::BoxError;
-use crate::tls::ext::SslRefExt;
-use crate::tls::{ConnectConfigurationExt, SslConnectorBuilderExt, TlsConfig, TlsResult};
+use crate::tls::ext::{ConnectConfigurationExt, SslConnectorBuilderExt, SslRefExt};
+use crate::tls::{TlsConfig, TlsResult};
 use crate::util::client::connect::Connection;
 use crate::util::rt::TokioIo;
 

@@ -322,6 +322,8 @@ doc_comment::doctest!("../README.md");
 #[cfg(feature = "multipart")]
 pub use self::client::multipart;
 #[cfg(feature = "websocket")]
+pub use self::client::websocket;
+#[cfg(feature = "websocket")]
 pub use self::client::websocket::{
     CloseCode, CloseFrame, Message, Utf8Bytes, WebSocket, WebSocketRequestBuilder,
     WebSocketResponse,
@@ -346,5 +348,5 @@ pub mod dns;
 mod proxy;
 pub mod redirect;
 
-mod tls;
+pub mod tls;
 mod util;

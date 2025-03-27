@@ -1,4 +1,4 @@
-//! Backport from: <https://github.com/tokio-rs/axum/blob/main/axum/src/extract/ws.rs>
+//! WebSocket Upgrade
 
 #[cfg(feature = "json")]
 mod json;
