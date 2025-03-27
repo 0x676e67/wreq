@@ -1,5 +1,5 @@
 #[cfg(any(feature = "webpki-roots", feature = "native-roots"))]
-use super::certs::LOAD_CERTS;
+use super::x509::LOAD_CERTS;
 use super::{AlpnProtos, AlpsProtos, CertStore, TlsResult, TlsVersion};
 use boring2::ssl::{
     CertCompressionAlgorithm, ConnectConfiguration, SslConnectorBuilder, SslOptions, SslRef,

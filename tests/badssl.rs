@@ -219,13 +219,8 @@ async fn ssl_pinning() {
         .and_then(|info| info.peer_certificate())
         .unwrap();
 
-    let peer_cert = boring2::x509::X509::from_der(peer_cert_der)
-        .unwrap()
-        .to_pem()
-        .unwrap();
-
     let client = rquest::Client::builder()
-        .ssl_pinning([peer_cert])
+        .ssl_pinning([peer_cert_der])
         .build()
         .unwrap();
 
