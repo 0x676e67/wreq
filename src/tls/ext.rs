@@ -13,34 +13,34 @@ use std::borrow::Cow;
 /// SslConnectorBuilderExt trait for `SslConnectorBuilder`.
 pub trait SslConnectorBuilderExt {
     /// Configure the certificate verification for the given `SslConnectorBuilder`.
-    fn cert_verification(self, enable: bool) -> Result<SslConnectorBuilder, ErrorStack>;
+    fn cert_verification(self, enable: bool) -> crate::Result<SslConnectorBuilder>;
 
     /// Configure the ALPN and certificate config for the given `SslConnectorBuilder`.
-    fn alpn_protos(self, alpn: AlpnProtos) -> Result<SslConnectorBuilder, ErrorStack>;
+    fn alpn_protos(self, alpn: AlpnProtos) -> crate::Result<SslConnectorBuilder>;
 
     /// Configure the minimum TLS version for the given `SslConnectorBuilder`.
     fn min_tls_version<V: Into<Option<TlsVersion>>>(
         self,
         version: V,
-    ) -> Result<SslConnectorBuilder, ErrorStack>;
+    ) -> crate::Result<SslConnectorBuilder>;
 
     /// Configure the maximum TLS version for the given `SslConnectorBuilder`.
     fn max_tls_version<V: Into<Option<TlsVersion>>>(
         self,
         version: V,
-    ) -> Result<SslConnectorBuilder, ErrorStack>;
+    ) -> crate::Result<SslConnectorBuilder>;
 
     /// Configure the certificate compression algorithm for the given `SslConnectorBuilder`.
     fn add_cert_compression_algorithm(
         self,
         alg: CertCompressionAlgorithm,
-    ) -> Result<SslConnectorBuilder, ErrorStack>;
+    ) -> crate::Result<SslConnectorBuilder>;
 
     /// Configure the CertStore for the given `SslConnectorBuilder`.
     fn cert_store(
         self,
         provider: Option<Cow<'static, CertStore>>,
-    ) -> Result<SslConnectorBuilder, ErrorStack>;
+    ) -> crate::Result<SslConnectorBuilder>;
 }
 
 /// SslRefExt trait for `SslRef`.
@@ -67,7 +67,7 @@ pub trait ConnectConfigurationExt {
 
 impl SslConnectorBuilderExt for SslConnectorBuilder {
     #[inline]
-    fn cert_verification(mut self, enable: bool) -> Result<SslConnectorBuilder, ErrorStack> {
+    fn cert_verification(mut self, enable: bool) -> crate::Result<SslConnectorBuilder> {
         if enable {
             self.set_verify(SslVerifyMode::PEER);
         } else {
@@ -77,41 +77,47 @@ impl SslConnectorBuilderExt for SslConnectorBuilder {
     }
 
     #[inline]
-    fn alpn_protos(mut self, alpn: AlpnProtos) -> Result<SslConnectorBuilder, ErrorStack> {
-        self.set_alpn_protos(alpn.0).map(|_| self)
+    fn alpn_protos(mut self, alpn: AlpnProtos) -> crate::Result<SslConnectorBuilder> {
+        self.set_alpn_protos(alpn.0)
+            .map(|_| self)
+            .map_err(Into::into)
     }
 
     #[inline]
     fn min_tls_version<V: Into<Option<TlsVersion>>>(
         mut self,
         version: V,
-    ) -> Result<SslConnectorBuilder, ErrorStack> {
+    ) -> crate::Result<SslConnectorBuilder> {
         self.set_min_proto_version(version.into().map(|v| v.0))
             .map(|_| self)
+            .map_err(Into::into)
     }
 
     #[inline]
     fn max_tls_version<V: Into<Option<TlsVersion>>>(
         mut self,
         version: V,
-    ) -> Result<SslConnectorBuilder, ErrorStack> {
+    ) -> crate::Result<SslConnectorBuilder> {
         self.set_max_proto_version(version.into().map(|v| v.0))
             .map(|_| self)
+            .map_err(Into::into)
     }
 
     #[inline]
     fn add_cert_compression_algorithm(
         mut self,
         alg: CertCompressionAlgorithm,
-    ) -> Result<SslConnectorBuilder, ErrorStack> {
-        self.add_cert_compression_alg(alg).map(|_| self)
+    ) -> crate::Result<SslConnectorBuilder> {
+        self.add_cert_compression_alg(alg)
+            .map(|_| self)
+            .map_err(Into::into)
     }
 
     #[inline]
     fn cert_store(
         mut self,
         store: Option<Cow<'static, CertStore>>,
-    ) -> Result<SslConnectorBuilder, ErrorStack> {
+    ) -> crate::Result<SslConnectorBuilder> {
         if let Some(store) = store {
             match store {
                 Cow::Borrowed(store) => {

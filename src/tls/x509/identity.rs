@@ -97,7 +97,7 @@ impl Identity {
     pub(crate) fn identity(
         self,
         connector: &mut boring2::ssl::SslConnectorBuilder,
-    ) -> Result<(), Error> {
+    ) -> crate::Result<()> {
         connector.set_certificate(&self.cert)?;
         connector.set_private_key(&self.pkey)?;
         for cert in self.chain.into_iter() {
@@ -112,7 +112,7 @@ impl Identity {
     pub(crate) fn identity_ref(
         &self,
         connector: &mut boring2::ssl::SslConnectorBuilder,
-    ) -> Result<(), Error> {
+    ) -> crate::Result<()> {
         connector.set_certificate(&self.cert)?;
         connector.set_private_key(&self.pkey)?;
         for cert in self.chain.iter() {

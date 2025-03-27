@@ -2,6 +2,7 @@
 use super::cache::{SessionCache, SessionKey};
 use super::{HandshakeSettings, MaybeHttpsStream, key_index};
 
+use crate::Dst;
 use crate::connect::HttpConnector;
 use crate::error::BoxError;
 use crate::tls::TlsConfig;
@@ -42,7 +43,7 @@ impl HttpsConnector<HttpConnector> {
     pub fn new(
         mut http: HttpConnector,
         connector: BoringTlsConnector,
-        dst: &mut crate::Dst,
+        dst: &mut Dst,
     ) -> HttpsConnector<HttpConnector> {
         // Get the ALPN protocols from the destination
         let alpn_protos = dst.alpn_protos();
@@ -143,7 +144,7 @@ type SslCallback = Arc<dyn Fn(&mut SslRef, &Uri) -> Result<(), ErrorStack> + Syn
 
 impl BoringTlsConnector {
     /// Creates a new `BoringTlsConnector` with the given `TlsConfig`.
-    pub fn new(config: TlsConfig) -> Result<BoringTlsConnector, ErrorStack> {
+    pub fn new(config: TlsConfig) -> crate::Result<BoringTlsConnector> {
         let mut connector = SslConnector::no_default_verify_builder(SslMethod::tls_client())?
             .cert_store(config.cert_store)?
             .cert_verification(config.cert_verification)?

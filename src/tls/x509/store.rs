@@ -348,13 +348,13 @@ impl CertStore {
     pub(crate) fn add_to_tls(
         self,
         tls: &mut boring2::ssl::SslConnectorBuilder,
-    ) -> Result<(), ErrorStack> {
+    ) -> crate::Result<()> {
         if let Some(store) = self.store {
             tls.set_verify_cert_store(store)?;
         }
 
         if let Some(identity) = self.identity {
-            let _ = identity.identity(tls);
+            identity.identity(tls)?;
         }
         Ok(())
     }
@@ -362,12 +362,12 @@ impl CertStore {
     pub(crate) fn add_to_tls_ref(
         &'static self,
         tls: &mut boring2::ssl::SslConnectorBuilder,
-    ) -> Result<(), ErrorStack> {
+    ) -> crate::Result<()> {
         if let Some(ref store) = self.store {
             tls.set_verify_cert_store_ref(store)?;
         }
         if let Some(ref identity) = self.identity {
-            let _ = identity.identity_ref(tls);
+            identity.identity_ref(tls)?;
         }
         Ok(())
     }
@@ -407,14 +407,11 @@ where
     let mut valid_count = 0;
     let mut invalid_count = 0;
     for cert in iter {
-        match store.add_cert(cert) {
-            Ok(_) => {
-                valid_count += 1;
-            }
-            Err(_) => {
-                invalid_count += 1;
-                log::warn!("tls failed to add certificate");
-            }
+        if let Some(err) = store.add_cert(cert).err() {
+            invalid_count += 1;
+            log::warn!("tls failed to parse certificate: {err:?}");
+        } else {
+            valid_count += 1;
         }
     }
 
@@ -425,7 +422,7 @@ where
     Ok(())
 }
 
-fn filter_map_certs<C, F>(certs: C, f: F) -> impl Iterator<Item = X509>
+fn filter_map_certs<C, F>(certs: C, parser: F) -> impl Iterator<Item = X509>
 where
     C: IntoIterator,
     C::Item: AsRef<[u8]>,
@@ -433,7 +430,7 @@ where
 {
     certs
         .into_iter()
-        .filter_map(move |data| match f(data.as_ref()) {
+        .filter_map(move |data| match parser(data.as_ref()) {
             Ok(cert) => Some(cert),
             Err(err) => {
                 log::warn!("tls failed to parse certificate: {err:?}");
@@ -442,7 +439,6 @@ where
         })
 }
 
-#[inline]
 fn detect_cert_parser(data: &[u8]) -> Result<X509, ErrorStack> {
     let parser = if data.len() >= 10 {
         // Quick check: if data starts with "-----BEGIN"
