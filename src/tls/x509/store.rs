@@ -1,5 +1,5 @@
 #![allow(missing_debug_implementations)]
-use crate::{Error, error};
+use crate::{Identity, tls::error::Error};
 use boring2::{
     error::ErrorStack,
     x509::{
@@ -28,10 +28,17 @@ use std::{fmt::Debug, path::Path};
 ///     .build()?;
 /// ```
 pub struct CertStoreBuilder {
-    builder: Result<X509StoreBuilder, Error>,
+    builder: Option<Result<X509StoreBuilder, Error>>,
+    identity: Option<Identity>,
 }
 
 impl CertStoreBuilder {
+    /// Adds an identity to the certificate store.
+    pub fn identity(mut self, identity: Identity) -> Self {
+        self.identity = Some(identity);
+        self
+    }
+
     /// Adds a DER/PEM-encoded certificate to the certificate store.
     ///
     /// # Parameters
@@ -41,13 +48,12 @@ impl CertStoreBuilder {
     where
         C: AsRef<[u8]>,
     {
-        if let Ok(ref mut builder) = self.builder {
+        if let Ok(builder) = self.get_or_init() {
             if let Some(err) = detect_cert_parser(cert.as_ref())
                 .and_then(|cert| builder.add_cert(cert))
-                .map_err(error::builder)
                 .err()
             {
-                self.builder = Err(err);
+                self.builder = Some(Err(err.into()));
             }
         }
         self
@@ -62,13 +68,12 @@ impl CertStoreBuilder {
     where
         C: AsRef<[u8]>,
     {
-        if let Ok(ref mut builder) = self.builder {
+        if let Ok(builder) = self.get_or_init() {
             if let Some(err) = X509::from_der(cert.as_ref())
                 .and_then(|cert| builder.add_cert(cert))
-                .map_err(error::builder)
                 .err()
             {
-                self.builder = Err(err);
+                self.builder = Some(Err(err.into()));
             }
         }
         self
@@ -83,13 +88,12 @@ impl CertStoreBuilder {
     where
         C: AsRef<[u8]>,
     {
-        if let Ok(ref mut builder) = self.builder {
+        if let Ok(builder) = self.get_or_init() {
             if let Some(err) = X509::from_pem(cert.as_ref())
                 .and_then(|cert| builder.add_cert(cert))
-                .map_err(error::builder)
                 .err()
             {
-                self.builder = Err(err);
+                self.builder = Some(Err(err.into()));
             }
         }
         self
@@ -105,10 +109,10 @@ impl CertStoreBuilder {
         C: IntoIterator,
         C::Item: AsRef<[u8]>,
     {
-        if let Ok(ref mut builder) = self.builder {
+        if let Ok(builder) = self.get_or_init() {
             let certs = filter_map_certs(certs, detect_cert_parser);
             if let Some(err) = process_certs(certs, builder).err() {
-                self.builder = Err(err);
+                self.builder = Some(Err(err));
             }
         }
         self
@@ -124,10 +128,10 @@ impl CertStoreBuilder {
         C: IntoIterator,
         C::Item: AsRef<[u8]>,
     {
-        if let Ok(ref mut builder) = self.builder {
+        if let Ok(builder) = self.get_or_init() {
             let certs = filter_map_certs(certs, X509::from_der);
             if let Some(err) = process_certs(certs, builder).err() {
-                self.builder = Err(err);
+                self.builder = Some(Err(err));
             }
         }
         self
@@ -143,10 +147,10 @@ impl CertStoreBuilder {
         C: IntoIterator,
         C::Item: AsRef<[u8]>,
     {
-        if let Ok(ref mut builder) = self.builder {
+        if let Ok(builder) = self.get_or_init() {
             let certs = filter_map_certs(certs, X509::from_pem);
             if let Some(err) = process_certs(certs, builder).err() {
-                self.builder = Err(err);
+                self.builder = Some(Err(err));
             }
         }
         self
@@ -161,13 +165,16 @@ impl CertStoreBuilder {
     where
         C: AsRef<[u8]>,
     {
-        if let Ok(ref mut builder) = self.builder {
-            if let Some(err) = X509::stack_from_pem(certs.as_ref())
-                .map_err(error::builder)
-                .and_then(|certs| process_certs(certs.into_iter(), builder))
-                .err()
-            {
-                self.builder = Err(err);
+        if let Ok(builder) = self.get_or_init() {
+            match X509::stack_from_pem(certs.as_ref()) {
+                Ok(certs) => {
+                    if let Some(err) = process_certs(certs.into_iter(), builder).err() {
+                        self.builder = Some(Err(err));
+                    }
+                }
+                Err(err) => {
+                    self.builder = Some(Err(err.into()));
+                }
             }
         }
         self
@@ -188,7 +195,7 @@ impl CertStoreBuilder {
         match std::fs::read(path) {
             Ok(data) => return self.add_stack_pem_certs(data),
             Err(err) => {
-                self.builder = Err(error::builder(err));
+                self.builder = Some(Err(err.into()));
             }
         }
         self
@@ -200,12 +207,17 @@ impl CertStoreBuilder {
     /// environment variables if present, or defaults specified at OpenSSL
     /// build time otherwise.
     pub fn set_default_paths(mut self) -> Self {
-        if let Ok(ref mut builder) = self.builder {
+        if let Ok(builder) = self.get_or_init() {
             if let Some(err) = builder.set_default_paths().err() {
-                self.builder = Err(error::builder(err));
+                self.builder = Some(Err(err.into()));
             }
         }
         self
+    }
+
+    fn get_or_init(&mut self) -> &mut Result<X509StoreBuilder, Error> {
+        self.builder
+            .get_or_insert_with(|| X509StoreBuilder::new().map_err(Into::into))
     }
 
     /// Constructs the `CertStore`.
@@ -214,13 +226,20 @@ impl CertStoreBuilder {
     /// containing all the added certificates.
     #[inline]
     pub fn build(self) -> Result<CertStore, Error> {
-        self.builder.map(|builder| CertStore(builder.build()))
+        let builder = self.builder.transpose()?;
+        Ok(CertStore {
+            store: builder.map(|b| b.build()),
+            identity: self.identity,
+        })
     }
 }
 
 /// A collection of certificates Store.
 #[derive(Clone)]
-pub struct CertStore(X509Store);
+pub struct CertStore {
+    store: Option<X509Store>,
+    identity: Option<Identity>,
+}
 
 impl Debug for CertStore {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -234,7 +253,22 @@ impl CertStore {
     #[inline]
     pub fn builder() -> CertStoreBuilder {
         CertStoreBuilder {
-            builder: X509StoreBuilder::new().map_err(error::builder),
+            builder: Some(X509StoreBuilder::new().map_err(Into::into)),
+            identity: None,
+        }
+    }
+
+    /// Creates a new `CertStore` from an `Identity`.
+    ///
+    /// # Parameters
+    ///
+    /// - `identity`: An `Identity` object.
+    ///
+    #[inline]
+    pub fn from_identity(identity: Identity) -> CertStore {
+        CertStore {
+            store: None,
+            identity: Some(identity),
         }
     }
 
@@ -244,12 +278,12 @@ impl CertStore {
     ///
     /// - `certs`: An iterator over DER/PEM-encoded certificates.
     #[inline]
-    pub fn from_certs<C>(certs: C) -> Result<CertStore, Error>
+    pub fn from_certs<C>(certs: C) -> crate::Result<CertStore>
     where
         C: IntoIterator,
         C::Item: AsRef<[u8]>,
     {
-        load_certs_from_iter(certs, detect_cert_parser)
+        load_certs_from_iter(certs, detect_cert_parser).map_err(crate::error::builder)
     }
 
     /// Creates a new `CertStore` from a collection of DER-encoded certificates.
@@ -258,12 +292,12 @@ impl CertStore {
     ///
     /// - `certs`: An iterator over DER-encoded certificates.
     #[inline]
-    pub fn from_der_certs<C>(certs: C) -> Result<CertStore, Error>
+    pub fn from_der_certs<C>(certs: C) -> crate::Result<CertStore>
     where
         C: IntoIterator,
         C::Item: AsRef<[u8]>,
     {
-        load_certs_from_iter(certs, X509::from_der)
+        load_certs_from_iter(certs, X509::from_der).map_err(crate::error::builder)
     }
 
     /// Creates a new `CertStore` from a collection of PEM-encoded certificates.
@@ -272,12 +306,12 @@ impl CertStore {
     ///
     /// - `certs`: An iterator over PEM-encoded certificates.
     #[inline]
-    pub fn from_pem_certs<C>(certs: C) -> Result<CertStore, Error>
+    pub fn from_pem_certs<C>(certs: C) -> crate::Result<CertStore>
     where
         C: IntoIterator,
         C::Item: AsRef<[u8]>,
     {
-        load_certs_from_iter(certs, X509::from_pem)
+        load_certs_from_iter(certs, X509::from_pem).map_err(crate::error::builder)
     }
 
     /// Creates a new `CertStore` from a PEM-encoded certificate stack.
@@ -286,11 +320,11 @@ impl CertStore {
     ///
     /// - `certs`: A PEM-encoded certificate stack.
     #[inline]
-    pub fn from_pem_stack<C>(certs: C) -> Result<CertStore, Error>
+    pub fn from_pem_stack<C>(certs: C) -> crate::Result<CertStore>
     where
         C: AsRef<[u8]>,
     {
-        load_certs_from_stack(certs, X509::stack_from_pem)
+        load_certs_from_stack(certs, X509::stack_from_pem).map_err(crate::error::builder)
     }
 
     /// Creates a new `CertStore` from a PEM-encoded certificate file.
@@ -302,20 +336,40 @@ impl CertStore {
     ///
     /// - `path`: A reference to a path of the PEM file.
     #[inline]
-    pub fn from_pem_file<P>(path: P) -> Result<CertStore, Error>
+    pub fn from_pem_file<P>(path: P) -> crate::Result<CertStore>
     where
         P: AsRef<Path>,
     {
-        let data = std::fs::read(path).map_err(error::builder)?;
-        Self::from_pem_stack(data)
+        std::fs::read(path)
+            .map_err(crate::error::builder)
+            .and_then(Self::from_pem_stack)
     }
 
-    pub(crate) fn as_ref(&self) -> &X509Store {
-        &self.0
+    pub(crate) fn add_to_tls(
+        self,
+        tls: &mut boring2::ssl::SslConnectorBuilder,
+    ) -> Result<(), ErrorStack> {
+        if let Some(store) = self.store {
+            tls.set_verify_cert_store(store)?;
+        }
+
+        if let Some(identity) = self.identity {
+            let _ = identity.identity(tls);
+        }
+        Ok(())
     }
 
-    pub(crate) fn into_inner(self) -> X509Store {
-        self.0
+    pub(crate) fn add_to_tls_ref(
+        &'static self,
+        tls: &mut boring2::ssl::SslConnectorBuilder,
+    ) -> Result<(), ErrorStack> {
+        if let Some(ref store) = self.store {
+            tls.set_verify_cert_store_ref(store)?;
+        }
+        if let Some(ref identity) = self.identity {
+            let _ = identity.identity_ref(tls);
+        }
+        Ok(())
     }
 }
 
@@ -327,7 +381,10 @@ where
 {
     let mut store = X509StoreBuilder::new()?;
     let certs = filter_map_certs(certs, x509);
-    process_certs(certs.into_iter(), &mut store).map(|_| CertStore(store.build()))
+    process_certs(certs.into_iter(), &mut store).map(|_| CertStore {
+        store: Some(store.build()),
+        identity: None,
+    })
 }
 
 fn load_certs_from_stack<C, F>(certs: C, x509: F) -> Result<CertStore, Error>
@@ -337,7 +394,10 @@ where
 {
     let mut store = X509StoreBuilder::new()?;
     let certs = x509(certs.as_ref())?;
-    process_certs(certs.into_iter(), &mut store).map(|_| CertStore(store.build()))
+    process_certs(certs.into_iter(), &mut store).map(|_| CertStore {
+        store: Some(store.build()),
+        identity: None,
+    })
 }
 
 fn process_certs<I>(iter: I, store: &mut X509StoreBuilder) -> Result<(), Error>
@@ -359,7 +419,7 @@ where
     }
 
     if valid_count == 0 && invalid_count > 0 {
-        return Err(error::builder("all certificates are invalid"));
+        return Err(Error::InvalidCert);
     }
 
     Ok(())

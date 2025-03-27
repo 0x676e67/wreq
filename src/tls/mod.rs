@@ -7,17 +7,16 @@
 
 mod config;
 mod conn;
+mod error;
 mod ext;
 mod x509;
 
 pub(crate) use self::conn::{BoringTlsConnector, HttpsConnector, MaybeHttpsStream};
 pub use self::{
     config::{IntoCertStore, TlsConfig},
-    x509::{CertStore, CertStoreBuilder},
+    x509::{CertStore, CertStoreBuilder, Identity},
 };
-use boring2::{error::ErrorStack, ssl::SslVersion};
-
-type TlsResult<T> = Result<T, ErrorStack>;
+use boring2::ssl::SslVersion;
 
 /// A TLS protocol version.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

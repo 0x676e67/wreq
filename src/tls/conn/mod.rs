@@ -2,10 +2,11 @@
 mod boring;
 mod cache;
 
-use crate::tls::{AlpsProtos, TlsResult};
+use crate::tls::AlpsProtos;
 use crate::util::client::connect::{Connected, Connection};
 use crate::util::rt::TokioIo;
 
+use boring2::error::ErrorStack;
 use boring2::ex_data::Index;
 use boring2::ssl::Ssl;
 use cache::SessionKey;
@@ -21,8 +22,9 @@ use typed_builder::TypedBuilder;
 
 pub use self::boring::{BoringTlsConnector, HttpsConnector};
 
-fn key_index() -> TlsResult<Index<Ssl, SessionKey>> {
-    static IDX: LazyLock<TlsResult<Index<Ssl, SessionKey>>> = LazyLock::new(Ssl::new_ex_index);
+fn key_index() -> Result<Index<Ssl, SessionKey>, ErrorStack> {
+    static IDX: LazyLock<Result<Index<Ssl, SessionKey>, ErrorStack>> =
+        LazyLock::new(Ssl::new_ex_index);
     IDX.clone()
 }
 

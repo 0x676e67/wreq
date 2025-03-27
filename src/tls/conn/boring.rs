@@ -4,8 +4,8 @@ use super::{HandshakeSettings, MaybeHttpsStream, key_index};
 
 use crate::connect::HttpConnector;
 use crate::error::BoxError;
+use crate::tls::TlsConfig;
 use crate::tls::ext::{ConnectConfigurationExt, SslConnectorBuilderExt, SslRefExt};
-use crate::tls::{TlsConfig, TlsResult};
 use crate::util::client::connect::Connection;
 use crate::util::rt::TokioIo;
 
@@ -143,7 +143,7 @@ type SslCallback = Arc<dyn Fn(&mut SslRef, &Uri) -> Result<(), ErrorStack> + Syn
 
 impl BoringTlsConnector {
     /// Creates a new `BoringTlsConnector` with the given `TlsConfig`.
-    pub fn new(config: TlsConfig) -> TlsResult<BoringTlsConnector> {
+    pub fn new(config: TlsConfig) -> Result<BoringTlsConnector, ErrorStack> {
         let mut connector = SslConnector::no_default_verify_builder(SslMethod::tls_client())?
             .cert_store(config.cert_store)?
             .cert_verification(config.cert_verification)?

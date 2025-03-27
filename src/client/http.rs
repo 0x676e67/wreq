@@ -1079,7 +1079,7 @@ impl ClientBuilder {
             Ok(store) => {
                 self.config.cert_store = Some(Cow::Owned(store));
             }
-            Err(err) => self.config.error = Some(err),
+            Err(err) => self.config.error = Some(err.into()),
         }
         self
     }
