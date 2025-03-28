@@ -133,7 +133,7 @@ impl CertStoreBuilder {
                     }
                 }
                 Err(err) => {
-                    self.builder = Some(Err(err.into()));
+                    self.builder = Some(Err(err));
                 }
             }
         }

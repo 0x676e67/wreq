@@ -52,7 +52,7 @@ impl From<Certificate> for CertificateInput<'_> {
     }
 }
 
-impl<'c, T: AsRef<[u8]> + 'c> From<&'c T> for CertificateInput<'c> {
+impl<'c, T: AsRef<[u8]> + ?Sized + 'c> From<&'c T> for CertificateInput<'c> {
     fn from(value: &'c T) -> CertificateInput<'c> {
         CertificateInput::Raw(value.as_ref())
     }

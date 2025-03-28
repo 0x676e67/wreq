@@ -45,7 +45,7 @@ fn load_static_root_certs() -> Option<&'static CertStore> {
 /// Loads dynamically the root certificates from the native certificate store.
 fn load_dynamic_root_certs() -> Result<CertStore, Error> {
     log::info!("Loaded dynamic root certs");
-    CertStore::from_der_certs(rustls_native_certs::load_native_certs().certs)
+    CertStore::from_der_certs(&rustls_native_certs::load_native_certs().certs)
 }
 
 async fn use_static_root_certs() -> Result<(), rquest::Error> {
