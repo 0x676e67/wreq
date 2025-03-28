@@ -3,6 +3,12 @@ use std::time::Duration;
 use rquest::{AlpsProtos, Client, EmulationProvider, TlsInfo, TlsVersion};
 use rquest::{SslCurve, TlsConfig};
 
+macro_rules! join {
+    ($sep:expr, $first:expr $(, $rest:expr)*) => {
+        concat!($first $(, $sep, $rest)*)
+    };
+}
+
 #[tokio::test]
 async fn test_badssl_modern() {
     let text = rquest::Client::builder()
@@ -51,17 +57,21 @@ const CURVES: &[SslCurve] = &[
 
 #[tokio::test]
 async fn test_3des_support() -> Result<(), rquest::Error> {
-    let client = Client::builder()
-        .emulation(
-            EmulationProvider::builder()
-                .tls_config(
-                    TlsConfig::builder()
-                        .curves(CURVES)
-                        .cipher_list("TLS_ECDHE_ECDSA_WITH_3DES_EDE_CBC_SHA:TLS_ECDHE_RSA_WITH_3DES_EDE_CBC_SHA")
-                        .build(),
-                )
+    let emulation = EmulationProvider::builder()
+        .tls_config(
+            TlsConfig::builder()
+                .curves(CURVES)
+                .cipher_list(join!(
+                    ":",
+                    "TLS_ECDHE_ECDSA_WITH_3DES_EDE_CBC_SHA",
+                    "TLS_ECDHE_RSA_WITH_3DES_EDE_CBC_SHA"
+                ))
                 .build(),
         )
+        .build();
+
+    let client = Client::builder()
+        .emulation(emulation)
         .cert_verification(false)
         .connect_timeout(Duration::from_secs(360))
         .build()?;
@@ -81,17 +91,22 @@ async fn test_3des_support() -> Result<(), rquest::Error> {
 
 #[tokio::test]
 async fn test_firefox_7x_100_cipher() -> Result<(), rquest::Error> {
-    let client = Client::builder()
-        .emulation(
-            EmulationProvider::builder()
-                .tls_config(
-                    TlsConfig::builder()
-                        .curves(CURVES)
-                        .cipher_list("TLS_DHE_RSA_WITH_AES_128_CBC_SHA:TLS_DHE_RSA_WITH_AES_256_CBC_SHA:TLS_DHE_RSA_WITH_AES_128_CBC_SHA256:TLS_DHE_RSA_WITH_AES_256_CBC_SHA256")
-                        .build(),
-                )
+    let emulation = EmulationProvider::builder()
+        .tls_config(
+            TlsConfig::builder()
+                .curves(CURVES)
+                .cipher_list(join!(
+                    ":",
+                    "TLS_DHE_RSA_WITH_AES_128_CBC_SHA",
+                    "TLS_DHE_RSA_WITH_AES_256_CBC_SHA",
+                    "TLS_DHE_RSA_WITH_AES_128_CBC_SHA256",
+                    "TLS_DHE_RSA_WITH_AES_256_CBC_SHA256"
+                ))
                 .build(),
         )
+        .build();
+    let client = Client::builder()
+        .emulation(emulation)
         .cert_verification(false)
         .connect_timeout(Duration::from_secs(360))
         .build()?;
@@ -111,19 +126,19 @@ async fn test_firefox_7x_100_cipher() -> Result<(), rquest::Error> {
 
 #[tokio::test]
 async fn test_alps_new_endpoint() -> Result<(), rquest::Error> {
-    let client = rquest::Client::builder()
-        .emulation(
-            EmulationProvider::builder()
-                .tls_config(
-                    TlsConfig::builder()
-                        .min_tls_version(TlsVersion::TLS_1_2)
-                        .max_tls_version(TlsVersion::TLS_1_3)
-                        .alps_protos(AlpsProtos::HTTP2)
-                        .alps_use_new_codepoint(true)
-                        .build(),
-                )
+    let emulation = EmulationProvider::builder()
+        .tls_config(
+            TlsConfig::builder()
+                .min_tls_version(TlsVersion::TLS_1_2)
+                .max_tls_version(TlsVersion::TLS_1_3)
+                .alps_protos(AlpsProtos::HTTP2)
+                .alps_use_new_codepoint(true)
                 .build(),
         )
+        .build();
+
+    let client = rquest::Client::builder()
+        .emulation(emulation)
         .connect_timeout(Duration::from_secs(360))
         .build()?;
 
@@ -134,12 +149,6 @@ async fn test_alps_new_endpoint() -> Result<(), rquest::Error> {
 
 #[tokio::test]
 async fn test_aes_hw_override() -> Result<(), rquest::Error> {
-    macro_rules! join {
-        ($sep:expr, $first:expr $(, $rest:expr)*) => {
-            concat!($first $(, $sep, $rest)*)
-        };
-    }
-
     const CIPHER_LIST: &str = join!(
         ":",
         "TLS_AES_128_GCM_SHA256",
@@ -161,20 +170,20 @@ async fn test_aes_hw_override() -> Result<(), rquest::Error> {
         "TLS_RSA_WITH_AES_256_CBC_SHA"
     );
 
-    let client = rquest::Client::builder()
-        .emulation(
-            EmulationProvider::builder()
-                .tls_config(
-                    TlsConfig::builder()
-                        .cipher_list(CIPHER_LIST)
-                        .min_tls_version(TlsVersion::TLS_1_2)
-                        .max_tls_version(TlsVersion::TLS_1_3)
-                        .enable_ech_grease(true)
-                        .aes_hw_override(false)
-                        .build(),
-                )
+    let emulation = EmulationProvider::builder()
+        .tls_config(
+            TlsConfig::builder()
+                .cipher_list(CIPHER_LIST)
+                .min_tls_version(TlsVersion::TLS_1_2)
+                .max_tls_version(TlsVersion::TLS_1_3)
+                .enable_ech_grease(true)
+                .aes_hw_override(false)
                 .build(),
         )
+        .build();
+
+    let client = rquest::Client::builder()
+        .emulation(emulation)
         .connect_timeout(Duration::from_secs(360))
         .build()?;
 
