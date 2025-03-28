@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use rquest::{AlpsProtos, Client, EmulationProvider, TlsInfo, TlsVersion};
 use rquest::{SslCurve, TlsConfig};
 
@@ -5,6 +7,7 @@ use rquest::{SslCurve, TlsConfig};
 async fn test_badssl_modern() {
     let text = rquest::Client::builder()
         .no_proxy()
+        .connect_timeout(Duration::from_secs(360))
         .build()
         .unwrap()
         .get("https://mozilla-modern.badssl.com/")
@@ -22,6 +25,7 @@ async fn test_badssl_modern() {
 async fn test_badssl_self_signed() {
     let text = rquest::Client::builder()
         .cert_verification(false)
+        .connect_timeout(Duration::from_secs(360))
         .no_proxy()
         .build()
         .unwrap()
@@ -59,6 +63,7 @@ async fn test_3des_support() -> Result<(), rquest::Error> {
                 .build(),
         )
         .cert_verification(false)
+        .connect_timeout(Duration::from_secs(360))
         .build()?;
 
     // Check if the client can connect to the 3des.badssl.com
@@ -88,6 +93,7 @@ async fn test_firefox_7x_100_cipher() -> Result<(), rquest::Error> {
                 .build(),
         )
         .cert_verification(false)
+        .connect_timeout(Duration::from_secs(360))
         .build()?;
 
     // Check if the client can connect to the dh2048.badssl.com
@@ -118,6 +124,7 @@ async fn test_alps_new_endpoint() -> Result<(), rquest::Error> {
                 )
                 .build(),
         )
+        .connect_timeout(Duration::from_secs(360))
         .build()?;
 
     let resp = client.get("https://www.google.com").send().await?;
@@ -168,6 +175,7 @@ async fn test_aes_hw_override() -> Result<(), rquest::Error> {
                 )
                 .build(),
         )
+        .connect_timeout(Duration::from_secs(360))
         .build()?;
 
     let resp = client.get("https://tls.browserleaks.com").send().await?;
@@ -203,6 +211,7 @@ async fn test_aes_hw_override() -> Result<(), rquest::Error> {
 async fn ssl_pinning() {
     let client = rquest::Client::builder()
         .cert_verification(false)
+        .connect_timeout(Duration::from_secs(360))
         .tls_info(true)
         .build()
         .unwrap();

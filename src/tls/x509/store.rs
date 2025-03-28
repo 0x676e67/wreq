@@ -249,7 +249,10 @@ impl CertStore {
     #[inline]
     pub fn builder() -> CertStoreBuilder {
         CertStoreBuilder {
-            builder: Some(X509StoreBuilder::new().map_err(Into::into)),
+            builder: X509StoreBuilder::new()
+                .map(Some)
+                .map_err(Into::into)
+                .transpose(),
             identity: None,
         }
     }

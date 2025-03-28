@@ -288,6 +288,7 @@ async fn updatea_cloned() {
 #[tokio::test]
 async fn update_ssl_verify() {
     let client = rquest::Client::builder()
+        .connect_timeout(Duration::from_secs(360))
         .cert_verification(false)
         .no_proxy()
         .build()
@@ -309,6 +310,7 @@ async fn update_ssl_verify() {
 #[tokio::test]
 async fn update_ssl_certs_verify_stroe() {
     let client = rquest::Client::builder()
+        .connect_timeout(Duration::from_secs(360))
         .cert_verification(false)
         .tls_info(true)
         .build()
@@ -333,6 +335,7 @@ async fn update_ssl_certs_verify_stroe() {
 
     let client = rquest::Client::builder()
         .cert_store(store)
+        .connect_timeout(Duration::from_secs(360))
         .no_proxy()
         .build()
         .unwrap();
