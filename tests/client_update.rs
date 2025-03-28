@@ -1,6 +1,8 @@
 #![cfg(not(target_arch = "wasm32"))]
 mod support;
 
+use std::time::Duration;
+
 use http::header::{AUTHORIZATION, CACHE_CONTROL, REFERER};
 use http_body_util::BodyExt;
 use rquest::{CertStore, EmulationProvider, TlsConfig, TlsInfo};
