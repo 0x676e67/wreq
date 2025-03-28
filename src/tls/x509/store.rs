@@ -23,8 +23,8 @@ use std::{fmt::Debug, path::Path};
 ///     .build()?;
 /// ```
 pub struct CertStoreBuilder {
-    builder: Option<crate::Result<X509StoreBuilder>>,
     identity: Option<Identity>,
+    builder: Option<crate::Result<X509StoreBuilder>>,
 }
 
 impl CertStoreBuilder {
@@ -224,8 +224,8 @@ impl CertStoreBuilder {
     pub fn build(self) -> crate::Result<CertStore> {
         let builder = self.builder.transpose()?;
         Ok(CertStore {
-            store: builder.map(|b| b.build()),
             identity: self.identity,
+            store: builder.map(|b| b.build()),
         })
     }
 }
@@ -233,8 +233,8 @@ impl CertStoreBuilder {
 /// A collection of certificates Store.
 #[derive(Clone)]
 pub struct CertStore {
-    store: Option<X509Store>,
     identity: Option<Identity>,
+    store: Option<X509Store>,
 }
 
 impl Debug for CertStore {
@@ -249,11 +249,8 @@ impl CertStore {
     #[inline]
     pub fn builder() -> CertStoreBuilder {
         CertStoreBuilder {
-            builder: X509StoreBuilder::new()
-                .map(Some)
-                .map_err(Into::into)
-                .transpose(),
             identity: None,
+            builder: None,
         }
     }
 
@@ -343,18 +340,21 @@ impl CertStore {
             .map_err(crate::error::builder)
             .and_then(Self::from_pem_stack)
     }
+}
 
+impl CertStore {
     pub(crate) fn add_to_tls(
         self,
         tls: &mut boring2::ssl::SslConnectorBuilder,
     ) -> crate::Result<()> {
+        if let Some(identity) = self.identity {
+            identity.identity(tls)?;
+        }
+
         if let Some(store) = self.store {
             tls.set_verify_cert_store(store)?;
         }
 
-        if let Some(identity) = self.identity {
-            identity.identity(tls)?;
-        }
         Ok(())
     }
 
@@ -362,12 +362,14 @@ impl CertStore {
         &'static self,
         tls: &mut boring2::ssl::SslConnectorBuilder,
     ) -> crate::Result<()> {
-        if let Some(ref store) = self.store {
-            tls.set_verify_cert_store_ref(store)?;
-        }
         if let Some(ref identity) = self.identity {
             identity.identity_ref(tls)?;
         }
+
+        if let Some(ref store) = self.store {
+            tls.set_verify_cert_store_ref(store)?;
+        }
+
         Ok(())
     }
 }
