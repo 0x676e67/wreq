@@ -14,7 +14,7 @@ mod x509;
 pub(crate) use self::conn::{BoringTlsConnector, HttpsConnector, MaybeHttpsStream};
 pub use self::{
     config::{IntoCertStore, TlsConfig},
-    x509::{CertStore, CertStoreBuilder, Identity},
+    x509::{CertStore, CertStoreBuilder, Certificate, CertificateInput, Identity},
 };
 use boring2::ssl::SslVersion;
 

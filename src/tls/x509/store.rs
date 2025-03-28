@@ -1,12 +1,7 @@
 #![allow(missing_debug_implementations)]
+use super::{Certificate, CertificateInput};
 use crate::{Identity, tls::error::Error};
-use boring2::{
-    error::ErrorStack,
-    x509::{
-        X509,
-        store::{X509Store, X509StoreBuilder},
-    },
-};
+use boring2::x509::store::{X509Store, X509StoreBuilder};
 use std::{fmt::Debug, path::Path};
 
 /// A builder for constructing a `CertStore`.
@@ -34,6 +29,7 @@ pub struct CertStoreBuilder {
 
 impl CertStoreBuilder {
     /// Adds an identity to the certificate store.
+    #[inline]
     pub fn identity(mut self, identity: Identity) -> Self {
         self.identity = Some(identity);
         self
@@ -44,19 +40,12 @@ impl CertStoreBuilder {
     /// # Parameters
     ///
     /// - `cert`: A reference to a byte slice containing the DER/PEM-encoded certificate.
-    pub fn add_cert<C>(mut self, cert: C) -> Self
+    #[inline]
+    pub fn add_cert<'c, C>(self, cert: C) -> Self
     where
-        C: AsRef<[u8]>,
+        C: Into<CertificateInput<'c>>,
     {
-        if let Ok(builder) = self.get_or_init() {
-            if let Some(err) = detect_cert_parser(cert.as_ref())
-                .and_then(|cert| builder.add_cert(cert))
-                .err()
-            {
-                self.builder = Some(Err(err.into()));
-            }
-        }
-        self
+        self.parse_cert(cert, Certificate::from)
     }
 
     /// Adds a DER-encoded certificate to the certificate store.
@@ -64,19 +53,12 @@ impl CertStoreBuilder {
     /// # Parameters
     ///
     /// - `cert`: A reference to a byte slice containing the DER-encoded certificate.
-    pub fn add_der_cert<C>(mut self, cert: C) -> Self
+    #[inline]
+    pub fn add_der_cert<'c, C>(self, cert: C) -> Self
     where
-        C: AsRef<[u8]>,
+        C: Into<CertificateInput<'c>>,
     {
-        if let Ok(builder) = self.get_or_init() {
-            if let Some(err) = X509::from_der(cert.as_ref())
-                .and_then(|cert| builder.add_cert(cert))
-                .err()
-            {
-                self.builder = Some(Err(err.into()));
-            }
-        }
-        self
+        self.parse_cert(cert, Certificate::from_der)
     }
 
     /// Adds a PEM-encoded certificate to the certificate store.
@@ -84,19 +66,12 @@ impl CertStoreBuilder {
     /// # Parameters
     ///
     /// - `cert`: A reference to a byte slice containing the PEM-encoded certificate.
-    pub fn add_pem_cert<C>(mut self, cert: C) -> Self
+    #[inline]
+    pub fn add_pem_cert<'c, C>(self, cert: C) -> Self
     where
-        C: AsRef<[u8]>,
+        C: Into<CertificateInput<'c>>,
     {
-        if let Ok(builder) = self.get_or_init() {
-            if let Some(err) = X509::from_pem(cert.as_ref())
-                .and_then(|cert| builder.add_cert(cert))
-                .err()
-            {
-                self.builder = Some(Err(err.into()));
-            }
-        }
-        self
+        self.parse_cert(cert, Certificate::from_pem)
     }
 
     /// Adds multiple DER/PEM-encoded certificates to the certificate store.
@@ -104,18 +79,13 @@ impl CertStoreBuilder {
     /// # Parameters
     ///
     /// - `certs`: An iterator over DER/PEM-encoded certificates.
-    pub fn add_certs<C>(mut self, certs: C) -> Self
+    #[inline]
+    pub fn add_certs<'c, I>(self, certs: I) -> Self
     where
-        C: IntoIterator,
-        C::Item: AsRef<[u8]>,
+        I: IntoIterator,
+        I::Item: Into<CertificateInput<'c>>,
     {
-        if let Ok(builder) = self.get_or_init() {
-            let certs = filter_map_certs(certs, detect_cert_parser);
-            if let Some(err) = process_certs(certs, builder).err() {
-                self.builder = Some(Err(err));
-            }
-        }
-        self
+        self.parse_certs(certs, Certificate::from)
     }
 
     /// Adds multiple DER-encoded certificates to the certificate store.
@@ -123,18 +93,13 @@ impl CertStoreBuilder {
     /// # Parameters
     ///
     /// - `certs`: An iterator over DER-encoded certificates.
-    pub fn add_der_certs<C>(mut self, certs: C) -> Self
+    #[inline]
+    pub fn add_der_certs<'c, I>(self, _certs: I) -> Self
     where
-        C: IntoIterator,
-        C::Item: AsRef<[u8]>,
+        I: IntoIterator,
+        I::Item: Into<CertificateInput<'c>>,
     {
-        if let Ok(builder) = self.get_or_init() {
-            let certs = filter_map_certs(certs, X509::from_der);
-            if let Some(err) = process_certs(certs, builder).err() {
-                self.builder = Some(Err(err));
-            }
-        }
-        self
+        self.parse_certs(_certs, Certificate::from_der)
     }
 
     /// Adds multiple PEM-encoded certificates to the certificate store.
@@ -142,18 +107,13 @@ impl CertStoreBuilder {
     /// # Parameters
     ///
     /// - `certs`: An iterator over PEM-encoded certificates.
-    pub fn add_pem_certs<C>(mut self, certs: C) -> Self
+    #[inline]
+    pub fn add_pem_certs<'c, I>(self, _certs: I) -> Self
     where
-        C: IntoIterator,
-        C::Item: AsRef<[u8]>,
+        I: IntoIterator,
+        I::Item: Into<CertificateInput<'c>>,
     {
-        if let Ok(builder) = self.get_or_init() {
-            let certs = filter_map_certs(certs, X509::from_pem);
-            if let Some(err) = process_certs(certs, builder).err() {
-                self.builder = Some(Err(err));
-            }
-        }
-        self
+        self.parse_certs(_certs, Certificate::from_pem)
     }
 
     /// Adds a PEM-encoded certificate stack to the certificate store.
@@ -166,7 +126,7 @@ impl CertStoreBuilder {
         C: AsRef<[u8]>,
     {
         if let Ok(builder) = self.get_or_init() {
-            match X509::stack_from_pem(certs.as_ref()) {
+            match Certificate::stack_from_pem(certs.as_ref()) {
                 Ok(certs) => {
                     if let Some(err) = process_certs(certs.into_iter(), builder).err() {
                         self.builder = Some(Err(err));
@@ -210,6 +170,42 @@ impl CertStoreBuilder {
         if let Ok(builder) = self.get_or_init() {
             if let Some(err) = builder.set_default_paths().err() {
                 self.builder = Some(Err(err.into()));
+            }
+        }
+        self
+    }
+
+    fn parse_cert<'c, C, P>(mut self, cert: C, parser: P) -> Self
+    where
+        C: Into<CertificateInput<'c>>,
+        P: Fn(&'c [u8]) -> Result<Certificate, Error>,
+    {
+        if let Ok(builder) = self.get_or_init() {
+            let input = cert.into();
+            let result = input
+                .with_parser(parser)
+                .and_then(|cert| builder.add_cert(cert.0).map_err(Into::into));
+
+            if let Err(err) = result {
+                self.builder = Some(Err(err));
+            }
+        }
+        self
+    }
+
+    fn parse_certs<'c, I>(
+        mut self,
+        certs: I,
+        parser: fn(&'c [u8]) -> Result<Certificate, Error>,
+    ) -> Self
+    where
+        I: IntoIterator,
+        I::Item: Into<CertificateInput<'c>>,
+    {
+        if let Ok(builder) = self.get_or_init() {
+            let certs = filter_map_certs(certs, parser);
+            if let Some(err) = process_certs(certs, builder).err() {
+                self.builder = Some(Err(err));
             }
         }
         self
@@ -278,12 +274,12 @@ impl CertStore {
     ///
     /// - `certs`: An iterator over DER/PEM-encoded certificates.
     #[inline]
-    pub fn from_certs<C>(certs: C) -> crate::Result<CertStore>
+    pub fn from_certs<'c, I>(certs: I) -> crate::Result<CertStore>
     where
-        C: IntoIterator,
-        C::Item: AsRef<[u8]>,
+        I: IntoIterator,
+        I::Item: Into<CertificateInput<'c>>,
     {
-        load_certs_from_iter(certs, detect_cert_parser).map_err(crate::error::builder)
+        parse_certs_from_iter(certs, Certificate::from)
     }
 
     /// Creates a new `CertStore` from a collection of DER-encoded certificates.
@@ -292,12 +288,12 @@ impl CertStore {
     ///
     /// - `certs`: An iterator over DER-encoded certificates.
     #[inline]
-    pub fn from_der_certs<C>(certs: C) -> crate::Result<CertStore>
+    pub fn from_der_certs<'c, C>(certs: C) -> crate::Result<CertStore>
     where
-        C: IntoIterator,
-        C::Item: AsRef<[u8]>,
+        C: IntoIterator + 'c,
+        C::Item: Into<CertificateInput<'c>>,
     {
-        load_certs_from_iter(certs, X509::from_der).map_err(crate::error::builder)
+        parse_certs_from_iter(certs, Certificate::from_der)
     }
 
     /// Creates a new `CertStore` from a collection of PEM-encoded certificates.
@@ -306,12 +302,12 @@ impl CertStore {
     ///
     /// - `certs`: An iterator over PEM-encoded certificates.
     #[inline]
-    pub fn from_pem_certs<C>(certs: C) -> crate::Result<CertStore>
+    pub fn from_pem_certs<'c, C>(certs: C) -> crate::Result<CertStore>
     where
-        C: IntoIterator,
-        C::Item: AsRef<[u8]>,
+        C: IntoIterator + 'c,
+        C::Item: Into<CertificateInput<'c>>,
     {
-        load_certs_from_iter(certs, X509::from_pem).map_err(crate::error::builder)
+        parse_certs_from_iter(certs, Certificate::from_pem)
     }
 
     /// Creates a new `CertStore` from a PEM-encoded certificate stack.
@@ -324,7 +320,7 @@ impl CertStore {
     where
         C: AsRef<[u8]>,
     {
-        load_certs_from_stack(certs, X509::stack_from_pem).map_err(crate::error::builder)
+        load_certs_from_stack(certs, Certificate::stack_from_pem)
     }
 
     /// Creates a new `CertStore` from a PEM-encoded certificate file.
@@ -373,41 +369,47 @@ impl CertStore {
     }
 }
 
-fn load_certs_from_iter<C, F>(certs: C, x509: F) -> Result<CertStore, Error>
+fn parse_certs_from_iter<'c, I>(
+    certs: I,
+    parser: fn(&'c [u8]) -> Result<Certificate, Error>,
+) -> crate::Result<CertStore>
 where
-    C: IntoIterator,
-    C::Item: AsRef<[u8]>,
-    F: Fn(&[u8]) -> Result<X509, ErrorStack> + 'static,
+    I: IntoIterator,
+    I::Item: Into<CertificateInput<'c>>,
 {
     let mut store = X509StoreBuilder::new()?;
-    let certs = filter_map_certs(certs, x509);
-    process_certs(certs.into_iter(), &mut store).map(|_| CertStore {
-        store: Some(store.build()),
-        identity: None,
-    })
+    let certs = filter_map_certs(certs, parser);
+    process_certs(certs.into_iter(), &mut store)
+        .map(|_| CertStore {
+            store: Some(store.build()),
+            identity: None,
+        })
+        .map_err(crate::error::builder)
 }
 
-fn load_certs_from_stack<C, F>(certs: C, x509: F) -> Result<CertStore, Error>
+fn load_certs_from_stack<C, F>(certs: C, x509: F) -> crate::Result<CertStore>
 where
     C: AsRef<[u8]>,
-    F: Fn(&[u8]) -> Result<Vec<X509>, ErrorStack>,
+    F: Fn(C) -> Result<Vec<Certificate>, Error>,
 {
     let mut store = X509StoreBuilder::new()?;
-    let certs = x509(certs.as_ref())?;
-    process_certs(certs.into_iter(), &mut store).map(|_| CertStore {
-        store: Some(store.build()),
-        identity: None,
-    })
+    let certs = x509(certs).map_err(crate::error::builder)?;
+    process_certs(certs.into_iter(), &mut store)
+        .map(|_| CertStore {
+            store: Some(store.build()),
+            identity: None,
+        })
+        .map_err(crate::error::builder)
 }
 
 fn process_certs<I>(iter: I, store: &mut X509StoreBuilder) -> Result<(), Error>
 where
-    I: Iterator<Item = X509>,
+    I: Iterator<Item = Certificate>,
 {
     let mut valid_count = 0;
     let mut invalid_count = 0;
     for cert in iter {
-        if let Some(err) = store.add_cert(cert).err() {
+        if let Some(err) = store.add_cert(cert.0).err() {
             invalid_count += 1;
             log::warn!("tls failed to parse certificate: {err:?}");
         } else {
@@ -422,44 +424,22 @@ where
     Ok(())
 }
 
-fn filter_map_certs<C, F>(certs: C, parser: F) -> impl Iterator<Item = X509>
+fn filter_map_certs<'c, I>(
+    certs: I,
+    parser: fn(&'c [u8]) -> Result<Certificate, Error>,
+) -> impl Iterator<Item = Certificate>
 where
-    C: IntoIterator,
-    C::Item: AsRef<[u8]>,
-    F: Fn(&[u8]) -> Result<X509, ErrorStack> + 'static,
+    I: IntoIterator,
+    I::Item: Into<CertificateInput<'c>>,
 {
     certs
         .into_iter()
-        .filter_map(move |data| match parser(data.as_ref()) {
+        .map(Into::into)
+        .filter_map(move |data| match data.with_parser(parser) {
             Ok(cert) => Some(cert),
             Err(err) => {
                 log::warn!("tls failed to parse certificate: {err:?}");
                 None
             }
         })
-}
-
-fn detect_cert_parser(data: &[u8]) -> Result<X509, ErrorStack> {
-    let parser = if data.len() >= 10 {
-        // Quick check: if data starts with "-----BEGIN"
-        if data.starts_with(b"-----BEGIN") {
-            X509::from_pem
-        } else {
-            // Try to skip leading whitespace
-            let start = data
-                .iter()
-                .position(|&b| !b.is_ascii_whitespace())
-                .unwrap_or(0);
-
-            if data[start..].starts_with(b"-----BEGIN") {
-                X509::from_pem
-            } else {
-                X509::from_der
-            }
-        }
-    } else {
-        X509::from_der
-    };
-
-    parser(data)
 }

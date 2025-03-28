@@ -21,7 +21,7 @@ use crate::dns::{DnsResolverWithOverrides, DynResolver, Resolve, gai::GaiResolve
 use crate::error::{BoxError, Error};
 use crate::into_url::try_uri;
 use crate::proxy::IntoProxy;
-use crate::tls::IntoCertStore;
+use crate::tls::{CertificateInput, IntoCertStore};
 use crate::util::{
     self,
     client::{
@@ -1070,10 +1070,10 @@ impl ClientBuilder {
     ///
     /// If the provided certificates are invalid or cannot be parsed, this method will set an error
     /// in the builder, and the `build` method will return an error.
-    pub fn ssl_pinning<C>(mut self, certs: C) -> ClientBuilder
+    pub fn ssl_pinning<'c, I>(mut self, certs: I) -> ClientBuilder
     where
-        C: IntoIterator,
-        C::Item: AsRef<[u8]>,
+        I: IntoIterator,
+        I::Item: Into<CertificateInput<'c>>,
     {
         match CertStore::from_certs(certs) {
             Ok(store) => {
