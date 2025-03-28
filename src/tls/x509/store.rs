@@ -129,7 +129,7 @@ impl CertStoreBuilder {
             match Certificate::stack_from_pem(certs.as_ref()) {
                 Ok(certs) => {
                     if let Some(err) = process_certs(certs.into_iter(), builder).err() {
-                        self.builder = Some(Err(crate::error::builder(err)));
+                        self.builder = Some(Err(err));
                     }
                 }
                 Err(err) => {
@@ -205,7 +205,7 @@ impl CertStoreBuilder {
         if let Ok(builder) = self.get_or_init() {
             let certs = filter_map_certs(certs, parser);
             if let Some(err) = process_certs(certs, builder).err() {
-                self.builder = Some(Err(crate::error::builder(err)));
+                self.builder = Some(Err(err));
             }
         }
         self
@@ -382,12 +382,10 @@ where
 {
     let mut store = X509StoreBuilder::new()?;
     let certs = filter_map_certs(certs, parser);
-    process_certs(certs.into_iter(), &mut store)
-        .map(|_| CertStore {
-            store: Some(store.build()),
-            identity: None,
-        })
-        .map_err(crate::error::builder)
+    process_certs(certs.into_iter(), &mut store).map(|_| CertStore {
+        store: Some(store.build()),
+        identity: None,
+    })
 }
 
 fn load_certs_from_stack<C, F>(certs: C, x509: F) -> crate::Result<CertStore>
@@ -396,13 +394,11 @@ where
     F: Fn(C) -> crate::Result<Vec<Certificate>>,
 {
     let mut store = X509StoreBuilder::new()?;
-    let certs = x509(certs).map_err(crate::error::builder)?;
-    process_certs(certs.into_iter(), &mut store)
-        .map(|_| CertStore {
-            store: Some(store.build()),
-            identity: None,
-        })
-        .map_err(crate::error::builder)
+    let certs = x509(certs)?;
+    process_certs(certs.into_iter(), &mut store).map(|_| CertStore {
+        store: Some(store.build()),
+        identity: None,
+    })
 }
 
 fn process_certs<I>(iter: I, store: &mut X509StoreBuilder) -> crate::Result<()>
