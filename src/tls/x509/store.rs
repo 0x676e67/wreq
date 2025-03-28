@@ -94,12 +94,12 @@ impl CertStoreBuilder {
     ///
     /// - `certs`: An iterator over DER-encoded certificates.
     #[inline]
-    pub fn add_der_certs<'c, I>(self, _certs: I) -> Self
+    pub fn add_der_certs<'c, I>(self, certs: I) -> Self
     where
         I: IntoIterator,
         I::Item: Into<CertificateInput<'c>>,
     {
-        self.parse_certs(_certs, Certificate::from_der)
+        self.parse_certs(certs, Certificate::from_der)
     }
 
     /// Adds multiple PEM-encoded certificates to the certificate store.
@@ -108,12 +108,12 @@ impl CertStoreBuilder {
     ///
     /// - `certs`: An iterator over PEM-encoded certificates.
     #[inline]
-    pub fn add_pem_certs<'c, I>(self, _certs: I) -> Self
+    pub fn add_pem_certs<'c, I>(self, certs: I) -> Self
     where
         I: IntoIterator,
         I::Item: Into<CertificateInput<'c>>,
     {
-        self.parse_certs(_certs, Certificate::from_pem)
+        self.parse_certs(certs, Certificate::from_pem)
     }
 
     /// Adds a PEM-encoded certificate stack to the certificate store.
