@@ -1,6 +1,6 @@
 #![allow(missing_debug_implementations)]
 use super::{Certificate, CertificateInput};
-use crate::{Identity, tls::error::Error};
+use crate::Identity;
 use boring2::x509::store::{X509Store, X509StoreBuilder};
 use std::{fmt::Debug, path::Path};
 
@@ -405,7 +405,7 @@ where
         .map_err(crate::error::builder)
 }
 
-fn process_certs<I>(iter: I, store: &mut X509StoreBuilder) -> Result<(), Error>
+fn process_certs<I>(iter: I, store: &mut X509StoreBuilder) -> crate::Result<()>
 where
     I: Iterator<Item = Certificate>,
 {
@@ -421,7 +421,7 @@ where
     }
 
     if valid_count == 0 && invalid_count > 0 {
-        return Err(Error::InvalidCert);
+        return Err(crate::error::builder("invalid certificate"));
     }
 
     Ok(())

@@ -7,7 +7,6 @@
 
 mod config;
 mod conn;
-mod error;
 mod ext;
 mod x509;
 
