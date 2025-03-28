@@ -5,7 +5,6 @@ mod store;
 
 pub use self::identity::Identity;
 pub use self::store::{CertStore, CertStoreBuilder};
-use super::error::Error;
 use boring2::x509::X509;
 
 #[cfg(any(feature = "webpki-roots", feature = "native-roots"))]
@@ -15,7 +14,7 @@ pub(super) static LOAD_CERTS: std::sync::LazyLock<Option<CertStore>> =
         let res = CertStore::from_der_certs(webpki_root_certs::TLS_SERVER_ROOT_CERTS);
 
         #[cfg(all(feature = "native-roots", not(feature = "webpki-roots")))]
-        let res = CertStore::from_der_certs(rustls_native_certs::load_native_certs().certs);
+        let res = CertStore::from_der_certs(&rustls_native_certs::load_native_certs().certs);
 
         match res {
             Ok(store) => Some(store),
@@ -35,9 +34,9 @@ pub enum CertificateInput<'c> {
 }
 
 impl<'a> CertificateInput<'a> {
-    pub(crate) fn with_parser<F>(self, parser: F) -> Result<Certificate, Error>
+    pub(crate) fn with_parser<F>(self, parser: F) -> crate::Result<Certificate>
     where
-        F: Fn(&'a [u8]) -> Result<Certificate, Error>,
+        F: Fn(&'a [u8]) -> crate::Result<Certificate>,
     {
         match self {
             CertificateInput::Raw(data) => parser(data),
@@ -64,7 +63,7 @@ pub struct Certificate(X509);
 
 impl Certificate {
     /// Parse a certificate from DER or PEM data.
-    pub fn from<C: AsRef<[u8]>>(cert: C) -> Result<Self, Error> {
+    pub fn from<C: AsRef<[u8]>>(cert: C) -> crate::Result<Self> {
         let cert = cert.as_ref();
         let parser = if cert.len() >= 10 {
             // Quick check: if data starts with "-----BEGIN"
@@ -92,19 +91,19 @@ impl Certificate {
 
     /// Parse a certificate from DER data.
     #[inline(always)]
-    pub fn from_der<C: AsRef<[u8]>>(cert: C) -> Result<Self, Error> {
+    pub fn from_der<C: AsRef<[u8]>>(cert: C) -> crate::Result<Self> {
         X509::from_der(cert.as_ref()).map(Self).map_err(Into::into)
     }
 
     /// Parse a certificate from PEM data.
     #[inline(always)]
-    pub fn from_pem<C: AsRef<[u8]>>(cert: C) -> Result<Self, Error> {
+    pub fn from_pem<C: AsRef<[u8]>>(cert: C) -> crate::Result<Self> {
         X509::from_pem(cert.as_ref()).map(Self).map_err(Into::into)
     }
 
     /// Parse a stack of certificates from DER data.
     #[inline(always)]
-    pub fn stack_from_pem<C: AsRef<[u8]>>(cert: C) -> Result<Vec<Self>, Error> {
+    pub fn stack_from_pem<C: AsRef<[u8]>>(cert: C) -> crate::Result<Vec<Self>> {
         let certs = X509::stack_from_pem(cert.as_ref())?;
         Ok(certs.into_iter().map(Self).collect())
     }

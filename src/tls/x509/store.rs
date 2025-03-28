@@ -23,7 +23,7 @@ use std::{fmt::Debug, path::Path};
 ///     .build()?;
 /// ```
 pub struct CertStoreBuilder {
-    builder: Option<Result<X509StoreBuilder, Error>>,
+    builder: Option<crate::Result<X509StoreBuilder>>,
     identity: Option<Identity>,
 }
 
@@ -129,7 +129,7 @@ impl CertStoreBuilder {
             match Certificate::stack_from_pem(certs.as_ref()) {
                 Ok(certs) => {
                     if let Some(err) = process_certs(certs.into_iter(), builder).err() {
-                        self.builder = Some(Err(err));
+                        self.builder = Some(Err(crate::error::builder(err)));
                     }
                 }
                 Err(err) => {
@@ -155,7 +155,7 @@ impl CertStoreBuilder {
         match std::fs::read(path) {
             Ok(data) => return self.add_stack_pem_certs(data),
             Err(err) => {
-                self.builder = Some(Err(err.into()));
+                self.builder = Some(Err(crate::error::builder(err)));
             }
         }
         self
@@ -178,7 +178,7 @@ impl CertStoreBuilder {
     fn parse_cert<'c, C, P>(mut self, cert: C, parser: P) -> Self
     where
         C: Into<CertificateInput<'c>>,
-        P: Fn(&'c [u8]) -> Result<Certificate, Error>,
+        P: Fn(&'c [u8]) -> crate::Result<Certificate>,
     {
         if let Ok(builder) = self.get_or_init() {
             let input = cert.into();
@@ -196,7 +196,7 @@ impl CertStoreBuilder {
     fn parse_certs<'c, I>(
         mut self,
         certs: I,
-        parser: fn(&'c [u8]) -> Result<Certificate, Error>,
+        parser: fn(&'c [u8]) -> crate::Result<Certificate>,
     ) -> Self
     where
         I: IntoIterator,
@@ -205,13 +205,13 @@ impl CertStoreBuilder {
         if let Ok(builder) = self.get_or_init() {
             let certs = filter_map_certs(certs, parser);
             if let Some(err) = process_certs(certs, builder).err() {
-                self.builder = Some(Err(err));
+                self.builder = Some(Err(crate::error::builder(err)));
             }
         }
         self
     }
 
-    fn get_or_init(&mut self) -> &mut Result<X509StoreBuilder, Error> {
+    fn get_or_init(&mut self) -> &mut crate::Result<X509StoreBuilder> {
         self.builder
             .get_or_insert_with(|| X509StoreBuilder::new().map_err(Into::into))
     }
@@ -221,7 +221,7 @@ impl CertStoreBuilder {
     /// This method finalizes the builder and constructs the `CertStore`
     /// containing all the added certificates.
     #[inline]
-    pub fn build(self) -> Result<CertStore, Error> {
+    pub fn build(self) -> crate::Result<CertStore> {
         let builder = self.builder.transpose()?;
         Ok(CertStore {
             store: builder.map(|b| b.build()),
@@ -374,7 +374,7 @@ impl CertStore {
 
 fn parse_certs_from_iter<'c, I>(
     certs: I,
-    parser: fn(&'c [u8]) -> Result<Certificate, Error>,
+    parser: fn(&'c [u8]) -> crate::Result<Certificate>,
 ) -> crate::Result<CertStore>
 where
     I: IntoIterator,
@@ -393,7 +393,7 @@ where
 fn load_certs_from_stack<C, F>(certs: C, x509: F) -> crate::Result<CertStore>
 where
     C: AsRef<[u8]>,
-    F: Fn(C) -> Result<Vec<Certificate>, Error>,
+    F: Fn(C) -> crate::Result<Vec<Certificate>>,
 {
     let mut store = X509StoreBuilder::new()?;
     let certs = x509(certs).map_err(crate::error::builder)?;
@@ -429,7 +429,7 @@ where
 
 fn filter_map_certs<'c, I>(
     certs: I,
-    parser: fn(&'c [u8]) -> Result<Certificate, Error>,
+    parser: fn(&'c [u8]) -> crate::Result<Certificate>,
 ) -> impl Iterator<Item = Certificate>
 where
     I: IntoIterator,
