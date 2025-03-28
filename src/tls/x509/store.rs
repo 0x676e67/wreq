@@ -290,7 +290,7 @@ impl CertStore {
     #[inline]
     pub fn from_der_certs<'c, C>(certs: C) -> crate::Result<CertStore>
     where
-        C: IntoIterator + 'c,
+        C: IntoIterator,
         C::Item: Into<CertificateInput<'c>>,
     {
         parse_certs_from_iter(certs, Certificate::from_der)
@@ -304,7 +304,7 @@ impl CertStore {
     #[inline]
     pub fn from_pem_certs<'c, C>(certs: C) -> crate::Result<CertStore>
     where
-        C: IntoIterator + 'c,
+        C: IntoIterator,
         C::Item: Into<CertificateInput<'c>>,
     {
         parse_certs_from_iter(certs, Certificate::from_pem)
