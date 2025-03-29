@@ -237,7 +237,8 @@ impl<T: IntoCertStore> IntoCertStore for Option<T> {
 ///
 /// This trait is used to provide a unified way to convert different types
 /// into an optional `Cow` containing a slice of `CertCompressionAlgorithm`.
-pub trait IntoCertCompressionAlgorithm {
+pub(crate) trait IntoCertCompressionAlgorithm {
+    /// Converts the given value into an optional `Cow` containing a slice of `CertCompressionAlgorithm`.
     fn into(self) -> Option<Cow<'static, [CertCompressionAlgorithm]>>;
 }
 
