@@ -28,7 +28,7 @@ fn key_index() -> Result<Index<Ssl, SessionKey>, ErrorStack> {
     IDX.clone()
 }
 
-/// Settings for [`BoringTlsConnector`]
+/// Settings for [`TlsConnector`]
 #[derive(TypedBuilder)]
 pub struct HandshakeSettings {
     /// Sets whether to enable session caching capacity. Defaults to `8`.

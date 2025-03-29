@@ -143,7 +143,7 @@ type Callback =
 type SslCallback = Arc<dyn Fn(&mut SslRef, &Uri) -> Result<(), ErrorStack> + Sync + Send>;
 
 impl TlsConnector {
-    /// Creates a new `BoringTlsConnector` with the given `TlsConfig`.
+    /// Creates a new `TlsConnector` with the given `TlsConfig`.
     pub fn new(config: TlsConfig) -> crate::Result<TlsConnector> {
         let mut connector = SslConnector::no_default_verify_builder(SslMethod::tls_client())?
             .cert_store(config.cert_store)?
@@ -235,7 +235,7 @@ impl TlsConnector {
         ))
     }
 
-    /// Creates a new `BoringTlsConnector` with settings
+    /// Creates a new `TlsConnector` with settings
     fn with_connector_and_settings(
         mut ssl: SslConnectorBuilder,
         settings: HandshakeSettings,
