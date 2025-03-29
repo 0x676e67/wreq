@@ -10,7 +10,7 @@ mod conn;
 mod ext;
 mod x509;
 
-pub(crate) use self::conn::{BoringTlsConnector, HttpsConnector, MaybeHttpsStream};
+pub(crate) use self::conn::{HttpsConnector, MaybeHttpsStream, TlsConnector};
 pub use self::{
     config::{IntoCertStore, TlsConfig},
     x509::{CertStore, CertStoreBuilder, Certificate, CertificateInput, Identity},

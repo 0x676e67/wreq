@@ -42,7 +42,7 @@ impl HttpsConnector<HttpConnector> {
     /// Creates a new `HttpsConnector`
     pub fn new(
         mut http: HttpConnector,
-        connector: BoringTlsConnector,
+        connector: TlsConnector,
         dst: &mut Dst,
     ) -> HttpsConnector<HttpConnector> {
         // Get the ALPN protocols from the destination
@@ -88,7 +88,7 @@ where
     T: Read + Write + Connection + Unpin + Debug + Sync + Send + 'static,
 {
     /// Creates a new `HttpsConnector` with a given `HttpConnector`
-    pub fn with_connector(http: S, connector: BoringTlsConnector) -> HttpsConnector<S> {
+    pub fn with_connector(http: S, connector: TlsConnector) -> HttpsConnector<S> {
         HttpsConnector {
             http,
             inner: connector.inner,
@@ -123,9 +123,9 @@ where
     }
 }
 
-/// A layer which wraps services in an `HttpsConnector`.
+/// A layer which wraps services in an `SslConnector`.
 #[derive(Clone)]
-pub struct BoringTlsConnector {
+pub struct TlsConnector {
     inner: Inner,
 }
 
@@ -142,9 +142,9 @@ type Callback =
     Arc<dyn Fn(&mut ConnectConfiguration, &Uri) -> Result<(), ErrorStack> + Sync + Send>;
 type SslCallback = Arc<dyn Fn(&mut SslRef, &Uri) -> Result<(), ErrorStack> + Sync + Send>;
 
-impl BoringTlsConnector {
+impl TlsConnector {
     /// Creates a new `BoringTlsConnector` with the given `TlsConfig`.
-    pub fn new(config: TlsConfig) -> crate::Result<BoringTlsConnector> {
+    pub fn new(config: TlsConfig) -> crate::Result<TlsConnector> {
         let mut connector = SslConnector::no_default_verify_builder(SslMethod::tls_client())?
             .cert_store(config.cert_store)?
             .cert_verification(config.cert_verification)?
@@ -230,7 +230,7 @@ impl BoringTlsConnector {
             .random_aes_hw_override(config.random_aes_hw_override)
             .build();
 
-        Ok(BoringTlsConnector::with_connector_and_settings(
+        Ok(TlsConnector::with_connector_and_settings(
             connector, settings,
         ))
     }
@@ -239,7 +239,7 @@ impl BoringTlsConnector {
     fn with_connector_and_settings(
         mut ssl: SslConnectorBuilder,
         settings: HandshakeSettings,
-    ) -> BoringTlsConnector {
+    ) -> TlsConnector {
         // If the session cache is disabled, we don't need to set up any callbacks.
         let cache = if settings.session_cache {
             let cache = Arc::new(Mutex::new(SessionCache::with_capacity(
@@ -281,7 +281,7 @@ impl BoringTlsConnector {
             Ok(())
         });
 
-        BoringTlsConnector {
+        TlsConnector {
             inner: Inner {
                 ssl: ssl.build(),
                 cache,

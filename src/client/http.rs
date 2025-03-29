@@ -34,7 +34,7 @@ use crate::{CertStore, Http1Config, Http2Config, TlsConfig, error};
 use crate::{IntoUrl, Method, Proxy, StatusCode, Url};
 use crate::{
     redirect,
-    tls::{AlpnProtos, BoringTlsConnector, TlsVersion},
+    tls::{AlpnProtos, TlsConnector, TlsVersion},
 };
 
 use super::decoder::Accepts;
@@ -314,7 +314,7 @@ impl ClientBuilder {
                     tls_config.max_tls_version = config.max_tls_version;
                 }
 
-                BoringTlsConnector::new(tls_config)?
+                TlsConnector::new(tls_config)?
             };
 
             ConnectorBuilder::new(http, tls, config.nodelay, config.tls_info)
@@ -2007,7 +2007,7 @@ impl<'c> ClientUpdate<'c> {
                     tls_config.max_tls_version = current.max_tls_version;
                 }
 
-                let connector = BoringTlsConnector::new(tls_config)?;
+                let connector = TlsConnector::new(tls_config)?;
                 current.hyper.connector_mut().set_connector(connector);
             }
         }

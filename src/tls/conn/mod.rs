@@ -20,7 +20,7 @@ use tokio::io;
 use tokio_boring2::SslStream;
 use typed_builder::TypedBuilder;
 
-pub use self::boring::{BoringTlsConnector, HttpsConnector};
+pub use self::boring::{HttpsConnector, TlsConnector};
 
 fn key_index() -> Result<Index<Ssl, SessionKey>, ErrorStack> {
     static IDX: LazyLock<Result<Index<Ssl, SessionKey>, ErrorStack>> =

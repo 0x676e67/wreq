@@ -1,5 +1,5 @@
 use self::tls_conn::BoringTlsConn;
-use crate::tls::{BoringTlsConnector, HttpsConnector, MaybeHttpsStream};
+use crate::tls::{HttpsConnector, MaybeHttpsStream, TlsConnector};
 use crate::util::client::Dst;
 use crate::util::client::connect::{Connected, Connection};
 use crate::util::rt::TokioIo;
@@ -32,7 +32,7 @@ pub(crate) type BoxedConnectorLayer =
 
 pub(crate) struct ConnectorBuilder {
     http: HttpConnector,
-    tls: BoringTlsConnector,
+    tls: TlsConnector,
     verbose: verbose::Wrapper,
     timeout: Option<Duration>,
     nodelay: bool,
@@ -110,7 +110,7 @@ impl ConnectorBuilder {
 
     pub(crate) fn new(
         mut http: HttpConnector,
-        tls: BoringTlsConnector,
+        tls: TlsConnector,
         nodelay: bool,
         tls_info: bool,
     ) -> ConnectorBuilder {
@@ -158,7 +158,7 @@ pub(crate) enum Connector {
 }
 
 impl Connector {
-    pub(crate) fn set_connector(&mut self, mut connector: BoringTlsConnector) {
+    pub(crate) fn set_connector(&mut self, mut connector: TlsConnector) {
         match self {
             Connector::Simple(service) => {
                 std::mem::swap(&mut service.tls, &mut connector);
@@ -207,7 +207,7 @@ impl Service<Dst> for Connector {
 #[derive(Clone)]
 pub(crate) struct ConnectorService {
     http: HttpConnector,
-    tls: BoringTlsConnector,
+    tls: TlsConnector,
     verbose: verbose::Wrapper,
     /// When there is a single timeout layer and no other layers,
     /// we embed it directly inside our base Service::call().
