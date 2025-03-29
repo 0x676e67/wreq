@@ -22,6 +22,7 @@ use std::{fmt::Debug, path::Path};
 ///     .set_default_paths()
 ///     .build()?;
 /// ```
+#[derive(Default)]
 pub struct CertStoreBuilder {
     identity: Option<Identity>,
     builder: Option<crate::Result<X509StoreBuilder>>,
@@ -126,15 +127,11 @@ impl CertStoreBuilder {
         C: AsRef<[u8]>,
     {
         if let Ok(builder) = self.get_or_init() {
-            match Certificate::stack_from_pem(certs.as_ref()) {
-                Ok(certs) => {
-                    if let Some(err) = process_certs(certs.into_iter(), builder).err() {
-                        self.builder = Some(Err(err));
-                    }
-                }
-                Err(err) => {
-                    self.builder = Some(Err(err));
-                }
+            let result = Certificate::stack_from_pem(certs.as_ref())
+                .and_then(|certs| process_certs(certs.into_iter(), builder));
+
+            if let Err(err) = result {
+                self.builder = Some(Err(err));
             }
         }
         self
@@ -168,7 +165,7 @@ impl CertStoreBuilder {
     /// build time otherwise.
     pub fn set_default_paths(mut self) -> Self {
         if let Ok(builder) = self.get_or_init() {
-            if let Some(err) = builder.set_default_paths().err() {
+            if let Err(err) = builder.set_default_paths() {
                 self.builder = Some(Err(err.into()));
             }
         }
@@ -204,7 +201,7 @@ impl CertStoreBuilder {
     {
         if let Ok(builder) = self.get_or_init() {
             let certs = filter_map_certs(certs, parser);
-            if let Some(err) = process_certs(certs, builder).err() {
+            if let Err(err) = process_certs(certs, builder) {
                 self.builder = Some(Err(err));
             }
         }
@@ -248,10 +245,7 @@ impl CertStore {
     /// Creates a new `CertStoreBuilder`.
     #[inline]
     pub fn builder() -> CertStoreBuilder {
-        CertStoreBuilder {
-            identity: None,
-            builder: None,
-        }
+        CertStoreBuilder::default()
     }
 
     /// Creates a new `CertStore` from an `Identity`.
@@ -410,7 +404,7 @@ where
     let mut valid_count = 0;
     let mut invalid_count = 0;
     for cert in iter {
-        if let Some(err) = store.add_cert(cert.0).err() {
+        if let Err(err) = store.add_cert(cert.0) {
             invalid_count += 1;
             log::warn!("tls failed to parse certificate: {err:?}");
         } else {
