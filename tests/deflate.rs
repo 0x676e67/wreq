@@ -1,4 +1,6 @@
 mod support;
+use flate2::Compression;
+use flate2::write::ZlibEncoder;
 use std::io::Write;
 use support::server;
 use tokio::io::AsyncWriteExt;
