@@ -170,7 +170,7 @@ hyper-util = { version = "0.1.10", features = [
     "tokio",
 ] }
 serde = { version = "1.0", features = ["derive"] }
-libflate = "2.0.0"
+flate2 = "1.1.1"
 zstd = "0.13"
 brotli = "7.0.0"
 doc-comment = "0.3"
