@@ -262,7 +262,6 @@
 //!   threadpool using `getaddrinfo`.
 //! - **native-roots**: Use the native system root certificate store.
 //! - **webpki-roots**: Use the webpki-roots crate for root certificates.
-//! - **apple-network-device-binding**: Use the Apple Network Device Binding
 //! - **http2-tracing**: Enable HTTP/2 tracing.
 //! - **internal_proxy_sys_no_cache**: Use the internal proxy system with no cache.
 //!

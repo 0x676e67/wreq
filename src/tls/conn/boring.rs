@@ -60,17 +60,14 @@ impl HttpsConnector<HttpConnector> {
         #[cfg(any(
             target_os = "android",
             target_os = "fuchsia",
+            target_os = "illumos",
+            target_os = "ios",
             target_os = "linux",
-            all(
-                feature = "apple-network-device-binding",
-                any(
-                    target_os = "ios",
-                    target_os = "visionos",
-                    target_os = "macos",
-                    target_os = "tvos",
-                    target_os = "watchos",
-                )
-            )
+            target_os = "macos",
+            target_os = "solaris",
+            target_os = "tvos",
+            target_os = "visionos",
+            target_os = "watchos",
         ))]
         http.set_interface(dst.take_interface());
 

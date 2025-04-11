@@ -76,22 +76,18 @@ struct Config {
     reuse_address: bool,
     send_buffer_size: Option<usize>,
     recv_buffer_size: Option<usize>,
-    #[cfg(any(
-        target_os = "android",
-        target_os = "fuchsia",
-        target_os = "linux",
-        all(
-            feature = "apple-network-device-binding",
-            any(
-                target_os = "ios",
-                target_os = "visionos",
-                target_os = "macos",
-                target_os = "tvos",
-                target_os = "watchos",
-            )
-        )
-    ))]
+    #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
     interface: Option<std::borrow::Cow<'static, str>>,
+    #[cfg(any(
+        target_os = "illumos",
+        target_os = "ios",
+        target_os = "macos",
+        target_os = "solaris",
+        target_os = "tvos",
+        target_os = "visionos",
+        target_os = "watchos",
+    ))]
+    interface: Option<std::ffi::CString>,
     #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
     tcp_user_timeout: Option<Duration>,
 }
@@ -245,17 +241,14 @@ impl<R> HttpConnector<R> {
                 #[cfg(any(
                     target_os = "android",
                     target_os = "fuchsia",
+                    target_os = "illumos",
+                    target_os = "ios",
                     target_os = "linux",
-                    all(
-                        feature = "apple-network-device-binding",
-                        any(
-                            target_os = "ios",
-                            target_os = "visionos",
-                            target_os = "macos",
-                            target_os = "tvos",
-                            target_os = "watchos",
-                        )
-                    )
+                    target_os = "macos",
+                    target_os = "solaris",
+                    target_os = "tvos",
+                    target_os = "visionos",
+                    target_os = "watchos",
                 ))]
                 interface: None,
                 #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
@@ -383,39 +376,57 @@ impl<R> HttpConnector<R> {
         self
     }
 
-    /// Sets the value for the `SO_BINDTODEVICE` option on this socket.
+    /// Sets the name of the interface to bind sockets produced by this
+    /// connector.
+    ///
+    /// On Linux, this sets the `SO_BINDTODEVICE` option on this socket (see
+    /// [`man 7 socket`] for details). On macOS (and macOS-derived systems like
+    /// iOS), illumos, and Solaris, this will instead use the `IP_BOUND_IF`
+    /// socket option (see [`man 7p ip`]).
     ///
     /// If a socket is bound to an interface, only packets received from that particular
     /// interface are processed by the socket. Note that this only works for some socket
-    /// types, particularly AF_INET sockets.
+    /// types, particularly `AF_INET`` sockets.
     ///
     /// On Linux it can be used to specify a [VRF], but the binary needs
     /// to either have `CAP_NET_RAW` or to be run as root.
     ///
-    /// This function is only available on Android、Fuchsia、Linux and Apple platforms.
+    /// This function is only available on the following operating systems:
+    /// - Linux, including Android
+    /// - Fuchsia
+    /// - illumos and Solaris
+    /// - macOS, iOS, visionOS, watchOS, and tvOS
     ///
     /// [VRF]: https://www.kernel.org/doc/Documentation/networking/vrf.txt
+    /// [`man 7 socket`] https://man7.org/linux/man-pages/man7/socket.7.html
+    /// [`man 7p ip`]: https://docs.oracle.com/cd/E86824_01/html/E54777/ip-7p.html
     #[cfg(any(
         target_os = "android",
         target_os = "fuchsia",
+        target_os = "illumos",
+        target_os = "ios",
         target_os = "linux",
-        all(
-            feature = "apple-network-device-binding",
-            any(
-                target_os = "ios",
-                target_os = "visionos",
-                target_os = "macos",
-                target_os = "tvos",
-                target_os = "watchos",
-            )
-        )
+        target_os = "macos",
+        target_os = "solaris",
+        target_os = "tvos",
+        target_os = "visionos",
+        target_os = "watchos",
     ))]
     #[inline]
     pub fn set_interface<S>(&mut self, interface: S) -> &mut Self
     where
         S: Into<Option<std::borrow::Cow<'static, str>>>,
     {
-        self.config_mut().interface = interface.into();
+        #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
+        {
+            self.config_mut().interface = interface.into();
+        }
+        #[cfg(not(any(target_os = "android", target_os = "fuchsia", target_os = "linux")))]
+        if let Some(interface) = interface.into() {
+            let interface = std::ffi::CString::new(interface.into_owned())
+                .expect("interface name should not have nulls in it");
+            self.config_mut().interface = Some(interface);
+        }
         self
     }
 
@@ -822,42 +833,56 @@ fn connect(
         }
     }
 
-    #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
     // That this only works for some socket types, particularly AF_INET sockets.
+    #[cfg(any(
+        target_os = "android",
+        target_os = "fuchsia",
+        target_os = "illumos",
+        target_os = "ios",
+        target_os = "linux",
+        target_os = "macos",
+        target_os = "solaris",
+        target_os = "tvos",
+        target_os = "visionos",
+        target_os = "watchos",
+    ))]
     if let Some(interface) = &config.interface {
+        // On Linux-like systems, set the interface to bind using
+        // `SO_BINDTODEVICE`.
+        #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
         socket
             .bind_device(Some(interface.as_bytes()))
             .map_err(ConnectError::m("tcp bind interface error"))?;
-    }
 
-    #[cfg(all(
-        feature = "apple-network-device-binding",
-        any(
+        // On macOS-like and Solaris-like systems, we instead use `IP_BOUND_IF`.
+        // This socket option desires an integer index for the interface, so we
+        // must first determine the index of the requested interface name using
+        // `if_nametoindex`.
+        #[cfg(any(
+            target_os = "illumos",
             target_os = "ios",
-            target_os = "visionos",
             target_os = "macos",
+            target_os = "solaris",
             target_os = "tvos",
+            target_os = "visionos",
             target_os = "watchos",
-        )
-    ))]
-    /// That this only supports ios, visionos, macos, tvos, watchos
-    if let Some(interface) = &config.interface {
-        let c_interface = std::ffi::CString::new(interface.as_bytes())
-            .map_err(ConnectError::m("tcp bind interface error"))?;
-        let iface_index =
-            std::num::NonZeroU32::new(unsafe { libc::if_nametoindex(c_interface.as_ptr()) });
-
-        // If the interface is not found, it will skip the binding
-        if iface_index.is_some() {
-            if addr.is_ipv4() {
-                socket
-                    .bind_device_by_index_v4(iface_index)
-                    .map_err(ConnectError::m("tcp bind interface error"))?;
-            } else {
-                socket
-                    .bind_device_by_index_v6(iface_index)
-                    .map_err(ConnectError::m("tcp bind interface error"))?;
+        ))]
+        {
+            let idx = unsafe { libc::if_nametoindex(interface.as_ptr()) };
+            let idx = std::num::NonZeroU32::new(idx).ok_or_else(|| {
+                // If the index is 0, check errno and return an I/O error.
+                ConnectError::new(
+                    "error converting interface name to index",
+                    io::Error::last_os_error(),
+                )
+            })?;
+            // Different setsockopt calls are necessary depending on whether the
+            // address is IPv4 or IPv6.
+            match addr {
+                SocketAddr::V4(_) => socket.bind_device_by_index_v4(Some(idx)),
+                SocketAddr::V6(_) => socket.bind_device_by_index_v6(Some(idx)),
             }
+            .map_err(ConnectError::m("tcp bind interface error"))?;
         }
     }
 

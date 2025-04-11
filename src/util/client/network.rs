@@ -20,17 +20,14 @@ pub enum NetworkScheme {
         #[cfg(any(
             target_os = "android",
             target_os = "fuchsia",
+            target_os = "illumos",
+            target_os = "ios",
             target_os = "linux",
-            all(
-                feature = "apple-network-device-binding",
-                any(
-                    target_os = "ios",
-                    target_os = "visionos",
-                    target_os = "macos",
-                    target_os = "tvos",
-                    target_os = "watchos",
-                )
-            )
+            target_os = "macos",
+            target_os = "solaris",
+            target_os = "tvos",
+            target_os = "visionos",
+            target_os = "watchos",
         ))]
         interface: Option<std::borrow::Cow<'static, str>>,
 
@@ -83,17 +80,14 @@ impl NetworkScheme {
     #[cfg(any(
         target_os = "android",
         target_os = "fuchsia",
+        target_os = "illumos",
+        target_os = "ios",
         target_os = "linux",
-        all(
-            feature = "apple-network-device-binding",
-            any(
-                target_os = "ios",
-                target_os = "visionos",
-                target_os = "macos",
-                target_os = "tvos",
-                target_os = "watchos",
-            )
-        )
+        target_os = "macos",
+        target_os = "solaris",
+        target_os = "tvos",
+        target_os = "visionos",
+        target_os = "watchos",
     ))]
     #[inline(always)]
     pub fn take_interface(&mut self) -> Option<std::borrow::Cow<'static, str>> {
@@ -111,17 +105,14 @@ impl fmt::Debug for NetworkScheme {
                 #[cfg(any(
                     target_os = "android",
                     target_os = "fuchsia",
+                    target_os = "illumos",
+                    target_os = "ios",
                     target_os = "linux",
-                    all(
-                        feature = "apple-network-device-binding",
-                        any(
-                            target_os = "ios",
-                            target_os = "visionos",
-                            target_os = "macos",
-                            target_os = "tvos",
-                            target_os = "watchos",
-                        )
-                    )
+                    target_os = "macos",
+                    target_os = "solaris",
+                    target_os = "tvos",
+                    target_os = "visionos",
+                    target_os = "watchos",
                 ))]
                 interface,
                 addresses,
@@ -132,17 +123,14 @@ impl fmt::Debug for NetworkScheme {
                 #[cfg(any(
                     target_os = "android",
                     target_os = "fuchsia",
+                    target_os = "illumos",
+                    target_os = "ios",
                     target_os = "linux",
-                    all(
-                        feature = "apple-network-device-binding",
-                        any(
-                            target_os = "ios",
-                            target_os = "visionos",
-                            target_os = "macos",
-                            target_os = "tvos",
-                            target_os = "watchos",
-                        )
-                    )
+                    target_os = "macos",
+                    target_os = "solaris",
+                    target_os = "tvos",
+                    target_os = "visionos",
+                    target_os = "watchos",
                 ))]
                 if let Some(interface) = interface {
                     write!(f, " interface={:?},", interface)?;
@@ -175,17 +163,14 @@ pub struct NetworkSchemeBuilder {
     #[cfg(any(
         target_os = "android",
         target_os = "fuchsia",
+        target_os = "illumos",
+        target_os = "ios",
         target_os = "linux",
-        all(
-            feature = "apple-network-device-binding",
-            any(
-                target_os = "ios",
-                target_os = "visionos",
-                target_os = "macos",
-                target_os = "tvos",
-                target_os = "watchos",
-            )
-        )
+        target_os = "macos",
+        target_os = "solaris",
+        target_os = "tvos",
+        target_os = "visionos",
+        target_os = "watchos",
     ))]
     interface: Option<std::borrow::Cow<'static, str>>,
     addresses: (Option<Ipv4Addr>, Option<Ipv6Addr>),
@@ -217,17 +202,14 @@ impl NetworkSchemeBuilder {
     #[cfg(any(
         target_os = "android",
         target_os = "fuchsia",
+        target_os = "illumos",
+        target_os = "ios",
         target_os = "linux",
-        all(
-            feature = "apple-network-device-binding",
-            any(
-                target_os = "ios",
-                target_os = "visionos",
-                target_os = "macos",
-                target_os = "tvos",
-                target_os = "watchos",
-            )
-        )
+        target_os = "macos",
+        target_os = "solaris",
+        target_os = "tvos",
+        target_os = "visionos",
+        target_os = "watchos",
     ))]
     #[inline]
     pub fn interface<I>(&mut self, interface: I) -> &mut Self
@@ -249,17 +231,14 @@ impl NetworkSchemeBuilder {
         #[cfg(any(
             target_os = "android",
             target_os = "fuchsia",
+            target_os = "illumos",
+            target_os = "ios",
             target_os = "linux",
-            all(
-                feature = "apple-network-device-binding",
-                any(
-                    target_os = "ios",
-                    target_os = "visionos",
-                    target_os = "macos",
-                    target_os = "tvos",
-                    target_os = "watchos",
-                )
-            )
+            target_os = "macos",
+            target_os = "solaris",
+            target_os = "tvos",
+            target_os = "visionos",
+            target_os = "watchos",
         ))]
         {
             if matches!(
@@ -279,17 +258,14 @@ impl NetworkSchemeBuilder {
         #[cfg(not(any(
             target_os = "android",
             target_os = "fuchsia",
+            target_os = "illumos",
+            target_os = "ios",
             target_os = "linux",
-            all(
-                feature = "apple-network-device-binding",
-                any(
-                    target_os = "ios",
-                    target_os = "visionos",
-                    target_os = "macos",
-                    target_os = "tvos",
-                    target_os = "watchos",
-                )
-            )
+            target_os = "macos",
+            target_os = "solaris",
+            target_os = "tvos",
+            target_os = "visionos",
+            target_os = "watchos",
         )))]
         {
             if matches!((&self.proxy_scheme, &self.addresses), (None, (None, None))) {
