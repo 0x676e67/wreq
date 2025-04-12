@@ -1427,7 +1427,7 @@ impl Client {
             redirect,
             _allow_compression,
             network_scheme,
-            protocal,
+            protocol,
         ) = req.pieces();
 
         // get the scheme of the URL
@@ -1499,7 +1499,7 @@ impl Client {
                 .headers(headers.clone())
                 .headers_order(client.headers_order.as_deref())
                 .version(version)
-                .extension(protocal)
+                .extension(protocol.clone())
                 .network_scheme(network_scheme.clone())
                 .body(body);
 
@@ -1523,6 +1523,7 @@ impl Client {
                 headers,
                 body: reusable,
                 version,
+                protocol,
                 urls: Vec::new(),
                 http2_retry_count: 0,
                 http2_max_retry_count: client.http2_max_retry_count,
@@ -2046,6 +2047,7 @@ pin_project! {
         headers: HeaderMap,
         body: Option<Option<Bytes>>,
         version: Option<Version>,
+        protocol: Option<hyper2::ext::Protocol>,
         urls: Vec<Url>,
         http2_retry_count: usize,
         http2_max_retry_count: usize,
@@ -2125,6 +2127,7 @@ impl PendingRequest {
                 .headers(self.headers.clone())
                 .headers_order(self.client.headers_order.as_deref())
                 .version(self.version)
+                .extension(self.protocol.clone())
                 .network_scheme(self.network_scheme.clone())
                 .body(body);
 
@@ -2341,6 +2344,7 @@ impl Future for PendingRequest {
                                     .headers(headers.clone())
                                     .headers_order(self.client.headers_order.as_deref())
                                     .version(self.version)
+                                    .extension(self.protocol.clone())
                                     .network_scheme(self.network_scheme.clone())
                                     .body(body)?;
 
