@@ -105,7 +105,7 @@ http-body = "1"
 http-body-util = "0.1"
 hyper2 = { version = "1.5.5", features = ["http1", "http2", "client"] }
 socket2 = { version = "0.5.8", features = ["all"] }
-lru = { version = "0.13", default-features = false }
+lru = { version = "0.14", default-features = false }
 log = "0.4.27"
 mime = "0.3.17"
 percent-encoding = "2.3"
