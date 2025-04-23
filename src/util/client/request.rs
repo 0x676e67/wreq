@@ -245,14 +245,16 @@ where
     /// A `Result` containing the constructed `InnerRequest` or an `Error`.
     #[inline]
     pub fn body(mut self, body: B) -> Result<InnerRequest<B>, Error> {
-        if let Some((method, (headers, headers_order))) = self
+        if let Some((method, headers)) = self
             .builder
             .method_ref()
             .cloned()
-            .zip(self.builder.headers_mut().zip(self.headers_order))
+            .zip(self.builder.headers_mut())
         {
             add_content_length_header(method, headers, &body);
-            sort_headers(headers, headers_order);
+            if let Some(headers_order) = self.headers_order {
+                sort_headers(headers, headers_order);
+            }
         }
 
         self.builder.body(body).map(|request| InnerRequest {
@@ -277,9 +279,7 @@ where
 {
     if let Some(len) = Body::size_hint(body).exact() {
         if len != 0 || method_has_defined_payload_semantics(method) {
-            headers
-                .entry(CONTENT_LENGTH)
-                .or_insert_with(|| HeaderValue::from(len));
+            headers.insert(CONTENT_LENGTH, HeaderValue::from(len));
         }
     }
 }
