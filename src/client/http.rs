@@ -1420,6 +1420,7 @@ impl Client {
             method,
             url,
             mut headers,
+            headers_order,
             body,
             timeout,
             read_timeout,
@@ -1491,13 +1492,16 @@ impl Client {
 
         client.proxy_auth(&uri, &mut headers);
 
+        let headers_order = headers_order.or_else(|| client.headers_order.clone());
+
         let network_scheme = client.network_scheme(&uri, network_scheme);
+
         let in_flight = {
             let res = InnerRequest::builder()
                 .uri(uri)
                 .method(method.clone())
                 .headers(headers.clone())
-                .headers_order(client.headers_order.as_deref())
+                .headers_order(headers_order.as_deref())
                 .version(version)
                 .extension(protocol.clone())
                 .network_scheme(network_scheme.clone())
@@ -1521,6 +1525,7 @@ impl Client {
                 method,
                 url,
                 headers,
+                headers_order,
                 body: reusable,
                 version,
                 protocol,
@@ -2045,6 +2050,7 @@ pin_project! {
         method: Method,
         url: Url,
         headers: HeaderMap,
+        headers_order: Option<Cow<'static, [HeaderName]>>,
         body: Option<Option<Bytes>>,
         version: Option<Version>,
         protocol: Option<hyper2::ext::Protocol>,
@@ -2125,7 +2131,7 @@ impl PendingRequest {
                 .uri(uri)
                 .method(self.method.clone())
                 .headers(self.headers.clone())
-                .headers_order(self.client.headers_order.as_deref())
+                .headers_order(self.headers_order.as_deref())
                 .version(self.version)
                 .extension(self.protocol.clone())
                 .network_scheme(self.network_scheme.clone())
@@ -2342,7 +2348,7 @@ impl Future for PendingRequest {
                                     .uri(uri)
                                     .method(self.method.clone())
                                     .headers(headers.clone())
-                                    .headers_order(self.client.headers_order.as_deref())
+                                    .headers_order(self.headers_order.as_deref())
                                     .version(self.version)
                                     .extension(self.protocol.clone())
                                     .network_scheme(self.network_scheme.clone())

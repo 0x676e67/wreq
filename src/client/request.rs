@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::convert::TryFrom;
 use std::fmt;
 use std::future::Future;
@@ -22,6 +23,7 @@ pub struct Request {
     method: Method,
     url: Url,
     headers: HeaderMap,
+    headers_order: Option<Cow<'static, [HeaderName]>>,
     body: Option<Body>,
     timeout: Option<Duration>,
     read_timeout: Option<Duration>,
@@ -49,6 +51,7 @@ impl Request {
             method,
             url,
             headers: HeaderMap::new(),
+            headers_order: None,
             body: None,
             timeout: None,
             read_timeout: None,
@@ -99,6 +102,18 @@ impl Request {
     #[inline]
     pub fn headers_mut(&mut self) -> &mut HeaderMap {
         &mut self.headers
+    }
+
+    /// Get the headers order.
+    #[inline]
+    pub fn headers_order(&self) -> Option<&Cow<'static, [HeaderName]>> {
+        self.headers_order.as_ref()
+    }
+
+    /// Get a mutable reference to the headers order.
+    #[inline]
+    pub fn headers_order_mut(&mut self) -> &mut Option<Cow<'static, [HeaderName]>> {
+        &mut self.headers_order
     }
 
     /// Get a mutable reference to the redirect policy.
@@ -191,6 +206,7 @@ impl Request {
         *req.timeout_mut() = self.timeout().copied();
         *req.read_timeout_mut() = self.read_timeout().copied();
         *req.headers_mut() = self.headers().clone();
+        *req.headers_order_mut() = self.headers_order().cloned();
         *req.version_mut() = self.version();
         *req.redirect_mut() = self.redirect.clone();
         #[cfg(any(
@@ -215,6 +231,7 @@ impl Request {
         Method,
         Url,
         HeaderMap,
+        Option<Cow<'static, [HeaderName]>>,
         Option<Body>,
         Option<Duration>,
         Option<Duration>,
@@ -228,6 +245,7 @@ impl Request {
             self.method,
             self.url,
             self.headers,
+            self.headers_order,
             self.body,
             self.timeout,
             self.read_timeout,
@@ -348,6 +366,16 @@ impl RequestBuilder {
     pub fn headers(mut self, headers: crate::header::HeaderMap) -> RequestBuilder {
         if let Ok(ref mut req) = self.request {
             crate::util::replace_headers(req.headers_mut(), headers);
+        }
+        self
+    }
+
+    /// Set the order of the headers.
+    ///
+    /// The headers order will override client default order.
+    pub fn headers_order(mut self, order: impl Into<Cow<'static, [HeaderName]>>) -> RequestBuilder {
+        if let Ok(ref mut req) = self.request {
+            *req.headers_order_mut() = Some(order.into());
         }
         self
     }
@@ -858,6 +886,7 @@ where
             method,
             url,
             headers,
+            headers_order: None,
             body: Some(body.into()),
             timeout: None,
             read_timeout: None,
