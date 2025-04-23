@@ -1,6 +1,6 @@
 use super::{AlpnProtos, AlpsProtos, CertStore, TlsVersion};
 use boring2::ssl::{CertCompressionAlgorithm, SslCurve};
-use std::borrow::Cow;
+use std::{borrow::Cow, path::PathBuf};
 use typed_builder::TypedBuilder;
 
 /// Configuration settings for TLS connections.
@@ -9,6 +9,10 @@ use typed_builder::TypedBuilder;
 /// including the root certificate store, certificate verification, ALPN protocols, and more.
 #[derive(Debug, TypedBuilder)]
 pub struct TlsConfig {
+    /// Configures TLS key logging to a file for protocol analysis and debugging
+    #[builder(default, setter(into))]
+    pub tls_key_log_file: Option<PathBuf>,
+
     /// The root certificate store.
     /// Default use system's native certificate store.
     #[builder(default, setter(transform = |input: impl IntoCertStore| input.into()))]
@@ -194,10 +198,6 @@ pub struct TlsConfig {
     /// Only for ECH extension
     #[builder(default, setter(into))]
     pub random_aes_hw_override: bool,
-
-    /// Sets tls key log file. Used for wireshark
-    #[builder(default, setter(into))]
-    pub tls_key_log_file: Option<String>,
 }
 
 /// ====== impl TlsConfig ======

@@ -218,22 +218,17 @@ impl TlsConnector {
         }
 
         if let Some(tls_key_file) = config.tls_key_log_file {
-            match OpenOptions::new()
+            let file = OpenOptions::new()
                 .create(true)
                 .append(true)
-                .open(&tls_key_file)
-            {
-                Ok(file) => {
-                    connector.set_keylog_callback(move |_, line| {
-                        if let Err(e) = writeln!(&file, "{}", line) {
-                            log::error!("failed to write to tls key log file {e}");
-                        }
-                    });
+                .open(tls_key_file)
+                .map_err(crate::error::builder)?;
+
+            connector.set_keylog_callback(move |_, line| {
+                if let Err(e) = writeln!(&file, "{}", line) {
+                    log::error!("failed to write to tls key log file {e}");
                 }
-                Err(e) => {
-                    log::error!("failed to open tls key log file {e}");
-                }
-            }
+            });
         }
 
         // Create the `HandshakeSettings` with the default session cache capacity.

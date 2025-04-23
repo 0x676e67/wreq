@@ -2,6 +2,7 @@ use std::borrow::Cow;
 use std::future::Future;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::num::NonZeroUsize;
+use std::path::PathBuf;
 use std::pin::Pin;
 
 use std::sync::Arc;
@@ -132,6 +133,7 @@ struct Config {
     http2_max_retry_count: usize,
     connector_layers: Option<Vec<BoxedConnectorLayer>>,
     builder: Builder,
+    tls_key_log_file: Option<PathBuf>,
     tls_info: bool,
     alpn_protos: Option<AlpnProtos>,
     tls_sni: Option<bool>,
@@ -168,6 +170,7 @@ impl_debug!(
         https_only,
         http2_max_retry_count,
         builder,
+        tls_key_log_file,
         tls_info,
         tls_sni,
         verify_hostname,
@@ -224,6 +227,7 @@ impl ClientBuilder {
                 https_only: false,
                 http2_max_retry_count: 2,
                 connector_layers: None,
+                tls_key_log_file: None,
                 tls_info: false,
                 tls_sni: None,
                 alpn_protos: None,
@@ -287,6 +291,10 @@ impl ClientBuilder {
 
             let tls = {
                 let mut tls_config = config.tls_config.unwrap_or_default();
+
+                if let Some(tls_key_log_file) = config.tls_key_log_file {
+                    tls_config.tls_key_log_file = Some(tls_key_log_file);
+                }
 
                 if let Some(alpn_protos) = config.alpn_protos {
                     tls_config.alpn_protos = alpn_protos;
@@ -1129,10 +1137,7 @@ impl ClientBuilder {
     ///   to trust specific certificates that are not included in the system's default store.
     /// - Ensure that the provided verify certificate store is properly configured to avoid
     ///   potential security risks.
-    pub fn cert_store<S>(mut self, store: S) -> ClientBuilder
-    where
-        S: IntoCertStore,
-    {
+    pub fn cert_store<S: IntoCertStore>(mut self, store: S) -> ClientBuilder {
         self.config.cert_store = store.into();
         self
     }
@@ -1145,11 +1150,16 @@ impl ClientBuilder {
         self
     }
 
-    /// Configures tls key log file for wireshark decryption
-    pub fn tls_key_log_file(mut self, tls_key_log_file: String) -> ClientBuilder {
-        if let Some(tls_config) = self.config.tls_config.as_mut() {
-            tls_config.tls_key_log_file = Some(tls_key_log_file);
-        }
+    /// Configures TLS key logging to a file for protocol analysis and debugging
+    ///
+    /// This method specifies a file where TLS session keys will be written in NSS key log format.
+    /// The logged keys can be used by various network analysis tools to decrypt TLS traffic:
+    ///
+    /// * Wireshark - Import via Preferences > Protocols > TLS > (Pre)-Master-Secret log filename
+    /// * mitmproxy - Use with the --ssl-keylog-file option
+    /// * tcpdump/tshark - Use with SSLKEYLOGFILE environment variable
+    pub fn tls_key_log_file<P: Into<PathBuf>>(mut self, tls_key_log_file: P) -> ClientBuilder {
+        self.config.tls_key_log_file = Some(tls_key_log_file.into());
         self
     }
 
