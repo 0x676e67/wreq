@@ -133,7 +133,7 @@ cookie_crate = { version = "0.18", package = "cookie", optional = true }
 cookie_store = { version = "0.21", optional = true }
 
 ## compression
-async-compression = { version = "0.4.21", default-features = false, features = ["tokio"], optional = true }
+async-compression = { version = "0.4.23", default-features = false, features = ["tokio"], optional = true }
 tokio-util = { version = "0.7.0", default-features = false, features = ["codec","io"], optional = true }
 
 ## socks
