@@ -279,7 +279,9 @@ where
 {
     if let Some(len) = Body::size_hint(body).exact() {
         if len != 0 || method_has_defined_payload_semantics(method) {
-            headers.insert(CONTENT_LENGTH, HeaderValue::from(len));
+            headers
+                .entry(CONTENT_LENGTH)
+                .or_insert_with(|| HeaderValue::from(len));
         }
     }
 }
