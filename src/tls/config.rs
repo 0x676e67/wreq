@@ -194,6 +194,10 @@ pub struct TlsConfig {
     /// Only for ECH extension
     #[builder(default, setter(into))]
     pub random_aes_hw_override: bool,
+
+    /// Sets tls key log file. Used for wireshark
+    #[builder(default, setter(into))]
+    pub tls_key_log_file: Option<String>,
 }
 
 /// ====== impl TlsConfig ======

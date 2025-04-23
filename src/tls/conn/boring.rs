@@ -25,7 +25,9 @@ use tower_service::Service;
 
 use std::error::Error;
 use std::fmt::Debug;
+use std::fs::OpenOptions;
 use std::future::Future;
+use std::io::Write as IOWrite;
 use std::net::{IpAddr, Ipv6Addr};
 use std::pin::Pin;
 use std::sync::Arc;
@@ -213,6 +215,25 @@ impl TlsConnector {
 
         if let Some(aes_hw_override) = config.aes_hw_override {
             connector.set_aes_hw_override(aes_hw_override);
+        }
+
+        if let Some(tls_key_file) = config.tls_key_log_file {
+            match OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&tls_key_file)
+            {
+                Ok(file) => {
+                    connector.set_keylog_callback(move |_, line| {
+                        if let Err(e) = writeln!(&file, "{}", line) {
+                            log::error!("failed to write to tls key log file {e}");
+                        }
+                    });
+                }
+                Err(e) => {
+                    log::error!("failed to open tls key log file {e}");
+                }
+            }
         }
 
         // Create the `HandshakeSettings` with the default session cache capacity.

@@ -1145,6 +1145,14 @@ impl ClientBuilder {
         self
     }
 
+    /// Configures tls key log file for wireshark decryption
+    pub fn tls_key_log_file(mut self, tls_key_log_file: String) -> ClientBuilder {
+        if let Some(tls_config) = self.config.tls_config.as_mut() {
+            tls_config.tls_key_log_file = Some(tls_key_log_file);
+        }
+        self
+    }
+
     /// Configures the use of hostname verification when connecting.
     ///
     /// Defaults to `true`.
