@@ -148,6 +148,7 @@ async fn test_alps_new_endpoint() -> Result<(), rquest::Error> {
 }
 
 #[tokio::test]
+#[ignore = "The test was ignored because the specified server is down"]
 async fn test_aes_hw_override() -> Result<(), rquest::Error> {
     const CIPHER_LIST: &str = join!(
         ":",
