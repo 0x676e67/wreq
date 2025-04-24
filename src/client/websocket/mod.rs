@@ -178,6 +178,14 @@ impl WebSocketRequestBuilder {
         self
     }
 
+    /// Set the order of the headers.
+    ///
+    /// The headers order will override client default order.
+    pub fn headers_order(mut self, order: impl Into<Cow<'static, [HeaderName]>>) -> Self {
+        self.inner = self.inner.headers_order(order);
+        self
+    }
+
     /// Enable HTTP authentication.
     pub fn auth<V>(mut self, value: V) -> Self
     where
