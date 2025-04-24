@@ -259,6 +259,11 @@ path = "examples/emulation_provider.rs"
 required-features = ["full"]
 
 [[example]]
+name = "emulation_twitter"
+path = "examples/emulation_twitter.rs"
+required-features = ["full"]
+
+[[example]]
 name = "set_headers"
 path = "examples/set_headers.rs"
 
