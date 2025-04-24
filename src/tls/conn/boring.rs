@@ -217,11 +217,11 @@ impl TlsConnector {
             connector.set_aes_hw_override(aes_hw_override);
         }
 
-        if let Some(tls_key_file) = config.tls_key_log_file {
+        if let Some(tls_keylog_file) = config.tls_keylog_file {
             let file = OpenOptions::new()
                 .create(true)
                 .append(true)
-                .open(tls_key_file)
+                .open(tls_keylog_file)
                 .map_err(crate::error::builder)?;
 
             connector.set_keylog_callback(move |_, line| {

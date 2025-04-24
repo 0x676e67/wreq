@@ -11,7 +11,7 @@ use typed_builder::TypedBuilder;
 pub struct TlsConfig {
     /// Configures TLS key logging to a file for protocol analysis and debugging
     #[builder(default, setter(into))]
-    pub tls_key_log_file: Option<PathBuf>,
+    pub tls_keylog_file: Option<PathBuf>,
 
     /// The root certificate store.
     /// Default use system's native certificate store.

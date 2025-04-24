@@ -133,7 +133,7 @@ struct Config {
     http2_max_retry_count: usize,
     connector_layers: Option<Vec<BoxedConnectorLayer>>,
     builder: Builder,
-    tls_key_log_file: Option<PathBuf>,
+    tls_keylog_file: Option<PathBuf>,
     tls_info: bool,
     alpn_protos: Option<AlpnProtos>,
     tls_sni: Option<bool>,
@@ -170,7 +170,7 @@ impl_debug!(
         https_only,
         http2_max_retry_count,
         builder,
-        tls_key_log_file,
+        tls_keylog_file,
         tls_info,
         tls_sni,
         verify_hostname,
@@ -227,7 +227,7 @@ impl ClientBuilder {
                 https_only: false,
                 http2_max_retry_count: 2,
                 connector_layers: None,
-                tls_key_log_file: None,
+                tls_keylog_file: None,
                 tls_info: false,
                 tls_sni: None,
                 alpn_protos: None,
@@ -292,8 +292,8 @@ impl ClientBuilder {
             let tls = {
                 let mut tls_config = config.tls_config.unwrap_or_default();
 
-                if let Some(tls_key_log_file) = config.tls_key_log_file {
-                    tls_config.tls_key_log_file = Some(tls_key_log_file);
+                if let Some(tls_keylog_file) = config.tls_keylog_file {
+                    tls_config.tls_keylog_file = Some(tls_keylog_file);
                 }
 
                 if let Some(alpn_protos) = config.alpn_protos {
@@ -1158,8 +1158,8 @@ impl ClientBuilder {
     /// * Wireshark - Import via Preferences > Protocols > TLS > (Pre)-Master-Secret log filename
     /// * mitmproxy - Use with the --ssl-keylog-file option
     /// * tcpdump/tshark - Use with SSLKEYLOGFILE environment variable
-    pub fn tls_key_log_file<P: Into<PathBuf>>(mut self, tls_key_log_file: P) -> ClientBuilder {
-        self.config.tls_key_log_file = Some(tls_key_log_file.into());
+    pub fn tls_keylog_file<P: Into<PathBuf>>(mut self, tls_keylog_file: P) -> ClientBuilder {
+        self.config.tls_keylog_file = Some(tls_keylog_file.into());
         self
     }
 
