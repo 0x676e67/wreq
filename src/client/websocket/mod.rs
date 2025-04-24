@@ -259,7 +259,21 @@ impl WebSocketRequestBuilder {
         target_os = "visionos",
         target_os = "watchos",
     ))]
-    #[cfg_attr(docsrs, doc(cfg(feature = "apple-network-device-binding")))]
+    #[cfg_attr(
+        docsrs,
+        doc(cfg(any(
+            target_os = "android",
+            target_os = "fuchsia",
+            target_os = "illumos",
+            target_os = "ios",
+            target_os = "linux",
+            target_os = "macos",
+            target_os = "solaris",
+            target_os = "tvos",
+            target_os = "visionos",
+            target_os = "watchos",
+        )))
+    )]
     pub fn interface<I>(mut self, interface: I) -> Self
     where
         I: Into<std::borrow::Cow<'static, str>>,
