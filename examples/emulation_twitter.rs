@@ -101,8 +101,7 @@ async fn main() -> Result<(), rquest::Error> {
         .build()?;
 
     // Use the API you're already familiar with
-    let resp = client.post("https://tls.peet.ws/api/all").send().await?;
-
+    let resp = client.get("https://tls.peet.ws/api/all").send().await?;
     println!("{}", resp.text().await?);
 
     Ok(())
