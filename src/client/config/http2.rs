@@ -42,7 +42,9 @@ pub struct Http2Config {
     #[builder(default, setter(strip_option))]
     pub(crate) settings_order: Option<[SettingsOrder; 8]>,
 
-    #[builder(default, setter(transform = |input: impl IntoStreamDependency| input.into()))]
+    #[builder(default, setter(
+        transform = |(id, weight, exclusive): (u32, u8, bool)| Some(StreamDependency::new(StreamId::from(id), weight, exclusive)))
+    )]
     pub(crate) headers_priority: Option<StreamDependency>,
 
     #[builder(default, setter(into))]
@@ -155,8 +157,8 @@ impl Http2Config {
     ///
     /// - **Structure:** `(stream_dependency, weight, exclusive_flag)`
     /// - **Purpose:** Specifies how header frames are prioritized during transmission.
-    pub fn set_headers_priority<T: IntoStreamDependency>(&mut self, value: T) -> &mut Self {
-        self.headers_priority = value.into();
+    pub fn set_headers_priority(&mut self, (id, weight, exclusive): (u32, u8, bool)) -> &mut Self {
+        self.headers_priority = Some(StreamDependency::new(StreamId::from(id), weight, exclusive));
         self
     }
 
@@ -181,32 +183,3 @@ impl Http2Config {
         self
     }
 }
-
-/// A trait for converting various types into an optional `StreamDependency`.
-///
-/// This trait is used to provide a unified way to convert different types
-/// into an optional `StreamDependency` instance.
-pub trait IntoStreamDependency {
-    /// Converts the implementing type into an optional `StreamDependency`.
-    fn into(self) -> Option<StreamDependency>;
-}
-
-// Macro to implement IntoStreamDependency for various types
-macro_rules! impl_into_stream_dependency {
-    ($($t:ty => $body:expr),*) => {
-        $(
-            impl IntoStreamDependency for $t {
-                fn into(self) -> Option<StreamDependency> {
-                    $body(self)
-                }
-            }
-        )*
-    };
-}
-
-impl_into_stream_dependency!(
-    (u32, u8, bool) => |(id, weight, exclusive)| Some(StreamDependency::new(StreamId::from(id), weight, exclusive)),
-    Option<(u32, u8, bool)> => |opt: Option<(u32, u8, bool)>| opt.map(|(id, weight, exclusive)| StreamDependency::new(StreamId::from(id), weight, exclusive)),
-    StreamDependency => Some,
-    Option<StreamDependency> => |opt| opt
-);
