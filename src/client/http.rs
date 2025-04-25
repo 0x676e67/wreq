@@ -2528,8 +2528,8 @@ fn apply_http2_config(mut builder: Http2Builder<'_>, http2: Http2Config) {
         builder.enable_push(enable_push);
     }
 
-    if let Some(unknown_setting8) = http2.unknown_setting8 {
-        builder.unknown_setting8(unknown_setting8);
+    if let Some(enable_connect_protocol) = http2.unknown_setting8 {
+        builder.unknown_setting8(enable_connect_protocol);
     }
 
     if let Some(unknown_setting9) = http2.unknown_setting9 {

@@ -9,201 +9,282 @@ use typed_builder::TypedBuilder;
 /// including the root certificate store, certificate verification, ALPN protocols, and more.
 #[derive(Debug, TypedBuilder)]
 pub struct TlsConfig {
-    /// Configures TLS key logging to a file for protocol analysis and debugging
     #[builder(default, setter(into))]
-    pub tls_keylog_file: Option<PathBuf>,
+    pub(crate) tls_keylog_file: Option<PathBuf>,
 
-    /// The root certificate store.
-    /// Default use system's native certificate store.
     #[builder(default, setter(transform = |input: impl IntoCertStore| input.into()))]
-    pub cert_store: Option<Cow<'static, CertStore>>,
+    pub(crate) cert_store: Option<Cow<'static, CertStore>>,
 
-    /// SSL may authenticate either endpoint with an X.509 certificate.
-    /// Typically this is used to authenticate the server to the client.
-    /// These functions configure certificate verification.
     #[builder(default = true)]
-    pub cert_verification: bool,
+    pub(crate) cert_verification: bool,
 
-    /// The server_name extension (RFC 3546) allows the client to advertise the
-    /// name of the server it is connecting to. This is used in virtual hosting
-    /// deployments to select one of several certificates on a single IP.
-    /// Only the host_name name type is supported.
     #[builder(default = true)]
-    pub tls_sni: bool,
+    pub(crate) tls_sni: bool,
 
-    /// Hostname verification.
     #[builder(default = true)]
-    pub verify_hostname: bool,
+    pub(crate) verify_hostname: bool,
 
-    /// The **ALPN extension** [RFC 7301](https://datatracker.ietf.org/doc/html/rfc7301) allows negotiating different
-    /// **application-layer protocols** over a **single port**.
-    ///
-    /// **Usage Example:**
-    /// - Commonly used to negotiate **HTTP/2**.
-    /// - Default use all protocols (HTTP/1.1/HTTP/2/HTTP/3).
     #[builder(default = AlpnProtos::default())]
-    pub alpn_protos: AlpnProtos,
+    pub(crate) alpn_protos: AlpnProtos,
 
-    /// The **ALPS extension** (*draft-vvv-tls-alps*) enables exchanging
-    /// **application-layer settings** during the **TLS handshake**.
-    ///
-    /// This is specifically for applications negotiated via **ALPN**.
     #[builder(default, setter(into))]
-    pub alps_protos: Option<AlpsProtos>,
+    pub(crate) alps_protos: Option<AlpsProtos>,
 
-    /// Switching to a new codepoint for TLS ALPS extension to allow adding more data
-    /// in the ACCEPT_CH HTTP/2 and HTTP/3 frame. The ACCEPT_CH HTTP/2 frame with the
-    /// existing TLS ALPS extension had an arithmetic overflow bug in Chrome ALPS decoder.
-    /// It limits the capability to add more than 128 bytes data (in theory, the problem
-    /// range is 128 bytes to 255 bytes) to the ACCEPT_CH frame.
     #[builder(default = false)]
-    pub alps_use_new_codepoint: bool,
+    pub(crate) alps_use_new_codepoint: bool,
 
-    /// **Session Tickets** (RFC 5077) allow **session resumption** without the need for server-side state.
-    ///
-    /// This mechanism works as follows:
-    /// 1. The server maintains a **secret ticket key**.
-    /// 2. The server sends the client **opaque encrypted session parameters**, referred to as a **ticket**.
-    /// 3. When resuming the session, the client sends the **ticket** to the server.
-    /// 4. The server decrypts the ticket to recover the session state.
-    ///
-    /// **Reference:** See [RFC 5077](https://tools.ietf.org/html/rfc5077) for further details on session tickets.
     #[builder(default = true)]
-    pub session_ticket: bool,
+    pub(crate) session_ticket: bool,
 
-    /// Sets the minimum protocol version for ssl to version.
     #[builder(default, setter(into))]
-    pub min_tls_version: Option<TlsVersion>,
+    pub(crate) min_tls_version: Option<TlsVersion>,
 
-    /// Sets the maximum protocol version for ssl to version.
     #[builder(default, setter(into))]
-    pub max_tls_version: Option<TlsVersion>,
+    pub(crate) max_tls_version: Option<TlsVersion>,
 
-    /// Connections can be configured with **PSK (Pre-Shared Key)** cipher suites.
-    ///
-    /// **PSK cipher suites** use **out-of-band pre-shared keys** for authentication,
-    /// instead of relying on certificates.
-    ///
-    /// **Reference:** See [RFC 4279](https://datatracker.ietf.org/doc/html/rfc4279) for details.
     #[builder(default = false)]
-    pub pre_shared_key: bool,
+    pub(crate) pre_shared_key: bool,
 
-    /// Configures whether the **client** will send a **GREASE ECH** extension
-    /// when no supported **ECHConfig** is available.
-    ///
-    /// GREASE (Generate Random Extensions And Sustain Extensibility)
-    /// helps prevent ossification of the TLS protocol by randomly
-    /// introducing unknown extensions into the handshake.
-    ///
-    /// **ECH (Encrypted Client Hello)** improves privacy by encrypting
-    /// sensitive handshake information, such as the Server Name Indication (SNI).
-    ///
-    /// When no valid **ECHConfig** is present, enabling this setting allows
-    /// the client to still send a GREASE extension for compatibility purposes.
-    ///
-    /// **Reference:** See [RFC 8701](https://datatracker.ietf.org/doc/html/rfc8701) for GREASE details.
     #[builder(default = false)]
-    pub enable_ech_grease: bool,
+    pub(crate) enable_ech_grease: bool,
 
-    /// Configures whether ClientHello extensions should be permuted.
-    ///
-    /// Note: This is gated to non-fips because the fips feature builds with a separate
-    /// version of BoringSSL which doesn't yet include these APIs.
-    /// Once the submoduled fips commit is upgraded, these gates can be removed.
     #[builder(default, setter(into))]
-    pub permute_extensions: Option<bool>,
+    pub(crate) permute_extensions: Option<bool>,
 
-    /// Set's whether the context should enable GREASE.
     #[builder(default, setter(into))]
-    pub grease_enabled: Option<bool>,
+    pub(crate) grease_enabled: Option<bool>,
 
-    /// Enables OCSP stapling on all client SSL handshakes.
     #[builder(default = false)]
-    pub enable_ocsp_stapling: bool,
+    pub(crate) enable_ocsp_stapling: bool,
 
-    /// Sets the list of signed certificate timestamps that is sent to clients that request it
     #[builder(default = false)]
-    pub enable_signed_cert_timestamps: bool,
+    pub(crate) enable_signed_cert_timestamps: bool,
 
-    /// Sets the context's record size limit.
     #[builder(default, setter(into))]
-    pub record_size_limit: Option<u16>,
+    pub(crate) record_size_limit: Option<u16>,
 
-    /// PSK session ticket skip.
     #[builder(default = false)]
-    pub psk_skip_session_ticket: bool,
+    pub(crate) psk_skip_session_ticket: bool,
 
-    /// Sets the context's key shares length limit.
     #[builder(default, setter(into))]
-    pub key_shares_limit: Option<u8>,
+    pub(crate) key_shares_limit: Option<u8>,
 
-    /// Sets PSK with (EC)DHE key establishment (psk_dhe_ke)
-    /// [Reference](https://github.com/openssl/openssl/issues/13918)
     #[builder(default = true)]
-    pub psk_dhe_ke: bool,
+    pub(crate) psk_dhe_ke: bool,
 
-    /// SSL Renegotiation is enabled by default on many servers.
-    /// This setting allows the client to send a renegotiation_info extension
     #[builder(default = true)]
-    pub renegotiation: bool,
+    pub(crate) renegotiation: bool,
 
-    /// **Delegated Credentials** (RFC 9345) provide a mechanism for TLS 1.3 endpoints
-    /// to issue temporary credentials for authentication using their existing certificate.
-    ///
-    /// Once issued, **delegated credentials** **cannot be revoked**.
-    /// To minimize potential damage if the credential's secret key is compromised,
-    /// these credentials are valid only for a **short duration** (e.g., days, hours, or minutes).
-    ///
-    /// **Reference:** See [RFC 9345](https://datatracker.ietf.org/doc/html/rfc9345) for details.
     #[builder(default, setter(strip_option, into))]
-    pub delegated_credentials: Option<Cow<'static, str>>,
+    pub(crate) delegated_credentials: Option<Cow<'static, str>>,
 
-    /// BoringSSL uses a **mini-language** to configure **cipher suites**.
-    ///
-    /// This configuration language manages two ordered lists:
-    /// - **Enabled Ciphers**: An ordered list of currently active cipher suites.
-    /// - **Disabled but Available Ciphers**: An ordered list of cipher suites that are currently inactive but can be enabled.
-    ///
-    /// Initially, **all ciphers are disabled** and follow a **default ordering**.
-    ///
-    /// Developers can use this mini-language to fine-tune which ciphers are enabled,
-    /// their priority, and which ones are explicitly disabled.
-    ///
-    /// **Reference:** See [BoringSSL Cipher Suite Documentation](https://commondatastorage.googleapis.com/chromium-boringssl-docs/ssl.h.html#SSL_CTX_set_cipher_list) for details.
     #[builder(default, setter(strip_option, into))]
-    pub cipher_list: Option<Cow<'static, str>>,
+    pub(crate) cipher_list: Option<Cow<'static, str>>,
 
-    /// Sets the context's supported curves.
     #[builder(default, setter(strip_option, into))]
-    pub curves: Option<Cow<'static, [SslCurve]>>,
+    pub(crate) curves: Option<Cow<'static, [SslCurve]>>,
 
-    /// Sets the context's supported signature algorithms.
     #[builder(default, setter(strip_option, into))]
-    pub sigalgs_list: Option<Cow<'static, str>>,
+    pub(crate) sigalgs_list: Option<Cow<'static, str>>,
 
-    /// Certificates in TLS 1.3 can be compressed [RFC 8879](https://datatracker.ietf.org/doc/html/rfc8879).
     #[builder(default, setter(transform = |input: impl IntoCertCompressionAlgorithm| input.into()))]
-    pub cert_compression_algorithm: Option<Cow<'static, [CertCompressionAlgorithm]>>,
+    pub(crate) cert_compression_algorithm: Option<Cow<'static, [CertCompressionAlgorithm]>>,
 
-    /// Sets the context's extension permutation indices.
     #[builder(default, setter(strip_option, into))]
-    pub extension_permutation_indices: Option<Cow<'static, [u8]>>,
+    pub(crate) extension_permutation_indices: Option<Cow<'static, [u8]>>,
 
-    /// Sets whether the aes hardware override should be enabled.
-    /// Only for ECH extension
     #[builder(default, setter(into))]
-    pub aes_hw_override: Option<bool>,
+    pub(crate) aes_hw_override: Option<bool>,
 
-    /// Sets whether the random aes hardware override should be enabled.
-    /// Only for ECH extension
     #[builder(default, setter(into))]
-    pub random_aes_hw_override: bool,
+    pub(crate) random_aes_hw_override: bool,
 }
 
-/// ====== impl TlsConfig ======
 impl Default for TlsConfig {
     fn default() -> Self {
         Self::builder().build()
+    }
+}
+
+impl TlsConfig {
+    /// Sets the file path for TLS key logging.
+    pub fn set_tls_keylog_file<P: Into<PathBuf>>(&mut self, path: P) -> &mut Self {
+        self.tls_keylog_file = Some(path.into());
+        self
+    }
+
+    /// Sets the certificate store used for TLS verification.
+    pub fn set_cert_store<S: IntoCertStore>(&mut self, store: S) -> &mut Self {
+        self.cert_store = store.into();
+        self
+    }
+
+    /// Enables or disables certificate verification.
+    pub fn set_cert_verification(&mut self, enabled: bool) -> &mut Self {
+        self.cert_verification = enabled;
+        self
+    }
+
+    /// Enables or disables Server Name Indication (SNI).
+    pub fn set_tls_sni(&mut self, enabled: bool) -> &mut Self {
+        self.tls_sni = enabled;
+        self
+    }
+
+    /// Enables or disables hostname verification.
+    pub fn set_verify_hostname(&mut self, enabled: bool) -> &mut Self {
+        self.verify_hostname = enabled;
+        self
+    }
+
+    /// Sets the ALPN protocols to use.
+    pub fn set_alpn_protos(&mut self, protos: AlpnProtos) -> &mut Self {
+        self.alpn_protos = protos;
+        self
+    }
+
+    /// Sets the ALPS protocols to use.
+    pub fn set_alps_protos<A: Into<Option<AlpsProtos>>>(&mut self, protos: A) -> &mut Self {
+        self.alps_protos = protos.into();
+        self
+    }
+
+    /// Enables or disables the use of a new codepoint for ALPS.
+    pub fn set_alps_use_new_codepoint(&mut self, enabled: bool) -> &mut Self {
+        self.alps_use_new_codepoint = enabled;
+        self
+    }
+
+    /// Enables or disables TLS session tickets.
+    pub fn set_session_ticket(&mut self, enabled: bool) -> &mut Self {
+        self.session_ticket = enabled;
+        self
+    }
+
+    /// Sets the minimum TLS version to use.
+    pub fn set_min_tls_version<V: Into<Option<TlsVersion>>>(&mut self, version: V) -> &mut Self {
+        self.min_tls_version = version.into();
+        self
+    }
+
+    /// Sets the maximum TLS version to use.
+    pub fn set_max_tls_version<V: Into<Option<TlsVersion>>>(&mut self, version: V) -> &mut Self {
+        self.max_tls_version = version.into();
+        self
+    }
+
+    /// Enables or disables pre-shared key authentication.
+    pub fn set_pre_shared_key(&mut self, enabled: bool) -> &mut Self {
+        self.pre_shared_key = enabled;
+        self
+    }
+
+    /// Enables or disables GREASE ECH extension.
+    pub fn set_enable_ech_grease(&mut self, enabled: bool) -> &mut Self {
+        self.enable_ech_grease = enabled;
+        self
+    }
+
+    /// Sets whether ClientHello extensions should be permuted.
+    pub fn set_permute_extensions<B: Into<Option<bool>>>(&mut self, permute: B) -> &mut Self {
+        self.permute_extensions = permute.into();
+        self
+    }
+
+    /// Enables or disables GREASE for the context.
+    pub fn set_grease_enabled<B: Into<Option<bool>>>(&mut self, enabled: B) -> &mut Self {
+        self.grease_enabled = enabled.into();
+        self
+    }
+
+    /// Enables or disables OCSP stapling.
+    pub fn set_enable_ocsp_stapling(&mut self, enabled: bool) -> &mut Self {
+        self.enable_ocsp_stapling = enabled;
+        self
+    }
+
+    /// Enables or disables sending signed certificate timestamps.
+    pub fn set_enable_signed_cert_timestamps(&mut self, enabled: bool) -> &mut Self {
+        self.enable_signed_cert_timestamps = enabled;
+        self
+    }
+
+    /// Sets the record size limit.
+    pub fn set_record_size_limit<U: Into<Option<u16>>>(&mut self, limit: U) -> &mut Self {
+        self.record_size_limit = limit.into();
+        self
+    }
+
+    /// Enables or disables PSK session ticket skipping.
+    pub fn set_psk_skip_session_ticket(&mut self, skip: bool) -> &mut Self {
+        self.psk_skip_session_ticket = skip;
+        self
+    }
+
+    /// Sets the key shares length limit.
+    pub fn set_key_shares_limit<U: Into<Option<u8>>>(&mut self, limit: U) -> &mut Self {
+        self.key_shares_limit = limit.into();
+        self
+    }
+
+    /// Enables or disables PSK with DHE key establishment.
+    pub fn set_psk_dhe_ke(&mut self, enabled: bool) -> &mut Self {
+        self.psk_dhe_ke = enabled;
+        self
+    }
+
+    /// Enables or disables SSL renegotiation.
+    pub fn set_renegotiation(&mut self, enabled: bool) -> &mut Self {
+        self.renegotiation = enabled;
+        self
+    }
+
+    /// Sets the delegated credentials to use.
+    pub fn set_delegated_credentials<S: Into<Cow<'static, str>>>(&mut self, creds: S) -> &mut Self {
+        self.delegated_credentials = Some(creds.into());
+        self
+    }
+
+    /// Sets the cipher list to use.
+    pub fn set_cipher_list<S: Into<Cow<'static, str>>>(&mut self, ciphers: S) -> &mut Self {
+        self.cipher_list = Some(ciphers.into());
+        self
+    }
+
+    /// Sets the supported curves.
+    pub fn set_curves<C: Into<Cow<'static, [SslCurve]>>>(&mut self, curves: C) -> &mut Self {
+        self.curves = Some(curves.into());
+        self
+    }
+
+    /// Sets the supported signature algorithms.
+    pub fn set_sigalgs_list<S: Into<Cow<'static, str>>>(&mut self, sigalgs: S) -> &mut Self {
+        self.sigalgs_list = Some(sigalgs.into());
+        self
+    }
+
+    /// Sets the certificate compression algorithms.
+    pub fn set_cert_compression_algorithm<A: IntoCertCompressionAlgorithm>(&mut self, algs: A) -> &mut Self {
+        self.cert_compression_algorithm = algs.into();
+        self
+    }
+
+    /// Sets the extension permutation indices.
+    pub fn set_extension_permutation_indices<I: Into<Cow<'static, [u8]>>>(&mut self, indices: I) -> &mut Self {
+        self.extension_permutation_indices = Some(indices.into());
+        self
+    }
+
+    /// Sets whether the AES hardware override should be enabled.
+    pub fn set_aes_hw_override<B: Into<Option<bool>>>(&mut self, enabled: B) -> &mut Self {
+        self.aes_hw_override = enabled.into();
+        self
+    }
+
+    /// Sets whether the random AES hardware override should be enabled.
+    pub fn set_random_aes_hw_override(&mut self, enabled: bool) -> &mut Self {
+        self.random_aes_hw_override = enabled;
+        self
     }
 }
 
@@ -241,7 +322,7 @@ impl<T: IntoCertStore> IntoCertStore for Option<T> {
 ///
 /// This trait is used to provide a unified way to convert different types
 /// into an optional `Cow` containing a slice of `CertCompressionAlgorithm`.
-pub(crate) trait IntoCertCompressionAlgorithm {
+pub trait IntoCertCompressionAlgorithm {
     /// Converts the given value into an optional `Cow` containing a slice of `CertCompressionAlgorithm`.
     fn into(self) -> Option<Cow<'static, [CertCompressionAlgorithm]>>;
 }
