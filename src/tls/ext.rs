@@ -1,5 +1,3 @@
-#[cfg(any(feature = "webpki-roots", feature = "native-roots"))]
-use super::x509::LOAD_CERTS;
 use super::{AlpnProtos, AlpsProtos, CertStore, TlsVersion};
 use boring2::{
     error::ErrorStack,
@@ -8,7 +6,6 @@ use boring2::{
         SslVerifyMode,
     },
 };
-use std::borrow::Cow;
 
 /// SslConnectorBuilderExt trait for `SslConnectorBuilder`.
 pub trait SslConnectorBuilderExt {
@@ -37,10 +34,7 @@ pub trait SslConnectorBuilderExt {
     ) -> crate::Result<SslConnectorBuilder>;
 
     /// Configure the CertStore for the given `SslConnectorBuilder`.
-    fn cert_store(
-        self,
-        provider: Option<Cow<'static, CertStore>>,
-    ) -> crate::Result<SslConnectorBuilder>;
+    fn cert_store(self, provider: Option<CertStore>) -> crate::Result<SslConnectorBuilder>;
 }
 
 /// SslRefExt trait for `SslRef`.
@@ -114,37 +108,11 @@ impl SslConnectorBuilderExt for SslConnectorBuilder {
     }
 
     #[inline]
-    fn cert_store(
-        mut self,
-        store: Option<Cow<'static, CertStore>>,
-    ) -> crate::Result<SslConnectorBuilder> {
+    fn cert_store(mut self, store: Option<CertStore>) -> crate::Result<SslConnectorBuilder> {
         if let Some(store) = store {
-            match store {
-                Cow::Borrowed(store) => {
-                    store.add_to_tls_ref(&mut self)?;
-                }
-                Cow::Owned(store) => {
-                    store.add_to_tls(&mut self)?;
-                }
-            };
+            store.add_to_tls(&mut self)?;
         } else {
-            // WebPKI root certificates are enabled (regardless of whether native-roots is also enabled).
-            #[cfg(any(feature = "webpki-roots", feature = "native-roots"))]
-            {
-                if let Some(store) = LOAD_CERTS.as_ref() {
-                    log::debug!("Using CA certs from webpki/native roots");
-                    store.add_to_tls_ref(&mut self)?;
-                } else {
-                    log::debug!("No CA certs provided, using system default");
-                    self.set_default_verify_paths()?;
-                }
-            }
-
-            // Neither native-roots nor WebPKI roots are enabled, proceed with the default builder.
-            #[cfg(not(any(feature = "webpki-roots", feature = "native-roots")))]
-            {
-                self.set_default_verify_paths()?;
-            }
+            self.set_default_verify_paths()?;
         }
 
         Ok(self)

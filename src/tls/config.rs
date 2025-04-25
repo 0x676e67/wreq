@@ -16,7 +16,7 @@ pub struct TlsConfig {
     /// The root certificate store.
     /// Default use system's native certificate store.
     #[builder(default, setter(transform = |input: impl IntoCertStore| input.into()))]
-    pub cert_store: Option<Cow<'static, CertStore>>,
+    pub cert_store: Option<CertStore>,
 
     /// SSL may authenticate either endpoint with an X.509 certificate.
     /// Typically this is used to authenticate the server to the client.
@@ -213,13 +213,13 @@ impl Default for TlsConfig {
 /// into an optional `Cow` containing a `CertStore`.
 pub trait IntoCertStore {
     /// Converts the given value into an optional `Cow` containing a `CertStore`.
-    fn into(self) -> Option<Cow<'static, CertStore>>;
+    fn into(self) -> Option<CertStore>;
 }
 
 macro_rules! impl_into_cert_store {
     ($($t:ty => $body:expr),* $(,)?) => {
         $(impl IntoCertStore for $t {
-            fn into(self) -> Option<Cow<'static, CertStore>> {
+            fn into(self) -> Option<CertStore> {
                 $body(self)
             }
         })*
@@ -227,12 +227,12 @@ macro_rules! impl_into_cert_store {
 }
 
 impl_into_cert_store!(
-    &'static CertStore => |s| Some(Cow::Borrowed(s)),
-    CertStore => |s| Some(Cow::Owned(s))
+    &'static CertStore => |s: &'static CertStore| Some(s.clone()),
+    CertStore => |s| Some(s)
 );
 
 impl<T: IntoCertStore> IntoCertStore for Option<T> {
-    fn into(self) -> Option<Cow<'static, CertStore>> {
+    fn into(self) -> Option<CertStore> {
         self.and_then(|v| v.into())
     }
 }

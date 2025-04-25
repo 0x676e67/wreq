@@ -139,7 +139,7 @@ struct Config {
     tls_sni: Option<bool>,
     verify_hostname: Option<bool>,
     cert_verification: Option<bool>,
-    cert_store: Option<Cow<'static, CertStore>>,
+    cert_store: Option<CertStore>,
     min_tls_version: Option<TlsVersion>,
     max_tls_version: Option<TlsVersion>,
     tls_config: Option<TlsConfig>,
@@ -292,6 +292,29 @@ impl ClientBuilder {
             let tls = {
                 let mut tls_config = config.tls_config.unwrap_or_default();
 
+                let _store = {
+                    #[cfg(any(feature = "native-roots", feature = "webpki-roots"))]
+                    static DEFAULT_CERTS: std::sync::LazyLock<Vec<crate::tls::Certificate>> = std::sync::LazyLock::new(|| {
+                        #[cfg(feature = "webpki-roots")]
+                        let der_certs = webpki_root_certs::TLS_SERVER_ROOT_CERTS;
+
+                        #[cfg(all(feature = "native-roots", not(feature = "webpki-roots")))]
+                        let der_certs = rustls_native_certs::load_native_certs().certs;
+
+                        der_certs
+                            .iter()
+                            .map(crate::tls::Certificate::from_der)
+                            .collect::<crate::Result<Vec<_>>>()
+                            .unwrap_or_default()
+                    });
+
+                    let mut builder = CertStore::builder();
+                    for cert in DEFAULT_CERTS.iter() {
+                        builder = builder.add_der_cert(cert.clone())
+                    }
+                    builder.build()?
+                };
+
                 if let Some(tls_keylog_file) = config.tls_keylog_file {
                     tls_config.tls_keylog_file = Some(tls_keylog_file);
                 }
@@ -355,7 +378,7 @@ impl ClientBuilder {
                 tls_sni: config.tls_sni,
                 verify_hostname: config.verify_hostname,
                 cert_verification: config.cert_verification,
-                root_cert_store: config.cert_store,
+                cert_store: config.cert_store,
                 min_tls_version: config.min_tls_version,
                 max_tls_version: config.max_tls_version,
             })),
@@ -1098,7 +1121,7 @@ impl ClientBuilder {
     {
         match CertStore::from_certs(certs) {
             Ok(store) => {
-                self.config.cert_store = Some(Cow::Owned(store));
+                self.config.cert_store = Some(store);
             }
             Err(err) => self.config.error = Some(err),
         }
@@ -1779,7 +1802,7 @@ struct ClientRef {
     tls_sni: Option<bool>,
     verify_hostname: Option<bool>,
     cert_verification: Option<bool>,
-    root_cert_store: Option<Cow<'static, CertStore>>,
+    cert_store: Option<CertStore>,
     min_tls_version: Option<TlsVersion>,
     max_tls_version: Option<TlsVersion>,
 }
@@ -2029,8 +2052,8 @@ impl<'c> ClientUpdate<'c> {
                     tls_config.cert_verification = cert_verification;
                 }
 
-                if current.root_cert_store.is_some() {
-                    tls_config.cert_store = current.root_cert_store.clone();
+                if current.cert_store.is_some() {
+                    tls_config.cert_store = current.cert_store.clone();
                 }
 
                 if current.min_tls_version.is_some() {
