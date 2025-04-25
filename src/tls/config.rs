@@ -7,7 +7,7 @@ use typed_builder::TypedBuilder;
 ///
 /// This struct defines various parameters to fine-tune the behavior of a TLS connection,
 /// including the root certificate store, certificate verification, ALPN protocols, and more.
-#[derive(Debug, TypedBuilder)]
+#[derive(Clone, Debug, TypedBuilder)]
 pub struct TlsConfig {
     #[builder(default, setter(into))]
     pub(crate) tls_keylog_file: Option<PathBuf>,
