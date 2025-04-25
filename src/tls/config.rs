@@ -383,8 +383,8 @@ macro_rules! impl_into_cert_compression_algorithm {
 }
 
 impl_into_cert_compression_algorithm!(
-    &'static [CertCompressionAlgorithm] => |s| Some(Cow::Borrowed(s)),
     &'static CertCompressionAlgorithm => |s: &'static CertCompressionAlgorithm| Some(Cow::Owned(vec![*s])),
+    &'static [CertCompressionAlgorithm] => |s| Some(Cow::Borrowed(s)),
     CertCompressionAlgorithm => |s| Some(Cow::Owned(vec![s])),
     Vec<CertCompressionAlgorithm> => |s| Some(Cow::Owned(s)),
 );
