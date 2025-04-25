@@ -1,5 +1,5 @@
+use rquest::CertStore;
 use rquest::Client;
-use rquest::{CertStore, Error};
 use std::sync::LazyLock;
 
 #[tokio::main]
@@ -14,38 +14,31 @@ async fn main() -> Result<(), rquest::Error> {
 }
 
 /// Loads the system root certificates.
-fn load_system_root_certs() -> Option<&'static CertStore> {
-    static LOAD_CERTS: LazyLock<Option<CertStore>> =
-        LazyLock::new(|| match CertStore::builder().set_default_paths().build() {
-            Ok(store) => Some(store),
-            Err(err) => {
-                log::error!("tls failed to load root certificates: {err}");
-                None
-            }
-        });
+fn load_system_root_certs() -> CertStore {
+    static STORE: LazyLock<CertStore> = LazyLock::new(|| {
+        CertStore::builder()
+            .set_default_paths()
+            .build()
+            .expect("Failed to load system root certs")
+    });
 
-    LOAD_CERTS.as_ref()
+    STORE.clone()
 }
 
 /// Loads statically the root certificates from the webpki certificate store.
-fn load_static_root_certs() -> Option<&'static CertStore> {
-    static LOAD_CERTS: LazyLock<Option<CertStore>> = LazyLock::new(|| {
-        match CertStore::from_der_certs(webpki_root_certs::TLS_SERVER_ROOT_CERTS) {
-            Ok(store) => Some(store),
-            Err(err) => {
-                log::error!("tls failed to load root certificates: {err}");
-                None
-            }
-        }
+fn load_static_root_certs() -> CertStore {
+    static STORE: LazyLock<CertStore> = LazyLock::new(|| {
+        CertStore::from_der_certs(webpki_root_certs::TLS_SERVER_ROOT_CERTS)
+            .expect("Failed to load static root certs")
     });
 
-    LOAD_CERTS.as_ref()
+    STORE.clone()
 }
 
 /// Loads dynamically the root certificates from the native certificate store.
-fn load_dynamic_root_certs() -> Result<CertStore, Error> {
-    log::info!("Loaded dynamic root certs");
+fn load_dynamic_root_certs() -> CertStore {
     CertStore::from_der_certs(&rustls_native_certs::load_native_certs().certs)
+        .expect("Failed to load dynamic root certs")
 }
 
 async fn use_static_root_certs() -> Result<(), rquest::Error> {
@@ -67,7 +60,7 @@ async fn use_static_root_certs() -> Result<(), rquest::Error> {
 
 async fn use_dynamic_root_certs() -> Result<(), rquest::Error> {
     let client = Client::builder()
-        .cert_store(load_dynamic_root_certs()?)
+        .cert_store(load_dynamic_root_certs())
         .build()?;
 
     let text = client

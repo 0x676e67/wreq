@@ -22,7 +22,7 @@ use crate::dns::{DnsResolverWithOverrides, DynResolver, Resolve, gai::GaiResolve
 use crate::error::{BoxError, Error};
 use crate::into_url::try_uri;
 use crate::proxy::IntoProxy;
-use crate::tls::{CertificateInput, IntoCertStore};
+use crate::tls::CertificateInput;
 use crate::util::{
     self,
     client::{
@@ -294,19 +294,20 @@ impl ClientBuilder {
 
                 let _store = {
                     #[cfg(any(feature = "native-roots", feature = "webpki-roots"))]
-                    static DEFAULT_CERTS: std::sync::LazyLock<Vec<crate::tls::Certificate>> = std::sync::LazyLock::new(|| {
-                        #[cfg(feature = "webpki-roots")]
-                        let der_certs = webpki_root_certs::TLS_SERVER_ROOT_CERTS;
+                    static DEFAULT_CERTS: std::sync::LazyLock<Vec<crate::tls::Certificate>> =
+                        std::sync::LazyLock::new(|| {
+                            #[cfg(feature = "webpki-roots")]
+                            let der_certs = webpki_root_certs::TLS_SERVER_ROOT_CERTS;
 
-                        #[cfg(all(feature = "native-roots", not(feature = "webpki-roots")))]
-                        let der_certs = rustls_native_certs::load_native_certs().certs;
+                            #[cfg(all(feature = "native-roots", not(feature = "webpki-roots")))]
+                            let der_certs = rustls_native_certs::load_native_certs().certs;
 
-                        der_certs
-                            .iter()
-                            .map(crate::tls::Certificate::from_der)
-                            .collect::<crate::Result<Vec<_>>>()
-                            .unwrap_or_default()
-                    });
+                            der_certs
+                                .iter()
+                                .map(crate::tls::Certificate::from_der)
+                                .collect::<crate::Result<Vec<_>>>()
+                                .unwrap_or_default()
+                        });
 
                     let mut builder = CertStore::builder();
                     for cert in DEFAULT_CERTS.iter() {
@@ -1160,8 +1161,8 @@ impl ClientBuilder {
     ///   to trust specific certificates that are not included in the system's default store.
     /// - Ensure that the provided verify certificate store is properly configured to avoid
     ///   potential security risks.
-    pub fn cert_store<S: IntoCertStore>(mut self, store: S) -> ClientBuilder {
-        self.config.cert_store = store.into();
+    pub fn cert_store(mut self, store: CertStore) -> ClientBuilder {
+        self.config.cert_store = Some(store);
         self
     }
 
@@ -1181,7 +1182,10 @@ impl ClientBuilder {
     /// * Wireshark - Import via Preferences > Protocols > TLS > (Pre)-Master-Secret log filename
     /// * mitmproxy - Use with the --ssl-keylog-file option
     /// * tcpdump/tshark - Use with SSLKEYLOGFILE environment variable
-    pub fn tls_keylog_file<P: Into<PathBuf>>(mut self, tls_keylog_file: P) -> ClientBuilder {
+    pub fn tls_keylog_file<P>(mut self, tls_keylog_file: P) -> ClientBuilder
+    where
+        P: Into<PathBuf>,
+    {
         self.config.tls_keylog_file = Some(tls_keylog_file.into());
         self
     }
