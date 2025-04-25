@@ -264,13 +264,19 @@ impl TlsConfig {
     }
 
     /// Sets the certificate compression algorithms.
-    pub fn set_cert_compression_algorithm<A: IntoCertCompressionAlgorithm>(&mut self, algs: A) -> &mut Self {
+    pub fn set_cert_compression_algorithm<A: IntoCertCompressionAlgorithm>(
+        &mut self,
+        algs: A,
+    ) -> &mut Self {
         self.cert_compression_algorithm = algs.into();
         self
     }
 
     /// Sets the extension permutation indices.
-    pub fn set_extension_permutation_indices<I: Into<Cow<'static, [u8]>>>(&mut self, indices: I) -> &mut Self {
+    pub fn set_extension_permutation_indices<I: Into<Cow<'static, [u8]>>>(
+        &mut self,
+        indices: I,
+    ) -> &mut Self {
         self.extension_permutation_indices = Some(indices.into());
         self
     }
