@@ -108,13 +108,19 @@ impl Default for TlsConfig {
 
 impl TlsConfig {
     /// Sets the file path for TLS key logging.
-    pub fn set_tls_keylog_file<P: Into<PathBuf>>(&mut self, path: P) -> &mut Self {
+    pub fn set_tls_keylog_file<T>(&mut self, path: T) -> &mut Self
+    where
+        T: Into<PathBuf>,
+    {
         self.tls_keylog_file = Some(path.into());
         self
     }
 
     /// Sets the certificate store used for TLS verification.
-    pub fn set_cert_store<S: IntoCertStore>(&mut self, store: S) -> &mut Self {
+    pub fn set_cert_store<T>(&mut self, store: T) -> &mut Self
+    where
+        T: IntoCertStore,
+    {
         self.cert_store = store.into();
         self
     }
@@ -144,7 +150,10 @@ impl TlsConfig {
     }
 
     /// Sets the ALPS protocols to use.
-    pub fn set_alps_protos<A: Into<Option<AlpsProtos>>>(&mut self, protos: A) -> &mut Self {
+    pub fn set_alps_protos<T>(&mut self, protos: T) -> &mut Self
+    where
+        T: Into<Option<AlpsProtos>>,
+    {
         self.alps_protos = protos.into();
         self
     }
@@ -162,13 +171,19 @@ impl TlsConfig {
     }
 
     /// Sets the minimum TLS version to use.
-    pub fn set_min_tls_version<V: Into<Option<TlsVersion>>>(&mut self, version: V) -> &mut Self {
+    pub fn set_min_tls_version<T>(&mut self, version: T) -> &mut Self
+    where
+        T: Into<Option<TlsVersion>>,
+    {
         self.min_tls_version = version.into();
         self
     }
 
     /// Sets the maximum TLS version to use.
-    pub fn set_max_tls_version<V: Into<Option<TlsVersion>>>(&mut self, version: V) -> &mut Self {
+    pub fn set_max_tls_version<T>(&mut self, version: T) -> &mut Self
+    where
+        T: Into<Option<TlsVersion>>,
+    {
         self.max_tls_version = version.into();
         self
     }
@@ -186,13 +201,19 @@ impl TlsConfig {
     }
 
     /// Sets whether ClientHello extensions should be permuted.
-    pub fn set_permute_extensions<B: Into<Option<bool>>>(&mut self, permute: B) -> &mut Self {
+    pub fn set_permute_extensions<T>(&mut self, permute: T) -> &mut Self
+    where
+        T: Into<Option<bool>>,
+    {
         self.permute_extensions = permute.into();
         self
     }
 
     /// Enables or disables GREASE for the context.
-    pub fn set_grease_enabled<B: Into<Option<bool>>>(&mut self, enabled: B) -> &mut Self {
+    pub fn set_grease_enabled<T>(&mut self, enabled: T) -> &mut Self
+    where
+        T: Into<Option<bool>>,
+    {
         self.grease_enabled = enabled.into();
         self
     }
@@ -222,7 +243,10 @@ impl TlsConfig {
     }
 
     /// Sets the key shares length limit.
-    pub fn set_key_shares_limit<U: Into<Option<u8>>>(&mut self, limit: U) -> &mut Self {
+    pub fn set_key_shares_limit<T>(&mut self, limit: T) -> &mut Self
+    where
+        T: Into<Option<u8>>,
+    {
         self.key_shares_limit = limit.into();
         self
     }
@@ -240,49 +264,64 @@ impl TlsConfig {
     }
 
     /// Sets the delegated credentials to use.
-    pub fn set_delegated_credentials<S: Into<Cow<'static, str>>>(&mut self, creds: S) -> &mut Self {
+    pub fn set_delegated_credentials<T>(&mut self, creds: T) -> &mut Self
+    where
+        T: Into<Cow<'static, str>>,
+    {
         self.delegated_credentials = Some(creds.into());
         self
     }
 
     /// Sets the cipher list to use.
-    pub fn set_cipher_list<S: Into<Cow<'static, str>>>(&mut self, ciphers: S) -> &mut Self {
+    pub fn set_cipher_list<T>(&mut self, ciphers: T) -> &mut Self
+    where
+        T: Into<Cow<'static, str>>,
+    {
         self.cipher_list = Some(ciphers.into());
         self
     }
 
     /// Sets the supported curves.
-    pub fn set_curves<C: Into<Cow<'static, [SslCurve]>>>(&mut self, curves: C) -> &mut Self {
+    pub fn set_curves<T>(&mut self, curves: T) -> &mut Self
+    where
+        T: Into<Cow<'static, [SslCurve]>>,
+    {
         self.curves = Some(curves.into());
         self
     }
 
     /// Sets the supported signature algorithms.
-    pub fn set_sigalgs_list<S: Into<Cow<'static, str>>>(&mut self, sigalgs: S) -> &mut Self {
+    pub fn set_sigalgs_list<T>(&mut self, sigalgs: T) -> &mut Self
+    where
+        T: Into<Cow<'static, str>>,
+    {
         self.sigalgs_list = Some(sigalgs.into());
         self
     }
 
     /// Sets the certificate compression algorithms.
-    pub fn set_cert_compression_algorithm<A: IntoCertCompressionAlgorithm>(
-        &mut self,
-        algs: A,
-    ) -> &mut Self {
+    pub fn set_cert_compression_algorithm<T>(&mut self, algs: T) -> &mut Self
+    where
+        T: IntoCertCompressionAlgorithm,
+    {
         self.cert_compression_algorithm = algs.into();
         self
     }
 
     /// Sets the extension permutation indices.
-    pub fn set_extension_permutation_indices<I: Into<Cow<'static, [u8]>>>(
-        &mut self,
-        indices: I,
-    ) -> &mut Self {
+    pub fn set_extension_permutation_indices<T>(&mut self, indices: T) -> &mut Self
+    where
+        T: Into<Cow<'static, [u8]>>,
+    {
         self.extension_permutation_indices = Some(indices.into());
         self
     }
 
     /// Sets whether the AES hardware override should be enabled.
-    pub fn set_aes_hw_override<B: Into<Option<bool>>>(&mut self, enabled: B) -> &mut Self {
+    pub fn set_aes_hw_override<T>(&mut self, enabled: T) -> &mut Self
+    where
+        T: Into<Option<bool>>,
+    {
         self.aes_hw_override = enabled.into();
         self
     }
