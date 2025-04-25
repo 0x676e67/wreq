@@ -9,97 +9,210 @@ use typed_builder::TypedBuilder;
 /// including stream management, window sizes, frame limits, and header config.
 #[derive(Clone, Debug, TypedBuilder)]
 pub struct Http2Config {
-    /// The initial stream ID for HTTP/2 communication.
+    #[builder(default, setter(into))]
+    pub(crate) initial_stream_id: Option<u32>,
+
+    #[builder(default, setter(into))]
+    pub(crate) initial_connection_window_size: Option<u32>,
+
+    #[builder(default, setter(into))]
+    pub(crate) header_table_size: Option<u32>,
+
+    #[builder(default, setter(into))]
+    pub(crate) enable_push: Option<bool>,
+
+    #[builder(default, setter(into))]
+    pub(crate) max_concurrent_streams: Option<u32>,
+
+    #[builder(default, setter(into))]
+    pub(crate) initial_stream_window_size: Option<u32>,
+
+    #[builder(default, setter(into))]
+    pub(crate) max_frame_size: Option<u32>,
+
+    #[builder(default, setter(into))]
+    pub(crate) max_header_list_size: Option<u32>,
+
+    #[builder(default, setter(into))]
+    pub(crate) unknown_setting8: Option<bool>,
+
+    #[builder(default, setter(into))]
+    pub(crate) unknown_setting9: Option<bool>,
+
+    #[builder(default, setter(strip_option))]
+    pub(crate) settings_order: Option<[SettingsOrder; 8]>,
+
+    #[builder(default, setter(transform = |input: impl IntoStreamDependency| input.into()))]
+    pub(crate) headers_priority: Option<StreamDependency>,
+
+    #[builder(default, setter(into))]
+    pub(crate) headers_pseudo_order: Option<[PseudoOrder; 4]>,
+
+    #[builder(default, setter(strip_option, into))]
+    pub(crate) priority: Option<Cow<'static, [Priority]>>,
+}
+
+impl Default for Http2Config {
+    fn default() -> Self {
+        Self::builder().build()
+    }
+}
+
+impl Http2Config {
+    /// Sets the initial stream ID for HTTP/2 communication.
     ///
     /// - **Purpose:** Identifies the starting stream ID for client-server communication.
-    #[builder(default, setter(into))]
-    pub initial_stream_id: Option<u32>,
+    pub fn set_initial_stream_id<T>(&mut self, value: T) -> &mut Self
+    where
+        T: Into<Option<u32>>,
+    {
+        self.initial_stream_id = value.into();
+        self
+    }
 
-    // ============== Window Update Frame Settings ==============
-    /// The initial connection-level window size.
+    /// Sets the initial connection-level window size.
     ///
     /// - **Purpose:** Controls the maximum amount of data the connection can send without acknowledgment.
-    #[builder(default, setter(into))]
-    pub initial_connection_window_size: Option<u32>,
+    pub fn set_initial_connection_window_size<T>(&mut self, value: T) -> &mut Self
+    where
+        T: Into<Option<u32>>,
+    {
+        self.initial_connection_window_size = value.into();
+        self
+    }
 
-    // ============== Settings Frame Parameters ==============
-    /// The size of the header compression table.
+    /// Sets the size of the header compression table.
     ///
     /// - **Purpose:** Adjusts the memory used for HPACK header compression.
-    #[builder(default, setter(into))]
-    pub header_table_size: Option<u32>,
+    pub fn set_header_table_size<T>(&mut self, value: T) -> &mut Self
+    where
+        T: Into<Option<u32>>,
+    {
+        self.header_table_size = value.into();
+        self
+    }
 
     /// Enables or disables server push functionality.
     ///
     /// - **Purpose:** Allows the server to send resources to the client proactively.
-    #[builder(default, setter(into))]
-    pub enable_push: Option<bool>,
+    pub fn set_enable_push<T>(&mut self, value: T) -> &mut Self
+    where
+        T: Into<Option<bool>>,
+    {
+        self.enable_push = value.into();
+        self
+    }
 
-    /// The maximum number of concurrent streams allowed.
+    /// Sets the maximum number of concurrent streams allowed.
     ///
     /// - **Purpose:** Limits the number of simultaneous open streams.
-    #[builder(default, setter(into))]
-    pub max_concurrent_streams: Option<u32>,
+    pub fn set_max_concurrent_streams<T>(&mut self, value: T) -> &mut Self
+    where
+        T: Into<Option<u32>>,
+    {
+        self.max_concurrent_streams = value.into();
+        self
+    }
 
-    /// The initial window size for stream-level flow control.
+    /// Sets the initial window size for stream-level flow control.
     ///
     /// - **Purpose:** Controls the amount of data a single stream can send without acknowledgment.
-    #[builder(default, setter(into))]
-    pub initial_stream_window_size: Option<u32>,
+    pub fn set_initial_stream_window_size<T>(&mut self, value: T) -> &mut Self
+    where
+        T: Into<Option<u32>>,
+    {
+        self.initial_stream_window_size = value.into();
+        self
+    }
 
-    /// The maximum frame size allowed.
+    /// Sets the maximum frame size allowed.
     ///
     /// - **Purpose:** Limits the size of individual HTTP/2 frames.
-    #[builder(default, setter(into))]
-    pub max_frame_size: Option<u32>,
+    pub fn set_max_frame_size<T>(&mut self, value: T) -> &mut Self
+    where
+        T: Into<Option<u32>>,
+    {
+        self.max_frame_size = value.into();
+        self
+    }
 
-    /// The maximum size of header lists.
+    /// Sets the maximum size of header lists.
     ///
     /// - **Purpose:** Limits the total size of header blocks to prevent resource exhaustion.
-    #[builder(default, setter(into))]
-    pub max_header_list_size: Option<u32>,
+    pub fn set_max_header_list_size<T>(&mut self, value: T) -> &mut Self
+    where
+        T: Into<Option<u32>>,
+    {
+        self.max_header_list_size = value.into();
+        self
+    }
 
-    /// Placeholder for an unknown HTTP/2 setting with identifier `8`.
+    /// Placeholder for an enable connect protocol setting.
     ///
     /// - **Purpose:** Reserved for experimental or vendor-specific extensions.
-    #[builder(default, setter(into))]
-    pub unknown_setting8: Option<bool>,
+    pub fn unknown_setting8<T>(&mut self, value: T) -> &mut Self
+    where
+        T: Into<Option<bool>>,
+    {
+        self.unknown_setting8 = value.into();
+        self
+    }
 
-    /// Placeholder for an unknown HTTP/2 setting with identifier `9`.
+    /// Sets the placeholder for an unknown HTTP/2 setting with identifier `9`.
     ///
     /// - **Purpose:** Reserved for experimental or vendor-specific extensions.
-    #[builder(default, setter(into))]
-    pub unknown_setting9: Option<bool>,
+    pub fn set_unknown_setting9<T>(&mut self, value: T) -> &mut Self
+    where
+        T: Into<Option<bool>>,
+    {
+        self.unknown_setting9 = value.into();
+        self
+    }
 
-    /// The order in which settings are applied.
+    /// Sets the order in which settings are applied.
     ///
     /// - **Structure:** Array of `SettingsOrder` with up to 8 elements.
     /// - **Purpose:** Defines the sequence for applying HTTP/2 settings.
-    #[builder(default, setter(strip_option))]
-    pub settings_order: Option<[SettingsOrder; 8]>,
+    pub fn set_settings_order(&mut self, value: [SettingsOrder; 8]) -> &mut Self {
+        self.settings_order = Some(value);
+        self
+    }
 
-    // ============== Headers Frame Settings ==============
-    /// The priority settings for header frames.
+    /// Sets the priority settings for header frames.
     ///
     /// - **Structure:** `(stream_dependency, weight, exclusive_flag)`
     /// - **Purpose:** Specifies how header frames are prioritized during transmission.
-    #[builder(default, setter(transform = |input: impl IntoStreamDependency| input.into()))]
-    pub headers_priority: Option<StreamDependency>,
+    pub fn set_headers_priority<T>(&mut self, value: T) -> &mut Self
+    where
+        T: IntoStreamDependency,
+    {
+        self.headers_priority = value.into();
+        self
+    }
 
-    /// The order of pseudo-header fields.
+    /// Sets the order of pseudo-header fields.
     ///
     /// - **Structure:** Array of `PseudoOrder` with up to 4 elements.
     /// - **Purpose:** Determines the sequence in which pseudo-headers are transmitted.
-    #[builder(default, setter(into))]
-    pub headers_pseudo_order: Option<[PseudoOrder; 4]>,
+    pub fn set_headers_pseudo_order<T>(&mut self, value: T) -> &mut Self
+    where
+        T: Into<Option<[PseudoOrder; 4]>>,
+    {
+        self.headers_pseudo_order = value.into();
+        self
+    }
 
-    // ============== Priority Frame Settings ==============
-    /// The priority configuration for priority frames.
+    /// Sets the priority configuration for priority frames.
     ///
     /// - **Structure:** A borrowed slice of `Priority` settings.
     /// - **Purpose:** Defines stream dependencies and priorities.
-    #[builder(default, setter(strip_option, into))]
-    pub priority: Option<Cow<'static, [Priority]>>,
+    pub fn set_priority<T>(&mut self, value: T) -> &mut Self
+    where
+        T: Into<Cow<'static, [Priority]>>,
+    {
+        self.priority = Some(value.into());
+        self
+    }
 }
 
 /// A trait for converting various types into an optional `StreamDependency`.
