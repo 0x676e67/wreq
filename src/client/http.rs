@@ -22,7 +22,9 @@ use crate::dns::{DnsResolverWithOverrides, DynResolver, Resolve, gai::GaiResolve
 use crate::error::{BoxError, Error};
 use crate::into_url::try_uri;
 use crate::proxy::IntoProxy;
-use crate::tls::{Certificate, CertificateInput};
+#[cfg(any(feature = "native-roots", feature = "webpki-roots"))]
+use crate::tls::Certificate;
+use crate::tls::CertificateInput;
 use crate::util::{
     self,
     client::{
@@ -374,8 +376,8 @@ impl ClientBuilder {
                 alpn_protos: config.alpn_protos,
                 tls_sni: config.tls_sni,
                 verify_hostname: config.verify_hostname,
-                cert_verification: config.cert_verification,
                 cert_store: config.cert_store,
+                cert_verification: config.cert_verification,
                 min_tls_version: config.min_tls_version,
                 max_tls_version: config.max_tls_version,
             })),
@@ -1801,8 +1803,8 @@ struct ClientRef {
     alpn_protos: Option<AlpnProtos>,
     tls_sni: Option<bool>,
     verify_hostname: Option<bool>,
-    cert_verification: Option<bool>,
     cert_store: Option<CertStore>,
+    cert_verification: Option<bool>,
     min_tls_version: Option<TlsVersion>,
     max_tls_version: Option<TlsVersion>,
 }
