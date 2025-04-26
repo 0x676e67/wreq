@@ -5,7 +5,7 @@ use std::num::NonZeroUsize;
 use std::path::PathBuf;
 use std::pin::Pin;
 
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 use std::task::{Context, Poll};
 use std::time::Duration;
 use std::{collections::HashMap, convert::TryInto, net::SocketAddr};
@@ -22,7 +22,7 @@ use crate::dns::{DnsResolverWithOverrides, DynResolver, Resolve, gai::GaiResolve
 use crate::error::{BoxError, Error};
 use crate::into_url::try_uri;
 use crate::proxy::IntoProxy;
-use crate::tls::CertificateInput;
+use crate::tls::{Certificate, CertificateInput};
 use crate::util::{
     self,
     client::{
@@ -133,13 +133,13 @@ struct Config {
     http2_max_retry_count: usize,
     connector_layers: Option<Vec<BoxedConnectorLayer>>,
     builder: Builder,
+    alpn_protos: Option<AlpnProtos>,
     tls_keylog_file: Option<PathBuf>,
     tls_info: bool,
-    alpn_protos: Option<AlpnProtos>,
     tls_sni: Option<bool>,
     verify_hostname: Option<bool>,
-    cert_verification: Option<bool>,
     cert_store: Option<CertStore>,
+    cert_verification: Option<bool>,
     min_tls_version: Option<TlsVersion>,
     max_tls_version: Option<TlsVersion>,
     tls_config: Option<TlsConfig>,
@@ -227,13 +227,13 @@ impl ClientBuilder {
                 https_only: false,
                 http2_max_retry_count: 2,
                 connector_layers: None,
+                alpn_protos: None,
                 tls_keylog_file: None,
                 tls_info: false,
                 tls_sni: None,
-                alpn_protos: None,
                 verify_hostname: None,
-                cert_verification: None,
                 cert_store: None,
+                cert_verification: None,
                 min_tls_version: None,
                 max_tls_version: None,
                 tls_config: None,
@@ -292,10 +292,12 @@ impl ClientBuilder {
             let tls = {
                 let mut tls_config = config.tls_config.unwrap_or_default();
 
-                let _store = {
+                if let Some(ref cert_store) = config.cert_store {
+                    tls_config.cert_store = Some(cert_store.clone());
+                } else if tls_config.cert_store.is_none() {
                     #[cfg(any(feature = "native-roots", feature = "webpki-roots"))]
-                    static DEFAULT_CERTS: std::sync::LazyLock<Vec<crate::tls::Certificate>> =
-                        std::sync::LazyLock::new(|| {
+                    {
+                        static DEFAULT_CERTS: LazyLock<Vec<Certificate>> = LazyLock::new(|| {
                             #[cfg(feature = "webpki-roots")]
                             let der_certs = webpki_root_certs::TLS_SERVER_ROOT_CERTS;
 
@@ -304,17 +306,19 @@ impl ClientBuilder {
 
                             der_certs
                                 .iter()
-                                .map(crate::tls::Certificate::from_der)
+                                .map(Certificate::from_der)
                                 .collect::<crate::Result<Vec<_>>>()
                                 .unwrap_or_default()
                         });
 
-                    let mut builder = CertStore::builder();
-                    for cert in DEFAULT_CERTS.iter() {
-                        builder = builder.add_der_cert(cert.clone())
+                        tls_config.cert_store =
+                            Some(CertStore::from_certs(DEFAULT_CERTS.iter().cloned())?);
                     }
-                    builder.build()?
-                };
+                }
+
+                if let Some(cert_verification) = config.cert_verification {
+                    tls_config.cert_verification = cert_verification;
+                }
 
                 if let Some(tls_keylog_file) = config.tls_keylog_file {
                     tls_config.tls_keylog_file = Some(tls_keylog_file);
@@ -330,14 +334,6 @@ impl ClientBuilder {
 
                 if let Some(verify_hostname) = config.verify_hostname {
                     tls_config.verify_hostname = verify_hostname;
-                }
-
-                if let Some(cert_verification) = config.cert_verification {
-                    tls_config.cert_verification = cert_verification;
-                }
-
-                if config.cert_store.is_some() {
-                    tls_config.cert_store = config.cert_store.clone();
                 }
 
                 if config.min_tls_version.is_some() {

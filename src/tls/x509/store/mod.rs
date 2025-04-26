@@ -1,5 +1,3 @@
-#![allow(missing_debug_implementations)]
-
 mod parser;
 
 use super::{Certificate, CertificateInput, Identity};
@@ -220,7 +218,6 @@ impl CertStoreBuilder {
     ///
     /// This method finalizes the builder and constructs the `CertStore`
     /// containing all the added certificates.
-    #[inline]
     pub fn build(self) -> crate::Result<CertStore> {
         let builder = self.builder.transpose()?;
         Ok(CertStore {
