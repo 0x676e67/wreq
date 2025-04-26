@@ -5,7 +5,7 @@ use std::num::NonZeroUsize;
 use std::path::PathBuf;
 use std::pin::Pin;
 
-use std::sync::{Arc, LazyLock};
+use std::sync::Arc;
 use std::task::{Context, Poll};
 use std::time::Duration;
 use std::{collections::HashMap, convert::TryInto, net::SocketAddr};
@@ -22,8 +22,6 @@ use crate::dns::{DnsResolverWithOverrides, DynResolver, Resolve, gai::GaiResolve
 use crate::error::{BoxError, Error};
 use crate::into_url::try_uri;
 use crate::proxy::IntoProxy;
-#[cfg(any(feature = "native-roots", feature = "webpki-roots"))]
-use crate::tls::Certificate;
 use crate::tls::CertificateInput;
 use crate::util::{
     self,
@@ -299,19 +297,23 @@ impl ClientBuilder {
                 } else if tls_config.cert_store.is_none() {
                     #[cfg(any(feature = "native-roots", feature = "webpki-roots"))]
                     {
-                        static DEFAULT_CERTS: LazyLock<Vec<Certificate>> = LazyLock::new(|| {
-                            #[cfg(feature = "webpki-roots")]
-                            let der_certs = webpki_root_certs::TLS_SERVER_ROOT_CERTS;
+                        static DEFAULT_CERTS: std::sync::LazyLock<Vec<crate::tls::Certificate>> =
+                            std::sync::LazyLock::new(|| {
+                                #[cfg(feature = "webpki-roots")]
+                                let der_certs = webpki_root_certs::TLS_SERVER_ROOT_CERTS;
 
-                            #[cfg(all(feature = "native-roots", not(feature = "webpki-roots")))]
-                            let der_certs = rustls_native_certs::load_native_certs().certs;
+                                #[cfg(all(
+                                    feature = "native-roots",
+                                    not(feature = "webpki-roots")
+                                ))]
+                                let der_certs = rustls_native_certs::load_native_certs().certs;
 
-                            der_certs
-                                .iter()
-                                .map(Certificate::from_der)
-                                .collect::<crate::Result<Vec<_>>>()
-                                .unwrap_or_default()
-                        });
+                                der_certs
+                                    .iter()
+                                    .map(crate::tls::Certificate::from_der)
+                                    .collect::<crate::Result<Vec<_>>>()
+                                    .unwrap_or_default()
+                            });
 
                         tls_config.cert_store =
                             Some(CertStore::from_certs(DEFAULT_CERTS.iter().cloned())?);
