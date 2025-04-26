@@ -482,8 +482,10 @@ impl ClientBuilder {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn default_headers(mut self, mut headers: HeaderMap) -> ClientBuilder {
-        std::mem::swap(&mut self.config.headers, &mut headers);
+    pub fn default_headers(mut self, headers: HeaderMap) -> ClientBuilder {
+        for (key, value) in headers.iter() {
+            self.config.headers.insert(key, value.clone());
+        }
         self
     }
 
@@ -1050,8 +1052,10 @@ impl ClientBuilder {
         let mut emulation = factory.emulation();
 
         // apply default headers
-        if let Some(mut headers) = emulation.default_headers {
-            std::mem::swap(&mut self.config.headers, &mut headers);
+        if let Some(headers) = emulation.default_headers {
+            for (key, value) in headers.iter() {
+                self.config.headers.insert(key, value.clone());
+            }
         }
 
         // apply headers order
@@ -2039,8 +2043,10 @@ impl<'c> ClientUpdate<'c> {
 
         if let Some(emulation) = self.emulation {
             // apply default headers
-            if let Some(mut headers) = emulation.default_headers {
-                std::mem::swap(&mut current.headers, &mut headers);
+            if let Some(headers) = emulation.default_headers {
+                for (key, value) in headers.iter() {
+                    current.headers.insert(key, value.clone());
+                }
             }
 
             // apply headers order
