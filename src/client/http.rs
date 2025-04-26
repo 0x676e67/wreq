@@ -298,6 +298,7 @@ impl ClientBuilder {
                     tls_config.cert_store = Some(cert_store.clone());
                 } else if tls_config.cert_store.is_none() {
                     let mut builder = CertStore::builder();
+
                     #[cfg(any(feature = "native-roots", feature = "webpki-roots"))]
                     {
                         static DEFAULT_CERTS: std::sync::LazyLock<Vec<crate::tls::Certificate>> =
@@ -319,6 +320,11 @@ impl ClientBuilder {
                             });
 
                         builder = builder.add_certs(DEFAULT_CERTS.iter().cloned());
+                    }
+
+                    #[cfg(not(any(feature = "native-roots", feature = "webpki-roots")))]
+                    {
+                        builder = builder.set_default_paths();
                     }
 
                     if let Some(identify) = config.identity {
