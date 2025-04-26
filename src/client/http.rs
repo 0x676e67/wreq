@@ -327,8 +327,8 @@ impl ClientBuilder {
                         builder = builder.set_default_paths();
                     }
 
-                    if let Some(identify) = config.identity {
-                        builder = builder.identity(identify);
+                    if let Some(identity) = config.identity {
+                        builder = builder.identity(identity);
                     }
 
                     tls_config.cert_store = Some(builder.build()?);
