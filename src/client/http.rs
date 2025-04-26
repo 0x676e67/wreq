@@ -338,8 +338,8 @@ impl ClientBuilder {
                     tls_config.cert_verification = cert_verification;
                 }
 
-                if let Some(tls_keylog_file) = config.tls_keylog_file {
-                    tls_config.tls_keylog_file = Some(tls_keylog_file);
+                if let Some(ref tls_keylog_file) = config.tls_keylog_file {
+                    tls_config.tls_keylog_file = Some(tls_keylog_file.clone());
                 }
 
                 if let Some(alpn_protos) = config.alpn_protos {
@@ -390,6 +390,7 @@ impl ClientBuilder {
                 proxies_maybe_http_auth,
                 network_scheme: config.network_scheme,
                 alpn_protos: config.alpn_protos,
+                tls_keylog_file: config.tls_keylog_file,
                 tls_sni: config.tls_sni,
                 verify_hostname: config.verify_hostname,
                 cert_store: config.cert_store,
@@ -1827,6 +1828,7 @@ struct ClientRef {
     proxies_maybe_http_auth: bool,
     network_scheme: NetworkSchemeBuilder,
     alpn_protos: Option<AlpnProtos>,
+    tls_keylog_file: Option<PathBuf>,
     tls_sni: Option<bool>,
     verify_hostname: Option<bool>,
     cert_store: Option<CertStore>,
@@ -2080,6 +2082,10 @@ impl<'c> ClientUpdate<'c> {
 
                 if let Some(cert_verification) = current.cert_verification {
                     tls_config.cert_verification = cert_verification;
+                }
+
+                if current.tls_keylog_file.is_some() {
+                    tls_config.tls_keylog_file = current.tls_keylog_file.clone();
                 }
 
                 if current.cert_store.is_some() {
