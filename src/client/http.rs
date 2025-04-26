@@ -319,7 +319,7 @@ impl ClientBuilder {
                                     .unwrap_or_default()
                             });
 
-                        builder = builder.add_certs(DEFAULT_CERTS.iter().cloned());
+                        builder = builder.add_der_certs(DEFAULT_CERTS.iter().cloned());
                     }
 
                     #[cfg(not(any(feature = "native-roots", feature = "webpki-roots")))]
