@@ -31,7 +31,7 @@ use crate::util::{
     },
     rt::{TokioExecutor, tokio::TokioTimer},
 };
-use crate::{CertStore, Http1Config, Http2Config, TlsConfig, error};
+use crate::{CertStore, Http1Config, Http2Config, Identity, TlsConfig, error};
 use crate::{IntoUrl, Method, Proxy, StatusCode, Url};
 use crate::{
     redirect,
@@ -138,6 +138,7 @@ struct Config {
     tls_info: bool,
     tls_sni: Option<bool>,
     verify_hostname: Option<bool>,
+    identity: Option<Identity>,
     cert_store: Option<CertStore>,
     cert_verification: Option<bool>,
     min_tls_version: Option<TlsVersion>,
@@ -232,6 +233,7 @@ impl ClientBuilder {
                 tls_info: false,
                 tls_sni: None,
                 verify_hostname: None,
+                identity: None,
                 cert_store: None,
                 cert_verification: None,
                 min_tls_version: None,
@@ -295,6 +297,7 @@ impl ClientBuilder {
                 if let Some(ref cert_store) = config.cert_store {
                     tls_config.cert_store = Some(cert_store.clone());
                 } else if tls_config.cert_store.is_none() {
+                    let mut builder = CertStore::builder();
                     #[cfg(any(feature = "native-roots", feature = "webpki-roots"))]
                     {
                         static DEFAULT_CERTS: std::sync::LazyLock<Vec<crate::tls::Certificate>> =
@@ -315,9 +318,14 @@ impl ClientBuilder {
                                     .unwrap_or_default()
                             });
 
-                        tls_config.cert_store =
-                            Some(CertStore::from_certs(DEFAULT_CERTS.iter().cloned())?);
+                        builder = builder.add_certs(DEFAULT_CERTS.iter().cloned());
                     }
+
+                    if let Some(identify) = config.identity {
+                        builder = builder.identity(identify);
+                    }
+
+                    tls_config.cert_store = Some(builder.build()?);
                 }
 
                 if let Some(cert_verification) = config.cert_verification {
@@ -1126,6 +1134,12 @@ impl ClientBuilder {
             }
             Err(err) => self.config.error = Some(err),
         }
+        self
+    }
+
+    /// Sets the identity to be used for client certificate authentication.
+    pub fn identity(mut self, identity: Identity) -> ClientBuilder {
+        self.config.identity = Some(identity);
         self
     }
 
