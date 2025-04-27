@@ -10,29 +10,12 @@ use std::{fmt::Debug, path::Path};
 /// This builder provides methods to add certificates to the store from various formats,
 /// and to set default paths for the certificate store. Once all desired certificates
 /// have been added, the `build` method can be used to create the `CertStore`.
-///
-/// # Example
-///
-/// ```rust
-/// use rquest::CertStore;
-///
-/// let store = CertStore::builder()
-///     .add_cert(&der_or_pem_cert)
-///     .add_der_cert(&der_cert)
-///     .add_pem_cert(&pem_cert)
-///     .set_default_paths()
-///     .build()?;
-/// ```
 pub struct CertStoreBuilder {
     builder: crate::Result<X509StoreBuilder>,
 }
 
 impl CertStoreBuilder {
     /// Adds a DER-encoded certificate to the certificate store.
-    ///
-    /// # Parameters
-    ///
-    /// - `cert`: A reference to a byte slice containing the DER-encoded certificate.
     #[inline]
     pub fn add_der_cert<'c, C>(self, cert: C) -> Self
     where
@@ -42,10 +25,6 @@ impl CertStoreBuilder {
     }
 
     /// Adds a PEM-encoded certificate to the certificate store.
-    ///
-    /// # Parameters
-    ///
-    /// - `cert`: A reference to a byte slice containing the PEM-encoded certificate.
     #[inline]
     pub fn add_pem_cert<'c, C>(self, cert: C) -> Self
     where
@@ -55,10 +34,6 @@ impl CertStoreBuilder {
     }
 
     /// Adds multiple DER-encoded certificates to the certificate store.
-    ///
-    /// # Parameters
-    ///
-    /// - `certs`: An iterator over DER-encoded certificates.
     #[inline]
     pub fn add_der_certs<'c, I>(self, certs: I) -> Self
     where
@@ -69,10 +44,6 @@ impl CertStoreBuilder {
     }
 
     /// Adds multiple PEM-encoded certificates to the certificate store.
-    ///
-    /// # Parameters
-    ///
-    /// - `certs`: An iterator over PEM-encoded certificates.
     #[inline]
     pub fn add_pem_certs<'c, I>(self, certs: I) -> Self
     where
@@ -83,10 +54,6 @@ impl CertStoreBuilder {
     }
 
     /// Adds a PEM-encoded certificate stack to the certificate store.
-    ///
-    /// # Parameters
-    ///
-    /// - `certs`: A PEM-encoded certificate stack.
     pub fn add_stack_pem_certs<C>(mut self, certs: C) -> Self
     where
         C: AsRef<[u8]>,
@@ -106,10 +73,6 @@ impl CertStoreBuilder {
     ///
     /// This method reads the file at the specified path, expecting it to contain a PEM-encoded
     /// certificate stack, and then adds the certificates to the store.
-    ///
-    /// # Parameters
-    ///
-    /// - `path`: A reference to a path of the PEM file.
     pub fn add_file_pem_certs<P>(mut self, path: P) -> Self
     where
         P: AsRef<Path>,
@@ -135,6 +98,15 @@ impl CertStoreBuilder {
             }
         }
         self
+    }
+
+    /// Constructs the `CertStore`.
+    ///
+    /// This method finalizes the builder and constructs the `CertStore`
+    /// containing all the added certificates.
+    pub fn build(self) -> crate::Result<CertStore> {
+        let builder = self.builder?;
+        Ok(CertStore(builder.build()))
     }
 
     fn parse_cert<'c, C, P>(mut self, cert: C, parser: P) -> Self
@@ -171,15 +143,6 @@ impl CertStoreBuilder {
             }
         }
         self
-    }
-
-    /// Constructs the `CertStore`.
-    ///
-    /// This method finalizes the builder and constructs the `CertStore`
-    /// containing all the added certificates.
-    pub fn build(self) -> crate::Result<CertStore> {
-        let builder = self.builder?;
-        Ok(CertStore(builder.build()))
     }
 }
 
@@ -235,10 +198,6 @@ impl CertStore {
     }
 
     /// Creates a new `CertStore` from a collection of DER-encoded certificates.
-    ///
-    /// # Parameters
-    ///
-    /// - `certs`: An iterator over DER-encoded certificates.
     #[inline]
     pub fn from_der_certs<'c, C>(certs: C) -> crate::Result<CertStore>
     where
@@ -249,10 +208,6 @@ impl CertStore {
     }
 
     /// Creates a new `CertStore` from a collection of PEM-encoded certificates.
-    ///
-    /// # Parameters
-    ///
-    /// - `certs`: An iterator over PEM-encoded certificates.
     #[inline]
     pub fn from_pem_certs<'c, C>(certs: C) -> crate::Result<CertStore>
     where
@@ -263,10 +218,6 @@ impl CertStore {
     }
 
     /// Creates a new `CertStore` from a PEM-encoded certificate stack.
-    ///
-    /// # Parameters
-    ///
-    /// - `certs`: A PEM-encoded certificate stack.
     #[inline]
     pub fn from_pem_stack<C>(certs: C) -> crate::Result<CertStore>
     where
@@ -279,10 +230,6 @@ impl CertStore {
     ///
     /// This method reads the file at the specified path, expecting it to contain a PEM-encoded
     /// certificate stack, and then constructs a `CertStore` from it.
-    ///
-    /// # Parameters
-    ///
-    /// - `path`: A reference to a path of the PEM file.
     #[inline]
     pub fn from_pem_file<P>(path: P) -> crate::Result<CertStore>
     where
