@@ -69,36 +69,36 @@ impl EmulationProviderBuilder {
     /// Sets the TLS configuration for the `EmulationProvider`.
     pub fn tls_config<C>(mut self, config: C) -> Self
     where
-        C: Into<TlsConfig>,
+        C: Into<Option<TlsConfig>>,
     {
-        self.provider.tls_config = Some(config.into());
+        self.provider.tls_config = config.into();
         self
     }
 
     /// Sets the HTTP/1 configuration for the `EmulationProvider`.
     pub fn http1_config<C>(mut self, config: C) -> Self
     where
-        C: Into<Http1Config>,
+        C: Into<Option<Http1Config>>,
     {
-        self.provider.http1_config = Some(config.into());
+        self.provider.http1_config = config.into();
         self
     }
 
     /// Sets the HTTP/2 configuration for the `EmulationProvider`.
     pub fn http2_config<C>(mut self, config: C) -> Self
     where
-        C: Into<Http2Config>,
+        C: Into<Option<Http2Config>>,
     {
-        self.provider.http2_config = Some(config.into());
+        self.provider.http2_config = config.into();
         self
     }
 
     /// Sets the default headers for the `EmulationProvider`.
     pub fn default_headers<H>(mut self, headers: H) -> Self
     where
-        H: Into<HeaderMap>,
+        H: Into<Option<HeaderMap>>,
     {
-        self.provider.default_headers = Some(headers.into());
+        self.provider.default_headers = headers.into();
         self
     }
 
