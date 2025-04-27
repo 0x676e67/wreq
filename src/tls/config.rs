@@ -99,7 +99,7 @@ impl TlsConfigBuilder {
     }
 
     /// Sets the certificate store used for TLS verification.
-    pub fn cert_store<T>(mut self, store: CertStore) -> Self {
+    pub fn cert_store(mut self, store: CertStore) -> Self {
         self.config.cert_store = Some(store);
         self
     }
