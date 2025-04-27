@@ -18,7 +18,6 @@ use std::sync::LazyLock;
 use std::task::{Context, Poll};
 use tokio::io;
 use tokio_boring2::SslStream;
-use typed_builder::TypedBuilder;
 
 pub use self::boring::{HttpsConnector, TlsConnector};
 
@@ -28,44 +27,108 @@ fn key_index() -> Result<Index<Ssl, SessionKey>, ErrorStack> {
     IDX.clone()
 }
 
+/// Builds for [`HandshakeSettings`].
+pub struct HandshakeSettingsBuilder {
+    settings: HandshakeSettings,
+}
+
 /// Settings for [`TlsConnector`]
-#[derive(TypedBuilder)]
 pub struct HandshakeSettings {
-    /// Sets whether to enable session caching capacity. Defaults to `8`.
-    #[builder(default = 8)]
     session_cache_capacity: usize,
-
-    /// Sets whether to enable session caching. Defaults to `false`.
-    #[builder(default = false)]
     session_cache: bool,
-
-    /// Sets whether to enable no session ticket. Defaults to `false`.
-    #[builder(default = false)]
     skip_session_ticket: bool,
-
-    /// Sets whether to enable ECH grease. Defaults to `false`.
-    #[builder(default = false)]
     enable_ech_grease: bool,
-
-    /// Sets whether to enable hostname verification. Defaults to `true`.
-    #[builder(default = true)]
     verify_hostname: bool,
-
-    /// Sets whether to enable TLS SNI. Defaults to `true`.
-    #[builder(default = true)]
     tls_sni: bool,
-
-    /// Sets the ALPS. Defaults to `None`.
-    #[builder(default = None)]
     alps_protos: Option<AlpsProtos>,
-
-    /// Sets whether to use the new ALPS codepoint. Defaults to `false`.
-    #[builder(default = false)]
     alps_use_new_codepoint: bool,
-
-    /// Sets whether the random aes hardware override should be enabled.
-    #[builder(default = false)]
     random_aes_hw_override: bool,
+}
+
+impl HandshakeSettingsBuilder {
+    /// Sets the session cache capacity.
+    pub fn session_cache_capacity(mut self, capacity: usize) -> Self {
+        self.settings.session_cache_capacity = capacity;
+        self
+    }
+
+    /// Enables or disables session cache.
+    pub fn session_cache(mut self, enabled: bool) -> Self {
+        self.settings.session_cache = enabled;
+        self
+    }
+
+    /// Skips the session ticket.
+    pub fn skip_session_ticket(mut self, skip: bool) -> Self {
+        self.settings.skip_session_ticket = skip;
+        self
+    }
+
+    /// Enables or disables ECH grease.
+    pub fn enable_ech_grease(mut self, enable: bool) -> Self {
+        self.settings.enable_ech_grease = enable;
+        self
+    }
+
+    /// Sets hostname verification.
+    pub fn verify_hostname(mut self, verify: bool) -> Self {
+        self.settings.verify_hostname = verify;
+        self
+    }
+
+    /// Sets TLS SNI.
+    pub fn tls_sni(mut self, sni: bool) -> Self {
+        self.settings.tls_sni = sni;
+        self
+    }
+
+    /// Sets ALPS protocol.
+    pub fn alps_protos(mut self, protos: Option<AlpsProtos>) -> Self {
+        self.settings.alps_protos = protos;
+        self
+    }
+
+    /// Sets ALPS new codepoint usage.
+    pub fn alps_use_new_codepoint(mut self, use_new: bool) -> Self {
+        self.settings.alps_use_new_codepoint = use_new;
+        self
+    }
+
+    /// Sets random AES hardware override.
+    pub fn random_aes_hw_override(mut self, override_: bool) -> Self {
+        self.settings.random_aes_hw_override = override_;
+        self
+    }
+
+    /// Builds the `HandshakeSettings`.
+    pub fn build(self) -> HandshakeSettings {
+        self.settings
+    }
+}
+
+impl HandshakeSettings {
+    /// Creates a new `HandshakeSettingsBuilder`.
+    pub fn builder() -> HandshakeSettingsBuilder {
+        HandshakeSettingsBuilder {
+            settings: HandshakeSettings::default(),
+        }
+    }
+}
+
+impl Default for HandshakeSettings {
+    fn default() -> Self {
+        Self {
+            session_cache_capacity: 8,
+            session_cache: false,
+            skip_session_ticket: false,
+            enable_ech_grease: false,
+            verify_hostname: true,
+            tls_sni: true,
+            alps_protos: None,
+            alps_use_new_codepoint: false,
+            random_aes_hw_override: false,
+        }
+    }
 }
 
 /// A stream which may be wrapped with TLS.

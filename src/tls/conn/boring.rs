@@ -233,6 +233,7 @@ impl TlsConnector {
 
         // Create the `HandshakeSettings` with the default session cache capacity.
         let settings = HandshakeSettings::builder()
+            .session_cache_capacity(8)
             .session_cache(config.pre_shared_key)
             .skip_session_ticket(config.psk_skip_session_ticket)
             .alps_protos(config.alps_protos)
