@@ -7,7 +7,6 @@
 
 mod config;
 mod conn;
-mod ext;
 mod x509;
 
 pub(crate) use self::conn::{HttpsConnector, MaybeHttpsStream, TlsConnector};

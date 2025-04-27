@@ -294,46 +294,6 @@ impl ClientBuilder {
             let tls = {
                 let mut tls_config = config.tls_config.unwrap_or_default();
 
-                if let Some(ref cert_store) = config.cert_store {
-                    tls_config.cert_store = Some(cert_store.clone());
-                } else if tls_config.cert_store.is_none() {
-                    let mut builder = CertStore::builder();
-
-                    #[cfg(any(feature = "native-roots", feature = "webpki-roots"))]
-                    {
-                        static DEFAULT_CERTS: std::sync::LazyLock<Vec<crate::tls::Certificate>> =
-                            std::sync::LazyLock::new(|| {
-                                #[cfg(feature = "webpki-roots")]
-                                let der_certs = webpki_root_certs::TLS_SERVER_ROOT_CERTS;
-
-                                #[cfg(all(
-                                    feature = "native-roots",
-                                    not(feature = "webpki-roots")
-                                ))]
-                                let der_certs = rustls_native_certs::load_native_certs().certs;
-
-                                der_certs
-                                    .iter()
-                                    .map(crate::tls::Certificate::from_der)
-                                    .collect::<crate::Result<Vec<_>>>()
-                                    .unwrap_or_default()
-                            });
-
-                        builder = builder.add_der_certs(DEFAULT_CERTS.iter().cloned());
-                    }
-
-                    #[cfg(not(any(feature = "native-roots", feature = "webpki-roots")))]
-                    {
-                        builder = builder.set_default_paths();
-                    }
-
-                    if let Some(identity) = config.identity {
-                        builder = builder.identity(identity);
-                    }
-
-                    tls_config.cert_store = Some(builder.build()?);
-                }
-
                 if let Some(cert_verification) = config.cert_verification {
                     tls_config.cert_verification = cert_verification;
                 }
@@ -352,6 +312,16 @@ impl ClientBuilder {
 
                 if let Some(verify_hostname) = config.verify_hostname {
                     tls_config.verify_hostname = verify_hostname;
+                }
+
+                if config.cert_store.is_some() {
+                    tls_config.cert_store = config.cert_store.clone();
+                } else {
+                    tls_config.cert_store = Some(CertStore::default());
+                }
+
+                if config.identity.is_some() {
+                    tls_config.identity = config.identity.clone();
                 }
 
                 if config.min_tls_version.is_some() {
@@ -393,6 +363,7 @@ impl ClientBuilder {
                 tls_keylog_file: config.tls_keylog_file,
                 tls_sni: config.tls_sni,
                 verify_hostname: config.verify_hostname,
+                identity: config.identity,
                 cert_store: config.cert_store,
                 cert_verification: config.cert_verification,
                 min_tls_version: config.min_tls_version,
@@ -1780,6 +1751,7 @@ struct ClientRef {
     tls_keylog_file: Option<PathBuf>,
     tls_sni: Option<bool>,
     verify_hostname: Option<bool>,
+    identity: Option<Identity>,
     cert_store: Option<CertStore>,
     cert_verification: Option<bool>,
     min_tls_version: Option<TlsVersion>,
@@ -2028,6 +2000,10 @@ impl<'c> ClientUpdate<'c> {
 
                 if current.tls_keylog_file.is_some() {
                     tls_config.tls_keylog_file = current.tls_keylog_file.clone();
+                }
+
+                if current.identity.is_some() {
+                    tls_config.identity = current.identity.clone();
                 }
 
                 if current.cert_store.is_some() {

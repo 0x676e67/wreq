@@ -1,4 +1,4 @@
-use super::{AlpnProtos, AlpsProtos, CertStore, TlsVersion};
+use super::{AlpnProtos, AlpsProtos, CertStore, Identity, TlsVersion};
 use boring2::ssl::{CertCompressionAlgorithm, SslCurve};
 use std::{borrow::Cow, path::PathBuf};
 
@@ -16,6 +16,7 @@ pub struct TlsConfigBuilder {
 #[derive(Debug)]
 pub struct TlsConfig {
     pub(crate) tls_keylog_file: Option<PathBuf>,
+    pub(crate) identity: Option<Identity>,
     pub(crate) cert_store: Option<CertStore>,
     pub(crate) cert_verification: bool,
     pub(crate) tls_sni: bool,
@@ -51,6 +52,7 @@ impl Default for TlsConfig {
     fn default() -> Self {
         TlsConfig {
             tls_keylog_file: None,
+            identity: None,
             cert_store: None,
             cert_verification: true,
             tls_sni: true,
@@ -108,6 +110,12 @@ impl TlsConfigBuilder {
     /// Sets the certificate verification flag.
     pub fn cert_verification(mut self, enabled: bool) -> Self {
         self.config.cert_verification = enabled;
+        self
+    }
+
+    /// Sets the identity to be used for client certificate authentication.
+    pub fn identity(mut self, identity: Identity) -> Self {
+        self.config.identity = Some(identity);
         self
     }
 

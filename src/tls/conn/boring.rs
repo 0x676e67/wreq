@@ -1,12 +1,12 @@
 /// referrer: https://github.com/cloudflare/boring/blob/master/hyper-boring/src/lib.rs
 use super::cache::{SessionCache, SessionKey};
+use super::ext::{ConnectConfigurationExt, SslConnectorBuilderExt, SslRefExt};
 use super::{HandshakeSettings, MaybeHttpsStream, key_index};
 
 use crate::Dst;
 use crate::connect::HttpConnector;
 use crate::error::BoxError;
 use crate::tls::TlsConfig;
-use crate::tls::ext::{ConnectConfigurationExt, SslConnectorBuilderExt, SslRefExt};
 use crate::util::client::connect::Connection;
 use crate::util::rt::TokioIo;
 
@@ -147,6 +147,7 @@ impl TlsConnector {
         let mut connector = SslConnector::no_default_verify_builder(SslMethod::tls_client())?
             .cert_store(config.cert_store)?
             .cert_verification(config.cert_verification)?
+            .identity(config.identity)?
             .alpn_protos(config.alpn_protos)?
             .min_tls_version(config.min_tls_version)?
             .max_tls_version(config.max_tls_version)?;

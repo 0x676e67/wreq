@@ -95,7 +95,7 @@ impl Identity {
         Ok(Identity { pkey, cert, chain })
     }
 
-    pub(crate) fn identity(
+    pub(crate) fn add_to_tls(
         self,
         connector: &mut boring2::ssl::SslConnectorBuilder,
     ) -> crate::Result<()> {

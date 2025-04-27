@@ -1,6 +1,6 @@
 mod parser;
 
-use super::{Certificate, CertificateInput, Identity};
+use super::{Certificate, CertificateInput};
 use boring2::x509::store::{X509Store, X509StoreBuilder};
 use parser::{filter_map_certs, parse_certs_from_iter, parse_certs_from_stack, process_certs};
 use std::{fmt::Debug, path::Path};
@@ -23,20 +23,11 @@ use std::{fmt::Debug, path::Path};
 ///     .set_default_paths()
 ///     .build()?;
 /// ```
-#[derive(Default)]
 pub struct CertStoreBuilder {
-    identity: Option<Identity>,
-    builder: Option<crate::Result<X509StoreBuilder>>,
+    builder: crate::Result<X509StoreBuilder>,
 }
 
 impl CertStoreBuilder {
-    /// Adds an identity to the certificate store.
-    #[inline]
-    pub fn identity(mut self, identity: Identity) -> Self {
-        self.identity = Some(identity);
-        self
-    }
-
     /// Adds a DER-encoded certificate to the certificate store.
     ///
     /// # Parameters
@@ -100,12 +91,12 @@ impl CertStoreBuilder {
     where
         C: AsRef<[u8]>,
     {
-        if let Ok(builder) = self.get_or_init() {
+        if let Ok(ref mut builder) = self.builder {
             let result = Certificate::stack_from_pem(certs.as_ref())
                 .and_then(|certs| process_certs(certs.into_iter(), builder));
 
             if let Err(err) = result {
-                self.builder = Some(Err(err));
+                self.builder = Err(err);
             }
         }
         self
@@ -126,7 +117,7 @@ impl CertStoreBuilder {
         match std::fs::read(path) {
             Ok(data) => return self.add_stack_pem_certs(data),
             Err(err) => {
-                self.builder = Some(Err(crate::error::builder(err)));
+                self.builder = Err(crate::error::builder(err));
             }
         }
         self
@@ -138,9 +129,9 @@ impl CertStoreBuilder {
     /// environment variables if present, or defaults specified at OpenSSL
     /// build time otherwise.
     pub fn set_default_paths(mut self) -> Self {
-        if let Ok(builder) = self.get_or_init() {
+        if let Ok(ref mut builder) = self.builder {
             if let Err(err) = builder.set_default_paths() {
-                self.builder = Some(Err(err.into()));
+                self.builder = Err(err.into());
             }
         }
         self
@@ -151,14 +142,14 @@ impl CertStoreBuilder {
         C: Into<CertificateInput<'c>>,
         P: Fn(&'c [u8]) -> crate::Result<Certificate>,
     {
-        if let Ok(builder) = self.get_or_init() {
+        if let Ok(ref mut builder) = self.builder {
             let input = cert.into();
             let result = input
                 .with_parser(parser)
                 .and_then(|cert| builder.add_cert(cert.0).map_err(Into::into));
 
             if let Err(err) = result {
-                self.builder = Some(Err(err));
+                self.builder = Err(err);
             }
         }
         self
@@ -173,18 +164,13 @@ impl CertStoreBuilder {
         I: IntoIterator,
         I::Item: Into<CertificateInput<'c>>,
     {
-        if let Ok(builder) = self.get_or_init() {
+        if let Ok(ref mut builder) = self.builder {
             let certs = filter_map_certs(certs, parser);
             if let Err(err) = process_certs(certs, builder) {
-                self.builder = Some(Err(err));
+                self.builder = Err(err);
             }
         }
         self
-    }
-
-    fn get_or_init(&mut self) -> &mut crate::Result<X509StoreBuilder> {
-        self.builder
-            .get_or_insert_with(|| X509StoreBuilder::new().map_err(Into::into))
     }
 
     /// Constructs the `CertStore`.
@@ -192,19 +178,44 @@ impl CertStoreBuilder {
     /// This method finalizes the builder and constructs the `CertStore`
     /// containing all the added certificates.
     pub fn build(self) -> crate::Result<CertStore> {
-        let builder = self.builder.transpose()?;
-        Ok(CertStore {
-            identity: self.identity,
-            store: builder.map(|b| b.build()),
-        })
+        let builder = self.builder?;
+        Ok(CertStore(builder.build()))
     }
 }
 
 /// A collection of certificates Store.
 #[derive(Clone)]
-pub struct CertStore {
-    identity: Option<Identity>,
-    store: Option<X509Store>,
+pub struct CertStore(X509Store);
+
+impl Default for CertStore {
+    fn default() -> Self {
+        #[cfg(any(feature = "webpki-roots", feature = "native-roots"))]
+        pub(super) static LOAD_CERTS: std::sync::LazyLock<CertStore> =
+            std::sync::LazyLock::new(|| {
+                #[cfg(feature = "webpki-roots")]
+                {
+                    CertStore::from_der_certs(webpki_root_certs::TLS_SERVER_ROOT_CERTS)
+                        .expect("failed to parse webpki root certs")
+                }
+
+                #[cfg(all(feature = "native-roots", not(feature = "webpki-roots")))]
+                {
+                    CertStore::from_der_certs(&rustls_native_certs::load_native_certs().certs)
+                        .expect("failed to parse native certs")
+                }
+            });
+
+        #[cfg(not(any(feature = "webpki-roots", feature = "native-roots")))]
+        {
+            CertStore::builder()
+                .set_default_paths()
+                .build()
+                .expect("failed to load default cert store")
+        }
+
+        #[cfg(any(feature = "webpki-roots", feature = "native-roots"))]
+        LOAD_CERTS.clone()
+    }
 }
 
 impl Debug for CertStore {
@@ -218,7 +229,9 @@ impl CertStore {
     /// Creates a new `CertStoreBuilder`.
     #[inline]
     pub fn builder() -> CertStoreBuilder {
-        CertStoreBuilder::default()
+        CertStoreBuilder {
+            builder: X509StoreBuilder::new().map_err(crate::error::builder),
+        }
     }
 
     /// Creates a new `CertStore` from a collection of DER-encoded certificates.
@@ -282,18 +295,7 @@ impl CertStore {
 }
 
 impl CertStore {
-    pub(crate) fn add_to_tls(
-        self,
-        tls: &mut boring2::ssl::SslConnectorBuilder,
-    ) -> crate::Result<()> {
-        if let Some(identity) = self.identity {
-            identity.identity(tls)?;
-        }
-
-        if let Some(store) = self.store {
-            tls.set_cert_store(store);
-        }
-
-        Ok(())
+    pub(crate) fn add_to_tls(self, tls: &mut boring2::ssl::SslConnectorBuilder) {
+        tls.set_cert_store(self.0);
     }
 }

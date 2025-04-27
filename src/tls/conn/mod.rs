@@ -1,6 +1,7 @@
 //! Hyper SSL support via BoringSSL.
 mod boring;
 mod cache;
+mod ext;
 
 use crate::tls::AlpsProtos;
 use crate::util::client::connect::{Connected, Connection};

@@ -1,4 +1,4 @@
-use super::{AlpnProtos, AlpsProtos, CertStore, TlsVersion};
+use crate::tls::{AlpnProtos, AlpsProtos, CertStore, TlsVersion};
 use boring2::{
     error::ErrorStack,
     ssl::{
@@ -9,8 +9,14 @@ use boring2::{
 
 /// SslConnectorBuilderExt trait for `SslConnectorBuilder`.
 pub trait SslConnectorBuilderExt {
+    /// Configure the CertStore for the given `SslConnectorBuilder`.
+    fn cert_store(self, provider: Option<CertStore>) -> crate::Result<SslConnectorBuilder>;
+
     /// Configure the certificate verification for the given `SslConnectorBuilder`.
     fn cert_verification(self, enable: bool) -> crate::Result<SslConnectorBuilder>;
+
+    /// Configure the identity for the given `SslConnectorBuilder`.
+    fn identity(self, identity: Option<crate::Identity>) -> crate::Result<SslConnectorBuilder>;
 
     /// Configure the ALPN and certificate config for the given `SslConnectorBuilder`.
     fn alpn_protos(self, alpn: AlpnProtos) -> crate::Result<SslConnectorBuilder>;
@@ -32,9 +38,6 @@ pub trait SslConnectorBuilderExt {
         self,
         alg: CertCompressionAlgorithm,
     ) -> crate::Result<SslConnectorBuilder>;
-
-    /// Configure the CertStore for the given `SslConnectorBuilder`.
-    fn cert_store(self, provider: Option<CertStore>) -> crate::Result<SslConnectorBuilder>;
 }
 
 /// SslRefExt trait for `SslRef`.
@@ -61,12 +64,32 @@ pub trait ConnectConfigurationExt {
 
 impl SslConnectorBuilderExt for SslConnectorBuilder {
     #[inline]
+    fn cert_store(mut self, store: Option<CertStore>) -> crate::Result<SslConnectorBuilder> {
+        if let Some(store) = store {
+            store.add_to_tls(&mut self);
+        } else {
+            self.set_default_verify_paths()?;
+        }
+
+        Ok(self)
+    }
+
+    #[inline]
     fn cert_verification(mut self, enable: bool) -> crate::Result<SslConnectorBuilder> {
         if enable {
             self.set_verify(SslVerifyMode::PEER);
         } else {
             self.set_verify(SslVerifyMode::NONE);
         }
+        Ok(self)
+    }
+
+    #[inline]
+    fn identity(mut self, identity: Option<crate::Identity>) -> crate::Result<SslConnectorBuilder> {
+        if let Some(identity) = identity {
+            identity.add_to_tls(&mut self)?;
+        }
+
         Ok(self)
     }
 
@@ -105,17 +128,6 @@ impl SslConnectorBuilderExt for SslConnectorBuilder {
         self.add_cert_compression_alg(alg)
             .map(|_| self)
             .map_err(Into::into)
-    }
-
-    #[inline]
-    fn cert_store(mut self, store: Option<CertStore>) -> crate::Result<SslConnectorBuilder> {
-        if let Some(store) = store {
-            store.add_to_tls(&mut self)?;
-        } else {
-            self.set_default_verify_paths()?;
-        }
-
-        Ok(self)
     }
 }
 

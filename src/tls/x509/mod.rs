@@ -44,7 +44,6 @@ impl<'c, T: AsRef<[u8]> + ?Sized + 'c> From<&'c T> for CertificateInput<'c> {
 pub struct Certificate(X509);
 
 impl Certificate {
-
     /// Parse a certificate from DER data.
     #[inline(always)]
     pub fn from_der<C: AsRef<[u8]>>(cert: C) -> crate::Result<Self> {
