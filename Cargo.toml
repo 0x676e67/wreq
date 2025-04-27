@@ -114,8 +114,8 @@ ipnet = "2.11.0"
 arc-swap = "1.7.0"
 
 ## boring-tls
-boring2 = { version = "4.15.12", features = ["pq-experimental", "cert-compression"] }
-tokio-boring2 = { version = "4.15.12", features = ["pq-experimental"] }
+boring2 = { version = "4.15.13", features = ["pq-experimental", "cert-compression"] }
+tokio-boring2 = { version = "4.15.13", features = ["pq-experimental"] }
 linked_hash_set = "0.1"
 
 # Optional deps...
@@ -130,7 +130,7 @@ cookie_store = { version = "0.21", optional = true }
 
 ## compression
 async-compression = { version = "0.4.23", default-features = false, features = ["tokio"], optional = true }
-tokio-util = { version = "0.7.0", default-features = false, features = ["codec","io"], optional = true }
+tokio-util = { version = "0.7.15", default-features = false, features = ["codec","io"], optional = true }
 
 ## socks
 tokio-socks = { version = "0.5.2", optional = true }
