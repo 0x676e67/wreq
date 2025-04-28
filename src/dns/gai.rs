@@ -1,4 +1,4 @@
-use crate::util::client::connect::dns::GaiResolver as HyperGaiResolver;
+use crate::core::client::connect::dns::GaiResolver as HyperGaiResolver;
 use futures_util::future::FutureExt;
 use tower_service::Service;
 

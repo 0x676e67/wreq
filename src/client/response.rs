@@ -3,6 +3,7 @@ use std::net::SocketAddr;
 use std::pin::Pin;
 use std::time::Duration;
 
+use crate::core::client::connect::HttpInfo;
 use crate::core::{HeaderMap, StatusCode, Version};
 use bytes::Bytes;
 use http_body_util::BodyExt;
@@ -10,7 +11,6 @@ use http_body_util::BodyExt;
 use serde::de::DeserializeOwned;
 use tokio::time::Sleep;
 use url::Url;
-use util::client::connect::HttpInfo;
 
 use super::body::Body;
 use super::body::ResponseBody;
@@ -18,7 +18,6 @@ use super::decoder::{Accepts, Decoder};
 
 #[cfg(any(feature = "cookies", feature = "cookies-abstract"))]
 use crate::cookie;
-use crate::util;
 
 #[cfg(feature = "charset")]
 use encoding_rs::{Encoding, UTF_8};

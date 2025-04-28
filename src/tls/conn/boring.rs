@@ -5,11 +5,11 @@ use super::{HandshakeSettings, MaybeHttpsStream, key_index};
 
 use crate::Dst;
 use crate::connect::HttpConnector;
+use crate::core::client::connect::Connection;
 use crate::core::rt::TokioIo;
 use crate::error::BoxError;
 use crate::tls::TlsConfig;
 use crate::tracing::error;
-use crate::util::client::connect::Connection;
 
 use crate::core::rt::{Read, Write};
 use antidote::Mutex;

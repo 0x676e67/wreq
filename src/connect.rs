@@ -1,11 +1,13 @@
 use self::tls_conn::BoringTlsConn;
+use crate::core::client::{
+    Dst,
+    connect::{Connected, Connection},
+};
 use crate::core::rt::TokioIo;
 use crate::core::rt::{Read, ReadBufCursor, Write};
 use crate::tls::{HttpsConnector, MaybeHttpsStream, TlsConnector};
 use crate::tracing::{debug, trace};
-use crate::util::client::Dst;
-use crate::util::client::connect::{Connected, Connection};
-use crate::util::{self, into_uri};
+use crate::util::into_uri;
 use http::uri::Scheme;
 use pin_project_lite::pin_project;
 use sealed::{Conn, Unnameable};
@@ -24,7 +26,7 @@ use crate::dns::DynResolver;
 use crate::error::{BoxError, cast_to_internal_error};
 use crate::proxy::ProxyScheme;
 
-pub(crate) type HttpConnector = util::client::connect::HttpConnector<DynResolver>;
+pub(crate) type HttpConnector = crate::core::client::connect::HttpConnector<DynResolver>;
 
 pub(crate) type BoxedConnectorService = BoxCloneSyncService<Unnameable, Conn, BoxError>;
 
@@ -542,9 +544,9 @@ mod tls_conn {
     use super::TlsInfoFactory;
     use crate::core::rt::{Read, ReadBufCursor, Write};
     use crate::{
+        core::client::connect::{Connected, Connection},
         core::rt::TokioIo,
         tls::MaybeHttpsStream,
-        util::client::connect::{Connected, Connection},
     };
     use pin_project_lite::pin_project;
     use std::{
@@ -823,9 +825,9 @@ mod socks {
 }
 
 mod verbose {
+    use crate::core::client::connect::{Connected, Connection};
     use crate::core::rt::{Read, ReadBufCursor, Write};
     use crate::tracing::trace;
-    use crate::util::client::connect::{Connected, Connection};
     use std::cmp::min;
     use std::fmt;
     use std::io::{self, IoSlice};

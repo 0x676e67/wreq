@@ -125,7 +125,7 @@ impl Error {
         let mut source = self.source();
 
         while let Some(err) = source {
-            if let Some(hyper_err) = err.downcast_ref::<crate::util::client::Error>() {
+            if let Some(hyper_err) = err.downcast_ref::<crate::core::client::Error>() {
                 if hyper_err.is_connect() {
                     return true;
                 }

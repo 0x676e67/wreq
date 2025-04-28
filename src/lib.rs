@@ -332,9 +332,9 @@ pub use self::client::{
     Body, Client, ClientBuilder, ClientUpdate, EmulationProvider, EmulationProviderFactory,
     Http1Config, Http2Config, Request, RequestBuilder, Response, Upgraded,
 };
+pub use self::core::client::{Dst, Http1Builder, Http2Builder};
 pub use self::proxy::{NoProxy, Proxy};
 pub use self::tls::{AlpnProtos, AlpsProtos, CertStore, Identity, TlsConfig, TlsInfo, TlsVersion};
-pub use self::util::client::{Dst, Http1Builder, Http2Builder};
 
 pub use boring2::ssl::{CertCompressionAlgorithm, ExtensionType, SslCurve};
 pub use http2::frame::{Priority, PseudoOrder, SettingsOrder, StreamDependency, StreamId};

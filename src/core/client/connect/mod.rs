@@ -310,9 +310,8 @@ pub(super) mod sealed {
     use std::future::Future;
 
     use crate::core::rt::{Read, Write};
+    use crate::core::{client::Dst, service};
     use ::http::Uri;
-
-    use crate::util::{client::Dst, service};
 
     use super::Connection;
 

@@ -13,9 +13,9 @@ use super::client::{Client, Pending};
 #[cfg(feature = "multipart")]
 use super::multipart;
 use super::response::Response;
+use crate::core::client::{NetworkScheme, NetworkSchemeBuilder};
 use crate::header::{CONTENT_TYPE, HeaderMap, HeaderName, HeaderValue};
 use crate::proxy::IntoProxy;
-use crate::util::client::{NetworkScheme, NetworkSchemeBuilder};
 use crate::{Method, Url, redirect};
 
 /// A request which can be executed with `Client::execute()`.

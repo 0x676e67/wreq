@@ -1,13 +1,4 @@
 #![cfg_attr(docsrs, feature(doc_auto_cfg, doc_cfg))]
-//! Backport from: <https://github.com/hyperium/hyper-util>
-//! Utilities for working with hyper.
-//!
-//! This crate is less-stable than [`hyper`](https://docs.rs/hyper). However,
-//! does respect Rust's semantic version regarding breaking changes.
-
-pub mod client;
-pub mod common;
-pub mod service;
 
 use crate::header::{Entry, HeaderMap, HeaderValue, OccupiedEntry};
 use http::{

@@ -3,9 +3,9 @@ mod boring;
 mod cache;
 mod ext;
 
+use crate::core::client::connect::{Connected, Connection};
 use crate::core::rt::TokioIo;
 use crate::tls::AlpsProtos;
-use crate::util::client::connect::{Connected, Connection};
 
 use crate::core::rt::{Read, ReadBufCursor, Write};
 use boring2::error::ErrorStack;

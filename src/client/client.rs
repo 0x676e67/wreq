@@ -16,6 +16,10 @@ use crate::connect::{
 };
 #[cfg(any(feature = "cookies", feature = "cookies-abstract"))]
 use crate::cookie;
+use crate::core::client::{
+    Builder, Client as HyperClient, Http1Builder, Http2Builder, InnerRequest, NetworkScheme,
+    NetworkSchemeBuilder, connect::HttpConnector,
+};
 use crate::core::rt::{TokioExecutor, tokio::TokioTimer};
 #[cfg(feature = "hickory-dns")]
 use crate::dns::hickory::{HickoryDnsResolver, LookupIpStrategy};
@@ -25,13 +29,6 @@ use crate::into_url::try_uri;
 use crate::proxy::IntoProxy;
 use crate::tls::CertificateInput;
 use crate::tracing::{debug, trace};
-use crate::util::{
-    self,
-    client::{
-        Builder, Client as HyperClient, Http1Builder, Http2Builder, InnerRequest, NetworkScheme,
-        NetworkSchemeBuilder, connect::HttpConnector,
-    },
-};
 use crate::{CertStore, Http1Config, Http2Config, Identity, TlsConfig, error};
 use crate::{IntoUrl, Method, Proxy, StatusCode, Url};
 use crate::{
@@ -76,7 +73,7 @@ macro_rules! impl_debug {
     }
 }
 
-type HyperResponseFuture = util::client::ResponseFuture;
+type HyperResponseFuture = crate::core::client::ResponseFuture;
 
 /// An asynchronous `Client` to make Requests with.
 ///
