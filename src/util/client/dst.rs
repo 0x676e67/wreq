@@ -17,27 +17,6 @@ impl Dst {
     ///
     /// This method initializes a new `Dst` instance based on the provided URI, HTTP connect flag,
     /// network scheme, and HTTP version.
-    ///
-    /// # Parameters
-    ///
-    /// - `uri`: A mutable reference to the URI of the request.
-    /// - `is_http_connect`: A boolean indicating whether the request is an HTTP CONNECT request.
-    /// - `network`: The network scheme to be used for the request.
-    /// - `version`: An optional HTTP version for the request.
-    ///
-    /// # Returns
-    ///
-    /// A `Result` containing the constructed `Dst` or an `Error` if the URI is not absolute.
-    ///
-    /// # Example
-    ///
-    /// ```rust
-    /// use rquest::util::client::dst::Dst;
-    /// use http::Uri;
-    ///
-    /// let mut uri: Uri = "http://example.com".parse().unwrap();
-    /// let dst = Dst::new(&mut uri, false, Default::default(), None).unwrap();
-    /// ```
     pub(crate) fn new(
         uri: &mut Uri,
         is_http_connect: bool,
@@ -82,31 +61,32 @@ impl Dst {
             .map_err(Into::into)
     }
 
-    /// Sets a new URI for the destination.
+    #[inline(always)]
+    #[allow(dead_code)]
+    pub(crate) fn uri(&self) -> &Uri {
+        &self.0.uri
+    }
+
     #[inline(always)]
     pub(crate) fn set_uri(&mut self, mut uri: Uri) {
         std::mem::swap(&mut self.0.uri, &mut uri);
     }
 
-    /// Returns the ALPN protocols of the destination.
     #[inline(always)]
     pub(crate) fn alpn_protos(&self) -> Option<AlpnProtos> {
         self.0.alpn
     }
 
-    /// Checks if the destination only supports HTTP/2.
     #[inline(always)]
     pub(crate) fn only_http2(&self) -> bool {
         self.0.alpn == Some(AlpnProtos::HTTP2)
     }
 
-    /// Takes the IP addresses from the network scheme.
     #[inline(always)]
     pub(crate) fn take_addresses(&mut self) -> (Option<Ipv4Addr>, Option<Ipv6Addr>) {
         self.0.network.take_addresses()
     }
 
-    /// Takes the network interface from the network scheme.
     #[cfg(any(
         target_os = "android",
         target_os = "fuchsia",
@@ -124,13 +104,11 @@ impl Dst {
         self.0.network.take_interface()
     }
 
-    /// Takes the proxy scheme from the network scheme.
     #[inline(always)]
     pub(crate) fn take_proxy_scheme(&mut self) -> Option<ProxyScheme> {
         self.0.network.take_proxy_scheme()
     }
 
-    /// Returns a reference to the pool key of the destination.
     #[inline(always)]
     pub(super) fn pool_key(&self) -> &PoolKey {
         &self.0
