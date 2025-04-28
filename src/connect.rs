@@ -1,11 +1,12 @@
 use self::tls_conn::BoringTlsConn;
+use crate::core::rt::TokioIo;
+use crate::core::rt::{Read, ReadBufCursor, Write};
 use crate::tls::{HttpsConnector, MaybeHttpsStream, TlsConnector};
+use crate::tracing::{debug, trace};
 use crate::util::client::Dst;
 use crate::util::client::connect::{Connected, Connection};
-use crate::util::rt::TokioIo;
 use crate::util::{self, into_uri};
 use http::uri::Scheme;
-use hyper2::rt::{Read, ReadBufCursor, Write};
 use pin_project_lite::pin_project;
 use sealed::{Conn, Unnameable};
 use tokio_boring2::SslStream;
@@ -278,7 +279,7 @@ impl ConnectorService {
             http.set_nodelay(true);
         }
 
-        log::trace!("connect with maybe proxy");
+        trace!("connect with maybe proxy");
         let mut http = HttpsConnector::new(http, self.tls, &mut dst);
         let io = http.call(dst.into()).await?;
 
@@ -310,7 +311,7 @@ impl ConnectorService {
         mut dst: Dst,
         proxy_scheme: ProxyScheme,
     ) -> Result<Conn, BoxError> {
-        log::debug!("proxy({:?}) intercepts '{:?}'", proxy_scheme, dst.uri());
+        debug!("proxy({:?}) intercepts '{:?}'", proxy_scheme, dst.uri());
 
         let (proxy_dst, auth, headers) = match proxy_scheme {
             ProxyScheme::Http {
@@ -335,7 +336,7 @@ impl ConnectorService {
             let host = dst.host().ok_or(crate::error::uri_bad_host())?;
             let port = dst.port_u16().unwrap_or(443);
 
-            log::trace!("tunneling HTTPS over proxy");
+            trace!("tunneling HTTPS over proxy");
             let conn = http.call(proxy_dst).await?;
             let tunneled = tunnel::connect(conn, host, port, auth, headers).await?;
 
@@ -381,7 +382,7 @@ impl Service<Dst> for ConnectorService {
     }
 
     fn call(&mut self, mut dst: Dst) -> Self::Future {
-        log::debug!("starting new connection: {:?}", dst.uri());
+        debug!("starting new connection: {:?}", dst.uri());
 
         if let Some(proxy_scheme) = dst.take_proxy_scheme() {
             return Box::pin(with_timeout(
@@ -539,14 +540,12 @@ pub(crate) type Connecting = Pin<Box<dyn Future<Output = Result<Conn, BoxError>>
 
 mod tls_conn {
     use super::TlsInfoFactory;
+    use crate::core::rt::{Read, ReadBufCursor, Write};
     use crate::{
+        core::rt::TokioIo,
         tls::MaybeHttpsStream,
-        util::{
-            client::connect::{Connected, Connection},
-            rt::TokioIo,
-        },
+        util::client::connect::{Connected, Connection},
     };
-    use hyper2::rt::{Read, ReadBufCursor, Write};
     use pin_project_lite::pin_project;
     use std::{
         io::{self, IoSlice},
@@ -650,9 +649,10 @@ mod tls_conn {
 
 mod tunnel {
     use super::BoxError;
-    use crate::util::rt::TokioIo;
+    use crate::core::rt::TokioIo;
+    use crate::core::rt::{Read, Write};
+    use crate::tracing::debug;
     use http::{HeaderMap, HeaderValue};
-    use hyper2::rt::{Read, Write};
     use std::sync::Arc;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
@@ -683,7 +683,7 @@ mod tunnel {
 
         // proxy-authorization
         if let Some(value) = auth {
-            log::debug!("tunnel to {}:{} using basic auth", host, port);
+            debug!("tunnel to {}:{} using basic auth", host, port);
             buf.extend_from_slice(b"Proxy-Authorization: ");
             buf.extend_from_slice(value.as_bytes());
             buf.extend_from_slice(b"\r\n");
@@ -823,8 +823,9 @@ mod socks {
 }
 
 mod verbose {
+    use crate::core::rt::{Read, ReadBufCursor, Write};
+    use crate::tracing::trace;
     use crate::util::client::connect::{Connected, Connection};
-    use hyper2::rt::{Read, ReadBufCursor, Write};
     use std::cmp::min;
     use std::fmt;
     use std::io::{self, IoSlice};
@@ -838,7 +839,7 @@ mod verbose {
 
     impl Wrapper {
         pub(super) fn wrap<T: super::AsyncConnWithInfo>(&self, conn: T) -> super::BoxConn {
-            if self.0 && log::log_enabled!(log::Level::Trace) {
+            if self.0 && cfg!(feature = "tracing") {
                 Box::new(Verbose {
                     // truncate is fine
                     id: crate::util::fast_random() as u32,
@@ -851,6 +852,7 @@ mod verbose {
     }
 
     struct Verbose<T> {
+        #[allow(dead_code)]
         id: u32,
         inner: T,
     }
@@ -870,10 +872,10 @@ mod verbose {
             // TODO: This _does_ forget the `init` len, so it could result in
             // re-initializing twice. Needs upstream support, perhaps.
             // SAFETY: Passing to a ReadBuf will never de-initialize any bytes.
-            let mut vbuf = hyper2::rt::ReadBuf::uninit(unsafe { buf.as_mut() });
+            let mut vbuf = crate::core::rt::ReadBuf::uninit(unsafe { buf.as_mut() });
             match Pin::new(&mut self.inner).poll_read(cx, vbuf.unfilled()) {
                 Poll::Ready(Ok(())) => {
-                    log::trace!("{:08x} read: {:?}", self.id, Escape(vbuf.filled()));
+                    trace!("{:08x} read: {:?}", self.id, Escape(vbuf.filled()));
                     let len = vbuf.filled().len();
                     // SAFETY: The two cursors were for the same buffer. What was
                     // filled in one is safe in the other.
@@ -896,7 +898,7 @@ mod verbose {
         ) -> Poll<Result<usize, std::io::Error>> {
             match Pin::new(&mut self.inner).poll_write(cx, buf) {
                 Poll::Ready(Ok(n)) => {
-                    log::trace!("{:08x} write: {:?}", self.id, Escape(&buf[..n]));
+                    trace!("{:08x} write: {:?}", self.id, Escape(&buf[..n]));
                     Poll::Ready(Ok(n))
                 }
                 Poll::Ready(Err(e)) => Poll::Ready(Err(e)),
@@ -911,7 +913,7 @@ mod verbose {
         ) -> Poll<Result<usize, io::Error>> {
             match Pin::new(&mut self.inner).poll_write_vectored(cx, bufs) {
                 Poll::Ready(Ok(nwritten)) => {
-                    log::trace!(
+                    trace!(
                         "{:08x} write (vectored): {:?}",
                         self.id,
                         Vectored { bufs, nwritten }
@@ -948,6 +950,7 @@ mod verbose {
         }
     }
 
+    #[allow(dead_code)]
     struct Escape<'a>(&'a [u8]);
 
     impl fmt::Debug for Escape<'_> {
@@ -977,6 +980,7 @@ mod verbose {
         }
     }
 
+    #[allow(dead_code)]
     struct Vectored<'a, 'b> {
         bufs: &'a [IoSlice<'b>],
         nwritten: usize,

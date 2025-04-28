@@ -60,8 +60,8 @@
 //! [`HttpConnector`]: HttpConnector
 //! [`Service`]: tower_service::Service
 //! [`Uri`]: ::http::Uri
-//! [`Read`]: hyper2::rt::Read
-//! [`Write`]: hyper2::rt::Write
+//! [`Read`]: crate::core::rt::Read
+//! [`Write`]: crate::core::rt::Write
 //! [`Connection`]: Connection
 use std::{
     fmt::{self, Formatter},
@@ -72,6 +72,8 @@ use std::{
 };
 
 use ::http::Extensions;
+
+use crate::tracing::debug;
 
 pub use self::http::{HttpConnector, HttpInfo};
 
@@ -220,7 +222,7 @@ impl Connected {
     /// A poisoned connection will not be reused for subsequent requests by the pool
     pub fn poison(&self) {
         self.poisoned.poison();
-        log::debug!(
+        debug!(
             "connection was poisoned. this connection will not be reused for subsequent requests"
         );
     }
@@ -307,8 +309,8 @@ pub(super) mod sealed {
     use std::error::Error as StdError;
     use std::future::Future;
 
+    use crate::core::rt::{Read, Write};
     use ::http::Uri;
-    use hyper2::rt::{Read, Write};
 
     use crate::util::{client::Dst, service};
 

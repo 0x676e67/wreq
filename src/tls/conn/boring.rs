@@ -5,11 +5,13 @@ use super::{HandshakeSettings, MaybeHttpsStream, key_index};
 
 use crate::Dst;
 use crate::connect::HttpConnector;
+use crate::core::rt::TokioIo;
 use crate::error::BoxError;
 use crate::tls::TlsConfig;
+use crate::tracing::error;
 use crate::util::client::connect::Connection;
-use crate::util::rt::TokioIo;
 
+use crate::core::rt::{Read, Write};
 use antidote::Mutex;
 use boring2::error::ErrorStack;
 use boring2::ssl::{
@@ -18,7 +20,6 @@ use boring2::ssl::{
 };
 use http::Uri;
 use http::uri::Scheme;
-use hyper2::rt::{Read, Write};
 
 use tokio_boring2::SslStream;
 use tower_service::Service;
@@ -226,8 +227,8 @@ impl TlsConnector {
                 .map_err(crate::error::builder)?;
 
             connector.set_keylog_callback(move |_, line| {
-                if let Err(e) = writeln!(&file, "{}", line) {
-                    log::error!("failed to write to tls key log file {e}");
+                if let Err(_e) = writeln!(&file, "{}", line) {
+                    error!("failed to write to tls key log file {}", _e);
                 }
             });
         }

@@ -16,6 +16,7 @@ use crate::connect::{
 };
 #[cfg(any(feature = "cookies", feature = "cookies-abstract"))]
 use crate::cookie;
+use crate::core::rt::{TokioExecutor, tokio::TokioTimer};
 #[cfg(feature = "hickory-dns")]
 use crate::dns::hickory::{HickoryDnsResolver, LookupIpStrategy};
 use crate::dns::{DnsResolverWithOverrides, DynResolver, Resolve, gai::GaiResolver};
@@ -23,13 +24,13 @@ use crate::error::{BoxError, Error};
 use crate::into_url::try_uri;
 use crate::proxy::IntoProxy;
 use crate::tls::CertificateInput;
+use crate::tracing::{debug, trace};
 use crate::util::{
     self,
     client::{
         Builder, Client as HyperClient, Http1Builder, Http2Builder, InnerRequest, NetworkScheme,
         NetworkSchemeBuilder, connect::HttpConnector,
     },
-    rt::{TokioExecutor, tokio::TokioTimer},
 };
 use crate::{CertStore, Http1Config, Http2Config, Identity, TlsConfig, error};
 use crate::{IntoUrl, Method, Proxy, StatusCode, Url};
@@ -55,7 +56,6 @@ use http::{
     },
     uri::Scheme,
 };
-use log::{debug, trace};
 use pin_project_lite::pin_project;
 
 use tokio::time::Sleep;
@@ -2048,7 +2048,7 @@ pin_project! {
         headers_order: Option<Cow<'static, [HeaderName]>>,
         body: Option<Option<Bytes>>,
         version: Option<Version>,
-        protocol: Option<hyper2::ext::Protocol>,
+        protocol: Option<crate::core::ext::Protocol>,
         urls: Vec<Url>,
         http2_retry_count: usize,
         http2_max_retry_count: usize,
@@ -2135,7 +2135,7 @@ impl PendingRequest {
             if let Ok(req) = res {
                 self.client.hyper.request(req)
             } else {
-                log::trace!("error request build");
+                trace!("error request build");
                 return false;
             }
         };
@@ -2386,11 +2386,9 @@ fn is_retryable_error(err: &(dyn std::error::Error + 'static)) -> bool {
     };
 
     if let Some(cause) = err.source() {
-        if let Some(err) = cause.downcast_ref::<hyper2::h2::Error>() {
+        if let Some(err) = cause.downcast_ref::<http2::Error>() {
             // They sent us a graceful shutdown, try with a new connection!
-            if err.is_go_away()
-                && err.is_remote()
-                && err.reason() == Some(hyper2::h2::Reason::NO_ERROR)
+            if err.is_go_away() && err.is_remote() && err.reason() == Some(http2::Reason::NO_ERROR)
             {
                 return true;
             }
@@ -2399,7 +2397,7 @@ fn is_retryable_error(err: &(dyn std::error::Error + 'static)) -> bool {
             // https://www.rfc-editor.org/rfc/rfc9113.html#section-8.7-3.2
             if err.is_reset()
                 && err.is_remote()
-                && err.reason() == Some(hyper2::h2::Reason::REFUSED_STREAM)
+                && err.reason() == Some(http2::Reason::REFUSED_STREAM)
             {
                 return true;
             }

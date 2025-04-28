@@ -31,6 +31,8 @@ use std::{fmt, io, vec};
 use tokio::task::JoinHandle;
 use tower_service::Service;
 
+use crate::tracing::debug;
+
 pub(super) use self::sealed::Resolve;
 
 /// A domain name to resolve into IP addresses.
@@ -123,7 +125,7 @@ impl Service<Name> for GaiResolver {
 
     fn call(&mut self, name: Name) -> Self::Future {
         let blocking = tokio::task::spawn_blocking(move || {
-            log::debug!("resolving {}", name.host);
+            debug!("resolving {}", name.host);
             (&*name.host, 0)
                 .to_socket_addrs()
                 .map(|i| SocketAddrs { iter: i })

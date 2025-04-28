@@ -72,24 +72,37 @@ webpki-roots = ["dep:webpki-root-certs"]
 # Use the system's proxy configuration.
 macos-system-configuration = ["dep:system-configuration"]
 
-# Optional enable http2 tracing
-http2-tracing = ["hyper2/http2-tracing"]
+# Optional enable tracing
+tracing = ["http2/tracing", "dep:tracing"]
 
 # Optional disable internal proxy cache
 internal_proxy_sys_no_cache = []
 
 [dependencies]
 base64 = "0.22"
-http = "1"
 url = "2.5"
-bytes = "1.10.1"
 serde = { version = "1.0", features = ["derive"] }
 serde_urlencoded = "0.7.1"
 tower = { version = "0.5.2", default-features = false, features = ["timeout","util"] }
 tower-service = "0.3"
-futures-util = { version = "0.3.0", default-features = false }
 sync_wrapper = { version = "1.0", features = ["futures"] }
 antidote = "1" 
+
+# core
+bytes = "1.2"
+http = "1"
+http-body = "1"
+tokio = { version = "1", default-features = false, features = ["net","time","rt"] }
+futures-channel = "0.3"
+futures-util = { version = "0.3", default-features = false }
+http2 = { version = "0.4.21", features = ["unstable"]}
+http-body-util = "0.1"
+httparse = "1.9"
+itoa = "1"
+pin-project-lite = "0.2.4"
+smallvec = { version = "1.12", features = ["const_generics", "const_new"] }
+tracing = { version = "0.1", default-features = false, features = ["std"], optional = true }
+want = "0.3"
 
 # Optional deps...
 
@@ -100,16 +113,10 @@ mime_guess = { version = "2.0", default-features = false, optional = true }
 
 ## common
 encoding_rs = { version = "0.8", optional = true }
-http-body = "1"
-http-body-util = "0.1"
-hyper2 = { version = "1.5.5", features = ["http1", "http2", "client"] }
 socket2 = { version = "0.5.9", features = ["all"] }
 lru = { version = "0.14", default-features = false }
-log = "0.4.27"
 mime = "0.3.17"
 percent-encoding = "2.3"
-tokio = { version = "1", default-features = false, features = ["net","time","rt"] }
-pin-project-lite = "0.2.0"
 ipnet = "2.11.0"
 arc-swap = "1.7.0"
 
@@ -178,9 +185,11 @@ futures = { version = "0.3.0", default-features = false, features = ["std"] }
 tower = { version = "0.5.2", default-features = false, features = ["limit"] }
 libc = "0.2"
 
-env_logger = "0.11.6"
+env_logger = "0.11.8"
 tracing = "0.1"
 tracing-subscriber = "0.3.19"
+tokio-test = "0.4"
+pretty_env_logger = "0.5"
 
 [lib]
 doctest = false
@@ -331,4 +340,4 @@ required-features = ["websocket", "futures-util/std"]
 [[example]]
 name = "http2_websocket"
 path = "examples/http2_websocket.rs"
-required-features = ["websocket", "http2-tracing", "futures-util/std"]
+required-features = ["websocket", "tracing", "futures-util/std"]

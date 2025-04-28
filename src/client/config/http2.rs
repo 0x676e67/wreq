@@ -1,5 +1,5 @@
 //! HTTP/2 config.
-use hyper2::{Priority, PseudoOrder, SettingsOrder, StreamDependency, StreamId};
+use http2::frame::{Priority, PseudoOrder, SettingsOrder, StreamDependency, StreamId};
 use std::borrow::Cow;
 
 /// Builder for `Http2Config`.

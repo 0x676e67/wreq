@@ -84,6 +84,7 @@ impl Dst {
 
     /// Returns a reference to the URI of the destination.
     #[inline(always)]
+    #[allow(dead_code)]
     pub(crate) fn uri(&self) -> &Uri {
         &self.0.uri
     }

@@ -7,7 +7,6 @@
 
 pub mod client;
 pub mod common;
-pub mod rt;
 pub mod service;
 
 use crate::header::{Entry, HeaderMap, HeaderValue, OccupiedEntry};

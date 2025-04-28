@@ -1,3 +1,5 @@
+use crate::tracing::warn;
+
 use super::{CertStore, Certificate, CertificateInput};
 use boring2::x509::store::X509StoreBuilder;
 
@@ -33,9 +35,9 @@ where
     let mut valid_count = 0;
     let mut invalid_count = 0;
     for cert in iter {
-        if let Err(err) = store.add_cert(cert.0) {
+        if let Err(_err) = store.add_cert(cert.0) {
             invalid_count += 1;
-            log::warn!("tls failed to parse certificate: {err:?}");
+            warn!("tls failed to parse certificate: {:?}", _err);
         } else {
             valid_count += 1;
         }
@@ -61,8 +63,8 @@ where
         .map(Into::into)
         .filter_map(move |data| match data.with_parser(parser) {
             Ok(cert) => Some(cert),
-            Err(err) => {
-                log::warn!("tls failed to parse certificate: {err:?}");
+            Err(_err) => {
+                warn!("tls failed to parse certificate: {:?}", _err);
                 None
             }
         })

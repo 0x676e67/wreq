@@ -262,7 +262,7 @@
 //!   threadpool using `getaddrinfo`.
 //! - **native-roots**: Use the native system root certificate store.
 //! - **webpki-roots**: Use the webpki-roots crate for root certificates.
-//! - **http2-tracing**: Enable HTTP/2 tracing.
+//! - **tracing**: Enable tracing.
 //! - **internal_proxy_sys_no_cache**: Use the internal proxy system with no cache.
 //!
 //! [hyper]: http://hyper.rs
@@ -335,16 +335,21 @@ pub use self::client::{
 pub use self::proxy::{NoProxy, Proxy};
 pub use self::tls::{AlpnProtos, AlpsProtos, CertStore, Identity, TlsConfig, TlsInfo, TlsVersion};
 pub use self::util::client::{Dst, Http1Builder, Http2Builder};
+
 pub use boring2::ssl::{CertCompressionAlgorithm, ExtensionType, SslCurve};
-pub use hyper2::{Priority, PseudoOrder, SettingsOrder, StreamDependency, StreamId};
+pub use http2::frame::{Priority, PseudoOrder, SettingsOrder, StreamDependency, StreamId};
 
 mod client;
 mod connect;
 #[cfg(any(feature = "cookies", feature = "cookies-abstract"))]
 pub mod cookie;
+
+mod core;
 pub mod dns;
 mod proxy;
+
 pub mod redirect;
 
 pub mod tls;
+mod tracing;
 mod util;

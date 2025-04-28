@@ -3,15 +3,15 @@ mod boring;
 mod cache;
 mod ext;
 
+use crate::core::rt::TokioIo;
 use crate::tls::AlpsProtos;
 use crate::util::client::connect::{Connected, Connection};
-use crate::util::rt::TokioIo;
 
+use crate::core::rt::{Read, ReadBufCursor, Write};
 use boring2::error::ErrorStack;
 use boring2::ex_data::Index;
 use boring2::ssl::Ssl;
 use cache::SessionKey;
-use hyper2::rt::{Read, ReadBufCursor, Write};
 use std::fmt;
 use std::io::IoSlice;
 use std::pin::Pin;

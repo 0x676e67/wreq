@@ -31,7 +31,7 @@ pub struct Request {
     redirect: Option<redirect::Policy>,
     allow_compression: bool,
     network_scheme: NetworkSchemeBuilder,
-    protocol: Option<hyper2::ext::Protocol>,
+    protocol: Option<crate::core::ext::Protocol>,
 }
 
 /// A builder to construct the properties of a `Request`.
@@ -190,7 +190,7 @@ impl Request {
 
     /// Set the mutable reference to the protocol.
     #[inline]
-    pub fn protocol_mut(&mut self) -> &mut Option<hyper2::ext::Protocol> {
+    pub fn protocol_mut(&mut self) -> &mut Option<crate::core::ext::Protocol> {
         &mut self.protocol
     }
 
@@ -239,7 +239,7 @@ impl Request {
         Option<redirect::Policy>,
         bool,
         NetworkScheme,
-        Option<hyper2::ext::Protocol>,
+        Option<crate::core::ext::Protocol>,
     ) {
         (
             self.method,

@@ -1,0 +1,58 @@
+//! Trait aliases
+//!
+//! Traits in this module ease setting bounds and usually automatically
+//! implemented by implementing another trait.
+
+pub use self::h2_client::Http2ClientConnExec;
+
+mod h2_client {
+    use std::{error::Error, future::Future};
+
+    use crate::core::rt::{Read, Write};
+    use crate::core::{proto::h2::client::H2ClientFuture, rt::Executor};
+
+    /// An executor to spawn http2 futures for the client.
+    ///
+    /// This trait is implemented for any type that implements [`Executor`]
+    /// trait for any future.
+    ///
+    /// This trait is sealed and cannot be implemented for types outside this crate.
+    ///
+    /// [`Executor`]: crate::core::rt::Executor
+    pub trait Http2ClientConnExec<B, T>: sealed_client::Sealed<(B, T)>
+    where
+        B: http_body::Body,
+        B::Error: Into<Box<dyn Error + Send + Sync>>,
+        T: Read + Write + Unpin,
+    {
+        #[doc(hidden)]
+        fn execute_h2_future(&mut self, future: H2ClientFuture<B, T>);
+    }
+
+    impl<E, B, T> Http2ClientConnExec<B, T> for E
+    where
+        E: Executor<H2ClientFuture<B, T>>,
+        B: http_body::Body + 'static,
+        B::Error: Into<Box<dyn Error + Send + Sync>>,
+        H2ClientFuture<B, T>: Future<Output = ()>,
+        T: Read + Write + Unpin,
+    {
+        fn execute_h2_future(&mut self, future: H2ClientFuture<B, T>) {
+            self.execute(future)
+        }
+    }
+
+    impl<E, B, T> sealed_client::Sealed<(B, T)> for E
+    where
+        E: Executor<H2ClientFuture<B, T>>,
+        B: http_body::Body + 'static,
+        B::Error: Into<Box<dyn Error + Send + Sync>>,
+        H2ClientFuture<B, T>: Future<Output = ()>,
+        T: Read + Write + Unpin,
+    {
+    }
+
+    mod sealed_client {
+        pub trait Sealed<X> {}
+    }
+}

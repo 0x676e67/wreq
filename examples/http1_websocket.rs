@@ -5,6 +5,10 @@ use std::time::Duration;
 
 #[tokio::main]
 async fn main() -> Result<(), rquest::Error> {
+    tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::TRACE)
+        .init();
+
     // Build a client
     let client = Client::builder()
         .cert_verification(false)

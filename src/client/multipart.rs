@@ -175,7 +175,7 @@ impl Form {
         Box::pin(stream.chain(last))
     }
 
-    /// Generate a hyper2::Body stream for a single Part instance of a Form request.
+    /// Generate a crate::core::Body stream for a single Part instance of a Form request.
     pub(crate) fn part_stream<T>(
         &mut self,
         name: T,

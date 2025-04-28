@@ -22,17 +22,18 @@ use std::pin::Pin;
 use std::task::{self, Poll};
 use std::time::Duration;
 
+use crate::AlpnProtos;
+use crate::core::client::conn::TrySendError as ConnTrySendError;
+use crate::core::header::{HOST, HeaderValue};
+use crate::core::rt::Timer;
+use crate::core::{Method, Request, Response, Uri, Version, body::Body};
+use crate::tracing::{debug, trace, warn};
+use crate::util::common;
+
 use futures_util::future::{self, Either, FutureExt, TryFutureExt};
 use http::uri::Scheme;
-use hyper2::client::conn::TrySendError as ConnTrySendError;
-use hyper2::header::{HOST, HeaderValue};
-use hyper2::rt::Timer;
-use hyper2::{Method, Request, Response, Uri, Version, body::Body};
-use log::{debug, trace, warn};
 use sync_wrapper::SyncWrapper;
 
-use crate::AlpnProtos;
-use crate::util::common;
 use connect::capture::CaptureConnectionExtension;
 use connect::{Alpn, Connect, Connected, Connection};
 use pool::Ver;
@@ -53,8 +54,8 @@ pub struct Client<C, B> {
     config: Config,
     connector: C,
     exec: Exec,
-    h1_builder: hyper2::client::conn::http1::Builder,
-    h2_builder: hyper2::client::conn::http2::Builder<Exec>,
+    h1_builder: crate::core::client::conn::http1::Builder,
+    h2_builder: crate::core::client::conn::http2::Builder<Exec>,
     pool: pool::Pool<PoolClient<B>, PoolKey>,
 }
 
@@ -144,7 +145,7 @@ enum TrySendError<B> {
 }
 
 type ResponseWrapper = SyncWrapper<
-    Pin<Box<dyn Future<Output = Result<Response<hyper2::body::Incoming>, Error>> + Send>>,
+    Pin<Box<dyn Future<Output = Result<Response<crate::core::body::Incoming>, Error>> + Send>>,
 >;
 
 /// A `Future` that will resolve to an HTTP Response.
@@ -167,7 +168,7 @@ impl Client<(), ()> {
     /// # fn run () {
     /// use std::time::Duration;
     /// use crate::util::client::Client;
-    /// use crate::util::rt::TokioExecutor;
+    /// use crate::core::rt::TokioExecutor;
     ///
     /// let client = Client::builder(TokioExecutor::new())
     ///     .pool_idle_timeout(Duration::from_secs(30))
@@ -180,7 +181,7 @@ impl Client<(), ()> {
     /// ```
     pub fn builder<E>(executor: E) -> Builder
     where
-        E: hyper2::rt::Executor<BoxSendFuture> + Send + Sync + Clone + 'static,
+        E: crate::core::rt::Executor<BoxSendFuture> + Send + Sync + Clone + 'static,
     {
         Builder::new(executor)
     }
@@ -200,10 +201,10 @@ where
     /// ```
     /// #
     /// # fn run () {
-    /// use hyper2::{Method, Request};
+    /// use crate::core::{Method, Request};
     /// use crate::util::client::Client;
     /// use http_body_util::Full;
-    /// use crate::util::rt::TokioExecutor;
+    /// use crate::core::rt::TokioExecutor;
     /// use bytes::Bytes;
     ///
     /// let client: Client<_, Full<Bytes>> = Client::builder(TokioExecutor::new()).build_http();
@@ -247,7 +248,7 @@ where
         self,
         mut req: Request<B>,
         dst: Dst,
-    ) -> Result<Response<hyper2::body::Incoming>, Error> {
+    ) -> Result<Response<crate::core::body::Incoming>, Error> {
         let uri = req.uri().clone();
 
         loop {
@@ -280,7 +281,7 @@ where
         &self,
         mut req: Request<B>,
         dst: Dst,
-    ) -> Result<Response<hyper2::body::Incoming>, TrySendError<B>> {
+    ) -> Result<Response<crate::core::body::Incoming>, TrySendError<B>> {
         let mut pooled = self
             .connection_for(dst)
             .await
@@ -452,8 +453,8 @@ where
                 // have been started...
                 if connecting.started() {
                     let bg = connecting
-                        .map_err(|err| {
-                            trace!("background connect error: {}", err);
+                        .map_err(|_err| {
+                            trace!("background connect error: {}", _err);
                         })
                         .map(|_pooled| {
                             // dropping here should just place it in
@@ -568,7 +569,7 @@ where
                                         "http2 handshake complete, spawning background dispatcher task"
                                     );
                                     executor.execute(
-                                        conn.map_err(|e| debug!("client connection error: {}", e))
+                                        conn.map_err(|_e| debug!("client connection error: {}", _e))
                                             .map(|_| ()),
                                     );
 
@@ -587,7 +588,7 @@ where
                                     );
                                     executor.execute(
                                         conn.with_upgrades()
-                                            .map_err(|e| debug!("client connection error: {}", e))
+                                            .map_err(|_e| debug!("client connection error: {}", _e))
                                             .map(|_| ()),
                                     );
 
@@ -639,7 +640,7 @@ where
     B::Data: Send,
     B::Error: Into<Box<dyn StdError + Send + Sync>>,
 {
-    type Response = Response<hyper2::body::Incoming>;
+    type Response = Response<crate::core::body::Incoming>;
     type Error = Error;
     type Future = ResponseFuture;
 
@@ -659,7 +660,7 @@ where
     B::Data: Send,
     B::Error: Into<Box<dyn StdError + Send + Sync>>,
 {
-    type Response = Response<hyper2::body::Incoming>;
+    type Response = Response<crate::core::body::Incoming>;
     type Error = Error;
     type Future = ResponseFuture;
 
@@ -697,15 +698,15 @@ impl<C, B> fmt::Debug for Client<C, B> {
 impl ResponseFuture {
     fn new<F>(value: F) -> Self
     where
-        F: Future<Output = Result<Response<hyper2::body::Incoming>, Error>> + Send + 'static,
+        F: Future<Output = Result<Response<crate::core::body::Incoming>, Error>> + Send + 'static,
     {
         Self {
             inner: SyncWrapper::new(Box::pin(value)),
         }
     }
 
-    fn error_version(ver: Version) -> Self {
-        warn!("Request has unsupported version \"{:?}\"", ver);
+    fn error_version(_ver: Version) -> Self {
+        warn!("Request has unsupported version \"{:?}\"", _ver);
         ResponseFuture::new(Box::pin(future::err(e!(UserUnsupportedVersion))))
     }
 }
@@ -717,7 +718,7 @@ impl fmt::Debug for ResponseFuture {
 }
 
 impl Future for ResponseFuture {
-    type Output = Result<Response<hyper2::body::Incoming>, Error>;
+    type Output = Result<Response<crate::core::body::Incoming>, Error>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<Self::Output> {
         self.inner.get_mut().as_mut().poll(cx)
@@ -734,9 +735,9 @@ struct PoolClient<B> {
 }
 
 enum PoolTx<B> {
-    Http1(hyper2::client::conn::http1::SendRequest<B>),
+    Http1(crate::core::client::conn::http1::SendRequest<B>),
 
-    Http2(hyper2::client::conn::http2::SendRequest<B>),
+    Http2(crate::core::client::conn::http2::SendRequest<B>),
 }
 
 impl<B> PoolClient<B> {
@@ -780,7 +781,7 @@ impl<B: Body + 'static> PoolClient<B> {
     fn try_send_request(
         &mut self,
         req: Request<B>,
-    ) -> impl Future<Output = Result<Response<hyper2::body::Incoming>, ConnTrySendError<Request<B>>>>
+    ) -> impl Future<Output = Result<Response<crate::core::body::Incoming>, ConnTrySendError<Request<B>>>>
     where
         B: Send,
     {
@@ -908,11 +909,11 @@ fn is_schema_secure(uri: &Uri) -> bool {
 /// Http1 part of builder.
 #[derive(Debug)]
 pub struct Http1Builder<'a> {
-    inner: &'a mut hyper2::client::conn::http1::Builder,
+    inner: &'a mut crate::core::client::conn::http1::Builder,
 }
 
 impl Deref for Http1Builder<'_> {
-    type Target = hyper2::client::conn::http1::Builder;
+    type Target = crate::core::client::conn::http1::Builder;
 
     fn deref(&self) -> &Self::Target {
         self.inner
@@ -928,11 +929,11 @@ impl DerefMut for Http1Builder<'_> {
 /// Http2 part of builder.
 #[derive(Debug)]
 pub struct Http2Builder<'a> {
-    inner: &'a mut hyper2::client::conn::http2::Builder<Exec>,
+    inner: &'a mut crate::core::client::conn::http2::Builder<Exec>,
 }
 
 impl Deref for Http2Builder<'_> {
-    type Target = hyper2::client::conn::http2::Builder<Exec>;
+    type Target = crate::core::client::conn::http2::Builder<Exec>;
 
     fn deref(&self) -> &Self::Target {
         self.inner
@@ -954,7 +955,7 @@ impl DerefMut for Http2Builder<'_> {
 /// # fn run () {
 /// use std::time::Duration;
 /// use crate::util::client::Client;
-/// use crate::util::rt::TokioExecutor;
+/// use crate::core::rt::TokioExecutor;
 ///
 /// let client = Client::builder(TokioExecutor::new())
 ///     .pool_idle_timeout(Duration::from_secs(30))
@@ -971,8 +972,8 @@ pub struct Builder {
     client_config: Config,
     exec: Exec,
 
-    h1_builder: hyper2::client::conn::http1::Builder,
-    h2_builder: hyper2::client::conn::http2::Builder<Exec>,
+    h1_builder: crate::core::client::conn::http1::Builder,
+    h2_builder: crate::core::client::conn::http2::Builder<Exec>,
     pool_config: pool::Config,
     pool_timer: Option<timer::Timer>,
 }
@@ -981,7 +982,7 @@ impl Builder {
     /// Construct a new Builder.
     pub fn new<E>(executor: E) -> Self
     where
-        E: hyper2::rt::Executor<BoxSendFuture> + Send + Sync + Clone + 'static,
+        E: crate::core::rt::Executor<BoxSendFuture> + Send + Sync + Clone + 'static,
     {
         let exec = Exec::new(executor);
         Self {
@@ -992,8 +993,8 @@ impl Builder {
             },
             exec: exec.clone(),
 
-            h1_builder: hyper2::client::conn::http1::Builder::new(),
-            h2_builder: hyper2::client::conn::http2::Builder::new(exec),
+            h1_builder: crate::core::client::conn::http1::Builder::new(),
+            h2_builder: crate::core::client::conn::http2::Builder::new(exec),
             pool_config: pool::Config {
                 idle_timeout: Some(Duration::from_secs(90)),
                 max_idle_per_host: usize::MAX,
@@ -1016,7 +1017,7 @@ impl Builder {
     /// # fn run () {
     /// use std::time::Duration;
     /// use crate::util::client::Client;
-    /// use crate::util::rt::{TokioExecutor, TokioTimer};
+    /// use crate::core::rt::{TokioExecutor, TokioTimer};
     ///
     /// let client = Client::builder(TokioExecutor::new())
     ///     .pool_idle_timeout(Duration::from_secs(30))
@@ -1212,11 +1213,11 @@ impl Error {
         matches!(self.kind, ErrorKind::Canceled)
     }
 
-    fn tx(src: hyper2::Error) -> Self {
+    fn tx(src: crate::core::Error) -> Self {
         e!(SendRequest, src)
     }
 
-    fn closed(src: hyper2::Error) -> Self {
+    fn closed(src: crate::core::Error) -> Self {
         e!(ChannelClosed, src)
     }
 }

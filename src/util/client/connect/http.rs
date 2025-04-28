@@ -9,9 +9,9 @@ use std::sync::Arc;
 use std::task::{self, Poll, ready};
 use std::time::Duration;
 
+use crate::tracing::{debug, trace, warn};
 use futures_util::future::Either;
 use http::uri::{Scheme, Uri};
-use log::{debug, trace, warn};
 use pin_project_lite::pin_project;
 use socket2::TcpKeepalive;
 use tokio::net::{TcpSocket, TcpStream};
@@ -19,7 +19,7 @@ use tokio::time::Sleep;
 
 use super::dns::{self, GaiResolver, Resolve, resolve};
 use super::{Connected, Connection};
-use crate::util::rt::TokioIo;
+use crate::core::rt::TokioIo;
 
 /// A connector for the `http` scheme.
 ///

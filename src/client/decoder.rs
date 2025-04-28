@@ -37,10 +37,10 @@ use async_compression::tokio::bufread::ZlibDecoder;
 ))]
 use futures_util::Stream;
 
+use crate::core::body::Body as HttpBody;
+use crate::core::body::Frame;
 use bytes::Bytes;
 use http::HeaderMap;
-use hyper2::body::Body as HttpBody;
-use hyper2::body::Frame;
 
 #[cfg(any(
     feature = "gzip",

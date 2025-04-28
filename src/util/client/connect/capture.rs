@@ -51,7 +51,7 @@ pub struct CaptureConnection {
 /// # async fn example() {
 /// use crate::util::client::connect::capture_connection;
 /// use crate::util::client::Client;
-/// use crate::util::rt::TokioExecutor;
+/// use crate::core::rt::TokioExecutor;
 /// use bytes::Bytes;
 /// use http_body_util::Empty;
 /// let mut request = http::Request::builder()

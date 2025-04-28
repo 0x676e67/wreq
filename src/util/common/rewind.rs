@@ -1,7 +1,7 @@
 use std::{cmp, io};
 
+use crate::core::rt::{Read, ReadBufCursor, Write};
 use bytes::{Buf, Bytes};
-use hyper2::rt::{Read, ReadBufCursor, Write};
 
 use std::{
     pin::Pin,

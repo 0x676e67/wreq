@@ -1085,7 +1085,7 @@ pub(crate) fn encode_basic_auth(username: &str, password: &str) -> HeaderValue {
 }
 
 /// A helper trait to allow testing `Proxy::intercept` without having to
-/// construct `hyper2::client::connect::Destination`s.
+/// construct `crate::core::client::connect::Destination`s.
 pub(crate) trait Dst {
     fn scheme(&self) -> &str;
     fn host(&self) -> &str;
@@ -1175,9 +1175,9 @@ fn get_from_environment() -> SystemProxyMap {
     }
 
     if is_cgi() {
-        if log::log_enabled!(log::Level::Warn) && env::var_os("HTTP_PROXY").is_some() {
-            log::warn!("HTTP_PROXY environment variable ignored in CGI");
-        }
+        // if log::log_enabled!(log::Level::Warn) && env::var_os("HTTP_PROXY").is_some() {
+        //     log::warn!("HTTP_PROXY environment variable ignored in CGI");
+        // }
     } else if !insert_from_env(&mut proxies, "http", "HTTP_PROXY") {
         insert_from_env(&mut proxies, "http", "http_proxy");
     }

@@ -2,13 +2,13 @@ use std::pin::Pin;
 use std::task::{self, Poll};
 use std::{fmt, io};
 
-use crate::util::rt::TokioIo;
+use crate::core::rt::TokioIo;
 use futures_util::TryFutureExt;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 
 /// An upgraded HTTP connection.
 pub struct Upgraded {
-    inner: TokioIo<hyper2::upgrade::Upgraded>,
+    inner: TokioIo<crate::core::upgrade::Upgraded>,
 }
 
 impl AsyncRead for Upgraded {
@@ -57,8 +57,8 @@ impl fmt::Debug for Upgraded {
     }
 }
 
-impl From<hyper2::upgrade::Upgraded> for Upgraded {
-    fn from(inner: hyper2::upgrade::Upgraded) -> Self {
+impl From<crate::core::upgrade::Upgraded> for Upgraded {
+    fn from(inner: crate::core::upgrade::Upgraded) -> Self {
         Upgraded {
             inner: TokioIo::new(inner),
         }
@@ -68,7 +68,7 @@ impl From<hyper2::upgrade::Upgraded> for Upgraded {
 impl super::response::Response {
     /// Consumes the response and returns a future for a possible HTTP upgrade.
     pub async fn upgrade(self) -> crate::Result<Upgraded> {
-        hyper2::upgrade::on(self.res)
+        crate::core::upgrade::on(self.res)
             .map_ok(Upgraded::from)
             .map_err(crate::error::upgrade)
             .await

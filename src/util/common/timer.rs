@@ -6,16 +6,16 @@ use std::sync::Arc;
 use std::time::Duration;
 use std::time::Instant;
 
-use hyper2::rt::Sleep;
+use crate::core::rt::Sleep;
 
 #[derive(Clone)]
-pub(crate) struct Timer(Arc<dyn hyper2::rt::Timer + Send + Sync>);
+pub(crate) struct Timer(Arc<dyn crate::core::rt::Timer + Send + Sync>);
 
 // =====impl Timer=====
 impl Timer {
     pub(crate) fn new<T>(inner: T) -> Self
     where
-        T: hyper2::rt::Timer + Send + Sync + 'static,
+        T: crate::core::rt::Timer + Send + Sync + 'static,
     {
         Self(Arc::new(inner))
     }
@@ -27,7 +27,7 @@ impl fmt::Debug for Timer {
     }
 }
 
-impl hyper2::rt::Timer for Timer {
+impl crate::core::rt::Timer for Timer {
     fn sleep(&self, duration: Duration) -> Pin<Box<dyn Sleep>> {
         self.0.sleep(duration)
     }
