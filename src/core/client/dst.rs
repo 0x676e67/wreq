@@ -1,6 +1,7 @@
 use super::{Error, ErrorKind, NetworkScheme, PoolKey, set_scheme};
+use crate::AlpnProtos;
 use crate::proxy::ProxyScheme;
-use crate::{AlpnProtos, util::into_uri};
+use http::uri::PathAndQuery;
 use http::{Uri, Version, uri::Scheme};
 use std::net::{Ipv4Addr, Ipv6Addr};
 use std::ops::Deref;
@@ -56,7 +57,11 @@ impl Dst {
         };
 
         // Convert the scheme and host to a URI
-        into_uri(scheme, auth)
+        Uri::builder()
+            .scheme(scheme)
+            .authority(auth)
+            .path_and_query(PathAndQuery::from_static("/"))
+            .build()
             .map(|uri| Dst(PoolKey { uri, alpn, network }))
             .map_err(Into::into)
     }

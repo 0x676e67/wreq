@@ -1,4 +1,5 @@
 use self::tls_conn::BoringTlsConn;
+
 use crate::core::client::{
     Dst,
     connect::{Connected, Connection},
@@ -7,8 +8,12 @@ use crate::core::rt::TokioIo;
 use crate::core::rt::{Read, ReadBufCursor, Write};
 use crate::tls::{HttpsConnector, MaybeHttpsStream, TlsConnector};
 use crate::tracing::{debug, trace};
-use crate::util::into_uri;
-use http::uri::Scheme;
+
+use http::{
+    Uri,
+    uri::{Authority, PathAndQuery, Scheme},
+};
+
 use pin_project_lite::pin_project;
 use sealed::{Conn, Unnameable};
 use tokio_boring2::SslStream;
@@ -372,6 +377,16 @@ where
     } else {
         f.await
     }
+}
+
+#[inline]
+fn into_uri(scheme: Scheme, host: Authority) -> Result<Uri, http::Error> {
+    // TODO: Should the `http` crate get `From<(Scheme, Authority)> for Uri`?
+    Uri::builder()
+        .scheme(scheme)
+        .authority(host)
+        .path_and_query(PathAndQuery::from_static("/"))
+        .build()
 }
 
 impl Service<Dst> for ConnectorService {

@@ -1,10 +1,4 @@
-#![cfg_attr(docsrs, feature(doc_auto_cfg, doc_cfg))]
-
 use crate::header::{Entry, HeaderMap, HeaderValue, OccupiedEntry};
-use http::{
-    Uri,
-    uri::{Authority, PathAndQuery, Scheme},
-};
 
 pub fn basic_auth<U, P>(username: U, password: Option<P>) -> HeaderValue
 where
@@ -90,14 +84,4 @@ pub(crate) fn replace_headers(dst: &mut HeaderMap, src: HeaderMap) {
             },
         }
     }
-}
-
-#[inline]
-pub(crate) fn into_uri(scheme: Scheme, host: Authority) -> Result<Uri, http::Error> {
-    // TODO: Should the `http` crate get `From<(Scheme, Authority)> for Uri`?
-    Uri::builder()
-        .scheme(scheme)
-        .authority(host)
-        .path_and_query(PathAndQuery::from_static("/"))
-        .build()
 }
