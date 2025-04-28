@@ -38,7 +38,7 @@ impl Dst {
     /// let mut uri: Uri = "http://example.com".parse().unwrap();
     /// let dst = Dst::new(&mut uri, false, Default::default(), None).unwrap();
     /// ```
-    pub fn new(
+    pub(crate) fn new(
         uri: &mut Uri,
         is_http_connect: bool,
         network: NetworkScheme,
@@ -80,13 +80,6 @@ impl Dst {
         into_uri(scheme, auth)
             .map(|uri| Dst(PoolKey { uri, alpn, network }))
             .map_err(Into::into)
-    }
-
-    /// Returns a reference to the URI of the destination.
-    #[inline(always)]
-    #[allow(dead_code)]
-    pub(crate) fn uri(&self) -> &Uri {
-        &self.0.uri
     }
 
     /// Sets a new URI for the destination.
