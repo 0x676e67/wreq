@@ -243,7 +243,7 @@ impl ConnectorService {
         if dst.scheme() == Some(&Scheme::HTTPS) {
             let http = HttpsConnector::new(self.http.clone(), self.tls.clone(), &mut dst);
 
-            log::trace!("socks HTTPS over proxy");
+            crate::tracing::trace!("socks HTTPS over proxy");
             let host = dst.host().ok_or(crate::error::uri_bad_host())?;
             let conn = socks::connect(proxy, &dst, dns).await?;
 

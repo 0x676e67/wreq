@@ -30,7 +30,7 @@ macro_rules! trace_span {
             #[cfg(feature = "tracing")]
             {
                 let _span = ::tracing::trace_span!($($arg)+);
-                _span.entered()
+                let _ = _span.entered();
             }
         }
     }

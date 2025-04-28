@@ -227,7 +227,7 @@ async fn main() -> Result<(), rquest::Error> {
 
     // Use the API you're already familiar with
     let text = client
-        .get("https://tls.browserleaks.com")
+        .get("https://tls.peet.ws/api/all")
         .send()
         .await?
         .text()

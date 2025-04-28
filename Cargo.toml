@@ -172,6 +172,7 @@ hyper-util = { version = "0.1.10", features = [
     "server-auto",
     "tokio",
 ] }
+log = "0.4"
 serde = { version = "1.0", features = ["derive"] }
 flate2 = "1.1.1"
 zstd = "0.13"
@@ -251,93 +252,94 @@ path = "examples/form.rs"
 [[example]]
 name = "hickory_dns"
 path = "examples/hickory_dns.rs"
-required-features = ["hickory-dns"]
+required-features = ["hickory-dns", "tracing"]
 
 [[example]]
 name = "headers_order"
 path = "examples/headers_order.rs"
-required-features = ["cookies"]
+required-features = ["cookies", "tracing"]
 
 [[example]]
 name = "emulation_firefox"
 path = "examples/emulation_firefox.rs"
-required-features = ["full"]
+required-features = ["full", "tracing"]
 
 [[example]]
 name = "emulation_twitter"
 path = "examples/emulation_twitter.rs"
-required-features = ["full"]
+required-features = ["full", "tracing"]
 
 [[example]]
 name = "set_headers"
 path = "examples/set_headers.rs"
+required-features = ["tracing"]
 
 [[example]]
 name = "set_cookies"
 path = "examples/set_cookies.rs"
-required-features = ["cookies"]
+required-features = ["cookies", "tracing"]
 
 [[example]]
 name = "set_cookie_provider"
 path = "examples/set_cookie_provider.rs"
-required-features = ["cookies"]
+required-features = ["cookies", "tracing"]
 
 [[example]]
 name = "set_proxies"
 path = "examples/set_proxies.rs"
-required-features = ["socks", "brotli"]
+required-features = ["socks", "brotli", "tracing"]
 
 [[example]]
 name = "set_local_address"
 path = "examples/set_local_address.rs"
-required-features = ["brotli"]
+required-features = ["brotli", "tracing"]
 
 [[example]]
 name = "set_interface"
 path = "examples/set_interface.rs"
-required-features = ["brotli"]
+required-features = ["brotli", "tracing"]
 
 [[example]]
 name = "set_cert_store"
 path = "examples/set_cert_store.rs"
-required-features = ["native-roots", "webpki-roots"]
+required-features = ["native-roots", "webpki-roots", "tracing"]
 
 [[example]]
 name = "request_with_redirect"
 path = "examples/request_with_redirect.rs"
-required-features = ["full"]
+required-features = ["full", "tracing"]
 
 [[example]]
 name = "request_with_version"
 path = "examples/request_with_version.rs"
-required-features = ["full"]
+required-features = ["full", "tracing"]
 
 [[example]]
 name = "request_with_proxy"
 path = "examples/request_with_proxy.rs"
-required-features = ["full"]
+required-features = ["full", "tracing"]
 
 [[example]]
 name = "connect_via_lower_priority_tokio_runtime"
 path = "examples/connect_via_lower_priority_tokio_runtime.rs"
-required-features = ["full"]
+required-features = ["full", "tracing"]
 
 [[example]]
 name = "request_with_local_address"
 path = "examples/request_with_local_address.rs"
-required-features = ["full"]
+required-features = ["full", "tracing"]
 
 [[example]]
 name = "request_with_interface"
 path = "examples/request_with_interface.rs"
-required-features = ["full"]
+required-features = ["full", "tracing"]
 
 [[example]]
 name = "http1_websocket"
 path = "examples/http1_websocket.rs"
-required-features = ["websocket", "futures-util/std"]
+required-features = ["websocket", "futures-util/std", "tracing"]
 
 [[example]]
 name = "http2_websocket"
 path = "examples/http2_websocket.rs"
-required-features = ["websocket", "tracing", "futures-util/std"]
+required-features = ["websocket", "futures-util/std", "tracing"]
