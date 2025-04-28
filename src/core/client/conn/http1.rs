@@ -160,19 +160,6 @@ where
     /// Sends a `Request` on the associated connection.
     ///
     /// Returns a future that if successful, yields the `Response`.
-    ///
-    /// `req` must have a `Host` header.
-    ///
-    /// # Uri
-    ///
-    /// The `Uri` of the request is serialized as-is.
-    ///
-    /// - Usually you want origin-form (`/path?query`).
-    /// - For sending to an HTTP proxy, you want to send in absolute-form
-    ///   (`https://crate::core:.rs/guides`).
-    ///
-    /// This is however not enforced or validated and it is up to the user
-    /// of this method to ensure the `Uri` is correct for their intended purpose.
     pub fn send_request(
         &mut self,
         req: Request<B>,
