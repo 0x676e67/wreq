@@ -162,7 +162,7 @@ impl Error {
     pub fn is_decode(&self) -> bool {
         matches!(self.inner.kind, Kind::Decode)
     }
-    
+
     /// Returns true if the error is related to upgrading the connection
     pub fn is_upgrade(&self) -> bool {
         matches!(self.inner.kind, Kind::Upgrade)
