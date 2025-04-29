@@ -30,7 +30,6 @@ use http2::{Ping, PingPong};
 
 use crate::core::common::time::Time;
 use crate::core::rt::Sleep;
-use crate::tracing::{debug, trace};
 
 type WindowSize = u32;
 

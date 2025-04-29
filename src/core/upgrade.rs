@@ -48,12 +48,11 @@ use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll};
 
+use crate::core::common::io::Rewind;
 use crate::core::rt::{Read, ReadBufCursor, Write};
-use crate::tracing::trace;
+
 use bytes::Bytes;
 use tokio::sync::oneshot;
-
-use crate::core::common::io::Rewind;
 
 /// An upgraded HTTP connection.
 ///

@@ -18,7 +18,6 @@ use crate::core::client::dispatch::TrySendError;
 use crate::core::common::task;
 use crate::core::proto::{BodyLength, Conn, Dispatched, MessageHead, RequestHead};
 use crate::core::upgrade::OnUpgrade;
-use crate::tracing::{debug, error, trace};
 
 pub(crate) struct Dispatcher<D, Bs: Body, I, T> {
     conn: Conn<I, Bs::Data, T>,

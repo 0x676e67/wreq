@@ -18,7 +18,6 @@ use crate::core::proto::h1::{
     Encode, Encoder, Http1Transaction, ParseContext, ParseResult, ParsedMessage,
 };
 use crate::core::proto::{BodyLength, MessageHead, RequestLine};
-use crate::tracing::{debug, error, trace, trace_span, warn};
 
 pub(crate) const DEFAULT_MAX_HEADERS: usize = 100;
 const AVERAGE_HEADER_SIZE: usize = 30; // totally scientific

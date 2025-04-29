@@ -15,7 +15,6 @@ use pin_project_lite::pin_project;
 use crate::core::body::Body;
 use crate::core::proto::h2::ping::Recorder;
 use crate::core::rt::{Read, ReadBufCursor, Write};
-use crate::tracing::{debug, trace, warn};
 
 pub(crate) mod ping;
 

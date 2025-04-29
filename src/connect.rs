@@ -7,7 +7,6 @@ use crate::core::client::{
 use crate::core::rt::TokioIo;
 use crate::core::rt::{Read, ReadBufCursor, Write};
 use crate::tls::{HttpsConnector, MaybeHttpsStream, TlsConnector};
-use crate::tracing::{debug, trace};
 
 use http::{
     Uri,
@@ -668,7 +667,6 @@ mod tunnel {
     use super::BoxError;
     use crate::core::rt::TokioIo;
     use crate::core::rt::{Read, Write};
-    use crate::tracing::debug;
     use http::{HeaderMap, HeaderValue};
     use std::sync::Arc;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -842,7 +840,6 @@ mod socks {
 mod verbose {
     use crate::core::client::connect::{Connected, Connection};
     use crate::core::rt::{Read, ReadBufCursor, Write};
-    use crate::tracing::trace;
     use std::cmp::min;
     use std::fmt;
     use std::io::{self, IoSlice};

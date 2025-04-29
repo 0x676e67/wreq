@@ -11,7 +11,6 @@ use http_body::Frame;
 use super::DecodedLength;
 use super::io::MemRead;
 use super::role::DEFAULT_MAX_HEADERS;
-use crate::tracing::{debug, trace};
 
 use self::Kind::{Chunked, Eof, Length};
 

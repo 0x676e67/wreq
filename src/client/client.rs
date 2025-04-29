@@ -28,7 +28,6 @@ use crate::error::{BoxError, Error};
 use crate::into_url::try_uri;
 use crate::proxy::IntoProxy;
 use crate::tls::CertificateInput;
-use crate::tracing::{debug, trace};
 use crate::{CertStore, Http1Config, Http2Config, Identity, TlsConfig, error};
 use crate::{IntoUrl, Method, Proxy, StatusCode, Url};
 use crate::{

@@ -7,7 +7,6 @@ use pin_project_lite::pin_project;
 use tokio::sync::{mpsc, oneshot};
 
 use crate::core::{body::Incoming, proto::h2::client::ResponseFutMap};
-use crate::tracing::trace;
 
 pub(crate) type RetryPromise<T, U> = oneshot::Receiver<Result<U, TrySendError<T>>>;
 pub(crate) type Promise<T> = oneshot::Receiver<Result<T, crate::core::Error>>;

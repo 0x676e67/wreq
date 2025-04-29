@@ -9,8 +9,6 @@ macro_rules! debug {
     }
 }
 
-pub(crate) use debug;
-
 macro_rules! trace {
     ($($arg:tt)*) => {
         {
@@ -21,8 +19,6 @@ macro_rules! trace {
         }
     }
 }
-
-pub(crate) use trace;
 
 macro_rules! trace_span {
     ($($arg:tt)*) => {
@@ -36,9 +32,7 @@ macro_rules! trace_span {
     }
 }
 
-pub(crate) use trace_span;
-
-macro_rules! _warn {
+macro_rules! warn {
     ($($arg:tt)*) => {
         {
             #[cfg(feature = "tracing")]
@@ -49,9 +43,7 @@ macro_rules! _warn {
     }
 }
 
-pub(crate) use _warn as warn;
-
-macro_rules! _error {
+macro_rules! error {
     ($($arg:tt)*) => {
         {
             #[cfg(feature = "tracing")]
@@ -61,5 +53,3 @@ macro_rules! _error {
         }
     }
 }
-
-pub(crate) use _error as error;

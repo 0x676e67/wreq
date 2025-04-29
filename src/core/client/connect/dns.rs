@@ -31,8 +31,6 @@ use std::{fmt, io, vec};
 use tokio::task::JoinHandle;
 use tower_service::Service;
 
-use crate::tracing::debug;
-
 pub(super) use self::sealed::Resolve;
 
 /// A domain name to resolve into IP addresses.

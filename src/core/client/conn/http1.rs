@@ -15,7 +15,6 @@ use httparse::ParserConfig;
 use super::super::dispatch::{self, TrySendError};
 use crate::core::body::{Body, Incoming as IncomingBody};
 use crate::core::proto;
-use crate::tracing::{debug, trace};
 
 type Dispatcher<T, B> =
     proto::dispatch::Dispatcher<proto::dispatch::Client<B>, B, T, proto::h1::ClientTransaction>;

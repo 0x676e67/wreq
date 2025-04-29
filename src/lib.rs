@@ -275,6 +275,9 @@
 //! [Proxy]: ./struct.Proxy.html
 //! [cargo-features]: https://doc.rust-lang.org/stable/cargo/reference/manifest.html#the-features-section
 
+#[macro_use]
+mod trace;
+
 #[cfg(feature = "hickory-dns")]
 pub use hickory_resolver;
 pub use http::Method;
@@ -282,7 +285,6 @@ pub use http::header;
 pub use http::{StatusCode, Version};
 pub use url::Url;
 
-// universal mods
 #[macro_use]
 mod error;
 mod into_url;
@@ -351,5 +353,4 @@ mod proxy;
 pub mod redirect;
 
 pub mod tls;
-mod tracing;
 mod util;

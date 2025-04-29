@@ -17,7 +17,6 @@ use lru::LruCache;
 use crate::core::common::{exec, exec::Exec, timer::Timer};
 use crate::core::rt::Sleep;
 use crate::core::rt::Timer as _;
-use crate::tracing::{debug, trace};
 use tokio::sync::oneshot;
 
 // FIXME: allow() required due to `impl Trait` leaking types to this lint

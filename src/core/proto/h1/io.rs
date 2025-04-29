@@ -10,7 +10,6 @@ use futures_util::ready;
 
 use super::{Http1Transaction, ParseContext, ParsedMessage};
 use crate::core::common::buf::BufList;
-use crate::tracing::{debug, trace};
 
 /// The initial buffer size allocated before trying to read from IO.
 pub(crate) const INIT_BUFFER_SIZE: usize = 8192;

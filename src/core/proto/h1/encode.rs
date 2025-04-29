@@ -12,8 +12,6 @@ use http::{
     },
 };
 
-use crate::tracing::{debug, trace};
-
 use super::io::WriteBuf;
 use super::role::{write_headers, write_headers_title_case};
 

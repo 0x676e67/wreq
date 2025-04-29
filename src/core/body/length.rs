@@ -1,4 +1,3 @@
-use crate::tracing::warn;
 use std::fmt;
 
 #[derive(Clone, Copy, PartialEq, Eq)]

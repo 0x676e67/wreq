@@ -242,7 +242,7 @@ impl Decoder {
         feature = "deflate"
     ))]
     fn detect_encoding(headers: &mut HeaderMap, encoding_str: &str) -> bool {
-        use crate::tracing::warn;
+        use crate::trace::warn;
         use http::header::{CONTENT_ENCODING, CONTENT_LENGTH, TRANSFER_ENCODING};
 
         let mut is_content_encoded = {

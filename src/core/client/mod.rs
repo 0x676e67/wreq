@@ -29,7 +29,6 @@ use crate::core::common;
 use crate::core::header::{HOST, HeaderValue};
 use crate::core::rt::Timer;
 use crate::core::{Method, Request, Response, Uri, Version, body::Body};
-use crate::tracing::{debug, trace, warn};
 
 use futures_util::future::{self, Either, FutureExt, TryFutureExt};
 use http::uri::Scheme;

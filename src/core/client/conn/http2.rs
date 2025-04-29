@@ -21,7 +21,6 @@ use crate::core::common::time::Time;
 use crate::core::proto;
 use crate::core::rt::Timer;
 use crate::core::rt::bounds::Http2ClientConnExec;
-use crate::tracing::{debug, trace};
 
 /// The sender side of an established connection.
 pub struct SendRequest<B> {

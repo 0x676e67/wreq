@@ -73,8 +73,6 @@ use std::{
 
 use ::http::Extensions;
 
-use crate::tracing::debug;
-
 pub use self::http::{HttpConnector, HttpInfo};
 
 pub mod dns;

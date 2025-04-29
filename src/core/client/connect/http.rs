@@ -9,7 +9,6 @@ use std::sync::Arc;
 use std::task::{self, Poll, ready};
 use std::time::Duration;
 
-use crate::tracing::{debug, trace, warn};
 use futures_util::future::Either;
 use http::uri::{Scheme, Uri};
 use pin_project_lite::pin_project;

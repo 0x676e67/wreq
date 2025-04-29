@@ -1,5 +1,3 @@
-use crate::tracing::warn;
-
 use super::{CertStore, Certificate, CertificateInput};
 use boring2::x509::store::X509StoreBuilder;
 
