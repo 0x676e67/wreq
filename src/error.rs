@@ -163,6 +163,11 @@ impl Error {
         matches!(self.inner.kind, Kind::Decode)
     }
 
+    /// Returns true if the error is related to upgrading the connection
+    pub fn is_upgrade(&self) -> bool {
+        matches!(self.inner.kind, Kind::Upgrade)
+    }
+
     /// Returns the status code, if the error was generated from a response.
     pub fn status(&self) -> Option<StatusCode> {
         match self.inner.kind {
