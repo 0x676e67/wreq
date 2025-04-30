@@ -717,7 +717,7 @@ where
 
                     if is_connect
                         && headers::content_length_parse_all(req.headers())
-                        .is_some_and(|len| len != 0)
+                            .is_some_and(|len| len != 0)
                     {
                         warn!("h2 connect request with non-zero body not supported");
                         cb.send(Err(TrySendError {
