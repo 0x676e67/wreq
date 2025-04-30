@@ -28,8 +28,8 @@ impl HickoryDnsResolver {
     {
         let mut resolver = match TokioResolver::builder_tokio() {
             Ok(resolver) => resolver,
-            Err(err) => {
-                debug!("error reading DNS system conf: {}", err);
+            Err(_err) => {
+                debug!("error reading DNS system conf: {}", _err);
                 TokioResolver::builder_with_config(
                     ResolverConfig::default(),
                     TokioConnectionProvider::default(),
