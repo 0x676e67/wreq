@@ -1,5 +1,4 @@
 /// backport: https://github.com/cloudflare/boring/blob/master/hyper-boring/src/cache.rs
-/// 
 use boring2::ssl::SslVersion;
 use boring2::ssl::{SslSession, SslSessionRef};
 use http::uri::Authority;
