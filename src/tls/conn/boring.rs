@@ -1,4 +1,5 @@
-/// referrer: https://github.com/cloudflare/boring/blob/master/hyper-boring/src/lib.rs
+//! backport: https://github.com/cloudflare/boring/blob/master/hyper-boring/src/lib.rs
+
 use super::cache::{SessionCache, SessionKey};
 use super::ext::{ConnectConfigurationExt, SslConnectorBuilderExt, SslRefExt};
 use super::{HandshakeSettings, MaybeHttpsStream, key_index};

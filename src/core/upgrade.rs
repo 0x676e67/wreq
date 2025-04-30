@@ -31,13 +31,6 @@
 //! corresponding headers in a response. To then wait for crate::core: to finish the
 //! upgrade, you call `on()` with the `Request`, and then can spawn a task
 //! awaiting it.
-//!
-//! # Example
-//!
-//! See [this example][example] showing how upgrades work with both
-//! Clients and Servers.
-//!
-//! [example]: https://github.com/hyperium/crate::core:/blob/master/examples/upgrades.rs
 
 use std::any::TypeId;
 use std::error::Error as StdError;

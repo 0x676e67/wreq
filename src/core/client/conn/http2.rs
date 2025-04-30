@@ -468,7 +468,7 @@ where
     /// This will default to the default value set by the [`h2` crate](https://crates.io/crates/h2).
     /// As of v0.4.0, it is 20.
     ///
-    /// See <https://github.com/hyperium/crate::core:/issues/2877> for more information.
+    /// See <https://github.com/hyperium/hyper/issues/2877> for more information.
     pub fn max_pending_accept_reset_streams(&mut self, max: impl Into<Option<usize>>) -> &mut Self {
         self.h2_builder.max_pending_accept_reset_streams = max.into();
         self
