@@ -335,3 +335,37 @@ async fn test_redirect_302_with_set_cookies() {
     assert_eq!(res.url().as_str(), dst);
     assert_eq!(res.status(), rquest::StatusCode::OK);
 }
+
+#[tokio::test]
+async fn test_redirect_limit_to_1() {
+    let server = server::http(move |req| async move {
+        let i: i32 = req
+            .uri()
+            .path()
+            .rsplit('/')
+            .next()
+            .unwrap()
+            .parse::<i32>()
+            .unwrap();
+        assert!(req.uri().path().ends_with(&format!("/redirect/{i}")));
+        http::Response::builder()
+            .status(302)
+            .header("location", format!("/redirect/{}", i + 1))
+            .body(Body::default())
+            .unwrap()
+    });
+    // The number at the end of the uri indicates the total number of redirections
+    let url = format!("http://{}/redirect/0", server.addr());
+
+    let client = rquest::Client::builder()
+        .redirect(Policy::limited(1))
+        .build()
+        .unwrap();
+    let res = client.get(&url).send().await.unwrap_err();
+    // If the maxmium limit is 1, then the final uri should be /redirect/1
+    assert_eq!(
+        res.url().unwrap().as_str(),
+        format!("http://{}/redirect/1", server.addr()).as_str()
+    );
+    assert!(res.is_redirect());
+}
