@@ -1,5 +1,5 @@
 use http::{HeaderMap, HeaderName, HeaderValue, header};
-use rquest::{AlpnProtos, SslCurve, TlsConfig, TlsVersion};
+use rquest::{AlpnProtos, TlsConfig, TlsVersion};
 use rquest::{Client, EmulationProvider};
 use rquest::{Http2Config, PseudoOrder::*};
 
@@ -11,7 +11,7 @@ macro_rules! join {
     };
 }
 
-const CURVES: &[SslCurve] = &[SslCurve::X25519, SslCurve::SECP256R1, SslCurve::SECP384R1];
+const CURVES_LIST: &str = join!(":", "X25519", "P-256", "P-384");
 
 const CIPHER_LIST: &str = join!(
     ":",
@@ -55,7 +55,7 @@ async fn main() -> Result<(), rquest::Error> {
 
     // TLS config
     let tls = TlsConfig::builder()
-        .curves(CURVES)
+        .curves_list(CURVES_LIST)
         .cipher_list(CIPHER_LIST)
         .sigalgs_list(SIGALGS_LIST)
         .alpn_protos(AlpnProtos::ALL)

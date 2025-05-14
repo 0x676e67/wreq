@@ -39,8 +39,9 @@ pub struct TlsConfig {
     pub(crate) psk_dhe_ke: bool,
     pub(crate) renegotiation: bool,
     pub(crate) delegated_credentials: Option<Cow<'static, str>>,
-    pub(crate) cipher_list: Option<Cow<'static, str>>,
     pub(crate) curves: Option<Cow<'static, [SslCurve]>>,
+    pub(crate) curves_list: Option<Cow<'static, str>>,
+    pub(crate) cipher_list: Option<Cow<'static, str>>,
     pub(crate) sigalgs_list: Option<Cow<'static, str>>,
     pub(crate) cert_compression_algorithm: Option<Cow<'static, [CertCompressionAlgorithm]>>,
     pub(crate) extension_permutation_indices: Option<Cow<'static, [u8]>>,
@@ -75,8 +76,9 @@ impl Default for TlsConfig {
             psk_dhe_ke: true,
             renegotiation: true,
             delegated_credentials: None,
-            cipher_list: None,
             curves: None,
+            curves_list: None,
+            cipher_list: None,
             sigalgs_list: None,
             cert_compression_algorithm: None,
             extension_permutation_indices: None,
@@ -258,21 +260,30 @@ impl TlsConfigBuilder {
         self
     }
 
-    /// Sets the cipher list.
-    pub fn cipher_list<T>(mut self, ciphers: T) -> Self
-    where
-        T: Into<Cow<'static, str>>,
-    {
-        self.config.cipher_list = Some(ciphers.into());
-        self
-    }
-
     /// Sets the supported curves.
     pub fn curves<T>(mut self, curves: T) -> Self
     where
         T: Into<Cow<'static, [SslCurve]>>,
     {
         self.config.curves = Some(curves.into());
+        self
+    }
+
+    /// Sets the supported curves list.
+    pub fn curves_list<T>(mut self, curves: T) -> Self
+    where
+        T: Into<Cow<'static, str>>,
+    {
+        self.config.curves_list = Some(curves.into());
+        self
+    }
+
+    /// Sets the cipher list.
+    pub fn cipher_list<T>(mut self, ciphers: T) -> Self
+    where
+        T: Into<Cow<'static, str>>,
+    {
+        self.config.cipher_list = Some(ciphers.into());
         self
     }
 

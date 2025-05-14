@@ -1,7 +1,6 @@
 use std::time::Duration;
 
-use rquest::{AlpsProtos, Client, EmulationProvider, TlsInfo, TlsVersion};
-use rquest::{SslCurve, TlsConfig};
+use rquest::{AlpsProtos, Client, EmulationProvider, TlsConfig, TlsInfo, TlsVersion};
 
 macro_rules! join {
     ($sep:expr, $first:expr $(, $rest:expr)*) => {
@@ -45,27 +44,27 @@ async fn test_badssl_self_signed() {
 
     assert!(!text.is_empty());
 }
-
-const CURVES: &[SslCurve] = &[
-    SslCurve::X25519,
-    SslCurve::SECP256R1,
-    SslCurve::SECP384R1,
-    SslCurve::SECP521R1,
-    SslCurve::FFDHE2048,
-    SslCurve::FFDHE3072,
-];
+const CURVES_LIST: &str = join!(
+    ":",
+    "X25519",
+    "P-256",
+    "P-384",
+    "P-521",
+    "ffdhe2048",
+    "ffdhe3072"
+);
 
 #[tokio::test]
 async fn test_3des_support() -> Result<(), rquest::Error> {
     let emulation = EmulationProvider::builder()
         .tls_config(
             TlsConfig::builder()
-                .curves(CURVES)
                 .cipher_list(join!(
                     ":",
                     "TLS_ECDHE_ECDSA_WITH_3DES_EDE_CBC_SHA",
                     "TLS_ECDHE_RSA_WITH_3DES_EDE_CBC_SHA"
                 ))
+                .curves_list(CURVES_LIST)
                 .build(),
         )
         .build();
@@ -94,7 +93,6 @@ async fn test_firefox_7x_100_cipher() -> Result<(), rquest::Error> {
     let emulation = EmulationProvider::builder()
         .tls_config(
             TlsConfig::builder()
-                .curves(CURVES)
                 .cipher_list(join!(
                     ":",
                     "TLS_DHE_RSA_WITH_AES_128_CBC_SHA",
@@ -102,6 +100,7 @@ async fn test_firefox_7x_100_cipher() -> Result<(), rquest::Error> {
                     "TLS_DHE_RSA_WITH_AES_128_CBC_SHA256",
                     "TLS_DHE_RSA_WITH_AES_256_CBC_SHA256"
                 ))
+                .curves_list(CURVES_LIST)
                 .build(),
         )
         .build();

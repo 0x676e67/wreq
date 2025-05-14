@@ -185,6 +185,10 @@ impl TlsConnector {
             connector.set_curves(curves)?;
         }
 
+        if let Some(curves_list) = config.curves_list.as_deref() {
+            connector.set_curves_list(curves_list)?;
+        }
+
         if let Some(sigalgs_list) = config.sigalgs_list.as_deref() {
             connector.set_sigalgs_list(sigalgs_list)?;
         }
