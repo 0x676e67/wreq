@@ -72,10 +72,6 @@ jobs:
         run: cargo nextest run --workspace --no-default-features --features webpki-roots,native-roots
       - name: Test cookies feature
         run: cargo nextest run --workspace --features cookies
-      - name: Test cookies-abstract feature
-        run: cargo nextest run --workspace --features cookies-abstract
-      - name: Test cookies feature
-        run: cargo nextest run --workspace --features cookies
       - name: Test --features gzip,stream
         run: cargo nextest run --workspace --features gzip,stream
       - name: Test --features brotli,stream
