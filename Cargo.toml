@@ -18,7 +18,7 @@ rustdoc-args = ["--cfg", "docsrs"]
 targets = ["x86_64-unknown-linux-gnu"]
 
 [features]
-default = ["webpki-roots", "charset", "macos-system-configuration"]
+default = ["webpki-roots", "charset", "macos-system-configuration", "cookies"]
 
 full = [
     "json",
@@ -35,13 +35,7 @@ websocket = ["dep:tokio-tungstenite"]
 
 charset = ["dep:encoding_rs"]
 
-cookies = ["cookies-abstract", "dep:cookie_store"]
-
-cookies-abstract = ["dep:cookie_crate"]
-
-cookies-preserve-order = ["cookie_store/preserve_order"]
-
-cookies-multiple = []
+cookies = ["dep:cookie_crate", "dep:cookie_store"]
 
 gzip = ["dep:async-compression", "async-compression?/gzip", "dep:tokio-util"]
 
@@ -130,7 +124,7 @@ webpki-root-certs = { version = "1.0.0", optional = true }
 
 ## cookies
 cookie_crate = { version = "0.18", package = "cookie", optional = true }
-cookie_store = { version = "0.21", optional = true }
+cookie_store = { version = "0.21", features = ["preserve_order"], optional = true }
 
 ## compression
 async-compression = { version = "0.4.23", default-features = false, features = ["tokio"], optional = true }
@@ -195,7 +189,7 @@ doctest = false
 [[test]]
 name = "cookie"
 path = "tests/cookie.rs"
-required-features = ["cookies", "cookies-multiple", "cookies-preserve-order"]
+required-features = ["cookies"]
 
 [[test]]
 name = "gzip"
@@ -270,16 +264,6 @@ required-features = ["full", "tracing"]
 name = "set_headers"
 path = "examples/set_headers.rs"
 required-features = ["tracing"]
-
-[[example]]
-name = "set_cookies"
-path = "examples/set_cookies.rs"
-required-features = ["cookies", "tracing"]
-
-[[example]]
-name = "set_cookie_provider"
-path = "examples/set_cookie_provider.rs"
-required-features = ["cookies", "tracing"]
 
 [[example]]
 name = "set_proxies"

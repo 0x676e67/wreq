@@ -290,13 +290,6 @@ impl From<http::Error> for Error {
     }
 }
 
-#[cfg(feature = "cookies-abstract")]
-impl From<cookie_crate::ParseError> for Error {
-    fn from(err: cookie_crate::ParseError) -> Error {
-        Error::new(Kind::Decode, Some(err))
-    }
-}
-
 #[cfg(feature = "hickory-dns")]
 impl From<hickory_resolver::ResolveError> for Error {
     fn from(err: hickory_resolver::ResolveError) -> Error {

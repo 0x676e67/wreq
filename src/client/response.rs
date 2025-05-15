@@ -16,7 +16,7 @@ use super::body::Body;
 use super::body::ResponseBody;
 use super::decoder::{Accepts, Decoder};
 
-#[cfg(any(feature = "cookies", feature = "cookies-abstract"))]
+#[cfg(feature = "cookies")]
 use crate::cookie;
 
 #[cfg(feature = "charset")]
@@ -103,7 +103,7 @@ impl Response {
     /// # Optional
     ///
     /// This requires the optional `cookies` feature to be enabled.
-    #[cfg(any(feature = "cookies", feature = "cookies-abstract"))]
+    #[cfg(feature = "cookies")]
     #[cfg_attr(
         docsrs,
         doc(cfg(any(feature = "cookies", feature = "cookies-abstract")))
