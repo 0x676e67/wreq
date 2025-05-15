@@ -154,28 +154,28 @@ impl<'c> CookieBuilder<'c> {
     }
 
     /// Set the 'HttpOnly' directive.
-    #[inline(always)]
+    #[inline]
     pub fn http_only(mut self, enabled: bool) -> Self {
         self.0 = self.0.http_only(enabled);
         self
     }
 
     /// Set the 'Secure' directive.
-    #[inline(always)]
+    #[inline]
     pub fn secure(mut self, enabled: bool) -> Self {
         self.0 = self.0.secure(enabled);
         self
     }
 
     /// Set the 'SameSite' directive.
-    #[inline(always)]
+    #[inline]
     pub fn same_site(mut self, same_site: cookie_crate::SameSite) -> Self {
         self.0 = self.0.same_site(same_site);
         self
     }
 
     /// Set the path directive.
-    #[inline(always)]
+    #[inline]
     pub fn path<P>(mut self, path: P) -> Self
     where
         P: Into<Cow<'c, str>>,
@@ -185,7 +185,7 @@ impl<'c> CookieBuilder<'c> {
     }
 
     /// Set the domain directive.
-    #[inline(always)]
+    #[inline]
     pub fn domain<D>(mut self, domain: D) -> Self
     where
         D: Into<Cow<'c, str>>,
@@ -195,14 +195,14 @@ impl<'c> CookieBuilder<'c> {
     }
 
     /// Set the Max-Age directive.
-    #[inline(always)]
+    #[inline]
     pub fn max_age(mut self, max_age: Duration) -> Self {
         self.0 = self.0.max_age(max_age);
         self
     }
 
     /// Set the expiration time.
-    #[inline(always)]
+    #[inline]
     pub fn expires<E>(mut self, expires: E) -> Self
     where
         E: Into<Expiration>,
@@ -212,7 +212,7 @@ impl<'c> CookieBuilder<'c> {
     }
 
     /// Build the `Cookie`.
-    #[inline(always)]
+    #[inline]
     pub fn build(self) -> Cookie<'c> {
         Cookie(self.0.build())
     }
@@ -292,7 +292,7 @@ impl Jar {
         let _ = self.0.write().insert_raw(&cookie.0, url);
     }
 
-    /// Remove a cookie from this jar.
+    /// Removes a `Cookie` from the store, returning the `Cookie` if it was in the jar.
     ///
     /// # Example
     ///
@@ -314,7 +314,7 @@ impl Jar {
         }
     }
 
-    /// Remove all cookies from this jar.
+    /// Clear the contents of the jar.
     ///
     /// # Example
     /// ```
