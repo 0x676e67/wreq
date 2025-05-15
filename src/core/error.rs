@@ -86,6 +86,10 @@ pub(super) enum User {
     Body,
     /// The user aborted writing of the outgoing body.
     BodyWriteAborted,
+
+    /// User tried to send a connect request with a nonzero body
+    InvalidConnectWithBody,
+
     /// Error from future of user's Service.
     Service,
 
@@ -237,6 +241,10 @@ impl Error {
         Error::new_user(User::Body).with(cause)
     }
 
+    pub(super) fn new_user_invalid_connect() -> Error {
+        Error::new_user(User::InvalidConnectWithBody)
+    }
+
     pub(super) fn new_shutdown(cause: std::io::Error) -> Error {
         Error::new(Kind::Shutdown).with(cause)
     }
@@ -284,6 +292,9 @@ impl Error {
 
             Kind::User(User::Body) => "error from user's Body stream",
             Kind::User(User::BodyWriteAborted) => "user body write aborted",
+            Kind::User(User::InvalidConnectWithBody) => {
+                "user sent CONNECT request with non-zero body"
+            }
             Kind::User(User::Service) => "error from user's Service",
             Kind::User(User::NoUpgrade) => "no upgrade available",
             Kind::User(User::ManualUpgrade) => "upgrade expected but low level API in use",

@@ -719,9 +719,9 @@ where
                         && headers::content_length_parse_all(req.headers())
                             .is_some_and(|len| len != 0)
                     {
-                        warn!("h2 connect request with non-zero body not supported");
+                        debug!("h2 connect request with non-zero body not supported");
                         cb.send(Err(TrySendError {
-                            error: crate::core::Error::new_h2(http2::Reason::INTERNAL_ERROR.into()),
+                            error: crate::core::Error::new_user_invalid_connect(),
                             message: None,
                         }));
                         continue;
