@@ -2,7 +2,6 @@
 
 use antidote::RwLock;
 use bytes::BufMut;
-use std::any::Any;
 use std::fmt;
 use std::time::SystemTime;
 use std::{borrow::Cow, convert::TryInto};
@@ -11,7 +10,7 @@ use crate::header::{HeaderValue, SET_COOKIE};
 pub use cookie_crate::{Cookie as RawCookie, Expiration, SameSite, time::Duration};
 
 /// Actions for a persistent cookie store providing session support.
-pub trait CookieStore: Any + Send + Sync {
+pub trait CookieStore: Send + Sync {
     /// Store a set of Set-Cookie header values received from `url`
     fn set_cookies(&self, url: &url::Url, cookie_headers: &mut dyn Iterator<Item = &HeaderValue>);
 
