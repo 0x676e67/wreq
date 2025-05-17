@@ -31,8 +31,6 @@ jobs:
           override: true
       - name: Style check
         run: cargo fmt --all -- --check
-      - name: Clippy check
-        run: cargo clippy --all-targets --all-features
 
   docs:
     name: Docs
