@@ -181,10 +181,6 @@ impl TlsConnector {
             connector.set_permute_extensions(permute_extensions);
         }
 
-        if let Some(curves) = config.curves.as_deref() {
-            connector.set_curves(curves)?;
-        }
-
         if let Some(curves_list) = config.curves_list.as_deref() {
             connector.set_curves_list(curves_list)?;
         }

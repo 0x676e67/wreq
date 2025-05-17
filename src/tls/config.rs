@@ -1,5 +1,5 @@
 use super::{AlpnProtos, AlpsProtos, CertStore, Identity, TlsVersion};
-use boring2::ssl::{CertCompressionAlgorithm, SslCurve};
+use boring2::ssl::CertCompressionAlgorithm;
 use std::{borrow::Cow, path::PathBuf};
 
 /// Builder for `[`TlsConfig`]`.
@@ -39,7 +39,6 @@ pub struct TlsConfig {
     pub(crate) psk_dhe_ke: bool,
     pub(crate) renegotiation: bool,
     pub(crate) delegated_credentials: Option<Cow<'static, str>>,
-    pub(crate) curves: Option<Cow<'static, [SslCurve]>>,
     pub(crate) curves_list: Option<Cow<'static, str>>,
     pub(crate) cipher_list: Option<Cow<'static, str>>,
     pub(crate) sigalgs_list: Option<Cow<'static, str>>,
@@ -76,7 +75,6 @@ impl Default for TlsConfig {
             psk_dhe_ke: true,
             renegotiation: true,
             delegated_credentials: None,
-            curves: None,
             curves_list: None,
             cipher_list: None,
             sigalgs_list: None,
@@ -257,15 +255,6 @@ impl TlsConfigBuilder {
         T: Into<Cow<'static, str>>,
     {
         self.config.delegated_credentials = Some(creds.into());
-        self
-    }
-
-    /// Sets the supported curves.
-    pub fn curves<T>(mut self, curves: T) -> Self
-    where
-        T: Into<Cow<'static, [SslCurve]>>,
-    {
-        self.config.curves = Some(curves.into());
         self
     }
 

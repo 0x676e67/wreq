@@ -335,7 +335,7 @@ pub use self::core::client::{Dst, Http1Builder, Http2Builder};
 pub use self::proxy::{NoProxy, Proxy};
 pub use self::tls::{AlpnProtos, AlpsProtos, CertStore, Identity, TlsConfig, TlsInfo, TlsVersion};
 
-pub use boring2::ssl::{CertCompressionAlgorithm, ExtensionType, SslCurve};
+pub use boring2::ssl::{CertCompressionAlgorithm, ExtensionType};
 pub use http2::frame::{Priority, PseudoOrder, SettingsOrder, StreamDependency, StreamId};
 
 mod client;
