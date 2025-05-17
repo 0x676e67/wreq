@@ -295,11 +295,11 @@ impl TlsConfigBuilder {
     }
 
     /// Sets the extension permutation.
-    pub fn extension_permutation<T>(mut self, indices: T) -> Self
+    pub fn extension_permutation<T>(mut self, permutation: T) -> Self
     where
         T: Into<Cow<'static, [ExtensionType]>>,
     {
-        self.config.extension_permutation = Some(indices.into());
+        self.config.extension_permutation = Some(permutation.into());
         self
     }
 
