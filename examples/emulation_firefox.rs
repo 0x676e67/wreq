@@ -77,37 +77,24 @@ const DELEGATED_CREDENTIALS: &str = join!(
 
 const RECORD_SIZE_LIMIT: u16 = 0x4001;
 
-const EXTENSION_PERMUTATION_INDICES: &[u8] = &{
-    const EXTENSIONS: &[ExtensionType] = &[
-        ExtensionType::SERVER_NAME,
-        ExtensionType::EXTENDED_MASTER_SECRET,
-        ExtensionType::RENEGOTIATE,
-        ExtensionType::SUPPORTED_GROUPS,
-        ExtensionType::EC_POINT_FORMATS,
-        ExtensionType::SESSION_TICKET,
-        ExtensionType::APPLICATION_LAYER_PROTOCOL_NEGOTIATION,
-        ExtensionType::STATUS_REQUEST,
-        ExtensionType::DELEGATED_CREDENTIAL,
-        ExtensionType::KEY_SHARE,
-        ExtensionType::SUPPORTED_VERSIONS,
-        ExtensionType::SIGNATURE_ALGORITHMS,
-        ExtensionType::PSK_KEY_EXCHANGE_MODES,
-        ExtensionType::RECORD_SIZE_LIMIT,
-        ExtensionType::CERT_COMPRESSION,
-        ExtensionType::ENCRYPTED_CLIENT_HELLO,
-    ];
-
-    let mut indices = [0u8; EXTENSIONS.len()];
-    let mut index = usize::MIN;
-    while index < EXTENSIONS.len() {
-        if let Some(idx) = ExtensionType::index_of(EXTENSIONS[index]) {
-            indices[index] = idx as u8;
-        }
-        index += 1;
-    }
-
-    indices
-};
+const EXTENSION_PERMUTATION: &[ExtensionType] = &[
+    ExtensionType::SERVER_NAME,
+    ExtensionType::EXTENDED_MASTER_SECRET,
+    ExtensionType::RENEGOTIATE,
+    ExtensionType::SUPPORTED_GROUPS,
+    ExtensionType::EC_POINT_FORMATS,
+    ExtensionType::SESSION_TICKET,
+    ExtensionType::APPLICATION_LAYER_PROTOCOL_NEGOTIATION,
+    ExtensionType::STATUS_REQUEST,
+    ExtensionType::DELEGATED_CREDENTIAL,
+    ExtensionType::KEY_SHARE,
+    ExtensionType::SUPPORTED_VERSIONS,
+    ExtensionType::SIGNATURE_ALGORITHMS,
+    ExtensionType::PSK_KEY_EXCHANGE_MODES,
+    ExtensionType::RECORD_SIZE_LIMIT,
+    ExtensionType::CERT_COMPRESSION,
+    ExtensionType::ENCRYPTED_CLIENT_HELLO,
+];
 
 const HEADER_ORDER: &[HeaderName] = &[
     header::USER_AGENT,
@@ -138,7 +125,7 @@ async fn main() -> Result<(), rquest::Error> {
         .min_tls_version(TlsVersion::TLS_1_0)
         .max_tls_version(TlsVersion::TLS_1_3)
         .random_aes_hw_override(true)
-        .extension_permutation_indices(EXTENSION_PERMUTATION_INDICES)
+        .extension_permutation(EXTENSION_PERMUTATION)
         .build();
 
     // HTTP/1 config

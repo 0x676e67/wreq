@@ -1,5 +1,5 @@
 use super::{AlpnProtos, AlpsProtos, CertStore, Identity, TlsVersion};
-use boring2::ssl::CertCompressionAlgorithm;
+use boring2::ssl::{CertCompressionAlgorithm, ExtensionType};
 use std::{borrow::Cow, path::PathBuf};
 
 /// Builder for `[`TlsConfig`]`.
@@ -43,7 +43,7 @@ pub struct TlsConfig {
     pub(crate) cipher_list: Option<Cow<'static, str>>,
     pub(crate) sigalgs_list: Option<Cow<'static, str>>,
     pub(crate) cert_compression_algorithm: Option<Cow<'static, [CertCompressionAlgorithm]>>,
-    pub(crate) extension_permutation_indices: Option<Cow<'static, [u8]>>,
+    pub(crate) extension_permutation: Option<Cow<'static, [ExtensionType]>>,
     pub(crate) aes_hw_override: Option<bool>,
     pub(crate) random_aes_hw_override: bool,
 }
@@ -79,7 +79,7 @@ impl Default for TlsConfig {
             cipher_list: None,
             sigalgs_list: None,
             cert_compression_algorithm: None,
-            extension_permutation_indices: None,
+            extension_permutation: None,
             aes_hw_override: None,
             random_aes_hw_override: false,
         }
@@ -294,12 +294,12 @@ impl TlsConfigBuilder {
         self
     }
 
-    /// Sets the extension permutation indices.
-    pub fn extension_permutation_indices<T>(mut self, indices: T) -> Self
+    /// Sets the extension permutation.
+    pub fn extension_permutation<T>(mut self, indices: T) -> Self
     where
-        T: Into<Cow<'static, [u8]>>,
+        T: Into<Cow<'static, [ExtensionType]>>,
     {
-        self.config.extension_permutation_indices = Some(indices.into());
+        self.config.extension_permutation = Some(indices.into());
         self
     }
 

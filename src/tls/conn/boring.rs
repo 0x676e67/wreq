@@ -211,8 +211,8 @@ impl TlsConnector {
             connector.set_key_shares_limit(limit);
         }
 
-        if let Some(indices) = config.extension_permutation_indices {
-            connector.set_extension_permutation_indices(indices.as_ref())?;
+        if let Some(permutation) = config.extension_permutation {
+            connector.set_extension_permutation(&permutation)?;
         }
 
         if let Some(aes_hw_override) = config.aes_hw_override {
