@@ -288,9 +288,9 @@ impl TlsConfigBuilder {
     /// Sets the certificate compression algorithms.
     pub fn cert_compression_algorithm<T>(mut self, algs: T) -> Self
     where
-        T: IntoCertCompressionAlgorithm,
+        T: Into<Cow<'static, [CertCompressionAlgorithm]>>,
     {
-        self.config.cert_compression_algorithm = algs.into();
+        self.config.cert_compression_algorithm = Some(algs.into());
         self
     }
 
@@ -325,49 +325,5 @@ impl TlsConfig {
         TlsConfigBuilder {
             config: TlsConfig::default(),
         }
-    }
-}
-
-/// A trait for converting various types into an optional `Cow` containing a slice of `CertCompressionAlgorithm`.
-///
-/// This trait is used to provide a unified way to convert different types
-/// into an optional `Cow` containing a slice of `CertCompressionAlgorithm`.
-pub trait IntoCertCompressionAlgorithm {
-    /// Converts the given value into an optional `Cow` containing a slice of `CertCompressionAlgorithm`.
-    fn into(self) -> Option<Cow<'static, [CertCompressionAlgorithm]>>;
-}
-
-macro_rules! impl_into_cert_compression_algorithm {
-    ($($t:ty => $body:expr),* $(,)?) => {
-        $(impl IntoCertCompressionAlgorithm for $t {
-            fn into(self) -> Option<Cow<'static, [CertCompressionAlgorithm]>> {
-                $body(self)
-            }
-        })*
-    };
-}
-
-impl_into_cert_compression_algorithm!(
-    &'static CertCompressionAlgorithm => |s: &'static CertCompressionAlgorithm| Some(Cow::Owned(vec![*s])),
-    &'static [CertCompressionAlgorithm] => |s| Some(Cow::Borrowed(s)),
-    CertCompressionAlgorithm => |s| Some(Cow::Owned(vec![s])),
-    Vec<CertCompressionAlgorithm> => |s| Some(Cow::Owned(s)),
-);
-
-impl<const N: usize> IntoCertCompressionAlgorithm for &'static [CertCompressionAlgorithm; N] {
-    fn into(self) -> Option<Cow<'static, [CertCompressionAlgorithm]>> {
-        Some(Cow::Borrowed(self))
-    }
-}
-
-impl<const N: usize> IntoCertCompressionAlgorithm for [CertCompressionAlgorithm; N] {
-    fn into(self) -> Option<Cow<'static, [CertCompressionAlgorithm]>> {
-        Some(Cow::Owned(self.to_vec()))
-    }
-}
-
-impl<T: IntoCertCompressionAlgorithm> IntoCertCompressionAlgorithm for Option<T> {
-    fn into(self) -> Option<Cow<'static, [CertCompressionAlgorithm]>> {
-        self.and_then(|v| v.into())
     }
 }
