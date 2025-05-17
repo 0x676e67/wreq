@@ -2,11 +2,10 @@ use std::fmt;
 use std::io;
 use std::marker::{PhantomData, Unpin};
 use std::pin::Pin;
-use std::task::{Context, Poll};
+use std::task::{Context, Poll, ready};
 
 use crate::core::rt::{Read, Write};
 use bytes::{Buf, Bytes};
-use futures_util::ready;
 use http::header::{CONNECTION, HeaderValue, TE};
 use http::{HeaderMap, Method, Version};
 use http_body::Frame;

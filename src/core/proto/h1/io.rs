@@ -2,11 +2,10 @@ use std::cmp;
 use std::fmt;
 use std::io::{self, IoSlice};
 use std::pin::Pin;
-use std::task::{Context, Poll};
+use std::task::{Context, Poll, ready};
 
 use crate::core::rt::{Read, ReadBuf, Write};
 use bytes::{Buf, BufMut, Bytes, BytesMut};
-use futures_util::ready;
 
 use super::{Http1Transaction, ParseContext, ParsedMessage};
 use crate::core::common::buf::BufList;
@@ -305,7 +304,7 @@ where
 
     #[cfg(test)]
     fn flush(&mut self) -> impl std::future::Future<Output = io::Result<()>> + '_ {
-        futures_util::future::poll_fn(move |cx| self.poll_flush(cx))
+        std::future::poll_fn(move |cx| self.poll_flush(cx))
     }
 }
 
@@ -644,7 +643,7 @@ mod tests {
         // // First, let's just check that the Mock would normally return an
         // // error on an unexpected write, even if the buffer is empty...
         // let mut mock = Mock::new().build();
-        // futures_util::future::poll_fn(|cx| {
+        // std::future::poll_fn(|cx| {
         //     Pin::new(&mut mock).poll_write_buf(cx, &mut Cursor::new(&[]))
         // })
         // .await
@@ -676,7 +675,7 @@ mod tests {
 
         // We expect a `parse` to be not ready, and so can't await it directly.
         // Rather, this `poll_fn` will wrap the `Poll` result.
-        futures_util::future::poll_fn(|cx| {
+        std::future::poll_fn(|cx| {
             let parse_ctx = ParseContext {
                 cached_headers: &mut None,
                 req_method: &mut None,

@@ -5,10 +5,10 @@ use std::task::{Context, Poll};
 
 use bytes::Bytes;
 use futures_channel::{mpsc, oneshot};
-use futures_util::ready;
 use futures_util::{Stream, stream::FusedStream}; // for mpsc::Receiver
 use http::HeaderMap;
 use http_body::{Body, Frame, SizeHint};
+use std::task::ready;
 
 use super::DecodedLength;
 use crate::core::common::watch;
@@ -277,7 +277,7 @@ impl Sender {
 
     #[cfg(test)]
     async fn ready(&mut self) -> crate::core::Result<()> {
-        futures_util::future::poll_fn(|cx| self.poll_ready(cx)).await
+        std::future::poll_fn(|cx| self.poll_ready(cx)).await
     }
 
     /// Send data on data channel when it is ready.

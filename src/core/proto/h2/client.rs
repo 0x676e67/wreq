@@ -4,7 +4,7 @@ use std::{
     future::Future,
     marker::PhantomData,
     pin::Pin,
-    task::{Context, Poll},
+    task::{Context, Poll, ready},
     time::Duration,
 };
 
@@ -13,7 +13,6 @@ use bytes::Bytes;
 use futures_channel::mpsc::{Receiver, Sender};
 use futures_channel::{mpsc, oneshot};
 use futures_util::future::{Either, FusedFuture, FutureExt as _};
-use futures_util::ready;
 use futures_util::stream::{StreamExt as _, StreamFuture};
 use http::{Method, StatusCode};
 use http2::SendStream;
