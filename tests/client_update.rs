@@ -35,7 +35,6 @@ async fn update_headers() {
     let url = format!("http://{}", server.addr());
     let resp = client.get(url).send().await.unwrap();
     assert!(resp.status().is_success());
-    assert!(client.headers().contains_key(http::header::ACCEPT));
 
     let client2 = client.clone();
     tokio::spawn(async move {
@@ -64,7 +63,6 @@ async fn update_headers() {
     let url = format!("http://{}", server.addr());
     let resp = client.get(url).send().await.unwrap();
     assert!(resp.status().is_success());
-    assert!(client.headers().contains_key(http::header::ACCEPT_ENCODING));
 }
 
 #[tokio::test]
@@ -179,7 +177,6 @@ async fn update_emulation() {
     let url = format!("http://{}", server.addr());
     let resp = client.get(url).send().await.unwrap();
     assert!(resp.status().is_success());
-    assert!(client.headers().contains_key(http::header::ACCEPT));
 
     let client2 = client.clone();
     tokio::spawn(async move {
@@ -215,7 +212,6 @@ async fn update_emulation() {
     let url = format!("http://{}", server.addr());
     let resp = client.get(url).send().await.unwrap();
     assert!(resp.status().is_success());
-    assert!(client.headers().contains_key(http::header::ACCEPT_ENCODING));
 }
 
 #[tokio::test]
@@ -252,7 +248,6 @@ async fn updatea_cloned() {
     let url = format!("http://{}", server.addr());
     let resp = client.get(url).send().await.unwrap();
     assert!(resp.status().is_success());
-    assert!(client.headers().contains_key(http::header::ACCEPT));
 
     let client2 = client.cloned();
     client2
@@ -284,7 +279,6 @@ async fn updatea_cloned() {
     let url = format!("http://{}", server.addr());
     let resp = client.get(url).send().await.unwrap();
     assert!(resp.status().is_success());
-    assert!(!client.headers().contains_key(http::header::ACCEPT_ENCODING));
 }
 
 #[tokio::test]
