@@ -1531,32 +1531,6 @@ impl Client {
 }
 
 impl Client {
-    /// Retrieves the `User-Agent` header for this client.
-    ///
-    /// This method returns the `User-Agent` header value if it is set for this client.
-    ///
-    /// # Returns
-    ///
-    /// An `Option<HeaderValue>` containing the `User-Agent` header value if it is set, or `None` if it is not.
-    #[inline]
-    pub fn user_agent(&self) -> Option<HeaderValue> {
-        self.inner.load().headers.get(USER_AGENT).cloned()
-    }
-
-    /// Retrieves a headers for this client.
-    ///
-    /// This method returns a `HeaderMap` containing the headers for this client.
-    /// Note that this operation involves cloning the headers, which can be
-    /// expensive if the header map is large.
-    ///
-    /// # Returns
-    ///
-    /// A `HeaderMap` containing the headers for this client.
-    #[inline]
-    pub fn headers(&self) -> HeaderMap {
-        self.inner.load().headers.clone()
-    }
-
     /// Returns a `ClientUpdate` instance to modify the internal state of the `Client`.
     ///
     /// This method allows you to obtain a `ClientUpdate` instance, which provides methods
