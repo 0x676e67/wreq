@@ -6,8 +6,8 @@
 //! ```
 
 use futures_util::{SinkExt, StreamExt, TryStreamExt};
-use http::header;
-use rquest::{Client, Message};
+use rquest::websocket::Message;
+use rquest::{Client, header};
 use std::time::Duration;
 
 #[tokio::main]
@@ -26,6 +26,7 @@ async fn main() -> Result<(), rquest::Error> {
     let websocket = client
         .websocket("wss://127.0.0.1:3000/ws")
         .header(header::USER_AGENT, env!("CARGO_PKG_NAME"))
+        .read_buffer_size(1024 * 1024)
         .use_http2()
         .send()
         .await?;

@@ -303,13 +303,13 @@ fn _assert_impls() {
     assert_send::<Request>();
     assert_send::<RequestBuilder>();
     #[cfg(feature = "websocket")]
-    assert_send::<WebSocketRequestBuilder>();
+    assert_send::<websocket::WebSocketRequestBuilder>();
 
     assert_send::<Response>();
     #[cfg(feature = "websocket")]
-    assert_send::<WebSocketResponse>();
+    assert_send::<websocket::WebSocketResponse>();
     #[cfg(feature = "websocket")]
-    assert_send::<WebSocket>();
+    assert_send::<websocket::WebSocket>();
 
     assert_send::<Error>();
     assert_sync::<Error>();
@@ -322,11 +322,7 @@ doc_comment::doctest!("../README.md");
 pub use self::client::multipart;
 #[cfg(feature = "websocket")]
 pub use self::client::websocket;
-#[cfg(feature = "websocket")]
-pub use self::client::websocket::{
-    CloseCode, CloseFrame, Message, Utf8Bytes, WebSocket, WebSocketRequestBuilder,
-    WebSocketResponse,
-};
+
 pub use self::client::{
     Body, Client, ClientBuilder, ClientUpdate, EmulationProvider, EmulationProviderFactory,
     Http1Config, Http2Config, Request, RequestBuilder, Response, Upgraded,

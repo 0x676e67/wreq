@@ -24,7 +24,7 @@ use tungstenite::protocol::WebSocketConfig;
 pub use message::{CloseCode, CloseFrame, Message, Utf8Bytes};
 
 /// A WebSocket stream.
-pub type WebSocketStream = tokio_tungstenite::WebSocketStream<crate::Upgraded>;
+type WebSocketStream = tokio_tungstenite::WebSocketStream<crate::Upgraded>;
 
 /// Wrapper for [`RequestBuilder`] that performs the
 /// websocket handshake when sent.
