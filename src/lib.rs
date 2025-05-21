@@ -275,8 +275,6 @@
 #[macro_use]
 mod trace;
 
-#[cfg(feature = "hickory-dns")]
-pub use hickory_resolver;
 pub use http::Method;
 pub use http::header;
 pub use http::{StatusCode, Version};
