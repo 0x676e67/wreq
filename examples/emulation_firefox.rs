@@ -1,7 +1,7 @@
 use http::{HeaderMap, HeaderName, HeaderValue, header};
 use rquest::{
-    AlpnProtos, AlpsProtos, CertCompressionAlgorithm, ExtensionType, Http1Builder, Http1Config,
-    Http2Builder, TlsConfig, TlsVersion,
+    AlpnProtos, AlpsProtos, CertCompressionAlgorithm, ExtensionType, Http1Config, TlsConfig,
+    TlsVersion,
 };
 use rquest::{Client, EmulationProvider};
 use rquest::{Http2Config, PseudoOrder::*, SettingsOrder::*};
@@ -209,8 +209,7 @@ async fn main() -> Result<(), rquest::Error> {
     // Build a client with emulation config
     let client = Client::builder()
         .emulation(context)
-        .http1(http1_configuration)
-        .http2(http2_configuration)
+        .cert_verification(false)
         .build()?;
 
     // Use the API you're already familiar with
@@ -218,14 +217,4 @@ async fn main() -> Result<(), rquest::Error> {
     println!("{}", resp.text().await?);
 
     Ok(())
-}
-
-/// Http1 configuration.
-fn http1_configuration(mut builder: Http1Builder<'_>) {
-    builder.title_case_headers(true);
-}
-
-/// Http2 configuration.
-fn http2_configuration(mut builder: Http2Builder<'_>) {
-    builder.unknown_setting8(true);
 }
