@@ -1,4 +1,3 @@
-use crate::Error;
 use bytes::Bytes;
 use tokio_tungstenite::tungstenite as ts;
 
@@ -351,7 +350,7 @@ impl Message {
     }
 
     /// Attempt to consume the WebSocket message and convert it to a Utf8Bytes.
-    pub fn into_text(self) -> Result<Utf8Bytes, Error> {
+    pub fn into_text(self) -> crate::Result<Utf8Bytes> {
         match self {
             Self::Text(string) => Ok(string),
             Self::Binary(data) | Self::Ping(data) | Self::Pong(data) => {
@@ -364,7 +363,7 @@ impl Message {
 
     /// Attempt to get a &str from the WebSocket message,
     /// this will try to convert binary data to utf8.
-    pub fn to_text(&self) -> Result<&str, Error> {
+    pub fn to_text(&self) -> crate::Result<&str> {
         match *self {
             Self::Text(ref string) => Ok(string.as_str()),
             Self::Binary(ref data) | Self::Ping(ref data) | Self::Pong(ref data) => {

@@ -1,7 +1,5 @@
-use bytes::Bytes;
-use serde::{Serialize, de::DeserializeOwned};
-
 use super::{Message, Utf8Bytes};
+use serde::{Serialize, de::DeserializeOwned};
 
 impl Message {
     /// Tries to serialize the JSON as a [`Message::Text`].
@@ -35,7 +33,7 @@ impl Message {
     #[cfg_attr(docsrs, doc(cfg(feature = "json")))]
     pub fn binary_from_json<T: Serialize + ?Sized>(json: &T) -> crate::Result<Self> {
         serde_json::to_vec(json)
-            .map(Bytes::from)
+            .map(bytes::Bytes::from)
             .map(Message::Binary)
             .map_err(Into::into)
     }
