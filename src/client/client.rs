@@ -838,66 +838,6 @@ impl ClientBuilder {
         self
     }
 
-    /// Configures the HTTP/1 builder with the provided closure.
-    ///
-    /// This method allows you to customize the HTTP/1 builder by passing a closure
-    /// that modifies the builder. The closure receives a mutable reference to the
-    /// HTTP/1 builder, allowing you to set various options.
-    ///
-    /// # Example
-    /// ```
-    /// let client = rquest::Client::builder()
-    ///     .http1(|http1| {
-    ///         http1.http09_responses(true);
-    ///     })
-    ///     .build()?;
-    /// ```
-    ///
-    /// # Arguments
-    ///
-    /// * `f` - A closure that takes a mutable reference to an `Http1Builder` and modifies it.
-    ///
-    /// # Returns
-    ///
-    /// * `ClientBuilder` - The modified client builder.
-    pub fn http1<F>(mut self, f: F) -> ClientBuilder
-    where
-        F: FnOnce(Http1Builder<'_>),
-    {
-        f(self.config.builder.http1());
-        self
-    }
-
-    /// Configures the HTTP/2 builder with the provided closure.
-    ///
-    /// This method allows you to customize the HTTP/2 builder by passing a closure
-    /// that modifies the builder. The closure receives a mutable reference to the
-    /// HTTP/2 builder, allowing you to set various options.
-    ///
-    /// # Example
-    /// ```
-    /// let client = rquest::Client::builder()
-    ///     .http2(|http2| {
-    ///         http2.initial_stream_id(3);
-    ///     })
-    ///     .build()?;
-    /// ```
-    ///
-    /// # Arguments
-    ///
-    /// * `f` - A closure that takes a mutable reference to an `Http2Builder` and modifies it.
-    ///
-    /// # Returns
-    ///
-    /// * `ClientBuilder` - The modified client builder.
-    pub fn http2<F>(mut self, f: F) -> ClientBuilder
-    where
-        F: FnOnce(Http2Builder<'_>),
-    {
-        f(self.config.builder.http2());
-        self
-    }
-
     // TCP options
 
     /// Set whether sockets have `TCP_NODELAY` enabled.
