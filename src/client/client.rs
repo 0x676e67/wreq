@@ -109,6 +109,8 @@ struct Config {
     pool_max_idle_per_host: usize,
     pool_max_size: Option<NonZeroUsize>,
     tcp_keepalive: Option<Duration>,
+    tcp_keepalive_interval: Option<Duration>,
+    tcp_keepalive_retries: Option<u32>,
     proxies: Vec<Proxy>,
     auto_sys_proxy: bool,
     redirect_policy: redirect::Policy,
@@ -205,6 +207,8 @@ impl ClientBuilder {
                 // TODO: Re-enable default duration once hyper's HttpConnector is fixed
                 // to no longer error when an option fails.
                 tcp_keepalive: None,
+                tcp_keepalive_interval: None,
+                tcp_keepalive_retries: None,
                 proxies: Vec::new(),
                 auto_sys_proxy: true,
                 redirect_policy: redirect::Policy::none(),
@@ -334,6 +338,8 @@ impl ClientBuilder {
             Connector::builder(http, tls, config.nodelay, config.tls_info)
                 .timeout(config.connect_timeout)
                 .keepalive(config.tcp_keepalive)
+                .tcp_keepalive_interval(config.tcp_keepalive_interval)
+                .tcp_keepalive_retries(config.tcp_keepalive_retries)
                 .verbose(config.connection_verbose)
                 .build(config.connector_layers)
         };
@@ -985,6 +991,28 @@ impl ClientBuilder {
         D: Into<Option<Duration>>,
     {
         self.config.tcp_keepalive = val.into();
+        self
+    }
+
+    /// Set that all sockets have `SO_KEEPALIVE` set with the supplied interval.
+    ///
+    /// If `None`, the option will not be set.
+    pub fn tcp_keepalive_interval<D>(mut self, val: D) -> ClientBuilder
+    where
+        D: Into<Option<Duration>>,
+    {
+        self.config.tcp_keepalive_interval = val.into();
+        self
+    }
+
+    /// Set that all sockets have `SO_KEEPALIVE` set with the supplied retry count.
+    ///
+    /// If `None`, the option will not be set.
+    pub fn tcp_keepalive_retries<C>(mut self, retries: C) -> ClientBuilder
+    where
+        C: Into<Option<u32>>,
+    {
+        self.config.tcp_keepalive_retries = retries.into();
         self
     }
 

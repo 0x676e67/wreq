@@ -122,6 +122,18 @@ impl ConnectorBuilder {
     }
 
     #[inline]
+    pub(crate) fn tcp_keepalive_interval(mut self, dur: Option<Duration>) -> ConnectorBuilder {
+        self.http.set_keepalive_interval(dur);
+        self
+    }
+
+    #[inline]
+    pub(crate) fn tcp_keepalive_retries(mut self, retries: Option<u32>) -> ConnectorBuilder {
+        self.http.set_keepalive_retries(retries);
+        self
+    }
+
+    #[inline]
     pub(crate) fn timeout(mut self, timeout: Option<Duration>) -> ConnectorBuilder {
         self.timeout = timeout;
         self
