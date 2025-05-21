@@ -13,6 +13,7 @@ mod timer;
 pub mod tokio;
 
 pub use self::io::{Read, ReadBuf, ReadBufCursor, Write};
+pub(crate) use self::io::{read, write_all};
 pub use self::timer::{Sleep, Timer};
 pub use self::tokio::{TokioExecutor, TokioIo};
 

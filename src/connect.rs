@@ -1,5 +1,6 @@
 use self::tls_conn::BoringTlsConn;
 
+use crate::core::client::connect::proxy::Tunnel;
 use crate::core::client::{
     Dst,
     connect::{Connected, Connection},
@@ -20,11 +21,11 @@ use tower::util::{BoxCloneSyncServiceLayer, MapRequestLayer};
 use tower::{ServiceBuilder, timeout::TimeoutLayer, util::BoxCloneSyncService};
 use tower_service::Service;
 
-use std::future::Future;
 use std::io::{self, IoSlice};
 use std::pin::Pin;
 use std::task::{Context, Poll};
 use std::time::Duration;
+use std::{future::Future, ops::Deref};
 
 use crate::dns::DynResolver;
 use crate::error::{BoxError, cast_to_internal_error};
@@ -337,15 +338,24 @@ impl ConnectorService {
         };
 
         if dst.scheme() == Some(&Scheme::HTTPS) {
-            let mut http = HttpsConnector::new(self.http.clone(), self.tls, &mut dst);
+            trace!("tunneling HTTPS over proxy");
+            let http = HttpsConnector::new(self.http.clone(), self.tls, &mut dst);
+
+            // TODO: we could cache constructing this
+            let mut tunnel = Tunnel::new(proxy_dst, http.clone());
+            if let Some(auth) = auth {
+                tunnel = tunnel.with_auth(auth);
+            }
+
+            if let Some(headers) = headers {
+                tunnel = tunnel.with_headers((*headers).clone());
+            }
+
+            // We don't wrap this again in an HttpsConnector since that uses Maybe,
+            // and we know this is definitely HTTPS.
+            let tunneled = tunnel.call(dst.deref().clone()).await?;
 
             let host = dst.host().ok_or(crate::error::uri_bad_host())?;
-            let port = dst.port_u16().unwrap_or(443);
-
-            trace!("tunneling HTTPS over proxy");
-            let conn = http.call(proxy_dst).await?;
-            let tunneled = tunnel::connect(conn, host, port, auth, headers).await?;
-
             let io = http.connect(&dst, host, tunneled).await?;
 
             return Ok(Conn {
@@ -659,111 +669,6 @@ mod tls_conn {
     {
         fn tls_info(&self) -> Option<crate::tls::TlsInfo> {
             self.inner.tls_info()
-        }
-    }
-}
-
-mod tunnel {
-    use super::BoxError;
-    use crate::core::rt::TokioIo;
-    use crate::core::rt::{Read, Write};
-    use http::{HeaderMap, HeaderValue};
-    use std::sync::Arc;
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
-
-    const USER_AGENT: HeaderValue = HeaderValue::from_static(concat!(
-        env!("CARGO_PKG_NAME"),
-        "/",
-        env!("CARGO_PKG_VERSION")
-    ));
-
-    pub(super) async fn connect<T>(
-        mut conn: T,
-        host: &str,
-        port: u16,
-        auth: Option<HeaderValue>,
-        headers: Option<Arc<HeaderMap>>,
-    ) -> Result<T, BoxError>
-    where
-        T: Read + Write + Unpin,
-    {
-        let mut buf = format!(
-            "\
-             CONNECT {0}:{1} HTTP/1.1\r\n\
-             Host: {0}:{1}\r\n\
-             ",
-            host, port
-        )
-        .into_bytes();
-
-        // proxy-authorization
-        if let Some(value) = auth {
-            debug!("tunnel to {}:{} using basic auth", host, port);
-            buf.extend_from_slice(b"Proxy-Authorization: ");
-            buf.extend_from_slice(value.as_bytes());
-            buf.extend_from_slice(b"\r\n");
-        }
-
-        // headers
-        if let Some(headers) = headers {
-            add_user_agent_if_missing(&mut buf, &headers);
-
-            for (name, value) in headers.iter() {
-                buf.extend_from_slice(name.as_str().as_bytes());
-                buf.extend_from_slice(b": ");
-                buf.extend_from_slice(value.as_bytes());
-                buf.extend_from_slice(b"\r\n");
-            }
-        } else {
-            add_user_agent(&mut buf);
-        }
-
-        // headers end
-        buf.extend_from_slice(b"\r\n");
-
-        let mut tokio_conn = TokioIo::new(&mut conn);
-
-        tokio_conn.write_all(&buf).await?;
-
-        let mut buf = [0; 8192];
-        let mut pos = 0;
-
-        loop {
-            let n = tokio_conn.read(&mut buf[pos..]).await?;
-
-            if n == 0 {
-                return Err("unexpected eof while tunneling".into());
-            }
-            pos += n;
-
-            let recvd = &buf[..pos];
-            if recvd.starts_with(b"HTTP/1.1 200") || recvd.starts_with(b"HTTP/1.0 200") {
-                if recvd.ends_with(b"\r\n\r\n") {
-                    return Ok(conn);
-                }
-                if pos == buf.len() {
-                    return Err("proxy headers too long for tunnel".into());
-                }
-            // else read more
-            } else if recvd.starts_with(b"HTTP/1.1 407") {
-                return Err("proxy authentication required".into());
-            } else {
-                return Err("unsuccessful tunnel".into());
-            }
-        }
-    }
-
-    #[inline]
-    fn add_user_agent(buf: &mut Vec<u8>) {
-        buf.extend_from_slice(b"User-Agent: ");
-        buf.extend_from_slice(USER_AGENT.as_bytes());
-        buf.extend_from_slice(b"\r\n");
-    }
-
-    #[inline]
-    fn add_user_agent_if_missing(buf: &mut Vec<u8>, headers: &HeaderMap) {
-        if headers.get(http::header::USER_AGENT).is_none() {
-            add_user_agent(buf);
         }
     }
 }

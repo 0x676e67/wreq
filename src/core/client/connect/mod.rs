@@ -77,6 +77,7 @@ pub use self::http::{HttpConnector, HttpInfo};
 
 pub mod dns;
 mod http;
+pub mod proxy;
 
 pub(crate) mod capture;
 #[allow(unused)]

@@ -2,7 +2,7 @@ use std::fmt;
 use std::mem::MaybeUninit;
 use std::ops::DerefMut;
 use std::pin::Pin;
-use std::task::{Context, Poll};
+use std::task::{Context, Poll, ready};
 
 // New IO traits? What?! Why, are you bonkers?
 //
@@ -134,7 +134,6 @@ pub struct ReadBufCursor<'a> {
 
 impl<'data> ReadBuf<'data> {
     /// Create a new `ReadBuf` with a slice of initialized bytes.
-    #[cfg(test)]
     #[inline]
     pub fn new(raw: &'data mut [u8]) -> Self {
         let len = raw.len();
@@ -399,4 +398,30 @@ fn pin_as_deref_mut<P: DerefMut>(pin: Pin<&mut Pin<P>>) -> Pin<&mut P::Target> {
     // SAFETY: we go directly from Pin<&mut Pin<P>> to Pin<&mut P::Target>, without moving or
     // giving out the &mut Pin<P> in the process. See Pin::as_deref_mut() for more detail.
     unsafe { pin.get_unchecked_mut() }.as_mut()
+}
+
+pub(crate) async fn read<T>(io: &mut T, buf: &mut [u8]) -> Result<usize, std::io::Error>
+where
+    T: Read + Unpin,
+{
+    std::future::poll_fn(move |cx| {
+        let mut buf = ReadBuf::new(buf);
+        ready!(Pin::new(&mut *io).poll_read(cx, buf.unfilled()))?;
+        Poll::Ready(Ok(buf.filled().len()))
+    })
+    .await
+}
+
+pub(crate) async fn write_all<T>(io: &mut T, buf: &[u8]) -> Result<(), std::io::Error>
+where
+    T: Write + Unpin,
+{
+    let mut n = 0;
+    std::future::poll_fn(move |cx| {
+        while n < buf.len() {
+            n += ready!(Pin::new(&mut *io).poll_write(cx, &buf[n..])?);
+        }
+        Poll::Ready(Ok(()))
+    })
+    .await
 }

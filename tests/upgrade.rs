@@ -1,4 +1,3 @@
-#![cfg(not(target_arch = "wasm32"))]
 mod support;
 use http::Method;
 use support::server;

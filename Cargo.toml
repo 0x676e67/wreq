@@ -155,12 +155,13 @@ hyper = { version = "1.1.0", default-features = false, features = [
     "client",
     "server",
 ] }
-hyper-util = { version = "0.1.10", features = [
+hyper-util = { version = "0.1.12", features = [
     "http1",
     "http2",
     "client",
     "client-legacy",
     "server-auto",
+    "server-graceful",
     "tokio",
 ] }
 log = "0.4"

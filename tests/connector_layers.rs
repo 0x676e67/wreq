@@ -1,4 +1,3 @@
-#![cfg(not(target_arch = "wasm32"))]
 mod support;
 
 use std::time::Duration;
@@ -10,7 +9,6 @@ use tower::timeout::TimeoutLayer;
 
 use support::{delay_layer::DelayLayer, server};
 
-#[cfg(not(target_arch = "wasm32"))]
 #[tokio::test]
 async fn non_op_layer() {
     let _ = env_logger::try_init();
@@ -30,7 +28,6 @@ async fn non_op_layer() {
     assert!(res.is_ok());
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 #[tokio::test]
 async fn non_op_layer_with_timeout() {
     let _ = env_logger::try_init();
@@ -49,7 +46,6 @@ async fn non_op_layer_with_timeout() {
     let _res = client.get(url).send().await;
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 #[tokio::test]
 async fn with_connect_timeout_layer_never_returning() {
     let _ = env_logger::try_init();
@@ -67,7 +63,6 @@ async fn with_connect_timeout_layer_never_returning() {
     let _res = client.get(url).send().await;
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 #[tokio::test]
 async fn with_connect_timeout_layer_slow() {
     let _ = env_logger::try_init();
@@ -90,7 +85,6 @@ async fn with_connect_timeout_layer_slow() {
     assert!(err.is_connect() && err.is_timeout());
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 #[tokio::test]
 async fn multiple_timeout_layers_under_threshold() {
     let _ = env_logger::try_init();
@@ -114,7 +108,6 @@ async fn multiple_timeout_layers_under_threshold() {
     assert!(res.is_ok());
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 #[tokio::test]
 async fn multiple_timeout_layers_over_threshold() {
     let _ = env_logger::try_init();
@@ -140,7 +133,6 @@ async fn multiple_timeout_layers_over_threshold() {
     assert!(err.is_connect() && err.is_timeout());
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 #[tokio::test]
 async fn with_concurrency_limit_layer_timeout() {
     let _ = env_logger::try_init();
@@ -177,7 +169,6 @@ async fn with_concurrency_limit_layer_timeout() {
     assert!(timed_out, "at least one request should have timed out");
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 #[tokio::test]
 async fn with_concurrency_limit_layer_success() {
     let _ = env_logger::try_init();
@@ -217,7 +208,6 @@ async fn with_concurrency_limit_layer_success() {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 #[tokio::test]
 async fn no_generic_bounds_required_for_client_new() {
     let _ = env_logger::try_init();
