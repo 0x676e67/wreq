@@ -23,7 +23,7 @@ pub struct Http2Config {
     pub(crate) initial_stream_window_size: Option<u32>,
     pub(crate) max_frame_size: Option<u32>,
     pub(crate) max_header_list_size: Option<u32>,
-    pub(crate) unknown_setting8: Option<bool>,
+    pub(crate) enable_connect_protocol: Option<bool>,
     pub(crate) unknown_setting9: Option<bool>,
     pub(crate) settings_order: Option<[SettingsOrder; 8]>,
     pub(crate) headers_priority: Option<StreamDependency>,
@@ -123,11 +123,11 @@ impl Http2ConfigBuilder {
     /// Placeholder for an enable connect protocol setting.
     ///
     /// - **Purpose:** Reserved for experimental or vendor-specific extensions.
-    pub fn unknown_setting8<T>(mut self, value: T) -> Self
+    pub fn enable_connect_protocol<T>(mut self, value: T) -> Self
     where
         T: Into<Option<bool>>,
     {
-        self.config.unknown_setting8 = value.into();
+        self.config.enable_connect_protocol = value.into();
         self
     }
 

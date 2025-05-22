@@ -83,7 +83,7 @@ pub(crate) struct Config {
     pub(crate) max_pending_accept_reset_streams: Option<usize>,
     pub(crate) enable_push: Option<bool>,
     pub(crate) header_table_size: Option<u32>,
-    pub(crate) unknown_setting8: Option<bool>,
+    pub(crate) enable_connect_protocol: Option<bool>,
     pub(crate) unknown_setting9: Option<bool>,
     pub(crate) headers_pseudo_order: Option<[PseudoOrder; 4]>,
     pub(crate) headers_priority: Option<StreamDependency>,
@@ -110,7 +110,7 @@ impl Default for Config {
             header_table_size: None,
             max_concurrent_streams: None,
             enable_push: None,
-            unknown_setting8: None,
+            enable_connect_protocol: None,
             unknown_setting9: None,
             headers_pseudo_order: None,
             headers_priority: None,
@@ -151,7 +151,7 @@ fn new_builder(config: &Config) -> Builder {
     if let Some(max) = config.header_table_size {
         builder.header_table_size(max);
     }
-    if let Some(v) = config.unknown_setting8 {
+    if let Some(v) = config.enable_connect_protocol {
         builder.unknown_setting8(v);
     }
     if let Some(v) = config.unknown_setting9 {

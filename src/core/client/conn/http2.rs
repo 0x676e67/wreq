@@ -389,9 +389,9 @@ where
         self
     }
 
-    /// http2_unknown_setting8
-    pub fn unknown_setting8(&mut self, opt: bool) -> &mut Self {
-        self.h2_builder.unknown_setting8 = Some(opt);
+    /// Sets the enable connect protocol.
+    pub fn enable_connect_protocol(&mut self, opt: bool) -> &mut Self {
+        self.h2_builder.enable_connect_protocol = Some(opt);
         self
     }
 
