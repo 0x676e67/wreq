@@ -180,8 +180,7 @@ impl<T, U> Receiver<T, U> {
     }
 
     pub(crate) fn try_recv(&mut self) -> Option<(T, Callback<T, U>)> {
-        use futures_util::FutureExt;
-        match self.inner.recv().now_or_never() {
+        match crate::core::common::task::now_or_never(self.inner.recv()) {
             Some(Some(mut env)) => env.0.take(),
             _ => None,
         }

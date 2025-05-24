@@ -127,7 +127,7 @@ where
     type Future = Tunneling<C::Future, C::Response>;
 
     fn poll_ready(&mut self, cx: &mut task::Context<'_>) -> Poll<Result<(), Self::Error>> {
-        futures_util::ready!(self.inner.poll_ready(cx))
+        std::task::ready!(self.inner.poll_ready(cx))
             .map_err(|e| TunnelError::ConnectFailed(e.into()))?;
         Poll::Ready(Ok(()))
     }

@@ -6,14 +6,14 @@ use std::future::Future;
 use std::pin::Pin;
 use std::task::{Context, Poll, ready};
 
-use crate::core::rt::{Read, Write};
 use bytes::Bytes;
 use http::{Request, Response};
 use httparse::ParserConfig;
 
-use super::super::dispatch::{self, TrySendError};
 use crate::core::body::{Body, Incoming as IncomingBody};
+use crate::core::client::dispatch::{self, TrySendError};
 use crate::core::proto;
+use crate::core::rt::{Read, Write};
 
 type Dispatcher<T, B> =
     proto::dispatch::Dispatcher<proto::dispatch::Client<B>, B, T, proto::h1::ClientTransaction>;

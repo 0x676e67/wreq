@@ -10,16 +10,16 @@ use std::sync::Arc;
 use std::task::{Context, Poll, ready};
 use std::time::Duration;
 
-use crate::core::rt::{Read, Write};
 use http::{Request, Response};
 use http2::frame::{Priority, PseudoOrder, SettingsOrder, StreamDependency};
 
-use super::super::dispatch::{self, TrySendError};
 use crate::core::body::{Body, Incoming as IncomingBody};
+use crate::core::client::dispatch::{self, TrySendError};
 use crate::core::common::time::Time;
 use crate::core::proto;
 use crate::core::rt::Timer;
 use crate::core::rt::bounds::Http2ClientConnExec;
+use crate::core::rt::{Read, Write};
 
 /// The sender side of an established connection.
 pub struct SendRequest<B> {

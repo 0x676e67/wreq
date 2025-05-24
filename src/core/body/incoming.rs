@@ -1,14 +1,13 @@
 use std::fmt;
 use std::future::Future;
 use std::pin::Pin;
-use std::task::{Context, Poll};
+use std::task::{Context, Poll, ready};
 
 use bytes::Bytes;
 use futures_channel::{mpsc, oneshot};
-use futures_util::{Stream, stream::FusedStream}; // for mpsc::Receiver
+use futures_core::{Stream, stream::FusedStream}; // for mpsc::Receiver
 use http::HeaderMap;
 use http_body::{Body, Frame, SizeHint};
-use std::task::ready;
 
 use super::DecodedLength;
 use crate::core::common::watch;
