@@ -1475,7 +1475,7 @@ impl Client {
         let read_timeout_fut = read_timeout.map(tokio::time::sleep).map(Box::pin);
 
         Pending {
-            inner: PendingInner::Request(PendingRequest {
+            inner: PendingInner::Request(Box::new(PendingRequest {
                 method,
                 url,
                 headers,
@@ -1493,7 +1493,7 @@ impl Client {
                 total_timeout,
                 read_timeout_fut,
                 read_timeout,
-            }),
+            })),
         }
     }
 }
@@ -1885,7 +1885,7 @@ pin_project! {
 }
 
 enum PendingInner {
-    Request(PendingRequest),
+    Request(Box<PendingRequest>),
     Error(Option<Error>),
 }
 

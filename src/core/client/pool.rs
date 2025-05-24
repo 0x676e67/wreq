@@ -344,28 +344,27 @@ impl<T: Poolable, K: Key> PoolInner<T, K> {
             self.waiters.remove(&key);
         }
 
-        match value {
-            Some(value) => {
-                // borrow-check scope...
-                {
-                    let idle_list = self
-                        .idle
-                        .get_or_insert_mut(key.clone(), Vec::<Idle<T>>::default);
-                    if self.max_idle_per_host <= idle_list.len() {
-                        trace!("max idle per host for {:?}, dropping connection", key);
-                        return;
-                    }
-
-                    debug!("pooling idle connection for {:?}", key);
-                    idle_list.push(Idle {
-                        value,
-                        idle_at: Instant::now(),
-                    });
+        if let Some(value) = value {
+            // borrow-check scope...
+            {
+                let idle_list = self
+                    .idle
+                    .get_or_insert_mut(key.clone(), Vec::<Idle<T>>::default);
+                if self.max_idle_per_host <= idle_list.len() {
+                    trace!("max idle per host for {:?}, dropping connection", key);
+                    return;
                 }
 
-                self.spawn_idle_interval(__pool_ref);
+                debug!("pooling idle connection for {:?}", key);
+                idle_list.push(Idle {
+                    value,
+                    idle_at: Instant::now(),
+                });
             }
-            None => trace!("put; found waiter for {:?}", key),
+
+            self.spawn_idle_interval(__pool_ref);
+        } else {
+            trace!("put; found waiter for {:?}", key)
         }
     }
 

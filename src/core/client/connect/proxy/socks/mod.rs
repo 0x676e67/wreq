@@ -50,7 +50,7 @@ where
         match M::try_from(buf) {
             Err(ParsingError::Incomplete) => {
                 if n == 0 {
-                    if buf.spare_capacity_mut().len() == 0 {
+                    if buf.spare_capacity_mut().is_empty() {
                         return Err(SocksError::Parsing(ParsingError::WouldOverflow));
                     } else {
                         return Err(std::io::Error::new(

@@ -406,6 +406,7 @@ where
         debug_assert!(!self.state.is_read_closed());
 
         let result = ready!(self.io.poll_read_from_io(cx));
+        #[allow(clippy::manual_inspect)]
         Poll::Ready(result.map_err(|e| {
             trace!(error = %e, "force_io_read; io error");
             self.state.close();

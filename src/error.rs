@@ -180,7 +180,7 @@ impl Error {
 
     #[allow(unused)]
     pub(crate) fn into_io(self) -> io::Error {
-        io::Error::new(io::ErrorKind::Other, self)
+        io::Error::other(self)
     }
 }
 
@@ -359,7 +359,7 @@ pub(crate) fn uri_bad_host() -> Error {
     feature = "deflate",
 ))]
 pub(crate) fn into_io(e: BoxError) -> io::Error {
-    io::Error::new(io::ErrorKind::Other, e)
+    io::Error::other(e)
 }
 
 #[allow(unused)]
@@ -438,7 +438,7 @@ mod tests {
 
     #[test]
     fn from_unknown_io_error() {
-        let orig = io::Error::new(io::ErrorKind::Other, "orly");
+        let orig = io::Error::other("orly");
         let err = super::decode_io(orig);
         match err.inner.kind {
             Kind::Decode => (),
@@ -451,7 +451,7 @@ mod tests {
         let err = super::request(super::TimedOut);
         assert!(err.is_timeout());
 
-        let io = io::Error::new(io::ErrorKind::Other, err);
+        let io = io::Error::other(err);
         let nested = super::request(io);
         assert!(nested.is_timeout());
     }
@@ -464,7 +464,7 @@ mod tests {
         ));
         assert!(err.is_connection_reset());
 
-        let io = io::Error::new(io::ErrorKind::Other, err);
+        let io = io::Error::other(err);
         let nested = super::request(io);
         assert!(nested.is_connection_reset());
     }

@@ -138,7 +138,7 @@ struct PoolKey {
 enum TrySendError<B> {
     Retryable {
         error: Error,
-        req: Request<B>,
+        req: Box<Request<B>>,
         connection_reused: bool,
     },
     Nope(Error),
@@ -271,7 +271,7 @@ where
                         error
                     );
                     *req.uri_mut() = uri.clone();
-                    req
+                    *req
                 }
             }
         }
@@ -335,7 +335,7 @@ where
                         connection_reused: pooled.is_reused(),
                         error: e!(Canceled, err.into_error())
                             .with_connect_info(pooled.conn_info.clone()),
-                        req,
+                        req: Box::new(req),
                     })
                 } else {
                     Err(TrySendError::Nope(

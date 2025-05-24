@@ -199,18 +199,16 @@ impl SocksConfig {
                         } else {
                             state = State::ReadingProxyRes;
                         }
+                    } else if res.0 == AuthMethod::UserPass {
+                        state = State::SendingAuthReq;
                     } else {
-                        if res.0 == AuthMethod::UserPass {
-                            state = State::SendingAuthReq;
-                        } else {
-                            state = State::SendingProxyReq;
-                        }
+                        state = State::SendingProxyReq;
                     }
                 }
 
                 State::SendingAuthReq => {
                     let (user, pass) = self.proxy_auth.as_ref().unwrap();
-                    let req = AuthenticationReq(&user, &pass);
+                    let req = AuthenticationReq(user, pass);
 
                     let start = send_buf.len();
                     req.write_to_buf(&mut send_buf)?;

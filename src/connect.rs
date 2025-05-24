@@ -709,7 +709,7 @@ mod socks {
         let https = dst.scheme() == Some(&Scheme::HTTPS);
         let original_host = dst
             .host()
-            .ok_or(io::Error::new(io::ErrorKind::Other, "no host in url"))?;
+            .ok_or(io::Error::other("no host in url"))?;
         let mut host = original_host.to_owned();
         let port = match dst.port() {
             Some(p) => p.as_u16(),

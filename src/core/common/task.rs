@@ -14,7 +14,7 @@ pub(crate) fn yield_now(cx: &mut Context<'_>) -> Poll<std::convert::Infallible> 
 /// uses a no-op waker, so knowledge of what the pending future was waiting for is lost.
 pub(crate) fn now_or_never<F: std::future::Future>(fut: F) -> Option<F::Output> {
     let waker = std::task::Waker::noop();
-    let mut cx = Context::from_waker(&waker);
+    let mut cx = Context::from_waker(waker);
     let fut = std::pin::pin!(fut);
     match fut.poll(&mut cx) {
         Poll::Ready(res) => Some(res),
