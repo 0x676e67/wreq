@@ -135,10 +135,11 @@ struct PoolKey {
     network: NetworkScheme,
 }
 
+#[allow(clippy::large_enum_variant)]
 enum TrySendError<B> {
     Retryable {
         error: Error,
-        req: Box<Request<B>>,
+        req: Request<B>,
         connection_reused: bool,
     },
     Nope(Error),
@@ -271,7 +272,7 @@ where
                         error
                     );
                     *req.uri_mut() = uri.clone();
-                    *req
+                    req
                 }
             }
         }
@@ -335,7 +336,7 @@ where
                         connection_reused: pooled.is_reused(),
                         error: e!(Canceled, err.into_error())
                             .with_connect_info(pooled.conn_info.clone()),
-                        req: Box::new(req),
+                        req,
                     })
                 } else {
                     Err(TrySendError::Nope(

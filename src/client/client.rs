@@ -1475,7 +1475,7 @@ impl Client {
         let read_timeout_fut = read_timeout.map(tokio::time::sleep).map(Box::pin);
 
         Pending {
-            inner: PendingInner::Request(Box::new(PendingRequest {
+            inner: PendingInner::Request(PendingRequest {
                 method,
                 url,
                 headers,
@@ -1493,7 +1493,7 @@ impl Client {
                 total_timeout,
                 read_timeout_fut,
                 read_timeout,
-            })),
+            }),
         }
     }
 }
@@ -1884,8 +1884,9 @@ pin_project! {
     }
 }
 
+#[allow(clippy::large_enum_variant)]
 enum PendingInner {
-    Request(Box<PendingRequest>),
+    Request(PendingRequest),
     Error(Option<Error>),
 }
 
