@@ -86,7 +86,7 @@ pub(crate) struct Config {
     pub(crate) no_rfc7540_priorities: Option<bool>,
     pub(crate) headers_pseudo_order: Option<PseudoOrder>,
     pub(crate) headers_stream_dependency: Option<StreamDependency>,
-    pub(crate) expirimental_settings: Option<ExperimentalSettings>,
+    pub(crate) experimental_settings: Option<ExperimentalSettings>,
     pub(crate) settings_order: Option<SettingsOrder>,
     pub(crate) priorities: Option<Priorities>,
 }
@@ -112,7 +112,7 @@ impl Default for Config {
             enable_push: None,
             enable_connect_protocol: None,
             no_rfc7540_priorities: None,
-            expirimental_settings: None,
+            experimental_settings: None,
             settings_order: None,
             headers_pseudo_order: None,
             headers_stream_dependency: None,
@@ -161,8 +161,8 @@ fn new_builder(config: &Config) -> Builder {
     if let Some(ref order) = config.settings_order {
         builder.settings_order(order.clone());
     }
-    if let Some(ref settings) = config.expirimental_settings {
-        builder.experimental_settings(settings.clone());
+    if let Some(ref experimental_settings) = config.experimental_settings {
+        builder.experimental_settings(experimental_settings.clone());
     }
     if let Some(stream_dependency) = config.headers_stream_dependency {
         builder.headers_stream_dependency(stream_dependency);

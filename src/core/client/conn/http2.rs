@@ -500,8 +500,8 @@ where
     /// This setting is reserved for future use or experimental purposes.
     /// Enabling or disabling it may have no effect unless explicitly supported
     /// by the server or client implementation.
-    pub fn expirimental_settings(&mut self, settings: Option<ExperimentalSettings>) -> &mut Self {
-        self.h2_builder.expirimental_settings = settings;
+    pub fn experimental_settings(&mut self, settings: Option<ExperimentalSettings>) -> &mut Self {
+        self.h2_builder.experimental_settings = settings;
         self
     }
 

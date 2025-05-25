@@ -29,7 +29,7 @@ pub struct Http2Config {
     pub(crate) max_header_list_size: Option<u32>,
     pub(crate) enable_connect_protocol: Option<bool>,
     pub(crate) no_rfc7540_priorities: Option<bool>,
-    pub(crate) expirimental_settings: Option<ExperimentalSettings>,
+    pub(crate) experimental_settings: Option<ExperimentalSettings>,
     pub(crate) settings_order: Option<SettingsOrder>,
     pub(crate) headers_stream_dependency: Option<StreamDependency>,
     pub(crate) headers_pseudo_order: Option<PseudoOrder>,
@@ -151,11 +151,11 @@ impl Http2ConfigBuilder {
     /// This setting is reserved for future use or experimental purposes.
     /// Enabling or disabling it may have no effect unless explicitly supported
     /// by the server or client implementation.
-    pub fn expirimental_settings<T>(mut self, value: T) -> Self
+    pub fn experimental_settings<T>(mut self, value: T) -> Self
     where
         T: Into<Option<ExperimentalSettings>>,
     {
-        self.config.expirimental_settings = value.into();
+        self.config.experimental_settings = value.into();
         self
     }
 
