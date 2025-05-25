@@ -168,7 +168,7 @@ fn new_builder(config: &Config) -> Builder {
         builder.headers_stream_dependency(stream_dependency);
     }
     if let Some(ref order) = config.headers_pseudo_order {
-        builder.headers_psuedo_order(order.clone());
+        builder.headers_pseudo_order(order.clone());
     }
     if let Some(ref priority) = config.priorities {
         builder.priorities(priority.clone());
