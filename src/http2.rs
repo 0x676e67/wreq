@@ -1,6 +1,9 @@
-//! HTTP/2 config.
-use http2::frame::{Priority, PseudoOrder, SettingsOrder, StreamDependency, StreamId};
-use std::borrow::Cow;
+//! Re-export the `http2` module for HTTP/2 frame types and utilities.
+
+pub use http2::frame::{
+    Priorities, PrioritiesBuilder, Priority, PseudoId, PseudoOrder, Setting, SettingId,
+    SettingsOrder, SettingsOrderBuilder, StreamDependency, StreamId,
+};
 
 /// Builder for `Http2Config`.
 #[must_use]
@@ -24,11 +27,11 @@ pub struct Http2Config {
     pub(crate) max_frame_size: Option<u32>,
     pub(crate) max_header_list_size: Option<u32>,
     pub(crate) enable_connect_protocol: Option<bool>,
-    pub(crate) unknown_setting9: Option<bool>,
-    pub(crate) settings_order: Option<[SettingsOrder; 8]>,
-    pub(crate) headers_priority: Option<StreamDependency>,
-    pub(crate) headers_pseudo_order: Option<[PseudoOrder; 4]>,
-    pub(crate) priority: Option<Cow<'static, [Priority]>>,
+    pub(crate) no_rfc7540_priorities: Option<bool>,
+    pub(crate) settings_order: Option<SettingsOrder>,
+    pub(crate) headers_stream_dependency: Option<StreamDependency>,
+    pub(crate) headers_pseudo_order: Option<PseudoOrder>,
+    pub(crate) priorities: Option<Priorities>,
 }
 
 impl Http2ConfigBuilder {
@@ -131,59 +134,65 @@ impl Http2ConfigBuilder {
         self
     }
 
-    /// Sets the placeholder for an unknown HTTP/2 setting with identifier `9`.
-    ///
-    /// - **Purpose:** Reserved for experimental or vendor-specific extensions.
-    pub fn unknown_setting9<T>(mut self, value: T) -> Self
+    /// Disable RFC 7540 Stream Priorities (set to `true` to disable).
+    /// [RFC 9218]: <https://www.rfc-editor.org/rfc/rfc9218.html#section-2.1>
+    pub fn no_rfc7540_priorities<T>(mut self, value: T) -> Self
     where
         T: Into<Option<bool>>,
     {
-        self.config.unknown_setting9 = value.into();
+        self.config.no_rfc7540_priorities = value.into();
         self
     }
 
-    /// Sets the order in which settings are applied.
+    /// Sets the order of settings parameters in the initial SETTINGS frame.
     ///
-    /// - **Structure:** Array of `SettingsOrder` with up to 8 elements.
-    /// - **Purpose:** Defines the sequence for applying HTTP/2 settings.
-    pub fn settings_order(mut self, value: [SettingsOrder; 8]) -> Self {
+    /// This determines the order in which settings are sent during the HTTP/2 handshake.
+    /// Customizing the order may be useful for testing or protocol compliance.
+    pub fn settings_order(mut self, value: SettingsOrder) -> Self {
         self.config.settings_order = Some(value);
         self
     }
 
-    /// Sets the priority settings for header frames.
+    /// Sets the stream dependency and weight for the outgoing HEADERS frame.
     ///
-    /// - **Structure:** `(stream_dependency, weight, exclusive_flag)`
-    /// - **Purpose:** Specifies how header frames are prioritized during transmission.
-    pub fn headers_priority<T>(mut self, value: T) -> Self
+    /// This configures the priority of the stream by specifying its dependency and weight,
+    /// as defined by the HTTP/2 priority mechanism. This can be used to influence how the
+    /// server allocates resources to this stream relative to others.
+    pub fn headers_stream_dependency<T>(mut self, value: T) -> Self
     where
         T: IntoStreamDependency,
     {
-        self.config.headers_priority = value.into();
+        self.config.headers_stream_dependency = value.into();
         self
     }
 
-    /// Sets the order of pseudo-header fields.
+    /// Sets the HTTP/2 pseudo-header field order for outgoing HEADERS frames.
     ///
-    /// - **Structure:** Array of `PseudoOrder` with up to 4 elements.
-    /// - **Purpose:** Determines the sequence in which pseudo-headers are transmitted.
+    /// This determines the order in which pseudo-header fields (such as `:method`, `:scheme`, etc.)
+    /// are encoded in the HEADERS frame. Customizing the order may be useful for interoperability
+    /// or testing purposes.
     pub fn headers_pseudo_order<T>(mut self, value: T) -> Self
     where
-        T: Into<Option<[PseudoOrder; 4]>>,
+        T: Into<Option<PseudoOrder>>,
     {
         self.config.headers_pseudo_order = value.into();
         self
     }
 
-    /// Sets the priority configuration for priority frames.
+    /// Sets the list of PRIORITY frames to be sent immediately after the connection is established,
+    /// but before the first request is sent.
     ///
-    /// - **Structure:** A borrowed slice of `Priority` settings.
-    /// - **Purpose:** Defines stream dependencies and priorities.
-    pub fn priority<T>(mut self, value: T) -> Self
+    /// This allows you to pre-configure the HTTP/2 stream dependency tree by specifying a set of
+    /// PRIORITY frames that will be sent as part of the connection preface. This can be useful for
+    /// optimizing resource allocation or testing custom stream prioritization strategies.
+    ///
+    /// Each `Priority` in the list must have a valid (non-zero) stream ID. Any priority with a
+    /// stream ID of zero will be ignored.
+    pub fn priorities<T>(mut self, value: T) -> Self
     where
-        T: Into<Cow<'static, [Priority]>>,
+        T: Into<Priorities>,
     {
-        self.config.priority = Some(value.into());
+        self.config.priorities = Some(value.into());
         self
     }
 

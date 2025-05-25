@@ -1,7 +1,7 @@
 use http::{HeaderMap, HeaderName, HeaderValue, header};
+use rquest::http2::{Http2Config, PseudoId, PseudoOrder};
 use rquest::{AlpnProtos, TlsConfig, TlsVersion};
 use rquest::{Client, EmulationProvider};
-use rquest::{Http2Config, PseudoOrder::*};
 
 // ============== TLS Extension Algorithms ==============
 
@@ -69,7 +69,16 @@ async fn main() -> Result<(), rquest::Error> {
         .initial_stream_id(3)
         .initial_stream_window_size(16777216)
         .initial_connection_window_size(16711681 + 65535)
-        .headers_pseudo_order([Method, Path, Authority, Scheme])
+        .headers_pseudo_order(
+            PseudoOrder::builder()
+                .extend([
+                    PseudoId::Method,
+                    PseudoId::Path,
+                    PseudoId::Authority,
+                    PseudoId::Scheme,
+                ])
+                .build(),
+        )
         .build();
 
     // Default headers

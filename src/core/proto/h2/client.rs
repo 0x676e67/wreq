@@ -1,5 +1,4 @@
 use std::{
-    borrow::Cow,
     convert::Infallible,
     future::Future,
     marker::PhantomData,
@@ -14,11 +13,8 @@ use futures_channel::mpsc::{Receiver, Sender};
 use futures_channel::{mpsc, oneshot};
 use futures_core::{FusedFuture, FusedStream, Stream};
 use http::{Method, StatusCode};
-use http2::SendStream;
-use http2::{
-    client::{Builder, Connection, SendRequest},
-    frame::Priority,
-};
+use http2::client::{Builder, Connection, SendRequest};
+use http2::{SendStream, frame::Priorities};
 use pin_project_lite::pin_project;
 
 use super::ping::{Ponger, Recorder};
@@ -84,11 +80,11 @@ pub(crate) struct Config {
     pub(crate) enable_push: Option<bool>,
     pub(crate) header_table_size: Option<u32>,
     pub(crate) enable_connect_protocol: Option<bool>,
-    pub(crate) unknown_setting9: Option<bool>,
-    pub(crate) headers_pseudo_order: Option<[PseudoOrder; 4]>,
-    pub(crate) headers_priority: Option<StreamDependency>,
-    pub(crate) settings_order: Option<[SettingsOrder; 8]>,
-    pub(crate) priority: Option<Cow<'static, [Priority]>>,
+    pub(crate) no_rfc7540_priorities: Option<bool>,
+    pub(crate) headers_pseudo_order: Option<PseudoOrder>,
+    pub(crate) headers_stream_dependency: Option<StreamDependency>,
+    pub(crate) settings_order: Option<SettingsOrder>,
+    pub(crate) priorities: Option<Priorities>,
 }
 
 impl Default for Config {
@@ -111,11 +107,11 @@ impl Default for Config {
             max_concurrent_streams: None,
             enable_push: None,
             enable_connect_protocol: None,
-            unknown_setting9: None,
+            no_rfc7540_priorities: None,
             headers_pseudo_order: None,
-            headers_priority: None,
+            headers_stream_dependency: None,
             settings_order: None,
-            priority: None,
+            priorities: None,
         }
     }
 }
@@ -152,22 +148,22 @@ fn new_builder(config: &Config) -> Builder {
         builder.header_table_size(max);
     }
     if let Some(v) = config.enable_connect_protocol {
-        builder.unknown_setting8(v);
+        builder.enable_connect_protocol(v);
     }
-    if let Some(v) = config.unknown_setting9 {
-        builder.unknown_setting9(v);
+    if let Some(v) = config.no_rfc7540_priorities {
+        builder.no_rfc7540_priorities(v);
     }
-    if let Some(priority) = config.headers_priority {
-        builder.headers_priority(priority);
+    if let Some(stream_dependency) = config.headers_stream_dependency {
+        builder.headers_stream_dependency(stream_dependency);
     }
-    if let Some(order) = config.headers_pseudo_order {
-        builder.headers_psuedo(order);
+    if let Some(ref order) = config.headers_pseudo_order {
+        builder.headers_psuedo_order(order.clone());
     }
-    if let Some(order) = config.settings_order {
-        builder.settings_order(order);
+    if let Some(ref order) = config.settings_order {
+        builder.settings_order(order.clone());
     }
-    if let Some(ref priority) = config.priority {
-        builder.priority(priority.clone());
+    if let Some(ref priority) = config.priorities {
+        builder.priorities(priority.clone());
     }
     builder
 }

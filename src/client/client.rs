@@ -25,10 +25,12 @@ use crate::core::rt::{TokioExecutor, tokio::TokioTimer};
 use crate::dns::hickory::{HickoryDnsResolver, LookupIpStrategy};
 use crate::dns::{DnsResolverWithOverrides, DynResolver, Resolve, gai::GaiResolver};
 use crate::error::{BoxError, Error};
+use crate::http1::Http1Config;
+use crate::http2::Http2Config;
 use crate::into_url::try_uri;
 use crate::proxy::IntoProxy;
 use crate::tls::CertificateInput;
-use crate::{CertStore, Http1Config, Http2Config, Identity, TlsConfig, error};
+use crate::{CertStore, Identity, TlsConfig, error};
 use crate::{IntoUrl, Method, Proxy, StatusCode, Url};
 use crate::{
     redirect,
@@ -2328,10 +2330,10 @@ fn apply_http2_config(mut builder: Http2Builder<'_>, http2: Http2Config) {
         .max_concurrent_streams(http2.max_concurrent_streams)
         .header_table_size(http2.header_table_size)
         .max_frame_size(http2.max_frame_size)
-        .headers_priority(http2.headers_priority)
+        .headers_stream_dependency(http2.headers_stream_dependency)
         .headers_pseudo_order(http2.headers_pseudo_order)
         .settings_order(http2.settings_order)
-        .priority(http2.priority);
+        .priorities(http2.priorities);
 
     if let Some(max_header_list_size) = http2.max_header_list_size {
         builder.max_header_list_size(max_header_list_size);
@@ -2345,7 +2347,7 @@ fn apply_http2_config(mut builder: Http2Builder<'_>, http2: Http2Config) {
         builder.enable_connect_protocol(enable_connect_protocol);
     }
 
-    if let Some(unknown_setting9) = http2.unknown_setting9 {
-        builder.unknown_setting9(unknown_setting9);
+    if let Some(no_rfc7540_priorities) = http2.no_rfc7540_priorities {
+        builder.no_rfc7540_priorities(no_rfc7540_priorities);
     }
 }

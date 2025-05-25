@@ -1,11 +1,13 @@
 use http::{HeaderMap, HeaderName, HeaderValue, header};
+use rquest::http1::Http1Config;
+use rquest::http2::{
+    Http2Config, Priorities, Priority, PseudoId, PseudoOrder, SettingId, SettingsOrder,
+    StreamDependency, StreamId,
+};
 use rquest::{
-    AlpnProtos, AlpsProtos, CertCompressionAlgorithm, ExtensionType, Http1Config, TlsConfig,
-    TlsVersion,
+    AlpnProtos, AlpsProtos, CertCompressionAlgorithm, ExtensionType, TlsConfig, TlsVersion,
 };
 use rquest::{Client, EmulationProvider};
-use rquest::{Http2Config, PseudoOrder::*, SettingsOrder::*};
-use rquest::{Priority, StreamDependency, StreamId};
 
 // ============== TLS Extension Algorithms ==============
 
@@ -135,51 +137,73 @@ async fn main() -> Result<(), rquest::Error> {
         .build();
 
     // HTTP/2 config
-    let http2 = Http2Config::builder()
-        .initial_stream_id(15)
-        .header_table_size(65536)
-        .initial_stream_window_size(131072)
-        .max_frame_size(16384)
-        .initial_connection_window_size(12517377 + 65535)
-        .headers_priority(StreamDependency::new(StreamId::from(13), 41, false))
-        .headers_pseudo_order([Method, Scheme, Authority, Path])
-        .settings_order([
-            HeaderTableSize,
-            EnablePush,
-            MaxConcurrentStreams,
-            InitialWindowSize,
-            MaxFrameSize,
-            MaxHeaderListSize,
-            UnknownSetting8,
-            UnknownSetting9,
-        ])
-        .priority(vec![
-            Priority::new(
-                StreamId::from(3),
-                StreamDependency::new(StreamId::zero(), 200, false),
-            ),
-            Priority::new(
-                StreamId::from(5),
-                StreamDependency::new(StreamId::zero(), 100, false),
-            ),
-            Priority::new(
-                StreamId::from(7),
-                StreamDependency::new(StreamId::zero(), 0, false),
-            ),
-            Priority::new(
-                StreamId::from(9),
-                StreamDependency::new(StreamId::from(7), 0, false),
-            ),
-            Priority::new(
-                StreamId::from(11),
-                StreamDependency::new(StreamId::from(3), 0, false),
-            ),
-            Priority::new(
-                StreamId::from(13),
-                StreamDependency::new(StreamId::zero(), 240, false),
-            ),
-        ])
-        .build();
+    let http2 = {
+        // HTTP/2 headers frame pseudo-header order
+        let headers_pseudo_order = PseudoOrder::builder()
+            .extend([
+                PseudoId::Method,
+                PseudoId::Scheme,
+                PseudoId::Authority,
+                PseudoId::Path,
+            ])
+            .build();
+
+        // HTTP/2 settings frame order
+        let settings_order = SettingsOrder::builder()
+            .extend([
+                SettingId::HeaderTableSize,
+                SettingId::EnablePush,
+                SettingId::MaxConcurrentStreams,
+                SettingId::InitialWindowSize,
+                SettingId::MaxFrameSize,
+                SettingId::MaxHeaderListSize,
+                SettingId::EnableConnectProtocol,
+                SettingId::NoRfc7540Priorities,
+            ])
+            .build();
+
+        // HTTP/2 Priority frames
+        let priorities = Priorities::builder()
+            .extend([
+                Priority::new(
+                    StreamId::from(3),
+                    StreamDependency::new(StreamId::zero(), 200, false),
+                ),
+                Priority::new(
+                    StreamId::from(5),
+                    StreamDependency::new(StreamId::zero(), 100, false),
+                ),
+                Priority::new(
+                    StreamId::from(7),
+                    StreamDependency::new(StreamId::zero(), 0, false),
+                ),
+                Priority::new(
+                    StreamId::from(9),
+                    StreamDependency::new(StreamId::from(7), 0, false),
+                ),
+                Priority::new(
+                    StreamId::from(11),
+                    StreamDependency::new(StreamId::from(3), 0, false),
+                ),
+                Priority::new(
+                    StreamId::from(13),
+                    StreamDependency::new(StreamId::zero(), 240, false),
+                ),
+            ])
+            .build();
+
+        Http2Config::builder()
+            .initial_stream_id(15)
+            .header_table_size(65536)
+            .initial_stream_window_size(131072)
+            .max_frame_size(16384)
+            .initial_connection_window_size(12517377 + 65535)
+            .headers_stream_dependency(StreamDependency::new(StreamId::from(13), 41, false))
+            .headers_pseudo_order(headers_pseudo_order)
+            .settings_order(settings_order)
+            .priorities(priorities)
+            .build()
+    };
 
     // Default headers
     let headers = {

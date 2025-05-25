@@ -1,3 +1,5 @@
+//!// This module provides a builder pattern for configuring HTTP/1 connections.
+
 /// Builder for `Http1Config`.
 #[must_use]
 #[derive(Debug)]

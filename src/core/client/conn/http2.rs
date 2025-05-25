@@ -1,6 +1,5 @@
 //! HTTP/2 client connections
 
-use std::borrow::Cow;
 use std::error::Error;
 use std::fmt;
 use std::future::Future;
@@ -11,7 +10,7 @@ use std::task::{Context, Poll, ready};
 use std::time::Duration;
 
 use http::{Request, Response};
-use http2::frame::{Priority, PseudoOrder, SettingsOrder, StreamDependency};
+use http2::frame::{Priorities, PseudoOrder, SettingsOrder, StreamDependency};
 
 use crate::core::body::{Body, Incoming as IncomingBody};
 use crate::core::client::dispatch::{self, TrySendError};
@@ -395,9 +394,10 @@ where
         self
     }
 
-    /// http2_unknown_setting9
-    pub fn unknown_setting9(&mut self, opt: bool) -> &mut Self {
-        self.h2_builder.unknown_setting9 = Some(opt);
+    /// Disable RFC 7540 Stream Priorities (set to `true` to disable).
+    /// [RFC 9218]: <https://www.rfc-editor.org/rfc/rfc9218.html#section-2.1>
+    pub fn no_rfc7540_priorities(&mut self, opt: bool) -> &mut Self {
+        self.h2_builder.no_rfc7540_priorities = Some(opt);
         self
     }
 
@@ -470,27 +470,49 @@ where
         self
     }
 
-    /// HTTP/2 headers priority
-    pub fn headers_priority(&mut self, priority: Option<StreamDependency>) -> &mut Self {
-        self.h2_builder.headers_priority = priority;
+    /// Sets the stream dependency and weight for the outgoing HEADERS frame.
+    ///
+    /// This configures the priority of the stream by specifying its dependency and weight,
+    /// as defined by the HTTP/2 priority mechanism. This can be used to influence how the
+    /// server allocates resources to this stream relative to others.
+    pub fn headers_stream_dependency(
+        &mut self,
+        stream_dependency: Option<StreamDependency>,
+    ) -> &mut Self {
+        self.h2_builder.headers_stream_dependency = stream_dependency;
         self
     }
 
-    /// Http2 headers pseudo header order
-    pub fn headers_pseudo_order(&mut self, order: Option<[PseudoOrder; 4]>) -> &mut Self {
+    /// Sets the HTTP/2 pseudo-header field order for outgoing HEADERS frames.
+    ///
+    /// This determines the order in which pseudo-header fields (such as `:method`, `:scheme`, etc.)
+    /// are encoded in the HEADERS frame. Customizing the order may be useful for interoperability
+    /// or testing purposes.
+    pub fn headers_pseudo_order(&mut self, order: Option<PseudoOrder>) -> &mut Self {
         self.h2_builder.headers_pseudo_order = order;
         self
     }
 
-    /// Http2 settings order
-    pub fn settings_order(&mut self, order: Option<[SettingsOrder; 8]>) -> &mut Self {
+    /// Sets the order of settings parameters in the initial SETTINGS frame.
+    ///
+    /// This determines the order in which settings are sent during the HTTP/2 handshake.
+    /// Customizing the order may be useful for testing or protocol compliance.
+    pub fn settings_order(&mut self, order: Option<SettingsOrder>) -> &mut Self {
         self.h2_builder.settings_order = order;
         self
     }
 
-    /// Http2 priority frames
-    pub fn priority(&mut self, priority: Option<Cow<'static, [Priority]>>) -> &mut Self {
-        self.h2_builder.priority = priority;
+    /// Sets the list of PRIORITY frames to be sent immediately after the connection is established,
+    /// but before the first request is sent.
+    ///
+    /// This allows you to pre-configure the HTTP/2 stream dependency tree by specifying a set of
+    /// PRIORITY frames that will be sent as part of the connection preface. This can be useful for
+    /// optimizing resource allocation or testing custom stream prioritization strategies.
+    ///
+    /// Each `Priority` in the list must have a valid (non-zero) stream ID. Any priority with a
+    /// stream ID of zero will be ignored.
+    pub fn priorities(&mut self, priorities: Option<Priorities>) -> &mut Self {
+        self.h2_builder.priorities = priorities;
         self
     }
 
