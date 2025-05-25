@@ -1,5 +1,6 @@
 //! Re-export the `http2` module for HTTP/2 frame types and utilities.
 
+use http2::frame::ExperimentalSettings;
 pub use http2::frame::{
     Priorities, PrioritiesBuilder, Priority, PseudoId, PseudoOrder, Setting, SettingId,
     SettingsOrder, SettingsOrderBuilder, StreamDependency, StreamId,
@@ -28,6 +29,7 @@ pub struct Http2Config {
     pub(crate) max_header_list_size: Option<u32>,
     pub(crate) enable_connect_protocol: Option<bool>,
     pub(crate) no_rfc7540_priorities: Option<bool>,
+    pub(crate) expirimental_settings: Option<ExperimentalSettings>,
     pub(crate) settings_order: Option<SettingsOrder>,
     pub(crate) headers_stream_dependency: Option<StreamDependency>,
     pub(crate) headers_pseudo_order: Option<PseudoOrder>,
@@ -144,12 +146,28 @@ impl Http2ConfigBuilder {
         self
     }
 
+    /// Configures custom experimental HTTP/2 setting.
+    ///
+    /// This setting is reserved for future use or experimental purposes.
+    /// Enabling or disabling it may have no effect unless explicitly supported
+    /// by the server or client implementation.
+    pub fn expirimental_settings<T>(mut self, value: T) -> Self
+    where
+        T: Into<Option<ExperimentalSettings>>,
+    {
+        self.config.expirimental_settings = value.into();
+        self
+    }
+
     /// Sets the order of settings parameters in the initial SETTINGS frame.
     ///
     /// This determines the order in which settings are sent during the HTTP/2 handshake.
     /// Customizing the order may be useful for testing or protocol compliance.
-    pub fn settings_order(mut self, value: SettingsOrder) -> Self {
-        self.config.settings_order = Some(value);
+    pub fn settings_order<T>(mut self, value: T) -> Self
+    where
+        T: Into<Option<SettingsOrder>>,
+    {
+        self.config.settings_order = value.into();
         self
     }
 
@@ -160,7 +178,7 @@ impl Http2ConfigBuilder {
     /// server allocates resources to this stream relative to others.
     pub fn headers_stream_dependency<T>(mut self, value: T) -> Self
     where
-        T: IntoStreamDependency,
+        T: Into<Option<StreamDependency>>,
     {
         self.config.headers_stream_dependency = value.into();
         self
@@ -210,32 +228,3 @@ impl Http2Config {
         }
     }
 }
-
-/// A trait for converting various types into an optional `StreamDependency`.
-///
-/// This trait is used to provide a unified way to convert different types
-/// into an optional `StreamDependency` instance.
-pub trait IntoStreamDependency {
-    /// Converts the implementing type into an optional `StreamDependency`.
-    fn into(self) -> Option<StreamDependency>;
-}
-
-// Macro to implement IntoStreamDependency for various types
-macro_rules! impl_into_stream_dependency {
-    ($($t:ty => $body:expr),*) => {
-        $(
-            impl IntoStreamDependency for $t {
-                fn into(self) -> Option<StreamDependency> {
-                    $body(self)
-                }
-            }
-        )*
-    };
-}
-
-impl_into_stream_dependency!(
-    (u32, u8, bool) => |(id, weight, exclusive)| Some(StreamDependency::new(StreamId::from(id), weight, exclusive)),
-    Option<(u32, u8, bool)> => |opt: Option<(u32, u8, bool)>| opt.map(|(id, weight, exclusive)| StreamDependency::new(StreamId::from(id), weight, exclusive)),
-    StreamDependency => Some,
-    Option<StreamDependency> => |opt| opt
-);

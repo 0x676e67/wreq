@@ -10,7 +10,9 @@ use std::task::{Context, Poll, ready};
 use std::time::Duration;
 
 use http::{Request, Response};
-use http2::frame::{Priorities, PseudoOrder, SettingsOrder, StreamDependency};
+use http2::frame::{
+    ExperimentalSettings, Priorities, PseudoOrder, SettingsOrder, StreamDependency,
+};
 
 use crate::core::body::{Body, Incoming as IncomingBody};
 use crate::core::client::dispatch::{self, TrySendError};
@@ -490,6 +492,16 @@ where
     /// or testing purposes.
     pub fn headers_pseudo_order(&mut self, order: Option<PseudoOrder>) -> &mut Self {
         self.h2_builder.headers_pseudo_order = order;
+        self
+    }
+
+    /// Configures custom experimental HTTP/2 setting.
+    ///
+    /// This setting is reserved for future use or experimental purposes.
+    /// Enabling or disabling it may have no effect unless explicitly supported
+    /// by the server or client implementation.
+    pub fn expirimental_settings(&mut self, settings: Option<ExperimentalSettings>) -> &mut Self {
+        self.h2_builder.expirimental_settings = settings;
         self
     }
 

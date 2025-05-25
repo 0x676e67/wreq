@@ -2330,9 +2330,10 @@ fn apply_http2_config(mut builder: Http2Builder<'_>, http2: Http2Config) {
         .max_concurrent_streams(http2.max_concurrent_streams)
         .header_table_size(http2.header_table_size)
         .max_frame_size(http2.max_frame_size)
+        .expirimental_settings(http2.expirimental_settings)
+        .settings_order(http2.settings_order)
         .headers_stream_dependency(http2.headers_stream_dependency)
         .headers_pseudo_order(http2.headers_pseudo_order)
-        .settings_order(http2.settings_order)
         .priorities(http2.priorities);
 
     if let Some(max_header_list_size) = http2.max_header_list_size {

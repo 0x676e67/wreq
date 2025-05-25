@@ -13,8 +13,11 @@ use futures_channel::mpsc::{Receiver, Sender};
 use futures_channel::{mpsc, oneshot};
 use futures_core::{FusedFuture, FusedStream, Stream};
 use http::{Method, StatusCode};
-use http2::client::{Builder, Connection, SendRequest};
 use http2::{SendStream, frame::Priorities};
+use http2::{
+    client::{Builder, Connection, SendRequest},
+    frame::ExperimentalSettings,
+};
 use pin_project_lite::pin_project;
 
 use super::ping::{Ponger, Recorder};
@@ -83,6 +86,7 @@ pub(crate) struct Config {
     pub(crate) no_rfc7540_priorities: Option<bool>,
     pub(crate) headers_pseudo_order: Option<PseudoOrder>,
     pub(crate) headers_stream_dependency: Option<StreamDependency>,
+    pub(crate) expirimental_settings: Option<ExperimentalSettings>,
     pub(crate) settings_order: Option<SettingsOrder>,
     pub(crate) priorities: Option<Priorities>,
 }
@@ -108,9 +112,10 @@ impl Default for Config {
             enable_push: None,
             enable_connect_protocol: None,
             no_rfc7540_priorities: None,
+            expirimental_settings: None,
+            settings_order: None,
             headers_pseudo_order: None,
             headers_stream_dependency: None,
-            settings_order: None,
             priorities: None,
         }
     }
@@ -153,14 +158,17 @@ fn new_builder(config: &Config) -> Builder {
     if let Some(v) = config.no_rfc7540_priorities {
         builder.no_rfc7540_priorities(v);
     }
+    if let Some(ref order) = config.settings_order {
+        builder.settings_order(order.clone());
+    }
+    if let Some(ref settings) = config.expirimental_settings {
+        builder.experimental_settings(settings.clone());
+    }
     if let Some(stream_dependency) = config.headers_stream_dependency {
         builder.headers_stream_dependency(stream_dependency);
     }
     if let Some(ref order) = config.headers_pseudo_order {
         builder.headers_psuedo_order(order.clone());
-    }
-    if let Some(ref order) = config.settings_order {
-        builder.settings_order(order.clone());
     }
     if let Some(ref priority) = config.priorities {
         builder.priorities(priority.clone());
