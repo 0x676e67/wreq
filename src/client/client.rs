@@ -1076,7 +1076,6 @@ impl ClientBuilder {
     /// Configures the use of hostname verification when connecting.
     ///
     /// Defaults to `true`.
-    ///j
     /// # Warning
     ///
     /// You should think very carefully before you use this method. If hostname verification is not
