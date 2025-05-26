@@ -154,7 +154,80 @@ type Callback =
     Arc<dyn Fn(&mut ConnectConfiguration, &Uri) -> Result<(), ErrorStack> + Sync + Send>;
 type SslCallback = Arc<dyn Fn(&mut SslRef, &Uri) -> Result<(), ErrorStack> + Sync + Send>;
 
+impl TlsConnector {
+    /// Creates a new `TlsConnectorBuilder` with the given configuration.
+    pub fn builder(config: TlsConfig) -> TlsConnectorBuilder {
+        TlsConnectorBuilder {
+            config,
+            tls_keylog_file: None,
+            identity: None,
+            cert_store: None,
+            cert_verification: true,
+            tls_sni: true,
+            verify_hostname: true,
+        }
+    }
+
+    /// Creates a new `TlsConnector` with settings
+    fn with_connector_and_settings(
+        mut ssl: SslConnectorBuilder,
+        settings: HandshakeSettings,
+    ) -> TlsConnector {
+        // If the session cache is disabled, we don't need to set up any callbacks.
+        let cache = if settings.session_cache {
+            let cache = Arc::new(Mutex::new(SessionCache::with_capacity(
+                settings.session_cache_capacity,
+            )));
+
+            ssl.set_session_cache_mode(SslSessionCacheMode::CLIENT);
+
+            ssl.set_new_session_callback({
+                let cache = cache.clone();
+                move |ssl, session| {
+                    if let Ok(Some(key)) = key_index().map(|idx| ssl.ex_data(idx)) {
+                        cache.lock().insert(key.clone(), session);
+                    }
+                }
+            });
+
+            Some(cache)
+        } else {
+            None
+        };
+
+        let callback = Arc::new(move |conf: &mut ConnectConfiguration, _: &Uri| {
+            // Use server name indication
+            conf.set_use_server_name_indication(settings.tls_sni);
+
+            // Verify hostname
+            conf.set_verify_hostname(settings.verify_hostname);
+
+            // Set ECH grease
+            conf.set_enable_ech_grease(settings.enable_ech_grease);
+
+            // Set AES hardware override
+            conf.set_random_aes_hw_override(settings.random_aes_hw_override);
+
+            // Set ALPS
+            conf.alps_protos(settings.alps_protos, settings.alps_use_new_codepoint)?;
+
+            Ok(())
+        });
+
+        TlsConnector {
+            inner: Inner {
+                ssl: ssl.build(),
+                cache,
+                callback: Some(callback),
+                ssl_callback: None,
+                skip_session_ticket: settings.skip_session_ticket,
+            },
+        }
+    }
+}
+
 impl TlsConnectorBuilder {
+    /// Sets the file path for TLS key logging.
     #[inline]
     pub fn tls_keylog_file<P>(mut self, path: P) -> Self
     where
@@ -164,12 +237,14 @@ impl TlsConnectorBuilder {
         self
     }
 
+    /// Sets the identity to be used for client certificate authentication.
     #[inline]
     pub fn identity(mut self, identity: Option<Identity>) -> Self {
         self.identity = identity;
         self
     }
 
+    /// Sets the certificate store used for TLS verification.
     #[inline]
     pub fn cert_store<T>(mut self, cert_store: T) -> Self
     where
@@ -179,24 +254,28 @@ impl TlsConnectorBuilder {
         self
     }
 
+    /// Sets the certificate verification flag.
     #[inline]
     pub fn cert_verification(mut self, enabled: bool) -> Self {
         self.cert_verification = enabled;
         self
     }
 
+    /// Sets the Server Name Indication (SNI) flag.
     #[inline]
     pub fn tls_sni(mut self, enabled: bool) -> Self {
         self.tls_sni = enabled;
         self
     }
 
+    /// Sets the hostname verification flag.
     #[inline]
     pub fn verify_hostname(mut self, enabled: bool) -> Self {
         self.verify_hostname = enabled;
         self
     }
 
+    /// Build the `TlsConnector` with the provided configuration.
     pub fn build(self) -> crate::Result<TlsConnector> {
         let config = self.config;
 
@@ -304,77 +383,6 @@ impl TlsConnectorBuilder {
         Ok(TlsConnector::with_connector_and_settings(
             connector, settings,
         ))
-    }
-}
-
-impl TlsConnector {
-    pub fn builder(config: TlsConfig) -> TlsConnectorBuilder {
-        TlsConnectorBuilder {
-            config,
-            tls_keylog_file: None,
-            identity: None,
-            cert_store: None,
-            cert_verification: true,
-            tls_sni: true,
-            verify_hostname: true,
-        }
-    }
-
-    /// Creates a new `TlsConnector` with settings
-    fn with_connector_and_settings(
-        mut ssl: SslConnectorBuilder,
-        settings: HandshakeSettings,
-    ) -> TlsConnector {
-        // If the session cache is disabled, we don't need to set up any callbacks.
-        let cache = if settings.session_cache {
-            let cache = Arc::new(Mutex::new(SessionCache::with_capacity(
-                settings.session_cache_capacity,
-            )));
-
-            ssl.set_session_cache_mode(SslSessionCacheMode::CLIENT);
-
-            ssl.set_new_session_callback({
-                let cache = cache.clone();
-                move |ssl, session| {
-                    if let Ok(Some(key)) = key_index().map(|idx| ssl.ex_data(idx)) {
-                        cache.lock().insert(key.clone(), session);
-                    }
-                }
-            });
-
-            Some(cache)
-        } else {
-            None
-        };
-
-        let callback = Arc::new(move |conf: &mut ConnectConfiguration, _: &Uri| {
-            // Use server name indication
-            conf.set_use_server_name_indication(settings.tls_sni);
-
-            // Verify hostname
-            conf.set_verify_hostname(settings.verify_hostname);
-
-            // Set ECH grease
-            conf.set_enable_ech_grease(settings.enable_ech_grease);
-
-            // Set AES hardware override
-            conf.set_random_aes_hw_override(settings.random_aes_hw_override);
-
-            // Set ALPS
-            conf.alps_protos(settings.alps_protos, settings.alps_use_new_codepoint)?;
-
-            Ok(())
-        });
-
-        TlsConnector {
-            inner: Inner {
-                ssl: ssl.build(),
-                cache,
-                callback: Some(callback),
-                ssl_callback: None,
-                skip_session_ticket: settings.skip_session_ticket,
-            },
-        }
     }
 }
 
