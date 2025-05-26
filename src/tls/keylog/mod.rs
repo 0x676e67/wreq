@@ -4,8 +4,7 @@ use antidote::RwLock;
 pub use handle::KeyLogHandle;
 use std::{
     collections::{HashMap, hash_map::Entry},
-    fs::OpenOptions,
-    io::{Error, Result, Write},
+    io::{Error, Result},
     path::{Component, Path, PathBuf},
     sync::OnceLock,
 };
@@ -49,15 +48,6 @@ impl KeyLogPolicy {
             )
         })?;
 
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).map_err(|err| {
-                Error::other(format!(
-                    "Failed to create keylog parent path directory: {}",
-                    err
-                ))
-            })?;
-        }
-
         let path = normalize_path(&path);
 
         let mapping = GLOBAL_KEYLOG_FILE_MAPPING.get_or_init(|| RwLock::new(HashMap::new()));
@@ -69,44 +59,12 @@ impl KeyLogPolicy {
         match mut_mapping.entry(path.clone()) {
             Entry::Occupied(entry) => Ok(Some(entry.get().clone())),
             Entry::Vacant(entry) => {
-                let handle = create_key_log_handle(path)?;
+                let handle = KeyLogHandle::new(path)?;
                 entry.insert(handle.clone());
                 Ok(Some(handle))
             }
         }
     }
-}
-
-fn create_key_log_handle(filepath: PathBuf) -> std::io::Result<KeyLogHandle> {
-    if let Some(parent) = filepath.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-
-    let mut file = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&filepath)?;
-
-    let (tx, rx) = std::sync::mpsc::channel::<String>();
-
-    let _path_name = filepath.clone();
-    std::thread::spawn(move || {
-        trace!(
-            file = ?_path_name,
-            "KeyLogHandle: receiver task up and running",
-        );
-        while let Ok(line) = rx.recv() {
-            if let Err(_err) = file.write_all(line.as_bytes()) {
-                error!(
-                    file = ?_path_name,
-                    error = %_err,
-                    "KeyLogHandle: failed to write file",
-                );
-            }
-        }
-    });
-
-    Ok(KeyLogHandle::new(filepath, tx))
 }
 
 /// copied from: <https://github.com/rust-lang/cargo/blob/fede83ccf973457de319ba6fa0e36ead454d2e20/src/cargo/util/paths.rs#L61>
