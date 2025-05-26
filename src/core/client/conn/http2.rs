@@ -59,7 +59,7 @@ where
 pub struct Builder<Ex> {
     pub(super) exec: Ex,
     pub(super) timer: Time,
-    h2_builder: proto::h2::client::Config,
+    config: Http2Config,
 }
 
 // ===== impl SendRequest
@@ -108,37 +108,6 @@ where
     ///
     /// Returns a future that if successful, yields the `Response`.
     ///
-    /// `req` must have a `Host` header.
-    ///
-    /// Absolute-form `Uri`s are not required. If received, they will be serialized
-    /// as-is.
-    pub fn send_request(
-        &mut self,
-        req: Request<B>,
-    ) -> impl Future<Output = crate::core::Result<Response<IncomingBody>>> {
-        let sent = self.dispatch.send(req);
-
-        async move {
-            match sent {
-                Ok(rx) => match rx.await {
-                    Ok(Ok(resp)) => Ok(resp),
-                    Ok(Err(err)) => Err(err),
-                    // this is definite bug if it happens, but it shouldn't happen!
-                    Err(_canceled) => panic!("dispatch dropped without returning error"),
-                },
-                Err(_req) => {
-                    debug!("connection was not ready");
-
-                    Err(crate::core::Error::new_canceled().with("connection was not ready"))
-                }
-            }
-        }
-    }
-
-    /// Sends a `Request` on the associated connection.
-    ///
-    /// Returns a future that if successful, yields the `Response`.
-    ///
     /// # Error
     ///
     /// If there was an error before trying to serialize the request to the
@@ -176,28 +145,6 @@ impl<B> fmt::Debug for SendRequest<B> {
 }
 
 // ===== impl Connection
-
-impl<T, B, E> Connection<T, B, E>
-where
-    T: Read + Write + Unpin + 'static,
-    B: Body + Unpin + 'static,
-    B::Data: Send,
-    B::Error: Into<Box<dyn Error + Send + Sync>>,
-    E: Http2ClientConnExec<B, T> + Unpin,
-{
-    /// Returns whether the [extended CONNECT protocol][1] is enabled or not.
-    ///
-    /// This setting is configured by the server peer by sending the
-    /// [`SETTINGS_ENABLE_CONNECT_PROTOCOL` parameter][2] in a `SETTINGS` frame.
-    /// This method returns the currently acknowledged value received from the
-    /// remote.
-    ///
-    /// [1]: https://datatracker.ietf.org/doc/html/rfc8441#section-4
-    /// [2]: https://datatracker.ietf.org/doc/html/rfc8441#section-3
-    pub fn is_extended_connect_protocol_enabled(&self) -> bool {
-        self.inner.1.is_extended_connect_protocol_enabled()
-    }
-}
 
 impl<T, B, E> fmt::Debug for Connection<T, B, E>
 where
@@ -242,7 +189,7 @@ where
         Builder {
             exec,
             timer: Time::Empty,
-            h2_builder: Default::default(),
+            config: Default::default(),
         }
     }
 
@@ -257,7 +204,7 @@ where
 
     /// Provide a configuration for HTTP/2.
     pub fn config(&mut self, config: Http2Config) -> &mut Builder<Ex> {
-        self.h2_builder = config.h2_builder;
+        self.config = config;
         self
     }
 
@@ -283,8 +230,14 @@ where
             trace!("client handshake HTTP/2");
 
             let (tx, rx) = dispatch::channel();
-            let h2 = proto::h2::client::handshake(io, rx, &opts.h2_builder, opts.exec, opts.timer)
-                .await?;
+            let h2 = proto::h2::client::handshake(
+                io,
+                rx,
+                &opts.config.h2_builder,
+                opts.exec,
+                opts.timer,
+            )
+            .await?;
             Ok((
                 SendRequest {
                     dispatch: tx.unbound(),

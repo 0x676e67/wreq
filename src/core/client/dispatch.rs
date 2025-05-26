@@ -9,6 +9,7 @@ use tokio::sync::{mpsc, oneshot};
 use crate::core::{body::Incoming, proto::h2::client::ResponseFutMap};
 
 pub(crate) type RetryPromise<T, U> = oneshot::Receiver<Result<U, TrySendError<T>>>;
+#[allow(unused)]
 pub(crate) type Promise<T> = oneshot::Receiver<Result<T, crate::core::Error>>;
 
 /// An error when calling `try_send_request`.
@@ -74,10 +75,6 @@ impl<T, U> Sender<T, U> {
         self.giver.is_wanting()
     }
 
-    pub(crate) fn is_closed(&self) -> bool {
-        self.giver.is_canceled()
-    }
-
     fn can_send(&mut self) -> bool {
         if self.giver.give() || !self.buffered_once {
             // If the receiver is ready *now*, then of course we can send.
@@ -98,17 +95,6 @@ impl<T, U> Sender<T, U> {
         let (tx, rx) = oneshot::channel();
         self.inner
             .send(Envelope(Some((val, Callback::Retry(Some(tx))))))
-            .map(move |_| rx)
-            .map_err(|mut e| (e.0).0.take().expect("envelope not dropped").0)
-    }
-
-    pub(crate) fn send(&mut self, val: T) -> Result<Promise<U>, T> {
-        if !self.can_send() {
-            return Err(val);
-        }
-        let (tx, rx) = oneshot::channel();
-        self.inner
-            .send(Envelope(Some((val, Callback::NoRetry(Some(tx))))))
             .map(move |_| rx)
             .map_err(|mut e| (e.0).0.take().expect("envelope not dropped").0)
     }
@@ -134,14 +120,6 @@ impl<T, U> UnboundedSender<T, U> {
         let (tx, rx) = oneshot::channel();
         self.inner
             .send(Envelope(Some((val, Callback::Retry(Some(tx))))))
-            .map(move |_| rx)
-            .map_err(|mut e| (e.0).0.take().expect("envelope not dropped").0)
-    }
-
-    pub(crate) fn send(&mut self, val: T) -> Result<Promise<U>, T> {
-        let (tx, rx) = oneshot::channel();
-        self.inner
-            .send(Envelope(Some((val, Callback::NoRetry(Some(tx))))))
             .map(move |_| rx)
             .map_err(|mut e| (e.0).0.take().expect("envelope not dropped").0)
     }
@@ -211,6 +189,7 @@ impl<T, U> Drop for Envelope<T, U> {
 pub(crate) enum Callback<T, U> {
     #[allow(unused)]
     Retry(Option<oneshot::Sender<Result<U, TrySendError<T>>>>),
+    #[allow(unused)]
     NoRetry(Option<oneshot::Sender<Result<U, crate::core::Error>>>),
 }
 

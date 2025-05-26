@@ -8,12 +8,12 @@ use std::task::{Context, Poll, ready};
 
 use bytes::Bytes;
 use http::{Request, Response};
-use httparse::ParserConfig;
 
 use crate::core::body::{Body, Incoming as IncomingBody};
 use crate::core::client::dispatch::{self, TrySendError};
 use crate::core::proto;
 use crate::core::rt::{Read, Write};
+use crate::http1::Http1Config;
 
 type Dispatcher<T, B> =
     proto::dispatch::Dispatcher<proto::dispatch::Client<B>, B, T, proto::h1::ClientTransaction>;
@@ -71,32 +71,6 @@ where
         let (io, read_buf, _) = self.inner.into_inner();
         Parts { io, read_buf }
     }
-
-    /// Poll the connection for completion, but without calling `shutdown`
-    /// on the underlying IO.
-    ///
-    /// This is useful to allow running a connection while doing an HTTP
-    /// upgrade. Once the upgrade is completed, the connection would be "done",
-    /// but it is not desired to actually shutdown the IO object. Instead you
-    /// would take it back using `into_parts`.
-    ///
-    /// Use [`poll_fn`](https://docs.rs/futures/0.1.25/futures/future/fn.poll_fn.html)
-    /// and [`try_ready!`](https://docs.rs/futures/0.1.25/futures/macro.try_ready.html)
-    /// to work with this function; or use the `without_shutdown` wrapper.
-    pub fn poll_without_shutdown(&mut self, cx: &mut Context<'_>) -> Poll<crate::core::Result<()>> {
-        self.inner.poll_without_shutdown(cx)
-    }
-
-    /// Prevent shutdown of the underlying IO object at the end of service the request,
-    /// instead run `into_parts`. This is a convenience wrapper over `poll_without_shutdown`.
-    pub async fn without_shutdown(self) -> crate::core::Result<Parts<T>> {
-        let mut conn = Some(self);
-        std::future::poll_fn(move |cx| -> Poll<crate::core::Result<Parts<T>>> {
-            ready!(conn.as_mut().unwrap().poll_without_shutdown(cx))?;
-            Poll::Ready(Ok(conn.take().unwrap().into_parts()))
-        })
-        .await
-    }
 }
 
 /// A builder to configure an HTTP connection.
@@ -107,14 +81,7 @@ where
 /// are subject to change at any time.
 #[derive(Clone, Debug)]
 pub struct Builder {
-    h09_responses: bool,
-    h1_parser_config: ParserConfig,
-    h1_writev: Option<bool>,
-    h1_title_case_headers: bool,
-    h1_preserve_header_case: bool,
-    h1_max_headers: Option<usize>,
-    h1_read_buf_exact_size: Option<usize>,
-    h1_max_buf_size: Option<usize>,
+    config: Http1Config,
 }
 
 // ===== impl SendRequest
@@ -144,42 +111,12 @@ impl<B> SendRequest<B> {
     pub fn is_ready(&self) -> bool {
         self.dispatch.is_ready()
     }
-
-    /// Checks if the connection side has been closed.
-    pub fn is_closed(&self) -> bool {
-        self.dispatch.is_closed()
-    }
 }
 
 impl<B> SendRequest<B>
 where
     B: Body + 'static,
 {
-    /// Sends a `Request` on the associated connection.
-    ///
-    /// Returns a future that if successful, yields the `Response`.
-    pub fn send_request(
-        &mut self,
-        req: Request<B>,
-    ) -> impl Future<Output = crate::core::Result<Response<IncomingBody>>> {
-        let sent = self.dispatch.send(req);
-
-        async move {
-            match sent {
-                Ok(rx) => match rx.await {
-                    Ok(Ok(resp)) => Ok(resp),
-                    Ok(Err(err)) => Err(err),
-                    // this is definite bug if it happens, but it shouldn't happen!
-                    Err(_canceled) => panic!("dispatch dropped without returning error"),
-                },
-                Err(_req) => {
-                    debug!("connection was not ready");
-                    Err(crate::core::Error::new_canceled().with("connection was not ready"))
-                }
-            }
-        }
-    }
-
     /// Sends a `Request` on the associated connection.
     ///
     /// Returns a future that if successful, yields the `Response`.
@@ -283,188 +220,12 @@ impl Builder {
     #[inline]
     pub fn new() -> Builder {
         Builder {
-            h09_responses: false,
-            h1_writev: None,
-            h1_read_buf_exact_size: None,
-            h1_parser_config: Default::default(),
-            h1_title_case_headers: false,
-            h1_preserve_header_case: false,
-            h1_max_headers: None,
-            h1_max_buf_size: None,
+            config: Default::default(),
         }
     }
 
-    /// Set whether HTTP/0.9 responses should be tolerated.
-    ///
-    /// Default is false.
-    pub fn http09_responses(&mut self, enabled: bool) -> &mut Builder {
-        self.h09_responses = enabled;
-        self
-    }
-
-    /// Set whether HTTP/1 connections will accept spaces between header names
-    /// and the colon that follow them in responses.
-    ///
-    /// You probably don't need this, here is what [RFC 7230 Section 3.2.4.] has
-    /// to say about it:
-    ///
-    /// > No whitespace is allowed between the header field-name and colon. In
-    /// > the past, differences in the handling of such whitespace have led to
-    /// > security vulnerabilities in request routing and response handling. A
-    /// > server MUST reject any received request message that contains
-    /// > whitespace between a header field-name and colon with a response code
-    /// > of 400 (Bad Request). A proxy MUST remove any such whitespace from a
-    /// > response message before forwarding the message downstream.
-    ///
-    /// Default is false.
-    ///
-    /// [RFC 7230 Section 3.2.4.]: https://tools.ietf.org/html/rfc7230#section-3.2.4
-    pub fn allow_spaces_after_header_name_in_responses(&mut self, enabled: bool) -> &mut Builder {
-        self.h1_parser_config
-            .allow_spaces_after_header_name_in_responses(enabled);
-        self
-    }
-
-    /// Set whether HTTP/1 connections will accept obsolete line folding for
-    /// header values.
-    ///
-    /// Newline codepoints (`\r` and `\n`) will be transformed to spaces when
-    /// parsing.
-    ///
-    /// You probably don't need this, here is what [RFC 7230 Section 3.2.4.] has
-    /// to say about it:
-    ///
-    /// > A server that receives an obs-fold in a request message that is not
-    /// > within a message/http container MUST either reject the message by
-    /// > sending a 400 (Bad Request), preferably with a representation
-    /// > explaining that obsolete line folding is unacceptable, or replace
-    /// > each received obs-fold with one or more SP octets prior to
-    /// > interpreting the field value or forwarding the message downstream.
-    ///
-    /// > A proxy or gateway that receives an obs-fold in a response message
-    /// > that is not within a message/http container MUST either discard the
-    /// > message and replace it with a 502 (Bad Gateway) response, preferably
-    /// > with a representation explaining that unacceptable line folding was
-    /// > received, or replace each received obs-fold with one or more SP
-    /// > octets prior to interpreting the field value or forwarding the
-    /// > message downstream.
-    ///
-    /// > A user agent that receives an obs-fold in a response message that is
-    /// > not within a message/http container MUST replace each received
-    /// > obs-fold with one or more SP octets prior to interpreting the field
-    /// > value.
-    ///
-    /// Default is false.
-    ///
-    /// [RFC 7230 Section 3.2.4.]: https://tools.ietf.org/html/rfc7230#section-3.2.4
-    pub fn allow_obsolete_multiline_headers_in_responses(&mut self, enabled: bool) -> &mut Builder {
-        self.h1_parser_config
-            .allow_obsolete_multiline_headers_in_responses(enabled);
-        self
-    }
-
-    /// Set whether HTTP/1 connections will silently ignored malformed header lines.
-    ///
-    /// If this is enabled and a header line does not start with a valid header
-    /// name, or does not include a colon at all, the line will be silently ignored
-    /// and no error will be reported.
-    ///
-    /// Default is false.
-    pub fn ignore_invalid_headers_in_responses(&mut self, enabled: bool) -> &mut Builder {
-        self.h1_parser_config
-            .ignore_invalid_headers_in_responses(enabled);
-        self
-    }
-
-    /// Set whether HTTP/1 connections should try to use vectored writes,
-    /// or always flatten into a single buffer.
-    ///
-    /// Note that setting this to false may mean more copies of body data,
-    /// but may also improve performance when an IO transport doesn't
-    /// support vectored writes well, such as most TLS implementations.
-    ///
-    /// Setting this to true will force crate::core: to use queued strategy
-    /// which may eliminate unnecessary cloning on some TLS backends
-    ///
-    /// Default is `auto`. In this mode crate::core: will try to guess which
-    /// mode to use
-    pub fn writev(&mut self, enabled: bool) -> &mut Builder {
-        self.h1_writev = Some(enabled);
-        self
-    }
-
-    /// Set whether HTTP/1 connections will write header names as title case at
-    /// the socket level.
-    ///
-    /// Default is false.
-    pub fn title_case_headers(&mut self, enabled: bool) -> &mut Builder {
-        self.h1_title_case_headers = enabled;
-        self
-    }
-
-    /// Set whether to support preserving original header cases.
-    ///
-    /// Currently, this will record the original cases received, and store them
-    /// in a private extension on the `Response`. It will also look for and use
-    /// such an extension in any provided `Request`.
-    ///
-    /// Since the relevant extension is still private, there is no way to
-    /// interact with the original cases. The only effect this can have now is
-    /// to forward the cases in a proxy-like fashion.
-    ///
-    /// Default is false.
-    pub fn preserve_header_case(&mut self, enabled: bool) -> &mut Builder {
-        self.h1_preserve_header_case = enabled;
-        self
-    }
-
-    /// Set the maximum number of headers.
-    ///
-    /// When a response is received, the parser will reserve a buffer to store headers for optimal
-    /// performance.
-    ///
-    /// If client receives more headers than the buffer size, the error "message header too large"
-    /// is returned.
-    ///
-    /// Note that headers is allocated on the stack by default, which has higher performance. After
-    /// setting this value, headers will be allocated in heap memory, that is, heap memory
-    /// allocation will occur for each response, and there will be a performance drop of about 5%.
-    ///
-    /// Default is 100.
-    pub fn max_headers(&mut self, val: usize) -> &mut Self {
-        self.h1_max_headers = Some(val);
-        self
-    }
-
-    /// Sets the exact size of the read buffer to *always* use.
-    ///
-    /// Note that setting this option unsets the `max_buf_size` option.
-    ///
-    /// Default is an adaptive read buffer.
-    pub fn read_buf_exact_size(&mut self, sz: Option<usize>) -> &mut Builder {
-        self.h1_read_buf_exact_size = sz;
-        self.h1_max_buf_size = None;
-        self
-    }
-
-    /// Set the maximum buffer size for the connection.
-    ///
-    /// Default is ~400kb.
-    ///
-    /// Note that setting this option unsets the `read_exact_buf_size` option.
-    ///
-    /// # Panics
-    ///
-    /// The minimum value allowed is 8192. This method panics if the passed `max` is less than the minimum.
-    pub fn max_buf_size(&mut self, max: usize) -> &mut Self {
-        assert!(
-            max >= proto::h1::MINIMUM_MAX_BUFFER_SIZE,
-            "the max_buf_size cannot be smaller than the minimum that h1 specifies."
-        );
-
-        self.h1_max_buf_size = Some(max);
-        self.h1_read_buf_exact_size = None;
-        self
+    pub fn set_config(&mut self, config: Http1Config) {
+        self.config = config;
     }
 
     /// Constructs a connection with the configured options and IO.
@@ -482,7 +243,7 @@ impl Builder {
         B::Data: Send,
         B::Error: Into<Box<dyn StdError + Send + Sync>>,
     {
-        let opts = self.clone();
+        let opts = self.config.clone();
 
         async move {
             trace!("client handshake HTTP/1");

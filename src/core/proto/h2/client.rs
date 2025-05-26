@@ -478,18 +478,6 @@ where
     marker: PhantomData<T>,
 }
 
-impl<B, E, T> ClientTask<B, E, T>
-where
-    B: Body + 'static,
-    E: Http2ClientConnExec<B, T> + Unpin,
-    B::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
-    T: Read + Write + Unpin,
-{
-    pub(crate) fn is_extended_connect_protocol_enabled(&self) -> bool {
-        self.h2_tx.is_extended_connect_protocol_enabled()
-    }
-}
-
 pin_project! {
     pub struct PipeMap<S>
     where

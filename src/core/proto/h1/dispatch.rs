@@ -85,22 +85,6 @@ where
         (io, buf, self.dispatch)
     }
 
-    /// Run this dispatcher until HTTP says this connection is done,
-    /// but don't call `Write::shutdown` on the underlying IO.
-    ///
-    /// This is useful for old-style HTTP upgrades, but ignores
-    /// newer-style upgrade API.
-    pub(crate) fn poll_without_shutdown(
-        &mut self,
-        cx: &mut Context<'_>,
-    ) -> Poll<crate::core::Result<()>> {
-        Pin::new(self).poll_catch(cx, false).map_ok(|ds| {
-            if let Dispatched::Upgrade(pending) = ds {
-                pending.manual();
-            }
-        })
-    }
-
     fn poll_catch(
         &mut self,
         cx: &mut Context<'_>,

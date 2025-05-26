@@ -18,7 +18,6 @@ use std::error::Error as StdError;
 use std::fmt;
 use std::future::Future;
 use std::num::NonZeroUsize;
-use std::ops::{Deref, DerefMut};
 use std::pin::Pin;
 use std::task::{self, Poll};
 use std::time::Duration;
@@ -29,6 +28,7 @@ use crate::core::common;
 use crate::core::header::{HOST, HeaderValue};
 use crate::core::rt::Timer;
 use crate::core::{Method, Request, Response, Uri, Version, body::Body};
+use crate::http1::Http1Config;
 use crate::http2::Http2Config;
 
 use futures_util::future::{self, Either, FutureExt, TryFutureExt};
@@ -619,15 +619,13 @@ where
     }
 
     #[inline]
-    pub(crate) fn set_http2_config(&mut self, config: Http2Config) {
-        self.h2_builder.config(config);
+    pub(crate) fn set_http1_config(&mut self, config: Http1Config) {
+        self.h1_builder.set_config(config);
     }
 
-    /// Http1 configuration.
-    pub(crate) fn http1(&mut self) -> Http1Builder<'_> {
-        Http1Builder {
-            inner: &mut self.h1_builder,
-        }
+    #[inline]
+    pub(crate) fn set_http2_config(&mut self, config: Http2Config) {
+        self.h2_builder.config(config);
     }
 }
 
@@ -904,46 +902,6 @@ fn is_schema_secure(uri: &Uri) -> bool {
         .unwrap_or_default()
 }
 
-/// Http1 part of builder.
-#[derive(Debug)]
-pub struct Http1Builder<'a> {
-    inner: &'a mut crate::core::client::conn::http1::Builder,
-}
-
-impl Deref for Http1Builder<'_> {
-    type Target = crate::core::client::conn::http1::Builder;
-
-    fn deref(&self) -> &Self::Target {
-        self.inner
-    }
-}
-
-impl DerefMut for Http1Builder<'_> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        self.inner
-    }
-}
-
-/// Http2 part of builder.
-#[derive(Debug)]
-pub struct Http2Builder<'a> {
-    inner: &'a mut crate::core::client::conn::http2::Builder<Exec>,
-}
-
-impl Deref for Http2Builder<'_> {
-    type Target = crate::core::client::conn::http2::Builder<Exec>;
-
-    fn deref(&self) -> &Self::Target {
-        self.inner
-    }
-}
-
-impl DerefMut for Http2Builder<'_> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        self.inner
-    }
-}
-
 /// A builder to configure a new [`Client`].
 ///
 /// # Example
@@ -1079,6 +1037,12 @@ impl Builder {
         self
     }
 
+    /// Provide a configuration for HTTP/1.
+    pub fn http1_config(&mut self, config: Http1Config) -> &mut Self {
+        self.h1_builder.set_config(config);
+        self
+    }
+
     /// Provide a configuration for HTTP/2.
     pub fn http2_config(&mut self, config: Http2Config) -> &mut Self {
         self.h2_builder.config(config);
@@ -1140,16 +1104,6 @@ impl Builder {
             h2_builder: self.h2_builder.clone(),
             connector,
             pool: pool::Pool::new(self.pool_config, exec, timer),
-        }
-    }
-}
-
-impl Builder {
-    /// Http1 configuration.
-    #[inline]
-    pub fn http1(&mut self) -> Http1Builder<'_> {
-        Http1Builder {
-            inner: &mut self.h1_builder,
         }
     }
 }

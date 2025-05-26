@@ -17,15 +17,14 @@ use crate::connect::{
 #[cfg(feature = "cookies")]
 use crate::cookie;
 use crate::core::client::{
-    Builder, Client as HyperClient, Http1Builder, InnerRequest, NetworkScheme,
-    NetworkSchemeBuilder, connect::HttpConnector,
+    Builder, Client as HyperClient, InnerRequest, NetworkScheme, NetworkSchemeBuilder,
+    connect::HttpConnector,
 };
 use crate::core::rt::{TokioExecutor, tokio::TokioTimer};
 #[cfg(feature = "hickory-dns")]
 use crate::dns::hickory::{HickoryDnsResolver, LookupIpStrategy};
 use crate::dns::{DnsResolverWithOverrides, DynResolver, Resolve, gai::GaiResolver};
 use crate::error::{BoxError, Error};
-use crate::http1::Http1Config;
 use crate::into_url::try_uri;
 use crate::proxy::IntoProxy;
 use crate::tls::CertificateInput;
@@ -995,8 +994,7 @@ impl ClientBuilder {
         }
 
         if let Some(http1_config) = emulation.http1_config.take() {
-            let builder = self.config.builder.http1();
-            apply_http1_config(builder, http1_config);
+            self.config.builder.http1_config(http1_config);
         }
 
         if let Some(http2_config) = emulation.http2_config.take() {
@@ -1823,7 +1821,7 @@ impl<'c> ClientUpdate<'c> {
             }
 
             if let Some(http1_config) = emulation.http1_config {
-                apply_http1_config(current.hyper.http1(), http1_config);
+                current.hyper.set_http1_config(http1_config);
             }
 
             if let Some(http2_config) = emulation.http2_config {
@@ -2296,26 +2294,5 @@ fn add_accpet_encoding_header(accepts: &Accepts, headers: &mut HeaderMap) {
                 HeaderValue::from_static(accept_encoding),
             );
         }
-    }
-}
-
-fn apply_http1_config(mut builder: Http1Builder<'_>, http1: Http1Config) {
-    builder
-        .http09_responses(http1.http09_responses)
-        .max_headers(http1.max_headers)
-        .max_buf_size(http1.max_buf_size)
-        .read_buf_exact_size(http1.read_buf_exact_size)
-        .preserve_header_case(http1.preserve_header_case)
-        .title_case_headers(http1.title_case_headers)
-        .ignore_invalid_headers_in_responses(http1.ignore_invalid_headers_in_responses)
-        .allow_spaces_after_header_name_in_responses(
-            http1.allow_spaces_after_header_name_in_responses,
-        )
-        .allow_obsolete_multiline_headers_in_responses(
-            http1.allow_obsolete_multiline_headers_in_responses,
-        );
-
-    if let Some(writev) = http1.writev {
-        builder.writev(writev);
     }
 }
