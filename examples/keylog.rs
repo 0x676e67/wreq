@@ -4,7 +4,7 @@ use rquest::tls::KeyLogPolicy;
 async fn main() -> Result<(), rquest::Error> {
     // Build a client
     let client = rquest::Client::builder()
-        .keylog_policy(KeyLogPolicy::File("keylog.txt".into()))
+        .keylog(KeyLogPolicy::File("keylog.txt".into()))
         .cert_verification(false)
         .build()?;
 

@@ -1061,7 +1061,7 @@ impl ClientBuilder {
     }
 
     /// Configures TLS key logging policy for the client.
-    pub fn keylog_policy(mut self, keylog_policy: KeyLogPolicy) -> ClientBuilder {
+    pub fn keylog(mut self, keylog_policy: KeyLogPolicy) -> ClientBuilder {
         self.config.keylog_policy = Some(keylog_policy);
         self
     }

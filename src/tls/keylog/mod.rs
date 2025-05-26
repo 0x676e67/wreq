@@ -45,7 +45,7 @@ impl KeyLogPolicy {
         let path = filepath.ok_or_else(|| {
             Error::new(
                 std::io::ErrorKind::NotFound,
-                "Invalid keylog file path: SSLKEYLOGFILE not set or keylog policy is disabled",
+                "Invalid keylog file path: SSLKEYLOGFILE not set or keylog filepath inavalid",
             )
         })?;
 
@@ -77,38 +77,36 @@ impl KeyLogPolicy {
     }
 }
 
-fn create_key_log_handle(path: PathBuf) -> std::io::Result<KeyLogHandle> {
-    trace!(
-        file = ?path,
-        "KeyLogHandle: try to create a new handle",
-    );
-
-    if let Some(parent) = path.parent() {
+fn create_key_log_handle(filepath: PathBuf) -> std::io::Result<KeyLogHandle> {
+    if let Some(parent) = filepath.parent() {
         std::fs::create_dir_all(parent)?;
     }
 
-    let mut file = OpenOptions::new().append(true).create(true).open(&path)?;
+    let mut file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&filepath)?;
 
     let (tx, rx) = std::sync::mpsc::channel::<String>();
 
-    let _path_name = path.clone();
+    let _path_name = filepath.clone();
     std::thread::spawn(move || {
         trace!(
             file = ?_path_name,
-            "KeyLogHandle[rx]: receiver task up and running",
+            "KeyLogHandle: receiver task up and running",
         );
         while let Ok(line) = rx.recv() {
             if let Err(_err) = file.write_all(line.as_bytes()) {
                 error!(
                     file = ?_path_name,
                     error = %_err,
-                    "KeyLogHandle[rx]: failed to write file",
+                    "KeyLogHandle: failed to write file",
                 );
             }
         }
     });
 
-    Ok(KeyLogHandle::new(path, tx))
+    Ok(KeyLogHandle::new(filepath, tx))
 }
 
 /// copied from: <https://github.com/rust-lang/cargo/blob/fede83ccf973457de319ba6fa0e36ead454d2e20/src/cargo/util/paths.rs#L61>
