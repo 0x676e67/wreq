@@ -16,7 +16,7 @@ pub struct Http1ConfigBuilder {
 /// The `Http1Config` struct provides various configuration options for HTTP/1 connections.
 /// These config allow you to customize the behavior of the HTTP/1 client, such as
 /// enabling support for HTTP/0.9 responses, allowing spaces after header names, and more.
-#[derive(Debug, Clone)]
+#[derive(Debug, Default, Clone)]
 pub struct Http1Config {
     pub(crate) h09_responses: bool,
     pub(crate) h1_parser_config: ParserConfig,
@@ -180,21 +180,6 @@ impl Http1ConfigBuilder {
     /// Build the `Http1Config` instance.
     pub fn build(self) -> Http1Config {
         self.config
-    }
-}
-
-impl Default for Http1Config {
-    fn default() -> Self {
-        Http1Config {
-            h09_responses: false,
-            h1_writev: None,
-            h1_read_buf_exact_size: None,
-            h1_parser_config: Default::default(),
-            h1_title_case_headers: false,
-            h1_preserve_header_case: false,
-            h1_max_headers: None,
-            h1_max_buf_size: None,
-        }
     }
 }
 
