@@ -5,7 +5,7 @@ pub use handle::KeyLogHandle;
 use std::{
     borrow::Cow,
     collections::{HashMap, hash_map::Entry},
-    io::{Error, Result},
+    io::{Error, ErrorKind, Result},
     path::{Component, Path, PathBuf},
     sync::OnceLock,
 };
@@ -43,8 +43,11 @@ impl KeyLogPolicy {
                 .map(normalize_path)
                 .map_err(|err| {
                     Error::new(
-                        std::io::ErrorKind::NotFound,
-                        format!("KeyLogPolicy: SSLKEYLOGFILE not set: {}", err),
+                        ErrorKind::NotFound,
+                        format!(
+                            "KeyLogPolicy: SSLKEYLOGFILE environment is invalid: {}",
+                            err
+                        ),
                     )
                 })?,
             KeyLogPolicy::File(keylog_filename) => normalize_path(keylog_filename),
