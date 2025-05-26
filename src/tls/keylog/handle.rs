@@ -56,7 +56,7 @@ impl KeyLogHandle {
     pub fn write_log_line(&self, line: String) {
         if let Err(_err) = self.sender.send(line) {
             error!(
-                file = ?self.path,
+                file = ?self.filepath,
                 error = %_err,
                 "KeyLogHandle: failed to send log line for writing",
             );
