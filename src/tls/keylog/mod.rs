@@ -3,6 +3,7 @@ mod handle;
 use antidote::RwLock;
 pub use handle::KeyLogHandle;
 use std::{
+    borrow::Cow,
     collections::{HashMap, hash_map::Entry},
     io::{Error, Result},
     path::{Component, Path, PathBuf},
@@ -35,20 +36,19 @@ pub enum KeyLogPolicy {
 impl KeyLogPolicy {
     /// Creates a new key log file handle based on the policy.
     pub fn new_handle(&self) -> Result<Option<KeyLogHandle>> {
-        let filepath = match self {
+        let path = match self {
             KeyLogPolicy::Disabled => return Ok(None),
-            KeyLogPolicy::Environment => std::env::var("SSLKEYLOGFILE").ok().map(PathBuf::from),
-            KeyLogPolicy::File(keylog_filename) => Some(keylog_filename.clone()),
+            KeyLogPolicy::Environment => std::env::var("SSLKEYLOGFILE")
+                .map(PathBuf::from)
+                .map(normalize_path)
+                .map_err(|err| {
+                    Error::new(
+                        std::io::ErrorKind::NotFound,
+                        format!("KeyLogPolicy: SSLKEYLOGFILE not set: {}", err),
+                    )
+                })?,
+            KeyLogPolicy::File(keylog_filename) => normalize_path(keylog_filename),
         };
-
-        let path = filepath.ok_or_else(|| {
-            Error::new(
-                std::io::ErrorKind::NotFound,
-                "Invalid keylog file path: SSLKEYLOGFILE not set or keylog filepath inavalid",
-            )
-        })?;
-
-        let path = normalize_path(&path);
 
         let mapping = GLOBAL_KEYLOG_FILE_MAPPING.get_or_init(|| RwLock::new(HashMap::new()));
         if let Some(handle) = mapping.read().get(&path).cloned() {
@@ -68,7 +68,8 @@ impl KeyLogPolicy {
 }
 
 /// copied from: <https://github.com/rust-lang/cargo/blob/fede83ccf973457de319ba6fa0e36ead454d2e20/src/cargo/util/paths.rs#L61>
-pub fn normalize_path(path: &Path) -> PathBuf {
+pub fn normalize_path<'a>(path: impl Into<Cow<'a, Path>>) -> PathBuf {
+    let path = path.into();
     let mut components = path.components().peekable();
     let mut ret = if let Some(c @ Component::Prefix(..)) = components.peek().cloned() {
         components.next();

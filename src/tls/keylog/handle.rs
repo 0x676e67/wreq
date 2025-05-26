@@ -16,7 +16,7 @@ impl KeyLogHandle {
         if let Some(parent) = filepath.parent() {
             std::fs::create_dir_all(parent).map_err(|err| {
                 Error::other(format!(
-                    "Failed to create keylog parent path directory: {}",
+                    "KeyLogHandle: Failed to create keylog parent path directory: {}",
                     err
                 ))
             })?;
