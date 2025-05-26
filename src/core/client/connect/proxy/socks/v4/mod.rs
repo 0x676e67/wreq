@@ -97,7 +97,7 @@ impl SocksConfig {
     {
         let address = match host.parse::<IpAddr>() {
             Ok(IpAddr::V6(_)) => return Err(SocksV4Error::IpV6.into()),
-            Ok(IpAddr::V4(ip)) => Address::Socket(SocketAddrV4::new(ip.into(), port)),
+            Ok(IpAddr::V4(ip)) => Address::Socket(SocketAddrV4::new(ip, port)),
             Err(_) => {
                 if self.local_dns {
                     (host, port)
