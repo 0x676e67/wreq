@@ -101,7 +101,7 @@ want = "0.3"
 
 ## common
 encoding_rs = { version = "0.8", optional = true }
-socket2 = { version = "0.5.9", features = ["all"] }
+socket2 = { version = "0.5.10", features = ["all"] }
 lru = { version = "0.14", default-features = false }
 mime = "0.3.17"
 percent-encoding = "2.3"
@@ -327,3 +327,7 @@ required-features = ["websocket", "futures-util/std", "tracing"]
 name = "http2_websocket"
 path = "examples/http2_websocket.rs"
 required-features = ["websocket", "futures-util/std", "tracing"]
+
+[[example]]
+name = "keylog"
+path = "examples/keylog.rs"

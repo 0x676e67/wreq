@@ -2,7 +2,6 @@ use std::borrow::Cow;
 use std::future::Future;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::num::NonZeroUsize;
-use std::path::PathBuf;
 use std::pin::Pin;
 
 use std::sync::Arc;
@@ -27,7 +26,7 @@ use crate::dns::{DnsResolverWithOverrides, DynResolver, Resolve, gai::GaiResolve
 use crate::error::{BoxError, Error};
 use crate::into_url::try_uri;
 use crate::proxy::IntoProxy;
-use crate::tls::{CertStore, CertificateInput, Identity, TlsConfig};
+use crate::tls::{CertStore, CertificateInput, Identity, KeyLogPolicy, TlsConfig};
 use crate::{IntoUrl, Method, Proxy, StatusCode, Url};
 use crate::{
     error, redirect,
@@ -131,7 +130,7 @@ struct Config {
     connector_layers: Option<Vec<BoxedConnectorLayer>>,
     builder: Builder,
     alpn_protos: Option<AlpnProtos>,
-    tls_keylog_file: Option<PathBuf>,
+    keylog_policy: Option<KeyLogPolicy>,
     tls_info: bool,
     tls_sni: bool,
     verify_hostname: bool,
@@ -168,7 +167,7 @@ impl_debug!(
         https_only,
         http2_max_retry_count,
         builder,
-        tls_keylog_file,
+        keylog_policy,
         tls_info,
         tls_sni,
         verify_hostname,
@@ -228,7 +227,7 @@ impl ClientBuilder {
                 http2_max_retry_count: 2,
                 connector_layers: None,
                 alpn_protos: None,
-                tls_keylog_file: None,
+                keylog_policy: None,
                 tls_info: false,
                 tls_sni: true,
                 verify_hostname: true,
@@ -306,7 +305,7 @@ impl ClientBuilder {
                 }
 
                 TlsConnector::builder(tls_config)
-                    .tls_keylog_file(config.tls_keylog_file.clone())
+                    .keylog_policy(config.keylog_policy.clone())
                     .identity(config.identity.clone())
                     .cert_store(config.cert_store.clone().unwrap_or_default())
                     .cert_verification(config.cert_verification)
@@ -342,7 +341,7 @@ impl ClientBuilder {
                 proxies_maybe_http_auth,
                 network_scheme: config.network_scheme,
                 alpn_protos: config.alpn_protos,
-                tls_keylog_file: config.tls_keylog_file,
+                keylog_policy: config.keylog_policy,
                 tls_sni: config.tls_sni,
                 verify_hostname: config.verify_hostname,
                 identity: config.identity,
@@ -1061,7 +1060,7 @@ impl ClientBuilder {
         self
     }
 
-    /// Configures TLS key logging to a file for protocol analysis and debugging
+    /// Configures TLS key logging policy for the client.
     ///
     /// This method specifies a file where TLS session keys will be written in NSS key log format.
     /// The logged keys can be used by various network analysis tools to decrypt TLS traffic:
@@ -1069,18 +1068,15 @@ impl ClientBuilder {
     /// * Wireshark - Import via Preferences > Protocols > TLS > (Pre)-Master-Secret log filename
     /// * mitmproxy - Use with the --ssl-keylog-file option
     /// * tcpdump/tshark - Use with SSLKEYLOGFILE environment variable
-    pub fn tls_keylog_file<P>(mut self, tls_keylog_file: P) -> ClientBuilder
-    where
-        P: Into<PathBuf>,
-    {
-        self.config.tls_keylog_file = Some(tls_keylog_file.into());
+    pub fn keylog_policy(mut self, keylog_policy: KeyLogPolicy) -> ClientBuilder {
+        self.config.keylog_policy = Some(keylog_policy.into());
         self
     }
 
     /// Configures the use of hostname verification when connecting.
     ///
     /// Defaults to `true`.
-    ///
+    ///j
     /// # Warning
     ///
     /// You should think very carefully before you use this method. If hostname verification is not
@@ -1575,7 +1571,7 @@ struct ClientRef {
     proxies_maybe_http_auth: bool,
     network_scheme: NetworkSchemeBuilder,
     alpn_protos: Option<AlpnProtos>,
-    tls_keylog_file: Option<PathBuf>,
+    keylog_policy: Option<KeyLogPolicy>,
     tls_sni: bool,
     verify_hostname: bool,
     identity: Option<Identity>,
@@ -1822,7 +1818,7 @@ impl<'c> ClientUpdate<'c> {
                 }
 
                 let connector = TlsConnector::builder(tls_config)
-                    .tls_keylog_file(current.tls_keylog_file.clone())
+                    .keylog_policy(current.keylog_policy.clone())
                     .identity(current.identity.clone())
                     .cert_store(current.cert_store.clone())
                     .cert_verification(current.cert_verification)
