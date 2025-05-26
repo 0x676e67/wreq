@@ -280,7 +280,6 @@ pub use http::header;
 pub use http::{StatusCode, Version};
 pub use url::Url;
 
-#[macro_use]
 mod error;
 mod into_url;
 mod response;
