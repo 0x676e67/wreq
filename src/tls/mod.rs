@@ -14,23 +14,23 @@ pub use self::{
     config::TlsConfig,
     x509::{CertStore, CertStoreBuilder, Certificate, CertificateInput, Identity},
 };
-use boring2::ssl::SslVersion;
+pub use boring2::ssl::{CertCompressionAlgorithm, ExtensionType};
 
 /// A TLS protocol version.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct TlsVersion(SslVersion);
+pub struct TlsVersion(boring2::ssl::SslVersion);
 
 // These could perhaps be From/TryFrom implementations, but those would be
 // part of the public API so let's be careful
 impl TlsVersion {
     /// Version 1.0 of the TLS protocol.
-    pub const TLS_1_0: TlsVersion = TlsVersion(SslVersion::TLS1);
+    pub const TLS_1_0: TlsVersion = TlsVersion(boring2::ssl::SslVersion::TLS1);
     /// Version 1.1 of the TLS protocol.
-    pub const TLS_1_1: TlsVersion = TlsVersion(SslVersion::TLS1_1);
+    pub const TLS_1_1: TlsVersion = TlsVersion(boring2::ssl::SslVersion::TLS1_1);
     /// Version 1.2 of the TLS protocol.
-    pub const TLS_1_2: TlsVersion = TlsVersion(SslVersion::TLS1_2);
+    pub const TLS_1_2: TlsVersion = TlsVersion(boring2::ssl::SslVersion::TLS1_2);
     /// Version 1.3 of the TLS protocol.
-    pub const TLS_1_3: TlsVersion = TlsVersion(SslVersion::TLS1_3);
+    pub const TLS_1_3: TlsVersion = TlsVersion(boring2::ssl::SslVersion::TLS1_3);
 }
 
 /// A TLS ALPN protocol.

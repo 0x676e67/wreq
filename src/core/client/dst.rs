@@ -1,6 +1,6 @@
 use super::{Error, ErrorKind, NetworkScheme, PoolKey, set_scheme};
-use crate::AlpnProtos;
 use crate::proxy::ProxyScheme;
+use crate::tls::AlpnProtos;
 use http::uri::PathAndQuery;
 use http::{Uri, Version, uri::Scheme};
 use std::net::{Ipv4Addr, Ipv6Addr};

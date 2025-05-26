@@ -530,7 +530,7 @@ async fn test_tls_info() {
         .send()
         .await
         .expect("response");
-    let tls_info = resp.extensions().get::<rquest::TlsInfo>();
+    let tls_info = resp.extensions().get::<rquest::tls::TlsInfo>();
     assert!(tls_info.is_some());
     let tls_info = tls_info.unwrap();
     let peer_certificate = tls_info.peer_certificate();
@@ -545,7 +545,7 @@ async fn test_tls_info() {
         .send()
         .await
         .expect("response");
-    let tls_info = resp.extensions().get::<rquest::TlsInfo>();
+    let tls_info = resp.extensions().get::<rquest::tls::TlsInfo>();
     assert!(tls_info.is_none());
 }
 

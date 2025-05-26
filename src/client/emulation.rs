@@ -1,6 +1,6 @@
-use crate::TlsConfig;
 use crate::http1::Http1Config;
 use crate::http2::Http2Config;
+use crate::tls::TlsConfig;
 use http::{HeaderMap, HeaderName};
 use std::borrow::Cow;
 

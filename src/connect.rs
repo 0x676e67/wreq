@@ -502,7 +502,6 @@ pub(crate) mod sealed {
         /// This tells hyper whether the URI should be written in
         /// * origin-form (`GET /just/a/path HTTP/1.1`), when `is_proxy == false`, or
         /// * absolute-form (`GET http://foo.bar/and/a/path HTTP/1.1`), otherwise.
-        #[allow(missing_debug_implementations)]
         pub struct Conn {
             #[pin]
             pub(super) inner: BoxConn,

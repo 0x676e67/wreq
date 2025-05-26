@@ -1,4 +1,4 @@
-use crate::tls::{AlpnProtos, AlpsProtos, CertStore, TlsVersion};
+use crate::tls::{AlpnProtos, AlpsProtos, CertStore, Identity, TlsVersion};
 use boring2::{
     error::ErrorStack,
     ssl::{
@@ -16,7 +16,7 @@ pub trait SslConnectorBuilderExt {
     fn cert_verification(self, enable: bool) -> crate::Result<SslConnectorBuilder>;
 
     /// Configure the identity for the given `SslConnectorBuilder`.
-    fn identity(self, identity: Option<crate::Identity>) -> crate::Result<SslConnectorBuilder>;
+    fn identity(self, identity: Option<Identity>) -> crate::Result<SslConnectorBuilder>;
 
     /// Configure the ALPN and certificate config for the given `SslConnectorBuilder`.
     fn alpn_protos(self, alpn: AlpnProtos) -> crate::Result<SslConnectorBuilder>;
@@ -85,7 +85,7 @@ impl SslConnectorBuilderExt for SslConnectorBuilder {
     }
 
     #[inline]
-    fn identity(mut self, identity: Option<crate::Identity>) -> crate::Result<SslConnectorBuilder> {
+    fn identity(mut self, identity: Option<Identity>) -> crate::Result<SslConnectorBuilder> {
         if let Some(identity) = identity {
             identity.add_to_tls(&mut self)?;
         }

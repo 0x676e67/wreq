@@ -22,7 +22,6 @@ use std::pin::Pin;
 use std::task::{self, Poll};
 use std::time::Duration;
 
-use crate::AlpnProtos;
 use crate::core::client::conn::TrySendError as ConnTrySendError;
 use crate::core::common;
 use crate::core::header::{HOST, HeaderValue};
@@ -30,6 +29,7 @@ use crate::core::rt::Timer;
 use crate::core::{Method, Request, Response, Uri, Version, body::Body};
 use crate::http1::Http1Config;
 use crate::http2::Http2Config;
+use crate::tls::AlpnProtos;
 
 use futures_util::future::{self, Either, FutureExt, TryFutureExt};
 use http::uri::Scheme;

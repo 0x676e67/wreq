@@ -27,11 +27,10 @@ use crate::dns::{DnsResolverWithOverrides, DynResolver, Resolve, gai::GaiResolve
 use crate::error::{BoxError, Error};
 use crate::into_url::try_uri;
 use crate::proxy::IntoProxy;
-use crate::tls::CertificateInput;
-use crate::{CertStore, Identity, TlsConfig, error};
+use crate::tls::{CertStore, CertificateInput, Identity, TlsConfig};
 use crate::{IntoUrl, Method, Proxy, StatusCode, Url};
 use crate::{
-    redirect,
+    error, redirect,
     tls::{AlpnProtos, TlsConnector, TlsVersion},
 };
 
@@ -134,11 +133,11 @@ struct Config {
     alpn_protos: Option<AlpnProtos>,
     tls_keylog_file: Option<PathBuf>,
     tls_info: bool,
-    tls_sni: Option<bool>,
-    verify_hostname: Option<bool>,
+    tls_sni: bool,
+    verify_hostname: bool,
     identity: Option<Identity>,
     cert_store: Option<CertStore>,
-    cert_verification: Option<bool>,
+    cert_verification: bool,
     min_tls_version: Option<TlsVersion>,
     max_tls_version: Option<TlsVersion>,
     tls_config: Option<TlsConfig>,
@@ -231,11 +230,11 @@ impl ClientBuilder {
                 alpn_protos: None,
                 tls_keylog_file: None,
                 tls_info: false,
-                tls_sni: None,
-                verify_hostname: None,
+                tls_sni: true,
+                verify_hostname: true,
                 identity: None,
                 cert_store: None,
-                cert_verification: None,
+                cert_verification: true,
                 min_tls_version: None,
                 max_tls_version: None,
                 tls_config: None,
@@ -294,34 +293,8 @@ impl ClientBuilder {
             let tls = {
                 let mut tls_config = config.tls_config.unwrap_or_default();
 
-                if let Some(cert_verification) = config.cert_verification {
-                    tls_config.cert_verification = cert_verification;
-                }
-
-                if let Some(ref tls_keylog_file) = config.tls_keylog_file {
-                    tls_config.tls_keylog_file = Some(tls_keylog_file.clone());
-                }
-
                 if let Some(alpn_protos) = config.alpn_protos {
                     tls_config.alpn_protos = alpn_protos;
-                }
-
-                if let Some(tls_sni) = config.tls_sni {
-                    tls_config.tls_sni = tls_sni;
-                }
-
-                if let Some(verify_hostname) = config.verify_hostname {
-                    tls_config.verify_hostname = verify_hostname;
-                }
-
-                if config.cert_store.is_some() {
-                    tls_config.cert_store = config.cert_store.clone();
-                } else {
-                    tls_config.cert_store = Some(CertStore::default());
-                }
-
-                if config.identity.is_some() {
-                    tls_config.identity = config.identity.clone();
                 }
 
                 if config.min_tls_version.is_some() {
@@ -332,7 +305,14 @@ impl ClientBuilder {
                     tls_config.max_tls_version = config.max_tls_version;
                 }
 
-                TlsConnector::new(tls_config)?
+                TlsConnector::builder(tls_config)
+                    .tls_keylog_file(config.tls_keylog_file.clone())
+                    .identity(config.identity.clone())
+                    .cert_store(config.cert_store.clone().unwrap_or_default())
+                    .cert_verification(config.cert_verification)
+                    .tls_sni(config.tls_sni)
+                    .verify_hostname(config.verify_hostname)
+                    .build()?
             };
 
             Connector::builder(http, tls, config.nodelay, config.tls_info)
@@ -1048,7 +1028,7 @@ impl ClientBuilder {
     /// introduces significant vulnerabilities, and should only be used
     /// as a last resort.
     pub fn cert_verification(mut self, cert_verification: bool) -> ClientBuilder {
-        self.config.cert_verification = Some(cert_verification);
+        self.config.cert_verification = cert_verification;
         self
     }
 
@@ -1077,7 +1057,7 @@ impl ClientBuilder {
     ///
     /// Defaults to `true`.
     pub fn tls_sni(mut self, tls_sni: bool) -> ClientBuilder {
-        self.config.tls_sni = Some(tls_sni);
+        self.config.tls_sni = tls_sni;
         self
     }
 
@@ -1107,7 +1087,7 @@ impl ClientBuilder {
     /// used, *any* valid certificate for *any* site will be trusted for use from any other. This
     /// introduces a significant vulnerability to man-in-the-middle attacks.
     pub fn verify_hostname(mut self, verify_hostname: bool) -> ClientBuilder {
-        self.config.verify_hostname = Some(verify_hostname);
+        self.config.verify_hostname = verify_hostname;
         self
     }
 
@@ -1596,11 +1576,11 @@ struct ClientRef {
     network_scheme: NetworkSchemeBuilder,
     alpn_protos: Option<AlpnProtos>,
     tls_keylog_file: Option<PathBuf>,
-    tls_sni: Option<bool>,
-    verify_hostname: Option<bool>,
+    tls_sni: bool,
+    verify_hostname: bool,
     identity: Option<Identity>,
     cert_store: Option<CertStore>,
-    cert_verification: Option<bool>,
+    cert_verification: bool,
     min_tls_version: Option<TlsVersion>,
     max_tls_version: Option<TlsVersion>,
 }
@@ -1833,30 +1813,6 @@ impl<'c> ClientUpdate<'c> {
                     tls_config.alpn_protos = alpn_protos;
                 }
 
-                if let Some(tls_sni) = current.tls_sni {
-                    tls_config.tls_sni = tls_sni;
-                }
-
-                if let Some(verify_hostname) = current.verify_hostname {
-                    tls_config.verify_hostname = verify_hostname;
-                }
-
-                if let Some(cert_verification) = current.cert_verification {
-                    tls_config.cert_verification = cert_verification;
-                }
-
-                if current.tls_keylog_file.is_some() {
-                    tls_config.tls_keylog_file = current.tls_keylog_file.clone();
-                }
-
-                if current.identity.is_some() {
-                    tls_config.identity = current.identity.clone();
-                }
-
-                if current.cert_store.is_some() {
-                    tls_config.cert_store = current.cert_store.clone();
-                }
-
                 if current.min_tls_version.is_some() {
                     tls_config.min_tls_version = current.min_tls_version;
                 }
@@ -1865,7 +1821,14 @@ impl<'c> ClientUpdate<'c> {
                     tls_config.max_tls_version = current.max_tls_version;
                 }
 
-                let connector = TlsConnector::new(tls_config)?;
+                let connector = TlsConnector::builder(tls_config)
+                    .tls_keylog_file(current.tls_keylog_file.clone())
+                    .identity(current.identity.clone())
+                    .cert_store(current.cert_store.clone())
+                    .cert_verification(current.cert_verification)
+                    .tls_sni(current.tls_sni)
+                    .verify_hostname(current.verify_hostname)
+                    .build()?;
                 current.hyper.connector_mut().set_connector(connector);
             }
         }

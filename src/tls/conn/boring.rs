@@ -9,7 +9,7 @@ use crate::connect::HttpConnector;
 use crate::core::client::connect::Connection;
 use crate::core::rt::TokioIo;
 use crate::error::BoxError;
-use crate::tls::TlsConfig;
+use crate::tls::{CertStore, Identity, TlsConfig};
 
 use crate::core::rt::{Read, Write};
 use antidote::Mutex;
@@ -30,6 +30,7 @@ use std::fs::OpenOptions;
 use std::future::Future;
 use std::io::Write as IOWrite;
 use std::net::{IpAddr, Ipv6Addr};
+use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
@@ -129,6 +130,17 @@ pub struct TlsConnector {
     inner: Inner,
 }
 
+/// A builder for creating a `TlsConnector`.
+pub struct TlsConnectorBuilder {
+    config: TlsConfig,
+    tls_keylog_file: Option<PathBuf>,
+    identity: Option<Identity>,
+    cert_store: Option<CertStore>,
+    cert_verification: bool,
+    tls_sni: bool,
+    verify_hostname: bool,
+}
+
 #[derive(Clone)]
 struct Inner {
     ssl: SslConnector,
@@ -142,13 +154,56 @@ type Callback =
     Arc<dyn Fn(&mut ConnectConfiguration, &Uri) -> Result<(), ErrorStack> + Sync + Send>;
 type SslCallback = Arc<dyn Fn(&mut SslRef, &Uri) -> Result<(), ErrorStack> + Sync + Send>;
 
-impl TlsConnector {
-    /// Creates a new `TlsConnector` with the given `TlsConfig`.
-    pub fn new(config: TlsConfig) -> crate::Result<TlsConnector> {
+impl TlsConnectorBuilder {
+    #[inline]
+    pub fn tls_keylog_file<P>(mut self, path: P) -> Self
+    where
+        P: Into<Option<PathBuf>>,
+    {
+        self.tls_keylog_file = path.into();
+        self
+    }
+
+    #[inline]
+    pub fn identity(mut self, identity: Option<Identity>) -> Self {
+        self.identity = identity;
+        self
+    }
+
+    #[inline]
+    pub fn cert_store<T>(mut self, cert_store: T) -> Self
+    where
+        T: Into<Option<CertStore>>,
+    {
+        self.cert_store = cert_store.into();
+        self
+    }
+
+    #[inline]
+    pub fn cert_verification(mut self, enabled: bool) -> Self {
+        self.cert_verification = enabled;
+        self
+    }
+
+    #[inline]
+    pub fn tls_sni(mut self, enabled: bool) -> Self {
+        self.tls_sni = enabled;
+        self
+    }
+
+    #[inline]
+    pub fn verify_hostname(mut self, enabled: bool) -> Self {
+        self.verify_hostname = enabled;
+        self
+    }
+
+    pub fn build(self) -> crate::Result<TlsConnector> {
+        let config = self.config;
+
         let mut connector = SslConnector::no_default_verify_builder(SslMethod::tls_client())?
-            .cert_store(config.cert_store)?
-            .cert_verification(config.cert_verification)?
-            .identity(config.identity)?
+            .cert_store(self.cert_store)?
+            .cert_verification(self.cert_verification)?
+            .identity(self.identity)?
             .alpn_protos(config.alpn_protos)?
             .min_tls_version(config.min_tls_version)?
             .max_tls_version(config.max_tls_version)?;
@@ -219,7 +274,7 @@ impl TlsConnector {
             connector.set_aes_hw_override(aes_hw_override);
         }
 
-        if let Some(tls_keylog_file) = config.tls_keylog_file {
+        if let Some(tls_keylog_file) = self.tls_keylog_file {
             let file = OpenOptions::new()
                 .create(true)
                 .append(true)
@@ -241,14 +296,28 @@ impl TlsConnector {
             .alps_protos(config.alps_protos)
             .alps_use_new_codepoint(config.alps_use_new_codepoint)
             .enable_ech_grease(config.enable_ech_grease)
-            .tls_sni(config.tls_sni)
-            .verify_hostname(config.verify_hostname)
+            .tls_sni(self.tls_sni)
+            .verify_hostname(self.verify_hostname)
             .random_aes_hw_override(config.random_aes_hw_override)
             .build();
 
         Ok(TlsConnector::with_connector_and_settings(
             connector, settings,
         ))
+    }
+}
+
+impl TlsConnector {
+    pub fn builder(config: TlsConfig) -> TlsConnectorBuilder {
+        TlsConnectorBuilder {
+            config,
+            tls_keylog_file: None,
+            identity: None,
+            cert_store: None,
+            cert_verification: true,
+            tls_sni: true,
+            verify_hostname: true,
+        }
     }
 
     /// Creates a new `TlsConnector` with settings

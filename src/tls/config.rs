@@ -1,6 +1,6 @@
-use super::{AlpnProtos, AlpsProtos, CertStore, Identity, TlsVersion};
+use super::{AlpnProtos, AlpsProtos, TlsVersion};
 use boring2::ssl::{CertCompressionAlgorithm, ExtensionType};
-use std::{borrow::Cow, path::PathBuf};
+use std::borrow::Cow;
 
 /// Builder for `[`TlsConfig`]`.
 #[must_use]
@@ -12,15 +12,8 @@ pub struct TlsConfigBuilder {
 /// Configuration settings for TLS connections.
 ///
 /// This struct defines various parameters to fine-tune the behavior of a TLS connection,
-/// including the root certificate store, certificate verification, ALPN protocols, and more.
 #[derive(Debug)]
 pub struct TlsConfig {
-    pub(crate) tls_keylog_file: Option<PathBuf>,
-    pub(crate) identity: Option<Identity>,
-    pub(crate) cert_store: Option<CertStore>,
-    pub(crate) cert_verification: bool,
-    pub(crate) tls_sni: bool,
-    pub(crate) verify_hostname: bool,
     pub(crate) alpn_protos: AlpnProtos,
     pub(crate) alps_protos: Option<AlpsProtos>,
     pub(crate) alps_use_new_codepoint: bool,
@@ -51,12 +44,6 @@ pub struct TlsConfig {
 impl Default for TlsConfig {
     fn default() -> Self {
         TlsConfig {
-            tls_keylog_file: None,
-            identity: None,
-            cert_store: None,
-            cert_verification: true,
-            tls_sni: true,
-            verify_hostname: true,
             alpn_protos: AlpnProtos::default(),
             alps_protos: None,
             alps_use_new_codepoint: false,
@@ -92,44 +79,6 @@ impl TlsConfigBuilder {
         self.config
     }
 
-    /// Sets the file path for TLS key logging.
-    pub fn tls_keylog_file<T>(mut self, path: T) -> Self
-    where
-        T: Into<PathBuf>,
-    {
-        self.config.tls_keylog_file = Some(path.into());
-        self
-    }
-
-    /// Sets the certificate store used for TLS verification.
-    pub fn cert_store(mut self, store: CertStore) -> Self {
-        self.config.cert_store = Some(store);
-        self
-    }
-
-    /// Sets the certificate verification flag.
-    pub fn cert_verification(mut self, enabled: bool) -> Self {
-        self.config.cert_verification = enabled;
-        self
-    }
-
-    /// Sets the identity to be used for client certificate authentication.
-    pub fn identity(mut self, identity: Identity) -> Self {
-        self.config.identity = Some(identity);
-        self
-    }
-
-    /// Sets the Server Name Indication (SNI) flag.
-    pub fn tls_sni(mut self, enabled: bool) -> Self {
-        self.config.tls_sni = enabled;
-        self
-    }
-
-    /// Sets the hostname verification flag.
-    pub fn verify_hostname(mut self, enabled: bool) -> Self {
-        self.config.verify_hostname = enabled;
-        self
-    }
     /// Sets the ALPN protocols to use.
     pub fn alpn_protos(mut self, protos: AlpnProtos) -> Self {
         self.config.alpn_protos = protos;
