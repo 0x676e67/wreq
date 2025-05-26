@@ -4,7 +4,7 @@ use rquest::http2::{
     Http2Config, Priorities, Priority, PseudoId, PseudoOrder, SettingId, SettingsOrder,
     StreamDependency, StreamId,
 };
-use rquest::{
+use rquest::tls::{
     AlpnProtos, AlpsProtos, CertCompressionAlgorithm, ExtensionType, TlsConfig, TlsVersion,
 };
 use rquest::{Client, EmulationProvider};

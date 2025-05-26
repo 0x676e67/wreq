@@ -1,6 +1,6 @@
 use http::{HeaderMap, HeaderName, HeaderValue, header};
 use rquest::http2::{Http2Config, PseudoId, PseudoOrder};
-use rquest::{AlpnProtos, TlsConfig, TlsVersion};
+use rquest::tls::{AlpnProtos, TlsConfig, TlsVersion};
 use rquest::{Client, EmulationProvider};
 
 // ============== TLS Extension Algorithms ==============

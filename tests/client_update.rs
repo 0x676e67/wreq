@@ -2,7 +2,8 @@ mod support;
 
 use http::header::{AUTHORIZATION, CACHE_CONTROL, REFERER};
 use http_body_util::BodyExt;
-use rquest::{CertStore, EmulationProvider, TlsConfig, TlsInfo};
+use rquest::EmulationProvider;
+use rquest::tls::{CertStore, TlsConfig, TlsInfo};
 use std::time::Duration;
 use support::server;
 

@@ -1,5 +1,5 @@
-use rquest::CertStore;
 use rquest::Client;
+use rquest::tls::CertStore;
 use std::sync::LazyLock;
 
 #[tokio::main]
