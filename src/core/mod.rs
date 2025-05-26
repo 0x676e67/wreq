@@ -10,6 +10,7 @@ pub use http::{HeaderMap, Method, Request, Response, StatusCode, Uri, Version, h
 pub mod body;
 pub mod client;
 mod common;
+pub mod config;
 mod error;
 pub mod ext;
 mod headers;

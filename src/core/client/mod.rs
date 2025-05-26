@@ -29,6 +29,7 @@ use crate::core::common;
 use crate::core::header::{HOST, HeaderValue};
 use crate::core::rt::Timer;
 use crate::core::{Method, Request, Response, Uri, Version, body::Body};
+use crate::http2::Http2Config;
 
 use futures_util::future::{self, Either, FutureExt, TryFutureExt};
 use http::uri::Scheme;
@@ -612,23 +613,20 @@ where
         })
     }
 
-    /// Get a reference to the inner connector.
     #[inline]
     pub(crate) fn connector_mut(&mut self) -> &mut C {
         &mut self.connector
+    }
+
+    #[inline]
+    pub(crate) fn set_http2_config(&mut self, config: Http2Config) {
+        self.h2_builder.config(config);
     }
 
     /// Http1 configuration.
     pub(crate) fn http1(&mut self) -> Http1Builder<'_> {
         Http1Builder {
             inner: &mut self.h1_builder,
-        }
-    }
-
-    /// Http2 configuration.
-    pub(crate) fn http2(&mut self) -> Http2Builder<'_> {
-        Http2Builder {
-            inner: &mut self.h2_builder,
         }
     }
 }
@@ -1081,6 +1079,12 @@ impl Builder {
         self
     }
 
+    /// Provide a configuration for HTTP/2.
+    pub fn http2_config(&mut self, config: Http2Config) -> &mut Self {
+        self.h2_builder.config(config);
+        self
+    }
+
     /// Provide a timer to be used for timeouts and intervals in connection pools.
     pub fn pool_timer<M>(&mut self, timer: M) -> &mut Self
     where
@@ -1146,14 +1150,6 @@ impl Builder {
     pub fn http1(&mut self) -> Http1Builder<'_> {
         Http1Builder {
             inner: &mut self.h1_builder,
-        }
-    }
-
-    /// Http2 configuration.
-    #[inline]
-    pub fn http2(&mut self) -> Http2Builder<'_> {
-        Http2Builder {
-            inner: &mut self.h2_builder,
         }
     }
 }

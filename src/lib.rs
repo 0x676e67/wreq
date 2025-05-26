@@ -326,6 +326,7 @@ pub use self::client::{
     Request, RequestBuilder, Response, Upgraded,
 };
 pub use self::core::client::Dst;
+pub use self::core::config::{http1, http2};
 pub use self::proxy::{NoProxy, Proxy};
 
 pub use self::tls::{AlpnProtos, AlpsProtos, CertStore, Identity, TlsConfig, TlsInfo, TlsVersion};
@@ -344,6 +345,3 @@ pub mod redirect;
 
 pub mod tls;
 mod util;
-
-pub mod http1;
-pub mod http2;

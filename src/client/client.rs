@@ -17,7 +17,7 @@ use crate::connect::{
 #[cfg(feature = "cookies")]
 use crate::cookie;
 use crate::core::client::{
-    Builder, Client as HyperClient, Http1Builder, Http2Builder, InnerRequest, NetworkScheme,
+    Builder, Client as HyperClient, Http1Builder, InnerRequest, NetworkScheme,
     NetworkSchemeBuilder, connect::HttpConnector,
 };
 use crate::core::rt::{TokioExecutor, tokio::TokioTimer};
@@ -26,7 +26,6 @@ use crate::dns::hickory::{HickoryDnsResolver, LookupIpStrategy};
 use crate::dns::{DnsResolverWithOverrides, DynResolver, Resolve, gai::GaiResolver};
 use crate::error::{BoxError, Error};
 use crate::http1::Http1Config;
-use crate::http2::Http2Config;
 use crate::into_url::try_uri;
 use crate::proxy::IntoProxy;
 use crate::tls::CertificateInput;
@@ -1001,8 +1000,7 @@ impl ClientBuilder {
         }
 
         if let Some(http2_config) = emulation.http2_config.take() {
-            let builder = self.config.builder.http2();
-            apply_http2_config(builder, http2_config)
+            self.config.builder.http2_config(http2_config);
         }
 
         std::mem::swap(&mut self.config.tls_config, &mut emulation.tls_config);
@@ -1829,7 +1827,7 @@ impl<'c> ClientUpdate<'c> {
             }
 
             if let Some(http2_config) = emulation.http2_config {
-                apply_http2_config(current.hyper.http2(), http2_config);
+                current.hyper.set_http2_config(http2_config);
             }
 
             if let Some(mut tls_config) = emulation.tls_config {
@@ -2319,36 +2317,5 @@ fn apply_http1_config(mut builder: Http1Builder<'_>, http1: Http1Config) {
 
     if let Some(writev) = http1.writev {
         builder.writev(writev);
-    }
-}
-
-fn apply_http2_config(mut builder: Http2Builder<'_>, http2: Http2Config) {
-    builder
-        .initial_stream_id(http2.initial_stream_id)
-        .initial_stream_window_size(http2.initial_stream_window_size)
-        .initial_connection_window_size(http2.initial_connection_window_size)
-        .max_concurrent_streams(http2.max_concurrent_streams)
-        .header_table_size(http2.header_table_size)
-        .max_frame_size(http2.max_frame_size)
-        .experimental_settings(http2.experimental_settings)
-        .settings_order(http2.settings_order)
-        .headers_stream_dependency(http2.headers_stream_dependency)
-        .headers_pseudo_order(http2.headers_pseudo_order)
-        .priorities(http2.priorities);
-
-    if let Some(max_header_list_size) = http2.max_header_list_size {
-        builder.max_header_list_size(max_header_list_size);
-    }
-
-    if let Some(enable_push) = http2.enable_push {
-        builder.enable_push(enable_push);
-    }
-
-    if let Some(enable_connect_protocol) = http2.enable_connect_protocol {
-        builder.enable_connect_protocol(enable_connect_protocol);
-    }
-
-    if let Some(no_rfc7540_priorities) = http2.no_rfc7540_priorities {
-        builder.no_rfc7540_priorities(no_rfc7540_priorities);
     }
 }
