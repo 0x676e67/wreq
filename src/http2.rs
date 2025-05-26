@@ -208,9 +208,9 @@ impl Http2ConfigBuilder {
     /// stream ID of zero will be ignored.
     pub fn priorities<T>(mut self, value: T) -> Self
     where
-        T: Into<Priorities>,
+        T: Into<Option<Priorities>>,
     {
-        self.config.priorities = Some(value.into());
+        self.config.priorities = value.into();
         self
     }
 
