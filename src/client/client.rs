@@ -1069,7 +1069,7 @@ impl ClientBuilder {
     /// * mitmproxy - Use with the --ssl-keylog-file option
     /// * tcpdump/tshark - Use with SSLKEYLOGFILE environment variable
     pub fn keylog_policy(mut self, keylog_policy: KeyLogPolicy) -> ClientBuilder {
-        self.config.keylog_policy = Some(keylog_policy.into());
+        self.config.keylog_policy = Some(keylog_policy);
         self
     }
 
