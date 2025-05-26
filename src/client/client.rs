@@ -1061,13 +1061,6 @@ impl ClientBuilder {
     }
 
     /// Configures TLS key logging policy for the client.
-    ///
-    /// This method specifies a file where TLS session keys will be written in NSS key log format.
-    /// The logged keys can be used by various network analysis tools to decrypt TLS traffic:
-    ///
-    /// * Wireshark - Import via Preferences > Protocols > TLS > (Pre)-Master-Secret log filename
-    /// * mitmproxy - Use with the --ssl-keylog-file option
-    /// * tcpdump/tshark - Use with SSLKEYLOGFILE environment variable
     pub fn keylog_policy(mut self, keylog_policy: KeyLogPolicy) -> ClientBuilder {
         self.config.keylog_policy = Some(keylog_policy);
         self
