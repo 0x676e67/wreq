@@ -5,7 +5,7 @@ use std::future::Future;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::time::Duration;
 
-use http::{Request as HttpRequest, Version, request::Parts};
+use http::{Extensions, Request as HttpRequest, Version, request::Parts};
 use serde::Serialize;
 
 use super::body::Body;
@@ -13,6 +13,7 @@ use super::client::{Client, Pending};
 #[cfg(feature = "multipart")]
 use super::multipart;
 use super::response::Response;
+use crate::config::{RequestConfig, RequestTimeout};
 use crate::core::client::{NetworkScheme, NetworkSchemeBuilder};
 use crate::header::{CONTENT_TYPE, HeaderMap, HeaderName, HeaderValue};
 use crate::proxy::IntoProxy;
@@ -25,13 +26,11 @@ pub struct Request {
     headers: HeaderMap,
     headers_order: Option<Cow<'static, [HeaderName]>>,
     body: Option<Body>,
-    timeout: Option<Duration>,
-    read_timeout: Option<Duration>,
+    extensions: Extensions,
     version: Option<Version>,
     redirect: Option<redirect::Policy>,
     allow_compression: bool,
     network_scheme: NetworkSchemeBuilder,
-    protocol: Option<crate::core::ext::Protocol>,
 }
 
 /// A builder to construct the properties of a `Request`.
@@ -53,9 +52,8 @@ impl Request {
             headers: HeaderMap::new(),
             headers_order: None,
             body: None,
-            timeout: None,
-            read_timeout: None,
             version: None,
+            extensions: Extensions::new(),
             redirect: None,
             allow_compression: cfg!(any(
                 feature = "gzip",
@@ -64,7 +62,6 @@ impl Request {
                 feature = "zstd"
             )),
             network_scheme: NetworkScheme::builder(),
-            protocol: None,
         }
     }
 
@@ -155,25 +152,25 @@ impl Request {
     /// Get the timeout.
     #[inline]
     pub fn timeout(&self) -> Option<&Duration> {
-        self.timeout.as_ref()
+        RequestConfig::<RequestTimeout>::get(&self.extensions)
     }
 
     /// Get a mutable reference to the timeout.
     #[inline]
     pub fn timeout_mut(&mut self) -> &mut Option<Duration> {
-        &mut self.timeout
+        RequestConfig::<RequestTimeout>::get_mut(&mut self.extensions)
     }
 
     /// Get the read timeout.
     #[inline]
     pub fn read_timeout(&self) -> Option<&Duration> {
-        self.read_timeout.as_ref()
+        RequestConfig::<RequestTimeout>::get(&self.extensions)
     }
 
     /// Get a mutable reference to the read timeout.
     #[inline]
     pub fn read_timeout_mut(&mut self) -> &mut Option<Duration> {
-        &mut self.read_timeout
+        RequestConfig::<RequestTimeout>::get_mut(&mut self.extensions)
     }
 
     /// Get the http version.
@@ -188,10 +185,16 @@ impl Request {
         &mut self.version
     }
 
-    /// Set the mutable reference to the protocol.
+    /// Get the extensions.
     #[inline]
-    pub fn protocol_mut(&mut self) -> &mut Option<crate::core::ext::Protocol> {
-        &mut self.protocol
+    pub(crate) fn extensions(&self) -> &Extensions {
+        &self.extensions
+    }
+
+    /// Get a mutable reference to the extensions.
+    #[inline]
+    pub(crate) fn extensions_mut(&mut self) -> &mut Extensions {
+        &mut self.extensions
     }
 
     /// Attempt to clone the request.
@@ -219,7 +222,7 @@ impl Request {
             *req.allow_compression_mut() = self.allow_compression;
         }
         *req.network_scheme_mut() = self.network_scheme.clone();
-        *req.protocol_mut() = self.protocol.clone();
+        *req.extensions_mut() = self.extensions().clone();
         req.body = body;
         Some(req)
     }
@@ -233,13 +236,11 @@ impl Request {
         HeaderMap,
         Option<Cow<'static, [HeaderName]>>,
         Option<Body>,
-        Option<Duration>,
-        Option<Duration>,
+        Extensions,
         Option<Version>,
         Option<redirect::Policy>,
         bool,
         NetworkScheme,
-        Option<crate::core::ext::Protocol>,
     ) {
         (
             self.method,
@@ -247,13 +248,11 @@ impl Request {
             self.headers,
             self.headers_order,
             self.body,
-            self.timeout,
-            self.read_timeout,
+            self.extensions,
             self.version,
             self.redirect,
             self.allow_compression,
             self.network_scheme.build(),
-            self.protocol,
         )
     }
 }
@@ -902,8 +901,6 @@ where
             headers,
             headers_order: None,
             body: Some(body.into()),
-            timeout: None,
-            read_timeout: None,
             // TODO: Add version
             version: None,
             redirect: None,
@@ -914,7 +911,7 @@ where
                 feature = "zstd"
             )),
             network_scheme: NetworkScheme::builder(),
-            protocol: None,
+            extensions: Extensions::new(),
         })
     }
 }

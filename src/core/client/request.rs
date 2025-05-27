@@ -3,11 +3,11 @@
 use super::NetworkScheme;
 use crate::error::BoxError;
 use http::{
-    Error, HeaderMap, HeaderName, HeaderValue, Method, Request, Uri, Version,
+    Error, Extensions, HeaderMap, HeaderName, HeaderValue, Method, Request, Uri, Version,
     header::CONTENT_LENGTH, request::Builder,
 };
 use http_body::Body;
-use std::{any::Any, marker::PhantomData};
+use std::marker::PhantomData;
 
 /// Represents an HTTP request with additional metadata.
 ///
@@ -209,12 +209,9 @@ where
     ///
     /// The updated `InnerRequestBuilder`.
     #[inline]
-    pub fn extension<T>(mut self, extension: Option<T>) -> Self
-    where
-        T: Clone + Any + Send + Sync + 'static,
-    {
-        if let Some(extension) = extension {
-            self.builder = self.builder.extension(extension);
+    pub fn extensions(mut self, extension: Extensions) -> Self {
+        if let Some(extensions_mut) = self.builder.extensions_mut() {
+            *extensions_mut = extension;
         }
         self
     }

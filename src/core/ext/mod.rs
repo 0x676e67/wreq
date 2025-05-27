@@ -25,11 +25,6 @@ impl Protocol {
         }
     }
 
-    /// Returns a str representation of the header.
-    pub fn as_str(&self) -> &str {
-        self.inner.as_str()
-    }
-
     pub(crate) fn into_inner(self) -> http2::ext::Protocol {
         self.inner
     }

@@ -9,6 +9,7 @@ use std::task::{Context, Poll};
 use std::time::Duration;
 use std::{collections::HashMap, convert::TryInto, net::SocketAddr};
 
+use crate::config::{RequestConfig, RequestTimeout};
 use crate::connect::{
     BoxedConnectorLayer, BoxedConnectorService, Connector,
     sealed::{Conn, Unnameable},
@@ -24,6 +25,8 @@ use crate::core::rt::{TokioExecutor, tokio::TokioTimer};
 use crate::dns::hickory::{HickoryDnsResolver, LookupIpStrategy};
 use crate::dns::{DnsResolverWithOverrides, DynResolver, Resolve, gai::GaiResolver};
 use crate::error::{BoxError, Error};
+use crate::http1::Http1Config;
+use crate::http2::Http2Config;
 use crate::into_url::try_uri;
 use crate::proxy::IntoProxy;
 use crate::tls::{CertStore, CertificateInput, Identity, KeyLogPolicy, TlsConfig};
@@ -42,6 +45,7 @@ use super::{Body, EmulationProvider, EmulationProviderFactory};
 
 use arc_swap::{ArcSwap, Guard};
 use bytes::Bytes;
+use http::Extensions;
 use http::{
     HeaderName, Uri, Version,
     header::{
@@ -126,6 +130,8 @@ struct Config {
     #[cfg(feature = "hickory-dns")]
     dns_strategy: Option<LookupIpStrategy>,
     https_only: bool,
+    http1_config: Http1Config,
+    http2_config: Http2Config,
     http2_max_retry_count: usize,
     connector_layers: Option<Vec<BoxedConnectorLayer>>,
     builder: Builder,
@@ -139,7 +145,7 @@ struct Config {
     cert_verification: bool,
     min_tls_version: Option<TlsVersion>,
     max_tls_version: Option<TlsVersion>,
-    tls_config: Option<TlsConfig>,
+    tls_config: TlsConfig,
 }
 
 impl_debug!(
@@ -165,6 +171,8 @@ impl_debug!(
         hickory_dns,
         dns_overrides,
         https_only,
+        http1_config,
+        http2_config,
         http2_max_retry_count,
         builder,
         keylog_policy,
@@ -224,6 +232,8 @@ impl ClientBuilder {
                 dns_resolver: None,
                 builder: HyperClient::builder(TokioExecutor::new()),
                 https_only: false,
+                http1_config: Http1Config::default(),
+                http2_config: Http2Config::default(),
                 http2_max_retry_count: 2,
                 connector_layers: None,
                 alpn_protos: None,
@@ -236,7 +246,7 @@ impl ClientBuilder {
                 cert_verification: true,
                 min_tls_version: None,
                 max_tls_version: None,
-                tls_config: None,
+                tls_config: TlsConfig::default(),
             },
         }
     }
@@ -262,6 +272,8 @@ impl ClientBuilder {
 
         config
             .builder
+            .http1_config(config.http1_config)
+            .http2_config(config.http2_config)
             .http2_only(matches!(config.alpn_protos, Some(AlpnProtos::HTTP2)))
             .http2_timer(TokioTimer::new())
             .pool_timer(TokioTimer::new())
@@ -270,27 +282,30 @@ impl ClientBuilder {
             .pool_max_size(config.pool_max_size);
 
         let connector = {
-            let mut resolver: Arc<dyn Resolve> = match config.dns_resolver {
-                Some(dns_resolver) => dns_resolver,
-                #[cfg(feature = "hickory-dns")]
-                None if config.hickory_dns => {
-                    Arc::new(HickoryDnsResolver::new(config.dns_strategy)?)
+            let resolver = {
+                let mut resolver: Arc<dyn Resolve> = match config.dns_resolver {
+                    Some(dns_resolver) => dns_resolver,
+                    #[cfg(feature = "hickory-dns")]
+                    None if config.hickory_dns => {
+                        Arc::new(HickoryDnsResolver::new(config.dns_strategy)?)
+                    }
+                    None => Arc::new(GaiResolver::new()),
+                };
+
+                if !config.dns_overrides.is_empty() {
+                    resolver = Arc::new(DnsResolverWithOverrides::new(
+                        resolver,
+                        config.dns_overrides,
+                    ));
                 }
-                None => Arc::new(GaiResolver::new()),
+                DynResolver::new(resolver)
             };
 
-            if !config.dns_overrides.is_empty() {
-                resolver = Arc::new(DnsResolverWithOverrides::new(
-                    resolver,
-                    config.dns_overrides,
-                ));
-            }
-
-            let mut http = HttpConnector::new_with_resolver(DynResolver::new(resolver));
+            let mut http = HttpConnector::new_with_resolver(resolver.clone());
             http.set_connect_timeout(config.connect_timeout);
 
             let tls = {
-                let mut tls_config = config.tls_config.unwrap_or_default();
+                let mut tls_config = config.tls_config;
 
                 if let Some(alpn_protos) = config.alpn_protos {
                     tls_config.alpn_protos = alpn_protos;
@@ -314,13 +329,23 @@ impl ClientBuilder {
                     .build()?
             };
 
-            Connector::builder(http, tls, config.nodelay, config.tls_info)
+            let builder = Connector::builder(http, tls, config.nodelay, config.tls_info)
                 .timeout(config.connect_timeout)
                 .keepalive(config.tcp_keepalive)
                 .tcp_keepalive_interval(config.tcp_keepalive_interval)
                 .tcp_keepalive_retries(config.tcp_keepalive_retries)
-                .verbose(config.connection_verbose)
-                .build(config.connector_layers)
+                .verbose(config.connection_verbose);
+
+            #[cfg(feature = "socks")]
+            {
+                builder
+                    .socks_resolver(resolver)
+                    .build(config.connector_layers)
+            }
+            #[cfg(not(feature = "socks"))]
+            {
+                builder.build(config.connector_layers)
+            }
         };
 
         Ok(Client {
@@ -333,8 +358,8 @@ impl ClientBuilder {
                 headers_order: config.headers_order,
                 redirect: config.redirect_policy,
                 referer: config.referer,
-                request_timeout: config.timeout,
-                read_timeout: config.read_timeout,
+                total_timeout: RequestConfig::new(config.timeout),
+                read_timeout: RequestConfig::new(config.read_timeout),
                 https_only: config.https_only,
                 http2_max_retry_count: config.http2_max_retry_count,
                 proxies,
@@ -972,15 +997,18 @@ impl ClientBuilder {
             std::mem::swap(&mut self.config.headers_order, &mut Some(headers_order));
         }
 
-        if let Some(http1_config) = emulation.http1_config.take() {
-            self.config.builder.http1_config(http1_config);
+        if let Some(mut http1_config) = emulation.http1_config.take() {
+            std::mem::swap(&mut self.config.http1_config, &mut http1_config);
         }
 
-        if let Some(http2_config) = emulation.http2_config.take() {
-            self.config.builder.http2_config(http2_config);
+        if let Some(mut http2_config) = emulation.http2_config.take() {
+            std::mem::swap(&mut self.config.http2_config, &mut http2_config);
         }
 
-        std::mem::swap(&mut self.config.tls_config, &mut emulation.tls_config);
+        if let Some(mut tls_config) = emulation.tls_config.take() {
+            std::mem::swap(&mut self.config.tls_config, &mut tls_config);
+        }
+
         self
     }
 
@@ -1342,13 +1370,11 @@ impl Client {
             mut headers,
             headers_order,
             body,
-            timeout,
-            read_timeout,
+            extensions,
             version,
             redirect,
             _allow_compression,
             network_scheme,
-            protocol,
         ) = req.pieces();
 
         // get the scheme of the URL
@@ -1410,6 +1436,15 @@ impl Client {
             None => (None, Body::empty()),
         };
 
+        let total_timeout = client
+            .total_timeout
+            .fetch(&extensions)
+            .copied()
+            .map(tokio::time::sleep)
+            .map(Box::pin);
+        let read_timeout = client.read_timeout.fetch(&extensions).copied();
+        let read_timeout_fut = read_timeout.map(tokio::time::sleep).map(Box::pin);
+
         client.proxy_auth(&uri, &mut headers);
 
         let headers_order = headers_order.or_else(|| client.headers_order.clone());
@@ -1423,7 +1458,7 @@ impl Client {
                 .headers(headers.clone())
                 .headers_order(headers_order.as_deref())
                 .version(version)
-                .extension(protocol.clone())
+                .extensions(extensions.clone())
                 .network_scheme(network_scheme.clone())
                 .body(body);
 
@@ -1433,13 +1468,6 @@ impl Client {
             }
         };
 
-        let total_timeout = timeout
-            .or(client.request_timeout)
-            .map(tokio::time::sleep)
-            .map(Box::pin);
-        let read_timeout = read_timeout.or(client.read_timeout);
-        let read_timeout_fut = read_timeout.map(tokio::time::sleep).map(Box::pin);
-
         Pending {
             inner: PendingInner::Request(PendingRequest {
                 method,
@@ -1448,7 +1476,7 @@ impl Client {
                 headers_order,
                 body: reusable,
                 version,
-                protocol,
+                extensions,
                 urls: Vec::new(),
                 http2_retry_count: 0,
                 http2_max_retry_count: client.http2_max_retry_count,
@@ -1555,8 +1583,8 @@ struct ClientRef {
     hyper: HyperClient<Connector, super::Body>,
     redirect: redirect::Policy,
     referer: bool,
-    request_timeout: Option<Duration>,
-    read_timeout: Option<Duration>,
+    total_timeout: RequestConfig<RequestTimeout>,
+    read_timeout: RequestConfig<RequestTimeout>,
     https_only: bool,
     http2_max_retry_count: usize,
     proxies: Vec<Proxy>,
@@ -1634,8 +1662,6 @@ impl_debug!(ClientRef,{
     hyper,
     redirect,
     referer,
-    request_timeout,
-    read_timeout,
     https_only,
     http2_max_retry_count,
     proxies,
@@ -1817,7 +1843,7 @@ impl<'c> ClientUpdate<'c> {
                     .tls_sni(current.tls_sni)
                     .verify_hostname(current.verify_hostname)
                     .build()?;
-                current.hyper.connector_mut().set_connector(connector);
+                current.hyper.connector_mut().set_tls_connector(connector);
             }
         }
 
@@ -1847,7 +1873,7 @@ pin_project! {
         headers_order: Option<Cow<'static, [HeaderName]>>,
         body: Option<Option<Bytes>>,
         version: Option<Version>,
-        protocol: Option<crate::core::ext::Protocol>,
+        extensions: Extensions,
         urls: Vec<Url>,
         http2_retry_count: usize,
         http2_max_retry_count: usize,
@@ -1927,7 +1953,7 @@ impl PendingRequest {
                 .headers(self.headers.clone())
                 .headers_order(self.headers_order.as_deref())
                 .version(self.version)
-                .extension(self.protocol.clone())
+                .extensions(self.extensions.clone())
                 .network_scheme(self.network_scheme.clone())
                 .body(body);
 
@@ -2144,7 +2170,7 @@ impl Future for PendingRequest {
                                     .headers(headers.clone())
                                     .headers_order(self.headers_order.as_deref())
                                     .version(self.version)
-                                    .extension(self.protocol.clone())
+                                    .extensions(self.extensions.clone())
                                     .network_scheme(self.network_scheme.clone())
                                     .body(body)?;
 

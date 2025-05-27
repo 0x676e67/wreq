@@ -295,7 +295,6 @@ mod upgrades {
     //
     // This type is unnameable outside the crate.
     #[must_use = "futures do nothing unless polled"]
-    #[allow(missing_debug_implementations)]
     pub struct UpgradeableConnection<T, B>
     where
         T: Read + Write + Unpin + Send + 'static,

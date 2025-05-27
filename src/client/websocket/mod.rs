@@ -331,7 +331,9 @@ impl WebSocketRequestBuilder {
             Version::HTTP_2 => {
                 *request.method_mut() = Method::CONNECT;
                 *request.version_mut() = Some(Version::HTTP_2);
-                *request.protocol_mut() = Some(Protocol::from_static("websocket"));
+                request
+                    .extensions_mut()
+                    .insert(Protocol::from_static("websocket"));
                 None
             }
             _ => {

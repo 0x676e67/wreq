@@ -280,6 +280,7 @@ pub use http::header;
 pub use http::{StatusCode, Version};
 pub use url::Url;
 
+mod config;
 mod error;
 mod into_url;
 mod response;

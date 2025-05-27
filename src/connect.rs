@@ -45,6 +45,8 @@ pub(crate) struct ConnectorBuilder {
     timeout: Option<Duration>,
     nodelay: bool,
     tls_info: bool,
+    #[cfg(feature = "socks")]
+    resolver: Option<DynResolver>,
 }
 
 impl ConnectorBuilder {
@@ -59,6 +61,8 @@ impl ConnectorBuilder {
             nodelay: self.nodelay,
             tls_info: self.tls_info,
             timeout: self.timeout,
+            #[cfg(feature = "socks")]
+            resolver: self.resolver.unwrap_or_else(DynResolver::gai),
         };
 
         match layers.into() {
@@ -145,6 +149,16 @@ impl ConnectorBuilder {
         self.verbose.0 = enabled;
         self
     }
+
+    #[cfg(feature = "socks")]
+    #[inline]
+    pub(crate) fn socks_resolver<R>(mut self, resolver: R) -> ConnectorBuilder
+    where
+        R: Into<Option<DynResolver>>,
+    {
+        self.resolver = resolver.into();
+        self
+    }
 }
 
 #[derive(Clone)]
@@ -175,10 +189,12 @@ impl Connector {
             timeout: None,
             nodelay,
             tls_info,
+            #[cfg(feature = "socks")]
+            resolver: None,
         }
     }
 
-    pub(crate) fn set_connector(&mut self, mut connector: TlsConnector) {
+    pub(crate) fn set_tls_connector(&mut self, mut connector: TlsConnector) {
         match self {
             Connector::Simple(service) => {
                 std::mem::swap(&mut service.tls, &mut connector);
@@ -188,15 +204,27 @@ impl Connector {
                 base_service,
                 ..
             } => {
-                let mut connector = Connector::builder(
+                let builder = Connector::builder(
                     base_service.http.clone(),
                     connector,
                     base_service.nodelay,
                     base_service.tls_info,
                 )
                 .timeout(base_service.timeout)
-                .verbose(base_service.verbose.0)
-                .build(std::mem::take(layers));
+                .verbose(base_service.verbose.0);
+
+                let mut connector = {
+                    #[cfg(feature = "socks")]
+                    {
+                        builder
+                            .socks_resolver(base_service.resolver.clone())
+                            .build(std::mem::take(layers))
+                    }
+                    #[cfg(not(feature = "socks"))]
+                    {
+                        builder.build(std::mem::take(layers))
+                    }
+                };
 
                 std::mem::swap(self, &mut connector);
             }
@@ -236,6 +264,8 @@ pub(crate) struct ConnectorService {
     timeout: Option<Duration>,
     nodelay: bool,
     tls_info: bool,
+    #[cfg(feature = "socks")]
+    resolver: DynResolver,
 }
 
 impl ConnectorService {
@@ -264,7 +294,7 @@ impl ConnectorService {
 
             trace!("socks HTTPS over proxy");
             let host = dst.host().ok_or(crate::error::uri_bad_host())?;
-            let conn = socks::connect(proxy, &dst, dns).await?;
+            let conn = socks::connect(proxy, &dst, dns, &self.resolver).await?;
 
             let io = http.connect(&dst, host, TokioIo::new(conn)).await?;
 
@@ -277,11 +307,13 @@ impl ConnectorService {
             });
         }
 
-        socks::connect(proxy, &dst, dns).await.map(|tcp| Conn {
-            inner: self.verbose.wrap(TokioIo::new(tcp)),
-            is_proxy: false,
-            tls_info: false,
-        })
+        socks::connect(proxy, &dst, dns, &self.resolver)
+            .await
+            .map(|tcp| Conn {
+                inner: self.verbose.wrap(TokioIo::new(tcp)),
+                is_proxy: false,
+                tls_info: false,
+            })
     }
 
     async fn connect_with_maybe_proxy(
@@ -693,7 +725,7 @@ mod socks {
     use tokio_socks::tcp::{Socks4Stream, Socks5Stream};
 
     use super::{BoxError, Scheme};
-    use crate::proxy::ProxyScheme;
+    use crate::{dns::DynResolver, proxy::ProxyScheme};
 
     pub(super) enum DnsResolve {
         Local,
@@ -703,10 +735,13 @@ mod socks {
     pub(super) async fn connect(
         proxy: ProxyScheme,
         dst: &Uri,
-        dns: DnsResolve,
+        dns_mode: DnsResolve,
+        resolver: &DynResolver,
     ) -> Result<TcpStream, BoxError> {
         let https = dst.scheme() == Some(&Scheme::HTTPS);
-        let original_host = dst.host().ok_or(io::Error::other("no host in url"))?;
+        let original_host = dst
+            .host()
+            .ok_or_else(|| io::Error::other("no host in url"))?;
         let mut host = original_host.to_owned();
         let port = match dst.port() {
             Some(p) => p.as_u16(),
@@ -714,8 +749,8 @@ mod socks {
             _ => 80u16,
         };
 
-        if let DnsResolve::Local = dns {
-            let maybe_new_target = tokio::net::lookup_host((host.as_str(), port)).await?.next();
+        if let DnsResolve::Local = dns_mode {
+            let maybe_new_target = resolver.http_resolve(&dst).await?.next();
             if let Some(new_target) = maybe_new_target {
                 host = new_target.ip().to_string();
             }
