@@ -19,6 +19,7 @@ pub struct Protocol {
 
 impl Protocol {
     /// Converts a static string to a protocol name.
+    #[allow(unused)]
     pub const fn from_static(value: &'static str) -> Self {
         Self {
             inner: http2::ext::Protocol::from_static(value),

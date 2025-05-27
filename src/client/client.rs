@@ -1436,15 +1436,6 @@ impl Client {
             None => (None, Body::empty()),
         };
 
-        let total_timeout = client
-            .total_timeout
-            .fetch(&extensions)
-            .copied()
-            .map(tokio::time::sleep)
-            .map(Box::pin);
-        let read_timeout = client.read_timeout.fetch(&extensions).copied();
-        let read_timeout_fut = read_timeout.map(tokio::time::sleep).map(Box::pin);
-
         client.proxy_auth(&uri, &mut headers);
 
         let headers_order = headers_order.or_else(|| client.headers_order.clone());
@@ -1467,6 +1458,15 @@ impl Client {
                 Err(err) => return Pending::new_err(error::builder(err)),
             }
         };
+
+        let total_timeout = client
+            .total_timeout
+            .fetch(&extensions)
+            .copied()
+            .map(tokio::time::sleep)
+            .map(Box::pin);
+        let read_timeout = client.read_timeout.fetch(&extensions).copied();
+        let read_timeout_fut = read_timeout.map(tokio::time::sleep).map(Box::pin);
 
         Pending {
             inner: PendingInner::Request(PendingRequest {
