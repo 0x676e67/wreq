@@ -12,7 +12,7 @@ pub use cookie_crate::{Cookie as RawCookie, Expiration, SameSite, time::Duration
 /// Actions for a persistent cookie store providing session support.
 pub trait CookieStore: Send + Sync {
     /// Store a set of Set-Cookie header values received from `url`
-    fn set_cookies(&self, url: &url::Url, cookie_headers: &mut dyn Iterator<Item = &HeaderValue>);
+    fn set_cookies(&self, cookie_headers: &mut dyn Iterator<Item = &HeaderValue>, url: &url::Url);
 
     /// Get any Cookie values in the store for `url`
     fn cookies(&self, url: &url::Url) -> Option<Vec<HeaderValue>>;
@@ -334,7 +334,7 @@ impl Jar {
 }
 
 impl CookieStore for Jar {
-    fn set_cookies(&self, url: &url::Url, cookie_headers: &mut dyn Iterator<Item = &HeaderValue>) {
+    fn set_cookies(&self, cookie_headers: &mut dyn Iterator<Item = &HeaderValue>, url: &url::Url) {
         let iter =
             cookie_headers.filter_map(|val| Cookie::parse(val).map(|c| c.0.into_owned()).ok());
 

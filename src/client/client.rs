@@ -2010,7 +2010,7 @@ impl Future for PendingRequest {
                     let mut cookies =
                         cookie::extract_response_cookie_headers(res.headers()).peekable();
                     if cookies.peek().is_some() {
-                        cookie_store.set_cookies(&self.url, &mut cookies);
+                        cookie_store.set_cookies(&mut cookies, &self.url);
                     }
                 }
             }
