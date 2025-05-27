@@ -226,8 +226,8 @@ impl TlsConnector {
 impl TlsConnectorBuilder {
     /// Sets the TLS keylog policy.
     #[inline]
-    pub fn keylog_policy(mut self, keylog_policy: Option<KeyLogPolicy>) -> Self {
-        self.keylog_policy = keylog_policy;
+    pub fn keylog(mut self, policy: Option<KeyLogPolicy>) -> Self {
+        self.keylog_policy = policy;
         self
     }
 
@@ -347,13 +347,12 @@ impl TlsConnectorBuilder {
             connector.set_aes_hw_override(aes_hw_override);
         }
 
-        if let Some(keylog_policy) = self.keylog_policy {
-            if let Some(handle) = keylog_policy.new_handle().map_err(crate::error::builder)? {
-                connector.set_keylog_callback(move |_, line| {
-                    let line = format!("{}\n", line);
-                    handle.write_log_line(line);
-                });
-            }
+        if let Some(policy) = self.keylog_policy {
+            let handle = policy.open_handle().map_err(crate::error::builder)?;
+            connector.set_keylog_callback(move |_, line| {
+                let line = format!("{}\n", line);
+                handle.write_log_line(line);
+            });
         }
 
         // Create the `HandshakeSettings` with the default session cache capacity.

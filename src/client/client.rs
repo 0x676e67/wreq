@@ -305,7 +305,7 @@ impl ClientBuilder {
                 }
 
                 TlsConnector::builder(tls_config)
-                    .keylog_policy(config.keylog_policy.clone())
+                    .keylog(config.keylog_policy.clone())
                     .identity(config.identity.clone())
                     .cert_store(config.cert_store.clone().unwrap_or_default())
                     .cert_verification(config.cert_verification)
@@ -341,7 +341,7 @@ impl ClientBuilder {
                 proxies_maybe_http_auth,
                 network_scheme: config.network_scheme,
                 alpn_protos: config.alpn_protos,
-                keylog_policy: config.keylog_policy,
+                keylog: config.keylog_policy,
                 tls_sni: config.tls_sni,
                 verify_hostname: config.verify_hostname,
                 identity: config.identity,
@@ -1061,8 +1061,8 @@ impl ClientBuilder {
     }
 
     /// Configures TLS key logging policy for the client.
-    pub fn keylog(mut self, keylog_policy: KeyLogPolicy) -> ClientBuilder {
-        self.config.keylog_policy = Some(keylog_policy);
+    pub fn keylog(mut self, policy: KeyLogPolicy) -> ClientBuilder {
+        self.config.keylog_policy = Some(policy);
         self
     }
 
@@ -1563,7 +1563,7 @@ struct ClientRef {
     proxies_maybe_http_auth: bool,
     network_scheme: NetworkSchemeBuilder,
     alpn_protos: Option<AlpnProtos>,
-    keylog_policy: Option<KeyLogPolicy>,
+    keylog: Option<KeyLogPolicy>,
     tls_sni: bool,
     verify_hostname: bool,
     identity: Option<Identity>,
@@ -1810,7 +1810,7 @@ impl<'c> ClientUpdate<'c> {
                 }
 
                 let connector = TlsConnector::builder(tls_config)
-                    .keylog_policy(current.keylog_policy.clone())
+                    .keylog(current.keylog.clone())
                     .identity(current.identity.clone())
                     .cert_store(current.cert_store.clone())
                     .cert_verification(current.cert_verification)

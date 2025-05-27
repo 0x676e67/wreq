@@ -14,11 +14,8 @@ static GLOBAL_KEYLOG_FILE_MAPPING: OnceLock<RwLock<HashMap<PathBuf, KeyLogHandle
     OnceLock::new();
 
 /// Specifies the intent for a (TLS) keylogger to be used in a client or server configuration.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub enum KeyLogPolicy {
-    /// Explicitly disables key logging, even if the environment variable is set.
-    #[default]
-    Disabled,
     /// Uses the default behavior, respecting the `SSLKEYLOGFILE` environment variable.
     ///
     /// If the environment variable is defined, keys will be logged to the specified path.
@@ -35,9 +32,8 @@ pub enum KeyLogPolicy {
 
 impl KeyLogPolicy {
     /// Creates a new key log file handle based on the policy.
-    pub fn new_handle(&self) -> Result<Option<KeyLogHandle>> {
+    pub fn open_handle(self) -> Result<KeyLogHandle> {
         let path = match self {
-            KeyLogPolicy::Disabled => return Ok(None),
             KeyLogPolicy::Environment => std::env::var("SSLKEYLOGFILE")
                 .map(PathBuf::from)
                 .map(normalize_path)
@@ -55,16 +51,16 @@ impl KeyLogPolicy {
 
         let mapping = GLOBAL_KEYLOG_FILE_MAPPING.get_or_init(|| RwLock::new(HashMap::new()));
         if let Some(handle) = mapping.read().get(&path).cloned() {
-            return Ok(Some(handle));
+            return Ok(handle);
         }
 
         let mut mut_mapping = mapping.write();
         match mut_mapping.entry(path.clone()) {
-            Entry::Occupied(entry) => Ok(Some(entry.get().clone())),
+            Entry::Occupied(entry) => Ok(entry.get().clone()),
             Entry::Vacant(entry) => {
                 let handle = KeyLogHandle::new(path)?;
                 entry.insert(handle.clone());
-                Ok(Some(handle))
+                Ok(handle)
             }
         }
     }
