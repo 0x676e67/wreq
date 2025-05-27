@@ -750,7 +750,7 @@ mod socks {
         };
 
         if let DnsResolve::Local = dns_mode {
-            let maybe_new_target = resolver.http_resolve(&dst).await?.next();
+            let maybe_new_target = resolver.http_resolve(dst).await?.next();
             if let Some(new_target) = maybe_new_target {
                 host = new_target.ip().to_string();
             }
