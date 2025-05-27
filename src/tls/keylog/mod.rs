@@ -66,8 +66,10 @@ impl KeyLogPolicy {
     }
 }
 
-/// copied from: <https://github.com/rust-lang/cargo/blob/fede83ccf973457de319ba6fa0e36ead454d2e20/src/cargo/util/paths.rs#L61>
-pub fn normalize_path<'a>(path: impl Into<Cow<'a, Path>>) -> PathBuf {
+pub fn normalize_path<'a, P>(path: P) -> PathBuf
+where
+    P: Into<Cow<'a, Path>>,
+{
     let path = path.into();
     let mut components = path.components().peekable();
     let mut ret = if let Some(c @ Component::Prefix(..)) = components.peek().cloned() {
