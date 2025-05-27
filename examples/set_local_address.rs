@@ -1,7 +1,7 @@
 use std::net::IpAddr;
 
 #[tokio::main]
-async fn main() -> Result<(), rquest::Error> {
+async fn main() -> rquest::Result<()> {
     // Build a client
     let client = rquest::Client::new();
 

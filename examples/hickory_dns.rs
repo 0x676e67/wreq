@@ -2,7 +2,7 @@ use rquest::dns::{HickoryDnsResolver, LookupIpStrategy};
 use std::sync::Arc;
 
 #[tokio::main]
-async fn main() -> Result<(), rquest::Error> {
+async fn main() -> rquest::Result<()> {
     tracing_subscriber::fmt()
         .with_max_level(tracing::Level::TRACE)
         .init();

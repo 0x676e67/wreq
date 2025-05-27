@@ -56,7 +56,7 @@ const CURVES_LIST: &str = join!(
 );
 
 #[tokio::test]
-async fn test_3des_support() -> Result<(), rquest::Error> {
+async fn test_3des_support() -> rquest::Result<()> {
     let emulation = EmulationProvider::builder()
         .tls_config(
             TlsConfig::builder()
@@ -90,7 +90,7 @@ async fn test_3des_support() -> Result<(), rquest::Error> {
 }
 
 #[tokio::test]
-async fn test_firefox_7x_100_cipher() -> Result<(), rquest::Error> {
+async fn test_firefox_7x_100_cipher() -> rquest::Result<()> {
     let emulation = EmulationProvider::builder()
         .tls_config(
             TlsConfig::builder()
@@ -125,7 +125,7 @@ async fn test_firefox_7x_100_cipher() -> Result<(), rquest::Error> {
 }
 
 #[tokio::test]
-async fn test_alps_new_endpoint() -> Result<(), rquest::Error> {
+async fn test_alps_new_endpoint() -> rquest::Result<()> {
     let emulation = EmulationProvider::builder()
         .tls_config(
             TlsConfig::builder()
@@ -148,7 +148,7 @@ async fn test_alps_new_endpoint() -> Result<(), rquest::Error> {
 }
 
 #[tokio::test]
-async fn test_aes_hw_override() -> Result<(), rquest::Error> {
+async fn test_aes_hw_override() -> rquest::Result<()> {
     const CIPHER_LIST: &str = join!(
         ":",
         "TLS_AES_128_GCM_SHA256",

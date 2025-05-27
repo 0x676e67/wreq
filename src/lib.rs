@@ -31,7 +31,7 @@
 //! use rquest_util::Emulation;
 //!
 //! #[tokio::main]
-//! async fn main() -> Result<(), rquest::Error> {
+//! async fn main() -> rquest::Result<()> {
 //!     // Build a client
 //!     let client = Client::builder()
 //!         .emulation(Emulation::Firefox136)
@@ -56,7 +56,7 @@
 //!use std::time::Duration;
 //!
 //!#[tokio::main]
-//!async fn main() -> Result<(), rquest::Error> {
+//!async fn main() -> rquest::Result<()> {
 //!    // Build a client
 //!    let client = Client::builder()
 //!        .cert_verification(false)
@@ -97,7 +97,7 @@
 //! Making a GET request is simple.
 //!
 //! ```rust
-//! # async fn run() -> Result<(), rquest::Error> {
+//! # async fn run() -> rquest::Result<()> {
 //! let body = rquest::Client::new()
 //!     .get("https://www.rust-lang.org")
 //!     .send()

@@ -16,7 +16,7 @@
 // `tower = { version = "0.5", default-features = false}`
 
 #[tokio::main]
-async fn main() -> Result<(), rquest::Error> {
+async fn main() -> rquest::Result<()> {
     background_threadpool::init_background_runtime();
     tokio::time::sleep(std::time::Duration::from_millis(10)).await;
 

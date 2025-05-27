@@ -3,7 +3,7 @@ use rquest::tls::CertStore;
 use std::sync::LazyLock;
 
 #[tokio::main]
-async fn main() -> Result<(), rquest::Error> {
+async fn main() -> rquest::Result<()> {
     tracing_subscriber::fmt()
         .with_max_level(tracing::Level::INFO)
         .init();
@@ -41,7 +41,7 @@ fn load_dynamic_root_certs() -> CertStore {
         .expect("Failed to load dynamic root certs")
 }
 
-async fn use_static_root_certs() -> Result<(), rquest::Error> {
+async fn use_static_root_certs() -> rquest::Result<()> {
     let client = Client::builder()
         .cert_store(load_static_root_certs())
         .build()?;
@@ -58,7 +58,7 @@ async fn use_static_root_certs() -> Result<(), rquest::Error> {
     Ok(())
 }
 
-async fn use_dynamic_root_certs() -> Result<(), rquest::Error> {
+async fn use_dynamic_root_certs() -> rquest::Result<()> {
     let client = Client::builder()
         .cert_store(load_dynamic_root_certs())
         .build()?;
@@ -75,7 +75,7 @@ async fn use_dynamic_root_certs() -> Result<(), rquest::Error> {
     Ok(())
 }
 
-async fn use_system_root_certs() -> Result<(), rquest::Error> {
+async fn use_system_root_certs() -> rquest::Result<()> {
     let client = Client::builder()
         .cert_store(load_system_root_certs())
         .build()?;

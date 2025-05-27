@@ -20,7 +20,7 @@ struct Post {
 //
 // `tokio = { version = "1", features = ["full"] }`
 #[tokio::main]
-async fn main() -> Result<(), rquest::Error> {
+async fn main() -> rquest::Result<()> {
     let new_post = Post {
         id: None,
         title: "rquest.rs".into(),

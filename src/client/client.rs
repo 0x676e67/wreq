@@ -360,7 +360,7 @@ impl ClientBuilder {
     /// # Example
     ///
     /// ```rust
-    /// # async fn doc() -> Result<(), rquest::Error> {
+    /// # async fn doc() -> rquest::Result<()> {
     /// // Name your user agent after your app?
     /// static APP_USER_AGENT: &str = concat!(
     ///     env!("CARGO_PKG_NAME"),
@@ -397,7 +397,7 @@ impl ClientBuilder {
     ///
     /// ```rust
     /// use rquest::header;
-    /// # async fn doc() -> Result<(), rquest::Error> {
+    /// # async fn doc() -> rquest::Result<()> {
     /// let mut headers = header::HeaderMap::new();
     /// headers.insert("X-MY-HEADER", header::HeaderValue::from_static("value"));
     ///
@@ -419,7 +419,7 @@ impl ClientBuilder {
     ///
     /// ```rust
     /// use rquest::header;
-    /// # async fn doc() -> Result<(), rquest::Error> {
+    /// # async fn doc() -> rquest::Result<()> {
     /// let mut headers = header::HeaderMap::new();
     /// headers.insert("X-MY-HEADER", header::HeaderValue::from_static("value"));
     ///

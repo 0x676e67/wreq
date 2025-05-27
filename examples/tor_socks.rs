@@ -4,7 +4,7 @@
 //
 // `tokio = { version = "1", features = ["full"] }`
 #[tokio::main]
-async fn main() -> Result<(), rquest::Error> {
+async fn main() -> rquest::Result<()> {
     // Make sure you are running tor and this is your socks port
     let proxy = rquest::Proxy::all("socks5h://127.0.0.1:9050").expect("tor proxy should be there");
     let client = rquest::Client::builder()

@@ -8,7 +8,7 @@
 //
 // `tokio = { version = "1", features = ["full"] }`
 #[tokio::main]
-async fn main() -> Result<(), rquest::Error> {
+async fn main() -> rquest::Result<()> {
     let echo_json: serde_json::Value = rquest::Client::new()
         .post("https://jsonplaceholder.typicode.com/posts")
         .json(&serde_json::json!({
