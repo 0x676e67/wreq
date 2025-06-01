@@ -7,11 +7,13 @@
 use std::fmt;
 use std::{error::Error as StdError, sync::Arc};
 
-use crate::core::StatusCode;
-use crate::header::{AUTHORIZATION, COOKIE, HeaderMap, PROXY_AUTHORIZATION, WWW_AUTHENTICATE};
-use http::Method;
+use crate::header::{AUTHORIZATION, COOKIE, PROXY_AUTHORIZATION, REFERER, WWW_AUTHENTICATE};
+use http::{HeaderMap, HeaderValue, StatusCode};
 
-use crate::Url;
+use crate::{Url, client::Body};
+use tower_http::follow_redirect::policy::{
+    Action as TowerAction, Attempt as TowerAttempt, Policy as TowerPolicy,
+};
 
 /// A type that controls the policy on how to handle the following of redirects.
 ///
@@ -32,9 +34,7 @@ pub struct Policy {
 #[derive(Debug)]
 pub struct Attempt<'a> {
     status: StatusCode,
-    next_method: &'a Method,
     next: &'a Url,
-    previous_method: &'a Method,
     previous: &'a [Url],
 }
 
@@ -78,7 +78,7 @@ impl Policy {
     /// # Example
     ///
     /// ```rust
-    /// # use rquest::{Error, redirect};
+    /// # use reqwest::{Error, redirect};
     /// #
     /// # fn run() -> Result<(), Error> {
     /// let custom = redirect::Policy::custom(|attempt| {
@@ -91,7 +91,7 @@ impl Policy {
     ///         attempt.follow()
     ///     }
     /// });
-    /// let client = rquest::Client::builder()
+    /// let client = reqwest::Client::builder()
     ///     .redirect(custom)
     ///     .build()?;
     /// # Ok(())
@@ -118,7 +118,7 @@ impl Policy {
     /// # Example
     ///
     /// ```rust
-    /// # use rquest::{Error, redirect};
+    /// # use reqwest::{Error, redirect};
     /// #
     /// # fn run() -> Result<(), Error> {
     /// let custom = redirect::Policy::custom(|attempt| {
@@ -143,36 +143,17 @@ impl Policy {
         }
     }
 
-    pub(crate) fn check(
-        &self,
-        status: StatusCode,
-        next_method: &Method,
-        next: &Url,
-        previous_method: &Method,
-        previous: &[Url],
-    ) -> ActionKind {
+    pub(crate) fn check(&self, status: StatusCode, next: &Url, previous: &[Url]) -> ActionKind {
         self.redirect(Attempt {
             status,
-            next_method,
             next,
-            previous_method,
             previous,
         })
         .inner
     }
 
-    pub(crate) fn remove_sensitive_headers(headers: &mut HeaderMap, next: &Url, previous: &[Url]) {
-        if let Some(previous) = previous.last() {
-            let cross_host = next.host_str() != previous.host_str()
-                || next.port_or_known_default() != previous.port_or_known_default();
-            if cross_host {
-                headers.remove(AUTHORIZATION);
-                headers.remove(COOKIE);
-                headers.remove("cookie2");
-                headers.remove(PROXY_AUTHORIZATION);
-                headers.remove(WWW_AUTHENTICATE);
-            }
-        }
+    pub(crate) fn is_default(&self) -> bool {
+        matches!(self.inner, PolicyKind::Limit(10))
     }
 }
 
@@ -183,15 +164,10 @@ impl Default for Policy {
     }
 }
 
-impl Attempt<'_> {
+impl<'a> Attempt<'a> {
     /// Get the type of redirect.
     pub fn status(&self) -> StatusCode {
         self.status
-    }
-
-    /// Get the method for the next request, after applying redirection logic.
-    pub fn next_method(&self) -> &Method {
-        self.next_method
     }
 
     /// Get the next URL to redirect to.
@@ -199,23 +175,18 @@ impl Attempt<'_> {
         self.next
     }
 
-    /// Get the method for the previous request, before redirection.
-    pub fn previous_method(&self) -> &Method {
-        self.previous_method
-    }
-
     /// Get the list of previous URLs that have already been requested in this chain.
     pub fn previous(&self) -> &[Url] {
         self.previous
     }
-    /// Returns an action meaning rquest should follow the next URL.
+    /// Returns an action meaning reqwest should follow the next URL.
     pub fn follow(self) -> Action {
         Action {
             inner: ActionKind::Follow,
         }
     }
 
-    /// Returns an action meaning rquest should not follow the next URL.
+    /// Returns an action meaning reqwest should not follow the next URL.
     ///
     /// The 30x response will be returned as the `Ok` result.
     pub fn stop(self) -> Action {
@@ -266,6 +237,20 @@ pub(crate) enum ActionKind {
     Error(Box<dyn StdError + Send + Sync>),
 }
 
+pub(crate) fn remove_sensitive_headers(headers: &mut HeaderMap, next: &Url, previous: &[Url]) {
+    if let Some(previous) = previous.last() {
+        let cross_host = next.host_str() != previous.host_str()
+            || next.port_or_known_default() != previous.port_or_known_default();
+        if cross_host {
+            headers.remove(AUTHORIZATION);
+            headers.remove(COOKIE);
+            headers.remove("cookie2");
+            headers.remove(PROXY_AUTHORIZATION);
+            headers.remove(WWW_AUTHENTICATE);
+        }
+    }
+}
+
 #[derive(Debug)]
 struct TooManyRedirects;
 
@@ -277,36 +262,114 @@ impl fmt::Display for TooManyRedirects {
 
 impl StdError for TooManyRedirects {}
 
+#[derive(Clone)]
+pub(crate) struct TowerRedirectPolicy {
+    policy: Arc<Policy>,
+    referer: bool,
+    urls: Vec<Url>,
+    https_only: bool,
+}
+
+impl TowerRedirectPolicy {
+    pub(crate) fn new(policy: Policy) -> Self {
+        Self {
+            policy: Arc::new(policy),
+            referer: false,
+            urls: Vec::new(),
+            https_only: false,
+        }
+    }
+
+    pub(crate) fn with_referer(&mut self, referer: bool) -> &mut Self {
+        self.referer = referer;
+        self
+    }
+
+    pub(crate) fn with_https_only(&mut self, https_only: bool) -> &mut Self {
+        self.https_only = https_only;
+        self
+    }
+}
+
+fn make_referer(next: &Url, previous: &Url) -> Option<HeaderValue> {
+    if next.scheme() == "http" && previous.scheme() == "https" {
+        return None;
+    }
+
+    let mut referer = previous.clone();
+    let _ = referer.set_username("");
+    let _ = referer.set_password(None);
+    referer.set_fragment(None);
+    referer.as_str().parse().ok()
+}
+
+impl TowerPolicy<Body, crate::Error> for TowerRedirectPolicy {
+    fn redirect(&mut self, attempt: &TowerAttempt<'_>) -> Result<TowerAction, crate::Error> {
+        let previous_url =
+            Url::parse(&attempt.previous().to_string()).expect("Previous URL must be valid");
+
+        let next_url = match Url::parse(&attempt.location().to_string()) {
+            Ok(url) => url,
+            Err(e) => return Err(crate::error::builder(e)),
+        };
+
+        if next_url.scheme() != "http" && next_url.scheme() != "https" {
+            return Err(crate::error::url_bad_scheme(next_url));
+        }
+
+        if self.https_only && next_url.scheme() != "https" {
+            return Err(crate::error::redirect(
+                crate::error::url_bad_scheme(next_url.clone()),
+                next_url,
+            ));
+        }
+
+        self.urls.push(previous_url.clone());
+
+        match self.policy.check(attempt.status(), &next_url, &self.urls) {
+            ActionKind::Follow => Ok(TowerAction::Follow),
+            ActionKind::Stop => Ok(TowerAction::Stop),
+            ActionKind::Error(e) => Err(crate::error::redirect(e, previous_url)),
+        }
+    }
+
+    fn on_request(&mut self, req: &mut http::Request<Body>) {
+        if let Ok(next_url) = Url::parse(&req.uri().to_string()) {
+            remove_sensitive_headers(req.headers_mut(), &next_url, &self.urls);
+            if self.referer {
+                if let Some(previous_url) = self.urls.last() {
+                    if let Some(v) = make_referer(&next_url, previous_url) {
+                        req.headers_mut().insert(REFERER, v);
+                    }
+                }
+            }
+        };
+    }
+
+    // This is must implemented to make 307 and 308 redirects work
+    fn clone_body(&self, body: &Body) -> Option<Body> {
+        body.try_clone()
+    }
+}
+
 #[test]
 fn test_redirect_policy_limit() {
     let policy = Policy::default();
     let next = Url::parse("http://x.y/z").unwrap();
     let mut previous = (0..=9)
-        .map(|i| Url::parse(&format!("http://a.b/c/{}", i)).unwrap())
+        .map(|i| Url::parse(&format!("http://a.b/c/{i}")).unwrap())
         .collect::<Vec<_>>();
 
-    match policy.check(
-        StatusCode::FOUND,
-        &Method::GET,
-        &next,
-        &Method::GET,
-        &previous,
-    ) {
+    match policy.check(StatusCode::FOUND, &next, &previous) {
         ActionKind::Follow => (),
-        other => panic!("unexpected {:?}", other),
+        other => panic!("unexpected {other:?}"),
     }
 
     previous.push(Url::parse("http://a.b.d/e/33").unwrap());
 
-    match policy.check(
-        StatusCode::FOUND,
-        &Method::GET,
-        &next,
-        &Method::GET,
-        &previous,
-    ) {
+    match policy.check(StatusCode::FOUND, &next, &previous) {
         ActionKind::Error(err) if err.is::<TooManyRedirects>() => (),
-        other => panic!("unexpected {:?}", other),
+        other => panic!("unexpected {other:?}"),
     }
 }
 
@@ -316,15 +379,9 @@ fn test_redirect_policy_limit_to_0() {
     let next = Url::parse("http://x.y/z").unwrap();
     let previous = vec![Url::parse("http://a.b/c").unwrap()];
 
-    match policy.check(
-        StatusCode::FOUND,
-        &Method::GET,
-        &next,
-        &Method::GET,
-        &previous,
-    ) {
+    match policy.check(StatusCode::FOUND, &next, &previous) {
         ActionKind::Error(err) if err.is::<TooManyRedirects>() => (),
-        other => panic!("unexpected {:?}", other),
+        other => panic!("unexpected {other:?}"),
     }
 }
 
@@ -339,40 +396,21 @@ fn test_redirect_policy_custom() {
     });
 
     let next = Url::parse("http://bar/baz").unwrap();
-    match policy.check(StatusCode::FOUND, &Method::GET, &next, &Method::GET, &[]) {
+    match policy.check(StatusCode::FOUND, &next, &[]) {
         ActionKind::Follow => (),
-        other => panic!("unexpected {:?}", other),
+        other => panic!("unexpected {other:?}"),
     }
 
     let next = Url::parse("http://foo/baz").unwrap();
-    match policy.check(StatusCode::FOUND, &Method::GET, &next, &Method::GET, &[]) {
+    match policy.check(StatusCode::FOUND, &next, &[]) {
         ActionKind::Stop => (),
-        other => panic!("unexpected {:?}", other),
+        other => panic!("unexpected {other:?}"),
     }
-}
-
-#[test]
-fn test_redirect_custom_policy_methods() {
-    let policy = Policy::custom(|attempt| {
-        let next = attempt.next_method();
-        if next != Method::HEAD {
-            panic!("unexpected next method {:?}", next);
-        }
-        let prev = attempt.previous_method();
-        if prev != Method::PUT {
-            panic!("unexpected previous method {:?}", prev);
-        }
-        attempt.stop()
-    });
-
-    let next = Url::parse("http://bar/baz").unwrap();
-    let res = policy.check(StatusCode::FOUND, &Method::HEAD, &next, &Method::PUT, &[]);
-    assert!(matches!(res, ActionKind::Stop));
 }
 
 #[test]
 fn test_remove_sensitive_headers() {
-    use crate::core::header::{ACCEPT, AUTHORIZATION, COOKIE, HeaderValue};
+    use hyper::header::{ACCEPT, AUTHORIZATION, COOKIE, HeaderValue};
 
     let mut headers = HeaderMap::new();
     headers.insert(ACCEPT, HeaderValue::from_static("*/*"));
@@ -383,13 +421,13 @@ fn test_remove_sensitive_headers() {
     let mut prev = vec![Url::parse("http://initial-domain.com/new_path").unwrap()];
     let mut filtered_headers = headers.clone();
 
-    Policy::remove_sensitive_headers(&mut headers, &next, &prev);
+    remove_sensitive_headers(&mut headers, &next, &prev);
     assert_eq!(headers, filtered_headers);
 
     prev.push(Url::parse("http://new-domain.com/path").unwrap());
     filtered_headers.remove(AUTHORIZATION);
     filtered_headers.remove(COOKIE);
 
-    Policy::remove_sensitive_headers(&mut headers, &next, &prev);
+    remove_sensitive_headers(&mut headers, &next, &prev);
     assert_eq!(headers, filtered_headers);
 }

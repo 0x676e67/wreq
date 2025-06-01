@@ -322,8 +322,8 @@ pub use self::client::multipart;
 pub use self::client::websocket;
 
 pub use self::client::{
-    Body, Client, ClientBuilder, ClientUpdate, EmulationProvider, EmulationProviderFactory,
-    Request, RequestBuilder, Response, Upgraded,
+    Body, Client, ClientBuilder, EmulationProvider, EmulationProviderFactory, Request,
+    RequestBuilder, Response, Upgraded,
 };
 pub use self::core::client::Dst;
 pub use self::core::config::{http1, http2};

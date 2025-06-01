@@ -6,6 +6,7 @@ use http::header::{HeaderMap, IntoHeaderName, ValueIter};
 use std::fmt;
 
 mod h1_reason_phrase;
+mod net;
 pub use h1_reason_phrase::ReasonPhrase;
 
 /// Represents the `:protocol` pseudo-header used by
@@ -48,6 +49,30 @@ impl AsRef<[u8]> for Protocol {
 impl fmt::Debug for Protocol {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.inner.fmt(f)
+    }
+}
+
+#[derive(Clone, Copy, Eq, PartialEq)]
+pub enum HttpVersionPref {
+    /// No preference for HTTP version
+    /// (default) Use HTTP/2 if available, otherwise HTTP/1.1
+    Auto,
+    /// Prefer HTTP/2
+    Http1,
+    /// Prefer HTTP/1.1
+    Http2,
+}
+
+impl<T> From<T> for HttpVersionPref
+where
+    T: Into<Option<http::Version>>,
+{
+    fn from(value: T) -> Self {
+        match value.into() {
+            Some(http::Version::HTTP_2) => HttpVersionPref::Http1,
+            Some(http::Version::HTTP_11) => HttpVersionPref::Http2,
+            None | _ => HttpVersionPref::Auto,
+        }
     }
 }
 

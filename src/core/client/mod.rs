@@ -43,7 +43,6 @@ use common::{Exec, Lazy, lazy as hyper_lazy, timer};
 
 pub use dst::Dst;
 pub use network::{NetworkScheme, NetworkSchemeBuilder};
-pub use request::InnerRequest;
 
 type BoxSendFuture = Pin<Box<dyn Future<Output = ()> + Send>>;
 
@@ -221,7 +220,7 @@ where
     /// # }
     /// # fn main() {}
     /// ```
-    pub fn request(&self, req: InnerRequest<B>) -> ResponseFuture {
+    pub fn request(&self, req: Request<B>) -> ResponseFuture {
         let (mut req, version, network_scheme) = req.pieces();
         let is_http_connect = req.method() == Method::CONNECT;
         match req.version() {
@@ -630,7 +629,7 @@ where
     }
 }
 
-impl<C, B> tower_service::Service<InnerRequest<B>> for Client<C, B>
+impl<C, B> tower_service::Service<Request<B>> for Client<C, B>
 where
     C: Connect + Clone + Send + Sync + 'static,
     B: Body + Send + 'static + Unpin,
@@ -645,12 +644,12 @@ where
         Poll::Ready(Ok(()))
     }
 
-    fn call(&mut self, req: InnerRequest<B>) -> Self::Future {
+    fn call(&mut self, req: Request<B>) -> Self::Future {
         self.request(req)
     }
 }
 
-impl<C, B> tower_service::Service<InnerRequest<B>> for &'_ Client<C, B>
+impl<C, B> tower_service::Service<Request<B>> for &'_ Client<C, B>
 where
     C: Connect + Clone + Send + Sync + 'static,
     B: Body + Send + 'static + Unpin,
@@ -665,7 +664,7 @@ where
         Poll::Ready(Ok(()))
     }
 
-    fn call(&mut self, req: InnerRequest<B>) -> Self::Future {
+    fn call(&mut self, req: Request<B>) -> Self::Future {
         self.request(req)
     }
 }

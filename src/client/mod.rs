@@ -1,5 +1,5 @@
 pub use self::body::Body;
-pub use self::client::{Client, ClientBuilder, ClientUpdate};
+pub use self::client::{Client, ClientBuilder};
 pub use self::emulation::{EmulationProvider, EmulationProviderFactory};
 pub use self::request::{Request, RequestBuilder};
 pub use self::response::Response;

@@ -18,7 +18,7 @@ rustdoc-args = ["--cfg", "docsrs"]
 targets = ["x86_64-unknown-linux-gnu"]
 
 [features]
-default = ["webpki-roots", "charset", "macos-system-configuration"]
+default = ["webpki-roots", "charset", "macos-system-configuration", "cookies"]
 
 full = [
     "json",
@@ -78,6 +78,7 @@ url = "2.5"
 serde = { version = "1.0", features = ["derive"] }
 serde_urlencoded = "0.7.1"
 tower = { version = "0.5.2", default-features = false, features = ["timeout","util"] }
+tower-http = { version = "0.6.4", default-features = false, features = ["follow-redirect"] }
 tower-service = "0.3"
 sync_wrapper = { version = "1.0", features = ["futures"] }
 antidote = "1" 
@@ -106,7 +107,6 @@ lru = { version = "0.14", default-features = false }
 mime = "0.3.17"
 percent-encoding = "2.3"
 ipnet = "2.11.0"
-arc-swap = "1.7.0"
 
 ## boring-tls
 boring2 = { version = "4.15.13", features = ["pq-experimental", "cert-compression"] }
