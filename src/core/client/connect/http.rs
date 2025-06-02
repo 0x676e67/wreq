@@ -761,7 +761,7 @@ impl ConnectingTcpRemote {
                 }
                 Err(mut e) => {
                     e.addr = Some(addr);
-                    // only return the first error, we assume it's the most relevantAdd commentMore actions
+                    // Only return the first error; assume it’s the most relevant.
                     if err.is_none() {
                         err = Some(e);
                     }
