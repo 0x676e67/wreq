@@ -491,13 +491,15 @@ fn get_host_port<'u>(config: &Config, dst: &'u Uri) -> Result<(&'u str, u16), Co
     if config.enforce_http {
         if dst.scheme() != Some(&Scheme::HTTP) {
             return Err(ConnectError {
-                msg: INVALID_NOT_HTTP.into(),
+                msg: INVALID_NOT_HTTP,
+                addr: None,
                 cause: None,
             });
         }
     } else if dst.scheme().is_none() {
         return Err(ConnectError {
-            msg: INVALID_MISSING_SCHEME.into(),
+            msg: INVALID_MISSING_SCHEME,
+            addr: None,
             cause: None,
         });
     }
@@ -506,7 +508,8 @@ fn get_host_port<'u>(config: &Config, dst: &'u Uri) -> Result<(&'u str, u16), Co
         Some(s) => s,
         None => {
             return Err(ConnectError {
-                msg: INVALID_MISSING_HOST.into(),
+                msg: INVALID_MISSING_HOST,
+                addr: None,
                 cause: None,
             });
         }
@@ -630,18 +633,19 @@ impl<R: Resolve> Future for HttpConnecting<R> {
 
 // Not publicly exported (so missing_docs doesn't trigger).
 pub struct ConnectError {
-    msg: Box<str>,
+    msg: &'static str,
+    addr: Option<SocketAddr>,
     cause: Option<Box<dyn StdError + Send + Sync>>,
 }
 
 impl ConnectError {
-    fn new<S, E>(msg: S, cause: E) -> ConnectError
+    fn new<E>(msg: &'static str, cause: E) -> ConnectError
     where
-        S: Into<Box<str>>,
         E: Into<Box<dyn StdError + Send + Sync>>,
     {
         ConnectError {
-            msg: msg.into(),
+            msg,
+            addr: None,
             cause: Some(cause.into()),
         }
     }
@@ -653,9 +657,8 @@ impl ConnectError {
         ConnectError::new("dns error", cause)
     }
 
-    fn m<S, E>(msg: S) -> impl FnOnce(E) -> ConnectError
+    fn m<E>(msg: &'static str) -> impl FnOnce(E) -> ConnectError
     where
-        S: Into<Box<str>>,
         E: Into<Box<dyn StdError + Send + Sync>>,
     {
         move |cause| ConnectError::new(msg, cause)
@@ -664,26 +667,21 @@ impl ConnectError {
 
 impl fmt::Debug for ConnectError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if let Some(ref cause) = self.cause {
-            f.debug_tuple("ConnectError")
-                .field(&self.msg)
-                .field(cause)
-                .finish()
-        } else {
-            self.msg.fmt(f)
+        let mut b = f.debug_tuple("ConnectError");
+        b.field(&self.msg);
+        if let Some(ref addr) = self.addr {
+            b.field(addr);
         }
+        if let Some(ref cause) = self.cause {
+            b.field(cause);
+        }
+        b.finish()
     }
 }
 
 impl fmt::Display for ConnectError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.msg)?;
-
-        if let Some(ref cause) = self.cause {
-            write!(f, ": {}", cause)?;
-        }
-
-        Ok(())
+        f.write_str(self.msg)
     }
 }
 
@@ -761,9 +759,12 @@ impl ConnectingTcpRemote {
                     debug!("connected to {}", addr);
                     return Ok(tcp);
                 }
-                Err(e) => {
-                    trace!("connect error for {}: {:?}", addr, e);
-                    err = Some(e);
+                Err(mut e) => {
+                    e.addr = Some(addr);
+                    // Only return the first error; assume it’s the most relevant.
+                    if err.is_none() {
+                        err = Some(e);
+                    }
                 }
             }
         }
