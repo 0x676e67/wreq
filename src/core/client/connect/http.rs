@@ -491,14 +491,14 @@ fn get_host_port<'u>(config: &Config, dst: &'u Uri) -> Result<(&'u str, u16), Co
     if config.enforce_http {
         if dst.scheme() != Some(&Scheme::HTTP) {
             return Err(ConnectError {
-                msg: INVALID_NOT_HTTP.into(),
+                msg: INVALID_NOT_HTTP,
                 addr: None,
                 cause: None,
             });
         }
     } else if dst.scheme().is_none() {
         return Err(ConnectError {
-            msg: INVALID_MISSING_SCHEME.into(),
+            msg: INVALID_MISSING_SCHEME,
             addr: None,
             cause: None,
         });
@@ -508,7 +508,7 @@ fn get_host_port<'u>(config: &Config, dst: &'u Uri) -> Result<(&'u str, u16), Co
         Some(s) => s,
         None => {
             return Err(ConnectError {
-                msg: INVALID_MISSING_HOST.into(),
+                msg: INVALID_MISSING_HOST,
                 addr: None,
                 cause: None,
             });
@@ -681,7 +681,7 @@ impl fmt::Debug for ConnectError {
 
 impl fmt::Display for ConnectError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.msg)
+        f.write_str(self.msg)
     }
 }
 
