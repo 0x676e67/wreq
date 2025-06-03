@@ -24,7 +24,7 @@ async fn test_brotli_empty_body() {
             .unwrap()
     });
 
-    let client = rquest::Client::new();
+    let client = wreq::Client::new();
     let res = client
         .head(format!("http://{}/brotli", server.addr()))
         .send()
@@ -49,19 +49,19 @@ async fn test_accept_header_is_not_changed_if_set() {
         http::Response::default()
     });
 
-    let client = rquest::Client::new();
+    let client = wreq::Client::new();
 
     let res = client
         .get(format!("http://{}/accept", server.addr()))
         .header(
-            rquest::header::ACCEPT,
-            rquest::header::HeaderValue::from_static("application/json"),
+            wreq::header::ACCEPT,
+            wreq::header::HeaderValue::from_static("application/json"),
         )
         .send()
         .await
         .unwrap();
 
-    assert_eq!(res.status(), rquest::StatusCode::OK);
+    assert_eq!(res.status(), wreq::StatusCode::OK);
 }
 
 #[tokio::test]
@@ -72,20 +72,20 @@ async fn test_accept_encoding_header_is_not_changed_if_set() {
         http::Response::default()
     });
 
-    let client = rquest::Client::new();
+    let client = wreq::Client::new();
 
     let res = client
         .get(format!("http://{}/accept-encoding", server.addr()))
-        .header(rquest::header::ACCEPT, "*/*")
+        .header(wreq::header::ACCEPT, "*/*")
         .header(
-            rquest::header::ACCEPT_ENCODING,
-            rquest::header::HeaderValue::from_static("identity"),
+            wreq::header::ACCEPT_ENCODING,
+            wreq::header::HeaderValue::from_static("identity"),
         )
         .send()
         .await
         .unwrap();
 
-    assert_eq!(res.status(), rquest::StatusCode::OK);
+    assert_eq!(res.status(), wreq::StatusCode::OK);
 }
 
 async fn brotli_case(response_size: usize, chunk_size: usize) {
@@ -130,7 +130,7 @@ async fn brotli_case(response_size: usize, chunk_size: usize) {
                     Some((chunk, (brotlied, pos + 1)))
                 });
 
-            let body = rquest::Body::wrap_stream(stream.map(Ok::<_, std::convert::Infallible>));
+            let body = wreq::Body::wrap_stream(stream.map(Ok::<_, std::convert::Infallible>));
 
             http::Response::builder()
                 .header("content-encoding", "br")
@@ -140,7 +140,7 @@ async fn brotli_case(response_size: usize, chunk_size: usize) {
         }
     });
 
-    let client = rquest::Client::new();
+    let client = wreq::Client::new();
 
     let res = client
         .get(format!("http://{}/brotli", server.addr()))
@@ -188,7 +188,7 @@ async fn test_non_chunked_non_fragmented_response() {
         })
     });
 
-    let res = rquest::Client::new()
+    let res = wreq::Client::new()
         .get(format!("http://{}/", server.addr()))
         .send()
         .await
@@ -241,7 +241,7 @@ async fn test_chunked_fragmented_response_1() {
     });
 
     let start = tokio::time::Instant::now();
-    let res = rquest::Client::new()
+    let res = wreq::Client::new()
         .get(format!("http://{}/", server.addr()))
         .send()
         .await
@@ -296,7 +296,7 @@ async fn test_chunked_fragmented_response_2() {
     });
 
     let start = tokio::time::Instant::now();
-    let res = rquest::Client::new()
+    let res = wreq::Client::new()
         .get(format!("http://{}/", server.addr()))
         .send()
         .await
@@ -350,7 +350,7 @@ async fn test_chunked_fragmented_response_with_extra_bytes() {
     });
 
     let start = tokio::time::Instant::now();
-    let res = rquest::Client::new()
+    let res = wreq::Client::new()
         .get(format!("http://{}/", server.addr()))
         .send()
         .await
@@ -372,7 +372,7 @@ async fn disable_compression_request() {
 
     let url = format!("http://{}/compress", server.addr());
 
-    let res = rquest::Client::new()
+    let res = wreq::Client::new()
         .get(&url)
         .allow_compression(false)
         .send()
@@ -380,5 +380,5 @@ async fn disable_compression_request() {
         .unwrap();
 
     assert_eq!(res.url().as_str(), &url);
-    assert_eq!(res.status(), rquest::StatusCode::OK);
+    assert_eq!(res.status(), wreq::StatusCode::OK);
 }

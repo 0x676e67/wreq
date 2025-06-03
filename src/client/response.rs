@@ -156,7 +156,7 @@ impl Response {
     ///
     /// ```
     /// # async fn run() -> Result<(), Box<dyn std::error::Error>> {
-    /// let content = rquest::Client::new()
+    /// let content = wreq::Client::new()
     ///     .get("http://httpbin.org/range/26")
     ///     .send()
     ///     .await?
@@ -202,7 +202,7 @@ impl Response {
     ///
     /// ```
     /// # async fn run() -> Result<(), Box<dyn std::error::Error>> {
-    /// let content = rquest::Client::new()
+    /// let content = wreq::Client::new()
     ///     .get("http://httpbin.org/range/26")
     ///     .send()
     ///     .await?
@@ -242,10 +242,10 @@ impl Response {
     /// # Examples
     ///
     /// ```
-    /// # extern crate rquest;
+    /// # extern crate wreq;
     /// # extern crate serde;
     /// #
-    /// # use rquest::Error;
+    /// # use wreq::Error;
     /// # use serde::Deserialize;
     /// #
     /// // This `derive` requires the `serde` dependency.
@@ -255,7 +255,7 @@ impl Response {
     /// }
     ///
     /// # async fn run() -> Result<(), Error> {
-    /// let ip = rquest::Client::new()
+    /// let ip = wreq::Client::new()
     ///     .get("http://httpbin.org/ip")
     ///     .send()
     ///     .await?
@@ -290,7 +290,7 @@ impl Response {
     ///
     /// ```
     /// # async fn run() -> Result<(), Box<dyn std::error::Error>> {
-    /// let bytes = rquest::Client::new()
+    /// let bytes = wreq::Client::new()
     ///     .get("http://httpbin.org/ip")
     ///     .send()
     ///     .await?
@@ -317,7 +317,7 @@ impl Response {
     ///
     /// ```
     /// # async fn run() -> Result<(), Box<dyn std::error::Error>> {
-    /// let mut res = rquest::Client::new().get("https://hyper.rs").send().await?;
+    /// let mut res = wreq::Client::new().get("https://hyper.rs").send().await?;
     ///
     /// while let Some(chunk) = res.chunk().await? {
     ///     println!("Chunk: {chunk:?}");
@@ -350,7 +350,7 @@ impl Response {
     /// use futures_util::StreamExt;
     ///
     /// # async fn run() -> Result<(), Box<dyn std::error::Error>> {
-    /// let mut stream = rquest::Client::new()
+    /// let mut stream = wreq::Client::new()
     ///     .get("http://httpbin.org/ip")
     ///     .send()
     ///     .await?
@@ -379,7 +379,7 @@ impl Response {
     /// # Example
     ///
     /// ```
-    /// # use rquest::Response;
+    /// # use wreq::Response;
     /// fn on_response(res: Response) {
     ///     match res.error_for_status() {
     ///         Ok(_res) => (),
@@ -388,7 +388,7 @@ impl Response {
     ///             // it could be any status between 400...599
     ///             assert_eq!(
     ///                 err.status(),
-    ///                 Some(rquest::StatusCode::BAD_REQUEST)
+    ///                 Some(wreq::StatusCode::BAD_REQUEST)
     ///             );
     ///         }
     ///     }
@@ -409,7 +409,7 @@ impl Response {
     /// # Example
     ///
     /// ```
-    /// # use rquest::Response;
+    /// # use wreq::Response;
     /// fn on_response(res: &Response) {
     ///     match res.error_for_status_ref() {
     ///         Ok(_res) => (),
@@ -418,7 +418,7 @@ impl Response {
     ///             // it could be any status between 400...599
     ///             assert_eq!(
     ///                 err.status(),
-    ///                 Some(rquest::StatusCode::BAD_REQUEST)
+    ///                 Some(wreq::StatusCode::BAD_REQUEST)
     ///             );
     ///         }
     ///     }
@@ -446,7 +446,7 @@ impl fmt::Debug for Response {
 }
 
 // I'm not sure this conversion is that useful... People should be encouraged
-// to use `http::Response`, not `rquest::Response`.
+// to use `http::Response`, not `wreq::Response`.
 impl<T: Into<Body>> From<http::Response<T>> for Response {
     fn from(r: http::Response<T>) -> Response {
         use crate::response::ResponseUrl;

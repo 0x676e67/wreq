@@ -44,7 +44,7 @@ impl std::ops::Deref for Utf8Bytes {
     /// /// Example fn that takes a str slice
     /// fn a(s: &str) {}
     ///
-    /// let data = rquest::Utf8Bytes::from_static("foo123");
+    /// let data = wreq::Utf8Bytes::from_static("foo123");
     ///
     /// // auto-deref as arg
     /// a(&data);
@@ -116,7 +116,7 @@ where
     for<'a> &'a str: PartialEq<T>,
 {
     /// ```
-    /// let payload = rquest::Utf8Bytes::from_static("foo123");
+    /// let payload = wreq::Utf8Bytes::from_static("foo123");
     /// assert_eq!(payload, "foo123");
     /// assert_eq!(payload, "foo123".to_string());
     /// assert_eq!(payload, &"foo123".to_string());
@@ -274,7 +274,7 @@ pub enum Message {
     /// you may still read messages,
     /// but attempts to send another message will error.
     /// After receiving a close frame,
-    /// rquest will automatically respond with a close frame if necessary
+    /// wreq will automatically respond with a close frame if necessary
     /// (you do not have to deal with this yourself).
     /// Since no further messages will be received,
     /// you may either do nothing

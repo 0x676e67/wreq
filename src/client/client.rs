@@ -385,7 +385,7 @@ impl ClientBuilder {
     /// # Example
     ///
     /// ```rust
-    /// # async fn doc() -> rquest::Result<()> {
+    /// # async fn doc() -> wreq::Result<()> {
     /// // Name your user agent after your app?
     /// static APP_USER_AGENT: &str = concat!(
     ///     env!("CARGO_PKG_NAME"),
@@ -393,7 +393,7 @@ impl ClientBuilder {
     ///     env!("CARGO_PKG_VERSION"),
     /// );
     ///
-    /// let client = rquest::Client::builder()
+    /// let client = wreq::Client::builder()
     ///     .user_agent(APP_USER_AGENT)
     ///     .build()?;
     /// let res = client.get("https://www.rust-lang.org").send().await?;
@@ -421,8 +421,8 @@ impl ClientBuilder {
     /// # Example
     ///
     /// ```rust
-    /// use rquest::header;
-    /// # async fn doc() -> rquest::Result<()> {
+    /// use wreq::header;
+    /// # async fn doc() -> wreq::Result<()> {
     /// let mut headers = header::HeaderMap::new();
     /// headers.insert("X-MY-HEADER", header::HeaderValue::from_static("value"));
     ///
@@ -432,7 +432,7 @@ impl ClientBuilder {
     /// headers.insert(header::AUTHORIZATION, auth_value);
     ///
     /// // get a client builder
-    /// let client = rquest::Client::builder()
+    /// let client = wreq::Client::builder()
     ///     .default_headers(headers)
     ///     .build()?;
     /// let res = client.get("https://www.rust-lang.org").send().await?;
@@ -443,13 +443,13 @@ impl ClientBuilder {
     /// Override the default headers:
     ///
     /// ```rust
-    /// use rquest::header;
-    /// # async fn doc() -> rquest::Result<()> {
+    /// use wreq::header;
+    /// # async fn doc() -> wreq::Result<()> {
     /// let mut headers = header::HeaderMap::new();
     /// headers.insert("X-MY-HEADER", header::HeaderValue::from_static("value"));
     ///
     /// // get a client builder
-    /// let client = rquest::Client::builder()
+    /// let client = wreq::Client::builder()
     ///     .default_headers(headers)
     ///     .build()?;
     /// let res = client
@@ -708,8 +708,8 @@ impl ClientBuilder {
     ///
     /// # Example
     /// ```
-    /// use rquest::Client;
-    /// use rquest::Proxy;
+    /// use wreq::Client;
+    /// use wreq::Proxy;
     ///
     /// let proxy = Proxy::http("http://proxy:8080").unwrap();
     /// let client = Client::builder().proxy(proxy).build().unwrap();
@@ -859,7 +859,7 @@ impl ClientBuilder {
     /// ```
     /// use std::net::IpAddr;
     /// let local_addr = IpAddr::from([12, 4, 1, 8]);
-    /// let client = rquest::Client::builder()
+    /// let client = wreq::Client::builder()
     ///     .local_address(local_addr)
     ///     .build().unwrap();
     /// ```
@@ -888,7 +888,7 @@ impl ClientBuilder {
     ///
     /// ```
     /// let interface = "lo";
-    /// let client = rquest::Client::builder()
+    /// let client = wreq::Client::builder()
     ///     .interface(interface)
     ///     .build().unwrap();
     /// ```
@@ -975,7 +975,7 @@ impl ClientBuilder {
     /// # Example
     ///
     /// ```rust
-    /// use rquest::{Client, Emulation};
+    /// use wreq::{Client, Emulation};
     /// use rquest_util::Emulation;
     ///
     /// let client = Client::builder()
@@ -1218,7 +1218,7 @@ impl ClientBuilder {
     /// ```
     /// use std::time::Duration;
     ///
-    /// let client = rquest::Client::builder()
+    /// let client = wreq::Client::builder()
     ///                      // resolved to outermost layer, meaning while we are waiting on concurrency limit
     ///                      .connect_timeout(Duration::from_millis(200))
     ///                      // underneath the concurrency check, so only after concurrency limit lets us through
@@ -1506,7 +1506,7 @@ impl Client {
     /// # Example
     ///
     /// ```rust
-    /// let client = rquest::Client::new();
+    /// let client = wreq::Client::new();
     /// client.update()
     ///     .headers(|headers| {
     ///         headers.insert("X-Custom-Header", HeaderValue::from_static("value"));
@@ -1533,7 +1533,7 @@ impl Client {
     /// # Example
     ///
     /// ```rust
-    /// let client = rquest::Client::new();
+    /// let client = wreq::Client::new();
     /// let cloned_client = client.cloned();
     /// // Use the cloned client independently
     /// ```

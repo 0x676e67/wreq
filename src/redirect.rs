@@ -78,7 +78,7 @@ impl Policy {
     /// # Example
     ///
     /// ```rust
-    /// # use rquest::{Error, redirect};
+    /// # use wreq::{Error, redirect};
     /// #
     /// # fn run() -> Result<(), Error> {
     /// let custom = redirect::Policy::custom(|attempt| {
@@ -91,7 +91,7 @@ impl Policy {
     ///         attempt.follow()
     ///     }
     /// });
-    /// let client = rquest::Client::builder()
+    /// let client = wreq::Client::builder()
     ///     .redirect(custom)
     ///     .build()?;
     /// # Ok(())
@@ -118,7 +118,7 @@ impl Policy {
     /// # Example
     ///
     /// ```rust
-    /// # use rquest::{Error, redirect};
+    /// # use wreq::{Error, redirect};
     /// #
     /// # fn run() -> Result<(), Error> {
     /// let custom = redirect::Policy::custom(|attempt| {
@@ -208,14 +208,14 @@ impl Attempt<'_> {
     pub fn previous(&self) -> &[Url] {
         self.previous
     }
-    /// Returns an action meaning rquest should follow the next URL.
+    /// Returns an action meaning wreq should follow the next URL.
     pub fn follow(self) -> Action {
         Action {
             inner: ActionKind::Follow,
         }
     }
 
-    /// Returns an action meaning rquest should not follow the next URL.
+    /// Returns an action meaning wreq should not follow the next URL.
     ///
     /// The 30x response will be returned as the `Ok` result.
     pub fn stop(self) -> Action {

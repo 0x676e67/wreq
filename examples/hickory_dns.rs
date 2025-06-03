@@ -1,14 +1,14 @@
-use rquest::dns::{HickoryDnsResolver, LookupIpStrategy};
 use std::sync::Arc;
+use wreq::dns::{HickoryDnsResolver, LookupIpStrategy};
 
 #[tokio::main]
-async fn main() -> rquest::Result<()> {
+async fn main() -> wreq::Result<()> {
     tracing_subscriber::fmt()
         .with_max_level(tracing::Level::TRACE)
         .init();
 
     // Build a client
-    let client = rquest::Client::builder()
+    let client = wreq::Client::builder()
         .hickory_dns_strategy(LookupIpStrategy::Ipv4Only)
         .build()?;
 
@@ -20,7 +20,7 @@ async fn main() -> rquest::Result<()> {
     let resolver = Arc::new(HickoryDnsResolver::new(LookupIpStrategy::Ipv4thenIpv6)?);
 
     // Build a client
-    let client = rquest::Client::builder().dns_resolver(resolver).build()?;
+    let client = wreq::Client::builder().dns_resolver(resolver).build()?;
 
     // Use the API you're already familiar with
     let text = client

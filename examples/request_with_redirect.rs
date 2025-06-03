@@ -1,12 +1,12 @@
-use rquest::redirect::Policy;
+use wreq::redirect::Policy;
 
 #[tokio::main]
-async fn main() -> rquest::Result<()> {
+async fn main() -> wreq::Result<()> {
     tracing_subscriber::fmt()
         .with_max_level(tracing::Level::TRACE)
         .init();
 
-    let resp = rquest::Client::new()
+    let resp = wreq::Client::new()
         .get("http://google.com/")
         .redirect(Policy::default())
         .send()

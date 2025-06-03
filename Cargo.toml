@@ -1,11 +1,11 @@
 [package]
-name = "rquest"
+name = "wreq"
 version = "5.1.0"
 description = "A blazing-fast Rust HTTP Client with TLS fingerprint"
 keywords = ["http", "client", "websocket", "ja3", "ja4"]
 categories = ["web-programming::http-client"]
-repository = "https://github.com/0x676e67/rquest"
-documentation = "https://docs.rs/rquest"
+repository = "https://github.com/0x676e67/wreq"
+documentation = "https://docs.rs/wreq"
 authors = ["0x676e67 <gngppz@gmail.com>"]
 readme = "README.md"
 license = "Apache-2.0"

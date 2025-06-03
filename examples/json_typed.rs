@@ -20,14 +20,14 @@ struct Post {
 //
 // `tokio = { version = "1", features = ["full"] }`
 #[tokio::main]
-async fn main() -> rquest::Result<()> {
+async fn main() -> wreq::Result<()> {
     let new_post = Post {
         id: None,
-        title: "rquest.rs".into(),
-        body: "https://docs.rs/rquest".into(),
+        title: "wreq.rs".into(),
+        body: "https://docs.rs/wreq".into(),
         user_id: 1,
     };
-    let new_post: Post = rquest::Client::new()
+    let new_post: Post = wreq::Client::new()
         .post("https://jsonplaceholder.typicode.com/posts")
         .json(&new_post)
         .send()
@@ -40,8 +40,8 @@ async fn main() -> rquest::Result<()> {
     //     id: Some(
     //         101
     //     ),
-    //     title: "rquest.rs",
-    //     body: "https://docs.rs/rquest",
+    //     title: "wreq.rs",
+    //     body: "https://docs.rs/wreq",
     //     user_id: 1
     // }
     Ok(())

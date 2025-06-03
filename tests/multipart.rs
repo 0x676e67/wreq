@@ -6,7 +6,7 @@ use support::server;
 async fn text_part() {
     let _ = env_logger::try_init();
 
-    let form = rquest::multipart::Form::new().text("foo", "bar");
+    let form = wreq::multipart::Form::new().text("foo", "bar");
 
     let expected_body = format!(
         "\
@@ -44,7 +44,7 @@ async fn text_part() {
 
     let url = format!("http://{}/multipart/1", server.addr());
 
-    let res = rquest::Client::new()
+    let res = wreq::Client::new()
         .post(&url)
         .multipart(form)
         .send()
@@ -52,7 +52,7 @@ async fn text_part() {
         .unwrap();
 
     assert_eq!(res.url().as_str(), &url);
-    assert_eq!(res.status(), rquest::StatusCode::OK);
+    assert_eq!(res.status(), wreq::StatusCode::OK);
 }
 
 #[cfg(feature = "stream")]
@@ -62,12 +62,12 @@ async fn stream_part() {
 
     let _ = env_logger::try_init();
 
-    let stream = rquest::Body::wrap_stream(stream::once(future::ready(Ok::<_, rquest::Error>(
+    let stream = wreq::Body::wrap_stream(stream::once(future::ready(Ok::<_, wreq::Error>(
         "part1 part2".to_owned(),
     ))));
-    let part = rquest::multipart::Part::stream(stream);
+    let part = wreq::multipart::Part::stream(stream);
 
-    let form = rquest::multipart::Form::new()
+    let form = wreq::multipart::Form::new()
         .text("foo", "bar")
         .part("part_stream", part);
 
@@ -106,7 +106,7 @@ async fn stream_part() {
 
     let url = format!("http://{}/multipart/1", server.addr());
 
-    let client = rquest::Client::new();
+    let client = wreq::Client::new();
 
     let res = client
         .post(&url)
@@ -115,7 +115,7 @@ async fn stream_part() {
         .await
         .expect("Failed to post multipart");
     assert_eq!(res.url().as_str(), &url);
-    assert_eq!(res.status(), rquest::StatusCode::OK);
+    assert_eq!(res.status(), wreq::StatusCode::OK);
 }
 
 #[cfg(feature = "stream")]
@@ -123,7 +123,7 @@ async fn stream_part() {
 async fn async_impl_file_part() {
     let _ = env_logger::try_init();
 
-    let form = rquest::multipart::Form::new()
+    let form = wreq::multipart::Form::new()
         .file("foo", "Cargo.lock")
         .await
         .unwrap();
@@ -165,7 +165,7 @@ async fn async_impl_file_part() {
 
     let url = format!("http://{}/multipart/3", server.addr());
 
-    let res = rquest::Client::new()
+    let res = wreq::Client::new()
         .post(&url)
         .multipart(form)
         .send()
@@ -173,5 +173,5 @@ async fn async_impl_file_part() {
         .unwrap();
 
     assert_eq!(res.url().as_str(), &url);
-    assert_eq!(res.status(), rquest::StatusCode::OK);
+    assert_eq!(res.status(), wreq::StatusCode::OK);
 }

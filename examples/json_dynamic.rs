@@ -8,12 +8,12 @@
 //
 // `tokio = { version = "1", features = ["full"] }`
 #[tokio::main]
-async fn main() -> rquest::Result<()> {
-    let echo_json: serde_json::Value = rquest::Client::new()
+async fn main() -> wreq::Result<()> {
+    let echo_json: serde_json::Value = wreq::Client::new()
         .post("https://jsonplaceholder.typicode.com/posts")
         .json(&serde_json::json!({
-            "title": "rquest.rs",
-            "body": "https://docs.rs/rquest",
+            "title": "wreq.rs",
+            "body": "https://docs.rs/wreq",
             "userId": 1
         }))
         .send()
@@ -25,13 +25,13 @@ async fn main() -> rquest::Result<()> {
     // Object(
     //     {
     //         "body": String(
-    //             "https://docs.rs/rquest"
+    //             "https://docs.rs/wreq"
     //         ),
     //         "id": Number(
     //             101
     //         ),
     //         "title": String(
-    //             "rquest.rs"
+    //             "wreq.rs"
     //         ),
     //         "userId": Number(
     //             1

@@ -1,7 +1,7 @@
 use std::time::Duration;
 
-use rquest::tls::{AlpsProtos, TlsConfig, TlsInfo, TlsVersion};
-use rquest::{Client, EmulationProvider};
+use wreq::tls::{AlpsProtos, TlsConfig, TlsInfo, TlsVersion};
+use wreq::{Client, EmulationProvider};
 
 macro_rules! join {
     ($sep:expr, $first:expr $(, $rest:expr)*) => {
@@ -11,7 +11,7 @@ macro_rules! join {
 
 #[tokio::test]
 async fn test_badssl_modern() {
-    let text = rquest::Client::builder()
+    let text = wreq::Client::builder()
         .no_proxy()
         .connect_timeout(Duration::from_secs(360))
         .build()
@@ -29,7 +29,7 @@ async fn test_badssl_modern() {
 
 #[tokio::test]
 async fn test_badssl_self_signed() {
-    let text = rquest::Client::builder()
+    let text = wreq::Client::builder()
         .cert_verification(false)
         .connect_timeout(Duration::from_secs(360))
         .no_proxy()
@@ -56,7 +56,7 @@ const CURVES_LIST: &str = join!(
 );
 
 #[tokio::test]
-async fn test_3des_support() -> rquest::Result<()> {
+async fn test_3des_support() -> wreq::Result<()> {
     let emulation = EmulationProvider::builder()
         .tls_config(
             TlsConfig::builder()
@@ -90,7 +90,7 @@ async fn test_3des_support() -> rquest::Result<()> {
 }
 
 #[tokio::test]
-async fn test_firefox_7x_100_cipher() -> rquest::Result<()> {
+async fn test_firefox_7x_100_cipher() -> wreq::Result<()> {
     let emulation = EmulationProvider::builder()
         .tls_config(
             TlsConfig::builder()
@@ -125,7 +125,7 @@ async fn test_firefox_7x_100_cipher() -> rquest::Result<()> {
 }
 
 #[tokio::test]
-async fn test_alps_new_endpoint() -> rquest::Result<()> {
+async fn test_alps_new_endpoint() -> wreq::Result<()> {
     let emulation = EmulationProvider::builder()
         .tls_config(
             TlsConfig::builder()
@@ -137,7 +137,7 @@ async fn test_alps_new_endpoint() -> rquest::Result<()> {
         )
         .build();
 
-    let client = rquest::Client::builder()
+    let client = wreq::Client::builder()
         .emulation(emulation)
         .connect_timeout(Duration::from_secs(360))
         .build()?;
@@ -148,7 +148,7 @@ async fn test_alps_new_endpoint() -> rquest::Result<()> {
 }
 
 #[tokio::test]
-async fn test_aes_hw_override() -> rquest::Result<()> {
+async fn test_aes_hw_override() -> wreq::Result<()> {
     const CIPHER_LIST: &str = join!(
         ":",
         "TLS_AES_128_GCM_SHA256",
@@ -182,7 +182,7 @@ async fn test_aes_hw_override() -> rquest::Result<()> {
         )
         .build();
 
-    let client = rquest::Client::builder()
+    let client = wreq::Client::builder()
         .emulation(emulation)
         .connect_timeout(Duration::from_secs(360))
         .build()?;
@@ -218,7 +218,7 @@ async fn test_aes_hw_override() -> rquest::Result<()> {
 
 #[tokio::test]
 async fn ssl_pinning() {
-    let client = rquest::Client::builder()
+    let client = wreq::Client::builder()
         .cert_verification(false)
         .connect_timeout(Duration::from_secs(360))
         .tls_info(true)
@@ -237,7 +237,7 @@ async fn ssl_pinning() {
         .and_then(|info| info.peer_certificate())
         .unwrap();
 
-    let client = rquest::Client::builder()
+    let client = wreq::Client::builder()
         .ssl_pinning([peer_cert_der])
         .build()
         .unwrap();

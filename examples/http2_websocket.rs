@@ -6,12 +6,12 @@
 //! ```
 
 use futures_util::{SinkExt, StreamExt, TryStreamExt};
-use rquest::websocket::Message;
-use rquest::{Client, header};
 use std::time::Duration;
+use wreq::websocket::Message;
+use wreq::{Client, header};
 
 #[tokio::main]
-async fn main() -> rquest::Result<()> {
+async fn main() -> wreq::Result<()> {
     tracing_subscriber::fmt()
         .with_max_level(tracing::Level::TRACE)
         .init();
