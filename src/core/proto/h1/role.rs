@@ -9,9 +9,10 @@ use http::header::{self, HeaderMap, HeaderName, HeaderValue};
 use http::{Method, StatusCode, Version};
 use smallvec::{SmallVec, smallvec, smallvec_inline};
 
+use crate::OriginalHeaders;
 use crate::core::body::DecodedLength;
 use crate::core::error::Parse;
-use crate::core::ext::HeaderCaseMap;
+use crate::core::ext::{RequestConfig, RequestOriginalHeaders};
 use crate::core::headers;
 use crate::core::proto::RequestHead;
 use crate::core::proto::h1::{
@@ -192,7 +193,7 @@ impl Http1Transaction for Client {
             let mut keep_alive = version == Version::HTTP_11;
 
             let mut header_case_map = if ctx.preserve_header_case {
-                Some(HeaderCaseMap::default())
+                Some(OriginalHeaders::default())
             } else {
                 None
             };
@@ -290,9 +291,11 @@ impl Http1Transaction for Client {
         }
         extend(dst, b"\r\n");
 
-        if let Some(orig_headers) = msg.head.extensions.get::<HeaderCaseMap>() {
+        if let Some(orig_headers) =
+            RequestConfig::<RequestOriginalHeaders>::get(&msg.head.extensions)
+        {
             write_headers_original_case(
-                &msg.head.headers,
+                &mut msg.head.headers,
                 orig_headers,
                 dst,
                 msg.title_case_headers,
@@ -671,11 +674,13 @@ pub(crate) fn write_headers(headers: &HeaderMap, dst: &mut Vec<u8>) {
 
 #[cold]
 fn write_headers_original_case(
-    headers: &HeaderMap,
-    orig_case: &HeaderCaseMap,
+    headers: &mut HeaderMap,
+    orig_case: &OriginalHeaders,
     dst: &mut Vec<u8>,
     title_case_headers: bool,
 ) {
+    crate::core::headers::sort_headers(headers, orig_case);
+
     // For each header name/value pair, there may be a value in the casemap
     // that corresponds to the HeaderValue. So, we iterator all the keys,
     // and for each one, try to pair the originally cased name with the value.

@@ -7,7 +7,10 @@ use std::{
     time::Duration,
 };
 
-use crate::core::rt::{Read, Write};
+use crate::core::{
+    ext::{RequestConfig, RequestOriginalHeaders},
+    rt::{Read, Write},
+};
 use bytes::Bytes;
 use futures_channel::mpsc::{Receiver, Sender};
 use futures_channel::{mpsc, oneshot};
@@ -687,7 +690,7 @@ where
 
             match self.req_rx.poll_recv(cx) {
                 Poll::Ready(Some((req, cb))) => {
-                    // check that future hasn't been canceled already
+                    // Check that future hasn't been canceled already
                     if cb.is_canceled() {
                         trace!("request callback is canceled");
                         continue;
@@ -699,6 +702,13 @@ where
                         if len != 0 || headers::method_has_defined_payload_semantics(req.method()) {
                             headers::set_content_length_if_missing(req.headers_mut(), len);
                         }
+                    }
+
+                    // Sort headers if we have the original headers
+                    if let Some(orig) =
+                        RequestConfig::<RequestOriginalHeaders>::remove(req.extensions_mut())
+                    {
+                        headers::sort_headers(req.headers_mut(), &orig);
                     }
 
                     let is_connect = req.method() == Method::CONNECT;

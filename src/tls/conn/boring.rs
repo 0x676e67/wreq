@@ -50,7 +50,7 @@ impl HttpsConnector<HttpConnector> {
         let alpn_protos = dst.alpn_protos();
 
         // Set the local address and interface
-        match dst.take_addresses() {
+        match dst.addresses() {
             (Some(a), Some(b)) => http.set_local_addresses(a, b),
             (Some(a), None) => http.set_local_address(Some(IpAddr::V4(a))),
             (None, Some(b)) => http.set_local_address(Some(IpAddr::V6(b))),
@@ -70,7 +70,7 @@ impl HttpsConnector<HttpConnector> {
             target_os = "visionos",
             target_os = "watchos",
         ))]
-        http.set_interface(dst.take_interface());
+        http.set_interface(dst.interface());
 
         let mut connector = HttpsConnector::with_connector(http, connector);
         connector.set_ssl_callback(move |ssl, _| ssl.alpn_protos(alpn_protos));

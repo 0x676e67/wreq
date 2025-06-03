@@ -191,28 +191,6 @@ async fn test_aes_hw_override() -> wreq::Result<()> {
     assert!(resp.status().is_success());
     let text = resp.text().await?;
     assert!(text.contains("ChaCha20Poly1305"));
-
-    client
-        .update()
-        .emulation(
-            EmulationProvider::builder()
-                .tls_config(
-                    TlsConfig::builder()
-                        .cipher_list(CIPHER_LIST)
-                        .min_tls_version(TlsVersion::TLS_1_2)
-                        .max_tls_version(TlsVersion::TLS_1_3)
-                        .enable_ech_grease(true)
-                        .aes_hw_override(true)
-                        .build(),
-                )
-                .build(),
-        )
-        .apply()?;
-
-    let resp = client.get("https://tls.browserleaks.com").send().await?;
-    assert!(resp.status().is_success());
-    let text = resp.text().await?;
-    assert!(!text.contains("ChaCha20Poly1305"));
     Ok(())
 }
 

@@ -1,4 +1,4 @@
-use http::{HeaderMap, HeaderName, HeaderValue, header};
+use http::{HeaderMap, HeaderValue, header};
 use wreq::http1::Http1Config;
 use wreq::http2::{
     Http2Config, Priorities, Priority, PseudoId, PseudoOrder, SettingId, SettingsOrder,
@@ -7,7 +7,7 @@ use wreq::http2::{
 use wreq::tls::{
     AlpnProtos, AlpsProtos, CertCompressionAlgorithm, ExtensionType, TlsConfig, TlsVersion,
 };
-use wreq::{Client, EmulationProvider};
+use wreq::{Client, EmulationProvider, OriginalHeaders};
 
 // ============== TLS Extension Algorithms ==============
 
@@ -96,14 +96,6 @@ const EXTENSION_PERMUTATION: &[ExtensionType] = &[
     ExtensionType::RECORD_SIZE_LIMIT,
     ExtensionType::CERT_COMPRESSION,
     ExtensionType::ENCRYPTED_CLIENT_HELLO,
-];
-
-const HEADER_ORDER: &[HeaderName] = &[
-    header::USER_AGENT,
-    header::ACCEPT_LANGUAGE,
-    header::ACCEPT_ENCODING,
-    header::COOKIE,
-    header::HOST,
 ];
 
 #[tokio::main]
@@ -221,23 +213,36 @@ async fn main() -> wreq::Result<()> {
         headers
     };
 
-    // Create Http context
-    let context = EmulationProvider::builder()
+    // Original headers
+    // The headers keep the original case and order
+    let original_headers = {
+        let mut original_headers = OriginalHeaders::new();
+        original_headers.insert("cookie");
+        original_headers.insert("content-length");
+        original_headers.insert("USER-AGENT");
+        original_headers.insert("ACCEPT-LANGUAGE");
+        original_headers.insert("ACCEPT-ENCODING");
+        original_headers
+    };
+
+    // Create emulation provider with all configurations
+    // This provider encapsulates TLS, HTTP/1, HTTP/2, default headers, and original headers
+    let emulation = EmulationProvider::builder()
         .tls_config(tls)
         .http1_config(http1)
         .http2_config(http2)
         .default_headers(headers)
-        .headers_order(HEADER_ORDER)
+        .original_headers(original_headers)
         .build();
 
     // Build a client with emulation config
     let client = Client::builder()
-        .emulation(context)
+        .emulation(emulation)
         .cert_verification(false)
         .build()?;
 
     // Use the API you're already familiar with
-    let resp = client.get("https://tls.peet.ws/api/all").send().await?;
+    let resp = client.post("https://tls.peet.ws/api/all").send().await?;
     println!("{}", resp.text().await?);
 
     Ok(())

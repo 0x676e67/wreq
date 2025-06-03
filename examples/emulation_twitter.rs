@@ -1,7 +1,7 @@
-use http::{HeaderMap, HeaderName, HeaderValue, header};
+use http::{HeaderMap, HeaderValue, header};
 use wreq::http2::{Http2Config, PseudoId, PseudoOrder};
 use wreq::tls::{AlpnProtos, TlsConfig, TlsVersion};
-use wreq::{Client, EmulationProvider};
+use wreq::{Client, EmulationProvider, OriginalHeaders};
 
 // ============== TLS Extension Algorithms ==============
 
@@ -38,14 +38,6 @@ const SIGALGS_LIST: &str = join!(
     "rsa_pkcs1_sha512",
     "rsa_pkcs1_sha1"
 );
-
-const HEADER_ORDER: &[HeaderName] = &[
-    header::USER_AGENT,
-    header::ACCEPT_LANGUAGE,
-    header::ACCEPT_ENCODING,
-    header::COOKIE,
-    header::HOST,
-];
 
 #[tokio::main]
 async fn main() -> wreq::Result<()> {
@@ -95,17 +87,30 @@ async fn main() -> wreq::Result<()> {
         headers
     };
 
-    // Create an emulation context
-    let context = EmulationProvider::builder()
+    // Original headers
+    // The headers keep the original case and order
+    let original_headers = {
+        let mut original_headers = OriginalHeaders::new();
+        original_headers.insert("cookie");
+        original_headers.insert("content-length");
+        original_headers.insert("USER-AGENT");
+        original_headers.insert("ACCEPT-LANGUAGE");
+        original_headers.insert("ACCEPT-ENCODING");
+        original_headers
+    };
+
+    // Create emulation provider with all configurations
+    // This provider encapsulates TLS, HTTP/1, HTTP/2, default headers, and original headers
+    let emulation = EmulationProvider::builder()
         .tls_config(tls)
         .http2_config(http2)
         .default_headers(headers)
-        .headers_order(HEADER_ORDER)
+        .original_headers(original_headers)
         .build();
 
     // Build a client with emulation config
     let client = Client::builder()
-        .emulation(context)
+        .emulation(emulation)
         .cert_verification(false)
         .build()?;
 

@@ -219,11 +219,6 @@ name = "multipart"
 path = "tests/multipart.rs"
 required-features = ["multipart", "stream"]
 
-[[test]]
-name = "client_update"
-path = "tests/client_update.rs"
-required-features = ["full"]
-
 [[example]]
 name = "json_dynamic"
 path = "examples/json_dynamic.rs"
@@ -249,11 +244,6 @@ path = "examples/hickory_dns.rs"
 required-features = ["hickory-dns", "tracing"]
 
 [[example]]
-name = "headers_order"
-path = "examples/headers_order.rs"
-required-features = ["cookies", "tracing"]
-
-[[example]]
 name = "emulation_firefox"
 path = "examples/emulation_firefox.rs"
 required-features = ["full", "tracing"]
@@ -262,26 +252,6 @@ required-features = ["full", "tracing"]
 name = "emulation_twitter"
 path = "examples/emulation_twitter.rs"
 required-features = ["full", "tracing"]
-
-[[example]]
-name = "set_headers"
-path = "examples/set_headers.rs"
-required-features = ["tracing"]
-
-[[example]]
-name = "set_proxies"
-path = "examples/set_proxies.rs"
-required-features = ["socks", "brotli", "tracing"]
-
-[[example]]
-name = "set_local_address"
-path = "examples/set_local_address.rs"
-required-features = ["brotli", "tracing"]
-
-[[example]]
-name = "set_interface"
-path = "examples/set_interface.rs"
-required-features = ["brotli", "tracing"]
 
 [[example]]
 name = "set_cert_store"

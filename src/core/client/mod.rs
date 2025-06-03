@@ -7,16 +7,16 @@ pub(super) mod dispatch;
 
 pub mod connect;
 mod dst;
-mod network;
 #[doc(hidden)]
 // Publicly available, but just for legacy purposes. A better pool will be
 // designed.
 mod pool;
-mod request;
 
+use std::borrow::Cow;
 use std::error::Error as StdError;
 use std::fmt;
 use std::future::Future;
+use std::net::{Ipv4Addr, Ipv6Addr};
 use std::num::NonZeroUsize;
 use std::pin::Pin;
 use std::task::{self, Poll};
@@ -29,6 +29,7 @@ use crate::core::rt::Timer;
 use crate::core::{Method, Request, Response, Uri, Version, body::Body};
 use crate::http1::Http1Config;
 use crate::http2::Http2Config;
+use crate::proxy::ProxyScheme;
 use crate::tls::AlpnProtos;
 
 use futures_util::future::{self, Either, FutureExt, TryFutureExt};
@@ -42,7 +43,6 @@ use pool::Ver;
 use common::{Exec, Lazy, lazy as hyper_lazy, timer};
 
 pub use dst::Dst;
-pub use network::{NetworkScheme, NetworkSchemeBuilder};
 
 type BoxSendFuture = Pin<Box<dyn Future<Output = ()> + Send>>;
 
@@ -128,12 +128,14 @@ macro_rules! e {
 }
 
 // We might change this... :shrug:
-#[derive(Debug, Clone, Hash, PartialEq, Eq)]
-struct PoolKey {
-    uri: Uri,
-    alpn: Option<AlpnProtos>,
-    network: NetworkScheme,
-}
+type PoolKey = (
+    Uri,
+    Option<AlpnProtos>,
+    Option<Ipv4Addr>,
+    Option<Ipv6Addr>,
+    Option<Cow<'static, str>>,
+    Option<ProxyScheme>,
+);
 
 #[allow(clippy::large_enum_variant)]
 enum TrySendError<B> {
@@ -220,8 +222,7 @@ where
     /// # }
     /// # fn main() {}
     /// ```
-    pub fn request(&self, req: Request<B>) -> ResponseFuture {
-        let (mut req, version, network_scheme) = req.pieces();
+    pub fn request(&self, mut req: Request<B>) -> ResponseFuture {
         let is_http_connect = req.method() == Method::CONNECT;
         match req.version() {
             Version::HTTP_10 => {
@@ -235,14 +236,14 @@ where
             other => return ResponseFuture::error_version(other),
         };
 
-        let ctx = match Dst::new(req.uri_mut(), is_http_connect, network_scheme, version) {
-            Ok(s) => s,
+        let dst = match Dst::new(&mut req, is_http_connect) {
+            Ok(dst) => dst,
             Err(err) => {
                 return ResponseFuture::new(future::err(err));
             }
         };
 
-        ResponseFuture::new(self.clone().send_request(req, ctx))
+        ResponseFuture::new(self.clone().send_request(req, dst))
     }
 
     async fn send_request(
@@ -682,16 +683,19 @@ where
         })
     }
 
+    #[allow(dead_code)]
     #[inline]
     pub(crate) fn connector_mut(&mut self) -> &mut C {
         &mut self.connector
     }
 
+    #[allow(dead_code)]
     #[inline]
     pub(crate) fn set_http1_config(&mut self, config: Http1Config) {
         self.h1_builder.set_config(config);
     }
 
+    #[allow(dead_code)]
     #[inline]
     pub(crate) fn set_http2_config(&mut self, config: Http2Config) {
         self.h2_builder.config(config);

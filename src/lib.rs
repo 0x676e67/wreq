@@ -1,5 +1,4 @@
 #![deny(missing_docs)]
-#![deny(missing_debug_implementations)]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![cfg_attr(test, deny(warnings))]
 
@@ -325,8 +324,11 @@ pub use self::client::{
     Body, Client, ClientBuilder, EmulationProvider, EmulationProviderFactory, Request,
     RequestBuilder, Response, Upgraded,
 };
-pub use self::core::client::Dst;
-pub use self::core::config::{http1, http2};
+pub use self::core::{
+    client::Dst,
+    config::{http1, http2},
+    ext::OriginalHeaders,
+};
 pub use self::proxy::{NoProxy, Proxy};
 
 mod client;

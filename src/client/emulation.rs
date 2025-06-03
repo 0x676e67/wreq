@@ -1,8 +1,7 @@
-use crate::http1::Http1Config;
 use crate::http2::Http2Config;
 use crate::tls::TlsConfig;
-use http::{HeaderMap, HeaderName};
-use std::borrow::Cow;
+use crate::{OriginalHeaders, http1::Http1Config};
+use http::HeaderMap;
 
 /// Trait defining the interface for providing an `EmulationProvider`.
 ///
@@ -65,7 +64,7 @@ pub struct EmulationProvider {
     pub(crate) http1_config: Option<Http1Config>,
     pub(crate) http2_config: Option<Http2Config>,
     pub(crate) default_headers: Option<HeaderMap>,
-    pub(crate) headers_order: Option<Cow<'static, [HeaderName]>>,
+    pub(crate) original_headers: Option<OriginalHeaders>,
 }
 
 impl EmulationProviderBuilder {
@@ -105,12 +104,12 @@ impl EmulationProviderBuilder {
         self
     }
 
-    /// Sets the order of headers for the `EmulationProvider`.
-    pub fn headers_order<O>(mut self, order: O) -> Self
+    /// Sets the original headers for the `EmulationProvider`.
+    pub fn original_headers<H>(mut self, headers: H) -> Self
     where
-        O: Into<Cow<'static, [HeaderName]>>,
+        H: Into<Option<OriginalHeaders>>,
     {
-        self.provider.headers_order = Some(order.into());
+        self.provider.original_headers = headers.into();
         self
     }
 

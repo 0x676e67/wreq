@@ -1,13 +1,17 @@
 //! HTTP extensions.
 
-use bytes::Bytes;
-use http::header::HeaderName;
-use http::header::{HeaderMap, IntoHeaderName, ValueIter};
+mod config;
+mod h1_reason_phrase;
+mod header;
+
 use std::fmt;
 
-mod h1_reason_phrase;
-mod net;
-pub use h1_reason_phrase::ReasonPhrase;
+pub(crate) use config::{
+    RequestConfig, RequestConfigValue, RequestHttpVersionPref, RequestInterface, RequestIpv4Addr,
+    RequestIpv6Addr, RequestOriginalHeaders, RequestProxyScheme,
+};
+pub(crate) use h1_reason_phrase::ReasonPhrase;
+pub use header::OriginalHeaders;
 
 /// Represents the `:protocol` pseudo-header used by
 /// the [Extended CONNECT Protocol].
@@ -49,81 +53,5 @@ impl AsRef<[u8]> for Protocol {
 impl fmt::Debug for Protocol {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.inner.fmt(f)
-    }
-}
-
-#[derive(Clone, Copy, Eq, PartialEq)]
-pub enum HttpVersionPref {
-    /// No preference for HTTP version
-    /// (default) Use HTTP/2 if available, otherwise HTTP/1.1
-    Auto,
-    /// Prefer HTTP/2
-    Http1,
-    /// Prefer HTTP/1.1
-    Http2,
-}
-
-impl<T> From<T> for HttpVersionPref
-where
-    T: Into<Option<http::Version>>,
-{
-    fn from(value: T) -> Self {
-        match value.into() {
-            Some(http::Version::HTTP_2) => HttpVersionPref::Http1,
-            Some(http::Version::HTTP_11) => HttpVersionPref::Http2,
-            None | _ => HttpVersionPref::Auto,
-        }
-    }
-}
-
-/// A map from header names to their original casing as received in an HTTP message.
-///
-/// If an HTTP/1 response `res` is parsed on a connection whose option
-/// [`preserve_header_case`] was set to true and the response included
-/// the following headers:
-///
-/// ```ignore
-/// x-Bread: Baguette
-/// X-BREAD: Pain
-/// x-bread: Ficelle
-/// ```
-///
-/// Then `res.extensions().get::<HeaderCaseMap>()` will return a map with:
-///
-/// ```ignore
-/// HeaderCaseMap({
-///     "x-bread": ["x-Bread", "X-BREAD", "x-bread"],
-/// })
-/// ```
-///
-/// [`preserve_header_case`]: /client/struct.Client.html#method.preserve_header_case
-#[derive(Clone, Debug)]
-pub(crate) struct HeaderCaseMap(HeaderMap<Bytes>);
-
-impl HeaderCaseMap {
-    /// Returns a view of all spellings associated with that header name,
-    /// in the order they were found.
-    pub(crate) fn get_all<'a>(
-        &'a self,
-        name: &HeaderName,
-    ) -> impl Iterator<Item = impl AsRef<[u8]> + 'a> + 'a {
-        self.get_all_internal(name)
-    }
-
-    /// Returns a view of all spellings associated with that header name,
-    /// in the order they were found.
-    pub(crate) fn get_all_internal(&self, name: &HeaderName) -> ValueIter<'_, Bytes> {
-        self.0.get_all(name).into_iter()
-    }
-
-    pub(crate) fn default() -> Self {
-        Self(Default::default())
-    }
-
-    pub(crate) fn append<N>(&mut self, name: N, orig: Bytes)
-    where
-        N: IntoHeaderName,
-    {
-        self.0.append(name, orig);
     }
 }

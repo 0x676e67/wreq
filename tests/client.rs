@@ -11,7 +11,7 @@ use http::{
 };
 #[cfg(feature = "json")]
 use std::collections::HashMap;
-use wreq::Client;
+use wreq::{Client, OriginalHeaders};
 
 #[tokio::test]
 async fn auto_headers() {
@@ -74,7 +74,7 @@ async fn auto_headers() {
 
 #[tokio::test]
 async fn test_headers_order_with_client() {
-    use http::{HeaderName, HeaderValue};
+    use http::HeaderValue;
     use wreq::Client;
     use wreq::header::{ACCEPT, CONTENT_TYPE, USER_AGENT};
 
@@ -82,13 +82,13 @@ async fn test_headers_order_with_client() {
         assert_eq!(req.method(), "POST");
 
         let expected_headers = vec![
+            ("cookie", "cookie1=cookie1-value"),
+            ("cookie", "cookie2=cookie2-value"),
             ("user-agent", "my-test-client"),
             ("accept", "*/*"),
             ("content-type", "application/json"),
             ("authorization", "Bearer test-token"),
             ("referer", "https://example.com"),
-            ("cookie", "cookie1=cookie1-value"),
-            ("cookie", "cookie2=cookie2-value"),
             ("cache-control", "no-cache"),
         ];
 
@@ -127,15 +127,17 @@ async fn test_headers_order_with_client() {
             headers.insert(CACHE_CONTROL, HeaderValue::from_static("no-cache"));
             headers
         })
-        .headers_order(vec![
-            HeaderName::from_static("user-agent"),
-            HeaderName::from_static("accept"),
-            HeaderName::from_static("content-type"),
-            HeaderName::from_static("authorization"),
-            HeaderName::from_static("referer"),
-            HeaderName::from_static("cookie"),
-            HeaderName::from_static("cache-control"),
-        ])
+        .original_headers({
+            let mut original_headers = OriginalHeaders::new();
+            original_headers.insert("cookie");
+            original_headers.insert("user-agent");
+            original_headers.insert("accept");
+            original_headers.insert("content-type");
+            original_headers.insert("authorization");
+            original_headers.insert("referer");
+            original_headers.insert("cache-control");
+            original_headers
+        })
         .build()
         .unwrap();
 
@@ -151,7 +153,7 @@ async fn test_headers_order_with_client() {
 
 #[tokio::test]
 async fn test_headers_order_with_request() {
-    use http::{HeaderName, HeaderValue};
+    use http::HeaderValue;
     use wreq::Client;
     use wreq::header::{ACCEPT, CONTENT_TYPE, USER_AGENT};
 
@@ -192,20 +194,6 @@ async fn test_headers_order_with_request() {
 
     let client = Client::builder().no_proxy().build().unwrap();
 
-    client
-        .update()
-        .headers_order(vec![
-            HeaderName::from_static("user-agent"),
-            HeaderName::from_static("accept"),
-            HeaderName::from_static("content-type"),
-            HeaderName::from_static("authorization"),
-            HeaderName::from_static("referer"),
-            HeaderName::from_static("cookie"),
-            HeaderName::from_static("cache-control"),
-        ])
-        .apply()
-        .unwrap();
-
     let res = client
         .post(&url)
         .headers({
@@ -219,6 +207,17 @@ async fn test_headers_order_with_request() {
             headers.append("cookie", HeaderValue::from_static("cookie2=cookie2"));
             headers.insert(CACHE_CONTROL, HeaderValue::from_static("no-cache"));
             headers
+        })
+        .original_headers({
+            let mut original_headers = OriginalHeaders::new();
+            original_headers.insert("user-agent");
+            original_headers.insert("accept");
+            original_headers.insert("content-type");
+            original_headers.insert("authorization");
+            original_headers.insert("referer");
+            original_headers.insert("cookie");
+            original_headers.insert("cache-control");
+            original_headers
         })
         .body(r#"{"message":"hello"}"#)
         .send()

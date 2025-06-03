@@ -14,7 +14,7 @@ use std::{
 };
 
 use crate::core::ext::Protocol;
-use crate::{Error, RequestBuilder, Response, error, proxy::IntoProxy};
+use crate::{Error, OriginalHeaders, RequestBuilder, Response, error, proxy::IntoProxy};
 use futures_util::{Sink, SinkExt, Stream, StreamExt};
 use http::{HeaderMap, HeaderName, HeaderValue, Method, StatusCode, Version, header, uri::Scheme};
 use serde::Serialize;
@@ -178,11 +178,9 @@ impl WebSocketRequestBuilder {
         self
     }
 
-    /// Set the order of the headers.
-    ///
-    /// The headers order will override client default order.
-    pub fn headers_order(mut self, order: impl Into<Cow<'static, [HeaderName]>>) -> Self {
-        self.inner = self.inner.headers_order(order);
+    /// Set the original headers for this request.
+    pub fn original_headers(mut self, original_headers: OriginalHeaders) -> Self {
+        self.inner = self.inner.original_headers(original_headers);
         self
     }
 
@@ -303,7 +301,7 @@ impl WebSocketRequestBuilder {
 
         // Get the version of the request
         // If the version is not set, use the default version
-        let version = request.version().unwrap_or(Version::HTTP_11);
+        let version = request.version().cloned().unwrap_or(Version::HTTP_11);
 
         // Set the headers for the websocket handshake
         let headers = request.headers_mut();

@@ -10,16 +10,15 @@ use std::task::{Context, Poll};
 use std::time::Duration;
 use std::{collections::HashMap, convert::TryInto, net::SocketAddr};
 
-use crate::config::{RequestConfig, RequestTimeout};
+use crate::config::RequestTimeout;
 use crate::connect::{
     BoxedConnectorLayer, BoxedConnectorService, Connector,
     sealed::{Conn, Unnameable},
 };
 #[cfg(feature = "cookies")]
 use crate::cookie;
-use crate::core::client::{
-    Builder, Client as HyperClient, NetworkScheme, NetworkSchemeBuilder, connect::HttpConnector,
-};
+use crate::core::client::{Builder, Client as HyperClient, connect::HttpConnector};
+use crate::core::ext::{RequestConfig, RequestOriginalHeaders};
 use crate::core::rt::{TokioExecutor, tokio::TokioTimer};
 #[cfg(feature = "hickory-dns")]
 use crate::dns::hickory::{HickoryDnsResolver, LookupIpStrategy};
@@ -31,7 +30,7 @@ use crate::into_url::try_uri;
 use crate::proxy::IntoProxy;
 use crate::redirect::TowerRedirectPolicy;
 use crate::tls::{CertStore, CertificateInput, Identity, KeyLogPolicy, TlsConfig};
-use crate::{IntoUrl, Method, Proxy, Url};
+use crate::{IntoUrl, Method, OriginalHeaders, Proxy, Url};
 use crate::{
     error, redirect,
     tls::{AlpnProtos, TlsConnector, TlsVersion},
@@ -47,7 +46,7 @@ use super::{Body, EmulationProviderFactory};
 use bytes::Bytes;
 use http::Extensions;
 use http::{
-    Uri, Version,
+    Uri,
     header::{HeaderMap, HeaderValue, PROXY_AUTHORIZATION, USER_AGENT},
     uri::Scheme,
 };
@@ -84,7 +83,9 @@ pub struct ClientBuilder {
 }
 
 struct Config {
+    error: Option<Error>,
     headers: HeaderMap,
+    original_headers: Option<OriginalHeaders>,
     accepts: Accepts,
     connect_timeout: Option<Duration>,
     connection_verbose: bool,
@@ -100,16 +101,30 @@ struct Config {
     referer: bool,
     timeout: Option<Duration>,
     read_timeout: Option<Duration>,
-    network_scheme: NetworkSchemeBuilder,
+    #[cfg(any(
+        target_os = "android",
+        target_os = "fuchsia",
+        target_os = "illumos",
+        target_os = "ios",
+        target_os = "linux",
+        target_os = "macos",
+        target_os = "solaris",
+        target_os = "tvos",
+        target_os = "visionos",
+        target_os = "watchos",
+    ))]
+    interface: Option<std::borrow::Cow<'static, str>>,
+    local_ipv4_address: Option<Ipv4Addr>,
+    local_ipv6_address: Option<Ipv6Addr>,
     nodelay: bool,
     #[cfg(feature = "cookies")]
     cookie_store: Option<Arc<dyn cookie::CookieStore>>,
+    #[cfg(feature = "hickory-dns")]
     hickory_dns: bool,
-    error: Option<Error>,
+    #[cfg(feature = "hickory-dns")]
+    hickory_dns_strategy: Option<LookupIpStrategy>,
     dns_overrides: HashMap<String, Vec<SocketAddr>>,
     dns_resolver: Option<Arc<dyn Resolve>>,
-    #[cfg(feature = "hickory-dns")]
-    dns_strategy: Option<LookupIpStrategy>,
     https_only: bool,
     http1_config: Http1Config,
     http2_config: Http2Config,
@@ -144,6 +159,7 @@ impl ClientBuilder {
             config: Config {
                 error: None,
                 headers: HeaderMap::new(),
+                original_headers: None,
                 accepts: Accepts::default(),
                 connect_timeout: None,
                 connection_verbose: false,
@@ -157,15 +173,30 @@ impl ClientBuilder {
                 tcp_keepalive_retries: None,
                 proxies: Vec::new(),
                 auto_sys_proxy: true,
-                redirect_policy: redirect::Policy::none(),
+                redirect_policy: redirect::Policy::default(),
                 referer: true,
                 timeout: None,
                 read_timeout: None,
-                network_scheme: NetworkScheme::builder(),
+                #[cfg(any(
+                    target_os = "android",
+                    target_os = "fuchsia",
+                    target_os = "illumos",
+                    target_os = "ios",
+                    target_os = "linux",
+                    target_os = "macos",
+                    target_os = "solaris",
+                    target_os = "tvos",
+                    target_os = "visionos",
+                    target_os = "watchos",
+                ))]
+                interface: None,
+                local_ipv4_address: None,
+                local_ipv6_address: None,
                 nodelay: true,
+                #[cfg(feature = "hickory-dns")]
                 hickory_dns: cfg!(feature = "hickory-dns"),
                 #[cfg(feature = "hickory-dns")]
-                dns_strategy: None,
+                hickory_dns_strategy: None,
                 #[cfg(feature = "cookies")]
                 cookie_store: None,
                 dns_overrides: HashMap::new(),
@@ -204,11 +235,16 @@ impl ClientBuilder {
             return Err(err);
         }
 
-        let mut proxies = config.proxies;
-        if config.auto_sys_proxy {
-            proxies.push(Proxy::system());
-        }
-        let proxies_maybe_http_auth = proxies.iter().any(Proxy::maybe_has_http_auth);
+        let (proxies, proxies_maybe_http_auth) = {
+            let mut proxies = config.proxies;
+            if config.auto_sys_proxy {
+                proxies.push(Proxy::system());
+            }
+            let proxies = Arc::new(proxies);
+            let proxies_maybe_http_auth = proxies.iter().any(Proxy::maybe_has_http_auth);
+
+            (proxies, proxies_maybe_http_auth)
+        };
 
         config
             .builder
@@ -227,7 +263,7 @@ impl ClientBuilder {
                     Some(dns_resolver) => dns_resolver,
                     #[cfg(feature = "hickory-dns")]
                     None if config.hickory_dns => {
-                        Arc::new(HickoryDnsResolver::new(config.dns_strategy)?)
+                        Arc::new(HickoryDnsResolver::new(config.hickory_dns_strategy)?)
                     }
                     None => Arc::new(GaiResolver::new()),
                 };
@@ -242,6 +278,15 @@ impl ClientBuilder {
             };
 
             let mut http = HttpConnector::new_with_resolver(resolver.clone());
+            http.set_interface(config.interface);
+            match (config.local_ipv4_address, config.local_ipv6_address) {
+                (Some(ipv4), None) => http.set_local_address(Some(IpAddr::from(ipv4))),
+                (None, Some(ipv6)) => http.set_local_address(Some(IpAddr::from(ipv6))),
+                (Some(ipv4), Some(ipv6)) => {
+                    http.set_local_addresses(ipv4, ipv6);
+                }
+                (None, None) => {}
+            }
             http.set_connect_timeout(config.connect_timeout);
 
             let tls = {
@@ -269,12 +314,13 @@ impl ClientBuilder {
                     .build()?
             };
 
-            let builder = Connector::builder(http, tls, config.nodelay, config.tls_info)
-                .timeout(config.connect_timeout)
-                .keepalive(config.tcp_keepalive)
-                .tcp_keepalive_interval(config.tcp_keepalive_interval)
-                .tcp_keepalive_retries(config.tcp_keepalive_retries)
-                .verbose(config.connection_verbose);
+            let builder =
+                Connector::builder(http, tls, proxies.clone(), config.nodelay, config.tls_info)
+                    .timeout(config.connect_timeout)
+                    .keepalive(config.tcp_keepalive)
+                    .tcp_keepalive_interval(config.tcp_keepalive_interval)
+                    .tcp_keepalive_retries(config.tcp_keepalive_retries)
+                    .verbose(config.connection_verbose);
 
             #[cfg(feature = "socks")]
             {
@@ -309,14 +355,14 @@ impl ClientBuilder {
                     policy,
                 ),
                 headers: config.headers,
+                original_headers: RequestConfig::new(config.original_headers),
                 referer: config.referer,
                 total_timeout: RequestConfig::new(config.timeout),
                 read_timeout: RequestConfig::new(config.read_timeout),
                 https_only: config.https_only,
                 http2_max_retry_count: config.http2_max_retry_count,
-                proxies,
                 proxies_maybe_http_auth,
-                network_scheme: config.network_scheme,
+                proxies,
                 alpn_protos: config.alpn_protos,
                 keylog: config.keylog_policy,
                 tls_sni: config.tls_sni,
@@ -414,6 +460,12 @@ impl ClientBuilder {
     /// ```
     pub fn default_headers(mut self, headers: HeaderMap) -> ClientBuilder {
         crate::util::replace_headers(&mut self.config.headers, headers);
+        self
+    }
+
+    /// Sets the original headers for every request.
+    pub fn original_headers(mut self, original_headers: OriginalHeaders) -> ClientBuilder {
+        self.config.original_headers = Some(original_headers);
         self
     }
 
@@ -808,7 +860,11 @@ impl ClientBuilder {
     where
         T: Into<Option<IpAddr>>,
     {
-        self.config.network_scheme.address(addr);
+        match addr.into() {
+            Some(IpAddr::V4(addr)) => self.config.local_ipv4_address = Some(addr),
+            Some(IpAddr::V6(addr)) => self.config.local_ipv6_address = Some(addr),
+            _ => {}
+        }
         self
     }
 
@@ -819,7 +875,8 @@ impl ClientBuilder {
         V4: Into<Option<Ipv4Addr>>,
         V6: Into<Option<Ipv6Addr>>,
     {
-        self.config.network_scheme.addresses(ipv4, ipv6);
+        self.config.local_ipv4_address = ipv4.into();
+        self.config.local_ipv6_address = ipv6.into();
         self
     }
 
@@ -864,7 +921,7 @@ impl ClientBuilder {
     where
         T: Into<Cow<'static, str>>,
     {
-        self.config.network_scheme.interface(interface);
+        self.config.interface = Some(interface.into());
         self
     }
 
@@ -932,6 +989,13 @@ impl ClientBuilder {
 
         if let Some(mut headers) = emulation.default_headers {
             std::mem::swap(&mut self.config.headers, &mut headers);
+        }
+
+        if emulation.original_headers.is_some() {
+            std::mem::swap(
+                &mut self.config.original_headers,
+                &mut emulation.original_headers,
+            );
         }
 
         if let Some(mut http1_config) = emulation.http1_config.take() {
@@ -1090,7 +1154,7 @@ impl ClientBuilder {
     #[cfg(feature = "hickory-dns")]
     #[cfg_attr(docsrs, doc(cfg(feature = "hickory-dns")))]
     pub fn hickory_dns_strategy(mut self, strategy: LookupIpStrategy) -> ClientBuilder {
-        self.config.dns_strategy = Some(strategy);
+        self.config.hickory_dns_strategy = Some(strategy);
         self
     }
 
@@ -1301,17 +1365,8 @@ impl Client {
     }
 
     pub(super) fn execute_request(&self, req: Request) -> Pending {
-        let (
-            method,
-            url,
-            mut headers,
-            body,
-            extensions,
-            version,
-            redirect,
-            _allow_compression,
-            network_scheme,
-        ) = req.pieces();
+        let (method, url, mut headers, body, mut extensions, redirect, _allow_compression) =
+            req.pieces();
 
         // get the scheme of the URL
         let scheme = url.scheme();
@@ -1344,7 +1399,7 @@ impl Client {
             feature = "deflate"
         ))]
         if _allow_compression {
-            add_accpet_encoding_header(&client.accepts, &mut headers);
+            add_accpet_encoding_header(&self.inner.accepts, &mut headers);
         }
 
         // parse Uri from the Url
@@ -1364,13 +1419,16 @@ impl Client {
 
         self.inner.proxy_auth(&uri, &mut headers);
 
-        let network_scheme = self.inner.network_scheme(&uri, network_scheme);
         let in_flight = {
             let mut req = crate::core::Request::builder()
                 .uri(uri)
                 .method(method.clone())
                 .body(body)
                 .expect("valid request parts");
+
+            {
+                self.inner.original_headers.or_insert(&mut extensions);
+            }
 
             *req.headers_mut() = headers.clone();
             *req.extensions_mut() = extensions.clone();
@@ -1394,12 +1452,10 @@ impl Client {
                 url,
                 headers,
                 body: reusable,
-                version,
                 extensions,
                 http2_retry_count: 0,
                 http2_max_retry_count: self.inner.http2_max_retry_count,
                 redirect,
-                network_scheme,
                 inner: self.inner.clone(),
                 in_flight,
                 total_timeout,
@@ -1438,21 +1494,22 @@ impl tower_service::Service<Request> for &'_ Client {
     }
 }
 
+#[allow(dead_code)]
 #[derive(Clone)]
 struct ClientRef {
     accepts: Accepts,
     #[cfg(feature = "cookies")]
     cookie_store: Option<Arc<dyn cookie::CookieStore>>,
     headers: HeaderMap,
+    original_headers: RequestConfig<RequestOriginalHeaders>,
     client: FollowRedirect<ClientService, TowerRedirectPolicy>,
     total_timeout: RequestConfig<RequestTimeout>,
     read_timeout: RequestConfig<RequestTimeout>,
     referer: bool,
     https_only: bool,
     http2_max_retry_count: usize,
-    proxies: Vec<Proxy>,
+    proxies: Arc<Vec<Proxy>>,
     proxies_maybe_http_auth: bool,
-    network_scheme: NetworkSchemeBuilder,
     alpn_protos: Option<AlpnProtos>,
     keylog: Option<KeyLogPolicy>,
     tls_sni: bool,
@@ -1498,24 +1555,6 @@ impl ClientRef {
             }
         }
     }
-
-    #[inline]
-    fn network_scheme(&self, uri: &Uri, default: NetworkScheme) -> NetworkScheme {
-        if matches!(default, NetworkScheme::Default) {
-            let mut builder = self.network_scheme.clone();
-
-            // iterate over the client's proxies and use the first valid one
-            for proxy in self.proxies.iter() {
-                if let Some(proxy_scheme) = proxy.intercept(uri) {
-                    builder.proxy_scheme(proxy_scheme);
-                }
-            }
-
-            return builder.build();
-        }
-
-        default
-    }
 }
 
 type ResponseFuture =
@@ -1540,12 +1579,10 @@ pin_project! {
         url: Url,
         headers: HeaderMap,
         body: Option<Option<Bytes>>,
-        version: Option<Version>,
         extensions: Extensions,
         http2_retry_count: usize,
         http2_max_retry_count: usize,
         redirect: Option<redirect::Policy>,
-        network_scheme: NetworkScheme,
         inner: Arc<ClientRef>,
         #[pin]
         in_flight: ResponseFuture,

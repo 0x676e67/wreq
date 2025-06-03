@@ -1,5 +1,6 @@
 use self::tls_conn::BoringTlsConn;
 
+use crate::Proxy;
 use crate::core::client::connect::proxy::Tunnel;
 use crate::core::client::{
     Dst,
@@ -21,11 +22,12 @@ use tower::util::{BoxCloneSyncServiceLayer, MapRequestLayer};
 use tower::{ServiceBuilder, timeout::TimeoutLayer, util::BoxCloneSyncService};
 use tower_service::Service;
 
+use std::future::Future;
 use std::io::{self, IoSlice};
 use std::pin::Pin;
+use std::sync::Arc;
 use std::task::{Context, Poll};
 use std::time::Duration;
-use std::{future::Future, ops::Deref};
 
 use crate::dns::DynResolver;
 use crate::error::{BoxError, cast_to_internal_error};
@@ -41,6 +43,7 @@ pub(crate) type BoxedConnectorLayer =
 pub(crate) struct ConnectorBuilder {
     http: HttpConnector,
     tls: TlsConnector,
+    proxies: Arc<Vec<Proxy>>,
     verbose: verbose::Wrapper,
     timeout: Option<Duration>,
     nodelay: bool,
@@ -57,6 +60,7 @@ impl ConnectorBuilder {
         let base_service = ConnectorService {
             http: self.http,
             tls: self.tls,
+            proxies: self.proxies,
             verbose: self.verbose,
             nodelay: self.nodelay,
             tls_info: self.tls_info,
@@ -178,6 +182,7 @@ impl Connector {
     pub(crate) fn builder(
         mut http: HttpConnector,
         tls: TlsConnector,
+        proxies: Arc<Vec<Proxy>>,
         nodelay: bool,
         tls_info: bool,
     ) -> ConnectorBuilder {
@@ -185,6 +190,7 @@ impl Connector {
         ConnectorBuilder {
             http,
             tls,
+            proxies,
             verbose: verbose::OFF,
             timeout: None,
             nodelay,
@@ -194,6 +200,7 @@ impl Connector {
         }
     }
 
+    #[allow(dead_code)]
     pub(crate) fn set_tls_connector(&mut self, mut connector: TlsConnector) {
         match self {
             Connector::Simple(service) => {
@@ -207,6 +214,7 @@ impl Connector {
                 let builder = Connector::builder(
                     base_service.http.clone(),
                     connector,
+                    base_service.proxies.clone(),
                     base_service.nodelay,
                     base_service.tls_info,
                 )
@@ -256,6 +264,7 @@ impl Service<Dst> for Connector {
 pub(crate) struct ConnectorService {
     http: HttpConnector,
     tls: TlsConnector,
+    proxies: Arc<Vec<Proxy>>,
     verbose: verbose::Wrapper,
     /// When there is a single timeout layer and no other layers,
     /// we embed it directly inside our base Service::call().
@@ -271,6 +280,8 @@ pub(crate) struct ConnectorService {
 impl ConnectorService {
     #[cfg(feature = "socks")]
     async fn connect_socks(&self, mut dst: Dst, proxy: ProxyScheme) -> Result<Conn, BoxError> {
+        let uri = dst.uri().clone();
+        debug!("socks proxy({:?}) intercepts '{:?}'", proxy, dst);
         let dns = match proxy {
             ProxyScheme::Socks4 {
                 remote_dns: false, ..
@@ -289,14 +300,14 @@ impl ConnectorService {
             }
         };
 
-        if dst.scheme() == Some(&Scheme::HTTPS) {
+        if uri.scheme() == Some(&Scheme::HTTPS) {
             let http = HttpsConnector::new(self.http.clone(), self.tls.clone(), &mut dst);
 
             trace!("socks HTTPS over proxy");
-            let host = dst.host().ok_or(crate::error::uri_bad_host())?;
-            let conn = socks::connect(proxy, &dst, dns, &self.resolver).await?;
+            let host = uri.host().ok_or(crate::error::uri_bad_host())?;
+            let conn = socks::connect(proxy, &uri, dns, &self.resolver).await?;
 
-            let io = http.connect(&dst, host, TokioIo::new(conn)).await?;
+            let io = http.connect(&uri, host, TokioIo::new(conn)).await?;
 
             return Ok(Conn {
                 inner: self.verbose.wrap(BoringTlsConn {
@@ -307,7 +318,7 @@ impl ConnectorService {
             });
         }
 
-        socks::connect(proxy, &dst, dns, &self.resolver)
+        socks::connect(proxy, &uri, dns, &self.resolver)
             .await
             .map(|tcp| Conn {
                 inner: self.verbose.wrap(TokioIo::new(tcp)),
@@ -321,18 +332,19 @@ impl ConnectorService {
         mut dst: Dst,
         is_proxy: bool,
     ) -> Result<Conn, BoxError> {
+        let uri = dst.uri().clone();
         let mut http = self.http.clone();
 
         // Disable Nagle's algorithm for TLS handshake
         //
         // https://www.openssl.org/docs/man1.1.1/man3/SSL_connect.html#NOTES
-        if !self.nodelay && (dst.scheme() == Some(&Scheme::HTTPS)) {
+        if !self.nodelay && (uri.scheme() == Some(&Scheme::HTTPS)) {
             http.set_nodelay(true);
         }
 
         trace!("connect with maybe proxy");
         let mut http = HttpsConnector::new(http, self.tls, &mut dst);
-        let io = http.call(dst.into()).await?;
+        let io = http.call(uri).await?;
 
         if let MaybeHttpsStream::Https(stream) = io {
             if !self.nodelay {
@@ -362,7 +374,8 @@ impl ConnectorService {
         mut dst: Dst,
         proxy_scheme: ProxyScheme,
     ) -> Result<Conn, BoxError> {
-        debug!("proxy({:?}) intercepts '{:?}'", proxy_scheme, dst.uri());
+        let uri = dst.uri().clone();
+        debug!("proxy({:?}) intercepts '{:?}'", proxy_scheme, dst);
 
         let (proxy_dst, auth, headers) = match proxy_scheme {
             ProxyScheme::Http {
@@ -381,7 +394,7 @@ impl ConnectorService {
             }
         };
 
-        if dst.scheme() == Some(&Scheme::HTTPS) {
+        if uri.scheme() == Some(&Scheme::HTTPS) {
             trace!("tunneling HTTPS over proxy");
             let http = HttpsConnector::new(self.http.clone(), self.tls, &mut dst);
 
@@ -395,12 +408,12 @@ impl ConnectorService {
                 tunnel = tunnel.with_headers((*headers).clone());
             }
 
+            let host = uri.host().ok_or(crate::error::uri_bad_host())?;
+
             // We don't wrap this again in an HttpsConnector since that uses Maybe,
             // and we know this is definitely HTTPS.
-            let tunneled = tunnel.call(dst.deref().clone()).await?;
-
-            let host = dst.host().ok_or(crate::error::uri_bad_host())?;
-            let io = http.connect(&dst, host, tunneled).await?;
+            let tunneled = tunnel.call(uri.clone()).await?;
+            let io = http.connect(&uri, host, tunneled).await?;
 
             return Ok(Conn {
                 inner: self.verbose.wrap(BoringTlsConn {
@@ -459,6 +472,15 @@ impl Service<Dst> for ConnectorService {
                 self.clone().connect_via_proxy(dst, proxy_scheme),
                 self.timeout,
             ));
+        } else {
+            for prox in self.proxies.iter() {
+                if let Some(proxy_scheme) = prox.intercept(dst.uri()) {
+                    return Box::pin(with_timeout(
+                        self.clone().connect_via_proxy(dst, proxy_scheme),
+                        self.timeout,
+                    ));
+                }
+            }
         }
 
         Box::pin(with_timeout(
