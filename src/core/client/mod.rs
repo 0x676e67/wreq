@@ -610,7 +610,7 @@ where
                                                 trace!("sending connection error to error channel");
                                                 // Send the error via the oneshot channel, ignoring send failures
                                                 // (e.g., if the receiver is dropped, which is handled later).
-                                                let _ =err_tx.send(e);
+                                                let _ = err_tx.send(e);
                                             })
                                             .map(|_| ()),
                                     );
