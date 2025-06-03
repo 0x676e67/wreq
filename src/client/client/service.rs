@@ -1,6 +1,5 @@
 use std::{
     pin::Pin,
-    sync::Arc,
     task::{Context, Poll},
 };
 use tower::Service;
@@ -15,14 +14,16 @@ use crate::{
 #[derive(Clone)]
 pub struct ClientService {
     #[cfg(feature = "cookies")]
-    cookie_store: Option<Arc<dyn cookie::CookieStore>>,
+    cookie_store: Option<std::sync::Arc<dyn cookie::CookieStore>>,
     client: Client<Connector, super::Body>,
 }
 
 impl ClientService {
     pub fn new(
         client: Client<Connector, super::Body>,
-        #[cfg(feature = "cookies")] cookie_store: Option<Arc<dyn cookie::CookieStore + 'static>>,
+        #[cfg(feature = "cookies")] cookie_store: Option<
+            std::sync::Arc<dyn cookie::CookieStore + 'static>,
+        >,
     ) -> Self {
         Self {
             #[cfg(feature = "cookies")]
@@ -42,9 +43,9 @@ impl Service<Request<super::Body>> for ClientService {
     }
 
     #[cfg(not(feature = "cookies"))]
-    fn call(&mut self, req: Request) -> Self::Future {
+    fn call(&mut self, req: Request<super::Body>) -> Self::Future {
         let clone = self.client.clone();
-        let mut inner = std::mem::replace(&mut self.hyper, clone);
+        let mut inner = std::mem::replace(&mut self.client, clone);
         Box::pin(async move { inner.call(req).await.map_err(crate::error::request) })
     }
 
