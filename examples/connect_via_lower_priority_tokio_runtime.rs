@@ -16,14 +16,14 @@
 // `tower = { version = "0.5", default-features = false}`
 
 #[tokio::main]
-async fn main() -> rquest::Result<()> {
+async fn main() -> wreq::Result<()> {
     background_threadpool::init_background_runtime();
     tokio::time::sleep(std::time::Duration::from_millis(10)).await;
 
-    let client = rquest::Client::builder()
+    let client = wreq::Client::builder()
         .connector_layer(background_threadpool::BackgroundProcessorLayer::new())
         .build()
-        .expect("should be able to build rquest client");
+        .expect("should be able to build wreq client");
 
     let url = if let Some(url) = std::env::args().nth(1) {
         url

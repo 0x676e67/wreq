@@ -1,10 +1,10 @@
-# rquest
+# wreq
 
-[![CI](https://github.com/0x676e67/rquest/actions/workflows/ci.yml/badge.svg)](https://github.com/0x676e67/rquest/actions/workflows/ci.yml)
-[![Crates.io License](https://img.shields.io/crates/l/rquest)](./LICENSE)
-![Crates.io MSRV](https://img.shields.io/crates/msrv/rquest?logo=rust)
-[![crates.io](https://img.shields.io/crates/v/rquest.svg?logo=rust)](https://crates.io/crates/rquest)
-[![Crates.io Total Downloads](https://img.shields.io/crates/d/rquest)](https://crates.io/crates/rquest)
+[![CI](https://github.com/0x676e67/wreq/actions/workflows/ci.yml/badge.svg)](https://github.com/0x676e67/wreq/actions/workflows/ci.yml)
+[![Crates.io License](https://img.shields.io/crates/l/wreq)](./LICENSE)
+![Crates.io MSRV](https://img.shields.io/crates/msrv/wreq?logo=rust)
+[![crates.io](https://img.shields.io/crates/v/wreq.svg?logo=rust)](https://crates.io/crates/wreq)
+[![Documentation](https://docs.rs/reqwest/badge.svg)](https://docs.rs/wreq)
 
 > 🚀 Help me work seamlessly with open source sharing by [sponsoring me on GitHub](https://github.com/0x676e67/0x676e67/blob/main/SPONSOR.md)
 
@@ -29,18 +29,18 @@ This asynchronous example utilizes [Tokio](https://tokio.rs) with optional featu
 ```toml
 [dependencies]
 tokio = { version = "1", features = ["full"] }
-rquest = "5"
-rquest-util = "2"
+wreq = "5"
+wreq-util = "2"
 ```
 
 And then the code:
 
 ```rust,no_run
-use rquest::Client;
+use wreq::Client;
 use rquest_util::Emulation;
 
 #[tokio::main]
-async fn main() -> rquest::Result<()> {
+async fn main() -> wreq::Result<()> {
     // Build a client
     let client = Client::builder()
         .emulation(Emulation::Firefox136)
@@ -58,11 +58,11 @@ async fn main() -> rquest::Result<()> {
 
 - **HTTP/2 over TLS**
 
-Due to the complexity of TLS encryption and the widespread adoption of HTTP/2, browser fingerprints such as **JA3**, **JA4**, and **Akamai** cannot be reliably emulated using simple fingerprint strings. Instead of parsing and emulating these string-based fingerprints, `rquest` provides fine-grained control over TLS and HTTP/2 extensions and settings for precise browser behavior emulation.
+Due to the complexity of TLS encryption and the widespread adoption of HTTP/2, browser fingerprints such as **JA3**, **JA4**, and **Akamai** cannot be reliably emulated using simple fingerprint strings. Instead of parsing and emulating these string-based fingerprints, `wreq` provides fine-grained control over TLS and HTTP/2 extensions and settings for precise browser behavior emulation.
 
 - **Device Emulation**
 
-Most browser device models share identical TLS and HTTP/2 configurations, differing only in the `User-Agent` string. Common browser device emulation templates are maintained in [`rquest-util`](https://github.com/0x676e67/rquest-util), a companion utility crate.
+Most browser device models share identical TLS and HTTP/2 configurations, differing only in the `User-Agent` string. Common browser device emulation templates are maintained in [`wreq-util`](https://github.com/0x676e67/wreq-util), a companion utility crate.
 
 ## Building
 
@@ -88,9 +88,9 @@ Unless you explicitly state otherwise, any contribution intentionally submitted 
 
 ## Sponsors
 
-<a href="https://dashboard.capsolver.com/passport/register?inviteCode=y7CtB_a-3X6d" target="_blank"><img src="https://raw.githubusercontent.com/0x676e67/rquest/main/.github/assets/capsolver.jpg" height="47" width="149"></a>
+<a href="https://dashboard.capsolver.com/passport/register?inviteCode=y7CtB_a-3X6d" target="_blank"><img src="https://raw.githubusercontent.com/0x676e67/wreq/main/.github/assets/capsolver.jpg" height="47" width="149"></a>
 
-[CapSolver](https://www.capsolver.com/?utm_source=github&utm_medium=banner_repo&utm_campaign=rquest) leverages AI-powered Auto Web Unblock to bypass Captchas effortlessly, providing fast, reliable, and cost-effective data access with seamless integration into Colly, Puppeteer, and Playwright—use code **`RQUEST`** for a 6% bonus!
+[CapSolver](https://www.capsolver.com/?utm_source=github&utm_medium=banner_repo&utm_campaign=wreq) leverages AI-powered Auto Web Unblock to bypass Captchas effortlessly, providing fast, reliable, and cost-effective data access with seamless integration into Colly, Puppeteer, and Playwright—use code **`RQUEST`** for a 6% bonus!
 
 ## Accolades
 

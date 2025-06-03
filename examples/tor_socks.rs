@@ -4,13 +4,13 @@
 //
 // `tokio = { version = "1", features = ["full"] }`
 #[tokio::main]
-async fn main() -> rquest::Result<()> {
+async fn main() -> wreq::Result<()> {
     // Make sure you are running tor and this is your socks port
-    let proxy = rquest::Proxy::all("socks5h://127.0.0.1:9050").expect("tor proxy should be there");
-    let client = rquest::Client::builder()
+    let proxy = wreq::Proxy::all("socks5h://127.0.0.1:9050").expect("tor proxy should be there");
+    let client = wreq::Client::builder()
         .proxy(proxy)
         .build()
-        .expect("should be able to build rquest client");
+        .expect("should be able to build wreq client");
 
     let res = client.get("https://check.torproject.org").send().await?;
     println!("Status: {}", res.status());

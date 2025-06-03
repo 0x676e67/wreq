@@ -9,12 +9,12 @@
     target_os = "watchos"
 ))]
 #[tokio::main]
-async fn main() -> rquest::Result<()> {
+async fn main() -> wreq::Result<()> {
     tracing_subscriber::fmt()
         .with_max_level(tracing::Level::TRACE)
         .init();
 
-    let text = rquest::Client::new()
+    let text = wreq::Client::new()
         .get("https://api.ip.sb/ip")
         .interface("utun4")
         .send()

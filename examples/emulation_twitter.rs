@@ -1,7 +1,7 @@
 use http::{HeaderMap, HeaderName, HeaderValue, header};
-use rquest::http2::{Http2Config, PseudoId, PseudoOrder};
-use rquest::tls::{AlpnProtos, TlsConfig, TlsVersion};
-use rquest::{Client, EmulationProvider};
+use wreq::http2::{Http2Config, PseudoId, PseudoOrder};
+use wreq::tls::{AlpnProtos, TlsConfig, TlsVersion};
+use wreq::{Client, EmulationProvider};
 
 // ============== TLS Extension Algorithms ==============
 
@@ -48,7 +48,7 @@ const HEADER_ORDER: &[HeaderName] = &[
 ];
 
 #[tokio::main]
-async fn main() -> rquest::Result<()> {
+async fn main() -> wreq::Result<()> {
     tracing_subscriber::fmt()
         .with_max_level(tracing::Level::TRACE)
         .init();

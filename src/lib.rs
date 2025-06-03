@@ -3,7 +3,7 @@
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![cfg_attr(test, deny(warnings))]
 
-//! # rquest
+//! # wreq
 //!
 //! An ergonomic all-in-one HTTP client for browser emulation with TLS, JA3/JA4, and HTTP/2 fingerprints.
 //!
@@ -20,18 +20,18 @@
 //! Additional learning resources include:
 //!
 //! - [The Rust Cookbook](https://doc.rust-lang.org/stable/book/ch00-00-introduction.html)
-//! - [Repository Examples](https://github.com/0x676e67/rquest/tree/main/examples)
+//! - [Repository Examples](https://github.com/0x676e67/wreq/tree/main/examples)
 //!
 //! ## Emulation
 //!
 //! The `emulation` module provides a way to simulate various browser TLS/HTTP2 fingerprints.
 //!
 //! ```rust,no_run
-//! use rquest::Client;
+//! use wreq::Client;
 //! use rquest_util::Emulation;
 //!
 //! #[tokio::main]
-//! async fn main() -> rquest::Result<()> {
+//! async fn main() -> wreq::Result<()> {
 //!     // Build a client
 //!     let client = Client::builder()
 //!         .emulation(Emulation::Firefox136)
@@ -52,11 +52,11 @@
 //! ```rust,no_run
 //!use futures_util::{SinkExt, StreamExt, TryStreamExt};
 //!use http::header;
-//!use rquest::{Client, Message};
+//!use wreq::{Client, Message};
 //!use std::time::Duration;
 //!
 //!#[tokio::main]
-//!async fn main() -> rquest::Result<()> {
+//!async fn main() -> wreq::Result<()> {
 //!    // Build a client
 //!    let client = Client::builder()
 //!        .cert_verification(false)
@@ -97,8 +97,8 @@
 //! Making a GET request is simple.
 //!
 //! ```rust
-//! # async fn run() -> rquest::Result<()> {
-//! let body = rquest::Client::new()
+//! # async fn run() -> wreq::Result<()> {
+//! let body = wreq::Client::new()
 //!     .get("https://www.rust-lang.org")
 //!     .send()
 //!     .await?
@@ -120,13 +120,13 @@
 //! by using the `body()` method of a [`RequestBuilder`][builder]. This lets you set the
 //! exact raw bytes of what the body should be. It accepts various types,
 //! including `String` and `Vec<u8>`. If you wish to pass a custom
-//! type, you can use the `rquest::Body` constructors.
+//! type, you can use the `wreq::Body` constructors.
 //!
 //! ```rust
-//! # use rquest::Error;
+//! # use wreq::Error;
 //! #
 //! # async fn run() -> Result<(), Error> {
-//! let client = rquest::Client::new();
+//! let client = wreq::Client::new();
 //! let res = client.post("http://httpbin.org/post")
 //!     .body("the exact body that is sent")
 //!     .send()
@@ -144,12 +144,12 @@
 //! implements [`Serialize`][serde].
 //!
 //! ```rust
-//! # use rquest::Error;
+//! # use wreq::Error;
 //! #
 //! # async fn run() -> Result<(), Error> {
 //! // This will POST a body of `foo=bar&baz=quux`
 //! let params = [("foo", "bar"), ("baz", "quux")];
-//! let client = rquest::Client::new();
+//! let client = wreq::Client::new();
 //! let res = client.post("http://httpbin.org/post")
 //!     .form(&params)
 //!     .send()
@@ -165,7 +165,7 @@
 //! serialized into JSON. The feature `json` is required.
 //!
 //! ```rust
-//! # use rquest::Error;
+//! # use wreq::Error;
 //! # use std::collections::HashMap;
 //! #
 //! # #[cfg(feature = "json")]
@@ -175,7 +175,7 @@
 //! map.insert("lang", "rust");
 //! map.insert("body", "json");
 //!
-//! let client = rquest::Client::new();
+//! let client = wreq::Client::new();
 //! let res = client.post("http://httpbin.org/post")
 //!     .json(&map)
 //!     .send()
@@ -207,7 +207,7 @@
 //! HTTP or HTTPS proxies take precedence.
 //!
 //! These can be overwritten by adding a [`Proxy`] to `ClientBuilder`
-//! i.e. `let proxy = rquest::Proxy::http("https://secure.example")?;`
+//! i.e. `let proxy = wreq::Proxy::http("https://secure.example")?;`
 //! or disabled by calling `ClientBuilder::no_proxy()`.
 //!
 //! `socks` feature is required if you have configured socks proxy like this:
@@ -232,10 +232,10 @@
 //!
 //! ## Certificate Store
 //!
-//! By default, rquest uses Mozilla's root certificates through the webpki-roots crate.
+//! By default, wreq uses Mozilla's root certificates through the webpki-roots crate.
 //! This static root certificate bundle is not automatically updated and ignores any root certificates installed on the host.
 //! You can disable default-features to use the system's default certificate path.
-//! Additionally, rquest provides a certificate store for users to customize and update certificates.
+//! Additionally, wreq provides a certificate store for users to customize and update certificates.
 //!
 //! Custom Certificate Store verification supports Root CA certificates, peer certificates, and self-signed certificate SSL pinning.
 //!

@@ -13,7 +13,7 @@ use std::borrow::Cow;
 /// # Example
 ///
 /// ```rust
-/// use rquest::{EmulationProviderFactory, EmulationProvider};
+/// use wreq::{EmulationProviderFactory, EmulationProvider};
 ///
 /// struct MyEmulationProvider;
 ///
@@ -52,8 +52,8 @@ pub struct EmulationProviderBuilder {
 /// # Example
 ///
 /// ```rust
-/// use rquest::EmulationProvider;
-/// use rquest::TlsConfig;
+/// use wreq::EmulationProvider;
+/// use wreq::TlsConfig;
 ///
 /// let provider = EmulationProvider::builder()
 ///     .tls_config(TlsConfig::default())

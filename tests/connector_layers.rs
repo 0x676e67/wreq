@@ -17,7 +17,7 @@ async fn non_op_layer() {
 
     let url = format!("http://{}", server.addr());
 
-    let client = rquest::Client::builder()
+    let client = wreq::Client::builder()
         .connector_layer(Identity::new())
         .no_proxy()
         .build()
@@ -32,7 +32,7 @@ async fn non_op_layer() {
 async fn non_op_layer_with_timeout() {
     let _ = env_logger::try_init();
 
-    let client = rquest::Client::builder()
+    let client = wreq::Client::builder()
         .connector_layer(Identity::new())
         .connect_timeout(Duration::from_millis(200))
         .no_proxy()
@@ -50,7 +50,7 @@ async fn non_op_layer_with_timeout() {
 async fn with_connect_timeout_layer_never_returning() {
     let _ = env_logger::try_init();
 
-    let client = rquest::Client::builder()
+    let client = wreq::Client::builder()
         .connector_layer(TimeoutLayer::new(Duration::from_millis(100)))
         .no_proxy()
         .build()
@@ -71,7 +71,7 @@ async fn with_connect_timeout_layer_slow() {
 
     let url = format!("http://{}", server.addr());
 
-    let client = rquest::Client::builder()
+    let client = wreq::Client::builder()
         .connector_layer(DelayLayer::new(Duration::from_millis(200)))
         .connector_layer(TimeoutLayer::new(Duration::from_millis(100)))
         .no_proxy()
@@ -93,7 +93,7 @@ async fn multiple_timeout_layers_under_threshold() {
 
     let url = format!("http://{}", server.addr());
 
-    let client = rquest::Client::builder()
+    let client = wreq::Client::builder()
         .connector_layer(DelayLayer::new(Duration::from_millis(100)))
         .connector_layer(TimeoutLayer::new(Duration::from_millis(200)))
         .connector_layer(TimeoutLayer::new(Duration::from_millis(300)))
@@ -116,7 +116,7 @@ async fn multiple_timeout_layers_over_threshold() {
 
     let url = format!("http://{}", server.addr());
 
-    let client = rquest::Client::builder()
+    let client = wreq::Client::builder()
         .connector_layer(DelayLayer::new(Duration::from_millis(100)))
         .connector_layer(TimeoutLayer::new(Duration::from_millis(50)))
         .connector_layer(TimeoutLayer::new(Duration::from_millis(50)))
@@ -141,7 +141,7 @@ async fn with_concurrency_limit_layer_timeout() {
 
     let url = format!("http://{}", server.addr());
 
-    let client = rquest::Client::builder()
+    let client = wreq::Client::builder()
         .connector_layer(DelayLayer::new(Duration::from_millis(100)))
         .connector_layer(ConcurrencyLimitLayer::new(1))
         .timeout(Duration::from_millis(200))
@@ -177,7 +177,7 @@ async fn with_concurrency_limit_layer_success() {
 
     let url = format!("http://{}", server.addr());
 
-    let client = rquest::Client::builder()
+    let client = wreq::Client::builder()
         .connector_layer(DelayLayer::new(Duration::from_millis(100)))
         .connector_layer(TimeoutLayer::new(Duration::from_millis(200)))
         .connector_layer(ConcurrencyLimitLayer::new(1))
@@ -216,7 +216,7 @@ async fn no_generic_bounds_required_for_client_new() {
 
     let url = format!("http://{}", server.addr());
 
-    let client = rquest::Client::new();
+    let client = wreq::Client::new();
     let res = client.get(url).send().await;
 
     assert!(res.is_ok());

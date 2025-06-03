@@ -1,9 +1,9 @@
-use rquest::tls::KeyLogPolicy;
+use wreq::tls::KeyLogPolicy;
 
 #[tokio::main]
-async fn main() -> rquest::Result<()> {
+async fn main() -> wreq::Result<()> {
     // Build a client
-    let client = rquest::Client::builder()
+    let client = wreq::Client::builder()
         .keylog(KeyLogPolicy::File("keylog.txt".into()))
         .cert_verification(false)
         .build()?;

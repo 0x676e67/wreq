@@ -1,9 +1,9 @@
-use rquest::{
+use std::sync::Arc;
+use wreq::{
     Url,
     cookie::Jar,
     header::{self, HeaderName},
 };
-use std::sync::Arc;
 
 const HEADER_ORDER: &[HeaderName] = &[
     header::USER_AGENT,
@@ -14,12 +14,12 @@ const HEADER_ORDER: &[HeaderName] = &[
 ];
 
 #[tokio::main]
-async fn main() -> rquest::Result<()> {
+async fn main() -> wreq::Result<()> {
     // Create a cookie jar
     let jar = Arc::new(Jar::default());
 
     // Build a client
-    let client = rquest::Client::builder()
+    let client = wreq::Client::builder()
         .headers_order(HEADER_ORDER)
         .cookie_provider(jar.clone())
         .build()?;

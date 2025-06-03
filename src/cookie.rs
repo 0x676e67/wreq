@@ -253,7 +253,7 @@ impl Jar {
     /// # Example
     ///
     /// ```
-    /// use rquest::{cookie::Jar, Url};
+    /// use wreq::{cookie::Jar, Url};
     ///
     /// let cookie = "foo=bar; Domain=yolo.local";
     /// let url = "https://yolo.local".parse::<Url>().unwrap();
@@ -276,8 +276,8 @@ impl Jar {
     /// # Example
     ///
     /// ```
-    /// use rquest::Url;
-    /// use rquest::cookie::{Jar, Cookie};
+    /// use wreq::Url;
+    /// use wreq::cookie::{Jar, Cookie};
     ///
     /// let cookie = Cookie::new("foo", "bar");
     /// let url = "https://yolo.local".parse::<Url>().unwrap();
@@ -296,7 +296,7 @@ impl Jar {
     /// # Example
     ///
     /// ```
-    /// use rquest::{cookie::Jar, Url};
+    /// use wreq::{cookie::Jar, Url};
     ///
     /// // add a cookie
     /// let cookie = "foo=bar; Domain=yolo.local";
@@ -317,7 +317,7 @@ impl Jar {
     ///
     /// # Example
     /// ```
-    /// use rquest::{cookie::Jar, Url};
+    /// use wreq::{cookie::Jar, Url};
     ///
     /// // add a cookie
     /// let cookie = "foo=bar; Domain=yolo.local";

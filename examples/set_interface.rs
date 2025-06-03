@@ -9,9 +9,9 @@
     target_os = "watchos"
 ))]
 #[tokio::main]
-async fn main() -> rquest::Result<()> {
+async fn main() -> wreq::Result<()> {
     // Build a client
-    let client = rquest::Client::new();
+    let client = wreq::Client::new();
 
     // Set the interface to eth1
     client.update().interface("eth1").apply()?;

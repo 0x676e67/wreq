@@ -25,12 +25,12 @@ async fn http_upgrade() {
                 .status(http::StatusCode::SWITCHING_PROTOCOLS)
                 .header(http::header::CONNECTION, "upgrade")
                 .header(http::header::UPGRADE, "foobar")
-                .body(rquest::Body::default())
+                .body(wreq::Body::default())
                 .unwrap()
         }
     });
 
-    let res = rquest::Client::builder()
+    let res = wreq::Client::builder()
         .build()
         .unwrap()
         .get(format!("http://{}", server.addr()))
@@ -70,7 +70,7 @@ async fn http2_upgrade() {
 
             async {
                 http::Response::builder()
-                    .body(rquest::Body::default())
+                    .body(wreq::Body::default())
                     .unwrap()
             }
         },
@@ -80,7 +80,7 @@ async fn http2_upgrade() {
         },
     );
 
-    let res = rquest::Client::builder()
+    let res = wreq::Client::builder()
         .http2_only()
         .build()
         .unwrap()

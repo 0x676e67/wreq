@@ -20,8 +20,8 @@ async fn http_proxy() {
 
     let proxy = format!("http://{}", server.addr());
 
-    let res = rquest::Client::builder()
-        .proxy(rquest::Proxy::http(&proxy).unwrap())
+    let res = wreq::Client::builder()
+        .proxy(wreq::Proxy::http(&proxy).unwrap())
         .build()
         .unwrap()
         .get(url)
@@ -30,7 +30,7 @@ async fn http_proxy() {
         .unwrap();
 
     assert_eq!(res.url().as_str(), url);
-    assert_eq!(res.status(), rquest::StatusCode::OK);
+    assert_eq!(res.status(), wreq::StatusCode::OK);
 }
 
 #[tokio::test]
@@ -50,9 +50,9 @@ async fn http_proxy_basic_auth() {
 
     let proxy = format!("http://{}", server.addr());
 
-    let res = rquest::Client::builder()
+    let res = wreq::Client::builder()
         .proxy(
-            rquest::Proxy::http(&proxy)
+            wreq::Proxy::http(&proxy)
                 .unwrap()
                 .basic_auth("Aladdin", "open sesame"),
         )
@@ -64,7 +64,7 @@ async fn http_proxy_basic_auth() {
         .unwrap();
 
     assert_eq!(res.url().as_str(), url);
-    assert_eq!(res.status(), rquest::StatusCode::OK);
+    assert_eq!(res.status(), wreq::StatusCode::OK);
 }
 
 #[tokio::test]
@@ -84,8 +84,8 @@ async fn http_proxy_basic_auth_parsed() {
 
     let proxy = format!("http://Aladdin:open sesame@{}", server.addr());
 
-    let res = rquest::Client::builder()
-        .proxy(rquest::Proxy::http(&proxy).unwrap())
+    let res = wreq::Client::builder()
+        .proxy(wreq::Proxy::http(&proxy).unwrap())
         .build()
         .unwrap()
         .get(url)
@@ -94,7 +94,7 @@ async fn http_proxy_basic_auth_parsed() {
         .unwrap();
 
     assert_eq!(res.url().as_str(), url);
-    assert_eq!(res.status(), rquest::StatusCode::OK);
+    assert_eq!(res.status(), wreq::StatusCode::OK);
 }
 
 #[tokio::test]
@@ -126,7 +126,7 @@ async fn system_http_proxy_basic_auth_parsed() {
         )
     }
 
-    let res = rquest::Client::builder()
+    let res = wreq::Client::builder()
         .build()
         .unwrap()
         .get(url)
@@ -135,7 +135,7 @@ async fn system_http_proxy_basic_auth_parsed() {
         .unwrap();
 
     assert_eq!(res.url().as_str(), url);
-    assert_eq!(res.status(), rquest::StatusCode::OK);
+    assert_eq!(res.status(), wreq::StatusCode::OK);
 
     // reset user setting.
     unsafe {
@@ -158,8 +158,8 @@ async fn test_no_proxy() {
     let url = format!("http://{}/4", server.addr());
 
     // set up proxy and use no_proxy to clear up client builder proxies.
-    let res = rquest::Client::builder()
-        .proxy(rquest::Proxy::http(&proxy).unwrap())
+    let res = wreq::Client::builder()
+        .proxy(wreq::Proxy::http(&proxy).unwrap())
         .no_proxy()
         .build()
         .unwrap()
@@ -169,7 +169,7 @@ async fn test_no_proxy() {
         .unwrap();
 
     assert_eq!(res.url().as_str(), &url);
-    assert_eq!(res.status(), rquest::StatusCode::OK);
+    assert_eq!(res.status(), wreq::StatusCode::OK);
 }
 
 #[tokio::test]
@@ -193,10 +193,10 @@ async fn test_using_system_proxy() {
         env::set_var("http_proxy", format!("http://{}", server.addr()));
     }
     // system proxy is used by default
-    let res = rquest::Client::new().get(url).send().await.unwrap();
+    let res = wreq::Client::new().get(url).send().await.unwrap();
 
     assert_eq!(res.url().as_str(), url);
-    assert_eq!(res.status(), rquest::StatusCode::OK);
+    assert_eq!(res.status(), wreq::StatusCode::OK);
 
     // reset user setting.
     unsafe {
@@ -221,8 +221,8 @@ async fn http_over_http() {
 
     let proxy = format!("http://{}", server.addr());
 
-    let res = rquest::Client::builder()
-        .proxy(rquest::Proxy::http(&proxy).unwrap())
+    let res = wreq::Client::builder()
+        .proxy(wreq::Proxy::http(&proxy).unwrap())
         .build()
         .unwrap()
         .get(url)
@@ -231,7 +231,7 @@ async fn http_over_http() {
         .unwrap();
 
     assert_eq!(res.url().as_str(), url);
-    assert_eq!(res.status(), rquest::StatusCode::OK);
+    assert_eq!(res.status(), wreq::StatusCode::OK);
 }
 
 #[tokio::test]
@@ -252,12 +252,12 @@ async fn http_proxy_custom_headers() {
 
     let proxy = format!("http://Aladdin:open sesame@{}", server.addr());
 
-    let proxy = rquest::Proxy::http(&proxy).unwrap().custom_http_headers({
+    let proxy = wreq::Proxy::http(&proxy).unwrap().custom_http_headers({
         let mut headers = http::HeaderMap::new();
         headers.insert("x-custom-header", "value".parse().unwrap());
         headers
     });
-    let res = rquest::Client::builder()
+    let res = wreq::Client::builder()
         .proxy(proxy)
         .build()
         .unwrap()
@@ -267,7 +267,7 @@ async fn http_proxy_custom_headers() {
         .unwrap();
 
     assert_eq!(res.url().as_str(), url);
-    assert_eq!(res.status(), rquest::StatusCode::OK);
+    assert_eq!(res.status(), wreq::StatusCode::OK);
 }
 
 #[tokio::test]
@@ -291,8 +291,8 @@ async fn tunnel_detects_auth_required() {
 
     let proxy = format!("http://{}", server.addr());
 
-    let err = rquest::Client::builder()
-        .proxy(rquest::Proxy::https(&proxy).unwrap())
+    let err = wreq::Client::builder()
+        .proxy(wreq::Proxy::https(&proxy).unwrap())
         .build()
         .unwrap()
         .get(url)
@@ -330,8 +330,8 @@ async fn tunnel_includes_proxy_auth() {
 
     let proxy = format!("http://Aladdin:open%20sesame@{}", server.addr());
 
-    let err = rquest::Client::builder()
-        .proxy(rquest::Proxy::https(&proxy).unwrap())
+    let err = wreq::Client::builder()
+        .proxy(wreq::Proxy::https(&proxy).unwrap())
         .build()
         .unwrap()
         .get(url)
@@ -354,7 +354,7 @@ async fn tunnel_includes_user_agent() {
     let server = server::http(move |req| {
         assert_eq!(req.method(), "CONNECT");
         assert_eq!(req.uri(), "hyper.rs.local:443");
-        assert_eq!(req.headers()["user-agent"], "reqwest-test");
+        assert_eq!(req.headers()["user-agent"], "wreq-test");
 
         async {
             // return 400 to not actually deal with TLS tunneling
@@ -366,13 +366,13 @@ async fn tunnel_includes_user_agent() {
 
     let proxy = format!("http://{}", server.addr());
 
-    let err = rquest::Client::builder()
-        .proxy(rquest::Proxy::https(&proxy).unwrap().custom_http_headers({
+    let err = wreq::Client::builder()
+        .proxy(wreq::Proxy::https(&proxy).unwrap().custom_http_headers({
             let mut headers = http::HeaderMap::new();
-            headers.insert("user-agent", "reqwest-test".parse().unwrap());
+            headers.insert("user-agent", "wreq-test".parse().unwrap());
             headers
         }))
-        .user_agent("reqwest-test")
+        .user_agent("wreq-test")
         .build()
         .unwrap()
         .get(url)

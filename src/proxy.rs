@@ -46,7 +46,7 @@ use windows_registry::CURRENT_USER;
 ///
 /// ```rust
 /// # fn run() -> Result<(), Box<std::error::Error>> {
-/// let proxy = rquest::Proxy::http("https://secure.example")?;
+/// let proxy = wreq::Proxy::http("https://secure.example")?;
 /// # Ok(())
 /// # }
 /// ```
@@ -63,7 +63,7 @@ use windows_registry::CURRENT_USER;
 /// By enabling the `"socks"` feature it is possible to use a socks proxy:
 /// ```rust
 /// # fn run() -> Result<(), Box<std::error::Error>> {
-/// let proxy = rquest::Proxy::http("socks5://192.168.1.1:9000")?;
+/// let proxy = wreq::Proxy::http("socks5://192.168.1.1:9000")?;
 /// # Ok(())
 /// # }
 /// ```
@@ -304,10 +304,10 @@ impl Proxy {
     /// # Example
     ///
     /// ```
-    /// # extern crate rquest;
+    /// # extern crate wreq;
     /// # fn run() -> Result<(), Box<std::error::Error>> {
-    /// let client = rquest::Client::builder()
-    ///     .proxy(rquest::Proxy::http("https://my.prox")?)
+    /// let client = wreq::Client::builder()
+    ///     .proxy(wreq::Proxy::http("https://my.prox")?)
     ///     .build()?;
     /// # Ok(())
     /// # }
@@ -324,10 +324,10 @@ impl Proxy {
     /// # Example
     ///
     /// ```
-    /// # extern crate rquest;
+    /// # extern crate wreq;
     /// # fn run() -> Result<(), Box<std::error::Error>> {
-    /// let client = rquest::Client::builder()
-    ///     .proxy(rquest::Proxy::https("https://example.prox:4545")?)
+    /// let client = wreq::Client::builder()
+    ///     .proxy(wreq::Proxy::https("https://example.prox:4545")?)
     ///     .build()?;
     /// # Ok(())
     /// # }
@@ -344,10 +344,10 @@ impl Proxy {
     /// # Example
     ///
     /// ```
-    /// # extern crate rquest;
+    /// # extern crate wreq;
     /// # fn run() -> Result<(), Box<std::error::Error>> {
-    /// let client = rquest::Client::builder()
-    ///     .proxy(rquest::Proxy::all("http://pro.xy")?)
+    /// let client = wreq::Client::builder()
+    ///     .proxy(wreq::Proxy::all("http://pro.xy")?)
     ///     .build()?;
     /// # Ok(())
     /// # }
@@ -364,11 +364,11 @@ impl Proxy {
     /// # Example
     ///
     /// ```
-    /// # extern crate rquest;
+    /// # extern crate wreq;
     /// # fn run() -> Result<(), Box<std::error::Error>> {
-    /// let target = rquest::Url::parse("https://my.prox")?;
-    /// let client = rquest::Client::builder()
-    ///     .proxy(rquest::Proxy::custom(move |url| {
+    /// let target = wreq::Url::parse("https://my.prox")?;
+    /// let client = wreq::Client::builder()
+    ///     .proxy(wreq::Proxy::custom(move |url| {
     ///         if url.host_str() == Some("hyper.rs") {
     ///             Some(target.clone())
     ///         } else {
@@ -430,9 +430,9 @@ impl Proxy {
     /// # Example
     ///
     /// ```
-    /// # extern crate rquest;
+    /// # extern crate wreq;
     /// # fn run() -> Result<(), Box<std::error::Error>> {
-    /// let proxy = rquest::Proxy::https("http://localhost:1234")?
+    /// let proxy = wreq::Proxy::https("http://localhost:1234")?
     ///     .basic_auth("Aladdin", "open sesame");
     /// # Ok(())
     /// # }
@@ -448,10 +448,10 @@ impl Proxy {
     /// # Example
     ///
     /// ```
-    /// # extern crate rquest;
-    /// # use rquest::header::*;
+    /// # extern crate wreq;
+    /// # use wreq::header::*;
     /// # fn run() -> Result<(), Box<std::error::Error>> {
-    /// let proxy = rquest::Proxy::https("http://localhost:1234")?
+    /// let proxy = wreq::Proxy::https("http://localhost:1234")?
     ///     .custom_http_auth(HeaderValue::from_static("justletmeinalreadyplease"));
     /// # Ok(())
     /// # }
@@ -476,13 +476,13 @@ impl Proxy {
     /// # Example
     ///
     /// ```rust
-    /// # extern crate rquest;
-    /// # use rquest::header::{HeaderMap, HeaderValue};
+    /// # extern crate wreq;
+    /// # use wreq::header::{HeaderMap, HeaderValue};
     /// # fn run() -> Result<(), Box<dyn std::error::Error>> {
     /// let mut headers = HeaderMap::new();
     /// headers.insert("X-Custom-Header", HeaderValue::from_static("custom_value"));
     ///
-    /// let proxy = rquest::Proxy::https("http://localhost:1234")?
+    /// let proxy = wreq::Proxy::https("http://localhost:1234")?
     ///     .custom_http_headers(headers);
     /// # Ok(())
     /// # }
@@ -503,10 +503,10 @@ impl Proxy {
     /// # Example
     ///
     /// ```
-    /// # extern crate rquest;
+    /// # extern crate wreq;
     /// # fn run() -> Result<(), Box<std::error::Error>> {
-    /// let proxy = rquest::Proxy::https("http://localhost:1234")?
-    ///     .no_proxy(rquest::NoProxy::from_string("direct.tld, sub.direct2.tld"));
+    /// let proxy = wreq::Proxy::https("http://localhost:1234")?
+    ///     .no_proxy(wreq::NoProxy::from_string("direct.tld, sub.direct2.tld"));
     /// # Ok(())
     /// # }
     /// # fn main() {}
@@ -1256,7 +1256,7 @@ fn parse_setting_from_dynamic_store(
 
 #[cfg(all(target_os = "macos", feature = "macos-system-configuration"))]
 fn get_from_platform_impl() -> Result<Option<String>, Box<dyn Error>> {
-    let store = SCDynamicStoreBuilder::new("rquest").build();
+    let store = SCDynamicStoreBuilder::new("wreq").build();
 
     let proxies_map = if let Some(proxies_map) = store.get_proxies() {
         proxies_map

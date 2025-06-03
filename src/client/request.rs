@@ -369,10 +369,10 @@ impl RequestBuilder {
     /// Enable HTTP basic authentication.
     ///
     /// ```rust
-    /// # use rquest::Error;
+    /// # use wreq::Error;
     ///
     /// # async fn run() -> Result<(), Error> {
-    /// let client = rquest::Client::new();
+    /// let client = wreq::Client::new();
     /// let resp = client.delete("http://httpbin.org/delete")
     ///     .basic_auth("admin", Some("good password"))
     ///     .send()
@@ -445,11 +445,11 @@ impl RequestBuilder {
     /// Sends a multipart/form-data body.
     ///
     /// ```
-    /// # use rquest::Error;
+    /// # use wreq::Error;
     ///
     /// # async fn run() -> Result<(), Error> {
-    /// let client = rquest::Client::new();
-    /// let form = rquest::multipart::Form::new()
+    /// let client = wreq::Client::new();
+    /// let form = wreq::multipart::Form::new()
     ///     .text("key3", "value3")
     ///     .text("key4", "value4");
     ///
@@ -561,8 +561,8 @@ impl RequestBuilder {
     /// # Examples
     ///
     /// ```
-    /// use rquest::Client;
-    /// use rquest::Proxy;
+    /// use wreq::Client;
+    /// use wreq::Proxy;
     ///
     /// let client = Client::new();
     /// let proxy = Proxy::all("http://hyper.rs/prox")?.basic_auth("Aladdin", "open sesame");
@@ -666,14 +666,14 @@ impl RequestBuilder {
     /// header.
     ///
     /// ```rust
-    /// # use rquest::Error;
+    /// # use wreq::Error;
     /// # use std::collections::HashMap;
     /// #
     /// # async fn run() -> Result<(), Error> {
     /// let mut params = HashMap::new();
     /// params.insert("lang", "rust");
     ///
-    /// let client = rquest::Client::new();
+    /// let client = wreq::Client::new();
     /// let res = client.post("http://httpbin.org")
     ///     .form(&params)
     ///     .send()
@@ -757,10 +757,10 @@ impl RequestBuilder {
     /// # Example
     ///
     /// ```no_run
-    /// # use rquest::Error;
+    /// # use wreq::Error;
     /// #
     /// # async fn run() -> Result<(), Error> {
-    /// let response = rquest::Client::new()
+    /// let response = wreq::Client::new()
     ///     .get("https://hyper.rs")
     ///     .send()
     ///     .await?;
@@ -782,10 +782,10 @@ impl RequestBuilder {
     /// # Examples
     ///
     /// ```
-    /// # use rquest::Error;
+    /// # use wreq::Error;
     /// #
     /// # fn run() -> Result<(), Error> {
-    /// let client = rquest::Client::new();
+    /// let client = wreq::Client::new();
     /// let builder = client.post("http://httpbin.org/post")
     ///     .body("from a &str!");
     /// let clone = builder.try_clone();
