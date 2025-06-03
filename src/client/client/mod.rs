@@ -1,5 +1,4 @@
 mod service;
-use std::borrow::Cow;
 use std::future::Future;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::num::NonZeroUsize;
@@ -278,6 +277,18 @@ impl ClientBuilder {
             };
 
             let mut http = HttpConnector::new_with_resolver(resolver.clone());
+            #[cfg(any(
+                target_os = "android",
+                target_os = "fuchsia",
+                target_os = "illumos",
+                target_os = "ios",
+                target_os = "linux",
+                target_os = "macos",
+                target_os = "solaris",
+                target_os = "tvos",
+                target_os = "visionos",
+                target_os = "watchos",
+            ))]
             http.set_interface(config.interface);
             match (config.local_ipv4_address, config.local_ipv6_address) {
                 (Some(ipv4), None) => http.set_local_address(Some(IpAddr::from(ipv4))),
@@ -902,24 +913,9 @@ impl ClientBuilder {
         target_os = "visionos",
         target_os = "watchos",
     ))]
-    #[cfg_attr(
-        docsrs,
-        doc(cfg(any(
-            target_os = "android",
-            target_os = "fuchsia",
-            target_os = "illumos",
-            target_os = "ios",
-            target_os = "linux",
-            target_os = "macos",
-            target_os = "solaris",
-            target_os = "tvos",
-            target_os = "visionos",
-            target_os = "watchos",
-        )))
-    )]
     pub fn interface<T>(mut self, interface: T) -> ClientBuilder
     where
-        T: Into<Cow<'static, str>>,
+        T: Into<std::borrow::Cow<'static, str>>,
     {
         self.config.interface = Some(interface.into());
         self

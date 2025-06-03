@@ -13,8 +13,21 @@ use super::client::{Client, Pending};
 use super::multipart;
 use super::response::Response;
 use crate::config::RequestTimeout;
+#[cfg(any(
+    target_os = "android",
+    target_os = "fuchsia",
+    target_os = "illumos",
+    target_os = "ios",
+    target_os = "linux",
+    target_os = "macos",
+    target_os = "solaris",
+    target_os = "tvos",
+    target_os = "visionos",
+    target_os = "watchos",
+))]
+use crate::core::ext::RequestInterface;
 use crate::core::ext::{
-    RequestConfig, RequestHttpVersionPref, RequestInterface, RequestIpv4Addr, RequestIpv6Addr,
+    RequestConfig, RequestHttpVersionPref, RequestIpv4Addr, RequestIpv6Addr,
     RequestOriginalHeaders, RequestProxyScheme,
 };
 use crate::header::{CONTENT_TYPE, HeaderMap, HeaderName, HeaderValue};
