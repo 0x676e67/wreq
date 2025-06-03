@@ -616,7 +616,7 @@ where
                                     );
 
                                     // Log that the client is waiting for the connection to be ready.
-                                    // Readiness indicates the sender (tx) can accept a request without blocking.More actions
+                                    // Readiness indicates the sender (tx) can accept a request without blocking. More actions
                                     trace!("waiting for connection to be ready");
 
                                     // Check if the sender is ready to accept a request.
