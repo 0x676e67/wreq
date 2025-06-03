@@ -244,6 +244,10 @@ path = "examples/hickory_dns.rs"
 required-features = ["hickory-dns", "tracing"]
 
 [[example]]
+name = "http1_case_sensitive_headers"
+path = "examples/http1_case_sensitive_headers.rs"
+
+[[example]]
 name = "emulation_firefox"
 path = "examples/emulation_firefox.rs"
 required-features = ["full", "tracing"]
