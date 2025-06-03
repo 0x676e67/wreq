@@ -59,7 +59,7 @@ impl Service<Request<super::Body>> for ClientService {
         if let Some(cookie_store) = self.cookie_store.as_ref() {
             if req.headers().get(crate::header::COOKIE).is_none() {
                 let headers = req.headers_mut();
-                crate::util::add_cookie_header(&*cookie_store, &url, headers);
+                crate::util::add_cookie_header(cookie_store, &url, headers);
             }
         }
 

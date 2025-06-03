@@ -648,14 +648,12 @@ impl RequestBuilder {
         V: Into<Option<IpAddr>>,
     {
         if let Ok(ref mut req) = self.request {
-            local_address.into().map(|addr| match addr {
-                IpAddr::V4(ipv4) => {
-                    *req.local_ipv4_address_mut() = Some(ipv4);
+            if let Some(addr) = local_address.into() {
+                match addr {
+                    IpAddr::V4(ipv4) => *req.local_ipv4_address_mut() = Some(ipv4),
+                    IpAddr::V6(ipv6) => *req.local_ipv6_address_mut() = Some(ipv6),
                 }
-                IpAddr::V6(ipv6) => {
-                    *req.local_ipv6_address_mut() = Some(ipv6);
-                }
-            });
+            }
         }
         self
     }
