@@ -14,7 +14,7 @@ use std::{
 };
 
 use crate::core::ext::Protocol;
-use crate::{Error, OriginalHeaders, RequestBuilder, Response, error, proxy::IntoProxy};
+use crate::{Error, OriginalHeaders, RequestBuilder, Response, error, proxy::Proxy};
 use futures_util::{Sink, SinkExt, Stream, StreamExt};
 use http::{HeaderMap, HeaderName, HeaderValue, Method, StatusCode, Version, header, uri::Scheme};
 use serde::Serialize;
@@ -220,7 +220,7 @@ impl WebSocketRequestBuilder {
     }
 
     /// Set the proxy for this request.
-    pub fn proxy<U: IntoProxy>(mut self, proxy: U) -> Self {
+    pub fn proxy(mut self, proxy: Proxy) -> Self {
         self.inner = self.inner.proxy(proxy);
         self
     }

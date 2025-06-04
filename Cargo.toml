@@ -18,7 +18,7 @@ rustdoc-args = ["--cfg", "docsrs"]
 targets = ["x86_64-unknown-linux-gnu"]
 
 [features]
-default = ["webpki-roots", "charset", "macos-system-configuration"]
+default = ["webpki-roots", "charset", "system-proxy"]
 
 full = [
     "json",
@@ -64,13 +64,13 @@ native-roots = ["dep:rustls-native-certs"]
 webpki-roots = ["dep:webpki-root-certs"]
 
 # Use the system's proxy configuration.
-macos-system-configuration = ["dep:system-configuration"]
+system-proxy = ["dep:system-configuration", "dep:windows-registry"]
+
+# Deprecated, switch to system-proxy.
+macos-system-configuration = ["system-proxy"]
 
 # Optional enable tracing
 tracing = ["http2/tracing", "dep:tracing"]
-
-# Optional disable internal proxy cache
-internal_proxy_sys_no_cache = []
 
 [dependencies]
 base64 = "0.22"
@@ -141,12 +141,15 @@ tokio-tungstenite = { version = "0.26.2", default-features = false, features = [
 ## hickory-dns
 hickory-resolver = { version = "0.25.2", optional = true }
 
+## windows system proxy
 [target.'cfg(windows)'.dependencies]
-windows-registry = "0.5.0"
+windows-registry = { version = "0.5.2", optional = true }
 
+## macOS system proxy
 [target.'cfg(target_os = "macos")'.dependencies]
-system-configuration = { version = "0.6.0", optional = true }
+system-configuration = { version = "0.6.1", optional = true }
 
+## Interface binding
 [target.'cfg(any(target_os = "ios", target_os = "visionos", target_os = "macos", target_os = "tvos", target_os = "watchos", target = "illumos", target = "solaris"))'.dependencies]
 libc = "0.2.172"
 

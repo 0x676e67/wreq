@@ -28,11 +28,11 @@ use crate::config::RequestTimeout;
 use crate::core::ext::RequestInterface;
 use crate::core::ext::{
     RequestConfig, RequestHttpVersionPref, RequestIpv4Addr, RequestIpv6Addr,
-    RequestOriginalHeaders, RequestProxyScheme,
+    RequestOriginalHeaders, RequestProxyMatcher,
 };
 use crate::header::{CONTENT_TYPE, HeaderMap, HeaderName, HeaderValue};
-use crate::proxy::{IntoProxy, ProxyScheme};
-use crate::{Method, OriginalHeaders, Url, redirect};
+use crate::proxy::Matcher as ProxyMatcher;
+use crate::{Method, OriginalHeaders, Proxy, Url, redirect};
 
 /// A request which can be executed with `Client::execute()`.
 pub struct Request {
@@ -224,10 +224,10 @@ impl Request {
         RequestConfig::<RequestInterface>::get_mut(&mut self.extensions)
     }
 
-    /// Get a mutable reference to the proxy.
+    /// Get a mutable reference to the proxy matcher.
     #[inline]
-    pub fn proxy_scheme_mut(&mut self) -> &mut Option<ProxyScheme> {
-        RequestConfig::<RequestProxyScheme>::get_mut(&mut self.extensions)
+    pub(crate) fn proxy_matcher_mut(&mut self) -> &mut Option<ProxyMatcher> {
+        RequestConfig::<RequestProxyMatcher>::get_mut(&mut self.extensions)
     }
 
     /// Get the extensions.
@@ -629,28 +629,10 @@ impl RequestBuilder {
     ///     .proxy(proxy)
     ///     .send()
     ///     .await?;
-    ///
-    /// let resp = client
-    ///     .get("https://tls.peet.ws/api/all")
-    ///     .proxy("http://hyper.rs/prox")
-    ///     .send()
-    ///     .await?;
     /// ```
-    pub fn proxy<P>(mut self, proxy: P) -> RequestBuilder
-    where
-        P: IntoProxy,
-    {
+    pub fn proxy(mut self, proxy: Proxy) -> RequestBuilder {
         if let Ok(ref mut req) = self.request {
-            match proxy.into_proxy() {
-                Ok(proxy) => {
-                    if let Some(proxy_scheme) = proxy.intercept(req.url()) {
-                        *req.proxy_scheme_mut() = Some(proxy_scheme);
-                    }
-                }
-                Err(err) => {
-                    self.request = Err(crate::error::builder(err));
-                }
-            }
+            *req.proxy_matcher_mut() = Some(proxy.into_matcher());
         }
         self
     }

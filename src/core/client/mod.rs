@@ -11,6 +11,7 @@ mod dst;
 // Publicly available, but just for legacy purposes. A better pool will be
 // designed.
 mod pool;
+pub mod proxy;
 
 use std::borrow::Cow;
 use std::error::Error as StdError;
@@ -29,7 +30,7 @@ use crate::core::rt::Timer;
 use crate::core::{Method, Request, Response, Uri, Version, body::Body};
 use crate::http1::Http1Config;
 use crate::http2::Http2Config;
-use crate::proxy::ProxyScheme;
+use crate::proxy::Intercepted;
 use crate::tls::AlpnProtos;
 
 use futures_util::future::{self, Either, FutureExt, TryFutureExt};
@@ -134,7 +135,7 @@ type PoolKey = (
     Option<Ipv4Addr>,
     Option<Ipv6Addr>,
     Option<Cow<'static, str>>,
-    Option<ProxyScheme>,
+    Option<Intercepted>,
 );
 
 #[allow(clippy::large_enum_variant)]

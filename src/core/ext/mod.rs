@@ -8,7 +8,7 @@ use std::fmt;
 
 pub(crate) use config::{
     RequestConfig, RequestConfigValue, RequestHttpVersionPref, RequestInterface, RequestIpv4Addr,
-    RequestIpv6Addr, RequestOriginalHeaders, RequestProxyScheme,
+    RequestIpv6Addr, RequestOriginalHeaders, RequestProxyMatcher,
 };
 pub(crate) use h1_reason_phrase::ReasonPhrase;
 pub use header::OriginalHeaders;

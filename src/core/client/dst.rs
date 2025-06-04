@@ -1,9 +1,9 @@
 use super::{Error, ErrorKind, PoolKey, set_scheme};
 use crate::core::ext::{
     RequestConfig, RequestHttpVersionPref, RequestInterface, RequestIpv4Addr, RequestIpv6Addr,
-    RequestProxyScheme,
+    RequestProxyMatcher,
 };
-use crate::proxy::ProxyScheme;
+use crate::proxy::Intercepted;
 use crate::tls::AlpnProtos;
 use http::uri::{PathAndQuery, Scheme};
 use http::{Request, Uri, Version};
@@ -62,7 +62,7 @@ impl Dst {
         let local_ipv4_address = RequestConfig::<RequestIpv4Addr>::remove(extensions);
         let local_ipv6_address = RequestConfig::<RequestIpv6Addr>::remove(extensions);
         let interface = RequestConfig::<RequestInterface>::remove(extensions);
-        let proxy_scheme = RequestConfig::<RequestProxyScheme>::remove(extensions);
+        let proxy_scheme = RequestConfig::<RequestProxyMatcher>::remove(extensions);
 
         // Convert the scheme and host to a URI
         Uri::builder()
@@ -71,13 +71,14 @@ impl Dst {
             .path_and_query(PathAndQuery::from_static("/"))
             .build()
             .map(|uri| {
+                let proxy_intercepted = proxy_scheme.and_then(|matcher| matcher.intercept(&uri));
                 Dst((
                     uri,
                     alpn,
                     local_ipv4_address,
                     local_ipv6_address,
                     interface,
-                    proxy_scheme,
+                    proxy_intercepted,
                 ))
             })
             .map_err(Into::into)
@@ -127,7 +128,7 @@ impl Dst {
     }
 
     #[inline(always)]
-    pub(crate) fn take_proxy_scheme(&mut self) -> Option<ProxyScheme> {
+    pub(crate) fn take_proxy_intercepted(&mut self) -> Option<Intercepted> {
         self.0.5.take()
     }
 

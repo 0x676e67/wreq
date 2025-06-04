@@ -26,7 +26,7 @@ use crate::error::{BoxError, Error};
 use crate::http1::Http1Config;
 use crate::http2::Http2Config;
 use crate::into_url::try_uri;
-use crate::proxy::IntoProxy;
+use crate::proxy::Matcher as ProxyMatcher;
 use crate::redirect::TowerRedirectPolicy;
 use crate::tls::{CertStore, CertificateInput, Identity, KeyLogPolicy, TlsConfig};
 use crate::{IntoUrl, Method, OriginalHeaders, Proxy, Url};
@@ -94,7 +94,7 @@ struct Config {
     tcp_keepalive: Option<Duration>,
     tcp_keepalive_interval: Option<Duration>,
     tcp_keepalive_retries: Option<u32>,
-    proxies: Vec<Proxy>,
+    proxies: Vec<ProxyMatcher>,
     auto_sys_proxy: bool,
     redirect_policy: redirect::Policy,
     referer: bool,
@@ -230,16 +230,15 @@ impl ClientBuilder {
             return Err(err);
         }
 
-        let (proxies, proxies_maybe_http_auth) = {
-            let mut proxies = config.proxies;
-            if config.auto_sys_proxy {
-                proxies.push(Proxy::system());
-            }
-            let proxies = Arc::new(proxies);
-            let proxies_maybe_http_auth = proxies.iter().any(Proxy::maybe_has_http_auth);
-
-            (proxies, proxies_maybe_http_auth)
-        };
+        let mut proxies = config.proxies;
+        if config.auto_sys_proxy {
+            proxies.push(ProxyMatcher::system());
+        }
+        let proxies = Arc::new(proxies);
+        let proxies_maybe_http_auth = proxies.iter().any(ProxyMatcher::maybe_has_http_auth);
+        let proxies_maybe_http_custom_headers = proxies
+            .iter()
+            .any(ProxyMatcher::maybe_has_http_custom_headers);
 
         config
             .builder
@@ -369,6 +368,7 @@ impl ClientBuilder {
                 https_only: config.https_only,
                 http2_max_retry_count: config.http2_max_retry_count,
                 proxies_maybe_http_auth,
+                proxies_maybe_http_custom_headers,
                 proxies,
                 alpn_protos: config.alpn_protos,
                 keylog: config.keylog_policy,
@@ -713,22 +713,10 @@ impl ClientBuilder {
     ///
     /// let proxy = Proxy::http("http://proxy:8080").unwrap();
     /// let client = Client::builder().proxy(proxy).build().unwrap();
-    ///
-    /// let client = Client::builder().proxy("http://proxy2:8080").build().unwrap();
     /// ```
-    pub fn proxy<P>(mut self, proxy: P) -> ClientBuilder
-    where
-        P: IntoProxy,
-    {
-        match proxy.into_proxy() {
-            Ok(proxy) => {
-                self.config.proxies.push(proxy);
-                self.config.auto_sys_proxy = false;
-            }
-            Err(e) => {
-                self.config.error = Some(e);
-            }
-        }
+    pub fn proxy(mut self, proxy: Proxy) -> ClientBuilder {
+        self.config.proxies.push(proxy.into_matcher());
+        self.config.auto_sys_proxy = false;
         self
     }
 
@@ -1396,6 +1384,7 @@ impl Client {
         };
 
         self.inner.proxy_auth(&uri, &mut headers);
+        self.inner.proxy_custom_headers(&uri, &mut headers);
 
         let in_flight = {
             let mut req = crate::core::Request::builder()
@@ -1486,8 +1475,9 @@ struct ClientRef {
     referer: bool,
     https_only: bool,
     http2_max_retry_count: usize,
-    proxies: Arc<Vec<Proxy>>,
+    proxies: Arc<Vec<ProxyMatcher>>,
     proxies_maybe_http_auth: bool,
+    proxies_maybe_http_custom_headers: bool,
     alpn_protos: Option<AlpnProtos>,
     keylog: Option<KeyLogPolicy>,
     tls_sni: bool,
@@ -1517,17 +1507,32 @@ impl ClientRef {
             return;
         }
 
-        // Find the first proxy that matches the destination URI
-        // If a matching proxy provides an HTTP basic auth header, insert it into the headers
         for proxy in self.proxies.iter() {
-            if proxy.is_match(dst) {
-                if let Some(header) = proxy.http_basic_auth(dst) {
-                    headers.insert(PROXY_AUTHORIZATION, header);
-                }
+            if let Some(header) = proxy.http_non_tunnel_basic_auth(dst) {
+                headers.insert(PROXY_AUTHORIZATION, header);
+                break;
+            }
+        }
+    }
 
-                if let Some(http_headers) = proxy.http_headers() {
-                    headers.extend(http_headers);
-                }
+    #[inline]
+    fn proxy_custom_headers(&self, dst: &Uri, headers: &mut HeaderMap) {
+        if !self.proxies_maybe_http_custom_headers {
+            return;
+        }
+
+        // Only set the header here if the destination scheme is 'http',
+        // since otherwise, the header will be included in the CONNECT tunnel
+        // request instead.
+        if dst.scheme() != Some(&Scheme::HTTP) {
+            return;
+        }
+
+        for proxy in self.proxies.iter() {
+            if let Some(iter) = proxy.http_non_tunnel_custom_headers(dst) {
+                iter.iter().for_each(|(key, value)| {
+                    headers.insert(key, value.clone());
+                });
 
                 break;
             }

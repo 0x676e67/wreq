@@ -5,6 +5,7 @@ mod tunnel;
 pub use self::socks::{SocksV4, SocksV5};
 pub use self::tunnel::Tunnel;
 
+#[cfg(test)]
 mod tests {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::{TcpListener, TcpStream};

@@ -78,8 +78,11 @@ struct Config {
     #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
     interface: Option<std::borrow::Cow<'static, str>>,
     #[cfg(any(
+        target_os = "android",
+        target_os = "fuchsia",
         target_os = "illumos",
         target_os = "ios",
+        target_os = "linux",
         target_os = "macos",
         target_os = "solaris",
         target_os = "tvos",

@@ -259,7 +259,6 @@
 //! - **native-roots**: Use the native system root certificate store.
 //! - **webpki-roots**: Use the webpki-roots crate for root certificates.
 //! - **tracing**: Enable tracing.
-//! - **internal_proxy_sys_no_cache**: Use the internal proxy system with no cache.
 //!
 //! [hyper]: http://hyper.rs
 //! [client]: ./struct.Client.html

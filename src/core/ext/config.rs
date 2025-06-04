@@ -126,10 +126,10 @@ impl RequestConfigValue for RequestInterface {
 }
 
 #[derive(Clone, Copy)]
-pub(crate) struct RequestProxyScheme;
+pub(crate) struct RequestProxyMatcher;
 
-impl RequestConfigValue for RequestProxyScheme {
-    type Value = crate::proxy::ProxyScheme;
+impl RequestConfigValue for RequestProxyMatcher {
+    type Value = crate::proxy::Matcher;
 }
 
 #[derive(Clone, Copy)]
