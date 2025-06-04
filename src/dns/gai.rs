@@ -1,15 +1,15 @@
-use crate::core::client::connect::dns::GaiResolver as HyperGaiResolver;
+use crate::core::client::connect::dns::GaiResolver as NativeGaiResolver;
 use tower_service::Service;
 
 use crate::dns::{Addrs, Name, Resolve, Resolving};
 use crate::error::BoxError;
 
 #[derive(Debug)]
-pub struct GaiResolver(HyperGaiResolver);
+pub struct GaiResolver(NativeGaiResolver);
 
 impl GaiResolver {
     pub fn new() -> Self {
-        Self(HyperGaiResolver::new())
+        Self(NativeGaiResolver::new())
     }
 }
 

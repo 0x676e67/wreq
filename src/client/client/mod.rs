@@ -120,8 +120,6 @@ struct Config {
     cookie_store: Option<Arc<dyn cookie::CookieStore>>,
     #[cfg(feature = "hickory-dns")]
     hickory_dns: bool,
-    #[cfg(feature = "hickory-dns")]
-    hickory_dns_strategy: Option<LookupIpStrategy>,
     dns_overrides: HashMap<String, Vec<SocketAddr>>,
     dns_resolver: Option<Arc<dyn Resolve>>,
     https_only: bool,
@@ -194,8 +192,6 @@ impl ClientBuilder {
                 nodelay: true,
                 #[cfg(feature = "hickory-dns")]
                 hickory_dns: cfg!(feature = "hickory-dns"),
-                #[cfg(feature = "hickory-dns")]
-                hickory_dns_strategy: None,
                 #[cfg(feature = "cookies")]
                 cookie_store: None,
                 dns_overrides: HashMap::new(),
@@ -262,7 +258,7 @@ impl ClientBuilder {
                     Some(dns_resolver) => dns_resolver,
                     #[cfg(feature = "hickory-dns")]
                     None if config.hickory_dns => {
-                        Arc::new(HickoryDnsResolver::new(config.hickory_dns_strategy)?)
+                        Arc::new(HickoryDnsResolver::new(LookupIpStrategy::Ipv4thenIpv6)?)
                     }
                     None => Arc::new(GaiResolver::new()),
                 };
@@ -1139,20 +1135,6 @@ impl ClientBuilder {
     }
 
     // DNS options
-
-    /// Enables the `hickory-dns` asynchronous resolver instead of the default threadpool-based `getaddrinfo`.
-    ///
-    /// By default, if the `hickory-dns` feature is enabled, this option is used.
-    ///
-    /// # Optional
-    ///
-    /// Requires the `hickory-dns` feature to be enabled.
-    #[cfg(feature = "hickory-dns")]
-    #[cfg_attr(docsrs, doc(cfg(feature = "hickory-dns")))]
-    pub fn hickory_dns_strategy(mut self, strategy: LookupIpStrategy) -> ClientBuilder {
-        self.config.hickory_dns_strategy = Some(strategy);
-        self
-    }
 
     /// Disables the hickory-dns async resolver.
     ///

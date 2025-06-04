@@ -1,12 +1,40 @@
 //! DNS resolution via the [hickory-resolver](https://github.com/hickory-dns/hickory-dns) crate
 
 use super::{Addrs, Name, Resolve, Resolving};
-pub use hickory_resolver::config::LookupIpStrategy;
-use hickory_resolver::config::ResolverConfig;
+use hickory_resolver::config::{LookupIpStrategy as HickoryLookupIpStrategy, ResolverConfig};
 use hickory_resolver::name_server::TokioConnectionProvider;
 use hickory_resolver::{TokioResolver, lookup_ip::LookupIpIntoIter};
 use std::net::SocketAddr;
 use std::sync::Arc;
+
+/// The lookup ip strategy
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
+#[repr(u8)]
+pub enum LookupIpStrategy {
+    /// Only query for A (Ipv4) records
+    Ipv4Only,
+    /// Only query for AAAA (Ipv6) records
+    Ipv6Only,
+    /// Query for A and AAAA in parallel
+    #[default]
+    Ipv4AndIpv6,
+    /// Query for Ipv6 if that fails, query for Ipv4
+    Ipv6thenIpv4,
+    /// Query for Ipv4 if that fails, query for Ipv6
+    Ipv4thenIpv6,
+}
+
+impl LookupIpStrategy {
+    const fn to_hickory(self) -> HickoryLookupIpStrategy {
+        match self {
+            LookupIpStrategy::Ipv4Only => HickoryLookupIpStrategy::Ipv4Only,
+            LookupIpStrategy::Ipv6Only => HickoryLookupIpStrategy::Ipv6Only,
+            LookupIpStrategy::Ipv4AndIpv6 => HickoryLookupIpStrategy::Ipv4AndIpv6,
+            LookupIpStrategy::Ipv6thenIpv4 => HickoryLookupIpStrategy::Ipv6thenIpv4,
+            LookupIpStrategy::Ipv4thenIpv6 => HickoryLookupIpStrategy::Ipv4thenIpv6,
+        }
+    }
+}
 
 /// Wrapper around an `AsyncResolver`, which implements the `Resolve` trait.
 #[derive(Debug, Clone)]
@@ -37,8 +65,10 @@ impl HickoryDnsResolver {
             }
         };
 
-        resolver.options_mut().ip_strategy =
-            strategy.into().unwrap_or(LookupIpStrategy::Ipv4AndIpv6);
+        resolver.options_mut().ip_strategy = strategy
+            .into()
+            .map(LookupIpStrategy::to_hickory)
+            .unwrap_or_default();
 
         Ok(Self {
             state: Arc::new(resolver.build()),
