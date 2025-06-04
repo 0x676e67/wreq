@@ -139,7 +139,7 @@ jobs:
 
       - name: Prepare musl cross-compiler
         run: |
-          curl -O http://musl.cc/${{ matrix.package }}.tgz
+          wget https://github.com/musl-cc/musl.cc/releases/latest/download/${{ matrix.package }}.tgz
           tar xzf ${{ matrix.package }}.tgz -C /opt
           echo "/opt/${{ matrix.package }}/bin/" >> $GITHUB_PATH
 
