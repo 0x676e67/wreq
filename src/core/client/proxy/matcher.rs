@@ -634,9 +634,12 @@ mod win {
             return;
         }
 
-        if builder.http.is_empty() {
-            if let Ok(val) = settings.get_string("ProxyServer") {
-                builder.http = val;
+        if let Ok(val) = settings.get_string("ProxyServer") {
+            if builder.http.is_empty() {
+                builder.http = val.clone();
+            }
+            if builder.https.is_empty() {
+                builder.https = val;
             }
         }
 
