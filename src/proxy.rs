@@ -64,25 +64,6 @@ pub struct NoProxy {
     inner: String,
 }
 
-/// A particular scheme used for proxying requests.
-///
-/// For example, HTTP vs SOCKS5
-#[cfg(feature = "socks")]
-#[derive(Clone)]
-#[repr(u8)]
-pub enum ProxyScheme {
-    Http,
-    Https,
-    #[cfg(feature = "socks")]
-    Socks4,
-    #[cfg(feature = "socks")]
-    Socks4a,
-    #[cfg(feature = "socks")]
-    Socks5,
-    #[cfg(feature = "socks")]
-    Socks5h,
-}
-
 #[derive(Clone, PartialEq, Eq)]
 struct Extra {
     auth: Option<HeaderValue>,
@@ -572,23 +553,6 @@ impl fmt::Debug for Matcher {
 }
 
 impl Intercepted {
-    #[cfg(feature = "socks")]
-    pub(crate) fn proxy_scheme(&self) -> Option<ProxyScheme> {
-        match self.inner.uri().scheme_str() {
-            Some("http") => Some(ProxyScheme::Http),
-            Some("https") => Some(ProxyScheme::Https),
-            #[cfg(feature = "socks")]
-            Some("socks4") => Some(ProxyScheme::Socks4),
-            #[cfg(feature = "socks")]
-            Some("socks4a") => Some(ProxyScheme::Socks4a),
-            #[cfg(feature = "socks")]
-            Some("socks5") => Some(ProxyScheme::Socks5),
-            #[cfg(feature = "socks")]
-            Some("socks5h") => Some(ProxyScheme::Socks5h),
-            _ => None,
-        }
-    }
-
     pub(crate) fn uri(&self) -> &http::Uri {
         self.inner.uri()
     }

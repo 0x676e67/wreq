@@ -7,12 +7,9 @@ use crate::core::client::{
 };
 use crate::core::rt::TokioIo;
 use crate::core::rt::{Read, ReadBufCursor, Write};
-#[cfg(feature = "socks")]
-use crate::proxy::ProxyScheme;
 use crate::tls::{HttpsConnector, MaybeHttpsStream, TlsConnector};
 
 use http::uri::Scheme;
-
 use pin_project_lite::pin_project;
 use sealed::{Conn, Unnameable};
 use tokio_boring2::SslStream;
@@ -278,11 +275,9 @@ pub(crate) struct ConnectorService {
 impl ConnectorService {
     #[cfg(feature = "socks")]
     async fn connect_socks(&self, mut dst: Dst, proxy: Intercepted) -> Result<Conn, BoxError> {
-        use crate::proxy::ProxyScheme;
-
-        let dns = match proxy.proxy_scheme() {
-            Some(ProxyScheme::Socks4 | ProxyScheme::Socks5) => socks::DnsResolve::Local,
-            Some(ProxyScheme::Socks4a | ProxyScheme::Socks5h) => socks::DnsResolve::Proxy,
+        let dns = match proxy.uri().scheme_str() {
+            Some("socks4" | "socks5") => socks::DnsResolve::Local,
+            Some("socks4a" | "socks5h") => socks::DnsResolve::Proxy,
             _ => unreachable!("connect_socks is only called for socks proxies"),
         };
 
@@ -361,10 +356,7 @@ impl ConnectorService {
         debug!("proxy({:?}) intercepts '{:?}'", proxy, dst);
 
         #[cfg(feature = "socks")]
-        if let Some(
-            ProxyScheme::Socks4 | ProxyScheme::Socks4a | ProxyScheme::Socks5 | ProxyScheme::Socks5h,
-        ) = proxy.proxy_scheme()
-        {
+        if let Some("socks4" | "socks4a" | "socks5" | "socks5h") = proxy.uri().scheme_str() {
             return self.connect_socks(dst, proxy).await;
         }
 
@@ -716,10 +708,7 @@ mod socks {
     };
 
     use super::{BoxError, Scheme};
-    use crate::{
-        dns::DynResolver,
-        proxy::{Intercepted, ProxyScheme},
-    };
+    use crate::{dns::DynResolver, proxy::Intercepted};
 
     pub(super) enum DnsResolve {
         Local,
@@ -738,15 +727,15 @@ mod socks {
 
         let target = resolve_target_addr(host, port, dst, &dns_mode, resolver).await?;
 
-        match proxy.proxy_scheme() {
-            Some(ProxyScheme::Socks4 | ProxyScheme::Socks4a) => {
+        match proxy.uri().scheme_str() {
+            Some("socks4" | "socks4a") => {
                 let stream = Socks4Stream::connect(proxy_addr, target)
                     .await
                     .map_err(|e| format!("SOCKS4 connect error: {e}"))?;
 
                 Ok(stream.into_inner())
             }
-            Some(ProxyScheme::Socks5 | ProxyScheme::Socks5h) => match proxy.raw_auth() {
+            Some("socks5" | "socks5h") => match proxy.raw_auth() {
                 Some((user, pass)) => {
                     let stream =
                         Socks5Stream::connect_with_password(proxy_addr, target, user, pass)
@@ -800,18 +789,12 @@ mod socks {
         match dns_mode {
             DnsResolve::Local => {
                 if let Some(addr) = resolver.http_resolve(dst).await?.next() {
-                    Ok(addr.into_target_addr().map_err(|e| {
-                        format!("failed to convert resolved address to target address: {e}")
-                    })?)
+                    Ok(addr.into_target_addr()?)
                 } else {
-                    Ok((host, port).into_target_addr().map_err(|e| {
-                        format!("failed to convert resolved address to target address: {e}")
-                    })?)
+                    Ok((host, port).into_target_addr()?)
                 }
             }
-            DnsResolve::Proxy => Ok((host, port).into_target_addr().map_err(|e| {
-                format!("failed to convert resolved address to target address: {e}")
-            })?),
+            DnsResolve::Proxy => Ok((host, port).into_target_addr()?),
         }
     }
 }
