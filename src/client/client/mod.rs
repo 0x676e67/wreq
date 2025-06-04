@@ -1383,6 +1383,7 @@ impl Client {
             None => (None, Body::empty()),
         };
 
+        // apply proxy headers if any proxies are configured
         self.inner.apply_proxy_headers(&uri, &mut headers);
 
         let in_flight = {
@@ -1490,22 +1491,18 @@ struct ClientRef {
 
 impl ClientRef {
     fn apply_proxy_headers(&self, dst: &Uri, headers: &mut HeaderMap) {
-        // Only set the header here if the destination scheme is 'http',
-        // since otherwise, the header will be included in the CONNECT tunnel
-        // request instead.
+        // Skip if the destination is not plain HTTP.
+        // For HTTPS, the proxy headers should be part of the CONNECT tunnel instead.
         if dst.scheme() != Some(&Scheme::HTTP) {
             return;
         }
 
-        // If we don't have any proxies that might require HTTP auth, or if the
-        // PROXY_AUTHORIZATION header is already set, we don't need to do anything.
+        // Determine whether we need to apply proxy auth and/or custom headers.
         let need_auth = self.proxies_maybe_http_auth && !headers.contains_key(PROXY_AUTHORIZATION);
-        let need_custom = self.proxies_maybe_http_custom_headers;
+        let need_custom_headers = self.proxies_maybe_http_custom_headers;
 
-        // If we don't need to set any proxy headers, we can return early.
-        // This is the case if we don't have any proxies that might require HTTP auth,
-        // and we don't have any proxies that might require custom headers.
-        if !need_auth && !need_custom {
+        // If no headers need to be applied, return early.
+        if !need_auth && !need_custom_headers {
             return;
         }
 
@@ -1513,18 +1510,16 @@ impl ClientRef {
         let mut inserted_custom = false;
 
         for proxy in self.proxies.iter() {
+            // Insert basic auth header from the first applicable proxy.
             if need_auth && !inserted_auth {
-                // If the proxy requires HTTP basic auth, insert the PROXY_AUTHORIZATION header.
                 if let Some(auth_header) = proxy.http_non_tunnel_basic_auth(dst) {
                     headers.insert(PROXY_AUTHORIZATION, auth_header);
                     inserted_auth = true;
                 }
             }
 
-            if need_custom && !inserted_custom {
-                // If the proxy requires custom headers, insert them.
-                // This is useful for proxies that require additional headers
-                // for authentication or other purposes.
+            // Insert custom headers from the first applicable proxy.
+            if need_custom_headers && !inserted_custom {
                 if let Some(custom_headers) = proxy.http_non_tunnel_custom_headers(dst) {
                     for (key, value) in custom_headers.iter() {
                         headers.insert(key.clone(), value.clone());
@@ -1533,6 +1528,7 @@ impl ClientRef {
                 }
             }
 
+            // Stop iterating if both kinds of headers have been inserted.
             if inserted_auth && inserted_custom {
                 break;
             }
