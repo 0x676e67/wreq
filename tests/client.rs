@@ -717,3 +717,26 @@ async fn connection_pool_cache() {
     assert_eq!(resp.status(), wreq::StatusCode::OK);
     assert_eq!(resp.version(), http::Version::HTTP_2);
 }
+
+#[tokio::test]
+async fn http1_case_sensitive_headers() {
+    // Create a request with a case-sensitive header
+    let mut original_headers = OriginalHeaders::new();
+    original_headers.insert("X-custom-header");
+    original_headers.insert("Host");
+
+    let resp = wreq::Client::new()
+        .get("https://tls.peet.ws/api/all")
+        .header("X-Custom-Header", "value")
+        .original_headers(original_headers)
+        .version(Version::HTTP_11)
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+
+    assert!(resp.contains("X-custom-header"));
+    assert!(resp.contains("Host"));
+}
