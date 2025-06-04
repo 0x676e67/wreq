@@ -336,10 +336,9 @@ mod tests {
 
             // command req/res
             let n = to_client.read(&mut buf).await.expect("read 3");
-            let message = [0x05, 0x01, 0x00];
-            assert_eq!(&buf[..3], message);
-            assert!(buf[3] == 0x01 || buf[3] == 0x04); // IPv4 or IPv6
-            assert_eq!(n, 4 + 4 * (buf[3] as usize) + 2);
+            let message = [0x05, 0x01, 0x00, 0x01];
+            assert_eq!(&buf[..4], message);
+            assert_eq!(n, 4 + 4 + 2);
 
             let message = vec![0x05, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0, 0];
             to_client.write_all(&message).await.expect("write 3");
