@@ -37,7 +37,7 @@ And then the code:
 
 ```rust,no_run
 use wreq::Client;
-use rquest_util::Emulation;
+use wreq_util::Emulation;
 
 #[tokio::main]
 async fn main() -> wreq::Result<()> {

@@ -966,7 +966,7 @@ impl ClientBuilder {
     ///
     /// ```rust
     /// use wreq::{Client, Emulation};
-    /// use rquest_util::Emulation;
+    /// use wreq_util::Emulation;
     ///
     /// let client = Client::builder()
     ///     .emulation(Emulation::Firefox128)
