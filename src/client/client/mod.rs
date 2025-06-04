@@ -1384,7 +1384,7 @@ impl Client {
         };
 
         // apply proxy headers if any proxies are configured
-        self.inner.apply_proxy_headers(&uri, &mut headers);
+        self.apply_proxy_headers(&uri, &mut headers);
 
         let in_flight = {
             let mut req = crate::core::Request::builder()
@@ -1429,6 +1429,52 @@ impl Client {
                 read_timeout_fut,
                 read_timeout,
             }),
+        }
+    }
+
+    fn apply_proxy_headers(&self, dst: &Uri, headers: &mut HeaderMap) {
+        // Skip if the destination is not plain HTTP.
+        // For HTTPS, the proxy headers should be part of the CONNECT tunnel instead.
+        if dst.scheme() != Some(&Scheme::HTTP) {
+            return;
+        }
+
+        // Determine whether we need to apply proxy auth and/or custom headers.
+        let need_auth =
+            self.inner.proxies_maybe_http_auth && !headers.contains_key(PROXY_AUTHORIZATION);
+        let need_custom_headers = self.inner.proxies_maybe_http_custom_headers;
+
+        // If no headers need to be applied, return early.
+        if !need_auth && !need_custom_headers {
+            return;
+        }
+
+        let mut inserted_auth = false;
+        let mut inserted_custom = false;
+
+        for proxy in self.inner.proxies.iter() {
+            // Insert basic auth header from the first applicable proxy.
+            if need_auth && !inserted_auth {
+                if let Some(auth_header) = proxy.http_non_tunnel_basic_auth(dst) {
+                    headers.insert(PROXY_AUTHORIZATION, auth_header);
+                    inserted_auth = true;
+                }
+            }
+
+            // Insert custom headers from the first applicable proxy.
+            if need_custom_headers && !inserted_custom {
+                if let Some(custom_headers) = proxy.http_non_tunnel_custom_headers(dst) {
+                    for (key, value) in custom_headers.iter() {
+                        headers.insert(key.clone(), value.clone());
+                    }
+                    inserted_custom = true;
+                }
+            }
+
+            // Stop iterating if both kinds of headers have been inserted.
+            if inserted_auth && inserted_custom {
+                break;
+            }
         }
     }
 }
@@ -1487,53 +1533,6 @@ struct ClientRef {
     cert_verification: bool,
     min_tls_version: Option<TlsVersion>,
     max_tls_version: Option<TlsVersion>,
-}
-
-impl ClientRef {
-    fn apply_proxy_headers(&self, dst: &Uri, headers: &mut HeaderMap) {
-        // Skip if the destination is not plain HTTP.
-        // For HTTPS, the proxy headers should be part of the CONNECT tunnel instead.
-        if dst.scheme() != Some(&Scheme::HTTP) {
-            return;
-        }
-
-        // Determine whether we need to apply proxy auth and/or custom headers.
-        let need_auth = self.proxies_maybe_http_auth && !headers.contains_key(PROXY_AUTHORIZATION);
-        let need_custom_headers = self.proxies_maybe_http_custom_headers;
-
-        // If no headers need to be applied, return early.
-        if !need_auth && !need_custom_headers {
-            return;
-        }
-
-        let mut inserted_auth = false;
-        let mut inserted_custom = false;
-
-        for proxy in self.proxies.iter() {
-            // Insert basic auth header from the first applicable proxy.
-            if need_auth && !inserted_auth {
-                if let Some(auth_header) = proxy.http_non_tunnel_basic_auth(dst) {
-                    headers.insert(PROXY_AUTHORIZATION, auth_header);
-                    inserted_auth = true;
-                }
-            }
-
-            // Insert custom headers from the first applicable proxy.
-            if need_custom_headers && !inserted_custom {
-                if let Some(custom_headers) = proxy.http_non_tunnel_custom_headers(dst) {
-                    for (key, value) in custom_headers.iter() {
-                        headers.insert(key.clone(), value.clone());
-                    }
-                    inserted_custom = true;
-                }
-            }
-
-            // Stop iterating if both kinds of headers have been inserted.
-            if inserted_auth && inserted_custom {
-                break;
-            }
-        }
-    }
 }
 
 type ResponseFuture =
