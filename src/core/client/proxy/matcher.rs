@@ -192,6 +192,7 @@ impl Intercept {
     /// let auth = proxy.raw_auth().expect("example");
     /// assert_eq!(auth, ("Aladdin", "opensesame"));
     /// ```
+    #[cfg(feature = "socks")]
     pub fn raw_auth(&self) -> Option<(&str, &str)> {
         if let Auth::Raw(ref u, ref p) = self.auth {
             Some((u.as_str(), p.as_str()))

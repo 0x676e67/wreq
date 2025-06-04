@@ -67,6 +67,7 @@ pub struct NoProxy {
 /// A particular scheme used for proxying requests.
 ///
 /// For example, HTTP vs SOCKS5
+#[cfg(feature = "socks")]
 #[derive(Clone)]
 #[repr(u8)]
 pub enum ProxyScheme {
@@ -123,7 +124,7 @@ pub(crate) struct Matcher {
 
 #[derive(Clone)]
 enum Matcher_ {
-    Util(matcher::Matcher),
+    Util(Box<matcher::Matcher>),
     Custom(Custom),
 }
 
@@ -393,34 +394,34 @@ impl Proxy {
                 maybe_has_http_auth = cache_maybe_has_http_auth(&url, &extra.auth);
                 maybe_has_http_custom_headers =
                     cache_maybe_has_http_custom_headers(&url, &extra.misc);
-                Matcher_::Util(
+                Matcher_::Util(Box::new(
                     matcher::Matcher::builder()
                         .all(String::from(url))
                         .no(no_proxy.as_ref().map(|n| n.inner.as_ref()).unwrap_or(""))
                         .build(),
-                )
+                ))
             }
             Intercept::Http(url) => {
                 maybe_has_http_auth = cache_maybe_has_http_auth(&url, &extra.auth);
                 maybe_has_http_custom_headers =
                     cache_maybe_has_http_custom_headers(&url, &extra.misc);
-                Matcher_::Util(
+                Matcher_::Util(Box::new(
                     matcher::Matcher::builder()
                         .http(String::from(url))
                         .no(no_proxy.as_ref().map(|n| n.inner.as_ref()).unwrap_or(""))
                         .build(),
-                )
+                ))
             }
             Intercept::Https(url) => {
                 maybe_has_http_auth = cache_maybe_has_http_auth(&url, &extra.auth);
                 maybe_has_http_custom_headers =
                     cache_maybe_has_http_custom_headers(&url, &extra.misc);
-                Matcher_::Util(
+                Matcher_::Util(Box::new(
                     matcher::Matcher::builder()
                         .https(String::from(url))
                         .no(no_proxy.as_ref().map(|n| n.inner.as_ref()).unwrap_or(""))
                         .build(),
-                )
+                ))
             }
             Intercept::Custom(mut custom) => {
                 maybe_has_http_auth = true; // never know
@@ -500,7 +501,7 @@ impl NoProxy {
 impl Matcher {
     pub(crate) fn system() -> Self {
         Self {
-            inner: Matcher_::Util(matcher::Matcher::from_system()),
+            inner: Matcher_::Util(Box::new(matcher::Matcher::from_system())),
             extra: Extra {
                 auth: None,
                 misc: None,
@@ -571,6 +572,7 @@ impl fmt::Debug for Matcher {
 }
 
 impl Intercepted {
+    #[cfg(feature = "socks")]
     pub(crate) fn proxy_scheme(&self) -> Option<ProxyScheme> {
         match self.inner.uri().scheme_str() {
             Some("http") => Some(ProxyScheme::Http),
@@ -632,6 +634,7 @@ fn url_auth(url: &mut Url, username: &str, password: &str) {
 
 #[derive(Clone)]
 struct Custom {
+    #[allow(clippy::type_complexity)]
     func: Arc<dyn Fn(&Url) -> Option<crate::Result<Url>> + Send + Sync + 'static>,
     no_proxy: Option<NoProxy>,
 }

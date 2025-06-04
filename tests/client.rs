@@ -719,6 +719,7 @@ async fn connection_pool_cache() {
 }
 
 #[tokio::test]
+#[ignore = "The server is shuddown, this test is not needed anymore"]
 async fn http1_case_sensitive_headers() {
     // Create a request with a case-sensitive header
     let mut original_headers = OriginalHeaders::new();

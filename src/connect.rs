@@ -361,16 +361,11 @@ impl ConnectorService {
         debug!("proxy({:?}) intercepts '{:?}'", proxy, dst);
 
         #[cfg(feature = "socks")]
-        match proxy.proxy_scheme() {
-            Some(
-                ProxyScheme::Socks4
-                | ProxyScheme::Socks4a
-                | ProxyScheme::Socks5
-                | ProxyScheme::Socks5h,
-            ) => {
-                return self.connect_socks(dst, proxy).await;
-            }
-            _ => (),
+        if let Some(
+            ProxyScheme::Socks4 | ProxyScheme::Socks4a | ProxyScheme::Socks5 | ProxyScheme::Socks5h,
+        ) = proxy.proxy_scheme()
+        {
+            return self.connect_socks(dst, proxy).await;
         }
 
         let proxy_dst = proxy.uri().clone();
@@ -753,7 +748,7 @@ mod socks {
             Some(ProxyScheme::Socks5 | ProxyScheme::Socks5h) => match proxy.raw_auth() {
                 Some((user, pass)) => {
                     let stream =
-                        Socks5Stream::connect_with_password(proxy_addr, (host, port), &user, &pass)
+                        Socks5Stream::connect_with_password(proxy_addr, (host, port), user, pass)
                             .await
                             .map_err(|e| format!("SOCKS5 connect error: {e}"))?;
 
