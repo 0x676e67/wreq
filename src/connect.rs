@@ -736,9 +736,10 @@ mod socks {
 
         let proxy_addr = resolve_proxy_addr(&proxy, resolver).await?;
 
+        let target = resolve_target_addr(host, port, dst, &dns_mode, resolver).await?;
+
         match proxy.proxy_scheme() {
             Some(ProxyScheme::Socks4 | ProxyScheme::Socks4a) => {
-                let target = resolve_target_addr(host, port, dst, &dns_mode, resolver).await?;
                 let stream = Socks4Stream::connect(proxy_addr, target)
                     .await
                     .map_err(|e| format!("SOCKS4 connect error: {e}"))?;
@@ -748,14 +749,14 @@ mod socks {
             Some(ProxyScheme::Socks5 | ProxyScheme::Socks5h) => match proxy.raw_auth() {
                 Some((user, pass)) => {
                     let stream =
-                        Socks5Stream::connect_with_password(proxy_addr, (host, port), user, pass)
+                        Socks5Stream::connect_with_password(proxy_addr, target, user, pass)
                             .await
                             .map_err(|e| format!("SOCKS5 connect error: {e}"))?;
 
                     Ok(stream.into_inner())
                 }
                 None => {
-                    let stream = Socks5Stream::connect(proxy_addr, (host, port))
+                    let stream = Socks5Stream::connect(proxy_addr, target)
                         .await
                         .map_err(|e| format!("SOCKS5 connect error: {e}"))?;
 
