@@ -36,7 +36,8 @@ use crate::core::proto::Dispatched;
 use crate::core::proto::h2::UpgradedSendStream;
 use crate::core::rt::bounds::Http2ClientConnExec;
 use crate::core::upgrade::Upgraded;
-use crate::core::{Request, Response};
+
+use http::{Request, Response};
 
 use http2::client::ResponseFuture;
 use http2::frame::{PseudoOrder, SettingsOrder, StreamDependency};

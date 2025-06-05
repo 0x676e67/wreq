@@ -105,7 +105,7 @@ impl PendingRequest {
         };
 
         *self.as_mut().in_flight().get_mut() = {
-            let mut req = crate::core::Request::builder()
+            let mut req = http::Request::builder()
                 .uri(uri)
                 .method(self.method.clone())
                 .body(body)

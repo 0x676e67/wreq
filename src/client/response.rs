@@ -4,8 +4,8 @@ use std::pin::Pin;
 use std::time::Duration;
 
 use crate::core::client::connect::HttpInfo;
-use crate::core::{HeaderMap, StatusCode, Version};
 use bytes::Bytes;
+use http::{HeaderMap, StatusCode, Version};
 use http_body_util::BodyExt;
 #[cfg(feature = "json")]
 use serde::de::DeserializeOwned;
@@ -26,7 +26,7 @@ use mime::Mime;
 
 /// A Response to a submitted `Request`.
 pub struct Response {
-    pub(super) res: crate::core::Response<Decoder>,
+    pub(super) res: http::Response<Decoder>,
     // Boxed to save space (11 words to 1 word), and it's not accessed
     // frequently internally.
     url: Box<Url>,
@@ -34,7 +34,7 @@ pub struct Response {
 
 impl Response {
     pub(super) fn new(
-        res: crate::core::Response<ResponseBody>,
+        res: http::Response<ResponseBody>,
         url: Url,
         accepts: Accepts,
         total_timeout: Option<Pin<Box<Sleep>>>,
@@ -46,7 +46,7 @@ impl Response {
             super::body::response(body, total_timeout, read_timeout),
             accepts,
         );
-        let res = crate::core::Response::from_parts(parts, decoder);
+        let res = http::Response::from_parts(parts, decoder);
 
         Response {
             res,
@@ -463,7 +463,7 @@ impl<T: Into<Body>> From<http::Response<T>> for Response {
             .remove::<ResponseUrl>()
             .unwrap_or_else(|| ResponseUrl(Url::parse("http://no.url.provided.local").unwrap()));
         let url = url.0;
-        let res = crate::core::Response::from_parts(parts, decoder);
+        let res = http::Response::from_parts(parts, decoder);
         Response {
             res,
             url: Box::new(url),

@@ -1,3 +1,4 @@
+use http::Request;
 use std::{
     pin::Pin,
     task::{Context, Poll},
@@ -9,7 +10,7 @@ use super::Body;
 use crate::cookie;
 use crate::{
     connect::Connector,
-    core::{Request, body::Incoming, client::Client},
+    core::{body::Incoming, client::Client},
 };
 
 #[derive(Clone)]

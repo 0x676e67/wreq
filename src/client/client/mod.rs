@@ -1392,7 +1392,7 @@ impl Client {
         self.apply_proxy_headers(&uri, &mut headers);
 
         let in_flight = {
-            let mut req = crate::core::Request::builder()
+            let mut req = http::Request::builder()
                 .uri(uri)
                 .method(method.clone())
                 .body(body)
