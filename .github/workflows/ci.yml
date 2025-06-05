@@ -56,6 +56,10 @@ jobs:
           toolchain: stable
           override: true
       - uses: Swatinem/rust-cache@v2
+      - name: Install cargo-hack from crates.io
+        uses: baptiste0928/cargo-install@v3
+        with:
+          crate: cargo-hack
       - name: Run hack script
         run: cargo hack check --each-feature
 
