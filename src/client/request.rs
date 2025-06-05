@@ -8,7 +8,7 @@ use http::{Extensions, Request as HttpRequest, Version, request::Parts};
 use serde::Serialize;
 
 use super::body::Body;
-use super::client::{Client, Pending};
+use super::client::{Client, future::Pending};
 #[cfg(feature = "multipart")]
 use super::multipart;
 use super::response::Response;

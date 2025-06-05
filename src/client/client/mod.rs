@@ -1,8 +1,9 @@
+pub(super) mod future;
 mod service;
+
 use std::future::Future;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::num::NonZeroUsize;
-use std::pin::Pin;
 
 use std::sync::Arc;
 use std::task::{Context, Poll};
@@ -29,7 +30,7 @@ use crate::into_url::try_uri;
 use crate::proxy::Matcher as ProxyMatcher;
 use crate::redirect::TowerRedirectPolicy;
 use crate::tls::{CertStore, CertificateInput, Identity, KeyLogPolicy, TlsConfig};
-use crate::{IntoUrl, Method, OriginalHeaders, Proxy, Url};
+use crate::{IntoUrl, Method, OriginalHeaders, Proxy};
 use crate::{
     error, redirect,
     tls::{AlpnProtos, TlsConnector, TlsVersion},
@@ -42,17 +43,15 @@ use super::response::Response;
 use super::websocket::WebSocketRequestBuilder;
 use super::{Body, EmulationProviderFactory};
 
-use bytes::Bytes;
-use http::Extensions;
+use future::{Pending, PendingInner, PendingRequest};
+
 use http::{
     Uri,
     header::{HeaderMap, HeaderValue, PROXY_AUTHORIZATION, USER_AGENT},
     uri::Scheme,
 };
-use pin_project_lite::pin_project;
 
 use service::ClientService;
-use tokio::time::Sleep;
 use tower::util::BoxCloneSyncServiceLayer;
 use tower::{Layer, Service};
 use tower_http::follow_redirect::FollowRedirect;
@@ -73,6 +72,23 @@ use tower_http::follow_redirect::FollowRedirect;
 #[derive(Clone)]
 pub struct Client {
     inner: Arc<ClientRef>,
+}
+
+/// A reference to the `Client` that is used internally.
+struct ClientRef {
+    accepts: Accepts,
+    #[cfg(feature = "cookies")]
+    cookie_store: Option<Arc<dyn cookie::CookieStore>>,
+    headers: HeaderMap,
+    original_headers: RequestConfig<RequestOriginalHeaders>,
+    total_timeout: RequestConfig<RequestTimeout>,
+    read_timeout: RequestConfig<RequestTimeout>,
+    client: FollowRedirect<ClientService, TowerRedirectPolicy>,
+    https_only: bool,
+    http2_max_retry_count: usize,
+    proxies: Arc<Vec<ProxyMatcher>>,
+    proxies_maybe_http_auth: bool,
+    proxies_maybe_http_custom_headers: bool,
 }
 
 /// A `ClientBuilder` can be used to create a `Client` with custom configuration.
@@ -347,22 +363,20 @@ impl ClientBuilder {
             p
         };
 
+        let client_service = ClientService::new(
+            config.builder.build(connector),
+            #[cfg(feature = "cookies")]
+            config.cookie_store.clone(),
+        );
+
         Ok(Client {
             inner: Arc::new(ClientRef {
                 accepts: config.accepts,
                 #[cfg(feature = "cookies")]
-                cookie_store: config.cookie_store.clone(),
-                client: FollowRedirect::with_policy(
-                    ClientService::new(
-                        config.builder.build(connector),
-                        #[cfg(feature = "cookies")]
-                        config.cookie_store,
-                    ),
-                    policy,
-                ),
+                cookie_store: config.cookie_store,
+                client: FollowRedirect::with_policy(client_service, policy),
                 headers: config.headers,
                 original_headers: RequestConfig::new(config.original_headers),
-                referer: config.referer,
                 total_timeout: RequestConfig::new(config.timeout),
                 read_timeout: RequestConfig::new(config.read_timeout),
                 https_only: config.https_only,
@@ -370,15 +384,6 @@ impl ClientBuilder {
                 proxies_maybe_http_auth,
                 proxies_maybe_http_custom_headers,
                 proxies,
-                alpn_protos: config.alpn_protos,
-                keylog: config.keylog_policy,
-                tls_sni: config.tls_sni,
-                verify_hostname: config.verify_hostname,
-                identity: config.identity,
-                cert_store: config.cert_store,
-                cert_verification: config.cert_verification,
-                min_tls_version: config.min_tls_version,
-                max_tls_version: config.max_tls_version,
             }),
         })
     }
@@ -1414,7 +1419,7 @@ impl Client {
         let read_timeout_fut = read_timeout.map(tokio::time::sleep).map(Box::pin);
 
         Pending {
-            inner: PendingInner::Request(PendingRequest {
+            inner: PendingInner::Request(Box::new(PendingRequest {
                 method,
                 url,
                 headers,
@@ -1428,7 +1433,7 @@ impl Client {
                 total_timeout,
                 read_timeout_fut,
                 read_timeout,
-            }),
+            })),
         }
     }
 
@@ -1507,262 +1512,6 @@ impl tower_service::Service<Request> for &'_ Client {
     }
 }
 
-#[allow(dead_code)]
-#[derive(Clone)]
-struct ClientRef {
-    accepts: Accepts,
-    #[cfg(feature = "cookies")]
-    cookie_store: Option<Arc<dyn cookie::CookieStore>>,
-    headers: HeaderMap,
-    original_headers: RequestConfig<RequestOriginalHeaders>,
-    client: FollowRedirect<ClientService, TowerRedirectPolicy>,
-    total_timeout: RequestConfig<RequestTimeout>,
-    read_timeout: RequestConfig<RequestTimeout>,
-    referer: bool,
-    https_only: bool,
-    http2_max_retry_count: usize,
-    proxies: Arc<Vec<ProxyMatcher>>,
-    proxies_maybe_http_auth: bool,
-    proxies_maybe_http_custom_headers: bool,
-    alpn_protos: Option<AlpnProtos>,
-    keylog: Option<KeyLogPolicy>,
-    tls_sni: bool,
-    verify_hostname: bool,
-    identity: Option<Identity>,
-    cert_store: Option<CertStore>,
-    cert_verification: bool,
-    min_tls_version: Option<TlsVersion>,
-    max_tls_version: Option<TlsVersion>,
-}
-
-type ResponseFuture =
-    tower_http::follow_redirect::ResponseFuture<ClientService, Body, TowerRedirectPolicy>;
-
-pin_project! {
-    pub struct Pending {
-        #[pin]
-        inner: PendingInner,
-    }
-}
-
-#[allow(clippy::large_enum_variant)]
-enum PendingInner {
-    Request(PendingRequest),
-    Error(Option<Error>),
-}
-
-pin_project! {
-    struct PendingRequest {
-        method: Method,
-        url: Url,
-        headers: HeaderMap,
-        body: Option<Option<Bytes>>,
-        extensions: Extensions,
-        http2_retry_count: usize,
-        http2_max_retry_count: usize,
-        redirect: Option<redirect::Policy>,
-        inner: Arc<ClientRef>,
-        #[pin]
-        in_flight: ResponseFuture,
-        #[pin]
-        total_timeout: Option<Pin<Box<Sleep>>>,
-        #[pin]
-        read_timeout_fut: Option<Pin<Box<Sleep>>>,
-        read_timeout: Option<Duration>,
-    }
-}
-
-impl PendingRequest {
-    #[inline]
-    fn in_flight(self: Pin<&mut Self>) -> Pin<&mut ResponseFuture> {
-        self.project().in_flight
-    }
-
-    #[inline]
-    fn total_timeout(self: Pin<&mut Self>) -> Pin<&mut Option<Pin<Box<Sleep>>>> {
-        self.project().total_timeout
-    }
-
-    #[inline]
-    fn read_timeout(self: Pin<&mut Self>) -> Pin<&mut Option<Pin<Box<Sleep>>>> {
-        self.project().read_timeout_fut
-    }
-
-    fn retry_error(mut self: Pin<&mut Self>, err: &(dyn std::error::Error + 'static)) -> bool {
-        if !is_retryable_error(err) {
-            return false;
-        }
-
-        trace!("can retry {:?}", err);
-
-        let body = match self.body {
-            Some(Some(ref body)) => Body::reusable(body.clone()),
-            Some(None) => {
-                debug!("error was retryable, but body not reusable");
-                return false;
-            }
-            None => Body::empty(),
-        };
-
-        if self.http2_retry_count >= self.http2_max_retry_count {
-            trace!("retry count too high");
-            return false;
-        }
-        self.http2_retry_count += 1;
-
-        let uri = match try_uri(&self.url) {
-            Some(uri) => uri,
-            None => {
-                debug!("a parsed Url should always be a valid Uri: {}", self.url);
-                return false;
-            }
-        };
-
-        *self.as_mut().in_flight().get_mut() = {
-            let mut req = crate::core::Request::builder()
-                .uri(uri)
-                .method(self.method.clone())
-                .body(body)
-                .expect("valid request parts");
-
-            *req.headers_mut() = self.headers.clone();
-            *req.extensions_mut() = self.extensions.clone();
-            let mut client = self.inner.client.clone();
-            client.call(req)
-        };
-
-        true
-    }
-}
-
-impl Pending {
-    pub(super) fn new_err(err: Error) -> Pending {
-        Pending {
-            inner: PendingInner::Error(Some(err)),
-        }
-    }
-
-    fn inner(self: Pin<&mut Self>) -> Pin<&mut PendingInner> {
-        self.project().inner
-    }
-}
-
-impl Future for Pending {
-    type Output = Result<Response, Error>;
-
-    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let inner = self.inner();
-        match inner.get_mut() {
-            PendingInner::Request(req) => Pin::new(req).poll(cx),
-            PendingInner::Error(err) => Poll::Ready(Err(err
-                .take()
-                .unwrap_or_else(|| error::request("Pending error polled more than once")))),
-        }
-    }
-}
-
-impl Future for PendingRequest {
-    type Output = Result<Response, Error>;
-
-    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        if let Some(delay) = self.as_mut().total_timeout().as_mut().as_pin_mut() {
-            if let Poll::Ready(()) = delay.poll(cx) {
-                return Poll::Ready(Err(
-                    error::request(error::TimedOut).with_url(self.url.clone())
-                ));
-            }
-        }
-
-        if let Some(delay) = self.as_mut().read_timeout().as_mut().as_pin_mut() {
-            if let Poll::Ready(()) = delay.poll(cx) {
-                return Poll::Ready(Err(
-                    error::request(error::TimedOut).with_url(self.url.clone())
-                ));
-            }
-        }
-
-        loop {
-            let res = {
-                let r = self.as_mut().in_flight().get_mut();
-                match Pin::new(r).poll(cx) {
-                    Poll::Ready(Err(e)) => {
-                        if e.is_request() {
-                            if let Some(e) = std::error::Error::source(&e) {
-                                if self.as_mut().retry_error(e) {
-                                    continue;
-                                }
-                            }
-                        }
-                        return Poll::Ready(Err(e));
-                    }
-                    Poll::Ready(Ok(res)) => res.map(super::body::boxed),
-                    Poll::Pending => return Poll::Pending,
-                }
-            };
-
-            #[cfg(feature = "cookies")]
-            {
-                if let Some(cookie_store) = self.inner.cookie_store.as_ref() {
-                    let mut cookies =
-                        cookie::extract_response_cookie_headers(res.headers()).peekable();
-                    if cookies.peek().is_some() {
-                        cookie_store.set_cookies(&mut cookies, &self.url);
-                    }
-                }
-            }
-
-            if let Some(url) = &res
-                .extensions()
-                .get::<tower_http::follow_redirect::RequestUri>()
-            {
-                self.url = match Url::parse(&url.0.to_string()) {
-                    Ok(url) => url,
-                    Err(e) => return Poll::Ready(Err(crate::error::decode(e))),
-                }
-            };
-
-            let res = Response::new(
-                res,
-                self.url.clone(),
-                self.inner.accepts,
-                self.total_timeout.take(),
-                self.read_timeout,
-            );
-
-            return Poll::Ready(Ok(res));
-        }
-    }
-}
-
-fn is_retryable_error(err: &(dyn std::error::Error + 'static)) -> bool {
-    // pop the legacy::Error
-    let err = if let Some(err) = err.source() {
-        err
-    } else {
-        return false;
-    };
-
-    if let Some(cause) = err.source() {
-        if let Some(err) = cause.downcast_ref::<http2::Error>() {
-            // They sent us a graceful shutdown, try with a new connection!
-            if err.is_go_away() && err.is_remote() && err.reason() == Some(http2::Reason::NO_ERROR)
-            {
-                return true;
-            }
-
-            // REFUSED_STREAM was sent from the server, which is safe to retry.
-            // https://www.rfc-editor.org/rfc/rfc9113.html#section-8.7-3.2
-            if err.is_reset()
-                && err.is_remote()
-                && err.reason() == Some(http2::Reason::REFUSED_STREAM)
-            {
-                return true;
-            }
-        }
-    }
-    false
-}
-
 #[cfg(any(
     feature = "gzip",
     feature = "brotli",
@@ -1776,7 +1525,7 @@ fn add_accpet_encoding_header(accepts: &Accepts, headers: &mut HeaderMap) {
         {
             headers.insert(
                 crate::header::ACCEPT_ENCODING,
-                HeaderValue::from_static(accept_encoding),
+                http::HeaderValue::from_static(accept_encoding),
             );
         }
     }
