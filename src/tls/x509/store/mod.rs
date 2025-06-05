@@ -152,6 +152,7 @@ pub struct CertStore(X509Store);
 
 impl Default for CertStore {
     fn default() -> Self {
+        #[cfg(any(feature = "webpki-roots", feature = "native-roots"))]
         pub(super) static LOAD_CERTS: std::sync::LazyLock<CertStore> =
             std::sync::LazyLock::new(|| {
                 let mut builder = CertStore::builder();
@@ -167,16 +168,18 @@ impl Default for CertStore {
                         builder.add_der_certs(&rustls_native_certs::load_native_certs().certs);
                 }
 
-                #[cfg(not(any(feature = "webpki-roots", feature = "native-roots")))]
-                {
-                    // If no feature is enabled, we still want to create a default store
-                    // that can be used later.
-                    builder = builder.set_default_paths();
-                }
-
                 builder.build().expect("failed to load default cert store")
             });
 
+        #[cfg(not(any(feature = "webpki-roots", feature = "native-roots")))]
+        {
+            CertStore::builder()
+                .set_default_paths()
+                .build()
+                .expect("failed to load default cert store")
+        }
+
+        #[cfg(any(feature = "webpki-roots", feature = "native-roots"))]
         LOAD_CERTS.clone()
     }
 }
