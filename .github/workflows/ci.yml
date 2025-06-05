@@ -46,6 +46,19 @@ jobs:
       - name: Build docs
         run: cargo doc --document-private-items --all-features
 
+  hack:
+    name: Hack
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          override: true
+      - uses: Swatinem/rust-cache@v2
+      - name: Run hack script
+        run: cargo hack check --each-feature
+
   tests:
     name: Tests
     runs-on: ubuntu-latest

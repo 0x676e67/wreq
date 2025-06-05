@@ -228,10 +228,10 @@ impl Builder {
         #[allow(unused_mut)]
         let mut builder = Self::from_env();
 
-        #[cfg(target_os = "macos")]
+        #[cfg(all(target_os = "macos", feature = "system-proxy"))]
         mac::with_system(&mut builder);
 
-        #[cfg(windows)]
+        #[cfg(all(windows, feature = "system-proxy"))]
         win::with_system(&mut builder);
 
         builder
@@ -537,7 +537,7 @@ mod builder {
     }
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", feature = "system-proxy"))]
 mod mac {
     use system_configuration::core_foundation::base::CFType;
     use system_configuration::core_foundation::dictionary::CFDictionary;

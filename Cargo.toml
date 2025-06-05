@@ -33,7 +33,7 @@ full = [
 
 websocket = ["dep:tokio-tungstenite"]
 
-charset = ["dep:encoding_rs"]
+charset = ["dep:encoding_rs", "dep:mime"]
 
 cookies = ["dep:cookie_crate", "dep:cookie_store"]
 
@@ -99,12 +99,8 @@ pin-project-lite = "0.2.4"
 smallvec = { version = "1.12", features = ["const_generics", "const_new"] }
 tracing = { version = "0.1", default-features = false, features = ["std"], optional = true }
 want = "0.3"
-
-## common
-encoding_rs = { version = "0.8", optional = true }
 socket2 = { version = "0.5.10", features = ["all"] }
 lru = { version = "0.14", default-features = false }
-mime = "0.3.17"
 percent-encoding = "2.3"
 ipnet = "2.11.0"
 
@@ -117,8 +113,13 @@ linked_hash_set = "0.1"
 
 ## json
 serde_json = { version = "1.0", optional = true }
+
 ## multipart
 mime_guess = { version = "2.0", default-features = false, optional = true }
+
+## charset
+encoding_rs = { version = "0.8", optional = true }
+mime = { version = "0.3.17", optional = true }
 
 # root certs
 rustls-native-certs = { version = "0.8.0", optional = true }
