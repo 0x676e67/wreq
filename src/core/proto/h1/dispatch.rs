@@ -612,7 +612,7 @@ mod tests {
             handle.read(b"HTTP/1.1 200 OK\r\n\r\n");
 
             let mut res_rx = tx
-                .try_send(crate::core::Request::new(IncomingBody::empty()))
+                .try_send(http::Request::new(IncomingBody::empty()))
                 .unwrap();
 
             tokio_test::assert_ready_ok!(Pin::new(&mut dispatcher).poll(cx));
@@ -650,10 +650,7 @@ mod tests {
             body
         };
 
-        let req = crate::core::Request::builder()
-            .method("POST")
-            .body(body)
-            .unwrap();
+        let req = http::Request::builder().method("POST").body(body).unwrap();
 
         let res = tx.try_send(req).unwrap().await.expect("response");
         drop(res);
@@ -684,7 +681,7 @@ mod tests {
             body
         };
 
-        let _res_rx = tx.try_send(crate::core::Request::new(body)).unwrap();
+        let _res_rx = tx.try_send(http::Request::new(body)).unwrap();
 
         // Ensure conn.write_body wasn't called with the empty chunk.
         // If it is, it will trigger an assertion.

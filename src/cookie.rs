@@ -218,13 +218,13 @@ impl<'c> CookieBuilder<'c> {
 }
 
 pub(crate) fn extract_response_cookie_headers(
-    headers: &crate::core::HeaderMap,
+    headers: &http::HeaderMap,
 ) -> impl Iterator<Item = &'_ HeaderValue> {
     headers.get_all(SET_COOKIE).iter()
 }
 
 pub(crate) fn extract_response_cookies(
-    headers: &crate::core::HeaderMap,
+    headers: &http::HeaderMap,
 ) -> impl Iterator<Item = Result<Cookie<'_>, CookieParseError>> {
     headers.get_all(SET_COOKIE).iter().map(Cookie::parse)
 }
