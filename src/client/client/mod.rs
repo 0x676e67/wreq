@@ -289,30 +289,19 @@ impl ClientBuilder {
 
             let http_connector = HttpConnector::new_with_resolver(resolver.clone());
 
-            let tls_connector = {
-                let mut tls_config = config.tls_config;
+            let mut tls_config = config.tls_config;
+            tls_config.alpn_protos = config.alpn_protos.unwrap_or(tls_config.alpn_protos);
+            tls_config.min_tls_version = config.min_tls_version.or(tls_config.min_tls_version);
+            tls_config.max_tls_version = config.max_tls_version.or(tls_config.max_tls_version);
 
-                if let Some(alpn_protos) = config.alpn_protos {
-                    tls_config.alpn_protos = alpn_protos;
-                }
-
-                if config.min_tls_version.is_some() {
-                    tls_config.min_tls_version = config.min_tls_version;
-                }
-
-                if config.max_tls_version.is_some() {
-                    tls_config.max_tls_version = config.max_tls_version;
-                }
-
-                TlsConnector::builder(tls_config)
-                    .keylog(config.keylog_policy.clone())
-                    .identity(config.identity.clone())
-                    .cert_store(config.cert_store.clone().unwrap_or_default())
-                    .cert_verification(config.cert_verification)
-                    .tls_sni(config.tls_sni)
-                    .verify_hostname(config.verify_hostname)
-                    .build()?
-            };
+            let tls_connector = TlsConnector::builder(tls_config)
+                .keylog(config.keylog_policy.clone())
+                .identity(config.identity.clone())
+                .cert_store(config.cert_store.clone().unwrap_or_default())
+                .cert_verification(config.cert_verification)
+                .tls_sni(config.tls_sni)
+                .verify_hostname(config.verify_hostname)
+                .build()?;
 
             let mut builder = Connector::builder(
                 http_connector,
