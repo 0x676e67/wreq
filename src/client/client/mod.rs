@@ -314,7 +314,7 @@ impl ClientBuilder {
                     .build()?
             };
 
-            let builder = Connector::builder(
+            let mut builder = Connector::builder(
                 http_connector,
                 tls_connector,
                 proxies.clone(),
@@ -325,9 +325,24 @@ impl ClientBuilder {
             .keepalive(config.tcp_keepalive)
             .tcp_keepalive_interval(config.tcp_keepalive_interval)
             .tcp_keepalive_retries(config.tcp_keepalive_retries)
-            .interface(config.interface)
             .local_addresses(config.local_ipv4_address, config.local_ipv6_address)
             .verbose(config.connection_verbose);
+
+            #[cfg(any(
+                target_os = "android",
+                target_os = "fuchsia",
+                target_os = "illumos",
+                target_os = "ios",
+                target_os = "linux",
+                target_os = "macos",
+                target_os = "solaris",
+                target_os = "tvos",
+                target_os = "visionos",
+                target_os = "watchos",
+            ))]
+            {
+                builder = builder.interface(config.interface)
+            }
 
             #[cfg(feature = "socks")]
             {
@@ -335,6 +350,7 @@ impl ClientBuilder {
                     .socks_resolver(resolver)
                     .build(config.connector_layers)
             }
+
             #[cfg(not(feature = "socks"))]
             {
                 builder.build(config.connector_layers)
