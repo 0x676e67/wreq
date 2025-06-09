@@ -1,4 +1,5 @@
 mod v5;
+use http::Uri;
 pub use v5::{SocksV5, SocksV5Error};
 
 mod v4;
@@ -117,5 +118,22 @@ impl<C> From<SocksV4Error> for SocksError<C> {
 impl<C> From<SocksV5Error> for SocksError<C> {
     fn from(err: SocksV5Error) -> Self {
         Self::V5(err)
+    }
+}
+#[derive(Debug)]
+pub struct Socks<'a, C> {
+    inner: C,
+    proxy_dst: Uri,
+    auth: Option<(&'a str, &'a str)>,
+}
+
+impl<'a, C> Socks<'a, C> {
+    pub fn new(inner: C, proxy_dst: Uri) -> Self {
+        Self { inner, proxy_dst, auth: None }
+    }
+
+    pub fn with_auth(mut self, auth: (&'a str, &'a str)) -> Self {
+        self.auth = Some(auth);
+        self
     }
 }

@@ -18,7 +18,7 @@ rustdoc-args = ["--cfg", "docsrs"]
 targets = ["x86_64-unknown-linux-gnu"]
 
 [features]
-default = ["webpki-roots", "charset", "system-proxy"]
+default = ["webpki-roots", "charset", "system-proxy", "socks"]
 
 full = [
     "json",
@@ -57,7 +57,7 @@ hickory-dns = ["dep:hickory-resolver"]
 
 stream = ["tokio/fs", "dep:tokio-util"]
 
-socks = ["dep:tokio-socks"]
+socks = []
 
 native-roots = ["dep:rustls-native-certs"]
 
@@ -132,9 +132,6 @@ cookie_store = { version = "0.21", features = ["preserve_order"], optional = tru
 ## compression
 async-compression = { version = "0.4.23", default-features = false, features = ["tokio"], optional = true }
 tokio-util = { version = "0.7.15", default-features = false, features = ["codec","io"], optional = true }
-
-## socks
-tokio-socks = { version = "0.5.2", optional = true }
 
 ## websocket
 tokio-tungstenite = { version = "0.26.2", default-features = false, features = ["handshake"], optional = true }
