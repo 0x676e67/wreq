@@ -1404,7 +1404,7 @@ impl Client {
         let read_timeout_fut = read_timeout.map(tokio::time::sleep).map(Box::pin);
 
         Pending {
-            inner: PendingInner::Request(Box::new(PendingRequest {
+            inner: PendingInner::Request(Box::pin(PendingRequest {
                 method,
                 url,
                 headers,
