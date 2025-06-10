@@ -314,7 +314,7 @@ impl ClientBuilder {
                     .build()?
             };
 
-            let builder = Connector::builder(
+            Connector::builder(
                 http_connector,
                 tls_connector,
                 proxies.clone(),
@@ -327,18 +327,8 @@ impl ClientBuilder {
             .tcp_keepalive_retries(config.tcp_keepalive_retries)
             .interface(config.interface)
             .local_addresses(config.local_ipv4_address, config.local_ipv6_address)
-            .verbose(config.connection_verbose);
-
-            #[cfg(feature = "socks")]
-            {
-                builder
-                    .socks_resolver(resolver)
-                    .build(config.connector_layers)
-            }
-            #[cfg(not(feature = "socks"))]
-            {
-                builder.build(config.connector_layers)
-            }
+            .verbose(config.connection_verbose)
+            .build(config.connector_layers)
         };
 
         let policy = {

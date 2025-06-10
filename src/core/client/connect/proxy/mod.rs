@@ -4,7 +4,7 @@ mod socks;
 mod tunnel;
 
 #[cfg(feature = "socks")]
-pub use self::socks::{SocksV4, SocksV5};
+pub use self::socks::Socks;
 pub use self::tunnel::Tunnel;
 
 #[cfg(test)]
@@ -13,9 +13,9 @@ mod tests {
     use tokio::net::{TcpListener, TcpStream};
     use tower_service::Service;
 
-    #[cfg(feature = "socks")]
-    use super::{SocksV4, SocksV5};
     use super::Tunnel;
+    #[cfg(feature = "socks")]
+    use super::socks::{SocksV4, SocksV5};
     use crate::core::client::connect::HttpConnector;
 
     #[cfg(not(miri))]

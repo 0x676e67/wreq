@@ -1,5 +1,14 @@
 mod v5;
+
 use http::Uri;
+use pin_project_lite::pin_project;
+use std::{
+    error::Error as StdError,
+    marker::PhantomData,
+    pin::Pin,
+    task::{Context, Poll},
+};
+use tower_service::Service;
 pub use v5::{SocksV5, SocksV5Error};
 
 mod v4;
@@ -7,7 +16,7 @@ pub use v4::{SocksV4, SocksV4Error};
 
 use bytes::BytesMut;
 
-use crate::core::rt::Read;
+use crate::core::rt::{Read, Write};
 
 #[derive(Debug)]
 pub enum SocksError<C> {
@@ -120,20 +129,109 @@ impl<C> From<SocksV5Error> for SocksError<C> {
         Self::V5(err)
     }
 }
-#[derive(Debug)]
-pub struct Socks<'a, C> {
-    inner: C,
-    proxy_dst: Uri,
-    auth: Option<(&'a str, &'a str)>,
+
+pin_project! {
+    // Not publicly exported (so missing_docs doesn't trigger).
+    //
+    // We return this `Future` instead of the `Pin<Box<dyn Future>>` directly
+    // so that users don't rely on it fitting in a `Pin<Box<dyn Future>>` slot
+    // (and thus we can change the type in the future).
+    #[must_use = "futures do nothing unless polled"]
+    #[allow(missing_debug_implementations)]
+    pub struct Handshaking<F, T, E> {
+        #[pin]
+        fut: BoxHandshaking<T, E>,
+        _marker: std::marker::PhantomData<F>
+    }
 }
 
-impl<'a, C> Socks<'a, C> {
-    pub fn new(inner: C, proxy_dst: Uri) -> Self {
-        Self { inner, proxy_dst, auth: None }
+type BoxHandshaking<T, E> = Pin<Box<dyn Future<Output = Result<T, SocksError<E>>> + Send>>;
+
+impl<F, T, E> Future for Handshaking<F, T, E>
+where
+    F: Future<Output = Result<T, E>>,
+{
+    type Output = Result<T, SocksError<E>>;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        self.project().fut.poll(cx)
+    }
+}
+
+type BoxTunneling<T, C> = Pin<Box<dyn Future<Output = Result<T, SocksError<C>>> + Send>>;
+
+#[derive(Debug)]
+pub struct Socks<C> {
+    inner: Inner<C>,
+    proxy_dst: Uri,
+}
+
+#[derive(Debug)]
+enum Inner<C> {
+    SocksV5(SocksV5<C>),
+    SocksV4(SocksV4<C>),
+}
+
+/// ====== Socks Implementation ======
+
+impl<C> Socks<C> {
+    pub fn new(inner: C, proxy_dst: Uri, auth: Option<(&str, &str)>) -> Self {
+        let scheme = proxy_dst.scheme_str();
+        let (is_v5, local_dns) = match scheme {
+            Some("socks5") => (true, true),
+            Some("socks5h") => (true, false),
+            Some("socks4") => (false, true),
+            Some("socks4a") => (false, false),
+            _ => unreachable!("connect_socks is only called for socks proxies"),
+        };
+
+        let inner = if is_v5 {
+            let mut v5 = SocksV5::new(proxy_dst.clone(), inner).local_dns(local_dns);
+            if let Some((user, pass)) = auth {
+                v5 = v5.with_auth(user.to_owned(), pass.to_owned());
+            }
+            Inner::SocksV5(v5)
+        } else {
+            let v4 = SocksV4::new(proxy_dst.clone(), inner).local_dns(local_dns);
+            Inner::SocksV4(v4)
+        };
+
+        Self { inner, proxy_dst }
+    }
+}
+
+impl<C> Service<Uri> for Socks<C>
+where
+    C: Service<Uri>,
+    C::Future: Send + 'static,
+    C::Response: Read + Write + Unpin + Send + 'static,
+    C::Error: Send + Sync + 'static,
+{
+    type Response = C::Response;
+    type Error = SocksError<C::Error>;
+    type Future = Handshaking<C::Future, C::Response, C::Error>;
+
+    fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        match &mut self.inner {
+            Inner::SocksV5(socks_v5) => {
+                std::task::ready!(socks_v5.poll_ready(cx))?;
+            }
+            Inner::SocksV4(socks_v4) => {
+                std::task::ready!(socks_v4.poll_ready(cx))?;
+            }
+        }
+        Poll::Ready(Ok(()))
     }
 
-    pub fn with_auth(mut self, auth: (&'a str, &'a str)) -> Self {
-        self.auth = Some(auth);
-        self
+    fn call(&mut self, dst: Uri) -> Self::Future {
+        let connecting = match &mut self.inner {
+            Inner::SocksV5(socks_v5) => socks_v5.call(dst),
+            Inner::SocksV4(socks_v4) => socks_v4.call(dst),
+        };
+
+        Handshaking {
+            fut: Box::pin(async move { Ok(connecting.await?) }),
+            _marker: Default::default(),
+        }
     }
 }

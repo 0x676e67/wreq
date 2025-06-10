@@ -44,8 +44,6 @@ pub(crate) struct ConnectorBuilder {
     timeout: Option<Duration>,
     nodelay: bool,
     tls_info: bool,
-    #[cfg(feature = "socks")]
-    resolver: Option<DynResolver>,
 }
 
 impl ConnectorBuilder {
@@ -61,8 +59,6 @@ impl ConnectorBuilder {
             nodelay: self.nodelay,
             tls_info: self.tls_info,
             timeout: self.timeout,
-            #[cfg(feature = "socks")]
-            resolver: self.resolver.unwrap_or_else(DynResolver::gai),
         };
 
         match layers.into() {
@@ -188,16 +184,6 @@ impl ConnectorBuilder {
         self.verbose.0 = enabled;
         self
     }
-
-    #[cfg(feature = "socks")]
-    #[inline]
-    pub(crate) fn socks_resolver<R>(mut self, resolver: R) -> ConnectorBuilder
-    where
-        R: Into<Option<DynResolver>>,
-    {
-        self.resolver = resolver.into();
-        self
-    }
 }
 
 #[derive(Clone)]
@@ -230,8 +216,6 @@ impl Connector {
             timeout: None,
             nodelay,
             tls_info,
-            #[cfg(feature = "socks")]
-            resolver: None,
         }
     }
 
@@ -246,7 +230,7 @@ impl Connector {
                 base_service,
                 ..
             } => {
-                let builder = Connector::builder(
+                let mut connector = Connector::builder(
                     base_service.http.clone(),
                     connector,
                     base_service.proxies.clone(),
@@ -254,20 +238,8 @@ impl Connector {
                     base_service.tls_info,
                 )
                 .timeout(base_service.timeout)
-                .verbose(base_service.verbose.0);
-
-                let mut connector = {
-                    #[cfg(feature = "socks")]
-                    {
-                        builder
-                            .socks_resolver(base_service.resolver.clone())
-                            .build(std::mem::take(layers))
-                    }
-                    #[cfg(not(feature = "socks"))]
-                    {
-                        builder.build(std::mem::take(layers))
-                    }
-                };
+                .verbose(base_service.verbose.0)
+                .build(std::mem::take(layers));
 
                 std::mem::swap(self, &mut connector);
             }
@@ -308,28 +280,24 @@ pub(crate) struct ConnectorService {
     timeout: Option<Duration>,
     nodelay: bool,
     tls_info: bool,
-    #[cfg(feature = "socks")]
-    resolver: DynResolver,
 }
 
 impl ConnectorService {
     #[cfg(feature = "socks")]
     async fn connect_socks(&self, mut dst: Dst, proxy: Intercepted) -> Result<Conn, BoxError> {
-        let dns = match proxy.uri().scheme_str() {
-            Some("socks4" | "socks5") => socks::DnsResolve::Local,
-            Some("socks4a" | "socks5h") => socks::DnsResolve::Proxy,
-            _ => unreachable!("connect_socks is only called for socks proxies"),
-        };
+        use crate::core::client::connect::proxy::Socks;
 
         let uri = dst.uri().clone();
+        let mut socks = Socks::new(self.http.clone(), proxy.uri().clone(), proxy.raw_auth());
 
         if uri.scheme() == Some(&Scheme::HTTPS) {
             let http = HttpsConnector::new(self.http.clone(), self.tls.clone(), &mut dst);
 
             trace!("socks HTTPS over proxy");
+            let conn = socks.call(uri.clone()).await?;
+
             let host = uri.host().ok_or(crate::error::uri_bad_host())?;
-            let conn = socks::connect(proxy, &uri, dns, &self.resolver).await?;
-            let io = http.connect(&uri, host, TokioIo::new(conn)).await?;
+            let io = http.connect(&uri, host, conn).await?;
 
             return Ok(Conn {
                 inner: self.verbose.wrap(BoringTlsConn {
@@ -340,13 +308,15 @@ impl ConnectorService {
             });
         }
 
-        socks::connect(proxy, &uri, dns, &self.resolver)
+        socks
+            .call(uri)
             .await
             .map(|tcp| Conn {
-                inner: self.verbose.wrap(TokioIo::new(tcp)),
+                inner: self.verbose.wrap(tcp),
                 is_proxy: false,
                 tls_info: false,
             })
+            .map_err(Into::into)
     }
 
     async fn connect_with_maybe_proxy(
@@ -732,109 +702,6 @@ mod tls_conn {
     {
         fn tls_info(&self) -> Option<crate::tls::TlsInfo> {
             self.inner.tls_info()
-        }
-    }
-}
-
-#[cfg(feature = "socks")]
-mod socks {
-    use std::{io, net::SocketAddr};
-
-    use http::Uri;
-    use tokio::net::TcpStream;
-    use tokio_socks::{
-        IntoTargetAddr,
-        tcp::{Socks4Stream, Socks5Stream},
-    };
-
-    use super::{BoxError, Scheme};
-    use crate::{dns::DynResolver, proxy::Intercepted};
-
-    pub(super) enum DnsResolve {
-        Local,
-        Proxy,
-    }
-
-    pub(super) async fn connect(
-        proxy: Intercepted,
-        dst: &Uri,
-        dns_mode: DnsResolve,
-        resolver: &DynResolver,
-    ) -> Result<TcpStream, BoxError> {
-        let (host, port) = extract_host_port(dst)?;
-
-        let proxy_addr = resolve_proxy_addr(&proxy, resolver).await?;
-
-        let target = resolve_target_addr(host, port, dst, &dns_mode, resolver).await?;
-
-        match proxy.uri().scheme_str() {
-            Some("socks4" | "socks4a") => {
-                let stream = Socks4Stream::connect(proxy_addr, target)
-                    .await
-                    .map_err(|e| format!("SOCKS4 connect error: {e}"))?;
-
-                Ok(stream.into_inner())
-            }
-            Some("socks5" | "socks5h") => match proxy.raw_auth() {
-                Some((user, pass)) => {
-                    let stream =
-                        Socks5Stream::connect_with_password(proxy_addr, target, user, pass)
-                            .await
-                            .map_err(|e| format!("SOCKS5 connect error: {e}"))?;
-
-                    Ok(stream.into_inner())
-                }
-                None => {
-                    let stream = Socks5Stream::connect(proxy_addr, target)
-                        .await
-                        .map_err(|e| format!("SOCKS5 connect error: {e}"))?;
-
-                    Ok(stream.into_inner())
-                }
-            },
-            _ => unreachable!("connect is only called for socks proxies"),
-        }
-    }
-
-    fn extract_host_port(dst: &Uri) -> Result<(&str, u16), BoxError> {
-        let https = dst.scheme() == Some(&Scheme::HTTPS);
-        let host = dst
-            .host()
-            .ok_or_else(|| io::Error::other("no host in URI"))?;
-        let port = dst
-            .port()
-            .map(|p| p.as_u16())
-            .unwrap_or(if https { 443 } else { 80 });
-        Ok((host, port))
-    }
-
-    async fn resolve_proxy_addr(
-        proxy: &Intercepted,
-        resolver: &DynResolver,
-    ) -> Result<SocketAddr, BoxError> {
-        resolver
-            .http_resolve(proxy.uri())
-            .await?
-            .next()
-            .ok_or_else(|| "proxy DNS resolve returned empty".into())
-    }
-
-    async fn resolve_target_addr<'a>(
-        host: &'a str,
-        port: u16,
-        dst: &Uri,
-        dns_mode: &DnsResolve,
-        resolver: &DynResolver,
-    ) -> Result<tokio_socks::TargetAddr<'a>, BoxError> {
-        match dns_mode {
-            DnsResolve::Local => {
-                if let Some(addr) = resolver.http_resolve(dst).await?.next() {
-                    Ok(addr.into_target_addr()?)
-                } else {
-                    Ok((host, port).into_target_addr()?)
-                }
-            }
-            DnsResolve::Proxy => Ok((host, port).into_target_addr()?),
         }
     }
 }
