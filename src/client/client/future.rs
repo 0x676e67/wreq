@@ -11,18 +11,20 @@ use tokio::time::Sleep;
 use tower::Service;
 use url::Url;
 
-use super::{Body, ClientRef, Response, service::ClientService};
+use super::{Body, ClientRef, Response};
 
 use crate::{
     Error,
     client::body,
+    core::body::Incoming,
     error,
     into_url::try_uri,
-    redirect::{self, TowerRedirectPolicy},
+    redirect::{self},
 };
 
-type ResponseFuture =
-    tower_http::follow_redirect::ResponseFuture<ClientService, Body, TowerRedirectPolicy>;
+type ResponseFuture = std::pin::Pin<
+    Box<dyn Future<Output = Result<http::Response<Incoming>, Error>> + Send + 'static>,
+>;
 
 pin_project! {
     pub struct Pending {

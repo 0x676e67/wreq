@@ -17,6 +17,7 @@ use crate::connect::{
 };
 #[cfg(feature = "cookies")]
 use crate::cookie;
+use crate::core::body::Incoming;
 use crate::core::client::{Builder, Client as HyperClient, connect::HttpConnector};
 use crate::core::ext::{RequestConfig, RequestOriginalHeaders};
 use crate::core::rt::{TokioExecutor, tokio::TokioTimer};
@@ -52,9 +53,19 @@ use http::{
 };
 
 use service::ClientService;
-use tower::util::BoxCloneSyncServiceLayer;
-use tower::{Layer, Service};
+use tower::util::{BoxCloneSyncService, BoxCloneSyncServiceLayer};
+use tower::{Layer, Service, ServiceBuilder, ServiceExt};
 use tower_http::follow_redirect::FollowRedirect;
+
+type BoxedRequestService =
+    BoxCloneSyncService<http::Request<Body>, http::Response<Incoming>, Error>;
+
+type BoxedRequestLayer = BoxCloneSyncServiceLayer<
+    BoxedRequestService,
+    http::Request<Body>,
+    http::Response<Incoming>,
+    Error,
+>;
 
 /// An asynchronous `Client` to make Requests with.
 ///
@@ -83,7 +94,7 @@ struct ClientRef {
     original_headers: RequestConfig<RequestOriginalHeaders>,
     total_timeout: RequestConfig<RequestTimeout>,
     read_timeout: RequestConfig<RequestTimeout>,
-    client: FollowRedirect<ClientService, TowerRedirectPolicy>,
+    client: BoxedRequestService,
     https_only: bool,
     http2_max_retry_count: usize,
     proxies: Arc<Vec<ProxyMatcher>>,
@@ -144,6 +155,7 @@ struct Config {
     http1_config: Http1Config,
     http2_config: Http2Config,
     http2_max_retry_count: usize,
+    request_layers: Option<Vec<BoxedRequestLayer>>,
     connector_layers: Option<Vec<BoxedConnectorLayer>>,
     builder: Builder,
     alpn_protos: Option<AlpnProtos>,
@@ -221,6 +233,7 @@ impl ClientBuilder {
                 http1_config: Http1Config::default(),
                 http2_config: Http2Config::default(),
                 http2_max_retry_count: 2,
+                request_layers: None,
                 connector_layers: None,
                 alpn_protos: None,
                 keylog_policy: None,
@@ -354,18 +367,38 @@ impl ClientBuilder {
             p
         };
 
-        let client_service = ClientService::new(
+        let base_service = ClientService::new(
             config.builder.build(connector),
             #[cfg(feature = "cookies")]
             config.cookie_store.clone(),
         );
+
+        let mut client = BoxCloneSyncService::new(
+            ServiceBuilder::new()
+                .service(FollowRedirect::with_policy(
+                    base_service.clone(),
+                    policy.clone(),
+                ))
+                .map_err(error::request),
+        );
+
+        if let Some(layers) = config.request_layers {
+            for layer in layers {
+                client = BoxCloneSyncService::new(
+                    ServiceBuilder::new()
+                        .layer(layer.clone())
+                        .service(client)
+                        .map_err(error::request),
+                );
+            }
+        }
 
         Ok(Client {
             inner: Arc::new(ClientRef {
                 accepts: config.accepts,
                 #[cfg(feature = "cookies")]
                 cookie_store: config.cookie_store,
-                client: FollowRedirect::with_policy(client_service, policy),
+                client,
                 headers: config.headers,
                 original_headers: RequestConfig::new(config.original_headers),
                 total_timeout: RequestConfig::new(config.timeout),
@@ -1181,6 +1214,27 @@ impl ClientBuilder {
     /// still be applied on top of this resolver.
     pub fn dns_resolver<R: Resolve + 'static>(mut self, resolver: Arc<R>) -> ClientBuilder {
         self.config.dns_resolver = Some(resolver as _);
+        self
+    }
+
+    /// Adds a new Tower [`Layer`](https://docs.rs/tower/latest/tower/trait.Layer.html) to the
+    /// request [`Service`](https://docs.rs/tower/latest/tower/trait.Service.html) which is responsible
+    /// for request processing.
+    pub fn layer<L>(mut self, layer: L) -> ClientBuilder
+    where
+        L: Layer<BoxedRequestService> + Clone + Send + Sync + 'static,
+        L::Service: Service<http::Request<Body>, Response = http::Response<Incoming>, Error = Error>
+            + Clone
+            + Send
+            + Sync
+            + 'static,
+        <L::Service as Service<http::Request<Body>>>::Future: Send + 'static,
+    {
+        let layer = BoxCloneSyncServiceLayer::new(layer);
+        self.config
+            .request_layers
+            .get_or_insert_default()
+            .push(layer);
         self
     }
 
