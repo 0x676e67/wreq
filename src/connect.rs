@@ -732,12 +732,16 @@ mod tls_conn {
 }
 
 mod verbose {
-    use crate::core::client::connect::{Connected, Connection};
-    use crate::core::rt::{Read, ReadBufCursor, Write};
-    use std::fmt;
-    use std::io::{self, IoSlice};
-    use std::pin::Pin;
-    use std::task::{Context, Poll};
+    use super::{AsyncConnWithInfo, BoxConn};
+    #[cfg(feature = "tracing")]
+    use {
+        crate::core::client::connect::{Connected, Connection},
+        crate::core::rt::{Read, ReadBufCursor, Write},
+        std::fmt,
+        std::io::{self, IoSlice},
+        std::pin::Pin,
+        std::task::{Context, Poll},
+    };
 
     pub(super) const OFF: Wrapper = Wrapper(false);
 
@@ -745,32 +749,36 @@ mod verbose {
     pub(super) struct Wrapper(pub(super) bool);
 
     impl Wrapper {
-        pub(super) fn wrap<T: super::AsyncConnWithInfo>(&self, conn: T) -> super::BoxConn {
-            if self.0 && cfg!(feature = "tracing") {
-                Box::new(Verbose {
-                    // truncate is fine
-                    #[cfg(feature = "tracing")]
-                    id: crate::util::fast_random() as u32,
-                    inner: conn,
-                })
-            } else {
-                Box::new(conn)
+        pub(super) fn wrap<T: AsyncConnWithInfo>(&self, conn: T) -> BoxConn {
+            #[cfg(feature = "tracing")]
+            {
+                if self.0 {
+                    return Box::new(Verbose {
+                        // truncate is fine
+                        id: crate::util::fast_random() as u32,
+                        inner: conn,
+                    });
+                }
             }
+
+            Box::new(conn)
         }
     }
 
+    #[cfg(feature = "tracing")]
     struct Verbose<T> {
-        #[cfg(feature = "tracing")]
         id: u32,
         inner: T,
     }
 
+    #[cfg(feature = "tracing")]
     impl<T: Connection + Read + Write + Unpin> Connection for Verbose<T> {
         fn connected(&self) -> Connected {
             self.inner.connected()
         }
     }
 
+    #[cfg(feature = "tracing")]
     impl<T: Read + Write + Unpin> Read for Verbose<T> {
         fn poll_read(
             mut self: Pin<&mut Self>,
@@ -798,6 +806,7 @@ mod verbose {
         }
     }
 
+    #[cfg(feature = "tracing")]
     impl<T: Read + Write + Unpin> Write for Verbose<T> {
         fn poll_write(
             mut self: Pin<&mut Self>,
@@ -852,15 +861,17 @@ mod verbose {
         }
     }
 
+    #[cfg(feature = "tracing")]
     impl<T: super::TlsInfoFactory> super::TlsInfoFactory for Verbose<T> {
         fn tls_info(&self) -> Option<crate::tls::TlsInfo> {
             self.inner.tls_info()
         }
     }
 
-    #[allow(dead_code)]
+    #[cfg(feature = "tracing")]
     struct Escape<'a>(&'a [u8]);
 
+    #[cfg(feature = "tracing")]
     impl fmt::Debug for Escape<'_> {
         fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
             write!(f, "b\"")?;
