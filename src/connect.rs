@@ -141,7 +141,7 @@ impl ConnectorBuilder {
     #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
     #[inline(always)]
     pub(crate) fn tcp_user_timeout(mut self, dur: Option<Duration>) -> ConnectorBuilder {
-        self.http.set_user_timeout(dur);
+        self.http.set_tcp_user_timeout(dur);
         self
     }
 
