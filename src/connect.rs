@@ -749,6 +749,7 @@ mod verbose {
     pub(super) struct Wrapper(pub(super) bool);
 
     impl Wrapper {
+        #[cfg_attr(not(feature = "tracing"), inline(always))]
         pub(super) fn wrap<T: AsyncConnWithInfo>(&self, conn: T) -> BoxConn {
             #[cfg(feature = "tracing")]
             {
