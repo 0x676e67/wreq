@@ -734,7 +734,6 @@ mod tls_conn {
 mod verbose {
     use crate::core::client::connect::{Connected, Connection};
     use crate::core::rt::{Read, ReadBufCursor, Write};
-    use std::cmp::min;
     use std::fmt;
     use std::io::{self, IoSlice};
     use std::pin::Pin;
@@ -750,6 +749,7 @@ mod verbose {
             if self.0 && cfg!(feature = "tracing") {
                 Box::new(Verbose {
                     // truncate is fine
+                    #[cfg(feature = "tracing")]
                     id: crate::util::fast_random() as u32,
                     inner: conn,
                 })
@@ -760,7 +760,7 @@ mod verbose {
     }
 
     struct Verbose<T> {
-        #[allow(dead_code)]
+        #[cfg(feature = "tracing")]
         id: u32,
         inner: T,
     }
@@ -888,12 +888,13 @@ mod verbose {
         }
     }
 
-    #[allow(dead_code)]
+    #[cfg(feature = "tracing")]
     struct Vectored<'a, 'b> {
         bufs: &'a [IoSlice<'b>],
         nwritten: usize,
     }
 
+    #[cfg(feature = "tracing")]
     impl fmt::Debug for Vectored<'_, '_> {
         fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
             let mut left = self.nwritten;
@@ -901,7 +902,7 @@ mod verbose {
                 if left == 0 {
                     break;
                 }
-                let n = min(left, buf.len());
+                let n = std::cmp::min(left, buf.len());
                 Escape(&buf[..n]).fmt(f)?;
                 left -= n;
             }
