@@ -158,8 +158,6 @@ where
     }
 }
 
-type BoxTunneling<T, C> = Pin<Box<dyn Future<Output = Result<T, SocksError<C>>> + Send>>;
-
 #[derive(Debug)]
 pub struct Socks<C> {
     inner: Inner<C>,
