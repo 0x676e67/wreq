@@ -157,7 +157,7 @@ where
 
     async fn execute<T, E>(self, mut conn: T, host: &str, port: u16) -> Result<T, SocksError<E>>
     where
-        T: Read + Write + Unpin + Send,
+        T: Read + Write + Unpin,
     {
         let address = match host.parse::<IpAddr>() {
             Ok(ip) => Address::Socket(SocketAddr::new(ip, port)),
@@ -193,8 +193,10 @@ where
             AuthMethod::NoAuth
         };
 
-        let mut recv_buf = BytesMut::with_capacity(513); // Max length of valid recievable message is 513 from Auth Request
-        let mut send_buf = BytesMut::with_capacity(262); // Max length of valid sendable message is 262 from Auth Response
+        // Max length of valid recievable message is 513 from Auth Request
+        let mut recv_buf = BytesMut::with_capacity(513);
+        // Max length of valid sendable message is 262 from Auth Response
+        let mut send_buf = BytesMut::with_capacity(262);
         let mut state = State::SendingNegReq;
 
         loop {
