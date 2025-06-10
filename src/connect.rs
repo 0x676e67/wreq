@@ -222,7 +222,7 @@ impl Connector {
             nodelay,
             tls_info,
             #[cfg(feature = "socks")]
-            resolver: resolver,
+            resolver,
         }
     }
 
