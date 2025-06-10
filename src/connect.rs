@@ -44,6 +44,8 @@ pub(crate) struct ConnectorBuilder {
     timeout: Option<Duration>,
     nodelay: bool,
     tls_info: bool,
+    #[cfg(feature = "socks")]
+    resolver: DynResolver,
 }
 
 impl ConnectorBuilder {
@@ -59,6 +61,8 @@ impl ConnectorBuilder {
             nodelay: self.nodelay,
             tls_info: self.tls_info,
             timeout: self.timeout,
+            #[cfg(feature = "socks")]
+            resolver: self.resolver,
         };
 
         match layers.into() {
@@ -206,6 +210,7 @@ impl Connector {
         proxies: Arc<Vec<ProxyMatcher>>,
         nodelay: bool,
         tls_info: bool,
+        #[cfg(feature = "socks")] resolver: DynResolver,
     ) -> ConnectorBuilder {
         http.enforce_http(false);
         ConnectorBuilder {
@@ -216,6 +221,8 @@ impl Connector {
             timeout: None,
             nodelay,
             tls_info,
+            #[cfg(feature = "socks")]
+            resolver: resolver,
         }
     }
 
@@ -236,6 +243,8 @@ impl Connector {
                     base_service.proxies.clone(),
                     base_service.nodelay,
                     base_service.tls_info,
+                    #[cfg(feature = "socks")]
+                    base_service.resolver.clone(),
                 )
                 .timeout(base_service.timeout)
                 .verbose(base_service.verbose.0)
@@ -280,6 +289,8 @@ pub(crate) struct ConnectorService {
     timeout: Option<Duration>,
     nodelay: bool,
     tls_info: bool,
+    #[cfg(feature = "socks")]
+    resolver: DynResolver,
 }
 
 impl ConnectorService {
@@ -288,7 +299,13 @@ impl ConnectorService {
         use crate::core::client::connect::proxy::Socks;
 
         let uri = dst.uri().clone();
-        let mut socks = Socks::new(self.http.clone(), proxy.uri().clone(), proxy.raw_auth());
+
+        let mut socks = Socks::new_with_resolver(
+            self.http.clone(),
+            self.resolver.clone(),
+            proxy.uri().clone(),
+            proxy.raw_auth(),
+        );
 
         if uri.scheme() == Some(&Scheme::HTTPS) {
             let http = HttpsConnector::new(self.http.clone(), self.tls.clone(), &mut dst);

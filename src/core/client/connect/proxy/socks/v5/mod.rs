@@ -10,6 +10,7 @@ use std::task::{Context, Poll};
 
 use std::net::{IpAddr, SocketAddr, ToSocketAddrs};
 
+use crate::core::client::connect::dns::{GaiResolver, Name, Resolve};
 use crate::core::rt::{Read, Write};
 use http::Uri;
 use tower_service::Service;
@@ -26,18 +27,20 @@ use super::{BoxHandshaking, Handshaking, SocksError};
 /// another connector, and after getting an underlying connection, it established
 /// a TCP tunnel over it using SOCKSv5.
 #[derive(Debug, Clone)]
-pub struct SocksV5<C> {
+pub struct SocksV5<C, R = GaiResolver> {
     inner: C,
-    config: SocksConfig,
+    config: SocksConfig<R>,
 }
 
 #[derive(Debug, Clone)]
-pub struct SocksConfig {
+pub struct SocksConfig<R = GaiResolver> {
     proxy: Uri,
     proxy_auth: Option<(String, String)>,
 
     local_dns: bool,
     optimistic: bool,
+
+    resolver: Option<R>,
 }
 
 #[derive(Debug)]
@@ -50,6 +53,7 @@ enum State {
     ReadingProxyRes,
 }
 
+#[cfg(test)]
 impl<C> SocksV5<C> {
     /// Create a new SOCKSv5 handshake service.
     ///
@@ -63,6 +67,26 @@ impl<C> SocksV5<C> {
         Self {
             inner: connector,
             config: SocksConfig::new(proxy_dst),
+        }
+    }
+}
+
+impl<C, R> SocksV5<C, R>
+where
+    R: Resolve + Clone,
+{
+    /// Create a new SOCKSv5 handshake service with a custom DNS resolver.
+    ///
+    /// Wraps an underlying connector and stores the address of a tunneling
+    /// proxying server, as well as a custom DNS resolver.
+    ///
+    /// A `SocksV5` can then be called with any destination. The `dst` passed to
+    /// `call` will not be used to create the underlying connection, but will
+    /// be used in a SOCKS handshake with the proxy destination.
+    pub fn new_with_resolver(proxy_dst: Uri, connector: C, resolver: R) -> Self {
+        Self {
+            inner: connector,
+            config: SocksConfig::new_with_resolver(proxy_dst, resolver),
         }
     }
 
@@ -100,38 +124,64 @@ impl<C> SocksV5<C> {
     }
 }
 
+#[cfg(test)]
 impl SocksConfig {
-    fn new(proxy: Uri) -> Self {
+    pub fn new(proxy: Uri) -> Self {
         Self {
             proxy,
             proxy_auth: None,
 
             local_dns: false,
             optimistic: false,
+
+            resolver: None,
+        }
+    }
+}
+
+impl<R> SocksConfig<R>
+where
+    R: Resolve + Clone,
+{
+    fn new_with_resolver(proxy: Uri, resolver: R) -> Self {
+        Self {
+            proxy,
+            proxy_auth: None,
+
+            local_dns: false,
+            optimistic: false,
+
+            resolver: Some(resolver),
         }
     }
 
-    async fn execute<T, E>(
-        self,
-        mut conn: T,
-        host: String,
-        port: u16,
-    ) -> Result<T, super::SocksError<E>>
+    async fn execute<T, E>(self, mut conn: T, host: &str, port: u16) -> Result<T, SocksError<E>>
     where
-        T: Read + Write + Unpin,
+        T: Read + Write + Unpin + Send,
     {
         let address = match host.parse::<IpAddr>() {
             Ok(ip) => Address::Socket(SocketAddr::new(ip, port)),
             Err(_) if host.len() <= 255 => {
                 if self.local_dns {
-                    let socket = (host, port)
-                        .to_socket_addrs()?
-                        .next()
-                        .ok_or(super::SocksError::DnsFailure)?;
+                    let socket = if let Some(mut resolver) = self.resolver {
+                        let mut socket_addr = resolver
+                            .resolve(Name::new(host.into()))
+                            .await
+                            .map_err(|_| SocksError::DnsFailure)?
+                            .next()
+                            .ok_or(SocksError::DnsFailure)?;
+                        socket_addr.set_port(port);
+                        socket_addr
+                    } else {
+                        tokio::net::lookup_host((host, port))
+                            .await?
+                            .next()
+                            .ok_or(SocksError::DnsFailure)?
+                    };
 
                     Address::Socket(socket)
                 } else {
-                    Address::Domain(host, port)
+                    Address::Domain(host.to_owned(), port)
                 }
             }
             Err(_) => return Err(SocksV5Error::HostTooLong.into()),
@@ -249,12 +299,14 @@ impl SocksConfig {
     }
 }
 
-impl<C> Service<Uri> for SocksV5<C>
+impl<C, R> Service<Uri> for SocksV5<C, R>
 where
     C: Service<Uri>,
     C::Future: Send + 'static,
     C::Response: Read + Write + Unpin + Send + 'static,
     C::Error: Send + 'static,
+    R: Resolve + Clone + Send + 'static,
+    <R as Resolve>::Future: Send + 'static,
 {
     type Response = C::Response;
     type Error = SocksError<C::Error>;
@@ -270,7 +322,8 @@ where
 
         let fut = async move {
             let port = dst.port().map(|p| p.as_u16()).unwrap_or(443);
-            let host = dst.host().ok_or(SocksError::MissingHost)?.to_string();
+            let host = dst.host().ok_or(SocksError::MissingHost)?;
+            let host = host.trim_start_matches('[').trim_end_matches(']');
 
             let conn = connecting.await.map_err(SocksError::Inner)?;
             config.execute(conn, host, port).await

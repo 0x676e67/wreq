@@ -16,7 +16,10 @@ pub use v4::{SocksV4, SocksV4Error};
 
 use bytes::BytesMut;
 
-use crate::core::rt::{Read, Write};
+use crate::core::{
+    client::connect::dns::{GaiResolver, Resolve},
+    rt::{Read, Write},
+};
 
 #[derive(Debug)]
 pub enum SocksError<C> {
@@ -159,19 +162,21 @@ where
 }
 
 #[derive(Debug)]
-pub struct Socks<C> {
-    inner: Inner<C>,
-    proxy_dst: Uri,
+pub enum Socks<C, R = GaiResolver> {
+    SocksV5(SocksV5<C, R>),
+    SocksV4(SocksV4<C, R>),
 }
 
-#[derive(Debug)]
-enum Inner<C> {
-    SocksV5(SocksV5<C>),
-    SocksV4(SocksV4<C>),
-}
-
-impl<C> Socks<C> {
-    pub fn new(inner: C, proxy_dst: Uri, auth: Option<(&str, &str)>) -> Self {
+impl<C, R> Socks<C, R>
+where
+    R: Resolve + Clone,
+{
+    pub fn new_with_resolver(
+        inner: C,
+        resolver: R,
+        proxy_dst: Uri,
+        auth: Option<(&str, &str)>,
+    ) -> Self {
         let scheme = proxy_dst.scheme_str();
         let (is_v5, local_dns) = match scheme {
             Some("socks5") => (true, true),
@@ -181,38 +186,40 @@ impl<C> Socks<C> {
             _ => unreachable!("connect_socks is only called for socks proxies"),
         };
 
-        let inner = if is_v5 {
-            let mut v5 = SocksV5::new(proxy_dst.clone(), inner).local_dns(local_dns);
+        if is_v5 {
+            let mut v5 =
+                SocksV5::new_with_resolver(proxy_dst, inner, resolver).local_dns(local_dns);
             if let Some((user, pass)) = auth {
                 v5 = v5.with_auth(user.to_owned(), pass.to_owned());
             }
-            Inner::SocksV5(v5)
-        } else {
-            let v4 = SocksV4::new(proxy_dst.clone(), inner).local_dns(local_dns);
-            Inner::SocksV4(v4)
-        };
 
-        Self { inner, proxy_dst }
+            Self::SocksV5(v5)
+        } else {
+            let v4 = SocksV4::new_with_resolver(proxy_dst, inner, resolver).local_dns(local_dns);
+            Self::SocksV4(v4)
+        }
     }
 }
 
-impl<C> Service<Uri> for Socks<C>
+impl<C, R> Service<Uri> for Socks<C, R>
 where
     C: Service<Uri>,
     C::Future: Send + 'static,
     C::Response: Read + Write + Unpin + Send + 'static,
     C::Error: Send + Sync + 'static,
+    R: Resolve + Clone + Send + 'static,
+    <R as Resolve>::Future: Send + 'static,
 {
     type Response = C::Response;
     type Error = SocksError<C::Error>;
     type Future = Handshaking<C::Future, C::Response, C::Error>;
 
     fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        match &mut self.inner {
-            Inner::SocksV5(socks_v5) => {
+        match self {
+            Self::SocksV5(socks_v5) => {
                 std::task::ready!(socks_v5.poll_ready(cx))?;
             }
-            Inner::SocksV4(socks_v4) => {
+            Self::SocksV4(socks_v4) => {
                 std::task::ready!(socks_v4.poll_ready(cx))?;
             }
         }
@@ -220,12 +227,9 @@ where
     }
 
     fn call(&mut self, dst: Uri) -> Self::Future {
-        Handshaking {
-            fut: match &mut self.inner {
-                Inner::SocksV5(socks_v5) => Box::pin(socks_v5.call(dst)),
-                Inner::SocksV4(socks_v4) => Box::pin(socks_v4.call(dst)),
-            },
-            _marker: Default::default(),
+        match self {
+            Self::SocksV5(socks_v5) => socks_v5.call(dst),
+            Self::SocksV4(socks_v4) => socks_v4.call(dst),
         }
     }
 }

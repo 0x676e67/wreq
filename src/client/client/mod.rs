@@ -309,6 +309,8 @@ impl ClientBuilder {
                 proxies.clone(),
                 config.nodelay,
                 config.tls_info,
+                #[cfg(feature = "socks")]
+                resolver.clone(),
             )
             .timeout(config.connect_timeout)
             .keepalive(config.tcp_keepalive)
