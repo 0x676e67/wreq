@@ -172,8 +172,6 @@ enum Inner<C> {
     SocksV4(SocksV4<C>),
 }
 
-/// ====== Socks Implementation ======
-
 impl<C> Socks<C> {
     pub fn new(inner: C, proxy_dst: Uri, auth: Option<(&str, &str)>) -> Self {
         let scheme = proxy_dst.scheme_str();
@@ -224,13 +222,11 @@ where
     }
 
     fn call(&mut self, dst: Uri) -> Self::Future {
-        let connecting = match &mut self.inner {
-            Inner::SocksV5(socks_v5) => socks_v5.call(dst),
-            Inner::SocksV4(socks_v4) => socks_v4.call(dst),
-        };
-
         Handshaking {
-            fut: Box::pin(async move { Ok(connecting.await?) }),
+            fut: match &mut self.inner {
+                Inner::SocksV5(socks_v5) => Box::pin(socks_v5.call(dst)),
+                Inner::SocksV4(socks_v4) => Box::pin(socks_v4.call(dst)),
+            },
             _marker: Default::default(),
         }
     }
