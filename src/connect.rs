@@ -759,6 +759,7 @@ mod verbose {
 
     #[cfg(feature = "tracing")]
     mod sealed {
+        use super::super::TlsInfoFactory;
         use crate::core::client::connect::{Connected, Connection};
         use crate::core::rt::{Read, ReadBufCursor, Write};
         use crate::tls::TlsInfo;
@@ -766,7 +767,6 @@ mod verbose {
         use std::io::{self, IoSlice};
         use std::pin::Pin;
         use std::task::{Context, Poll};
-        use super::super::TlsInfoFactory;
 
         pub(super) struct Verbose<T> {
             pub(super) id: u32,
