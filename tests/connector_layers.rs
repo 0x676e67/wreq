@@ -42,8 +42,11 @@ async fn non_op_layer_with_timeout() {
     // never returns
     let url = "http://192.0.2.1:81/slow";
 
-    // We will ignore it here, otherwise it will fail when using VPN in Tunnel mode.
-    let _res = client.get(url).send().await;
+    let res = client.get(url).send().await;
+
+    let err = res.unwrap_err();
+
+    assert!(err.is_connect() && err.is_timeout());
 }
 
 #[tokio::test]
@@ -59,8 +62,11 @@ async fn with_connect_timeout_layer_never_returning() {
     // never returns
     let url = "http://192.0.2.1:81/slow";
 
-    // We will ignore it here, otherwise it will fail when using VPN in Tunnel mode.
-    let _res = client.get(url).send().await;
+    let res = client.get(url).send().await;
+
+    let err = res.unwrap_err();
+
+    assert!(err.is_connect() && err.is_timeout());
 }
 
 #[tokio::test]
