@@ -105,12 +105,12 @@ async fn connect_many_timeout_succeeds() {
 
     let url = format!("http://many_addrs:{port}/eventual");
 
-    // We will ignore it here, otherwise it will fail when using VPN in Tunnel mode.
-    let _ = client
+    let _res = client
         .get(url)
         .timeout(Duration::from_millis(1000))
         .send()
-        .await;
+        .await
+        .unwrap();
 }
 
 #[tokio::test]
@@ -132,12 +132,15 @@ async fn connect_many_timeout() {
 
     let url = "http://many_addrs:81/slow".to_string();
 
-    // We will ignore it here, otherwise it will fail when using VPN in Tunnel mode.
-    let _ = client
+    let res = client
         .get(url)
         .timeout(Duration::from_millis(1000))
         .send()
         .await;
+
+    let err = res.unwrap_err();
+
+    assert!(err.is_connect() && err.is_timeout());
 }
 
 #[cfg(feature = "stream")]
