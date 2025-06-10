@@ -110,6 +110,8 @@ struct Config {
     tcp_keepalive: Option<Duration>,
     tcp_keepalive_interval: Option<Duration>,
     tcp_keepalive_retries: Option<u32>,
+    #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
+    tcp_user_timeout: Option<Duration>,
     proxies: Vec<ProxyMatcher>,
     auto_sys_proxy: bool,
     redirect_policy: redirect::Policy,
@@ -184,6 +186,8 @@ impl ClientBuilder {
                 tcp_keepalive: None,
                 tcp_keepalive_interval: None,
                 tcp_keepalive_retries: None,
+                #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
+                tcp_user_timeout: None,
                 proxies: Vec::new(),
                 auto_sys_proxy: true,
                 redirect_policy: redirect::Policy::default(),
@@ -333,6 +337,11 @@ impl ClientBuilder {
             ))]
             {
                 builder = builder.interface(config.interface)
+            }
+
+            #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
+            {
+                builder = builder.tcp_user_timeout(config.tcp_user_timeout);
             }
 
             builder.build(config.connector_layers)
@@ -922,6 +931,21 @@ impl ClientBuilder {
         C: Into<Option<u32>>,
     {
         self.config.tcp_keepalive_retries = retries.into();
+        self
+    }
+
+    /// Set that all sockets have `TCP_USER_TIMEOUT` set with the supplied duration.
+    ///
+    /// This option controls how long transmitted data may remain unacknowledged before
+    /// the connection is force-closed.
+    ///
+    /// The current default is `None` (option disabled).
+    #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
+    pub fn tcp_user_timeout<D>(mut self, val: D) -> ClientBuilder
+    where
+        D: Into<Option<Duration>>,
+    {
+        self.config.tcp_user_timeout = val.into();
         self
     }
 

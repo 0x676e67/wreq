@@ -120,25 +120,32 @@ impl ConnectorBuilder {
         }
     }
 
-    #[inline]
+    #[inline(always)]
     pub(crate) fn keepalive(mut self, dur: Option<Duration>) -> ConnectorBuilder {
         self.http.set_keepalive(dur);
         self
     }
 
-    #[inline]
+    #[inline(always)]
     pub(crate) fn tcp_keepalive_interval(mut self, dur: Option<Duration>) -> ConnectorBuilder {
         self.http.set_keepalive_interval(dur);
         self
     }
 
-    #[inline]
+    #[inline(always)]
     pub(crate) fn tcp_keepalive_retries(mut self, retries: Option<u32>) -> ConnectorBuilder {
         self.http.set_keepalive_retries(retries);
         self
     }
 
-    #[inline]
+    #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
+    #[inline(always)]
+    pub(crate) fn tcp_user_timeout(mut self, dur: Option<Duration>) -> ConnectorBuilder {
+        self.http.set_user_timeout(dur);
+        self
+    }
+
+    #[inline(always)]
     pub(crate) fn timeout(mut self, timeout: Option<Duration>) -> ConnectorBuilder {
         self.timeout = timeout;
         self.http.set_connect_timeout(timeout);
@@ -157,7 +164,7 @@ impl ConnectorBuilder {
         target_os = "visionos",
         target_os = "watchos",
     ))]
-    #[inline]
+    #[inline(always)]
     pub(crate) fn interface(
         mut self,
         iface: Option<std::borrow::Cow<'static, str>>,
@@ -166,6 +173,7 @@ impl ConnectorBuilder {
         self
     }
 
+    #[inline(always)]
     pub(crate) fn local_addresses(
         mut self,
         local_ipv4_address: Option<Ipv4Addr>,
@@ -183,7 +191,7 @@ impl ConnectorBuilder {
         self
     }
 
-    #[inline]
+    #[inline(always)]
     pub(crate) fn verbose(mut self, enabled: bool) -> ConnectorBuilder {
         self.verbose.0 = enabled;
         self
