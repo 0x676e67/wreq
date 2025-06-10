@@ -31,9 +31,8 @@ pin_project! {
     }
 }
 
-#[allow(clippy::large_enum_variant)]
 pub(super) enum PendingInner {
-    Request(Box<PendingRequest>),
+    Request(Pin<Box<PendingRequest>>),
     Error(Option<Error>),
 }
 
@@ -247,4 +246,14 @@ fn is_retryable_error(err: &(dyn std::error::Error + 'static)) -> bool {
         }
     }
     false
+}
+
+#[cfg(test)]
+mod test {
+
+    #[test]
+    fn test_future_size() {
+        let s = std::mem::size_of::<super::Pending>();
+        assert!(s < 128, "size_of::<Pending>() == {s}, too big");
+    }
 }
