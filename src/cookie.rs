@@ -373,7 +373,6 @@ mod future {
     //! [`Future`] types.
 
     use super::CookieStore;
-    use futures_util::ready;
     use http::Response;
     use pin_project_lite::pin_project;
     use std::{
@@ -401,7 +400,7 @@ mod future {
 
         fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
             let this = self.project();
-            let res = ready!(this.future.poll(cx)?);
+            let res = std::task::ready!(this.future.poll(cx)?);
 
             // If we have a cookie store, extract cookies from the response headers
             // and store them in the cookie store.
@@ -410,7 +409,7 @@ mod future {
             if let Some(cookie_store) = this.cookie_store {
                 let mut cookies = super::extract_response_cookie_headers(res.headers()).peekable();
                 if cookies.peek().is_some() {
-                    cookie_store.set_cookies(&mut cookies, &this.url);
+                    cookie_store.set_cookies(&mut cookies, this.url);
                 }
             }
 
