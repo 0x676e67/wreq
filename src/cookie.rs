@@ -8,7 +8,7 @@ use std::{borrow::Cow, convert::TryInto};
 
 pub use self::{
     future::ResponseFuture,
-    service::{CookieStoreLayer, CookieStoreManager},
+    service::{CookieStoreManager, CookieStoreManagerLayer},
 };
 use crate::header::{HeaderValue, SET_COOKIE};
 pub use cookie_crate::{Cookie as RawCookie, Expiration, SameSite, time::Duration};
@@ -478,18 +478,18 @@ mod service {
 
     /// Layer to apply [`CookieStoreManager`] middleware.
     #[derive(Clone)]
-    pub struct CookieStoreLayer {
+    pub struct CookieStoreManagerLayer {
         cookie_store: Option<Arc<dyn CookieStore>>,
     }
 
-    impl CookieStoreLayer {
+    impl CookieStoreManagerLayer {
         /// Create a new cookie manager layer.
         pub fn new(cookie_store: Option<Arc<dyn CookieStore + 'static>>) -> Self {
             Self { cookie_store }
         }
     }
 
-    impl<S> Layer<S> for CookieStoreLayer {
+    impl<S> Layer<S> for CookieStoreManagerLayer {
         type Service = CookieStoreManager<S>;
 
         fn layer(&self, inner: S) -> Self::Service {
