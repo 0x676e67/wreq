@@ -7,6 +7,7 @@
 use std::fmt;
 use std::{error::Error as StdError, sync::Arc};
 
+use crate::error::BoxError;
 use crate::header::{AUTHORIZATION, COOKIE, PROXY_AUTHORIZATION, REFERER, WWW_AUTHENTICATE};
 use http::{HeaderMap, HeaderValue, StatusCode};
 
@@ -276,12 +277,12 @@ impl TowerRedirectPolicy {
         }
     }
 
-    pub(crate) fn with_referer(&mut self, referer: bool) -> &mut Self {
+    pub(crate) fn with_referer(mut self, referer: bool) -> Self {
         self.referer = referer;
         self
     }
 
-    pub(crate) fn with_https_only(&mut self, https_only: bool) -> &mut Self {
+    pub(crate) fn with_https_only(mut self, https_only: bool) -> Self {
         self.https_only = https_only;
         self
     }
@@ -299,14 +300,14 @@ fn make_referer(next: &Url, previous: &Url) -> Option<HeaderValue> {
     referer.as_str().parse().ok()
 }
 
-impl TowerPolicy<Body, crate::Error> for TowerRedirectPolicy {
-    fn redirect(&mut self, attempt: &TowerAttempt<'_>) -> Result<TowerAction, crate::Error> {
+impl TowerPolicy<Body, BoxError> for TowerRedirectPolicy {
+    fn redirect(&mut self, attempt: &TowerAttempt<'_>) -> Result<TowerAction, BoxError> {
         let previous_url =
             Url::parse(&attempt.previous().to_string()).expect("Previous URL must be valid");
 
         let next_url = match Url::parse(&attempt.location().to_string()) {
             Ok(url) => url,
-            Err(e) => return Err(crate::error::builder(e)),
+            Err(e) => return Err(BoxError::from(crate::error::builder(e))),
         };
 
         self.urls.push(previous_url.clone());
@@ -314,19 +315,19 @@ impl TowerPolicy<Body, crate::Error> for TowerRedirectPolicy {
         match self.policy.check(attempt.status(), &next_url, &self.urls) {
             ActionKind::Follow => {
                 if next_url.scheme() != "http" && next_url.scheme() != "https" {
-                    return Err(crate::error::url_bad_scheme(next_url));
+                    return Err(BoxError::from(crate::error::url_bad_scheme(next_url)));
                 }
 
                 if self.https_only && next_url.scheme() != "https" {
-                    return Err(crate::error::redirect(
+                    return Err(BoxError::from(crate::error::redirect(
                         crate::error::url_bad_scheme(next_url.clone()),
                         next_url,
-                    ));
+                    )));
                 }
                 Ok(TowerAction::Follow)
             }
             ActionKind::Stop => Ok(TowerAction::Stop),
-            ActionKind::Error(e) => Err(crate::error::redirect(e, previous_url)),
+            ActionKind::Error(e) => Err(BoxError::from(crate::error::redirect(e, previous_url))),
         }
     }
 

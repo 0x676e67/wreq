@@ -104,6 +104,7 @@ impl Error {
             if err.is::<TimedOut>() {
                 return true;
             }
+
             if let Some(io) = err.downcast_ref::<io::Error>() {
                 if io.kind() == io::ErrorKind::TimedOut {
                     return true;
@@ -350,6 +351,10 @@ pub(crate) fn uri_bad_host() -> Error {
     Error::new(Kind::Builder, Some("no host in url"))
 }
 
+pub(crate) fn unknown() -> Error {
+    Error::new(Kind::Request, Some(Unknown))
+}
+
 // io::Error helpers
 
 #[cfg(any(
@@ -397,6 +402,17 @@ impl fmt::Display for BadScheme {
 }
 
 impl StdError for BadScheme {}
+
+#[derive(Debug)]
+pub(crate) struct Unknown;
+
+impl fmt::Display for Unknown {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.write_str("unknown error")
+    }
+}
+
+impl StdError for Unknown {}
 
 #[cfg(test)]
 mod tests {

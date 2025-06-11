@@ -11,6 +11,7 @@ use crate::cookie;
 use crate::{
     connect::Connector,
     core::{body::Incoming, client::Client},
+    error::{self, BoxError},
 };
 
 #[derive(Clone)]
@@ -36,19 +37,28 @@ impl ClientService {
 }
 
 impl Service<Request<Body>> for ClientService {
-    type Error = crate::Error;
+    type Error = BoxError;
     type Response = http::Response<Incoming>;
     type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send + Sync>>;
 
     fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        self.client.poll_ready(cx).map_err(crate::error::request)
+        match self.client.poll_ready(cx) {
+            Poll::Pending => Poll::Pending,
+            Poll::Ready(r) => Poll::Ready(r.map_err(error::request).map_err(From::from)),
+        }
     }
 
     #[cfg(not(feature = "cookies"))]
     fn call(&mut self, req: Request<Body>) -> Self::Future {
         let clone = self.client.clone();
         let mut inner = std::mem::replace(&mut self.client, clone);
-        Box::pin(async move { inner.call(req).await.map_err(crate::error::request) })
+        Box::pin(async move {
+            inner
+                .call(req)
+                .await
+                .map_err(error::request)
+                .map_err(From::from)
+        })
     }
 
     #[cfg(feature = "cookies")]
@@ -66,7 +76,11 @@ impl Service<Request<Body>> for ClientService {
 
         let cookie_store = self.cookie_store.clone();
         Box::pin(async move {
-            let res = inner.call(req).await.map_err(crate::error::request);
+            let res = inner
+                .call(req)
+                .await
+                .map_err(error::request)
+                .map_err(From::from);
 
             if let Some(ref cookie_store) = cookie_store {
                 if let Ok(res) = &res {
