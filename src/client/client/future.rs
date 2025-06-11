@@ -21,9 +21,8 @@ use crate::{
     redirect::{self},
 };
 
-type ResponseFuture = std::pin::Pin<
-    Box<dyn Future<Output = Result<http::Response<Incoming>, BoxError>> + Send + 'static>,
->;
+type ResponseFuture =
+    Pin<Box<dyn Future<Output = Result<http::Response<Incoming>, BoxError>> + Send + 'static>>;
 
 pin_project! {
     pub struct Pending {
