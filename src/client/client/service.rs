@@ -18,6 +18,7 @@ pub struct ClientService {
 }
 
 impl ClientService {
+    #[inline(always)]
     pub fn new(client: Client<Connector, Body>) -> Self {
         Self { client }
     }
