@@ -26,7 +26,7 @@ use std::task::{Context, Poll};
 use std::time::Duration;
 
 use crate::dns::DynResolver;
-use crate::error::{BoxError, cast_timeout_to_internal_error};
+use crate::error::{BoxError, map_timeout_to_error};
 use crate::proxy::{Intercepted, Matcher as ProxyMatcher};
 
 pub(crate) type HttpConnector = crate::core::client::connect::HttpConnector<DynResolver>;
@@ -88,7 +88,7 @@ impl ConnectorBuilder {
                             .layer(TimeoutLayer::new(timeout))
                             .service(service);
                         let service = ServiceBuilder::new()
-                            .map_err(cast_timeout_to_internal_error)
+                            .map_err(map_timeout_to_error)
                             .service(service);
                         let service = BoxCloneSyncService::new(service);
                         Connector::WithLayers {
@@ -102,7 +102,7 @@ impl ConnectorBuilder {
                         // no named timeout layer but we still map errors since
                         // we might have user-provided timeout layer
                         let service = ServiceBuilder::new()
-                            .map_err(cast_timeout_to_internal_error)
+                            .map_err(map_timeout_to_error)
                             .service(service);
                         let service = BoxCloneSyncService::new(service);
                         Connector::WithLayers {
