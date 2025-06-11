@@ -359,8 +359,6 @@ pub(crate) fn unknown() -> Error {
     Error::new(Kind::Request, Some(Unknown))
 }
 
-// io::Error helpers
-
 #[cfg(any(
     feature = "gzip",
     feature = "zstd",
@@ -371,7 +369,13 @@ pub(crate) fn into_io(e: BoxError) -> io::Error {
     io::Error::other(e)
 }
 
-#[allow(unused)]
+#[cfg(any(
+    test,
+    feature = "gzip",
+    feature = "zstd",
+    feature = "brotli",
+    feature = "deflate",
+))]
 pub(crate) fn decode_io(e: io::Error) -> Error {
     if e.get_ref().map(|r| r.is::<Error>()).unwrap_or(false) {
         *e.into_inner()
@@ -382,8 +386,6 @@ pub(crate) fn decode_io(e: io::Error) -> Error {
         decode(e)
     }
 }
-
-// internal Error "sources"
 
 #[derive(Debug)]
 pub(crate) struct TimedOut;
