@@ -15,7 +15,7 @@
 //! # Motivation
 //!
 //! The key design benefit is the ability to store multiple config types—potentially even with the same
-//! value type (e.g., [`Duration`])—without code duplication or ambiguity. By leveraging trait association,
+//! value type (e.g., [`std::time::Duration`])—without code duplication or ambiguity. By leveraging trait association,
 //! each config key is distinct at the type level, while code for storage and access remains totally generic.
 //!
 //! # Usage

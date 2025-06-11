@@ -223,7 +223,7 @@ impl HttpConnector {
 impl<R> HttpConnector<R> {
     /// Construct a new HttpConnector.
     ///
-    /// Takes a [`Resolver`](crate::util::client::connect::dns#resolvers-are-services) to handle DNS lookups.
+    /// Takes a [`Resolver`](crate::core::client::connect::dns#resolvers-are-services) to handle DNS lookups.
     pub fn new_with_resolver(resolver: R) -> HttpConnector<R> {
         HttpConnector {
             config: Arc::new(Config {
@@ -397,8 +397,8 @@ impl<R> HttpConnector<R> {
     /// - macOS, iOS, visionOS, watchOS, and tvOS
     ///
     /// [VRF]: https://www.kernel.org/doc/Documentation/networking/vrf.txt
-    /// [`man 7 socket`] https://man7.org/linux/man-pages/man7/socket.7.html
-    /// [`man 7p ip`]: https://docs.oracle.com/cd/E86824_01/html/E54777/ip-7p.html
+    /// [`man 7 socket`] <https://man7.org/linux/man-pages/man7/socket.7.html>
+    /// [`man 7p ip`]: <https://docs.oracle.com/cd/E86824_01/html/E54777/ip-7p.html>
     #[cfg(any(
         target_os = "android",
         target_os = "fuchsia",

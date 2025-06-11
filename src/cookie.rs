@@ -6,7 +6,7 @@ use std::fmt;
 use std::time::SystemTime;
 use std::{borrow::Cow, convert::TryInto};
 
-pub use self::{future::ResponseFuture, service::CookieManagerLayer};
+pub use self::{future::ResponseFuture, service::{CookieManager, CookieManagerLayer}};
 use crate::header::{HeaderValue, SET_COOKIE};
 pub use cookie_crate::{Cookie as RawCookie, Expiration, SameSite, time::Duration};
 
@@ -419,7 +419,7 @@ mod future {
 }
 
 mod service {
-    //! Middleware to use [`Cookies`].
+    //! Middleware to use [`CookieStore`].
 
     use super::{CookieStore, future::ResponseFuture};
     use http::{Request, Response};
@@ -430,7 +430,7 @@ mod service {
     use tower::Layer;
     use tower_service::Service;
 
-    /// Middleware to use [`Cookies`].
+    /// Middleware to use [`CookieStore`].
     #[derive(Clone)]
     pub struct CookieManager<S> {
         inner: S,
