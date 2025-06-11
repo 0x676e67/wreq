@@ -218,8 +218,8 @@ async fn with_concurrency_limit_layer_success() {
     let url = format!("http://{}", server.addr());
 
     let client = wreq::Client::builder()
-        // .layer(DelayLayer::new(Duration::from_millis(100)))
-        // .layer(TimeoutLayer::new(Duration::from_millis(200)))
+        .layer(DelayLayer::new(Duration::from_millis(100)))
+        .layer(TimeoutLayer::new(Duration::from_millis(200)))
         .layer(ConcurrencyLimitLayer::new(1))
         .timeout(Duration::from_millis(1000))
         .pool_max_idle_per_host(0) // disable connection reuse to force resource contention on the concurrency limit semaphore
