@@ -376,11 +376,9 @@ impl ClientBuilder {
         };
 
         if let Some(layers) = config.request_layers {
-            for layer in layers {
-                client = BoxCloneSyncService::new(
-                    ServiceBuilder::new().layer(layer.clone()).service(client),
-                );
-            }
+            client = layers.into_iter().fold(client, |client, layer| {
+                ServiceBuilder::new().layer(layer).service(client)
+            });
         }
 
         let client = ServiceBuilder::new()
