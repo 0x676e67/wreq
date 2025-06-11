@@ -177,9 +177,8 @@ impl Error {
         }
     }
 
-    // private
 
-    #[allow(unused)]
+    #[cfg(test)]
     pub(crate) fn into_io(self) -> io::Error {
         io::Error::other(self)
     }
@@ -189,9 +188,22 @@ impl Error {
 /// internal equivalents.
 ///
 /// Currently only is used for `tower::timeout::error::Elapsed`.
-pub(crate) fn cast_to_internal_error(error: BoxError) -> BoxError {
+#[inline]
+pub(crate) fn cast_timeout_to_internal_error(error: BoxError) -> BoxError {
     if error.is::<tower::timeout::error::Elapsed>() {
-        Box::new(crate::error::TimedOut) as BoxError
+        Box::new(TimedOut) as BoxError
+    } else {
+        error
+    }
+}
+
+/// Converts from external types to wreq's
+/// internal equivalents.
+/// Currently only is used for `tower::timeout::error::Elapsed`.
+#[inline]
+pub(crate) fn cast_io_to_internal_error(error: BoxError) -> BoxError {
+    if error.is::<tower::timeout::error::Elapsed>() {
+        Box::new(request(TimedOut)) as BoxError
     } else {
         error
     }
