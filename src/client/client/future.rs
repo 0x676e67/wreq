@@ -16,7 +16,7 @@ use crate::{
     Error,
     client::body,
     core::{body::Incoming, service::Oneshot},
-    error::{self, BoxError},
+    error::{self, BoxError, TimedOut},
     into_url::try_uri,
     redirect::{self},
 };
@@ -176,6 +176,13 @@ impl Future for PendingRequest {
                             if self.as_mut().retry_error(e) {
                                 continue;
                             }
+                        }
+
+                        // If the error is a Timeout, we return a timeout error
+                        if e.is::<TimedOut>() {
+                            return Poll::Ready(Err(
+                                error::request(TimedOut).with_url(self.url.clone())
+                            ));
                         }
 
                         // If the error is an Error, we return it

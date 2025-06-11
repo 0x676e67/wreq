@@ -55,7 +55,7 @@ use http::{
 
 use service::ClientService;
 use tower::util::{BoxCloneSyncService, BoxCloneSyncServiceLayer};
-use tower::{Layer, Service, ServiceBuilder, ServiceExt};
+use tower::{Layer, Service, ServiceBuilder};
 use tower_http::follow_redirect::FollowRedirect;
 
 type BoxedRequestService =
@@ -377,20 +377,21 @@ impl ClientBuilder {
         if let Some(layers) = config.request_layers {
             for layer in layers {
                 client = BoxCloneSyncService::new(
-                    ServiceBuilder::new()
-                        .layer(layer.clone())
-                        .service(client)
-                        .map_err(error::cast_to_internal_error),
+                    ServiceBuilder::new().layer(layer.clone()).service(client),
                 );
             }
         }
+
+        let client = ServiceBuilder::new()
+            .map_err(error::cast_to_internal_error)
+            .service(client);
 
         Ok(Client {
             inner: Arc::new(ClientRef {
                 accepts: config.accepts,
                 #[cfg(feature = "cookies")]
                 cookie_store: config.cookie_store,
-                client,
+                client: BoxCloneSyncService::new(client),
                 headers: config.headers,
                 original_headers: RequestConfig::new(config.original_headers),
                 total_timeout: RequestConfig::new(config.timeout),
