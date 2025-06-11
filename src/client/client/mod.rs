@@ -57,11 +57,11 @@ use tower::util::{BoxCloneSyncService, BoxCloneSyncServiceLayer, Oneshot};
 use tower::{Layer, Service, ServiceBuilder};
 use tower_http::follow_redirect::FollowRedirect;
 
-type BoxedRequestService =
+type BoxedClientService =
     BoxCloneSyncService<http::Request<Body>, http::Response<Incoming>, BoxError>;
 
-type BoxedRequestLayer = BoxCloneSyncServiceLayer<
-    BoxedRequestService,
+type BoxedClientServiceLayer = BoxCloneSyncServiceLayer<
+    BoxedClientService,
     http::Request<Body>,
     http::Response<Incoming>,
     BoxError,
@@ -92,7 +92,7 @@ struct ClientRef {
     original_headers: RequestConfig<RequestOriginalHeaders>,
     total_timeout: RequestConfig<RequestTimeout>,
     read_timeout: RequestConfig<RequestTimeout>,
-    client: BoxedRequestService,
+    client: BoxedClientService,
     https_only: bool,
     http2_max_retry_count: usize,
     proxies: Arc<Vec<ProxyMatcher>>,
@@ -153,7 +153,7 @@ struct Config {
     http1_config: Http1Config,
     http2_config: Http2Config,
     http2_max_retry_count: usize,
-    request_layers: Option<Vec<BoxedRequestLayer>>,
+    request_layers: Option<Vec<BoxedClientServiceLayer>>,
     connector_layers: Option<Vec<BoxedConnectorLayer>>,
     builder: Builder,
     alpn_protos: Option<AlpnProtos>,
@@ -358,37 +358,39 @@ impl ClientBuilder {
             builder.build(config.connector_layers)
         };
 
-        let mut client = {
-            let base_service = ClientService::new(config.builder.build(connector));
+        let mut client_service = {
+            let client_service = ClientService::new(config.builder.build(connector));
             let redirect_policy = TowerRedirectPolicy::new(config.redirect_policy)
                 .with_referer(config.referer)
                 .with_https_only(config.https_only);
 
             #[cfg(feature = "cookies")]
-            let base_service = ServiceBuilder::new()
+            let client_service = ServiceBuilder::new()
                 .layer(cookie::CookieManagerLayer::new(config.cookie_store))
-                .service(base_service);
+                .service(client_service);
 
             BoxCloneSyncService::new(
                 ServiceBuilder::new()
-                    .service(FollowRedirect::with_policy(base_service, redirect_policy)),
+                    .service(FollowRedirect::with_policy(client_service, redirect_policy)),
             )
         };
 
         if let Some(layers) = config.request_layers {
-            client = layers.into_iter().fold(client, |client, layer| {
-                ServiceBuilder::new().layer(layer).service(client)
-            });
+            client_service = layers
+                .into_iter()
+                .fold(client_service, |client_service, layer| {
+                    ServiceBuilder::new().layer(layer).service(client_service)
+                });
         }
 
-        let client = ServiceBuilder::new()
+        let client_service = ServiceBuilder::new()
             .map_err(error::cast_timeout_to_request_error)
-            .service(client);
+            .service(client_service);
 
         Ok(Client {
             inner: Arc::new(ClientRef {
                 accepts: config.accepts,
-                client: BoxCloneSyncService::new(client),
+                client: BoxCloneSyncService::new(client_service),
                 headers: config.headers,
                 original_headers: RequestConfig::new(config.original_headers),
                 total_timeout: RequestConfig::new(config.timeout),
@@ -1214,7 +1216,7 @@ impl ClientBuilder {
     /// Each subsequent invocation of this function will wrap previous layers.
     pub fn layer<L>(mut self, layer: L) -> ClientBuilder
     where
-        L: Layer<BoxedRequestService> + Clone + Send + Sync + 'static,
+        L: Layer<BoxedClientService> + Clone + Send + Sync + 'static,
         L::Service: Service<http::Request<Body>, Response = http::Response<Incoming>, Error = BoxError>
             + Clone
             + Send
