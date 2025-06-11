@@ -367,7 +367,7 @@ impl ClientBuilder {
 
             #[cfg(feature = "cookies")]
             let base_service = ServiceBuilder::new()
-                .layer(cookie::CookieManagerLayer::new(config.cookie_store))
+                .layer(cookie::CookieStoreLayer::new(config.cookie_store))
                 .service(base_service);
 
             BoxCloneSyncService::new(
