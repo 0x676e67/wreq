@@ -176,12 +176,6 @@ impl Error {
             _ => None,
         }
     }
-
-
-    #[cfg(test)]
-    pub(crate) fn into_io(self) -> io::Error {
-        io::Error::other(self)
-    }
 }
 
 /// Converts from external types to wreq's
@@ -430,6 +424,12 @@ mod tests {
 
     fn assert_send<T: Send>() {}
     fn assert_sync<T: Sync>() {}
+
+    impl super::Error {
+        fn into_io(self) -> io::Error {
+            io::Error::other(self)
+        }
+    }
 
     #[test]
     fn test_source_chain() {
