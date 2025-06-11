@@ -29,10 +29,10 @@ impl Service<Request<Body>> for ClientService {
     type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send + Sync>>;
 
     fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        match self.client.poll_ready(cx) {
-            Poll::Pending => Poll::Pending,
-            Poll::Ready(r) => Poll::Ready(r.map_err(error::request).map_err(From::from)),
-        }
+        self.client
+            .poll_ready(cx)
+            .map_err(error::request)
+            .map_err(From::from)
     }
 
     fn call(&mut self, req: Request<Body>) -> Self::Future {
