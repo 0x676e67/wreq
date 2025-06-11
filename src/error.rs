@@ -291,12 +291,6 @@ impl From<boring2::error::ErrorStack> for Error {
     }
 }
 
-impl From<http::Error> for Error {
-    fn from(err: http::Error) -> Error {
-        Error::new(Kind::Builder, Some(format!("http error: {:?}", err)))
-    }
-}
-
 #[cfg(feature = "hickory-dns")]
 impl From<hickory_resolver::ResolveError> for Error {
     fn from(err: hickory_resolver::ResolveError) -> Error {
@@ -355,10 +349,6 @@ pub(crate) fn uri_bad_host() -> Error {
     Error::new(Kind::Builder, Some("no host in url"))
 }
 
-pub(crate) fn unknown() -> Error {
-    Error::new(Kind::Request, Some(Unknown))
-}
-
 #[cfg(any(
     feature = "gzip",
     feature = "zstd",
@@ -408,17 +398,6 @@ impl fmt::Display for BadScheme {
 }
 
 impl StdError for BadScheme {}
-
-#[derive(Debug)]
-pub(crate) struct Unknown;
-
-impl fmt::Display for Unknown {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        f.write_str("unknown error")
-    }
-}
-
-impl StdError for Unknown {}
 
 #[cfg(test)]
 mod tests {

@@ -179,11 +179,10 @@ impl Future for PendingRequest {
                         }
 
                         // If the error is an Error, we return it
-                        if let Ok(e) = e.downcast::<Error>() {
-                            return Poll::Ready(Err(*e));
-                        }
-
-                        return Poll::Ready(Err(error::unknown()));
+                        return match e.downcast::<Error>() {
+                            Ok(e) => Poll::Ready(Err(*e)),
+                            Err(e) => Poll::Ready(Err(error::request(e))),
+                        };
                     }
                     Poll::Ready(Ok(res)) => res.map(body::boxed),
                     Poll::Pending => return Poll::Pending,
