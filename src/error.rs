@@ -309,8 +309,6 @@ pub(crate) enum Kind {
     Upgrade,
 }
 
-// constructors
-
 pub(crate) fn builder<E: Into<BoxError>>(e: E) -> Error {
     Error::new(Kind::Builder, Some(e))
 }

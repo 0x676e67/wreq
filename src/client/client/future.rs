@@ -178,7 +178,7 @@ impl Future for PendingRequest {
                             }
                         }
 
-                        // If the error is a Timeout, we return a timeout error
+                        // If the error is a TimedOut, we return a timeout error
                         if e.is::<TimedOut>() {
                             return Poll::Ready(Err(
                                 error::request(TimedOut).with_url(self.url.clone())
