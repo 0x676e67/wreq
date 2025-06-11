@@ -6,7 +6,10 @@ use std::fmt;
 use std::time::SystemTime;
 use std::{borrow::Cow, convert::TryInto};
 
-pub use self::{future::ResponseFuture, service::{CookieManager, CookieManagerLayer}};
+pub use self::{
+    future::ResponseFuture,
+    service::{CookieManager, CookieManagerLayer},
+};
 use crate::header::{HeaderValue, SET_COOKIE};
 pub use cookie_crate::{Cookie as RawCookie, Expiration, SameSite, time::Duration};
 
