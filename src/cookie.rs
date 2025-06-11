@@ -458,10 +458,10 @@ mod service {
 
             // If a cookie store is present, inject cookies for this URL if not already set.
             if let Some(ref cookie_store) = self.cookie_store {
-                url = url::Url::parse(&req.uri().to_string()).ok();
+                if req.headers().get(COOKIE).is_none() {
+                    url = url::Url::parse(&req.uri().to_string()).ok();
 
-                if let Some(ref url) = url {
-                    if req.headers().get(COOKIE).is_none() {
+                    if let Some(ref url) = url {
                         let headers = req.headers_mut();
                         if let Some(cookie_headers) = cookie_store.cookies(url) {
                             for header in cookie_headers {
