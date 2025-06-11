@@ -183,7 +183,7 @@ impl Error {
 ///
 /// Currently only is used for `tower::timeout::error::Elapsed`.
 #[inline]
-pub(crate) fn map_timeout_to_error(error: BoxError) -> BoxError {
+pub(crate) fn cast_timeout_to_error(error: BoxError) -> BoxError {
     if error.is::<tower::timeout::error::Elapsed>() {
         Box::new(TimedOut) as BoxError
     } else {
@@ -195,7 +195,7 @@ pub(crate) fn map_timeout_to_error(error: BoxError) -> BoxError {
 /// internal equivalents.
 /// Currently only is used for `tower::timeout::error::Elapsed`.
 #[inline]
-pub(crate) fn map_timeout_to_request_error(error: BoxError) -> BoxError {
+pub(crate) fn cast_timeout_to_request_error(error: BoxError) -> BoxError {
     if error.is::<tower::timeout::error::Elapsed>() {
         Box::new(request(TimedOut)) as BoxError
     } else {

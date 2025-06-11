@@ -383,7 +383,7 @@ impl ClientBuilder {
         }
 
         let client = ServiceBuilder::new()
-            .map_err(error::map_timeout_to_request_error)
+            .map_err(error::cast_timeout_to_request_error)
             .service(client);
 
         Ok(Client {
