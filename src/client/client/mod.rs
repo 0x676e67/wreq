@@ -89,8 +89,6 @@ pub struct Client {
 /// A reference to the `Client` that is used internally.
 struct ClientRef {
     accepts: Accepts,
-    #[cfg(feature = "cookies")]
-    cookie_store: Option<Arc<dyn cookie::CookieStore>>,
     headers: HeaderMap,
     original_headers: RequestConfig<RequestOriginalHeaders>,
     total_timeout: RequestConfig<RequestTimeout>,
@@ -361,18 +359,22 @@ impl ClientBuilder {
             builder.build(config.connector_layers)
         };
 
-        let mut client = BoxCloneSyncService::new(
-            ServiceBuilder::new().service(FollowRedirect::with_policy(
-                ClientService::new(
-                    config.builder.build(connector),
-                    #[cfg(feature = "cookies")]
-                    config.cookie_store.clone(),
-                ),
-                TowerRedirectPolicy::new(config.redirect_policy)
-                    .with_referer(config.referer)
-                    .with_https_only(config.https_only),
-            )),
-        );
+        let mut client = {
+            let base_service = ClientService::new(config.builder.build(connector));
+            let redirect_policy = TowerRedirectPolicy::new(config.redirect_policy)
+                .with_referer(config.referer)
+                .with_https_only(config.https_only);
+
+            #[cfg(feature = "cookies")]
+            let base_service = ServiceBuilder::new()
+                .layer(cookie::CookieManagerLayer::new(config.cookie_store))
+                .service(base_service);
+
+            BoxCloneSyncService::new(
+                ServiceBuilder::new()
+                    .service(FollowRedirect::with_policy(base_service, redirect_policy)),
+            )
+        };
 
         if let Some(layers) = config.request_layers {
             for layer in layers {
@@ -389,8 +391,6 @@ impl ClientBuilder {
         Ok(Client {
             inner: Arc::new(ClientRef {
                 accepts: config.accepts,
-                #[cfg(feature = "cookies")]
-                cookie_store: config.cookie_store,
                 client: BoxCloneSyncService::new(client),
                 headers: config.headers,
                 original_headers: RequestConfig::new(config.original_headers),

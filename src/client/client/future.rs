@@ -189,17 +189,6 @@ impl Future for PendingRequest {
                 }
             };
 
-            #[cfg(feature = "cookies")]
-            {
-                if let Some(cookie_store) = self.inner.cookie_store.as_ref() {
-                    let mut cookies =
-                        crate::cookie::extract_response_cookie_headers(res.headers()).peekable();
-                    if cookies.peek().is_some() {
-                        cookie_store.set_cookies(&mut cookies, &self.url);
-                    }
-                }
-            }
-
             if let Some(url) = &res
                 .extensions()
                 .get::<tower_http::follow_redirect::RequestUri>()

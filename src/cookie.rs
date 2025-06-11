@@ -6,6 +6,7 @@ use std::fmt;
 use std::time::SystemTime;
 use std::{borrow::Cow, convert::TryInto};
 
+pub use self::{future::ResponseFuture, service::CookieManagerLayer};
 use crate::header::{HeaderValue, SET_COOKIE};
 pub use cookie_crate::{Cookie as RawCookie, Expiration, SameSite, time::Duration};
 
@@ -365,5 +366,135 @@ impl CookieStore for Jar {
 impl Default for Jar {
     fn default() -> Self {
         Self(RwLock::new(cookie_store::CookieStore::default()))
+    }
+}
+
+mod future {
+    //! [`Future`] types.
+
+    use super::CookieStore;
+    use futures_util::ready;
+    use http::Response;
+    use pin_project_lite::pin_project;
+    use std::{
+        future::Future,
+        pin::Pin,
+        sync::Arc,
+        task::{Context, Poll},
+    };
+
+    pin_project! {
+        /// Response future for [`CookieManager`].
+        pub struct ResponseFuture<F> {
+            #[pin]
+            pub(crate) future: F,
+            pub(crate) cookie_store: Option<Arc<dyn CookieStore>>,
+            pub(crate) url: url::Url,
+        }
+    }
+
+    impl<F, ResBody, E> Future for ResponseFuture<F>
+    where
+        F: Future<Output = Result<Response<ResBody>, E>>,
+    {
+        type Output = F::Output;
+
+        fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+            let this = self.project();
+            let res = ready!(this.future.poll(cx)?);
+
+            // If we have a cookie store, extract cookies from the response headers
+            // and store them in the cookie store.
+            // We use `peekable` to check if there are any cookies before setting them.
+            // This avoids unnecessary writes to the cookie store if there are no cookies.
+            if let Some(cookie_store) = this.cookie_store {
+                let mut cookies = super::extract_response_cookie_headers(res.headers()).peekable();
+                if cookies.peek().is_some() {
+                    cookie_store.set_cookies(&mut cookies, &this.url);
+                }
+            }
+
+            Poll::Ready(Ok(res))
+        }
+    }
+}
+
+mod service {
+    //! Middleware to use [`Cookies`].
+
+    use super::{CookieStore, future::ResponseFuture};
+    use http::{Request, Response};
+    use std::{
+        sync::Arc,
+        task::{Context, Poll},
+    };
+    use tower::Layer;
+    use tower_service::Service;
+
+    /// Middleware to use [`Cookies`].
+    #[derive(Clone)]
+    pub struct CookieManager<S> {
+        inner: S,
+        cookie_store: Option<Arc<dyn CookieStore>>,
+    }
+
+    impl<ReqBody, ResBody, S> Service<Request<ReqBody>> for CookieManager<S>
+    where
+        S: Service<Request<ReqBody>, Response = Response<ResBody>>,
+    {
+        type Response = S::Response;
+        type Error = S::Error;
+        type Future = ResponseFuture<S::Future>;
+
+        #[inline]
+        fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+            self.inner.poll_ready(cx)
+        }
+
+        fn call(&mut self, mut req: Request<ReqBody>) -> Self::Future {
+            // Extract the request URL.
+            let url = url::Url::parse(&req.uri().to_string()).expect("invalid URL");
+
+            // If we have a cookie store, check if there are any cookies for the URL
+            // and add them to the request headers.
+            // We only add the cookie header if it is not already present.
+            // This avoids overwriting existing cookies in the request.
+            if let Some(ref cookie_store) = self.cookie_store {
+                if req.headers().get(crate::header::COOKIE).is_none() {
+                    let headers = req.headers_mut();
+                    crate::util::add_cookie_header(cookie_store, &url, headers);
+                }
+            }
+
+            ResponseFuture {
+                future: self.inner.call(req),
+                cookie_store: self.cookie_store.clone(),
+                url,
+            }
+        }
+    }
+
+    /// Layer to apply [`CookieManager`] middleware.
+    #[derive(Clone)]
+    pub struct CookieManagerLayer {
+        cookie_store: Option<Arc<dyn CookieStore>>,
+    }
+
+    impl CookieManagerLayer {
+        /// Create a new cookie manager layer.
+        pub fn new(cookie_store: Option<Arc<dyn CookieStore + 'static>>) -> Self {
+            Self { cookie_store }
+        }
+    }
+
+    impl<S> Layer<S> for CookieManagerLayer {
+        type Service = CookieManager<S>;
+
+        fn layer(&self, inner: S) -> Self::Service {
+            CookieManager {
+                inner,
+                cookie_store: self.cookie_store.clone(),
+            }
+        }
     }
 }
