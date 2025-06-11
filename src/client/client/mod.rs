@@ -1210,6 +1210,8 @@ impl ClientBuilder {
     /// Adds a new Tower [`Layer`](https://docs.rs/tower/latest/tower/trait.Layer.html) to the
     /// request [`Service`](https://docs.rs/tower/latest/tower/trait.Service.html) which is responsible
     /// for request processing.
+    ///
+    /// Each subsequent invocation of this function will wrap previous layers.
     pub fn layer<L>(mut self, layer: L) -> ClientBuilder
     where
         L: Layer<BoxedRequestService> + Clone + Send + Sync + 'static,
