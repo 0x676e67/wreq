@@ -23,7 +23,7 @@ use super::{BoxHandshaking, Handshaking, SocksError};
 
 /// Tunnel Proxy via SOCKSv4
 ///
-/// This is a connector that can be used by the `legacy::Client`. It wraps
+/// This is a connector that can be used by the `Client`. It wraps
 /// another connector, and after getting an underlying connection, it established
 /// a TCP tunnel over it using SOCKSv4.
 #[derive(Debug, Clone)]

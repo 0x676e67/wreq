@@ -11,7 +11,7 @@ use tower_service::Service;
 
 /// Tunnel Proxy via HTTP CONNECT
 ///
-/// This is a connector that can be used by the `legacy::Client`. It wraps
+/// This is a connector that can be used by the `Client`. It wraps
 /// another connector, and after getting an underlying connection, it creates
 /// an HTTP CONNECT tunnel over it.
 #[derive(Debug)]
