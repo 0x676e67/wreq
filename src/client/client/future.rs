@@ -1,5 +1,5 @@
 use bytes::Bytes;
-use http::{Extensions, HeaderMap, Method};
+use http::{Extensions, HeaderMap, Method, Uri};
 use pin_project_lite::pin_project;
 use std::{
     pin::Pin,
@@ -17,7 +17,6 @@ use crate::{
     client::body,
     core::{body::Incoming, service::Oneshot},
     error::{self, BoxError},
-    into_url::try_uri,
     redirect::{self},
 };
 
@@ -39,6 +38,7 @@ pub(super) enum PendingInner {
 pin_project! {
     pub(super) struct PendingRequest {
         pub method: Method,
+        pub uri: Uri,
         pub url: Url,
         pub headers: HeaderMap,
         pub body: Option<Option<Bytes>>,
@@ -61,11 +61,6 @@ impl PendingRequest {
     #[inline]
     fn in_flight(self: Pin<&mut Self>) -> Pin<&mut ResponseFuture> {
         self.project().in_flight
-    }
-
-    #[inline]
-    fn total_timeout(self: Pin<&mut Self>) -> Pin<&mut Option<Pin<Box<Sleep>>>> {
-        self.project().total_timeout
     }
 
     #[inline]
@@ -95,17 +90,9 @@ impl PendingRequest {
         }
         self.http2_retry_count += 1;
 
-        let uri = match try_uri(&self.url) {
-            Some(uri) => uri,
-            None => {
-                debug!("a parsed Url should always be a valid Uri: {}", self.url);
-                return false;
-            }
-        };
-
         *self.as_mut().in_flight().get_mut() = {
             let mut req = http::Request::builder()
-                .uri(uri)
+                .uri(self.uri.clone())
                 .method(self.method.clone())
                 .body(body)
                 .expect("valid request parts");
@@ -149,14 +136,6 @@ impl Future for PendingRequest {
     type Output = Result<Response, Error>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        if let Some(delay) = self.as_mut().total_timeout().as_mut().as_pin_mut() {
-            if let Poll::Ready(()) = delay.poll(cx) {
-                return Poll::Ready(Err(
-                    error::request(error::TimedOut).with_url(self.url.clone())
-                ));
-            }
-        }
-
         if let Some(delay) = self.as_mut().read_timeout().as_mut().as_pin_mut() {
             if let Poll::Ready(()) = delay.poll(cx) {
                 return Poll::Ready(Err(

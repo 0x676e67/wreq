@@ -12,7 +12,7 @@ use super::client::{Client, future::Pending};
 #[cfg(feature = "multipart")]
 use super::multipart;
 use super::response::Response;
-use crate::config::RequestTimeout;
+use crate::config::{RequestReadTimeout, RequestTotalTimeout};
 #[cfg(any(
     target_os = "android",
     target_os = "fuchsia",
@@ -173,25 +173,25 @@ impl Request {
     /// Get the timeout.
     #[inline]
     pub fn timeout(&self) -> Option<&Duration> {
-        RequestConfig::<RequestTimeout>::get(&self.extensions)
+        RequestConfig::<RequestTotalTimeout>::get(&self.extensions)
     }
 
     /// Get a mutable reference to the timeout.
     #[inline]
     pub fn timeout_mut(&mut self) -> &mut Option<Duration> {
-        RequestConfig::<RequestTimeout>::get_mut(&mut self.extensions)
+        RequestConfig::<RequestTotalTimeout>::get_mut(&mut self.extensions)
     }
 
     /// Get the read timeout.
     #[inline]
     pub fn read_timeout(&self) -> Option<&Duration> {
-        RequestConfig::<RequestTimeout>::get(&self.extensions)
+        RequestConfig::<RequestReadTimeout>::get(&self.extensions)
     }
 
     /// Get a mutable reference to the read timeout.
     #[inline]
     pub fn read_timeout_mut(&mut self) -> &mut Option<Duration> {
-        RequestConfig::<RequestTimeout>::get_mut(&mut self.extensions)
+        RequestConfig::<RequestReadTimeout>::get_mut(&mut self.extensions)
     }
 
     /// Get a mutable reference to the local ipv4 address.

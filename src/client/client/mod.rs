@@ -10,13 +10,12 @@ use std::task::{Context, Poll};
 use std::time::Duration;
 use std::{collections::HashMap, convert::TryInto, net::SocketAddr};
 
-use crate::config::RequestTimeout;
+use crate::client::middleware::timeout::TotalTimeoutLayer;
+use crate::config::{RequestReadTimeout, RequestTotalTimeout, RequestUrl};
 use crate::connect::{
     BoxedConnectorLayer, BoxedConnectorService, Connector,
     sealed::{Conn, Unnameable},
 };
-#[cfg(feature = "cookies")]
-use crate::cookie;
 use crate::core::body::Incoming;
 use crate::core::client::{Builder, Client as HyperClient, connect::HttpConnector};
 use crate::core::ext::{RequestConfig, RequestOriginalHeaders};
@@ -36,6 +35,8 @@ use crate::{
     error, redirect,
     tls::{AlpnProtos, TlsConnector, TlsVersion},
 };
+#[cfg(feature = "cookies")]
+use {super::middleware::cookie::CookieManagerLayer, crate::cookie};
 
 use super::decoder::Accepts;
 use super::request::{Request, RequestBuilder};
@@ -90,8 +91,8 @@ struct ClientRef {
     accepts: Accepts,
     headers: HeaderMap,
     original_headers: RequestConfig<RequestOriginalHeaders>,
-    total_timeout: RequestConfig<RequestTimeout>,
-    read_timeout: RequestConfig<RequestTimeout>,
+    total_timeout: RequestConfig<RequestTotalTimeout>,
+    read_timeout: RequestConfig<RequestReadTimeout>,
     client: BoxedClientService,
     https_only: bool,
     http2_max_retry_count: usize,
@@ -358,34 +359,36 @@ impl ClientBuilder {
             builder.build(config.connector_layers)
         };
 
-        let mut client_service = {
-            let client_service = ClientService::new(config.builder.build(connector));
+        let mut service = {
+            let service = ClientService::new(config.builder.build(connector));
+            let service = ServiceBuilder::new()
+                .layer(TotalTimeoutLayer::new(config.timeout))
+                .service(service);
+
+            #[cfg(feature = "cookies")]
+            let service = ServiceBuilder::new()
+                .layer(CookieManagerLayer::new(config.cookie_store))
+                .service(service);
+
             let redirect_policy = TowerRedirectPolicy::new(config.redirect_policy)
                 .with_referer(config.referer)
                 .with_https_only(config.https_only);
 
-            #[cfg(feature = "cookies")]
-            let client_service = ServiceBuilder::new()
-                .layer(cookie::CookieManagerLayer::new(config.cookie_store))
-                .service(client_service);
-
             BoxCloneSyncService::new(
                 ServiceBuilder::new()
-                    .service(FollowRedirect::with_policy(client_service, redirect_policy)),
+                    .service(FollowRedirect::with_policy(service, redirect_policy)),
             )
         };
 
         if let Some(layers) = config.request_layers {
-            client_service = layers
-                .into_iter()
-                .fold(client_service, |client_service, layer| {
-                    ServiceBuilder::new().layer(layer).service(client_service)
-                });
+            service = layers.into_iter().fold(service, |client_service, layer| {
+                ServiceBuilder::new().layer(layer).service(client_service)
+            });
         }
 
         let client_service = ServiceBuilder::new()
             .map_err(error::cast_timeout_to_request_error)
-            .service(client_service);
+            .service(service);
 
         Ok(Client {
             inner: Arc::new(ClientRef {
@@ -1447,13 +1450,14 @@ impl Client {
 
         let in_flight = {
             let mut req = http::Request::builder()
-                .uri(uri)
+                .uri(uri.clone())
                 .method(method.clone())
                 .body(body)
                 .expect("valid request parts");
 
             {
                 self.inner.original_headers.or_insert(&mut extensions);
+                RequestConfig::<RequestUrl>::insert(&mut extensions, url.clone());
             }
 
             *req.headers_mut() = headers.clone();
@@ -1474,6 +1478,7 @@ impl Client {
         Pending {
             inner: PendingInner::Request(Box::pin(PendingRequest {
                 method,
+                uri,
                 url,
                 headers,
                 body: reusable,

@@ -10,6 +10,7 @@ pub mod body;
 mod client;
 pub mod decoder;
 mod emulation;
+mod middleware;
 #[cfg(feature = "multipart")]
 pub mod multipart;
 pub(crate) mod request;
