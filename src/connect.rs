@@ -70,11 +70,11 @@ impl ConnectorBuilder {
                 // otherwise we have user provided layers
                 // so we need type erasure all the way through
                 // as well as mapping the unnameable type of the layers back to Dst for the inner service
-                let service = layers.iter().fold(
+                let service = layers.into_iter().fold(
                     BoxCloneSyncService::new(
                         ServiceBuilder::new()
                             .layer(MapRequestLayer::new(|request: Unnameable| request.0))
-                            .service(base_service.clone()),
+                            .service(base_service),
                     ),
                     |service, layer| ServiceBuilder::new().layer(layer).service(service),
                 );
@@ -91,11 +91,7 @@ impl ConnectorBuilder {
                             .map_err(cast_timeout_to_error)
                             .service(service);
                         let service = BoxCloneSyncService::new(service);
-                        Connector::WithLayers {
-                            layers,
-                            base_service,
-                            service,
-                        }
+                        Connector::WithLayers(service)
                     }
                     None => {
                         // no timeout, but still map err
@@ -105,11 +101,7 @@ impl ConnectorBuilder {
                             .map_err(cast_timeout_to_error)
                             .service(service);
                         let service = BoxCloneSyncService::new(service);
-                        Connector::WithLayers {
-                            layers,
-                            base_service,
-                            service,
-                        }
+                        Connector::WithLayers(service)
                     }
                 }
             }
@@ -204,11 +196,7 @@ pub(crate) enum Connector {
     Simple(ConnectorService),
     // at least one custom layer along with maybe an outer timeout layer
     // from `builder.connect_timeout()`
-    WithLayers {
-        layers: Vec<BoxedConnectorLayer>,
-        service: BoxedConnectorService,
-        base_service: ConnectorService,
-    },
+    WithLayers(BoxedConnectorService),
 }
 
 impl Connector {
@@ -233,35 +221,6 @@ impl Connector {
             resolver,
         }
     }
-
-    #[allow(dead_code)]
-    pub(crate) fn set_tls_connector(&mut self, mut connector: TlsConnector) {
-        match self {
-            Connector::Simple(service) => {
-                std::mem::swap(&mut service.tls, &mut connector);
-            }
-            Connector::WithLayers {
-                layers,
-                base_service,
-                ..
-            } => {
-                let mut connector = Connector::builder(
-                    base_service.http.clone(),
-                    connector,
-                    base_service.proxies.clone(),
-                    base_service.nodelay,
-                    base_service.tls_info,
-                    #[cfg(feature = "socks")]
-                    base_service.resolver.clone(),
-                )
-                .timeout(base_service.timeout)
-                .verbose(base_service.verbose.0)
-                .build(std::mem::take(layers));
-
-                std::mem::swap(self, &mut connector);
-            }
-        }
-    }
 }
 
 impl Service<Dst> for Connector {
@@ -272,14 +231,14 @@ impl Service<Dst> for Connector {
     fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         match self {
             Connector::Simple(service) => service.poll_ready(cx),
-            Connector::WithLayers { service, .. } => service.poll_ready(cx),
+            Connector::WithLayers(service) => service.poll_ready(cx),
         }
     }
 
     fn call(&mut self, dst: Dst) -> Self::Future {
         match self {
             Connector::Simple(service) => service.call(dst),
-            Connector::WithLayers { service, .. } => service.call(Unnameable(dst)),
+            Connector::WithLayers(service) => service.call(Unnameable(dst)),
         }
     }
 }

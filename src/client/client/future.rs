@@ -8,6 +8,7 @@ use std::{
     time::Duration,
 };
 use tokio::time::Sleep;
+use tower::util::BoxCloneSyncService;
 use url::Url;
 
 use super::{Body, ClientRef, Response};
@@ -20,8 +21,10 @@ use crate::{
     redirect::{self},
 };
 
-type ResponseFuture =
-    Pin<Box<dyn Future<Output = Result<http::Response<Incoming>, BoxError>> + Send + 'static>>;
+type ResponseFuture = Oneshot<
+    BoxCloneSyncService<http::Request<Body>, http::Response<Incoming>, BoxError>,
+    http::Request<Body>,
+>;
 
 pin_project! {
     pub struct Pending {
@@ -44,7 +47,6 @@ pin_project! {
         pub body: Option<Option<Bytes>>,
         pub extensions: Extensions,
         pub http2_retry_count: usize,
-        pub http2_max_retry_count: usize,
         pub redirect: Option<redirect::Policy>,
         pub inner: Arc<ClientRef>,
         #[pin]
@@ -58,22 +60,18 @@ pin_project! {
 }
 
 impl PendingRequest {
-    #[inline]
-    fn in_flight(self: Pin<&mut Self>) -> Pin<&mut ResponseFuture> {
-        self.project().in_flight
-    }
-
-    #[inline]
-    fn read_timeout(self: Pin<&mut Self>) -> Pin<&mut Option<Pin<Box<Sleep>>>> {
-        self.project().read_timeout_fut
-    }
-
-    fn retry_error(mut self: Pin<&mut Self>, err: &(dyn std::error::Error + 'static)) -> bool {
-        if !is_retryable_error(err) {
+    fn http2_retry_error(
+        mut self: Pin<&mut Self>,
+        err: &(dyn std::error::Error + 'static),
+    ) -> bool {
+        if !is_http2_retryable_error(err) {
             return false;
         }
 
-        trace!("can retry {:?}", err);
+        trace!(
+            "HTTP/2 retryable error: {:?}, retry_count={}/max={}",
+            err, self.http2_retry_count, self.inner.http2_max_retry_count
+        );
 
         let body = match self.body {
             Some(Some(ref body)) => Body::reusable(body.clone()),
@@ -84,13 +82,13 @@ impl PendingRequest {
             None => Body::empty(),
         };
 
-        if self.http2_retry_count >= self.http2_max_retry_count {
-            trace!("retry count too high");
+        if self.http2_retry_count >= self.inner.http2_max_retry_count {
+            trace!("http2 retry count too high: {}", self.http2_retry_count);
             return false;
         }
         self.http2_retry_count += 1;
 
-        *self.as_mut().in_flight().get_mut() = {
+        *self.as_mut().project().in_flight = {
             let mut req = http::Request::builder()
                 .uri(self.uri.clone())
                 .method(self.method.clone())
@@ -99,7 +97,7 @@ impl PendingRequest {
 
             *req.headers_mut() = self.headers.clone();
             *req.extensions_mut() = self.extensions.clone();
-            Box::pin(Oneshot::new(self.inner.client.clone(), req))
+            Oneshot::new(self.inner.client.clone(), req)
         };
 
         true
@@ -112,17 +110,13 @@ impl Pending {
             inner: PendingInner::Error(Some(err)),
         }
     }
-
-    fn inner(self: Pin<&mut Self>) -> Pin<&mut PendingInner> {
-        self.project().inner
-    }
 }
 
 impl Future for Pending {
     type Output = Result<Response, Error>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let inner = self.inner();
+        let inner = self.project().inner;
         match inner.get_mut() {
             PendingInner::Request(req) => Pin::new(req).poll(cx),
             PendingInner::Error(err) => Poll::Ready(Err(err
@@ -136,7 +130,7 @@ impl Future for PendingRequest {
     type Output = Result<Response, Error>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        if let Some(delay) = self.as_mut().read_timeout().as_mut().as_pin_mut() {
+        if let Some(delay) = self.as_mut().project().read_timeout_fut.as_pin_mut() {
             if let Poll::Ready(()) = delay.poll(cx) {
                 return Poll::Ready(Err(
                     error::request(error::TimedOut).with_url(self.url.clone())
@@ -146,12 +140,12 @@ impl Future for PendingRequest {
 
         loop {
             let res = {
-                let r = self.as_mut().in_flight().get_mut();
+                let r = self.as_mut().project().in_flight.get_mut();
                 match Pin::new(r).poll(cx) {
                     Poll::Ready(Err(e)) => {
                         // Http2 errors are retryable, so we check if we can retry
                         if let Some(e) = e.source() {
-                            if self.as_mut().retry_error(e) {
+                            if self.as_mut().http2_retry_error(e) {
                                 continue;
                             }
                         }
@@ -190,7 +184,7 @@ impl Future for PendingRequest {
     }
 }
 
-fn is_retryable_error(err: &(dyn std::error::Error + 'static)) -> bool {
+fn is_http2_retryable_error(err: &(dyn std::error::Error + 'static)) -> bool {
     // pop the legacy::Error
     let err = if let Some(err) = err.source() {
         err

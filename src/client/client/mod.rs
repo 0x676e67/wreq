@@ -10,18 +10,19 @@ use std::task::{Context, Poll};
 use std::time::Duration;
 use std::{collections::HashMap, convert::TryInto, net::SocketAddr};
 
-use crate::config::{RequestReadTimeout, RequestTotalTimeout, RequestUrl};
+use crate::config::{RequestReadTimeout, RequestTotalTimeout};
 use crate::connect::{
     BoxedConnectorLayer, BoxedConnectorService, Connector,
     sealed::{Conn, Unnameable},
 };
-use crate::core::body::Incoming;
-use crate::core::client::{Builder, Client as HyperClient, connect::HttpConnector};
-use crate::core::ext::{RequestConfig, RequestOriginalHeaders};
-use crate::core::rt::{TokioExecutor, tokio::TokioTimer};
-#[cfg(feature = "hickory-dns")]
-use crate::dns::hickory::{HickoryDnsResolver, LookupIpStrategy};
-use crate::dns::{DnsResolverWithOverrides, DynResolver, Resolve, gai::GaiResolver};
+use crate::core::{
+    body::Incoming,
+    client::{Builder, Client as HyperClient, connect::HttpConnector},
+    ext::{RequestConfig, RequestOriginalHeaders},
+    rt::{TokioExecutor, tokio::TokioTimer},
+    service::Oneshot,
+};
+
 use crate::error::{BoxError, Error};
 use crate::http1::Http1Config;
 use crate::http2::Http2Config;
@@ -34,6 +35,10 @@ use crate::{
     error, redirect,
     tls::{AlpnProtos, TlsConnector, TlsVersion},
 };
+
+#[cfg(feature = "hickory-dns")]
+use crate::dns::hickory::{HickoryDnsResolver, LookupIpStrategy};
+use crate::dns::{DnsResolverWithOverrides, DynResolver, Resolve, gai::GaiResolver};
 
 use super::decoder::Accepts;
 use super::middleware::timeout::TotalTimeoutLayer;
@@ -54,8 +59,8 @@ use http::{
 };
 
 use service::ClientService;
-use tower::util::{BoxCloneSyncService, BoxCloneSyncServiceLayer, Oneshot};
-use tower::{Layer, Service, ServiceBuilder, ServiceExt};
+use tower::util::{BoxCloneSyncService, BoxCloneSyncServiceLayer};
+use tower::{Layer, Service, ServiceBuilder};
 use tower_http::follow_redirect::FollowRedirect;
 
 type BoxedClientService =
@@ -387,14 +392,14 @@ impl ClientBuilder {
             .layer(TotalTimeoutLayer::new(config.timeout))
             .service(service);
 
-        let service = ServiceBuilder::new()
-            .service(service)
-            .map_err(error::cast_timeout_to_request_error);
+        let client_service = ServiceBuilder::new()
+            .map_err(error::cast_timeout_to_request_error)
+            .service(service);
 
         Ok(Client {
             inner: Arc::new(ClientRef {
                 accepts: config.accepts,
-                client: BoxCloneSyncService::new(service),
+                client: BoxCloneSyncService::new(client_service),
                 headers: config.headers,
                 original_headers: RequestConfig::new(config.original_headers),
                 total_timeout: RequestConfig::new(config.timeout),
@@ -1449,6 +1454,8 @@ impl Client {
         // apply proxy headers if any proxies are configured
         self.apply_proxy_headers(&uri, &mut headers);
 
+        // Prepare the in-flight request by ensuring we use the exact same Service instance
+        // for both poll_ready and call.
         let in_flight = {
             let mut req = http::Request::builder()
                 .uri(uri.clone())
@@ -1456,14 +1463,14 @@ impl Client {
                 .body(body)
                 .expect("valid request parts");
 
-            {
-                self.inner.original_headers.or_insert(&mut extensions);
-                RequestConfig::<RequestUrl>::insert(&mut extensions, url.clone());
-            }
+            // Inject metadata into request extensions
+            self.inner.original_headers.or_insert(&mut extensions);
 
+            // Finalize headers and extensions
             *req.headers_mut() = headers.clone();
             *req.extensions_mut() = extensions.clone();
-            Box::pin(Oneshot::new(self.inner.client.clone(), req))
+
+            Oneshot::new(self.inner.client.clone(), req)
         };
 
         let total_timeout = self
@@ -1485,7 +1492,6 @@ impl Client {
                 body: reusable,
                 extensions,
                 http2_retry_count: 0,
-                http2_max_retry_count: self.inner.http2_max_retry_count,
                 redirect,
                 inner: self.inner.clone(),
                 in_flight,

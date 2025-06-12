@@ -7,7 +7,10 @@ use tower::layer::util::Identity;
 use tower::limit::ConcurrencyLimitLayer;
 use tower::timeout::TimeoutLayer;
 
-use support::{delay_layer::DelayLayer, server};
+use support::{
+    layer::{DelayLayer, PrintPollReadyLayer, SharedConcurrencyLimitLayer},
+    server,
+};
 
 #[tokio::test]
 async fn non_op_layer() {
@@ -106,7 +109,7 @@ async fn multiple_timeout_layers_under_threshold() {
         .layer(TimeoutLayer::new(Duration::from_millis(200)))
         .layer(TimeoutLayer::new(Duration::from_millis(300)))
         .layer(TimeoutLayer::new(Duration::from_millis(500)))
-        .connect_timeout(Duration::from_millis(200))
+        .timeout(Duration::from_millis(200))
         .no_proxy()
         .build()
         .unwrap();
@@ -183,9 +186,9 @@ async fn with_concurrency_limit_layer_timeout() {
 
     let client = wreq::Client::builder()
         .layer(DelayLayer::new(Duration::from_millis(100)))
-        .layer(ConcurrencyLimitLayer::new(1))
+        .layer(SharedConcurrencyLimitLayer::new(2))
         .timeout(Duration::from_millis(200))
-        .no_keepalive()
+        .pool_max_idle_per_host(0) // disable connection reuse to force resource contention on the concurrency limit semaphore
         .no_proxy()
         .build()
         .unwrap();
@@ -194,19 +197,22 @@ async fn with_concurrency_limit_layer_timeout() {
     let res = client.get(url.clone()).send().await;
     assert!(res.is_ok());
 
-    // Each request is independent and no request will timeout
+    // 3 calls where the second two wait on the first and time out
     let mut futures = Vec::new();
-    for _ in 0..10 {
+    for _ in 0..3 {
         futures.push(client.clone().get(url.clone()).send());
     }
 
     let all_res = join_all(futures).await;
 
-    let timed_out = all_res
-        .into_iter()
-        .any(|res| res.is_err_and(|err| err.is_timeout()));
+    let timed_out = all_res.into_iter().any(|res| {
+        res.is_err_and(|err| {
+            dbg!(&err);
+            err.is_timeout()
+        })
+    });
 
-    assert!(!timed_out);
+    assert!(timed_out, "at least one request should have timed out");
 }
 
 #[tokio::test]
@@ -220,7 +226,9 @@ async fn with_concurrency_limit_layer_success() {
     let client = wreq::Client::builder()
         .layer(DelayLayer::new(Duration::from_millis(100)))
         .layer(TimeoutLayer::new(Duration::from_millis(200)))
-        .layer(ConcurrencyLimitLayer::new(1))
+        .layer(PrintPollReadyLayer("after_concurrency")) //3
+        .layer(ConcurrencyLimitLayer::new(1)) //2
+        .layer(PrintPollReadyLayer("before_concurrency")) //1
         .timeout(Duration::from_millis(1000))
         .pool_max_idle_per_host(0) // disable connection reuse to force resource contention on the concurrency limit semaphore
         .no_proxy()

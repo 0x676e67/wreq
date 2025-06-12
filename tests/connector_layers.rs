@@ -7,7 +7,7 @@ use tower::layer::util::Identity;
 use tower::limit::ConcurrencyLimitLayer;
 use tower::timeout::TimeoutLayer;
 
-use support::{delay_layer::DelayLayer, server};
+use support::{layer::DelayLayer, server};
 
 #[tokio::test]
 async fn non_op_layer() {

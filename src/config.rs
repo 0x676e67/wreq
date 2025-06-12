@@ -1,5 +1,3 @@
-use url::Url;
-
 use crate::core::ext::RequestConfigValue;
 use std::time::Duration;
 
@@ -27,11 +25,4 @@ pub(crate) struct RequestReadTimeout;
 
 impl RequestConfigValue for RequestReadTimeout {
     type Value = Duration;
-}
-
-#[derive(Clone, Copy)]
-pub(crate) struct RequestUrl;
-
-impl RequestConfigValue for RequestUrl {
-    type Value = Url;
 }

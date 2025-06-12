@@ -71,11 +71,6 @@ where
         ext.get::<RequestConfig<T>>().and_then(|v| v.0.as_ref())
     }
 
-    /// Insert the value into the request's Extensions.
-    pub(crate) fn insert(ext: &mut Extensions, value: T::Value) {
-        ext.insert(RequestConfig::<T>(Some(value)));
-    }
-
     /// Or insert the value into the request's Extensions if it does not already exist.
     pub(crate) fn or_insert<'client, 'request>(&'client self, ext: &'request mut Extensions)
     where

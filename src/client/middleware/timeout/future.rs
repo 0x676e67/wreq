@@ -49,9 +49,10 @@ where
             Poll::Pending => {}
         }
 
-        if let Some(sleep) = this.sleep.as_pin_mut() {
-            // Now check the sleep
-            match sleep.poll(cx) {
+        // Now check the sleep
+        match this.sleep.as_pin_mut() {
+            None => Poll::Pending,
+            Some(sleep) => match sleep.poll(cx) {
                 Poll::Pending => Poll::Pending,
                 Poll::Ready(_) => {
                     if let Ok(url) = Url::parse(&this.uri.to_string()) {
@@ -60,9 +61,7 @@ where
 
                     Poll::Ready(Err(TimedOut.into()))
                 }
-            }
-        } else {
-            Poll::Pending
+            },
         }
     }
 }
