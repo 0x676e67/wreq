@@ -128,8 +128,8 @@ struct Config {
     auto_sys_proxy: bool,
     redirect_policy: redirect::Policy,
     referer: bool,
-    timeout: Duration,
-    read_timeout: Duration,
+    timeout: Option<Duration>,
+    read_timeout: Option<Duration>,
     #[cfg(any(
         target_os = "android",
         target_os = "fuchsia",
@@ -205,8 +205,8 @@ impl ClientBuilder {
                 auto_sys_proxy: true,
                 redirect_policy: redirect::Policy::default(),
                 referer: true,
-                timeout: Duration::from_secs(u64::MAX),
-                read_timeout: Duration::from_secs(u64::MAX),
+                timeout: None,
+                read_timeout: None,
                 #[cfg(any(
                     target_os = "android",
                     target_os = "fuchsia",
@@ -363,7 +363,10 @@ impl ClientBuilder {
 
         let mut service = {
             let service = ServiceBuilder::new()
-                .layer(ResponseBodyTimeoutLayer::new(config.read_timeout))
+                .layer(ResponseBodyTimeoutLayer::new(
+                    config.timeout,
+                    config.read_timeout,
+                ))
                 .service(ClientService::new(config.builder.build(connector)));
 
             #[cfg(feature = "cookies")]
@@ -769,7 +772,7 @@ impl ClientBuilder {
     ///
     /// Default is no timeout.
     pub fn timeout(mut self, timeout: Duration) -> ClientBuilder {
-        self.config.timeout = timeout;
+        self.config.timeout = Some(timeout);
         self
     }
 
@@ -777,7 +780,7 @@ impl ClientBuilder {
     ///
     /// Default is `None`.
     pub fn read_timeout(mut self, timeout: Duration) -> ClientBuilder {
-        self.config.read_timeout = timeout;
+        self.config.read_timeout = Some(timeout);
         self
     }
 

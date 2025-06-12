@@ -20,7 +20,7 @@ pin_project! {
         #[pin]
         pub(crate) response: T,
         #[pin]
-        pub(crate) sleep: Sleep,
+        pub(crate) sleep: Option<Sleep>,
         pub(crate) uri: Uri,
     }
 }
@@ -33,7 +33,7 @@ where
     type Output = Result<T, BoxError>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let this = self.project();
+        let mut this = self.project();
 
         // First, try polling the future
         match this.response.poll(cx) {
@@ -42,16 +42,20 @@ where
         }
 
         // Now check the sleep
-        match this.sleep.poll(cx) {
-            Poll::Pending => Poll::Pending,
-            Poll::Ready(_) => {
-                if let Ok(url) = Url::parse(&this.uri.to_string()) {
-                    return Poll::Ready(Err(error::request(TimedOut).with_url(url).into()));
-                }
+        if let Some(sleep) = this.sleep.as_mut().as_pin_mut() {
+            return match sleep.poll(cx) {
+                Poll::Pending => Poll::Pending,
+                Poll::Ready(_) => {
+                    if let Ok(url) = Url::parse(&this.uri.to_string()) {
+                        return Poll::Ready(Err(error::request(TimedOut).with_url(url).into()));
+                    }
 
-                Poll::Ready(Err(TimedOut.into()))
-            }
+                    Poll::Ready(Err(TimedOut.into()))
+                }
+            };
         }
+
+        Poll::Pending
     }
 }
 
@@ -60,7 +64,8 @@ pin_project! {
     pub struct ResponseBodyTimeoutFuture<Fut> {
         #[pin]
         pub(crate) inner: Fut,
-        pub(crate) timeout: Duration,
+        pub(crate) read_timeout: Option<Duration>,
+        pub(crate) total_timeout: Option<Duration>,
     }
 }
 
@@ -71,9 +76,12 @@ where
     type Output = Result<Response<TimeoutBody<ResBody>>, E>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let timeout = self.timeout;
+        let total_timeout = self.total_timeout;
+        let read_timeout = self.read_timeout;
         let this = self.project();
         let res = ready!(this.inner.poll(cx))?;
-        Poll::Ready(Ok(res.map(|body| TimeoutBody::new(timeout, body))))
+        Poll::Ready(Ok(
+            res.map(|body| TimeoutBody::new(total_timeout, read_timeout, body))
+        ))
     }
 }

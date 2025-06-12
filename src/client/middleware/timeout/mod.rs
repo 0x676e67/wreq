@@ -21,12 +21,12 @@ pub use self::{
 #[derive(Clone)]
 pub struct TotalTimeout<T> {
     inner: T,
-    timeout: Duration,
+    timeout: Option<Duration>,
 }
 
 impl<T> TotalTimeout<T> {
     /// Creates a new [`HttpTimeout`]
-    pub const fn new(inner: T, timeout: Duration) -> Self {
+    pub const fn new(inner: T, timeout: Option<Duration>) -> Self {
         TotalTimeout { inner, timeout }
     }
 }
@@ -44,10 +44,10 @@ where
     }
 
     fn call(&mut self, mut req: Request<ReqBody>) -> Self::Future {
-        let sleep = tokio::time::sleep(
-            RequestConfig::<RequestTotalTimeout>::remove(req.extensions_mut())
-                .unwrap_or(self.timeout),
-        );
+        let sleep = RequestConfig::<RequestTotalTimeout>::get(req.extensions_mut())
+            .copied()
+            .or(self.timeout)
+            .map(tokio::time::sleep);
 
         let uri = req.uri().clone();
         let response = self.inner.call(req);
@@ -63,7 +63,8 @@ where
 #[derive(Clone)]
 pub struct ResponseBodyTimeout<S> {
     inner: S,
-    timeout: Duration,
+    read_timeout: Option<Duration>,
+    total_timeout: Option<Duration>,
 }
 
 impl<S, ReqBody, ResBody> Service<Request<ReqBody>> for ResponseBodyTimeout<S>
@@ -79,12 +80,18 @@ where
     }
 
     fn call(&mut self, mut req: Request<ReqBody>) -> Self::Future {
-        let timeout = RequestConfig::<RequestReadTimeout>::remove(req.extensions_mut())
-            .unwrap_or(self.timeout);
+        let total_timeout = RequestConfig::<RequestTotalTimeout>::get(req.extensions_mut())
+            .cloned()
+            .or(self.total_timeout);
+
+        let read_timeout = RequestConfig::<RequestReadTimeout>::get(req.extensions_mut())
+            .copied()
+            .or(self.read_timeout);
 
         ResponseBodyTimeoutFuture {
             inner: self.inner.call(req),
-            timeout,
+            total_timeout,
+            read_timeout,
         }
     }
 }

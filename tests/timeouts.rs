@@ -152,7 +152,7 @@ async fn response_timeout() {
         async {
             // immediate response, but delayed body
             let body = wreq::Body::wrap_stream(futures_util::stream::once(async {
-                tokio::time::sleep(Duration::from_millis(1000)).await;
+                tokio::time::sleep(Duration::from_secs(1)).await;
                 Ok::<_, std::convert::Infallible>("Hello")
             }));
 
@@ -161,8 +161,7 @@ async fn response_timeout() {
     });
 
     let client = wreq::Client::builder()
-        // Read body frame timeout 500 ms < server delay 1000 ms
-        .read_timeout(Duration::from_millis(500))
+        .timeout(Duration::from_millis(500))
         .no_proxy()
         .build()
         .unwrap();
@@ -189,8 +188,8 @@ async fn read_timeout_applies_to_headers() {
     });
 
     let client = wreq::Client::builder()
-        // Response timeout 100 ms < server delay 300 ms
         .timeout(Duration::from_millis(100))
+        .read_timeout(Duration::from_millis(100))
         .no_proxy()
         .build()
         .unwrap();
