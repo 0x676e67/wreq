@@ -1,25 +1,29 @@
 use std::time::Duration;
 use tower::Layer;
 
-use super::{ResponseBodyTimeout, TotalTimeout};
+use super::{ResponseBodyTimeout, Timeout};
 
 #[derive(Clone)]
-pub struct TotalTimeoutLayer {
-    timeout: Option<Duration>,
+pub struct TimeoutLayer {
+    total_timeout: Option<Duration>,
+    read_timeout: Option<Duration>,
 }
 
-impl TotalTimeoutLayer {
+impl TimeoutLayer {
     /// Create a timeout from a duration
-    pub const fn new(timeout: Option<Duration>) -> Self {
-        TotalTimeoutLayer { timeout }
+    pub const fn new(total_timeout: Option<Duration>, read_timeout: Option<Duration>) -> Self {
+        TimeoutLayer {
+            total_timeout,
+            read_timeout,
+        }
     }
 }
 
-impl<S> Layer<S> for TotalTimeoutLayer {
-    type Service = TotalTimeout<S>;
+impl<S> Layer<S> for TimeoutLayer {
+    type Service = Timeout<S>;
 
     fn layer(&self, service: S) -> Self::Service {
-        TotalTimeout::new(service, self.timeout)
+        Timeout::new(service, self.total_timeout, self.read_timeout)
     }
 }
 

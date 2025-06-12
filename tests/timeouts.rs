@@ -188,7 +188,6 @@ async fn read_timeout_applies_to_headers() {
     });
 
     let client = wreq::Client::builder()
-        .timeout(Duration::from_millis(100))
         .read_timeout(Duration::from_millis(100))
         .no_proxy()
         .build()

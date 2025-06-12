@@ -40,7 +40,7 @@ use crate::dns::hickory::{HickoryDnsResolver, LookupIpStrategy};
 use crate::dns::{DnsResolverWithOverrides, DynResolver, Resolve, gai::GaiResolver};
 
 use super::decoder::Accepts;
-use super::middleware::timeout::{ResponseBodyTimeoutLayer, TimeoutBody, TotalTimeoutLayer};
+use super::middleware::timeout::{ResponseBodyTimeoutLayer, TimeoutBody, TimeoutLayer};
 use super::request::{Request, RequestBuilder};
 use super::response::Response;
 #[cfg(feature = "websocket")]
@@ -391,7 +391,7 @@ impl ClientBuilder {
         }
 
         let service = ServiceBuilder::new()
-            .layer(TotalTimeoutLayer::new(config.timeout))
+            .layer(TimeoutLayer::new(config.timeout, config.read_timeout))
             .service(service);
 
         let client_service = ServiceBuilder::new()

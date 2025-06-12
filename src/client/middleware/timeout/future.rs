@@ -13,14 +13,14 @@ use url::Url;
 
 pin_project! {
     /// [`Timeout`] response future
-    ///
-    /// [`Timeout`]: crate::timeout::Timeout
     #[derive(Debug)]
     pub struct ResponseFuture<T> {
         #[pin]
         pub(crate) response: T,
         #[pin]
-        pub(crate) sleep: Option<Sleep>,
+        pub(crate) total_timeout: Option<Sleep>,
+        #[pin]
+        pub(crate) read_timeout: Option<Sleep>,
         pub(crate) uri: Uri,
     }
 }
@@ -41,18 +41,28 @@ where
             Poll::Pending => {}
         }
 
-        // Now check the sleep
-        if let Some(sleep) = this.sleep.as_mut().as_pin_mut() {
-            return match sleep.poll(cx) {
-                Poll::Pending => Poll::Pending,
-                Poll::Ready(_) => {
-                    if let Ok(url) = Url::parse(&this.uri.to_string()) {
-                        return Poll::Ready(Err(error::request(TimedOut).with_url(url).into()));
-                    }
-
-                    Poll::Ready(Err(TimedOut.into()))
+        // Helper closure for polling a timeout and returning a TimedOut error
+        let mut check_timeout = |sleep: Option<Pin<&mut Sleep>>| {
+            if let Some(sleep) = sleep {
+                if sleep.poll(cx).is_ready() {
+                    let url = Url::parse(&this.uri.to_string()).ok();
+                    return Some(Poll::Ready(Err(match url {
+                        Some(url) => error::request(TimedOut).with_url(url).into(),
+                        None => TimedOut.into(),
+                    })));
                 }
-            };
+            }
+            None
+        };
+
+        // Check total timeout first
+        if let Some(poll) = check_timeout(this.total_timeout.as_mut().as_pin_mut()) {
+            return poll;
+        }
+
+        // Check read timeout
+        if let Some(poll) = check_timeout(this.read_timeout.as_mut().as_pin_mut()) {
+            return poll;
         }
 
         Poll::Pending

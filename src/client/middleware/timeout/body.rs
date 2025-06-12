@@ -49,10 +49,11 @@ pin_project! {
 }
 
 /// ==== impl TimeoutBody ====
+
 impl<B> TimeoutBody<B> {
     /// Creates a new [`TimeoutBody`] with no timeout.
     pub fn new(deadline: Option<Duration>, read_timeout: Option<Duration>, body: B) -> Self {
-        let deadline = deadline.map(tokio::time::sleep).map(Box::pin);
+        let deadline = deadline.map(sleep).map(Box::pin);
         match (deadline, read_timeout) {
             (Some(total), Some(read)) => {
                 let body = ReadTimeoutBody::new(read, body);
@@ -75,7 +76,7 @@ impl<B> TimeoutBody<B> {
             }
             (None, None) => TimeoutBody {
                 inner: InnerTimeoutBody::Read(Box::pin(ReadTimeoutBody::new(
-                    Duration::from_secs(0),
+                    Duration::from_secs(u64::MAX),
                     body,
                 ))),
             },
@@ -97,25 +98,9 @@ where
     ) -> Poll<Option<Result<http_body::Frame<Self::Data>, Self::Error>>> {
         let mut this = self.project();
         match *this.inner.as_mut() {
-            InnerTimeoutBody::Total(ref mut body) => Poll::Ready(
-                ready!(Body::poll_frame(body.as_mut(), cx))
-                    .map(|opt_chunk| opt_chunk.map_err(error::body)),
-            ),
-            InnerTimeoutBody::Read(ref mut body) => Poll::Ready(
-                ready!(body.as_mut().poll_frame(cx))
-                    .map(|opt_chunk| opt_chunk.map_err(error::body)),
-            ),
-            InnerTimeoutBody::TotalAndRead(ref mut body) => {
-                let mut this = body.as_mut().project();
-                if let Poll::Ready(()) = this.timeout.as_mut().poll(cx) {
-                    return Poll::Ready(Some(Err(error::body(error::TimedOut))));
-                }
-
-                Poll::Ready(
-                    ready!(Body::poll_frame(this.body.as_mut(), cx))
-                        .map(|opt_chunk| opt_chunk.map_err(error::body)),
-                )
-            }
+            InnerTimeoutBody::Total(ref mut body) => poll_and_map_body(body.as_mut(), cx),
+            InnerTimeoutBody::Read(ref mut body) => poll_and_map_body(body.as_mut(), cx),
+            InnerTimeoutBody::TotalAndRead(ref mut body) => poll_and_map_body(body.as_mut(), cx),
         }
     }
 
@@ -136,6 +121,18 @@ where
             InnerTimeoutBody::TotalAndRead(body) => body.is_end_stream(),
         }
     }
+}
+
+#[inline(always)]
+fn poll_and_map_body<B>(
+    body: Pin<&mut B>,
+    cx: &mut Context<'_>,
+) -> Poll<Option<Result<http_body::Frame<B::Data>, crate::Error>>>
+where
+    B: Body,
+    B::Error: Into<BoxError>,
+{
+    Poll::Ready(ready!(body.poll_frame(cx)).map(|opt| opt.map_err(crate::error::body)))
 }
 
 // ==== impl TotalTimeoutBody ====
@@ -203,28 +200,30 @@ where
         self: Pin<&mut Self>,
         cx: &mut Context<'_>,
     ) -> Poll<Option<Result<http_body::Frame<Self::Data>, Self::Error>>> {
-        println!("ReadTimeoutBody::call: {}", self.timeout.as_millis());
         let mut this = self.project();
 
-        // Start the `Sleep` if not active.
-        let sleep_pinned = if let Some(some) = this.sleep.as_mut().as_pin_mut() {
-            some
-        } else {
-            this.sleep.set(Some(sleep(*this.timeout)));
-            this.sleep.as_mut().as_pin_mut().unwrap()
-        };
-
         // Error if the timeout has expired.
-        if let Poll::Ready(()) = sleep_pinned.poll(cx) {
-            return Poll::Ready(Some(Err(Box::new(TimedOut))));
+        if this.sleep.is_none() {
+            this.sleep.set(Some(sleep(*this.timeout)));
         }
 
-        // Check for body data.
-        let frame = ready!(this.body.poll_frame(cx));
-        // A frame is ready. Reset the `Sleep`...
-        this.sleep.set(None);
+        // Error if the timeout has expired.
+        if let Some(sleep) = this.sleep.as_mut().as_pin_mut() {
+            if sleep.poll(cx).is_ready() {
+                return Poll::Ready(Some(Err(Box::new(TimedOut))));
+            }
+        }
 
-        Poll::Ready(frame.transpose().map_err(Into::into).transpose())
+        // Poll the actual body
+        match ready!(this.body.poll_frame(cx)) {
+            Some(Ok(frame)) => {
+                // Reset timeout on successful read
+                this.sleep.set(None);
+                Poll::Ready(Some(Ok(frame)))
+            }
+            Some(Err(err)) => Poll::Ready(Some(Err(err.into()))),
+            None => Poll::Ready(None),
+        }
     }
 
     #[inline]

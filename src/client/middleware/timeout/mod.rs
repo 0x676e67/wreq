@@ -14,24 +14,33 @@ use tower_service::Service;
 
 pub use self::{
     body::TimeoutBody,
-    layer::{ResponseBodyTimeoutLayer, TotalTimeoutLayer},
+    layer::{ResponseBodyTimeoutLayer, TimeoutLayer},
 };
 
 /// Timeout middleware for HTTP requests only.
 #[derive(Clone)]
-pub struct TotalTimeout<T> {
+pub struct Timeout<T> {
     inner: T,
-    timeout: Option<Duration>,
+    total_timeout: Option<Duration>,
+    read_timeout: Option<Duration>,
 }
 
-impl<T> TotalTimeout<T> {
+impl<T> Timeout<T> {
     /// Creates a new [`HttpTimeout`]
-    pub const fn new(inner: T, timeout: Option<Duration>) -> Self {
-        TotalTimeout { inner, timeout }
+    pub const fn new(
+        inner: T,
+        total_timeout: Option<Duration>,
+        read_timeout: Option<Duration>,
+    ) -> Self {
+        Timeout {
+            inner,
+            total_timeout,
+            read_timeout,
+        }
     }
 }
 
-impl<ReqBody, ResBody, S> Service<Request<ReqBody>> for TotalTimeout<S>
+impl<ReqBody, ResBody, S> Service<Request<ReqBody>> for Timeout<S>
 where
     S: Service<Request<ReqBody>, Response = Response<ResBody>, Error = BoxError>,
 {
@@ -44,16 +53,22 @@ where
     }
 
     fn call(&mut self, mut req: Request<ReqBody>) -> Self::Future {
-        let sleep = RequestConfig::<RequestTotalTimeout>::get(req.extensions_mut())
+        let total_timeout = RequestConfig::<RequestTotalTimeout>::get(req.extensions_mut())
             .copied()
-            .or(self.timeout)
+            .or(self.total_timeout)
+            .map(tokio::time::sleep);
+
+        let read_timeout = RequestConfig::<RequestReadTimeout>::get(req.extensions_mut())
+            .copied()
+            .or(self.read_timeout)
             .map(tokio::time::sleep);
 
         let uri = req.uri().clone();
         let response = self.inner.call(req);
         ResponseFuture {
             response,
-            sleep,
+            total_timeout,
+            read_timeout,
             uri,
         }
     }
