@@ -8,6 +8,7 @@ use std::{
 };
 
 use crate::core::{
+    error::BoxError,
     ext::{RequestConfig, RequestOriginalHeaders},
     rt::{Read, Write},
 };
@@ -16,6 +17,7 @@ use futures_channel::mpsc::{Receiver, Sender};
 use futures_channel::{mpsc, oneshot};
 use futures_core::{FusedFuture, FusedStream, Stream};
 use http::{Method, StatusCode};
+use http_body::Body;
 use http2::{SendStream, frame::Priorities};
 use http2::{
     client::{Builder, Connection, SendRequest},
@@ -25,7 +27,7 @@ use pin_project_lite::pin_project;
 
 use super::ping::{Ponger, Recorder};
 use super::{H2Upgraded, PipeToSendStream, SendBuf, ping};
-use crate::core::body::{Body, Incoming as IncomingBody};
+use crate::core::body::Incoming as IncomingBody;
 use crate::core::client::dispatch::{Callback, SendWhen, TrySendError};
 use crate::core::common::either::Either;
 use crate::core::common::io::Compat;
@@ -205,7 +207,7 @@ where
     B: Body + 'static,
     B::Data: Send + 'static,
     E: Http2ClientConnExec<B, T> + Unpin,
-    B::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
+    B::Error: Into<BoxError>,
 {
     let (h2_tx, mut conn) = new_builder(config)
         .handshake::<_, SendBuf<B::Data>>(Compat::new(io))
@@ -414,7 +416,7 @@ pin_project! {
     where
         B: http_body::Body,
         B: 'static,
-        B::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
+        B::Error: Into<BoxError>,
         T: Read,
         T: Write,
         T: Unpin,
@@ -437,7 +439,7 @@ pin_project! {
 impl<B, T> Future for H2ClientFuture<B, T>
 where
     B: http_body::Body + 'static,
-    B::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
+    B::Error: Into<BoxError>,
     T: Read + Write + Unpin,
 {
     type Output = ();
@@ -499,7 +501,7 @@ pin_project! {
 impl<B> Future for PipeMap<B>
 where
     B: http_body::Body,
-    B::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
+    B::Error: Into<BoxError>,
 {
     type Output = ();
 
@@ -526,7 +528,7 @@ where
     B: Body + 'static + Unpin,
     B::Data: Send,
     E: Http2ClientConnExec<B, T> + Unpin,
-    B::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
+    B::Error: Into<BoxError>,
     T: Read + Write + Unpin,
 {
     fn poll_pipe(&mut self, f: FutCtx<B>, cx: &mut Context<'_>) {
@@ -661,7 +663,7 @@ impl<B, E, T> Future for ClientTask<B, E, T>
 where
     B: Body + 'static + Unpin,
     B::Data: Send,
-    B::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
+    B::Error: Into<BoxError>,
     E: Http2ClientConnExec<B, T> + Unpin,
     T: Read + Write + Unpin,
 {

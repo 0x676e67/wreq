@@ -9,10 +9,11 @@ use std::{
 use crate::core::rt::{Read, Write};
 use bytes::{Buf, Bytes};
 use http::Request;
+use http_body::Body;
 
 use super::{Http1Transaction, Wants};
 
-use crate::core::body::{Body, DecodedLength, Incoming as IncomingBody};
+use crate::core::body::{DecodedLength, Incoming as IncomingBody};
 use crate::core::client::dispatch::TrySendError;
 use crate::core::common::task;
 use crate::core::proto::{BodyLength, Conn, Dispatched, MessageHead, RequestHead};

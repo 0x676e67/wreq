@@ -7,6 +7,8 @@ pub type Result<T> = std::result::Result<T, Error>;
 
 type Cause = Box<dyn StdError + Send + Sync>;
 
+pub type BoxError = Box<dyn StdError + Send + Sync>;
+
 /// Represents errors that can occur handling HTTP streams.
 ///
 /// # Formatting

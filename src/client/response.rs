@@ -78,9 +78,7 @@ impl Response {
     /// - The response is gzipped and automatically decoded (thus changing the
     ///   actual decoded length).
     pub fn content_length(&self) -> Option<u64> {
-        use crate::core::body::Body;
-
-        Body::size_hint(self.res.body()).exact()
+        http_body::Body::size_hint(self.res.body()).exact()
     }
 
     /// Retrieve the cookies contained in the response.

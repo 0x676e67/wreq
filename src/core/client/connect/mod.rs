@@ -330,7 +330,7 @@ pub(super) mod sealed {
         #[doc(hidden)]
         type _Svc: ConnectSvc;
         #[doc(hidden)]
-        fn connect(self, internal_only: Internal, dst: Dst) -> <Self::_Svc as ConnectSvc>::Future;
+        fn connect(self, dst: Dst) -> <Self::_Svc as ConnectSvc>::Future;
     }
 
     pub trait ConnectSvc {
@@ -338,7 +338,7 @@ pub(super) mod sealed {
         type Error: Into<Box<dyn StdError + Send + Sync>>;
         type Future: Future<Output = Result<Self::Connection, Self::Error>> + Unpin + Send + 'static;
 
-        fn connect(self, internal_only: Internal, dst: Dst) -> Self::Future;
+        fn connect(self, dst: Dst) -> Self::Future;
     }
 
     impl<S, T> Connect for S
@@ -350,7 +350,7 @@ pub(super) mod sealed {
     {
         type _Svc = S;
 
-        fn connect(self, _: Internal, dst: Dst) -> service::Oneshot<S, Dst> {
+        fn connect(self, dst: Dst) -> service::Oneshot<S, Dst> {
             service::Oneshot::new(self, dst)
         }
     }
@@ -366,7 +366,7 @@ pub(super) mod sealed {
         type Error = S::Error;
         type Future = service::Oneshot<S, Dst>;
 
-        fn connect(self, _: Internal, dst: Dst) -> Self::Future {
+        fn connect(self, dst: Dst) -> Self::Future {
             service::Oneshot::new(self, dst)
         }
     }
@@ -381,6 +381,4 @@ pub(super) mod sealed {
     }
 
     pub trait Sealed {}
-    #[allow(missing_debug_implementations)]
-    pub struct Internal;
 }

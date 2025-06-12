@@ -1,3 +1,6 @@
+pub(crate) mod client;
+pub(crate) mod ping;
+
 use std::error::Error as StdError;
 use std::future::Future;
 use std::io::{Cursor, IoSlice};
@@ -8,16 +11,16 @@ use std::task::{Context, Poll, ready};
 use bytes::{Buf, Bytes};
 use http::HeaderMap;
 use http::header::{CONNECTION, HeaderName, TE, TRANSFER_ENCODING, UPGRADE};
+use http_body::Body;
 use http2::{Reason, RecvStream, SendStream};
 use pin_project_lite::pin_project;
 
-use crate::core::body::Body;
-use crate::core::proto::h2::ping::Recorder;
-use crate::core::rt::{Read, ReadBufCursor, Write};
+use crate::core::{
+    error::BoxError,
+    proto::h2::ping::Recorder,
+    rt::{Read, ReadBufCursor, Write},
+};
 
-pub(crate) mod ping;
-
-pub(crate) mod client;
 pub(crate) use self::client::ClientTask;
 
 /// Default initial stream window size defined in HTTP2 spec.
@@ -190,14 +193,14 @@ where
 trait SendStreamExt {
     fn on_user_err<E>(&mut self, err: E) -> crate::core::Error
     where
-        E: Into<Box<dyn std::error::Error + Send + Sync>>;
+        E: Into<BoxError>;
     fn send_eos_frame(&mut self) -> crate::core::Result<()>;
 }
 
 impl<B: Buf> SendStreamExt for SendStream<SendBuf<B>> {
     fn on_user_err<E>(&mut self, err: E) -> crate::core::Error
     where
-        E: Into<Box<dyn std::error::Error + Send + Sync>>,
+        E: Into<BoxError>,
     {
         let err = crate::core::Error::new_user_body(err);
         debug!("send body user stream error: {}", err);

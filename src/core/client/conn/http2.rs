@@ -9,8 +9,9 @@ use std::sync::Arc;
 use std::task::{Context, Poll, ready};
 
 use http::{Request, Response};
+use http_body::Body;
 
-use crate::core::body::{Body, Incoming as IncomingBody};
+use crate::core::body::Incoming as IncomingBody;
 use crate::core::client::dispatch::{self, TrySendError};
 use crate::core::common::time::Time;
 use crate::core::proto;
@@ -253,8 +254,11 @@ where
 #[cfg(test)]
 mod tests {
     use super::{Builder, Connection, SendRequest};
-    use crate::core::body::Body;
-    use crate::core::rt::{Read, Write, bounds::Http2ClientConnExec};
+    use crate::core::{
+        error::BoxError,
+        rt::{Read, Write, bounds::Http2ClientConnExec},
+    };
+    use http_body::Body;
 
     pub async fn handshake<E, T, B>(
         exec: E,
@@ -264,7 +268,7 @@ mod tests {
         T: Read + Write + Unpin,
         B: Body + 'static,
         B::Data: Send,
-        B::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
+        B::Error: Into<BoxError>,
         E: Http2ClientConnExec<B, T> + Unpin + Clone,
     {
         Builder::new(exec).handshake(io).await

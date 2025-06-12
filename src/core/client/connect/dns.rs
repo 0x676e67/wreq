@@ -260,13 +260,14 @@ impl Iterator for SocketAddrs {
 mod sealed {
     use std::future::Future;
     use std::task::{self, Poll};
+    use tower_service::Service;
 
     use super::{Name, SocketAddr};
-    use tower_service::Service;
+    use crate::error::BoxError;
 
     pub trait Resolve {
         type Addrs: Iterator<Item = SocketAddr>;
-        type Error: Into<Box<dyn std::error::Error + Send + Sync>>;
+        type Error: Into<BoxError>;
         type Future: Future<Output = Result<Self::Addrs, Self::Error>>;
 
         fn poll_ready(&mut self, cx: &mut task::Context<'_>) -> Poll<Result<(), Self::Error>>;
@@ -277,7 +278,7 @@ mod sealed {
     where
         S: Service<Name>,
         S::Response: Iterator<Item = SocketAddr>,
-        S::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
+        S::Error: Into<BoxError>,
     {
         type Addrs = S::Response;
         type Error = S::Error;

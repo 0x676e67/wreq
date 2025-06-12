@@ -8,8 +8,9 @@ use std::task::{Context, Poll, ready};
 
 use bytes::Bytes;
 use http::{Request, Response};
+use http_body::Body;
 
-use crate::core::body::{Body, Incoming as IncomingBody};
+use crate::core::body::Incoming as IncomingBody;
 use crate::core::client::dispatch::{self, TrySendError};
 use crate::core::proto;
 use crate::core::rt::{Read, Write};

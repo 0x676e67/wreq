@@ -37,10 +37,10 @@ use async_compression::tokio::bufread::ZlibDecoder;
 ))]
 use futures_util::Stream;
 
-use crate::core::body::Body as HttpBody;
-use crate::core::body::Frame;
 use bytes::Bytes;
 use http::HeaderMap;
+use http_body::Body as HttpBody;
+use http_body::Frame;
 
 #[cfg(any(
     feature = "gzip",
@@ -56,6 +56,14 @@ use tokio_util::codec::{BytesCodec, FramedRead};
     feature = "deflate"
 ))]
 use tokio_util::io::StreamReader;
+
+#[cfg(any(
+    feature = "gzip",
+    feature = "zstd",
+    feature = "brotli",
+    feature = "deflate",
+))]
+use crate::error::BoxError;
 
 use super::body::ResponseBody;
 
@@ -530,7 +538,7 @@ impl Future for Pending {
 impl<B> Stream for IoStream<B>
 where
     B: HttpBody<Data = Bytes> + Unpin,
-    B::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
+    B::Error: Into<BoxError>,
 {
     type Item = Result<Bytes, std::io::Error>;
 

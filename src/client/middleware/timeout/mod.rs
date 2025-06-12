@@ -2,14 +2,16 @@ mod body;
 mod future;
 mod layer;
 
-use crate::config::{RequestReadTimeout, RequestTotalTimeout};
-use crate::core::ext::RequestConfig;
+use crate::{
+    config::{RequestReadTimeout, RequestTotalTimeout},
+    core::ext::RequestConfig,
+    error::BoxError,
+};
 
 use self::future::{ResponseBodyTimeoutFuture, ResponseFuture};
 use http::{Request, Response};
 use std::task::{Context, Poll};
 use std::time::Duration;
-use tower::BoxError;
 use tower_service::Service;
 
 pub use self::{

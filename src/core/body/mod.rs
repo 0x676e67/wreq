@@ -19,9 +19,6 @@
 //!
 //! [`http-body-util`]: https://docs.rs/http-body-util
 
-pub use http_body::Body;
-pub use http_body::Frame;
-
 pub use self::incoming::Incoming;
 
 pub(crate) use self::incoming::Sender;

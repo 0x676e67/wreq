@@ -25,7 +25,7 @@ use std::time::Duration;
 
 use crate::core::client::conn::TrySendError as ConnTrySendError;
 use crate::core::common;
-use crate::core::{body::Body, rt::Timer};
+use crate::core::rt::Timer;
 use crate::http1::Http1Config;
 use crate::http2::Http2Config;
 use crate::proxy::Intercepted;
@@ -34,6 +34,7 @@ use crate::tls::AlpnProtos;
 use futures_util::future::{self, Either, FutureExt, TryFutureExt};
 use http::uri::Scheme;
 use http::{HeaderValue, Method, Request, Response, Uri, Version, header::HOST};
+use http_body::Body;
 use sync_wrapper::SyncWrapper;
 
 use connect::capture::CaptureConnectionExtension;
@@ -535,7 +536,7 @@ where
             };
             Either::Left(
                 connector
-                    .connect(connect::sealed::Internal, dst)
+                    .connect(dst)
                     .map_err(|src| e!(Connect, src))
                     .and_then(move |io| {
                         let connected = io.connected();

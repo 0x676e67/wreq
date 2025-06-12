@@ -2,6 +2,8 @@ use std::fmt;
 use std::pin::Pin;
 use std::task::{Context, Poll, ready};
 
+use crate::error::BoxError;
+
 use bytes::Bytes;
 use http_body::Body as HttpBody;
 use http_body_util::combinators::BoxBody;
@@ -18,7 +20,7 @@ pub struct Body {
 
 enum Inner {
     Reusable(Bytes),
-    Streaming(BoxBody<Bytes, Box<dyn std::error::Error + Send + Sync>>),
+    Streaming(BoxBody<Bytes, BoxError>),
 }
 
 /// Converts any `impl Body` into a `impl Stream` of just its DATA frames.
@@ -64,7 +66,7 @@ impl Body {
     pub fn wrap_stream<S>(stream: S) -> Body
     where
         S: futures_util::stream::TryStream + Send + 'static,
-        S::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
+        S::Error: Into<BoxError>,
         Bytes: From<S::Ok>,
     {
         Body::stream(stream)
@@ -74,7 +76,7 @@ impl Body {
     pub(crate) fn stream<S>(stream: S) -> Body
     where
         S: futures_util::stream::TryStream + Send + 'static,
-        S::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
+        S::Error: Into<BoxError>,
         Bytes: From<S::Ok>,
     {
         use futures_util::TryStreamExt;
@@ -118,7 +120,7 @@ impl Body {
     where
         B: HttpBody + Send + Sync + 'static,
         B::Data: Into<Bytes>,
-        B::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
+        B::Error: Into<BoxError>,
     {
         use http_body_util::BodyExt;
 
@@ -166,9 +168,9 @@ impl Default for Body {
     }
 }
 
-impl From<BoxBody<Bytes, Box<dyn std::error::Error + Send + Sync>>> for Body {
+impl From<BoxBody<Bytes, BoxError>> for Body {
     #[inline]
-    fn from(body: BoxBody<Bytes, Box<dyn std::error::Error + Send + Sync>>) -> Self {
+    fn from(body: BoxBody<Bytes, BoxError>) -> Self {
         Self {
             inner: Inner::Streaming(body),
         }
@@ -232,14 +234,14 @@ impl HttpBody for Body {
     fn poll_frame(
         mut self: Pin<&mut Self>,
         cx: &mut Context,
-    ) -> Poll<Option<Result<crate::core::body::Frame<Self::Data>, Self::Error>>> {
+    ) -> Poll<Option<Result<http_body::Frame<Self::Data>, Self::Error>>> {
         match self.inner {
             Inner::Reusable(ref mut bytes) => {
                 let out = bytes.split_off(0);
                 if out.is_empty() {
                     Poll::Ready(None)
                 } else {
-                    Poll::Ready(Some(Ok(crate::core::body::Frame::data(out))))
+                    Poll::Ready(Some(Ok(http_body::Frame::data(out))))
                 }
             }
             Inner::Streaming(ref mut body) => Poll::Ready(
@@ -264,24 +266,16 @@ impl HttpBody for Body {
     }
 }
 
-pub(crate) type ResponseBody =
-    http_body_util::combinators::BoxBody<Bytes, Box<dyn std::error::Error + Send + Sync>>;
+pub(crate) type ResponseBody = http_body_util::combinators::BoxBody<Bytes, BoxError>;
 
 pub(crate) fn boxed<B>(body: B) -> ResponseBody
 where
-    B: crate::core::body::Body<Data = Bytes> + Send + Sync + 'static,
-    B::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
+    B: HttpBody<Data = Bytes> + Send + Sync + 'static,
+    B::Error: Into<BoxError>,
 {
     use http_body_util::BodyExt;
 
-    body.map_err(box_err).boxed()
-}
-
-fn box_err<E>(err: E) -> Box<dyn std::error::Error + Send + Sync>
-where
-    E: Into<Box<dyn std::error::Error + Send + Sync>>,
-{
-    err.into()
+    body.map_err(Into::into).boxed()
 }
 
 // ===== impl DataStream =====
@@ -320,9 +314,9 @@ pin_project! {
 }
 // We can't use `map_frame()` because that loses the hint data (for good reason).
 // But we aren't transforming the data.
-impl<B> crate::core::body::Body for IntoBytesBody<B>
+impl<B> HttpBody for IntoBytesBody<B>
 where
-    B: crate::core::body::Body,
+    B: HttpBody,
     B::Data: Into<Bytes>,
 {
     type Data = Bytes;
@@ -330,7 +324,7 @@ where
     fn poll_frame(
         self: Pin<&mut Self>,
         cx: &mut Context,
-    ) -> Poll<Option<Result<crate::core::body::Frame<Self::Data>, Self::Error>>> {
+    ) -> Poll<Option<Result<http_body::Frame<Self::Data>, Self::Error>>> {
         match ready!(self.project().inner.poll_frame(cx)) {
             Some(Ok(f)) => Poll::Ready(Some(Ok(f.map_data(Into::into)))),
             Some(Err(e)) => Poll::Ready(Some(Err(e))),
