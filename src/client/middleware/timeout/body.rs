@@ -49,7 +49,6 @@ pin_project! {
 }
 
 /// ==== impl TimeoutBody ====
-
 impl<B> TimeoutBody<B> {
     /// Creates a new [`TimeoutBody`] with no timeout.
     pub fn new(deadline: Option<Duration>, read_timeout: Option<Duration>, body: B) -> Self {
@@ -175,8 +174,7 @@ where
     }
 }
 
-// ==== impl ReadTimeoutBody ====
-
+/// ==== impl ReadTimeoutBody ====
 impl<B> ReadTimeoutBody<B> {
     /// Creates a new [`ReadTimeoutBody`].
     pub const fn new(timeout: Duration, body: B) -> Self {
