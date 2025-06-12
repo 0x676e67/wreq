@@ -1,8 +1,6 @@
 use std::fmt;
-use std::future::Future;
 use std::pin::Pin;
 use std::task::{Context, Poll, ready};
-use std::time::Duration;
 
 use bytes::Bytes;
 use http_body::Body as HttpBody;
@@ -10,7 +8,6 @@ use http_body_util::combinators::BoxBody;
 use pin_project_lite::pin_project;
 #[cfg(feature = "stream")]
 use tokio::fs::File;
-use tokio::time::Sleep;
 #[cfg(feature = "stream")]
 use tokio_util::io::ReaderStream;
 
@@ -22,28 +19,6 @@ pub struct Body {
 enum Inner {
     Reusable(Bytes),
     Streaming(BoxBody<Bytes, Box<dyn std::error::Error + Send + Sync>>),
-}
-
-pin_project! {
-    /// A body with a total timeout.
-    ///
-    /// The timeout does not reset upon each chunk, but rather requires the whole
-    /// body be streamed before the deadline is reached.
-    pub(crate) struct TotalTimeoutBody<B> {
-        #[pin]
-        inner: B,
-        timeout: Pin<Box<Sleep>>,
-    }
-}
-
-pin_project! {
-    pub(crate) struct ReadTimeoutBody<B> {
-        #[pin]
-        inner: B,
-        #[pin]
-        sleep: Option<Sleep>,
-        timeout: Duration,
-    }
 }
 
 /// Converts any `impl Body` into a `impl Stream` of just its DATA frames.
@@ -289,101 +264,6 @@ impl HttpBody for Body {
     }
 }
 
-// ===== impl TotalTimeoutBody =====
-
-pub(crate) fn total_timeout<B>(body: B, timeout: Pin<Box<Sleep>>) -> TotalTimeoutBody<B> {
-    TotalTimeoutBody {
-        inner: body,
-        timeout,
-    }
-}
-
-pub(crate) fn with_read_timeout<B>(body: B, timeout: Duration) -> ReadTimeoutBody<B> {
-    ReadTimeoutBody {
-        inner: body,
-        sleep: None,
-        timeout,
-    }
-}
-
-impl<B> crate::core::body::Body for TotalTimeoutBody<B>
-where
-    B: crate::core::body::Body,
-    B::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
-{
-    type Data = B::Data;
-    type Error = crate::Error;
-
-    fn poll_frame(
-        self: Pin<&mut Self>,
-        cx: &mut Context,
-    ) -> Poll<Option<Result<crate::core::body::Frame<Self::Data>, Self::Error>>> {
-        let this = self.project();
-        if let Poll::Ready(()) = this.timeout.as_mut().poll(cx) {
-            return Poll::Ready(Some(Err(crate::error::body(crate::error::TimedOut))));
-        }
-        Poll::Ready(
-            ready!(this.inner.poll_frame(cx))
-                .map(|opt_chunk| opt_chunk.map_err(crate::error::body)),
-        )
-    }
-
-    #[inline]
-    fn size_hint(&self) -> http_body::SizeHint {
-        self.inner.size_hint()
-    }
-
-    #[inline]
-    fn is_end_stream(&self) -> bool {
-        self.inner.is_end_stream()
-    }
-}
-
-impl<B> crate::core::body::Body for ReadTimeoutBody<B>
-where
-    B: crate::core::body::Body,
-    B::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
-{
-    type Data = B::Data;
-    type Error = crate::Error;
-
-    fn poll_frame(
-        self: Pin<&mut Self>,
-        cx: &mut Context,
-    ) -> Poll<Option<Result<crate::core::body::Frame<Self::Data>, Self::Error>>> {
-        let mut this = self.project();
-
-        // Start the `Sleep` if not active.
-        let sleep_pinned = if let Some(some) = this.sleep.as_mut().as_pin_mut() {
-            some
-        } else {
-            this.sleep.set(Some(tokio::time::sleep(*this.timeout)));
-            this.sleep.as_mut().as_pin_mut().unwrap()
-        };
-
-        // Error if the timeout has expired.
-        if let Poll::Ready(()) = sleep_pinned.poll(cx) {
-            return Poll::Ready(Some(Err(crate::error::body(crate::error::TimedOut))));
-        }
-
-        let item = ready!(this.inner.poll_frame(cx))
-            .map(|opt_chunk| opt_chunk.map_err(crate::error::body));
-        // a ready frame means timeout is reset
-        this.sleep.set(None);
-        Poll::Ready(item)
-    }
-
-    #[inline]
-    fn size_hint(&self) -> http_body::SizeHint {
-        self.inner.size_hint()
-    }
-
-    #[inline]
-    fn is_end_stream(&self) -> bool {
-        self.inner.is_end_stream()
-    }
-}
-
 pub(crate) type ResponseBody =
     http_body_util::combinators::BoxBody<Bytes, Box<dyn std::error::Error + Send + Sync>>;
 
@@ -395,28 +275,6 @@ where
     use http_body_util::BodyExt;
 
     body.map_err(box_err).boxed()
-}
-
-pub(crate) fn response<B>(
-    body: B,
-    deadline: Option<Pin<Box<Sleep>>>,
-    read_timeout: Option<Duration>,
-) -> ResponseBody
-where
-    B: crate::core::body::Body<Data = Bytes> + Send + Sync + 'static,
-    B::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
-{
-    use http_body_util::BodyExt;
-
-    match (deadline, read_timeout) {
-        (Some(total), Some(read)) => {
-            let body = with_read_timeout(body, read).map_err(box_err);
-            total_timeout(body, total).map_err(box_err).boxed()
-        }
-        (Some(total), None) => total_timeout(body, total).map_err(box_err).boxed(),
-        (None, Some(read)) => with_read_timeout(body, read).map_err(box_err).boxed(),
-        (None, None) => body.map_err(box_err).boxed(),
-    }
 }
 
 fn box_err<E>(err: E) -> Box<dyn std::error::Error + Send + Sync>

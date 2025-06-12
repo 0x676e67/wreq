@@ -5,9 +5,7 @@ use std::{
     pin::Pin,
     sync::Arc,
     task::{Context, Poll},
-    time::Duration,
 };
-use tokio::time::Sleep;
 use tower::util::BoxCloneSyncService;
 use url::Url;
 
@@ -15,14 +13,14 @@ use super::{Body, ClientRef, Response};
 
 use crate::{
     Error,
-    client::body,
+    client::{body, middleware::timeout::TimeoutBody},
     core::{body::Incoming, service::Oneshot},
     error::{self, BoxError},
     redirect::{self},
 };
 
 type ResponseFuture = Oneshot<
-    BoxCloneSyncService<http::Request<Body>, http::Response<Incoming>, BoxError>,
+    BoxCloneSyncService<http::Request<Body>, http::Response<TimeoutBody<Incoming>>, BoxError>,
     http::Request<Body>,
 >;
 
@@ -51,11 +49,6 @@ pin_project! {
         pub inner: Arc<ClientRef>,
         #[pin]
         pub in_flight: ResponseFuture,
-        #[pin]
-        pub total_timeout: Option<Pin<Box<Sleep>>>,
-        #[pin]
-        pub read_timeout_fut: Option<Pin<Box<Sleep>>>,
-        pub read_timeout: Option<Duration>,
     }
 }
 
@@ -130,14 +123,6 @@ impl Future for PendingRequest {
     type Output = Result<Response, Error>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        if let Some(delay) = self.as_mut().project().read_timeout_fut.as_pin_mut() {
-            if let Poll::Ready(()) = delay.poll(cx) {
-                return Poll::Ready(Err(
-                    error::request(error::TimedOut).with_url(self.url.clone())
-                ));
-            }
-        }
-
         loop {
             let res = {
                 let r = self.as_mut().project().in_flight.get_mut();
@@ -171,13 +156,7 @@ impl Future for PendingRequest {
                 }
             };
 
-            let res = Response::new(
-                res,
-                self.url.clone(),
-                self.inner.accepts,
-                self.total_timeout.take(),
-                self.read_timeout,
-            );
+            let res = Response::new(res, self.url.clone(), self.inner.accepts);
 
             return Poll::Ready(Ok(res));
         }

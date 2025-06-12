@@ -10,7 +10,6 @@ use std::task::{Context, Poll};
 use std::time::Duration;
 use std::{collections::HashMap, convert::TryInto, net::SocketAddr};
 
-use crate::config::{RequestReadTimeout, RequestTotalTimeout};
 use crate::connect::{
     BoxedConnectorLayer, BoxedConnectorService, Connector,
     sealed::{Conn, Unnameable},
@@ -41,7 +40,7 @@ use crate::dns::hickory::{HickoryDnsResolver, LookupIpStrategy};
 use crate::dns::{DnsResolverWithOverrides, DynResolver, Resolve, gai::GaiResolver};
 
 use super::decoder::Accepts;
-use super::middleware::timeout::TotalTimeoutLayer;
+use super::middleware::timeout::{ResponseBodyTimeoutLayer, TimeoutBody, TotalTimeoutLayer};
 use super::request::{Request, RequestBuilder};
 use super::response::Response;
 #[cfg(feature = "websocket")]
@@ -64,12 +63,12 @@ use tower::{Layer, Service, ServiceBuilder};
 use tower_http::follow_redirect::FollowRedirect;
 
 type BoxedClientService =
-    BoxCloneSyncService<http::Request<Body>, http::Response<Incoming>, BoxError>;
+    BoxCloneSyncService<http::Request<Body>, http::Response<TimeoutBody<Incoming>>, BoxError>;
 
 type BoxedClientServiceLayer = BoxCloneSyncServiceLayer<
     BoxedClientService,
     http::Request<Body>,
-    http::Response<Incoming>,
+    http::Response<TimeoutBody<Incoming>>,
     BoxError,
 >;
 
@@ -96,8 +95,6 @@ struct ClientRef {
     accepts: Accepts,
     headers: HeaderMap,
     original_headers: RequestConfig<RequestOriginalHeaders>,
-    total_timeout: RequestConfig<RequestTotalTimeout>,
-    read_timeout: RequestConfig<RequestReadTimeout>,
     client: BoxedClientService,
     https_only: bool,
     http2_max_retry_count: usize,
@@ -131,8 +128,8 @@ struct Config {
     auto_sys_proxy: bool,
     redirect_policy: redirect::Policy,
     referer: bool,
-    timeout: Option<Duration>,
-    read_timeout: Option<Duration>,
+    timeout: Duration,
+    read_timeout: Duration,
     #[cfg(any(
         target_os = "android",
         target_os = "fuchsia",
@@ -208,8 +205,8 @@ impl ClientBuilder {
                 auto_sys_proxy: true,
                 redirect_policy: redirect::Policy::default(),
                 referer: true,
-                timeout: None,
-                read_timeout: None,
+                timeout: Duration::from_secs(u64::MAX),
+                read_timeout: Duration::from_secs(u64::MAX),
                 #[cfg(any(
                     target_os = "android",
                     target_os = "fuchsia",
@@ -365,7 +362,9 @@ impl ClientBuilder {
         };
 
         let mut service = {
-            let service = ClientService::new(config.builder.build(connector));
+            let service = ServiceBuilder::new()
+                .layer(ResponseBodyTimeoutLayer::new(config.read_timeout))
+                .service(ClientService::new(config.builder.build(connector)));
 
             #[cfg(feature = "cookies")]
             let service = ServiceBuilder::new()
@@ -402,8 +401,6 @@ impl ClientBuilder {
                 client: BoxCloneSyncService::new(client_service),
                 headers: config.headers,
                 original_headers: RequestConfig::new(config.original_headers),
-                total_timeout: RequestConfig::new(config.timeout),
-                read_timeout: RequestConfig::new(config.read_timeout),
                 https_only: config.https_only,
                 http2_max_retry_count: config.http2_max_retry_count,
                 proxies_maybe_http_auth,
@@ -772,7 +769,7 @@ impl ClientBuilder {
     ///
     /// Default is no timeout.
     pub fn timeout(mut self, timeout: Duration) -> ClientBuilder {
-        self.config.timeout = Some(timeout);
+        self.config.timeout = timeout;
         self
     }
 
@@ -780,7 +777,7 @@ impl ClientBuilder {
     ///
     /// Default is `None`.
     pub fn read_timeout(mut self, timeout: Duration) -> ClientBuilder {
-        self.config.read_timeout = Some(timeout);
+        self.config.read_timeout = timeout;
         self
     }
 
@@ -1226,8 +1223,11 @@ impl ClientBuilder {
     pub fn layer<L>(mut self, layer: L) -> ClientBuilder
     where
         L: Layer<BoxedClientService> + Clone + Send + Sync + 'static,
-        L::Service: Service<http::Request<Body>, Response = http::Response<Incoming>, Error = BoxError>
-            + Clone
+        L::Service: Service<
+                http::Request<Body>,
+                Response = http::Response<TimeoutBody<Incoming>>,
+                Error = BoxError,
+            > + Clone
             + Send
             + Sync
             + 'static,
@@ -1473,16 +1473,6 @@ impl Client {
             Oneshot::new(self.inner.client.clone(), req)
         };
 
-        let total_timeout = self
-            .inner
-            .total_timeout
-            .fetch(&extensions)
-            .copied()
-            .map(tokio::time::sleep)
-            .map(Box::pin);
-        let read_timeout = self.inner.read_timeout.fetch(&extensions).copied();
-        let read_timeout_fut = read_timeout.map(tokio::time::sleep).map(Box::pin);
-
         Pending {
             inner: PendingInner::Request(Box::pin(PendingRequest {
                 method,
@@ -1495,9 +1485,6 @@ impl Client {
                 redirect,
                 inner: self.inner.clone(),
                 in_flight,
-                total_timeout,
-                read_timeout_fut,
-                read_timeout,
             })),
         }
     }

@@ -1,7 +1,5 @@
 use std::fmt;
 use std::net::SocketAddr;
-use std::pin::Pin;
-use std::time::Duration;
 
 use crate::core::client::connect::HttpInfo;
 use bytes::Bytes;
@@ -9,7 +7,6 @@ use http::{HeaderMap, StatusCode, Version};
 use http_body_util::BodyExt;
 #[cfg(feature = "json")]
 use serde::de::DeserializeOwned;
-use tokio::time::Sleep;
 use url::Url;
 
 use super::body::Body;
@@ -33,19 +30,9 @@ pub struct Response {
 }
 
 impl Response {
-    pub(super) fn new(
-        res: http::Response<ResponseBody>,
-        url: Url,
-        accepts: Accepts,
-        total_timeout: Option<Pin<Box<Sleep>>>,
-        read_timeout: Option<Duration>,
-    ) -> Response {
+    pub(super) fn new(res: http::Response<ResponseBody>, url: Url, accepts: Accepts) -> Response {
         let (mut parts, body) = res.into_parts();
-        let decoder = Decoder::detect(
-            &mut parts.headers,
-            super::body::response(body, total_timeout, read_timeout),
-            accepts,
-        );
+        let decoder = Decoder::detect(&mut parts.headers, body, accepts);
         let res = http::Response::from_parts(parts, decoder);
 
         Response {

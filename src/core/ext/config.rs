@@ -51,21 +51,6 @@ where
         RequestConfig(v)
     }
 
-    /// Retrieve the value from the request-scoped configuration.
-    ///
-    /// If the request specifies a value, use that value; otherwise, attempt to retrieve it from the current instance (typically a client instance).
-    pub(crate) fn fetch<'client, 'request>(
-        &'client self,
-        ext: &'request Extensions,
-    ) -> Option<&'request T::Value>
-    where
-        'client: 'request,
-    {
-        ext.get::<RequestConfig<T>>()
-            .and_then(|v| v.0.as_ref())
-            .or(self.0.as_ref())
-    }
-
     /// Retrieve the value from the request's Extensions.
     pub(crate) fn get(ext: &Extensions) -> Option<&T::Value> {
         ext.get::<RequestConfig<T>>().and_then(|v| v.0.as_ref())
