@@ -46,12 +46,14 @@ pin_project! {
 
 /// Represents the different timeout strategies for the HTTP body.
 enum InnerBody<B> {
-    /// Body with a total (overall) timeout.
-    Total(Pin<Box<TotalTimeoutBody<B>>>),
-    /// Body with a per-read timeout.
-    Read(Pin<Box<ReadTimeoutBody<B>>>),
-    /// Body with both total and per-read timeouts.
-    Full(Pin<Box<TotalTimeoutBody<ReadTimeoutBody<B>>>>),
+    /// Applies a timeout to the entire body stream.
+    TotalTimeout(Pin<Box<TotalTimeoutBody<B>>>),
+    /// Applies a timeout to each read operation.
+    ReadTimeout(Pin<Box<ReadTimeoutBody<B>>>),
+    /// Applies both total and per-read timeouts.
+    CombinedTimeout(Pin<Box<TotalTimeoutBody<ReadTimeoutBody<B>>>>),
+    /// No timeout applied.
+    Plain(Pin<Box<B>>),
 }
 
 /// ==== impl TimeoutBody ====
@@ -64,26 +66,23 @@ impl<B> TimeoutBody<B> {
                 let body = ReadTimeoutBody::new(read, body);
                 let body = TotalTimeoutBody::new(total, body);
                 TimeoutBody {
-                    inner: InnerBody::Full(Box::pin(body)),
+                    inner: InnerBody::CombinedTimeout(Box::pin(body)),
                 }
             }
             (Some(total), None) => {
                 let body = TotalTimeoutBody::new(total, body);
                 TimeoutBody {
-                    inner: InnerBody::Total(Box::pin(body)),
+                    inner: InnerBody::TotalTimeout(Box::pin(body)),
                 }
             }
             (None, Some(read)) => {
                 let body = ReadTimeoutBody::new(read, body);
                 TimeoutBody {
-                    inner: InnerBody::Read(Box::pin(body)),
+                    inner: InnerBody::ReadTimeout(Box::pin(body)),
                 }
             }
             (None, None) => TimeoutBody {
-                inner: InnerBody::Read(Box::pin(ReadTimeoutBody::new(
-                    Duration::from_secs(u64::MAX),
-                    body,
-                ))),
+                inner: InnerBody::Plain(Box::pin(body)),
             },
         }
     }
@@ -103,27 +102,33 @@ where
     ) -> Poll<Option<Result<http_body::Frame<Self::Data>, Self::Error>>> {
         let mut this = self.project();
         match *this.inner.as_mut() {
-            InnerBody::Total(ref mut body) => poll_and_map_body(body.as_mut(), cx),
-            InnerBody::Read(ref mut body) => poll_and_map_body(body.as_mut(), cx),
-            InnerBody::Full(ref mut body) => poll_and_map_body(body.as_mut(), cx),
+            InnerBody::TotalTimeout(ref mut body) => poll_and_map_body(body.as_mut(), cx),
+            InnerBody::ReadTimeout(ref mut body) => poll_and_map_body(body.as_mut(), cx),
+            InnerBody::CombinedTimeout(ref mut body) => poll_and_map_body(body.as_mut(), cx),
+            InnerBody::Plain(ref mut body) => {
+                // If no timeout is set, just poll the inner body directly.
+                poll_and_map_body(body.as_mut(), cx)
+            }
         }
     }
 
-    #[inline]
+    #[inline(always)]
     fn size_hint(&self) -> http_body::SizeHint {
         match &self.inner {
-            InnerBody::Total(body) => body.size_hint(),
-            InnerBody::Read(body) => body.size_hint(),
-            InnerBody::Full(body) => body.size_hint(),
+            InnerBody::TotalTimeout(body) => body.size_hint(),
+            InnerBody::ReadTimeout(body) => body.size_hint(),
+            InnerBody::CombinedTimeout(body) => body.size_hint(),
+            InnerBody::Plain(body) => body.size_hint(),
         }
     }
 
-    #[inline]
+    #[inline(always)]
     fn is_end_stream(&self) -> bool {
         match &self.inner {
-            InnerBody::Total(body) => body.is_end_stream(),
-            InnerBody::Read(body) => body.is_end_stream(),
-            InnerBody::Full(body) => body.is_end_stream(),
+            InnerBody::TotalTimeout(body) => body.is_end_stream(),
+            InnerBody::ReadTimeout(body) => body.is_end_stream(),
+            InnerBody::CombinedTimeout(body) => body.is_end_stream(),
+            InnerBody::Plain(body) => body.is_end_stream(),
         }
     }
 }
@@ -169,12 +174,12 @@ where
         )
     }
 
-    #[inline]
+    #[inline(always)]
     fn size_hint(&self) -> http_body::SizeHint {
         self.body.size_hint()
     }
 
-    #[inline]
+    #[inline(always)]
     fn is_end_stream(&self) -> bool {
         self.body.is_end_stream()
     }
@@ -230,12 +235,12 @@ where
         }
     }
 
-    #[inline]
+    #[inline(always)]
     fn size_hint(&self) -> http_body::SizeHint {
         self.body.size_hint()
     }
 
-    #[inline]
+    #[inline(always)]
     fn is_end_stream(&self) -> bool {
         self.body.is_end_stream()
     }
