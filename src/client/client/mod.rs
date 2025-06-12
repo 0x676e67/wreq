@@ -10,7 +10,6 @@ use std::task::{Context, Poll};
 use std::time::Duration;
 use std::{collections::HashMap, convert::TryInto, net::SocketAddr};
 
-use crate::client::middleware::timeout::TotalTimeoutLayer;
 use crate::config::{RequestReadTimeout, RequestTotalTimeout, RequestUrl};
 use crate::connect::{
     BoxedConnectorLayer, BoxedConnectorService, Connector,
@@ -35,15 +34,16 @@ use crate::{
     error, redirect,
     tls::{AlpnProtos, TlsConnector, TlsVersion},
 };
-#[cfg(feature = "cookies")]
-use {super::middleware::cookie::CookieManagerLayer, crate::cookie};
 
 use super::decoder::Accepts;
+use super::middleware::timeout::TotalTimeoutLayer;
 use super::request::{Request, RequestBuilder};
 use super::response::Response;
 #[cfg(feature = "websocket")]
 use super::websocket::WebSocketRequestBuilder;
 use super::{Body, EmulationProviderFactory};
+#[cfg(feature = "cookies")]
+use {super::middleware::cookie::CookieManagerLayer, crate::cookie};
 
 use future::{Pending, PendingInner, PendingRequest};
 
@@ -55,7 +55,7 @@ use http::{
 
 use service::ClientService;
 use tower::util::{BoxCloneSyncService, BoxCloneSyncServiceLayer, Oneshot};
-use tower::{Layer, Service, ServiceBuilder};
+use tower::{Layer, Service, ServiceBuilder, ServiceExt};
 use tower_http::follow_redirect::FollowRedirect;
 
 type BoxedClientService =
@@ -361,9 +361,6 @@ impl ClientBuilder {
 
         let mut service = {
             let service = ClientService::new(config.builder.build(connector));
-            let service = ServiceBuilder::new()
-                .layer(TotalTimeoutLayer::new(config.timeout))
-                .service(service);
 
             #[cfg(feature = "cookies")]
             let service = ServiceBuilder::new()
@@ -374,10 +371,10 @@ impl ClientBuilder {
                 .with_referer(config.referer)
                 .with_https_only(config.https_only);
 
-            BoxCloneSyncService::new(
-                ServiceBuilder::new()
-                    .service(FollowRedirect::with_policy(service, redirect_policy)),
-            )
+            let service = ServiceBuilder::new()
+                .service(FollowRedirect::with_policy(service, redirect_policy));
+
+            BoxCloneSyncService::new(service)
         };
 
         if let Some(layers) = config.request_layers {
@@ -386,14 +383,18 @@ impl ClientBuilder {
             });
         }
 
-        let client_service = ServiceBuilder::new()
-            .map_err(error::cast_timeout_to_request_error)
+        let service = ServiceBuilder::new()
+            .layer(TotalTimeoutLayer::new(config.timeout))
             .service(service);
+
+        let service = ServiceBuilder::new()
+            .service(service)
+            .map_err(error::cast_timeout_to_request_error);
 
         Ok(Client {
             inner: Arc::new(ClientRef {
                 accepts: config.accepts,
-                client: BoxCloneSyncService::new(client_service),
+                client: BoxCloneSyncService::new(service),
                 headers: config.headers,
                 original_headers: RequestConfig::new(config.original_headers),
                 total_timeout: RequestConfig::new(config.timeout),

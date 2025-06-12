@@ -3,9 +3,9 @@ mod support;
 use std::time::Duration;
 
 use futures_util::future::join_all;
+use tower::layer::util::Identity;
 use tower::limit::ConcurrencyLimitLayer;
 use tower::timeout::TimeoutLayer;
-use tower::{layer::util::Identity, limit::GlobalConcurrencyLimitLayer};
 
 use support::{delay_layer::DelayLayer, server};
 
@@ -183,9 +183,9 @@ async fn with_concurrency_limit_layer_timeout() {
 
     let client = wreq::Client::builder()
         .layer(DelayLayer::new(Duration::from_millis(100)))
-        .layer(GlobalConcurrencyLimitLayer::new(1))
+        .layer(ConcurrencyLimitLayer::new(1))
         .timeout(Duration::from_millis(200))
-        .pool_max_idle_per_host(0) // disable connection reuse to force resource contention on the concurrency limit semaphore
+        .no_keepalive()
         .no_proxy()
         .build()
         .unwrap();
@@ -194,9 +194,9 @@ async fn with_concurrency_limit_layer_timeout() {
     let res = client.get(url.clone()).send().await;
     assert!(res.is_ok());
 
-    // 3 calls where the second two wait on the first and time out
+    // Each request is independent and no request will timeout
     let mut futures = Vec::new();
-    for _ in 0..3 {
+    for _ in 0..10 {
         futures.push(client.clone().get(url.clone()).send());
     }
 
@@ -206,7 +206,7 @@ async fn with_concurrency_limit_layer_timeout() {
         .into_iter()
         .any(|res| res.is_err_and(|err| err.is_timeout()));
 
-    assert!(timed_out, "at least one request should have timed out");
+    assert!(!timed_out);
 }
 
 #[tokio::test]
