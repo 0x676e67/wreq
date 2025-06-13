@@ -275,7 +275,7 @@ pub(crate) struct TowerRedirectPolicy {
 impl TowerRedirectPolicy {
     pub(crate) fn new(policy: Policy) -> Self {
         Self {
-            policy: RequestConfig::<RequestRedirectPolicy>::new(Some(policy)),
+            policy: RequestConfig::new(Some(policy)),
             referer: false,
             urls: Vec::new(),
             https_only: false,
