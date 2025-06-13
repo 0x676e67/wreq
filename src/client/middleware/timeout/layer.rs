@@ -30,8 +30,8 @@ impl<S> Layer<S> for TimeoutLayer {
     fn layer(&self, service: S) -> Self::Service {
         Timeout {
             inner: service,
-            total_timeout: self.total_timeout.clone(),
-            read_timeout: self.read_timeout.clone(),
+            total_timeout: self.total_timeout,
+            read_timeout: self.read_timeout,
         }
     }
 }
