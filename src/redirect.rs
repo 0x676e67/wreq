@@ -195,7 +195,7 @@ impl<'a> Attempt<'a> {
     /// Returns an action failing the redirect with an error.
     ///
     /// The `Error` will be returned for the result of the sent request.
-    pub fn error<E: Into<Box<dyn StdError + Send + Sync>>>(self, error: E) -> Action {
+    pub fn error<E: Into<BoxError>>(self, error: E) -> Action {
         Action {
             inner: ActionKind::Error(error.into()),
         }
@@ -231,7 +231,7 @@ impl fmt::Debug for PolicyKind {
 pub(crate) enum ActionKind {
     Follow,
     Stop,
-    Error(Box<dyn StdError + Send + Sync>),
+    Error(BoxError),
 }
 
 pub(crate) fn remove_sensitive_headers(headers: &mut HeaderMap, next: &Url, previous: &[Url]) {
