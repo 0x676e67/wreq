@@ -114,7 +114,8 @@ impl Http1ConfigBuilder {
     ///
     /// # Panics
     ///
-    /// The minimum value allowed is 8192. This method panics if the passed `max` is less than the minimum.
+    /// The minimum value allowed is 8192. This method panics if the passed `max` is less than the
+    /// minimum.
     pub fn max_buf_size(mut self, max: usize) -> Self {
         assert!(
             max >= proto::h1::MINIMUM_MAX_BUFFER_SIZE,

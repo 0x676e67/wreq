@@ -7,12 +7,10 @@
 //!
 //! There are two pieces to this in crate::core::
 //!
-//! - **The [`Body`] trait** describes all possible bodies.
-//!   crate::core: allows any body type that implements `Body`, allowing
-//!   applications to have fine-grained control over their streaming.
-//! - **The [`Incoming`] concrete type**, which is an implementation
-//!   of `Body`, and returned by crate::core: as a "receive stream" (so, for server
-//!   requests and client responses).
+//! - **The [`Body`] trait** describes all possible bodies. crate::core: allows any body type that
+//!   implements `Body`, allowing applications to have fine-grained control over their streaming.
+//! - **The [`Incoming`] concrete type**, which is an implementation of `Body`, and returned by
+//!   crate::core: as a "receive stream" (so, for server requests and client responses).
 //!
 //! There are additional implementations available in [`http-body-util`][],
 //! such as a `Full` or `Empty` body.

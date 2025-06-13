@@ -5,12 +5,21 @@
 //! use std::{
 //!     future::Future,
 //!     pin::Pin,
-//!     task::{Context, Poll},
-//!     time::{Duration, Instant},
+//!     task::{
+//!         Context,
+//!         Poll,
+//!     },
+//!     time::{
+//!         Duration,
+//!         Instant,
+//!     },
 //! };
 //!
+//! use crate::core::rt::{
+//!     Sleep,
+//!     Timer,
+//! };
 //! use pin_project_lite::pin_project;
-//! use crate::core::rt::{Timer, Sleep};
 //!
 //! #[derive(Clone, Debug)]
 //! pub struct TokioTimer;

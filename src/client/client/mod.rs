@@ -429,15 +429,9 @@ impl ClientBuilder {
     /// ```rust
     /// # async fn doc() -> wreq::Result<()> {
     /// // Name your user agent after your app?
-    /// static APP_USER_AGENT: &str = concat!(
-    ///     env!("CARGO_PKG_NAME"),
-    ///     "/",
-    ///     env!("CARGO_PKG_VERSION"),
-    /// );
+    /// static APP_USER_AGENT: &str = concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_PKG_VERSION"),);
     ///
-    /// let client = wreq::Client::builder()
-    ///     .user_agent(APP_USER_AGENT)
-    ///     .build()?;
+    /// let client = wreq::Client::builder().user_agent(APP_USER_AGENT).build()?;
     /// let res = client.get("https://www.rust-lang.org").send().await?;
     /// # Ok(())
     /// # }
@@ -474,9 +468,7 @@ impl ClientBuilder {
     /// headers.insert(header::AUTHORIZATION, auth_value);
     ///
     /// // get a client builder
-    /// let client = wreq::Client::builder()
-    ///     .default_headers(headers)
-    ///     .build()?;
+    /// let client = wreq::Client::builder().default_headers(headers).build()?;
     /// let res = client.get("https://www.rust-lang.org").send().await?;
     /// # Ok(())
     /// # }
@@ -491,9 +483,7 @@ impl ClientBuilder {
     /// headers.insert("X-MY-HEADER", header::HeaderValue::from_static("value"));
     ///
     /// // get a client builder
-    /// let client = wreq::Client::builder()
-    ///     .default_headers(headers)
-    ///     .build()?;
+    /// let client = wreq::Client::builder().default_headers(headers).build()?;
     /// let res = client
     ///     .get("https://www.rust-lang.org")
     ///     .header("X-MY-HEADER", "new_value")
@@ -561,12 +551,12 @@ impl ClientBuilder {
     ///
     /// If auto gzip decompression is turned on:
     ///
-    /// - When sending a request and if the request's headers do not already contain
-    ///   an `Accept-Encoding` **and** `Range` values, the `Accept-Encoding` header is set to `gzip`.
+    /// - When sending a request and if the request's headers do not already contain an
+    ///   `Accept-Encoding` **and** `Range` values, the `Accept-Encoding` header is set to `gzip`.
     ///   The request body is **not** automatically compressed.
-    /// - When receiving a response, if its headers contain a `Content-Encoding` value of
-    ///   `gzip`, both `Content-Encoding` and `Content-Length` are removed from the
-    ///   headers' set. The response body is automatically decompressed.
+    /// - When receiving a response, if its headers contain a `Content-Encoding` value of `gzip`,
+    ///   both `Content-Encoding` and `Content-Length` are removed from the headers' set. The
+    ///   response body is automatically decompressed.
     ///
     /// If the `gzip` feature is turned on, the default option is enabled.
     ///
@@ -584,12 +574,12 @@ impl ClientBuilder {
     ///
     /// If auto brotli decompression is turned on:
     ///
-    /// - When sending a request and if the request's headers do not already contain
-    ///   an `Accept-Encoding` **and** `Range` values, the `Accept-Encoding` header is set to `br`.
-    ///   The request body is **not** automatically compressed.
-    /// - When receiving a response, if its headers contain a `Content-Encoding` value of
-    ///   `br`, both `Content-Encoding` and `Content-Length` are removed from the
-    ///   headers' set. The response body is automatically decompressed.
+    /// - When sending a request and if the request's headers do not already contain an
+    ///   `Accept-Encoding` **and** `Range` values, the `Accept-Encoding` header is set to `br`. The
+    ///   request body is **not** automatically compressed.
+    /// - When receiving a response, if its headers contain a `Content-Encoding` value of `br`, both
+    ///   `Content-Encoding` and `Content-Length` are removed from the headers' set. The response
+    ///   body is automatically decompressed.
     ///
     /// If the `brotli` feature is turned on, the default option is enabled.
     ///
@@ -607,12 +597,12 @@ impl ClientBuilder {
     ///
     /// If auto zstd decompression is turned on:
     ///
-    /// - When sending a request and if the request's headers do not already contain
-    ///   an `Accept-Encoding` **and** `Range` values, the `Accept-Encoding` header is set to `zstd`.
+    /// - When sending a request and if the request's headers do not already contain an
+    ///   `Accept-Encoding` **and** `Range` values, the `Accept-Encoding` header is set to `zstd`.
     ///   The request body is **not** automatically compressed.
-    /// - When receiving a response, if its headers contain a `Content-Encoding` value of
-    ///   `zstd`, both `Content-Encoding` and `Content-Length` are removed from the
-    ///   headers' set. The response body is automatically decompressed.
+    /// - When receiving a response, if its headers contain a `Content-Encoding` value of `zstd`,
+    ///   both `Content-Encoding` and `Content-Length` are removed from the headers' set. The
+    ///   response body is automatically decompressed.
     ///
     /// If the `zstd` feature is turned on, the default option is enabled.
     ///
@@ -630,11 +620,11 @@ impl ClientBuilder {
     ///
     /// If auto deflate decompression is turned on:
     ///
-    /// - When sending a request and if the request's headers do not already contain
-    ///   an `Accept-Encoding` **and** `Range` values, the `Accept-Encoding` header is set to `deflate`.
-    ///   The request body is **not** automatically compressed.
-    /// - When receiving a response, if it's headers contain a `Content-Encoding` value that
-    ///   equals to `deflate`, both values `Content-Encoding` and `Content-Length` are removed from the
+    /// - When sending a request and if the request's headers do not already contain an
+    ///   `Accept-Encoding` **and** `Range` values, the `Accept-Encoding` header is set to
+    ///   `deflate`. The request body is **not** automatically compressed.
+    /// - When receiving a response, if it's headers contain a `Content-Encoding` value that equals
+    ///   to `deflate`, both values `Content-Encoding` and `Content-Length` are removed from the
     ///   headers' set. The response body is automatically decompressed.
     ///
     /// If the `deflate` feature is turned on, the default option is enabled.
@@ -745,8 +735,10 @@ impl ClientBuilder {
     ///
     /// # Example
     /// ```
-    /// use wreq::Client;
-    /// use wreq::Proxy;
+    /// use wreq::{
+    ///     Client,
+    ///     Proxy,
+    /// };
     ///
     /// let proxy = Proxy::http("http://proxy:8080").unwrap();
     /// let client = Client::builder().proxy(proxy).build().unwrap();
@@ -886,7 +878,8 @@ impl ClientBuilder {
     /// let local_addr = IpAddr::from([12, 4, 1, 8]);
     /// let client = wreq::Client::builder()
     ///     .local_address(local_addr)
-    ///     .build().unwrap();
+    ///     .build()
+    ///     .unwrap();
     /// ```
     pub fn local_address<T>(mut self, addr: T) -> ClientBuilder
     where
@@ -920,7 +913,8 @@ impl ClientBuilder {
     /// let interface = "lo";
     /// let client = wreq::Client::builder()
     ///     .interface(interface)
-    ///     .build().unwrap();
+    ///     .build()
+    ///     .unwrap();
     /// ```
     #[cfg(any(
         target_os = "android",
@@ -996,7 +990,8 @@ impl ClientBuilder {
     ///
     /// This method sets the necessary headers, HTTP/1 and HTTP/2 configurations, and TLS config
     /// to use the specified HTTP context. It allows the client to mimic the behavior of different
-    /// versions or setups, which can be useful for testing or ensuring compatibility with various environments.
+    /// versions or setups, which can be useful for testing or ensuring compatibility with various
+    /// environments.
     ///
     /// # Note
     /// This will overwrite the existing configuration.
@@ -1005,7 +1000,10 @@ impl ClientBuilder {
     /// # Example
     ///
     /// ```rust
-    /// use wreq::{Client, Emulation};
+    /// use wreq::{
+    ///     Client,
+    ///     Emulation,
+    /// };
     /// use wreq_util::Emulation;
     ///
     /// let client = Client::builder()
@@ -1049,13 +1047,14 @@ impl ClientBuilder {
     ///
     /// This method allows you to specify a set of PEM-encoded certificates that the client
     /// will pin to, ensuring that only these certificates are trusted during SSL/TLS connections.
-    /// This provides an additional layer of security by preventing man-in-the-middle (MITM) attacks,
-    /// even if a malicious certificate is issued by a trusted Certificate Authority (CA).
+    /// This provides an additional layer of security by preventing man-in-the-middle (MITM)
+    /// attacks, even if a malicious certificate is issued by a trusted Certificate Authority
+    /// (CA).
     ///
     /// # Parameters
     ///
-    /// - `certs`: An iterator of DER-encoded certificates. Each certificate should be provided
-    ///   as a byte slice (`&[u8]`).
+    /// - `certs`: An iterator of DER-encoded certificates. Each certificate should be provided as a
+    ///   byte slice (`&[u8]`).
     pub fn ssl_pinning<'c, I>(mut self, certs: I) -> ClientBuilder
     where
         I: IntoIterator,
@@ -1099,13 +1098,13 @@ impl ClientBuilder {
     ///
     /// # Parameters
     ///
-    /// - `store`: The verify certificate store to use. This can be a custom implementation
-    ///   of the `IntoCertStore` trait or one of the predefined options.
+    /// - `store`: The verify certificate store to use. This can be a custom implementation of the
+    ///   `IntoCertStore` trait or one of the predefined options.
     ///
     /// # Notes
     ///
-    /// - Using a custom verify certificate store can be useful in scenarios where you need
-    ///   to trust specific certificates that are not included in the system's default store.
+    /// - Using a custom verify certificate store can be useful in scenarios where you need to trust
+    ///   specific certificates that are not included in the system's default store.
     /// - Ensure that the provided verify certificate store is properly configured to avoid
     ///   potential security risks.
     pub fn cert_store(mut self, store: CertStore) -> ClientBuilder {
@@ -1264,15 +1263,14 @@ impl ClientBuilder {
     /// use std::time::Duration;
     ///
     /// let client = wreq::Client::builder()
-    ///                      // resolved to outermost layer, meaning while we are waiting on concurrency limit
-    ///                      .connect_timeout(Duration::from_millis(200))
-    ///                      // underneath the concurrency check, so only after concurrency limit lets us through
-    ///                      .connector_layer(tower::timeout::TimeoutLayer::new(Duration::from_millis(50)))
-    ///                      .connector_layer(tower::limit::concurrency::ConcurrencyLimitLayer::new(2))
-    ///                      .build()
-    ///                      .unwrap();
+    ///     // resolved to outermost layer, meaning while we are waiting on concurrency limit
+    ///     .connect_timeout(Duration::from_millis(200))
+    ///     // underneath the concurrency check, so only after concurrency limit lets us through
+    ///     .connector_layer(tower::timeout::TimeoutLayer::new(Duration::from_millis(50)))
+    ///     .connector_layer(tower::limit::concurrency::ConcurrencyLimitLayer::new(2))
+    ///     .build()
+    ///     .unwrap();
     /// ```
-    ///
     pub fn connector_layer<L>(mut self, layer: L) -> ClientBuilder
     where
         L: Layer<BoxedConnectorService> + Clone + Send + Sync + 'static,
@@ -1311,7 +1309,8 @@ impl Client {
 
     /// Create a `ClientBuilder` specifically configured for WebSocket connections.
     ///
-    /// This method configures the `ClientBuilder` to use HTTP/1.0 only, which is required for certain WebSocket connections.
+    /// This method configures the `ClientBuilder` to use HTTP/1.0 only, which is required for
+    /// certain WebSocket connections.
     pub fn builder() -> ClientBuilder {
         ClientBuilder::new()
     }

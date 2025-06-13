@@ -246,7 +246,10 @@ impl Jar {
     /// # Example
     ///
     /// ```
-    /// use wreq::{cookie::Jar, Url};
+    /// use wreq::{
+    ///     Url,
+    ///     cookie::Jar,
+    /// };
     ///
     /// let cookie = "foo=bar; Domain=yolo.local";
     /// let url = "https://yolo.local".parse::<Url>().unwrap();
@@ -269,13 +272,18 @@ impl Jar {
     /// # Example
     ///
     /// ```
-    /// use wreq::Url;
-    /// use wreq::cookie::{Jar, Cookie};
+    /// use wreq::{
+    ///     Url,
+    ///     cookie::{
+    ///         Cookie,
+    ///         Jar,
+    ///     },
+    /// };
     ///
     /// let cookie = Cookie::new("foo", "bar");
     /// let url = "https://yolo.local".parse::<Url>().unwrap();
     ///
-    /// let jar = Jar::default();   
+    /// let jar = Jar::default();
     /// jar.add_cookie(cookie, &url);
     ///
     /// // and now add to a `ClientBuilder`?
@@ -289,7 +297,10 @@ impl Jar {
     /// # Example
     ///
     /// ```
-    /// use wreq::{cookie::Jar, Url};
+    /// use wreq::{
+    ///     Url,
+    ///     cookie::Jar,
+    /// };
     ///
     /// // add a cookie
     /// let cookie = "foo=bar; Domain=yolo.local";
@@ -310,7 +321,10 @@ impl Jar {
     ///
     /// # Example
     /// ```
-    /// use wreq::{cookie::Jar, Url};
+    /// use wreq::{
+    ///     Url,
+    ///     cookie::Jar,
+    /// };
     ///
     /// // add a cookie
     /// let cookie = "foo=bar; Domain=yolo.local";

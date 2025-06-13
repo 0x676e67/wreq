@@ -49,12 +49,9 @@ pub struct HttpConnector<R = GaiResolver> {
 /// use crate::util::client::connect::HttpInfo;
 ///
 /// // res = http::Response
-/// res
-///     .extensions()
-///     .get::<HttpInfo>()
-///     .map(|info| {
-///         println!("remote addr = {}", info.remote_addr());
-///     });
+/// res.extensions().get::<HttpInfo>().map(|info| {
+///     println!("remote addr = {}", info.remote_addr());
+/// });
 /// # }
 /// ```
 ///
@@ -229,7 +226,8 @@ impl HttpConnector {
 impl<R> HttpConnector<R> {
     /// Construct a new HttpConnector.
     ///
-    /// Takes a [`Resolver`](crate::core::client::connect::dns#resolvers-are-services) to handle DNS lookups.
+    /// Takes a [`Resolver`](crate::core::client::connect::dns#resolvers-are-services) to handle DNS
+    /// lookups.
     pub fn new_with_resolver(resolver: R) -> HttpConnector<R> {
         HttpConnector {
             config: Arc::new(Config {
@@ -289,7 +287,8 @@ impl<R> HttpConnector<R> {
         self.config_mut().tcp_keepalive_config.interval = interval;
     }
 
-    /// Set the number of retransmissions to be carried out before declaring that remote end is not available.
+    /// Set the number of retransmissions to be carried out before declaring that remote end is not
+    /// available.
     #[inline]
     pub fn set_keepalive_retries(&mut self, retries: Option<u32>) {
         self.config_mut().tcp_keepalive_config.retries = retries;

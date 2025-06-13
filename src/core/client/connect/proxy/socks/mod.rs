@@ -173,10 +173,12 @@ where
     /// Create a new SOCKS service with the given inner service, resolver, proxy destination,
     /// and optional authentication credentials.
     ///
-    /// The `proxy_dst` should be a valid URI with a scheme of `socks5`, `socks5h`, `socks4`, or `socks4a`.
+    /// The `proxy_dst` should be a valid URI with a scheme of `socks5`, `socks5h`, `socks4`, or
+    /// `socks4a`.
     ///
     /// The `auth` parameter is optional and can be used to provide a username and password for
-    /// SOCKS authentication. If provided, it should be a tuple containing the username and password.
+    /// SOCKS authentication. If provided, it should be a tuple containing the username and
+    /// password.
     pub fn new_with_resolver(
         inner: C,
         resolver: R,

@@ -19,9 +19,9 @@ type TrailersSender = oneshot::Sender<HeaderMap>;
 
 /// A stream of `Bytes`, used when receiving bodies from the network.
 ///
-/// Note that Users should not instantiate this struct directly. When working with the crate::core: client,
-/// `Incoming` is returned to you in responses. Similarly, when operating with the crate::core: server,
-/// it is provided within requests.
+/// Note that Users should not instantiate this struct directly. When working with the crate::core:
+/// client, `Incoming` is returned to you in responses. Similarly, when operating with the
+/// crate::core: server, it is provided within requests.
 ///
 /// # Examples
 ///
@@ -83,7 +83,7 @@ impl Incoming {
     #[inline]
     #[cfg(test)]
     pub(crate) fn channel() -> (Sender, Incoming) {
-        Self::new_channel(DecodedLength::CHUNKED, /*wanter =*/ false)
+        Self::new_channel(DecodedLength::CHUNKED, /* wanter = */ false)
     }
 
     pub(crate) fn new_channel(content_length: DecodedLength, wanter: bool) -> (Sender, Incoming) {
@@ -187,8 +187,9 @@ impl Body for Incoming {
                         }
                         Some(Err(e)) => {
                             return match e.reason() {
-                                // These reasons should cause the body reading to stop, but not fail it.
-                                // The same logic as for `Read for H2Upgraded` is applied here.
+                                // These reasons should cause the body reading to stop, but not fail
+                                // it. The same logic as for `Read
+                                // for H2Upgraded` is applied here.
                                 Some(http2::Reason::NO_ERROR) | Some(http2::Reason::CANCEL) => {
                                     Poll::Ready(None)
                                 }
@@ -412,7 +413,7 @@ mod tests {
         eq(Incoming::channel().1, SizeHint::new(), "channel");
 
         eq(
-            Incoming::new_channel(DecodedLength::new(4), /*wanter =*/ false).1,
+            Incoming::new_channel(DecodedLength::new(4), /* wanter = */ false).1,
             SizeHint::with_exact(4),
             "channel with length",
         );
@@ -472,7 +473,8 @@ mod tests {
 
     #[test]
     fn channel_ready() {
-        let (mut tx, _rx) = Incoming::new_channel(DecodedLength::CHUNKED, /*wanter = */ false);
+        let (mut tx, _rx) =
+            Incoming::new_channel(DecodedLength::CHUNKED, /* wanter = */ false);
 
         let mut tx_ready = tokio_test::task::spawn(tx.ready());
 
@@ -482,7 +484,7 @@ mod tests {
     #[test]
     fn channel_wanter() {
         let (mut tx, mut rx) =
-            Incoming::new_channel(DecodedLength::CHUNKED, /*wanter = */ true);
+            Incoming::new_channel(DecodedLength::CHUNKED, /* wanter = */ true);
 
         let mut tx_ready = tokio_test::task::spawn(tx.ready());
         let mut rx_data = tokio_test::task::spawn(rx.frame());
@@ -503,7 +505,7 @@ mod tests {
 
     #[test]
     fn channel_notices_closure() {
-        let (mut tx, rx) = Incoming::new_channel(DecodedLength::CHUNKED, /*wanter = */ true);
+        let (mut tx, rx) = Incoming::new_channel(DecodedLength::CHUNKED, /* wanter = */ true);
 
         let mut tx_ready = tokio_test::task::spawn(tx.ready());
 

@@ -450,11 +450,10 @@ impl Client {
                     // This can be bad, depending on if this is a request or a
                     // response.
                     //
-                    // - A request is illegal if there is a `Transfer-Encoding`
-                    //   but it doesn't end in `chunked`.
-                    // - A response that has `Transfer-Encoding` but doesn't
-                    //   end in `chunked` isn't illegal, it just forces this
-                    //   to be close-delimited.
+                    // - A request is illegal if there is a `Transfer-Encoding` but it doesn't end
+                    //   in `chunked`.
+                    // - A response that has `Transfer-Encoding` but doesn't end in `chunked` isn't
+                    //   illegal, it just forces this to be close-delimited.
                     //
                     // We can try to repair this, by adding `chunked` ourselves.
 

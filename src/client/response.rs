@@ -71,10 +71,9 @@ impl Response {
     ///
     /// Reasons it may not be known:
     ///
-    /// - The response does not include a body (e.g. it responds to a `HEAD`
-    ///   request).
-    /// - The response is gzipped and automatically decoded (thus changing the
-    ///   actual decoded length).
+    /// - The response does not include a body (e.g. it responds to a `HEAD` request).
+    /// - The response is gzipped and automatically decoded (thus changing the actual decoded
+    ///   length).
     pub fn content_length(&self) -> Option<u64> {
         http_body::Body::size_hint(self.res.body()).exact()
     }
@@ -369,10 +368,7 @@ impl Response {
     ///         Err(err) => {
     ///             // asserting a 400 as an example
     ///             // it could be any status between 400...599
-    ///             assert_eq!(
-    ///                 err.status(),
-    ///                 Some(wreq::StatusCode::BAD_REQUEST)
-    ///             );
+    ///             assert_eq!(err.status(), Some(wreq::StatusCode::BAD_REQUEST));
     ///         }
     ///     }
     /// }
@@ -399,10 +395,7 @@ impl Response {
     ///         Err(err) => {
     ///             // asserting a 400 as an example
     ///             // it could be any status between 400...599
-    ///             assert_eq!(
-    ///                 err.status(),
-    ///                 Some(wreq::StatusCode::BAD_REQUEST)
-    ///             );
+    ///             assert_eq!(err.status(), Some(wreq::StatusCode::BAD_REQUEST));
     ///         }
     ///     }
     /// }

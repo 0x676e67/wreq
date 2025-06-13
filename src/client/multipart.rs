@@ -93,7 +93,8 @@ impl Form {
     /// ```no_run
     /// # async fn run() -> std::io::Result<()> {
     /// let form = wreq::multipart::Form::new()
-    ///     .file("key", "/path/to/file").await?;
+    ///     .file("key", "/path/to/file")
+    ///     .await?;
     /// # Ok(())
     /// # }
     /// ```

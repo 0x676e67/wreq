@@ -33,8 +33,7 @@ impl Identity {
     /// # use std::io::Read;
     /// # fn pkcs12() -> Result<(), Box<dyn std::error::Error>> {
     /// let mut buf = Vec::new();
-    /// File::open("my-ident.pfx")?
-    ///     .read_to_end(&mut buf)?;
+    /// File::open("my-ident.pfx")?.read_to_end(&mut buf)?;
     /// let pkcs12 = wreq::Identity::from_pkcs12_der(&buf, "my-privkey-password")?;
     /// # drop(pkcs12);
     /// # Ok(())

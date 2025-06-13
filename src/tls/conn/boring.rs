@@ -102,7 +102,8 @@ where
 
     /// Registers a callback which can customize the SSL context for a given URI.
     ///
-    /// This callback is executed after the callback registered by [`Self::set_ssl_callback`] is executed.
+    /// This callback is executed after the callback registered by [`Self::set_ssl_callback`] is
+    /// executed.
     #[inline]
     pub fn set_ssl_callback<F>(&mut self, callback: F)
     where

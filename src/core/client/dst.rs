@@ -17,8 +17,9 @@ use crate::{
 
 /// Destination of the request.
 ///
-/// The `Dst` struct is used to store the destination of the request, including the HTTP version preference,
-/// network scheme, and the pool key. It provides methods to create and manipulate the destination.
+/// The `Dst` struct is used to store the destination of the request, including the HTTP version
+/// preference, network scheme, and the pool key. It provides methods to create and manipulate the
+/// destination.
 #[derive(Debug, Clone)]
 pub struct Dst(PoolKey);
 

@@ -3,8 +3,7 @@
 //!
 //! This module contains:
 //!
-//! - A default [`HttpConnector`][] that does DNS resolution and establishes
-//!   connections over TCP.
+//! - A default [`HttpConnector`][] that does DNS resolution and establishes connections over TCP.
 //! - Types to build custom connectors.
 //!
 //! # Connectors
@@ -27,8 +26,16 @@
 //! Or, fully written out:
 //!
 //! ```
-//! use std::{future::Future, net::SocketAddr, pin::Pin, task::{self, Poll}};
 //! use http::Uri;
+//! use std::{
+//!     future::Future,
+//!     net::SocketAddr,
+//!     pin::Pin,
+//!     task::{
+//!         self,
+//!         Poll,
+//!     },
+//! };
 //! use tokio::net::TcpStream;
 //! use tower_service::Service;
 //!
@@ -39,9 +46,7 @@
 //!     type Response = TcpStream;
 //!     type Error = std::io::Error;
 //!     // We can't "name" an `async` generated future.
-//!     type Future = Pin<Box<
-//!         dyn Future<Output = Result<Self::Response, Self::Error>> + Send
-//!     >>;
+//!     type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
 //!
 //!     fn poll_ready(&mut self, _: &mut task::Context<'_>) -> Poll<Result<(), Self::Error>> {
 //!         // This connector is always ready, but others might not be.

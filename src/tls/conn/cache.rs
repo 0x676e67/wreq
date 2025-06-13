@@ -78,8 +78,8 @@ impl SessionCache {
         };
 
         // https://tools.ietf.org/html/rfc8446#appendix-C.4
-        // OpenSSL will remove the session from its cache after the handshake completes anyway, but this ensures
-        // that concurrent handshakes don't end up with the same session.
+        // OpenSSL will remove the session from its cache after the handshake completes anyway, but
+        // this ensures that concurrent handshakes don't end up with the same session.
         if session.protocol_version() == SslVersion::TLS1_3 {
             self.remove(&session);
         }

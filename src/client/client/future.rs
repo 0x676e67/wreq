@@ -22,7 +22,7 @@ use crate::{
     },
     core::{body::Incoming, service::Oneshot},
     error::{self, BoxError},
-    redirect::{self},
+    redirect,
 };
 
 type ResponseFuture = Oneshot<

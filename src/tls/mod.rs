@@ -2,8 +2,7 @@
 //!
 //! By default, a `Client` will make use of BoringSSL for TLS.
 //!
-//! - Various parts of TLS can also be configured or even disabled on the
-//!   `ClientBuilder`.
+//! - Various parts of TLS can also be configured or even disabled on the `ClientBuilder`.
 
 mod config;
 mod conn;

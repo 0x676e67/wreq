@@ -50,7 +50,8 @@ impl ConnectorBuilder {
 
             // otherwise we have user provided layers
             // so we need type erasure all the way through
-            // as well as mapping the unnameable type of the layers back to Dst for the inner service
+            // as well as mapping the unnameable type of the layers back to Dst for the inner
+            // service
             let service = layers.into_iter().fold(
                 BoxCloneSyncService::new(
                     ServiceBuilder::new()

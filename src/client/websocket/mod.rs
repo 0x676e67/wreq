@@ -75,7 +75,8 @@ impl WebSocketRequestBuilder {
     ///
     /// # Arguments
     ///
-    /// * `protocols` - A list of subprotocols, which can be converted into a `Cow<'static, [String]>`.
+    /// * `protocols` - A list of subprotocols, which can be converted into a `Cow<'static,
+    ///   [String]>`.
     ///
     /// # Returns
     ///
@@ -137,7 +138,8 @@ impl WebSocketRequestBuilder {
     /// Configures the WebSocket connection to use HTTP/2.
     ///
     /// This method sets the HTTP version to HTTP/2 for the WebSocket connection.
-    /// If the server does not support HTTP/2 WebSocket connections, the connection attempt will fail.
+    /// If the server does not support HTTP/2 WebSocket connections, the connection attempt will
+    /// fail.
     ///
     /// # Returns
     ///

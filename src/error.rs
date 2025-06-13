@@ -43,7 +43,10 @@ impl Error {
     /// ```
     /// # async fn run() {
     /// // displays last stop of a redirect loop
-    /// let response = wreq::Client::new().get("http://site.with.redirect.loop").send().await;
+    /// let response = wreq::Client::new()
+    ///     .get("http://site.with.redirect.loop")
+    ///     .send()
+    ///     .await;
     /// if let Err(e) = response {
     ///     if e.is_redirect() {
     ///         if let Some(final_stop) = e.url() {

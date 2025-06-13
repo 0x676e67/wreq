@@ -277,8 +277,7 @@ impl Proxy {
     /// ```
     /// # extern crate wreq;
     /// # fn run() -> Result<(), Box<dyn std::error::Error>> {
-    /// let proxy = wreq::Proxy::https("http://localhost:1234")?
-    ///     .basic_auth("Aladdin", "open sesame");
+    /// let proxy = wreq::Proxy::https("http://localhost:1234")?.basic_auth("Aladdin", "open sesame");
     /// # Ok(())
     /// # }
     /// # fn main() {}
@@ -326,8 +325,7 @@ impl Proxy {
     /// # fn run() -> Result<(), Box<dyn std::error::Error>> {
     /// let mut headers = HeaderMap::new();
     /// headers.insert(USER_AGENT, "wreq".parse().unwrap());
-    /// let proxy = wreq::Proxy::https("http://localhost:1234")?
-    ///     .custom_http_headers(headers);
+    /// let proxy = wreq::Proxy::https("http://localhost:1234")?.custom_http_headers(headers);
     /// # Ok(())
     /// # }
     /// # fn main() {}
@@ -439,8 +437,8 @@ impl fmt::Debug for Proxy {
 }
 
 impl NoProxy {
-    /// Returns a new no-proxy configuration based on environment variables (or `None` if no variables are set)
-    /// see [self::NoProxy::from_string()] for the string format
+    /// Returns a new no-proxy configuration based on environment variables (or `None` if no
+    /// variables are set) see [self::NoProxy::from_string()] for the string format
     pub fn from_env() -> Option<NoProxy> {
         let raw = std::env::var("NO_PROXY")
             .or_else(|_| std::env::var("no_proxy"))
@@ -458,14 +456,15 @@ impl NoProxy {
     /// * The environment variable `NO_PROXY` is checked, if it is not set, `no_proxy` is checked
     /// * If neither environment variable is set, `None` is returned
     /// * Entries are expected to be comma-separated (whitespace between entries is ignored)
-    /// * IP addresses (both IPv4 and IPv6) are allowed, as are optional subnet masks (by adding /size,
-    ///   for example "`192.168.1.0/24`").
+    /// * IP addresses (both IPv4 and IPv6) are allowed, as are optional subnet masks (by adding
+    ///   /size, for example "`192.168.1.0/24`").
     /// * An entry "`*`" matches all hostnames (this is the only wildcard allowed)
-    /// * Any other entry is considered a domain name (and may contain a leading dot, for example `google.com`
-    ///   and `.google.com` are equivalent) and would match both that domain AND all subdomains.
+    /// * Any other entry is considered a domain name (and may contain a leading dot, for example
+    ///   `google.com` and `.google.com` are equivalent) and would match both that domain AND all
+    ///   subdomains.
     ///
-    /// For example, if `"NO_PROXY=google.com, 192.168.1.0/24"` was set, all the following would match
-    /// (and therefore would bypass the proxy):
+    /// For example, if `"NO_PROXY=google.com, 192.168.1.0/24"` was set, all the following would
+    /// match (and therefore would bypass the proxy):
     /// * `http://google.com/`
     /// * `http://www.google.com/`
     /// * `http://192.168.1.42/`

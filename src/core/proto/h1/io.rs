@@ -117,8 +117,7 @@ where
     /// Return whether we can append to the headers buffer.
     ///
     /// Reasons we can't:
-    /// - The write buf is in queue mode, and some of the past body is still
-    ///   needing to be flushed.
+    /// - The write buf is in queue mode, and some of the past body is still needing to be flushed.
     pub(crate) fn can_headers_buf(&self) -> bool {
         !self.write_buf.queue.has_remaining()
     }

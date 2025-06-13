@@ -151,7 +151,8 @@ impl CloseCode {
     /// Indicates that an endpoint is terminating the connection because it has received a type of
     /// data that it cannot accept.
     ///
-    /// For example, an endpoint MAY send this if it understands only text data, but receives a binary message.
+    /// For example, an endpoint MAY send this if it understands only text data, but receives a
+    /// binary message.
     pub const UNSUPPORTED: CloseCode = CloseCode(1003);
 
     /// Indicates that no status code was included in a closing frame.

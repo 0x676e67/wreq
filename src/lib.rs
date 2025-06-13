@@ -5,7 +5,8 @@
 
 //! # wreq
 //!
-//! An ergonomic all-in-one HTTP client for browser emulation with TLS, JA3/JA4, and HTTP/2 fingerprints.
+//! An ergonomic all-in-one HTTP client for browser emulation with TLS, JA3/JA4, and HTTP/2
+//! fingerprints.
 //!
 //! - Plain bodies, [JSON](#json), [urlencoded](#forms), [multipart]
 //! - Cookies Store
@@ -33,9 +34,7 @@
 //! #[tokio::main]
 //! async fn main() -> wreq::Result<()> {
 //!     // Build a client
-//!     let client = Client::builder()
-//!         .emulation(Emulation::Firefox136)
-//!         .build()?;
+//!     let client = Client::builder().emulation(Emulation::Firefox136).build()?;
 //!
 //!     // Use the API you're already familiar with
 //!     let resp = client.get("https://tls.peet.ws/api/all").send().await?;
@@ -50,46 +49,53 @@
 //! The `websocket` module provides a way to upgrade a connection to a websocket.
 //!
 //! ```rust,no_run
-//!use futures_util::{SinkExt, StreamExt, TryStreamExt};
-//!use http::header;
-//!use wreq::{Client, Message};
-//!use std::time::Duration;
+//! use futures_util::{
+//!     SinkExt,
+//!     StreamExt,
+//!     TryStreamExt,
+//! };
+//! use http::header;
+//! use std::time::Duration;
+//! use wreq::{
+//!     Client,
+//!     Message,
+//! };
 //!
-//!#[tokio::main]
-//!async fn main() -> wreq::Result<()> {
-//!    // Build a client
-//!    let client = Client::builder()
-//!        .cert_verification(false)
-//!        .connect_timeout(Duration::from_secs(10))
-//!        .build()?;
+//! #[tokio::main]
+//! async fn main() -> wreq::Result<()> {
+//!     // Build a client
+//!     let client = Client::builder()
+//!         .cert_verification(false)
+//!         .connect_timeout(Duration::from_secs(10))
+//!         .build()?;
 //!
-//!    // Use the API you're already familiar with
-//!    let websocket = client
-//!        .websocket("wss://echo.websocket.org")
-//!        .header(header::USER_AGENT, env!("CARGO_PKG_NAME"))
-//!        .send()
-//!        .await?;
+//!     // Use the API you're already familiar with
+//!     let websocket = client
+//!         .websocket("wss://echo.websocket.org")
+//!         .header(header::USER_AGENT, env!("CARGO_PKG_NAME"))
+//!         .send()
+//!         .await?;
 //!
-//!    assert_eq!(websocket.version(), http::Version::HTTP_11);
+//!     assert_eq!(websocket.version(), http::Version::HTTP_11);
 //!
-//!    let (mut tx, mut rx) = websocket.into_websocket().await?.split();
+//!     let (mut tx, mut rx) = websocket.into_websocket().await?.split();
 //!
-//!    tokio::spawn(async move {
-//!        for i in 1..11 {
-//!            if let Err(err) = tx.send(Message::text(format!("Hello, World! {i}"))).await {
-//!                eprintln!("failed to send message: {err}");
-//!            }
-//!        }
-//!    });
+//!     tokio::spawn(async move {
+//!         for i in 1..11 {
+//!             if let Err(err) = tx.send(Message::text(format!("Hello, World! {i}"))).await {
+//!                 eprintln!("failed to send message: {err}");
+//!             }
+//!         }
+//!     });
 //!
-//!    while let Some(message) = rx.try_next().await? {
-//!        if let Message::Text(text) = message {
-//!            println!("received: {text}");
-//!        }
-//!    }
+//!     while let Some(message) = rx.try_next().await? {
+//!         if let Message::Text(text) = message {
+//!             println!("received: {text}");
+//!         }
+//!     }
 //!
-//!    Ok(())
-//!}
+//!     Ok(())
+//! }
 //! ```
 //!
 //! ## Making a GET request
@@ -127,7 +133,8 @@
 //! #
 //! # async fn run() -> Result<(), Error> {
 //! let client = wreq::Client::new();
-//! let res = client.post("http://httpbin.org/post")
+//! let res = client
+//!     .post("http://httpbin.org/post")
 //!     .body("the exact body that is sent")
 //!     .send()
 //!     .await?;
@@ -150,7 +157,8 @@
 //! // This will POST a body of `foo=bar&baz=quux`
 //! let params = [("foo", "bar"), ("baz", "quux")];
 //! let client = wreq::Client::new();
-//! let res = client.post("http://httpbin.org/post")
+//! let res = client
+//!     .post("http://httpbin.org/post")
 //!     .form(&params)
 //!     .send()
 //!     .await?;
@@ -176,7 +184,8 @@
 //! map.insert("body", "json");
 //!
 //! let client = wreq::Client::new();
-//! let res = client.post("http://httpbin.org/post")
+//! let res = client
+//!     .post("http://httpbin.org/post")
 //!     .json(&map)
 //!     .send()
 //!     .await?;
@@ -227,17 +236,18 @@
 //!
 //! By default, clients will utilize BoringSSL transport layer security to connect to HTTPS targets.
 //!
-//! - Various parts of TLS can also be configured or even disabled on the
-//!   `ClientBuilder`.
+//! - Various parts of TLS can also be configured or even disabled on the `ClientBuilder`.
 //!
 //! ## Certificate Store
 //!
 //! By default, wreq uses Mozilla's root certificates through the webpki-roots crate.
-//! This static root certificate bundle is not automatically updated and ignores any root certificates installed on the host.
-//! You can disable default-features to use the system's default certificate path.
-//! Additionally, wreq provides a certificate store for users to customize and update certificates.
+//! This static root certificate bundle is not automatically updated and ignores any root
+//! certificates installed on the host. You can disable default-features to use the system's default
+//! certificate path. Additionally, wreq provides a certificate store for users to customize and
+//! update certificates.
 //!
-//! Custom Certificate Store verification supports Root CA certificates, peer certificates, and self-signed certificate SSL pinning.
+//! Custom Certificate Store verification supports Root CA certificates, peer certificates, and
+//! self-signed certificate SSL pinning.
 //!
 //! ## Optional Features
 //!
@@ -255,8 +265,8 @@
 //! - **multipart**: Provides functionality for multipart forms.
 //! - **stream**: Adds support for `futures::Stream`.
 //! - **socks**: Provides SOCKS5 proxy support.
-//! - **hickory-dns**: Enables a hickory-dns async resolver instead of default
-//!   threadpool using `getaddrinfo`.
+//! - **hickory-dns**: Enables a hickory-dns async resolver instead of default threadpool using
+//!   `getaddrinfo`.
 //! - **native-roots**: Use the native system root certificate store.
 //! - **webpki-roots**: Use the webpki-roots crate for root certificates.
 //! - **tracing**: Enable tracing.
