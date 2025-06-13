@@ -266,7 +266,7 @@ impl StdError for TooManyRedirects {}
 
 #[derive(Clone)]
 pub(crate) struct TowerRedirectPolicy {
-    policy: Policy,
+    policy: RequestConfig<RequestRedirectPolicy>,
     referer: bool,
     urls: Vec<Url>,
     https_only: bool,
@@ -275,7 +275,7 @@ pub(crate) struct TowerRedirectPolicy {
 impl TowerRedirectPolicy {
     pub(crate) fn new(policy: Policy) -> Self {
         Self {
-            policy,
+            policy: RequestConfig::<RequestRedirectPolicy>::new(Some(policy)),
             referer: false,
             urls: Vec::new(),
             https_only: false,
@@ -319,8 +319,15 @@ impl TowerPolicy<Body, BoxError> for TowerRedirectPolicy {
         // Push the previous URL to the list of URLs.
         self.urls.push(previous_url.clone());
 
+        // Get policy from config
+        let policy = self.policy.as_ref().ok_or_else(|| {
+            BoxError::from(error::request(
+                "RequestRedirectPolicy not set in request config",
+            ))
+        })?;
+
         // Check if the next URL is already in the list of URLs.
-        match self.policy.check(attempt.status(), &next_url, &self.urls) {
+        match policy.check(attempt.status(), &next_url, &self.urls) {
             ActionKind::Follow => {
                 if next_url.scheme() != "http" && next_url.scheme() != "https" {
                     return Err(BoxError::from(error::url_bad_scheme(next_url)));
@@ -354,11 +361,7 @@ impl TowerPolicy<Body, BoxError> for TowerRedirectPolicy {
 
         // If the request has a `RequestRedirectPolicy` extension, use it to
         // override the current policy.
-        if let Some(policy) =
-            RequestConfig::<RequestRedirectPolicy>::get(req.extensions_mut()).cloned()
-        {
-            self.policy = policy;
-        }
+        self.policy.replace_from(req.extensions());
     }
 
     // This is must implemented to make 307 and 308 redirects work

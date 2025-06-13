@@ -1472,7 +1472,7 @@ impl Client {
                 .expect("valid request parts");
 
             // Inject metadata into request extensions
-            self.inner.original_headers.or_insert(&mut extensions);
+            self.inner.original_headers.replace_to(&mut extensions);
 
             // Finalize headers and extensions
             *req.headers_mut() = headers.clone();

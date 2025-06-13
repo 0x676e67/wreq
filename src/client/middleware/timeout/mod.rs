@@ -2,10 +2,7 @@ mod body;
 mod future;
 mod layer;
 
-use std::{
-    task::{Context, Poll},
-    time::Duration,
-};
+use std::task::{Context, Poll};
 
 use http::{Request, Response};
 use tower_service::Service;
@@ -25,23 +22,8 @@ use crate::{
 #[derive(Clone)]
 pub struct Timeout<T> {
     inner: T,
-    total_timeout: Option<Duration>,
-    read_timeout: Option<Duration>,
-}
-
-impl<T> Timeout<T> {
-    /// Creates a new [`HttpTimeout`]
-    pub const fn new(
-        inner: T,
-        total_timeout: Option<Duration>,
-        read_timeout: Option<Duration>,
-    ) -> Self {
-        Timeout {
-            inner,
-            total_timeout,
-            read_timeout,
-        }
-    }
+    total_timeout: RequestConfig<RequestTotalTimeout>,
+    read_timeout: RequestConfig<RequestReadTimeout>,
 }
 
 impl<ReqBody, ResBody, S> Service<Request<ReqBody>> for Timeout<S>
@@ -56,15 +38,17 @@ where
         self.inner.poll_ready(cx)
     }
 
-    fn call(&mut self, mut req: Request<ReqBody>) -> Self::Future {
-        let total_timeout = RequestConfig::<RequestTotalTimeout>::get(req.extensions_mut())
+    fn call(&mut self, req: Request<ReqBody>) -> Self::Future {
+        let total_timeout = self
+            .total_timeout
+            .fetch(req.extensions())
             .copied()
-            .or(self.total_timeout)
             .map(tokio::time::sleep);
 
-        let read_timeout = RequestConfig::<RequestReadTimeout>::get(req.extensions_mut())
+        let read_timeout = self
+            .read_timeout
+            .fetch(req.extensions())
             .copied()
-            .or(self.read_timeout)
             .map(tokio::time::sleep);
 
         let uri = req.uri().clone();
@@ -82,8 +66,8 @@ where
 #[derive(Clone)]
 pub struct ResponseBodyTimeout<S> {
     inner: S,
-    read_timeout: Option<Duration>,
-    total_timeout: Option<Duration>,
+    total_timeout: RequestConfig<RequestTotalTimeout>,
+    read_timeout: RequestConfig<RequestReadTimeout>,
 }
 
 impl<S, ReqBody, ResBody> Service<Request<ReqBody>> for ResponseBodyTimeout<S>
@@ -98,15 +82,9 @@ where
         self.inner.poll_ready(cx)
     }
 
-    fn call(&mut self, mut req: Request<ReqBody>) -> Self::Future {
-        let total_timeout = RequestConfig::<RequestTotalTimeout>::get(req.extensions_mut())
-            .cloned()
-            .or(self.total_timeout);
-
-        let read_timeout = RequestConfig::<RequestReadTimeout>::get(req.extensions_mut())
-            .copied()
-            .or(self.read_timeout);
-
+    fn call(&mut self, req: Request<ReqBody>) -> Self::Future {
+        let total_timeout = self.total_timeout.fetch(req.extensions()).copied();
+        let read_timeout = self.read_timeout.fetch(req.extensions()).copied();
         ResponseBodyTimeoutFuture {
             inner: self.inner.call(req),
             total_timeout,

@@ -50,35 +50,71 @@ impl<T> RequestConfig<T>
 where
     T: RequestConfigValue,
 {
-    pub(crate) fn new(v: Option<T::Value>) -> Self {
+    #[inline]
+    pub(crate) const fn new(v: Option<T::Value>) -> Self {
         RequestConfig(v)
     }
 
-    /// Retrieve the value from the request's Extensions.
-    pub(crate) fn get(ext: &Extensions) -> Option<&T::Value> {
-        ext.get::<RequestConfig<T>>().and_then(|v| v.0.as_ref())
+    #[inline]
+    pub(crate) const fn as_ref(&self) -> Option<&T::Value> {
+        self.0.as_ref()
     }
 
-    /// Or insert the value into the request's Extensions if it does not already exist.
-    pub(crate) fn or_insert<'client, 'request>(&'client self, ext: &'request mut Extensions)
-    where
-        'client: 'request,
-    {
+    /// Retrieve the value from the request-scoped configuration.
+    ///
+    /// If the request specifies a value, use that value; otherwise, attempt to retrieve it from the
+    /// current instance (typically a client instance).
+    #[inline]
+    pub(crate) fn fetch<'a>(&'a self, ext: &'a Extensions) -> Option<&'a T::Value> {
+        ext.get::<RequestConfig<T>>()
+            .and_then(|v| v.0.as_ref())
+            .or(self.0.as_ref())
+    }
+
+    /// Replaces the internal value with a clone of the corresponding value found in the given
+    /// `Extensions`, if present.
+    ///
+    /// This method attempts to retrieve a value of type `RequestConfig<T>` from the provided
+    /// `Extensions`. If such a value exists, the current internal value is replaced with a
+    /// clone of that value. If not, the internal value remains unchanged.
+    #[inline]
+    pub(crate) fn replace_from(&mut self, ext: &Extensions) {
+        if let Some(value) = RequestConfig::<T>::get(ext) {
+            self.0 = Some(value.clone());
+        }
+    }
+
+    /// Inserts this value into the given `Extensions` if it does not already contain one of the
+    /// same type.
+    ///
+    /// This method checks whether the provided `Extensions` contains a `RequestConfig<T>`.
+    /// If not, it clones the current value and inserts it into the extensions. If a value already
+    /// exists, the method does nothing.
+    #[inline]
+    pub(crate) fn replace_to(&self, ext: &mut Extensions) {
         let option_value = ext.get_mut::<RequestConfig<T>>();
         if option_value.is_none() {
             ext.insert(self.clone());
         }
     }
 
-    /// Retrieve the value from the request's Extensions, consuming it.
-    pub(crate) fn remove(ext: &mut Extensions) -> Option<T::Value> {
-        ext.remove::<RequestConfig<T>>().and_then(|v| v.0)
+    /// Retrieve the value from the request's Extensions.
+    #[inline]
+    pub(crate) fn get(ext: &Extensions) -> Option<&T::Value> {
+        ext.get::<RequestConfig<T>>().and_then(|v| v.0.as_ref())
     }
 
     /// Retrieve the mutable value from the request's Extensions.
+    #[inline]
     pub(crate) fn get_mut(ext: &mut Extensions) -> &mut Option<T::Value> {
         let cfg = ext.get_or_insert_default::<RequestConfig<T>>();
         &mut cfg.0
+    }
+
+    /// Retrieve the value from the request's Extensions, consuming it.
+    #[inline]
+    pub(crate) fn remove(ext: &mut Extensions) -> Option<T::Value> {
+        ext.remove::<RequestConfig<T>>().and_then(|v| v.0)
     }
 }
 
