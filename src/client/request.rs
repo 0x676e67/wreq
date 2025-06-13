@@ -31,7 +31,7 @@ use super::{
 use crate::core::ext::RequestInterface;
 use crate::{
     Method, OriginalHeaders, Proxy, Url,
-    config::{RequestReadTimeout, RequestTotalTimeout},
+    config::{RequestReadTimeout, RequestRedirectPolicy, RequestTotalTimeout},
     core::ext::{
         RequestConfig, RequestHttpVersionPref, RequestIpv4Addr, RequestIpv6Addr,
         RequestOriginalHeaders, RequestProxyMatcher,
@@ -48,7 +48,6 @@ pub struct Request {
     headers: HeaderMap,
     body: Option<Body>,
     extensions: Extensions,
-    redirect: Option<redirect::Policy>,
     allow_compression: bool,
 }
 
@@ -71,7 +70,6 @@ impl Request {
             headers: HeaderMap::new(),
             body: None,
             extensions: Extensions::new(),
-            redirect: None,
             allow_compression: cfg!(any(
                 feature = "gzip",
                 feature = "brotli",
@@ -132,13 +130,13 @@ impl Request {
     /// Get the redirect policy.
     #[inline]
     pub fn redirect(&self) -> Option<&redirect::Policy> {
-        self.redirect.as_ref()
+        RequestConfig::<RequestRedirectPolicy>::get(&self.extensions)
     }
 
     /// Get a mutable reference to the redirect policy.
     #[inline]
     pub fn redirect_mut(&mut self) -> &mut Option<redirect::Policy> {
-        &mut self.redirect
+        RequestConfig::<RequestRedirectPolicy>::get_mut(&mut self.extensions)
     }
 
     /// Get a mutable reference to the allow_compression policy.
@@ -278,24 +276,13 @@ impl Request {
     }
 
     #[allow(clippy::type_complexity)]
-    pub(super) fn pieces(
-        self,
-    ) -> (
-        Method,
-        Url,
-        HeaderMap,
-        Option<Body>,
-        Extensions,
-        Option<redirect::Policy>,
-        bool,
-    ) {
+    pub(super) fn pieces(self) -> (Method, Url, HeaderMap, Option<Body>, Extensions, bool) {
         (
             self.method,
             self.url,
             self.headers,
             self.body,
             self.extensions,
-            self.redirect,
             self.allow_compression,
         )
     }
@@ -596,7 +583,7 @@ impl RequestBuilder {
     /// Set the redirect policy for this request.
     pub fn redirect(mut self, policy: redirect::Policy) -> RequestBuilder {
         if let Ok(ref mut req) = self.request {
-            req.redirect = Some(policy)
+            *req.redirect_mut() = Some(policy);
         }
         self
     }
@@ -927,7 +914,6 @@ where
             url,
             headers,
             body: Some(body.into()),
-            redirect: None,
             allow_compression: cfg!(any(
                 feature = "gzip",
                 feature = "brotli",

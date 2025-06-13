@@ -1408,8 +1408,7 @@ impl Client {
     }
 
     pub(super) fn execute_request(&self, req: Request) -> Pending {
-        let (method, url, mut headers, body, mut extensions, redirect, _allow_compression) =
-            req.pieces();
+        let (method, url, mut headers, body, mut extensions, _allow_compression) = req.pieces();
 
         // get the scheme of the URL
         let scheme = url.scheme();
@@ -1491,7 +1490,6 @@ impl Client {
                 body: reusable,
                 extensions,
                 http2_retry_count: 0,
-                redirect,
                 inner: self.inner.clone(),
                 in_flight,
             })),

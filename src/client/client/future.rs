@@ -22,7 +22,6 @@ use crate::{
     },
     core::{body::Incoming, service::Oneshot},
     error::{self, BoxError},
-    redirect,
 };
 
 type ResponseFuture = Oneshot<
@@ -51,7 +50,6 @@ pin_project! {
         pub body: Option<Option<Bytes>>,
         pub extensions: Extensions,
         pub http2_retry_count: usize,
-        pub redirect: Option<redirect::Policy>,
         pub inner: Arc<ClientRef>,
         #[pin]
         pub in_flight: ResponseFuture,

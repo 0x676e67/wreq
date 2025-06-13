@@ -16,6 +16,8 @@ use crate::{
             Action as TowerAction, Attempt as TowerAttempt, Policy as TowerPolicy,
         },
     },
+    config::RequestRedirectPolicy,
+    core::ext::RequestConfig,
     error::{self, BoxError},
     header::{AUTHORIZATION, COOKIE, PROXY_AUTHORIZATION, REFERER, WWW_AUTHENTICATE},
 };
@@ -264,7 +266,7 @@ impl StdError for TooManyRedirects {}
 
 #[derive(Clone)]
 pub(crate) struct TowerRedirectPolicy {
-    policy: Arc<Policy>,
+    policy: Policy,
     referer: bool,
     urls: Vec<Url>,
     https_only: bool,
@@ -273,7 +275,7 @@ pub(crate) struct TowerRedirectPolicy {
 impl TowerRedirectPolicy {
     pub(crate) fn new(policy: Policy) -> Self {
         Self {
-            policy: Arc::new(policy),
+            policy,
             referer: false,
             urls: Vec::new(),
             https_only: false,
@@ -310,11 +312,14 @@ impl TowerPolicy<Body, BoxError> for TowerRedirectPolicy {
             Url::parse(input).map_err(|e| BoxError::from(error::builder(e)))
         }
 
+        // Parse the next URL from the attempt.
         let previous_url = parse_url(&attempt.previous().to_string())?;
         let next_url = parse_url(&attempt.location().to_string())?;
 
+        // Push the previous URL to the list of URLs.
         self.urls.push(previous_url.clone());
 
+        // Check if the next URL is already in the list of URLs.
         match self.policy.check(attempt.status(), &next_url, &self.urls) {
             ActionKind::Follow => {
                 if next_url.scheme() != "http" && next_url.scheme() != "https" {
@@ -335,6 +340,7 @@ impl TowerPolicy<Body, BoxError> for TowerRedirectPolicy {
     }
 
     fn on_request(&mut self, req: &mut http::Request<Body>) {
+        // Parse the request URL and update the list of URLs.
         if let Ok(next_url) = Url::parse(&req.uri().to_string()) {
             remove_sensitive_headers(req.headers_mut(), &next_url, &self.urls);
             if self.referer {
@@ -345,6 +351,14 @@ impl TowerPolicy<Body, BoxError> for TowerRedirectPolicy {
                 }
             }
         };
+
+        // If the request has a `RequestRedirectPolicy` extension, use it to
+        // override the current policy.
+        if let Some(policy) =
+            RequestConfig::<RequestRedirectPolicy>::get(req.extensions_mut()).cloned()
+        {
+            self.policy = policy;
+        }
     }
 
     // This is must implemented to make 307 and 308 redirects work
