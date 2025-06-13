@@ -36,111 +36,86 @@ pub(crate) type BoxedConnectorService = BoxCloneSyncService<Unnameable, Conn, Bo
 pub(crate) type BoxedConnectorLayer =
     BoxCloneSyncServiceLayer<BoxedConnectorService, Unnameable, Conn, BoxError>;
 
-pub(crate) struct ConnectorBuilder {
-    http: HttpConnector,
-    tls: TlsConnector,
-    proxies: Arc<Vec<ProxyMatcher>>,
-    verbose: verbose::Wrapper,
-    timeout: Option<Duration>,
-    nodelay: bool,
-    tls_info: bool,
-    #[cfg(feature = "socks")]
-    resolver: DynResolver,
-}
+pub(crate) struct ConnectorBuilder(ConnectorService);
 
 impl ConnectorBuilder {
-    pub(crate) fn build<L>(self, layers: L) -> Connector
-    where
-        L: Into<Option<Vec<BoxedConnectorLayer>>>,
-    {
-        let base_service = ConnectorService {
-            http: self.http,
-            tls: self.tls,
-            proxies: self.proxies,
-            verbose: self.verbose,
-            nodelay: self.nodelay,
-            tls_info: self.tls_info,
-            timeout: self.timeout,
-            #[cfg(feature = "socks")]
-            resolver: self.resolver,
-        };
+    pub(crate) fn build(self, layers: Option<Vec<BoxedConnectorLayer>>) -> Connector {
+        let base_service = self.0;
+        let timeout = base_service.timeout;
 
-        match layers.into() {
-            Some(layers) => {
-                // otherwise we have user provided layers
-                // so we need type erasure all the way through
-                // as well as mapping the unnameable type of the layers back to Dst for the inner service
-                let service = layers.into_iter().fold(
-                    BoxCloneSyncService::new(
-                        ServiceBuilder::new()
-                            .layer(MapRequestLayer::new(|request: Unnameable| request.0))
-                            .service(base_service),
-                    ),
-                    |service, layer| ServiceBuilder::new().layer(layer).service(service),
-                );
+        if let Some(layers) = layers {
+            // otherwise we have user provided layers
+            // so we need type erasure all the way through
+            // as well as mapping the unnameable type of the layers back to Dst for the inner service
+            let service = layers.into_iter().fold(
+                BoxCloneSyncService::new(
+                    ServiceBuilder::new()
+                        .layer(MapRequestLayer::new(|request: Unnameable| request.0))
+                        .service(base_service),
+                ),
+                |service, layer| ServiceBuilder::new().layer(layer).service(service),
+            );
 
-                // now we handle the concrete stuff - any `connect_timeout`,
-                // plus a final map_err layer we can use to cast default tower layer
-                // errors to internal errors
-                match self.timeout {
-                    Some(timeout) => {
-                        let service = ServiceBuilder::new()
-                            .layer(TimeoutLayer::new(timeout))
-                            .service(service);
-                        let service = ServiceBuilder::new()
-                            .map_err(cast_timeout_to_error)
-                            .service(service);
-                        let service = BoxCloneSyncService::new(service);
-                        Connector::WithLayers(service)
-                    }
-                    None => {
-                        // no timeout, but still map err
-                        // no named timeout layer but we still map errors since
-                        // we might have user-provided timeout layer
-                        let service = ServiceBuilder::new()
-                            .map_err(cast_timeout_to_error)
-                            .service(service);
-                        let service = BoxCloneSyncService::new(service);
-                        Connector::WithLayers(service)
-                    }
+            // now we handle the concrete stuff - any `connect_timeout`,
+            // plus a final map_err layer we can use to cast default tower layer
+            // errors to internal errors
+            return match timeout {
+                Some(timeout) => {
+                    let service = ServiceBuilder::new()
+                        .layer(TimeoutLayer::new(timeout))
+                        .service(service);
+                    let service = ServiceBuilder::new()
+                        .map_err(cast_timeout_to_error)
+                        .service(service);
+                    let service = BoxCloneSyncService::new(service);
+                    Connector::WithLayers(service)
                 }
-            }
-            None => {
-                // we have no user-provided layers, only use concrete types
-                Connector::Simple(base_service)
-            }
+                None => {
+                    // no timeout, but still map err
+                    // no named timeout layer but we still map errors since
+                    // we might have user-provided timeout layer
+                    let service = ServiceBuilder::new()
+                        .map_err(cast_timeout_to_error)
+                        .service(service);
+                    let service = BoxCloneSyncService::new(service);
+                    Connector::WithLayers(service)
+                }
+            };
         }
+
+        // we have no user-provided layers, only use concrete types
+        Connector::Simple(base_service)
     }
 
     #[inline(always)]
     pub(crate) fn keepalive(mut self, dur: Option<Duration>) -> ConnectorBuilder {
-        self.http.set_keepalive(dur);
+        self.0.http.set_keepalive(dur);
         self
     }
 
     #[inline(always)]
     pub(crate) fn tcp_keepalive_interval(mut self, dur: Option<Duration>) -> ConnectorBuilder {
-        self.http.set_keepalive_interval(dur);
+        self.0.http.set_keepalive_interval(dur);
         self
     }
 
     #[inline(always)]
     pub(crate) fn tcp_keepalive_retries(mut self, retries: Option<u32>) -> ConnectorBuilder {
-        self.http.set_keepalive_retries(retries);
+        self.0.http.set_keepalive_retries(retries);
         self
     }
 
     #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
     #[inline(always)]
     pub(crate) fn tcp_user_timeout(mut self, dur: Option<Duration>) -> ConnectorBuilder {
-        self.http.set_tcp_user_timeout(dur);
+        self.0.http.set_tcp_user_timeout(dur);
         self
     }
 
     #[inline(always)]
     pub(crate) fn timeout(mut self, timeout: Option<Duration>) -> ConnectorBuilder {
-        self.timeout = timeout;
-        self.http.set_connect_timeout(timeout);
+        self.0.timeout = timeout;
+        self.0.http.set_connect_timeout(timeout);
         self
     }
 
@@ -161,7 +136,7 @@ impl ConnectorBuilder {
         mut self,
         iface: Option<std::borrow::Cow<'static, str>>,
     ) -> ConnectorBuilder {
-        self.http.set_interface(iface);
+        self.0.http.set_interface(iface);
         self
     }
 
@@ -172,10 +147,10 @@ impl ConnectorBuilder {
         local_ipv6_address: Option<Ipv6Addr>,
     ) -> ConnectorBuilder {
         match (local_ipv4_address, local_ipv6_address) {
-            (Some(ipv4), None) => self.http.set_local_address(Some(IpAddr::from(ipv4))),
-            (None, Some(ipv6)) => self.http.set_local_address(Some(IpAddr::from(ipv6))),
+            (Some(ipv4), None) => self.0.http.set_local_address(Some(IpAddr::from(ipv4))),
+            (None, Some(ipv6)) => self.0.http.set_local_address(Some(IpAddr::from(ipv6))),
             (Some(ipv4), Some(ipv6)) => {
-                self.http.set_local_addresses(ipv4, ipv6);
+                self.0.http.set_local_addresses(ipv4, ipv6);
             }
             (None, None) => {}
         }
@@ -185,7 +160,7 @@ impl ConnectorBuilder {
 
     #[inline(always)]
     pub(crate) fn verbose(mut self, enabled: bool) -> ConnectorBuilder {
-        self.verbose.0 = enabled;
+        self.0.verbose.0 = enabled;
         self
     }
 }
@@ -209,7 +184,7 @@ impl Connector {
         #[cfg(feature = "socks")] resolver: DynResolver,
     ) -> ConnectorBuilder {
         http.enforce_http(false);
-        ConnectorBuilder {
+        ConnectorBuilder(ConnectorService {
             http,
             tls,
             proxies,
@@ -219,7 +194,7 @@ impl Connector {
             tls_info,
             #[cfg(feature = "socks")]
             resolver,
-        }
+        })
     }
 }
 
