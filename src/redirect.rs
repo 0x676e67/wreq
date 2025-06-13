@@ -12,7 +12,7 @@ use http::{HeaderMap, HeaderValue, StatusCode};
 use crate::client::middleware::redirect::policy::{
     Action as TowerAction, Attempt as TowerAttempt, Policy as TowerPolicy,
 };
-use crate::error::BoxError;
+use crate::error::{self, BoxError};
 use crate::header::{AUTHORIZATION, COOKIE, PROXY_AUTHORIZATION, REFERER, WWW_AUTHENTICATE};
 use crate::{Url, client::Body};
 
@@ -302,32 +302,32 @@ fn make_referer(next: &Url, previous: &Url) -> Option<HeaderValue> {
 
 impl TowerPolicy<Body, BoxError> for TowerRedirectPolicy {
     fn redirect(&mut self, attempt: &TowerAttempt<'_>) -> Result<TowerAction, BoxError> {
-        let previous_url =
-            Url::parse(&attempt.previous().to_string()).expect("Previous URL must be valid");
+        #[inline(always)]
+        fn parse_url(input: &str) -> Result<Url, BoxError> {
+            Url::parse(input).map_err(|e| BoxError::from(error::builder(e)))
+        }
 
-        let next_url = match Url::parse(&attempt.location().to_string()) {
-            Ok(url) => url,
-            Err(e) => return Err(BoxError::from(crate::error::builder(e))),
-        };
+        let previous_url = parse_url(&attempt.previous().to_string())?;
+        let next_url = parse_url(&attempt.location().to_string())?;
 
         self.urls.push(previous_url.clone());
 
         match self.policy.check(attempt.status(), &next_url, &self.urls) {
             ActionKind::Follow => {
                 if next_url.scheme() != "http" && next_url.scheme() != "https" {
-                    return Err(BoxError::from(crate::error::url_bad_scheme(next_url)));
+                    return Err(BoxError::from(error::url_bad_scheme(next_url)));
                 }
 
                 if self.https_only && next_url.scheme() != "https" {
-                    return Err(BoxError::from(crate::error::redirect(
-                        crate::error::url_bad_scheme(next_url.clone()),
+                    return Err(BoxError::from(error::redirect(
+                        error::url_bad_scheme(next_url.clone()),
                         next_url,
                     )));
                 }
                 Ok(TowerAction::Follow)
             }
             ActionKind::Stop => Ok(TowerAction::Stop),
-            ActionKind::Error(e) => Err(BoxError::from(crate::error::redirect(e, previous_url))),
+            ActionKind::Error(e) => Err(BoxError::from(error::redirect(e, previous_url))),
         }
     }
 
