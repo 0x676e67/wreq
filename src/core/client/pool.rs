@@ -1,23 +1,26 @@
-use std::collections::{HashMap, HashSet, VecDeque};
-use std::convert::Infallible;
-use std::error::Error as StdError;
-use std::fmt::{self, Debug};
-use std::future::Future;
-use std::hash::Hash;
-use std::num::NonZero;
-use std::ops::{Deref, DerefMut};
-use std::pin::Pin;
-use std::sync::{Arc, Weak};
-use std::task::{self, Poll, ready};
-use std::time::{Duration, Instant};
+use std::{
+    collections::{HashMap, HashSet, VecDeque},
+    convert::Infallible,
+    error::Error as StdError,
+    fmt::{self, Debug},
+    future::Future,
+    hash::Hash,
+    num::NonZero,
+    ops::{Deref, DerefMut},
+    pin::Pin,
+    sync::{Arc, Weak},
+    task::{self, Poll, ready},
+    time::{Duration, Instant},
+};
 
 use antidote::Mutex;
 use lru::LruCache;
-
-use crate::core::common::{exec, exec::Exec, timer::Timer};
-use crate::core::rt::Sleep;
-use crate::core::rt::Timer as _;
 use tokio::sync::oneshot;
+
+use crate::core::{
+    common::{exec, exec::Exec, timer::Timer},
+    rt::{Sleep, Timer as _},
+};
 
 // FIXME: allow() required due to `impl Trait` leaking types to this lint
 #[allow(missing_debug_implementations)]

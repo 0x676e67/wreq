@@ -22,20 +22,24 @@
 //! upgrade is agreed upon by the server (such as a `101` status code), and then
 //! get the `Future` from the `Response`.
 
-use std::any::TypeId;
-use std::error::Error as StdError;
-use std::fmt;
-use std::future::Future;
-use std::io;
-use std::pin::Pin;
-use std::sync::{Arc, Mutex};
-use std::task::{Context, Poll};
-
-use crate::core::common::io::Rewind;
-use crate::core::rt::{Read, ReadBufCursor, Write};
+use std::{
+    any::TypeId,
+    error::Error as StdError,
+    fmt,
+    future::Future,
+    io,
+    pin::Pin,
+    sync::{Arc, Mutex},
+    task::{Context, Poll},
+};
 
 use bytes::Bytes;
 use tokio::sync::oneshot;
+
+use crate::core::{
+    common::io::Rewind,
+    rt::{Read, ReadBufCursor, Write},
+};
 
 /// An upgraded HTTP connection.
 ///

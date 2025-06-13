@@ -1,27 +1,29 @@
 pub(crate) mod client;
 pub(crate) mod ping;
 
-use std::error::Error as StdError;
-use std::future::Future;
-use std::io::{Cursor, IoSlice};
-use std::mem;
-use std::pin::Pin;
-use std::task::{Context, Poll, ready};
+use std::{
+    future::Future,
+    io::{Cursor, IoSlice},
+    mem,
+    pin::Pin,
+    task::{Context, Poll, ready},
+};
 
 use bytes::{Buf, Bytes};
-use http::HeaderMap;
-use http::header::{CONNECTION, HeaderName, TE, TRANSFER_ENCODING, UPGRADE};
+use http::{
+    HeaderMap,
+    header::{CONNECTION, HeaderName, TE, TRANSFER_ENCODING, UPGRADE},
+};
 use http_body::Body;
 use http2::{Reason, RecvStream, SendStream};
 use pin_project_lite::pin_project;
 
+pub(crate) use self::client::ClientTask;
 use crate::core::{
     error::BoxError,
     proto::h2::ping::Recorder,
     rt::{Read, ReadBufCursor, Write},
 };
-
-pub(crate) use self::client::ClientTask;
 
 /// Default initial stream window size defined in HTTP2 spec.
 pub(crate) const SPEC_WINDOW_SIZE: u32 = 65_535;
@@ -106,7 +108,7 @@ where
 impl<S> Future for PipeToSendStream<S>
 where
     S: Body,
-    S::Error: Into<Box<dyn StdError + Send + Sync>>,
+    S::Error: Into<BoxError>,
 {
     type Output = crate::core::Result<()>;
 

@@ -13,15 +13,6 @@
 
 pub mod policy;
 
-use self::policy::{Action, Attempt, Policy};
-use futures_util::future::Either;
-use http::{
-    Extensions, HeaderMap, HeaderValue, Method, Request, Response, StatusCode, Uri, Version,
-    header::{CONTENT_ENCODING, CONTENT_LENGTH, CONTENT_TYPE, LOCATION, TRANSFER_ENCODING},
-};
-use http_body::Body;
-use iri_string::types::{UriAbsoluteString, UriReferenceStr};
-use pin_project_lite::pin_project;
 use std::{
     convert::TryFrom,
     future::Future,
@@ -30,9 +21,19 @@ use std::{
     str,
     task::{Context, Poll, ready},
 };
-use tower::Layer;
-use tower::util::Oneshot;
+
+use futures_util::future::Either;
+use http::{
+    Extensions, HeaderMap, HeaderValue, Method, Request, Response, StatusCode, Uri, Version,
+    header::{CONTENT_ENCODING, CONTENT_LENGTH, CONTENT_TYPE, LOCATION, TRANSFER_ENCODING},
+};
+use http_body::Body;
+use iri_string::types::{UriAbsoluteString, UriReferenceStr};
+use pin_project_lite::pin_project;
+use tower::{Layer, util::Oneshot};
 use tower_service::Service;
+
+use self::policy::{Action, Attempt, Policy};
 
 /// [`Layer`] for retrying requests with a [`Service`] to follow redirection responses.
 ///

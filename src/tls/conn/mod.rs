@@ -3,24 +3,27 @@ mod boring;
 mod cache;
 mod ext;
 
-use crate::core::client::connect::{Connected, Connection};
-use crate::core::rt::TokioIo;
-use crate::tls::AlpsProtos;
+use std::{
+    fmt,
+    io::IoSlice,
+    pin::Pin,
+    sync::LazyLock,
+    task::{Context, Poll},
+};
 
-use crate::core::rt::{Read, ReadBufCursor, Write};
-use boring2::error::ErrorStack;
-use boring2::ex_data::Index;
-use boring2::ssl::Ssl;
+use boring2::{error::ErrorStack, ex_data::Index, ssl::Ssl};
 use cache::SessionKey;
-use std::fmt;
-use std::io::IoSlice;
-use std::pin::Pin;
-use std::sync::LazyLock;
-use std::task::{Context, Poll};
 use tokio::io;
 use tokio_boring2::SslStream;
 
 pub use self::boring::{HttpsConnector, TlsConnector};
+use crate::{
+    core::{
+        client::connect::{Connected, Connection},
+        rt::{Read, ReadBufCursor, TokioIo, Write},
+    },
+    tls::AlpsProtos,
+};
 
 fn key_index() -> Result<Index<Ssl, SessionKey>, ErrorStack> {
     static IDX: LazyLock<Result<Index<Ssl, SessionKey>, ErrorStack>> =

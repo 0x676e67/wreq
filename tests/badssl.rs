@@ -1,7 +1,9 @@
 use std::time::Duration;
 
-use wreq::tls::{AlpsProtos, TlsConfig, TlsInfo, TlsVersion};
-use wreq::{Client, EmulationProvider};
+use wreq::{
+    Client, EmulationProvider,
+    tls::{AlpsProtos, TlsConfig, TlsInfo, TlsVersion},
+};
 
 macro_rules! join {
     ($sep:expr, $first:expr $(, $rest:expr)*) => {

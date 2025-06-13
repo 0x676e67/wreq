@@ -1,23 +1,24 @@
 use std::{
-    error::Error as StdError,
     future::Future,
     marker::Unpin,
     pin::Pin,
     task::{Context, Poll, ready},
 };
 
-use crate::core::rt::{Read, Write};
 use bytes::{Buf, Bytes};
 use http::Request;
 use http_body::Body;
 
 use super::{Http1Transaction, Wants};
-
-use crate::core::body::{DecodedLength, Incoming as IncomingBody};
-use crate::core::client::dispatch::TrySendError;
-use crate::core::common::task;
-use crate::core::proto::{BodyLength, Conn, Dispatched, MessageHead, RequestHead};
-use crate::core::upgrade::OnUpgrade;
+use crate::core::{
+    body::{DecodedLength, Incoming as IncomingBody},
+    client::dispatch::TrySendError,
+    common::task,
+    error::BoxError,
+    proto::{BodyLength, Conn, Dispatched, MessageHead, RequestHead},
+    rt::{Read, Write},
+    upgrade::OnUpgrade,
+};
 
 pub(crate) struct Dispatcher<D, Bs: Body, I, T> {
     conn: Conn<I, Bs::Data, T>,
@@ -65,11 +66,11 @@ where
             PollBody = Bs,
             RecvItem = MessageHead<T::Incoming>,
         > + Unpin,
-    D::PollError: Into<Box<dyn StdError + Send + Sync>>,
+    D::PollError: Into<BoxError>,
     I: Read + Write + Unpin,
     T: Http1Transaction + Unpin,
     Bs: Body + 'static,
-    Bs::Error: Into<Box<dyn StdError + Send + Sync>>,
+    Bs::Error: Into<BoxError>,
 {
     pub(crate) fn new(dispatch: D, conn: Conn<I, Bs::Data, T>) -> Self {
         Dispatcher {
@@ -424,11 +425,11 @@ where
             PollBody = Bs,
             RecvItem = MessageHead<T::Incoming>,
         > + Unpin,
-    D::PollError: Into<Box<dyn StdError + Send + Sync>>,
+    D::PollError: Into<BoxError>,
     I: Read + Write + Unpin,
     T: Http1Transaction + Unpin,
     Bs: Body + 'static,
-    Bs::Error: Into<Box<dyn StdError + Send + Sync>>,
+    Bs::Error: Into<BoxError>,
 {
     type Output = crate::core::Result<Dispatched>;
 
@@ -587,10 +588,10 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::core::common::io::Compat;
-    use crate::core::proto::h1::ClientTransaction;
     use std::time::Duration;
+
+    use super::*;
+    use crate::core::{common::io::Compat, proto::h1::ClientTransaction};
 
     #[test]
     fn client_read_bytes_before_writing_request() {

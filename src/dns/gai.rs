@@ -1,8 +1,10 @@
-use crate::core::client::connect::dns::GaiResolver as NativeGaiResolver;
 use tower_service::Service;
 
-use crate::dns::{Addrs, Name, Resolve, Resolving};
-use crate::error::BoxError;
+use crate::{
+    core::client::connect::dns::GaiResolver as NativeGaiResolver,
+    dns::{Addrs, Name, Resolve, Resolving},
+    error::BoxError,
+};
 
 #[derive(Debug)]
 pub struct GaiResolver(NativeGaiResolver);

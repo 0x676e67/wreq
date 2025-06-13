@@ -1,7 +1,8 @@
-use super::super::{ParsingError, SerializeError};
+use std::net::SocketAddrV4;
 
 use bytes::{Buf, BufMut, BytesMut};
-use std::net::SocketAddrV4;
+
+use super::super::{ParsingError, SerializeError};
 
 /// +-----+-----+----+----+----+----+----+----+-------------+------+------------+------+
 /// |  VN |  CD | DSTPORT |        DSTIP      |    USERID   | NULL |   DOMAIN   | NULL |

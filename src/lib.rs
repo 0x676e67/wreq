@@ -274,9 +274,7 @@
 #[macro_use]
 mod trace;
 
-pub use http::Method;
-pub use http::header;
-pub use http::{StatusCode, Version};
+pub use http::{Method, StatusCode, Version, header};
 pub use url::Url;
 
 mod config;
@@ -284,9 +282,11 @@ mod error;
 mod into_url;
 mod response;
 
-pub use self::error::{Error, Result};
-pub use self::into_url::IntoUrl;
-pub use self::response::ResponseBuilderExt;
+pub use self::{
+    error::{Error, Result},
+    into_url::IntoUrl,
+    response::ResponseBuilderExt,
+};
 
 fn _assert_impls() {
     fn assert_send<T: Send>() {}
@@ -319,17 +319,18 @@ doc_comment::doctest!("../README.md");
 pub use self::client::multipart;
 #[cfg(feature = "websocket")]
 pub use self::client::websocket;
-
-pub use self::client::{
-    Body, Client, ClientBuilder, EmulationProvider, EmulationProviderFactory, Request,
-    RequestBuilder, Response, Upgraded,
+pub use self::{
+    client::{
+        Body, Client, ClientBuilder, EmulationProvider, EmulationProviderFactory, Request,
+        RequestBuilder, Response, Upgraded,
+    },
+    core::{
+        client::Dst,
+        config::{http1, http2},
+        ext::OriginalHeaders,
+    },
+    proxy::{NoProxy, Proxy},
 };
-pub use self::core::{
-    client::Dst,
-    config::{http1, http2},
-    ext::OriginalHeaders,
-};
-pub use self::proxy::{NoProxy, Proxy};
 
 mod client;
 mod connect;

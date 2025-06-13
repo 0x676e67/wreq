@@ -1,5 +1,6 @@
-use super::{Message, Utf8Bytes};
 use serde::{Serialize, de::DeserializeOwned};
+
+use super::{Message, Utf8Bytes};
 
 impl Message {
     /// Tries to serialize the JSON as a [`Message::Text`].
@@ -67,8 +68,9 @@ impl Message {
 
 #[cfg(test)]
 mod test {
-    use super::Message;
     use serde::{Deserialize, Serialize};
+
+    use super::Message;
 
     #[derive(Default, Serialize, Deserialize)]
     struct Content {

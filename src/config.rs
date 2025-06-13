@@ -1,5 +1,6 @@
-use crate::core::ext::RequestConfigValue;
 use std::time::Duration;
+
+use crate::core::ext::RequestConfigValue;
 
 // ================================
 //

@@ -1,7 +1,5 @@
 mod handle;
 
-use antidote::RwLock;
-pub use handle::KeyLogHandle;
 use std::{
     borrow::Cow,
     collections::{HashMap, hash_map::Entry},
@@ -9,6 +7,9 @@ use std::{
     path::{Component, Path, PathBuf},
     sync::OnceLock,
 };
+
+use antidote::RwLock;
+pub use handle::KeyLogHandle;
 
 static GLOBAL_KEYLOG_FILE_MAPPING: OnceLock<RwLock<HashMap<PathBuf, KeyLogHandle>>> =
     OnceLock::new();

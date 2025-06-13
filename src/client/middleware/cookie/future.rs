@@ -1,14 +1,16 @@
 //! [`Future`] types.
 
-use super::CookieStore;
-use http::Response;
-use pin_project_lite::pin_project;
 use std::{
     future::Future,
     pin::Pin,
     sync::Arc,
     task::{Context, Poll},
 };
+
+use http::Response;
+use pin_project_lite::pin_project;
+
+use super::CookieStore;
 
 pin_project! {
     /// Response future for [`CookieManager`].

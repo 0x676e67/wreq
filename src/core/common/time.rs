@@ -1,9 +1,11 @@
-use std::time::Duration;
-use std::{fmt, sync::Arc};
-use std::{pin::Pin, time::Instant};
+use std::{
+    fmt,
+    pin::Pin,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
-use crate::core::rt::Sleep;
-use crate::core::rt::Timer;
+use crate::core::rt::{Sleep, Timer};
 
 /// A user-provided timer to time background tasks.
 #[derive(Clone)]

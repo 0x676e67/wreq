@@ -1,15 +1,17 @@
-use super::body::TimeoutBody;
-use crate::error::{self, BoxError, TimedOut};
-use http::{Response, Uri};
-use pin_project_lite::pin_project;
 use std::{
     future::Future,
     pin::Pin,
     task::{Context, Poll, ready},
     time::Duration,
 };
+
+use http::{Response, Uri};
+use pin_project_lite::pin_project;
 use tokio::time::Sleep;
 use url::Url;
+
+use super::body::TimeoutBody;
+use crate::error::{self, BoxError, TimedOut};
 
 pin_project! {
     /// [`Timeout`] response future

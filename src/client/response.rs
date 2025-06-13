@@ -1,25 +1,23 @@
-use std::fmt;
-use std::net::SocketAddr;
+use std::{fmt, net::SocketAddr};
 
-use crate::core::client::connect::HttpInfo;
 use bytes::Bytes;
+#[cfg(feature = "charset")]
+use encoding_rs::{Encoding, UTF_8};
 use http::{HeaderMap, StatusCode, Version};
 use http_body_util::BodyExt;
+#[cfg(feature = "charset")]
+use mime::Mime;
 #[cfg(feature = "json")]
 use serde::de::DeserializeOwned;
 use url::Url;
 
-use super::body::Body;
-use super::body::ResponseBody;
-use super::decoder::{Accepts, Decoder};
-
+use super::{
+    body::{Body, ResponseBody},
+    decoder::{Accepts, Decoder},
+};
 #[cfg(feature = "cookies")]
 use crate::cookie;
-
-#[cfg(feature = "charset")]
-use encoding_rs::{Encoding, UTF_8};
-#[cfg(feature = "charset")]
-use mime::Mime;
+use crate::core::client::connect::HttpInfo;
 
 /// A Response to a submitted `Request`.
 pub struct Response {
@@ -475,10 +473,11 @@ impl From<Response> for Body {
 
 #[cfg(test)]
 mod tests {
-    use super::Response;
-    use crate::ResponseBuilderExt;
     use http::response::Builder;
     use url::Url;
+
+    use super::Response;
+    use crate::ResponseBuilderExt;
 
     #[test]
     fn test_from_http_response() {

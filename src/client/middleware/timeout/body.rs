@@ -1,13 +1,15 @@
-use crate::error::{self, BoxError, TimedOut};
-use http_body::Body;
-use pin_project_lite::pin_project;
 use std::{
     future::Future,
     pin::Pin,
     task::{Context, Poll, ready},
     time::Duration,
 };
+
+use http_body::Body;
+use pin_project_lite::pin_project;
 use tokio::time::{Sleep, sleep};
+
+use crate::error::{self, BoxError, TimedOut};
 
 pin_project! {
     /// A wrapper body that applies timeout strategies to an inner HTTP body.

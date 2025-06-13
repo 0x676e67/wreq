@@ -1,5 +1,8 @@
-use std::task::{Context, Poll};
-use std::{future::Future, pin::Pin};
+use std::{
+    future::Future,
+    pin::Pin,
+    task::{Context, Poll},
+};
 
 use http::{Request, Response};
 use http_body::Body;

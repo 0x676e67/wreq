@@ -20,13 +20,17 @@
 //!     Ok::<_, Infallible>(iter::once(SocketAddr::from(([127, 0, 0, 1], 8080))))
 //! });
 //! ```
-use std::error::Error;
-use std::future::{self, Future};
-use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6, ToSocketAddrs};
-use std::pin::Pin;
-use std::str::FromStr;
-use std::task::{self, Poll};
-use std::{fmt, io, vec};
+use std::{
+    error::Error,
+    fmt,
+    future::{self, Future},
+    io,
+    net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6, ToSocketAddrs},
+    pin::Pin,
+    str::FromStr,
+    task::{self, Poll},
+    vec,
+};
 
 use tokio::task::JoinHandle;
 use tower_service::Service;
@@ -258,8 +262,11 @@ impl Iterator for SocketAddrs {
 }
 
 mod sealed {
-    use std::future::Future;
-    use std::task::{self, Poll};
+    use std::{
+        future::Future,
+        task::{self, Poll},
+    };
+
     use tower_service::Service;
 
     use super::{Name, SocketAddr};
@@ -304,8 +311,9 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::net::{Ipv4Addr, Ipv6Addr};
+
+    use super::*;
 
     #[test]
     fn test_ip_addrs_split_by_preference() {

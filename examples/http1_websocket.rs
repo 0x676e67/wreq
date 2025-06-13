@@ -1,7 +1,7 @@
-use futures_util::{SinkExt, StreamExt, TryStreamExt};
 use std::time::Duration;
-use wreq::websocket::Message;
-use wreq::{Client, header};
+
+use futures_util::{SinkExt, StreamExt, TryStreamExt};
+use wreq::{Client, header, websocket::Message};
 
 #[tokio::main]
 async fn main() -> wreq::Result<()> {

@@ -1,4 +1,3 @@
-use std::fmt;
 #[cfg(any(
     feature = "gzip",
     feature = "zstd",
@@ -6,29 +5,21 @@ use std::fmt;
     feature = "deflate"
 ))]
 use std::future::Future;
-use std::pin::Pin;
-use std::task::{Context, Poll, ready};
-
-#[cfg(any(
-    feature = "gzip",
-    feature = "zstd",
-    feature = "brotli",
-    feature = "deflate"
-))]
-use futures_util::stream::Fuse;
-
-#[cfg(feature = "gzip")]
-use async_compression::tokio::bufread::GzipDecoder;
+use std::{
+    fmt,
+    pin::Pin,
+    task::{Context, Poll, ready},
+};
 
 #[cfg(feature = "brotli")]
 use async_compression::tokio::bufread::BrotliDecoder;
-
-#[cfg(feature = "zstd")]
-use async_compression::tokio::bufread::ZstdDecoder;
-
+#[cfg(feature = "gzip")]
+use async_compression::tokio::bufread::GzipDecoder;
 #[cfg(feature = "deflate")]
 use async_compression::tokio::bufread::ZlibDecoder;
-
+#[cfg(feature = "zstd")]
+use async_compression::tokio::bufread::ZstdDecoder;
+use bytes::Bytes;
 #[cfg(any(
     feature = "gzip",
     feature = "zstd",
@@ -36,12 +27,15 @@ use async_compression::tokio::bufread::ZlibDecoder;
     feature = "deflate",
 ))]
 use futures_util::Stream;
-
-use bytes::Bytes;
+#[cfg(any(
+    feature = "gzip",
+    feature = "zstd",
+    feature = "brotli",
+    feature = "deflate"
+))]
+use futures_util::stream::Fuse;
 use http::HeaderMap;
-use http_body::Body as HttpBody;
-use http_body::Frame;
-
+use http_body::{Body as HttpBody, Frame};
 #[cfg(any(
     feature = "gzip",
     feature = "brotli",
@@ -57,6 +51,7 @@ use tokio_util::codec::{BytesCodec, FramedRead};
 ))]
 use tokio_util::io::StreamReader;
 
+use super::body::ResponseBody;
 #[cfg(any(
     feature = "gzip",
     feature = "zstd",
@@ -64,8 +59,6 @@ use tokio_util::io::StreamReader;
     feature = "deflate",
 ))]
 use crate::error::BoxError;
-
-use super::body::ResponseBody;
 
 #[derive(Clone, Copy, Debug)]
 pub(super) struct Accepts {

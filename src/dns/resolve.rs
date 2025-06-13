@@ -1,15 +1,16 @@
-use crate::core::client::connect::dns::Name as HyperName;
+use std::{
+    collections::HashMap,
+    future::Future,
+    net::SocketAddr,
+    pin::Pin,
+    str::FromStr,
+    sync::Arc,
+    task::{Context, Poll},
+};
+
 use tower_service::Service;
 
-use std::collections::HashMap;
-use std::future::Future;
-use std::net::SocketAddr;
-use std::pin::Pin;
-use std::str::FromStr;
-use std::sync::Arc;
-use std::task::{Context, Poll};
-
-use crate::error::BoxError;
+use crate::{core::client::connect::dns::Name as HyperName, error::BoxError};
 
 /// Alias for an `Iterator` trait object over `SocketAddr`.
 pub type Addrs = Box<dyn Iterator<Item = SocketAddr> + Send>;

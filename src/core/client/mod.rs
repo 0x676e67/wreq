@@ -13,37 +13,38 @@ mod dst;
 mod pool;
 pub mod proxy;
 
-use std::borrow::Cow;
-use std::error::Error as StdError;
-use std::fmt;
-use std::future::Future;
-use std::net::{Ipv4Addr, Ipv6Addr};
-use std::num::NonZeroUsize;
-use std::pin::Pin;
-use std::task::{self, Poll};
-use std::time::Duration;
-
-use crate::core::client::conn::TrySendError as ConnTrySendError;
-use crate::core::common;
-use crate::core::rt::Timer;
-use crate::http1::Http1Config;
-use crate::http2::Http2Config;
-use crate::proxy::Intercepted;
-use crate::tls::AlpnProtos;
-
-use futures_util::future::{self, Either, FutureExt, TryFutureExt};
-use http::uri::Scheme;
-use http::{HeaderValue, Method, Request, Response, Uri, Version, header::HOST};
-use http_body::Body;
-use sync_wrapper::SyncWrapper;
-
-use connect::capture::CaptureConnectionExtension;
-use connect::{Alpn, Connect, Connected, Connection};
-use pool::Ver;
+use std::{
+    borrow::Cow,
+    error::Error as StdError,
+    fmt,
+    future::Future,
+    net::{Ipv4Addr, Ipv6Addr},
+    num::NonZeroUsize,
+    pin::Pin,
+    task::{self, Poll},
+    time::Duration,
+};
 
 use common::{Exec, Lazy, lazy as hyper_lazy, timer};
-
+use connect::{Alpn, Connect, Connected, Connection, capture::CaptureConnectionExtension};
 pub use dst::Dst;
+use futures_util::future::{self, Either, FutureExt, TryFutureExt};
+use http::{HeaderValue, Method, Request, Response, Uri, Version, header::HOST, uri::Scheme};
+use http_body::Body;
+use pool::Ver;
+use sync_wrapper::SyncWrapper;
+
+use crate::{
+    core::{
+        client::conn::TrySendError as ConnTrySendError,
+        common,
+        config::{http1::Http1Config, http2::Http2Config},
+        error::BoxError,
+        rt::Timer,
+    },
+    proxy::Intercepted,
+    tls::AlpnProtos,
+};
 
 type BoxSendFuture = Pin<Box<dyn Future<Output = ()> + Send>>;
 
@@ -84,7 +85,7 @@ struct Config {
 /// Client errors
 pub struct Error {
     kind: ErrorKind,
-    source: Option<Box<dyn StdError + Send + Sync>>,
+    source: Option<BoxError>,
 
     connect_info: Option<Connected>,
 }
@@ -196,7 +197,7 @@ where
     C: Connect + Clone + Send + Sync + 'static,
     B: Body + Send + 'static + Unpin,
     B::Data: Send,
-    B::Error: Into<Box<dyn StdError + Send + Sync>>,
+    B::Error: Into<BoxError>,
 {
     /// Send a constructed `Request` using this `Client`.
     ///
@@ -708,7 +709,7 @@ where
     C: Connect + Clone + Send + Sync + 'static,
     B: Body + Send + 'static + Unpin,
     B::Data: Send,
-    B::Error: Into<Box<dyn StdError + Send + Sync>>,
+    B::Error: Into<BoxError>,
 {
     type Response = Response<crate::core::body::Incoming>;
     type Error = Error;
@@ -728,7 +729,7 @@ where
     C: Connect + Clone + Send + Sync + 'static,
     B: Body + Send + 'static + Unpin,
     B::Data: Send,
-    B::Error: Into<Box<dyn StdError + Send + Sync>>,
+    B::Error: Into<BoxError>,
 {
     type Response = Response<crate::core::body::Incoming>;
     type Error = Error;

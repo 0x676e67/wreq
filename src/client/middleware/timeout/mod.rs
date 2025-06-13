@@ -2,21 +2,23 @@ mod body;
 mod future;
 mod layer;
 
+use std::{
+    task::{Context, Poll},
+    time::Duration,
+};
+
+use http::{Request, Response};
+use tower_service::Service;
+
+use self::future::{ResponseBodyTimeoutFuture, ResponseFuture};
+pub use self::{
+    body::TimeoutBody,
+    layer::{ResponseBodyTimeoutLayer, TimeoutLayer},
+};
 use crate::{
     config::{RequestReadTimeout, RequestTotalTimeout},
     core::ext::RequestConfig,
     error::BoxError,
-};
-
-use self::future::{ResponseBodyTimeoutFuture, ResponseFuture};
-use http::{Request, Response};
-use std::task::{Context, Poll};
-use std::time::Duration;
-use tower_service::Service;
-
-pub use self::{
-    body::TimeoutBody,
-    layer::{ResponseBodyTimeoutLayer, TimeoutLayer},
 };
 
 /// Timeout middleware for HTTP requests only.

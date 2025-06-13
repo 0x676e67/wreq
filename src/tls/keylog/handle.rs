@@ -1,6 +1,9 @@
-use std::fs::OpenOptions;
-use std::io::{Error, Result, Write};
-use std::{path::PathBuf, sync::mpsc::Sender};
+use std::{
+    fs::OpenOptions,
+    io::{Error, Result, Write},
+    path::PathBuf,
+    sync::mpsc::Sender,
+};
 
 /// Handle for writing to a key log file.
 #[derive(Debug, Clone)]

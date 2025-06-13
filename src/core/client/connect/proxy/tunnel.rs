@@ -1,13 +1,18 @@
-use std::error::Error as StdError;
-use std::future::Future;
-use std::marker::{PhantomData, Unpin};
-use std::pin::Pin;
-use std::task::{self, Poll};
+use std::{
+    future::Future,
+    marker::{PhantomData, Unpin},
+    pin::Pin,
+    task::{self, Poll},
+};
 
-use crate::core::rt::{Read, Write};
 use http::{HeaderMap, HeaderValue, Uri};
 use pin_project_lite::pin_project;
 use tower_service::Service;
+
+use crate::core::{
+    error::BoxError,
+    rt::{Read, Write},
+};
 
 /// Tunnel Proxy via HTTP CONNECT
 ///
@@ -30,7 +35,7 @@ enum Headers {
 
 #[derive(Debug)]
 pub enum TunnelError {
-    ConnectFailed(Box<dyn StdError + Send + Sync>),
+    ConnectFailed(BoxError),
     Io(std::io::Error),
     MissingHost,
     ProxyAuthRequired,
@@ -120,7 +125,7 @@ where
     C: Service<Uri>,
     C::Future: Send + 'static,
     C::Response: Read + Write + Unpin + Send + 'static,
-    C::Error: Into<Box<dyn StdError + Send + Sync>>,
+    C::Error: Into<BoxError>,
 {
     type Response = C::Response;
     type Error = TunnelError;
@@ -259,8 +264,10 @@ impl std::error::Error for TunnelError {
 
 #[cfg(test)]
 mod tests {
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
-    use tokio::net::{TcpListener, TcpStream};
+    use tokio::{
+        io::{AsyncReadExt, AsyncWriteExt},
+        net::{TcpListener, TcpStream},
+    };
     use tower_service::Service;
 
     use super::Tunnel;

@@ -1,17 +1,15 @@
-use std::error::Error as StdError;
-use std::fmt;
-use std::io;
-use std::task::{Context, Poll, ready};
+use std::{
+    error::Error as StdError,
+    fmt, io,
+    task::{Context, Poll, ready},
+};
 
 use bytes::{BufMut, Bytes, BytesMut};
 use http::{HeaderMap, HeaderName, HeaderValue};
 use http_body::Frame;
 
-use super::DecodedLength;
-use super::io::MemRead;
-use super::role::DEFAULT_MAX_HEADERS;
-
 use self::Kind::{Chunked, Eof, Length};
+use super::{DecodedLength, io::MemRead, role::DEFAULT_MAX_HEADERS};
 
 /// Maximum amount of bytes allowed in chunked extensions.
 ///
@@ -689,10 +687,10 @@ impl StdError for IncompleteBody {}
 
 #[cfg(test)]
 mod tests {
+    use std::{pin::Pin, time::Duration};
+
     use super::*;
     use crate::core::rt::{Read, ReadBuf};
-    use std::pin::Pin;
-    use std::time::Duration;
 
     impl MemRead for &[u8] {
         fn read_mem(&mut self, _: &mut Context<'_>, len: usize) -> Poll<io::Result<Bytes>> {

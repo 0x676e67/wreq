@@ -19,17 +19,18 @@
 //!    3c. Calculate bdp as bytes/rtt.
 //!    3d. If bdp is over 2/3 max, set new max to bdp and update windows.
 
-use std::fmt;
-use std::future::Future;
-use std::pin::Pin;
-use std::sync::{Arc, Mutex};
-use std::task::{self, Poll};
-use std::time::{Duration, Instant};
+use std::{
+    fmt,
+    future::Future,
+    pin::Pin,
+    sync::{Arc, Mutex},
+    task::{self, Poll},
+    time::{Duration, Instant},
+};
 
 use http2::{Ping, PingPong};
 
-use crate::core::common::time::Time;
-use crate::core::rt::Sleep;
+use crate::core::{common::time::Time, rt::Sleep};
 
 type WindowSize = u32;
 

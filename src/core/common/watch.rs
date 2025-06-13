@@ -4,12 +4,15 @@
 //! - The consumer is only notified if the value is different.
 //! - The value `0` is reserved for closed.
 
-use atomic_waker::AtomicWaker;
-use std::sync::{
-    Arc,
-    atomic::{AtomicUsize, Ordering},
+use std::{
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
+    task,
 };
-use std::task;
+
+use atomic_waker::AtomicWaker;
 
 type Value = usize;
 

@@ -2,15 +2,18 @@ use bytes::BytesMut;
 use http::{HeaderMap, Method};
 use httparse::ParserConfig;
 
-use crate::core::body::DecodedLength;
-use crate::core::proto::{BodyLength, MessageHead};
-
-pub(crate) use self::conn::Conn;
-pub(crate) use self::decode::Decoder;
-pub(crate) use self::dispatch::Dispatcher;
-pub(crate) use self::encode::{EncodedBuf, Encoder};
+pub(crate) use self::{
+    conn::Conn,
+    decode::Decoder,
+    dispatch::Dispatcher,
+    encode::{EncodedBuf, Encoder},
+};
 //TODO: move out of h1::io
 pub(crate) use self::io::MINIMUM_MAX_BUFFER_SIZE;
+use crate::core::{
+    body::DecodedLength,
+    proto::{BodyLength, MessageHead},
+};
 
 mod conn;
 mod decode;

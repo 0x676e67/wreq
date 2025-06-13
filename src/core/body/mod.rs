@@ -20,9 +20,7 @@
 //! [`http-body-util`]: https://docs.rs/http-body-util
 
 pub use self::incoming::Incoming;
-
-pub(crate) use self::incoming::Sender;
-pub(crate) use self::length::DecodedLength;
+pub(crate) use self::{incoming::Sender, length::DecodedLength};
 
 mod incoming;
 mod length;

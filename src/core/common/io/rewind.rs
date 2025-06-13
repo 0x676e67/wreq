@@ -1,6 +1,8 @@
-use std::pin::Pin;
-use std::task::{Context, Poll};
-use std::{cmp, io};
+use std::{
+    cmp, io,
+    pin::Pin,
+    task::{Context, Poll},
+};
 
 use bytes::{Buf, Bytes};
 
@@ -107,10 +109,10 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::super::Compat;
-    use super::Rewind;
     use bytes::Bytes;
     use tokio::io::AsyncReadExt;
+
+    use super::{super::Compat, Rewind};
 
     #[cfg(not(miri))]
     #[tokio::test]

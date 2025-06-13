@@ -1,33 +1,38 @@
-use self::tls_conn::BoringTlsConn;
-
-use crate::core::client::connect::proxy::Tunnel;
-use crate::core::client::{
-    Dst,
-    connect::{Connected, Connection},
+use std::{
+    future::Future,
+    io::{self, IoSlice},
+    net::{IpAddr, Ipv4Addr, Ipv6Addr},
+    pin::Pin,
+    sync::Arc,
+    task::{Context, Poll},
+    time::Duration,
 };
-use crate::core::rt::TokioIo;
-use crate::core::rt::{Read, ReadBufCursor, Write};
-use crate::tls::{HttpsConnector, MaybeHttpsStream, TlsConnector};
 
 use http::uri::Scheme;
 use pin_project_lite::pin_project;
 use sealed::{Conn, Unnameable};
 use tokio_boring2::SslStream;
-use tower::util::{BoxCloneSyncServiceLayer, MapRequestLayer};
-use tower::{ServiceBuilder, timeout::TimeoutLayer, util::BoxCloneSyncService};
+use tower::{
+    ServiceBuilder,
+    timeout::TimeoutLayer,
+    util::{BoxCloneSyncService, BoxCloneSyncServiceLayer, MapRequestLayer},
+};
 use tower_service::Service;
 
-use std::future::Future;
-use std::io::{self, IoSlice};
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
-use std::pin::Pin;
-use std::sync::Arc;
-use std::task::{Context, Poll};
-use std::time::Duration;
-
-use crate::dns::DynResolver;
-use crate::error::{BoxError, cast_timeout_to_error};
-use crate::proxy::{Intercepted, Matcher as ProxyMatcher};
+use self::tls_conn::BoringTlsConn;
+use crate::{
+    core::{
+        client::{
+            Dst,
+            connect::{Connected, Connection, proxy::Tunnel},
+        },
+        rt::{Read, ReadBufCursor, TokioIo, Write},
+    },
+    dns::DynResolver,
+    error::{BoxError, cast_timeout_to_error},
+    proxy::{Intercepted, Matcher as ProxyMatcher},
+    tls::{HttpsConnector, MaybeHttpsStream, TlsConnector},
+};
 
 pub(crate) type HttpConnector = crate::core::client::connect::HttpConnector<DynResolver>;
 
@@ -556,24 +561,27 @@ pub(crate) mod sealed {
 pub(crate) type Connecting = Pin<Box<dyn Future<Output = Result<Conn, BoxError>> + Send>>;
 
 mod tls_conn {
-    use super::TlsInfoFactory;
-    use crate::core::rt::{Read, ReadBufCursor, Write};
-    use crate::{
-        core::client::connect::{Connected, Connection},
-        core::rt::TokioIo,
-        tls::MaybeHttpsStream,
-    };
-    use pin_project_lite::pin_project;
     use std::{
         io::{self, IoSlice},
         pin::Pin,
         task::{Context, Poll},
     };
+
+    use pin_project_lite::pin_project;
     use tokio::{
         io::{AsyncRead, AsyncWrite},
         net::TcpStream,
     };
     use tokio_boring2::SslStream;
+
+    use super::TlsInfoFactory;
+    use crate::{
+        core::{
+            client::connect::{Connected, Connection},
+            rt::{Read, ReadBufCursor, TokioIo, Write},
+        },
+        tls::MaybeHttpsStream,
+    };
 
     pin_project! {
         pub(super) struct BoringTlsConn<T> {
@@ -692,14 +700,21 @@ mod verbose {
 
     #[cfg(feature = "tracing")]
     mod sealed {
+        use std::{
+            fmt,
+            io::{self, IoSlice},
+            pin::Pin,
+            task::{Context, Poll},
+        };
+
         use super::super::TlsInfoFactory;
-        use crate::core::client::connect::{Connected, Connection};
-        use crate::core::rt::{Read, ReadBufCursor, Write};
-        use crate::tls::TlsInfo;
-        use std::fmt;
-        use std::io::{self, IoSlice};
-        use std::pin::Pin;
-        use std::task::{Context, Poll};
+        use crate::{
+            core::{
+                client::connect::{Connected, Connection},
+                rt::{Read, ReadBufCursor, Write},
+            },
+            tls::TlsInfo,
+        };
 
         pub(super) struct Verbose<T> {
             pub(super) id: u32,

@@ -1,68 +1,72 @@
 pub(super) mod future;
 mod service;
 
-use std::future::Future;
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
-use std::num::NonZeroUsize;
-
-use std::sync::Arc;
-use std::task::{Context, Poll};
-use std::time::Duration;
-use std::{collections::HashMap, convert::TryInto, net::SocketAddr};
-
-use crate::connect::{
-    BoxedConnectorLayer, BoxedConnectorService, Connector,
-    sealed::{Conn, Unnameable},
+use std::{
+    collections::HashMap,
+    convert::TryInto,
+    future::Future,
+    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
+    num::NonZeroUsize,
+    sync::Arc,
+    task::{Context, Poll},
+    time::Duration,
 };
-use crate::core::{
-    body::Incoming,
-    client::{Builder, Client as HyperClient, connect::HttpConnector},
-    ext::{RequestConfig, RequestOriginalHeaders},
-    rt::{TokioExecutor, tokio::TokioTimer},
-    service::Oneshot,
-};
-
-use crate::error::{BoxError, Error};
-use crate::http1::Http1Config;
-use crate::http2::Http2Config;
-use crate::into_url::try_uri;
-use crate::proxy::Matcher as ProxyMatcher;
-use crate::redirect::TowerRedirectPolicy;
-use crate::tls::{CertStore, CertificateInput, Identity, KeyLogPolicy, TlsConfig};
-use crate::{IntoUrl, Method, OriginalHeaders, Proxy};
-use crate::{
-    error, redirect,
-    tls::{AlpnProtos, TlsConnector, TlsVersion},
-};
-
-#[cfg(feature = "hickory-dns")]
-use crate::dns::hickory::{HickoryDnsResolver, LookupIpStrategy};
-use crate::dns::{DnsResolverWithOverrides, DynResolver, Resolve, gai::GaiResolver};
-
-use super::decoder::Accepts;
-use super::middleware::{
-    redirect::FollowRedirectLayer,
-    timeout::{ResponseBodyTimeoutLayer, TimeoutBody, TimeoutLayer},
-};
-use super::request::{Request, RequestBuilder};
-use super::response::Response;
-#[cfg(feature = "websocket")]
-use super::websocket::WebSocketRequestBuilder;
-use super::{Body, EmulationProviderFactory};
-#[cfg(feature = "cookies")]
-use {super::middleware::cookie::CookieManagerLayer, crate::cookie};
 
 use future::{Pending, PendingInner, PendingRequest};
-
 use http::{
     Uri,
     header::{HeaderMap, HeaderValue, PROXY_AUTHORIZATION, USER_AGENT},
     uri::Scheme,
 };
-
 use service::ClientService;
-use tower::util::{BoxCloneSyncService, BoxCloneSyncServiceLayer};
-use tower::{Layer, Service, ServiceBuilder};
+use tower::{
+    Layer, Service, ServiceBuilder,
+    util::{BoxCloneSyncService, BoxCloneSyncServiceLayer},
+};
+#[cfg(feature = "cookies")]
+use {super::middleware::cookie::CookieManagerLayer, crate::cookie};
+
+#[cfg(feature = "websocket")]
+use super::websocket::WebSocketRequestBuilder;
+use super::{
+    Body, EmulationProviderFactory,
+    decoder::Accepts,
+    middleware::{
+        redirect::FollowRedirectLayer,
+        timeout::{ResponseBodyTimeoutLayer, TimeoutBody, TimeoutLayer},
+    },
+    request::{Request, RequestBuilder},
+    response::Response,
+};
+#[cfg(feature = "hickory-dns")]
+use crate::dns::hickory::{HickoryDnsResolver, LookupIpStrategy};
+use crate::{
+    IntoUrl, Method, OriginalHeaders, Proxy,
+    connect::{
+        BoxedConnectorLayer, BoxedConnectorService, Connector,
+        sealed::{Conn, Unnameable},
+    },
+    core::{
+        body::Incoming,
+        client::{Builder, Client as HyperClient, connect::HttpConnector},
+        ext::{RequestConfig, RequestOriginalHeaders},
+        rt::{TokioExecutor, tokio::TokioTimer},
+        service::Oneshot,
+    },
+    dns::{DnsResolverWithOverrides, DynResolver, Resolve, gai::GaiResolver},
+    error,
+    error::{BoxError, Error},
+    http1::Http1Config,
+    http2::Http2Config,
+    into_url::try_uri,
+    proxy::Matcher as ProxyMatcher,
+    redirect,
+    redirect::TowerRedirectPolicy,
+    tls::{
+        AlpnProtos, CertStore, CertificateInput, Identity, KeyLogPolicy, TlsConfig, TlsConnector,
+        TlsVersion,
+    },
+};
 
 type BoxedClientService =
     BoxCloneSyncService<http::Request<Body>, http::Response<TimeoutBody<Incoming>>, BoxError>;

@@ -1,6 +1,8 @@
-use super::{AlpnProtos, AlpsProtos, TlsVersion};
-use boring2::ssl::{CertCompressionAlgorithm, ExtensionType};
 use std::borrow::Cow;
+
+use boring2::ssl::{CertCompressionAlgorithm, ExtensionType};
+
+use super::{AlpnProtos, AlpsProtos, TlsVersion};
 
 /// Builder for `[`TlsConfig`]`.
 #[must_use]

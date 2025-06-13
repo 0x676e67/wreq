@@ -1,9 +1,11 @@
 mod parser;
 
-use super::{Certificate, CertificateInput};
+use std::{fmt::Debug, path::Path};
+
 use boring2::x509::store::{X509Store, X509StoreBuilder};
 use parser::{filter_map_certs, parse_certs_from_iter, parse_certs_from_stack, process_certs};
-use std::{fmt::Debug, path::Path};
+
+use super::{Certificate, CertificateInput};
 
 /// A builder for constructing a `CertStore`.
 ///

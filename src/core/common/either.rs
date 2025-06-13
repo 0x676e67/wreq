@@ -1,9 +1,10 @@
-use pin_project_lite::pin_project;
 use std::{
     future::Future,
     pin::Pin,
     task::{Context, Poll},
 };
+
+use pin_project_lite::pin_project;
 
 pin_project! {
     /// One of two possible futures that have the same output type.

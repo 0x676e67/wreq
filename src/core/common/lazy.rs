@@ -1,8 +1,10 @@
-use pin_project_lite::pin_project;
+use std::{
+    future::Future,
+    pin::Pin,
+    task::{self, Poll},
+};
 
-use std::future::Future;
-use std::pin::Pin;
-use std::task::{self, Poll};
+use pin_project_lite::pin_project;
 
 pub(crate) trait Started: Future {
     fn started(&self) -> bool;

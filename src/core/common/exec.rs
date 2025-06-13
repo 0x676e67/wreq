@@ -1,10 +1,8 @@
 #![allow(dead_code)]
 
+use std::{fmt, future::Future, pin::Pin, sync::Arc};
+
 use crate::core::rt::Executor;
-use std::fmt;
-use std::future::Future;
-use std::pin::Pin;
-use std::sync::Arc;
 
 pub(crate) type BoxSendFuture = Pin<Box<dyn Future<Output = ()> + Send>>;
 

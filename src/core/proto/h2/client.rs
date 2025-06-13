@@ -7,42 +7,37 @@ use std::{
     time::Duration,
 };
 
-use crate::core::{
-    error::BoxError,
-    ext::{RequestConfig, RequestOriginalHeaders},
-    rt::{Read, Write},
-};
 use bytes::Bytes;
-use futures_channel::mpsc::{Receiver, Sender};
-use futures_channel::{mpsc, oneshot};
+use futures_channel::{
+    mpsc,
+    mpsc::{Receiver, Sender},
+    oneshot,
+};
 use futures_core::{FusedFuture, FusedStream, Stream};
-use http::{Method, StatusCode};
+use http::{Method, Request, Response, StatusCode};
 use http_body::Body;
-use http2::{SendStream, frame::Priorities};
 use http2::{
-    client::{Builder, Connection, SendRequest},
-    frame::ExperimentalSettings,
+    SendStream,
+    client::{Builder, Connection, ResponseFuture, SendRequest},
+    frame::{ExperimentalSettings, Priorities, PseudoOrder, SettingsOrder, StreamDependency},
 };
 use pin_project_lite::pin_project;
 
-use super::ping::{Ponger, Recorder};
-use super::{H2Upgraded, PipeToSendStream, SendBuf, ping};
-use crate::core::body::Incoming as IncomingBody;
-use crate::core::client::dispatch::{Callback, SendWhen, TrySendError};
-use crate::core::common::either::Either;
-use crate::core::common::io::Compat;
-use crate::core::common::time::Time;
-use crate::core::ext::Protocol;
-use crate::core::headers;
-use crate::core::proto::Dispatched;
-use crate::core::proto::h2::UpgradedSendStream;
-use crate::core::rt::bounds::Http2ClientConnExec;
-use crate::core::upgrade::Upgraded;
-
-use http::{Request, Response};
-
-use http2::client::ResponseFuture;
-use http2::frame::{PseudoOrder, SettingsOrder, StreamDependency};
+use super::{
+    H2Upgraded, PipeToSendStream, SendBuf, ping,
+    ping::{Ponger, Recorder},
+};
+use crate::core::{
+    body::Incoming as IncomingBody,
+    client::dispatch::{Callback, SendWhen, TrySendError},
+    common::{either::Either, io::Compat, time::Time},
+    error::BoxError,
+    ext::{Protocol, RequestConfig, RequestOriginalHeaders},
+    headers,
+    proto::{Dispatched, h2::UpgradedSendStream},
+    rt::{Read, Write, bounds::Http2ClientConnExec},
+    upgrade::Upgraded,
+};
 
 type ClientRx<B> = crate::core::client::dispatch::Receiver<Request<B>, Response<IncomingBody>>;
 

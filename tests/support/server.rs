@@ -1,14 +1,8 @@
-use std::convert::Infallible;
-use std::future::Future;
-use std::net;
-use std::sync::mpsc as std_mpsc;
-use std::thread;
-use std::time::Duration;
+use std::{
+    convert::Infallible, future::Future, net, sync::mpsc as std_mpsc, thread, time::Duration,
+};
 
-use tokio::io::AsyncReadExt;
-use tokio::net::TcpStream;
-use tokio::runtime;
-use tokio::sync::oneshot;
+use tokio::{io::AsyncReadExt, net::TcpStream, runtime, sync::oneshot};
 
 pub struct Server {
     addr: net::SocketAddr,

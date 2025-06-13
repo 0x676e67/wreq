@@ -1,7 +1,9 @@
-use std::fmt;
-use std::future::Future;
-use std::pin::Pin;
-use std::task::{Context, Poll, ready};
+use std::{
+    fmt,
+    future::Future,
+    pin::Pin,
+    task::{Context, Poll, ready},
+};
 
 use bytes::Bytes;
 use futures_channel::{mpsc, oneshot};
@@ -10,8 +12,7 @@ use http::HeaderMap;
 use http_body::{Body, Frame, SizeHint};
 
 use super::DecodedLength;
-use crate::core::common::watch;
-use crate::core::proto::h2::ping;
+use crate::core::{common::watch, proto::h2::ping};
 
 type BodySender = mpsc::Sender<Result<Bytes, crate::core::Error>>;
 type TrailersSender = oneshot::Sender<HeaderMap>;
@@ -363,11 +364,11 @@ impl fmt::Debug for Sender {
 
 #[cfg(test)]
 mod tests {
-    use std::mem;
-    use std::task::Poll;
+    use std::{mem, task::Poll};
+
+    use http_body_util::BodyExt;
 
     use super::{Body, DecodedLength, Incoming, Sender, SizeHint};
-    use http_body_util::BodyExt;
 
     #[test]
     fn test_size_of() {

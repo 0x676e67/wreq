@@ -1,5 +1,7 @@
-use std::pin::Pin;
-use std::task::{Context, Poll};
+use std::{
+    pin::Pin,
+    task::{Context, Poll},
+};
 
 /// This adapts from `crate::core:` IO traits to the ones in Tokio.
 ///

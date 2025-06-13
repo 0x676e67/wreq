@@ -1,8 +1,10 @@
-use std::fmt;
-use std::mem::MaybeUninit;
-use std::ops::DerefMut;
-use std::pin::Pin;
-use std::task::{Context, Poll, ready};
+use std::{
+    fmt,
+    mem::MaybeUninit,
+    ops::DerefMut,
+    pin::Pin,
+    task::{Context, Poll, ready},
+};
 
 // New IO traits? What?! Why, are you bonkers?
 //

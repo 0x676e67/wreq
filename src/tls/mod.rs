@@ -10,13 +10,14 @@ mod conn;
 mod keylog;
 mod x509;
 
+pub use boring2::ssl::{CertCompressionAlgorithm, ExtensionType};
+
 pub(crate) use self::conn::{HttpsConnector, MaybeHttpsStream, TlsConnector};
 pub use self::{
     config::TlsConfig,
     keylog::KeyLogPolicy,
     x509::{CertStore, CertStoreBuilder, Certificate, CertificateInput, Identity},
 };
-pub use boring2::ssl::{CertCompressionAlgorithm, ExtensionType};
 
 /// A TLS protocol version.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

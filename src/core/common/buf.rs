@@ -1,5 +1,4 @@
-use std::collections::VecDeque;
-use std::io::IoSlice;
+use std::{collections::VecDeque, io::IoSlice};
 
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 

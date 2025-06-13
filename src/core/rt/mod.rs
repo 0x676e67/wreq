@@ -12,10 +12,12 @@ mod io;
 mod timer;
 pub mod tokio;
 
-pub use self::io::{Read, ReadBuf, ReadBufCursor, Write};
 pub(crate) use self::io::{read, write_all};
-pub use self::timer::{Sleep, Timer};
-pub use self::tokio::{TokioExecutor, TokioIo};
+pub use self::{
+    io::{Read, ReadBuf, ReadBufCursor, Write},
+    timer::{Sleep, Timer},
+    tokio::{TokioExecutor, TokioIo},
+};
 
 /// An executor of futures.
 ///

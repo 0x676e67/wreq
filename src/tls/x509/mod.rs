@@ -3,9 +3,12 @@
 mod identity;
 mod store;
 
-pub use self::identity::Identity;
-pub use self::store::{CertStore, CertStoreBuilder};
 use boring2::x509::X509;
+
+pub use self::{
+    identity::Identity,
+    store::{CertStore, CertStoreBuilder},
+};
 
 /// A certificate input.
 pub enum CertificateInput<'c> {

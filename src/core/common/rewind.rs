@@ -1,12 +1,12 @@
-use std::{cmp, io};
-
-use crate::core::rt::{Read, ReadBufCursor, Write};
-use bytes::{Buf, Bytes};
-
 use std::{
+    cmp, io,
     pin::Pin,
     task::{self, Poll},
 };
+
+use bytes::{Buf, Bytes};
+
+use crate::core::rt::{Read, ReadBufCursor, Write};
 
 /// Combine a buffer with an IO, rewinding reads to use the buffer.
 #[derive(Debug)]

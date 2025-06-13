@@ -1,9 +1,9 @@
-use std::collections::HashMap;
-use std::fmt;
-use std::io::IoSlice;
+use std::{collections::HashMap, fmt, io::IoSlice};
 
-use bytes::buf::{Chain, Take};
-use bytes::{Buf, Bytes};
+use bytes::{
+    Buf, Bytes,
+    buf::{Chain, Take},
+};
 use http::{
     HeaderMap, HeaderName, HeaderValue,
     header::{
@@ -12,8 +12,10 @@ use http::{
     },
 };
 
-use super::io::WriteBuf;
-use super::role::{write_headers, write_headers_title_case};
+use super::{
+    io::WriteBuf,
+    role::{write_headers, write_headers_title_case},
+};
 
 type StaticBuf = &'static [u8];
 
@@ -420,8 +422,7 @@ mod tests {
         },
     };
 
-    use super::super::io::Cursor;
-    use super::Encoder;
+    use super::{super::io::Cursor, Encoder};
 
     #[test]
     fn chunked() {

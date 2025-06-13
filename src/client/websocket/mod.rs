@@ -13,15 +13,16 @@ use std::{
     task::{Context, Poll, ready},
 };
 
-use crate::core::ext::Protocol;
-use crate::{Error, OriginalHeaders, RequestBuilder, Response, error, proxy::Proxy};
 use futures_util::{Sink, SinkExt, Stream, StreamExt};
 use http::{HeaderMap, HeaderName, HeaderValue, Method, StatusCode, Version, header, uri::Scheme};
+pub use message::{CloseCode, CloseFrame, Message, Utf8Bytes};
 use serde::Serialize;
 use tokio_tungstenite::tungstenite::{self, protocol};
 use tungstenite::protocol::WebSocketConfig;
 
-pub use message::{CloseCode, CloseFrame, Message, Utf8Bytes};
+use crate::{
+    Error, OriginalHeaders, RequestBuilder, Response, core::ext::Protocol, error, proxy::Proxy,
+};
 
 /// A WebSocket stream.
 type WebSocketStream = tokio_tungstenite::WebSocketStream<crate::Upgraded>;

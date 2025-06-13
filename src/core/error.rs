@@ -1,13 +1,12 @@
 //! Error and Result module.
-use std::error::Error as StdError;
-use std::fmt;
+use std::{error::Error as StdError, fmt};
 
 /// Result type often returned from methods that can have crate::core: `Error`s.
 pub type Result<T> = std::result::Result<T, Error>;
 
-type Cause = Box<dyn StdError + Send + Sync>;
-
 pub type BoxError = Box<dyn StdError + Send + Sync>;
+
+type Cause = BoxError;
 
 /// Represents errors that can occur handling HTTP streams.
 ///
@@ -398,8 +397,9 @@ impl StdError for TimedOut {}
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::mem;
+
+    use super::*;
 
     fn assert_send_sync<T: Send + Sync + 'static>() {}
 

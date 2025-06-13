@@ -1,7 +1,7 @@
 mod support;
-use support::server;
-
 use std::{env, sync::LazyLock};
+
+use support::server;
 use tokio::sync::Mutex;
 
 // serialize tests that read from / write to environment variables

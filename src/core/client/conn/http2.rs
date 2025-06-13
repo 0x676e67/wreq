@@ -1,24 +1,28 @@
 //! HTTP/2 client connections
 
-use std::error::Error;
-use std::fmt;
-use std::future::Future;
-use std::marker::PhantomData;
-use std::pin::Pin;
-use std::sync::Arc;
-use std::task::{Context, Poll, ready};
+use std::{
+    error::Error,
+    fmt,
+    future::Future,
+    marker::PhantomData,
+    pin::Pin,
+    sync::Arc,
+    task::{Context, Poll, ready},
+};
 
 use http::{Request, Response};
 use http_body::Body;
 
-use crate::core::body::Incoming as IncomingBody;
-use crate::core::client::dispatch::{self, TrySendError};
-use crate::core::common::time::Time;
-use crate::core::proto;
-use crate::core::rt::Timer;
-use crate::core::rt::bounds::Http2ClientConnExec;
-use crate::core::rt::{Read, Write};
-use crate::http2::Http2Config;
+use crate::{
+    core::{
+        body::Incoming as IncomingBody,
+        client::dispatch::{self, TrySendError},
+        common::time::Time,
+        proto,
+        rt::{Read, Timer, Write, bounds::Http2ClientConnExec},
+    },
+    http2::Http2Config,
+};
 
 /// The sender side of an established connection.
 pub struct SendRequest<B> {
@@ -253,12 +257,13 @@ where
 
 #[cfg(test)]
 mod tests {
+    use http_body::Body;
+
     use super::{Builder, Connection, SendRequest};
     use crate::core::{
         error::BoxError,
         rt::{Read, Write, bounds::Http2ClientConnExec},
     };
-    use http_body::Body;
 
     pub async fn handshake<E, T, B>(
         exec: E,

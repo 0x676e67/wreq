@@ -1,8 +1,8 @@
-use std::fmt;
-use std::pin::Pin;
-use std::task::{Context, Poll, ready};
-
-use crate::error::BoxError;
+use std::{
+    fmt,
+    pin::Pin,
+    task::{Context, Poll, ready},
+};
 
 use bytes::Bytes;
 use http_body::Body as HttpBody;
@@ -12,6 +12,8 @@ use pin_project_lite::pin_project;
 use tokio::fs::File;
 #[cfg(feature = "stream")]
 use tokio_util::io::ReaderStream;
+
+use crate::error::BoxError;
 
 /// An asynchronous request body.
 pub struct Body {

@@ -1,36 +1,43 @@
 //! backport: <https://github.com/cloudflare/boring/blob/master/hyper-boring/src/lib.rs>
 
-use super::cache::{SessionCache, SessionKey};
-use super::ext::{ConnectConfigurationExt, SslConnectorBuilderExt, SslRefExt};
-use super::{HandshakeSettings, MaybeHttpsStream, key_index};
-
-use crate::Dst;
-use crate::connect::HttpConnector;
-use crate::core::client::connect::Connection;
-use crate::core::rt::TokioIo;
-use crate::error::BoxError;
-use crate::tls::{CertStore, Identity, KeyLogPolicy, TlsConfig};
-
-use crate::core::rt::{Read, Write};
-use antidote::Mutex;
-use boring2::error::ErrorStack;
-use boring2::ssl::{
-    ConnectConfiguration, SslConnector, SslConnectorBuilder, SslMethod, SslOptions, SslRef,
-    SslSessionCacheMode,
+use std::{
+    error::Error,
+    fmt::Debug,
+    future::Future,
+    net::{IpAddr, Ipv6Addr},
+    pin::Pin,
+    sync::Arc,
+    task::{Context, Poll},
 };
-use http::Uri;
-use http::uri::Scheme;
 
+use antidote::Mutex;
+use boring2::{
+    error::ErrorStack,
+    ssl::{
+        ConnectConfiguration, SslConnector, SslConnectorBuilder, SslMethod, SslOptions, SslRef,
+        SslSessionCacheMode,
+    },
+};
+use http::{Uri, uri::Scheme};
 use tokio_boring2::SslStream;
 use tower_service::Service;
 
-use std::error::Error;
-use std::fmt::Debug;
-use std::future::Future;
-use std::net::{IpAddr, Ipv6Addr};
-use std::pin::Pin;
-use std::sync::Arc;
-use std::task::{Context, Poll};
+use super::{
+    HandshakeSettings, MaybeHttpsStream,
+    cache::{SessionCache, SessionKey},
+    ext::{ConnectConfigurationExt, SslConnectorBuilderExt, SslRefExt},
+    key_index,
+};
+use crate::{
+    Dst,
+    connect::HttpConnector,
+    core::{
+        client::connect::Connection,
+        rt::{Read, TokioIo, Write},
+    },
+    error::BoxError,
+    tls::{CertStore, Identity, KeyLogPolicy, TlsConfig},
+};
 
 /// A Connector using BoringSSL to support `http` and `https` schemes.
 #[derive(Clone)]

@@ -8,8 +8,10 @@ pub use self::h2_client::Http2ClientConnExec;
 mod h2_client {
     use std::{error::Error, future::Future};
 
-    use crate::core::rt::{Read, Write};
-    use crate::core::{proto::h2::client::H2ClientFuture, rt::Executor};
+    use crate::core::{
+        proto::h2::client::H2ClientFuture,
+        rt::{Executor, Read, Write},
+    };
 
     /// An executor to spawn http2 futures for the client.
     ///

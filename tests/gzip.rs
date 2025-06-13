@@ -1,7 +1,7 @@
 mod support;
-use flate2::Compression;
-use flate2::write::GzEncoder;
 use std::io::Write;
+
+use flate2::{Compression, write::GzEncoder};
 use support::server;
 use tokio::io::AsyncWriteExt;
 

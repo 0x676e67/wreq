@@ -1,5 +1,6 @@
-use super::{CertStore, Certificate, CertificateInput};
 use boring2::x509::store::X509StoreBuilder;
+
+use super::{CertStore, Certificate, CertificateInput};
 
 pub fn parse_certs_from_iter<'c, I>(
     certs: I,

@@ -1,8 +1,9 @@
-use http::Request;
 use std::{
     pin::Pin,
     task::{Context, Poll},
 };
+
+use http::Request;
 use tower::Service;
 
 use super::Body;

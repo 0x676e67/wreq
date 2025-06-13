@@ -12,8 +12,7 @@
 //! An [`Intercept`] includes the destination for the proxy, and any parsed
 //! authentication to be used.
 
-use std::fmt;
-use std::net::IpAddr;
+use std::{fmt, net::IpAddr};
 
 use http::header::HeaderValue;
 use ipnet::IpNet;
@@ -369,9 +368,9 @@ fn parse_env_uri(val: &str) -> Option<Intercept> {
 }
 
 fn encode_basic_auth(user: &str, pass: Option<&str>) -> HeaderValue {
-    use base64::prelude::BASE64_STANDARD;
-    use base64::write::EncoderWriter;
     use std::io::Write;
+
+    use base64::{prelude::BASE64_STANDARD, write::EncoderWriter};
 
     let mut buf = b"Basic ".to_vec();
     {
@@ -539,14 +538,18 @@ mod builder {
 
 #[cfg(all(target_os = "macos", feature = "system-proxy"))]
 mod mac {
-    use system_configuration::core_foundation::base::CFType;
-    use system_configuration::core_foundation::dictionary::CFDictionary;
-    use system_configuration::core_foundation::number::CFNumber;
-    use system_configuration::core_foundation::string::{CFString, CFStringRef};
-    use system_configuration::dynamic_store::SCDynamicStoreBuilder;
-    use system_configuration::sys::schema_definitions::{
-        kSCPropNetProxiesHTTPEnable, kSCPropNetProxiesHTTPPort, kSCPropNetProxiesHTTPProxy,
-        kSCPropNetProxiesHTTPSEnable, kSCPropNetProxiesHTTPSPort, kSCPropNetProxiesHTTPSProxy,
+    use system_configuration::{
+        core_foundation::{
+            base::CFType,
+            dictionary::CFDictionary,
+            number::CFNumber,
+            string::{CFString, CFStringRef},
+        },
+        dynamic_store::SCDynamicStoreBuilder,
+        sys::schema_definitions::{
+            kSCPropNetProxiesHTTPEnable, kSCPropNetProxiesHTTPPort, kSCPropNetProxiesHTTPProxy,
+            kSCPropNetProxiesHTTPSEnable, kSCPropNetProxiesHTTPSPort, kSCPropNetProxiesHTTPSProxy,
+        },
     };
 
     pub(super) fn with_system(builder: &mut super::Builder) {

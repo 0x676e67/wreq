@@ -1,10 +1,14 @@
 //! Re-export the `http2` module for HTTP/2 frame types and utilities.
 
-use crate::core::proto::{self, h2::client::Config};
 use http2::frame::ExperimentalSettings;
 pub use http2::frame::{
     Priorities, PrioritiesBuilder, Priority, PseudoId, PseudoOrder, Setting, SettingId,
     SettingsOrder, SettingsOrderBuilder, StreamDependency, StreamId,
+};
+
+use crate::core::proto::{
+    h2::client::Config,
+    {self},
 };
 
 /// Builder for `Http2Config`.

@@ -4,17 +4,21 @@
 //! maximum redirect chain of 10 hops. To customize this behavior, a
 //! `redirect::Policy` can be used with a `ClientBuilder`.
 
-use std::fmt;
-use std::{error::Error as StdError, sync::Arc};
+use std::{error::Error as StdError, fmt, sync::Arc};
 
 use http::{HeaderMap, HeaderValue, StatusCode};
 
-use crate::client::middleware::redirect::policy::{
-    Action as TowerAction, Attempt as TowerAttempt, Policy as TowerPolicy,
+use crate::{
+    Url,
+    client::{
+        Body,
+        middleware::redirect::policy::{
+            Action as TowerAction, Attempt as TowerAttempt, Policy as TowerPolicy,
+        },
+    },
+    error::{self, BoxError},
+    header::{AUTHORIZATION, COOKIE, PROXY_AUTHORIZATION, REFERER, WWW_AUTHENTICATE},
 };
-use crate::error::{self, BoxError};
-use crate::header::{AUTHORIZATION, COOKIE, PROXY_AUTHORIZATION, REFERER, WWW_AUTHENTICATE};
-use crate::{Url, client::Body};
 
 /// A type that controls the policy on how to handle the following of redirects.
 ///

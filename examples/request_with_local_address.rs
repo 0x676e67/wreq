@@ -1,4 +1,5 @@
 use std::net::IpAddr;
+
 use wreq::redirect::Policy;
 
 #[tokio::main]

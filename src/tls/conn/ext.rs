@@ -1,4 +1,3 @@
-use crate::tls::{AlpnProtos, AlpsProtos, CertStore, Identity, TlsVersion};
 use boring2::{
     error::ErrorStack,
     ssl::{
@@ -6,6 +5,8 @@ use boring2::{
         SslVerifyMode,
     },
 };
+
+use crate::tls::{AlpnProtos, AlpsProtos, CertStore, Identity, TlsVersion};
 
 /// SslConnectorBuilderExt trait for `SslConnectorBuilder`.
 pub trait SslConnectorBuilderExt {

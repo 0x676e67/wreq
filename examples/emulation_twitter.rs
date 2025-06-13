@@ -1,7 +1,9 @@
 use http::{HeaderMap, HeaderValue, header};
-use wreq::http2::{Http2Config, PseudoId, PseudoOrder};
-use wreq::tls::{AlpnProtos, TlsConfig, TlsVersion};
-use wreq::{Client, EmulationProvider, OriginalHeaders};
+use wreq::{
+    Client, EmulationProvider, OriginalHeaders,
+    http2::{Http2Config, PseudoId, PseudoOrder},
+    tls::{AlpnProtos, TlsConfig, TlsVersion},
+};
 
 // ============== TLS Extension Algorithms ==============
 

@@ -2,9 +2,7 @@
 
 pub(crate) mod h1;
 
-pub(crate) use self::h1::Conn;
-
-pub(crate) use self::h1::dispatch;
+pub(crate) use self::h1::{Conn, dispatch};
 
 pub(crate) mod h2;
 

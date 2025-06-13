@@ -1,21 +1,24 @@
-use bytes::Bytes;
-use http::{Extensions, HeaderMap, Method, Uri};
-use pin_project_lite::pin_project;
 use std::{
     pin::Pin,
     sync::Arc,
     task::{Context, Poll},
 };
+
+use bytes::Bytes;
+use http::{Extensions, HeaderMap, Method, Uri};
+use pin_project_lite::pin_project;
 use tower::util::BoxCloneSyncService;
 use url::Url;
 
 use super::{Body, ClientRef, Response};
-
 use crate::{
     Error,
     client::{
         body,
-        middleware::{self, timeout::TimeoutBody},
+        middleware::{
+            timeout::TimeoutBody,
+            {self},
+        },
     },
     core::{body::Incoming, service::Oneshot},
     error::{self, BoxError},

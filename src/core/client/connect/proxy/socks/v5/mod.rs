@@ -2,24 +2,24 @@ mod errors;
 pub use errors::*;
 
 mod messages;
-use messages::*;
-
-use std::future::Future;
-use std::pin::Pin;
-use std::task::{Context, Poll};
-
-use std::net::{IpAddr, SocketAddr, ToSocketAddrs};
-
-use crate::core::client::connect::dns::{GaiResolver, Name, Resolve};
-use crate::core::rt::{Read, Write};
-use http::Uri;
-use tower_service::Service;
+use std::{
+    future::Future,
+    net::{IpAddr, SocketAddr, ToSocketAddrs},
+    pin::Pin,
+    task::{Context, Poll},
+};
 
 use bytes::BytesMut;
-
+use http::Uri;
+use messages::*;
 use pin_project_lite::pin_project;
+use tower_service::Service;
 
 use super::{BoxHandshaking, Handshaking, SocksError};
+use crate::core::{
+    client::connect::dns::{GaiResolver, Name, Resolve},
+    rt::{Read, Write},
+};
 
 /// Tunnel Proxy via SOCKSv5
 ///

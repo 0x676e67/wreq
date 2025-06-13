@@ -24,8 +24,9 @@
 //! specifying the associated value type. Then use [`RequestConfig<T>`] in [`Extensions`]
 //! to set or retrieve config values for each key type in a uniform way.
 
-use http::Extensions;
 use std::fmt::Debug;
+
+use http::Extensions;
 
 /// This trait is empty and is only used to associate a configuration key type with its
 /// corresponding value type.

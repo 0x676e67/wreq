@@ -1,24 +1,30 @@
-use std::error::Error as StdError;
-use std::fmt;
-use std::future::Future;
-use std::io;
-use std::marker::PhantomData;
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
-use std::pin::Pin;
-use std::sync::Arc;
-use std::task::{self, Poll, ready};
-use std::time::Duration;
+use std::{
+    error::Error as StdError,
+    fmt,
+    future::Future,
+    io,
+    marker::PhantomData,
+    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
+    pin::Pin,
+    sync::Arc,
+    task::{self, Poll, ready},
+    time::Duration,
+};
 
 use futures_util::future::Either;
 use http::uri::{Scheme, Uri};
 use pin_project_lite::pin_project;
 use socket2::TcpKeepalive;
-use tokio::net::{TcpSocket, TcpStream};
-use tokio::time::Sleep;
+use tokio::{
+    net::{TcpSocket, TcpStream},
+    time::Sleep,
+};
 
-use super::dns::{self, GaiResolver, Resolve, resolve};
-use super::{Connected, Connection};
-use crate::core::rt::TokioIo;
+use super::{
+    Connected, Connection,
+    dns::{self, GaiResolver, Resolve, resolve},
+};
+use crate::core::{error::BoxError, rt::TokioIo};
 
 /// A connector for the `http` scheme.
 ///
@@ -635,13 +641,13 @@ impl<R: Resolve> Future for HttpConnecting<R> {
 pub struct ConnectError {
     msg: &'static str,
     addr: Option<SocketAddr>,
-    cause: Option<Box<dyn StdError + Send + Sync>>,
+    cause: Option<BoxError>,
 }
 
 impl ConnectError {
     fn new<E>(msg: &'static str, cause: E) -> ConnectError
     where
-        E: Into<Box<dyn StdError + Send + Sync>>,
+        E: Into<BoxError>,
     {
         ConnectError {
             msg,
@@ -652,14 +658,14 @@ impl ConnectError {
 
     fn dns<E>(cause: E) -> ConnectError
     where
-        E: Into<Box<dyn StdError + Send + Sync>>,
+        E: Into<BoxError>,
     {
         ConnectError::new("dns error", cause)
     }
 
     fn m<E>(msg: &'static str) -> impl FnOnce(E) -> ConnectError
     where
-        E: Into<Box<dyn StdError + Send + Sync>>,
+        E: Into<BoxError>,
     {
         move |cause| ConnectError::new(msg, cause)
     }

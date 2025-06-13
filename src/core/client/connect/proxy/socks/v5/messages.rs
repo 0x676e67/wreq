@@ -1,7 +1,8 @@
-use super::super::{ParsingError, SerializeError};
+use std::net::SocketAddr;
 
 use bytes::{Buf, BufMut, BytesMut};
-use std::net::SocketAddr;
+
+use super::super::{ParsingError, SerializeError};
 
 ///  +----+----------+----------+
 /// |VER | NMETHODS | METHODS  |

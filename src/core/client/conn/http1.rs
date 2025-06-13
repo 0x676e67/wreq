@@ -1,20 +1,24 @@
 //! HTTP/1 client connections
 
-use std::error::Error as StdError;
-use std::fmt;
-use std::future::Future;
-use std::pin::Pin;
-use std::task::{Context, Poll, ready};
+use std::{
+    fmt,
+    future::Future,
+    pin::Pin,
+    task::{Context, Poll, ready},
+};
 
 use bytes::Bytes;
 use http::{Request, Response};
 use http_body::Body;
 
-use crate::core::body::Incoming as IncomingBody;
-use crate::core::client::dispatch::{self, TrySendError};
-use crate::core::proto;
-use crate::core::rt::{Read, Write};
-use crate::http1::Http1Config;
+use crate::core::{
+    body::Incoming as IncomingBody,
+    client::dispatch::{self, TrySendError},
+    config::http1::Http1Config,
+    error::BoxError,
+    proto,
+    rt::{Read, Write},
+};
 
 type Dispatcher<T, B> =
     proto::dispatch::Dispatcher<proto::dispatch::Client<B>, B, T, proto::h1::ClientTransaction>;
@@ -63,7 +67,7 @@ impl<T, B> Connection<T, B>
 where
     T: Read + Write + Unpin,
     B: Body + 'static,
-    B::Error: Into<Box<dyn StdError + Send + Sync>>,
+    B::Error: Into<BoxError>,
 {
     /// Return the inner IO object, and additional information.
     ///
@@ -164,7 +168,7 @@ impl<T, B> Connection<T, B>
 where
     T: Read + Write + Unpin + Send,
     B: Body + 'static,
-    B::Error: Into<Box<dyn StdError + Send + Sync>>,
+    B::Error: Into<BoxError>,
 {
     /// Enable this connection to support higher-level HTTP upgrades.
     ///
@@ -189,7 +193,7 @@ where
     T: Read + Write + Unpin,
     B: Body + 'static,
     B::Data: Send,
-    B::Error: Into<Box<dyn StdError + Send + Sync>>,
+    B::Error: Into<BoxError>,
 {
     type Output = crate::core::Result<()>;
 
@@ -242,7 +246,7 @@ impl Builder {
         T: Read + Write + Unpin,
         B: Body + 'static,
         B::Data: Send,
-        B::Error: Into<Box<dyn StdError + Send + Sync>>,
+        B::Error: Into<BoxError>,
     {
         let opts = self.config.clone();
 
@@ -288,9 +292,8 @@ impl Builder {
 }
 
 mod upgrades {
-    use crate::core::upgrade::Upgraded;
-
     use super::*;
+    use crate::core::upgrade::Upgraded;
 
     // A future binding a connection with a Service with Upgrade support.
     //
@@ -300,7 +303,7 @@ mod upgrades {
     where
         T: Read + Write + Unpin + Send + 'static,
         B: Body + 'static,
-        B::Error: Into<Box<dyn StdError + Send + Sync>>,
+        B::Error: Into<BoxError>,
     {
         pub(super) inner: Option<Connection<T, B>>,
     }
@@ -310,7 +313,7 @@ mod upgrades {
         I: Read + Write + Unpin + Send + 'static,
         B: Body + 'static,
         B::Data: Send,
-        B::Error: Into<Box<dyn StdError + Send + Sync>>,
+        B::Error: Into<BoxError>,
     {
         type Output = crate::core::Result<()>;
 

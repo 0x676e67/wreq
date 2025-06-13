@@ -1,21 +1,27 @@
-use std::fmt;
-use std::io;
-use std::marker::{PhantomData, Unpin};
-use std::pin::Pin;
-use std::task::{Context, Poll, ready};
+use std::{
+    fmt, io,
+    marker::{PhantomData, Unpin},
+    pin::Pin,
+    task::{Context, Poll, ready},
+};
 
-use crate::core::rt::{Read, Write};
 use bytes::{Buf, Bytes};
-use http::header::{CONNECTION, HeaderValue, TE};
-use http::{HeaderMap, Method, Version};
+use http::{
+    HeaderMap, Method, Version,
+    header::{CONNECTION, HeaderValue, TE},
+};
 use http_body::Frame;
 use httparse::ParserConfig;
 
-use super::io::Buffered;
-use super::{Decoder, Encode, EncodedBuf, Encoder, Http1Transaction, ParseContext, Wants};
-use crate::core::body::DecodedLength;
-use crate::core::headers;
-use crate::core::proto::{BodyLength, MessageHead};
+use super::{
+    Decoder, Encode, EncodedBuf, Encoder, Http1Transaction, ParseContext, Wants, io::Buffered,
+};
+use crate::core::{
+    body::DecodedLength,
+    headers,
+    proto::{BodyLength, MessageHead},
+    rt::{Read, Write},
+};
 
 const H2_PREFACE: &[u8] = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
 

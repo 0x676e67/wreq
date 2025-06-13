@@ -1,24 +1,28 @@
-use std::mem::MaybeUninit;
+use std::{
+    fmt::{self, Write as _},
+    mem::MaybeUninit,
+};
 
-use std::fmt::{self, Write as _};
-
-use bytes::Bytes;
-use bytes::BytesMut;
-use http::header::Entry;
-use http::header::{self, HeaderMap, HeaderName, HeaderValue};
-use http::{Method, StatusCode, Version};
+use bytes::{Bytes, BytesMut};
+use http::{
+    Method, StatusCode, Version,
+    header::{self, Entry, HeaderMap, HeaderName, HeaderValue},
+};
 use smallvec::{SmallVec, smallvec, smallvec_inline};
 
-use crate::OriginalHeaders;
-use crate::core::body::DecodedLength;
-use crate::core::error::Parse;
-use crate::core::ext::{RequestConfig, RequestOriginalHeaders};
-use crate::core::headers;
-use crate::core::proto::RequestHead;
-use crate::core::proto::h1::{
-    Encode, Encoder, Http1Transaction, ParseContext, ParseResult, ParsedMessage,
+use crate::{
+    OriginalHeaders,
+    core::{
+        body::DecodedLength,
+        error::Parse,
+        ext::{RequestConfig, RequestOriginalHeaders},
+        headers,
+        proto::{
+            BodyLength, MessageHead, RequestHead, RequestLine,
+            h1::{Encode, Encoder, Http1Transaction, ParseContext, ParseResult, ParsedMessage},
+        },
+    },
 };
-use crate::core::proto::{BodyLength, MessageHead, RequestLine};
 
 pub(crate) const DEFAULT_MAX_HEADERS: usize = 100;
 const AVERAGE_HEADER_SIZE: usize = 30; // totally scientific

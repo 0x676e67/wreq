@@ -1,12 +1,12 @@
-use std::error::Error;
-use std::fmt;
-use std::sync::Arc;
+use std::{error::Error, fmt, sync::Arc};
 
 use http::{HeaderMap, Uri, header::HeaderValue};
 
-use crate::Url;
-use crate::core::client::proxy::matcher;
-use crate::into_url::{IntoUrl, IntoUrlSealed};
+use crate::{
+    Url,
+    core::client::proxy::matcher,
+    into_url::{IntoUrl, IntoUrlSealed},
+};
 
 // # Internals
 //

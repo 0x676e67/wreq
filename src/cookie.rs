@@ -1,13 +1,12 @@
 //! HTTP Cookies
 
+use std::{borrow::Cow, convert::TryInto, fmt, time::SystemTime};
+
 use antidote::RwLock;
 use bytes::BufMut;
-use std::fmt;
-use std::time::SystemTime;
-use std::{borrow::Cow, convert::TryInto};
+pub use cookie_crate::{Cookie as RawCookie, Expiration, SameSite, time::Duration};
 
 use crate::header::{HeaderValue, SET_COOKIE};
-pub use cookie_crate::{Cookie as RawCookie, Expiration, SameSite, time::Duration};
 
 /// Actions for a persistent cookie store providing session support.
 pub trait CookieStore: Send + Sync {

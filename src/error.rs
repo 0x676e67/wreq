@@ -1,6 +1,4 @@
-use std::error::Error as StdError;
-use std::fmt;
-use std::io;
+use std::{error::Error as StdError, fmt, io};
 
 use crate::{StatusCode, Url};
 

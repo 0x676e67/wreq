@@ -1,4 +1,5 @@
 use std::sync::Arc;
+
 use wreq::dns::{HickoryDnsResolver, LookupIpStrategy};
 
 #[tokio::main]

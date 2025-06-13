@@ -1,7 +1,6 @@
-use crate::http2::Http2Config;
-use crate::tls::TlsConfig;
-use crate::{OriginalHeaders, http1::Http1Config};
 use http::HeaderMap;
+
+use crate::{OriginalHeaders, http1::Http1Config, http2::Http2Config, tls::TlsConfig};
 
 /// Trait defining the interface for providing an `EmulationProvider`.
 ///

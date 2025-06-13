@@ -1,10 +1,11 @@
 #![allow(dead_code)]
 
-use std::fmt;
-use std::pin::Pin;
-use std::sync::Arc;
-use std::time::Duration;
-use std::time::Instant;
+use std::{
+    fmt,
+    pin::Pin,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use crate::core::rt::Sleep;
 

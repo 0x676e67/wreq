@@ -74,6 +74,7 @@ use std::{
 use ::http::Extensions;
 
 pub use self::http::{HttpConnector, HttpInfo};
+use crate::core::error::BoxError;
 
 pub mod dns;
 mod http;
@@ -305,14 +306,17 @@ where
 }
 
 pub(super) mod sealed {
-    use std::error::Error as StdError;
-    use std::future::Future;
+    use std::{error::Error as StdError, future::Future};
 
-    use crate::core::rt::{Read, Write};
-    use crate::core::{client::Dst, service};
     use ::http::Uri;
 
     use super::Connection;
+    use crate::core::{
+        client::Dst,
+        error::BoxError,
+        rt::{Read, Write},
+        service,
+    };
 
     /// Connect to a destination, returning an IO transport.
     ///
@@ -335,7 +339,7 @@ pub(super) mod sealed {
 
     pub trait ConnectSvc {
         type Connection: Read + Write + Connection + Unpin + Send + 'static;
-        type Error: Into<Box<dyn StdError + Send + Sync>>;
+        type Error: Into<BoxError>;
         type Future: Future<Output = Result<Self::Connection, Self::Error>> + Unpin + Send + 'static;
 
         fn connect(self, dst: Dst) -> Self::Future;
@@ -344,7 +348,7 @@ pub(super) mod sealed {
     impl<S, T> Connect for S
     where
         S: tower_service::Service<Dst, Response = T> + Send + 'static,
-        S::Error: Into<Box<dyn StdError + Send + Sync>>,
+        S::Error: Into<BoxError>,
         S::Future: Unpin + Send,
         T: Read + Write + Connection + Unpin + Send + 'static,
     {
@@ -358,7 +362,7 @@ pub(super) mod sealed {
     impl<S, T> ConnectSvc for S
     where
         S: tower_service::Service<Dst, Response = T> + Send + 'static,
-        S::Error: Into<Box<dyn StdError + Send + Sync>>,
+        S::Error: Into<BoxError>,
         S::Future: Unpin + Send,
         T: Read + Write + Connection + Unpin + Send + 'static,
     {
@@ -374,7 +378,7 @@ pub(super) mod sealed {
     impl<S, T> Sealed for S
     where
         S: tower_service::Service<Dst, Response = T> + Send,
-        S::Error: Into<Box<dyn StdError + Send + Sync>>,
+        S::Error: Into<BoxError>,
         S::Future: Unpin + Send,
         T: Read + Write + Connection + Unpin + Send + 'static,
     {

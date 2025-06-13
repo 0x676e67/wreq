@@ -1,15 +1,10 @@
 #![allow(unused)]
-use std::convert::Infallible;
-use std::future::Future;
-use std::net;
-use std::time::Duration;
+use std::{convert::Infallible, future::Future, net, time::Duration};
 
 use futures_util::FutureExt;
 use http::{Request, Response};
 use hyper::service::service_fn;
-use tokio::net::TcpListener;
-use tokio::select;
-use tokio::sync::oneshot;
+use tokio::{net::TcpListener, select, sync::oneshot};
 
 /// This server, unlike [`super::server::Server`], allows for delaying the
 /// specified amount of time after each TCP connection is established. This is

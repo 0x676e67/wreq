@@ -3,15 +3,16 @@
 mod future;
 mod layer;
 
-use crate::cookie::CookieStore;
-use http::{Request, Response, header::COOKIE};
 use std::{
     sync::Arc,
     task::{Context, Poll},
 };
+
+use http::{Request, Response, header::COOKIE};
 use tower_service::Service;
 
 pub use self::{future::ResponseFuture, layer::CookieManagerLayer};
+use crate::cookie::CookieStore;
 
 /// Middleware to use [`CookieStore`].
 #[derive(Clone)]

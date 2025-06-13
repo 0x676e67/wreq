@@ -1,18 +1,21 @@
-use std::convert::TryFrom;
-use std::fmt;
-use std::future::Future;
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
-use std::time::Duration;
+use std::{
+    convert::TryFrom,
+    fmt,
+    future::Future,
+    net::{IpAddr, Ipv4Addr, Ipv6Addr},
+    time::Duration,
+};
 
 use http::{Extensions, Request as HttpRequest, Version, request::Parts};
 use serde::Serialize;
 
-use super::body::Body;
-use super::client::{Client, future::Pending};
 #[cfg(feature = "multipart")]
 use super::multipart;
-use super::response::Response;
-use crate::config::{RequestReadTimeout, RequestTotalTimeout};
+use super::{
+    body::Body,
+    client::{Client, future::Pending},
+    response::Response,
+};
 #[cfg(any(
     target_os = "android",
     target_os = "fuchsia",
@@ -26,13 +29,17 @@ use crate::config::{RequestReadTimeout, RequestTotalTimeout};
     target_os = "watchos",
 ))]
 use crate::core::ext::RequestInterface;
-use crate::core::ext::{
-    RequestConfig, RequestHttpVersionPref, RequestIpv4Addr, RequestIpv6Addr,
-    RequestOriginalHeaders, RequestProxyMatcher,
+use crate::{
+    Method, OriginalHeaders, Proxy, Url,
+    config::{RequestReadTimeout, RequestTotalTimeout},
+    core::ext::{
+        RequestConfig, RequestHttpVersionPref, RequestIpv4Addr, RequestIpv6Addr,
+        RequestOriginalHeaders, RequestProxyMatcher,
+    },
+    header::{CONTENT_TYPE, HeaderMap, HeaderName, HeaderValue},
+    proxy::Matcher as ProxyMatcher,
+    redirect,
 };
-use crate::header::{CONTENT_TYPE, HeaderMap, HeaderName, HeaderValue};
-use crate::proxy::Matcher as ProxyMatcher;
-use crate::{Method, OriginalHeaders, Proxy, Url, redirect};
 
 /// A request which can be executed with `Client::execute()`.
 pub struct Request {

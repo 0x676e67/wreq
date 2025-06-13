@@ -1,9 +1,7 @@
 use bytes::BytesMut;
-use http::Method;
-use http::header::HeaderValue;
 use http::{
-    HeaderMap,
-    header::{CONTENT_LENGTH, ValueIter},
+    HeaderMap, Method,
+    header::{CONTENT_LENGTH, HeaderValue, ValueIter},
 };
 
 use crate::OriginalHeaders;

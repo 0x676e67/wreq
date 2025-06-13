@@ -1,13 +1,19 @@
-use super::{Error, ErrorKind, PoolKey, set_scheme};
-use crate::core::ext::{
-    RequestConfig, RequestHttpVersionPref, RequestInterface, RequestIpv4Addr, RequestIpv6Addr,
-    RequestProxyMatcher,
-};
-use crate::proxy::Intercepted;
-use crate::tls::AlpnProtos;
-use http::uri::{PathAndQuery, Scheme};
-use http::{Request, Uri, Version};
 use std::net::{Ipv4Addr, Ipv6Addr};
+
+use http::{
+    Request, Uri, Version,
+    uri::{PathAndQuery, Scheme},
+};
+
+use super::{Error, ErrorKind, PoolKey, set_scheme};
+use crate::{
+    core::ext::{
+        RequestConfig, RequestHttpVersionPref, RequestInterface, RequestIpv4Addr, RequestIpv6Addr,
+        RequestProxyMatcher,
+    },
+    proxy::Intercepted,
+    tls::AlpnProtos,
+};
 
 /// Destination of the request.
 ///
