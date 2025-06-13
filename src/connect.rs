@@ -40,10 +40,9 @@ pub(crate) struct ConnectorBuilder(ConnectorService);
 
 impl ConnectorBuilder {
     pub(crate) fn build(self, layers: Option<Vec<BoxedConnectorLayer>>) -> Connector {
-        let base_service = self.0;
-        let timeout = base_service.timeout;
-
         if let Some(layers) = layers {
+            let timeout = self.0.timeout;
+
             // otherwise we have user provided layers
             // so we need type erasure all the way through
             // as well as mapping the unnameable type of the layers back to Dst for the inner service
@@ -51,7 +50,7 @@ impl ConnectorBuilder {
                 BoxCloneSyncService::new(
                     ServiceBuilder::new()
                         .layer(MapRequestLayer::new(|request: Unnameable| request.0))
-                        .service(base_service),
+                        .service(self.0),
                 ),
                 |service, layer| ServiceBuilder::new().layer(layer).service(service),
             );
@@ -59,7 +58,7 @@ impl ConnectorBuilder {
             // now we handle the concrete stuff - any `connect_timeout`,
             // plus a final map_err layer we can use to cast default tower layer
             // errors to internal errors
-            return match timeout {
+            match timeout {
                 Some(timeout) => {
                     let service = ServiceBuilder::new()
                         .layer(TimeoutLayer::new(timeout))
@@ -80,11 +79,11 @@ impl ConnectorBuilder {
                     let service = BoxCloneSyncService::new(service);
                     Connector::WithLayers(service)
                 }
-            };
+            }
+        } else {
+            // we have no user-provided layers, only use concrete types
+            Connector::Simple(self.0)
         }
-
-        // we have no user-provided layers, only use concrete types
-        Connector::Simple(base_service)
     }
 
     #[inline(always)]
