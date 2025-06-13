@@ -13,7 +13,10 @@ use super::{Body, ClientRef, Response};
 
 use crate::{
     Error,
-    client::{body, middleware::timeout::TimeoutBody},
+    client::{
+        body,
+        middleware::{self, timeout::TimeoutBody},
+    },
     core::{body::Incoming, service::Oneshot},
     error::{self, BoxError},
     redirect::{self},
@@ -146,10 +149,7 @@ impl Future for PendingRequest {
                 }
             };
 
-            if let Some(url) = &res
-                .extensions()
-                .get::<tower_http::follow_redirect::RequestUri>()
-            {
+            if let Some(url) = &res.extensions().get::<middleware::redirect::RequestUri>() {
                 self.url = match Url::parse(&url.0.to_string()) {
                     Ok(url) => url,
                     Err(e) => return Poll::Ready(Err(error::decode(e))),

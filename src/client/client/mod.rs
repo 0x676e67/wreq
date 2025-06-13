@@ -40,7 +40,10 @@ use crate::dns::hickory::{HickoryDnsResolver, LookupIpStrategy};
 use crate::dns::{DnsResolverWithOverrides, DynResolver, Resolve, gai::GaiResolver};
 
 use super::decoder::Accepts;
-use super::middleware::timeout::{ResponseBodyTimeoutLayer, TimeoutBody, TimeoutLayer};
+use super::middleware::{
+    redirect::FollowRedirectLayer,
+    timeout::{ResponseBodyTimeoutLayer, TimeoutBody, TimeoutLayer},
+};
 use super::request::{Request, RequestBuilder};
 use super::response::Response;
 #[cfg(feature = "websocket")]
@@ -60,7 +63,6 @@ use http::{
 use service::ClientService;
 use tower::util::{BoxCloneSyncService, BoxCloneSyncServiceLayer};
 use tower::{Layer, Service, ServiceBuilder};
-use tower_http::follow_redirect::FollowRedirect;
 
 type BoxedClientService =
     BoxCloneSyncService<http::Request<Body>, http::Response<TimeoutBody<Incoming>>, BoxError>;
@@ -379,7 +381,8 @@ impl ClientBuilder {
                 .with_https_only(config.https_only);
 
             let service = ServiceBuilder::new()
-                .service(FollowRedirect::with_policy(service, redirect_policy));
+                .layer(FollowRedirectLayer::with_policy(redirect_policy))
+                .service(service);
 
             BoxCloneSyncService::new(service)
         };

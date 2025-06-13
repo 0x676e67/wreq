@@ -7,14 +7,14 @@
 use std::fmt;
 use std::{error::Error as StdError, sync::Arc};
 
-use crate::error::BoxError;
-use crate::header::{AUTHORIZATION, COOKIE, PROXY_AUTHORIZATION, REFERER, WWW_AUTHENTICATE};
 use http::{HeaderMap, HeaderValue, StatusCode};
 
-use crate::{Url, client::Body};
-use tower_http::follow_redirect::policy::{
+use crate::client::middleware::redirect::policy::{
     Action as TowerAction, Attempt as TowerAttempt, Policy as TowerPolicy,
 };
+use crate::error::BoxError;
+use crate::header::{AUTHORIZATION, COOKIE, PROXY_AUTHORIZATION, REFERER, WWW_AUTHENTICATE};
+use crate::{Url, client::Body};
 
 /// A type that controls the policy on how to handle the following of redirects.
 ///
