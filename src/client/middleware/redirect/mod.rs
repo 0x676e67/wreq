@@ -17,8 +17,7 @@ use self::policy::{Action, Attempt, Policy};
 use futures_util::future::Either;
 use http::{
     Extensions, HeaderMap, HeaderValue, Method, Request, Response, StatusCode, Uri, Version,
-    header::CONTENT_ENCODING, header::CONTENT_LENGTH, header::CONTENT_TYPE, header::LOCATION,
-    header::TRANSFER_ENCODING,
+    header::{CONTENT_ENCODING, CONTENT_LENGTH, CONTENT_TYPE, LOCATION, TRANSFER_ENCODING},
 };
 use http_body::Body;
 use iri_string::types::{UriAbsoluteString, UriReferenceStr};
