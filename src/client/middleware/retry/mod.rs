@@ -1,5 +1,6 @@
 use futures_util::future;
 use http::{Request, Response};
+use http2::Reason;
 use tower::retry::Policy;
 
 use crate::{
@@ -15,8 +16,11 @@ impl Http2RetryPolicy {
         Self(attempts)
     }
 
+    /// Determines whether the given error is considered retryable for HTTP/2 requests.
+    ///
+    /// Returns `true` if the error type or content indicates that the request can be retried,
+    /// otherwise returns `false`.
     fn is_retryable_error(&self, err: &(dyn std::error::Error + 'static)) -> bool {
-        // pop the legacy::Error
         let err = if let Some(err) = err.source() {
             err
         } else {
@@ -26,10 +30,7 @@ impl Http2RetryPolicy {
         if let Some(cause) = err.source() {
             if let Some(err) = cause.downcast_ref::<http2::Error>() {
                 // They sent us a graceful shutdown, try with a new connection!
-                if err.is_go_away()
-                    && err.is_remote()
-                    && err.reason() == Some(http2::Reason::NO_ERROR)
-                {
+                if err.is_go_away() && err.is_remote() && err.reason() == Some(Reason::NO_ERROR) {
                     return true;
                 }
 
@@ -59,10 +60,8 @@ impl Policy<Req, Res, BoxError> for Http2RetryPolicy {
         result: &mut Result<Res, BoxError>,
     ) -> Option<Self::Future> {
         if let Err(err) = result {
-            if let Some(source) = err.source() {
-                if self.is_retryable_error(source) {
-                    return Some(future::ready(()));
-                }
+            if self.is_retryable_error(err.source()?) {
+                return Some(future::ready(()));
             }
 
             // Treat all errors as failures...
