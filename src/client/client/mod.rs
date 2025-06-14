@@ -364,7 +364,7 @@ impl ClientBuilder {
             builder.build(config.connector_layers)
         };
 
-        let mut service = {
+        let service = {
             let service = ServiceBuilder::new()
                 .layer(ResponseBodyTimeoutLayer::new(
                     config.timeout,
@@ -388,33 +388,56 @@ impl ClientBuilder {
                 .layer(FollowRedirectLayer::with_policy(redirect_policy))
                 .service(service);
 
-            BoxCloneSyncService::new(service)
+            match config.request_layers {
+                Some(layers) => {
+                    let service = layers.into_iter().fold(
+                        BoxCloneSyncService::new(service),
+                        |client_service, layer| {
+                            ServiceBuilder::new().layer(layer).service(client_service)
+                        },
+                    );
+
+                    let service = ServiceBuilder::new()
+                        .layer(RetryLayer::new(Http2RetryPolicy::new(
+                            config.http2_max_retry,
+                        )))
+                        .service(service);
+
+                    let service = ServiceBuilder::new()
+                        .layer(TimeoutLayer::new(config.timeout, config.read_timeout))
+                        .service(service);
+
+                    let service = ServiceBuilder::new()
+                        .map_err(error::cast_timeout_to_request_error)
+                        .service(service);
+
+                    BoxCloneSyncService::new(service)
+                }
+                None => {
+                    let service = ServiceBuilder::new()
+                        .layer(RetryLayer::new(Http2RetryPolicy::new(
+                            config.http2_max_retry,
+                        )))
+                        .service(service);
+
+                    let service = ServiceBuilder::new()
+                        .layer(TimeoutLayer::new(config.timeout, config.read_timeout))
+                        .service(service);
+
+                    let service = ServiceBuilder::new()
+                        .map_err(error::cast_timeout_to_request_error)
+                        .service(service);
+
+                    BoxCloneSyncService::new(service)
+                }
+            }
         };
-
-        if let Some(layers) = config.request_layers {
-            service = layers.into_iter().fold(service, |client_service, layer| {
-                ServiceBuilder::new().layer(layer).service(client_service)
-            });
-        }
-
-        let service = ServiceBuilder::new()
-            .layer(RetryLayer::new(Http2RetryPolicy::new(
-                config.http2_max_retry,
-            )))
-            .service(service);
-
-        let service = ServiceBuilder::new()
-            .layer(TimeoutLayer::new(config.timeout, config.read_timeout))
-            .service(service);
-
-        let service = ServiceBuilder::new()
-            .map_err(error::cast_timeout_to_request_error)
-            .service(service);
 
         Ok(Client {
             inner: Arc::new(ClientRef {
+                service,
                 accepts: config.accepts,
-                service: BoxCloneSyncService::new(service),
+
                 headers: config.headers,
                 https_only: config.https_only,
                 proxies_maybe_http_auth,
