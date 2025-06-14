@@ -26,7 +26,6 @@ pub struct ClientService {
 }
 
 impl ClientService {
-    #[inline(always)]
     pub fn new(client: Client<Connector, Body>, original_headers: Option<OriginalHeaders>) -> Self {
         Self {
             client,
@@ -40,6 +39,7 @@ impl Service<Request<Body>> for ClientService {
     type Response = http::Response<Incoming>;
     type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send + Sync>>;
 
+    #[inline(always)]
     fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         self.client
             .poll_ready(cx)

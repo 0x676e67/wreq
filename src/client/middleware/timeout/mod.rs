@@ -34,6 +34,7 @@ where
     type Error = BoxError;
     type Future = ResponseFuture<S::Future>;
 
+    #[inline(always)]
     fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         self.inner.poll_ready(cx)
     }
@@ -78,6 +79,7 @@ where
     type Error = S::Error;
     type Future = ResponseBodyTimeoutFuture<S::Future>;
 
+    #[inline(always)]
     fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         self.inner.poll_ready(cx)
     }

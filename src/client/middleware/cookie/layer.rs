@@ -13,7 +13,7 @@ pub struct CookieManagerLayer {
 
 impl CookieManagerLayer {
     /// Create a new cookie manager layer.
-    pub fn new(cookie_store: Option<Arc<dyn CookieStore + 'static>>) -> Self {
+    pub const fn new(cookie_store: Option<Arc<dyn CookieStore + 'static>>) -> Self {
         Self { cookie_store }
     }
 }

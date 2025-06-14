@@ -45,7 +45,7 @@ pub struct FollowRedirectLayer<P> {
 
 impl<P> FollowRedirectLayer<P> {
     /// Create a new [`FollowRedirectLayer`] with the given redirection [`Policy`].
-    pub fn with_policy(policy: P) -> Self {
+    pub const fn with_policy(policy: P) -> Self {
         FollowRedirectLayer { policy }
     }
 }
@@ -76,7 +76,7 @@ where
     P: Clone,
 {
     /// Create a new [`FollowRedirect`] with the given redirection [`Policy`].
-    pub fn with_policy(inner: S, policy: P) -> Self {
+    pub const fn with_policy(inner: S, policy: P) -> Self {
         FollowRedirect { inner, policy }
     }
 }
@@ -91,6 +91,7 @@ where
     type Error = S::Error;
     type Future = ResponseFuture<S, ReqBody, P>;
 
+    #[inline(always)]
     fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         self.inner.poll_ready(cx)
     }

@@ -36,31 +36,17 @@ impl<B, E, P> Policy<B, E> for &mut P
 where
     P: Policy<B, E> + ?Sized,
 {
+    #[inline(always)]
     fn redirect(&mut self, attempt: &Attempt<'_>) -> Result<Action, E> {
         (**self).redirect(attempt)
     }
 
+    #[inline(always)]
     fn on_request(&mut self, request: &mut Request<B>) {
         (**self).on_request(request)
     }
 
-    fn clone_body(&self, body: &B) -> Option<B> {
-        (**self).clone_body(body)
-    }
-}
-
-impl<B, E, P> Policy<B, E> for Box<P>
-where
-    P: Policy<B, E> + ?Sized,
-{
-    fn redirect(&mut self, attempt: &Attempt<'_>) -> Result<Action, E> {
-        (**self).redirect(attempt)
-    }
-
-    fn on_request(&mut self, request: &mut Request<B>) {
-        (**self).on_request(request)
-    }
-
+    #[inline(always)]
     fn clone_body(&self, body: &B) -> Option<B> {
         (**self).clone_body(body)
     }
@@ -98,19 +84,4 @@ pub enum Action {
     Follow,
     /// Do not follow the redirection, and return the redirection response as-is.
     Stop,
-}
-
-impl<B, E> Policy<B, E> for Action {
-    fn redirect(&mut self, _: &Attempt<'_>) -> Result<Action, E> {
-        Ok(*self)
-    }
-}
-
-impl<B, E> Policy<B, E> for Result<Action, E>
-where
-    E: Clone,
-{
-    fn redirect(&mut self, _: &Attempt<'_>) -> Result<Action, E> {
-        self.clone()
-    }
 }

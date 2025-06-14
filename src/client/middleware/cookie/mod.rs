@@ -29,7 +29,7 @@ where
     type Error = S::Error;
     type Future = ResponseFuture<S::Future>;
 
-    #[inline]
+    #[inline(always)]
     fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         self.inner.poll_ready(cx)
     }

@@ -273,7 +273,7 @@ pub(crate) struct TowerRedirectPolicy {
 }
 
 impl TowerRedirectPolicy {
-    pub(crate) fn new(policy: Policy) -> Self {
+    pub(crate) const fn new(policy: Policy) -> Self {
         Self {
             policy: RequestConfig::new(Some(policy)),
             referer: false,
@@ -346,6 +346,7 @@ impl TowerPolicy<Body, BoxError> for TowerRedirectPolicy {
         }
     }
 
+    #[inline(always)]
     fn on_request(&mut self, req: &mut http::Request<Body>) {
         // Parse the request URL and update the list of URLs.
         if let Ok(next_url) = Url::parse(&req.uri().to_string()) {
@@ -365,6 +366,7 @@ impl TowerPolicy<Body, BoxError> for TowerRedirectPolicy {
     }
 
     // This is must implemented to make 307 and 308 redirects work
+    #[inline(always)]
     fn clone_body(&self, body: &Body) -> Option<Body> {
         body.try_clone()
     }

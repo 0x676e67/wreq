@@ -1534,10 +1534,12 @@ impl tower_service::Service<Request> for Client {
     type Error = Error;
     type Future = Pending;
 
+    #[inline(always)]
     fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         Poll::Ready(Ok(()))
     }
 
+    #[inline(always)]
     fn call(&mut self, req: Request) -> Self::Future {
         self.execute_request(req)
     }
@@ -1548,10 +1550,12 @@ impl tower_service::Service<Request> for &'_ Client {
     type Error = Error;
     type Future = Pending;
 
+    #[inline(always)]
     fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         Poll::Ready(Ok(()))
     }
 
+    #[inline(always)]
     fn call(&mut self, req: Request) -> Self::Future {
         self.execute_request(req)
     }
