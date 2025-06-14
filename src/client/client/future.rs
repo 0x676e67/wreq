@@ -4,7 +4,6 @@ use std::{
     task::{Context, Poll},
 };
 
-use http::Uri;
 use pin_project_lite::pin_project;
 use tower::util::BoxCloneSyncService;
 use url::Url;
@@ -42,7 +41,6 @@ pub(super) enum PendingInner {
 
 pin_project! {
     pub(super) struct PendingRequest {
-        pub uri: Uri,
         pub url: Url,
         pub inner: Arc<ClientRef>,
         #[pin]

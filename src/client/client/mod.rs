@@ -1461,7 +1461,7 @@ impl Client {
         // for both poll_ready and call.
         let in_flight = {
             let mut req = http::Request::builder()
-                .uri(uri.clone())
+                .uri(uri)
                 .method(method.clone())
                 .body(body.unwrap_or_else(Body::empty))
                 .expect("valid request parts");
@@ -1475,7 +1475,6 @@ impl Client {
 
         Pending {
             inner: PendingInner::Request(Box::pin(PendingRequest {
-                uri,
                 url,
                 inner: self.inner.clone(),
                 in_flight,
