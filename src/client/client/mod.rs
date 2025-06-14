@@ -1476,7 +1476,7 @@ impl Client {
         Pending {
             inner: PendingInner::Request(Box::pin(PendingRequest {
                 url,
-                accepts: self.inner.accepts.clone(),
+                accepts: self.inner.accepts,
                 in_flight,
             })),
         }
