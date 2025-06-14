@@ -806,7 +806,7 @@ impl RequestBuilder {
     /// ```
     pub fn send(self) -> impl Future<Output = Result<Response, crate::Error>> {
         match self.request {
-            Ok(req) => self.client.execute_request(req),
+            Ok(req) => self.client.execute(req),
             Err(err) => Pending::new_err(err),
         }
     }

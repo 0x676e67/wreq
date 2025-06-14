@@ -4,7 +4,6 @@ mod service;
 use std::{
     collections::HashMap,
     convert::TryInto,
-    future::Future,
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
     num::NonZeroUsize,
     sync::Arc,
@@ -1424,12 +1423,8 @@ impl Client {
     ///
     /// This method fails if there was an error while sending request,
     /// redirect loop was detected or redirect limit was exhausted.
-    pub fn execute(&self, request: Request) -> impl Future<Output = Result<Response, Error>> {
-        self.execute_request(request)
-    }
-
-    pub(super) fn execute_request(&self, req: Request) -> Pending {
-        let (method, url, mut headers, body, extensions, _allow_compression) = req.pieces();
+    pub fn execute(&self, request: Request) -> Pending {
+        let (method, url, mut headers, body, extensions, _allow_compression) = request.pieces();
 
         // get the scheme of the URL
         let scheme = url.scheme();
@@ -1558,7 +1553,7 @@ impl tower_service::Service<Request> for Client {
 
     #[inline(always)]
     fn call(&mut self, req: Request) -> Self::Future {
-        self.execute_request(req)
+        self.execute(req)
     }
 }
 
@@ -1574,7 +1569,7 @@ impl tower_service::Service<Request> for &'_ Client {
 
     #[inline(always)]
     fn call(&mut self, req: Request) -> Self::Future {
-        self.execute_request(req)
+        self.execute(req)
     }
 }
 
