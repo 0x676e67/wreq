@@ -398,10 +398,13 @@ impl ClientBuilder {
         }
 
         let service = ServiceBuilder::new()
-            .layer(TimeoutLayer::new(config.timeout, config.read_timeout))
             .layer(RetryLayer::new(Http2RetryPolicy::new(
                 config.http2_max_retry,
             )))
+            .service(service);
+
+        let service = ServiceBuilder::new()
+            .layer(TimeoutLayer::new(config.timeout, config.read_timeout))
             .service(service);
 
         let client_service = ServiceBuilder::new()
