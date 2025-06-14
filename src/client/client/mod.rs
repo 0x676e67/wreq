@@ -21,6 +21,7 @@ use http::{
 use service::ClientService;
 use tower::{
     Layer, Service, ServiceBuilder,
+    retry::RetryLayer,
     util::{BoxCloneSyncService, BoxCloneSyncServiceLayer},
 };
 #[cfg(feature = "cookies")]
@@ -42,6 +43,7 @@ use super::{
 use crate::dns::hickory::{HickoryDnsResolver, LookupIpStrategy};
 use crate::{
     IntoUrl, Method, OriginalHeaders, Proxy,
+    client::middleware::retry::Http2RetryPolicy,
     connect::{
         BoxedConnectorLayer, BoxedConnectorService, Connector,
         sealed::{Conn, Unnameable},
@@ -49,19 +51,16 @@ use crate::{
     core::{
         body::Incoming,
         client::{Builder, Client as HyperClient, connect::HttpConnector},
-        ext::{RequestConfig, RequestOriginalHeaders},
         rt::{TokioExecutor, tokio::TokioTimer},
         service::Oneshot,
     },
     dns::{DnsResolverWithOverrides, DynResolver, Resolve, gai::GaiResolver},
-    error,
-    error::{BoxError, Error},
+    error::{self, BoxError, Error},
     http1::Http1Config,
     http2::Http2Config,
     into_url::try_uri,
     proxy::Matcher as ProxyMatcher,
-    redirect,
-    redirect::TowerRedirectPolicy,
+    redirect::{self, TowerRedirectPolicy},
     tls::{
         AlpnProtos, CertStore, CertificateInput, Identity, KeyLogPolicy, TlsConfig, TlsConnector,
         TlsVersion,
@@ -100,10 +99,8 @@ pub struct Client {
 struct ClientRef {
     accepts: Accepts,
     headers: HeaderMap,
-    original_headers: RequestConfig<RequestOriginalHeaders>,
     client: BoxedClientService,
     https_only: bool,
-    http2_max_retry_count: usize,
     proxies: Arc<Vec<ProxyMatcher>>,
     proxies_maybe_http_auth: bool,
     proxies_maybe_http_custom_headers: bool,
@@ -161,7 +158,7 @@ struct Config {
     https_only: bool,
     http1_config: Http1Config,
     http2_config: Http2Config,
-    http2_max_retry_count: usize,
+    http2_max_retry: usize,
     request_layers: Option<Vec<BoxedClientServiceLayer>>,
     connector_layers: Option<Vec<BoxedConnectorLayer>>,
     builder: Builder,
@@ -239,7 +236,7 @@ impl ClientBuilder {
                 https_only: false,
                 http1_config: Http1Config::default(),
                 http2_config: Http2Config::default(),
-                http2_max_retry_count: 2,
+                http2_max_retry: 2,
                 request_layers: None,
                 connector_layers: None,
                 alpn_protos: None,
@@ -373,7 +370,10 @@ impl ClientBuilder {
                     config.timeout,
                     config.read_timeout,
                 ))
-                .service(ClientService::new(config.builder.build(connector)));
+                .service(ClientService::new(
+                    config.builder.build(connector),
+                    config.original_headers,
+                ));
 
             #[cfg(feature = "cookies")]
             let service = ServiceBuilder::new()
@@ -398,6 +398,9 @@ impl ClientBuilder {
         }
 
         let service = ServiceBuilder::new()
+            .layer(RetryLayer::new(Http2RetryPolicy::new(
+                config.http2_max_retry,
+            )))
             .layer(TimeoutLayer::new(config.timeout, config.read_timeout))
             .service(service);
 
@@ -410,9 +413,7 @@ impl ClientBuilder {
                 accepts: config.accepts,
                 client: BoxCloneSyncService::new(client_service),
                 headers: config.headers,
-                original_headers: RequestConfig::new(config.original_headers),
                 https_only: config.https_only,
-                http2_max_retry_count: config.http2_max_retry_count,
                 proxies_maybe_http_auth,
                 proxies_maybe_http_custom_headers,
                 proxies,
@@ -854,8 +855,8 @@ impl ClientBuilder {
     }
 
     /// Sets the maximum number of safe retries for HTTP/2 connections.
-    pub fn http2_max_retry_count(mut self, max: usize) -> ClientBuilder {
-        self.config.http2_max_retry_count = max;
+    pub fn http2_max_retry(mut self, max: usize) -> ClientBuilder {
+        self.config.http2_max_retry = max;
         self
     }
 
@@ -1408,7 +1409,7 @@ impl Client {
     }
 
     pub(super) fn execute_request(&self, req: Request) -> Pending {
-        let (method, url, mut headers, body, mut extensions, _allow_compression) = req.pieces();
+        let (method, url, mut headers, body, extensions, _allow_compression) = req.pieces();
 
         // get the scheme of the URL
         let scheme = url.scheme();
@@ -1470,9 +1471,6 @@ impl Client {
                 .method(method.clone())
                 .body(body)
                 .expect("valid request parts");
-
-            // Inject metadata into request extensions
-            self.inner.original_headers.replace_to(&mut extensions);
 
             // Finalize headers and extensions
             *req.headers_mut() = headers.clone();
