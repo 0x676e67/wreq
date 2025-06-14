@@ -103,7 +103,7 @@ where
         cx: &mut Context<'_>,
     ) -> Poll<Option<Result<http_body::Frame<Self::Data>, Self::Error>>> {
         let mut this = self.project();
-        match *this.inner.as_mut() {
+        match *this.inner {
             InnerBody::TotalTimeout(ref mut body) => poll_and_map_body(body.as_mut(), cx),
             InnerBody::ReadTimeout(ref mut body) => poll_and_map_body(body.as_mut(), cx),
             InnerBody::CombinedTimeout(ref mut body) => poll_and_map_body(body.as_mut(), cx),

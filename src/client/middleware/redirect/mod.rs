@@ -36,8 +36,6 @@ use tower_service::Service;
 use self::policy::{Action, Attempt, Policy};
 
 /// [`Layer`] for retrying requests with a [`Service`] to follow redirection responses.
-///
-/// See the [module docs](self) for more details.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct FollowRedirectLayer<P> {
     policy: P,
@@ -45,7 +43,7 @@ pub struct FollowRedirectLayer<P> {
 
 impl<P> FollowRedirectLayer<P> {
     /// Create a new [`FollowRedirectLayer`] with the given redirection [`Policy`].
-    pub fn with_policy(policy: P) -> Self {
+    pub const fn with_policy(policy: P) -> Self {
         FollowRedirectLayer { policy }
     }
 }
@@ -63,8 +61,6 @@ where
 }
 
 /// Middleware that retries requests with a [`Service`] to follow redirection responses.
-///
-/// See the [module docs](self) for more details.
 #[derive(Clone, Copy, Debug)]
 pub struct FollowRedirect<S, P> {
     inner: S,
@@ -76,7 +72,7 @@ where
     P: Clone,
 {
     /// Create a new [`FollowRedirect`] with the given redirection [`Policy`].
-    pub fn with_policy(inner: S, policy: P) -> Self {
+    pub const fn with_policy(inner: S, policy: P) -> Self {
         FollowRedirect { inner, policy }
     }
 }
@@ -91,6 +87,7 @@ where
     type Error = S::Error;
     type Future = ResponseFuture<S, ReqBody, P>;
 
+    #[inline(always)]
     fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         self.inner.poll_ready(cx)
     }

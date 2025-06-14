@@ -1,24 +1,19 @@
 use std::{
     pin::Pin,
-    sync::Arc,
     task::{Context, Poll},
 };
 
-use bytes::Bytes;
-use http::{Extensions, HeaderMap, Method, Uri};
 use pin_project_lite::pin_project;
 use tower::util::BoxCloneSyncService;
 use url::Url;
 
-use super::{Body, ClientRef, Response};
+use super::{Body, Response};
 use crate::{
     Error,
     client::{
         body,
-        middleware::{
-            timeout::TimeoutBody,
-            {self},
-        },
+        decoder::Accepts,
+        middleware::{self, timeout::TimeoutBody},
     },
     core::{body::Incoming, service::Oneshot},
     error::{self, BoxError},
@@ -43,61 +38,10 @@ pub(super) enum PendingInner {
 
 pin_project! {
     pub(super) struct PendingRequest {
-        pub method: Method,
-        pub uri: Uri,
         pub url: Url,
-        pub headers: HeaderMap,
-        pub body: Option<Option<Bytes>>,
-        pub extensions: Extensions,
-        pub http2_retry_count: usize,
-        pub inner: Arc<ClientRef>,
+        pub accepts: Accepts,
         #[pin]
         pub in_flight: ResponseFuture,
-    }
-}
-
-impl PendingRequest {
-    fn http2_retry_error(
-        mut self: Pin<&mut Self>,
-        err: &(dyn std::error::Error + 'static),
-    ) -> bool {
-        if !is_http2_retryable_error(err) {
-            return false;
-        }
-
-        trace!(
-            "HTTP/2 retryable error: {:?}, retry_count={}/max={}",
-            err, self.http2_retry_count, self.inner.http2_max_retry_count
-        );
-
-        let body = match self.body {
-            Some(Some(ref body)) => Body::reusable(body.clone()),
-            Some(None) => {
-                debug!("error was retryable, but body not reusable");
-                return false;
-            }
-            None => Body::empty(),
-        };
-
-        if self.http2_retry_count >= self.inner.http2_max_retry_count {
-            trace!("http2 retry count too high: {}", self.http2_retry_count);
-            return false;
-        }
-        self.http2_retry_count += 1;
-
-        *self.as_mut().project().in_flight = {
-            let mut req = http::Request::builder()
-                .uri(self.uri.clone())
-                .method(self.method.clone())
-                .body(body)
-                .expect("valid request parts");
-
-            *req.headers_mut() = self.headers.clone();
-            *req.extensions_mut() = self.extensions.clone();
-            Oneshot::new(self.inner.client.clone(), req)
-        };
-
-        true
     }
 }
 
@@ -127,70 +71,29 @@ impl Future for PendingRequest {
     type Output = Result<Response, Error>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        loop {
-            let res = {
-                let r = self.as_mut().project().in_flight.get_mut();
-                match Pin::new(r).poll(cx) {
-                    Poll::Ready(Err(e)) => {
-                        // Http2 errors are retryable, so we check if we can retry
-                        if let Some(e) = e.source() {
-                            if self.as_mut().http2_retry_error(e) {
-                                continue;
-                            }
-                        }
-
-                        // If the error is an Error, we return it
-                        return match e.downcast::<Error>() {
-                            Ok(e) => Poll::Ready(Err(*e)),
-                            Err(e) => Poll::Ready(Err(error::request(e))),
-                        };
-                    }
-                    Poll::Ready(Ok(res)) => res.map(body::boxed),
-                    Poll::Pending => return Poll::Pending,
+        let res = {
+            let r = self.as_mut().project().in_flight.get_mut();
+            match Pin::new(r).poll(cx) {
+                Poll::Ready(Err(e)) => {
+                    return match e.downcast::<Error>() {
+                        Ok(e) => Poll::Ready(Err(*e)),
+                        Err(e) => Poll::Ready(Err(error::request(e))),
+                    };
                 }
-            };
-
-            if let Some(url) = &res.extensions().get::<middleware::redirect::RequestUri>() {
-                self.url = match Url::parse(&url.0.to_string()) {
-                    Ok(url) => url,
-                    Err(e) => return Poll::Ready(Err(error::decode(e))),
-                }
-            };
-
-            let res = Response::new(res, self.url.clone(), self.inner.accepts);
-
-            return Poll::Ready(Ok(res));
-        }
-    }
-}
-
-fn is_http2_retryable_error(err: &(dyn std::error::Error + 'static)) -> bool {
-    // pop the legacy::Error
-    let err = if let Some(err) = err.source() {
-        err
-    } else {
-        return false;
-    };
-
-    if let Some(cause) = err.source() {
-        if let Some(err) = cause.downcast_ref::<http2::Error>() {
-            // They sent us a graceful shutdown, try with a new connection!
-            if err.is_go_away() && err.is_remote() && err.reason() == Some(http2::Reason::NO_ERROR)
-            {
-                return true;
+                Poll::Ready(Ok(res)) => res.map(body::boxed),
+                Poll::Pending => return Poll::Pending,
             }
+        };
 
-            // REFUSED_STREAM was sent from the server, which is safe to retry.
-            // https://www.rfc-editor.org/rfc/rfc9113.html#section-8.7-3.2
-            if err.is_reset()
-                && err.is_remote()
-                && err.reason() == Some(http2::Reason::REFUSED_STREAM)
-            {
-                return true;
+        if let Some(url) = &res.extensions().get::<middleware::redirect::RequestUri>() {
+            self.url = match Url::parse(&url.0.to_string()) {
+                Ok(url) => url,
+                Err(e) => return Poll::Ready(Err(error::decode(e))),
             }
-        }
+        };
+
+        Poll::Ready(Ok(Response::new(res, self.url.clone(), self.accepts)))
     }
-    false
 }
 
 #[cfg(test)]

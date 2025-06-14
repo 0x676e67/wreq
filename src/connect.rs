@@ -208,6 +208,7 @@ impl Service<Dst> for Connector {
     type Error = BoxError;
     type Future = Connecting;
 
+    #[inline(always)]
     fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         match self {
             Connector::Simple(service) => service.poll_ready(cx),
@@ -215,6 +216,7 @@ impl Service<Dst> for Connector {
         }
     }
 
+    #[inline(always)]
     fn call(&mut self, dst: Dst) -> Self::Future {
         match self {
             Connector::Simple(service) => service.call(dst),
@@ -392,6 +394,7 @@ impl Service<Dst> for ConnectorService {
     type Error = BoxError;
     type Future = Connecting;
 
+    #[inline(always)]
     fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         Poll::Ready(Ok(()))
     }

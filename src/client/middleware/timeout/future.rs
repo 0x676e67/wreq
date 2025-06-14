@@ -76,8 +76,8 @@ pin_project! {
     pub struct ResponseBodyTimeoutFuture<Fut> {
         #[pin]
         pub(crate) inner: Fut,
-        pub(crate) read_timeout: Option<Duration>,
         pub(crate) total_timeout: Option<Duration>,
+        pub(crate) read_timeout: Option<Duration>,
     }
 }
 
