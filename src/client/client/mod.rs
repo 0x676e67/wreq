@@ -388,6 +388,12 @@ impl ClientBuilder {
                 .layer(FollowRedirectLayer::with_policy(redirect_policy))
                 .service(service);
 
+            let service = ServiceBuilder::new()
+                .layer(RetryLayer::new(Http2RetryPolicy::new(
+                    config.http2_max_retry,
+                )))
+                .service(service);
+
             match config.request_layers {
                 Some(layers) => {
                     let service = layers.into_iter().fold(
@@ -396,12 +402,6 @@ impl ClientBuilder {
                             ServiceBuilder::new().layer(layer).service(client_service)
                         },
                     );
-
-                    let service = ServiceBuilder::new()
-                        .layer(RetryLayer::new(Http2RetryPolicy::new(
-                            config.http2_max_retry,
-                        )))
-                        .service(service);
 
                     let service = ServiceBuilder::new()
                         .layer(TimeoutLayer::new(config.timeout, config.read_timeout))
@@ -414,12 +414,6 @@ impl ClientBuilder {
                     BoxCloneSyncService::new(service)
                 }
                 None => {
-                    let service = ServiceBuilder::new()
-                        .layer(RetryLayer::new(Http2RetryPolicy::new(
-                            config.http2_max_retry,
-                        )))
-                        .service(service);
-
                     let service = ServiceBuilder::new()
                         .layer(TimeoutLayer::new(config.timeout, config.read_timeout))
                         .service(service);
