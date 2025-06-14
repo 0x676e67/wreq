@@ -60,8 +60,8 @@ impl Policy<Req, Res, BoxError> for Http2RetryPolicy {
         result: &mut Result<Res, BoxError>,
     ) -> Option<Self::Future> {
         if let Err(err) = result {
-            if self.is_retryable_error(err.source()?) {
-                return Some(future::ready(()));
+            if !self.is_retryable_error(err.source()?) {
+                return None;
             }
 
             // Treat all errors as failures...
