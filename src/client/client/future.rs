@@ -82,32 +82,28 @@ impl Future for PendingRequest {
     type Output = Result<Response, Error>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        loop {
-            let res = {
-                let r = self.as_mut().project().in_flight.get_mut();
-                match Pin::new(r).poll(cx) {
-                    Poll::Ready(Err(e)) => {
-                        return match e.downcast::<Error>() {
-                            Ok(e) => Poll::Ready(Err(*e)),
-                            Err(e) => Poll::Ready(Err(error::request(e))),
-                        };
-                    }
-                    Poll::Ready(Ok(res)) => res.map(body::boxed),
-                    Poll::Pending => return Poll::Pending,
+        let res = {
+            let r = self.as_mut().project().in_flight.get_mut();
+            match Pin::new(r).poll(cx) {
+                Poll::Ready(Err(e)) => {
+                    return match e.downcast::<Error>() {
+                        Ok(e) => Poll::Ready(Err(*e)),
+                        Err(e) => Poll::Ready(Err(error::request(e))),
+                    };
                 }
-            };
+                Poll::Ready(Ok(res)) => res.map(body::boxed),
+                Poll::Pending => return Poll::Pending,
+            }
+        };
 
-            if let Some(url) = &res.extensions().get::<middleware::redirect::RequestUri>() {
-                self.url = match Url::parse(&url.0.to_string()) {
-                    Ok(url) => url,
-                    Err(e) => return Poll::Ready(Err(error::decode(e))),
-                }
-            };
+        if let Some(url) = &res.extensions().get::<middleware::redirect::RequestUri>() {
+            self.url = match Url::parse(&url.0.to_string()) {
+                Ok(url) => url,
+                Err(e) => return Poll::Ready(Err(error::decode(e))),
+            }
+        };
 
-            let res = Response::new(res, self.url.clone(), self.inner.accepts);
-
-            return Poll::Ready(Ok(res));
-        }
+        Poll::Ready(Ok(Response::new(res, self.url.clone(), self.inner.accepts)))
     }
 }
 
