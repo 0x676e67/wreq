@@ -10,7 +10,7 @@ use std::{
 use http::Response;
 use pin_project_lite::pin_project;
 
-use super::CookieStore;
+use crate::cookie::CookieStore;
 
 pin_project! {
     /// Response future for [`CookieManager`].
