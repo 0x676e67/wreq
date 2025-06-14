@@ -12,9 +12,6 @@ use crate::{
 ///
 /// This policy helps avoid unsafe or infinite retries by tracking the number of attempts
 /// and only retrying errors that are considered safe to repeat (such as connection-level errors).
-///
-/// # Fields
-/// - `usize`: The maximum number of retry attempts allowed for a single request.
 #[derive(Clone)]
 pub struct Http2RetryPolicy(usize);
 
