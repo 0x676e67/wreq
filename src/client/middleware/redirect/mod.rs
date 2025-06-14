@@ -36,8 +36,6 @@ use tower_service::Service;
 use self::policy::{Action, Attempt, Policy};
 
 /// [`Layer`] for retrying requests with a [`Service`] to follow redirection responses.
-///
-/// See the [module docs](self) for more details.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct FollowRedirectLayer<P> {
     policy: P,
@@ -63,8 +61,6 @@ where
 }
 
 /// Middleware that retries requests with a [`Service`] to follow redirection responses.
-///
-/// See the [module docs](self) for more details.
 #[derive(Clone, Copy, Debug)]
 pub struct FollowRedirect<S, P> {
     inner: S,
