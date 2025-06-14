@@ -10,7 +10,7 @@ use crate::{
 pub struct Http2RetryPolicy(usize);
 
 impl Http2RetryPolicy {
-    /// Create a new `Http2Attempts` policy with the specified number of attempts.
+    /// Create a new `Http2RetryPolicy` policy with the specified number of attempts.
     pub const fn new(attempts: usize) -> Self {
         Self(attempts)
     }
