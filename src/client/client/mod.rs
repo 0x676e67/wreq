@@ -1454,15 +1454,6 @@ impl Client {
             None => return Pending::new_err(error::url_bad_uri(url)),
         };
 
-        // reuse the body if possible
-        let (reusable, body) = match body {
-            Some(body) => {
-                let (reusable, body) = body.try_reuse();
-                (Some(reusable), body)
-            }
-            None => (None, Body::empty()),
-        };
-
         // apply proxy headers if any proxies are configured
         self.apply_proxy_headers(&uri, &mut headers);
 
@@ -1472,7 +1463,7 @@ impl Client {
             let mut req = http::Request::builder()
                 .uri(uri.clone())
                 .method(method.clone())
-                .body(body)
+                .body(body.unwrap_or_else(Body::empty))
                 .expect("valid request parts");
 
             // Finalize headers and extensions
@@ -1484,13 +1475,8 @@ impl Client {
 
         Pending {
             inner: PendingInner::Request(Box::pin(PendingRequest {
-                method,
                 uri,
                 url,
-                headers,
-                body: reusable,
-                extensions,
-                http2_retry_count: 0,
                 inner: self.inner.clone(),
                 in_flight,
             })),

@@ -4,8 +4,7 @@ use std::{
     task::{Context, Poll},
 };
 
-use bytes::Bytes;
-use http::{Extensions, HeaderMap, Method, Uri};
+use http::Uri;
 use pin_project_lite::pin_project;
 use tower::util::BoxCloneSyncService;
 use url::Url;
@@ -43,13 +42,8 @@ pub(super) enum PendingInner {
 
 pin_project! {
     pub(super) struct PendingRequest {
-        pub method: Method,
         pub uri: Uri,
         pub url: Url,
-        pub headers: HeaderMap,
-        pub body: Option<Option<Bytes>>,
-        pub extensions: Extensions,
-        pub http2_retry_count: usize,
         pub inner: Arc<ClientRef>,
         #[pin]
         pub in_flight: ResponseFuture,
