@@ -1,6 +1,5 @@
 use std::{
     pin::Pin,
-    sync::Arc,
     task::{Context, Poll},
 };
 
@@ -8,15 +7,13 @@ use pin_project_lite::pin_project;
 use tower::util::BoxCloneSyncService;
 use url::Url;
 
-use super::{Body, ClientRef, Response};
+use super::{Body, Response};
 use crate::{
     Error,
     client::{
         body,
-        middleware::{
-            timeout::TimeoutBody,
-            {self},
-        },
+        decoder::Accepts,
+        middleware::{self, timeout::TimeoutBody},
     },
     core::{body::Incoming, service::Oneshot},
     error::{self, BoxError},
@@ -42,7 +39,7 @@ pub(super) enum PendingInner {
 pin_project! {
     pub(super) struct PendingRequest {
         pub url: Url,
-        pub inner: Arc<ClientRef>,
+        pub accepts: Accepts,
         #[pin]
         pub in_flight: ResponseFuture,
     }
@@ -95,7 +92,7 @@ impl Future for PendingRequest {
             }
         };
 
-        Poll::Ready(Ok(Response::new(res, self.url.clone(), self.inner.accepts)))
+        Poll::Ready(Ok(Response::new(res, self.url.clone(), self.accepts)))
     }
 }
 

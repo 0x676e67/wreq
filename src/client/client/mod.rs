@@ -99,7 +99,7 @@ pub struct Client {
 struct ClientRef {
     accepts: Accepts,
     headers: HeaderMap,
-    client: BoxedClientService,
+    service: BoxedClientService,
     https_only: bool,
     proxies: Arc<Vec<ProxyMatcher>>,
     proxies_maybe_http_auth: bool,
@@ -407,14 +407,14 @@ impl ClientBuilder {
             .layer(TimeoutLayer::new(config.timeout, config.read_timeout))
             .service(service);
 
-        let client_service = ServiceBuilder::new()
+        let service = ServiceBuilder::new()
             .map_err(error::cast_timeout_to_request_error)
             .service(service);
 
         Ok(Client {
             inner: Arc::new(ClientRef {
                 accepts: config.accepts,
-                client: BoxCloneSyncService::new(client_service),
+                service: BoxCloneSyncService::new(service),
                 headers: config.headers,
                 https_only: config.https_only,
                 proxies_maybe_http_auth,
@@ -1470,13 +1470,13 @@ impl Client {
             *req.headers_mut() = headers.clone();
             *req.extensions_mut() = extensions.clone();
 
-            Oneshot::new(self.inner.client.clone(), req)
+            Oneshot::new(self.inner.service.clone(), req)
         };
 
         Pending {
             inner: PendingInner::Request(Box::pin(PendingRequest {
                 url,
-                inner: self.inner.clone(),
+                accepts: self.inner.accepts.clone(),
                 in_flight,
             })),
         }

@@ -47,6 +47,7 @@ impl<S> Layer<S> for TimeoutLayer {
 
 /// Middleware that applies both a total timeout and a per-read timeout to the response body of a
 /// request with a [`Service`].
+#[derive(Clone)]
 pub struct Timeout<T> {
     inner: T,
     total_timeout: RequestConfig<RequestTotalTimeout>,
