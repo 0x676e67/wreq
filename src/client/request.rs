@@ -215,7 +215,7 @@ impl Request {
 
     /// Skip client default headers.
     #[inline(always)]
-    pub(crate) fn skip_default_headers_mut(&mut self) -> &mut Option<bool> {
+    pub(crate) fn default_headers_mut(&mut self) -> &mut Option<bool> {
         RequestConfig::<RequestSkipDefaultHeaders>::get_mut(&mut self.extensions)
     }
 
@@ -382,7 +382,7 @@ impl RequestBuilder {
     /// Set skip client default headers for this request.
     pub fn default_headers(mut self, skip: bool) -> RequestBuilder {
         if let Ok(ref mut req) = self.request {
-            *req.skip_default_headers_mut() = Some(skip);
+            *req.default_headers_mut() = Some(skip);
         }
         self
     }
