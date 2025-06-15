@@ -13,7 +13,7 @@ use tokio::fs::File;
 #[cfg(feature = "stream")]
 use tokio_util::io::ReaderStream;
 
-use crate::error::BoxError;
+use crate::error::{self, BoxError, Error};
 
 /// An asynchronous request body.
 pub struct Body {
@@ -218,7 +218,7 @@ impl fmt::Debug for Body {
 
 impl HttpBody for Body {
     type Data = Bytes;
-    type Error = crate::Error;
+    type Error = Error;
 
     fn poll_frame(
         mut self: Pin<&mut Self>,
@@ -235,7 +235,10 @@ impl HttpBody for Body {
             }
             Inner::Streaming(ref mut body) => {
                 Poll::Ready(ready!(Pin::new(body).poll_frame(cx)).map(|opt_chunk| {
-                    opt_chunk.map_err(crate::error::decode_boxed_error_to_internal)
+                    opt_chunk.map_err(|err| match err.downcast::<Error>() {
+                        Ok(err) => *err,
+                        Err(err) => error::body(err),
+                    })
                 }))
             }
         }

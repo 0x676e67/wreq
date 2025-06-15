@@ -203,17 +203,6 @@ pub(crate) fn map_timeout_to_request_error(error: BoxError) -> BoxError {
     }
 }
 
-/// Converts a boxed error into the internal `Error` type, if possible.
-/// If the error is already an `Error`, it is unboxed and returned.
-/// Otherwise, wraps the error as a body decoding error.
-#[inline]
-pub(crate) fn decode_boxed_error_to_internal(error: BoxError) -> Error {
-    match error.downcast::<Error>() {
-        Ok(err) => *err,
-        Err(err) => body(err),
-    }
-}
-
 impl fmt::Debug for Error {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let mut builder = f.debug_struct("wreq::Error");
