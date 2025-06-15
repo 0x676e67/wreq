@@ -5,6 +5,9 @@ use crate::{StatusCode, Url};
 /// A `Result` alias where the `Err` case is `wreq::Error`.
 pub type Result<T> = std::result::Result<T, Error>;
 
+/// A boxed error type that can be used for dynamic error handling.
+pub(crate) type BoxError = Box<dyn StdError + Send + Sync>;
+
 /// The Errors that may occur when processing a `Request`.
 ///
 /// Note: Errors may include the full URL used to make the `Request`. If the URL
@@ -13,8 +16,6 @@ pub type Result<T> = std::result::Result<T, Error>;
 pub struct Error {
     inner: Box<Inner>,
 }
-
-pub(crate) type BoxError = Box<dyn StdError + Send + Sync>;
 
 struct Inner {
     kind: Kind,
