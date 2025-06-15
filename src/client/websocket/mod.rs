@@ -20,9 +20,7 @@ use serde::Serialize;
 use tokio_tungstenite::tungstenite::{self, protocol};
 use tungstenite::protocol::WebSocketConfig;
 
-use crate::{
-    Error, OriginalHeaders, RequestBuilder, Response, core::ext::Protocol, proxy::Proxy,
-};
+use crate::{Error, OriginalHeaders, RequestBuilder, Response, core::ext::Protocol, proxy::Proxy};
 
 /// A WebSocket stream.
 type WebSocketStream = tokio_tungstenite::WebSocketStream<crate::Upgraded>;
