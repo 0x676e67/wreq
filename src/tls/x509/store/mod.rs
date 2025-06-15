@@ -6,6 +6,7 @@ use boring2::x509::store::{X509Store, X509StoreBuilder};
 use parser::{filter_map_certs, parse_certs_from_iter, parse_certs_from_stack, process_certs};
 
 use super::{Certificate, CertificateInput};
+use crate::Error;
 
 /// A builder for constructing a `CertStore`.
 ///
@@ -82,7 +83,7 @@ impl CertStoreBuilder {
         match std::fs::read(path) {
             Ok(data) => return self.add_stack_pem_certs(data),
             Err(err) => {
-                self.builder = Err(crate::error::builder(err));
+                self.builder = Err(Error::builder(err));
             }
         }
         self
@@ -198,7 +199,7 @@ impl CertStore {
     #[inline]
     pub fn builder() -> CertStoreBuilder {
         CertStoreBuilder {
-            builder: X509StoreBuilder::new().map_err(crate::error::builder),
+            builder: X509StoreBuilder::new().map_err(Error::builder),
         }
     }
 
@@ -241,7 +242,7 @@ impl CertStore {
         P: AsRef<Path>,
     {
         std::fs::read(path)
-            .map_err(crate::error::builder)
+            .map_err(Error::builder)
             .and_then(Self::from_pem_stack)
     }
 }

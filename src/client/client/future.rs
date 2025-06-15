@@ -15,7 +15,7 @@ use crate::{
         middleware::{self},
     },
     core::service::Oneshot,
-    error::{self, BoxError},
+    error::BoxError,
 };
 
 type ResponseFuture = Oneshot<
@@ -60,7 +60,7 @@ impl Future for Pending {
             PendingInner::Request(req) => Pin::new(req).poll(cx),
             PendingInner::Error(err) => Poll::Ready(Err(err
                 .take()
-                .unwrap_or_else(|| error::request("Pending error polled more than once")))),
+                .expect("Error already taken in PendingInner::Error"))),
         }
     }
 }
@@ -75,7 +75,7 @@ impl Future for PendingRequest {
                 Poll::Ready(Err(e)) => {
                     return match e.downcast::<Error>() {
                         Ok(e) => Poll::Ready(Err(*e)),
-                        Err(e) => Poll::Ready(Err(error::request(e))),
+                        Err(e) => Poll::Ready(Err(Error::request(e))),
                     };
                 }
                 Poll::Ready(Ok(res)) => res.map(body::boxed),
@@ -83,12 +83,9 @@ impl Future for PendingRequest {
             }
         };
 
-        if let Some(url) = &res.extensions().get::<middleware::redirect::RequestUri>() {
-            self.url = match Url::parse(&url.0.to_string()) {
-                Ok(url) => url,
-                Err(e) => return Poll::Ready(Err(error::decode(e))),
-            }
-        };
+        if let Some(uri) = res.extensions().get::<middleware::redirect::RequestUri>() {
+            self.url = Url::parse(&uri.0.to_string()).map_err(Error::decode)?;
+        }
 
         Poll::Ready(Ok(Response::new(res, self.url.clone())))
     }

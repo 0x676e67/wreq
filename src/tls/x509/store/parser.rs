@@ -1,6 +1,7 @@
 use boring2::x509::store::X509StoreBuilder;
 
 use super::{CertStore, Certificate, CertificateInput};
+use crate::Error;
 
 pub fn parse_certs_from_iter<'c, I>(
     certs: I,
@@ -43,7 +44,7 @@ where
     }
 
     if valid_count == 0 && invalid_count > 0 {
-        return Err(crate::error::builder("invalid certificate"));
+        return Err(Error::builder("invalid certificate"));
     }
 
     Ok(())

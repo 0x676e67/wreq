@@ -21,7 +21,7 @@ use tokio_tungstenite::tungstenite::{self, protocol};
 use tungstenite::protocol::WebSocketConfig;
 
 use crate::{
-    Error, OriginalHeaders, RequestBuilder, Response, core::ext::Protocol, error, proxy::Proxy,
+    Error, OriginalHeaders, RequestBuilder, Response, core::ext::Protocol, proxy::Proxy,
 };
 
 /// A WebSocket stream.
@@ -294,13 +294,13 @@ impl WebSocketRequestBuilder {
             "ws" => Scheme::HTTP,
             "wss" => Scheme::HTTPS,
             _ => {
-                return Err(error::url_bad_scheme(url.clone()));
+                return Err(Error::url_bad_scheme(url.clone()));
             }
         };
 
         // Update the scheme
         url.set_scheme(new_scheme.as_str())
-            .map_err(|_| error::url_bad_scheme(url.clone()))?;
+            .map_err(|_| Error::url_bad_scheme(url.clone()))?;
 
         // Get the version of the request
         // If the version is not set, use the default version
@@ -338,7 +338,7 @@ impl WebSocketRequestBuilder {
                 None
             }
             _ => {
-                return Err(error::upgrade(format!(
+                return Err(Error::upgrade(format!(
                     "unsupported version: {:?}",
                     version
                 )));
@@ -413,7 +413,7 @@ impl WebSocketResponse {
                 self.inner.version(),
                 Version::HTTP_10 | Version::HTTP_11 | Version::HTTP_2
             ) {
-                return Err(error::upgrade(format!(
+                return Err(Error::upgrade(format!(
                     "unexpected version: {:?}",
                     self.inner.version()
                 )));
@@ -423,15 +423,15 @@ impl WebSocketResponse {
                 Version::HTTP_10 | Version::HTTP_11 => {
                     if status != StatusCode::SWITCHING_PROTOCOLS {
                         let body = self.inner.text().await?;
-                        return Err(error::upgrade(format!("unexpected status code: {}", body)));
+                        return Err(Error::upgrade(format!("unexpected status code: {}", body)));
                     }
 
                     if !header_contains(self.inner.headers(), header::CONNECTION, "upgrade") {
-                        return Err(error::upgrade("missing connection header"));
+                        return Err(Error::upgrade("missing connection header"));
                     }
 
                     if !header_eq(self.inner.headers(), header::UPGRADE, "websocket") {
-                        return Err(error::upgrade("invalid upgrade header"));
+                        return Err(Error::upgrade("invalid upgrade header"));
                     }
 
                     match self
@@ -442,27 +442,27 @@ impl WebSocketResponse {
                             if !header.to_str().is_ok_and(|s| {
                                 s == tungstenite::handshake::derive_accept_key(nonce.as_bytes())
                             }) {
-                                return Err(error::upgrade(format!(
+                                return Err(Error::upgrade(format!(
                                     "invalid accept key: {:?}",
                                     header
                                 )));
                             }
                         }
                         None => {
-                            return Err(error::upgrade("missing accept key"));
+                            return Err(Error::upgrade("missing accept key"));
                         }
                     }
                 }
                 Version::HTTP_2 => {
                     if status != StatusCode::OK {
-                        return Err(error::upgrade(format!(
+                        return Err(Error::upgrade(format!(
                             "unexpected status code: {}",
                             status
                         )));
                     }
                 }
                 _ => {
-                    return Err(error::upgrade(format!(
+                    return Err(Error::upgrade(format!(
                         "unsupported version: {:?}",
                         self.version
                     )));
@@ -481,23 +481,23 @@ impl WebSocketResponse {
                 }
                 (false, None) => {
                     // server didn't reply with a protocol
-                    return Err(error::upgrade("missing protocol"));
+                    return Err(Error::upgrade("missing protocol"));
                 }
                 (false, Some(protocol)) => {
                     if let Some((protocols, protocol)) = self.protocols.zip(protocol.to_str().ok())
                     {
                         if !protocols.contains(&Cow::Borrowed(protocol)) {
                             // the responded protocol is none which we requested
-                            return Err(error::upgrade(format!("invalid protocol: {}", protocol)));
+                            return Err(Error::upgrade(format!("invalid protocol: {}", protocol)));
                         }
                     } else {
                         // we didn't request any protocols but got one anyway
-                        return Err(error::upgrade("invalid protocol"));
+                        return Err(Error::upgrade("invalid protocol"));
                     }
                 }
                 (true, Some(_)) => {
                     // we didn't request any protocols but got one anyway
-                    return Err(error::upgrade("invalid protocol"));
+                    return Err(Error::upgrade("invalid protocol"));
                 }
             }
 
@@ -594,7 +594,7 @@ impl Stream for WebSocket {
                         return Poll::Ready(Some(Ok(msg)));
                     }
                 }
-                Some(Err(err)) => return Poll::Ready(Some(Err(error::body(err)))),
+                Some(Err(err)) => return Poll::Ready(Some(Err(Error::body(err)))),
                 None => return Poll::Ready(None),
             }
         }
@@ -604,20 +604,24 @@ impl Stream for WebSocket {
 impl Sink<Message> for WebSocket {
     type Error = Error;
 
+    #[inline(always)]
     fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         Pin::new(&mut self.inner).poll_ready(cx).map_err(Into::into)
     }
 
+    #[inline(always)]
     fn start_send(mut self: Pin<&mut Self>, item: Message) -> Result<(), Self::Error> {
         Pin::new(&mut self.inner)
             .start_send(item.into_tungstenite())
             .map_err(Into::into)
     }
 
+    #[inline(always)]
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         Pin::new(&mut self.inner).poll_flush(cx).map_err(Into::into)
     }
 
+    #[inline(always)]
     fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         Pin::new(&mut self.inner).poll_close(cx).map_err(Into::into)
     }

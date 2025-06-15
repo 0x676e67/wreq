@@ -21,6 +21,7 @@ use tower_service::Service;
 
 use self::tls_conn::BoringTlsConn;
 use crate::{
+    Error,
     core::{
         client::{
             Dst,
@@ -257,12 +258,14 @@ impl ConnectorService {
         );
 
         if uri.scheme() == Some(&Scheme::HTTPS) {
+            use crate::Error;
+
             let http = HttpsConnector::new(self.http.clone(), self.tls.clone(), &mut dst);
 
             trace!("socks HTTPS over proxy");
             let conn = socks.call(uri.clone()).await?;
 
-            let host = uri.host().ok_or(crate::error::uri_bad_host())?;
+            let host = uri.host().ok_or(Error::uri_bad_host())?;
             let io = http.connect(&uri, host, conn).await?;
 
             return Ok(Conn {
@@ -352,7 +355,7 @@ impl ConnectorService {
                 tunnel = tunnel.with_headers(headers.clone());
             }
 
-            let host = uri.host().ok_or(crate::error::uri_bad_host())?;
+            let host = uri.host().ok_or(Error::uri_bad_host())?;
 
             // We don't wrap this again in an HttpsConnector since that uses Maybe,
             // and we know this is definitely HTTPS.

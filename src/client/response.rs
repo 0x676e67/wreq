@@ -13,7 +13,7 @@ use url::Url;
 use super::body::{Body, ResponseBody};
 #[cfg(feature = "cookies")]
 use crate::cookie;
-use crate::core::client::connect::HttpInfo;
+use crate::{Error, core::client::connect::HttpInfo};
 
 /// A Response to a submitted `Request`.
 pub struct Response {
@@ -258,7 +258,7 @@ impl Response {
     pub async fn json<T: DeserializeOwned>(self) -> crate::Result<T> {
         let full = self.bytes().await?;
 
-        serde_json::from_slice(&full).map_err(crate::error::decode)
+        serde_json::from_slice(&full).map_err(Error::decode)
     }
 
     /// Get the full response body as `Bytes`.
@@ -372,7 +372,7 @@ impl Response {
     pub fn error_for_status(self) -> crate::Result<Self> {
         let status = self.status();
         if status.is_client_error() || status.is_server_error() {
-            Err(crate::error::status_code(*self.url, status))
+            Err(Error::status_code(*self.url, status))
         } else {
             Ok(self)
         }
@@ -399,7 +399,7 @@ impl Response {
     pub fn error_for_status_ref(&self) -> crate::Result<&Self> {
         let status = self.status();
         if status.is_client_error() || status.is_server_error() {
-            Err(crate::error::status_code(*self.url.clone(), status))
+            Err(Error::status_code(*self.url.clone(), status))
         } else {
             Ok(self)
         }

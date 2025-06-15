@@ -23,6 +23,8 @@ use tower::{
     retry::RetryLayer,
     util::{BoxCloneSyncService, BoxCloneSyncServiceLayer},
 };
+#[cfg(feature = "cookies")]
+use {super::middleware::cookie::CookieManagerLayer, crate::cookie};
 #[cfg(any(
     feature = "gzip",
     feature = "zstd",
@@ -30,11 +32,9 @@ use tower::{
     feature = "deflate",
 ))]
 use {
-    super::decoder::Accepts, crate::client::middleware::decoder::DecompressionLayer,
+    super::{decoder::Accepts, middleware::decoder::DecompressionLayer},
     tower_http::decompression::DecompressionBody,
 };
-#[cfg(feature = "cookies")]
-use {super::middleware::cookie::CookieManagerLayer, crate::cookie};
 
 #[cfg(feature = "websocket")]
 use super::websocket::WebSocketRequestBuilder;
@@ -509,8 +509,8 @@ impl ClientBuilder {
             Ok(value) => {
                 self.config.headers.insert(USER_AGENT, value);
             }
-            Err(e) => {
-                self.config.error = Some(crate::error::builder(e.into()));
+            Err(err) => {
+                self.config.error = Some(Error::builder(err.into()));
             }
         };
         self
@@ -1472,12 +1472,12 @@ impl Client {
 
         // check if the scheme is supported
         if scheme != "http" && scheme != "https" {
-            return Pending::new_err(error::url_bad_scheme(url));
+            return Pending::new_err(Error::url_bad_scheme(url));
         }
 
         // check if we're in https_only mode and check the scheme of the current URL
         if self.inner.https_only && scheme != "https" {
-            return Pending::new_err(error::url_bad_scheme(url));
+            return Pending::new_err(Error::url_bad_scheme(url));
         }
 
         // insert default headers in the request headers
@@ -1493,7 +1493,7 @@ impl Client {
         // parse Uri from the Url
         let uri = match try_uri(&url) {
             Some(uri) => uri,
-            None => return Pending::new_err(error::url_bad_uri(url)),
+            None => return Pending::new_err(Error::url_bad_uri(url)),
         };
 
         // apply proxy headers if any proxies are configured

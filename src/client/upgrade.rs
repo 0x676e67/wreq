@@ -6,7 +6,7 @@ use std::{
 
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 
-use crate::core::rt::TokioIo;
+use crate::{Error, core::rt::TokioIo};
 
 /// An upgraded HTTP connection.
 pub struct Upgraded {
@@ -73,6 +73,6 @@ impl super::response::Response {
         crate::core::upgrade::on(self.res)
             .await
             .map(Upgraded::from)
-            .map_err(crate::error::upgrade)
+            .map_err(Error::upgrade)
     }
 }

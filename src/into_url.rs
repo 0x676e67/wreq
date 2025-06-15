@@ -2,6 +2,8 @@ use std::borrow::Cow;
 
 use url::Url;
 
+use crate::Error;
+
 /// A trait to try to convert some type into a `Url`.
 ///
 /// This trait is "sealed", such that only types within wreq can
@@ -28,7 +30,7 @@ impl IntoUrlSealed for Url {
         if self.has_host() {
             Ok(self)
         } else {
-            Err(crate::error::url_bad_scheme(self))
+            Err(Error::url_bad_scheme(self))
         }
     }
 
@@ -42,7 +44,7 @@ impl IntoUrlSealed for &Url {
         if self.has_host() {
             Ok(self.clone())
         } else {
-            Err(crate::error::url_bad_scheme(self.clone()))
+            Err(Error::url_bad_scheme(self.clone()))
         }
     }
 
@@ -53,7 +55,7 @@ impl IntoUrlSealed for &Url {
 
 impl IntoUrlSealed for &str {
     fn into_url(self) -> crate::Result<Url> {
-        Url::parse(self).map_err(crate::error::builder)?.into_url()
+        Url::parse(self).map_err(Error::builder)?.into_url()
     }
 
     fn as_str(&self) -> &str {

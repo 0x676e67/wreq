@@ -4,6 +4,8 @@ use boring2::{
     x509::X509,
 };
 
+use crate::Error;
+
 /// Represents a private key and X509 cert as a client certificate.
 #[derive(Debug, Clone)]
 pub struct Identity {
@@ -82,13 +84,13 @@ impl Identity {
     /// This requires the `native-tls` Cargo feature enabled.
     pub fn from_pkcs8_pem(buf: &[u8], key: &[u8]) -> crate::Result<Identity> {
         if !key.starts_with(b"-----BEGIN PRIVATE KEY-----") {
-            return Err(crate::error::builder("expected PKCS#8 PEM"));
+            return Err(Error::builder("expected PKCS#8 PEM"));
         }
 
         let pkey = PKey::private_key_from_pem(key)?;
         let mut cert_chain = X509::stack_from_pem(buf)?.into_iter();
         let cert = cert_chain.next().ok_or_else(|| {
-            crate::error::builder("at least one certificate must be provided to create an identity")
+            Error::builder("at least one certificate must be provided to create an identity")
         })?;
         let chain = cert_chain.collect();
         Ok(Identity { pkey, cert, chain })

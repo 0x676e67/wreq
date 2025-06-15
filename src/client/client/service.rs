@@ -16,7 +16,7 @@ use crate::{
         client::Client,
         ext::{RequestConfig, RequestOriginalHeaders},
     },
-    error::{self, BoxError},
+    error::{BoxError, Error},
 };
 
 #[derive(Clone)]
@@ -43,7 +43,7 @@ impl Service<Request<Body>> for ClientService {
     fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         self.client
             .poll_ready(cx)
-            .map_err(error::request)
+            .map_err(Error::request)
             .map_err(From::from)
     }
 
@@ -55,7 +55,7 @@ impl Service<Request<Body>> for ClientService {
             inner
                 .call(req)
                 .await
-                .map_err(error::request)
+                .map_err(Error::request)
                 .map_err(From::from)
         })
     }

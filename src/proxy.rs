@@ -1,10 +1,11 @@
-use std::{error::Error, fmt, sync::Arc};
+use std::{error::Error as StdError, fmt, sync::Arc};
 
 use http::{HeaderMap, Uri, header::HeaderValue};
 
 use crate::{
     Url,
     core::client::proxy::matcher,
+    error::{BadScheme, Error},
     into_url::{IntoUrl, IntoUrlSealed},
 };
 
@@ -139,20 +140,20 @@ impl<S: IntoUrl> IntoProxy for S {
                             presumed_to_have_scheme = false;
                             break;
                         }
-                    } else if err.downcast_ref::<crate::error::BadScheme>().is_some() {
+                    } else if err.downcast_ref::<BadScheme>().is_some() {
                         presumed_to_have_scheme = false;
                         break;
                     }
                     source = err.source();
                 }
                 if presumed_to_have_scheme {
-                    return Err(crate::error::builder(e));
+                    return Err(Error::builder(e));
                 }
                 // the issue could have been caused by a missing scheme, so we try adding http://
                 let try_this = format!("http://{}", self.as_str());
                 try_this.into_url().map_err(|_| {
                     // return the original error
-                    crate::error::builder(e)
+                    Error::builder(e)
                 })
             }
         }

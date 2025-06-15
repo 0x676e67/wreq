@@ -11,7 +11,7 @@ use tokio::time::Sleep;
 use url::Url;
 
 use super::body::TimeoutBody;
-use crate::error::{self, BoxError, TimedOut};
+use crate::error::{BoxError, Error, TimedOut};
 
 pin_project! {
     /// [`Timeout`] response future
@@ -49,7 +49,7 @@ where
                 if sleep.poll(cx).is_ready() {
                     let url = Url::parse(&this.uri.to_string()).ok();
                     return Some(Poll::Ready(Err(match url {
-                        Some(url) => error::request(TimedOut).with_url(url).into(),
+                        Some(url) => Error::request(TimedOut).with_url(url).into(),
                         None => TimedOut.into(),
                     })));
                 }

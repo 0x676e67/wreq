@@ -30,7 +30,7 @@ use super::{
 ))]
 use crate::core::ext::RequestInterface;
 use crate::{
-    Method, OriginalHeaders, Proxy, Url,
+    Error, Method, OriginalHeaders, Proxy, Url,
     config::{RequestReadTimeout, RequestRedirectPolicy, RequestTotalTimeout},
     core::ext::{
         RequestConfig, RequestHttpVersionPref, RequestIpv4Addr, RequestIpv6Addr,
@@ -369,9 +369,9 @@ impl RequestBuilder {
                             req.headers_mut().append(key, value);
                         }
                     }
-                    Err(e) => error = Some(crate::error::builder(e.into())),
+                    Err(e) => error = Some(Error::builder(e.into())),
                 },
-                Err(e) => error = Some(crate::error::builder(e.into())),
+                Err(e) => error = Some(Error::builder(e.into())),
             };
         }
         if let Some(err) = error {
@@ -547,7 +547,7 @@ impl RequestBuilder {
             let serializer = serde_urlencoded::Serializer::new(&mut pairs);
 
             if let Err(err) = query.serialize(serializer) {
-                error = Some(crate::error::builder(err));
+                error = Some(Error::builder(err));
             }
         }
         if let Ok(ref mut req) = self.request {
@@ -759,7 +759,7 @@ impl RequestBuilder {
                         ));
                     *req.body_mut() = Some(body.into());
                 }
-                Err(err) => self.request = Err(crate::error::builder(err)),
+                Err(err) => self.request = Err(Error::builder(err)),
             }
         }
         self
@@ -786,7 +786,7 @@ impl RequestBuilder {
                         .or_insert(HeaderValue::from_static("application/json"));
                     *req.body_mut() = Some(body.into());
                 }
-                Err(err) => self.request = Err(crate::error::builder(err)),
+                Err(err) => self.request = Err(Error::builder(err)),
             }
         }
 
@@ -965,7 +965,7 @@ impl TryFrom<Request> for HttpRequest<Body> {
             .method(method)
             .uri(url.as_str())
             .body(body.unwrap_or_else(Body::empty))
-            .map_err(crate::error::builder)?;
+            .map_err(Error::builder)?;
 
         *req.headers_mut() = headers;
         Ok(req)

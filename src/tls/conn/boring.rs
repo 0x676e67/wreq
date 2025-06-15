@@ -356,7 +356,7 @@ impl TlsConnectorBuilder {
         }
 
         if let Some(policy) = self.keylog_policy {
-            let handle = policy.open_handle().map_err(crate::error::builder)?;
+            let handle = policy.open_handle().map_err(crate::Error::builder)?;
             connector.set_keylog_callback(move |_, line| {
                 let line = format!("{}\n", line);
                 handle.write_log_line(line);

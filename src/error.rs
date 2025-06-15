@@ -36,6 +36,48 @@ impl Error {
         }
     }
 
+    pub(crate) fn builder<E: Into<BoxError>>(e: E) -> Error {
+        Error::new(Kind::Builder, Some(e))
+    }
+
+    pub(crate) fn body<E: Into<BoxError>>(e: E) -> Error {
+        Error::new(Kind::Body, Some(e))
+    }
+
+    pub(crate) fn decode<E: Into<BoxError>>(e: E) -> Error {
+        Error::new(Kind::Decode, Some(e))
+    }
+
+    pub(crate) fn request<E: Into<BoxError>>(e: E) -> Error {
+        Error::new(Kind::Request, Some(e))
+    }
+
+    pub(crate) fn redirect<E: Into<BoxError>>(e: E, url: Url) -> Error {
+        Error::new(Kind::Redirect, Some(e)).with_url(url)
+    }
+
+    pub(crate) fn upgrade<E: Into<BoxError>>(e: E) -> Error {
+        Error::new(Kind::Upgrade, Some(e))
+    }
+
+    pub(crate) fn status_code(url: Url, status: StatusCode) -> Error {
+        Error::new(Kind::Status(status), None::<Error>).with_url(url)
+    }
+
+    pub(crate) fn url_bad_scheme(url: Url) -> Error {
+        Error::new(Kind::Builder, Some(BadScheme)).with_url(url)
+    }
+
+    pub(crate) fn url_bad_uri(url: Url) -> Error {
+        Error::new(Kind::Builder, Some("url is not a valid uri")).with_url(url)
+    }
+
+    pub(crate) fn uri_bad_host() -> Error {
+        Error::new(Kind::Builder, Some("no host in url"))
+    }
+}
+
+impl Error {
     /// Returns a possible URL related to this error.
     ///
     /// # Examples
@@ -197,7 +239,7 @@ pub(crate) fn map_timeout_to_connector_error(error: BoxError) -> BoxError {
 #[inline]
 pub(crate) fn map_timeout_to_request_error(error: BoxError) -> BoxError {
     if error.is::<tower::timeout::error::Elapsed>() {
-        Box::new(request(TimedOut)) as BoxError
+        Box::new(Error::request(TimedOut)) as BoxError
     } else {
         error
     }
@@ -309,46 +351,6 @@ pub(crate) enum Kind {
     Upgrade,
 }
 
-pub(crate) fn builder<E: Into<BoxError>>(e: E) -> Error {
-    Error::new(Kind::Builder, Some(e))
-}
-
-pub(crate) fn body<E: Into<BoxError>>(e: E) -> Error {
-    Error::new(Kind::Body, Some(e))
-}
-
-pub(crate) fn decode<E: Into<BoxError>>(e: E) -> Error {
-    Error::new(Kind::Decode, Some(e))
-}
-
-pub(crate) fn request<E: Into<BoxError>>(e: E) -> Error {
-    Error::new(Kind::Request, Some(e))
-}
-
-pub(crate) fn redirect<E: Into<BoxError>>(e: E, url: Url) -> Error {
-    Error::new(Kind::Redirect, Some(e)).with_url(url)
-}
-
-pub(crate) fn upgrade<E: Into<BoxError>>(e: E) -> Error {
-    Error::new(Kind::Upgrade, Some(e))
-}
-
-pub(crate) fn status_code(url: Url, status: StatusCode) -> Error {
-    Error::new(Kind::Status(status), None::<Error>).with_url(url)
-}
-
-pub(crate) fn url_bad_scheme(url: Url) -> Error {
-    Error::new(Kind::Builder, Some(BadScheme)).with_url(url)
-}
-
-pub(crate) fn url_bad_uri(url: Url) -> Error {
-    Error::new(Kind::Builder, Some("url is not a valid uri")).with_url(url)
-}
-
-pub(crate) fn uri_bad_host() -> Error {
-    Error::new(Kind::Builder, Some("no host in url"))
-}
-
 #[derive(Debug)]
 pub(crate) struct TimedOut;
 
@@ -391,7 +393,7 @@ mod tests {
                 .downcast::<Error>()
                 .expect("StdError::is() was true")
         } else {
-            decode(e)
+            Error::decode(e)
         }
     }
 
@@ -400,7 +402,7 @@ mod tests {
         let root = Error::new(Kind::Request, None::<Error>);
         assert!(root.source().is_none());
 
-        let link = super::body(root);
+        let link = Error::body(root);
         assert!(link.source().is_some());
         assert_send::<Error>();
         assert_sync::<Error>();
@@ -414,7 +416,7 @@ mod tests {
 
     #[test]
     fn roundtrip_io_error() {
-        let orig = super::request("orig");
+        let orig = Error::request("orig");
         // Convert wreq::Error into an io::Error...
         let io = orig.into_io();
         // Convert that io::Error back into a wreq::Error...
@@ -438,24 +440,24 @@ mod tests {
 
     #[test]
     fn is_timeout() {
-        let err = super::request(super::TimedOut);
+        let err = Error::request(super::TimedOut);
         assert!(err.is_timeout());
 
         let io = io::Error::other(err);
-        let nested = super::request(io);
+        let nested = Error::request(io);
         assert!(nested.is_timeout());
     }
 
     #[test]
     fn is_connection_reset() {
-        let err = super::request(io::Error::new(
+        let err = Error::request(io::Error::new(
             io::ErrorKind::ConnectionReset,
             "connection reset",
         ));
         assert!(err.is_connection_reset());
 
         let io = io::Error::other(err);
-        let nested = super::request(io);
+        let nested = Error::request(io);
         assert!(nested.is_connection_reset());
     }
 }

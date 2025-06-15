@@ -18,7 +18,7 @@ use crate::{
     },
     config::RequestRedirectPolicy,
     core::ext::RequestConfig,
-    error::{self, BoxError},
+    error::{BoxError, Error},
     header::{AUTHORIZATION, COOKIE, PROXY_AUTHORIZATION, REFERER, WWW_AUTHENTICATE},
 };
 
@@ -309,7 +309,7 @@ impl TowerPolicy<Body, BoxError> for TowerRedirectPolicy {
     fn redirect(&mut self, attempt: &TowerAttempt<'_>) -> Result<TowerAction, BoxError> {
         #[inline(always)]
         fn parse_url(input: &str) -> Result<Url, BoxError> {
-            Url::parse(input).map_err(|e| BoxError::from(error::builder(e)))
+            Url::parse(input).map_err(|e| BoxError::from(Error::builder(e)))
         }
 
         // Parse the next URL from the attempt.
@@ -321,7 +321,7 @@ impl TowerPolicy<Body, BoxError> for TowerRedirectPolicy {
 
         // Get policy from config
         let policy = self.policy.as_ref().ok_or_else(|| {
-            BoxError::from(error::request(
+            BoxError::from(Error::request(
                 "RequestRedirectPolicy not set in request config",
             ))
         })?;
@@ -330,19 +330,19 @@ impl TowerPolicy<Body, BoxError> for TowerRedirectPolicy {
         match policy.check(attempt.status(), &next_url, &self.urls) {
             ActionKind::Follow => {
                 if next_url.scheme() != "http" && next_url.scheme() != "https" {
-                    return Err(BoxError::from(error::url_bad_scheme(next_url)));
+                    return Err(BoxError::from(Error::url_bad_scheme(next_url)));
                 }
 
                 if self.https_only && next_url.scheme() != "https" {
-                    return Err(BoxError::from(error::redirect(
-                        error::url_bad_scheme(next_url.clone()),
+                    return Err(BoxError::from(Error::redirect(
+                        Error::url_bad_scheme(next_url.clone()),
                         next_url,
                     )));
                 }
                 Ok(TowerAction::Follow)
             }
             ActionKind::Stop => Ok(TowerAction::Stop),
-            ActionKind::Error(e) => Err(BoxError::from(error::redirect(e, previous_url))),
+            ActionKind::Error(e) => Err(BoxError::from(Error::redirect(e, previous_url))),
         }
     }
 

@@ -9,7 +9,10 @@ use http_body::Body;
 use pin_project_lite::pin_project;
 use tokio::time::{Sleep, sleep};
 
-use crate::error::{self, BoxError, TimedOut};
+use crate::{
+    Error,
+    error::{BoxError, TimedOut},
+};
 
 pin_project! {
     /// A wrapper body that applies timeout strategies to an inner HTTP body.
@@ -145,7 +148,7 @@ where
     B::Error: Into<BoxError>,
 {
     Poll::Ready(
-        ready!(body.poll_frame(cx)).map(|opt| opt.map_err(error::decode).map_err(Into::into)),
+        ready!(body.poll_frame(cx)).map(|opt| opt.map_err(Error::decode).map_err(Into::into)),
     )
 }
 
@@ -171,7 +174,7 @@ where
     ) -> Poll<Option<Result<http_body::Frame<Self::Data>, Self::Error>>> {
         let this = self.project();
         if let Poll::Ready(()) = this.timeout.as_mut().poll(cx) {
-            return Poll::Ready(Some(Err(error::body(error::TimedOut).into())));
+            return Poll::Ready(Some(Err(Error::body(TimedOut).into())));
         }
         poll_and_map_body(this.body, cx)
     }
