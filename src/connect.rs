@@ -30,7 +30,7 @@ use crate::{
         rt::{Read, ReadBufCursor, TokioIo, Write},
     },
     dns::DynResolver,
-    error::{BoxError, map_timeout_to_connector_error},
+    error::{BoxError, TimedOut, map_timeout_to_connector_error},
     proxy::{Intercepted, Matcher as ProxyMatcher},
     tls::{
         CertStore, HttpsConnector, Identity, KeyLogPolicy, MaybeHttpsStream, TlsConfig,
@@ -224,12 +224,12 @@ impl ConnectorBuilder {
         tls_config: TlsConfig,
         layers: Option<Vec<BoxedConnectorLayer>>,
     ) -> crate::Result<Connector> {
-        let service = ConnectorService {
+        let mut service = ConnectorService {
             http: self.http,
             tls: self.tls_builder.clone().build(tls_config)?,
             proxies: self.proxies,
             verbose: self.verbose,
-            timeout: self.timeout,
+            timeout: None,
             nodelay: self.nodelay,
             #[cfg(feature = "socks")]
             resolver: self.resolver,
@@ -238,8 +238,6 @@ impl ConnectorBuilder {
         };
 
         if let Some(layers) = layers {
-            let timeout = self.timeout;
-
             // otherwise we have user provided layers
             // so we need type erasure all the way through
             // as well as mapping the unnameable type of the layers back to Dst for the inner
@@ -256,7 +254,7 @@ impl ConnectorBuilder {
             // now we handle the concrete stuff - any `connect_timeout`,
             // plus a final map_err layer we can use to cast default tower layer
             // errors to internal errors
-            match timeout {
+            match self.timeout {
                 Some(timeout) => {
                     let service = ServiceBuilder::new()
                         .layer(TimeoutLayer::new(timeout))
@@ -280,6 +278,7 @@ impl ConnectorBuilder {
             }
         } else {
             // we have no user-provided layers, only use concrete types
+            service.timeout = self.timeout;
             Ok(Connector::Simple(service))
         }
     }
@@ -507,7 +506,7 @@ where
 {
     if let Some(to) = timeout {
         match tokio::time::timeout(to, f).await {
-            Err(_elapsed) => Err(Box::new(crate::error::TimedOut) as BoxError),
+            Err(_elapsed) => Err(Box::new(TimedOut) as BoxError),
             Ok(Ok(try_res)) => Ok(try_res),
             Ok(Err(e)) => Err(e),
         }
