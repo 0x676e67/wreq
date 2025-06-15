@@ -351,6 +351,7 @@ async fn test_chunked_fragmented_response_with_extra_bytes() {
         .expect("response");
 
     let err = res.text().await.expect_err("there must be an error");
+    dbg!(&err);
     assert!(err.is_decode());
     assert!(start.elapsed() >= DELAY_BETWEEN_RESPONSE_PARTS - DELAY_MARGIN);
 }
@@ -573,26 +574,4 @@ async fn test_connection_reuse_with_chunked_fragmented_multiple_frames_in_one_ch
         "All peer addresses should be the same, but found differences: {:?}",
         peer_addrs
     );
-}
-
-#[tokio::test]
-async fn disable_compression_request() {
-    let _ = env_logger::try_init();
-
-    let server = server::http(move |req| {
-        assert_eq!(req.headers().get("accept-encoding"), None);
-        async { http::Response::default() }
-    });
-
-    let url = format!("http://{}/compress", server.addr());
-
-    let res = wreq::Client::new()
-        .get(&url)
-        .allow_compression(false)
-        .send()
-        .await
-        .unwrap();
-
-    assert_eq!(res.url().as_str(), &url);
-    assert_eq!(res.status(), wreq::StatusCode::OK);
 }

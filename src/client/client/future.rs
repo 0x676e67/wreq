@@ -7,20 +7,19 @@ use pin_project_lite::pin_project;
 use tower::util::BoxCloneSyncService;
 use url::Url;
 
-use super::{Body, Response};
+use super::{Body, Response, ResponseBody};
 use crate::{
     Error,
     client::{
         body,
-        decoder::Accepts,
-        middleware::{self, timeout::TimeoutBody},
+        middleware::{self},
     },
-    core::{body::Incoming, service::Oneshot},
+    core::service::Oneshot,
     error::{self, BoxError},
 };
 
 type ResponseFuture = Oneshot<
-    BoxCloneSyncService<http::Request<Body>, http::Response<TimeoutBody<Incoming>>, BoxError>,
+    BoxCloneSyncService<http::Request<Body>, http::Response<ResponseBody>, BoxError>,
     http::Request<Body>,
 >;
 
@@ -39,7 +38,6 @@ pub(super) enum PendingInner {
 pin_project! {
     pub(super) struct PendingRequest {
         pub url: Url,
-        pub accepts: Accepts,
         #[pin]
         pub in_flight: ResponseFuture,
     }
@@ -92,7 +90,7 @@ impl Future for PendingRequest {
             }
         };
 
-        Poll::Ready(Ok(Response::new(res, self.url.clone(), self.accepts)))
+        Poll::Ready(Ok(Response::new(res, self.url.clone())))
     }
 }
 

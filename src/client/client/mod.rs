@@ -23,6 +23,16 @@ use tower::{
     retry::RetryLayer,
     util::{BoxCloneSyncService, BoxCloneSyncServiceLayer},
 };
+#[cfg(any(
+    feature = "gzip",
+    feature = "zstd",
+    feature = "brotli",
+    feature = "deflate",
+))]
+use {
+    super::decoder::Accepts, crate::client::middleware::decoder::DecompressionLayer,
+    tower_http::decompression::DecompressionBody,
+};
 #[cfg(feature = "cookies")]
 use {super::middleware::cookie::CookieManagerLayer, crate::cookie};
 
@@ -30,9 +40,9 @@ use {super::middleware::cookie::CookieManagerLayer, crate::cookie};
 use super::websocket::WebSocketRequestBuilder;
 use super::{
     Body, EmulationProviderFactory,
-    decoder::Accepts,
     middleware::{
         redirect::FollowRedirectLayer,
+        retry::Http2RetryPolicy,
         timeout::{ResponseBodyTimeoutLayer, TimeoutBody, TimeoutLayer},
     },
     request::{Request, RequestBuilder},
@@ -42,7 +52,6 @@ use super::{
 use crate::dns::hickory::{HickoryDnsResolver, LookupIpStrategy};
 use crate::{
     IntoUrl, Method, OriginalHeaders, Proxy,
-    client::middleware::retry::Http2RetryPolicy,
     connect::{
         BoxedConnectorLayer, BoxedConnectorService, Connector,
         sealed::{Conn, Unnameable},
@@ -66,13 +75,29 @@ use crate::{
     },
 };
 
+#[cfg(not(any(
+    feature = "gzip",
+    feature = "zstd",
+    feature = "brotli",
+    feature = "deflate",
+)))]
+type ResponseBody = TimeoutBody<Incoming>;
+
+#[cfg(any(
+    feature = "gzip",
+    feature = "zstd",
+    feature = "brotli",
+    feature = "deflate",
+))]
+type ResponseBody = TimeoutBody<DecompressionBody<Incoming>>;
+
 type BoxedClientService =
-    BoxCloneSyncService<http::Request<Body>, http::Response<TimeoutBody<Incoming>>, BoxError>;
+    BoxCloneSyncService<http::Request<Body>, http::Response<ResponseBody>, BoxError>;
 
 type BoxedClientServiceLayer = BoxCloneSyncServiceLayer<
     BoxedClientService,
     http::Request<Body>,
-    http::Response<TimeoutBody<Incoming>>,
+    http::Response<ResponseBody>,
     BoxError,
 >;
 
@@ -96,7 +121,6 @@ pub struct Client {
 
 /// A reference to the `Client` that is used internally.
 struct ClientRef {
-    accepts: Accepts,
     headers: HeaderMap,
     service: BoxedClientService,
     https_only: bool,
@@ -115,6 +139,12 @@ struct Config {
     error: Option<Error>,
     headers: HeaderMap,
     original_headers: Option<OriginalHeaders>,
+    #[cfg(any(
+        feature = "gzip",
+        feature = "zstd",
+        feature = "brotli",
+        feature = "deflate",
+    ))]
     accepts: Accepts,
     connect_timeout: Option<Duration>,
     connection_verbose: bool,
@@ -190,6 +220,12 @@ impl ClientBuilder {
                 error: None,
                 headers: HeaderMap::new(),
                 original_headers: None,
+                #[cfg(any(
+                    feature = "gzip",
+                    feature = "zstd",
+                    feature = "brotli",
+                    feature = "deflate",
+                ))]
                 accepts: Accepts::default(),
                 connect_timeout: None,
                 connection_verbose: false,
@@ -364,15 +400,25 @@ impl ClientBuilder {
         };
 
         let service = {
+            let service =
+                ClientService::new(config.builder.build(connector), config.original_headers);
+
+            #[cfg(any(
+                feature = "gzip",
+                feature = "zstd",
+                feature = "brotli",
+                feature = "deflate",
+            ))]
+            let service = ServiceBuilder::new()
+                .layer(DecompressionLayer::new(config.accepts))
+                .service(service);
+
             let service = ServiceBuilder::new()
                 .layer(ResponseBodyTimeoutLayer::new(
                     config.timeout,
                     config.read_timeout,
                 ))
-                .service(ClientService::new(
-                    config.builder.build(connector),
-                    config.original_headers,
-                ));
+                .service(service);
 
             #[cfg(feature = "cookies")]
             let service = ServiceBuilder::new()
@@ -407,7 +453,7 @@ impl ClientBuilder {
                         .service(service);
 
                     let service = ServiceBuilder::new()
-                        .map_err(error::cast_timeout_to_request_error)
+                        .map_err(error::map_timeout_to_request_error)
                         .service(service);
 
                     BoxCloneSyncService::new(service)
@@ -418,7 +464,7 @@ impl ClientBuilder {
                         .service(service);
 
                     let service = ServiceBuilder::new()
-                        .map_err(error::cast_timeout_to_request_error)
+                        .map_err(error::map_timeout_to_request_error)
                         .service(service);
 
                     BoxCloneSyncService::new(service)
@@ -429,8 +475,6 @@ impl ClientBuilder {
         Ok(Client {
             inner: Arc::new(ClientRef {
                 service,
-                accepts: config.accepts,
-
                 headers: config.headers,
                 https_only: config.https_only,
                 proxies_maybe_http_auth,
@@ -1252,11 +1296,8 @@ impl ClientBuilder {
     pub fn layer<L>(mut self, layer: L) -> ClientBuilder
     where
         L: Layer<BoxedClientService> + Clone + Send + Sync + 'static,
-        L::Service: Service<
-                http::Request<Body>,
-                Response = http::Response<TimeoutBody<Incoming>>,
-                Error = BoxError,
-            > + Clone
+        L::Service: Service<http::Request<Body>, Response = http::Response<ResponseBody>, Error = BoxError>
+            + Clone
             + Send
             + Sync
             + 'static,
@@ -1424,7 +1465,7 @@ impl Client {
     /// This method fails if there was an error while sending request,
     /// redirect loop was detected or redirect limit was exhausted.
     pub fn execute(&self, request: Request) -> Pending {
-        let (method, url, mut headers, body, extensions, _allow_compression) = request.pieces();
+        let (method, url, mut headers, body, extensions) = request.pieces();
 
         // get the scheme of the URL
         let scheme = url.scheme();
@@ -1447,17 +1488,6 @@ impl Client {
                     headers.append(name, value.clone());
                 }
             }
-        }
-
-        // add accept-encoding header
-        #[cfg(any(
-            feature = "gzip",
-            feature = "brotli",
-            feature = "zstd",
-            feature = "deflate"
-        ))]
-        if _allow_compression {
-            add_accpet_encoding_header(&self.inner.accepts, &mut headers);
         }
 
         // parse Uri from the Url
@@ -1486,11 +1516,7 @@ impl Client {
         };
 
         Pending {
-            inner: PendingInner::Request(Box::pin(PendingRequest {
-                url,
-                accepts: self.inner.accepts,
-                in_flight,
-            })),
+            inner: PendingInner::Request(Box::pin(PendingRequest { url, in_flight })),
         }
     }
 
@@ -1570,24 +1596,5 @@ impl tower_service::Service<Request> for &'_ Client {
     #[inline(always)]
     fn call(&mut self, req: Request) -> Self::Future {
         self.execute(req)
-    }
-}
-
-#[cfg(any(
-    feature = "gzip",
-    feature = "brotli",
-    feature = "zstd",
-    feature = "deflate"
-))]
-fn add_accpet_encoding_header(accepts: &Accepts, headers: &mut HeaderMap) {
-    if let Some(accept_encoding) = accepts.as_str() {
-        if !headers.contains_key(crate::header::ACCEPT_ENCODING)
-            && !headers.contains_key(crate::header::RANGE)
-        {
-            headers.insert(
-                crate::header::ACCEPT_ENCODING,
-                http::HeaderValue::from_static(accept_encoding),
-            );
-        }
     }
 }

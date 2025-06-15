@@ -18,7 +18,7 @@ rustdoc-args = ["--cfg", "docsrs"]
 targets = ["x86_64-unknown-linux-gnu"]
 
 [features]
-default = ["webpki-roots", "charset", "system-proxy"]
+default = ["webpki-roots", "charset", "system-proxy", "full"]
 
 full = [
     "json",
@@ -37,17 +37,13 @@ charset = ["dep:encoding_rs", "dep:mime"]
 
 cookies = ["dep:cookie_crate", "dep:cookie_store"]
 
-gzip = ["dep:async-compression", "async-compression?/gzip", "dep:tokio-util"]
+gzip = ["tower-http/decompression-gzip"]
 
-brotli = [
-    "dep:async-compression",
-    "async-compression?/brotli",
-    "dep:tokio-util",
-]
+brotli = ["tower-http/decompression-br"]
 
-zstd = ["dep:async-compression", "async-compression?/zstd", "dep:tokio-util"]
+zstd = ["tower-http/decompression-zstd"]
 
-deflate = ["dep:async-compression", "async-compression?/zlib", "dep:tokio-util"]
+deflate = ["tower-http/decompression-deflate"]
 
 json = ["dep:serde_json"]
 
@@ -77,7 +73,7 @@ base64 = "0.22"
 url = "2.5"
 serde = { version = "1.0", features = ["derive"] }
 serde_urlencoded = "0.7.1"
-tower = { version = "0.5.2", default-features = false, features = ["timeout","util", "retry"] }
+tower = { version = "0.5.2", default-features = false, features = ["timeout", "util", "retry"] }
 tower-service = "0.3"
 sync_wrapper = { version = "1.0", features = ["futures"] }
 antidote = "1" 
@@ -129,9 +125,11 @@ webpki-root-certs = { version = "1.0.0", optional = true }
 cookie_crate = { version = "0.18", package = "cookie", optional = true }
 cookie_store = { version = "0.21", features = ["preserve_order"], optional = true }
 
-## compression
-async-compression = { version = "0.4.23", default-features = false, features = ["tokio"], optional = true }
+## tokio util
 tokio-util = { version = "0.7.15", default-features = false, features = ["codec","io"], optional = true }
+
+## compression
+tower-http = { version = "0.6.6", default-features = false, optional = true }
 
 ## websocket
 tokio-tungstenite = { version = "0.26.2", default-features = false, features = ["handshake"], optional = true }
@@ -149,7 +147,7 @@ system-configuration = { version = "0.6.1", optional = true }
 
 ## Interface binding
 [target.'cfg(any(target_os = "ios", target_os = "visionos", target_os = "macos", target_os = "tvos", target_os = "watchos", target = "illumos", target = "solaris"))'.dependencies]
-libc = "0.2.172"
+libc = "0.2.173"
 
 [dev-dependencies]
 hyper = { version = "1.1.0", default-features = false, features = [

@@ -40,6 +40,13 @@ use crate::{
     proxy::Matcher as ProxyMatcher,
     redirect,
 };
+#[cfg(any(
+    feature = "gzip",
+    feature = "zstd",
+    feature = "brotli",
+    feature = "deflate",
+))]
+use crate::{client::decoder::Accepts, config::RequestAcceptsEncoding};
 
 /// A request which can be executed with `Client::execute()`.
 pub struct Request {
@@ -48,7 +55,6 @@ pub struct Request {
     headers: HeaderMap,
     body: Option<Body>,
     extensions: Extensions,
-    allow_compression: bool,
 }
 
 /// A builder to construct the properties of a `Request`.
@@ -70,12 +76,6 @@ impl Request {
             headers: HeaderMap::new(),
             body: None,
             extensions: Extensions::new(),
-            allow_compression: cfg!(any(
-                feature = "gzip",
-                feature = "brotli",
-                feature = "deflate",
-                feature = "zstd"
-            )),
         }
     }
 
@@ -137,18 +137,6 @@ impl Request {
     #[inline]
     pub fn redirect_mut(&mut self) -> &mut Option<redirect::Policy> {
         RequestConfig::<RequestRedirectPolicy>::get_mut(&mut self.extensions)
-    }
-
-    /// Get a mutable reference to the allow_compression policy.
-    #[cfg(any(
-        feature = "gzip",
-        feature = "brotli",
-        feature = "deflate",
-        feature = "zstd"
-    ))]
-    #[inline]
-    pub fn allow_compression_mut(&mut self) -> &mut bool {
-        &mut self.allow_compression
     }
 
     /// Get the body.
@@ -235,6 +223,18 @@ impl Request {
         RequestConfig::<RequestProxyMatcher>::get_mut(&mut self.extensions)
     }
 
+    /// Get the accepts encoding.
+    #[cfg(any(
+        feature = "gzip",
+        feature = "zstd",
+        feature = "brotli",
+        feature = "deflate",
+    ))]
+    #[inline]
+    pub(crate) fn accpet_encoding_mut(&mut self) -> &mut Option<Accepts> {
+        RequestConfig::<RequestAcceptsEncoding>::get_mut(&mut self.extensions)
+    }
+
     /// Get the extensions.
     #[inline]
     pub(crate) fn extensions(&self) -> &Extensions {
@@ -261,29 +261,18 @@ impl Request {
         *req.headers_mut() = self.headers().clone();
         *req.version_mut() = self.version().cloned();
         *req.redirect_mut() = self.redirect().cloned();
-        #[cfg(any(
-            feature = "gzip",
-            feature = "brotli",
-            feature = "deflate",
-            feature = "zstd"
-        ))]
-        {
-            *req.allow_compression_mut() = self.allow_compression;
-        }
         *req.extensions_mut() = self.extensions().clone();
         req.body = body;
         Some(req)
     }
 
-    #[allow(clippy::type_complexity)]
-    pub(super) fn pieces(self) -> (Method, Url, HeaderMap, Option<Body>, Extensions, bool) {
+    pub(super) fn pieces(self) -> (Method, Url, HeaderMap, Option<Body>, Extensions) {
         (
             self.method,
             self.url,
             self.headers,
             self.body,
             self.extensions,
-            self.allow_compression,
         )
     }
 }
@@ -588,21 +577,54 @@ impl RequestBuilder {
         self
     }
 
-    /// Sets if this request will announce that it accepts compression.
-    ///
-    /// This value defaults to true. Note that this only lets the browser know that this request
-    /// supports compression, the server might choose not to compress the content.
+    /// Sets if this request will announce that it accepts gzip encoding.
+    #[cfg(feature = "gzip")]
+    pub fn gzip(mut self, gzip: bool) -> RequestBuilder {
+        self.set_accept(|a| a.gzip(gzip));
+        self
+    }
+
+    /// Sets if this request will announce that it accepts brotli encoding.
+    #[cfg(feature = "brotli")]
+    pub fn brotli(mut self, brotli: bool) -> RequestBuilder {
+        self.set_accept(|a| a.brotli(brotli));
+        self
+    }
+
+    /// Sets if this request will announce that it accepts deflate encoding.
+    #[cfg(feature = "deflate")]
+    pub fn deflate(mut self, deflate: bool) -> RequestBuilder {
+        self.set_accept(|a| a.deflate(deflate));
+        self
+    }
+
+    /// Sets if this request will announce that it accepts zstd encoding.
+    #[cfg(feature = "zstd")]
+    pub fn zstd(mut self, zstd: bool) -> RequestBuilder {
+        self.set_accept(|a| a.zstd(zstd));
+        self
+    }
+
     #[cfg(any(
         feature = "gzip",
+        feature = "zstd",
         feature = "brotli",
         feature = "deflate",
-        feature = "zstd"
     ))]
-    pub fn allow_compression(mut self, allow_compression: bool) -> Self {
+    fn set_accept<F>(&mut self, setter: F)
+    where
+        F: FnOnce(&mut Accepts),
+    {
         if let Ok(ref mut req) = self.request {
-            req.allow_compression = allow_compression
+            let accepts = req.accpet_encoding_mut();
+            if let Some(accepts) = accepts {
+                setter(accepts);
+            } else {
+                let mut default_accepts = Accepts::default();
+                setter(&mut default_accepts);
+                *accepts = Some(default_accepts);
+            }
         }
-        self
     }
 
     /// Set the proxy for this request.
@@ -914,12 +936,6 @@ where
             url,
             headers,
             body: Some(body.into()),
-            allow_compression: cfg!(any(
-                feature = "gzip",
-                feature = "brotli",
-                feature = "deflate",
-                feature = "zstd"
-            )),
             extensions: Extensions::new(),
         })
     }

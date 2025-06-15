@@ -2,6 +2,13 @@ use futures_util::future;
 use http::{Request, Response};
 use http2::Reason;
 use tower::retry::Policy;
+#[cfg(any(
+    feature = "gzip",
+    feature = "zstd",
+    feature = "brotli",
+    feature = "deflate",
+))]
+use tower_http::decompression::DecompressionBody;
 
 use crate::{
     Body, client::middleware::timeout::TimeoutBody, core::body::Incoming, error::BoxError,
@@ -54,7 +61,20 @@ impl Http2RetryPolicy {
 }
 
 type Req = Request<Body>;
+#[cfg(not(any(
+    feature = "gzip",
+    feature = "zstd",
+    feature = "brotli",
+    feature = "deflate",
+)))]
 type Res = Response<TimeoutBody<Incoming>>;
+#[cfg(any(
+    feature = "gzip",
+    feature = "zstd",
+    feature = "brotli",
+    feature = "deflate",
+))]
+type Res = Response<TimeoutBody<DecompressionBody<Incoming>>>;
 
 impl Policy<Req, Res, BoxError> for Http2RetryPolicy {
     type Future = future::Ready<()>;

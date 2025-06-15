@@ -233,10 +233,11 @@ impl HttpBody for Body {
                     Poll::Ready(Some(Ok(http_body::Frame::data(out))))
                 }
             }
-            Inner::Streaming(ref mut body) => Poll::Ready(
-                ready!(Pin::new(body).poll_frame(cx))
-                    .map(|opt_chunk| opt_chunk.map_err(crate::error::body)),
-            ),
+            Inner::Streaming(ref mut body) => {
+                Poll::Ready(ready!(Pin::new(body).poll_frame(cx)).map(|opt_chunk| {
+                    opt_chunk.map_err(crate::error::decode_boxed_error_to_internal)
+                }))
+            }
         }
     }
 

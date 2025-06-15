@@ -179,12 +179,11 @@ impl Error {
     }
 }
 
-/// Converts from external types to wreq's
-/// internal equivalents.
-///
-/// Currently only is used for `tower::timeout::error::Elapsed`.
+/// Maps external timeout errors (such as `tower::timeout::error::Elapsed`)
+/// to the internal `TimedOut` error type used for connector operations.
+/// Returns the original error if it is not a timeout.
 #[inline]
-pub(crate) fn cast_timeout_to_error(error: BoxError) -> BoxError {
+pub(crate) fn map_timeout_to_connector_error(error: BoxError) -> BoxError {
     if error.is::<tower::timeout::error::Elapsed>() {
         Box::new(TimedOut) as BoxError
     } else {
@@ -192,15 +191,26 @@ pub(crate) fn cast_timeout_to_error(error: BoxError) -> BoxError {
     }
 }
 
-/// Converts from external types to wreq's
-/// internal equivalents.
-/// Currently only is used for `tower::timeout::error::Elapsed`.
+/// Maps external timeout errors (such as `tower::timeout::error::Elapsed`)
+/// to the internal request-level `Error` type.
+/// Returns the original error if it is not a timeout.
 #[inline]
-pub(crate) fn cast_timeout_to_request_error(error: BoxError) -> BoxError {
+pub(crate) fn map_timeout_to_request_error(error: BoxError) -> BoxError {
     if error.is::<tower::timeout::error::Elapsed>() {
         Box::new(request(TimedOut)) as BoxError
     } else {
         error
+    }
+}
+
+/// Converts a boxed error into the internal `Error` type, if possible.
+/// If the error is already an `Error`, it is unboxed and returned.
+/// Otherwise, wraps the error as a body decoding error.
+#[inline]
+pub(crate) fn decode_boxed_error_to_internal(error: BoxError) -> Error {
+    match error.downcast::<Error>() {
+        Ok(err) => *err,
+        Err(err) => body(err),
     }
 }
 
@@ -350,34 +360,6 @@ pub(crate) fn uri_bad_host() -> Error {
     Error::new(Kind::Builder, Some("no host in url"))
 }
 
-#[cfg(any(
-    feature = "gzip",
-    feature = "zstd",
-    feature = "brotli",
-    feature = "deflate",
-))]
-pub(crate) fn into_io(e: BoxError) -> io::Error {
-    io::Error::other(e)
-}
-
-#[cfg(any(
-    test,
-    feature = "gzip",
-    feature = "zstd",
-    feature = "brotli",
-    feature = "deflate",
-))]
-pub(crate) fn decode_io(e: io::Error) -> Error {
-    if e.get_ref().map(|r| r.is::<Error>()).unwrap_or(false) {
-        *e.into_inner()
-            .expect("io::Error::get_ref was Some(_)")
-            .downcast::<Error>()
-            .expect("StdError::is() was true")
-    } else {
-        decode(e)
-    }
-}
-
 #[derive(Debug)]
 pub(crate) struct TimedOut;
 
@@ -413,6 +395,17 @@ mod tests {
         }
     }
 
+    fn decode_io(e: io::Error) -> Error {
+        if e.get_ref().map(|r| r.is::<Error>()).unwrap_or(false) {
+            *e.into_inner()
+                .expect("io::Error::get_ref was Some(_)")
+                .downcast::<Error>()
+                .expect("StdError::is() was true")
+        } else {
+            decode(e)
+        }
+    }
+
     #[test]
     fn test_source_chain() {
         let root = Error::new(Kind::Request, None::<Error>);
@@ -436,7 +429,7 @@ mod tests {
         // Convert wreq::Error into an io::Error...
         let io = orig.into_io();
         // Convert that io::Error back into a wreq::Error...
-        let err = super::decode_io(io);
+        let err = decode_io(io);
         // It should have pulled out the original, not nested it...
         match err.inner.kind {
             Kind::Request => (),
@@ -447,7 +440,7 @@ mod tests {
     #[test]
     fn from_unknown_io_error() {
         let orig = io::Error::other("orly");
-        let err = super::decode_io(orig);
+        let err = decode_io(orig);
         match err.inner.kind {
             Kind::Decode => (),
             _ => panic!("{:?}", err),

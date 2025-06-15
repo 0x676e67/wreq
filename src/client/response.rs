@@ -4,34 +4,29 @@ use bytes::Bytes;
 #[cfg(feature = "charset")]
 use encoding_rs::{Encoding, UTF_8};
 use http::{HeaderMap, StatusCode, Version};
-use http_body_util::BodyExt;
 #[cfg(feature = "charset")]
 use mime::Mime;
 #[cfg(feature = "json")]
 use serde::de::DeserializeOwned;
 use url::Url;
 
-use super::{
-    body::{Body, ResponseBody},
-    decoder::{Accepts, Decoder},
-};
+use super::body::{Body, ResponseBody};
 #[cfg(feature = "cookies")]
 use crate::cookie;
 use crate::core::client::connect::HttpInfo;
 
 /// A Response to a submitted `Request`.
 pub struct Response {
-    pub(super) res: http::Response<Decoder>,
+    pub(super) res: http::Response<Body>,
     // Boxed to save space (11 words to 1 word), and it's not accessed
     // frequently internally.
     url: Box<Url>,
 }
 
 impl Response {
-    pub(super) fn new(res: http::Response<ResponseBody>, url: Url, accepts: Accepts) -> Response {
-        let (mut parts, body) = res.into_parts();
-        let decoder = Decoder::detect(&mut parts.headers, body, accepts);
-        let res = http::Response::from_parts(parts, decoder);
+    pub(super) fn new(res: http::Response<ResponseBody>, url: Url) -> Response {
+        let (parts, body) = res.into_parts();
+        let res = http::Response::from_parts(parts, Body::wrap(body));
 
         Response {
             res,
@@ -429,17 +424,12 @@ impl<T: Into<Body>> From<http::Response<T>> for Response {
 
         let (mut parts, body) = r.into_parts();
         let body: super::body::Body = body.into();
-        let decoder = Decoder::detect(
-            &mut parts.headers,
-            ResponseBody::new(body.map_err(Into::into)),
-            Accepts::none(),
-        );
         let url = parts
             .extensions
             .remove::<ResponseUrl>()
             .unwrap_or_else(|| ResponseUrl(Url::parse("http://no.url.provided.local").unwrap()));
         let url = url.0;
-        let res = http::Response::from_parts(parts, decoder);
+        let res = http::Response::from_parts(parts, body);
         Response {
             res,
             url: Box::new(url),

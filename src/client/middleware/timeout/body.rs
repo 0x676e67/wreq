@@ -96,7 +96,7 @@ where
     B::Error: Into<BoxError>,
 {
     type Data = B::Data;
-    type Error = crate::Error;
+    type Error = BoxError;
 
     fn poll_frame(
         self: Pin<&mut Self>,
@@ -139,12 +139,14 @@ where
 fn poll_and_map_body<B>(
     body: Pin<&mut B>,
     cx: &mut Context<'_>,
-) -> Poll<Option<Result<http_body::Frame<B::Data>, crate::Error>>>
+) -> Poll<Option<Result<http_body::Frame<B::Data>, BoxError>>>
 where
     B: Body,
     B::Error: Into<BoxError>,
 {
-    Poll::Ready(ready!(body.poll_frame(cx)).map(|opt| opt.map_err(crate::error::body)))
+    Poll::Ready(
+        ready!(body.poll_frame(cx)).map(|opt| opt.map_err(error::decode).map_err(Into::into)),
+    )
 }
 
 // ==== impl TotalTimeoutBody ====
@@ -161,7 +163,7 @@ where
     B::Error: Into<BoxError>,
 {
     type Data = B::Data;
-    type Error = crate::Error;
+    type Error = BoxError;
 
     fn poll_frame(
         self: Pin<&mut Self>,
@@ -169,11 +171,9 @@ where
     ) -> Poll<Option<Result<http_body::Frame<Self::Data>, Self::Error>>> {
         let this = self.project();
         if let Poll::Ready(()) = this.timeout.as_mut().poll(cx) {
-            return Poll::Ready(Some(Err(error::body(error::TimedOut))));
+            return Poll::Ready(Some(Err(error::body(error::TimedOut).into())));
         }
-        Poll::Ready(
-            ready!(this.body.poll_frame(cx)).map(|opt_chunk| opt_chunk.map_err(crate::error::body)),
-        )
+        poll_and_map_body(this.body, cx)
     }
 
     #[inline(always)]

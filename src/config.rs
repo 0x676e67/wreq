@@ -33,3 +33,22 @@ pub(crate) struct RequestRedirectPolicy;
 impl RequestConfigValue for RequestRedirectPolicy {
     type Value = Policy;
 }
+
+#[cfg(any(
+    feature = "gzip",
+    feature = "zstd",
+    feature = "brotli",
+    feature = "deflate",
+))]
+#[derive(Clone, Copy)]
+pub(crate) struct RequestAcceptsEncoding;
+
+#[cfg(any(
+    feature = "gzip",
+    feature = "zstd",
+    feature = "brotli",
+    feature = "deflate",
+))]
+impl RequestConfigValue for RequestAcceptsEncoding {
+    type Value = crate::client::decoder::Accepts;
+}
