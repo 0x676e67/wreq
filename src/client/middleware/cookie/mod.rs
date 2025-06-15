@@ -1,4 +1,4 @@
-//! Middleware to use [`CookieStore`].
+//! Middleware to use [\`CookieStore\`].
 
 mod future;
 mod layer;

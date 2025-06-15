@@ -14,6 +14,7 @@
 //! - [Redirect Policy](#redirect-policies)
 //! - Rotating [Proxies](#proxies)
 //! - [Certificate Store](#certificate-store)
+//! - [Tower](https://docs.rs/tower/latest/tower) Middleware
 //! - [WebSocket](#websocket) Upgrade
 //! - HTTPS via [BoringSSL](#tls)
 //! - HTTP/2 over TLS [Emulation](#emulation)
@@ -263,15 +264,16 @@
 //! - **deflate**: Provides response body deflate decompression.
 //! - **json**: Provides serialization and deserialization for JSON bodies.
 //! - **multipart**: Provides functionality for multipart forms.
+//! - **charset** *(enabled by default)*: Improved support for decoding text.
 //! - **stream**: Adds support for `futures::Stream`.
-//! - **socks**: Provides SOCKS5 proxy support.
+//! - **socks**: Provides SOCKS5 and SOCKS4 proxy support.
 //! - **hickory-dns**: Enables a hickory-dns async resolver instead of default threadpool using
 //!   `getaddrinfo`.
 //! - **native-roots**: Use the native system root certificate store.
-//! - **webpki-roots**: Use the webpki-roots crate for root certificates.
-//! - **tracing**: Enable tracing.
+//! - **webpki-roots** *(enabled by default)*: Use the webpki-roots crate for root certificates.
+//! - **system-proxy** *(enabled by default)*: Enable system proxy support.
+//! - **tracing**: Enable tracing logging support.
 //!
-//! [hyper]: http://hyper.rs
 //! [client]: ./struct.Client.html
 //! [response]: ./struct.Response.html
 //! [get]: ./fn.get.html

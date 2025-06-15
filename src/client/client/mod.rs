@@ -94,7 +94,7 @@ type BoxedClientServiceLayer = BoxCloneSyncServiceLayer<
     BoxError,
 >;
 
-/// An asynchronous `Client` to make Requests with.
+/// An `Client` to make Requests with.
 ///
 /// The Client has various configuration values to tweak, but the defaults
 /// are set to what is usually the most commonly desired value. To configure a
@@ -1261,6 +1261,19 @@ impl ClientBuilder {
     /// for request processing.
     ///
     /// Each subsequent invocation of this function will wrap previous layers.
+    ///
+    /// If configured, the `timeout` will be the outermost layer.
+    ///
+    /// Example usage:
+    /// ```
+    /// use std::time::Duration;
+    ///
+    /// let client = wreq::Client::builder()
+    ///     .timeout(Duration::from_millis(200))
+    ///     .layer(tower::timeout::TimeoutLayer::new(Duration::from_millis(50)))
+    ///     .build()
+    ///     .unwrap();
+    /// ```
     pub fn layer<L>(mut self, layer: L) -> ClientBuilder
     where
         L: Layer<BoxedClientService> + Clone + Send + Sync + 'static,

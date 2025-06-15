@@ -15,7 +15,7 @@ use tokio_util::io::ReaderStream;
 
 use crate::error::{BoxError, Error};
 
-/// An asynchronous request body.
+/// An request body.
 pub struct Body {
     inner: Inner,
 }
