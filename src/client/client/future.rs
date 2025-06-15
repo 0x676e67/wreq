@@ -24,19 +24,17 @@ type ResponseFuture = Oneshot<
 >;
 
 pin_project! {
+    #[project = PendingProj]
     pub enum Pending {
-        Request { url: Url, #[pin] in_flight: Pin<Box<ResponseFuture>> },
+        Request { url: Url, #[pin] in_flight: ResponseFuture },
         Error { error: Option<Error> },
     }
 }
 
 impl Pending {
     #[inline(always)]
-    pub(crate) fn new(url: Url, fut: ResponseFuture) -> Pending {
-        Pending::Request {
-            url,
-            in_flight: Box::pin(fut),
-        }
+    pub(crate) fn new(url: Url, in_flight: ResponseFuture) -> Pending {
+        Pending::Request { url, in_flight }
     }
 
     #[inline(always)]
@@ -49,10 +47,10 @@ impl Future for Pending {
     type Output = Result<Response, Error>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        match self.get_mut() {
-            Pending::Request { url, in_flight } => {
+        match self.project() {
+            PendingProj::Request { url, in_flight } => {
                 let res = {
-                    let r = in_flight.as_mut().get_mut();
+                    let r = in_flight.get_mut();
                     match Pin::new(r).poll(cx) {
                         Poll::Ready(Ok(res)) => res.map(body::boxed),
                         Poll::Ready(Err(e)) => {
@@ -71,7 +69,7 @@ impl Future for Pending {
 
                 Poll::Ready(Ok(Response::new(res, url.clone())))
             }
-            Pending::Error { error } => Poll::Ready(Err(error
+            PendingProj::Error { error } => Poll::Ready(Err(error
                 .take()
                 .expect("Error already taken in PendingInner::Error"))),
         }
