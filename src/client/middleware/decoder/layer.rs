@@ -8,7 +8,9 @@ use tower_http::decompression::{
 };
 use tower_service::Service;
 
-use crate::{client::decoder::Accepts, config::RequestAcceptsEncoding, core::ext::RequestConfig};
+use crate::{
+    client::decoder::AcceptEncoding, config::RequestAcceptEncoding, core::ext::RequestConfig,
+};
 
 /// Decompresses response bodies of the underlying service.
 ///
@@ -16,12 +18,12 @@ use crate::{client::decoder::Accepts, config::RequestAcceptsEncoding, core::ext:
 /// bodies based on the `Content-Encoding` header.
 #[derive(Clone)]
 pub struct DecompressionLayer {
-    accept: Accepts,
+    accept: AcceptEncoding,
 }
 
 impl DecompressionLayer {
     /// Creates a new `DecompressionLayer` with the specified `Accepts`.
-    pub const fn new(accept: Accepts) -> Self {
+    pub const fn new(accept: AcceptEncoding) -> Self {
         Self { accept }
     }
 }
@@ -45,14 +47,17 @@ pub struct Decompression<S> {
 
 impl<S> Decompression<S> {
     /// Creates a new `Decompression` wrapping the `service`.
-    pub fn new(service: S, accepts: Accepts) -> Decompression<S> {
+    pub fn new(service: S, accepts: AcceptEncoding) -> Decompression<S> {
         let decoder = TowerDecompression::new(service);
         let decoder = Self::accepts(decoder, &accepts);
         Decompression { decoder }
     }
 
     /// Sets decompression options based on the provided `Accepts`.
-    fn accepts(mut decoder: TowerDecompression<S>, accepts: &Accepts) -> TowerDecompression<S> {
+    fn accepts(
+        mut decoder: TowerDecompression<S>,
+        accepts: &AcceptEncoding,
+    ) -> TowerDecompression<S> {
         #[cfg(feature = "gzip")]
         {
             decoder = decoder.gzip(accepts.gzip);
@@ -93,7 +98,7 @@ where
     }
 
     fn call(&mut self, req: Request<ReqBody>) -> Self::Future {
-        if let Some(accpets) = RequestConfig::<RequestAcceptsEncoding>::get(req.extensions()) {
+        if let Some(accpets) = RequestConfig::<RequestAcceptEncoding>::get(req.extensions()) {
             let mut decoder = self.decoder.clone();
             decoder = Decompression::accepts(decoder, accpets);
             std::mem::swap(&mut self.decoder, &mut decoder);

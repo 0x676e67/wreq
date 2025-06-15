@@ -28,7 +28,7 @@ use {super::middleware::cookie::CookieManagerLayer, crate::cookie};
     feature = "deflate",
 ))]
 use {
-    super::{decoder::Accepts, middleware::decoder::DecompressionLayer},
+    super::{decoder::AcceptEncoding, middleware::decoder::DecompressionLayer},
     tower_http::decompression::DecompressionBody,
 };
 
@@ -134,7 +134,7 @@ struct Config {
         feature = "brotli",
         feature = "deflate",
     ))]
-    accepts: Accepts,
+    accepts: AcceptEncoding,
     connect_timeout: Option<Duration>,
     connection_verbose: bool,
     pool_idle_timeout: Option<Duration>,
@@ -215,7 +215,7 @@ impl ClientBuilder {
                     feature = "brotli",
                     feature = "deflate",
                 ))]
-                accepts: Accepts::default(),
+                accepts: AcceptEncoding::default(),
                 connect_timeout: None,
                 connection_verbose: false,
                 pool_idle_timeout: Some(Duration::from_secs(90)),

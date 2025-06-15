@@ -48,7 +48,7 @@ use crate::{
     feature = "brotli",
     feature = "deflate",
 ))]
-use crate::{client::decoder::Accepts, config::RequestAcceptsEncoding};
+use crate::{client::decoder::AcceptEncoding, config::RequestAcceptEncoding};
 
 /// A request which can be executed with `Client::execute()`.
 pub struct Request {
@@ -209,8 +209,8 @@ impl Request {
         feature = "deflate",
     ))]
     #[inline(always)]
-    pub(crate) fn accpet_encoding_mut(&mut self) -> &mut Option<Accepts> {
-        RequestConfig::<RequestAcceptsEncoding>::get_mut(&mut self.extensions)
+    pub(crate) fn accpet_encoding_mut(&mut self) -> &mut Option<AcceptEncoding> {
+        RequestConfig::<RequestAcceptEncoding>::get_mut(&mut self.extensions)
     }
 
     /// Skip client default headers.
@@ -569,28 +569,28 @@ impl RequestBuilder {
     /// Sets if this request will announce that it accepts gzip encoding.
     #[cfg(feature = "gzip")]
     pub fn gzip(mut self, gzip: bool) -> RequestBuilder {
-        self.set_accept(|a| a.gzip(gzip));
+        self.set_accept_encoding(|a| a.gzip(gzip));
         self
     }
 
     /// Sets if this request will announce that it accepts brotli encoding.
     #[cfg(feature = "brotli")]
     pub fn brotli(mut self, brotli: bool) -> RequestBuilder {
-        self.set_accept(|a| a.brotli(brotli));
+        self.set_accept_encoding(|a| a.brotli(brotli));
         self
     }
 
     /// Sets if this request will announce that it accepts deflate encoding.
     #[cfg(feature = "deflate")]
     pub fn deflate(mut self, deflate: bool) -> RequestBuilder {
-        self.set_accept(|a| a.deflate(deflate));
+        self.set_accept_encoding(|a| a.deflate(deflate));
         self
     }
 
     /// Sets if this request will announce that it accepts zstd encoding.
     #[cfg(feature = "zstd")]
     pub fn zstd(mut self, zstd: bool) -> RequestBuilder {
-        self.set_accept(|a| a.zstd(zstd));
+        self.set_accept_encoding(|a| a.zstd(zstd));
         self
     }
 
@@ -600,18 +600,18 @@ impl RequestBuilder {
         feature = "brotli",
         feature = "deflate",
     ))]
-    fn set_accept<F>(&mut self, setter: F)
+    fn set_accept_encoding<F>(&mut self, setter: F)
     where
-        F: FnOnce(&mut Accepts),
+        F: FnOnce(&mut AcceptEncoding),
     {
         if let Ok(ref mut req) = self.request {
-            let accepts = req.accpet_encoding_mut();
-            if let Some(accepts) = accepts {
-                setter(accepts);
+            let accept_encoding = req.accpet_encoding_mut();
+            if let Some(accept_encoding) = accept_encoding {
+                setter(accept_encoding);
             } else {
-                let mut default_accepts = Accepts::default();
-                setter(&mut default_accepts);
-                *accepts = Some(default_accepts);
+                let mut default = AcceptEncoding::default();
+                setter(&mut default);
+                *accept_encoding = Some(default);
             }
         }
     }

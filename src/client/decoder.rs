@@ -1,5 +1,5 @@
 #[derive(Clone, Debug)]
-pub(crate) struct Accepts {
+pub(crate) struct AcceptEncoding {
     #[cfg(feature = "gzip")]
     pub(super) gzip: bool,
     #[cfg(feature = "brotli")]
@@ -10,9 +10,9 @@ pub(crate) struct Accepts {
     pub(super) deflate: bool,
 }
 
-// ===== impl Accepts ====o
+// ===== impl AcceptEncoding =====
 
-impl Accepts {
+impl AcceptEncoding {
     #[cfg(feature = "gzip")]
     #[inline(always)]
     pub fn gzip(&mut self, enabled: bool) {
@@ -39,9 +39,9 @@ impl Accepts {
 }
 
 #[allow(clippy::all)]
-impl Default for Accepts {
-    fn default() -> Accepts {
-        Accepts {
+impl Default for AcceptEncoding {
+    fn default() -> AcceptEncoding {
+        AcceptEncoding {
             #[cfg(feature = "gzip")]
             gzip: true,
             #[cfg(feature = "brotli")]
