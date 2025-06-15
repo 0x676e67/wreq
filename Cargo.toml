@@ -18,7 +18,7 @@ rustdoc-args = ["--cfg", "docsrs"]
 targets = ["x86_64-unknown-linux-gnu"]
 
 [features]
-default = ["webpki-roots", "charset", "system-proxy"]
+default = ["webpki-roots", "charset", "system-proxy", "full"]
 
 full = [
     "json",
@@ -74,6 +74,7 @@ url = "2.5"
 serde = { version = "1.0", features = ["derive"] }
 serde_urlencoded = "0.7.1"
 tower = { version = "0.5.2", default-features = false, features = ["timeout", "util", "retry"] }
+tower-http = { version = "0.6.6", default-features = false, optional = true }
 tower-service = "0.3"
 sync_wrapper = { version = "1.0", features = ["futures"] }
 antidote = "1" 
@@ -127,9 +128,6 @@ cookie_store = { version = "0.21", features = ["preserve_order"], optional = tru
 
 ## tokio util
 tokio-util = { version = "0.7.15", default-features = false, features = ["codec","io"], optional = true }
-
-## compression
-tower-http = { version = "0.6.6", default-features = false, optional = true }
 
 ## websocket
 tokio-tungstenite = { version = "0.26.2", default-features = false, features = ["handshake"], optional = true }
