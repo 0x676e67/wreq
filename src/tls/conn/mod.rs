@@ -16,7 +16,7 @@ use cache::SessionKey;
 use tokio::io;
 use tokio_boring2::SslStream;
 
-pub use self::boring::{HttpsConnector, TlsConnector};
+pub use self::boring::{HttpsConnector, TlsConnector, TlsConnectorBuilder};
 use crate::{
     core::{
         client::connect::{Connected, Connection},

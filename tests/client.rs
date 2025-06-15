@@ -823,3 +823,67 @@ async fn tunnel_includes_proxy_auth_with_multiple_proxies() {
     assert_eq!(res.url().as_str(), url);
     assert_eq!(res.status(), wreq::StatusCode::OK);
 }
+
+#[tokio::test]
+async fn skip_default_headers() {
+    let server = server::http(move |req| async move {
+        assert_eq!(req.method(), "GET");
+        assert_eq!(req.headers().get("user-agent"), None);
+        assert_eq!(req.headers().get("accept"), None);
+        assert_eq!(req.headers().get("accept-encoding"), None);
+        http::Response::default()
+    });
+
+    let url = format!("http://{}/skip", server.addr());
+    let client = wreq::Client::builder()
+        .default_headers({
+            let mut headers = wreq::header::HeaderMap::new();
+            headers.insert("user-agent", "test-agent".parse().unwrap());
+            headers.insert("accept", "*/*".parse().unwrap());
+            headers.insert("accept-encoding", "gzip".parse().unwrap());
+            headers
+        })
+        .no_proxy()
+        .build()
+        .unwrap();
+
+    let res = client
+        .get(&url)
+        .default_headers(true)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.url().as_str(), &url);
+    assert_eq!(res.status(), wreq::StatusCode::OK);
+
+    let server = server::http(move |req| async move {
+        assert_eq!(req.method(), "GET");
+        assert_eq!(
+            req.headers().get("user-agent"),
+            Some(&"test-agent".parse().unwrap())
+        );
+        assert_eq!(req.headers().get("accept"), Some(&"*/*".parse().unwrap()));
+        assert_eq!(
+            req.headers().get("accept-encoding"),
+            Some(&"gzip".parse().unwrap())
+        );
+        http::Response::default()
+    });
+
+    let url = format!("http://{}/no_skip", server.addr());
+    let client = wreq::Client::builder()
+        .default_headers({
+            let mut headers = wreq::header::HeaderMap::new();
+            headers.insert("user-agent", "test-agent".parse().unwrap());
+            headers.insert("accept", "*/*".parse().unwrap());
+            headers.insert("accept-encoding", "gzip".parse().unwrap());
+            headers
+        })
+        .no_proxy()
+        .build()
+        .unwrap();
+
+    let res = client.get(&url).send().await.unwrap();
+    assert_eq!(res.url().as_str(), &url);
+    assert_eq!(res.status(), wreq::StatusCode::OK);
+}

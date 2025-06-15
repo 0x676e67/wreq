@@ -31,7 +31,9 @@ use super::{
 use crate::core::ext::RequestInterface;
 use crate::{
     Error, Method, OriginalHeaders, Proxy, Url,
-    config::{RequestReadTimeout, RequestRedirectPolicy, RequestTotalTimeout},
+    config::{
+        RequestReadTimeout, RequestRedirectPolicy, RequestSkipDefaultHeaders, RequestTotalTimeout,
+    },
     core::ext::{
         RequestConfig, RequestHttpVersionPref, RequestIpv4Addr, RequestIpv6Addr,
         RequestOriginalHeaders, RequestProxyMatcher,
@@ -80,73 +82,61 @@ impl Request {
     }
 
     /// Get the method.
-    #[inline]
+    #[inline(always)]
     pub fn method(&self) -> &Method {
         &self.method
     }
 
     /// Get a mutable reference to the method.
-    #[inline]
+    #[inline(always)]
     pub fn method_mut(&mut self) -> &mut Method {
         &mut self.method
     }
 
     /// Get the url.
-    #[inline]
+    #[inline(always)]
     pub fn url(&self) -> &Url {
         &self.url
     }
 
     /// Get a mutable reference to the url.
-    #[inline]
+    #[inline(always)]
     pub fn url_mut(&mut self) -> &mut Url {
         &mut self.url
     }
 
     /// Get the headers.
-    #[inline]
+    #[inline(always)]
     pub fn headers(&self) -> &HeaderMap {
         &self.headers
     }
 
     /// Get a mutable reference to the headers.
-    #[inline]
+    #[inline(always)]
     pub fn headers_mut(&mut self) -> &mut HeaderMap {
         &mut self.headers
     }
 
-    /// Get the original headers.
-    #[inline]
-    pub fn original_headers(&self) -> Option<&OriginalHeaders> {
-        RequestConfig::<RequestOriginalHeaders>::get(&self.extensions)
-    }
-
     /// Get a mutable reference to the original headers.
-    #[inline]
+    #[inline(always)]
     pub fn original_headers_mut(&mut self) -> &mut Option<OriginalHeaders> {
         RequestConfig::<RequestOriginalHeaders>::get_mut(&mut self.extensions)
     }
 
-    /// Get the redirect policy.
-    #[inline]
-    pub fn redirect(&self) -> Option<&redirect::Policy> {
-        RequestConfig::<RequestRedirectPolicy>::get(&self.extensions)
-    }
-
     /// Get a mutable reference to the redirect policy.
-    #[inline]
+    #[inline(always)]
     pub fn redirect_mut(&mut self) -> &mut Option<redirect::Policy> {
         RequestConfig::<RequestRedirectPolicy>::get_mut(&mut self.extensions)
     }
 
     /// Get the body.
-    #[inline]
+    #[inline(always)]
     pub fn body(&self) -> Option<&Body> {
         self.body.as_ref()
     }
 
     /// Get a mutable reference to the body.
-    #[inline]
+    #[inline(always)]
     pub fn body_mut(&mut self) -> &mut Option<Body> {
         &mut self.body
     }
@@ -158,43 +148,31 @@ impl Request {
     }
 
     /// Get a mutable reference to the http version.
-    #[inline]
+    #[inline(always)]
     pub fn version_mut(&mut self) -> &mut Option<Version> {
         RequestConfig::<RequestHttpVersionPref>::get_mut(&mut self.extensions)
     }
 
-    /// Get the timeout.
-    #[inline]
-    pub fn timeout(&self) -> Option<&Duration> {
-        RequestConfig::<RequestTotalTimeout>::get(&self.extensions)
-    }
-
     /// Get a mutable reference to the timeout.
-    #[inline]
+    #[inline(always)]
     pub fn timeout_mut(&mut self) -> &mut Option<Duration> {
         RequestConfig::<RequestTotalTimeout>::get_mut(&mut self.extensions)
     }
 
-    /// Get the read timeout.
-    #[inline]
-    pub fn read_timeout(&self) -> Option<&Duration> {
-        RequestConfig::<RequestReadTimeout>::get(&self.extensions)
-    }
-
     /// Get a mutable reference to the read timeout.
-    #[inline]
+    #[inline(always)]
     pub fn read_timeout_mut(&mut self) -> &mut Option<Duration> {
         RequestConfig::<RequestReadTimeout>::get_mut(&mut self.extensions)
     }
 
     /// Get a mutable reference to the local ipv4 address.
-    #[inline]
+    #[inline(always)]
     pub fn local_ipv4_address_mut(&mut self) -> &mut Option<Ipv4Addr> {
         RequestConfig::<RequestIpv4Addr>::get_mut(&mut self.extensions)
     }
 
     /// Get a mutable reference to the local ipv6 address.
-    #[inline]
+    #[inline(always)]
     pub fn local_ipv6_address_mut(&mut self) -> &mut Option<Ipv6Addr> {
         RequestConfig::<RequestIpv6Addr>::get_mut(&mut self.extensions)
     }
@@ -212,13 +190,13 @@ impl Request {
         target_os = "visionos",
         target_os = "watchos",
     ))]
-    #[inline]
+    #[inline(always)]
     pub fn interface_mut(&mut self) -> &mut Option<std::borrow::Cow<'static, str>> {
         RequestConfig::<RequestInterface>::get_mut(&mut self.extensions)
     }
 
     /// Get a mutable reference to the proxy matcher.
-    #[inline]
+    #[inline(always)]
     pub(crate) fn proxy_matcher_mut(&mut self) -> &mut Option<ProxyMatcher> {
         RequestConfig::<RequestProxyMatcher>::get_mut(&mut self.extensions)
     }
@@ -230,19 +208,25 @@ impl Request {
         feature = "brotli",
         feature = "deflate",
     ))]
-    #[inline]
+    #[inline(always)]
     pub(crate) fn accpet_encoding_mut(&mut self) -> &mut Option<Accepts> {
         RequestConfig::<RequestAcceptsEncoding>::get_mut(&mut self.extensions)
     }
 
+    /// Skip client default headers.
+    #[inline(always)]
+    pub(crate) fn skip_default_headers_mut(&mut self) -> &mut Option<bool> {
+        RequestConfig::<RequestSkipDefaultHeaders>::get_mut(&mut self.extensions)
+    }
+
     /// Get the extensions.
-    #[inline]
+    #[inline(always)]
     pub(crate) fn extensions(&self) -> &Extensions {
         &self.extensions
     }
 
     /// Get a mutable reference to the extensions.
-    #[inline]
+    #[inline(always)]
     pub(crate) fn extensions_mut(&mut self) -> &mut Extensions {
         &mut self.extensions
     }
@@ -251,16 +235,13 @@ impl Request {
     ///
     /// `None` is returned if the request can not be cloned, i.e. if the body is a stream.
     pub fn try_clone(&self) -> Option<Request> {
-        let body = match self.body.as_ref() {
+        let body = match self.body() {
             Some(body) => Some(body.try_clone()?),
             None => None,
         };
         let mut req = Request::new(self.method().clone(), self.url().clone());
-        *req.timeout_mut() = self.timeout().copied();
-        *req.read_timeout_mut() = self.read_timeout().copied();
         *req.headers_mut() = self.headers().clone();
         *req.version_mut() = self.version().cloned();
-        *req.redirect_mut() = self.redirect().cloned();
         *req.extensions_mut() = self.extensions().clone();
         req.body = body;
         Some(req)
@@ -394,6 +375,14 @@ impl RequestBuilder {
     pub fn original_headers(mut self, original_headers: OriginalHeaders) -> RequestBuilder {
         if let Ok(ref mut req) = self.request {
             *req.original_headers_mut() = Some(original_headers);
+        }
+        self
+    }
+
+    /// Set skip client default headers for this request.
+    pub fn default_headers(mut self, skip: bool) -> RequestBuilder {
+        if let Ok(ref mut req) = self.request {
+            *req.skip_default_headers_mut() = Some(skip);
         }
         self
     }

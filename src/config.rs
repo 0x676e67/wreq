@@ -52,3 +52,9 @@ pub(crate) struct RequestAcceptsEncoding;
 impl RequestConfigValue for RequestAcceptsEncoding {
     type Value = crate::client::decoder::Accepts;
 }
+
+#[derive(Clone, Copy)]
+pub(crate) struct RequestSkipDefaultHeaders;
+impl RequestConfigValue for RequestSkipDefaultHeaders {
+    type Value = bool;
+}

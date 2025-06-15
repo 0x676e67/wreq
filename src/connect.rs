@@ -32,7 +32,10 @@ use crate::{
     dns::DynResolver,
     error::{BoxError, map_timeout_to_connector_error},
     proxy::{Intercepted, Matcher as ProxyMatcher},
-    tls::{HttpsConnector, MaybeHttpsStream, TlsConnector},
+    tls::{
+        CertStore, HttpsConnector, Identity, KeyLogPolicy, MaybeHttpsStream, TlsConfig,
+        TlsConnector, TlsConnectorBuilder,
+    },
 };
 
 pub(crate) type HttpConnector = crate::core::client::connect::HttpConnector<DynResolver>;
@@ -42,12 +45,200 @@ pub(crate) type BoxedConnectorService = BoxCloneSyncService<Unnameable, Conn, Bo
 pub(crate) type BoxedConnectorLayer =
     BoxCloneSyncServiceLayer<BoxedConnectorService, Unnameable, Conn, BoxError>;
 
-pub(crate) struct ConnectorBuilder(ConnectorService);
+pub(crate) struct ConnectorBuilder {
+    http: HttpConnector,
+    proxies: Arc<Vec<ProxyMatcher>>,
+    verbose: verbose::Wrapper,
+    /// When there is a single timeout layer and no other layers,
+    /// we embed it directly inside our base Service::call().
+    /// This lets us avoid an extra `Box::pin` indirection layer
+    /// since `tokio::time::Timeout` is `Unpin`
+    timeout: Option<Duration>,
+    nodelay: bool,
+    #[cfg(feature = "socks")]
+    resolver: DynResolver,
+
+    tls_info: bool,
+    tls_builder: TlsConnectorBuilder,
+}
 
 impl ConnectorBuilder {
-    pub(crate) fn build(self, layers: Option<Vec<BoxedConnectorLayer>>) -> Connector {
+    /// Set that all sockets have `SO_KEEPALIVE` set with the supplied duration
+    /// to remain idle before sending TCP keepalive probes.
+    #[inline(always)]
+    pub(crate) fn keepalive(mut self, dur: Option<Duration>) -> ConnectorBuilder {
+        self.http.set_keepalive(dur);
+        self
+    }
+
+    /// Set the duration between two successive TCP keepalive retransmissions,
+    /// if acknowledgement to the previous keepalive transmission is not received.
+    #[inline(always)]
+    pub(crate) fn tcp_keepalive_interval(mut self, dur: Option<Duration>) -> ConnectorBuilder {
+        self.http.set_keepalive_interval(dur);
+        self
+    }
+
+    /// Set the number of retransmissions to be carried out before declaring that remote end is not
+    /// available.
+    #[inline(always)]
+    pub(crate) fn tcp_keepalive_retries(mut self, retries: Option<u32>) -> ConnectorBuilder {
+        self.http.set_keepalive_retries(retries);
+        self
+    }
+
+    /// Sets the value of the TCP_USER_TIMEOUT option on the socket.
+    #[inline(always)]
+    pub(crate) fn tcp_user_timeout(
+        #[allow(unused_mut)] mut self,
+        #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))] dur: Option<
+            Duration,
+        >,
+    ) -> ConnectorBuilder {
+        #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
+        self.inner.http.set_tcp_user_timeout(dur);
+        self
+    }
+
+    /// Set the connect timeout.
+    ///
+    /// If a domain resolves to multiple IP addresses, the timeout will be
+    /// evenly divided across them.
+    #[inline(always)]
+    pub(crate) fn connect_timeout(mut self, timeout: Option<Duration>) -> ConnectorBuilder {
+        self.timeout = timeout;
+        self.http.set_connect_timeout(timeout);
+        self
+    }
+
+    /// Sets the name of the interface to bind sockets produced by this
+    /// connector.
+    #[inline(always)]
+    pub(crate) fn interface(
+        #[allow(unused_mut)] mut self,
+        #[cfg(any(
+            target_os = "android",
+            target_os = "fuchsia",
+            target_os = "illumos",
+            target_os = "ios",
+            target_os = "linux",
+            target_os = "macos",
+            target_os = "solaris",
+            target_os = "tvos",
+            target_os = "visionos",
+            target_os = "watchos",
+        ))]
+        iface: Option<std::borrow::Cow<'static, str>>,
+    ) -> ConnectorBuilder {
+        #[cfg(any(
+            target_os = "android",
+            target_os = "fuchsia",
+            target_os = "illumos",
+            target_os = "ios",
+            target_os = "linux",
+            target_os = "macos",
+            target_os = "solaris",
+            target_os = "tvos",
+            target_os = "visionos",
+            target_os = "watchos",
+        ))]
+        self.http.set_interface(iface);
+        self
+    }
+
+    /// Set that all sockets are bound to the configured IPv4 or IPv6 address (depending on host's
+    /// preferences) before connection.
+    #[inline(always)]
+    pub(crate) fn local_addresses(
+        mut self,
+        local_ipv4_address: Option<Ipv4Addr>,
+        local_ipv6_address: Option<Ipv6Addr>,
+    ) -> ConnectorBuilder {
+        match (local_ipv4_address, local_ipv6_address) {
+            (Some(ipv4), None) => self.http.set_local_address(Some(IpAddr::from(ipv4))),
+            (None, Some(ipv6)) => self.http.set_local_address(Some(IpAddr::from(ipv6))),
+            (Some(ipv4), Some(ipv6)) => {
+                self.http.set_local_addresses(ipv4, ipv6);
+            }
+            (None, None) => {}
+        }
+
+        self
+    }
+
+    /// Set connecting verbose mode.
+    #[inline(always)]
+    pub(crate) fn verbose(mut self, enabled: bool) -> ConnectorBuilder {
+        self.verbose.0 = enabled;
+        self
+    }
+
+    /// Sets the TLS keylog policy.
+    #[inline(always)]
+    pub(crate) fn tls_keylog_policy(
+        mut self,
+        keylog_policy: Option<KeyLogPolicy>,
+    ) -> ConnectorBuilder {
+        self.tls_builder = self.tls_builder.keylog(keylog_policy);
+        self
+    }
+
+    /// Sets the Server Name Indication (SNI) flag.
+    #[inline(always)]
+    pub(crate) fn tls_sni(mut self, enabled: bool) -> ConnectorBuilder {
+        self.tls_builder = self.tls_builder.tls_sni(enabled);
+        self
+    }
+
+    /// Sets the hostname verification flag.
+    #[inline(always)]
+    pub(crate) fn tls_verify_hostname(mut self, enabled: bool) -> ConnectorBuilder {
+        self.tls_builder = self.tls_builder.verify_hostname(enabled);
+        self
+    }
+
+    /// Sets the identity to be used for client certificate authentication.
+    #[inline(always)]
+    pub(crate) fn tls_identity(mut self, identity: Option<Identity>) -> ConnectorBuilder {
+        self.tls_builder = self.tls_builder.identity(identity);
+        self
+    }
+
+    /// Sets the certificate store used for TLS verification.
+    #[inline(always)]
+    pub(crate) fn tls_cert_store(mut self, cert_store: Option<CertStore>) -> ConnectorBuilder {
+        self.tls_builder = self.tls_builder.cert_store(cert_store);
+        self
+    }
+
+    /// Sets the certificate verification flag.
+    #[inline(always)]
+    pub(crate) fn tls_cert_verification(mut self, enabled: bool) -> ConnectorBuilder {
+        self.tls_builder = self.tls_builder.cert_verification(enabled);
+        self
+    }
+
+    /// Builds the connector with the provided TLS configuration and optional layers.
+    pub(crate) fn build(
+        self,
+        tls_config: TlsConfig,
+        layers: Option<Vec<BoxedConnectorLayer>>,
+    ) -> crate::Result<Connector> {
+        let service = ConnectorService {
+            http: self.http,
+            tls: self.tls_builder.clone().build(tls_config)?,
+            proxies: self.proxies,
+            verbose: self.verbose,
+            timeout: self.timeout,
+            nodelay: self.nodelay,
+            #[cfg(feature = "socks")]
+            resolver: self.resolver,
+            tls_info: self.tls_info,
+            tls_builder: self.tls_builder,
+        };
+
         if let Some(layers) = layers {
-            let timeout = self.0.timeout;
+            let timeout = self.timeout;
 
             // otherwise we have user provided layers
             // so we need type erasure all the way through
@@ -57,7 +248,7 @@ impl ConnectorBuilder {
                 BoxCloneSyncService::new(
                     ServiceBuilder::new()
                         .layer(MapRequestLayer::new(|request: Unnameable| request.0))
-                        .service(self.0),
+                        .service(service),
                 ),
                 |service, layer| ServiceBuilder::new().layer(layer).service(service),
             );
@@ -74,7 +265,7 @@ impl ConnectorBuilder {
                         .map_err(map_timeout_to_connector_error)
                         .service(service);
                     let service = BoxCloneSyncService::new(service);
-                    Connector::WithLayers(service)
+                    Ok(Connector::WithLayers(service))
                 }
                 None => {
                     // no timeout, but still map err
@@ -84,90 +275,13 @@ impl ConnectorBuilder {
                         .map_err(map_timeout_to_connector_error)
                         .service(service);
                     let service = BoxCloneSyncService::new(service);
-                    Connector::WithLayers(service)
+                    Ok(Connector::WithLayers(service))
                 }
             }
         } else {
             // we have no user-provided layers, only use concrete types
-            Connector::Simple(self.0)
+            Ok(Connector::Simple(service))
         }
-    }
-
-    #[inline(always)]
-    pub(crate) fn keepalive(mut self, dur: Option<Duration>) -> ConnectorBuilder {
-        self.0.http.set_keepalive(dur);
-        self
-    }
-
-    #[inline(always)]
-    pub(crate) fn tcp_keepalive_interval(mut self, dur: Option<Duration>) -> ConnectorBuilder {
-        self.0.http.set_keepalive_interval(dur);
-        self
-    }
-
-    #[inline(always)]
-    pub(crate) fn tcp_keepalive_retries(mut self, retries: Option<u32>) -> ConnectorBuilder {
-        self.0.http.set_keepalive_retries(retries);
-        self
-    }
-
-    #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
-    #[inline(always)]
-    pub(crate) fn tcp_user_timeout(mut self, dur: Option<Duration>) -> ConnectorBuilder {
-        self.0.http.set_tcp_user_timeout(dur);
-        self
-    }
-
-    #[inline(always)]
-    pub(crate) fn timeout(mut self, timeout: Option<Duration>) -> ConnectorBuilder {
-        self.0.timeout = timeout;
-        self.0.http.set_connect_timeout(timeout);
-        self
-    }
-
-    #[cfg(any(
-        target_os = "android",
-        target_os = "fuchsia",
-        target_os = "illumos",
-        target_os = "ios",
-        target_os = "linux",
-        target_os = "macos",
-        target_os = "solaris",
-        target_os = "tvos",
-        target_os = "visionos",
-        target_os = "watchos",
-    ))]
-    #[inline(always)]
-    pub(crate) fn interface(
-        mut self,
-        iface: Option<std::borrow::Cow<'static, str>>,
-    ) -> ConnectorBuilder {
-        self.0.http.set_interface(iface);
-        self
-    }
-
-    #[inline(always)]
-    pub(crate) fn local_addresses(
-        mut self,
-        local_ipv4_address: Option<Ipv4Addr>,
-        local_ipv6_address: Option<Ipv6Addr>,
-    ) -> ConnectorBuilder {
-        match (local_ipv4_address, local_ipv6_address) {
-            (Some(ipv4), None) => self.0.http.set_local_address(Some(IpAddr::from(ipv4))),
-            (None, Some(ipv6)) => self.0.http.set_local_address(Some(IpAddr::from(ipv6))),
-            (Some(ipv4), Some(ipv6)) => {
-                self.0.http.set_local_addresses(ipv4, ipv6);
-            }
-            (None, None) => {}
-        }
-
-        self
-    }
-
-    #[inline(always)]
-    pub(crate) fn verbose(mut self, enabled: bool) -> ConnectorBuilder {
-        self.0.verbose.0 = enabled;
-        self
     }
 }
 
@@ -182,25 +296,29 @@ pub(crate) enum Connector {
 
 impl Connector {
     pub(crate) fn builder(
-        mut http: HttpConnector,
-        tls: TlsConnector,
+        tls_info: bool,
         proxies: Arc<Vec<ProxyMatcher>>,
         nodelay: bool,
-        tls_info: bool,
-        #[cfg(feature = "socks")] resolver: DynResolver,
+        resolver: DynResolver,
     ) -> ConnectorBuilder {
-        http.enforce_http(false);
-        ConnectorBuilder(ConnectorService {
-            http,
-            tls,
+        ConnectorBuilder {
+            #[cfg(feature = "socks")]
+            resolver: resolver.clone(),
+            http: {
+                // Create a new HttpConnector with the provided resolver
+                let mut http = HttpConnector::new_with_resolver(resolver);
+                http.enforce_http(false);
+                http
+            },
             proxies,
             verbose: verbose::OFF,
             timeout: None,
             nodelay,
+
+            // TLS connector and its configuration
             tls_info,
-            #[cfg(feature = "socks")]
-            resolver,
-        })
+            tls_builder: TlsConnector::builder(),
+        }
     }
 }
 
@@ -238,9 +356,15 @@ pub(crate) struct ConnectorService {
     /// since `tokio::time::Timeout` is `Unpin`
     timeout: Option<Duration>,
     nodelay: bool,
-    tls_info: bool,
     #[cfg(feature = "socks")]
     resolver: DynResolver,
+
+    // TLS configuration
+    // Note: these are not used in the `TlsConnectorBuilder` but rather
+    // in the `TlsConnector` that is built from it.
+    tls_info: bool,
+    #[allow(unused)]
+    tls_builder: TlsConnectorBuilder,
 }
 
 impl ConnectorService {

@@ -6,7 +6,7 @@ use super::{AlpnProtos, AlpsProtos, TlsVersion};
 
 /// Builder for `[`TlsConfig`]`.
 #[must_use]
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct TlsConfigBuilder {
     config: TlsConfig,
 }
@@ -14,7 +14,7 @@ pub struct TlsConfigBuilder {
 /// Configuration settings for TLS connections.
 ///
 /// This struct defines various parameters to fine-tune the behavior of a TLS connection,
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct TlsConfig {
     pub(crate) alpn_protos: AlpnProtos,
     pub(crate) alps_protos: Option<AlpsProtos>,

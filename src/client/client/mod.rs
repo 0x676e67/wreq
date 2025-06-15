@@ -12,11 +12,7 @@ use std::{
 };
 
 use future::{Pending, PendingRequest};
-use http::{
-    Uri,
-    header::{HeaderMap, HeaderValue, PROXY_AUTHORIZATION, USER_AGENT},
-    uri::Scheme,
-};
+use http::header::{HeaderMap, HeaderValue, USER_AGENT};
 use service::ClientService;
 use tower::{
     Layer, Service, ServiceBuilder,
@@ -58,7 +54,7 @@ use crate::{
     },
     core::{
         body::Incoming,
-        client::{Builder, Client as HyperClient, connect::HttpConnector},
+        client::{Builder, Client as HyperClient},
         rt::{TokioExecutor, tokio::TokioTimer},
         service::Oneshot,
     },
@@ -69,10 +65,7 @@ use crate::{
     into_url::try_uri,
     proxy::Matcher as ProxyMatcher,
     redirect::{self, TowerRedirectPolicy},
-    tls::{
-        AlpnProtos, CertStore, CertificateInput, Identity, KeyLogPolicy, TlsConfig, TlsConnector,
-        TlsVersion,
-    },
+    tls::{AlpnProtos, CertStore, CertificateInput, Identity, KeyLogPolicy, TlsConfig, TlsVersion},
 };
 
 #[cfg(not(any(
@@ -121,12 +114,8 @@ pub struct Client {
 
 /// A reference to the `Client` that is used internally.
 struct ClientRef {
-    headers: HeaderMap,
     service: BoxedClientService,
     https_only: bool,
-    proxies: Arc<Vec<ProxyMatcher>>,
-    proxies_maybe_http_auth: bool,
-    proxies_maybe_http_custom_headers: bool,
 }
 
 /// A `ClientBuilder` can be used to create a `Client` with custom configuration.
@@ -191,14 +180,14 @@ struct Config {
     request_layers: Option<Vec<BoxedClientServiceLayer>>,
     connector_layers: Option<Vec<BoxedConnectorLayer>>,
     builder: Builder,
-    alpn_protos: Option<AlpnProtos>,
-    keylog_policy: Option<KeyLogPolicy>,
+    tls_alpn_protos: Option<AlpnProtos>,
+    tls_keylog_policy: Option<KeyLogPolicy>,
     tls_info: bool,
     tls_sni: bool,
-    verify_hostname: bool,
-    identity: Option<Identity>,
-    cert_store: Option<CertStore>,
-    cert_verification: bool,
+    tls_verify_hostname: bool,
+    tls_identity: Option<Identity>,
+    tls_cert_store: Option<CertStore>,
+    tls_cert_verification: bool,
     min_tls_version: Option<TlsVersion>,
     max_tls_version: Option<TlsVersion>,
     tls_config: TlsConfig,
@@ -274,14 +263,14 @@ impl ClientBuilder {
                 http2_max_retry: 2,
                 request_layers: None,
                 connector_layers: None,
-                alpn_protos: None,
-                keylog_policy: None,
+                tls_alpn_protos: None,
+                tls_keylog_policy: None,
                 tls_info: false,
                 tls_sni: true,
-                verify_hostname: true,
-                identity: None,
-                cert_store: None,
-                cert_verification: true,
+                tls_verify_hostname: true,
+                tls_identity: None,
+                tls_cert_store: None,
+                tls_cert_verification: true,
                 min_tls_version: None,
                 max_tls_version: None,
                 tls_config: TlsConfig::default(),
@@ -316,7 +305,7 @@ impl ClientBuilder {
             .builder
             .http1_config(config.http1_config)
             .http2_config(config.http2_config)
-            .http2_only(matches!(config.alpn_protos, Some(AlpnProtos::HTTP2)))
+            .http2_only(matches!(config.tls_alpn_protos, Some(AlpnProtos::HTTP2)))
             .http2_timer(TokioTimer::new())
             .pool_timer(TokioTimer::new())
             .pool_idle_timeout(config.pool_idle_timeout)
@@ -343,65 +332,58 @@ impl ClientBuilder {
                 DynResolver::new(resolver)
             };
 
-            let http_connector = HttpConnector::new_with_resolver(resolver.clone());
+            config.tls_config.alpn_protos = config
+                .tls_alpn_protos
+                .unwrap_or(config.tls_config.alpn_protos);
+            config.tls_config.min_tls_version =
+                config.min_tls_version.or(config.tls_config.min_tls_version);
+            config.tls_config.max_tls_version =
+                config.max_tls_version.or(config.tls_config.max_tls_version);
 
-            let mut tls_config = config.tls_config;
-            tls_config.alpn_protos = config.alpn_protos.unwrap_or(tls_config.alpn_protos);
-            tls_config.min_tls_version = config.min_tls_version.or(tls_config.min_tls_version);
-            tls_config.max_tls_version = config.max_tls_version.or(tls_config.max_tls_version);
-
-            let tls_connector = TlsConnector::builder(tls_config)
-                .keylog(config.keylog_policy.clone())
-                .identity(config.identity.clone())
-                .cert_store(config.cert_store.clone().unwrap_or_default())
-                .cert_verification(config.cert_verification)
+            Connector::builder(config.tls_info, proxies.clone(), config.nodelay, resolver)
+                .connect_timeout(config.connect_timeout)
+                .keepalive(config.tcp_keepalive)
+                .tcp_keepalive_interval(config.tcp_keepalive_interval)
+                .tcp_keepalive_retries(config.tcp_keepalive_retries)
+                .local_addresses(config.local_ipv4_address, config.local_ipv6_address)
+                .verbose(config.connection_verbose)
                 .tls_sni(config.tls_sni)
-                .verify_hostname(config.verify_hostname)
-                .build()?;
-
-            let mut builder = Connector::builder(
-                http_connector,
-                tls_connector,
-                proxies.clone(),
-                config.nodelay,
-                config.tls_info,
-                #[cfg(feature = "socks")]
-                resolver.clone(),
-            )
-            .timeout(config.connect_timeout)
-            .keepalive(config.tcp_keepalive)
-            .tcp_keepalive_interval(config.tcp_keepalive_interval)
-            .tcp_keepalive_retries(config.tcp_keepalive_retries)
-            .local_addresses(config.local_ipv4_address, config.local_ipv6_address)
-            .verbose(config.connection_verbose);
-
-            #[cfg(any(
-                target_os = "android",
-                target_os = "fuchsia",
-                target_os = "illumos",
-                target_os = "ios",
-                target_os = "linux",
-                target_os = "macos",
-                target_os = "solaris",
-                target_os = "tvos",
-                target_os = "visionos",
-                target_os = "watchos",
-            ))]
-            {
-                builder = builder.interface(config.interface)
-            }
-
-            #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
-            {
-                builder = builder.tcp_user_timeout(config.tcp_user_timeout);
-            }
-
-            builder.build(config.connector_layers)
+                .tls_verify_hostname(config.tls_verify_hostname)
+                .tls_cert_verification(config.tls_cert_verification)
+                .tls_cert_store(config.tls_cert_store)
+                .tls_identity(config.tls_identity)
+                .tls_keylog_policy(config.tls_keylog_policy)
+                .interface(
+                    #[cfg(any(
+                        target_os = "android",
+                        target_os = "fuchsia",
+                        target_os = "illumos",
+                        target_os = "ios",
+                        target_os = "linux",
+                        target_os = "macos",
+                        target_os = "solaris",
+                        target_os = "tvos",
+                        target_os = "visionos",
+                        target_os = "watchos",
+                    ))]
+                    config.interface,
+                )
+                .tcp_user_timeout(
+                    #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
+                    config.tcp_user_timeout,
+                )
+                .build(config.tls_config, config.connector_layers)?
         };
 
         let service = {
-            let service =
-                ClientService::new(config.builder.build(connector), config.original_headers);
+            let service = ClientService::new(
+                config.builder.build(connector),
+                config.headers,
+                config.original_headers,
+                proxies,
+                proxies_maybe_http_auth,
+                proxies_maybe_http_custom_headers,
+            );
 
             #[cfg(any(
                 feature = "gzip",
@@ -475,11 +457,7 @@ impl ClientBuilder {
         Ok(Client {
             inner: Arc::new(ClientRef {
                 service,
-                headers: config.headers,
                 https_only: config.https_only,
-                proxies_maybe_http_auth,
-                proxies_maybe_http_custom_headers,
-                proxies,
             }),
         })
     }
@@ -898,13 +876,13 @@ impl ClientBuilder {
 
     /// Only use HTTP/1.
     pub fn http1_only(mut self) -> ClientBuilder {
-        self.config.alpn_protos = Some(AlpnProtos::HTTP1);
+        self.config.tls_alpn_protos = Some(AlpnProtos::HTTP1);
         self
     }
 
     /// Only use HTTP/2.
     pub fn http2_only(mut self) -> ClientBuilder {
-        self.config.alpn_protos = Some(AlpnProtos::HTTP2);
+        self.config.tls_alpn_protos = Some(AlpnProtos::HTTP2);
         self
     }
 
@@ -1117,7 +1095,7 @@ impl ClientBuilder {
     {
         match CertStore::from_der_certs(certs) {
             Ok(store) => {
-                self.config.cert_store = Some(store);
+                self.config.tls_cert_store = Some(store);
             }
             Err(err) => self.config.error = Some(err),
         }
@@ -1126,7 +1104,7 @@ impl ClientBuilder {
 
     /// Sets the identity to be used for client certificate authentication.
     pub fn identity(mut self, identity: Identity) -> ClientBuilder {
-        self.config.identity = Some(identity);
+        self.config.tls_identity = Some(identity);
         self
     }
 
@@ -1142,7 +1120,7 @@ impl ClientBuilder {
     /// introduces significant vulnerabilities, and should only be used
     /// as a last resort.
     pub fn cert_verification(mut self, cert_verification: bool) -> ClientBuilder {
-        self.config.cert_verification = cert_verification;
+        self.config.tls_cert_verification = cert_verification;
         self
     }
 
@@ -1163,7 +1141,7 @@ impl ClientBuilder {
     /// - Ensure that the provided verify certificate store is properly configured to avoid
     ///   potential security risks.
     pub fn cert_store(mut self, store: CertStore) -> ClientBuilder {
-        self.config.cert_store = Some(store);
+        self.config.tls_cert_store = Some(store);
         self
     }
 
@@ -1177,7 +1155,7 @@ impl ClientBuilder {
 
     /// Configures TLS key logging policy for the client.
     pub fn keylog(mut self, policy: KeyLogPolicy) -> ClientBuilder {
-        self.config.keylog_policy = Some(policy);
+        self.config.tls_keylog_policy = Some(policy);
         self
     }
 
@@ -1190,7 +1168,7 @@ impl ClientBuilder {
     /// used, *any* valid certificate for *any* site will be trusted for use from any other. This
     /// introduces a significant vulnerability to man-in-the-middle attacks.
     pub fn verify_hostname(mut self, verify_hostname: bool) -> ClientBuilder {
-        self.config.verify_hostname = verify_hostname;
+        self.config.tls_verify_hostname = verify_hostname;
         self
     }
 
@@ -1236,7 +1214,6 @@ impl ClientBuilder {
     /// This can be used to ensure a `Client` doesn't use the hickory-dns async resolver
     /// even if another dependency were to enable the optional `hickory-dns` feature.
     #[cfg(feature = "hickory-dns")]
-    #[cfg_attr(docsrs, doc(cfg(feature = "hickory-dns")))]
     pub fn no_hickory_dns(mut self) -> ClientBuilder {
         self.config.hickory_dns = false;
         self
@@ -1456,7 +1433,7 @@ impl Client {
     /// This method fails if there was an error while sending request,
     /// redirect loop was detected or redirect limit was exhausted.
     pub fn execute(&self, request: Request) -> Pending {
-        let (method, url, mut headers, body, extensions) = request.pieces();
+        let (method, url, headers, body, extensions) = request.pieces();
 
         // get the scheme of the URL
         let scheme = url.scheme();
@@ -1471,24 +1448,11 @@ impl Client {
             return Pending::new_err(Error::url_bad_scheme(url));
         }
 
-        // insert default headers in the request headers
-        // without overwriting already appended headers.
-        for name in self.inner.headers.keys() {
-            if !headers.contains_key(name) {
-                for value in self.inner.headers.get_all(name) {
-                    headers.append(name, value.clone());
-                }
-            }
-        }
-
         // parse Uri from the Url
         let uri = match try_uri(&url) {
             Some(uri) => uri,
             None => return Pending::new_err(Error::url_bad_uri(url)),
         };
-
-        // apply proxy headers if any proxies are configured
-        self.apply_proxy_headers(&uri, &mut headers);
 
         // Prepare the in-flight request by ensuring we use the exact same Service instance
         // for both poll_ready and call.
@@ -1500,59 +1464,13 @@ impl Client {
                 .expect("valid request parts");
 
             // Finalize headers and extensions
-            *req.headers_mut() = headers.clone();
-            *req.extensions_mut() = extensions.clone();
+            *req.headers_mut() = headers;
+            *req.extensions_mut() = extensions;
 
             Oneshot::new(self.inner.service.clone(), req)
         };
 
         Pending::new(PendingRequest { url, in_flight })
-    }
-
-    fn apply_proxy_headers(&self, dst: &Uri, headers: &mut HeaderMap) {
-        // Skip if the destination is not plain HTTP.
-        // For HTTPS, the proxy headers should be part of the CONNECT tunnel instead.
-        if dst.scheme() != Some(&Scheme::HTTP) {
-            return;
-        }
-
-        // Determine whether we need to apply proxy auth and/or custom headers.
-        let need_auth =
-            self.inner.proxies_maybe_http_auth && !headers.contains_key(PROXY_AUTHORIZATION);
-        let need_custom_headers = self.inner.proxies_maybe_http_custom_headers;
-
-        // If no headers need to be applied, return early.
-        if !need_auth && !need_custom_headers {
-            return;
-        }
-
-        let mut inserted_auth = false;
-        let mut inserted_custom = false;
-
-        for proxy in self.inner.proxies.iter() {
-            // Insert basic auth header from the first applicable proxy.
-            if need_auth && !inserted_auth {
-                if let Some(auth_header) = proxy.http_non_tunnel_basic_auth(dst) {
-                    headers.insert(PROXY_AUTHORIZATION, auth_header);
-                    inserted_auth = true;
-                }
-            }
-
-            // Insert custom headers from the first applicable proxy.
-            if need_custom_headers && !inserted_custom {
-                if let Some(custom_headers) = proxy.http_non_tunnel_custom_headers(dst) {
-                    for (key, value) in custom_headers.iter() {
-                        headers.insert(key.clone(), value.clone());
-                    }
-                    inserted_custom = true;
-                }
-            }
-
-            // Stop iterating if both kinds of headers have been inserted.
-            if inserted_auth && inserted_custom {
-                break;
-            }
-        }
     }
 }
 
