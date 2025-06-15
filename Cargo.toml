@@ -134,7 +134,7 @@ async-compression = { version = "0.4.23", default-features = false, features = [
 tokio-util = { version = "0.7.15", default-features = false, features = ["codec","io"], optional = true }
 
 ## websocket
-tokio-tungstenite = { version = "0.26.2", default-features = false, features = ["handshake"], optional = true }
+tokio-tungstenite = { version = "0.27.0", default-features = false, features = ["handshake"], optional = true }
 
 ## hickory-dns
 hickory-resolver = { version = "0.25.2", optional = true }
