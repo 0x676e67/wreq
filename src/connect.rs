@@ -96,7 +96,7 @@ impl ConnectorBuilder {
         >,
     ) -> ConnectorBuilder {
         #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
-        self.inner.http.set_tcp_user_timeout(dur);
+        self.http.set_tcp_user_timeout(dur);
         self
     }
 

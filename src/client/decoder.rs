@@ -10,30 +10,35 @@ pub(crate) struct Accepts {
     pub(super) deflate: bool,
 }
 
-// ===== impl Accepts =====
+// ===== impl Accepts ====o
 
 impl Accepts {
-    #[cfg_attr(feature = "gzip", inline(always))]
+    #[cfg(feature = "gzip")]
+    #[inline(always)]
     pub fn gzip(&mut self, enabled: bool) {
         self.gzip = enabled;
     }
 
-    #[cfg_attr(feature = "brotli", inline(always))]
+    #[cfg(feature = "brotli")]
+    #[inline(always)]
     pub fn brotli(&mut self, enabled: bool) {
         self.brotli = enabled;
     }
 
-    #[cfg_attr(feature = "zstd", inline(always))]
+    #[cfg(feature = "zstd")]
+    #[inline(always)]
     pub fn zstd(&mut self, enabled: bool) {
         self.zstd = enabled;
     }
 
-    #[cfg_attr(feature = "deflate", inline(always))]
+    #[cfg(feature = "deflate")]
+    #[inline(always)]
     pub fn deflate(&mut self, enabled: bool) {
         self.deflate = enabled;
     }
 }
 
+#[allow(clippy::all)]
 impl Default for Accepts {
     fn default() -> Accepts {
         Accepts {
