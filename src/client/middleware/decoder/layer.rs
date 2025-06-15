@@ -94,8 +94,9 @@ where
 
     fn call(&mut self, req: Request<ReqBody>) -> Self::Future {
         if let Some(accpets) = RequestConfig::<RequestAcceptsEncoding>::get(req.extensions()) {
-            let inner = Decompression::accepts(self.decoder.clone(), accpets);
-            self.decoder = std::mem::replace(&mut self.decoder, inner);
+            let mut decoder = self.decoder.clone();
+            decoder = Decompression::accepts(decoder, accpets);
+            std::mem::swap(&mut self.decoder, &mut decoder);
         }
 
         self.decoder.call(req)
