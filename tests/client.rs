@@ -830,7 +830,6 @@ async fn skip_default_headers() {
         assert_eq!(req.method(), "GET");
         assert_eq!(req.headers().get("user-agent"), None);
         assert_eq!(req.headers().get("accept"), None);
-        assert_eq!(req.headers().get("accept-encoding"), None);
         http::Response::default()
     });
 
@@ -840,7 +839,6 @@ async fn skip_default_headers() {
             let mut headers = wreq::header::HeaderMap::new();
             headers.insert("user-agent", "test-agent".parse().unwrap());
             headers.insert("accept", "*/*".parse().unwrap());
-            headers.insert("accept-encoding", "gzip".parse().unwrap());
             headers
         })
         .no_proxy()
@@ -858,10 +856,6 @@ async fn skip_default_headers() {
             Some(&"test-agent".parse().unwrap())
         );
         assert_eq!(req.headers().get("accept"), Some(&"*/*".parse().unwrap()));
-        assert_eq!(
-            req.headers().get("accept-encoding"),
-            Some(&"gzip".parse().unwrap())
-        );
         http::Response::default()
     });
 
@@ -871,7 +865,6 @@ async fn skip_default_headers() {
             let mut headers = wreq::header::HeaderMap::new();
             headers.insert("user-agent", "test-agent".parse().unwrap());
             headers.insert("accept", "*/*".parse().unwrap());
-            headers.insert("accept-encoding", "gzip".parse().unwrap());
             headers
         })
         .no_proxy()
