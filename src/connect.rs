@@ -229,6 +229,8 @@ impl ConnectorBuilder {
             tls: self.tls_builder.clone().build(tls_config)?,
             proxies: self.proxies,
             verbose: self.verbose,
+            // The timeout is initially set to None and will be reassigned later
+            // based on the presence or absence of user-provided layers.
             timeout: None,
             nodelay: self.nodelay,
             #[cfg(feature = "socks")]
