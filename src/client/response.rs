@@ -13,11 +13,11 @@ use url::Url;
 use super::body::{Body, ResponseBody};
 #[cfg(feature = "cookies")]
 use crate::cookie;
-use crate::{Error, core::client::connect::HttpInfo};
+use crate::{Error, Upgraded, core::client::connect::HttpInfo};
 
 /// A Response to a submitted `Request`.
 pub struct Response {
-    pub(super) res: http::Response<Body>,
+    res: http::Response<Body>,
     // Boxed to save space (11 words to 1 word), and it's not accessed
     // frequently internally.
     url: Box<Url>,
@@ -399,6 +399,14 @@ impl Response {
         } else {
             Ok(self)
         }
+    }
+
+    /// Consumes the response and returns a future for a possible HTTP upgrade.
+    pub async fn upgrade(self) -> crate::Result<Upgraded> {
+        crate::core::upgrade::on(self.res)
+            .await
+            .map(Upgraded::from)
+            .map_err(Error::upgrade)
     }
 }
 

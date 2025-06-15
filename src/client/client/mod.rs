@@ -11,7 +11,7 @@ use std::{
     time::Duration,
 };
 
-use future::{Pending, PendingRequest};
+use future::Pending;
 use http::header::{HeaderMap, HeaderValue, USER_AGENT};
 use service::ClientService;
 use tower::{
@@ -1483,7 +1483,7 @@ impl Client {
             Oneshot::new(self.inner.service.clone(), req)
         };
 
-        Pending::new(PendingRequest { url, in_flight })
+        Pending::new(url, in_flight)
     }
 }
 
