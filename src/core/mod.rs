@@ -11,5 +11,4 @@ pub mod ext;
 mod headers;
 mod proto;
 pub mod rt;
-pub mod service;
 pub mod upgrade;

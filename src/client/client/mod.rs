@@ -17,7 +17,7 @@ use service::ClientService;
 use tower::{
     Layer, Service, ServiceBuilder,
     retry::RetryLayer,
-    util::{BoxCloneSyncService, BoxCloneSyncServiceLayer},
+    util::{BoxCloneSyncService, BoxCloneSyncServiceLayer, Oneshot},
 };
 #[cfg(feature = "cookies")]
 use {super::middleware::cookie::CookieManagerLayer, crate::cookie};
@@ -56,7 +56,6 @@ use crate::{
         body::Incoming,
         client::{Builder, Client as HyperClient},
         rt::{TokioExecutor, tokio::TokioTimer},
-        service::Oneshot,
     },
     dns::{DnsResolverWithOverrides, DynResolver, Resolve, gai::GaiResolver},
     error::{self, BoxError, Error},

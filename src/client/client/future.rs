@@ -4,7 +4,7 @@ use std::{
 };
 
 use pin_project_lite::pin_project;
-use tower::util::BoxCloneSyncService;
+use tower::util::{BoxCloneSyncService, Oneshot};
 use url::Url;
 
 use super::{Body, Response, ResponseBody};
@@ -14,7 +14,6 @@ use crate::{
         body,
         middleware::{self},
     },
-    core::service::Oneshot,
     error::BoxError,
 };
 

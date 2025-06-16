@@ -314,13 +314,13 @@ pub(super) mod sealed {
     use std::{error::Error as StdError, future::Future};
 
     use ::http::Uri;
+    use tower::util::Oneshot;
 
     use super::Connection;
     use crate::core::{
         client::Dst,
         error::BoxError,
         rt::{Read, Write},
-        service,
     };
 
     /// Connect to a destination, returning an IO transport.
@@ -359,8 +359,8 @@ pub(super) mod sealed {
     {
         type _Svc = S;
 
-        fn connect(self, dst: Dst) -> service::Oneshot<S, Dst> {
-            service::Oneshot::new(self, dst)
+        fn connect(self, dst: Dst) -> Oneshot<S, Dst> {
+            Oneshot::new(self, dst)
         }
     }
 
@@ -373,10 +373,10 @@ pub(super) mod sealed {
     {
         type Connection = T;
         type Error = S::Error;
-        type Future = service::Oneshot<S, Dst>;
+        type Future = Oneshot<S, Dst>;
 
         fn connect(self, dst: Dst) -> Self::Future {
-            service::Oneshot::new(self, dst)
+            Oneshot::new(self, dst)
         }
     }
 
