@@ -11,29 +11,21 @@
 //! implementation of the body type to create a new request body. If you know that the body can be
 //! cloned in some way, you can tell the middleware to clone it by configuring a [`policy`].
 
+mod future;
 pub mod policy;
 
 use std::{
-    convert::TryFrom,
-    future::Future,
     mem,
-    pin::Pin,
-    str,
-    task::{Context, Poll, ready},
+    task::{Context, Poll},
 };
 
 use futures_util::future::Either;
-use http::{
-    Extensions, HeaderMap, HeaderValue, Method, Request, Response, StatusCode, Uri, Version,
-    header::{CONTENT_ENCODING, CONTENT_LENGTH, CONTENT_TYPE, LOCATION, TRANSFER_ENCODING},
-};
+use http::{Request, Response, Uri};
 use http_body::Body;
-use iri_string::types::{UriAbsoluteString, UriReferenceStr};
-use pin_project_lite::pin_project;
-use tower::{Layer, util::Oneshot};
+use tower::Layer;
 use tower_service::Service;
 
-use self::policy::{Action, Attempt, Policy};
+use self::{future::ResponseFuture, policy::Policy};
 
 /// [`Layer`] for retrying requests with a [`Service`] to follow redirection responses.
 #[derive(Clone, Copy, Debug, Default)]
@@ -97,127 +89,25 @@ where
         let mut service = mem::replace(&mut self.inner, service);
         let mut policy = self.policy.clone();
         let mut body = BodyRepr::None;
-        body.try_clone_from(req.body(), &policy);
-        policy.on_request(&mut req);
-        ResponseFuture {
-            method: req.method().clone(),
-            uri: req.uri().clone(),
-            version: req.version(),
-            headers: req.headers().clone(),
-            extensions: req.extensions().clone(),
-            body,
-            future: Either::Left(service.call(req)),
-            service,
-            policy,
-        }
-    }
-}
 
-pin_project! {
-    /// Response future for [`FollowRedirect`].
-    #[derive(Debug)]
-    pub struct ResponseFuture<S, B, P>
-    where
-        S: Service<Request<B>>,
-    {
-        #[pin]
-        future: Either<S::Future, Oneshot<S, Request<B>>>,
-        service: S,
-        policy: P,
-        method: Method,
-        uri: Uri,
-        version: Version,
-        headers: HeaderMap<HeaderValue>,
-        extensions: Extensions,
-        body: BodyRepr<B>,
-    }
-}
-
-impl<S, ReqBody, ResBody, P> Future for ResponseFuture<S, ReqBody, P>
-where
-    S: Service<Request<ReqBody>, Response = Response<ResBody>> + Clone,
-    ReqBody: Body + Default,
-    P: Policy<ReqBody, S::Error>,
-{
-    type Output = Result<Response<ResBody>, S::Error>;
-
-    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let mut this = self.project();
-        let mut res = ready!(this.future.as_mut().poll(cx)?);
-        res.extensions_mut().insert(RequestUri(this.uri.clone()));
-
-        let drop_payload_headers = |headers: &mut HeaderMap| {
-            for header in &[
-                CONTENT_TYPE,
-                CONTENT_LENGTH,
-                CONTENT_ENCODING,
-                TRANSFER_ENCODING,
-            ] {
-                headers.remove(header);
+        if policy.is_redirect_allowed(&mut req) {
+            body.try_clone_from(req.body(), &policy);
+            policy.on_request(&mut req);
+            ResponseFuture::Redirect {
+                method: req.method().clone(),
+                uri: req.uri().clone(),
+                version: req.version(),
+                headers: req.headers().clone(),
+                extensions: req.extensions().clone(),
+                body,
+                future: Either::Left(service.call(req)),
+                service,
+                policy,
             }
-        };
-        match res.status() {
-            StatusCode::MOVED_PERMANENTLY | StatusCode::FOUND => {
-                // User agents MAY change the request method from POST to GET
-                // (RFC 7231 section 6.4.2. and 6.4.3.).
-                if *this.method == Method::POST {
-                    *this.method = Method::GET;
-                    *this.body = BodyRepr::Empty;
-                    drop_payload_headers(this.headers);
-                }
-            }
-            StatusCode::SEE_OTHER => {
-                // A user agent can perform a GET or HEAD request (RFC 7231 section 6.4.4.).
-                if *this.method != Method::HEAD {
-                    *this.method = Method::GET;
-                }
-                *this.body = BodyRepr::Empty;
-                drop_payload_headers(this.headers);
-            }
-            StatusCode::TEMPORARY_REDIRECT | StatusCode::PERMANENT_REDIRECT => {}
-            _ => return Poll::Ready(Ok(res)),
-        };
-
-        let body = if let Some(body) = this.body.take() {
-            body
         } else {
-            return Poll::Ready(Ok(res));
-        };
-
-        let location = res
-            .headers()
-            .get(&LOCATION)
-            .and_then(|loc| resolve_uri(str::from_utf8(loc.as_bytes()).ok()?, this.uri));
-        let location = if let Some(loc) = location {
-            loc
-        } else {
-            return Poll::Ready(Ok(res));
-        };
-
-        let attempt = Attempt {
-            status: res.status(),
-            location: &location,
-            previous: this.uri,
-        };
-        match this.policy.redirect(&attempt)? {
-            Action::Follow => {
-                *this.uri = location;
-                this.body.try_clone_from(&body, &this.policy);
-
-                let mut req = Request::new(body);
-                *req.uri_mut() = this.uri.clone();
-                *req.method_mut() = this.method.clone();
-                *req.version_mut() = *this.version;
-                *req.headers_mut() = this.headers.clone();
-                *req.extensions_mut() = this.extensions.clone();
-                this.policy.on_request(&mut req);
-                this.future
-                    .set(Either::Right(Oneshot::new(this.service.clone(), req)));
-
-                cx.waker().wake_by_ref();
-                Poll::Pending
+            ResponseFuture::NoRedirect {
+                future: service.call(req),
             }
-            Action::Stop => Poll::Ready(Ok(res)),
         }
     }
 }
@@ -277,12 +167,4 @@ where
     } else {
         policy.clone_body(body)
     }
-}
-
-/// Try to resolve a URI reference `relative` against a base URI `base`.
-fn resolve_uri(relative: &str, base: &Uri) -> Option<Uri> {
-    let relative = UriReferenceStr::new(relative).ok()?;
-    let base = UriAbsoluteString::try_from(base.to_string()).ok()?;
-    let uri = relative.resolve_against(&base).to_string();
-    Uri::try_from(uri).ok()
 }

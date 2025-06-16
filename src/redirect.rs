@@ -359,16 +359,23 @@ impl TowerPolicy<Body, BoxError> for TowerRedirectPolicy {
                 }
             }
         };
-
-        // If the request has a `RequestRedirectPolicy` extension, use it to
-        // override the current policy.
-        self.policy.replace_from(req.extensions());
     }
 
     // This is must implemented to make 307 and 308 redirects work
     #[inline(always)]
     fn clone_body(&self, body: &Body) -> Option<Body> {
         body.try_clone()
+    }
+
+    // Check if a redirect is allowed for the given request.
+    fn is_redirect_allowed(&mut self, req: &mut http::Request<Body>) -> bool {
+        // If the request has a `RequestRedirectPolicy` extension, use it to
+        // override the current policy.
+        self.policy.replace_from(req.extensions());
+        self.policy
+            .as_ref()
+            .map(|policy| !matches!(policy.inner, PolicyKind::None))
+            .unwrap_or(false)
     }
 }
 

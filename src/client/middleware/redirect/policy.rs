@@ -30,6 +30,9 @@ pub trait Policy<B, E> {
     fn clone_body(&self, _body: &B) -> Option<B> {
         None
     }
+
+    /// Determine if redirection is permitted by the current policy
+    fn is_redirect_allowed(&mut self, _request: &mut Request<B>) -> bool;
 }
 
 impl<B, E, P> Policy<B, E> for &mut P
@@ -49,6 +52,11 @@ where
     #[inline(always)]
     fn clone_body(&self, body: &B) -> Option<B> {
         (**self).clone_body(body)
+    }
+
+    #[inline(always)]
+    fn is_redirect_allowed(&mut self, request: &mut Request<B>) -> bool {
+        (**self).is_redirect_allowed(request)
     }
 }
 
