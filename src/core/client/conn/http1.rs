@@ -13,8 +13,10 @@ use http_body::Body;
 
 use crate::core::{
     body::Incoming as IncomingBody,
-    client::dispatch::{self, TrySendError},
-    config::http1::Http1Config,
+    client::{
+        config::http1::Http1Config,
+        dispatch::{self, TrySendError},
+    },
     error::BoxError,
     proto,
     rt::{Read, Write},

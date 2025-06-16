@@ -337,8 +337,10 @@ pub use self::{
         RequestBuilder, Response, Upgraded,
     },
     core::{
-        client::Dst,
-        config::{http1, http2},
+        client::{
+            Dst,
+            config::{http1, http2},
+        },
         ext::OriginalHeaders,
     },
     proxy::{NoProxy, Proxy},

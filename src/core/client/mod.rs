@@ -2,6 +2,7 @@
 //!
 //! crate::core: provides HTTP over a single connection. See the [`conn`] module.
 
+pub mod config;
 pub mod conn;
 pub(super) mod dispatch;
 
@@ -36,9 +37,11 @@ use sync_wrapper::SyncWrapper;
 
 use crate::{
     core::{
-        client::conn::TrySendError as ConnTrySendError,
+        client::{
+            config::{http1::Http1Config, http2::Http2Config},
+            conn::TrySendError as ConnTrySendError,
+        },
         common,
-        config::{http1::Http1Config, http2::Http2Config},
         error::BoxError,
         rt::Timer,
     },
