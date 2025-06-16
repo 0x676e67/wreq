@@ -206,7 +206,7 @@ impl ConnectorBuilder {
 
     /// Sets the certificate store used for TLS verification.
     #[inline(always)]
-    pub(crate) fn tls_cert_store(mut self, cert_store: Option<CertStore>) -> ConnectorBuilder {
+    pub(crate) fn tls_cert_store(mut self, cert_store: CertStore) -> ConnectorBuilder {
         self.tls_builder = self.tls_builder.cert_store(cert_store);
         self
     }

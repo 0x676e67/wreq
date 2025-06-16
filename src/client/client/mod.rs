@@ -186,7 +186,7 @@ struct Config {
     tls_sni: bool,
     tls_verify_hostname: bool,
     tls_identity: Option<Identity>,
-    tls_cert_store: Option<CertStore>,
+    tls_cert_store: CertStore,
     tls_cert_verification: bool,
     min_tls_version: Option<TlsVersion>,
     max_tls_version: Option<TlsVersion>,
@@ -269,7 +269,7 @@ impl ClientBuilder {
                 tls_sni: true,
                 tls_verify_hostname: true,
                 tls_identity: None,
-                tls_cert_store: None,
+                tls_cert_store: CertStore::default(),
                 tls_cert_verification: true,
                 min_tls_version: None,
                 max_tls_version: None,
@@ -1095,7 +1095,7 @@ impl ClientBuilder {
     {
         match CertStore::from_der_certs(certs) {
             Ok(store) => {
-                self.config.tls_cert_store = Some(store);
+                self.config.tls_cert_store = store;
             }
             Err(err) => self.config.error = Some(err),
         }
@@ -1141,7 +1141,7 @@ impl ClientBuilder {
     /// - Ensure that the provided verify certificate store is properly configured to avoid
     ///   potential security risks.
     pub fn cert_store(mut self, store: CertStore) -> ClientBuilder {
-        self.config.tls_cert_store = Some(store);
+        self.config.tls_cert_store = store;
         self
     }
 
