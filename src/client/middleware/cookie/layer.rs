@@ -55,11 +55,10 @@ where
     }
 
     fn call(&mut self, mut req: Request<ReqBody>) -> Self::Future {
-        // Try to extract the request URL.
-        let mut url = None;
-
         // If a cookie store is present, inject cookies for this URL if not already set.
         if let Some(ref cookie_store) = self.cookie_store {
+            // Try to extract the request URL.
+            let mut url = None;
             if req.headers().get(COOKIE).is_none() {
                 url = url::Url::parse(&req.uri().to_string()).ok();
 
@@ -72,12 +71,17 @@ where
                     }
                 }
             }
-        }
 
-        ResponseFuture {
-            future: self.inner.call(req),
-            cookie_store: self.cookie_store.clone(),
-            url,
+            ResponseFuture::WithCookieStore {
+                future: self.inner.call(req),
+                cookie_store: cookie_store.clone(),
+                url,
+            }
+        } else {
+            // If no cookie store is present, just call the inner service.
+            ResponseFuture::WithoutCookieStore {
+                future: self.inner.call(req),
+            }
         }
     }
 }

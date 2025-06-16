@@ -4,21 +4,29 @@ use std::{
     future::Future,
     pin::Pin,
     sync::Arc,
-    task::{Context, Poll},
+    task::{Context, Poll, ready},
 };
 
 use http::Response;
 use pin_project_lite::pin_project;
+use url::Url;
 
 use crate::cookie::CookieStore;
 
 pin_project! {
     /// Response future for [`CookieManager`].
-    pub struct ResponseFuture<F> {
-        #[pin]
-        pub(crate) future: F,
-        pub(crate) cookie_store: Option<Arc<dyn CookieStore>>,
-        pub(crate) url: Option<url::Url>,
+    #[project=ResponseFutureProj]
+    pub enum ResponseFuture<F> {
+        WithCookieStore {
+            #[pin]
+            future: F,
+            cookie_store: Arc<dyn CookieStore>,
+            url: Option<Url>,
+        },
+        WithoutCookieStore {
+            #[pin]
+            future: F,
+        },
     }
 }
 
@@ -29,25 +37,30 @@ where
     type Output = F::Output;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let this = self.project();
-        let res = std::task::ready!(this.future.poll(cx)?);
-
-        // If a cookie store is set, extract any `Set-Cookie` headers from the response
-        // and store them for the URL. Use `peekable` to avoid unnecessary writes
-        // when there are no cookies.
-        if let Some(cookie_store) = this.cookie_store {
-            if let Some(url) = this.url {
-                let mut cookies = res
-                    .headers()
-                    .get_all(http::header::SET_COOKIE)
-                    .iter()
-                    .peekable();
-                if cookies.peek().is_some() {
-                    cookie_store.set_cookies(&mut cookies, url);
+        match self.project() {
+            ResponseFutureProj::WithCookieStore {
+                future,
+                cookie_store,
+                url,
+            } => {
+                let res = ready!(future.poll(cx)?);
+                if let Some(url) = url {
+                    let mut cookies = res
+                        .headers()
+                        .get_all(http::header::SET_COOKIE)
+                        .iter()
+                        .peekable();
+                    if cookies.peek().is_some() {
+                        cookie_store.set_cookies(&mut cookies, &*url);
+                    }
                 }
+
+                Poll::Ready(Ok(res))
+            }
+            ResponseFutureProj::WithoutCookieStore { mut future } => {
+                let res = ready!(future.as_mut().poll(cx)?);
+                Poll::Ready(Ok(res))
             }
         }
-
-        Poll::Ready(Ok(res))
     }
 }

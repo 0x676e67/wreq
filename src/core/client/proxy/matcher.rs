@@ -56,7 +56,7 @@ pub struct Builder {
 #[derive(Clone, PartialEq, Eq, Hash)]
 enum Auth {
     Empty,
-    Basic(http::header::HeaderValue),
+    Basic(HeaderValue),
     Raw(Bytes, Bytes),
 }
 
