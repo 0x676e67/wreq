@@ -9,7 +9,7 @@ use std::{
     task::{Context, Poll},
 };
 
-use bytes::BytesMut;
+use bytes::{Bytes, BytesMut};
 use http::Uri;
 use messages::*;
 use pin_project_lite::pin_project;
@@ -35,7 +35,7 @@ pub struct SocksV5<C, R = GaiResolver> {
 #[derive(Debug, Clone)]
 pub struct SocksConfig<R = GaiResolver> {
     proxy: Uri,
-    proxy_auth: Option<(String, String)>,
+    proxy_auth: Option<(Bytes, Bytes)>,
 
     local_dns: bool,
     optimistic: bool,
@@ -95,8 +95,11 @@ where
     /// Username and Password must be maximum of 255 characters each.
     /// 0 length strings are allowed despite RFC prohibiting it. This is done so that
     /// for compatablity with server implementations that require it for IP authentication.
-    pub fn with_auth(mut self, user: String, pass: String) -> Self {
-        self.config.proxy_auth = Some((user, pass));
+    pub fn with_auth<A>(mut self, user: A, pass: A) -> Self
+    where
+        A: Into<Bytes>,
+    {
+        self.config.proxy_auth = Some((user.into(), pass.into()));
         self
     }
 
@@ -244,8 +247,11 @@ where
                 }
 
                 State::SendingAuthReq => {
-                    let (user, pass) = self.proxy_auth.as_ref().unwrap();
-                    let req = AuthenticationReq(user, pass);
+                    let (user, pass) = self
+                        .proxy_auth
+                        .as_ref()
+                        .ok_or(SocksV5Error::Auth(AuthError::MissingCredentials))?;
+                    let req = AuthenticationReq(user.clone(), pass.clone());
 
                     let start = send_buf.len();
                     req.write_to_buf(&mut send_buf)?;

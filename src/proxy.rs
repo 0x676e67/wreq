@@ -1,5 +1,7 @@
 use std::{error::Error as StdError, fmt, sync::Arc};
 
+#[cfg(feature = "socks")]
+use bytes::Bytes;
 use http::{HeaderMap, Uri, header::HeaderValue};
 
 use crate::{
@@ -572,7 +574,7 @@ impl Intercepted {
     }
 
     #[cfg(feature = "socks")]
-    pub(crate) fn raw_auth(&self) -> Option<(&str, &str)> {
+    pub(crate) fn raw_auth(&self) -> Option<(Bytes, Bytes)> {
         self.inner.raw_auth()
     }
 }

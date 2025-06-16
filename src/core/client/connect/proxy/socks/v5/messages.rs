@@ -1,6 +1,6 @@
 use std::net::SocketAddr;
 
-use bytes::{Buf, BufMut, BytesMut};
+use bytes::{Buf, BufMut, Bytes, BytesMut};
 
 use super::super::{ParsingError, SerializeError};
 
@@ -26,7 +26,7 @@ pub struct NegotiationRes(pub AuthMethod);
 /// | 1  |  1   | 1 to 255 |  1   | 1 to 255 |
 /// +----+------+----------+------+----------+
 #[derive(Debug)]
-pub struct AuthenticationReq<'a>(pub &'a str, pub &'a str);
+pub struct AuthenticationReq(pub Bytes, pub Bytes);
 
 /// +----+--------+
 /// |VER | STATUS |
@@ -110,7 +110,7 @@ impl TryFrom<&mut BytesMut> for NegotiationRes {
     }
 }
 
-impl AuthenticationReq<'_> {
+impl AuthenticationReq {
     pub fn write_to_buf(&self, buf: &mut BytesMut) -> Result<usize, SerializeError> {
         if buf.capacity() - buf.len() < 3 + self.0.len() + self.1.len() {
             return Err(SerializeError::WouldOverflow);
@@ -119,10 +119,10 @@ impl AuthenticationReq<'_> {
         buf.put_u8(0x01); // Version
 
         buf.put_u8(self.0.len() as u8); // Username length (guarenteed to be 255 or less)
-        buf.put_slice(self.0.as_bytes()); // Username
+        buf.put_slice(self.0.as_ref()); // Username
 
         buf.put_u8(self.1.len() as u8); // Password length (guarenteed to be 255 or less)
-        buf.put_slice(self.1.as_bytes()); // Password
+        buf.put_slice(self.1.as_ref()); // Password
 
         Ok(3 + self.0.len() + self.1.len())
     }

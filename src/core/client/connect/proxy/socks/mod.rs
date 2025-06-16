@@ -8,7 +8,7 @@ use std::{
     task::{Context, Poll},
 };
 
-use bytes::BytesMut;
+use bytes::{Bytes, BytesMut};
 use http::Uri;
 use pin_project_lite::pin_project;
 use tower_service::Service;
@@ -183,7 +183,7 @@ where
         inner: C,
         resolver: R,
         proxy_dst: Uri,
-        auth: Option<(&str, &str)>,
+        auth: Option<(Bytes, Bytes)>,
     ) -> Self {
         let scheme = proxy_dst.scheme_str();
         let (is_v5, local_dns) = match scheme {
@@ -198,7 +198,7 @@ where
             let mut v5 =
                 SocksV5::new_with_resolver(proxy_dst, inner, resolver).local_dns(local_dns);
             if let Some((user, pass)) = auth {
-                v5 = v5.with_auth(user.to_owned(), pass.to_owned());
+                v5 = v5.with_auth(user, pass);
             }
 
             Self::SocksV5(v5)
@@ -342,8 +342,7 @@ mod tests {
         let target_addr = target_tcp.local_addr().expect("local_addr");
         let target_dst = format!("http://{target_addr}").parse().expect("uri");
 
-        let mut connector =
-            SocksV5::new(proxy_dst, HttpConnector::new()).with_auth("user".into(), "pass".into());
+        let mut connector = SocksV5::new(proxy_dst, HttpConnector::new()).with_auth("user", "pass");
 
         // Client
         //
@@ -432,7 +431,7 @@ mod tests {
         let proxy_addr = format!("http://{proxy_addr}").parse().expect("uri");
 
         let mut connector = SocksV5::new(proxy_addr, HttpConnector::new())
-            .with_auth("user".into(), "pass".into())
+            .with_auth("user", "pass")
             .local_dns(false);
 
         // Client
@@ -498,7 +497,7 @@ mod tests {
         let proxy_addr = format!("http://{proxy_addr}").parse().expect("uri");
 
         let mut connector = SocksV5::new(proxy_addr, HttpConnector::new())
-            .with_auth("user".into(), "pass".into())
+            .with_auth("user", "pass")
             .local_dns(true);
 
         // Client
@@ -637,7 +636,7 @@ mod tests {
         let target_dst = format!("http://{target_addr}").parse().expect("uri");
 
         let mut connector = SocksV5::new(proxy_dst, HttpConnector::new())
-            .with_auth("ABC".into(), "XYZ".into())
+            .with_auth("ABC", "XYZ")
             .send_optimistically(true);
 
         // Client
