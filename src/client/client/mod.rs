@@ -229,7 +229,7 @@ impl ClientBuilder {
                 tcp_user_timeout: None,
                 proxies: Vec::new(),
                 auto_sys_proxy: true,
-                redirect_policy: redirect::Policy::none(),
+                redirect_policy: redirect::Policy::default(),
                 referer: true,
                 timeout: None,
                 read_timeout: None,
