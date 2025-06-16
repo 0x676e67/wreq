@@ -14,6 +14,7 @@
 
 use std::{fmt, net::IpAddr};
 
+use bytes::Bytes;
 use http::header::HeaderValue;
 use ipnet::IpNet;
 use percent_encoding::percent_decode_str;
@@ -56,7 +57,7 @@ pub struct Builder {
 enum Auth {
     Empty,
     Basic(http::header::HeaderValue),
-    Raw(String, String),
+    Raw(Bytes, Bytes),
 }
 
 /// A filter for proxy matchers.
@@ -192,9 +193,9 @@ impl Intercept {
     /// assert_eq!(auth, ("Aladdin", "opensesame"));
     /// ```
     #[cfg(feature = "socks")]
-    pub fn raw_auth(&self) -> Option<(&str, &str)> {
+    pub fn raw_auth(&self) -> Option<(Bytes, Bytes)> {
         if let Auth::Raw(ref u, ref p) = self.auth {
-            Some((u.as_str(), p.as_str()))
+            Some((u.clone(), p.clone()))
         } else {
             None
         }
@@ -353,7 +354,10 @@ fn parse_env_uri(val: &str) -> Option<Intercept> {
         if is_httpish {
             auth = Auth::Basic(encode_basic_auth(&user, Some(&pass)));
         } else {
-            auth = Auth::Raw(user.into(), pass.into());
+            auth = Auth::Raw(
+                Bytes::from(user.into_owned()),
+                Bytes::from(pass.into_owned()),
+            );
         }
         builder = builder.authority(host_port);
     } else {

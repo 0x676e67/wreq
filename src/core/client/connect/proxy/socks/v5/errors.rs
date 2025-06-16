@@ -12,6 +12,7 @@ pub enum AuthError {
     Unsupported,
     MethodMismatch,
     Failed,
+    MissingCredentials,
 }
 
 impl From<Status> for SocksV5Error {
@@ -42,6 +43,7 @@ impl std::fmt::Display for AuthError {
             Self::Unsupported => "server does not support user/pass authentication",
             Self::MethodMismatch => "server implements authentication incorrectly",
             Self::Failed => "credentials not accepted",
+            Self::MissingCredentials => "missing credentials",
         })
     }
 }
