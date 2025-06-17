@@ -3,6 +3,7 @@ use std::{
     task::{Context, Poll},
 };
 
+use http::{Request as HttpRequest, Response as HttpResponse};
 use pin_project_lite::pin_project;
 use tower::util::{BoxCloneSyncService, Oneshot};
 use url::Url;
@@ -18,15 +19,21 @@ use crate::{
 };
 
 type ResponseFuture = Oneshot<
-    BoxCloneSyncService<http::Request<Body>, http::Response<ResponseBody>, BoxError>,
-    http::Request<Body>,
+    BoxCloneSyncService<HttpRequest<Body>, HttpResponse<ResponseBody>, BoxError>,
+    HttpRequest<Body>,
 >;
 
 pin_project! {
-    #[project = PendingProj]
+#[project = PendingProj]
     pub enum Pending {
-        Request { url: Url, #[pin] in_flight: ResponseFuture },
-        Error { error: Option<Error> },
+        Request {
+            url: Url,
+            #[pin]
+            in_flight: ResponseFuture,
+        },
+        Error {
+            error: Option<Error>,
+        },
     }
 }
 

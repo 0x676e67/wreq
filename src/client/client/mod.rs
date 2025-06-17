@@ -12,7 +12,10 @@ use std::{
 };
 
 use future::Pending;
-use http::header::{HeaderMap, HeaderValue, USER_AGENT};
+use http::{
+    Request as HttpRequest, Response as HttpResponse,
+    header::{HeaderMap, HeaderValue, USER_AGENT},
+};
 use service::ClientService;
 use tower::{
     Layer, Service, ServiceBuilder,
@@ -84,12 +87,12 @@ type ResponseBody = TimeoutBody<Incoming>;
 type ResponseBody = TimeoutBody<DecompressionBody<Incoming>>;
 
 type BoxedClientService =
-    BoxCloneSyncService<http::Request<Body>, http::Response<ResponseBody>, BoxError>;
+    BoxCloneSyncService<HttpRequest<Body>, HttpResponse<ResponseBody>, BoxError>;
 
 type BoxedClientServiceLayer = BoxCloneSyncServiceLayer<
     BoxedClientService,
-    http::Request<Body>,
-    http::Response<ResponseBody>,
+    HttpRequest<Body>,
+    HttpResponse<ResponseBody>,
     BoxError,
 >;
 
@@ -1276,12 +1279,12 @@ impl ClientBuilder {
     pub fn layer<L>(mut self, layer: L) -> ClientBuilder
     where
         L: Layer<BoxedClientService> + Clone + Send + Sync + 'static,
-        L::Service: Service<http::Request<Body>, Response = http::Response<ResponseBody>, Error = BoxError>
+        L::Service: Service<HttpRequest<Body>, Response = HttpResponse<ResponseBody>, Error = BoxError>
             + Clone
             + Send
             + Sync
             + 'static,
-        <L::Service as Service<http::Request<Body>>>::Future: Send + 'static,
+        <L::Service as Service<HttpRequest<Body>>>::Future: Send + 'static,
     {
         let layer = BoxCloneSyncServiceLayer::new(layer);
         self.config
@@ -1469,7 +1472,7 @@ impl Client {
         // Prepare the in-flight request by ensuring we use the exact same Service instance
         // for both poll_ready and call.
         let in_flight = {
-            let mut req = http::Request::builder()
+            let mut req = HttpRequest::builder()
                 .uri(uri)
                 .method(method.clone())
                 .body(body.unwrap_or_else(Body::empty))
