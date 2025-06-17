@@ -16,9 +16,24 @@ use crate::{
 
 pin_project! {
     /// A wrapper body that applies timeout strategies to an inner HTTP body.
-    pub struct TimeoutBody<B> {
-        #[pin]
-        inner: InnerBody<B>,
+    #[project = TimeoutBodyProj]
+    pub enum TimeoutBody<B> {
+        TotalTimeout {
+            #[pin]
+            body: TotalTimeoutBody<B>,
+        },
+        ReadTimeout {
+            #[pin]
+            body: ReadTimeoutBody<B>
+        },
+        CombinedTimeout {
+            #[pin]
+            body: TotalTimeoutBody<ReadTimeoutBody<B>>,
+        },
+        Plain {
+            #[pin]
+            body: B,
+        },
     }
 }
 
@@ -49,18 +64,6 @@ pin_project! {
     }
 }
 
-/// Represents the different timeout strategies for the HTTP body.
-enum InnerBody<B> {
-    /// Applies a timeout to the entire body stream.
-    TotalTimeout(Pin<Box<TotalTimeoutBody<B>>>),
-    /// Applies a timeout to each read operation.
-    ReadTimeout(Pin<Box<ReadTimeoutBody<B>>>),
-    /// Applies both total and per-read timeouts.
-    CombinedTimeout(Pin<Box<TotalTimeoutBody<ReadTimeoutBody<B>>>>),
-    /// No timeout applied.
-    Plain(Pin<Box<B>>),
-}
-
 /// ==== impl TimeoutBody ====
 impl<B> TimeoutBody<B> {
     /// Creates a new [`TimeoutBody`] with no timeout.
@@ -70,25 +73,15 @@ impl<B> TimeoutBody<B> {
             (Some(total), Some(read)) => {
                 let body = ReadTimeoutBody::new(read, body);
                 let body = TotalTimeoutBody::new(total, body);
-                TimeoutBody {
-                    inner: InnerBody::CombinedTimeout(Box::pin(body)),
-                }
+                TimeoutBody::CombinedTimeout { body: body }
             }
-            (Some(total), None) => {
-                let body = TotalTimeoutBody::new(total, body);
-                TimeoutBody {
-                    inner: InnerBody::TotalTimeout(Box::pin(body)),
-                }
-            }
-            (None, Some(read)) => {
-                let body = ReadTimeoutBody::new(read, body);
-                TimeoutBody {
-                    inner: InnerBody::ReadTimeout(Box::pin(body)),
-                }
-            }
-            (None, None) => TimeoutBody {
-                inner: InnerBody::Plain(Box::pin(body)),
+            (Some(total), None) => TimeoutBody::TotalTimeout {
+                body: TotalTimeoutBody::new(total, body),
             },
+            (None, Some(read)) => TimeoutBody::ReadTimeout {
+                body: ReadTimeoutBody::new(read, body),
+            },
+            (None, None) => TimeoutBody::Plain { body },
         }
     }
 }
@@ -105,35 +98,31 @@ where
         self: Pin<&mut Self>,
         cx: &mut Context<'_>,
     ) -> Poll<Option<Result<http_body::Frame<Self::Data>, Self::Error>>> {
-        let mut this = self.project();
-        match *this.inner {
-            InnerBody::TotalTimeout(ref mut body) => poll_and_map_body(body.as_mut(), cx),
-            InnerBody::ReadTimeout(ref mut body) => poll_and_map_body(body.as_mut(), cx),
-            InnerBody::CombinedTimeout(ref mut body) => poll_and_map_body(body.as_mut(), cx),
-            InnerBody::Plain(ref mut body) => {
-                // If no timeout is set, just poll the inner body directly.
-                poll_and_map_body(body.as_mut(), cx)
-            }
+        match self.project() {
+            TimeoutBodyProj::TotalTimeout { body } => body.poll_frame(cx),
+            TimeoutBodyProj::ReadTimeout { body } => body.poll_frame(cx),
+            TimeoutBodyProj::CombinedTimeout { body } => body.poll_frame(cx),
+            TimeoutBodyProj::Plain { body } => poll_and_map_body(body, cx),
         }
     }
 
     #[inline(always)]
     fn size_hint(&self) -> http_body::SizeHint {
-        match &self.inner {
-            InnerBody::TotalTimeout(body) => body.size_hint(),
-            InnerBody::ReadTimeout(body) => body.size_hint(),
-            InnerBody::CombinedTimeout(body) => body.size_hint(),
-            InnerBody::Plain(body) => body.size_hint(),
+        match self {
+            TimeoutBody::TotalTimeout { body } => body.size_hint(),
+            TimeoutBody::ReadTimeout { body } => body.size_hint(),
+            TimeoutBody::CombinedTimeout { body } => body.size_hint(),
+            TimeoutBody::Plain { body } => body.size_hint(),
         }
     }
 
     #[inline(always)]
     fn is_end_stream(&self) -> bool {
-        match &self.inner {
-            InnerBody::TotalTimeout(body) => body.is_end_stream(),
-            InnerBody::ReadTimeout(body) => body.is_end_stream(),
-            InnerBody::CombinedTimeout(body) => body.is_end_stream(),
-            InnerBody::Plain(body) => body.is_end_stream(),
+        match self {
+            TimeoutBody::TotalTimeout { body } => body.is_end_stream(),
+            TimeoutBody::ReadTimeout { body } => body.is_end_stream(),
+            TimeoutBody::CombinedTimeout { body } => body.is_end_stream(),
+            TimeoutBody::Plain { body } => body.is_end_stream(),
         }
     }
 }
