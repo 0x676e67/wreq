@@ -362,26 +362,3 @@ async fn test_chunked_fragmented_response_with_extra_bytes() {
     assert!(err.is_decode());
     assert!(start.elapsed() >= DELAY_BETWEEN_RESPONSE_PARTS - DELAY_MARGIN);
 }
-
-#[tokio::test]
-async fn test_decompression() {
-    let client = wreq::Client::builder()
-        .no_gzip()
-        .no_brotli()
-        .no_deflate()
-        .no_zstd()
-        .build()
-        .expect("client builder");
-
-    // test brotli decompression
-    let brotli_url = "https://httpbin.org/brotli";
-    let brotli_resp = client
-        .get(brotli_url)
-        .brotli(true)
-        .send()
-        .await
-        .expect("brotli request");
-    assert_eq!(brotli_resp.status(), wreq::StatusCode::OK);
-    let brotli_text = brotli_resp.text().await.expect("brotli response text");
-    assert!(brotli_text.contains("brotli"));
-}

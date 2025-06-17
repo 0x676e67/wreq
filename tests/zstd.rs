@@ -575,16 +575,3 @@ async fn test_connection_reuse_with_chunked_fragmented_multiple_frames_in_one_ch
         peer_addrs
     );
 }
-
-#[tokio::test]
-async fn test_decompression() {
-    let _client = wreq::Client::builder()
-        .no_gzip()
-        .no_brotli()
-        .no_deflate()
-        .no_zstd()
-        .build()
-        .expect("client builder");
-
-    // TODO: test zstd decompression
-}

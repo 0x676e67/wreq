@@ -361,26 +361,3 @@ async fn test_chunked_fragmented_response_with_extra_bytes() {
     assert!(err.is_decode());
     assert!(start.elapsed() >= DELAY_BETWEEN_RESPONSE_PARTS - DELAY_MARGIN);
 }
-
-#[tokio::test]
-async fn test_decompression() {
-    let client = wreq::Client::builder()
-        .no_gzip()
-        .no_brotli()
-        .no_deflate()
-        .no_zstd()
-        .build()
-        .expect("client builder");
-
-    // test deflate decompression
-    let deflate_url = "https://httpbin.org/deflate";
-    let deflate_resp = client
-        .get(deflate_url)
-        .deflate(true)
-        .send()
-        .await
-        .expect("deflate request");
-    assert_eq!(deflate_resp.status(), wreq::StatusCode::OK);
-    let deflate_text = deflate_resp.text().await.expect("deflate response text");
-    assert!(deflate_text.contains("deflated"));
-}
