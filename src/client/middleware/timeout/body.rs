@@ -18,6 +18,10 @@ pin_project! {
     /// A wrapper body that applies timeout strategies to an inner HTTP body.
     #[project = TimeoutBodyProj]
     pub enum TimeoutBody<B> {
+        Plain {
+            #[pin]
+            body: B,
+        },
         TotalTimeout {
             #[pin]
             body: TotalTimeoutBody<B>,
@@ -29,11 +33,7 @@ pin_project! {
         CombinedTimeout {
             #[pin]
             body: TotalTimeoutBody<ReadTimeoutBody<B>>,
-        },
-        Plain {
-            #[pin]
-            body: B,
-        },
+        }
     }
 }
 
