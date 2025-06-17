@@ -1,5 +1,7 @@
 //! Pieces pertaining to the HTTP message protocol.
 
+mod headers;
+
 pub(crate) mod h1;
 
 pub(crate) use self::h1::{Conn, dispatch};

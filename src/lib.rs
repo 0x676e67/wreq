@@ -341,7 +341,7 @@ pub use self::{
             Dst,
             config::{http1, http2},
         },
-        ext::OriginalHeaders,
+        header::OriginalHeaders,
     },
     proxy::{NoProxy, Proxy},
 };

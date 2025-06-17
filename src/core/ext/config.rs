@@ -160,5 +160,5 @@ impl RequestConfigValue for RequestProxyMatcher {
 pub(crate) struct RequestOriginalHeaders;
 
 impl RequestConfigValue for RequestOriginalHeaders {
-    type Value = super::OriginalHeaders;
+    type Value = crate::core::header::OriginalHeaders;
 }

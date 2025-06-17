@@ -18,8 +18,7 @@ use super::{
 };
 use crate::core::{
     body::DecodedLength,
-    headers,
-    proto::{BodyLength, MessageHead},
+    proto::{BodyLength, MessageHead, headers},
     rt::{Read, Write},
 };
 

@@ -10,17 +10,15 @@ use http::{
 };
 use smallvec::{SmallVec, smallvec, smallvec_inline};
 
-use crate::{
-    OriginalHeaders,
-    core::{
-        body::DecodedLength,
-        error::Parse,
-        ext::{RequestConfig, RequestOriginalHeaders},
+use crate::core::{
+    body::DecodedLength,
+    error::Parse,
+    ext::{RequestConfig, RequestOriginalHeaders},
+    header::OriginalHeaders,
+    proto::{
+        BodyLength, MessageHead, RequestHead, RequestLine,
+        h1::{Encode, Encoder, Http1Transaction, ParseContext, ParseResult, ParsedMessage},
         headers,
-        proto::{
-            BodyLength, MessageHead, RequestHead, RequestLine,
-            h1::{Encode, Encoder, Http1Transaction, ParseContext, ParseResult, ParsedMessage},
-        },
     },
 };
 
@@ -682,7 +680,7 @@ fn write_headers_original_case(
     dst: &mut Vec<u8>,
     title_case_headers: bool,
 ) {
-    crate::core::headers::sort_headers(headers, orig_case);
+    crate::core::proto::headers::sort_headers(headers, orig_case);
 
     // For each header name/value pair, there may be a value in the casemap
     // that corresponds to the HeaderValue. So, we iterator all the keys,

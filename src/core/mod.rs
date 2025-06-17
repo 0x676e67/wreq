@@ -7,7 +7,8 @@ pub mod client;
 mod common;
 mod error;
 pub mod ext;
-mod headers;
+
+pub mod header;
 mod proto;
 pub mod rt;
 pub mod upgrade;

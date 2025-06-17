@@ -33,8 +33,7 @@ use crate::core::{
     common::{either::Either, io::Compat, time::Time},
     error::BoxError,
     ext::{Protocol, RequestConfig, RequestOriginalHeaders},
-    headers,
-    proto::{Dispatched, h2::UpgradedSendStream},
+    proto::{Dispatched, h2::UpgradedSendStream, headers},
     rt::{Read, Write, bounds::Http2ClientConnExec},
     upgrade::Upgraded,
 };

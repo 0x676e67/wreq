@@ -11,7 +11,6 @@ pub(crate) use config::{
     RequestIpv6Addr, RequestOriginalHeaders, RequestProxyMatcher,
 };
 pub(crate) use h1_reason_phrase::ReasonPhrase;
-pub use header::OriginalHeaders;
 
 /// Represents the `:protocol` pseudo-header used by
 /// the [Extended CONNECT Protocol].
