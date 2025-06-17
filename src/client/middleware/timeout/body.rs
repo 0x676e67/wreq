@@ -73,7 +73,7 @@ impl<B> TimeoutBody<B> {
             (Some(total), Some(read)) => {
                 let body = ReadTimeoutBody::new(read, body);
                 let body = TotalTimeoutBody::new(total, body);
-                TimeoutBody::CombinedTimeout { body: body }
+                TimeoutBody::CombinedTimeout { body }
             }
             (Some(total), None) => TimeoutBody::TotalTimeout {
                 body: TotalTimeoutBody::new(total, body),
