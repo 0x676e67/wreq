@@ -70,16 +70,25 @@ impl<B> TimeoutBody<B> {
     pub fn new(deadline: Option<Duration>, read_timeout: Option<Duration>, body: B) -> Self {
         let deadline = deadline.map(sleep).map(Box::pin);
         match (deadline, read_timeout) {
-            (Some(total), Some(read)) => {
-                let body = ReadTimeoutBody::new(read, body);
-                let body = TotalTimeoutBody::new(total, body);
-                TimeoutBody::CombinedTimeout { body }
-            }
-            (Some(total), None) => TimeoutBody::TotalTimeout {
-                body: TotalTimeoutBody::new(total, body),
+            (Some(total_timeout), Some(read_timeout)) => TimeoutBody::CombinedTimeout {
+                body: TotalTimeoutBody {
+                    timeout: total_timeout,
+                    body: ReadTimeoutBody {
+                        timeout: read_timeout,
+                        sleep: None,
+                        body,
+                    },
+                },
             },
-            (None, Some(read)) => TimeoutBody::ReadTimeout {
-                body: ReadTimeoutBody::new(read, body),
+            (Some(timeout), None) => TimeoutBody::TotalTimeout {
+                body: TotalTimeoutBody { body, timeout },
+            },
+            (None, Some(timeout)) => TimeoutBody::ReadTimeout {
+                body: ReadTimeoutBody {
+                    timeout,
+                    sleep: None,
+                    body,
+                },
             },
             (None, None) => TimeoutBody::Plain { body },
         }
@@ -142,13 +151,6 @@ where
 }
 
 // ==== impl TotalTimeoutBody ====
-impl<B> TotalTimeoutBody<B> {
-    /// Creates a new [`TotalTimeoutBody`].
-    pub const fn new(timeout: Pin<Box<Sleep>>, body: B) -> Self {
-        TotalTimeoutBody { body, timeout }
-    }
-}
-
 impl<B> Body for TotalTimeoutBody<B>
 where
     B: Body,
@@ -180,17 +182,6 @@ where
 }
 
 /// ==== impl ReadTimeoutBody ====
-impl<B> ReadTimeoutBody<B> {
-    /// Creates a new [`ReadTimeoutBody`].
-    pub const fn new(timeout: Duration, body: B) -> Self {
-        ReadTimeoutBody {
-            timeout,
-            sleep: None,
-            body,
-        }
-    }
-}
-
 impl<B> Body for ReadTimeoutBody<B>
 where
     B: Body,
