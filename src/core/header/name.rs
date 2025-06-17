@@ -71,7 +71,7 @@ impl<'a> TryFrom<&'a Bytes> for OriginalHeaderName {
     type Error = http::Error;
 
     fn try_from(orig: &'a Bytes) -> Result<Self, Self::Error> {
-        let name = HeaderName::from_bytes(&orig)?;
+        let name = HeaderName::from_bytes(orig)?;
         Ok(Self {
             orig: orig.clone(),
             name,
