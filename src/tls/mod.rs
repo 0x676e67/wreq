@@ -9,7 +9,7 @@ mod conn;
 mod keylog;
 mod x509;
 
-pub use boring2::ssl::{CertCompressionAlgorithm, ExtensionType};
+pub use boring2::ssl::{CertificateCompressionAlgorithm, ExtensionType};
 
 pub(crate) use self::conn::{HttpsConnector, MaybeHttpsStream, TlsConnector, TlsConnectorBuilder};
 pub use self::{
@@ -64,6 +64,19 @@ impl AlpsProtos {
     pub const HTTP1: AlpsProtos = AlpsProtos(b"http/1.1");
     /// Application Settings protocol for HTTP/2
     pub const HTTP2: AlpsProtos = AlpsProtos(b"h2");
+}
+
+/// IANA assigned identifier of compression algorithm.
+/// See https://www.rfc-editor.org/rfc/rfc8879.html#name-compression-algorithms
+#[repr(u8)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum CertCompressionAlgorithm {
+    /// The Brotli compression algorithm.
+    Brotli,
+    /// The zlib compression algorithm.
+    Zlib,
+    /// The Zstandard compression algorithm.
+    Zstd,
 }
 
 /// Hyper extension carrying extra TLS layer information.

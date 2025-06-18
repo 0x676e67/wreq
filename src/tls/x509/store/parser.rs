@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use boring2::x509::store::X509StoreBuilder;
 
 use super::{CertStore, Certificate, CertificateInput};
@@ -14,7 +16,7 @@ where
     let mut store = X509StoreBuilder::new()?;
     let certs = filter_map_certs(certs, parser);
     process_certs(certs.into_iter(), &mut store)?;
-    Ok(CertStore(store.build()))
+    Ok(CertStore(Arc::new(store.build())))
 }
 
 pub fn parse_certs_from_stack<C, F>(certs: C, x509: F) -> crate::Result<CertStore>
@@ -25,7 +27,7 @@ where
     let mut store = X509StoreBuilder::new()?;
     let certs = x509(certs)?;
     process_certs(certs.into_iter(), &mut store)?;
-    Ok(CertStore(store.build()))
+    Ok(CertStore(Arc::new(store.build())))
 }
 
 pub fn process_certs<I>(iter: I, store: &mut X509StoreBuilder) -> crate::Result<()>

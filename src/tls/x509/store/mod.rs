@@ -1,6 +1,6 @@
 mod parser;
 
-use std::{fmt::Debug, path::Path};
+use std::{fmt::Debug, path::Path, sync::Arc};
 
 use boring2::x509::store::{X509Store, X509StoreBuilder};
 use parser::{filter_map_certs, parse_certs_from_iter, parse_certs_from_stack, process_certs};
@@ -109,7 +109,7 @@ impl CertStoreBuilder {
     /// containing all the added certificates.
     pub fn build(self) -> crate::Result<CertStore> {
         let builder = self.builder?;
-        Ok(CertStore(builder.build()))
+        Ok(CertStore(Arc::new(builder.build())))
     }
 
     fn parse_cert<'c, C, P>(mut self, cert: C, parser: P) -> Self
@@ -151,7 +151,7 @@ impl CertStoreBuilder {
 
 /// A collection of certificates Store.
 #[derive(Clone)]
-pub struct CertStore(X509Store);
+pub struct CertStore(Arc<X509Store>);
 
 impl Default for CertStore {
     fn default() -> Self {
@@ -249,6 +249,6 @@ impl CertStore {
 
 impl CertStore {
     pub(crate) fn add_to_tls(self, tls: &mut boring2::ssl::SslConnectorBuilder) {
-        tls.set_cert_store(self.0);
+        tls.set_cert_store_ref(&self.0);
     }
 }

@@ -118,6 +118,7 @@ async fn main() -> wreq::Result<()> {
         .alps_protos(AlpsProtos::HTTP2)
         .min_tls_version(TlsVersion::TLS_1_0)
         .max_tls_version(TlsVersion::TLS_1_3)
+        .prefer_chacha20(true)
         .random_aes_hw_override(true)
         .extension_permutation(EXTENSION_PERMUTATION)
         .build();

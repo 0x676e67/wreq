@@ -1,12 +1,12 @@
 use boring2::{
     error::ErrorStack,
-    ssl::{
-        CertCompressionAlgorithm, ConnectConfiguration, SslConnectorBuilder, SslOptions, SslRef,
-        SslVerifyMode,
-    },
+    ssl::{ConnectConfiguration, SslConnectorBuilder, SslOptions, SslRef, SslVerifyMode},
 };
 
-use crate::tls::{AlpnProtos, AlpsProtos, CertStore, Identity, TlsVersion};
+use crate::tls::{
+    AlpnProtos, AlpsProtos, CertCompressionAlgorithm, CertStore, Identity,
+    conn::cert::{BrotliCompressor, ZlibCompressor, ZstdCompressor},
+};
 
 /// SslConnectorBuilderExt trait for `SslConnectorBuilder`.
 pub trait SslConnectorBuilderExt {
@@ -19,25 +19,10 @@ pub trait SslConnectorBuilderExt {
     /// Configure the identity for the given `SslConnectorBuilder`.
     fn identity(self, identity: Option<Identity>) -> crate::Result<SslConnectorBuilder>;
 
-    /// Configure the ALPN and certificate config for the given `SslConnectorBuilder`.
-    fn alpn_protos(self, alpn: AlpnProtos) -> crate::Result<SslConnectorBuilder>;
-
-    /// Configure the minimum TLS version for the given `SslConnectorBuilder`.
-    fn min_tls_version<V: Into<Option<TlsVersion>>>(
-        self,
-        version: V,
-    ) -> crate::Result<SslConnectorBuilder>;
-
-    /// Configure the maximum TLS version for the given `SslConnectorBuilder`.
-    fn max_tls_version<V: Into<Option<TlsVersion>>>(
-        self,
-        version: V,
-    ) -> crate::Result<SslConnectorBuilder>;
-
     /// Configure the certificate compression algorithm for the given `SslConnectorBuilder`.
     fn add_cert_compression_algorithm(
         self,
-        alg: CertCompressionAlgorithm,
+        algs: Option<&[CertCompressionAlgorithm]>,
     ) -> crate::Result<SslConnectorBuilder>;
 }
 
@@ -64,7 +49,7 @@ pub trait ConnectConfigurationExt {
 }
 
 impl SslConnectorBuilderExt for SslConnectorBuilder {
-    #[inline]
+    #[inline(always)]
     fn cert_store(mut self, store: Option<CertStore>) -> crate::Result<SslConnectorBuilder> {
         if let Some(store) = store {
             store.add_to_tls(&mut self);
@@ -75,7 +60,7 @@ impl SslConnectorBuilderExt for SslConnectorBuilder {
         Ok(self)
     }
 
-    #[inline]
+    #[inline(always)]
     fn cert_verification(mut self, enable: bool) -> crate::Result<SslConnectorBuilder> {
         if enable {
             self.set_verify(SslVerifyMode::PEER);
@@ -85,7 +70,7 @@ impl SslConnectorBuilderExt for SslConnectorBuilder {
         Ok(self)
     }
 
-    #[inline]
+    #[inline(always)]
     fn identity(mut self, identity: Option<Identity>) -> crate::Result<SslConnectorBuilder> {
         if let Some(identity) = identity {
             identity.add_to_tls(&mut self)?;
@@ -95,40 +80,27 @@ impl SslConnectorBuilderExt for SslConnectorBuilder {
     }
 
     #[inline]
-    fn alpn_protos(mut self, alpn: AlpnProtos) -> crate::Result<SslConnectorBuilder> {
-        self.set_alpn_protos(alpn.0)
-            .map(|_| self)
-            .map_err(Into::into)
-    }
-
-    #[inline]
-    fn min_tls_version<V: Into<Option<TlsVersion>>>(
-        mut self,
-        version: V,
-    ) -> crate::Result<SslConnectorBuilder> {
-        self.set_min_proto_version(version.into().map(|v| v.0))
-            .map(|_| self)
-            .map_err(Into::into)
-    }
-
-    #[inline]
-    fn max_tls_version<V: Into<Option<TlsVersion>>>(
-        mut self,
-        version: V,
-    ) -> crate::Result<SslConnectorBuilder> {
-        self.set_max_proto_version(version.into().map(|v| v.0))
-            .map(|_| self)
-            .map_err(Into::into)
-    }
-
-    #[inline]
     fn add_cert_compression_algorithm(
         mut self,
-        alg: CertCompressionAlgorithm,
+        algs: Option<&[CertCompressionAlgorithm]>,
     ) -> crate::Result<SslConnectorBuilder> {
-        self.add_cert_compression_alg(alg)
-            .map(|_| self)
-            .map_err(Into::into)
+        if let Some(algs) = algs {
+            for algorithm in algs.iter() {
+                match algorithm {
+                    CertCompressionAlgorithm::Brotli => {
+                        self.add_certificate_compression_algorithm(BrotliCompressor::default())?
+                    }
+                    CertCompressionAlgorithm::Zlib => {
+                        self.add_certificate_compression_algorithm(ZlibCompressor::default())?;
+                    }
+                    CertCompressionAlgorithm::Zstd => {
+                        self.add_certificate_compression_algorithm(ZstdCompressor::default())?;
+                    }
+                }
+            }
+        }
+
+        Ok(self)
     }
 }
 

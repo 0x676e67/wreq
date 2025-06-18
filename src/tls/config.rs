@@ -1,8 +1,9 @@
 use std::borrow::Cow;
 
-use boring2::ssl::{CertCompressionAlgorithm, ExtensionType};
+use boring2::ssl::ExtensionType;
 
 use super::{AlpnProtos, AlpsProtos, TlsVersion};
+use crate::tls::CertCompressionAlgorithm;
 
 /// Builder for `[`TlsConfig`]`.
 #[must_use]
@@ -40,39 +41,8 @@ pub struct TlsConfig {
     pub(crate) cert_compression_algorithm: Option<Cow<'static, [CertCompressionAlgorithm]>>,
     pub(crate) extension_permutation: Option<Cow<'static, [ExtensionType]>>,
     pub(crate) aes_hw_override: Option<bool>,
+    pub(crate) prefer_chacha20: Option<bool>,
     pub(crate) random_aes_hw_override: bool,
-}
-
-impl Default for TlsConfig {
-    fn default() -> Self {
-        TlsConfig {
-            alpn_protos: AlpnProtos::default(),
-            alps_protos: None,
-            alps_use_new_codepoint: false,
-            session_ticket: true,
-            min_tls_version: None,
-            max_tls_version: None,
-            pre_shared_key: false,
-            enable_ech_grease: false,
-            permute_extensions: None,
-            grease_enabled: None,
-            enable_ocsp_stapling: false,
-            enable_signed_cert_timestamps: false,
-            record_size_limit: None,
-            psk_skip_session_ticket: false,
-            key_shares_limit: None,
-            psk_dhe_ke: true,
-            renegotiation: true,
-            delegated_credentials: None,
-            curves_list: None,
-            cipher_list: None,
-            sigalgs_list: None,
-            cert_compression_algorithm: None,
-            extension_permutation: None,
-            aes_hw_override: None,
-            random_aes_hw_override: false,
-        }
-    }
 }
 
 impl TlsConfigBuilder {
@@ -268,6 +238,15 @@ impl TlsConfigBuilder {
         self.config.random_aes_hw_override = enabled;
         self
     }
+
+    /// Sets the preference for ChaCha20 cipher.
+    pub fn prefer_chacha20<T>(mut self, enabled: T) -> Self
+    where
+        T: Into<Option<bool>>,
+    {
+        self.config.prefer_chacha20 = enabled.into();
+        self
+    }
 }
 
 impl TlsConfig {
@@ -275,6 +254,39 @@ impl TlsConfig {
     pub fn builder() -> TlsConfigBuilder {
         TlsConfigBuilder {
             config: TlsConfig::default(),
+        }
+    }
+}
+
+impl Default for TlsConfig {
+    fn default() -> Self {
+        TlsConfig {
+            alpn_protos: AlpnProtos::default(),
+            alps_protos: None,
+            alps_use_new_codepoint: false,
+            session_ticket: true,
+            min_tls_version: None,
+            max_tls_version: None,
+            pre_shared_key: false,
+            enable_ech_grease: false,
+            permute_extensions: None,
+            grease_enabled: None,
+            enable_ocsp_stapling: false,
+            enable_signed_cert_timestamps: false,
+            record_size_limit: None,
+            psk_skip_session_ticket: false,
+            key_shares_limit: None,
+            psk_dhe_ke: true,
+            renegotiation: true,
+            delegated_credentials: None,
+            curves_list: None,
+            cipher_list: None,
+            sigalgs_list: None,
+            cert_compression_algorithm: None,
+            extension_permutation: None,
+            aes_hw_override: None,
+            prefer_chacha20: None,
+            random_aes_hw_override: false,
         }
     }
 }

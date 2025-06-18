@@ -1,6 +1,10 @@
-//! Hyper SSL support via BoringSSL.
+//! SSL support via BoringSSL.
+
+#[macro_use]
+mod macros;
 mod boring;
 mod cache;
+mod cert;
 mod ext;
 
 use std::{

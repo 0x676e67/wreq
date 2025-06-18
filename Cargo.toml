@@ -102,8 +102,11 @@ percent-encoding = "2.3"
 ipnet = "2.11.0"
 
 ## boring-tls
-boring2 = { version = "4.15.13", features = ["pq-experimental", "cert-compression"] }
-tokio-boring2 = { version = "4.15.13", features = ["pq-experimental"] }
+boring2 = { version = "5.0.0-alpha.1", features = ["pq-experimental"] }
+tokio-boring2 = { version = "5.0.0-alpha.1", features = ["pq-experimental"] }
+brotli = "8.0.1"
+flate2 = "1.1.2"
+zstd = "0.13.3"
 linked_hash_set = "0.1"
 
 # Optional deps...

@@ -180,6 +180,7 @@ async fn test_aes_hw_override() -> wreq::Result<()> {
                 .max_tls_version(TlsVersion::TLS_1_3)
                 .enable_ech_grease(true)
                 .aes_hw_override(false)
+                .prefer_chacha20(true)
                 .build(),
         )
         .build();
@@ -197,7 +198,7 @@ async fn test_aes_hw_override() -> wreq::Result<()> {
 }
 
 #[tokio::test]
-async fn ssl_pinning() {
+async fn test_ssl_pinning() {
     let client = wreq::Client::builder()
         .cert_verification(false)
         .connect_timeout(Duration::from_secs(360))
