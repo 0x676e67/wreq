@@ -25,7 +25,7 @@ use tower_service::Service;
 use super::{
     HandshakeSettings, MaybeHttpsStream,
     cache::{SessionCache, SessionKey},
-    ext::{ConnectConfigurationExt, SslConnectorBuilderExt, SslRefExt},
+    ext::{ConnectConfigurationExt, SslConnectorBuilderExt},
     key_index,
 };
 use crate::{
@@ -57,9 +57,6 @@ impl HttpsConnector<HttpConnector> {
         connector: TlsConnector,
         dst: &mut Dst,
     ) -> HttpsConnector<HttpConnector> {
-        // Get the ALPN protocols from the destination
-        let alpn_protos = dst.alpn_protos();
-
         // Set the local address and interface
         match dst.addresses() {
             (Some(a), Some(b)) => http.set_local_addresses(a, b),
@@ -83,8 +80,18 @@ impl HttpsConnector<HttpConnector> {
         ))]
         http.set_interface(dst.interface());
 
+        // Get the ALPN protocols from the destination
+        let alpn_protos = dst.alpn_protos();
         let mut connector = HttpsConnector::with_connector(http, connector);
-        connector.set_ssl_callback(move |ssl, _| ssl.alpn_protos(alpn_protos));
+        connector.set_ssl_callback(move |ssl, _| {
+            let alpn = match alpn_protos {
+                Some(alpn) => alpn.0,
+                None => return Ok(()),
+            };
+
+            ssl.set_alpn_protos(alpn)
+        });
+
         connector
     }
 }
@@ -211,7 +218,7 @@ impl TlsConnectorBuilder {
             .cert_store(self.cert_store)?
             .cert_verification(self.cert_verification)?
             .identity(self.identity)?
-            .add_cert_compression_algorithm(config.cert_compression_algorithm.as_deref())?;
+            .cert_compression_algorithm(config.cert_compression_algorithm)?;
 
         // Set minimum TLS version
         set_option_inner_try!(config, min_tls_version, connector, set_min_proto_version);
@@ -441,7 +448,7 @@ impl Inner {
                     }
 
                     if self.skip_session_ticket {
-                        conf.skip_session_ticket()?;
+                        conf.set_options(SslOptions::NO_TICKET)?;
                     }
                 }
             }
