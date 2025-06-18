@@ -5,7 +5,7 @@ use boring2::x509::store::X509StoreBuilder;
 use super::{CertStore, Certificate, CertificateInput};
 use crate::Error;
 
-pub fn parse_certs_from_iter<'c, I>(
+pub fn parse_certs_with_iter<'c, I>(
     certs: I,
     parser: fn(&'c [u8]) -> crate::Result<Certificate>,
 ) -> crate::Result<CertStore>
@@ -15,22 +15,22 @@ where
 {
     let mut store = X509StoreBuilder::new()?;
     let certs = filter_map_certs(certs, parser);
-    process_certs(certs.into_iter(), &mut store)?;
+    process_certs_with_builder(certs.into_iter(), &mut store)?;
     Ok(CertStore(Arc::new(store.build())))
 }
 
-pub fn parse_certs_from_stack<C, F>(certs: C, x509: F) -> crate::Result<CertStore>
+pub fn parse_certs_with_stack<C, F>(certs: C, x509: F) -> crate::Result<CertStore>
 where
     C: AsRef<[u8]>,
     F: Fn(C) -> crate::Result<Vec<Certificate>>,
 {
     let mut store = X509StoreBuilder::new()?;
     let certs = x509(certs)?;
-    process_certs(certs.into_iter(), &mut store)?;
+    process_certs_with_builder(certs.into_iter(), &mut store)?;
     Ok(CertStore(Arc::new(store.build())))
 }
 
-pub fn process_certs<I>(iter: I, store: &mut X509StoreBuilder) -> crate::Result<()>
+pub fn process_certs_with_builder<I>(iter: I, store: &mut X509StoreBuilder) -> crate::Result<()>
 where
     I: Iterator<Item = Certificate>,
 {
