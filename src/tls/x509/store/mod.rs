@@ -3,7 +3,9 @@ mod parser;
 use std::{fmt::Debug, path::Path, sync::Arc};
 
 use boring2::x509::store::{X509Store, X509StoreBuilder};
-use parser::{filter_map_certs, parse_certs_with_iter, parse_certs_with_stack, process_certs_with_builder};
+use parser::{
+    filter_map_certs, parse_certs_with_iter, parse_certs_with_stack, process_certs_with_builder,
+};
 
 use super::{Certificate, CertificateInput};
 use crate::Error;
