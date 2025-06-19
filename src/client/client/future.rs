@@ -60,10 +60,16 @@ impl Future for Pending {
                     match Pin::new(r).poll(cx) {
                         Poll::Ready(Ok(res)) => res.map(body::boxed),
                         Poll::Ready(Err(e)) => {
-                            return match e.downcast::<Error>() {
-                                Ok(e) => Poll::Ready(Err(*e)),
-                                Err(e) => Poll::Ready(Err(Error::request(e))),
+                            let mut e = match e.downcast::<Error>() {
+                                Ok(e) => *e,
+                                Err(e) => Error::request(e),
                             };
+
+                            if e.url().is_none() {
+                                e = e.with_url(url.clone());
+                            }
+
+                            return Poll::Ready(Err(e));
                         }
                         Poll::Pending => return Poll::Pending,
                     }
@@ -89,5 +95,12 @@ mod test {
     fn test_future_size() {
         let s = std::mem::size_of::<super::Pending>();
         assert!(s <= 360, "size_of::<Pending>() == {s}, too big");
+    }
+
+    #[tokio::test]
+    async fn error_has_url() {
+        let u = "http://does.not.exist.local/ever";
+        let err = crate::Client::new().get(u).send().await.unwrap_err();
+        assert_eq!(err.url().map(AsRef::as_ref), Some(u), "{err:?}");
     }
 }
