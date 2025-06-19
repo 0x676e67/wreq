@@ -7,9 +7,13 @@ use std::{
 use http::{HeaderMap, Request, Response, Uri, header::PROXY_AUTHORIZATION, uri::Scheme};
 use tower::Service;
 
-use super::Body;
+use super::{
+    Body,
+    types::{BoxedClientService, SimpleClientService},
+};
 use crate::{
     OriginalHeaders,
+    client::{client::future::ResponseFuture, middleware::timeout::TimeoutBody},
     config::RequestSkipDefaultHeaders,
     connect::Connector,
     core::{
@@ -22,7 +26,13 @@ use crate::{
 };
 
 #[derive(Clone)]
-pub struct ClientService {
+pub(crate) enum ClientService {
+    Simple(SimpleClientService),
+    WithLayers(BoxedClientService),
+}
+
+#[derive(Clone)]
+pub struct BaseClientService {
     client: Client<Connector, Body>,
     inner: Arc<ClientConfig>,
 }
@@ -36,7 +46,7 @@ struct ClientConfig {
     proxies_maybe_http_custom_headers: bool,
 }
 
-impl ClientService {
+impl BaseClientService {
     pub fn new(
         client: Client<Connector, Body>,
         default_headers: HeaderMap,
@@ -105,7 +115,7 @@ impl ClientService {
     }
 }
 
-impl Service<Request<Body>> for ClientService {
+impl Service<Request<Body>> for BaseClientService {
     type Error = BoxError;
     type Response = Response<Incoming>;
     type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send + Sync>>;
@@ -155,5 +165,31 @@ impl Service<Request<Body>> for ClientService {
                 .map_err(Error::request)
                 .map_err(From::from)
         })
+    }
+}
+
+impl Service<Request<Body>> for ClientService {
+    type Error = BoxError;
+    type Response = Response<TimeoutBody<Incoming>>;
+    type Future = ResponseFuture;
+
+    #[inline(always)]
+    fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        match self {
+            ClientService::Simple(service) => service.poll_ready(cx),
+            ClientService::WithLayers(service) => service.poll_ready(cx),
+        }
+    }
+
+    #[inline(always)]
+    fn call(&mut self, req: Request<Body>) -> Self::Future {
+        match self {
+            ClientService::Simple(service) => ResponseFuture::Simple {
+                fut: service.call(req),
+            },
+            ClientService::WithLayers(service) => ResponseFuture::WithLayers {
+                fut: Box::pin(service.call(req)),
+            },
+        }
     }
 }

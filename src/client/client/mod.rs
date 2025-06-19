@@ -1,5 +1,6 @@
 pub(super) mod future;
 mod service;
+mod types;
 
 use std::{
     collections::HashMap,
@@ -16,12 +17,13 @@ use http::{
     Request as HttpRequest, Response as HttpResponse,
     header::{HeaderMap, HeaderValue, USER_AGENT},
 };
-use service::ClientService;
+use service::{BaseClientService, ClientService};
 use tower::{
     Layer, Service, ServiceBuilder,
     retry::RetryLayer,
     util::{BoxCloneSyncService, BoxCloneSyncServiceLayer, Oneshot},
 };
+use types::{BoxedClientService, BoxedClientServiceLayer, ResponseBody};
 #[cfg(feature = "cookies")]
 use {super::middleware::cookie::CookieManagerLayer, crate::cookie};
 #[cfg(any(
@@ -42,7 +44,7 @@ use super::{
     middleware::{
         redirect::FollowRedirectLayer,
         retry::Http2RetryPolicy,
-        timeout::{ResponseBodyTimeoutLayer, TimeoutBody, TimeoutLayer},
+        timeout::{ResponseBodyTimeoutLayer, TimeoutLayer},
     },
     request::{Request, RequestBuilder},
     response::Response,
@@ -56,7 +58,6 @@ use crate::{
         sealed::{Conn, Unnameable},
     },
     core::{
-        body::Incoming,
         client::{Builder, Client as HyperClient},
         rt::{TokioExecutor, tokio::TokioTimer},
     },
@@ -69,32 +70,6 @@ use crate::{
     redirect::{self, RedirectPolicy},
     tls::{AlpnProtos, CertStore, CertificateInput, Identity, KeyLogPolicy, TlsConfig, TlsVersion},
 };
-
-#[cfg(not(any(
-    feature = "gzip",
-    feature = "zstd",
-    feature = "brotli",
-    feature = "deflate",
-)))]
-type ResponseBody = TimeoutBody<Incoming>;
-
-#[cfg(any(
-    feature = "gzip",
-    feature = "zstd",
-    feature = "brotli",
-    feature = "deflate",
-))]
-type ResponseBody = TimeoutBody<DecompressionBody<Incoming>>;
-
-type BoxedClientService =
-    BoxCloneSyncService<HttpRequest<Body>, HttpResponse<ResponseBody>, BoxError>;
-
-type BoxedClientServiceLayer = BoxCloneSyncServiceLayer<
-    BoxedClientService,
-    HttpRequest<Body>,
-    HttpResponse<ResponseBody>,
-    BoxError,
->;
 
 /// An `Client` to make Requests with.
 ///
@@ -116,7 +91,7 @@ pub struct Client {
 
 /// A reference to the `Client` that is used internally.
 struct ClientRef {
-    service: BoxedClientService,
+    service: ClientService,
     https_only: bool,
 }
 
@@ -378,7 +353,7 @@ impl ClientBuilder {
         };
 
         let service = {
-            let service = ClientService::new(
+            let service = BaseClientService::new(
                 config.builder.build(connector),
                 config.headers,
                 config.original_headers,
@@ -440,7 +415,7 @@ impl ClientBuilder {
                         .map_err(error::map_timeout_to_request_error)
                         .service(service);
 
-                    BoxCloneSyncService::new(service)
+                    ClientService::WithLayers(BoxCloneSyncService::new(service))
                 }
                 None => {
                     let service = ServiceBuilder::new()
@@ -448,10 +423,10 @@ impl ClientBuilder {
                         .service(service);
 
                     let service = ServiceBuilder::new()
-                        .map_err(error::map_timeout_to_request_error)
+                        .map_err(error::map_timeout_to_request_error as _)
                         .service(service);
 
-                    BoxCloneSyncService::new(service)
+                    ClientService::Simple(service)
                 }
             }
         };

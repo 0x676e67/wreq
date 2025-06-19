@@ -1,27 +1,51 @@
 use std::{
     pin::Pin,
-    task::{Context, Poll},
+    task::{Context, Poll, ready},
 };
 
 use http::{Request as HttpRequest, Response as HttpResponse};
 use pin_project_lite::pin_project;
-use tower::util::{BoxCloneSyncService, Oneshot};
+use tower::util::Oneshot;
 use url::Url;
 
-use super::{Body, Response, ResponseBody};
+use super::{
+    Body, Response,
+    types::{BoxedResponseFuture, SimpleResponseFuture},
+};
 use crate::{
     Error,
     client::{
         body,
-        middleware::{self},
+        client::service::ClientService,
+        middleware::{self, timeout::TimeoutBody},
     },
+    core::body::Incoming,
     error::BoxError,
 };
 
-type ResponseFuture = Oneshot<
-    BoxCloneSyncService<HttpRequest<Body>, HttpResponse<ResponseBody>, BoxError>,
-    HttpRequest<Body>,
->;
+pin_project! {
+    #[project = ResponseFutureProj]
+    pub enum ResponseFuture {
+        Simple {
+            #[pin]
+            fut: SimpleResponseFuture,
+        },
+        WithLayers {
+            fut: BoxedResponseFuture,
+        },
+    }
+}
+
+impl Future for ResponseFuture {
+    type Output = Result<HttpResponse<TimeoutBody<Incoming>>, BoxError>;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        match self.project() {
+            ResponseFutureProj::Simple { fut } => Poll::Ready(ready!(fut.poll(cx))),
+            ResponseFutureProj::WithLayers { fut } => Poll::Ready(ready!(fut.as_mut().poll(cx))),
+        }
+    }
+}
 
 pin_project! {
     #[project = PendingProj]
@@ -29,7 +53,7 @@ pin_project! {
         Request {
             url: Url,
             #[pin]
-            in_flight: ResponseFuture,
+            in_flight: Oneshot<ClientService, HttpRequest<Body>>,
         },
         Error {
             error: Option<Error>,
@@ -39,7 +63,7 @@ pin_project! {
 
 impl Pending {
     #[inline(always)]
-    pub(crate) fn new(url: Url, in_flight: ResponseFuture) -> Pending {
+    pub(crate) fn new(url: Url, in_flight: Oneshot<ClientService, HttpRequest<Body>>) -> Pending {
         Pending::Request { url, in_flight }
     }
 
@@ -56,8 +80,7 @@ impl Future for Pending {
         match self.project() {
             PendingProj::Request { url, in_flight } => {
                 let res = {
-                    let r = in_flight.get_mut();
-                    match Pin::new(r).poll(cx) {
+                    match in_flight.poll(cx) {
                         Poll::Ready(Ok(res)) => res.map(body::boxed),
                         Poll::Ready(Err(e)) => {
                             let mut e = match e.downcast::<Error>() {

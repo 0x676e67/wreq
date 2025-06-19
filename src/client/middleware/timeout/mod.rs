@@ -4,5 +4,6 @@ mod layer;
 
 pub use self::{
     body::TimeoutBody,
-    layer::{ResponseBodyTimeoutLayer, TimeoutLayer},
+    future::ResponseFuture as TimeoutResponseFuture,
+    layer::{ResponseBodyTimeout, ResponseBodyTimeoutLayer, Timeout, TimeoutLayer},
 };
