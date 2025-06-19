@@ -278,16 +278,16 @@ impl TlsConnectorBuilder {
         );
 
         // Set TLS curves list
-        set_option_try_try!(config, curves_list, connector, set_curves_list);
+        set_option_ref_try!(config, curves_list, connector, set_curves_list);
 
         // Set TLS signature algorithms list
-        set_option_try_try!(config, sigalgs_list, connector, set_sigalgs_list);
+        set_option_ref_try!(config, sigalgs_list, connector, set_sigalgs_list);
 
         // Set TLS cipher list
-        set_option_try_try!(config, cipher_list, connector, set_cipher_list);
+        set_option_ref_try!(config, cipher_list, connector, set_cipher_list);
 
         // Set TLS delegated credentials
-        set_option_try_try!(
+        set_option_ref_try!(
             config,
             delegated_credentials,
             connector,
@@ -301,7 +301,7 @@ impl TlsConnectorBuilder {
         set_option!(config, key_shares_limit, connector, set_key_shares_limit);
 
         // Set TLS extension permutation
-        set_option_try_try!(
+        set_option_ref_try!(
             config,
             extension_permutation,
             connector,
