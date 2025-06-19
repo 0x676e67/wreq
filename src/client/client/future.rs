@@ -10,16 +10,15 @@ use url::Url;
 
 use super::{
     Body, Response,
-    types::{BoxedResponseFuture, SimpleResponseFuture},
+    types::{BoxedResponseFuture, ResponseBody, SimpleResponseFuture},
 };
 use crate::{
     Error,
     client::{
         body,
         client::service::ClientService,
-        middleware::{self, timeout::TimeoutBody},
+        middleware::{self},
     },
-    core::body::Incoming,
     error::BoxError,
 };
 
@@ -37,7 +36,7 @@ pin_project! {
 }
 
 impl Future for ResponseFuture {
-    type Output = Result<HttpResponse<TimeoutBody<Incoming>>, BoxError>;
+    type Output = Result<HttpResponse<ResponseBody>, BoxError>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         match self.project() {

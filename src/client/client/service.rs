@@ -9,11 +9,11 @@ use tower::Service;
 
 use super::{
     Body,
-    types::{BoxedClientService, SimpleClientService},
+    types::{BoxedClientService, ResponseBody, SimpleClientService},
 };
 use crate::{
     OriginalHeaders,
-    client::{client::future::ResponseFuture, middleware::timeout::TimeoutBody},
+    client::client::future::ResponseFuture,
     config::RequestSkipDefaultHeaders,
     connect::Connector,
     core::{
@@ -170,7 +170,7 @@ impl Service<Request<Body>> for BaseClientService {
 
 impl Service<Request<Body>> for ClientService {
     type Error = BoxError;
-    type Response = Response<TimeoutBody<Incoming>>;
+    type Response = Response<ResponseBody>;
     type Future = ResponseFuture;
 
     #[inline(always)]

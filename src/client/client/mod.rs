@@ -26,16 +26,6 @@ use tower::{
 use types::{BoxedClientService, BoxedClientServiceLayer, ResponseBody};
 #[cfg(feature = "cookies")]
 use {super::middleware::cookie::CookieManagerLayer, crate::cookie};
-#[cfg(any(
-    feature = "gzip",
-    feature = "zstd",
-    feature = "brotli",
-    feature = "deflate",
-))]
-use {
-    super::{decoder::AcceptEncoding, middleware::decoder::DecompressionLayer},
-    tower_http::decompression::DecompressionBody,
-};
 
 #[cfg(feature = "websocket")]
 use super::websocket::WebSocketRequestBuilder;
@@ -49,6 +39,13 @@ use super::{
     request::{Request, RequestBuilder},
     response::Response,
 };
+#[cfg(any(
+    feature = "gzip",
+    feature = "zstd",
+    feature = "brotli",
+    feature = "deflate",
+))]
+use super::{decoder::AcceptEncoding, middleware::decoder::DecompressionLayer};
 #[cfg(feature = "hickory-dns")]
 use crate::dns::hickory::{HickoryDnsResolver, LookupIpStrategy};
 use crate::{
