@@ -13,10 +13,7 @@ use std::{
 use antidote::Mutex;
 use boring2::{
     error::ErrorStack,
-    ssl::{
-        SslConnector, SslConnectorBuilder, SslMethod, SslOptions, SslRef,
-        SslSessionCacheMode,
-    },
+    ssl::{SslConnector, SslMethod, SslOptions, SslRef, SslSessionCacheMode},
 };
 use http::{Uri, uri::Scheme};
 use tokio_boring2::SslStream;
@@ -339,9 +336,33 @@ impl TlsConnectorBuilder {
             .random_aes_hw_override(config.random_aes_hw_override)
             .build();
 
-        Ok(TlsConnector::with_connector_and_settings(
-            connector, settings,
-        ))
+        // If the session cache is disabled, we don't need to set up any callbacks.
+        let cache = settings.session_cache.then(|| {
+            let cache = Arc::new(Mutex::new(SessionCache::with_capacity(
+                settings.session_cache_capacity,
+            )));
+
+            connector.set_session_cache_mode(SslSessionCacheMode::CLIENT);
+            connector.set_new_session_callback({
+                let cache = cache.clone();
+                move |ssl, session| {
+                    if let Ok(Some(key)) = key_index().map(|idx| ssl.ex_data(idx)) {
+                        cache.lock().insert(key.clone(), session);
+                    }
+                }
+            });
+
+            cache
+        });
+
+        Ok(TlsConnector {
+            inner: Inner {
+                ssl: connector.build(),
+                cache,
+                settings,
+                ssl_callback: None,
+            },
+        })
     }
 }
 
@@ -355,43 +376,6 @@ impl TlsConnector {
             cert_verification: true,
             tls_sni: true,
             verify_hostname: true,
-        }
-    }
-
-    /// Creates a new `TlsConnector` with settings
-    fn with_connector_and_settings(
-        mut ssl: SslConnectorBuilder,
-        settings: HandshakeSettings,
-    ) -> TlsConnector {
-        // If the session cache is disabled, we don't need to set up any callbacks.
-        let cache = if settings.session_cache {
-            let cache = Arc::new(Mutex::new(SessionCache::with_capacity(
-                settings.session_cache_capacity,
-            )));
-
-            ssl.set_session_cache_mode(SslSessionCacheMode::CLIENT);
-
-            ssl.set_new_session_callback({
-                let cache = cache.clone();
-                move |ssl, session| {
-                    if let Ok(Some(key)) = key_index().map(|idx| ssl.ex_data(idx)) {
-                        cache.lock().insert(key.clone(), session);
-                    }
-                }
-            });
-
-            Some(cache)
-        } else {
-            None
-        };
-
-        TlsConnector {
-            inner: Inner {
-                ssl: ssl.build(),
-                cache,
-                settings,
-                ssl_callback: None,
-            },
         }
     }
 }
