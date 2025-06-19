@@ -25,6 +25,7 @@ use crate::{
 
 #[cfg(not(feature = "cookies"))]
 type MaybeCookieLayer<T> = T;
+
 #[cfg(feature = "cookies")]
 type MaybeCookieLayer<T> = crate::client::middleware::cookie::CookieManager<T>;
 
@@ -35,6 +36,7 @@ type MaybeCookieLayer<T> = crate::client::middleware::cookie::CookieManager<T>;
     feature = "deflate"
 )))]
 type MaybeDecompression<T> = T;
+
 #[cfg(any(
     feature = "gzip",
     feature = "zstd",
