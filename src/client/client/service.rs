@@ -27,7 +27,7 @@ use crate::{
 
 #[derive(Clone)]
 pub(crate) enum ClientService {
-    Simple(SimpleClientService),
+    Simple(Box<SimpleClientService>),
     WithLayers(BoxedClientService),
 }
 
@@ -191,5 +191,18 @@ impl Service<Request<Body>> for ClientService {
                 fut: service.call(req),
             },
         }
+    }
+}
+
+#[cfg(test)]
+mod test {
+
+    #[test]
+    fn test_service_size() {
+        let s = std::mem::size_of::<super::BoxedClientService>();
+        assert!(s <= 64, "size_of::<Pending>() == {s}, too big");
+
+        let s = std::mem::size_of::<super::ClientService>();
+        assert!(s <= 64, "size_of::<Pending>() == {s}, too big");
     }
 }

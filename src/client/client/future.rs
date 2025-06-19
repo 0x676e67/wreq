@@ -53,7 +53,7 @@ pin_project! {
         Request {
             url: Url,
             #[pin]
-            in_flight: Oneshot<ClientService, HttpRequest<Body>>,
+            in_flight: Pin<Box<Oneshot<ClientService, HttpRequest<Body>>>>,
         },
         Error {
             error: Option<Error>,
@@ -64,7 +64,10 @@ pin_project! {
 impl Pending {
     #[inline(always)]
     pub(crate) fn new(url: Url, in_flight: Oneshot<ClientService, HttpRequest<Body>>) -> Pending {
-        Pending::Request { url, in_flight }
+        Pending::Request {
+            url,
+            in_flight: Box::pin(in_flight),
+        }
     }
 
     #[inline(always)]

@@ -423,7 +423,7 @@ impl ClientBuilder {
                         .map_err(error::map_timeout_to_request_error as _)
                         .service(service);
 
-                    ClientService::Simple(service)
+                    ClientService::Simple(Box::new(service))
                 }
             }
         };
