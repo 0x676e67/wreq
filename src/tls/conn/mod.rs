@@ -35,14 +35,14 @@ fn key_index() -> Result<Index<Ssl, SessionKey>, ErrorStack> {
     IDX.clone()
 }
 
-/// Builds for [`HandshakeSettings`].
-pub struct HandshakeSettingsBuilder {
-    settings: HandshakeSettings,
+/// Builds for [`HandshakeConfig`].
+pub struct HandshakeConfigBuilder {
+    settings: HandshakeConfig,
 }
 
 /// Settings for [`TlsConnector`]
 #[derive(Clone)]
-pub struct HandshakeSettings {
+pub struct HandshakeConfig {
     session_cache_capacity: usize,
     session_cache: bool,
     skip_session_ticket: bool,
@@ -54,7 +54,7 @@ pub struct HandshakeSettings {
     random_aes_hw_override: bool,
 }
 
-impl HandshakeSettingsBuilder {
+impl HandshakeConfigBuilder {
     /// Sets the session cache capacity.
     pub fn session_cache_capacity(mut self, capacity: usize) -> Self {
         self.settings.session_cache_capacity = capacity;
@@ -109,22 +109,22 @@ impl HandshakeSettingsBuilder {
         self
     }
 
-    /// Builds the `HandshakeSettings`.
-    pub fn build(self) -> HandshakeSettings {
+    /// Builds the `HandshakeConfig`.
+    pub fn build(self) -> HandshakeConfig {
         self.settings
     }
 }
 
-impl HandshakeSettings {
-    /// Creates a new `HandshakeSettingsBuilder`.
-    pub fn builder() -> HandshakeSettingsBuilder {
-        HandshakeSettingsBuilder {
-            settings: HandshakeSettings::default(),
+impl HandshakeConfig {
+    /// Creates a new `HandshakeConfigBuilder`.
+    pub fn builder() -> HandshakeConfigBuilder {
+        HandshakeConfigBuilder {
+            settings: HandshakeConfig::default(),
         }
     }
 }
 
-impl Default for HandshakeSettings {
+impl Default for HandshakeConfig {
     fn default() -> Self {
         Self {
             session_cache_capacity: 8,

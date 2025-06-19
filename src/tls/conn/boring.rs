@@ -20,7 +20,7 @@ use tokio_boring2::SslStream;
 use tower_service::Service;
 
 use super::{
-    HandshakeSettings, MaybeHttpsStream,
+    HandshakeConfig, MaybeHttpsStream,
     cache::{SessionCache, SessionKey},
     ext::{ConnectConfigurationExt, SslConnectorBuilderExt},
     key_index,
@@ -156,7 +156,7 @@ pub struct TlsConnector {
 struct Inner {
     ssl: SslConnector,
     cache: Option<Arc<Mutex<SessionCache>>>,
-    settings: HandshakeSettings,
+    config: HandshakeConfig,
     ssl_callback: Option<SslCallback>,
 }
 
@@ -323,8 +323,8 @@ impl TlsConnectorBuilder {
             });
         }
 
-        // Create the `HandshakeSettings` with the default session cache capacity.
-        let settings = HandshakeSettings::builder()
+        // Create the `HandshakeConfig` with the default session cache capacity.
+        let config = HandshakeConfig::builder()
             .session_cache_capacity(8)
             .session_cache(config.pre_shared_key)
             .skip_session_ticket(config.psk_skip_session_ticket)
@@ -337,9 +337,9 @@ impl TlsConnectorBuilder {
             .build();
 
         // If the session cache is disabled, we don't need to set up any callbacks.
-        let cache = settings.session_cache.then(|| {
+        let cache = config.session_cache.then(|| {
             let cache = Arc::new(Mutex::new(SessionCache::with_capacity(
-                settings.session_cache_capacity,
+                config.session_cache_capacity,
             )));
 
             connector.set_session_cache_mode(SslSessionCacheMode::CLIENT);
@@ -359,7 +359,7 @@ impl TlsConnectorBuilder {
             inner: Inner {
                 ssl: connector.build(),
                 cache,
-                settings,
+                config,
                 ssl_callback: None,
             },
         })
@@ -393,25 +393,22 @@ impl Inner {
     where
         A: Read + Write + Unpin + Send + Sync + Debug + 'static,
     {
-        let mut conf = self.ssl.configure()?;
+        let mut cfg = self.ssl.configure()?;
 
         // Use server name indication
-        conf.set_use_server_name_indication(self.settings.tls_sni);
+        cfg.set_use_server_name_indication(self.config.tls_sni);
 
         // Verify hostname
-        conf.set_verify_hostname(self.settings.verify_hostname);
+        cfg.set_verify_hostname(self.config.verify_hostname);
 
         // Set ECH grease
-        conf.set_enable_ech_grease(self.settings.enable_ech_grease);
+        cfg.set_enable_ech_grease(self.config.enable_ech_grease);
 
         // Set AES hardware override
-        conf.set_random_aes_hw_override(self.settings.random_aes_hw_override);
+        cfg.set_random_aes_hw_override(self.config.random_aes_hw_override);
 
         // Set ALPS protos
-        conf.alps_protos(
-            self.settings.alps_protos,
-            self.settings.alps_use_new_codepoint,
-        )?;
+        cfg.alps_protos(self.config.alps_protos, self.config.alps_use_new_codepoint)?;
 
         if let Some(authority) = uri.authority() {
             let key = SessionKey(authority.clone());
@@ -419,20 +416,20 @@ impl Inner {
             if let Some(ref cache) = self.cache {
                 if let Some(session) = cache.lock().get(&key) {
                     unsafe {
-                        conf.set_session(&session)?;
+                        cfg.set_session(&session)?;
                     }
 
-                    if self.settings.skip_session_ticket {
-                        conf.set_options(SslOptions::NO_TICKET)?;
+                    if self.config.skip_session_ticket {
+                        cfg.set_options(SslOptions::NO_TICKET)?;
                     }
                 }
             }
 
             let idx = key_index()?;
-            conf.set_ex_data(idx, key);
+            cfg.set_ex_data(idx, key);
         }
 
-        let mut ssl = conf.into_ssl(host)?;
+        let mut ssl = cfg.into_ssl(host)?;
 
         if let Some(ref ssl_callback) = self.ssl_callback {
             ssl_callback(&mut ssl, uri)?;
