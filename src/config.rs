@@ -21,9 +21,9 @@ impl RequestConfigValue for RequestTimeout {
     type Value = Duration;
 }
 
-pub type RequestTotalTimeout = RequestTimeout;
+pub(crate) type RequestTotalTimeout = RequestTimeout;
 
-pub type RequestReadTimeout = RequestTimeout;
+pub(crate) type RequestReadTimeout = RequestTimeout;
 
 #[derive(Clone, Copy)]
 pub(crate) struct RequestRedirectPolicy;
