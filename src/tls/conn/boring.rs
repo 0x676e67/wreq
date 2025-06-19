@@ -14,7 +14,7 @@ use antidote::Mutex;
 use boring2::{
     error::ErrorStack,
     ssl::{
-        ConnectConfiguration, SslConnector, SslConnectorBuilder, SslMethod, SslOptions, SslRef,
+        SslConnector, SslConnectorBuilder, SslMethod, SslOptions, SslRef,
         SslSessionCacheMode,
     },
 };
@@ -39,8 +39,6 @@ use crate::{
     tls::{CertStore, Identity, KeyLogPolicy, TlsConfig},
 };
 
-type Callback =
-    Arc<dyn Fn(&mut ConnectConfiguration, &Uri) -> Result<(), ErrorStack> + Sync + Send>;
 type SslCallback = Arc<dyn Fn(&mut SslRef, &Uri) -> Result<(), ErrorStack> + Sync + Send>;
 
 /// A Connector using BoringSSL to support `http` and `https` schemes.
@@ -161,9 +159,8 @@ pub struct TlsConnector {
 struct Inner {
     ssl: SslConnector,
     cache: Option<Arc<Mutex<SessionCache>>>,
-    callback: Option<Callback>,
+    settings: HandshakeSettings,
     ssl_callback: Option<SslCallback>,
-    skip_session_ticket: bool,
 }
 
 impl TlsConnectorBuilder {
@@ -388,32 +385,12 @@ impl TlsConnector {
             None
         };
 
-        let callback = Arc::new(move |conf: &mut ConnectConfiguration, _: &Uri| {
-            // Use server name indication
-            conf.set_use_server_name_indication(settings.tls_sni);
-
-            // Verify hostname
-            conf.set_verify_hostname(settings.verify_hostname);
-
-            // Set ECH grease
-            conf.set_enable_ech_grease(settings.enable_ech_grease);
-
-            // Set AES hardware override
-            conf.set_random_aes_hw_override(settings.random_aes_hw_override);
-
-            // Set ALPS
-            conf.alps_protos(settings.alps_protos, settings.alps_use_new_codepoint)?;
-
-            Ok(())
-        });
-
         TlsConnector {
             inner: Inner {
                 ssl: ssl.build(),
                 cache,
-                callback: Some(callback),
+                settings,
                 ssl_callback: None,
-                skip_session_ticket: settings.skip_session_ticket,
             },
         }
     }
@@ -434,9 +411,23 @@ impl Inner {
     {
         let mut conf = self.ssl.configure()?;
 
-        if let Some(ref callback) = self.callback {
-            callback(&mut conf, uri)?;
-        }
+        // Use server name indication
+        conf.set_use_server_name_indication(self.settings.tls_sni);
+
+        // Verify hostname
+        conf.set_verify_hostname(self.settings.verify_hostname);
+
+        // Set ECH grease
+        conf.set_enable_ech_grease(self.settings.enable_ech_grease);
+
+        // Set AES hardware override
+        conf.set_random_aes_hw_override(self.settings.random_aes_hw_override);
+
+        // Set ALPS protos
+        conf.alps_protos(
+            self.settings.alps_protos,
+            self.settings.alps_use_new_codepoint,
+        )?;
 
         if let Some(authority) = uri.authority() {
             let key = SessionKey(authority.clone());
@@ -447,7 +438,7 @@ impl Inner {
                         conf.set_session(&session)?;
                     }
 
-                    if self.skip_session_ticket {
+                    if self.settings.skip_session_ticket {
                         conf.set_options(SslOptions::NO_TICKET)?;
                     }
                 }

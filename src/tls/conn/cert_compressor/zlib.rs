@@ -2,17 +2,17 @@ use std::io::Write;
 
 use flate2::Compression;
 
-pub struct ZlibCompressor {
+pub struct ZlibCertificateCompressor {
     level: u32,
 }
 
-impl Default for ZlibCompressor {
+impl Default for ZlibCertificateCompressor {
     fn default() -> Self {
         Self { level: 6 }
     }
 }
 
-impl boring2::ssl::CertificateCompressor for ZlibCompressor {
+impl boring2::ssl::CertificateCompressor for ZlibCertificateCompressor {
     const ALGORITHM: boring2::ssl::CertificateCompressionAlgorithm =
         boring2::ssl::CertificateCompressionAlgorithm::ZLIB;
 

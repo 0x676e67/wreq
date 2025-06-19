@@ -7,7 +7,9 @@ use boring2::{
 
 use crate::tls::{
     AlpsProtos, CertCompressionAlgorithm, CertStore, Identity,
-    conn::cert::{BrotliCompressor, ZlibCompressor, ZstdCompressor},
+    conn::cert_compressor::{
+        BrotliCertificateCompressor, ZlibCertificateCompressor, ZstdCertificateCompressor,
+    },
 };
 
 /// SslConnectorBuilderExt trait for `SslConnectorBuilder`.
@@ -80,14 +82,19 @@ impl SslConnectorBuilderExt for SslConnectorBuilder {
         if let Some(algs) = algs {
             for algorithm in algs.iter() {
                 match algorithm {
-                    CertCompressionAlgorithm::Brotli => {
-                        self.add_certificate_compression_algorithm(BrotliCompressor::default())?
-                    }
+                    CertCompressionAlgorithm::Brotli => self
+                        .add_certificate_compression_algorithm(
+                            BrotliCertificateCompressor::default(),
+                        )?,
                     CertCompressionAlgorithm::Zlib => {
-                        self.add_certificate_compression_algorithm(ZlibCompressor::default())?;
+                        self.add_certificate_compression_algorithm(
+                            ZlibCertificateCompressor::default(),
+                        )?;
                     }
                     CertCompressionAlgorithm::Zstd => {
-                        self.add_certificate_compression_algorithm(ZstdCompressor::default())?;
+                        self.add_certificate_compression_algorithm(
+                            ZstdCertificateCompressor::default(),
+                        )?;
                     }
                 }
             }

@@ -2,17 +2,17 @@ use std::io::Write;
 
 use boring2::ssl::CertificateCompressor;
 
-pub struct ZstdCompressor {
+pub struct ZstdCertificateCompressor {
     level: i32,
 }
 
-impl Default for ZstdCompressor {
+impl Default for ZstdCertificateCompressor {
     fn default() -> Self {
         Self { level: 3 }
     }
 }
 
-impl CertificateCompressor for ZstdCompressor {
+impl CertificateCompressor for ZstdCertificateCompressor {
     const ALGORITHM: boring2::ssl::CertificateCompressionAlgorithm =
         boring2::ssl::CertificateCompressionAlgorithm::ZSTD;
 

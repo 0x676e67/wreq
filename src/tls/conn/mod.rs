@@ -4,7 +4,7 @@
 mod macros;
 mod boring;
 mod cache;
-mod cert;
+mod cert_compressor;
 mod ext;
 
 use std::{
@@ -41,6 +41,7 @@ pub struct HandshakeSettingsBuilder {
 }
 
 /// Settings for [`TlsConnector`]
+#[derive(Clone)]
 pub struct HandshakeSettings {
     session_cache_capacity: usize,
     session_cache: bool,

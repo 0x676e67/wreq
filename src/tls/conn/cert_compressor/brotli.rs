@@ -2,18 +2,18 @@ use std::io::Write;
 
 use boring2::ssl::{CertificateCompressionAlgorithm, CertificateCompressor};
 
-pub struct BrotliCompressor {
+pub struct BrotliCertificateCompressor {
     q: u32,
     lgwin: u32,
 }
 
-impl Default for BrotliCompressor {
+impl Default for BrotliCertificateCompressor {
     fn default() -> Self {
         Self { q: 11, lgwin: 32 }
     }
 }
 
-impl CertificateCompressor for BrotliCompressor {
+impl CertificateCompressor for BrotliCertificateCompressor {
     const ALGORITHM: CertificateCompressionAlgorithm = CertificateCompressionAlgorithm::BROTLI;
 
     const CAN_COMPRESS: bool = true;
