@@ -188,7 +188,7 @@ impl Service<Request<Body>> for ClientService {
                 fut: service.call(req),
             },
             ClientService::WithLayers(service) => ResponseFuture::WithLayers {
-                fut: Box::pin(service.call(req)),
+                fut: service.call(req),
             },
         }
     }

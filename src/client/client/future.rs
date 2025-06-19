@@ -38,6 +38,7 @@ pin_project! {
 impl Future for ResponseFuture {
     type Output = Result<HttpResponse<ResponseBody>, BoxError>;
 
+    #[inline(always)]
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         match self.project() {
             ResponseFutureProj::Simple { fut } => Poll::Ready(ready!(fut.poll(cx))),
