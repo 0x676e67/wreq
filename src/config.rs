@@ -15,18 +15,15 @@ use crate::{core::ext::RequestConfigValue, redirect::Policy};
 // ================================
 
 #[derive(Clone, Copy)]
-pub(crate) struct RequestTotalTimeout;
+pub(crate) struct RequestTimeout;
 
-impl RequestConfigValue for RequestTotalTimeout {
+impl RequestConfigValue for RequestTimeout {
     type Value = Duration;
 }
 
-#[derive(Clone, Copy)]
-pub(crate) struct RequestReadTimeout;
+pub type RequestTotalTimeout = RequestTimeout;
 
-impl RequestConfigValue for RequestReadTimeout {
-    type Value = Duration;
-}
+pub type RequestReadTimeout = RequestTimeout;
 
 #[derive(Clone, Copy)]
 pub(crate) struct RequestRedirectPolicy;
