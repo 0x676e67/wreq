@@ -71,18 +71,15 @@ impl AlpsProtos {
 /// IANA assigned identifier of compression algorithm.
 /// See https://www.rfc-editor.org/rfc/rfc8879.html#name-compression-algorithms
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
-pub struct CertificateCompressionAlgorithm(boring2::ssl::CertificateCompressionAlgorithm);
+pub struct CertificateCompressionAlgorithm(());
 
 impl CertificateCompressionAlgorithm {
     /// Zlib compression algorithm.
-    pub const ZLIB: CertificateCompressionAlgorithm =
-        CertificateCompressionAlgorithm(boring2::ssl::CertificateCompressionAlgorithm::ZLIB);
+    pub const ZLIB: CertificateCompressionAlgorithm = CertificateCompressionAlgorithm(());
     /// Brotli compression algorithm.
-    pub const BROTLI: CertificateCompressionAlgorithm =
-        CertificateCompressionAlgorithm(boring2::ssl::CertificateCompressionAlgorithm::BROTLI);
+    pub const BROTLI: CertificateCompressionAlgorithm = CertificateCompressionAlgorithm(());
     /// Zstd compression algorithm.
-    pub const ZSTD: CertificateCompressionAlgorithm =
-        CertificateCompressionAlgorithm(boring2::ssl::CertificateCompressionAlgorithm::ZSTD);
+    pub const ZSTD: CertificateCompressionAlgorithm = CertificateCompressionAlgorithm(());
 }
 
 /// Hyper extension carrying extra TLS layer information.
