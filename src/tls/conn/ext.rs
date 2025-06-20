@@ -81,24 +81,22 @@ impl SslConnectorBuilderExt for SslConnectorBuilder {
     ) -> crate::Result<SslConnectorBuilder> {
         if let Some(algs) = algs {
             for algorithm in algs.iter() {
-                match *algorithm {
-                    CertificateCompressionAlgorithm::BROTLI => self
-                        .add_certificate_compression_algorithm(
-                            BrotliCertificateCompressor::default(),
-                        )?,
-                    CertificateCompressionAlgorithm::ZLIB => {
-                        self.add_certificate_compression_algorithm(
-                            ZlibCertificateCompressor::default(),
-                        )?;
-                    }
-                    CertificateCompressionAlgorithm::ZSTD => {
-                        self.add_certificate_compression_algorithm(
-                            ZstdCertificateCompressor::default(),
-                        )?;
-                    }
-                    _ => {
-                        // Ignore unknown or unsupported algorithms
-                    }
+                if algorithm == &CertificateCompressionAlgorithm::ZLIB {
+                    self.add_certificate_compression_algorithm(
+                        ZlibCertificateCompressor::default(),
+                    )?;
+                }
+                
+                if algorithm == &CertificateCompressionAlgorithm::BROTLI {
+                    self.add_certificate_compression_algorithm(
+                        BrotliCertificateCompressor::default(),
+                    )?;
+                }
+
+                if algorithm == &CertificateCompressionAlgorithm::ZSTD {
+                    self.add_certificate_compression_algorithm(
+                        ZstdCertificateCompressor::default(),
+                    )?;
                 }
             }
         }
