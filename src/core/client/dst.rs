@@ -12,7 +12,7 @@ use crate::{
         RequestProxyMatcher,
     },
     proxy::Intercepted,
-    tls::AlpnProtos,
+    tls::AlpnProtocol,
 };
 
 /// Destination of the request.
@@ -61,8 +61,10 @@ impl Dst {
         let version = RequestConfig::<RequestHttpVersionPref>::remove(extensions);
 
         let alpn = match version {
-            Some(Version::HTTP_11 | Version::HTTP_10 | Version::HTTP_09) => Some(AlpnProtos::HTTP1),
-            Some(Version::HTTP_2) => Some(AlpnProtos::HTTP2),
+            Some(Version::HTTP_11 | Version::HTTP_10 | Version::HTTP_09) => {
+                Some(AlpnProtocol::HTTP1)
+            }
+            Some(Version::HTTP_2) => Some(AlpnProtocol::HTTP2),
             _ => None,
         };
 
@@ -103,13 +105,13 @@ impl Dst {
     }
 
     #[inline(always)]
-    pub(crate) fn alpn_protos(&self) -> Option<AlpnProtos> {
+    pub(crate) fn alpn_protos(&self) -> Option<AlpnProtocol> {
         self.0.1
     }
 
     #[inline(always)]
     pub(crate) fn only_http2(&self) -> bool {
-        self.0.1 == Some(AlpnProtos::HTTP2)
+        self.0.1 == Some(AlpnProtocol::HTTP2)
     }
 
     #[inline(always)]

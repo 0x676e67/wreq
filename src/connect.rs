@@ -34,7 +34,7 @@ use crate::{
     proxy::{Intercepted, Matcher as ProxyMatcher},
     tls::{
         CertStore, HttpsConnector, Identity, KeyLogPolicy, MaybeHttpsStream, TlsConfig,
-        TlsConnector, TlsConnectorBuilder,
+        TlsConnector, TlsConnectorBuilder, TlsVersion,
     },
 };
 
@@ -166,10 +166,38 @@ impl ConnectorBuilder {
         self
     }
 
+    /// Set the nodelay flag for the connector.
+    #[inline(always)]
+    pub(crate) fn nodelay(mut self, enabled: bool) -> ConnectorBuilder {
+        self.nodelay = enabled;
+        self.http.set_nodelay(enabled);
+        self
+    }
+
     /// Set connecting verbose mode.
     #[inline(always)]
     pub(crate) fn verbose(mut self, enabled: bool) -> ConnectorBuilder {
         self.verbose.0 = enabled;
+        self
+    }
+
+    /// Sets the maximum TLS version to be used.
+    #[inline(always)]
+    pub(crate) fn tls_max_version<T>(mut self, version: T) -> ConnectorBuilder
+    where
+        T: Into<Option<TlsVersion>>,
+    {
+        self.tls_builder = self.tls_builder.max_version(version);
+        self
+    }
+
+    /// Sets the minimum TLS version to be used.
+    #[inline(always)]
+    pub(crate) fn tls_min_version<T>(mut self, version: T) -> ConnectorBuilder
+    where
+        T: Into<Option<TlsVersion>>,
+    {
+        self.tls_builder = self.tls_builder.min_version(version);
         self
     }
 
@@ -180,6 +208,13 @@ impl ConnectorBuilder {
         keylog_policy: Option<KeyLogPolicy>,
     ) -> ConnectorBuilder {
         self.tls_builder = self.tls_builder.keylog(keylog_policy);
+        self
+    }
+
+    /// Sets the TLS info flag.
+    #[inline(always)]
+    pub(crate) fn tls_info(mut self, enabled: bool) -> ConnectorBuilder {
+        self.tls_info = enabled;
         self
     }
 
@@ -236,7 +271,7 @@ impl ConnectorBuilder {
             #[cfg(feature = "socks")]
             resolver: self.resolver,
             tls_info: self.tls_info,
-            tls_builder: self.tls_builder,
+            tls_builder: Arc::new(self.tls_builder),
         };
 
         if let Some(layers) = layers {
@@ -297,9 +332,7 @@ pub(crate) enum Connector {
 
 impl Connector {
     pub(crate) fn builder(
-        tls_info: bool,
         proxies: Arc<Vec<ProxyMatcher>>,
-        nodelay: bool,
         resolver: DynResolver,
     ) -> ConnectorBuilder {
         ConnectorBuilder {
@@ -314,10 +347,10 @@ impl Connector {
             proxies,
             verbose: verbose::OFF,
             timeout: None,
-            nodelay,
+            nodelay: false,
 
             // TLS connector and its configuration
-            tls_info,
+            tls_info: false,
             tls_builder: TlsConnector::builder(),
         }
     }
@@ -365,7 +398,7 @@ pub(crate) struct ConnectorService {
     // in the `TlsConnector` that is built from it.
     tls_info: bool,
     #[allow(unused)]
-    tls_builder: TlsConnectorBuilder,
+    tls_builder: Arc<TlsConnectorBuilder>,
 }
 
 impl ConnectorService {

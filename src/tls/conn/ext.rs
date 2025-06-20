@@ -6,7 +6,7 @@ use boring2::{
 };
 
 use crate::tls::{
-    AlpsProtos, CertStore, CertificateCompressionAlgorithm, Identity,
+    ApplicationProtocol, CertStore, CertificateCompressionAlgorithm, Identity,
     conn::cert_compressor::{
         BrotliCertificateCompressor, ZlibCertificateCompressor, ZstdCertificateCompressor,
     },
@@ -35,7 +35,7 @@ pub trait ConnectConfigurationExt {
     /// Configure the ALPS for the given `ConnectConfiguration`.
     fn alps_protos(
         &mut self,
-        alps: Option<AlpsProtos>,
+        alps: Option<ApplicationProtocol>,
         new_endpoint: bool,
     ) -> Result<&mut ConnectConfiguration, ErrorStack>;
 
@@ -109,7 +109,7 @@ impl ConnectConfigurationExt for ConnectConfiguration {
     #[inline]
     fn alps_protos(
         &mut self,
-        alps: Option<AlpsProtos>,
+        alps: Option<ApplicationProtocol>,
         new_endpoint: bool,
     ) -> Result<&mut ConnectConfiguration, ErrorStack> {
         if let Some(alps) = alps {

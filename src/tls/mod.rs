@@ -4,12 +4,15 @@
 //!
 //! - Various parts of TLS can also be configured or even disabled on the `ClientBuilder`.
 
+#[macro_use]
+mod macros;
 mod config;
 mod conn;
 mod keylog;
 mod x509;
 
 pub use boring2::ssl::ExtensionType;
+use bytes::{BufMut, Bytes, BytesMut};
 
 pub(crate) use self::conn::{HttpsConnector, MaybeHttpsStream, TlsConnector, TlsConnectorBuilder};
 pub use self::{
@@ -22,64 +25,105 @@ pub use self::{
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TlsVersion(boring2::ssl::SslVersion);
 
-// These could perhaps be From/TryFrom implementations, but those would be
-// part of the public API so let's be careful
 impl TlsVersion {
     /// Version 1.0 of the TLS protocol.
     pub const TLS_1_0: TlsVersion = TlsVersion(boring2::ssl::SslVersion::TLS1);
+
     /// Version 1.1 of the TLS protocol.
     pub const TLS_1_1: TlsVersion = TlsVersion(boring2::ssl::SslVersion::TLS1_1);
+
     /// Version 1.2 of the TLS protocol.
     pub const TLS_1_2: TlsVersion = TlsVersion(boring2::ssl::SslVersion::TLS1_2);
+
     /// Version 1.3 of the TLS protocol.
     pub const TLS_1_3: TlsVersion = TlsVersion(boring2::ssl::SslVersion::TLS1_3);
 }
 
 /// A TLS ALPN protocol.
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
-pub struct AlpnProtos(&'static [u8]);
+pub struct AlpnProtocol(&'static [u8]);
 
-/// A `AlpnProtos` is used to set the HTTP version preference.
-impl AlpnProtos {
+impl AlpnProtocol {
+    const _HTTP1: [u8; 8] = *b"http/1.1";
+    const _HTTP2: [u8; 2] = *b"h2";
+    const _HTTP3: [u8; 2] = *b"h3";
+
     /// Prefer HTTP/1.1
-    pub const HTTP1: AlpnProtos = AlpnProtos(b"\x08http/1.1");
+    pub const HTTP1: AlpnProtocol = AlpnProtocol(&AlpnProtocol::_HTTP1);
+
     /// Prefer HTTP/2
-    pub const HTTP2: AlpnProtos = AlpnProtos(b"\x02h2");
-    /// Prefer HTTP/1 and HTTP/2
-    pub const ALL: AlpnProtos = AlpnProtos(b"\x02h2\x08http/1.1");
+    pub const HTTP2: AlpnProtocol = AlpnProtocol(&AlpnProtocol::_HTTP2);
+
+    /// Prefer HTTP/3
+    pub const HTTP3: AlpnProtocol = AlpnProtocol(&AlpnProtocol::_HTTP3);
 }
 
-impl Default for AlpnProtos {
+impl AlpnProtocol {
+    pub(crate) fn encode(alpns: &[Self]) -> Bytes {
+        let total_len: usize = alpns.iter().map(|alpn| alpn.0.len() + 1).sum();
+        let mut buf = BytesMut::with_capacity(total_len);
+
+        for alpn in alpns {
+            let b = alpn.0;
+            buf.put_u8(b.len() as u8);
+            buf.extend_from_slice(b);
+        }
+
+        buf.freeze()
+    }
+}
+
+impl Default for AlpnProtocol {
     fn default() -> Self {
-        Self::ALL
+        const DEFAULT: [u8; 12] = concat_array!(
+            [AlpnProtocol::_HTTP2.len() as u8],
+            AlpnProtocol::_HTTP2,
+            [AlpnProtocol::_HTTP1.len() as u8],
+            AlpnProtocol::_HTTP1
+        );
+        AlpnProtocol(&DEFAULT)
+    }
+}
+
+impl From<AlpnProtocol> for Bytes {
+    #[inline(always)]
+    fn from(alpn: AlpnProtocol) -> Self {
+        Bytes::from_static(alpn.0)
     }
 }
 
 /// Application-layer protocol settings for HTTP/1.1 and HTTP/2.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct AlpsProtos(&'static [u8]);
+pub struct ApplicationProtocol(&'static [u8]);
 
-impl AlpsProtos {
+impl ApplicationProtocol {
     /// Application Settings protocol for HTTP/1.1
-    pub const HTTP1: AlpsProtos = AlpsProtos(b"http/1.1");
+    pub const HTTP1: ApplicationProtocol = ApplicationProtocol(b"http/1.1");
+
     /// Application Settings protocol for HTTP/2
-    pub const HTTP2: AlpsProtos = AlpsProtos(b"h2");
+    pub const HTTP2: ApplicationProtocol = ApplicationProtocol(b"h2");
+
     /// Application Settings protocol for HTTP/3
-    pub const HTTP3: AlpsProtos = AlpsProtos(b"h3");
+    pub const HTTP3: ApplicationProtocol = ApplicationProtocol(b"h3");
 }
 
 /// IANA assigned identifier of compression algorithm.
 /// See https://www.rfc-editor.org/rfc/rfc8879.html#name-compression-algorithms
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
-pub struct CertificateCompressionAlgorithm(());
+pub struct CertificateCompressionAlgorithm(boring2::ssl::CertificateCompressionAlgorithm);
 
 impl CertificateCompressionAlgorithm {
     /// Zlib compression algorithm.
-    pub const ZLIB: CertificateCompressionAlgorithm = CertificateCompressionAlgorithm(());
+    pub const ZLIB: CertificateCompressionAlgorithm =
+        CertificateCompressionAlgorithm(boring2::ssl::CertificateCompressionAlgorithm::ZLIB);
+
     /// Brotli compression algorithm.
-    pub const BROTLI: CertificateCompressionAlgorithm = CertificateCompressionAlgorithm(());
+    pub const BROTLI: CertificateCompressionAlgorithm =
+        CertificateCompressionAlgorithm(boring2::ssl::CertificateCompressionAlgorithm::BROTLI);
+
     /// Zstd compression algorithm.
-    pub const ZSTD: CertificateCompressionAlgorithm = CertificateCompressionAlgorithm(());
+    pub const ZSTD: CertificateCompressionAlgorithm =
+        CertificateCompressionAlgorithm(boring2::ssl::CertificateCompressionAlgorithm::ZSTD);
 }
 
 /// Hyper extension carrying extra TLS layer information.

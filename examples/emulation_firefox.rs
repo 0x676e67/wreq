@@ -7,8 +7,7 @@ use wreq::{
         StreamDependency, StreamId,
     },
     tls::{
-        AlpnProtos, AlpsProtos, CertificateCompressionAlgorithm, ExtensionType, TlsConfig,
-        TlsVersion,
+        ApplicationProtocol, CertificateCompressionAlgorithm, ExtensionType, TlsConfig, TlsVersion,
     },
 };
 
@@ -84,8 +83,7 @@ async fn main() -> wreq::Result<()> {
         .record_size_limit(0x4001)
         .pre_shared_key(true)
         .enable_ech_grease(true)
-        .alpn_protos(AlpnProtos::ALL)
-        .alps_protos(AlpsProtos::HTTP2)
+        .alps_protos(ApplicationProtocol::HTTP2)
         .min_tls_version(TlsVersion::TLS_1_0)
         .max_tls_version(TlsVersion::TLS_1_3)
         .prefer_chacha20(true)

@@ -67,7 +67,9 @@ use crate::{
     into_url::try_uri,
     proxy::Matcher as ProxyMatcher,
     redirect::{self, RedirectPolicy},
-    tls::{AlpnProtos, CertStore, CertificateInput, Identity, KeyLogPolicy, TlsConfig, TlsVersion},
+    tls::{
+        AlpnProtocol, CertStore, CertificateInput, Identity, KeyLogPolicy, TlsConfig, TlsVersion,
+    },
 };
 
 #[cfg(not(any(
@@ -126,6 +128,14 @@ pub struct ClientBuilder {
     config: Config,
 }
 
+/// The HTTP version preference for the client.
+#[repr(u8)]
+enum HttpVersionPref {
+    Http1,
+    Http2,
+    All,
+}
+
 struct Config {
     error: Option<Error>,
     headers: HeaderMap,
@@ -175,6 +185,7 @@ struct Config {
     hickory_dns: bool,
     dns_overrides: HashMap<String, Vec<SocketAddr>>,
     dns_resolver: Option<Arc<dyn Resolve>>,
+    http_version_pref: HttpVersionPref,
     https_only: bool,
     http1_config: Http1Config,
     http2_config: Http2Config,
@@ -182,7 +193,6 @@ struct Config {
     request_layers: Option<Vec<BoxedClientServiceLayer>>,
     connector_layers: Option<Vec<BoxedConnectorLayer>>,
     builder: Builder,
-    tls_alpn_protos: Option<AlpnProtos>,
     tls_keylog_policy: Option<KeyLogPolicy>,
     tls_info: bool,
     tls_sni: bool,
@@ -258,6 +268,7 @@ impl ClientBuilder {
                 cookie_store: None,
                 dns_overrides: HashMap::new(),
                 dns_resolver: None,
+                http_version_pref: HttpVersionPref::All,
                 builder: HyperClient::builder(TokioExecutor::new()),
                 https_only: false,
                 http1_config: Http1Config::default(),
@@ -265,7 +276,6 @@ impl ClientBuilder {
                 http2_max_retry: 2,
                 request_layers: None,
                 connector_layers: None,
-                tls_alpn_protos: None,
                 tls_keylog_policy: None,
                 tls_info: false,
                 tls_sni: true,
@@ -307,7 +317,7 @@ impl ClientBuilder {
             .builder
             .http1_config(config.http1_config)
             .http2_config(config.http2_config)
-            .http2_only(matches!(config.tls_alpn_protos, Some(AlpnProtos::HTTP2)))
+            .http2_only(matches!(config.http_version_pref, HttpVersionPref::Http2))
             .http2_timer(TokioTimer::new())
             .pool_timer(TokioTimer::new())
             .pool_idle_timeout(config.pool_idle_timeout)
@@ -334,21 +344,29 @@ impl ClientBuilder {
                 DynResolver::new(resolver)
             };
 
-            config.tls_config.alpn_protos = config
-                .tls_alpn_protos
-                .unwrap_or(config.tls_config.alpn_protos);
-            config.tls_config.min_tls_version =
-                config.min_tls_version.or(config.tls_config.min_tls_version);
-            config.tls_config.max_tls_version =
-                config.max_tls_version.or(config.tls_config.max_tls_version);
+            match config.http_version_pref {
+                HttpVersionPref::Http1 => {
+                    config.tls_config.alpn_protos =
+                        Some(AlpnProtocol::encode(&[AlpnProtocol::HTTP1]));
+                }
+                HttpVersionPref::Http2 => {
+                    config.tls_config.alpn_protos =
+                        Some(AlpnProtocol::encode(&[AlpnProtocol::HTTP2]));
+                }
+                _ => {}
+            }
 
-            Connector::builder(config.tls_info, proxies.clone(), config.nodelay, resolver)
+            Connector::builder(proxies.clone(), resolver)
                 .connect_timeout(config.connect_timeout)
                 .keepalive(config.tcp_keepalive)
                 .tcp_keepalive_interval(config.tcp_keepalive_interval)
                 .tcp_keepalive_retries(config.tcp_keepalive_retries)
                 .local_addresses(config.local_ipv4_address, config.local_ipv6_address)
+                .nodelay(config.nodelay)
                 .verbose(config.connection_verbose)
+                .tls_max_version(config.max_tls_version)
+                .tls_min_version(config.min_tls_version)
+                .tls_info(config.tls_info)
                 .tls_sni(config.tls_sni)
                 .tls_verify_hostname(config.tls_verify_hostname)
                 .tls_cert_verification(config.tls_cert_verification)
@@ -878,13 +896,13 @@ impl ClientBuilder {
 
     /// Only use HTTP/1.
     pub fn http1_only(mut self) -> ClientBuilder {
-        self.config.tls_alpn_protos = Some(AlpnProtos::HTTP1);
+        self.config.http_version_pref = HttpVersionPref::Http1;
         self
     }
 
     /// Only use HTTP/2.
     pub fn http2_only(mut self) -> ClientBuilder {
-        self.config.tls_alpn_protos = Some(AlpnProtos::HTTP2);
+        self.config.http_version_pref = HttpVersionPref::Http2;
         self
     }
 

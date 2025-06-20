@@ -33,7 +33,7 @@ use crate::{
         rt::{Read, TokioIo, Write},
     },
     error::BoxError,
-    tls::{CertStore, Identity, KeyLogPolicy, TlsConfig},
+    tls::{CertStore, Identity, KeyLogPolicy, TlsConfig, TlsVersion},
 };
 
 type SslCallback = Arc<dyn Fn(&mut SslRef, &Uri) -> Result<(), ErrorStack> + Sync + Send>;
@@ -139,6 +139,8 @@ where
 #[derive(Clone)]
 pub struct TlsConnectorBuilder {
     keylog_policy: Option<KeyLogPolicy>,
+    max_version: Option<TlsVersion>,
+    min_version: Option<TlsVersion>,
     tls_sni: bool,
     verify_hostname: bool,
     identity: Option<Identity>,
@@ -192,6 +194,26 @@ impl TlsConnectorBuilder {
         self
     }
 
+    /// Sets the minimum TLS version to use.
+    #[inline(always)]
+    pub fn min_version<T>(mut self, version: T) -> Self
+    where
+        T: Into<Option<TlsVersion>>,
+    {
+        self.min_version = version.into();
+        self
+    }
+
+    /// Sets the maximum TLS version to use.
+    #[inline(always)]
+    pub fn max_version<T>(mut self, version: T) -> Self
+    where
+        T: Into<Option<TlsVersion>>,
+    {
+        self.max_version = version.into();
+        self
+    }
+
     /// Sets the Server Name Indication (SNI) flag.
     #[inline(always)]
     pub fn tls_sni(mut self, enabled: bool) -> Self {
@@ -207,7 +229,11 @@ impl TlsConnectorBuilder {
     }
 
     /// Build the `TlsConnector` with the provided configuration.
-    pub fn build(self, config: TlsConfig) -> crate::Result<TlsConnector> {
+    pub fn build(self, mut config: TlsConfig) -> crate::Result<TlsConnector> {
+        // Replace the default configuration with the provided one
+        config.max_tls_version = config.max_tls_version.or(self.max_version);
+        config.min_tls_version = config.min_tls_version.or(self.min_version);
+
         let mut connector = SslConnector::no_default_verify_builder(SslMethod::tls_client())?
             .cert_store(self.cert_store)?
             .cert_verification(self.cert_verification)?
@@ -266,9 +292,6 @@ impl TlsConnectorBuilder {
         // Set TLS grease options
         set_option!(config, grease_enabled, connector, set_grease_enabled);
 
-        // Set TLS ALPN protocols
-        set_inner_try!(config, alpn_protos, connector, set_alpn_protos);
-
         // Set TLS permute extensions options
         set_option!(
             config,
@@ -277,17 +300,20 @@ impl TlsConnectorBuilder {
             set_permute_extensions
         );
 
+        // Set TLS ALPN protocols
+        set_option_ref_try!(config, alpn_protos, connector, set_alpn_protos);
+
         // Set TLS curves list
-        set_option_ref_try!(config, curves_list, connector, set_curves_list);
+        set_option_deref_try!(config, curves_list, connector, set_curves_list);
 
         // Set TLS signature algorithms list
-        set_option_ref_try!(config, sigalgs_list, connector, set_sigalgs_list);
+        set_option_deref_try!(config, sigalgs_list, connector, set_sigalgs_list);
 
         // Set TLS cipher list
-        set_option_ref_try!(config, cipher_list, connector, set_cipher_list);
+        set_option_deref_try!(config, cipher_list, connector, set_cipher_list);
 
         // Set TLS delegated credentials
-        set_option_ref_try!(
+        set_option_deref_try!(
             config,
             delegated_credentials,
             connector,
@@ -301,7 +327,7 @@ impl TlsConnectorBuilder {
         set_option!(config, key_shares_limit, connector, set_key_shares_limit);
 
         // Set TLS extension permutation
-        set_option_ref_try!(
+        set_option_deref_try!(
             config,
             extension_permutation,
             connector,
@@ -374,6 +400,8 @@ impl TlsConnector {
             identity: None,
             cert_store: None,
             cert_verification: true,
+            min_version: None,
+            max_version: None,
             tls_sni: true,
             verify_hostname: true,
         }

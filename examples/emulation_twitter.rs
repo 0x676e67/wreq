@@ -2,7 +2,7 @@ use http::{HeaderMap, HeaderValue, header};
 use wreq::{
     Client, EmulationProvider, OriginalHeaders,
     http2::{Http2Config, PseudoId, PseudoOrder},
-    tls::{AlpnProtos, TlsConfig, TlsVersion},
+    tls::{TlsConfig, TlsVersion},
 };
 
 macro_rules! join {
@@ -44,7 +44,6 @@ async fn main() -> wreq::Result<()> {
             "rsa_pkcs1_sha512",
             "rsa_pkcs1_sha1"
         ))
-        .alpn_protos(AlpnProtos::ALL)
         .enable_ocsp_stapling(true)
         .min_tls_version(TlsVersion::TLS_1_2)
         .max_tls_version(TlsVersion::TLS_1_3)

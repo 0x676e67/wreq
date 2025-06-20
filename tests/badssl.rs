@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use wreq::{
     Client, EmulationProvider,
-    tls::{AlpsProtos, TlsConfig, TlsInfo, TlsVersion},
+    tls::{ApplicationProtocol, TlsConfig, TlsInfo, TlsVersion},
 };
 
 macro_rules! join {
@@ -133,7 +133,7 @@ async fn test_alps_new_endpoint() -> wreq::Result<()> {
             TlsConfig::builder()
                 .min_tls_version(TlsVersion::TLS_1_2)
                 .max_tls_version(TlsVersion::TLS_1_3)
-                .alps_protos(AlpsProtos::HTTP2)
+                .alps_protos(ApplicationProtocol::HTTP2)
                 .alps_use_new_codepoint(true)
                 .build(),
         )

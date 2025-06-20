@@ -46,7 +46,7 @@ use crate::{
         rt::Timer,
     },
     proxy::Intercepted,
-    tls::AlpnProtos,
+    tls::AlpnProtocol,
 };
 
 type BoxSendFuture = Pin<Box<dyn Future<Output = ()> + Send>>;
@@ -135,7 +135,7 @@ macro_rules! e {
 // We might change this... :shrug:
 type PoolKey = (
     Uri,
-    Option<AlpnProtos>,
+    Option<AlpnProtocol>,
     Option<Ipv4Addr>,
     Option<Ipv6Addr>,
     Option<Cow<'static, str>>,
