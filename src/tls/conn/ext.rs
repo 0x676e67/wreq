@@ -86,7 +86,7 @@ impl SslConnectorBuilderExt for SslConnectorBuilder {
                         ZlibCertificateCompressor::default(),
                     )?;
                 }
-                
+
                 if algorithm == &CertificateCompressionAlgorithm::BROTLI {
                     self.add_certificate_compression_algorithm(
                         BrotliCertificateCompressor::default(),
