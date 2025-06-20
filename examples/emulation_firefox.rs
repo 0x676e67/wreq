@@ -6,97 +6,17 @@ use wreq::{
         Http2Config, Priorities, Priority, PseudoId, PseudoOrder, SettingId, SettingsOrder,
         StreamDependency, StreamId,
     },
-    tls::{AlpnProtos, AlpsProtos, CertCompressionAlgorithm, ExtensionType, TlsConfig, TlsVersion},
+    tls::{
+        AlpnProtos, AlpsProtos, CertificateCompressionAlgorithm, ExtensionType, TlsConfig,
+        TlsVersion,
+    },
 };
-
-// ============== TLS Extension Algorithms ==============
 
 macro_rules! join {
     ($sep:expr, $first:expr $(, $rest:expr)*) => {
         concat!($first $(, $sep, $rest)*)
     };
 }
-
-const CURVES_LIST: &str = join!(
-    ":",
-    "X25519",
-    "P-256",
-    "P-384",
-    "P-521",
-    "ffdhe2048",
-    "ffdhe3072"
-);
-
-const CIPHER_LIST: &str = join!(
-    ":",
-    "TLS_AES_128_GCM_SHA256",
-    "TLS_CHACHA20_POLY1305_SHA256",
-    "TLS_AES_256_GCM_SHA384",
-    "TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256",
-    "TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256",
-    "TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256",
-    "TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256",
-    "TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384",
-    "TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384",
-    "TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA",
-    "TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA",
-    "TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA",
-    "TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA",
-    "TLS_RSA_WITH_AES_128_GCM_SHA256",
-    "TLS_RSA_WITH_AES_256_GCM_SHA384",
-    "TLS_RSA_WITH_AES_128_CBC_SHA",
-    "TLS_RSA_WITH_AES_256_CBC_SHA"
-);
-
-const SIGALGS_LIST: &str = join!(
-    ":",
-    "ecdsa_secp256r1_sha256",
-    "ecdsa_secp384r1_sha384",
-    "ecdsa_secp521r1_sha512",
-    "rsa_pss_rsae_sha256",
-    "rsa_pss_rsae_sha384",
-    "rsa_pss_rsae_sha512",
-    "rsa_pkcs1_sha256",
-    "rsa_pkcs1_sha384",
-    "rsa_pkcs1_sha512",
-    "ecdsa_sha1",
-    "rsa_pkcs1_sha1"
-);
-
-const CERT_COMPRESSION_ALGORITHM: &[CertCompressionAlgorithm] = &[
-    CertCompressionAlgorithm::Zlib,
-    CertCompressionAlgorithm::Brotli,
-    CertCompressionAlgorithm::Zstd,
-];
-
-const DELEGATED_CREDENTIALS: &str = join!(
-    ":",
-    "ecdsa_secp256r1_sha256",
-    "ecdsa_secp384r1_sha384",
-    "ecdsa_secp521r1_sha512",
-    "ecdsa_sha1"
-);
-
-const RECORD_SIZE_LIMIT: u16 = 0x4001;
-
-const EXTENSION_PERMUTATION: &[ExtensionType] = &[
-    ExtensionType::SERVER_NAME,
-    ExtensionType::EXTENDED_MASTER_SECRET,
-    ExtensionType::RENEGOTIATE,
-    ExtensionType::SUPPORTED_GROUPS,
-    ExtensionType::EC_POINT_FORMATS,
-    ExtensionType::SESSION_TICKET,
-    ExtensionType::APPLICATION_LAYER_PROTOCOL_NEGOTIATION,
-    ExtensionType::STATUS_REQUEST,
-    ExtensionType::DELEGATED_CREDENTIAL,
-    ExtensionType::KEY_SHARE,
-    ExtensionType::SUPPORTED_VERSIONS,
-    ExtensionType::SIGNATURE_ALGORITHMS,
-    ExtensionType::PSK_KEY_EXCHANGE_MODES,
-    ExtensionType::RECORD_SIZE_LIMIT,
-    ExtensionType::CERT_COMPRESSION,
-    ExtensionType::ENCRYPTED_CLIENT_HELLO,
-];
 
 #[tokio::main]
 async fn main() -> wreq::Result<()> {
@@ -106,12 +26,62 @@ async fn main() -> wreq::Result<()> {
 
     // TLS config
     let tls = TlsConfig::builder()
-        .curves_list(CURVES_LIST)
-        .cipher_list(CIPHER_LIST)
-        .sigalgs_list(SIGALGS_LIST)
-        .delegated_credentials(DELEGATED_CREDENTIALS)
-        .cert_compression_algorithm(CERT_COMPRESSION_ALGORITHM)
-        .record_size_limit(RECORD_SIZE_LIMIT)
+        .curves_list(join!(
+            ":",
+            "X25519",
+            "P-256",
+            "P-384",
+            "P-521",
+            "ffdhe2048",
+            "ffdhe3072"
+        ))
+        .cipher_list(join!(
+            ":",
+            "TLS_AES_128_GCM_SHA256",
+            "TLS_CHACHA20_POLY1305_SHA256",
+            "TLS_AES_256_GCM_SHA384",
+            "TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256",
+            "TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256",
+            "TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256",
+            "TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256",
+            "TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384",
+            "TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384",
+            "TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA",
+            "TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA",
+            "TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA",
+            "TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA",
+            "TLS_RSA_WITH_AES_128_GCM_SHA256",
+            "TLS_RSA_WITH_AES_256_GCM_SHA384",
+            "TLS_RSA_WITH_AES_128_CBC_SHA",
+            "TLS_RSA_WITH_AES_256_CBC_SHA"
+        ))
+        .sigalgs_list(join!(
+            ":",
+            "ecdsa_secp256r1_sha256",
+            "ecdsa_secp384r1_sha384",
+            "ecdsa_secp521r1_sha512",
+            "rsa_pss_rsae_sha256",
+            "rsa_pss_rsae_sha384",
+            "rsa_pss_rsae_sha512",
+            "rsa_pkcs1_sha256",
+            "rsa_pkcs1_sha384",
+            "rsa_pkcs1_sha512",
+            "ecdsa_sha1",
+            "rsa_pkcs1_sha1"
+        ))
+        .delegated_credentials(join!(
+            ":",
+            "ecdsa_secp256r1_sha256",
+            "ecdsa_secp384r1_sha384",
+            "ecdsa_secp521r1_sha512",
+            "ecdsa_sha1"
+        ))
+        .certificate_compression_algorithms(&[
+            CertificateCompressionAlgorithm::ZLIB,
+            CertificateCompressionAlgorithm::BROTLI,
+            CertificateCompressionAlgorithm::ZSTD,
+        ])
+        .record_size_limit(0x4001)
         .pre_shared_key(true)
         .enable_ech_grease(true)
         .alpn_protos(AlpnProtos::ALL)
@@ -119,8 +89,26 @@ async fn main() -> wreq::Result<()> {
         .min_tls_version(TlsVersion::TLS_1_0)
         .max_tls_version(TlsVersion::TLS_1_3)
         .prefer_chacha20(true)
+        .aes_hw_override(false)
         .random_aes_hw_override(true)
-        .extension_permutation(EXTENSION_PERMUTATION)
+        .extension_permutation(&[
+            ExtensionType::SERVER_NAME,
+            ExtensionType::EXTENDED_MASTER_SECRET,
+            ExtensionType::RENEGOTIATE,
+            ExtensionType::SUPPORTED_GROUPS,
+            ExtensionType::EC_POINT_FORMATS,
+            ExtensionType::SESSION_TICKET,
+            ExtensionType::APPLICATION_LAYER_PROTOCOL_NEGOTIATION,
+            ExtensionType::STATUS_REQUEST,
+            ExtensionType::DELEGATED_CREDENTIAL,
+            ExtensionType::KEY_SHARE,
+            ExtensionType::SUPPORTED_VERSIONS,
+            ExtensionType::SIGNATURE_ALGORITHMS,
+            ExtensionType::PSK_KEY_EXCHANGE_MODES,
+            ExtensionType::RECORD_SIZE_LIMIT,
+            ExtensionType::CERT_COMPRESSION,
+            ExtensionType::ENCRYPTED_CLIENT_HELLO,
+        ])
         .build();
 
     // HTTP/1 config

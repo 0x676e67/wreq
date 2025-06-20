@@ -1,41 +1,33 @@
-use std::io::Write;
+use std::io::{self, Result, Write};
 
-use flate2::Compression;
+use boring2::ssl::{CertificateCompressionAlgorithm, CertificateCompressor};
+use flate2::{Compression, read::ZlibDecoder, write::ZlibEncoder};
 
-pub struct ZlibCertificateCompressor {
-    level: u32,
-}
+#[derive(Debug, Clone, Default)]
+#[non_exhaustive]
+pub struct ZlibCertificateCompressor;
 
-impl Default for ZlibCertificateCompressor {
-    fn default() -> Self {
-        Self { level: 6 }
-    }
-}
-
-impl boring2::ssl::CertificateCompressor for ZlibCertificateCompressor {
-    const ALGORITHM: boring2::ssl::CertificateCompressionAlgorithm =
-        boring2::ssl::CertificateCompressionAlgorithm::ZLIB;
-
+impl CertificateCompressor for ZlibCertificateCompressor {
+    const ALGORITHM: CertificateCompressionAlgorithm = CertificateCompressionAlgorithm::ZLIB;
     const CAN_COMPRESS: bool = true;
-
     const CAN_DECOMPRESS: bool = true;
 
-    fn compress<W>(&self, input: &[u8], output: &mut W) -> std::io::Result<()>
+    fn compress<W>(&self, input: &[u8], output: &mut W) -> Result<()>
     where
-        W: std::io::Write,
+        W: Write,
     {
-        let mut encoder = flate2::write::ZlibEncoder::new(output, Compression::new(self.level));
+        let mut encoder = ZlibEncoder::new(output, Compression::default());
         encoder.write_all(input)?;
         encoder.finish()?;
         Ok(())
     }
 
-    fn decompress<W>(&self, input: &[u8], output: &mut W) -> std::io::Result<()>
+    fn decompress<W>(&self, input: &[u8], output: &mut W) -> Result<()>
     where
-        W: std::io::Write,
+        W: Write,
     {
-        let mut decoder = flate2::read::ZlibDecoder::new(input);
-        std::io::copy(&mut decoder, output)?;
+        let mut decoder = ZlibDecoder::new(input);
+        io::copy(&mut decoder, output)?;
         Ok(())
     }
 }

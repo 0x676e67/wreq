@@ -212,7 +212,7 @@ impl TlsConnectorBuilder {
             .cert_store(self.cert_store)?
             .cert_verification(self.cert_verification)?
             .identity(self.identity)?
-            .cert_compression_algorithm(config.cert_compression_algorithm)?;
+            .certificate_compression_algorithms(config.certificate_compression_algorithms)?;
 
         // Set minimum TLS version
         set_option_inner_try!(config, min_tls_version, connector, set_min_proto_version);

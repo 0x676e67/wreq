@@ -3,7 +3,7 @@ use std::borrow::Cow;
 use boring2::ssl::ExtensionType;
 
 use super::{AlpnProtos, AlpsProtos, TlsVersion};
-use crate::tls::CertCompressionAlgorithm;
+use crate::tls::CertificateCompressionAlgorithm;
 
 /// Builder for `[`TlsConfig`]`.
 #[must_use]
@@ -38,7 +38,8 @@ pub struct TlsConfig {
     pub(crate) curves_list: Option<Cow<'static, str>>,
     pub(crate) cipher_list: Option<Cow<'static, str>>,
     pub(crate) sigalgs_list: Option<Cow<'static, str>>,
-    pub(crate) cert_compression_algorithm: Option<Cow<'static, [CertCompressionAlgorithm]>>,
+    pub(crate) certificate_compression_algorithms:
+        Option<Cow<'static, [CertificateCompressionAlgorithm]>>,
     pub(crate) extension_permutation: Option<Cow<'static, [ExtensionType]>>,
     pub(crate) aes_hw_override: Option<bool>,
     pub(crate) prefer_chacha20: Option<bool>,
@@ -207,11 +208,11 @@ impl TlsConfigBuilder {
     }
 
     /// Sets the certificate compression algorithms.
-    pub fn cert_compression_algorithm<T>(mut self, algs: T) -> Self
+    pub fn certificate_compression_algorithms<T>(mut self, algs: T) -> Self
     where
-        T: Into<Cow<'static, [CertCompressionAlgorithm]>>,
+        T: Into<Cow<'static, [CertificateCompressionAlgorithm]>>,
     {
-        self.config.cert_compression_algorithm = Some(algs.into());
+        self.config.certificate_compression_algorithms = Some(algs.into());
         self
     }
 
@@ -286,7 +287,7 @@ impl Default for TlsConfig {
             curves_list: None,
             cipher_list: None,
             sigalgs_list: None,
-            cert_compression_algorithm: None,
+            certificate_compression_algorithms: None,
             extension_permutation: None,
             aes_hw_override: None,
             prefer_chacha20: None,

@@ -1,41 +1,49 @@
-use std::io::Write;
+use std::io::{self, Read, Result, Write};
 
-use boring2::ssl::CertificateCompressor;
+use boring2::ssl::{CertificateCompressionAlgorithm, CertificateCompressor};
+use zstd::stream::{Decoder, Encoder};
 
-pub struct ZstdCertificateCompressor {
-    level: i32,
-}
-
-impl Default for ZstdCertificateCompressor {
-    fn default() -> Self {
-        Self { level: 3 }
-    }
-}
+#[derive(Debug, Clone, Default)]
+#[non_exhaustive]
+pub struct ZstdCertificateCompressor;
 
 impl CertificateCompressor for ZstdCertificateCompressor {
-    const ALGORITHM: boring2::ssl::CertificateCompressionAlgorithm =
-        boring2::ssl::CertificateCompressionAlgorithm::ZSTD;
-
+    const ALGORITHM: CertificateCompressionAlgorithm = CertificateCompressionAlgorithm::ZSTD;
     const CAN_COMPRESS: bool = true;
-
     const CAN_DECOMPRESS: bool = true;
 
-    fn compress<W>(&self, input: &[u8], output: &mut W) -> std::io::Result<()>
+    fn compress<W>(&self, input: &[u8], output: &mut W) -> Result<()>
     where
-        W: std::io::Write,
+        W: Write,
     {
-        let mut writer = zstd::stream::Encoder::new(output, self.level)?;
+        let mut writer = Encoder::new(output, 0)?;
         writer.write_all(input)?;
-        writer.finish()?;
+        writer.flush()?;
         Ok(())
     }
 
-    fn decompress<W>(&self, input: &[u8], output: &mut W) -> std::io::Result<()>
+    fn decompress<W>(&self, input: &[u8], output: &mut W) -> Result<()>
     where
-        W: std::io::Write,
+        W: Write,
     {
-        let mut reader = zstd::stream::Decoder::new(input)?;
-        std::io::copy(&mut reader, output)?;
+        let mut reader = Decoder::new(input)?;
+        let mut buf = [0u8; 4096];
+        loop {
+            match reader.read(&mut buf[..]) {
+                Err(e) => {
+                    if let io::ErrorKind::Interrupted = e.kind() {
+                        continue;
+                    }
+                    return Err(e);
+                }
+                Ok(size) => {
+                    if size == 0 {
+                        break;
+                    }
+                    output.write_all(&buf[..size])?;
+                }
+            }
+        }
         Ok(())
     }
 }

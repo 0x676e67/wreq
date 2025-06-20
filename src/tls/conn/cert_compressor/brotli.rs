@@ -1,39 +1,49 @@
-use std::io::Write;
+use std::io::{self, Read, Result, Write};
 
 use boring2::ssl::{CertificateCompressionAlgorithm, CertificateCompressor};
+use brotli::{CompressorWriter, Decompressor};
 
-pub struct BrotliCertificateCompressor {
-    q: u32,
-    lgwin: u32,
-}
-
-impl Default for BrotliCertificateCompressor {
-    fn default() -> Self {
-        Self { q: 11, lgwin: 32 }
-    }
-}
+#[derive(Debug, Clone, Default)]
+#[non_exhaustive]
+pub struct BrotliCertificateCompressor;
 
 impl CertificateCompressor for BrotliCertificateCompressor {
     const ALGORITHM: CertificateCompressionAlgorithm = CertificateCompressionAlgorithm::BROTLI;
-
     const CAN_COMPRESS: bool = true;
-
     const CAN_DECOMPRESS: bool = true;
 
-    fn compress<W>(&self, input: &[u8], output: &mut W) -> std::io::Result<()>
+    fn compress<W>(&self, input: &[u8], output: &mut W) -> Result<()>
     where
-        W: std::io::Write,
+        W: Write,
     {
-        let mut writer = brotli::CompressorWriter::new(output, 1024, self.q, self.lgwin);
+        let mut writer = CompressorWriter::new(output, input.len(), 11, 22);
         writer.write_all(input)?;
+        writer.flush()?;
         Ok(())
     }
 
-    fn decompress<W>(&self, input: &[u8], output: &mut W) -> std::io::Result<()>
+    fn decompress<W>(&self, input: &[u8], output: &mut W) -> Result<()>
     where
-        W: std::io::Write,
+        W: Write,
     {
-        brotli::BrotliDecompress(&mut std::io::Cursor::new(input), output)?;
+        let mut reader = Decompressor::new(input, 4096);
+        let mut buf = [0u8; 4096];
+        loop {
+            match reader.read(&mut buf[..]) {
+                Err(e) => {
+                    if let io::ErrorKind::Interrupted = e.kind() {
+                        continue;
+                    }
+                    return Err(e);
+                }
+                Ok(size) => {
+                    if size == 0 {
+                        break;
+                    }
+                    output.write_all(&buf[..size])?;
+                }
+            }
+        }
         Ok(())
     }
 }
