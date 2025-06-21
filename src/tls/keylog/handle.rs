@@ -56,7 +56,8 @@ impl KeyLogHandle {
     }
 
     /// Write a line to the keylogger.
-    pub fn write_log_line(&self, line: String) {
+    pub fn write_log_line(&self, line: &str) {
+        let line = format!("{}\n", line);
         if let Err(_err) = self.sender.send(line) {
             error!(
                 file = ?self.filepath,

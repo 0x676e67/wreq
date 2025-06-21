@@ -27,14 +27,6 @@ macro_rules! set_option_ref_try {
     };
 }
 
-macro_rules! set_option_deref_try {
-    ($cfg:expr, $field:ident, $conn:expr, $setter:ident) => {
-        if let Some(val) = $cfg.$field.as_deref() {
-            $conn.$setter(val)?;
-        }
-    };
-}
-
 macro_rules! set_option_inner_try {
     ($cfg:expr, $field:ident, $conn:expr, $setter:ident) => {
         $conn.$setter($cfg.$field.map(|v| v.0))?;
