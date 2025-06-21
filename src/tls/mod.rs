@@ -44,22 +44,18 @@ impl TlsVersion {
 pub struct AlpnProtocol(&'static [u8]);
 
 impl AlpnProtocol {
-    const _HTTP1: [u8; 8] = *b"http/1.1";
-    const _HTTP2: [u8; 2] = *b"h2";
-    const _HTTP3: [u8; 2] = *b"h3";
-
     /// Prefer HTTP/1.1
-    pub const HTTP1: AlpnProtocol = AlpnProtocol(&AlpnProtocol::_HTTP1);
+    pub const HTTP1: AlpnProtocol = AlpnProtocol(b"http/1.1");
 
     /// Prefer HTTP/2
-    pub const HTTP2: AlpnProtocol = AlpnProtocol(&AlpnProtocol::_HTTP2);
+    pub const HTTP2: AlpnProtocol = AlpnProtocol(b"h2");
 
     /// Prefer HTTP/3
-    pub const HTTP3: AlpnProtocol = AlpnProtocol(&AlpnProtocol::_HTTP3);
+    pub const HTTP3: AlpnProtocol = AlpnProtocol(b"h3");
 }
 
 impl AlpnProtocol {
-    pub(crate) fn encode_wire_format<'a, I>(alpn: I) -> Bytes
+    pub(crate) fn encode_sequence<'a, I>(alpn: I) -> Bytes
     where
         I: IntoIterator<Item = &'a AlpnProtocol>,
     {
@@ -74,10 +70,7 @@ impl AlpnProtocol {
     }
 
     pub(crate) fn encode(self) -> Bytes {
-        let mut buf = BytesMut::with_capacity(self.0.len());
-        buf.put_u8(self.0.len() as u8);
-        buf.extend_from_slice(self.0);
-        buf.freeze()
+        Self::encode_sequence(std::iter::once(&self))
     }
 }
 
@@ -97,7 +90,7 @@ impl AlpsProtocol {
 }
 
 impl AlpsProtocol {
-    pub(crate) fn encode_wire_format<'a, I>(alps: I) -> Bytes
+    pub(crate) fn encode_sequence<'a, I>(alps: I) -> Bytes
     where
         I: IntoIterator<Item = &'a AlpsProtocol>,
     {
@@ -149,19 +142,19 @@ mod tests {
 
     #[test]
     fn alpn_protocol_encode() {
-        let alpn = AlpnProtocol::encode_wire_format(&[AlpnProtocol::HTTP1, AlpnProtocol::HTTP2]);
+        let alpn = AlpnProtocol::encode_sequence(&[AlpnProtocol::HTTP1, AlpnProtocol::HTTP2]);
         assert_eq!(alpn, Bytes::from_static(b"\x08http/1.1\x02h2"));
 
-        let alpn = AlpnProtocol::encode_wire_format(&[AlpnProtocol::HTTP3]);
+        let alpn = AlpnProtocol::encode_sequence(&[AlpnProtocol::HTTP3]);
         assert_eq!(alpn, Bytes::from_static(b"\x02h3"));
 
-        let alpn = AlpnProtocol::encode_wire_format(&[AlpnProtocol::HTTP1, AlpnProtocol::HTTP3]);
+        let alpn = AlpnProtocol::encode_sequence(&[AlpnProtocol::HTTP1, AlpnProtocol::HTTP3]);
         assert_eq!(alpn, Bytes::from_static(b"\x08http/1.1\x02h3"));
 
-        let alpn = AlpnProtocol::encode_wire_format(&[AlpnProtocol::HTTP2, AlpnProtocol::HTTP3]);
+        let alpn = AlpnProtocol::encode_sequence(&[AlpnProtocol::HTTP2, AlpnProtocol::HTTP3]);
         assert_eq!(alpn, Bytes::from_static(b"\x02h2\x02h3"));
 
-        let alpn = AlpnProtocol::encode_wire_format(&[
+        let alpn = AlpnProtocol::encode_sequence(&[
             AlpnProtocol::HTTP1,
             AlpnProtocol::HTTP2,
             AlpnProtocol::HTTP3,

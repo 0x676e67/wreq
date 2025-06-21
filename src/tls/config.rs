@@ -58,7 +58,7 @@ impl TlsConfigBuilder {
     where
         I: IntoIterator<Item = &'a AlpnProtocol>,
     {
-        self.config.alpn_protos = Some(AlpnProtocol::encode_wire_format(alpn));
+        self.config.alpn_protos = Some(AlpnProtocol::encode_sequence(alpn));
         self
     }
 
@@ -67,7 +67,7 @@ impl TlsConfigBuilder {
     where
         I: IntoIterator<Item = &'a AlpsProtocol>,
     {
-        self.config.alps_protos = Some(AlpsProtocol::encode_wire_format(alps));
+        self.config.alps_protos = Some(AlpsProtocol::encode_sequence(alps));
         self
     }
 
@@ -270,7 +270,7 @@ impl TlsConfig {
 impl Default for TlsConfig {
     fn default() -> Self {
         TlsConfig {
-            alpn_protos: Some(AlpnProtocol::encode_wire_format(&[
+            alpn_protos: Some(AlpnProtocol::encode_sequence(&[
                 AlpnProtocol::HTTP2,
                 AlpnProtocol::HTTP1,
             ])),
