@@ -46,39 +46,40 @@ pub struct AlpnProtocol(&'static [u8]);
 impl AlpnProtocol {
     /// Prefer HTTP/1.1
     pub const HTTP1: AlpnProtocol = {
-        const _ENC_HTTP1: [u8; 9] = encode_alpns!(*b"http/1.1");
-        AlpnProtocol(&_ENC_HTTP1)
+        const ENC_HTTP1: [u8; 9] = encode_alpns!(*b"http/1.1");
+        AlpnProtocol(&ENC_HTTP1)
     };
 
     /// Prefer HTTP/2
     pub const HTTP2: AlpnProtocol = {
-        const _ENC_HTTP2: [u8; 3] = encode_alpns!(*b"h2");
-        AlpnProtocol(&_ENC_HTTP2)
+        const ENC_HTTP2: [u8; 3] = encode_alpns!(*b"h2");
+        AlpnProtocol(&ENC_HTTP2)
     };
 
     /// Prefer HTTP/3
     pub const HTTP3: AlpnProtocol = {
-        const _ENC_HTTP3: [u8; 3] = encode_alpns!(*b"h3");
-        AlpnProtocol(&_ENC_HTTP3)
+        const ENC_HTTP3: [u8; 3] = encode_alpns!(*b"h3");
+        AlpnProtocol(&ENC_HTTP3)
     };
-}
 
-impl AlpnProtocol {
-    pub(crate) const fn encode(self) -> Bytes {
+    #[inline(always)]
+    pub(crate) fn encode(self) -> Bytes {
         Bytes::from_static(self.0)
     }
 
-    pub(crate) fn encode_sequence<'a, I>(alpn: I) -> Bytes
+    #[inline(always)]
+    pub(crate) fn encode_sequence<'a, I>(items: I) -> Bytes
     where
         I: IntoIterator<Item = &'a AlpnProtocol>,
     {
-        let mut buf = BytesMut::new();
-        for alpn in alpn.into_iter() {
-            let b = alpn.0;
-            buf.extend_from_slice(b);
-        }
+        encode_sequence(items)
+    }
+}
 
-        buf.freeze()
+impl AsRef<[u8]> for AlpnProtocol {
+    #[inline(always)]
+    fn as_ref(&self) -> &[u8] {
+        self.0
     }
 }
 
@@ -95,19 +96,20 @@ impl AlpsProtocol {
 
     /// Application Settings protocol for HTTP/3
     pub const HTTP3: AlpsProtocol = AlpsProtocol(b"h3");
-}
 
-impl AlpsProtocol {
+    #[inline(always)]
     pub(crate) fn encode_sequence<'a, I>(alps: I) -> Bytes
     where
         I: IntoIterator<Item = &'a AlpsProtocol>,
     {
-        let mut buf = BytesMut::new();
-        for alps in alps.into_iter() {
-            buf.extend_from_slice(alps.0);
-        }
+        encode_sequence(alps)
+    }
+}
 
-        buf.freeze()
+impl AsRef<[u8]> for AlpsProtocol {
+    #[inline(always)]
+    fn as_ref(&self) -> &[u8] {
+        self.0
     }
 }
 
@@ -142,6 +144,18 @@ impl TlsInfo {
     pub fn peer_certificate(&self) -> Option<&[u8]> {
         self.peer_certificate.as_ref().map(|der| &der[..])
     }
+}
+
+fn encode_sequence<'a, T, I>(items: I) -> Bytes
+where
+    T: AsRef<[u8]> + 'a,
+    I: IntoIterator<Item = &'a T>,
+{
+    let mut buf = BytesMut::new();
+    for item in items {
+        buf.extend_from_slice(item.as_ref());
+    }
+    buf.freeze()
 }
 
 #[cfg(test)]
