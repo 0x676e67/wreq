@@ -12,7 +12,7 @@ mod keylog;
 mod x509;
 
 pub use boring2::ssl::ExtensionType;
-use bytes::{BufMut, Bytes, BytesMut};
+use bytes::{Bytes, BytesMut};
 
 pub(crate) use self::conn::{HttpsConnector, MaybeHttpsStream, TlsConnector, TlsConnectorBuilder};
 pub use self::{
@@ -45,16 +45,29 @@ pub struct AlpnProtocol(&'static [u8]);
 
 impl AlpnProtocol {
     /// Prefer HTTP/1.1
-    pub const HTTP1: AlpnProtocol = AlpnProtocol(b"http/1.1");
+    pub const HTTP1: AlpnProtocol = {
+        const _ENC_HTTP1: [u8; 9] = encode_alpns!(*b"http/1.1");
+        AlpnProtocol(&_ENC_HTTP1)
+    };
 
     /// Prefer HTTP/2
-    pub const HTTP2: AlpnProtocol = AlpnProtocol(b"h2");
+    pub const HTTP2: AlpnProtocol = {
+        const _ENC_HTTP2: [u8; 3] = encode_alpns!(*b"h2");
+        AlpnProtocol(&_ENC_HTTP2)
+    };
 
     /// Prefer HTTP/3
-    pub const HTTP3: AlpnProtocol = AlpnProtocol(b"h3");
+    pub const HTTP3: AlpnProtocol = {
+        const _ENC_HTTP3: [u8; 3] = encode_alpns!(*b"h3");
+        AlpnProtocol(&_ENC_HTTP3)
+    };
 }
 
 impl AlpnProtocol {
+    pub(crate) const fn encode(self) -> Bytes {
+        Bytes::from_static(self.0)
+    }
+
     pub(crate) fn encode_sequence<'a, I>(alpn: I) -> Bytes
     where
         I: IntoIterator<Item = &'a AlpnProtocol>,
@@ -62,15 +75,10 @@ impl AlpnProtocol {
         let mut buf = BytesMut::new();
         for alpn in alpn.into_iter() {
             let b = alpn.0;
-            buf.put_u8(b.len() as u8);
             buf.extend_from_slice(b);
         }
 
         buf.freeze()
-    }
-
-    pub(crate) fn encode(self) -> Bytes {
-        Self::encode_sequence(std::iter::once(&self))
     }
 }
 

@@ -78,6 +78,10 @@ async fn main() -> wreq::Result<()> {
         );
         headers.insert(header::ACCEPT, HeaderValue::from_static("application/json"));
         headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+        headers.insert(
+            header::COOKIE,
+            HeaderValue::from_static("ct0=YOUR_CT0_VALUE;"),
+        );
         headers
     };
 
@@ -109,7 +113,7 @@ async fn main() -> wreq::Result<()> {
         .build()?;
 
     // Use the API you're already familiar with
-    let resp = client.get("https://tls.peet.ws/api/all").send().await?;
+    let resp = client.post("https://tls.peet.ws/api/all").send().await?;
     println!("{}", resp.text().await?);
 
     Ok(())
