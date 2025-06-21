@@ -346,12 +346,10 @@ impl ClientBuilder {
 
             match config.http_version_pref {
                 HttpVersionPref::Http1 => {
-                    config.tls_config.alpn_protos =
-                        Some(AlpnProtocol::encode(&[AlpnProtocol::HTTP1]));
+                    config.tls_config.alpn_protos = Some(AlpnProtocol::HTTP1.encode());
                 }
                 HttpVersionPref::Http2 => {
-                    config.tls_config.alpn_protos =
-                        Some(AlpnProtocol::encode(&[AlpnProtocol::HTTP2]));
+                    config.tls_config.alpn_protos = Some(AlpnProtocol::HTTP2.encode());
                 }
                 _ => {}
             }

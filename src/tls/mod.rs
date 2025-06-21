@@ -59,11 +59,12 @@ impl AlpnProtocol {
 }
 
 impl AlpnProtocol {
-    pub(crate) fn encode(alpns: &[Self]) -> Bytes {
-        let total_len: usize = alpns.iter().map(|alpn| alpn.0.len() + 1).sum();
-        let mut buf = BytesMut::with_capacity(total_len);
-
-        for alpn in alpns {
+    pub(crate) fn encode_wire_format<'a, I>(alpn: I) -> Bytes
+    where
+        I: IntoIterator<Item = &'a AlpnProtocol>,
+    {
+        let mut buf = BytesMut::new();
+        for alpn in alpn.into_iter() {
             let b = alpn.0;
             buf.put_u8(b.len() as u8);
             buf.extend_from_slice(b);
@@ -71,40 +72,42 @@ impl AlpnProtocol {
 
         buf.freeze()
     }
-}
 
-impl Default for AlpnProtocol {
-    fn default() -> Self {
-        const DEFAULT: [u8; 12] = concat_array!(
-            [AlpnProtocol::_HTTP2.len() as u8],
-            AlpnProtocol::_HTTP2,
-            [AlpnProtocol::_HTTP1.len() as u8],
-            AlpnProtocol::_HTTP1
-        );
-        AlpnProtocol(&DEFAULT)
-    }
-}
-
-impl From<AlpnProtocol> for Bytes {
-    #[inline(always)]
-    fn from(alpn: AlpnProtocol) -> Self {
-        Bytes::from_static(alpn.0)
+    pub(crate) fn encode(self) -> Bytes {
+        let mut buf = BytesMut::with_capacity(self.0.len());
+        buf.put_u8(self.0.len() as u8);
+        buf.extend_from_slice(self.0);
+        buf.freeze()
     }
 }
 
 /// Application-layer protocol settings for HTTP/1.1 and HTTP/2.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ApplicationProtocol(&'static [u8]);
+pub struct AlpsProtocol(&'static [u8]);
 
-impl ApplicationProtocol {
+impl AlpsProtocol {
     /// Application Settings protocol for HTTP/1.1
-    pub const HTTP1: ApplicationProtocol = ApplicationProtocol(b"http/1.1");
+    pub const HTTP1: AlpsProtocol = AlpsProtocol(b"http/1.1");
 
     /// Application Settings protocol for HTTP/2
-    pub const HTTP2: ApplicationProtocol = ApplicationProtocol(b"h2");
+    pub const HTTP2: AlpsProtocol = AlpsProtocol(b"h2");
 
     /// Application Settings protocol for HTTP/3
-    pub const HTTP3: ApplicationProtocol = ApplicationProtocol(b"h3");
+    pub const HTTP3: AlpsProtocol = AlpsProtocol(b"h3");
+}
+
+impl AlpsProtocol {
+    pub(crate) fn encode_wire_format<'a, I>(alps: I) -> Bytes
+    where
+        I: IntoIterator<Item = &'a AlpsProtocol>,
+    {
+        let mut buf = BytesMut::new();
+        for alps in alps.into_iter() {
+            buf.extend_from_slice(alps.0);
+        }
+
+        buf.freeze()
+    }
 }
 
 /// IANA assigned identifier of compression algorithm.
@@ -137,5 +140,44 @@ impl TlsInfo {
     /// Get the DER encoded leaf certificate of the peer.
     pub fn peer_certificate(&self) -> Option<&[u8]> {
         self.peer_certificate.as_ref().map(|der| &der[..])
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn alpn_protocol_encode() {
+        let alpn = AlpnProtocol::encode_wire_format(&[AlpnProtocol::HTTP1, AlpnProtocol::HTTP2]);
+        assert_eq!(alpn, Bytes::from_static(b"\x08http/1.1\x02h2"));
+
+        let alpn = AlpnProtocol::encode_wire_format(&[AlpnProtocol::HTTP3]);
+        assert_eq!(alpn, Bytes::from_static(b"\x02h3"));
+
+        let alpn = AlpnProtocol::encode_wire_format(&[AlpnProtocol::HTTP1, AlpnProtocol::HTTP3]);
+        assert_eq!(alpn, Bytes::from_static(b"\x08http/1.1\x02h3"));
+
+        let alpn = AlpnProtocol::encode_wire_format(&[AlpnProtocol::HTTP2, AlpnProtocol::HTTP3]);
+        assert_eq!(alpn, Bytes::from_static(b"\x02h2\x02h3"));
+
+        let alpn = AlpnProtocol::encode_wire_format(&[
+            AlpnProtocol::HTTP1,
+            AlpnProtocol::HTTP2,
+            AlpnProtocol::HTTP3,
+        ]);
+        assert_eq!(alpn, Bytes::from_static(b"\x08http/1.1\x02h2\x02h3"));
+    }
+
+    #[test]
+    fn alpn_protocol_encode_single() {
+        let alpn = AlpnProtocol::HTTP1.encode();
+        assert_eq!(alpn, b"\x08http/1.1".as_ref());
+
+        let alpn = AlpnProtocol::HTTP2.encode();
+        assert_eq!(alpn, b"\x02h2".as_ref());
+
+        let alpn = AlpnProtocol::HTTP3.encode();
+        assert_eq!(alpn, b"\x02h3".as_ref());
     }
 }

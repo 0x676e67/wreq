@@ -79,12 +79,10 @@ impl HttpsConnector<HttpConnector> {
         let alpn_protos = dst.alpn_protos();
         let mut connector = HttpsConnector::with_connector(http, connector);
         connector.set_ssl_callback(move |ssl, _| {
-            let alpn = match alpn_protos {
-                Some(alpn) => alpn.0,
-                None => return Ok(()),
-            };
-
-            ssl.set_alpn_protos(alpn)
+            if let Some(alpn) = alpn_protos {
+                ssl.set_alpn_protos(&alpn.encode())?;
+            }
+            Ok(())
         });
 
         connector
@@ -436,7 +434,10 @@ impl Inner {
         cfg.set_random_aes_hw_override(self.config.random_aes_hw_override);
 
         // Set ALPS protos
-        cfg.alps_protos(self.config.alps_protos, self.config.alps_use_new_codepoint)?;
+        cfg.alps_protos(
+            self.config.alps_protos.clone(),
+            self.config.alps_use_new_codepoint,
+        )?;
 
         if let Some(authority) = uri.authority() {
             let key = SessionKey(authority.clone());

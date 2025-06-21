@@ -2,7 +2,7 @@ use http::{HeaderMap, HeaderValue, header};
 use wreq::{
     Client, EmulationProvider, OriginalHeaders,
     http2::{Http2Config, PseudoId, PseudoOrder},
-    tls::{TlsConfig, TlsVersion},
+    tls::{AlpnProtocol, TlsConfig, TlsVersion},
 };
 
 macro_rules! join {
@@ -19,6 +19,7 @@ async fn main() -> wreq::Result<()> {
 
     // TLS config
     let tls = TlsConfig::builder()
+        .enable_ocsp_stapling(true)
         .curves_list(join!(":", "X25519", "P-256", "P-384"))
         .cipher_list(join!(
             ":",
@@ -44,7 +45,7 @@ async fn main() -> wreq::Result<()> {
             "rsa_pkcs1_sha512",
             "rsa_pkcs1_sha1"
         ))
-        .enable_ocsp_stapling(true)
+        .alpn_protos(&[AlpnProtocol::HTTP2, AlpnProtocol::HTTP1])
         .min_tls_version(TlsVersion::TLS_1_2)
         .max_tls_version(TlsVersion::TLS_1_3)
         .build();

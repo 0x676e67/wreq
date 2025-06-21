@@ -6,9 +6,7 @@ use wreq::{
         Http2Config, Priorities, Priority, PseudoId, PseudoOrder, SettingId, SettingsOrder,
         StreamDependency, StreamId,
     },
-    tls::{
-        ApplicationProtocol, CertificateCompressionAlgorithm, ExtensionType, TlsConfig, TlsVersion,
-    },
+    tls::{AlpnProtocol, CertificateCompressionAlgorithm, ExtensionType, TlsConfig, TlsVersion},
 };
 
 macro_rules! join {
@@ -80,10 +78,10 @@ async fn main() -> wreq::Result<()> {
             CertificateCompressionAlgorithm::BROTLI,
             CertificateCompressionAlgorithm::ZSTD,
         ])
+        .alpn_protos(&[AlpnProtocol::HTTP2, AlpnProtocol::HTTP1])
         .record_size_limit(0x4001)
         .pre_shared_key(true)
         .enable_ech_grease(true)
-        .alps_protos(ApplicationProtocol::HTTP2)
         .min_tls_version(TlsVersion::TLS_1_0)
         .max_tls_version(TlsVersion::TLS_1_3)
         .prefer_chacha20(true)

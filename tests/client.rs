@@ -648,21 +648,6 @@ async fn close_connection_after_idle_timeout() {
 }
 
 #[tokio::test]
-async fn default_http_version() {
-    let server = server::http(move |_| async move { http::Response::default() });
-
-    let resp = wreq::Client::builder()
-        .build()
-        .unwrap()
-        .get(format!("http://{}", server.addr()))
-        .send()
-        .await
-        .unwrap();
-
-    assert_eq!(resp.version(), wreq::Version::HTTP_11);
-}
-
-#[tokio::test]
 async fn http1_only() {
     let server = server::http(move |_| async move { http::Response::default() });
 

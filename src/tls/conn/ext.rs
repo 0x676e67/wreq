@@ -4,9 +4,10 @@ use boring2::{
     error::ErrorStack,
     ssl::{ConnectConfiguration, SslConnectorBuilder, SslVerifyMode},
 };
+use bytes::Bytes;
 
 use crate::tls::{
-    ApplicationProtocol, CertStore, CertificateCompressionAlgorithm, Identity,
+    CertStore, CertificateCompressionAlgorithm, Identity,
     conn::cert_compressor::{
         BrotliCertificateCompressor, ZlibCertificateCompressor, ZstdCertificateCompressor,
     },
@@ -35,8 +36,8 @@ pub trait ConnectConfigurationExt {
     /// Configure the ALPS for the given `ConnectConfiguration`.
     fn alps_protos(
         &mut self,
-        alps: Option<ApplicationProtocol>,
-        new_endpoint: bool,
+        alps: Option<Bytes>,
+        use_new_codepoint: bool,
     ) -> Result<&mut ConnectConfiguration, ErrorStack>;
 
     /// Configure the random aes hardware override for the given `ConnectConfiguration`.
@@ -109,15 +110,15 @@ impl ConnectConfigurationExt for ConnectConfiguration {
     #[inline]
     fn alps_protos(
         &mut self,
-        alps: Option<ApplicationProtocol>,
-        new_endpoint: bool,
+        alps: Option<Bytes>,
+        use_new_codepoint: bool,
     ) -> Result<&mut ConnectConfiguration, ErrorStack> {
         if let Some(alps) = alps {
-            self.add_application_settings(alps.0)?;
+            self.add_application_settings(&alps)?;
 
             // By default, the old endpoint is used. Avoid unnecessary FFI calls.
-            if new_endpoint {
-                self.set_alps_use_new_codepoint(new_endpoint);
+            if use_new_codepoint {
+                self.set_alps_use_new_codepoint(use_new_codepoint);
             }
         }
 

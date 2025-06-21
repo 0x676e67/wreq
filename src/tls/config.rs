@@ -3,7 +3,7 @@ use std::borrow::Cow;
 use boring2::ssl::ExtensionType;
 use bytes::Bytes;
 
-use super::{AlpnProtocol, ApplicationProtocol, TlsVersion};
+use super::{AlpnProtocol, AlpsProtocol, TlsVersion};
 use crate::tls::CertificateCompressionAlgorithm;
 
 /// Builder for `[`TlsConfig`]`.
@@ -19,7 +19,7 @@ pub struct TlsConfigBuilder {
 #[derive(Debug, Clone)]
 pub struct TlsConfig {
     pub(crate) alpn_protos: Option<Bytes>,
-    pub(crate) alps_protos: Option<ApplicationProtocol>,
+    pub(crate) alps_protos: Option<Bytes>,
     pub(crate) alps_use_new_codepoint: bool,
     pub(crate) session_ticket: bool,
     pub(crate) min_tls_version: Option<TlsVersion>,
@@ -54,17 +54,20 @@ impl TlsConfigBuilder {
     }
 
     /// Sets the ALPN protocols to use.
-    pub fn alpn_protos(mut self, alpn: &[AlpnProtocol]) -> Self {
-        self.config.alpn_protos = Some(AlpnProtocol::encode(alpn));
+    pub fn alpn_protos<'a, I>(mut self, alpn: I) -> Self
+    where
+        I: IntoIterator<Item = &'a AlpnProtocol>,
+    {
+        self.config.alpn_protos = Some(AlpnProtocol::encode_wire_format(alpn.into_iter()));
         self
     }
 
     /// Sets the ALPS protocols to use.
-    pub fn alps_protos<T>(mut self, protos: T) -> Self
+    pub fn alps_protos<'a, I>(mut self, alps: I) -> Self
     where
-        T: Into<Option<ApplicationProtocol>>,
+        I: IntoIterator<Item = &'a AlpsProtocol>,
     {
-        self.config.alps_protos = protos.into();
+        self.config.alps_protos = Some(AlpsProtocol::encode_wire_format(alps.into_iter()));
         self
     }
 
@@ -267,7 +270,10 @@ impl TlsConfig {
 impl Default for TlsConfig {
     fn default() -> Self {
         TlsConfig {
-            alpn_protos: Some(Bytes::from(AlpnProtocol::default())),
+            alpn_protos: Some(AlpnProtocol::encode_wire_format(&[
+                AlpnProtocol::HTTP2,
+                AlpnProtocol::HTTP1,
+            ])),
             alps_protos: None,
             alps_use_new_codepoint: false,
             session_ticket: true,

@@ -8,7 +8,7 @@ async fn main() -> wreq::Result<()> {
         .init();
 
     let resp = wreq::Client::new()
-        .get("http://google.com/")
+        .get("https://tls.peet.ws/api/all")
         .redirect(Policy::default())
         .version(Version::HTTP_11)
         .send()
