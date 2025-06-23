@@ -196,7 +196,7 @@ impl<T: Poolable, K: Key> Pool<T, K> {
             match value.reserve() {
                 Reservation::Shared(to_insert, to_return) => {
                     let mut inner = enabled.lock();
-                    inner.put(connecting.key.clone(), to_insert, enabled);
+                    inner.put(&connecting.key, to_insert, enabled);
                     // Do this here instead of Drop for Connecting because we
                     // already have a lock, no need to lock the mutex twice.
                     inner.connected(&connecting.key);
@@ -223,6 +223,7 @@ impl<T: Poolable, K: Key> Pool<T, K> {
 
             (value, WeakOpt::none())
         };
+
         Pooled {
             key: connecting.key.clone(),
             is_reused: false,
@@ -306,15 +307,15 @@ impl<'a, T: Poolable + 'a, K: Debug> IdlePopper<'a, T, K> {
 }
 
 impl<T: Poolable, K: Key> PoolInner<T, K> {
-    fn put(&mut self, key: K, value: T, __pool_ref: &Arc<Mutex<PoolInner<T, K>>>) {
-        if value.can_share() && self.idle.get(&key).is_some() {
+    fn put(&mut self, key: &K, value: T, __pool_ref: &Arc<Mutex<PoolInner<T, K>>>) {
+        if value.can_share() && self.idle.get(key).is_some() {
             trace!("put; existing idle HTTP/2 connection for {:?}", key);
             return;
         }
         trace!("put; add idle connection for {:?}", key);
         let mut remove_waiters = false;
         let mut value = Some(value);
-        if let Some(waiters) = self.waiters.get_mut(&key) {
+        if let Some(waiters) = self.waiters.get_mut(key) {
             while let Some(tx) = waiters.pop_front() {
                 if !tx.is_closed() {
                     let reserved = value.take().expect("value already sent");
@@ -343,8 +344,9 @@ impl<T: Poolable, K: Key> PoolInner<T, K> {
             }
             remove_waiters = waiters.is_empty();
         }
+
         if remove_waiters {
-            self.waiters.remove(&key);
+            self.waiters.remove(key);
         }
 
         if let Some(value) = value {
@@ -528,7 +530,7 @@ impl<T: Poolable, K: Key> Drop for Pooled<T, K> {
 
             if let Some(pool) = self.pool.upgrade() {
                 let mut inner = pool.lock();
-                inner.put(self.key.clone(), value, &pool);
+                inner.put(&self.key, value, &pool);
             } else if !value.can_share() {
                 trace!("pool dropped, dropping pooled ({:?})", self.key);
             }
