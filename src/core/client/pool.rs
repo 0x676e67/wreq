@@ -132,11 +132,11 @@ impl<T, K: Key> Pool<T, K> {
         };
         let inner = if config.is_enabled() {
             Some(Arc::new(Mutex::new(PoolInner {
-                connecting: HashSet::with_hasher(ahash::RandomState::default()),
+                connecting: HashSet::default(),
                 idle,
                 idle_interval_ref: None,
                 max_idle_per_host: config.max_idle_per_host,
-                waiters: HashMap::with_hasher(ahash::RandomState::default()),
+                waiters: HashMap::default(),
                 exec,
                 timer,
                 timeout: config.idle_timeout,

@@ -49,8 +49,8 @@ pub struct SessionCache {
 impl SessionCache {
     pub fn with_capacity(per_key_session_capacity: usize) -> SessionCache {
         SessionCache {
-            sessions: HashMap::with_hasher(RandomState::default()),
-            reverse: HashMap::with_hasher(RandomState::default()),
+            sessions: HashMap::default(),
+            reverse: HashMap::default(),
             per_key_session_capacity,
         }
     }
