@@ -16,6 +16,7 @@ use crate::{
         middleware::{self},
     },
     error::BoxError,
+    into_url::IntoUrlSealed,
 };
 
 type ResponseFuture = Oneshot<
@@ -79,7 +80,7 @@ impl Future for Pending {
                     .extensions_mut()
                     .remove::<middleware::redirect::RequestUri>()
                 {
-                    *url = Url::parse(&uri.0.to_string()).map_err(Error::decode)?;
+                    *url = IntoUrlSealed::into_url(uri.0.to_string())?;
                 }
 
                 Poll::Ready(Ok(Response::new(res, url.clone())))

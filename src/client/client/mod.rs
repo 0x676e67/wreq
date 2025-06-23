@@ -16,7 +16,7 @@ use http::{
     Request as HttpRequest, Response as HttpResponse,
     header::{HeaderMap, HeaderValue, USER_AGENT},
 };
-use service::ClientService;
+use service::{ClientConfig, ClientService};
 use tower::{
     Layer, Service, ServiceBuilder,
     retry::RetryLayer,
@@ -58,6 +58,7 @@ use crate::{
     core::{
         body::Incoming,
         client::{Builder, Client as HyperClient},
+        ext::RequestConfig,
         rt::{TokioExecutor, tokio::TokioTimer},
     },
     dns::{DnsResolverWithOverrides, DynResolver, Resolve, gai::GaiResolver},
@@ -387,15 +388,18 @@ impl ClientBuilder {
         };
 
         let service = {
-            let service = ClientService::new(
-                config.builder.build(connector),
-                config.headers,
-                config.original_headers,
-                config.https_only,
-                proxies,
-                proxies_maybe_http_auth,
-                proxies_maybe_http_custom_headers,
-            );
+            let service = ClientService {
+                client: config.builder.build(connector),
+                config: Arc::new(ClientConfig {
+                    default_headers: config.headers,
+                    original_headers: RequestConfig::new(config.original_headers),
+                    skip_default_headers: RequestConfig::default(),
+                    https_only: config.https_only,
+                    proxies,
+                    proxies_maybe_http_auth,
+                    proxies_maybe_http_custom_headers,
+                }),
+            };
 
             #[cfg(any(
                 feature = "gzip",
@@ -1462,7 +1466,7 @@ impl Client {
                 let in_flight = Oneshot::new(self.inner.as_ref().clone(), req);
                 Pending::new(url, in_flight)
             }
-            Err(err) => return Pending::new_err(err),
+            Err(err) => Pending::new_err(err),
         }
     }
 }
