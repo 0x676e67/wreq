@@ -69,10 +69,6 @@ impl Error {
         Error::new(Kind::Builder, Some(BadScheme)).with_url(url)
     }
 
-    pub(crate) fn url_bad_uri(url: Url) -> Error {
-        Error::new(Kind::Builder, Some("url is not a valid uri")).with_url(url)
-    }
-
     pub(crate) fn uri_bad_host() -> Error {
         Error::new(Kind::Builder, Some("no host in url"))
     }
