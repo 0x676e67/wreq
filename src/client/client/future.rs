@@ -31,7 +31,7 @@ pin_project! {
     #[project = PendingProj]
     pub enum Pending {
         Request {
-            url: Url,
+            url: Option<Url>,
             #[pin]
             in_flight: ResponseFuture,
         },
@@ -59,7 +59,10 @@ pin_project! {
 impl Pending {
     #[inline(always)]
     pub(crate) fn new(url: Url, in_flight: ResponseFuture) -> Self {
-        Pending::Request { url, in_flight }
+        Pending::Request {
+            url: Some(url),
+            in_flight,
+        }
     }
 
     #[inline(always)]
@@ -74,34 +77,36 @@ impl Future for Pending {
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         match self.project() {
             PendingProj::Request { url, in_flight } => {
-                let mut res = {
-                    let r = in_flight.get_mut();
-                    match Pin::new(r).poll(cx) {
-                        Poll::Ready(Ok(res)) => res.map(body::boxed),
-                        Poll::Ready(Err(err)) => {
-                            let mut err = match err.downcast::<Error>() {
-                                Ok(err) => *err,
-                                Err(e) => Error::request(e),
-                            };
+                let mut take_url = || url.take().expect("Pending future should have a URL");
 
-                            if err.url().is_none() {
-                                err = err.with_url(url.clone());
-                            }
-
-                            return Poll::Ready(Err(err));
-                        }
-                        Poll::Pending => return Poll::Pending,
-                    }
+                let poll_result = {
+                    let fut = Pin::new(in_flight.get_mut());
+                    fut.poll(cx)
                 };
 
-                if let Some(uri) = res
-                    .extensions_mut()
-                    .remove::<middleware::redirect::RequestUri>()
-                {
-                    *url = IntoUrlSealed::into_url(uri.0.to_string())?;
+                let res = match poll_result {
+                    Poll::Ready(Ok(res)) => res.map(body::boxed),
+                    Poll::Ready(Err(err)) => {
+                        let mut err = match err.downcast::<Error>() {
+                            Ok(err) => *err,
+                            Err(e) => Error::request(e),
+                        };
+
+                        if err.url().is_none() {
+                            err = err.with_url(take_url());
+                        }
+
+                        return Poll::Ready(Err(err));
+                    }
+                    Poll::Pending => return Poll::Pending,
+                };
+
+                if let Some(uri) = res.extensions().get::<middleware::redirect::RequestUri>() {
+                    let url = IntoUrlSealed::into_url(uri.0.to_string())?;
+                    return Poll::Ready(Ok(Response::new(res, url)));
                 }
 
-                Poll::Ready(Ok(Response::new(res, url.clone())))
+                Poll::Ready(Ok(Response::new(res, take_url())))
             }
             PendingProj::Error { error } => Poll::Ready(Err(error
                 .take()
