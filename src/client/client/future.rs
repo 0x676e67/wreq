@@ -74,14 +74,7 @@ impl Future for Pending {
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         match self.project() {
             PendingProj::Request { url, in_flight } => {
-                let mut take_url = || url.take().expect("Pending future should have a URL");
-
-                let poll_result = {
-                    let fut = Pin::new(in_flight.get_mut());
-                    fut.poll(cx)
-                };
-
-                let res = match poll_result {
+                let res = match in_flight.poll(cx) {
                     Poll::Ready(Ok(res)) => res.map(body::boxed),
                     Poll::Ready(Err(err)) => {
                         let mut err = match err.downcast::<Error>() {
@@ -90,7 +83,9 @@ impl Future for Pending {
                         };
 
                         if err.url().is_none() {
-                            err = err.with_url(take_url());
+                            if let Some(url) = url.take() {
+                                err = err.with_url(url);
+                            }
                         }
 
                         return Poll::Ready(Err(err));
@@ -99,15 +94,22 @@ impl Future for Pending {
                 };
 
                 if let Some(uri) = res.extensions().get::<RequestUri>() {
-                    let url = IntoUrlSealed::into_url(uri.0.to_string())?;
-                    return Poll::Ready(Ok(Response::new(res, url)));
+                    *url = Some(IntoUrlSealed::into_url(uri.0.to_string())?);
                 }
 
-                Poll::Ready(Ok(Response::new(res, take_url())))
+                match url.take() {
+                    Some(url) => Poll::Ready(Ok(Response::new(res, url))),
+                    None => {
+                        Poll::Ready(Err(Error::builder("URL already taken in Pending::Request")))
+                    }
+                }
             }
-            PendingProj::Error { error } => Poll::Ready(Err(error
-                .take()
-                .expect("Error already taken in PendingInner::Error"))),
+            PendingProj::Error { error } => {
+                let err = error
+                    .take()
+                    .unwrap_or_else(|| Error::builder("Error already taken in Pending::Error"));
+                Poll::Ready(Err(err))
+            }
         }
     }
 }
@@ -139,12 +141,12 @@ impl Future for CorePending {
                     Poll::Pending => Poll::Pending,
                 }
             }
-            CorePendingProj::Error { error } => Poll::Ready(Err(error
-                .take()
-                .unwrap_or_else(|| {
-                    Error::builder("Pending future encountered an error without a specific error")
-                })
-                .into())),
+            CorePendingProj::Error { error } => {
+                let err = error
+                    .take()
+                    .unwrap_or_else(|| Error::builder("Error already taken in CorePending::Error"));
+                Poll::Ready(Err(err.into()))
+            }
         }
     }
 }
