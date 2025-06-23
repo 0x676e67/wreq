@@ -55,7 +55,9 @@ where
     T: AsRef<str> + sealed::Sealed,
 {
     fn into_url(self) -> crate::Result<Url> {
-        Url::parse(self.as_ref()).map_err(Error::builder)
+        Url::parse(self.as_ref())
+            .map_err(Error::builder)?
+            .into_url()
     }
 
     fn as_str(&self) -> &str {

@@ -375,82 +375,87 @@ impl TowerPolicy<Body, BoxError> for RedirectPolicy {
     }
 }
 
-#[test]
-fn test_redirect_policy_limit() {
-    let policy = Policy::default();
-    let next = Url::parse("http://x.y/z").unwrap();
-    let mut previous = (0..=9)
-        .map(|i| Url::parse(&format!("http://a.b/c/{i}")).unwrap())
-        .collect::<Vec<_>>();
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-    match policy.check(StatusCode::FOUND, &next, &previous) {
-        ActionKind::Follow => (),
-        other => panic!("unexpected {other:?}"),
-    }
+    #[test]
+    fn test_redirect_policy_limit() {
+        let policy = Policy::default();
+        let next = Url::parse("http://x.y/z").unwrap();
+        let mut previous = (0..=9)
+            .map(|i| Url::parse(&format!("http://a.b/c/{i}")).unwrap())
+            .collect::<Vec<_>>();
 
-    previous.push(Url::parse("http://a.b.d/e/33").unwrap());
-
-    match policy.check(StatusCode::FOUND, &next, &previous) {
-        ActionKind::Error(err) if err.is::<TooManyRedirects>() => (),
-        other => panic!("unexpected {other:?}"),
-    }
-}
-
-#[test]
-fn test_redirect_policy_limit_to_0() {
-    let policy = Policy::limited(0);
-    let next = Url::parse("http://x.y/z").unwrap();
-    let previous = vec![Url::parse("http://a.b/c").unwrap()];
-
-    match policy.check(StatusCode::FOUND, &next, &previous) {
-        ActionKind::Error(err) if err.is::<TooManyRedirects>() => (),
-        other => panic!("unexpected {other:?}"),
-    }
-}
-
-#[test]
-fn test_redirect_policy_custom() {
-    let policy = Policy::custom(|attempt| {
-        if attempt.url().host_str() == Some("foo") {
-            attempt.stop()
-        } else {
-            attempt.follow()
+        match policy.check(StatusCode::FOUND, &next, &previous) {
+            ActionKind::Follow => (),
+            other => panic!("unexpected {other:?}"),
         }
-    });
 
-    let next = Url::parse("http://bar/baz").unwrap();
-    match policy.check(StatusCode::FOUND, &next, &[]) {
-        ActionKind::Follow => (),
-        other => panic!("unexpected {other:?}"),
+        previous.push(Url::parse("http://a.b.d/e/33").unwrap());
+
+        match policy.check(StatusCode::FOUND, &next, &previous) {
+            ActionKind::Error(err) if err.is::<TooManyRedirects>() => (),
+            other => panic!("unexpected {other:?}"),
+        }
     }
 
-    let next = Url::parse("http://foo/baz").unwrap();
-    match policy.check(StatusCode::FOUND, &next, &[]) {
-        ActionKind::Stop => (),
-        other => panic!("unexpected {other:?}"),
+    #[test]
+    fn test_redirect_policy_limit_to_0() {
+        let policy = Policy::limited(0);
+        let next = Url::parse("http://x.y/z").unwrap();
+        let previous = vec![Url::parse("http://a.b/c").unwrap()];
+
+        match policy.check(StatusCode::FOUND, &next, &previous) {
+            ActionKind::Error(err) if err.is::<TooManyRedirects>() => (),
+            other => panic!("unexpected {other:?}"),
+        }
     }
-}
 
-#[test]
-fn test_remove_sensitive_headers() {
-    use hyper::header::{ACCEPT, AUTHORIZATION, COOKIE, HeaderValue};
+    #[test]
+    fn test_redirect_policy_custom() {
+        let policy = Policy::custom(|attempt| {
+            if attempt.url().host_str() == Some("foo") {
+                attempt.stop()
+            } else {
+                attempt.follow()
+            }
+        });
 
-    let mut headers = HeaderMap::new();
-    headers.insert(ACCEPT, HeaderValue::from_static("*/*"));
-    headers.insert(AUTHORIZATION, HeaderValue::from_static("let me in"));
-    headers.insert(COOKIE, HeaderValue::from_static("foo=bar"));
+        let next = Url::parse("http://bar/baz").unwrap();
+        match policy.check(StatusCode::FOUND, &next, &[]) {
+            ActionKind::Follow => (),
+            other => panic!("unexpected {other:?}"),
+        }
 
-    let next = Url::parse("http://initial-domain.com/path").unwrap();
-    let mut prev = vec![Url::parse("http://initial-domain.com/new_path").unwrap()];
-    let mut filtered_headers = headers.clone();
+        let next = Url::parse("http://foo/baz").unwrap();
+        match policy.check(StatusCode::FOUND, &next, &[]) {
+            ActionKind::Stop => (),
+            other => panic!("unexpected {other:?}"),
+        }
+    }
 
-    remove_sensitive_headers(&mut headers, &next, &prev);
-    assert_eq!(headers, filtered_headers);
+    #[test]
+    fn test_remove_sensitive_headers() {
+        use hyper::header::{ACCEPT, AUTHORIZATION, COOKIE, HeaderValue};
 
-    prev.push(Url::parse("http://new-domain.com/path").unwrap());
-    filtered_headers.remove(AUTHORIZATION);
-    filtered_headers.remove(COOKIE);
+        let mut headers = HeaderMap::new();
+        headers.insert(ACCEPT, HeaderValue::from_static("*/*"));
+        headers.insert(AUTHORIZATION, HeaderValue::from_static("let me in"));
+        headers.insert(COOKIE, HeaderValue::from_static("foo=bar"));
 
-    remove_sensitive_headers(&mut headers, &next, &prev);
-    assert_eq!(headers, filtered_headers);
+        let next = Url::parse("http://initial-domain.com/path").unwrap();
+        let mut prev = vec![Url::parse("http://initial-domain.com/new_path").unwrap()];
+        let mut filtered_headers = headers.clone();
+
+        remove_sensitive_headers(&mut headers, &next, &prev);
+        assert_eq!(headers, filtered_headers);
+
+        prev.push(Url::parse("http://new-domain.com/path").unwrap());
+        filtered_headers.remove(AUTHORIZATION);
+        filtered_headers.remove(COOKIE);
+
+        remove_sensitive_headers(&mut headers, &next, &prev);
+        assert_eq!(headers, filtered_headers);
+    }
 }
