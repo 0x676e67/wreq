@@ -103,7 +103,7 @@ impl Service<Request<Body>> for ClientService {
 
         // Check for invalid schemes
         if (scheme != Some(&Scheme::HTTP) && scheme != Some(&Scheme::HTTPS))
-            || self.config.https_only && scheme != Some(&Scheme::HTTPS)
+            || (self.config.https_only && scheme != Some(&Scheme::HTTPS))
         {
             let err = match IntoUrlSealed::into_url(req.uri().to_string()) {
                 Ok(url) => Error::url_bad_scheme(url),

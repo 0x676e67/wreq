@@ -54,6 +54,8 @@ pin_project! {
     }
 }
 
+// ======== Pending impl ========
+
 impl Pending {
     #[inline(always)]
     pub(crate) fn new(url: Url, in_flight: ResponseFuture) -> Self {
@@ -76,17 +78,17 @@ impl Future for Pending {
                     let r = in_flight.get_mut();
                     match Pin::new(r).poll(cx) {
                         Poll::Ready(Ok(res)) => res.map(body::boxed),
-                        Poll::Ready(Err(e)) => {
-                            let mut e = match e.downcast::<Error>() {
-                                Ok(e) => *e,
+                        Poll::Ready(Err(err)) => {
+                            let mut err = match err.downcast::<Error>() {
+                                Ok(err) => *err,
                                 Err(e) => Error::request(e),
                             };
 
-                            if e.url().is_none() {
-                                e = e.with_url(url.clone());
+                            if err.url().is_none() {
+                                err = err.with_url(url.clone());
                             }
 
-                            return Poll::Ready(Err(e));
+                            return Poll::Ready(Err(err));
                         }
                         Poll::Pending => return Poll::Pending,
                     }
@@ -107,6 +109,8 @@ impl Future for Pending {
         }
     }
 }
+
+// ======== CorePending impl ========
 
 impl CorePending {
     #[inline(always)]
@@ -129,7 +133,7 @@ impl Future for CorePending {
                 let r = fut.get_mut();
                 match Pin::new(r).poll(cx) {
                     Poll::Ready(Ok(res)) => Poll::Ready(Ok(res)),
-                    Poll::Ready(Err(e)) => Poll::Ready(Err(e.into())),
+                    Poll::Ready(Err(err)) => Poll::Ready(Err(err.into())),
                     Poll::Pending => Poll::Pending,
                 }
             }

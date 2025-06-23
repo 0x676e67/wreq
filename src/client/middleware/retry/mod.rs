@@ -22,6 +22,7 @@ pub struct Http2RetryPolicy(usize);
 
 impl Http2RetryPolicy {
     /// Create a new `Http2RetryPolicy` policy with the specified number of attempts.
+    #[inline]
     pub const fn new(attempts: usize) -> Self {
         Self(attempts)
     }
@@ -86,7 +87,7 @@ impl Policy<Req, Res, BoxError> for Http2RetryPolicy {
         result: &mut Result<Res, BoxError>,
     ) -> Option<Self::Future> {
         if let Err(err) = result {
-            if !self.is_retryable_error(err.source()?) {
+            if !self.is_retryable_error(err.as_ref()) {
                 return None;
             }
 
