@@ -13,6 +13,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use ahash::RandomState;
 use antidote::Mutex;
 use schnellru::{ByLength, LruMap};
 use tokio::sync::oneshot;
@@ -77,7 +78,7 @@ struct PoolInner<T, K: Eq + Hash> {
     // A flag that a connection is being established, and the connection
     // should be shared. This prevents making multiple HTTP/2 connections
     // to the same host.
-    connecting: HashSet<K>,
+    connecting: HashSet<K, RandomState>,
     // These are internal Conns sitting in the event loop in the KeepAlive
     // state, waiting to receive a new Request to send on the socket.
     idle: LruMap<K, Vec<Idle<T>>>,
@@ -91,7 +92,7 @@ struct PoolInner<T, K: Eq + Hash> {
     // this list is checked for any parked Checkouts, and tries to notify
     // them that the Conn could be used instead of waiting for a brand new
     // connection.
-    waiters: HashMap<K, VecDeque<oneshot::Sender<T>>>,
+    waiters: HashMap<K, VecDeque<oneshot::Sender<T>>, RandomState>,
     // A oneshot channel is used to allow the interval to be notified when
     // the Pool completely drops. That way, the interval can cancel immediately.
     idle_interval_ref: Option<oneshot::Sender<Infallible>>,
@@ -131,11 +132,11 @@ impl<T, K: Key> Pool<T, K> {
         };
         let inner = if config.is_enabled() {
             Some(Arc::new(Mutex::new(PoolInner {
-                connecting: HashSet::new(),
+                connecting: HashSet::with_hasher(ahash::RandomState::default()),
                 idle,
                 idle_interval_ref: None,
                 max_idle_per_host: config.max_idle_per_host,
-                waiters: HashMap::new(),
+                waiters: HashMap::with_hasher(ahash::RandomState::default()),
                 exec,
                 timer,
                 timeout: config.idle_timeout,

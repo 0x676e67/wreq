@@ -97,9 +97,10 @@ smallvec = { version = "1.12", features = ["const_generics", "const_new"] }
 tracing = { version = "0.1", default-features = false, features = ["std"], optional = true }
 want = "0.3"
 socket2 = { version = "0.5.10", features = ["all"] }
-schnellru = "0.2.4"
 percent-encoding = "2.3"
 ipnet = "2.11.0"
+schnellru = "0.2.4"
+ahash = { version = "0.8.12", default-features = false }
 
 ## boring-tls
 boring2 = { version = "5.0.0-alpha.1", features = ["pq-experimental"] }
