@@ -97,7 +97,7 @@ smallvec = { version = "1.12", features = ["const_generics", "const_new"] }
 tracing = { version = "0.1", default-features = false, features = ["std"], optional = true }
 want = "0.3"
 socket2 = { version = "0.5.10", features = ["all"] }
-lru = { version = "0.14", default-features = false }
+schnellru = "0.2.4"
 percent-encoding = "2.3"
 ipnet = "2.11.0"
 

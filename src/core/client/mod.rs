@@ -20,7 +20,7 @@ use std::{
     fmt,
     future::Future,
     net::{Ipv4Addr, Ipv6Addr},
-    num::NonZeroUsize,
+    num::NonZeroU32,
     pin::Pin,
     task::{self, Poll},
     time::Duration,
@@ -1078,7 +1078,7 @@ impl Builder {
     /// Sets the maximum number of connections in the pool.
     ///
     /// Default is `None` (no limit).
-    pub fn pool_max_size(&mut self, max_size: impl Into<Option<NonZeroUsize>>) -> &mut Self {
+    pub fn pool_max_size(&mut self, max_size: impl Into<Option<NonZeroU32>>) -> &mut Self {
         self.pool_config.max_pool_size = max_size.into();
         self
     }

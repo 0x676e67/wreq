@@ -14,7 +14,7 @@ use std::{
 };
 
 use antidote::Mutex;
-use lru::LruCache;
+use schnellru::{ByLength, LruMap};
 use tokio::sync::oneshot;
 
 use crate::core::{
@@ -80,7 +80,7 @@ struct PoolInner<T, K: Eq + Hash> {
     connecting: HashSet<K>,
     // These are internal Conns sitting in the event loop in the KeepAlive
     // state, waiting to receive a new Request to send on the socket.
-    idle: LruCache<K, Vec<Idle<T>>>,
+    idle: LruMap<K, Vec<Idle<T>>>,
     max_idle_per_host: usize,
     // These are outstanding Checkouts that are waiting for a socket to be
     // able to send a Request one. This is used when "racing" for a new
@@ -108,7 +108,7 @@ struct WeakOpt<T>(Option<Weak<T>>);
 pub struct Config {
     pub idle_timeout: Option<Duration>,
     pub max_idle_per_host: usize,
-    pub max_pool_size: Option<NonZero<usize>>,
+    pub max_pool_size: Option<NonZero<u32>>,
 }
 
 impl Config {
@@ -126,8 +126,8 @@ impl<T, K: Key> Pool<T, K> {
         let exec = Exec::new(executor);
         let timer = timer.map(Timer::new);
         let idle = match config.max_pool_size {
-            Some(max_size) => LruCache::new(max_size),
-            None => LruCache::unbounded(),
+            Some(max_size) => LruMap::new(ByLength::new(max_size.get())),
+            None => LruMap::new(ByLength::new(u32::MAX)),
         };
         let inner = if config.is_enabled() {
             Some(Arc::new(Mutex::new(PoolInner {
@@ -307,7 +307,7 @@ impl<'a, T: Poolable + 'a, K: Debug> IdlePopper<'a, T, K> {
 
 impl<T: Poolable, K: Key> PoolInner<T, K> {
     fn put(&mut self, key: K, value: T, __pool_ref: &Arc<Mutex<PoolInner<T, K>>>) {
-        if value.can_share() && self.idle.contains(&key) {
+        if value.can_share() && self.idle.get(&key).is_some() {
             trace!("put; existing idle HTTP/2 connection for {:?}", key);
             return;
         }
@@ -352,17 +352,20 @@ impl<T: Poolable, K: Key> PoolInner<T, K> {
             {
                 let idle_list = self
                     .idle
-                    .get_or_insert_mut(key.clone(), Vec::<Idle<T>>::default);
-                if self.max_idle_per_host <= idle_list.len() {
-                    trace!("max idle per host for {:?}, dropping connection", key);
-                    return;
-                }
+                    .get_or_insert(key.clone(), Vec::<Idle<T>>::default);
 
-                debug!("pooling idle connection for {:?}", key);
-                idle_list.push(Idle {
-                    value,
-                    idle_at: Instant::now(),
-                });
+                if let Some(idle_list) = idle_list {
+                    if self.max_idle_per_host <= idle_list.len() {
+                        trace!("max idle per host for {:?}, dropping connection", key);
+                        return;
+                    }
+
+                    debug!("pooling idle connection for {:?}", key);
+                    idle_list.push(Idle {
+                        value,
+                        idle_at: Instant::now(),
+                    });
+                }
             }
 
             self.spawn_idle_interval(__pool_ref);
@@ -461,7 +464,7 @@ impl<T: Poolable, K: Key> PoolInner<T, K> {
             }
         });
         keys_to_remove.iter().for_each(|k| {
-            self.idle.pop(k);
+            self.idle.remove(k);
         });
     }
 }
@@ -611,7 +614,7 @@ impl<T: Poolable, K: Key> Checkout<T, K> {
         let entry = {
             let mut inner = self.pool.inner.as_ref()?.lock();
             let expiration = Expiration::new(inner.timeout);
-            let maybe_entry = inner.idle.get_mut(&self.key).and_then(|list| {
+            let maybe_entry = inner.idle.get(&self.key).and_then(|list| {
                 trace!("take? {:?}: expiration = {:?}", self.key, expiration.0);
                 // A block to end the mutable borrow on list,
                 // so the map below can check is_empty()
@@ -633,7 +636,7 @@ impl<T: Poolable, K: Key> Checkout<T, K> {
             };
             if empty {
                 //TODO: This could be done with the HashMap::entry API instead.
-                inner.idle.pop(&self.key);
+                inner.idle.remove(&self.key);
             }
 
             if entry.is_none() && self.waiter.is_none() {
