@@ -126,17 +126,27 @@ impl<T, K: Key> Pool<T, K> {
     {
         let exec = Exec::new(executor);
         let timer = timer.map(Timer::new);
-        let idle = match config.max_pool_size {
-            Some(max_size) => LruMap::new(ByLength::new(max_size.get())),
-            None => LruMap::new(ByLength::new(u32::MAX)),
+        let idle = {
+            let seed = [
+                0x9e3779b97f4a7c15,
+                0x243f6a8885a308d3,
+                0x13198a2e03707344,
+                0xa4093822299f31d0,
+            ];
+
+            match config.max_pool_size {
+                Some(max_size) => LruMap::with_seed(ByLength::new(max_size.get()), seed),
+                None => LruMap::with_seed(ByLength::new(u32::MAX), seed),
+            }
         };
+
         let inner = if config.is_enabled() {
             Some(Arc::new(Mutex::new(PoolInner {
-                connecting: HashSet::default(),
+                connecting: HashSet::with_hasher(RandomState::new()),
                 idle,
                 idle_interval_ref: None,
                 max_idle_per_host: config.max_idle_per_host,
-                waiters: HashMap::default(),
+                waiters: HashMap::with_hasher(RandomState::new()),
                 exec,
                 timer,
                 timeout: config.idle_timeout,

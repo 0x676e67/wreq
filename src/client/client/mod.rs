@@ -263,7 +263,7 @@ impl ClientBuilder {
                 hickory_dns: cfg!(feature = "hickory-dns"),
                 #[cfg(feature = "cookies")]
                 cookie_store: None,
-                dns_overrides: HashMap::default(),
+                dns_overrides: HashMap::with_hasher(RandomState::new()),
                 dns_resolver: None,
                 http_version_pref: HttpVersionPref::All,
                 builder: HyperClient::builder(TokioExecutor::new()),

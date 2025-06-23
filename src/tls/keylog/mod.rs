@@ -51,7 +51,8 @@ impl KeyLogPolicy {
             KeyLogPolicy::File(keylog_filename) => normalize_path(keylog_filename),
         };
 
-        let mapping = GLOBAL_KEYLOG_FILE_MAPPING.get_or_init(|| RwLock::new(HashMap::default()));
+        let mapping = GLOBAL_KEYLOG_FILE_MAPPING
+            .get_or_init(|| RwLock::new(HashMap::with_hasher(RandomState::new())));
         if let Some(handle) = mapping.read().get(&path).cloned() {
             return Ok(handle);
         }
