@@ -127,11 +127,12 @@ impl<T, K: Key> Pool<T, K> {
         let exec = Exec::new(executor);
         let timer = timer.map(Timer::new);
         let idle = {
+            // Copy from `ahash` constructor, so that the seed is always the same.
             let seed = [
-                0x9e3779b97f4a7c15,
-                0x243f6a8885a308d3,
-                0x13198a2e03707344,
-                0xa4093822299f31d0,
+                0x243f_6a88_85a3_08d3,
+                0x1319_8a2e_0370_7344,
+                0xa409_3822_299f_31d0,
+                0x082e_fa98_ec4e_6c89,
             ];
 
             match config.max_pool_size {
