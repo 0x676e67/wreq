@@ -1,3 +1,5 @@
+#[macro_use]
+mod macros;
 pub(super) mod future;
 mod service;
 

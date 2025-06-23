@@ -83,9 +83,7 @@ impl Future for Pending {
                         };
 
                         if err.url().is_none() {
-                            if let Some(url) = url.take() {
-                                err = err.with_url(url);
-                            }
+                            err = err.with_url(take_url!(url));
                         }
 
                         return Poll::Ready(Err(err));
@@ -97,19 +95,9 @@ impl Future for Pending {
                     *url = Some(IntoUrlSealed::into_url(uri.0.to_string())?);
                 }
 
-                match url.take() {
-                    Some(url) => Poll::Ready(Ok(Response::new(res, url))),
-                    None => {
-                        Poll::Ready(Err(Error::builder("URL already taken in Pending::Request")))
-                    }
-                }
+                Poll::Ready(Ok(Response::new(res, take_url!(url))))
             }
-            PendingProj::Error { error } => {
-                let err = error
-                    .take()
-                    .unwrap_or_else(|| Error::builder("Error already taken in Pending::Error"));
-                Poll::Ready(Err(err))
-            }
+            PendingProj::Error { error } => Poll::Ready(Err(take_err!(error))),
         }
     }
 }
@@ -141,12 +129,7 @@ impl Future for CorePending {
                     Poll::Pending => Poll::Pending,
                 }
             }
-            CorePendingProj::Error { error } => {
-                let err = error
-                    .take()
-                    .unwrap_or_else(|| Error::builder("Error already taken in CorePending::Error"));
-                Poll::Ready(Err(err.into()))
-            }
+            CorePendingProj::Error { error } => Poll::Ready(Err(take_err!(error).into())),
         }
     }
 }
