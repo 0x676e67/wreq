@@ -69,16 +69,19 @@ pub struct Attempt<'a> {
 
 impl<'a> Attempt<'a> {
     /// Returns the redirection response.
+    #[inline(always)]
     pub fn status(&self) -> StatusCode {
         self.status
     }
 
     /// Returns the destination URI of the redirection.
+    #[inline(always)]
     pub fn location(&self) -> &'a Uri {
         self.location
     }
 
     /// Returns the URI of the original request.
+    #[inline(always)]
     pub fn previous(&self) -> &'a Uri {
         self.previous
     }

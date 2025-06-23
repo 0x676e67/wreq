@@ -1,5 +1,3 @@
-use std::borrow::Cow;
-
 use url::Url;
 
 use crate::Error;
@@ -15,7 +13,6 @@ impl IntoUrl for String {}
 impl IntoUrl for &Url {}
 impl IntoUrl for &str {}
 impl IntoUrl for &String {}
-impl IntoUrl for Cow<'_, str> {}
 
 pub trait IntoUrlSealed {
     // Besides parsing as a valid `Url`, the `Url` must be a valid
@@ -53,19 +50,12 @@ impl IntoUrlSealed for &Url {
     }
 }
 
-impl IntoUrlSealed for &str {
+impl<T> IntoUrlSealed for T
+where
+    T: AsRef<str> + sealed::Sealed,
+{
     fn into_url(self) -> crate::Result<Url> {
-        Url::parse(self).map_err(Error::builder)?.into_url()
-    }
-
-    fn as_str(&self) -> &str {
-        self
-    }
-}
-
-impl IntoUrlSealed for &String {
-    fn into_url(self) -> crate::Result<Url> {
-        (&**self).into_url()
+        Url::parse(self.as_ref()).map_err(Error::builder)
     }
 
     fn as_str(&self) -> &str {
@@ -73,27 +63,15 @@ impl IntoUrlSealed for &String {
     }
 }
 
-impl IntoUrlSealed for String {
-    fn into_url(self) -> crate::Result<Url> {
-        (&*self).into_url()
-    }
+mod sealed {
+    use http::Uri;
 
-    fn as_str(&self) -> &str {
-        self.as_ref()
-    }
-}
+    pub trait Sealed {}
 
-impl IntoUrlSealed for Cow<'_, str> {
-    fn into_url(self) -> crate::Result<Url> {
-        (&*self).into_url()
-    }
-    fn as_str(&self) -> &str {
-        self
-    }
-}
-
-pub(crate) fn try_uri(url: &Url) -> Option<http::Uri> {
-    url.as_str().parse().ok()
+    impl Sealed for Uri {}
+    impl Sealed for &str {}
+    impl Sealed for String {}
+    impl Sealed for &String {}
 }
 
 #[cfg(test)]

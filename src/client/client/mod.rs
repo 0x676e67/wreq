@@ -64,7 +64,6 @@ use crate::{
     error::{self, BoxError, Error},
     http1::Http1Config,
     http2::Http2Config,
-    into_url::try_uri,
     proxy::Matcher as ProxyMatcher,
     redirect::{self, RedirectPolicy},
     tls::{
@@ -1464,41 +1463,26 @@ impl Client {
     /// This method fails if there was an error while sending request,
     /// redirect loop was detected or redirect limit was exhausted.
     pub fn execute(&self, request: Request) -> Pending {
-        let (method, url, headers, body, extensions) = request.pieces();
+        let url = request.url().clone();
 
-        // get the scheme of the URL
+        // Get the scheme of the URL
         let scheme = url.scheme();
 
-        // check if the scheme is supported
+        // Check if the scheme is supported
         if scheme != "http" && scheme != "https" {
             return Pending::new_err(Error::url_bad_scheme(url));
         }
 
-        // check if we're in https_only mode and check the scheme of the current URL
+        // Check if we're in https_only mode and check the scheme of the current URL
         if self.inner.https_only && scheme != "https" {
             return Pending::new_err(Error::url_bad_scheme(url));
         }
 
-        // parse Uri from the Url
-        let uri = match try_uri(&url) {
-            Some(uri) => uri,
-            None => return Pending::new_err(Error::url_bad_uri(url)),
-        };
-
         // Prepare the in-flight request by ensuring we use the exact same Service instance
         // for both poll_ready and call.
-        let in_flight = {
-            let mut req = HttpRequest::builder()
-                .uri(uri)
-                .method(method.clone())
-                .body(body.unwrap_or_else(Body::empty))
-                .expect("valid request parts");
-
-            // Finalize headers and extensions
-            *req.headers_mut() = headers;
-            *req.extensions_mut() = extensions;
-
-            Oneshot::new(self.inner.service.clone(), req)
+        let in_flight = match HttpRequest::try_from(request) {
+            Ok(req) => Oneshot::new(self.inner.service.clone(), req),
+            Err(err) => return Pending::new_err(err),
         };
 
         Pending::new(url, in_flight)

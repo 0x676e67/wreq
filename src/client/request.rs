@@ -246,16 +246,6 @@ impl Request {
         req.body = body;
         Some(req)
     }
-
-    pub(super) fn pieces(self) -> (Method, Url, HeaderMap, Option<Body>, Extensions) {
-        (
-            self.method,
-            self.url,
-            self.headers,
-            self.body,
-            self.extensions,
-        )
-    }
 }
 
 impl RequestBuilder {
@@ -925,6 +915,7 @@ impl TryFrom<Request> for HttpRequest<Body> {
             method,
             url,
             headers,
+            extensions,
             body,
             ..
         } = req;
@@ -942,6 +933,7 @@ impl TryFrom<Request> for HttpRequest<Body> {
             .map_err(Error::builder)?;
 
         *req.headers_mut() = headers;
+        *req.extensions_mut() = extensions;
         Ok(req)
     }
 }

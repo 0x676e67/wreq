@@ -20,6 +20,7 @@ use crate::{
     core::ext::RequestConfig,
     error::{BoxError, Error},
     header::{AUTHORIZATION, COOKIE, PROXY_AUTHORIZATION, REFERER, WWW_AUTHENTICATE},
+    into_url::IntoUrlSealed,
 };
 
 /// A type that controls the policy on how to handle the following of redirects.
@@ -307,14 +308,9 @@ fn make_referer(next: &Url, previous: &Url) -> Option<HeaderValue> {
 
 impl TowerPolicy<Body, BoxError> for RedirectPolicy {
     fn redirect(&mut self, attempt: &TowerAttempt<'_>) -> Result<TowerAction, BoxError> {
-        #[inline(always)]
-        fn parse_url(input: &str) -> Result<Url, BoxError> {
-            Url::parse(input).map_err(|e| BoxError::from(Error::builder(e)))
-        }
-
         // Parse the next URL from the attempt.
-        let previous_url = parse_url(&attempt.previous().to_string())?;
-        let next_url = parse_url(&attempt.location().to_string())?;
+        let previous_url = IntoUrlSealed::into_url(attempt.previous().to_string())?;
+        let next_url = IntoUrlSealed::into_url(attempt.location().to_string())?;
 
         // Push the previous URL to the list of URLs.
         self.urls.push(previous_url.clone());
