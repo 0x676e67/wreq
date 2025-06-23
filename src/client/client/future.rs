@@ -55,7 +55,7 @@ impl Future for Pending {
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         match self.project() {
             PendingProj::Request { url, in_flight } => {
-                let res = {
+                let mut res = {
                     let r = in_flight.get_mut();
                     match Pin::new(r).poll(cx) {
                         Poll::Ready(Ok(res)) => res.map(body::boxed),
@@ -75,7 +75,10 @@ impl Future for Pending {
                     }
                 };
 
-                if let Some(uri) = res.extensions().get::<middleware::redirect::RequestUri>() {
+                if let Some(uri) = res
+                    .extensions_mut()
+                    .remove::<middleware::redirect::RequestUri>()
+                {
                     *url = Url::parse(&uri.0.to_string()).map_err(Error::decode)?;
                 }
 

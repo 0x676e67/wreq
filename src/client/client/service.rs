@@ -18,6 +18,7 @@ use crate::{
         ext::{RequestConfig, RequestOriginalHeaders},
     },
     error::{BoxError, Error},
+    into_url::IntoUrlSealed,
     proxy::Matcher as ProxyMatcher,
 };
 
@@ -31,6 +32,7 @@ struct ClientConfig {
     default_headers: HeaderMap,
     skip_default_headers: RequestConfig<RequestSkipDefaultHeaders>,
     original_headers: RequestConfig<RequestOriginalHeaders>,
+    https_only: bool,
     proxies: Arc<Vec<ProxyMatcher>>,
     proxies_maybe_http_auth: bool,
     proxies_maybe_http_custom_headers: bool,
@@ -41,6 +43,7 @@ impl ClientService {
         client: Client<Connector, Body>,
         default_headers: HeaderMap,
         original_headers: Option<OriginalHeaders>,
+        https_only: bool,
         proxies: Arc<Vec<ProxyMatcher>>,
         proxies_maybe_http_auth: bool,
         proxies_maybe_http_custom_headers: bool,
@@ -51,6 +54,7 @@ impl ClientService {
                 default_headers,
                 skip_default_headers: RequestConfig::default(),
                 original_headers: RequestConfig::new(original_headers),
+                https_only,
                 proxies,
                 proxies_maybe_http_auth,
                 proxies_maybe_http_custom_headers,
@@ -139,6 +143,7 @@ impl Service<Request<Body>> for ClientService {
             }
         }
 
+        let https_only = self.inner.https_only;
         let clone = self.client.clone();
         let mut inner = std::mem::replace(&mut self.client, clone);
 
@@ -149,6 +154,13 @@ impl Service<Request<Body>> for ClientService {
         self.inner.original_headers.replace_to(req.extensions_mut());
 
         Box::pin(async move {
+            if https_only && req.uri().scheme() != Some(&Scheme::HTTP) {
+                return match IntoUrlSealed::into_url(req.uri().to_string()) {
+                    Ok(url) => Err(Error::url_bad_scheme(url).into()),
+                    Err(err) => Err(Error::builder(err).into()),
+                };
+            }
+
             inner
                 .call(req)
                 .await

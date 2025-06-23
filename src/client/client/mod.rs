@@ -112,13 +112,7 @@ type BoxedClientServiceLayer = BoxCloneSyncServiceLayer<
 /// [`Rc`]: std::rc::Rc
 #[derive(Clone)]
 pub struct Client {
-    inner: Arc<ClientRef>,
-}
-
-/// A reference to the `Client` that is used internally.
-struct ClientRef {
-    service: BoxedClientService,
-    https_only: bool,
+    inner: Arc<BoxedClientService>,
 }
 
 /// A `ClientBuilder` can be used to create a `Client` with custom configuration.
@@ -397,6 +391,7 @@ impl ClientBuilder {
                 config.builder.build(connector),
                 config.headers,
                 config.original_headers,
+                config.https_only,
                 proxies,
                 proxies_maybe_http_auth,
                 proxies_maybe_http_custom_headers,
@@ -472,10 +467,7 @@ impl ClientBuilder {
         };
 
         Ok(Client {
-            inner: Arc::new(ClientRef {
-                service,
-                https_only: config.https_only,
-            }),
+            inner: Arc::new(service),
         })
     }
 
@@ -1463,29 +1455,15 @@ impl Client {
     /// This method fails if there was an error while sending request,
     /// redirect loop was detected or redirect limit was exhausted.
     pub fn execute(&self, request: Request) -> Pending {
-        let url = request.url().clone();
-
-        // Get the scheme of the URL
-        let scheme = url.scheme();
-
-        // Check if the scheme is supported
-        if scheme != "http" && scheme != "https" {
-            return Pending::new_err(Error::url_bad_scheme(url));
-        }
-
-        // Check if we're in https_only mode and check the scheme of the current URL
-        if self.inner.https_only && scheme != "https" {
-            return Pending::new_err(Error::url_bad_scheme(url));
-        }
-
-        // Prepare the in-flight request by ensuring we use the exact same Service instance
-        // for both poll_ready and call.
-        let in_flight = match HttpRequest::try_from(request) {
-            Ok(req) => Oneshot::new(self.inner.service.clone(), req),
+        match request.try_into() {
+            Ok((url, req)) => {
+                // Prepare the in-flight request by ensuring we use the exact same Service instance
+                // for both poll_ready and call.
+                let in_flight = Oneshot::new(self.inner.as_ref().clone(), req);
+                Pending::new(url, in_flight)
+            }
             Err(err) => return Pending::new_err(err),
-        };
-
-        Pending::new(url, in_flight)
+        }
     }
 }
 

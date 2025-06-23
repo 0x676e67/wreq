@@ -6,7 +6,7 @@ use std::{
     time::Duration,
 };
 
-use http::{Extensions, Request as HttpRequest, Uri, Version, request::Parts};
+use http::{Extensions, Request as HttpRequest, Uri, Version, request::Parts, uri::Scheme};
 use serde::Serialize;
 
 #[cfg(feature = "multipart")]
@@ -909,6 +909,14 @@ impl TryFrom<Request> for HttpRequest<Body> {
     type Error = crate::Error;
 
     fn try_from(req: Request) -> crate::Result<Self> {
+        req.try_into().map(|(_, http_req)| http_req)
+    }
+}
+
+impl TryFrom<Request> for (Url, HttpRequest<Body>) {
+    type Error = crate::Error;
+
+    fn try_from(req: Request) -> crate::Result<Self> {
         let version = req.version().cloned();
 
         let Request {
@@ -920,22 +928,31 @@ impl TryFrom<Request> for HttpRequest<Body> {
             ..
         } = req;
 
-        let uri = Uri::try_from(url.as_str()).map_err(|err| Error::builder(err).with_url(url))?;
+        match Uri::try_from(url.as_str()) {
+            Ok(uri) => {
+                let scheme = uri.scheme();
 
-        let mut builder = HttpRequest::builder();
+                if scheme != Some(&Scheme::HTTP) && scheme != Some(&Scheme::HTTPS) {
+                    return Err(Error::url_bad_scheme(url));
+                }
 
-        if let Some(version) = version {
-            builder = builder.version(version);
+                let mut builder = HttpRequest::builder();
+
+                if let Some(version) = version {
+                    builder = builder.version(version);
+                }
+
+                let mut req = builder
+                    .method(method)
+                    .uri(uri)
+                    .body(body.unwrap_or_else(Body::empty))
+                    .map_err(Error::builder)?;
+
+                *req.headers_mut() = headers;
+                *req.extensions_mut() = extensions;
+                Ok((url, req))
+            }
+            Err(err) => Err(Error::builder(err).with_url(url)),
         }
-
-        let mut req = builder
-            .method(method)
-            .uri(uri)
-            .body(body.unwrap_or_else(Body::empty))
-            .map_err(Error::builder)?;
-
-        *req.headers_mut() = headers;
-        *req.extensions_mut() = extensions;
-        Ok(req)
     }
 }
