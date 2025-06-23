@@ -15,6 +15,7 @@ use crate::{
         body,
         middleware::{self},
     },
+    core::body::Incoming,
     error::BoxError,
     into_url::IntoUrlSealed,
 };
@@ -23,6 +24,8 @@ type ResponseFuture = Oneshot<
     BoxCloneSyncService<HttpRequest<Body>, HttpResponse<ResponseBody>, BoxError>,
     HttpRequest<Body>,
 >;
+
+type CoreResponseFuture = crate::core::client::ResponseFuture;
 
 pin_project! {
     #[project = PendingProj]
@@ -38,14 +41,27 @@ pin_project! {
     }
 }
 
+pin_project! {
+    #[project = CorePendingProj]
+    pub enum CorePending {
+        Request {
+            #[pin]
+            fut: CoreResponseFuture,
+        },
+        Error {
+            error: Option<Error>,
+        },
+    }
+}
+
 impl Pending {
     #[inline(always)]
-    pub(crate) fn new(url: Url, in_flight: ResponseFuture) -> Pending {
+    pub(crate) fn new(url: Url, in_flight: ResponseFuture) -> Self {
         Pending::Request { url, in_flight }
     }
 
     #[inline(always)]
-    pub(crate) fn new_err(err: Error) -> Pending {
+    pub(crate) fn new_err(err: Error) -> Self {
         Pending::Error { error: Some(err) }
     }
 }
@@ -88,6 +104,41 @@ impl Future for Pending {
             PendingProj::Error { error } => Poll::Ready(Err(error
                 .take()
                 .expect("Error already taken in PendingInner::Error"))),
+        }
+    }
+}
+
+impl CorePending {
+    #[inline(always)]
+    pub(super) fn new(fut: CoreResponseFuture) -> Self {
+        CorePending::Request { fut }
+    }
+
+    #[inline(always)]
+    pub(super) fn new_err(err: Error) -> Self {
+        CorePending::Error { error: Some(err) }
+    }
+}
+
+impl Future for CorePending {
+    type Output = Result<HttpResponse<Incoming>, BoxError>;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        match self.project() {
+            CorePendingProj::Request { fut } => {
+                let r = fut.get_mut();
+                match Pin::new(r).poll(cx) {
+                    Poll::Ready(Ok(res)) => Poll::Ready(Ok(res)),
+                    Poll::Ready(Err(e)) => Poll::Ready(Err(e.into())),
+                    Poll::Pending => Poll::Pending,
+                }
+            }
+            CorePendingProj::Error { error } => Poll::Ready(Err(error
+                .take()
+                .unwrap_or_else(|| {
+                    Error::builder("Pending future encountered an error without a specific error")
+                })
+                .into())),
         }
     }
 }

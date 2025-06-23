@@ -1,5 +1,4 @@
 use std::{
-    pin::Pin,
     sync::Arc,
     task::{Context, Poll},
 };
@@ -7,7 +6,7 @@ use std::{
 use http::{HeaderMap, Request, Response, header::PROXY_AUTHORIZATION, uri::Scheme};
 use tower::Service;
 
-use super::Body;
+use super::{Body, future::CorePending};
 use crate::{
     config::RequestSkipDefaultHeaders,
     connect::Connector,
@@ -112,12 +111,20 @@ impl ClientService {
             }
         }
     }
+
+    #[inline]
+    fn create_scheme_error(&self, uri: &http::Uri) -> Error {
+        match IntoUrlSealed::into_url(uri.to_string()) {
+            Ok(url) => Error::url_bad_scheme(url),
+            Err(err) => Error::builder(err),
+        }
+    }
 }
 
 impl Service<Request<Body>> for ClientService {
     type Error = BoxError;
     type Response = Response<Incoming>;
-    type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send + Sync>>;
+    type Future = CorePending;
 
     #[inline(always)]
     fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
@@ -128,43 +135,24 @@ impl Service<Request<Body>> for ClientService {
     }
 
     fn call(&mut self, mut req: Request<Body>) -> Self::Future {
-        let mut this = self.clone();
+        let scheme = req.uri().scheme();
 
-        let fut = async move {
-            let scheme = req.uri().scheme();
+        // Check for invalid schemes
+        if scheme != Some(&Scheme::HTTP) && scheme != Some(&Scheme::HTTPS) {
+            return CorePending::new_err(self.create_scheme_error(req.uri()));
+        }
 
-            // Helper function to create error from URI
-            let create_error = || -> BoxError {
-                let err = match IntoUrlSealed::into_url(req.uri().to_string()) {
-                    Ok(url) => Error::url_bad_scheme(url),
-                    Err(err) => Error::builder(err),
-                };
-                err.into()
-            };
+        // Check HTTPS-only requirement
+        if self.config.https_only && scheme != Some(&Scheme::HTTPS) {
+            return CorePending::new_err(self.create_scheme_error(req.uri()));
+        }
 
-            // Check for invalid schemes
-            if scheme != Some(&Scheme::HTTP) && scheme != Some(&Scheme::HTTPS) {
-                return Err(create_error());
-            }
+        // Apply default headers if not skipped.
+        self.apply_default_headers(&mut req);
 
-            // Check HTTPS-only requirement
-            if this.config.https_only && scheme != Some(&Scheme::HTTPS) {
-                return Err(create_error());
-            }
+        // Apply proxy headers if the request is routed through a proxy.
+        self.apply_proxy_headers(&mut req);
 
-            // Apply default headers if not skipped.
-            this.apply_default_headers(&mut req);
-
-            // Apply proxy headers if the request is routed through a proxy.
-            this.apply_proxy_headers(&mut req);
-
-            this.client
-                .call(req)
-                .await
-                .map_err(Error::request)
-                .map_err(From::from)
-        };
-
-        Box::pin(fut)
+        CorePending::new(self.client.call(req))
     }
 }
