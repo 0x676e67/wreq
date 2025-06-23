@@ -38,34 +38,6 @@ pub(super) struct ClientConfig {
 
 impl ClientService {
     #[inline]
-    fn apply_default_headers(&self, req: &mut Request<Body>) {
-        // Only skip setting default headers if skip_default_headers is explicitly Some(true).
-        let skip = self
-            .config
-            .skip_default_headers
-            .fetch(req.extensions())
-            .copied()
-            == Some(true);
-
-        if !skip {
-            let headers = req.headers_mut();
-            // Insert default headers if they are not already present in the request.
-            for name in self.config.default_headers.keys() {
-                if !headers.contains_key(name) {
-                    for value in self.config.default_headers.get_all(name) {
-                        headers.append(name, value.clone());
-                    }
-                }
-            }
-        }
-
-        // Apply original headers if they are set in the request extensions.
-        self.config
-            .original_headers
-            .replace_to(req.extensions_mut());
-    }
-
-    #[inline]
     fn apply_proxy_headers(&self, req: &mut Request<Body>) {
         // Skip if the destination is not plain HTTP.
         // For HTTPS, the proxy headers should be part of the CONNECT tunnel instead.
@@ -111,14 +83,6 @@ impl ClientService {
             }
         }
     }
-
-    #[inline]
-    fn create_scheme_error(&self, uri: &http::Uri) -> Error {
-        match IntoUrlSealed::into_url(uri.to_string()) {
-            Ok(url) => Error::url_bad_scheme(url),
-            Err(err) => Error::builder(err),
-        }
-    }
 }
 
 impl Service<Request<Body>> for ClientService {
@@ -138,17 +102,41 @@ impl Service<Request<Body>> for ClientService {
         let scheme = req.uri().scheme();
 
         // Check for invalid schemes
-        if scheme != Some(&Scheme::HTTP) && scheme != Some(&Scheme::HTTPS) {
-            return CorePending::new_err(self.create_scheme_error(req.uri()));
+        if (scheme != Some(&Scheme::HTTP) && scheme != Some(&Scheme::HTTPS))
+            || self.config.https_only && scheme != Some(&Scheme::HTTPS)
+        {
+            let err = match IntoUrlSealed::into_url(req.uri().to_string()) {
+                Ok(url) => Error::url_bad_scheme(url),
+                Err(err) => Error::builder(err),
+            };
+
+            return CorePending::new_err(err);
         }
 
-        // Check HTTPS-only requirement
-        if self.config.https_only && scheme != Some(&Scheme::HTTPS) {
-            return CorePending::new_err(self.create_scheme_error(req.uri()));
+        // Only skip setting default headers if skip_default_headers is explicitly Some(true).
+        let skip = self
+            .config
+            .skip_default_headers
+            .fetch(req.extensions())
+            .copied()
+            == Some(true);
+
+        if !skip {
+            let headers = req.headers_mut();
+            // Insert default headers if they are not already present in the request.
+            for name in self.config.default_headers.keys() {
+                if !headers.contains_key(name) {
+                    for value in self.config.default_headers.get_all(name) {
+                        headers.append(name, value.clone());
+                    }
+                }
+            }
         }
 
-        // Apply default headers if not skipped.
-        self.apply_default_headers(&mut req);
+        // Apply original headers if they are set in the request extensions.
+        self.config
+            .original_headers
+            .replace_to(req.extensions_mut());
 
         // Apply proxy headers if the request is routed through a proxy.
         self.apply_proxy_headers(&mut req);
