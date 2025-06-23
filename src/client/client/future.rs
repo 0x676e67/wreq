@@ -11,10 +11,7 @@ use url::Url;
 use super::{Body, Response, ResponseBody};
 use crate::{
     Error,
-    client::{
-        body,
-        middleware::{self},
-    },
+    client::{body, middleware::redirect::RequestUri},
     core::body::Incoming,
     error::BoxError,
     into_url::IntoUrlSealed,
@@ -101,7 +98,7 @@ impl Future for Pending {
                     Poll::Pending => return Poll::Pending,
                 };
 
-                if let Some(uri) = res.extensions().get::<middleware::redirect::RequestUri>() {
+                if let Some(uri) = res.extensions().get::<RequestUri>() {
                     let url = IntoUrlSealed::into_url(uri.0.to_string())?;
                     return Poll::Ready(Ok(Response::new(res, url)));
                 }
