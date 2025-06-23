@@ -2,7 +2,7 @@ use std::{error::Error as StdError, fmt, sync::Arc};
 
 #[cfg(feature = "socks")]
 use bytes::Bytes;
-use http::{HeaderMap, Uri, header::HeaderValue};
+use http::{HeaderMap, Uri, header::HeaderValue, uri::Scheme};
 
 use crate::{
     Url,
@@ -423,11 +423,11 @@ impl Proxy {
 }
 
 fn cache_maybe_has_http_auth(url: &Url, extra: &Option<HeaderValue>) -> bool {
-    url.scheme() == "http" && (url.password().is_some() || extra.is_some())
+    url.scheme() == Scheme::HTTP.as_str() && (url.password().is_some() || extra.is_some())
 }
 
 fn cache_maybe_has_http_custom_headers(url: &Url, extra: &Option<HeaderMap>) -> bool {
-    url.scheme() == "http" && extra.is_some()
+    url.scheme() == Scheme::HTTP.as_str() && extra.is_some()
 }
 
 impl fmt::Debug for Proxy {
@@ -522,7 +522,7 @@ impl Matcher {
 
     pub(crate) fn http_non_tunnel_basic_auth(&self, dst: &Uri) -> Option<HeaderValue> {
         if let Some(proxy) = self.intercept(dst) {
-            if proxy.uri().scheme_str() == Some("http") {
+            if proxy.uri().scheme() == Some(&Scheme::HTTP) {
                 return proxy.basic_auth().cloned();
             }
         }
@@ -536,7 +536,7 @@ impl Matcher {
 
     pub(crate) fn http_non_tunnel_custom_headers(&self, dst: &Uri) -> Option<HeaderMap> {
         if let Some(proxy) = self.intercept(dst) {
-            if proxy.uri().scheme_str() == Some("http") {
+            if proxy.uri().scheme() == Some(&Scheme::HTTP) {
                 return proxy.custom_headers().cloned();
             }
         }
