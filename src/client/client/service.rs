@@ -92,10 +92,7 @@ impl Service<Request<Body>> for ClientService {
 
     #[inline(always)]
     fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        self.client
-            .poll_ready(cx)
-            .map_err(Error::request)
-            .map_err(From::from)
+        self.client.poll_ready(cx).map_err(From::from)
     }
 
     fn call(&mut self, mut req: Request<Body>) -> Self::Future {
