@@ -134,13 +134,25 @@ impl Service<Request<Body>> for ClientService {
         let mut inner = std::mem::replace(&mut self.client, clone);
 
         Box::pin(async move {
-            if https_only && req.uri().scheme() != Some(&Scheme::HTTP) {
+            let scheme = req.uri().scheme();
+
+            // Helper function to create error from URI
+            let create_error = || -> BoxError {
                 let err = match IntoUrlSealed::into_url(req.uri().to_string()) {
                     Ok(url) => Error::url_bad_scheme(url),
                     Err(err) => Error::builder(err),
                 };
+                err.into()
+            };
 
-                return Err(err.into());
+            // Check for invalid schemes
+            if scheme != Some(&Scheme::HTTP) && scheme != Some(&Scheme::HTTPS) {
+                return Err(create_error());
+            }
+
+            // Check HTTPS-only requirement
+            if https_only && scheme != Some(&Scheme::HTTPS) {
+                return Err(create_error());
             }
 
             inner

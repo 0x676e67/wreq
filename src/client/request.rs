@@ -6,7 +6,7 @@ use std::{
     time::Duration,
 };
 
-use http::{Extensions, Request as HttpRequest, Uri, Version, request::Parts, uri::Scheme};
+use http::{Extensions, Request as HttpRequest, Uri, Version, request::Parts};
 use serde::Serialize;
 
 #[cfg(feature = "multipart")]
@@ -930,12 +930,6 @@ impl TryFrom<Request> for (Url, HttpRequest<Body>) {
 
         match Uri::try_from(url.as_str()) {
             Ok(uri) => {
-                let scheme = uri.scheme();
-
-                if scheme != Some(&Scheme::HTTP) && scheme != Some(&Scheme::HTTPS) {
-                    return Err(Error::url_bad_scheme(url));
-                }
-
                 let mut builder = HttpRequest::builder();
 
                 if let Some(version) = version {
