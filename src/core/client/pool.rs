@@ -317,7 +317,7 @@ impl<'a, T: Poolable + 'a, K: Debug> IdlePopper<'a, T, K> {
 
 impl<T: Poolable, K: Key> PoolInner<T, K> {
     fn put(&mut self, key: &K, value: T, __pool_ref: &Arc<Mutex<PoolInner<T, K>>>) {
-        if value.can_share() && self.idle.get(key).is_some() {
+        if value.can_share() && self.idle.peek(key).is_some() {
             trace!("put; existing idle HTTP/2 connection for {:?}", key);
             return;
         }
