@@ -91,6 +91,7 @@ pub struct Client {
     inner: Arc<ClientRef>,
 }
 
+#[allow(clippy::large_enum_variant)]
 #[derive(Clone)]
 enum ClientRef {
     Boxed(BoxedClientService),
@@ -446,7 +447,7 @@ impl ClientBuilder {
                         .map_err(error::map_timeout_to_request_error as _)
                         .service(service);
 
-                    ClientRef::Generic(Box::new(service))
+                    ClientRef::Generic(service)
                 }
             }
         };
@@ -1445,9 +1446,12 @@ impl Client {
                 // Prepare the in-flight request by ensuring we use the exact same Service instance
                 // for both poll_ready and call.
                 let in_flight = Oneshot::new(self.inner.as_ref().clone(), req);
-                Pending::new(url, in_flight)
+                Pending::Request {
+                    url: Some(url),
+                    fut: in_flight,
+                }
             }
-            Err(err) => Pending::new_err(err),
+            Err(err) => Pending::Error { error: Some(err) },
         }
     }
 }

@@ -78,21 +78,6 @@ impl Future for ResponsePending {
 
 // ======== Pending impl ========
 
-impl Pending {
-    #[inline(always)]
-    pub(super) fn new(url: Url, fut: Oneshot<ClientRef, http::Request<Body>>) -> Self {
-        Pending::Request {
-            url: Some(url),
-            fut,
-        }
-    }
-
-    #[inline(always)]
-    pub(crate) fn new_err(err: Error) -> Self {
-        Pending::Error { error: Some(err) }
-    }
-}
-
 impl Future for Pending {
     type Output = Result<Response, Error>;
 
