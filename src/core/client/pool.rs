@@ -128,15 +128,12 @@ impl<T, K: Key> Pool<T, K> {
     {
         let exec = Exec::new(executor);
         let timer = timer.map(Timer::new);
-        let idle = {
-            let pool_size = config.max_pool_size.map(|v| v.get()).unwrap_or(u32::MAX);
-            LruMap::with_hasher(ByLength::new(pool_size), RandomState::new())
-        };
+        let max_pool_size = config.max_pool_size.map(NonZero::get).unwrap_or(u32::MAX);
 
         let inner = if config.is_enabled() {
             Some(Arc::new(Mutex::new(PoolInner {
                 connecting: HashSet::with_hasher(RandomState::new()),
-                idle,
+                idle: LruMap::with_hasher(ByLength::new(max_pool_size), RandomState::new()),
                 idle_interval_ref: None,
                 max_idle_per_host: config.max_idle_per_host,
                 waiters: HashMap::with_hasher(RandomState::new()),
