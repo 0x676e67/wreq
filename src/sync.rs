@@ -1,7 +1,7 @@
 //! Synchronization primitives: [`Mutex`] and [`RwLock`] that never poison.
 //!
 //! These types expose APIs identical to [`std::sync::Mutex`] and [`std::sync::RwLock`],
-//! but **do not return** [`PoisonError`] even if a thread panics while holding the lock.
+//! but **do not return** [`std::sync::PoisonError`] even if a thread panics while holding the lock.
 //!
 //! This is useful in high-availability systems where panic recovery is done externally,
 //! or poisoning is not meaningful in context.

@@ -114,7 +114,7 @@ impl AsRef<[u8]> for AlpsProtocol {
 }
 
 /// IANA assigned identifier of compression algorithm.
-/// See https://www.rfc-editor.org/rfc/rfc8879.html#name-compression-algorithms
+/// See <https://www.rfc-editor.org/rfc/rfc8879.html#name-compression-algorithms>
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub struct CertificateCompressionAlgorithm(boring2::ssl::CertificateCompressionAlgorithm);
 
