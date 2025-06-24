@@ -169,7 +169,7 @@ impl Default for CertStore {
         #[cfg(not(feature = "webpki-roots"))]
         {
             CertStore::builder()
-                .add_der_certs(webpki_root_certs::TLS_SERVER_ROOT_CERTS)
+                .set_default_paths()
                 .build()
                 .expect("failed to load default cert store")
         }

@@ -102,8 +102,8 @@ percent-encoding = "2.3"
 ipnet = "2.11.0"
 
 ## boring-tls
-boring2 = { version = "5.0.0-alpha.1", features = ["pq-experimental"] }
-tokio-boring2 = { version = "5.0.0-alpha.1", features = ["pq-experimental"] }
+boring2 = { version = "5.0.0-alpha.2", features = ["pq-experimental"] }
+tokio-boring2 = { version = "5.0.0-alpha.2", features = ["pq-experimental"] }
 brotli = "8.0.1"
 flate2 = "1.1.2"
 zstd = "0.13.3"
@@ -122,7 +122,6 @@ encoding_rs = { version = "0.8", optional = true }
 mime = { version = "0.3.17", optional = true }
 
 # root certs
-rustls-native-certs = { version = "0.8.0", optional = true }
 webpki-root-certs = { version = "1.0.0", optional = true }
 
 ## cookies
