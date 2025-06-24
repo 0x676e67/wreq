@@ -8,6 +8,7 @@ use std::{
     task::{Context, Poll},
 };
 
+use ahash::RandomState;
 use tower_service::Service;
 
 use crate::{core::client::connect::dns::Name as HyperName, error::BoxError};
@@ -83,13 +84,13 @@ impl Service<HyperName> for DynResolver {
 
 pub(crate) struct DnsResolverWithOverrides {
     dns_resolver: Arc<dyn Resolve>,
-    overrides: Arc<HashMap<String, Vec<SocketAddr>>>,
+    overrides: Arc<HashMap<String, Vec<SocketAddr>, RandomState>>,
 }
 
 impl DnsResolverWithOverrides {
     pub(crate) fn new(
         dns_resolver: Arc<dyn Resolve>,
-        overrides: HashMap<String, Vec<SocketAddr>>,
+        overrides: HashMap<String, Vec<SocketAddr>, RandomState>,
     ) -> Self {
         DnsResolverWithOverrides {
             dns_resolver,

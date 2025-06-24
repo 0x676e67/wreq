@@ -7,12 +7,13 @@ use std::{
     collections::HashMap,
     convert::TryInto,
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
-    num::NonZeroUsize,
+    num::NonZeroU32,
     sync::Arc,
     task::{Context, Poll},
     time::Duration,
 };
 
+use ahash::RandomState;
 use future::Pending;
 use http::{
     Request as HttpRequest, Response as HttpResponse,
@@ -147,7 +148,7 @@ struct Config {
     connection_verbose: bool,
     pool_idle_timeout: Option<Duration>,
     pool_max_idle_per_host: usize,
-    pool_max_size: Option<NonZeroUsize>,
+    pool_max_size: Option<NonZeroU32>,
     tcp_keepalive: Option<Duration>,
     tcp_keepalive_interval: Option<Duration>,
     tcp_keepalive_retries: Option<u32>,
@@ -179,7 +180,7 @@ struct Config {
     cookie_store: Option<Arc<dyn cookie::CookieStore>>,
     #[cfg(feature = "hickory-dns")]
     hickory_dns: bool,
-    dns_overrides: HashMap<String, Vec<SocketAddr>>,
+    dns_overrides: HashMap<String, Vec<SocketAddr>, RandomState>,
     dns_resolver: Option<Arc<dyn Resolve>>,
     http_version_pref: HttpVersionPref,
     https_only: bool,
@@ -262,7 +263,7 @@ impl ClientBuilder {
                 hickory_dns: cfg!(feature = "hickory-dns"),
                 #[cfg(feature = "cookies")]
                 cookie_store: None,
-                dns_overrides: HashMap::new(),
+                dns_overrides: HashMap::with_hasher(RandomState::new()),
                 dns_resolver: None,
                 http_version_pref: HttpVersionPref::All,
                 builder: HyperClient::builder(TokioExecutor::new()),
@@ -877,8 +878,8 @@ impl ClientBuilder {
     }
 
     /// Sets the maximum number of connections in the pool.
-    pub fn pool_max_size(mut self, max: usize) -> ClientBuilder {
-        self.config.pool_max_size = NonZeroUsize::new(max);
+    pub fn pool_max_size(mut self, max: u32) -> ClientBuilder {
+        self.config.pool_max_size = NonZeroU32::new(max);
         self
     }
 

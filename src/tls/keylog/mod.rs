@@ -8,11 +8,12 @@ use std::{
     sync::OnceLock,
 };
 
+use ahash::RandomState;
 pub use handle::KeyLogHandle;
 
 use crate::sync::RwLock;
 
-static GLOBAL_KEYLOG_FILE_MAPPING: OnceLock<RwLock<HashMap<PathBuf, KeyLogHandle>>> =
+static GLOBAL_KEYLOG_FILE_MAPPING: OnceLock<RwLock<HashMap<PathBuf, KeyLogHandle, RandomState>>> =
     OnceLock::new();
 
 /// Specifies the intent for a (TLS) keylogger to be used in a client or server configuration.
@@ -51,7 +52,8 @@ impl KeyLogPolicy {
             KeyLogPolicy::File(keylog_filename) => normalize_path(keylog_filename),
         };
 
-        let mapping = GLOBAL_KEYLOG_FILE_MAPPING.get_or_init(|| RwLock::new(HashMap::new()));
+        let mapping = GLOBAL_KEYLOG_FILE_MAPPING
+            .get_or_init(|| RwLock::new(HashMap::with_hasher(RandomState::new())));
         if let Some(handle) = mapping.read().get(&path).cloned() {
             return Ok(handle);
         }
