@@ -13,7 +13,6 @@ use std::{
     time::{Duration, Instant},
 };
 
-use ahash::RandomState;
 use schnellru::{ByLength, LruMap};
 use tokio::sync::oneshot;
 
@@ -80,10 +79,10 @@ struct PoolInner<T, K: Eq + Hash> {
     // A flag that a connection is being established, and the connection
     // should be shared. This prevents making multiple HTTP/2 connections
     // to the same host.
-    connecting: HashSet<K, RandomState>,
+    connecting: HashSet<K>,
     // These are internal Conns sitting in the event loop in the KeepAlive
     // state, waiting to receive a new Request to send on the socket.
-    idle: LruMap<K, Vec<Idle<T>>, ByLength, RandomState>,
+    idle: LruMap<K, Vec<Idle<T>>>,
     max_idle_per_host: usize,
     // These are outstanding Checkouts that are waiting for a socket to be
     // able to send a Request one. This is used when "racing" for a new
@@ -94,7 +93,7 @@ struct PoolInner<T, K: Eq + Hash> {
     // this list is checked for any parked Checkouts, and tries to notify
     // them that the Conn could be used instead of waiting for a brand new
     // connection.
-    waiters: HashMap<K, VecDeque<oneshot::Sender<T>>, RandomState>,
+    waiters: HashMap<K, VecDeque<oneshot::Sender<T>>>,
     // A oneshot channel is used to allow the interval to be notified when
     // the Pool completely drops. That way, the interval can cancel immediately.
     idle_interval_ref: Option<oneshot::Sender<Infallible>>,
@@ -128,15 +127,25 @@ impl<T, K: Key> Pool<T, K> {
     {
         let exec = Exec::new(executor);
         let timer = timer.map(Timer::new);
-        let max_pool_size = config.max_pool_size.map(NonZero::get).unwrap_or(u32::MAX);
+        let idle = {
+            // Copy from `ahash` constructor, so that the seed is always the same.
+            let seed = [
+                0x243f_6a88_85a3_08d3,
+                0x1319_8a2e_0370_7344,
+                0xa409_3822_299f_31d0,
+                0x082e_fa98_ec4e_6c89,
+            ];
+            let pool_size = config.max_pool_size.map(|v| v.get()).unwrap_or(u32::MAX);
+            LruMap::with_seed(ByLength::new(pool_size), seed)
+        };
 
         let inner = if config.is_enabled() {
             Some(Arc::new(Mutex::new(PoolInner {
-                connecting: HashSet::with_hasher(RandomState::new()),
-                idle: LruMap::with_hasher(ByLength::new(max_pool_size), RandomState::new()),
+                connecting: HashSet::new(),
+                idle,
                 idle_interval_ref: None,
                 max_idle_per_host: config.max_idle_per_host,
-                waiters: HashMap::with_hasher(RandomState::new()),
+                waiters: HashMap::new(),
                 exec,
                 timer,
                 timeout: config.idle_timeout,
@@ -144,7 +153,6 @@ impl<T, K: Key> Pool<T, K> {
         } else {
             None
         };
-
         Pool { inner }
     }
 

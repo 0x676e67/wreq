@@ -5,7 +5,6 @@ use std::{
     hash::{Hash, Hasher},
 };
 
-use ahash::RandomState;
 use boring2::ssl::{SslSession, SslSessionRef, SslVersion};
 use http::uri::Authority;
 use linked_hash_set::LinkedHashSet;
@@ -40,8 +39,8 @@ impl Borrow<[u8]> for HashSession {
 }
 
 pub struct SessionCache {
-    sessions: HashMap<SessionKey, LinkedHashSet<HashSession>, RandomState>,
-    reverse: HashMap<HashSession, SessionKey, RandomState>,
+    sessions: HashMap<SessionKey, LinkedHashSet<HashSession>>,
+    reverse: HashMap<HashSession, SessionKey>,
     /// Maximum capacity of LinkedHashSet per SessionKey
     per_key_session_capacity: usize,
 }
@@ -49,8 +48,8 @@ pub struct SessionCache {
 impl SessionCache {
     pub fn with_capacity(per_key_session_capacity: usize) -> SessionCache {
         SessionCache {
-            sessions: HashMap::with_hasher(RandomState::new()),
-            reverse: HashMap::with_hasher(RandomState::new()),
+            sessions: HashMap::new(),
+            reverse: HashMap::new(),
             per_key_session_capacity,
         }
     }

@@ -13,7 +13,6 @@ use std::{
     time::Duration,
 };
 
-use ahash::RandomState;
 use future::Pending;
 use http::{
     Request as HttpRequest, Response as HttpResponse,
@@ -180,7 +179,7 @@ struct Config {
     cookie_store: Option<Arc<dyn cookie::CookieStore>>,
     #[cfg(feature = "hickory-dns")]
     hickory_dns: bool,
-    dns_overrides: HashMap<String, Vec<SocketAddr>, RandomState>,
+    dns_overrides: HashMap<String, Vec<SocketAddr>>,
     dns_resolver: Option<Arc<dyn Resolve>>,
     http_version_pref: HttpVersionPref,
     https_only: bool,
@@ -263,7 +262,7 @@ impl ClientBuilder {
                 hickory_dns: cfg!(feature = "hickory-dns"),
                 #[cfg(feature = "cookies")]
                 cookie_store: None,
-                dns_overrides: HashMap::with_hasher(RandomState::new()),
+                dns_overrides: HashMap::new(),
                 dns_resolver: None,
                 http_version_pref: HttpVersionPref::All,
                 builder: HyperClient::builder(TokioExecutor::new()),
