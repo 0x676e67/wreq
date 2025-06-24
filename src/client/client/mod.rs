@@ -405,12 +405,12 @@ impl ClientBuilder {
                 .layer(CookieManagerLayer::new(config.cookie_store))
                 .service(service);
 
-            let redirect_policy = RedirectPolicy::new(config.redirect_policy)
+            let policy = RedirectPolicy::new(config.redirect_policy)
                 .with_referer(config.referer)
                 .with_https_only(config.https_only);
 
             let service = ServiceBuilder::new()
-                .layer(FollowRedirectLayer::with_policy(redirect_policy))
+                .layer(FollowRedirectLayer::with_policy(policy))
                 .service(service);
 
             let service = ServiceBuilder::new()
