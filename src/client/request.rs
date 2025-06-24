@@ -13,7 +13,7 @@ use serde::Serialize;
 use super::multipart;
 use super::{
     body::Body,
-    client::{Client, future::Pending},
+    client::{Client, Pending},
     response::Response,
 };
 #[cfg(any(

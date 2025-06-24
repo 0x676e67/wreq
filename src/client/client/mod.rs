@@ -1,7 +1,8 @@
 #[macro_use]
 mod macros;
-pub(super) mod future;
+mod future;
 mod service;
+mod types;
 
 use std::{
     collections::HashMap,
@@ -13,7 +14,7 @@ use std::{
     time::Duration,
 };
 
-use future::Pending;
+pub use future::Pending;
 use http::{
     Request as HttpRequest, Response as HttpResponse,
     header::{HeaderMap, HeaderValue, USER_AGENT},
