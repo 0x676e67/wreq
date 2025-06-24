@@ -823,19 +823,15 @@ impl<T> WeakOpt<T> {
 #[cfg(test)]
 mod tests {
     use std::{
-        fmt::Debug,
-        future::Future,
-        hash::Hash,
-        num::NonZero,
-        pin::Pin,
-        task::{self, Poll},
-        time::Duration,
+        fmt::Debug, future::Future, hash::Hash, num::NonZero, pin::Pin, sync::MutexGuard, task::{self, Poll}, time::Duration
     };
 
     use super::{Connecting, Key, Pool, Poolable, Reservation, WeakOpt};
-    use crate::core::{
-        common::timer,
-        rt::{TokioExecutor, tokio::TokioTimer},
+    use crate::{
+        core::{
+            common::timer,
+            rt::{TokioExecutor, tokio::TokioTimer},
+        },
     };
 
     #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -887,7 +883,7 @@ mod tests {
     }
 
     impl<T: Poolable, K: Key> Pool<T, K> {
-        fn locked(&self) -> antidote::MutexGuard<'_, super::PoolInner<T, K>> {
+        fn locked(&self) -> MutexGuard<'_, super::PoolInner<T, K>> {
             self.inner.as_ref().expect("enabled").lock()
         }
     }

@@ -12,6 +12,12 @@
 //! - Otherwise, it wraps [`std::sync::Mutex`] and [`std::sync::RwLock`], using `.unwrap_or_else(|e|
 //!   e.into_inner())` to silently recover from poisoning.
 
+#[cfg(all(feature = "parking_lot", test))]
+pub use parking_lot::MutexGuard;
+
+#[cfg(all(not(feature = "parking_lot"), test))]
+pub use fallback::MutexGuard;
+
 #[cfg(not(feature = "parking_lot"))]
 pub use fallback::{Mutex, RwLock};
 #[cfg(feature = "parking_lot")]
