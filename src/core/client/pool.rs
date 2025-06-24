@@ -823,7 +823,13 @@ impl<T> WeakOpt<T> {
 #[cfg(test)]
 mod tests {
     use std::{
-        fmt::Debug, future::Future, hash::Hash, num::NonZero, pin::Pin, sync::MutexGuard, task::{self, Poll}, time::Duration
+        fmt::Debug,
+        future::Future,
+        hash::Hash,
+        num::NonZero,
+        pin::Pin,
+        task::{self, Poll},
+        time::Duration,
     };
 
     use super::{Connecting, Key, Pool, Poolable, Reservation, WeakOpt};
@@ -832,6 +838,7 @@ mod tests {
             common::timer,
             rt::{TokioExecutor, tokio::TokioTimer},
         },
+        sync::MutexGuard,
     };
 
     #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -927,7 +934,8 @@ mod tests {
         let pooled = pool.pooled(c(key.clone()), Uniq(41));
 
         drop(pooled);
-        tokio::time::sleep(pool.locked().timeout.unwrap()).await;
+        let timeout = pool.locked().timeout.unwrap();
+        tokio::time::sleep(timeout).await;
         let mut checkout = pool.checkout(key);
         let poll_once = PollOnce(&mut checkout);
         let is_not_ready = poll_once.await.is_none();
@@ -947,7 +955,8 @@ mod tests {
             pool.locked().idle.get(&key).map(|entries| entries.len()),
             Some(3)
         );
-        tokio::time::sleep(pool.locked().timeout.unwrap()).await;
+        let timeout = pool.locked().timeout.unwrap();
+        tokio::time::sleep(timeout).await;
 
         let mut checkout = pool.checkout(key.clone());
         let poll_once = PollOnce(&mut checkout);
