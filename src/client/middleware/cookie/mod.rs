@@ -3,4 +3,4 @@
 mod future;
 mod layer;
 
-pub use self::layer::CookieManagerLayer;
+pub use self::layer::{CookieManager, CookieManagerLayer};

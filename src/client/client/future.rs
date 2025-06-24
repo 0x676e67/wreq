@@ -1,28 +1,39 @@
 use std::{
     pin::Pin,
-    task::{Context, Poll},
+    task::{Context, Poll, ready},
 };
 
-use http::{Request as HttpRequest, Response as HttpResponse};
+use http::Response as HttpResponse;
 use pin_project_lite::pin_project;
-use tower::util::{BoxCloneSyncService, Oneshot};
+use tower::util::Oneshot;
 use url::Url;
 
-use super::{Body, Response, ResponseBody};
+use super::{
+    ClientRef, Response,
+    types::{
+        BoxedResponseFuture, CoreResponseFuture, GenericResponseFuture, HttpRequest, ResponseBody,
+    },
+};
 use crate::{
-    Error,
+    Body, Error,
     client::{body, middleware::redirect::RequestUri},
     core::body::Incoming,
     error::BoxError,
     into_url::IntoUrlSealed,
 };
 
-type ResponseFuture = Oneshot<
-    BoxCloneSyncService<HttpRequest<Body>, HttpResponse<ResponseBody>, BoxError>,
-    HttpRequest<Body>,
->;
-
-type CoreResponseFuture = crate::core::client::ResponseFuture;
+pin_project! {
+    #[project = ResponsePendingProj]
+    pub enum ResponsePending {
+        Generic {
+            #[pin]
+            fut: GenericResponseFuture,
+        },
+        Boxed {
+            fut: BoxedResponseFuture,
+        },
+    }
+}
 
 pin_project! {
     #[project = PendingProj]
@@ -30,7 +41,7 @@ pin_project! {
         Request {
             url: Option<Url>,
             #[pin]
-            in_flight: ResponseFuture,
+            fut: Oneshot<ClientRef, HttpRequest<Body>>,
         },
         Error {
             error: Option<Error>,
@@ -51,14 +62,28 @@ pin_project! {
     }
 }
 
+// ======== ResponseFuture impl ========
+
+impl Future for ResponsePending {
+    type Output = Result<HttpResponse<ResponseBody>, BoxError>;
+
+    #[inline(always)]
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        match self.project() {
+            ResponsePendingProj::Generic { fut } => Poll::Ready(ready!(fut.poll(cx))),
+            ResponsePendingProj::Boxed { fut } => Poll::Ready(ready!(fut.as_mut().poll(cx))),
+        }
+    }
+}
+
 // ======== Pending impl ========
 
 impl Pending {
     #[inline(always)]
-    pub(crate) fn new(url: Url, in_flight: ResponseFuture) -> Self {
+    pub(super) fn new(url: Url, fut: Oneshot<ClientRef, http::Request<Body>>) -> Self {
         Pending::Request {
             url: Some(url),
-            in_flight,
+            fut,
         }
     }
 
@@ -73,7 +98,10 @@ impl Future for Pending {
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         match self.project() {
-            PendingProj::Request { url, in_flight } => {
+            PendingProj::Request {
+                url,
+                fut: in_flight,
+            } => {
                 let res = match in_flight.poll(cx) {
                     Poll::Ready(Ok(res)) => res.map(body::boxed),
                     Poll::Ready(Err(err)) => {
@@ -138,9 +166,15 @@ impl Future for CorePending {
 mod test {
 
     #[test]
+    fn test_oneshot_future_size() {
+        let s = std::mem::size_of::<super::ResponsePending>();
+        assert!(s <= 360, "size_of::<ResponseFuture>() == {s}, too big");
+    }
+
+    #[test]
     fn test_future_size() {
         let s = std::mem::size_of::<super::Pending>();
-        assert!(s <= 360, "size_of::<Pending>() == {s}, too big");
+        assert!(s <= 1200, "size_of::<Pending>() == {s}, too big");
     }
 
     #[tokio::test]

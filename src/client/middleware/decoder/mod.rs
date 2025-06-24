@@ -1,3 +1,3 @@
 mod layer;
 
-pub use layer::DecompressionLayer;
+pub use layer::{Decompression, DecompressionLayer};

@@ -25,18 +25,9 @@ use tower::{
     retry::RetryLayer,
     util::{BoxCloneSyncService, BoxCloneSyncServiceLayer, Oneshot},
 };
+use types::{BoxedClientService, BoxedClientServiceLayer, ResponseBody};
 #[cfg(feature = "cookies")]
 use {super::middleware::cookie::CookieManagerLayer, crate::cookie};
-#[cfg(any(
-    feature = "gzip",
-    feature = "zstd",
-    feature = "brotli",
-    feature = "deflate",
-))]
-use {
-    super::{decoder::AcceptEncoding, middleware::decoder::DecompressionLayer},
-    tower_http::decompression::DecompressionBody,
-};
 
 #[cfg(feature = "websocket")]
 use super::websocket::WebSocketRequestBuilder;
@@ -45,21 +36,28 @@ use super::{
     middleware::{
         redirect::FollowRedirectLayer,
         retry::Http2RetryPolicy,
-        timeout::{ResponseBodyTimeoutLayer, TimeoutBody, TimeoutLayer},
+        timeout::{ResponseBodyTimeoutLayer, TimeoutLayer},
     },
     request::{Request, RequestBuilder},
     response::Response,
 };
+#[cfg(any(
+    feature = "gzip",
+    feature = "zstd",
+    feature = "brotli",
+    feature = "deflate",
+))]
+use super::{decoder::AcceptEncoding, middleware::decoder::DecompressionLayer};
 #[cfg(feature = "hickory-dns")]
 use crate::dns::hickory::{HickoryDnsResolver, LookupIpStrategy};
 use crate::{
     IntoUrl, Method, OriginalHeaders, Proxy,
+    client::client::{future::ResponsePending, types::GenericClientService},
     connect::{
         BoxedConnectorLayer, BoxedConnectorService, Connector,
         sealed::{Conn, Unnameable},
     },
     core::{
-        body::Incoming,
         client::{Builder, Client as HyperClient},
         ext::RequestConfig,
         rt::{TokioExecutor, tokio::TokioTimer},
@@ -74,32 +72,6 @@ use crate::{
         AlpnProtocol, CertStore, CertificateInput, Identity, KeyLogPolicy, TlsConfig, TlsVersion,
     },
 };
-
-#[cfg(not(any(
-    feature = "gzip",
-    feature = "zstd",
-    feature = "brotli",
-    feature = "deflate",
-)))]
-type ResponseBody = TimeoutBody<Incoming>;
-
-#[cfg(any(
-    feature = "gzip",
-    feature = "zstd",
-    feature = "brotli",
-    feature = "deflate",
-))]
-type ResponseBody = TimeoutBody<DecompressionBody<Incoming>>;
-
-type BoxedClientService =
-    BoxCloneSyncService<HttpRequest<Body>, HttpResponse<ResponseBody>, BoxError>;
-
-type BoxedClientServiceLayer = BoxCloneSyncServiceLayer<
-    BoxedClientService,
-    HttpRequest<Body>,
-    HttpResponse<ResponseBody>,
-    BoxError,
->;
 
 /// An `Client` to make Requests with.
 ///
@@ -116,7 +88,14 @@ type BoxedClientServiceLayer = BoxCloneSyncServiceLayer<
 /// [`Rc`]: std::rc::Rc
 #[derive(Clone)]
 pub struct Client {
-    inner: Arc<BoxedClientService>,
+    inner: Arc<ClientRef>,
+}
+
+#[allow(clippy::large_enum_variant)]
+#[derive(Clone)]
+enum ClientRef {
+    Boxed(BoxedClientService),
+    Generic(GenericClientService),
 }
 
 /// A `ClientBuilder` can be used to create a `Client` with custom configuration.
@@ -457,7 +436,7 @@ impl ClientBuilder {
                         .map_err(error::map_timeout_to_request_error)
                         .service(service);
 
-                    BoxCloneSyncService::new(service)
+                    ClientRef::Boxed(BoxCloneSyncService::new(service))
                 }
                 None => {
                     let service = ServiceBuilder::new()
@@ -465,10 +444,10 @@ impl ClientBuilder {
                         .service(service);
 
                     let service = ServiceBuilder::new()
-                        .map_err(error::map_timeout_to_request_error)
+                        .map_err(error::map_timeout_to_request_error as _)
                         .service(service);
 
-                    BoxCloneSyncService::new(service)
+                    ClientRef::Generic(service)
                 }
             }
         };
@@ -1503,5 +1482,31 @@ impl tower_service::Service<Request> for &'_ Client {
     #[inline(always)]
     fn call(&mut self, req: Request) -> Self::Future {
         self.execute(req)
+    }
+}
+
+impl Service<HttpRequest<Body>> for ClientRef {
+    type Error = BoxError;
+    type Response = HttpResponse<ResponseBody>;
+    type Future = ResponsePending;
+
+    #[inline(always)]
+    fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        match self {
+            ClientRef::Generic(service) => service.poll_ready(cx),
+            ClientRef::Boxed(service) => service.poll_ready(cx),
+        }
+    }
+
+    #[inline(always)]
+    fn call(&mut self, req: HttpRequest<Body>) -> Self::Future {
+        match self {
+            ClientRef::Generic(service) => ResponsePending::Generic {
+                fut: Box::pin(service.call(req)),
+            },
+            ClientRef::Boxed(service) => ResponsePending::Boxed {
+                fut: service.call(req),
+            },
+        }
     }
 }
