@@ -83,7 +83,7 @@ struct PoolInner<T, K: Eq + Hash> {
     connecting: HashSet<K, RandomState>,
     // These are internal Conns sitting in the event loop in the KeepAlive
     // state, waiting to receive a new Request to send on the socket.
-    idle: LruMap<K, Vec<Idle<T>>>,
+    idle: LruMap<K, Vec<Idle<T>>, ByLength, RandomState>,
     max_idle_per_host: usize,
     // These are outstanding Checkouts that are waiting for a socket to be
     // able to send a Request one. This is used when "racing" for a new
@@ -129,15 +129,8 @@ impl<T, K: Key> Pool<T, K> {
         let exec = Exec::new(executor);
         let timer = timer.map(Timer::new);
         let idle = {
-            // Copy from `ahash` constructor, so that the seed is always the same.
-            let seed = [
-                0x243f_6a88_85a3_08d3,
-                0x1319_8a2e_0370_7344,
-                0xa409_3822_299f_31d0,
-                0x082e_fa98_ec4e_6c89,
-            ];
             let pool_size = config.max_pool_size.map(|v| v.get()).unwrap_or(u32::MAX);
-            LruMap::with_seed(ByLength::new(pool_size), seed)
+            LruMap::with_hasher(ByLength::new(pool_size), RandomState::new())
         };
 
         let inner = if config.is_enabled() {
