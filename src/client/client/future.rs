@@ -62,7 +62,7 @@ pin_project! {
     }
 }
 
-// ======== ResponseFuture impl ========
+// ======== ResponsePending impl ========
 
 impl Future for ResponsePending {
     type Output = Result<HttpResponse<ResponseBody>, BoxError>;
