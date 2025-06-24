@@ -1,5 +1,3 @@
-#![allow(missing_debug_implementations)]
-
 mod identity;
 mod store;
 
