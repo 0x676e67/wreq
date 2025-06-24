@@ -269,7 +269,6 @@
 //! - **socks**: Provides SOCKS5 and SOCKS4 proxy support.
 //! - **hickory-dns**: Enables a hickory-dns async resolver instead of default threadpool using
 //!   `getaddrinfo`.
-//! - **native-roots**: Use the native system root certificate store.
 //! - **webpki-roots** *(enabled by default)*: Use the webpki-roots crate for root certificates.
 //! - **system-proxy** *(enabled by default)*: Enable system proxy support.
 //! - **parking_lot**: Use `parking_lot` for synchronization primitives.

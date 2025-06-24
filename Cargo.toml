@@ -55,8 +55,6 @@ stream = ["tokio/fs", "dep:tokio-util"]
 
 socks = []
 
-native-roots = ["dep:rustls-native-certs"]
-
 webpki-roots = ["dep:webpki-root-certs"]
 
 # Use the system's proxy configuration.
@@ -265,7 +263,7 @@ required-features = ["full", "tracing"]
 [[example]]
 name = "set_cert_store"
 path = "examples/set_cert_store.rs"
-required-features = ["native-roots", "webpki-roots", "tracing"]
+required-features = ["webpki-roots", "tracing"]
 
 [[example]]
 name = "request_with_redirect"

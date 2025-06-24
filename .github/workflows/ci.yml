@@ -83,10 +83,6 @@ jobs:
         run: cargo nextest run --workspace --no-default-features
       - name: Test webpki-roots feature
         run: cargo nextest run --workspace --no-default-features --features webpki-roots
-      - name: Test native-roots feature
-        run: cargo nextest run --workspace --no-default-features --features native-roots
-      - name: Test webpki-roots and native-roots features
-        run: cargo nextest run --workspace --no-default-features --features webpki-roots,native-roots
       - name: Test cookies feature
         run: cargo nextest run --workspace --features cookies
       - name: Test --features gzip,stream
