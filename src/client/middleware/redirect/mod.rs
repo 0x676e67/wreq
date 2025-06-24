@@ -111,7 +111,7 @@ where
     }
 }
 
-/// Response [Extensions] value that represents the effective request URI of
+/// Response [`http::Extensions`] value that represents the effective request URI of
 /// a response returned by a [`FollowRedirect`] middleware.
 ///
 /// The value differs from the original request's effective URI if the middleware has followed

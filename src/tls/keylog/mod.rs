@@ -9,8 +9,9 @@ use std::{
 };
 
 use ahash::RandomState;
-use antidote::RwLock;
 pub use handle::KeyLogHandle;
+
+use crate::sync::RwLock;
 
 static GLOBAL_KEYLOG_FILE_MAPPING: OnceLock<RwLock<HashMap<PathBuf, KeyLogHandle, RandomState>>> =
     OnceLock::new();

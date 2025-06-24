@@ -10,7 +10,6 @@ use std::{
     task::{Context, Poll},
 };
 
-use antidote::Mutex;
 use boring2::{
     error::ErrorStack,
     ssl::{SslConnector, SslMethod, SslOptions, SslRef, SslSessionCacheMode},
@@ -33,6 +32,7 @@ use crate::{
         rt::{Read, TokioIo, Write},
     },
     error::BoxError,
+    sync::Mutex,
     tls::{CertStore, Identity, KeyLogPolicy, TlsConfig, TlsVersion},
 };
 
