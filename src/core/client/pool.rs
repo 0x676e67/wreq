@@ -13,13 +13,15 @@ use std::{
     time::{Duration, Instant},
 };
 
-use antidote::Mutex;
 use lru::LruCache;
 use tokio::sync::oneshot;
 
-use crate::core::{
-    common::{exec, exec::Exec, timer::Timer},
-    rt::{Sleep, Timer as _},
+use crate::{
+    core::{
+        common::{exec, exec::Exec, timer::Timer},
+        rt::{Sleep, Timer as _},
+    },
+    sync::Mutex,
 };
 
 // FIXME: allow() required due to `impl Trait` leaking types to this lint

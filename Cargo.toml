@@ -68,6 +68,9 @@ macos-system-configuration = ["system-proxy"]
 # Optional enable tracing
 tracing = ["http2/tracing", "dep:tracing"]
 
+# Enables the `parking_lot` crate for synchronization primitives.
+parking_lot = ["dep:parking_lot", "http2/parking_lot"]
+
 [dependencies]
 base64 = "0.22"
 url = "2.5"
@@ -77,7 +80,6 @@ tower = { version = "0.5.2", default-features = false, features = ["timeout", "u
 tower-http = { version = "0.6.6", default-features = false, optional = true }
 tower-service = "0.3"
 sync_wrapper = { version = "1.0", features = ["futures"] }
-antidote = "1" 
 iri-string = "0.7.0"
 
 # core
@@ -137,6 +139,9 @@ tokio-tungstenite = { version = "0.27.0", default-features = false, features = [
 
 ## hickory-dns
 hickory-resolver = { version = "0.25.2", optional = true }
+
+## parking_lot
+parking_lot = { version = "0.12.4", optional = true }
 
 ## windows system proxy
 [target.'cfg(windows)'.dependencies]
