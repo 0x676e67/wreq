@@ -91,7 +91,6 @@ pub struct Client {
     inner: Arc<ClientRef>,
 }
 
-#[allow(clippy::large_enum_variant)]
 #[derive(Clone)]
 enum ClientRef {
     Boxed(BoxedClientService),
@@ -447,7 +446,7 @@ impl ClientBuilder {
                         .map_err(error::map_timeout_to_request_error as _)
                         .service(service);
 
-                    ClientRef::Generic(service)
+                    ClientRef::Generic(Box::new(service))
                 }
             }
         };

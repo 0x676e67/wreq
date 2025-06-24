@@ -85,7 +85,7 @@ pub type BoxedResponseFuture =
     Pin<Box<dyn Future<Output = Result<HttpResponse<ResponseBody>, BoxError>> + Send + 'static>>;
 
 pub type GenericClientService =
-    MapErr<Timeout<Retry<Http2RetryPolicy, RedirectLayer>>, fn(BoxError) -> BoxError>;
+    Box<MapErr<Timeout<Retry<Http2RetryPolicy, RedirectLayer>>, fn(BoxError) -> BoxError>>;
 
 pub type BoxedClientService =
     BoxCloneSyncService<HttpRequest<Body>, HttpResponse<ResponseBody>, BoxError>;
