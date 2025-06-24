@@ -1,5 +1,4 @@
 //! backport: <https://github.com/cloudflare/boring/blob/master/hyper-boring/src/lib.rs>
-
 use std::{
     error::Error,
     fmt::Debug,
