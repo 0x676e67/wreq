@@ -1443,12 +1443,11 @@ impl Client {
     pub fn execute(&self, request: Request) -> Pending {
         match request.try_into() {
             Ok((url, req)) => {
-                // Prepare the in-flight request by ensuring we use the exact same Service instance
+                // Prepare the future request by ensuring we use the exact same Service instance
                 // for both poll_ready and call.
-                let in_flight = Oneshot::new(self.inner.as_ref().clone(), req);
                 Pending::Request {
                     url: Some(url),
-                    fut: in_flight,
+                    fut: Oneshot::new(self.inner.as_ref().clone(), req),
                 }
             }
             Err(err) => Pending::Error { error: Some(err) },
