@@ -82,11 +82,8 @@ impl Future for Pending {
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         match self.project() {
-            PendingProj::Request {
-                url,
-                fut: in_flight,
-            } => {
-                let res = match in_flight.as_mut().poll(cx) {
+            PendingProj::Request { url, fut } => {
+                let res = match fut.as_mut().poll(cx) {
                     Poll::Ready(Ok(res)) => res.map(body::boxed),
                     Poll::Ready(Err(err)) => {
                         let mut err = match err.downcast::<Error>() {
