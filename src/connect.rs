@@ -11,6 +11,7 @@ use std::{
 use http::uri::Scheme;
 use pin_project_lite::pin_project;
 use sealed::{Conn, Unnameable};
+use tokio::net::TcpStream;
 use tokio_boring2::SslStream;
 use tower::{
     ServiceBuilder,
@@ -34,7 +35,7 @@ use crate::{
     proxy::{Intercepted, Matcher as ProxyMatcher},
     tls::{
         CertStore, HttpsConnector, Identity, KeyLogPolicy, MaybeHttpsStream, TlsConfig,
-        TlsConnector, TlsConnectorBuilder, TlsVersion,
+        TlsConnector, TlsConnectorBuilder, TlsInfo, TlsVersion,
     },
 };
 
@@ -587,40 +588,40 @@ impl Service<Dst> for ConnectorService {
 }
 
 trait TlsInfoFactory {
-    fn tls_info(&self) -> Option<crate::tls::TlsInfo>;
+    fn tls_info(&self) -> Option<TlsInfo>;
 }
 
-impl TlsInfoFactory for tokio::net::TcpStream {
-    fn tls_info(&self) -> Option<crate::tls::TlsInfo> {
+impl TlsInfoFactory for TcpStream {
+    fn tls_info(&self) -> Option<TlsInfo> {
         None
     }
 }
 
 impl<T: TlsInfoFactory> TlsInfoFactory for TokioIo<T> {
-    fn tls_info(&self) -> Option<crate::tls::TlsInfo> {
+    fn tls_info(&self) -> Option<TlsInfo> {
         self.inner().tls_info()
     }
 }
 
-impl TlsInfoFactory for SslStream<TokioIo<TokioIo<tokio::net::TcpStream>>> {
-    fn tls_info(&self) -> Option<crate::tls::TlsInfo> {
+impl TlsInfoFactory for SslStream<TokioIo<TokioIo<TcpStream>>> {
+    fn tls_info(&self) -> Option<TlsInfo> {
         self.ssl()
             .peer_certificate()
             .and_then(|c| c.to_der().ok())
-            .map(|c| crate::tls::TlsInfo {
+            .map(|c| TlsInfo {
                 peer_certificate: Some(c),
             })
     }
 }
 
-impl TlsInfoFactory for SslStream<TokioIo<MaybeHttpsStream<TokioIo<tokio::net::TcpStream>>>> {
-    fn tls_info(&self) -> Option<crate::tls::TlsInfo> {
+impl TlsInfoFactory for SslStream<TokioIo<MaybeHttpsStream<TokioIo<TcpStream>>>> {
+    fn tls_info(&self) -> Option<TlsInfo> {
         self.get_ref().inner().tls_info()
     }
 }
 
-impl TlsInfoFactory for MaybeHttpsStream<TokioIo<tokio::net::TcpStream>> {
-    fn tls_info(&self) -> Option<crate::tls::TlsInfo> {
+impl TlsInfoFactory for MaybeHttpsStream<TokioIo<TcpStream>> {
+    fn tls_info(&self) -> Option<TlsInfo> {
         match self {
             MaybeHttpsStream::Https(tls) => tls.inner().tls_info(),
             MaybeHttpsStream::Http(_) => None,
@@ -739,7 +740,7 @@ mod tls_conn {
     };
     use tokio_boring2::SslStream;
 
-    use super::TlsInfoFactory;
+    use super::{TlsInfo, TlsInfoFactory};
     use crate::{
         core::{
             client::connect::{Connected, Connection},
@@ -750,7 +751,8 @@ mod tls_conn {
 
     pin_project! {
         pub(super) struct BoringTlsConn<T> {
-            #[pin] pub(super) inner: TokioIo<SslStream<T>>,
+            #[pin]
+            pub(super) inner: TokioIo<SslStream<T>>,
         }
     }
 
@@ -831,7 +833,7 @@ mod tls_conn {
     where
         TokioIo<SslStream<T>>: TlsInfoFactory,
     {
-        fn tls_info(&self) -> Option<crate::tls::TlsInfo> {
+        fn tls_info(&self) -> Option<TlsInfo> {
             self.inner.tls_info()
         }
     }
