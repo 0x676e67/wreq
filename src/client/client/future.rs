@@ -40,8 +40,7 @@ pin_project! {
     pub enum Pending {
         Request {
             url: Option<Url>,
-            #[pin]
-            fut: Oneshot<ClientRef, HttpRequest<Body>>,
+            fut: Pin<Box<Oneshot<ClientRef, HttpRequest<Body>>>>,
         },
         Error {
             error: Option<Error>,
@@ -87,7 +86,7 @@ impl Future for Pending {
                 url,
                 fut: in_flight,
             } => {
-                let res = match in_flight.poll(cx) {
+                let res = match in_flight.as_mut().poll(cx) {
                     Poll::Ready(Ok(res)) => res.map(body::boxed),
                     Poll::Ready(Err(err)) => {
                         let mut err = match err.downcast::<Error>() {
@@ -151,15 +150,9 @@ impl Future for CorePending {
 mod test {
 
     #[test]
-    fn test_oneshot_future_size() {
-        let s = std::mem::size_of::<super::ResponsePending>();
-        assert!(s <= 360, "size_of::<ResponseFuture>() == {s}, too big");
-    }
-
-    #[test]
     fn test_future_size() {
         let s = std::mem::size_of::<super::Pending>();
-        assert!(s <= 1200, "size_of::<Pending>() == {s}, too big");
+        assert!(s <= 320, "size_of::<Pending>() == {s}, too big");
     }
 
     #[tokio::test]

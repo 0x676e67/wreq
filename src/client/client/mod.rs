@@ -1447,7 +1447,7 @@ impl Client {
                 // for both poll_ready and call.
                 Pending::Request {
                     url: Some(url),
-                    fut: Oneshot::new(self.inner.as_ref().clone(), req),
+                    fut: Box::pin(Oneshot::new(self.inner.as_ref().clone(), req)),
                 }
             }
             Err(err) => Pending::Error { error: Some(err) },
@@ -1504,7 +1504,7 @@ impl Service<HttpRequest<Body>> for ClientRef {
     fn call(&mut self, req: HttpRequest<Body>) -> Self::Future {
         match self {
             ClientRef::Generic(service) => ResponsePending::Generic {
-                fut: Box::pin(service.call(req)),
+                fut: service.call(req),
             },
             ClientRef::Boxed(service) => ResponsePending::Boxed {
                 fut: service.call(req),

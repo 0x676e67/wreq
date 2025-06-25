@@ -70,15 +70,9 @@ type RedirectLayer = FollowRedirect<
 
 pub type CoreResponseFuture = crate::core::client::ResponseFuture;
 
-pub type GenericResponseFuture = Pin<
-    Box<
-        MapErrFuture<
-            TimeoutResponseFuture<
-                RetryResponseFuture<Http2RetryPolicy, RedirectLayer, HttpRequest<Body>>,
-            >,
-            fn(BoxError) -> BoxError,
-        >,
-    >,
+pub type GenericResponseFuture = MapErrFuture<
+    TimeoutResponseFuture<RetryResponseFuture<Http2RetryPolicy, RedirectLayer, HttpRequest<Body>>>,
+    fn(BoxError) -> BoxError,
 >;
 
 pub type BoxedResponseFuture =
