@@ -29,7 +29,8 @@ pin_project! {
     pub enum Pending {
         BoxedRequest {
             url: Option<Url>,
-            fut: Pin<Box<Oneshot<BoxedClientService, HttpRequest<Body>>>>,
+            #[pin]
+            fut: Oneshot<BoxedClientService, HttpRequest<Body>>,
         },
         GenericRequest {
             url: Option<Url>,
@@ -61,7 +62,7 @@ impl Future for Pending {
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let (url, res) = match self.project() {
-            PendingProj::BoxedRequest { url, fut } => (url, fut.as_mut().poll(cx)),
+            PendingProj::BoxedRequest { url, fut } => (url, fut.poll(cx)),
             PendingProj::GenericRequest { url, fut } => (url, fut.as_mut().poll(cx)),
             PendingProj::Error { error } => return Poll::Ready(Err(take_err!(error))),
         };
@@ -114,7 +115,7 @@ mod test {
     #[test]
     fn test_future_size() {
         let s = std::mem::size_of::<super::Pending>();
-        assert!(s <= 320, "size_of::<Pending>() == {s}, too big");
+        assert!(s <= 360, "size_of::<Pending>() == {s}, too big");
     }
 
     #[tokio::test]

@@ -1446,13 +1446,10 @@ impl Client {
                 // Prepare the future request by ensuring we use the exact same Service instance
                 // for both poll_ready and call.
                 match <ClientRef as Clone>::clone(&self.inner) {
-                    ClientRef::Boxed(service) => {
-                        let fut = service.oneshot(req);
-                        Pending::BoxedRequest {
-                            url: Some(url),
-                            fut: Box::pin(fut),
-                        }
-                    }
+                    ClientRef::Boxed(service) => Pending::BoxedRequest {
+                        url: Some(url),
+                        fut: service.oneshot(req),
+                    },
                     ClientRef::Generic(service) => {
                         let fut = service.oneshot(req);
                         Pending::GenericRequest {
