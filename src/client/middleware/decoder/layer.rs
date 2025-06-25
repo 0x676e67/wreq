@@ -32,7 +32,9 @@ impl<S> Layer<S> for DecompressionLayer {
     type Service = Decompression<S>;
 
     fn layer(&self, service: S) -> Self::Service {
-        Decompression::new(service, self.accept.clone())
+        let decoder = TowerDecompression::new(service);
+        let decoder = Decompression::<S>::accept(decoder, &self.accept);
+        Decompression { decoder }
     }
 }
 
@@ -46,36 +48,29 @@ pub struct Decompression<S> {
 }
 
 impl<S> Decompression<S> {
-    /// Creates a new `Decompression` wrapping the `service`.
-    pub fn new(service: S, accepts: AcceptEncoding) -> Decompression<S> {
-        let decoder = TowerDecompression::new(service);
-        let decoder = Self::accepts(decoder, &accepts);
-        Decompression { decoder }
-    }
-
-    /// Sets decompression options based on the provided `Accepts`.
-    fn accepts(
+    /// Sets decompression options based on the provided `AcceptEncoding`.
+    fn accept(
         mut decoder: TowerDecompression<S>,
-        accepts: &AcceptEncoding,
+        accept: &AcceptEncoding,
     ) -> TowerDecompression<S> {
         #[cfg(feature = "gzip")]
         {
-            decoder = decoder.gzip(accepts.gzip);
+            decoder = decoder.gzip(accept.gzip);
         }
 
         #[cfg(feature = "deflate")]
         {
-            decoder = decoder.deflate(accepts.deflate);
+            decoder = decoder.deflate(accept.deflate);
         }
 
         #[cfg(feature = "brotli")]
         {
-            decoder = decoder.br(accepts.brotli);
+            decoder = decoder.br(accept.brotli);
         }
 
         #[cfg(feature = "zstd")]
         {
-            decoder = decoder.zstd(accepts.zstd);
+            decoder = decoder.zstd(accept.zstd);
         }
 
         decoder
@@ -98,9 +93,9 @@ where
     }
 
     fn call(&mut self, req: Request<ReqBody>) -> Self::Future {
-        if let Some(accpets) = RequestConfig::<RequestAcceptEncoding>::get(req.extensions()) {
+        if let Some(accpet) = RequestConfig::<RequestAcceptEncoding>::get(req.extensions()) {
             let mut decoder = self.decoder.clone();
-            decoder = Decompression::accepts(decoder, accpets);
+            decoder = Decompression::accept(decoder, accpet);
             std::mem::swap(&mut self.decoder, &mut decoder);
         }
 
