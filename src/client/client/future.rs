@@ -23,19 +23,6 @@ use crate::{
 };
 
 pin_project! {
-    #[project = ResponsePendingProj]
-    pub enum ResponsePending {
-        Generic {
-            #[pin]
-            fut: GenericResponseFuture,
-        },
-        Boxed {
-            fut: BoxedResponseFuture,
-        },
-    }
-}
-
-pin_project! {
     #[project = PendingProj]
     pub enum Pending {
         Request {
@@ -61,17 +48,16 @@ pin_project! {
     }
 }
 
-// ======== ResponsePending impl ========
-
-impl Future for ResponsePending {
-    type Output = Result<HttpResponse<ResponseBody>, BoxError>;
-
-    #[inline(always)]
-    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        match self.project() {
-            ResponsePendingProj::Generic { fut } => Poll::Ready(ready!(fut.poll(cx))),
-            ResponsePendingProj::Boxed { fut } => Poll::Ready(ready!(fut.as_mut().poll(cx))),
-        }
+pin_project! {
+    #[project = ResponsePendingProj]
+    pub enum ResponsePending {
+        Generic {
+            #[pin]
+            fut: GenericResponseFuture,
+        },
+        Boxed {
+            fut: BoxedResponseFuture,
+        },
     }
 }
 
@@ -139,6 +125,20 @@ impl Future for CorePending {
                 }
             }
             CorePendingProj::Error { error } => Poll::Ready(Err(take_err!(error).into())),
+        }
+    }
+}
+
+// ======== ResponsePending impl ========
+
+impl Future for ResponsePending {
+    type Output = Result<HttpResponse<ResponseBody>, BoxError>;
+
+    #[inline(always)]
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        match self.project() {
+            ResponsePendingProj::Generic { fut } => Poll::Ready(ready!(fut.poll(cx))),
+            ResponsePendingProj::Boxed { fut } => Poll::Ready(ready!(fut.as_mut().poll(cx))),
         }
     }
 }
