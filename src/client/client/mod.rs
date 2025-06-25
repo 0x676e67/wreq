@@ -1450,13 +1450,10 @@ impl Client {
                         url: Some(url),
                         fut: service.oneshot(req),
                     },
-                    ClientRef::Generic(service) => {
-                        let fut = service.oneshot(req);
-                        Pending::GenericRequest {
-                            url: Some(url),
-                            fut: Box::pin(fut),
-                        }
-                    }
+                    ClientRef::Generic(service) => Pending::GenericRequest {
+                        url: Some(url),
+                        fut: service.oneshot(req),
+                    },
                 }
             }
             Err(err) => Pending::Error { error: Some(err) },
