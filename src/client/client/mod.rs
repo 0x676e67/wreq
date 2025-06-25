@@ -1452,7 +1452,7 @@ impl Client {
                     },
                     ClientRef::Generic(service) => Pending::GenericRequest {
                         url: Some(url),
-                        fut: service.oneshot(req),
+                        fut: Box::pin(service.oneshot(req)),
                     },
                 }
             }

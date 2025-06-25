@@ -34,8 +34,7 @@ pin_project! {
         },
         GenericRequest {
             url: Option<Url>,
-            #[pin]
-            fut: Oneshot<GenericClientService, HttpRequest<Body>>,
+            fut: Pin<Box<Oneshot<GenericClientService, HttpRequest<Body>>>>,
         },
         Error {
             error: Option<Error>,
@@ -64,7 +63,7 @@ impl Future for Pending {
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let (url, res) = match self.project() {
             PendingProj::BoxedRequest { url, fut } => (url, fut.poll(cx)),
-            PendingProj::GenericRequest { url, fut } => (url, fut.poll(cx)),
+            PendingProj::GenericRequest { url, fut } => (url, fut.as_mut().poll(cx)),
             PendingProj::Error { error } => return Poll::Ready(Err(take_err!(error))),
         };
 
