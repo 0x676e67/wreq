@@ -99,31 +99,16 @@ impl Future for Pending {
 
 // ======== CorePending impl ========
 
-impl CorePending {
-    #[inline(always)]
-    pub(super) fn new(fut: CoreResponseFuture) -> Self {
-        CorePending::Request { fut }
-    }
-
-    #[inline(always)]
-    pub(super) fn new_err(err: Error) -> Self {
-        CorePending::Error { error: Some(err) }
-    }
-}
-
 impl Future for CorePending {
     type Output = Result<HttpResponse<Incoming>, BoxError>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         match self.project() {
-            CorePendingProj::Request { fut } => {
-                let r = fut.get_mut();
-                match Pin::new(r).poll(cx) {
-                    Poll::Ready(Ok(res)) => Poll::Ready(Ok(res)),
-                    Poll::Ready(Err(err)) => Poll::Ready(Err(err.into())),
-                    Poll::Pending => Poll::Pending,
-                }
-            }
+            CorePendingProj::Request { fut } => match fut.poll(cx) {
+                Poll::Ready(Ok(res)) => Poll::Ready(Ok(res)),
+                Poll::Ready(Err(err)) => Poll::Ready(Err(err.into())),
+                Poll::Pending => Poll::Pending,
+            },
             CorePendingProj::Error { error } => Poll::Ready(Err(take_err!(error).into())),
         }
     }

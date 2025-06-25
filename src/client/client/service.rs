@@ -102,12 +102,12 @@ impl Service<Request<Body>> for ClientService {
         if (scheme != Some(&Scheme::HTTP) && scheme != Some(&Scheme::HTTPS))
             || (self.config.https_only && scheme != Some(&Scheme::HTTPS))
         {
-            let err = match IntoUrlSealed::into_url(req.uri().to_string()) {
+            let error = match IntoUrlSealed::into_url(req.uri().to_string()) {
                 Ok(url) => Error::url_bad_scheme(url),
                 Err(err) => Error::builder(err),
             };
 
-            return CorePending::new_err(err);
+            return CorePending::Error { error: Some(error) };
         }
 
         // Only skip setting default headers if skip_default_headers is explicitly Some(true).
@@ -138,6 +138,8 @@ impl Service<Request<Body>> for ClientService {
         // Apply proxy headers if the request is routed through a proxy.
         self.apply_proxy_headers(&mut req);
 
-        CorePending::new(self.client.call(req))
+        CorePending::Request {
+            fut: self.client.call(req),
+        }
     }
 }
