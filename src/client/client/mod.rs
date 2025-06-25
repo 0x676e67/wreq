@@ -25,7 +25,7 @@ use tower::{
     retry::RetryLayer,
     util::{BoxCloneSyncService, BoxCloneSyncServiceLayer},
 };
-use types::{BoxedClientService, BoxedClientServiceLayer, ResponseBody};
+use types::{BoxedClientService, BoxedClientServiceLayer, GenericClientService, ResponseBody};
 #[cfg(feature = "cookies")]
 use {super::middleware::cookie::CookieManagerLayer, crate::cookie};
 
@@ -52,7 +52,6 @@ use super::{decoder::AcceptEncoding, middleware::decoder::DecompressionLayer};
 use crate::dns::hickory::{HickoryDnsResolver, LookupIpStrategy};
 use crate::{
     IntoUrl, Method, OriginalHeaders, Proxy,
-    client::client::types::GenericClientService,
     connect::{
         BoxedConnectorLayer, BoxedConnectorService, Connector,
         sealed::{Conn, Unnameable},

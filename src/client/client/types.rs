@@ -4,15 +4,12 @@ use tower::{
     util::{BoxCloneSyncService, BoxCloneSyncServiceLayer, MapErr},
 };
 
+use super::{Body, service::ClientService};
 use crate::{
-    client::{
-        Body,
-        client::service::ClientService,
-        middleware::{
-            redirect::FollowRedirect,
-            retry::Http2RetryPolicy,
-            timeout::{ResponseBodyTimeout, Timeout, TimeoutBody},
-        },
+    client::middleware::{
+        redirect::FollowRedirect,
+        retry::Http2RetryPolicy,
+        timeout::{ResponseBodyTimeout, Timeout, TimeoutBody},
     },
     core::body::Incoming,
     error::BoxError,

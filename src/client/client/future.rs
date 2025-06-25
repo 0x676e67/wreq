@@ -10,15 +10,11 @@ use url::Url;
 
 use super::{
     Response,
-    types::{CoreResponseFuture, HttpRequest},
+    types::{BoxedClientService, CoreResponseFuture, GenericClientService, HttpRequest},
 };
 use crate::{
     Body, Error,
-    client::{
-        body,
-        client::types::{BoxedClientService, GenericClientService},
-        middleware::redirect::RequestUri,
-    },
+    client::{body, middleware::redirect::RequestUri},
     core::body::Incoming,
     error::BoxError,
     into_url::IntoUrlSealed,
