@@ -1,6 +1,6 @@
 use std::{
     pin::Pin,
-    task::{Context, Poll, ready},
+    task::{Context, Poll},
 };
 
 use http::Response as HttpResponse;
@@ -9,14 +9,16 @@ use tower::util::Oneshot;
 use url::Url;
 
 use super::{
-    ClientRef, Response,
-    types::{
-        BoxedResponseFuture, CoreResponseFuture, GenericResponseFuture, HttpRequest, ResponseBody,
-    },
+    Response,
+    types::{CoreResponseFuture, HttpRequest},
 };
 use crate::{
     Body, Error,
-    client::{body, middleware::redirect::RequestUri},
+    client::{
+        body,
+        client::types::{BoxedClientService, GenericClientService},
+        middleware::redirect::RequestUri,
+    },
     core::body::Incoming,
     error::BoxError,
     into_url::IntoUrlSealed,
@@ -25,9 +27,13 @@ use crate::{
 pin_project! {
     #[project = PendingProj]
     pub enum Pending {
-        Request {
+        BoxedRequest {
             url: Option<Url>,
-            fut: Pin<Box<Oneshot<ClientRef, HttpRequest<Body>>>>,
+            fut: Pin<Box<Oneshot<BoxedClientService, HttpRequest<Body>>>>,
+        },
+        GenericRequest {
+            url: Option<Url>,
+            fut: Pin<Box<Oneshot<GenericClientService, HttpRequest<Body>>>>,
         },
         Error {
             error: Option<Error>,
@@ -48,52 +54,40 @@ pin_project! {
     }
 }
 
-pin_project! {
-    #[project = ResponsePendingProj]
-    pub enum ResponsePending {
-        Generic {
-            #[pin]
-            fut: GenericResponseFuture,
-        },
-        Boxed {
-            fut: BoxedResponseFuture,
-        },
-    }
-}
-
 // ======== Pending impl ========
 
 impl Future for Pending {
     type Output = Result<Response, Error>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        match self.project() {
-            PendingProj::Request { url, fut } => {
-                let res = match fut.as_mut().poll(cx) {
-                    Poll::Ready(Ok(res)) => res.map(body::boxed),
-                    Poll::Ready(Err(err)) => {
-                        let mut err = match err.downcast::<Error>() {
-                            Ok(err) => *err,
-                            Err(e) => Error::request(e),
-                        };
+        let (url, res) = match self.project() {
+            PendingProj::BoxedRequest { url, fut } => (url, fut.as_mut().poll(cx)),
+            PendingProj::GenericRequest { url, fut } => (url, fut.as_mut().poll(cx)),
+            PendingProj::Error { error } => return Poll::Ready(Err(take_err!(error))),
+        };
 
-                        if err.url().is_none() {
-                            err = err.with_url(take_url!(url));
-                        }
-
-                        return Poll::Ready(Err(err));
-                    }
-                    Poll::Pending => return Poll::Pending,
+        let res = match res {
+            Poll::Ready(Ok(res)) => res.map(body::boxed),
+            Poll::Ready(Err(err)) => {
+                let mut err = match err.downcast::<Error>() {
+                    Ok(err) => *err,
+                    Err(e) => Error::request(e),
                 };
 
-                if let Some(uri) = res.extensions().get::<RequestUri>() {
-                    *url = Some(IntoUrlSealed::into_url(uri.0.to_string())?);
+                if err.url().is_none() {
+                    err = err.with_url(take_url!(url));
                 }
 
-                Poll::Ready(Ok(Response::new(res, take_url!(url))))
+                return Poll::Ready(Err(err));
             }
-            PendingProj::Error { error } => Poll::Ready(Err(take_err!(error))),
+            Poll::Pending => return Poll::Pending,
+        };
+
+        if let Some(uri) = res.extensions().get::<RequestUri>() {
+            *url = Some(IntoUrlSealed::into_url(uri.0.to_string())?);
         }
+
+        Poll::Ready(Ok(Response::new(res, take_url!(url))))
     }
 }
 
@@ -110,20 +104,6 @@ impl Future for CorePending {
                 Poll::Pending => Poll::Pending,
             },
             CorePendingProj::Error { error } => Poll::Ready(Err(take_err!(error).into())),
-        }
-    }
-}
-
-// ======== ResponsePending impl ========
-
-impl Future for ResponsePending {
-    type Output = Result<HttpResponse<ResponseBody>, BoxError>;
-
-    #[inline(always)]
-    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        match self.project() {
-            ResponsePendingProj::Generic { fut } => Poll::Ready(ready!(fut.poll(cx))),
-            ResponsePendingProj::Boxed { fut } => Poll::Ready(ready!(fut.as_mut().poll(cx))),
         }
     }
 }

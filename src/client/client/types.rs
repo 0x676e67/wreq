@@ -1,9 +1,7 @@
-use std::{future::Future, pin::Pin};
-
 pub use http::{Request as HttpRequest, Response as HttpResponse};
 use tower::{
-    retry::{Retry, future::ResponseFuture as RetryResponseFuture},
-    util::{BoxCloneSyncService, BoxCloneSyncServiceLayer, MapErr, future::MapErrFuture},
+    retry::Retry,
+    util::{BoxCloneSyncService, BoxCloneSyncServiceLayer, MapErr},
 };
 
 use crate::{
@@ -13,7 +11,7 @@ use crate::{
         middleware::{
             redirect::FollowRedirect,
             retry::Http2RetryPolicy,
-            timeout::{ResponseBodyTimeout, Timeout, TimeoutBody, TimeoutResponseFuture},
+            timeout::{ResponseBodyTimeout, Timeout, TimeoutBody},
         },
     },
     core::body::Incoming,
@@ -69,14 +67,6 @@ type RedirectLayer = FollowRedirect<
 >;
 
 pub type CoreResponseFuture = crate::core::client::ResponseFuture;
-
-pub type GenericResponseFuture = MapErrFuture<
-    TimeoutResponseFuture<RetryResponseFuture<Http2RetryPolicy, RedirectLayer, HttpRequest<Body>>>,
-    fn(BoxError) -> BoxError,
->;
-
-pub type BoxedResponseFuture =
-    Pin<Box<dyn Future<Output = Result<HttpResponse<ResponseBody>, BoxError>> + Send + 'static>>;
 
 pub type GenericClientService =
     MapErr<Timeout<Retry<Http2RetryPolicy, RedirectLayer>>, fn(BoxError) -> BoxError>;

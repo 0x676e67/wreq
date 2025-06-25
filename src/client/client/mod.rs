@@ -21,9 +21,9 @@ use http::{
 };
 use service::{ClientConfig, ClientService};
 use tower::{
-    Layer, Service, ServiceBuilder,
+    Layer, Service, ServiceBuilder, ServiceExt,
     retry::RetryLayer,
-    util::{BoxCloneSyncService, BoxCloneSyncServiceLayer, Oneshot},
+    util::{BoxCloneSyncService, BoxCloneSyncServiceLayer},
 };
 use types::{BoxedClientService, BoxedClientServiceLayer, ResponseBody};
 #[cfg(feature = "cookies")]
@@ -52,7 +52,7 @@ use super::{decoder::AcceptEncoding, middleware::decoder::DecompressionLayer};
 use crate::dns::hickory::{HickoryDnsResolver, LookupIpStrategy};
 use crate::{
     IntoUrl, Method, OriginalHeaders, Proxy,
-    client::client::{future::ResponsePending, types::GenericClientService},
+    client::client::types::GenericClientService,
     connect::{
         BoxedConnectorLayer, BoxedConnectorService, Connector,
         sealed::{Conn, Unnameable},
@@ -1445,9 +1445,21 @@ impl Client {
             Ok((url, req)) => {
                 // Prepare the future request by ensuring we use the exact same Service instance
                 // for both poll_ready and call.
-                Pending::Request {
-                    url: Some(url),
-                    fut: Box::pin(Oneshot::new(self.inner.as_ref().clone(), req)),
+                match <ClientRef as Clone>::clone(&self.inner) {
+                    ClientRef::Boxed(service) => {
+                        let fut = service.oneshot(req);
+                        Pending::BoxedRequest {
+                            url: Some(url),
+                            fut: Box::pin(fut),
+                        }
+                    }
+                    ClientRef::Generic(service) => {
+                        let fut = service.oneshot(req);
+                        Pending::GenericRequest {
+                            url: Some(url),
+                            fut: Box::pin(fut),
+                        }
+                    }
                 }
             }
             Err(err) => Pending::Error { error: Some(err) },
@@ -1484,31 +1496,5 @@ impl tower_service::Service<Request> for &'_ Client {
     #[inline(always)]
     fn call(&mut self, req: Request) -> Self::Future {
         self.execute(req)
-    }
-}
-
-impl Service<HttpRequest<Body>> for ClientRef {
-    type Error = BoxError;
-    type Response = HttpResponse<ResponseBody>;
-    type Future = ResponsePending;
-
-    #[inline(always)]
-    fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        match self {
-            ClientRef::Generic(service) => service.poll_ready(cx),
-            ClientRef::Boxed(service) => service.poll_ready(cx),
-        }
-    }
-
-    #[inline(always)]
-    fn call(&mut self, req: HttpRequest<Body>) -> Self::Future {
-        match self {
-            ClientRef::Generic(service) => ResponsePending::Generic {
-                fut: service.call(req),
-            },
-            ClientRef::Boxed(service) => ResponsePending::Boxed {
-                fut: service.call(req),
-            },
-        }
     }
 }
