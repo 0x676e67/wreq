@@ -1002,7 +1002,7 @@ mod verbose {
                     } else if (0x20..0x7f).contains(&c) {
                         write!(f, "{}", c as char)?;
                     } else {
-                        write!(f, "\\x{:02x}", c)?;
+                        write!(f, "\\x{c:02x}")?;
                     }
                 }
                 write!(f, "\"")?;

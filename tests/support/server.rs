@@ -79,8 +79,7 @@ where
         let (panic_tx, panic_rx) = std_mpsc::channel();
         let (events_tx, events_rx) = std_mpsc::channel();
         let tname = format!(
-            "test({})-support-server",
-            test_name,
+            "test({test_name})-support-server",
         );
         thread::Builder::new()
             .name(tname)
@@ -151,7 +150,7 @@ where
         let (shutdown_tx, mut shutdown_rx) = oneshot::channel();
         let (panic_tx, panic_rx) = std_mpsc::channel();
         let (events_tx, events_rx) = std_mpsc::channel();
-        let tname = format!("test({})-support-server", test_name,);
+        let tname = format!("test({test_name})-support-server",);
         thread::Builder::new()
             .name(tname)
             .spawn(move || {

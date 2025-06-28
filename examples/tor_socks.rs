@@ -17,7 +17,7 @@ async fn main() -> wreq::Result<()> {
 
     let text = res.text().await?;
     let is_tor = text.contains("Congratulations. This emulation is configured to use Tor.");
-    println!("Is Tor: {}", is_tor);
+    println!("Is Tor: {is_tor}");
     assert!(is_tor);
 
     Ok(())

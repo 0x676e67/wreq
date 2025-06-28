@@ -154,7 +154,7 @@ impl Future for GaiFuture {
                 if join_err.is_cancelled() {
                     Err(io::Error::new(io::ErrorKind::Interrupted, join_err))
                 } else {
-                    panic!("gai background task failed: {:?}", join_err)
+                    panic!("gai background task failed: {join_err:?}")
                 }
             }
         })

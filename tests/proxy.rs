@@ -303,8 +303,7 @@ async fn tunnel_detects_auth_required() {
     let err = support::error::inspect(err).pop().unwrap();
     assert!(
         err.contains("auth"),
-        "proxy auth err expected, got: {:?}",
-        err
+        "proxy auth err expected, got: {err:?}"
     );
 }
 
@@ -342,8 +341,7 @@ async fn tunnel_includes_proxy_auth() {
     let err = support::error::inspect(err).pop().unwrap();
     assert!(
         err.contains("unsuccessful"),
-        "tunnel unsuccessful expected, got: {:?}",
-        err
+        "tunnel unsuccessful expected, got: {err:?}"
     );
 }
 
@@ -383,7 +381,6 @@ async fn tunnel_includes_user_agent() {
     let err = support::error::inspect(err).pop().unwrap();
     assert!(
         err.contains("unsuccessful"),
-        "tunnel unsuccessful expected, got: {:?}",
-        err
+        "tunnel unsuccessful expected, got: {err:?}"
     );
 }

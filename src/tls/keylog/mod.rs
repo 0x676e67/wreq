@@ -43,8 +43,7 @@ impl KeyLogPolicy {
                     Error::new(
                         ErrorKind::NotFound,
                         format!(
-                            "KeyLogPolicy: SSLKEYLOGFILE environment is invalid: {}",
-                            err
+                            "KeyLogPolicy: SSLKEYLOGFILE environment is invalid: {err}"
                         ),
                     )
                 })?,

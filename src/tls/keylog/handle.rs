@@ -19,8 +19,7 @@ impl KeyLogHandle {
         if let Some(parent) = filepath.parent() {
             std::fs::create_dir_all(parent).map_err(|err| {
                 Error::other(format!(
-                    "KeyLogHandle: Failed to create keylog parent path directory: {}",
-                    err
+                    "KeyLogHandle: Failed to create keylog parent path directory: {err}"
                 ))
             })?;
         }
@@ -57,7 +56,7 @@ impl KeyLogHandle {
 
     /// Write a line to the keylogger.
     pub fn write_log_line(&self, line: &str) {
-        let line = format!("{}\n", line);
+        let line = format!("{line}\n");
         if let Err(_err) = self.sender.send(line) {
             error!(
                 file = ?self.filepath,

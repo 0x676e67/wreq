@@ -25,7 +25,7 @@ async fn main() -> wreq::Result<()> {
         .text()
         .await?;
 
-    println!("{}", text);
+    println!("{text}");
 
     Ok(())
 }

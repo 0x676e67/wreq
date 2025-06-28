@@ -49,7 +49,7 @@ impl Dst {
                 return Err(Error {
                     kind: ErrorKind::UserAbsoluteUriRequired,
                     source: Some(
-                        format!("Client requires absolute-form URIs, received: {:?}", uri).into(),
+                        format!("Client requires absolute-form URIs, received: {uri:?}").into(),
                     ),
                     connect_info: None,
                 });

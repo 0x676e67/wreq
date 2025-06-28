@@ -46,7 +46,7 @@ async fn use_static_root_certs() -> wreq::Result<()> {
         .text()
         .await?;
 
-    println!("{}", text);
+    println!("{text}");
 
     Ok(())
 }
@@ -63,7 +63,7 @@ async fn use_system_root_certs() -> wreq::Result<()> {
         .text()
         .await?;
 
-    println!("{}", text);
+    println!("{text}");
 
     Ok(())
 }

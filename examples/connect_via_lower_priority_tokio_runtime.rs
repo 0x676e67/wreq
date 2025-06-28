@@ -91,13 +91,13 @@ mod background_threadpool {
                     })
                     .enable_all()
                     .build()
-                    .unwrap_or_else(|e| panic!("cpu heavy runtime failed_to_initialize: {}", e));
+                    .unwrap_or_else(|e| panic!("cpu heavy runtime failed_to_initialize: {e}"));
                 rt.block_on(async {
                     log::debug!("starting background cpu-heavy work");
                     process_cpu_work().await;
                 });
             })
-            .unwrap_or_else(|e| panic!("cpu heavy thread failed_to_initialize: {}", e));
+            .unwrap_or_else(|e| panic!("cpu heavy thread failed_to_initialize: {e}"));
     }
 
     async fn process_cpu_work() {
