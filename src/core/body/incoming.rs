@@ -380,9 +380,7 @@ mod tests {
         let body_expected_size = mem::size_of::<u64>() * 5;
         assert!(
             body_size <= body_expected_size,
-            "Body size = {} <= {}",
-            body_size,
-            body_expected_size,
+            "Body size = {body_size} <= {body_expected_size}",
         );
 
         //assert_eq!(body_size, mem::size_of::<Option<Incoming>>(), "Option<Incoming>");
@@ -404,8 +402,8 @@ mod tests {
     fn size_hint() {
         fn eq(body: Incoming, b: SizeHint, note: &str) {
             let a = body.size_hint();
-            assert_eq!(a.lower(), b.lower(), "lower for {:?}", note);
-            assert_eq!(a.upper(), b.upper(), "upper for {:?}", note);
+            assert_eq!(a.lower(), b.lower(), "lower for {note:?}");
+            assert_eq!(a.upper(), b.upper(), "upper for {note:?}");
         }
 
         eq(Incoming::empty(), SizeHint::with_exact(0), "empty");
@@ -427,7 +425,7 @@ mod tests {
         tx.abort();
 
         let err = rx.frame().await.unwrap().unwrap_err();
-        assert!(err.is_body_write_aborted(), "{:?}", err);
+        assert!(err.is_body_write_aborted(), "{err:?}");
     }
 
     #[cfg(not(miri))]
@@ -449,7 +447,7 @@ mod tests {
         assert_eq!(chunk1, "chunk 1");
 
         let err = rx.frame().await.unwrap().unwrap_err();
-        assert!(err.is_body_write_aborted(), "{:?}", err);
+        assert!(err.is_body_write_aborted(), "{err:?}");
     }
 
     #[test]
@@ -519,7 +517,7 @@ mod tests {
 
         match tx_ready.poll() {
             Poll::Ready(Err(ref e)) if e.is_closed() => (),
-            unexpected => panic!("tx poll ready unexpected: {:?}", unexpected),
+            unexpected => panic!("tx poll ready unexpected: {unexpected:?}"),
         }
     }
 }

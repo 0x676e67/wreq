@@ -1,4 +1,3 @@
-#![deny(warnings)]
 // This example demonstrates how to delegate the connect calls, which contain TLS handshakes,
 // to a secondary tokio runtime of lower OS thread priority using a custom tower layer.
 // This helps to ensure that long-running futures during handshake crypto operations don't block
@@ -84,20 +83,20 @@ mod background_threadpool {
                                 *libc::__errno_location() = 0;
                                 if libc::nice(10) == -1 && *libc::__errno_location() != 0 {
                                     let error = std::io::Error::last_os_error();
-                                    log::error!("failed to set threadpool niceness: {}", error);
+                                    log::error!("failed to set threadpool niceness: {error}");
                                 }
                             }
                         }
                     })
                     .enable_all()
                     .build()
-                    .unwrap_or_else(|e| panic!("cpu heavy runtime failed_to_initialize: {}", e));
+                    .unwrap_or_else(|e| panic!("cpu heavy runtime failed_to_initialize: {e}"));
                 rt.block_on(async {
                     log::debug!("starting background cpu-heavy work");
                     process_cpu_work().await;
                 });
             })
-            .unwrap_or_else(|e| panic!("cpu heavy thread failed_to_initialize: {}", e));
+            .unwrap_or_else(|e| panic!("cpu heavy thread failed_to_initialize: {e}"));
     }
 
     async fn process_cpu_work() {

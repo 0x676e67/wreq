@@ -421,7 +421,7 @@ impl RequestBuilder {
     where
         T: fmt::Display,
     {
-        let header_value = format!("Bearer {}", token);
+        let header_value = format!("Bearer {token}");
         self.header_operation(
             crate::header::AUTHORIZATION,
             header_value,

@@ -42,10 +42,7 @@ impl KeyLogPolicy {
                 .map_err(|err| {
                     Error::new(
                         ErrorKind::NotFound,
-                        format!(
-                            "KeyLogPolicy: SSLKEYLOGFILE environment is invalid: {}",
-                            err
-                        ),
+                        format!("KeyLogPolicy: SSLKEYLOGFILE environment is invalid: {err}"),
                     )
                 })?,
             KeyLogPolicy::File(keylog_filename) => normalize_path(keylog_filename),

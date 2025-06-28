@@ -282,7 +282,7 @@ impl fmt::Display for Error {
                     debug_assert!(code.is_server_error());
                     "HTTP status server error"
                 };
-                write!(f, "{} ({})", prefix, code)?;
+                write!(f, "{prefix} ({code})")?;
             }
         };
 
@@ -291,7 +291,7 @@ impl fmt::Display for Error {
         }
 
         if let Some(e) = &self.inner.source {
-            write!(f, ": {}", e)?;
+            write!(f, ": {e}")?;
         }
 
         Ok(())
@@ -333,7 +333,7 @@ impl From<serde_json::Error> for Error {
 
 impl From<boring2::error::ErrorStack> for Error {
     fn from(err: boring2::error::ErrorStack) -> Error {
-        Error::new(Kind::Builder, Some(format!("boring tls error: {:?}", err)))
+        Error::new(Kind::Builder, Some(format!("boring tls error: {err:?}")))
     }
 }
 
@@ -428,7 +428,7 @@ mod tests {
         // It should have pulled out the original, not nested it...
         match err.inner.kind {
             Kind::Request => (),
-            _ => panic!("{:?}", err),
+            _ => panic!("{err:?}"),
         }
     }
 
@@ -438,7 +438,7 @@ mod tests {
         let err = decode_io(orig);
         match err.inner.kind {
             Kind::Decode => (),
-            _ => panic!("{:?}", err),
+            _ => panic!("{err:?}"),
         }
     }
 

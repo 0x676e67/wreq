@@ -86,7 +86,7 @@ async fn test_3des_support() -> wreq::Result<()> {
         .text()
         .await?;
 
-    println!("3des.badssl.com is supported:\n{}", content);
+    println!("3des.badssl.com is supported:\n{content}");
 
     Ok(())
 }
@@ -121,7 +121,7 @@ async fn test_firefox_7x_100_cipher() -> wreq::Result<()> {
         .text()
         .await?;
 
-    println!("dh2048.badssl.com is supported:\n{}", content);
+    println!("dh2048.badssl.com is supported:\n{content}");
 
     Ok(())
 }

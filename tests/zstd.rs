@@ -427,7 +427,7 @@ async fn test_chunked_fragmented_multiple_frames_in_one_chunk() {
                 COMPRESSED_RESPONSE_HEADERS, /* e.g., "HTTP/1.1 200 OK\r\nContent-Encoding:
                                               * zstd\r\n" */
                 b"Transfer-Encoding: chunked\r\n\r\n", // Indicate chunked encoding
-                format!("{:x}\r\n", chunk_size).as_bytes(), // Chunk size in hex
+                format!("{chunk_size:x}\r\n").as_bytes(), // Chunk size in hex
             ]
             .concat();
 
@@ -503,7 +503,7 @@ async fn test_connection_reuse_with_chunked_fragmented_multiple_frames_in_one_ch
                 COMPRESSED_RESPONSE_HEADERS, /* e.g., "HTTP/1.1 200 OK\r\nContent-Encoding:
                                               * zstd\r\n" */
                 b"Transfer-Encoding: chunked\r\n\r\n", // Indicate chunked encoding
-                format!("{:x}\r\n", chunk_size).as_bytes(), // Chunk size in hex
+                format!("{chunk_size:x}\r\n").as_bytes(), // Chunk size in hex
             ]
             .concat();
 
@@ -571,7 +571,6 @@ async fn test_connection_reuse_with_chunked_fragmented_multiple_frames_in_one_ch
     let first_addr = peer_addrs[0];
     assert!(
         peer_addrs.iter().all(|addr| addr == &first_addr),
-        "All peer addresses should be the same, but found differences: {:?}",
-        peer_addrs
+        "All peer addresses should be the same, but found differences: {peer_addrs:?}"
     );
 }

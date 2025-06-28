@@ -51,7 +51,7 @@ use crate::{
         },
         rt::Timer,
     },
-    proxy::Intercepted,
+    proxy::Matcher as ProxyMacher,
     tls::AlpnProtocol,
 };
 
@@ -93,7 +93,7 @@ impl ConnectRequest {
                 return Err(Error {
                     kind: ErrorKind::UserAbsoluteUriRequired,
                     source: Some(
-                        format!("Client requires absolute-form URIs, received: {:?}", uri).into(),
+                        format!("Client requires absolute-form URIs, received: {uri:?}").into(),
                     ),
                     connect_info: None,
                 });
@@ -115,16 +115,16 @@ impl ConnectRequest {
         let interface = RequestConfig::<RequestInterface>::remove(extensions);
         let local_ipv4_address = RequestConfig::<RequestIpv4Addr>::remove(extensions);
         let local_ipv6_address = RequestConfig::<RequestIpv6Addr>::remove(extensions);
-        let proxy_scheme = RequestConfig::<RequestProxyMatcher>::remove(extensions);
+        let proxy_matcher = RequestConfig::<RequestProxyMatcher>::remove(extensions);
 
-        let mut pool_key = PoolKey {
+        let pool_key = PoolKey {
             scheme: scheme.clone(),
             authority: auth.clone(),
             alpn,
             interface,
             local_ipv4_address,
             local_ipv6_address,
-            proxy_intercepted: None,
+            proxy_matcher,
         };
 
         // Convert the scheme and host to a URI
@@ -134,7 +134,6 @@ impl ConnectRequest {
             .path_and_query(PathAndQuery::from_static("/"))
             .build()?;
 
-        pool_key.proxy_intercepted = proxy_scheme.and_then(|matcher| matcher.intercept(&uri));
         Ok(ConnectRequest { uri, pool_key })
     }
 
@@ -179,8 +178,8 @@ impl ConnectRequest {
     }
 
     #[inline(always)]
-    pub(crate) fn take_proxy_intercepted(&mut self) -> Option<Intercepted> {
-        self.pool_key.proxy_intercepted.clone()
+    pub(crate) fn take_proxy_matcher(&mut self) -> Option<ProxyMacher> {
+        self.pool_key.proxy_matcher.clone()
     }
 
     #[inline(always)]
@@ -270,7 +269,7 @@ struct PoolKey {
     interface: Option<Cow<'static, str>>,
     local_ipv4_address: Option<Ipv4Addr>,
     local_ipv6_address: Option<Ipv6Addr>,
-    proxy_intercepted: Option<Intercepted>,
+    proxy_matcher: Option<ProxyMacher>,
 }
 
 #[allow(clippy::large_enum_variant)]
@@ -451,7 +450,7 @@ where
                 req.headers_mut().entry(HOST).or_insert_with(|| {
                     let hostname = uri.host().expect("authority implies host");
                     if let Some(port) = get_non_default_port(&uri) {
-                        let s = format!("{}:{}", hostname, port);
+                        let s = format!("{hostname}:{port}");
                         HeaderValue::from_str(&s)
                     } else {
                         HeaderValue::from_str(hostname)

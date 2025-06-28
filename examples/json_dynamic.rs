@@ -21,7 +21,7 @@ async fn main() -> wreq::Result<()> {
         .json()
         .await?;
 
-    println!("{:#?}", echo_json);
+    println!("{echo_json:#?}");
     // Object(
     //     {
     //         "body": String(

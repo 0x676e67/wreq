@@ -336,7 +336,7 @@ impl ChunkSize {
             pos: 0,
             len: 0,
         };
-        write!(&mut size, "{:X}\r\n", len).expect("CHUNK_SIZE_MAX_BYTES should fit any usize");
+        write!(&mut size, "{len:X}\r\n").expect("CHUNK_SIZE_MAX_BYTES should fit any usize");
         size
     }
 }
@@ -553,19 +553,7 @@ mod tests {
         let encoder = Encoder::chunked();
 
         let trailers = format!(
-            "{},{},{},{},{},{},{},{},{},{},{},{}",
-            AUTHORIZATION,
-            CACHE_CONTROL,
-            CONTENT_ENCODING,
-            CONTENT_LENGTH,
-            CONTENT_RANGE,
-            CONTENT_TYPE,
-            HOST,
-            MAX_FORWARDS,
-            SET_COOKIE,
-            TRAILER,
-            TRANSFER_ENCODING,
-            TE,
+            "{AUTHORIZATION},{CACHE_CONTROL},{CONTENT_ENCODING},{CONTENT_LENGTH},{CONTENT_RANGE},{CONTENT_TYPE},{HOST},{MAX_FORWARDS},{SET_COOKIE},{TRAILER},{TRANSFER_ENCODING},{TE}",
         );
         let trailers = vec![HeaderValue::from_str(&trailers).unwrap()];
         let encoder = encoder.into_chunked_with_trailing_fields(trailers);

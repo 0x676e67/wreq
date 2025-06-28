@@ -321,10 +321,7 @@ impl WebSocketRequestBuilder {
                 None
             }
             _ => {
-                return Err(Error::upgrade(format!(
-                    "unsupported version: {:?}",
-                    version
-                )));
+                return Err(Error::upgrade(format!("unsupported version: {version:?}")));
             }
         };
 
@@ -406,7 +403,7 @@ impl WebSocketResponse {
                 Version::HTTP_10 | Version::HTTP_11 => {
                     if status != StatusCode::SWITCHING_PROTOCOLS {
                         let body = self.inner.text().await?;
-                        return Err(Error::upgrade(format!("unexpected status code: {}", body)));
+                        return Err(Error::upgrade(format!("unexpected status code: {body}")));
                     }
 
                     if !header_contains(self.inner.headers(), header::CONNECTION, "upgrade") {
@@ -426,8 +423,7 @@ impl WebSocketResponse {
                                 s == tungstenite::handshake::derive_accept_key(nonce.as_bytes())
                             }) {
                                 return Err(Error::upgrade(format!(
-                                    "invalid accept key: {:?}",
-                                    header
+                                    "invalid accept key: {header:?}"
                                 )));
                             }
                         }
@@ -438,10 +434,7 @@ impl WebSocketResponse {
                 }
                 Version::HTTP_2 => {
                     if status != StatusCode::OK {
-                        return Err(Error::upgrade(format!(
-                            "unexpected status code: {}",
-                            status
-                        )));
+                        return Err(Error::upgrade(format!("unexpected status code: {status}")));
                     }
                 }
                 _ => {
@@ -471,7 +464,7 @@ impl WebSocketResponse {
                     {
                         if !protocols.contains(&Cow::Borrowed(protocol)) {
                             // the responded protocol is none which we requested
-                            return Err(Error::upgrade(format!("invalid protocol: {}", protocol)));
+                            return Err(Error::upgrade(format!("invalid protocol: {protocol}")));
                         }
                     } else {
                         // we didn't request any protocols but got one anyway
