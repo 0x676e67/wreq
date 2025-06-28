@@ -321,9 +321,7 @@ impl WebSocketRequestBuilder {
                 None
             }
             _ => {
-                return Err(Error::upgrade(format!(
-                    "unsupported version: {version:?}"
-                )));
+                return Err(Error::upgrade(format!("unsupported version: {version:?}")));
             }
         };
 
@@ -436,9 +434,7 @@ impl WebSocketResponse {
                 }
                 Version::HTTP_2 => {
                     if status != StatusCode::OK {
-                        return Err(Error::upgrade(format!(
-                            "unexpected status code: {status}"
-                        )));
+                        return Err(Error::upgrade(format!("unexpected status code: {status}")));
                     }
                 }
                 _ => {
