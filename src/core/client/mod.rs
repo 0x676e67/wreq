@@ -7,7 +7,6 @@ pub mod conn;
 pub(super) mod dispatch;
 
 pub mod connect;
-mod dst;
 #[doc(hidden)]
 // Publicly available, but just for legacy purposes. A better pool will be
 // designed.
@@ -27,10 +26,12 @@ use std::{
 };
 
 use common::{Exec, Lazy, lazy as hyper_lazy, timer};
-use connect::{Alpn, Connect, Connected, Connection, capture::CaptureConnectionExtension};
-pub use dst::Dst;
 use futures_util::future::{self, Either, FutureExt, TryFutureExt};
-use http::{HeaderValue, Method, Request, Response, Uri, Version, header::HOST, uri::Scheme};
+use http::{
+    HeaderValue, Method, Request, Response, Uri, Version,
+    header::HOST,
+    uri::{Authority, PathAndQuery, Scheme},
+};
 use http_body::Body;
 use pool::Ver;
 use sync_wrapper::SyncWrapper;
@@ -40,9 +41,14 @@ use crate::{
         client::{
             config::{http1::Http1Config, http2::Http2Config},
             conn::TrySendError as ConnTrySendError,
+            connect::{Alpn, Connect, Connected, Connection, capture::CaptureConnectionExtension},
         },
         common,
         error::BoxError,
+        ext::{
+            RequestConfig, RequestHttpVersionPref, RequestInterface, RequestIpv4Addr,
+            RequestIpv6Addr, RequestProxyMatcher,
+        },
         rt::Timer,
     },
     proxy::Intercepted,
@@ -50,6 +56,143 @@ use crate::{
 };
 
 type BoxSendFuture = Pin<Box<dyn Future<Output = ()> + Send>>;
+
+/// A Client Connect request.
+#[derive(Debug, Clone)]
+pub struct ConnectRequest {
+    uri: Uri,
+    pool_key: PoolKey,
+}
+
+impl ConnectRequest {
+    /// Creates a new `Dst`.
+    ///
+    /// This method initializes a new `Dst` instance based on the provided URI, HTTP connect flag,
+    /// network scheme, and HTTP version.
+    pub(crate) fn new<B>(
+        req: &mut Request<B>,
+        is_http_connect: bool,
+    ) -> Result<ConnectRequest, Error> {
+        let uri = req.uri_mut();
+        let (scheme, auth) = match (uri.scheme().cloned(), uri.authority().cloned()) {
+            (Some(scheme), Some(auth)) => (scheme, auth),
+            (None, Some(auth)) if is_http_connect => {
+                let scheme = match auth.port_u16() {
+                    Some(443) => {
+                        set_scheme(uri, Scheme::HTTPS);
+                        Scheme::HTTPS
+                    }
+                    _ => {
+                        set_scheme(uri, Scheme::HTTP);
+                        Scheme::HTTP
+                    }
+                };
+                (scheme, auth)
+            }
+            _ => {
+                return Err(Error {
+                    kind: ErrorKind::UserAbsoluteUriRequired,
+                    source: Some(
+                        format!("Client requires absolute-form URIs, received: {:?}", uri).into(),
+                    ),
+                    connect_info: None,
+                });
+            }
+        };
+
+        let extensions = req.extensions_mut();
+
+        let version = RequestConfig::<RequestHttpVersionPref>::remove(extensions);
+
+        let alpn = match version {
+            Some(Version::HTTP_11 | Version::HTTP_10 | Version::HTTP_09) => {
+                Some(AlpnProtocol::HTTP1)
+            }
+            Some(Version::HTTP_2) => Some(AlpnProtocol::HTTP2),
+            _ => None,
+        };
+
+        let interface = RequestConfig::<RequestInterface>::remove(extensions);
+        let local_ipv4_address = RequestConfig::<RequestIpv4Addr>::remove(extensions);
+        let local_ipv6_address = RequestConfig::<RequestIpv6Addr>::remove(extensions);
+        let proxy_scheme = RequestConfig::<RequestProxyMatcher>::remove(extensions);
+
+        let mut pool_key = PoolKey {
+            scheme: scheme.clone(),
+            authority: auth.clone(),
+            alpn,
+            interface,
+            local_ipv4_address,
+            local_ipv6_address,
+            proxy_intercepted: None,
+        };
+
+        // Convert the scheme and host to a URI
+        let uri = Uri::builder()
+            .scheme(scheme)
+            .authority(auth)
+            .path_and_query(PathAndQuery::from_static("/"))
+            .build()?;
+
+        pool_key.proxy_intercepted = proxy_scheme.and_then(|matcher| matcher.intercept(&uri));
+        Ok(ConnectRequest { uri, pool_key })
+    }
+
+    #[inline(always)]
+    pub(crate) fn uri(&self) -> &Uri {
+        &self.uri
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_uri(&mut self, mut uri: Uri) {
+        std::mem::swap(&mut self.uri, &mut uri);
+    }
+
+    #[inline(always)]
+    pub(crate) fn alpn(&self) -> Option<AlpnProtocol> {
+        self.pool_key.alpn
+    }
+
+    #[inline(always)]
+    pub(crate) fn addresses(&self) -> (Option<Ipv4Addr>, Option<Ipv6Addr>) {
+        (
+            self.pool_key.local_ipv4_address,
+            self.pool_key.local_ipv6_address,
+        )
+    }
+
+    #[cfg(any(
+        target_os = "android",
+        target_os = "fuchsia",
+        target_os = "illumos",
+        target_os = "ios",
+        target_os = "linux",
+        target_os = "macos",
+        target_os = "solaris",
+        target_os = "tvos",
+        target_os = "visionos",
+        target_os = "watchos",
+    ))]
+    #[inline(always)]
+    pub(crate) fn interface(&self) -> Option<std::borrow::Cow<'static, str>> {
+        self.pool_key.interface.clone()
+    }
+
+    #[inline(always)]
+    pub(crate) fn take_proxy_intercepted(&mut self) -> Option<Intercepted> {
+        self.pool_key.proxy_intercepted.clone()
+    }
+
+    #[inline(always)]
+    fn only_http2(&self) -> bool {
+        self.pool_key.alpn == Some(AlpnProtocol::HTTP2)
+    }
+
+    #[inline(always)]
+    fn pool_key(&self) -> &PoolKey {
+        &self.pool_key
+    }
+}
 
 /// A Client to make outgoing HTTP requests.
 ///
@@ -62,20 +205,6 @@ pub struct Client<C, B> {
     h1_builder: crate::core::client::conn::http1::Builder,
     h2_builder: crate::core::client::conn::http2::Builder<Exec>,
     pool: pool::Pool<PoolClient<B>, PoolKey>,
-}
-
-impl<C, B> std::ops::Deref for Client<C, B> {
-    type Target = C;
-
-    fn deref(&self) -> &Self::Target {
-        &self.connector
-    }
-}
-
-impl<C, B> std::ops::DerefMut for Client<C, B> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.connector
-    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -133,14 +262,16 @@ macro_rules! e {
 }
 
 // We might change this... :shrug:
-type PoolKey = (
-    Uri,
-    Option<AlpnProtocol>,
-    Option<Ipv4Addr>,
-    Option<Ipv6Addr>,
-    Option<Cow<'static, str>>,
-    Option<Intercepted>,
-);
+#[derive(Clone, Hash, Debug, Eq, PartialEq)]
+struct PoolKey {
+    scheme: Scheme,
+    authority: Authority,
+    alpn: Option<AlpnProtocol>,
+    interface: Option<Cow<'static, str>>,
+    local_ipv4_address: Option<Ipv4Addr>,
+    local_ipv6_address: Option<Ipv6Addr>,
+    proxy_intercepted: Option<Intercepted>,
+}
 
 #[allow(clippy::large_enum_variant)]
 enum TrySendError<B> {
@@ -248,7 +379,7 @@ where
             other => return ResponseFuture::error_version(other),
         };
 
-        let dst = match Dst::new(&mut req, is_http_connect) {
+        let dst = match ConnectRequest::new(&mut req, is_http_connect) {
             Ok(dst) => dst,
             Err(err) => {
                 return ResponseFuture::new(future::err(err));
@@ -261,7 +392,7 @@ where
     async fn send_request(
         self,
         mut req: Request<B>,
-        dst: Dst,
+        dst: ConnectRequest,
     ) -> Result<Response<crate::core::body::Incoming>, Error> {
         let uri = req.uri().clone();
 
@@ -294,7 +425,7 @@ where
     async fn try_send_request(
         &self,
         mut req: Request<B>,
-        dst: Dst,
+        dst: ConnectRequest,
     ) -> Result<Response<crate::core::body::Incoming>, TrySendError<B>> {
         let mut pooled = self
             .connection_for(dst)
@@ -387,7 +518,7 @@ where
 
     async fn connection_for(
         &self,
-        dst: Dst,
+        dst: ConnectRequest,
     ) -> Result<pool::Pooled<PoolClient<B>, PoolKey>, Error> {
         loop {
             match self.one_connection_for(dst.clone()).await {
@@ -410,7 +541,7 @@ where
 
     async fn one_connection_for(
         &self,
-        dst: Dst,
+        dst: ConnectRequest,
     ) -> Result<pool::Pooled<PoolClient<B>, PoolKey>, ClientConnectError> {
         // Return a single connection if pooling is not enabled
         if !self.pool.is_enabled() {
@@ -498,7 +629,7 @@ where
 
     fn connect_to(
         &self,
-        dst: Dst,
+        dst: ConnectRequest,
     ) -> impl Lazy<Output = Result<pool::Pooled<PoolClient<B>, PoolKey>, Error>> + Send + Unpin + 'static
     {
         let executor = self.exec.clone();

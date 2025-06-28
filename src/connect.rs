@@ -25,7 +25,7 @@ use crate::{
     Error,
     core::{
         client::{
-            Dst,
+            ConnectRequest,
             connect::{Connected, Connection, proxy::Tunnel},
         },
         rt::{Read, ReadBufCursor, TokioIo, Write},
@@ -357,7 +357,7 @@ impl Connector {
     }
 }
 
-impl Service<Dst> for Connector {
+impl Service<ConnectRequest> for Connector {
     type Response = Conn;
     type Error = BoxError;
     type Future = Connecting;
@@ -371,7 +371,7 @@ impl Service<Dst> for Connector {
     }
 
     #[inline(always)]
-    fn call(&mut self, dst: Dst) -> Self::Future {
+    fn call(&mut self, dst: ConnectRequest) -> Self::Future {
         match self {
             Connector::Simple(service) => service.call(dst),
             Connector::WithLayers(service) => service.call(Unnameable(dst)),
@@ -404,7 +404,11 @@ pub(crate) struct ConnectorService {
 
 impl ConnectorService {
     #[cfg(feature = "socks")]
-    async fn connect_socks(&self, mut dst: Dst, proxy: Intercepted) -> Result<Conn, BoxError> {
+    async fn connect_socks(
+        &self,
+        mut dst: ConnectRequest,
+        proxy: Intercepted,
+    ) -> Result<Conn, BoxError> {
         use crate::core::client::connect::proxy::Socks;
 
         let uri = dst.uri().clone();
@@ -449,7 +453,7 @@ impl ConnectorService {
 
     async fn connect_with_maybe_proxy(
         self,
-        mut dst: Dst,
+        mut dst: ConnectRequest,
         is_proxy: bool,
     ) -> Result<Conn, BoxError> {
         let uri = dst.uri().clone();
@@ -489,7 +493,11 @@ impl ConnectorService {
         }
     }
 
-    async fn connect_via_proxy(self, mut dst: Dst, proxy: Intercepted) -> Result<Conn, BoxError> {
+    async fn connect_via_proxy(
+        self,
+        mut dst: ConnectRequest,
+        proxy: Intercepted,
+    ) -> Result<Conn, BoxError> {
         let uri = dst.uri().clone();
         debug!("proxy({:?}) intercepts '{:?}'", proxy, dst);
 
@@ -551,7 +559,7 @@ where
     }
 }
 
-impl Service<Dst> for ConnectorService {
+impl Service<ConnectRequest> for ConnectorService {
     type Response = Conn;
     type Error = BoxError;
     type Future = Connecting;
@@ -561,7 +569,7 @@ impl Service<Dst> for ConnectorService {
         Poll::Ready(Ok(()))
     }
 
-    fn call(&mut self, mut dst: Dst) -> Self::Future {
+    fn call(&mut self, mut dst: ConnectRequest) -> Self::Future {
         debug!("starting new connection: {:?}", dst.uri());
 
         if let Some(proxy_scheme) = dst.take_proxy_intercepted() {
@@ -646,7 +654,7 @@ pub(crate) mod sealed {
     use super::*;
 
     #[derive(Debug)]
-    pub struct Unnameable(pub(super) Dst);
+    pub struct Unnameable(pub(super) ConnectRequest);
 
     pin_project! {
         /// Note: the `is_proxy` member means *is plain text HTTP proxy*.

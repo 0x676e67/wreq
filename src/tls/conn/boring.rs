@@ -1,4 +1,3 @@
-//! backport: <https://github.com/cloudflare/boring/blob/master/hyper-boring/src/lib.rs>
 use std::{
     error::Error,
     fmt::Debug,
@@ -9,10 +8,7 @@ use std::{
     task::{Context, Poll},
 };
 
-use boring2::{
-    error::ErrorStack,
-    ssl::{SslConnector, SslMethod, SslOptions, SslRef, SslSessionCacheMode},
-};
+use boring2::ssl::{SslConnector, SslMethod, SslOptions, SslSessionCacheMode};
 use http::{Uri, uri::Scheme};
 use tokio_boring2::SslStream;
 use tower_service::Service;
@@ -24,18 +20,15 @@ use super::{
     key_index,
 };
 use crate::{
-    Dst,
     connect::HttpConnector,
     core::{
-        client::connect::Connection,
+        client::{ConnectRequest, connect::Connection},
         rt::{Read, TokioIo, Write},
     },
     error::BoxError,
     sync::Mutex,
     tls::{CertStore, Identity, KeyLogPolicy, TlsConfig, TlsVersion},
 };
-
-type SslCallback = Arc<dyn Fn(&mut SslRef, &Uri) -> Result<(), ErrorStack> + Sync + Send>;
 
 /// A Connector using BoringSSL to support `http` and `https` schemes.
 #[derive(Clone)]
@@ -49,7 +42,7 @@ impl HttpsConnector<HttpConnector> {
     pub fn new(
         mut http: HttpConnector,
         connector: TlsConnector,
-        dst: &mut Dst,
+        dst: &mut ConnectRequest,
     ) -> HttpsConnector<HttpConnector> {
         // Set the local address and interface
         match dst.addresses() {
@@ -74,16 +67,9 @@ impl HttpsConnector<HttpConnector> {
         ))]
         http.set_interface(dst.interface());
 
-        // Get the ALPN protocols from the destination
-        let alpn_protos = dst.alpn_protos();
+        // Set the ALPN protocols from the destination
         let mut connector = HttpsConnector::with_connector(http, connector);
-        connector.set_ssl_callback(move |ssl, _| {
-            if let Some(alpn) = alpn_protos {
-                ssl.set_alpn_protos(&alpn.encode())?;
-            }
-            Ok(())
-        });
-
+        connector.inner.config.alpn_protos = dst.alpn().map(|p| p.encode());
         connector
     }
 }
@@ -101,18 +87,6 @@ where
             http,
             inner: connector.inner,
         }
-    }
-
-    /// Registers a callback which can customize the SSL context for a given URI.
-    ///
-    /// This callback is executed after the callback registered by [`Self::set_ssl_callback`] is
-    /// executed.
-    #[inline]
-    pub fn set_ssl_callback<F>(&mut self, callback: F)
-    where
-        F: Fn(&mut SslRef, &Uri) -> Result<(), ErrorStack> + 'static + Sync + Send,
-    {
-        self.inner.ssl_callback = Some(Arc::new(callback));
     }
 
     /// Connects to the given URI using the given connection.
@@ -156,7 +130,6 @@ struct Inner {
     ssl: SslConnector,
     cache: Option<Arc<Mutex<SessionCache>>>,
     config: HandshakeConfig,
-    ssl_callback: Option<SslCallback>,
 }
 
 impl TlsConnectorBuilder {
@@ -382,7 +355,6 @@ impl TlsConnectorBuilder {
                 ssl: connector.build(),
                 cache,
                 config,
-                ssl_callback: None,
             },
         })
     }
@@ -437,6 +409,11 @@ impl Inner {
             self.config.alps_use_new_codepoint,
         )?;
 
+        // Set ALPN protocols
+        if let Some(ref alpn_protos) = self.config.alpn_protos {
+            cfg.set_alpn_protos(alpn_protos)?;
+        }
+
         if let Some(authority) = uri.authority() {
             let key = SessionKey(authority.clone());
 
@@ -456,11 +433,7 @@ impl Inner {
             cfg.set_ex_data(idx, key);
         }
 
-        let mut ssl = cfg.into_ssl(host)?;
-
-        if let Some(ref ssl_callback) = self.ssl_callback {
-            ssl_callback(&mut ssl, uri)?;
-        }
+        let ssl = cfg.into_ssl(host)?;
 
         tokio_boring2::SslStreamBuilder::new(ssl, TokioIo::new(conn))
             .connect()
