@@ -11,7 +11,7 @@ use crate::{
         RequestConfig, RequestHttpVersionPref, RequestInterface, RequestIpv4Addr, RequestIpv6Addr,
         RequestProxyMatcher,
     },
-    proxy::Intercepted,
+    proxy::Matcher as ProxyMatcher,
     tls::AlpnProtocol,
 };
 
@@ -71,7 +71,7 @@ impl Dst {
         let local_ipv4_address = RequestConfig::<RequestIpv4Addr>::remove(extensions);
         let local_ipv6_address = RequestConfig::<RequestIpv6Addr>::remove(extensions);
         let interface = RequestConfig::<RequestInterface>::remove(extensions);
-        let proxy_scheme = RequestConfig::<RequestProxyMatcher>::remove(extensions);
+        let proxy_matcher = RequestConfig::<RequestProxyMatcher>::remove(extensions);
 
         // Convert the scheme and host to a URI
         Uri::builder()
@@ -80,14 +80,13 @@ impl Dst {
             .path_and_query(PathAndQuery::from_static("/"))
             .build()
             .map(|uri| {
-                let proxy_intercepted = proxy_scheme.and_then(|matcher| matcher.intercept(&uri));
                 Dst((
                     uri,
                     alpn,
                     local_ipv4_address,
                     local_ipv6_address,
                     interface,
-                    proxy_intercepted,
+                    proxy_matcher,
                 ))
             })
             .map_err(Into::into)
@@ -137,7 +136,7 @@ impl Dst {
     }
 
     #[inline(always)]
-    pub(crate) fn take_proxy_intercepted(&mut self) -> Option<Intercepted> {
+    pub(crate) fn take_proxy_matcher(&mut self) -> Option<ProxyMatcher> {
         self.0.5.take()
     }
 

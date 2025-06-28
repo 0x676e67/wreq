@@ -16,7 +16,6 @@
 pub use fallback::MutexGuard;
 #[cfg(not(feature = "parking_lot"))]
 pub use fallback::{Mutex, RwLock};
-
 #[cfg(all(feature = "parking_lot", test))]
 pub use parking_lot::MutexGuard;
 #[cfg(feature = "parking_lot")]

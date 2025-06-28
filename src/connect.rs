@@ -564,20 +564,20 @@ impl Service<Dst> for ConnectorService {
     fn call(&mut self, mut dst: Dst) -> Self::Future {
         debug!("starting new connection: {:?}", dst.uri());
 
-        if let Some(proxy_scheme) = dst.take_proxy_intercepted() {
+        let intercepted = dst
+            .take_proxy_matcher()
+            .and_then(|scheme| scheme.intercept(dst.uri()))
+            .or_else(|| {
+                self.proxies
+                    .iter()
+                    .find_map(|prox| prox.intercept(dst.uri()))
+            });
+
+        if let Some(intercepted) = intercepted {
             return Box::pin(with_timeout(
-                self.clone().connect_via_proxy(dst, proxy_scheme),
+                self.clone().connect_via_proxy(dst, intercepted),
                 self.timeout,
             ));
-        } else {
-            for prox in self.proxies.iter() {
-                if let Some(intercepted) = prox.intercept(dst.uri()) {
-                    return Box::pin(with_timeout(
-                        self.clone().connect_via_proxy(dst, intercepted),
-                        self.timeout,
-                    ));
-                }
-            }
         }
 
         Box::pin(with_timeout(

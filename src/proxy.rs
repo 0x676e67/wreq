@@ -1,4 +1,4 @@
-use std::{error::Error as StdError, fmt, sync::Arc};
+use std::{error::Error as StdError, fmt};
 
 #[cfg(feature = "socks")]
 use bytes::Bytes;
@@ -98,18 +98,12 @@ impl std::hash::Hash for Extra {
 
 // ===== Internal =====
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq, Hash)]
 pub(crate) struct Matcher {
-    inner: Matcher_,
+    inner: Box<matcher::Matcher>,
     extra: Extra,
     maybe_has_http_auth: bool,
     maybe_has_http_custom_headers: bool,
-}
-
-#[derive(Clone)]
-enum Matcher_ {
-    Util(Box<matcher::Matcher>),
-    Custom(Custom),
 }
 
 /// Our own type, wrapping an `Intercept`, since we may have a few additional
@@ -231,37 +225,6 @@ impl Proxy {
         Ok(Proxy::new(Intercept::All(proxy_scheme.into_proxy()?)))
     }
 
-    /// Provide a custom function to determine what traffic to proxy to where.
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// # extern crate wreq;
-    /// # fn run() -> Result<(), Box<dyn std::error::Error>> {
-    /// let target = wreq::Url::parse("https://my.prox")?;
-    /// let client = wreq::Client::builder()
-    ///     .proxy(wreq::Proxy::custom(move |url| {
-    ///         if url.host_str() == Some("hyper.rs") {
-    ///             Some(target.clone())
-    ///         } else {
-    ///             None
-    ///         }
-    ///     }))
-    ///     .build()?;
-    /// # Ok(())
-    /// # }
-    /// # fn main() {}
-    /// ```
-    pub fn custom<F, U: IntoProxy>(fun: F) -> Proxy
-    where
-        F: Fn(&Url) -> Option<U> + Send + Sync + 'static,
-    {
-        Proxy::new(Intercept::Custom(Custom {
-            func: Arc::new(move |url| fun(url).map(IntoProxy::into_proxy)),
-            no_proxy: None,
-        }))
-    }
-
     fn new(intercept: Intercept) -> Proxy {
         Proxy {
             extra: Extra {
@@ -289,8 +252,8 @@ impl Proxy {
         match self.intercept {
             Intercept::All(ref mut s)
             | Intercept::Http(ref mut s)
-            | Intercept::Https(ref mut s) => url_auth(s, username, password),
-            Intercept::Custom(_) => {
+            | Intercept::Https(ref mut s) => {
+                url_auth(s, username, password);
                 let header = encode_basic_auth(username, password);
                 self.extra.auth = Some(header);
             }
@@ -335,7 +298,7 @@ impl Proxy {
     /// ```
     pub fn custom_http_headers(mut self, headers: HeaderMap) -> Proxy {
         match self.intercept {
-            Intercept::All(_) | Intercept::Http(_) | Intercept::Https(_) | Intercept::Custom(_) => {
+            Intercept::All(_) | Intercept::Http(_) | Intercept::Https(_) => {
                 self.extra.misc = Some(headers);
             }
         }
@@ -376,40 +339,34 @@ impl Proxy {
                 maybe_has_http_auth = cache_maybe_has_http_auth(&url, &extra.auth);
                 maybe_has_http_custom_headers =
                     cache_maybe_has_http_custom_headers(&url, &extra.misc);
-                Matcher_::Util(Box::new(
+                Box::new(
                     matcher::Matcher::builder()
                         .all(String::from(url))
                         .no(no_proxy.as_ref().map(|n| n.inner.as_ref()).unwrap_or(""))
                         .build(),
-                ))
+                )
             }
             Intercept::Http(url) => {
                 maybe_has_http_auth = cache_maybe_has_http_auth(&url, &extra.auth);
                 maybe_has_http_custom_headers =
                     cache_maybe_has_http_custom_headers(&url, &extra.misc);
-                Matcher_::Util(Box::new(
+                Box::new(
                     matcher::Matcher::builder()
                         .http(String::from(url))
                         .no(no_proxy.as_ref().map(|n| n.inner.as_ref()).unwrap_or(""))
                         .build(),
-                ))
+                )
             }
             Intercept::Https(url) => {
                 maybe_has_http_auth = cache_maybe_has_http_auth(&url, &extra.auth);
                 maybe_has_http_custom_headers =
                     cache_maybe_has_http_custom_headers(&url, &extra.misc);
-                Matcher_::Util(Box::new(
+                Box::new(
                     matcher::Matcher::builder()
                         .https(String::from(url))
                         .no(no_proxy.as_ref().map(|n| n.inner.as_ref()).unwrap_or(""))
                         .build(),
-                ))
-            }
-            Intercept::Custom(mut custom) => {
-                maybe_has_http_auth = true; // never know
-                maybe_has_http_custom_headers = true;
-                custom.no_proxy = no_proxy;
-                Matcher_::Custom(custom)
+                )
             }
         };
 
@@ -484,7 +441,7 @@ impl NoProxy {
 impl Matcher {
     pub(crate) fn system() -> Self {
         Self {
-            inner: Matcher_::Util(Box::new(matcher::Matcher::from_system())),
+            inner: Box::new(matcher::Matcher::from_system()),
             extra: Extra {
                 auth: None,
                 misc: None,
@@ -496,10 +453,7 @@ impl Matcher {
     }
 
     pub(crate) fn intercept(&self, dst: &Uri) -> Option<Intercepted> {
-        let inner = match self.inner {
-            Matcher_::Util(ref m) => m.intercept(dst),
-            Matcher_::Custom(ref c) => c.call(dst),
-        };
+        let inner = self.inner.intercept(dst);
 
         inner.map(|inner| Intercepted {
             inner,
@@ -547,10 +501,7 @@ impl Matcher {
 
 impl fmt::Debug for Matcher {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self.inner {
-            Matcher_::Util(ref m) => m.fmt(f),
-            Matcher_::Custom(ref m) => m.fmt(f),
-        }
+        self.inner.fmt(f)
     }
 }
 
@@ -590,49 +541,11 @@ enum Intercept {
     All(Url),
     Http(Url),
     Https(Url),
-    Custom(Custom),
 }
 
 fn url_auth(url: &mut Url, username: &str, password: &str) {
     url.set_username(username).expect("is a base");
     url.set_password(Some(password)).expect("is a base");
-}
-
-#[derive(Clone)]
-struct Custom {
-    #[allow(clippy::type_complexity)]
-    func: Arc<dyn Fn(&Url) -> Option<crate::Result<Url>> + Send + Sync + 'static>,
-    no_proxy: Option<NoProxy>,
-}
-
-impl Custom {
-    fn call(&self, uri: &http::Uri) -> Option<matcher::Intercept> {
-        let url = format!(
-            "{}://{}{}{}",
-            uri.scheme()?,
-            uri.host()?,
-            uri.port().map_or("", |_| ":"),
-            uri.port().map_or(String::new(), |p| p.to_string())
-        )
-        .parse()
-        .expect("should be valid Url");
-
-        (self.func)(&url)
-            .and_then(|result| result.ok())
-            .and_then(|target| {
-                let m = matcher::Matcher::builder()
-                    .all(String::from(target))
-                    .build();
-
-                m.intercept(uri)
-            })
-    }
-}
-
-impl fmt::Debug for Custom {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        f.write_str("_")
-    }
 }
 
 pub(crate) fn encode_basic_auth(username: &str, password: &str) -> HeaderValue {
@@ -691,46 +604,10 @@ mod tests {
     }
 
     #[test]
-    fn test_custom() {
-        let target1 = "http://example.domain/";
-        let target2 = "https://example.domain/";
-        let p = Proxy::custom(move |url| {
-            if url.host_str() == Some("hyper.rs") {
-                target1.parse().ok()
-            } else if url.scheme() == "http" {
-                target2.parse().ok()
-            } else {
-                None::<Url>
-            }
-        })
-        .into_matcher();
-
-        let http = "http://seanmonstar.com";
-        let https = "https://hyper.rs";
-        let other = "x-youve-never-heard-of-me-mr-proxy://seanmonstar.com";
-
-        assert_eq!(intercepted_uri(&p, http), target2);
-        assert_eq!(intercepted_uri(&p, https), target1);
-        assert!(p.intercept(&url(other)).is_none());
-    }
-
-    #[test]
     fn test_standard_with_custom_auth_header() {
         let target = "http://example.domain/";
         let p = Proxy::all(target)
             .unwrap()
-            .custom_http_auth(http::HeaderValue::from_static("testme"))
-            .into_matcher();
-
-        let got = p.intercept(&url("http://anywhere.local")).unwrap();
-        let auth = got.basic_auth().unwrap();
-        assert_eq!(auth, "testme");
-    }
-
-    #[test]
-    fn test_custom_with_custom_auth_header() {
-        let target = "http://example.domain/";
-        let p = Proxy::custom(move |_| target.parse::<Url>().ok())
             .custom_http_auth(http::HeaderValue::from_static("testme"))
             .into_matcher();
 

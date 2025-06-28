@@ -45,7 +45,7 @@ use crate::{
         error::BoxError,
         rt::Timer,
     },
-    proxy::Intercepted,
+    proxy::Matcher as ProxyMacher,
     tls::AlpnProtocol,
 };
 
@@ -139,7 +139,7 @@ type PoolKey = (
     Option<Ipv4Addr>,
     Option<Ipv6Addr>,
     Option<Cow<'static, str>>,
-    Option<Intercepted>,
+    Option<ProxyMacher>,
 );
 
 #[allow(clippy::large_enum_variant)]
