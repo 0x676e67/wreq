@@ -216,7 +216,7 @@ impl ConnectorBuilder {
     ) -> crate::Result<Connector> {
         let mut service = ConnectorService {
             http: self.http,
-            tls: self.tls_builder.clone().build(tls_config)?,
+            tls: self.tls_builder.build(tls_config)?,
             proxies: self.proxies,
             verbose: self.verbose,
             // The timeout is initially set to None and will be reassigned later
