@@ -52,10 +52,7 @@ use super::{decoder::AcceptEncoding, middleware::decoder::DecompressionLayer};
 use crate::dns::hickory::{HickoryDnsResolver, LookupIpStrategy};
 use crate::{
     IntoUrl, Method, OriginalHeaders, Proxy,
-    connect::{
-        BoxedConnectorLayer, BoxedConnectorService, Connector,
-        sealed::{Conn, Unnameable},
-    },
+    connect::{BoxedConnectorLayer, BoxedConnectorService, Conn, Connector, Unnameable},
     core::{
         client::{Builder, Client as HyperClient, connect::TcpConnectOptions},
         ext::RequestConfig,

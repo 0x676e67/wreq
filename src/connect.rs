@@ -7,7 +7,6 @@ use std::{
     time::Duration,
 };
 
-use conn::{Conn, Unnameable};
 use http::uri::Scheme;
 use pin_project_lite::pin_project;
 use tls_conn::TlsConn;
@@ -20,6 +19,7 @@ use tower::{
 };
 use tower_service::Service;
 
+pub use self::conn::{Conn, Unnameable};
 use crate::{
     core::{
         client::{
@@ -627,7 +627,7 @@ type BoxConn = Box<dyn AsyncConnWithInfo>;
 
 pub(crate) type Connecting = Pin<Box<dyn Future<Output = Result<Conn, BoxError>> + Send>>;
 
-pub(crate) mod conn {
+mod conn {
     use super::*;
 
     #[derive(Debug)]
