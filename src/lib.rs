@@ -50,17 +50,10 @@
 //! The `websocket` module provides a way to upgrade a connection to a websocket.
 //!
 //! ```rust,no_run
-//! use futures_util::{
-//!     SinkExt,
-//!     StreamExt,
-//!     TryStreamExt,
-//! };
-//! use http::header;
 //! use std::time::Duration;
-//! use wreq::{
-//!     Client,
-//!     Message,
-//! };
+//!
+//! use futures_util::{SinkExt, StreamExt, TryStreamExt};
+//! use wreq::{Client, header, websocket::Message};
 //!
 //! #[tokio::main]
 //! async fn main() -> wreq::Result<()> {

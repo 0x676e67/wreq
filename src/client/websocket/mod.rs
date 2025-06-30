@@ -15,11 +15,11 @@ use std::{
 
 use futures_util::{Sink, SinkExt, Stream, StreamExt};
 use http::{HeaderMap, HeaderName, HeaderValue, Method, StatusCode, Version, header, uri::Scheme};
-pub use message::{CloseCode, CloseFrame, Message, Utf8Bytes};
 use serde::Serialize;
 use tokio_tungstenite::tungstenite::{self, protocol};
 use tungstenite::protocol::WebSocketConfig;
 
+pub use self::message::{CloseCode, CloseFrame, Message, Utf8Bytes};
 use crate::{
     EmulationProviderFactory, Error, OriginalHeaders, RequestBuilder, Response,
     core::ext::Protocol, proxy::Proxy,
