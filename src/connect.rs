@@ -37,6 +37,10 @@ use crate::{
     },
 };
 
+type BoxConn = Box<dyn AsyncConnWithInfo>;
+
+type Connecting = Pin<Box<dyn Future<Output = Result<Conn, BoxError>> + Send>>;
+
 pub(crate) type HttpConnector = connect::HttpConnector<DynResolver>;
 
 pub(crate) type BoxedConnectorService = BoxCloneSyncService<Unnameable, Conn, BoxError>;
@@ -571,7 +575,6 @@ impl TlsInfoFactory for TcpStream {
 }
 
 impl<T: TlsInfoFactory> TlsInfoFactory for TokioIo<T> {
-    #[inline]
     fn tls_info(&self) -> Option<TlsInfo> {
         self.inner().tls_info()
     }
@@ -598,7 +601,6 @@ impl TlsInfoFactory for MaybeHttpsStream<TcpStream> {
 }
 
 impl TlsInfoFactory for SslStream<TokioIo<MaybeHttpsStream<TcpStream>>> {
-    #[inline]
     fn tls_info(&self) -> Option<TlsInfo> {
         self.ssl()
             .peer_certificate()
@@ -620,10 +622,6 @@ trait AsyncConnWithInfo: AsyncConn + TlsInfoFactory {}
 
 impl<T: AsyncConn + TlsInfoFactory> AsyncConnWithInfo for T {}
 
-type BoxConn = Box<dyn AsyncConnWithInfo>;
-
-pub(crate) type Connecting = Pin<Box<dyn Future<Output = Result<Conn, BoxError>> + Send>>;
-
 mod conn {
     use super::*;
 
@@ -639,7 +637,6 @@ mod conn {
             #[pin]
             pub(super) inner: BoxConn,
             pub(super) is_proxy: bool,
-            // Only needed for __tls, but #[cfg()] on fields breaks pin_project!
             pub(super) tls_info: bool,
         }
     }
