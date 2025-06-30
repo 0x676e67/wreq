@@ -7,10 +7,10 @@ use std::{
     time::Duration,
 };
 
+use conn::{Conn, Unnameable};
 use http::uri::Scheme;
 use pin_project_lite::pin_project;
-use sealed::{Conn, Unnameable};
-use tls_conn::BoringTlsConn;
+use tls_conn::TlsConn;
 use tokio::net::TcpStream;
 use tokio_boring2::SslStream;
 use tower::{
@@ -385,7 +385,7 @@ impl ConnectorService {
                 if !self.tcp_nodelay {
                     stream.get_ref().set_nodelay(false)?;
                 }
-                self.verbose.wrap(BoringTlsConn {
+                self.verbose.wrap(TlsConn {
                     inner: TokioIo::new(stream),
                 })
             }
@@ -436,7 +436,7 @@ impl ConnectorService {
             let io = connector.call((uri, tunneled)).await?;
 
             return Ok(Conn {
-                inner: self.verbose.wrap(BoringTlsConn {
+                inner: self.verbose.wrap(TlsConn {
                     inner: TokioIo::new(io),
                 }),
                 is_proxy: false,
@@ -473,7 +473,7 @@ impl ConnectorService {
             let io = connector.call((uri, conn)).await?;
 
             return Ok(Conn {
-                inner: self.verbose.wrap(BoringTlsConn {
+                inner: self.verbose.wrap(TlsConn {
                     inner: TokioIo::new(io),
                 }),
                 is_proxy: false,
@@ -574,6 +574,7 @@ impl TlsInfoFactory for TcpStream {
 }
 
 impl<T: TlsInfoFactory> TlsInfoFactory for TokioIo<T> {
+    #[inline]
     fn tls_info(&self) -> Option<TlsInfo> {
         self.inner().tls_info()
     }
@@ -600,8 +601,14 @@ impl TlsInfoFactory for MaybeHttpsStream<TcpStream> {
 }
 
 impl TlsInfoFactory for SslStream<TokioIo<MaybeHttpsStream<TcpStream>>> {
+    #[inline]
     fn tls_info(&self) -> Option<TlsInfo> {
-        self.get_ref().tls_info()
+        self.ssl()
+            .peer_certificate()
+            .and_then(|c| c.to_der().ok())
+            .map(|c| TlsInfo {
+                peer_certificate: Some(c),
+            })
     }
 }
 
@@ -618,7 +625,9 @@ impl<T: AsyncConn + TlsInfoFactory> AsyncConnWithInfo for T {}
 
 type BoxConn = Box<dyn AsyncConnWithInfo>;
 
-pub(crate) mod sealed {
+pub(crate) type Connecting = Pin<Box<dyn Future<Output = Result<Conn, BoxError>> + Send>>;
+
+pub(crate) mod conn {
     use super::*;
 
     #[derive(Debug)]
@@ -700,8 +709,6 @@ pub(crate) mod sealed {
     }
 }
 
-pub(crate) type Connecting = Pin<Box<dyn Future<Output = Result<Conn, BoxError>> + Send>>;
-
 mod tls_conn {
     use std::{
         io::{self, IoSlice},
@@ -726,13 +733,13 @@ mod tls_conn {
     };
 
     pin_project! {
-        pub(super) struct BoringTlsConn<T> {
+        pub(super) struct TlsConn<T> {
             #[pin]
             pub(super) inner: TokioIo<SslStream<T>>,
         }
     }
 
-    impl Connection for BoringTlsConn<TcpStream> {
+    impl Connection for TlsConn<TcpStream> {
         fn connected(&self) -> Connected {
             let connected = self.inner.inner().get_ref().connected();
             if self.inner.inner().ssl().selected_alpn_protocol() == Some(b"h2") {
@@ -743,7 +750,7 @@ mod tls_conn {
         }
     }
 
-    impl Connection for BoringTlsConn<TokioIo<MaybeHttpsStream<TcpStream>>> {
+    impl Connection for TlsConn<TokioIo<MaybeHttpsStream<TcpStream>>> {
         fn connected(&self) -> Connected {
             let connected = self.inner.inner().get_ref().connected();
             if self.inner.inner().ssl().selected_alpn_protocol() == Some(b"h2") {
@@ -754,7 +761,7 @@ mod tls_conn {
         }
     }
 
-    impl<T: AsyncRead + AsyncWrite + Unpin> Read for BoringTlsConn<T> {
+    impl<T: AsyncRead + AsyncWrite + Unpin> Read for TlsConn<T> {
         fn poll_read(
             self: Pin<&mut Self>,
             cx: &mut Context,
@@ -765,7 +772,7 @@ mod tls_conn {
         }
     }
 
-    impl<T: AsyncRead + AsyncWrite + Unpin> Write for BoringTlsConn<T> {
+    impl<T: AsyncRead + AsyncWrite + Unpin> Write for TlsConn<T> {
         fn poll_write(
             self: Pin<&mut Self>,
             cx: &mut Context,
@@ -805,7 +812,7 @@ mod tls_conn {
         }
     }
 
-    impl<T> TlsInfoFactory for BoringTlsConn<T>
+    impl<T> TlsInfoFactory for TlsConn<T>
     where
         TokioIo<SslStream<T>>: TlsInfoFactory,
     {
