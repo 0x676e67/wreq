@@ -19,7 +19,7 @@ use tower::{
 };
 use tower_service::Service;
 
-pub use self::conn::{Conn, Unnameable};
+pub(crate) use self::conn::{Conn, Unnameable};
 use crate::{
     core::{
         client::{
