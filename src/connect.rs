@@ -65,7 +65,7 @@ impl ConnectorBuilder {
     /// Set that all sockets have `SO_KEEPALIVE` set with the supplied duration
     /// to remain idle before sending TCP keepalive probes.
     #[inline(always)]
-    pub(crate) fn keepalive(mut self, dur: Option<Duration>) -> ConnectorBuilder {
+    pub(crate) fn tcp_keepalive(mut self, dur: Option<Duration>) -> ConnectorBuilder {
         self.http.set_keepalive(dur);
         self
     }
@@ -83,6 +83,13 @@ impl ConnectorBuilder {
     #[inline(always)]
     pub(crate) fn tcp_keepalive_retries(mut self, retries: Option<u32>) -> ConnectorBuilder {
         self.http.set_keepalive_retries(retries);
+        self
+    }
+
+    /// Sets the value of the `SO_REUSEADDR` option on the socket.
+    #[inline(always)]
+    pub(crate) fn tcp_reuse_address(mut self, enabled: bool) -> ConnectorBuilder {
+        self.http.set_reuse_address(enabled);
         self
     }
 
@@ -123,7 +130,7 @@ impl ConnectorBuilder {
 
     /// Set the nodelay flag for the connector.
     #[inline(always)]
-    pub(crate) fn nodelay(mut self, enabled: bool) -> ConnectorBuilder {
+    pub(crate) fn tcp_nodelay(mut self, enabled: bool) -> ConnectorBuilder {
         self.nodelay = enabled;
         self.http.set_nodelay(enabled);
         self

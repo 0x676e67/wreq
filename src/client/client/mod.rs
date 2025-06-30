@@ -127,9 +127,12 @@ struct Config {
     pool_idle_timeout: Option<Duration>,
     pool_max_idle_per_host: usize,
     pool_max_size: Option<NonZeroU32>,
+    tcp_nodelay: bool,
+    tcp_reuse_address: bool,
     tcp_keepalive: Option<Duration>,
     tcp_keepalive_interval: Option<Duration>,
     tcp_keepalive_retries: Option<u32>,
+    tcp_connect_options: Option<TcpConnectOptions>,
     #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
     tcp_user_timeout: Option<Duration>,
     proxies: Vec<ProxyMatcher>,
@@ -138,8 +141,6 @@ struct Config {
     referer: bool,
     timeout: Option<Duration>,
     read_timeout: Option<Duration>,
-    tcp_connect_options: Option<TcpConnectOptions>,
-    nodelay: bool,
     #[cfg(feature = "cookies")]
     cookie_store: Option<Arc<dyn cookie::CookieStore>>,
     #[cfg(feature = "hickory-dns")]
@@ -199,6 +200,9 @@ impl ClientBuilder {
                 tcp_keepalive: None,
                 tcp_keepalive_interval: None,
                 tcp_keepalive_retries: None,
+                tcp_connect_options: None,
+                tcp_nodelay: true,
+                tcp_reuse_address: false,
                 #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
                 tcp_user_timeout: None,
                 proxies: Vec::new(),
@@ -207,8 +211,6 @@ impl ClientBuilder {
                 referer: true,
                 timeout: None,
                 read_timeout: None,
-                tcp_connect_options: None,
-                nodelay: true,
                 #[cfg(feature = "hickory-dns")]
                 hickory_dns: cfg!(feature = "hickory-dns"),
                 #[cfg(feature = "cookies")]
@@ -303,11 +305,12 @@ impl ClientBuilder {
 
             Connector::builder(proxies.clone(), resolver)
                 .connect_timeout(config.connect_timeout)
-                .keepalive(config.tcp_keepalive)
+                .tcp_keepalive(config.tcp_keepalive)
                 .tcp_keepalive_interval(config.tcp_keepalive_interval)
                 .tcp_keepalive_retries(config.tcp_keepalive_retries)
+                .tcp_reuse_address(config.tcp_reuse_address)
                 .tcp_connect_options(config.tcp_connect_options)
-                .nodelay(config.nodelay)
+                .tcp_nodelay(config.tcp_nodelay)
                 .verbose(config.connection_verbose)
                 .tls_max_version(config.max_tls_version)
                 .tls_min_version(config.min_tls_version)
@@ -849,7 +852,7 @@ impl ClientBuilder {
     ///
     /// Default is `true`.
     pub fn tcp_nodelay(mut self, enabled: bool) -> ClientBuilder {
-        self.config.nodelay = enabled;
+        self.config.tcp_nodelay = enabled;
         self
     }
 
@@ -969,6 +972,12 @@ impl ClientBuilder {
         D: Into<Option<Duration>>,
     {
         self.config.tcp_user_timeout = val.into();
+        self
+    }
+
+    /// Set whether sockets have `SO_REUSEADDR` enabled.
+    pub fn tcp_reuse_address(mut self, enabled: bool) -> ClientBuilder {
+        self.config.tcp_reuse_address = enabled;
         self
     }
 
