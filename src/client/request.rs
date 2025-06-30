@@ -17,15 +17,15 @@ use super::{
     response::Response,
 };
 use crate::{
-    Error, Method, OriginalHeaders, Proxy, Url,
+    EmulationProviderFactory, Error, Method, OriginalHeaders, Proxy, Url,
     config::{
         RequestReadTimeout, RequestRedirectPolicy, RequestSkipDefaultHeaders, RequestTotalTimeout,
     },
     core::{
-        client::connect::options::TcpConnectOptions,
+        client::{config::TransportConfig, connect::options::TcpConnectOptions},
         ext::{
             RequestConfig, RequestHttpVersionPref, RequestOriginalHeaders, RequestProxyMatcher,
-            RequestTcpConnectOptions,
+            RequestTcpConnectOptions, RequestTransportConfig,
         },
     },
     header::{CONTENT_TYPE, HeaderMap, HeaderName, HeaderValue},
@@ -183,6 +183,11 @@ impl Request {
     #[inline(always)]
     pub(crate) fn default_headers_mut(&mut self) -> &mut Option<bool> {
         RequestConfig::<RequestSkipDefaultHeaders>::get_mut(&mut self.extensions)
+    }
+
+    #[inline(always)]
+    pub(crate) fn transport_config_mut(&mut self) -> &mut Option<TransportConfig> {
+        RequestConfig::<RequestTransportConfig>::get_mut(&mut self.extensions)
     }
 
     /// Get the extensions.
@@ -525,51 +530,41 @@ impl RequestBuilder {
     /// Sets if this request will announce that it accepts gzip encoding.
     #[cfg(feature = "gzip")]
     pub fn gzip(mut self, gzip: bool) -> RequestBuilder {
-        self.set_accept_encoding(|a| a.gzip(gzip));
+        if let Ok(ref mut req) = self.request {
+            let accept_encoding = req.accpet_encoding_mut().get_or_insert_default();
+            accept_encoding.gzip(gzip);
+        }
         self
     }
 
     /// Sets if this request will announce that it accepts brotli encoding.
     #[cfg(feature = "brotli")]
     pub fn brotli(mut self, brotli: bool) -> RequestBuilder {
-        self.set_accept_encoding(|a| a.brotli(brotli));
+        if let Ok(ref mut req) = self.request {
+            let accept_encoding = req.accpet_encoding_mut().get_or_insert_default();
+            accept_encoding.brotli(brotli);
+        }
         self
     }
 
     /// Sets if this request will announce that it accepts deflate encoding.
     #[cfg(feature = "deflate")]
     pub fn deflate(mut self, deflate: bool) -> RequestBuilder {
-        self.set_accept_encoding(|a| a.deflate(deflate));
+        if let Ok(ref mut req) = self.request {
+            let accept_encoding = req.accpet_encoding_mut().get_or_insert_default();
+            accept_encoding.deflate(deflate);
+        }
         self
     }
 
     /// Sets if this request will announce that it accepts zstd encoding.
     #[cfg(feature = "zstd")]
     pub fn zstd(mut self, zstd: bool) -> RequestBuilder {
-        self.set_accept_encoding(|a| a.zstd(zstd));
-        self
-    }
-
-    #[cfg(any(
-        feature = "gzip",
-        feature = "zstd",
-        feature = "brotli",
-        feature = "deflate",
-    ))]
-    fn set_accept_encoding<F>(&mut self, setter: F)
-    where
-        F: FnOnce(&mut AcceptEncoding),
-    {
         if let Ok(ref mut req) = self.request {
-            let accept_encoding = req.accpet_encoding_mut();
-            if let Some(accept_encoding) = accept_encoding {
-                setter(accept_encoding);
-            } else {
-                let mut default = AcceptEncoding::default();
-                setter(&mut default);
-                *accept_encoding = Some(default);
-            }
+            let accept_encoding = req.accpet_encoding_mut().get_or_insert_default();
+            accept_encoding.zstd(zstd);
         }
+        self
     }
 
     /// Set the proxy for this request.
@@ -603,9 +598,10 @@ impl RequestBuilder {
     where
         V: Into<Option<IpAddr>>,
     {
-        self.set_tcp_connect_options(|options| {
-            options.set_local_address(local_address.into());
-        });
+        if let Ok(ref mut req) = self.request {
+            let tcp_connect_options = req.tcp_connect_options_mut().get_or_insert_default();
+            tcp_connect_options.set_local_address(local_address.into());
+        }
         self
     }
 
@@ -615,9 +611,10 @@ impl RequestBuilder {
         V4: Into<Option<Ipv4Addr>>,
         V6: Into<Option<Ipv6Addr>>,
     {
-        self.set_tcp_connect_options(|options| {
-            options.set_local_addresses(ipv4.into(), ipv6.into());
-        });
+        if let Ok(ref mut req) = self.request {
+            let tcp_connect_options = req.tcp_connect_options_mut().get_or_insert_default();
+            tcp_connect_options.set_local_addresses(ipv4.into(), ipv6.into());
+        }
         self
     }
 
@@ -638,26 +635,41 @@ impl RequestBuilder {
     where
         I: Into<std::borrow::Cow<'static, str>>,
     {
-        self.set_tcp_connect_options(|options| {
-            options.set_interface(interface.into());
-        });
+        if let Ok(ref mut req) = self.request {
+            let tcp_connect_options = req.tcp_connect_options_mut().get_or_insert_default();
+            tcp_connect_options.set_interface(interface.into());
+        }
         self
     }
 
-    fn set_tcp_connect_options<F>(&mut self, setter: F)
+    /// Configures the request builder to emulation the specified HTTP context.
+    ///
+    /// This method sets the necessary headers, HTTP/1 and HTTP/2 configurations, and TLS config
+    /// to use the specified HTTP context. It allows the client to mimic the behavior of different
+    /// versions or setups, which can be useful for testing or ensuring compatibility with various
+    /// environments.
+    pub fn emulation<P>(mut self, factory: P) -> RequestBuilder
     where
-        F: FnOnce(&mut TcpConnectOptions),
+        P: EmulationProviderFactory,
     {
         if let Ok(ref mut req) = self.request {
-            let accept_encoding = req.tcp_connect_options_mut();
-            if let Some(accept_encoding) = accept_encoding {
-                setter(accept_encoding);
-            } else {
-                let mut default = TcpConnectOptions::default();
-                setter(&mut default);
-                *accept_encoding = Some(default);
+            let transport_config = req.transport_config_mut().get_or_insert_default();
+            let emulation = factory.emulation();
+
+            transport_config.set_http1_config(emulation.http1_config);
+            transport_config.set_http2_config(emulation.http2_config);
+            transport_config.set_tls_config(emulation.tls_config);
+
+            if let Some(default_headers) = emulation.default_headers {
+                self = self.headers(default_headers);
+            }
+
+            if let Some(original_headers) = emulation.original_headers {
+                self = self.original_headers(original_headers);
             }
         }
+
+        self
     }
 
     /// Send a form body.

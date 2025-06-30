@@ -1003,29 +1003,31 @@ impl ClientBuilder {
     where
         P: EmulationProviderFactory,
     {
+        use std::mem::swap;
+
         let mut emulation = factory.emulation();
 
         if let Some(mut headers) = emulation.default_headers {
-            std::mem::swap(&mut self.config.headers, &mut headers);
+            swap(&mut self.config.headers, &mut headers);
         }
 
         if emulation.original_headers.is_some() {
-            std::mem::swap(
+            swap(
                 &mut self.config.original_headers,
                 &mut emulation.original_headers,
             );
         }
 
         if let Some(mut http1_config) = emulation.http1_config.take() {
-            std::mem::swap(&mut self.config.http1_config, &mut http1_config);
+            swap(&mut self.config.http1_config, &mut http1_config);
         }
 
         if let Some(mut http2_config) = emulation.http2_config.take() {
-            std::mem::swap(&mut self.config.http2_config, &mut http2_config);
+            swap(&mut self.config.http2_config, &mut http2_config);
         }
 
         if let Some(mut tls_config) = emulation.tls_config.take() {
-            std::mem::swap(&mut self.config.tls_config, &mut tls_config);
+            swap(&mut self.config.tls_config, &mut tls_config);
         }
 
         self

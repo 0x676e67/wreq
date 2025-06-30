@@ -231,7 +231,7 @@ impl Builder {
         }
     }
 
-    pub fn set_config(&mut self, config: Http1Config) {
+    pub fn config(&mut self, config: Http1Config) {
         self.config = config;
     }
 

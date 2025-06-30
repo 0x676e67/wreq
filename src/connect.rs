@@ -23,7 +23,7 @@ use self::tls_conn::BoringTlsConn;
 use crate::{
     core::{
         client::{
-            ConnectRequest,
+            ConnRequest,
             connect::{Connected, Connection, options::TcpConnectOptions, proxy::Tunnel},
         },
         rt::{Read, ReadBufCursor, TokioIo, Write},
@@ -311,7 +311,7 @@ impl Connector {
     }
 }
 
-impl Service<ConnectRequest> for Connector {
+impl Service<ConnRequest> for Connector {
     type Response = Conn;
     type Error = BoxError;
     type Future = Connecting;
@@ -325,7 +325,7 @@ impl Service<ConnectRequest> for Connector {
     }
 
     #[inline(always)]
-    fn call(&mut self, dst: ConnectRequest) -> Self::Future {
+    fn call(&mut self, dst: ConnRequest) -> Self::Future {
         match self {
             Connector::Simple(service) => service.call(dst),
             Connector::WithLayers(service) => service.call(Unnameable(dst)),
@@ -358,7 +358,7 @@ pub(crate) struct ConnectorService {
 impl ConnectorService {
     async fn connect_with_maybe_proxy(
         self,
-        mut req: ConnectRequest,
+        mut req: ConnRequest,
         is_proxy: bool,
     ) -> Result<Conn, BoxError> {
         let uri = req.uri().clone();
@@ -399,7 +399,7 @@ impl ConnectorService {
 
     async fn connect_via_proxy(
         self,
-        mut req: ConnectRequest,
+        mut req: ConnRequest,
         proxy: Intercepted,
     ) -> Result<Conn, BoxError> {
         let uri = req.uri().clone();
@@ -448,7 +448,7 @@ impl ConnectorService {
     #[cfg(feature = "socks")]
     async fn connect_socks(
         &self,
-        mut req: ConnectRequest,
+        mut req: ConnRequest,
         proxy: Intercepted,
     ) -> Result<Conn, BoxError> {
         use crate::core::client::connect::proxy::Socks;
@@ -491,7 +491,7 @@ impl ConnectorService {
     fn create_https_connector(
         &self,
         http: HttpConnector,
-        req: &mut ConnectRequest,
+        req: &mut ConnRequest,
     ) -> Result<HttpsConnector<HttpConnector>, BoxError> {
         let tls = if let Some(cfg) = req.take_tls_config() {
             <TlsConnectorBuilder as Clone>::clone(&self.tls_builder).build(cfg)?
@@ -500,7 +500,7 @@ impl ConnectorService {
         };
 
         let mut connector = HttpsConnector::with_connector(http, tls);
-        connector.set_alpn_protocol(req.alpn());
+        connector.set_alpn_protocol(req.alpn_protocol());
         connector.set_tcp_connect_options(req.take_tcp_connect_options());
 
         Ok(connector)
@@ -522,7 +522,7 @@ where
     }
 }
 
-impl Service<ConnectRequest> for ConnectorService {
+impl Service<ConnRequest> for ConnectorService {
     type Response = Conn;
     type Error = BoxError;
     type Future = Connecting;
@@ -532,7 +532,7 @@ impl Service<ConnectRequest> for ConnectorService {
         Poll::Ready(Ok(()))
     }
 
-    fn call(&mut self, mut req: ConnectRequest) -> Self::Future {
+    fn call(&mut self, mut req: ConnRequest) -> Self::Future {
         debug!("starting new connection: {:?}", req.uri());
 
         let intercepted = req
@@ -617,7 +617,7 @@ pub(crate) mod sealed {
     use super::*;
 
     #[derive(Debug)]
-    pub struct Unnameable(pub(super) ConnectRequest);
+    pub struct Unnameable(pub(super) ConnRequest);
 
     pin_project! {
         /// Note: the `is_proxy` member means *is plain text HTTP proxy*.
