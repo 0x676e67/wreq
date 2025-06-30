@@ -279,6 +279,11 @@ path = "examples/request_with_proxy.rs"
 required-features = ["full", "tracing"]
 
 [[example]]
+name = "request_with_emulation"
+path = "examples/request_with_emulation.rs"
+required-features = ["full", "tracing"]
+
+[[example]]
 name = "connect_via_lower_priority_tokio_runtime"
 path = "examples/connect_via_lower_priority_tokio_runtime.rs"
 required-features = ["full", "tracing"]
