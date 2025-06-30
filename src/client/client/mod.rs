@@ -856,6 +856,60 @@ impl ClientBuilder {
         self
     }
 
+    /// Set that all sockets have `SO_KEEPALIVE` set with the supplied duration.
+    ///
+    /// If `None`, the option will not be set.
+    pub fn tcp_keepalive<D>(mut self, val: D) -> ClientBuilder
+    where
+        D: Into<Option<Duration>>,
+    {
+        self.config.tcp_keepalive = val.into();
+        self
+    }
+
+    /// Set that all sockets have `SO_KEEPALIVE` set with the supplied interval.
+    ///
+    /// If `None`, the option will not be set.
+    pub fn tcp_keepalive_interval<D>(mut self, val: D) -> ClientBuilder
+    where
+        D: Into<Option<Duration>>,
+    {
+        self.config.tcp_keepalive_interval = val.into();
+        self
+    }
+
+    /// Set that all sockets have `SO_KEEPALIVE` set with the supplied retry count.
+    ///
+    /// If `None`, the option will not be set.
+    pub fn tcp_keepalive_retries<C>(mut self, retries: C) -> ClientBuilder
+    where
+        C: Into<Option<u32>>,
+    {
+        self.config.tcp_keepalive_retries = retries.into();
+        self
+    }
+
+    /// Set that all sockets have `TCP_USER_TIMEOUT` set with the supplied duration.
+    ///
+    /// This option controls how long transmitted data may remain unacknowledged before
+    /// the connection is force-closed.
+    ///
+    /// The current default is `None` (option disabled).
+    #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
+    pub fn tcp_user_timeout<D>(mut self, val: D) -> ClientBuilder
+    where
+        D: Into<Option<Duration>>,
+    {
+        self.config.tcp_user_timeout = val.into();
+        self
+    }
+
+    /// Set whether sockets have `SO_REUSEADDR` enabled.
+    pub fn tcp_reuse_address(mut self, enabled: bool) -> ClientBuilder {
+        self.config.tcp_reuse_address = enabled;
+        self
+    }
+
     /// Bind to a local IP Address.
     ///
     /// # Example
@@ -924,60 +978,6 @@ impl ClientBuilder {
             .tcp_connect_options
             .get_or_insert_default()
             .set_interface(interface.into());
-        self
-    }
-
-    /// Set that all sockets have `SO_KEEPALIVE` set with the supplied duration.
-    ///
-    /// If `None`, the option will not be set.
-    pub fn tcp_keepalive<D>(mut self, val: D) -> ClientBuilder
-    where
-        D: Into<Option<Duration>>,
-    {
-        self.config.tcp_keepalive = val.into();
-        self
-    }
-
-    /// Set that all sockets have `SO_KEEPALIVE` set with the supplied interval.
-    ///
-    /// If `None`, the option will not be set.
-    pub fn tcp_keepalive_interval<D>(mut self, val: D) -> ClientBuilder
-    where
-        D: Into<Option<Duration>>,
-    {
-        self.config.tcp_keepalive_interval = val.into();
-        self
-    }
-
-    /// Set that all sockets have `SO_KEEPALIVE` set with the supplied retry count.
-    ///
-    /// If `None`, the option will not be set.
-    pub fn tcp_keepalive_retries<C>(mut self, retries: C) -> ClientBuilder
-    where
-        C: Into<Option<u32>>,
-    {
-        self.config.tcp_keepalive_retries = retries.into();
-        self
-    }
-
-    /// Set that all sockets have `TCP_USER_TIMEOUT` set with the supplied duration.
-    ///
-    /// This option controls how long transmitted data may remain unacknowledged before
-    /// the connection is force-closed.
-    ///
-    /// The current default is `None` (option disabled).
-    #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
-    pub fn tcp_user_timeout<D>(mut self, val: D) -> ClientBuilder
-    where
-        D: Into<Option<Duration>>,
-    {
-        self.config.tcp_user_timeout = val.into();
-        self
-    }
-
-    /// Set whether sockets have `SO_REUSEADDR` enabled.
-    pub fn tcp_reuse_address(mut self, enabled: bool) -> ClientBuilder {
-        self.config.tcp_reuse_address = enabled;
         self
     }
 

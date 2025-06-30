@@ -128,7 +128,7 @@ impl ConnectorBuilder {
         self
     }
 
-    /// Set the nodelay flag for the connector.
+    /// Set the tcp_nodelay flag for the connector.
     #[inline(always)]
     pub(crate) fn tcp_nodelay(mut self, enabled: bool) -> ConnectorBuilder {
         self.tcp_nodelay = enabled;
@@ -229,7 +229,7 @@ impl ConnectorBuilder {
             // The timeout is initially set to None and will be reassigned later
             // based on the presence or absence of user-provided layers.
             timeout: None,
-            nodelay: self.tcp_nodelay,
+            tcp_nodelay: self.tcp_nodelay,
             #[cfg(feature = "socks")]
             resolver: self.resolver,
             tls_info: self.tls_info,
@@ -351,7 +351,7 @@ pub(crate) struct ConnectorService {
     /// This lets us avoid an extra `Box::pin` indirection layer
     /// since `tokio::time::Timeout` is `Unpin`
     timeout: Option<Duration>,
-    nodelay: bool,
+    tcp_nodelay: bool,
     #[cfg(feature = "socks")]
     resolver: DynResolver,
 
@@ -374,7 +374,7 @@ impl ConnectorService {
         // Disable Nagle's algorithm for TLS handshake
         //
         // https://www.openssl.org/docs/man1.1.1/man3/SSL_connect.html#NOTES
-        if !self.nodelay && (uri.scheme() == Some(&Scheme::HTTPS)) {
+        if !self.tcp_nodelay && (uri.scheme() == Some(&Scheme::HTTPS)) {
             http.set_nodelay(true);
         }
 
@@ -382,7 +382,7 @@ impl ConnectorService {
         let mut connector = self.create_https_connector(http, &mut req)?;
         let inner = match connector.call(uri).await? {
             MaybeHttpsStream::Https(stream) => {
-                if !self.nodelay {
+                if !self.tcp_nodelay {
                     stream
                         .inner()
                         .get_ref()
