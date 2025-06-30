@@ -12,7 +12,7 @@ use crate::proxy::Matcher as ProxyMatcher;
 #[derive(Debug, Clone, Hash, PartialEq, Eq, Default)]
 pub struct TcpConnectOptions {
     #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
-    interface: Option<std::borrow::Cow<'static, str>>,
+    pub(super) interface: Option<std::borrow::Cow<'static, str>>,
     #[cfg(any(
         target_os = "illumos",
         target_os = "ios",
