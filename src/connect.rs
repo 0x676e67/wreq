@@ -745,7 +745,12 @@ mod tls_conn {
 
     impl Connection for BoringTlsConn<TokioIo<MaybeHttpsStream<TcpStream>>> {
         fn connected(&self) -> Connected {
-            self.inner.inner().get_ref().connected()
+            let connected = self.inner.inner().get_ref().connected();
+            if self.inner.inner().ssl().selected_alpn_protocol() == Some(b"h2") {
+                connected.negotiated_h2()
+            } else {
+                connected
+            }
         }
     }
 
