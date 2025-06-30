@@ -20,7 +20,10 @@ use serde::Serialize;
 use tokio_tungstenite::tungstenite::{self, protocol};
 use tungstenite::protocol::WebSocketConfig;
 
-use crate::{Error, OriginalHeaders, RequestBuilder, Response, core::ext::Protocol, proxy::Proxy};
+use crate::{
+    EmulationProviderFactory, Error, OriginalHeaders, RequestBuilder, Response,
+    core::ext::Protocol, proxy::Proxy,
+};
 
 /// A WebSocket stream.
 type WebSocketStream = tokio_tungstenite::WebSocketStream<crate::Upgraded>;
@@ -264,6 +267,20 @@ impl WebSocketRequestBuilder {
     {
         self.inner = self.inner.interface(interface);
         self
+    }
+
+    /// Configures the request builder to emulation the specified WebSocket context.
+    ///
+    /// This method sets the necessary headers, HTTP/1 and HTTP/2 configurations, and TLS config
+    /// to use the specified HTTP context. It allows the client to mimic the behavior of different
+    /// versions or setups, which can be useful for testing or ensuring compatibility with various
+    /// environments.
+    pub fn emulation<P>(mut self, factory: P) -> RequestBuilder
+    where
+        P: EmulationProviderFactory,
+    {
+        self.inner = self.inner.emulation(factory);
+        self.inner
     }
 
     /// Sends the request and returns and [`WebSocketResponse`].
