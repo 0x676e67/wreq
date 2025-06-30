@@ -24,7 +24,7 @@ use crate::{
     core::{
         client::{
             ConnRequest,
-            connect::{self, Connected, Connection, options::TcpConnectOptions, proxy::Tunnel},
+            connect::{self, Connected, Connection, TcpConnectOptions, proxy::Tunnel},
         },
         rt::{Read, ReadBufCursor, TokioIo, Write},
     },

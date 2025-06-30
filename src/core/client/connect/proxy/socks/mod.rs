@@ -2,8 +2,6 @@ mod v4;
 mod v5;
 
 use std::{
-    error::Error as StdError,
-    marker::PhantomData,
     pin::Pin,
     task::{Context, Poll},
 };
@@ -27,7 +25,6 @@ pub enum SocksError<C> {
 
     DnsFailure,
     MissingHost,
-    MissingPort,
 
     V4(SocksV4Error),
     V5(SocksV5Error),
@@ -85,14 +82,13 @@ impl<C> std::fmt::Display for SocksError<C> {
 
         match self {
             Self::Inner(_) => f.write_str("failed to create underlying connection"),
-            Self::Io(_) => f.write_str("io error during SOCKS handshake"),
+            Self::Io(e) => f.write_fmt(format_args!("io error during SOCKS handshake: {e}")),
 
             Self::DnsFailure => f.write_str("could not resolve to acceptable address type"),
             Self::MissingHost => f.write_str("missing destination host"),
-            Self::MissingPort => f.write_str("missing destination port"),
 
-            Self::Parsing(_) => f.write_str("failed parsing server response"),
-            Self::Serialize(_) => f.write_str("failed serialize request"),
+            Self::Parsing(e) => f.write_fmt(format_args!("failed parsing server response: {e:?}")),
+            Self::Serialize(e) => f.write_fmt(format_args!("failed serialize request: {e:?}")),
 
             Self::V4(e) => e.fmt(f),
             Self::V5(e) => e.fmt(f),

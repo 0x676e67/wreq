@@ -267,7 +267,7 @@ impl std::error::Error for TunnelError {
 mod tests {
     use tokio::{
         io::{AsyncReadExt, AsyncWriteExt},
-        net::{TcpListener, TcpStream},
+        net::TcpListener,
     };
     use tower_service::Service;
 

@@ -22,7 +22,7 @@ use crate::{
         RequestReadTimeout, RequestRedirectPolicy, RequestSkipDefaultHeaders, RequestTotalTimeout,
     },
     core::{
-        client::{config::TransportConfig, connect::options::TcpConnectOptions},
+        client::{config::TransportConfig, connect::TcpConnectOptions},
         ext::{
             RequestConfig, RequestHttpVersionPref, RequestOriginalHeaders, RequestProxyMatcher,
             RequestTcpConnectOptions, RequestTransportConfig,

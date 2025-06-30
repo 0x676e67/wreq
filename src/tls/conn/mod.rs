@@ -29,7 +29,7 @@ use tower_service::Service;
 use crate::{
     connect::HttpConnector,
     core::{
-        client::connect::{Connected, Connection, options::TcpConnectOptions},
+        client::connect::{Connected, Connection, TcpConnectOptions},
         rt::{Read, ReadBufCursor, TokioIo, Write},
     },
     error::BoxError,

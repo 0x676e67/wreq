@@ -3,19 +3,16 @@ pub use errors::*;
 
 mod messages;
 use std::{
-    future::Future,
-    net::{IpAddr, SocketAddr, SocketAddrV4, ToSocketAddrs},
-    pin::Pin,
+    net::{IpAddr, SocketAddr, SocketAddrV4},
     task::{Context, Poll},
 };
 
 use bytes::BytesMut;
 use http::Uri;
 use messages::*;
-use pin_project_lite::pin_project;
 use tower_service::Service;
 
-use super::{BoxHandshaking, Handshaking, SocksError};
+use super::{Handshaking, SocksError};
 use crate::core::{
     client::connect::dns::{GaiResolver, Name, Resolve},
     rt::{Read, Write},

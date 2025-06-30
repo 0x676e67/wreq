@@ -1,4 +1,3 @@
-#![allow(unused)]
 //! Connectors used by the `Client`.
 //!
 //! This module contains:
@@ -68,6 +67,13 @@
 //! [`Read`]: crate::core::rt::Read
 //! [`Write`]: crate::core::rt::Write
 //! [`Connection`]: Connection
+
+pub(crate) mod capture;
+pub mod dns;
+mod http;
+mod options;
+pub mod proxy;
+
 use std::{
     fmt::{self, Formatter},
     sync::{
@@ -78,19 +84,11 @@ use std::{
 
 use ::http::Extensions;
 
-pub use self::http::{HttpConnector, HttpInfo};
-use crate::core::error::BoxError;
-
-pub mod dns;
-mod http;
-pub mod options;
-pub mod proxy;
-
-pub(crate) mod capture;
-#[allow(unused)]
-pub use capture::{CaptureConnection, capture_connection};
-
-pub use self::sealed::Connect;
+pub use self::{
+    http::{HttpConnector, HttpInfo},
+    options::TcpConnectOptions,
+    sealed::Connect,
+};
 
 /// Describes a type returned by a connector.
 pub trait Connection {
@@ -312,9 +310,8 @@ where
 }
 
 pub(super) mod sealed {
-    use std::{error::Error as StdError, future::Future};
+    use std::future::Future;
 
-    use ::http::Uri;
     use tower::util::Oneshot;
 
     use super::Connection;

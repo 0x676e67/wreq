@@ -1,10 +1,11 @@
+#![allow(unused)]
 use std::{
     error::Error as StdError,
     fmt,
     future::Future,
     io,
     marker::PhantomData,
-    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
+    net::{Ipv4Addr, Ipv6Addr, SocketAddr},
     pin::Pin,
     sync::Arc,
     task::{self, Poll, ready},

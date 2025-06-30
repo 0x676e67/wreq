@@ -57,7 +57,7 @@ use crate::{
         sealed::{Conn, Unnameable},
     },
     core::{
-        client::{Builder, Client as HyperClient, connect::options::TcpConnectOptions},
+        client::{Builder, Client as HyperClient, connect::TcpConnectOptions},
         ext::RequestConfig,
         rt::{TokioExecutor, tokio::TokioTimer},
     },

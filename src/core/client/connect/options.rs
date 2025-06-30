@@ -1,9 +1,4 @@
-use std::{
-    borrow::Cow,
-    net::{IpAddr, Ipv4Addr, Ipv6Addr},
-};
-
-use crate::proxy::Matcher as ProxyMatcher;
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
 /// Options for configuring a TCP network connection.
 ///

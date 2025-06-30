@@ -3,19 +3,16 @@ pub use errors::*;
 
 mod messages;
 use std::{
-    future::Future,
-    net::{IpAddr, SocketAddr, ToSocketAddrs},
-    pin::Pin,
+    net::{IpAddr, SocketAddr},
     task::{Context, Poll},
 };
 
 use bytes::{Bytes, BytesMut};
 use http::Uri;
 use messages::*;
-use pin_project_lite::pin_project;
 use tower_service::Service;
 
-use super::{BoxHandshaking, Handshaking, SocksError};
+use super::{Handshaking, SocksError};
 use crate::core::{
     client::connect::dns::{GaiResolver, Name, Resolve},
     rt::{Read, Write},
@@ -121,6 +118,7 @@ where
     ///
     /// Recommended to ensure connector works correctly without optimistic sending before trying
     /// with optimistic sending.
+    #[allow(unused)]
     pub fn send_optimistically(mut self, optimistic: bool) -> Self {
         self.config.optimistic = optimistic;
         self

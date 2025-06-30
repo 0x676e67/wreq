@@ -39,8 +39,8 @@ use crate::{
             config::{TransportConfig, http1::Http1Config, http2::Http2Config},
             conn::TrySendError as ConnTrySendError,
             connect::{
-                Alpn, Connect, Connected, Connection, capture::CaptureConnectionExtension,
-                options::TcpConnectOptions,
+                Alpn, Connect, Connected, Connection, TcpConnectOptions,
+                capture::CaptureConnectionExtension,
             },
         },
         common::{Exec, Lazy, lazy as hyper_lazy, timer},

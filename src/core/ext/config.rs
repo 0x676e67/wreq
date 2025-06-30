@@ -122,7 +122,7 @@ where
 pub(crate) struct RequestTcpConnectOptions;
 
 impl RequestConfigValue for RequestTcpConnectOptions {
-    type Value = crate::core::client::connect::options::TcpConnectOptions;
+    type Value = crate::core::client::connect::TcpConnectOptions;
 }
 
 #[derive(Clone, Copy)]
