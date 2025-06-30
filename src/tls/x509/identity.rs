@@ -97,16 +97,16 @@ impl Identity {
     }
 
     pub(crate) fn add_to_tls(
-        self,
+        &self,
         connector: &mut boring2::ssl::SslConnectorBuilder,
     ) -> crate::Result<()> {
         connector.set_certificate(&self.cert)?;
         connector.set_private_key(&self.pkey)?;
-        for cert in self.chain.into_iter() {
+        for cert in self.chain.iter() {
             // https://www.openssl.org/docs/manmaster/man3/SSL_CTX_add_extra_chain_cert.html
             // specifies that "When sending a certificate chain, extra chain certificates are
             // sent in order following the end entity certificate."
-            connector.add_extra_chain_cert(cert)?;
+            connector.add_extra_chain_cert(cert.clone())?;
         }
         Ok(())
     }

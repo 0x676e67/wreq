@@ -33,6 +33,14 @@ macro_rules! set_option_inner_try {
     };
 }
 
+macro_rules! call_option_ref_try {
+    ($owner:expr, $field:ident, $target:expr, $method:ident) => {
+        if let Some(val) = $owner.$field.as_ref() {
+            val.$method($target)?;
+        }
+    };
+}
+
 macro_rules! encode_alpns {
     ( $( $arr:expr ),* $(,)? ) => {{
         concat_array!(

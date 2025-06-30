@@ -80,29 +80,30 @@ impl ConnRequest {
     }
 
     #[inline]
-    pub(crate) fn alpn_protocol(&self) -> Option<AlpnProtocol> {
-        match self.version {
-            Some(Version::HTTP_11 | Version::HTTP_10 | Version::HTTP_09) => {
-                Some(AlpnProtocol::HTTP1)
-            }
-            Some(Version::HTTP_2) => Some(AlpnProtocol::HTTP2),
-            _ => None,
-        }
-    }
-
-    #[inline]
-    pub(crate) fn take_tcp_connect_options(&mut self) -> Option<TcpConnectOptions> {
-        self.tcp_connect_options.take()
-    }
-
-    #[inline]
     pub(crate) fn take_proxy_matcher(&mut self) -> Option<ProxyMacher> {
         self.proxy_matcher.take()
     }
 
     #[inline]
-    pub(crate) fn take_tls_config(&mut self) -> Option<TlsConfig> {
-        self.tls_config.take()
+    pub(crate) fn take_config_bundle(
+        &mut self,
+    ) -> (
+        Option<TcpConnectOptions>,
+        Option<TlsConfig>,
+        Option<AlpnProtocol>,
+    ) {
+        let tcp = self.tcp_connect_options.take();
+        let tls = self.tls_config.take();
+
+        let alpn = match self.version {
+            Some(Version::HTTP_11 | Version::HTTP_10 | Version::HTTP_09) => {
+                Some(AlpnProtocol::HTTP1)
+            }
+            Some(Version::HTTP_2) => Some(AlpnProtocol::HTTP2),
+            _ => None,
+        };
+
+        (tcp, tls, alpn)
     }
 
     #[inline]

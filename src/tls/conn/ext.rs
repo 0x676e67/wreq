@@ -7,7 +7,7 @@ use boring2::{
 use bytes::Bytes;
 
 use crate::tls::{
-    CertStore, CertificateCompressionAlgorithm, Identity,
+    CertStore, CertificateCompressionAlgorithm,
     conn::cert_compression::{
         BrotliCertificateCompressor, ZlibCertificateCompressor, ZstdCertificateCompressor,
     },
@@ -15,11 +15,8 @@ use crate::tls::{
 
 /// SslConnectorBuilderExt trait for `SslConnectorBuilder`.
 pub trait SslConnectorBuilderExt {
-    /// Configure the identity for the given `SslConnectorBuilder`.
-    fn set_identity(self, identity: Option<Identity>) -> crate::Result<SslConnectorBuilder>;
-
     /// Configure the CertStore for the given `SslConnectorBuilder`.
-    fn set_cert_store(self, store: Option<CertStore>) -> crate::Result<SslConnectorBuilder>;
+    fn set_cert_store(self, store: Option<&CertStore>) -> crate::Result<SslConnectorBuilder>;
 
     /// Configure the certificate verification for the given `SslConnectorBuilder`.
     fn set_cert_verification(self, enable: bool) -> crate::Result<SslConnectorBuilder>;
@@ -46,7 +43,7 @@ pub trait ConnectConfigurationExt {
 
 impl SslConnectorBuilderExt for SslConnectorBuilder {
     #[inline(always)]
-    fn set_cert_store(mut self, store: Option<CertStore>) -> crate::Result<SslConnectorBuilder> {
+    fn set_cert_store(mut self, store: Option<&CertStore>) -> crate::Result<SslConnectorBuilder> {
         if let Some(store) = store {
             store.add_to_tls(&mut self);
         } else {
@@ -63,15 +60,6 @@ impl SslConnectorBuilderExt for SslConnectorBuilder {
         } else {
             self.set_verify(SslVerifyMode::NONE);
         }
-        Ok(self)
-    }
-
-    #[inline(always)]
-    fn set_identity(mut self, identity: Option<Identity>) -> crate::Result<SslConnectorBuilder> {
-        if let Some(identity) = identity {
-            identity.add_to_tls(&mut self)?;
-        }
-
         Ok(self)
     }
 

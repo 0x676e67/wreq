@@ -241,7 +241,7 @@ impl CertStore {
 
 impl CertStore {
     #[inline(always)]
-    pub(crate) fn add_to_tls(self, tls: &mut boring2::ssl::SslConnectorBuilder) {
+    pub(crate) fn add_to_tls(&self, tls: &mut boring2::ssl::SslConnectorBuilder) {
         tls.set_cert_store_ref(&self.0);
     }
 }

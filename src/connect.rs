@@ -491,17 +491,18 @@ impl ConnectorService {
     fn create_https_connector(
         &self,
         http: HttpConnector,
-        req: &mut ConnRequest,
+        conn_req: &mut ConnRequest,
     ) -> Result<HttpsConnector<HttpConnector>, BoxError> {
-        let tls = if let Some(cfg) = req.take_tls_config() {
-            <TlsConnectorBuilder as Clone>::clone(&self.tls_builder).build(cfg)?
-        } else {
-            self.tls.clone()
-        };
+        let (tcp_opts, tls_cfg, alpn_protocol) = conn_req.take_config_bundle();
+
+        let tls = tls_cfg
+            .map(|cfg| self.tls_builder.build(cfg))
+            .transpose()?
+            .unwrap_or_else(|| self.tls.clone());
 
         let mut connector = HttpsConnector::with_connector(http, tls);
-        connector.set_alpn_protocol(req.alpn_protocol());
-        connector.set_tcp_connect_options(req.take_tcp_connect_options());
+        connector.set_alpn_protocol(alpn_protocol);
+        connector.set_tcp_connect_options(tcp_opts);
 
         Ok(connector)
     }
