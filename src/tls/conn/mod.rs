@@ -6,7 +6,11 @@ mod ext;
 mod service;
 
 use std::{
-    fmt::{self, Debug}, io, pin::Pin, sync::{Arc, LazyLock}, task::{Context, Poll}
+    fmt::{self, Debug},
+    io,
+    pin::Pin,
+    sync::{Arc, LazyLock},
+    task::{Context, Poll},
 };
 
 use boring2::{
@@ -25,7 +29,7 @@ use crate::{
     connect::HttpConnector,
     core::{
         client::connect::{Connected, Connection, TcpConnectOptions},
-        rt::{Read, ReadBufCursor, Write, TokioIo},
+        rt::{Read, ReadBufCursor, TokioIo, Write},
     },
     error::BoxError,
     sync::Mutex,
@@ -214,18 +218,7 @@ where
 // ===== impl Inner =====
 
 impl Inner {
-    /// Connects to the given URI using the given connection.
-    ///
-    /// This function is used to connect to the given URI using the given connection.
-    pub async fn connect<A>(
-        &self,
-        uri: &Uri,
-        host: &str,
-        conn: A,
-    ) -> Result<SslStream<TokioIo<A>>, BoxError>
-    where
-        A: Read + Write + Unpin + Send + Sync + Debug + 'static,
-    {
+    fn setup_ssl(&self, uri: &Uri, host: &str) -> Result<Ssl, ErrorStack> {
         let mut cfg = self.ssl.configure()?;
 
         // Use server name indication
@@ -270,12 +263,7 @@ impl Inner {
             cfg.set_ex_data(idx, key);
         }
 
-        let ssl = cfg.into_ssl(host)?;
-
-        tokio_boring2::SslStreamBuilder::new(ssl, TokioIo::new(conn))
-            .connect()
-            .await
-            .map_err(Into::into)
+        cfg.into_ssl(host)
     }
 }
 

@@ -383,12 +383,11 @@ impl ConnectorService {
         let inner = match connector.call(uri).await? {
             MaybeHttpsStream::Https(stream) => {
                 if !self.tcp_nodelay {
-                    stream
-                        .get_ref()
-                        .inner()
-                        .set_nodelay(false)?;
+                    stream.get_ref().set_nodelay(false)?;
                 }
-                self.verbose.wrap(BoringTlsConn { inner: stream })
+                self.verbose.wrap(BoringTlsConn {
+                    inner: TokioIo::new(stream),
+                })
             }
             other => self.verbose.wrap(other),
         };
@@ -432,6 +431,8 @@ impl ConnectorService {
             // We don't wrap this again in an HttpsConnector since that uses Maybe,
             // and we know this is definitely HTTPS.
             let tunneled = tunnel.call(uri.clone()).await?;
+            let tunneled = TokioIo::new(TokioIo::new(tunneled));
+
             let io = connector.call((uri, tunneled)).await?;
 
             return Ok(Conn {
@@ -578,7 +579,7 @@ impl<T: TlsInfoFactory> TlsInfoFactory for TokioIo<T> {
     }
 }
 
-impl TlsInfoFactory for SslStream<TokioIo<TokioIo<TcpStream>>> {
+impl TlsInfoFactory for SslStream<TcpStream> {
     fn tls_info(&self) -> Option<TlsInfo> {
         self.ssl()
             .peer_certificate()
@@ -589,18 +590,18 @@ impl TlsInfoFactory for SslStream<TokioIo<TokioIo<TcpStream>>> {
     }
 }
 
-impl TlsInfoFactory for SslStream<TokioIo<MaybeHttpsStream<TokioIo<TcpStream>>>> {
+impl TlsInfoFactory for MaybeHttpsStream<TcpStream> {
     fn tls_info(&self) -> Option<TlsInfo> {
-        self.get_ref().inner().tls_info()
+        match self {
+            MaybeHttpsStream::Https(tls) => tls.tls_info(),
+            MaybeHttpsStream::Http(_) => None,
+        }
     }
 }
 
-impl TlsInfoFactory for MaybeHttpsStream<TokioIo<TcpStream>> {
+impl TlsInfoFactory for SslStream<TokioIo<MaybeHttpsStream<TcpStream>>> {
     fn tls_info(&self) -> Option<TlsInfo> {
-        match self {
-            MaybeHttpsStream::Https(tls) => tls.inner().tls_info(),
-            MaybeHttpsStream::Http(_) => None,
-        }
+        self.get_ref().tls_info()
     }
 }
 
@@ -731,7 +732,7 @@ mod tls_conn {
         }
     }
 
-    impl Connection for BoringTlsConn<TokioIo<TokioIo<TcpStream>>> {
+    impl Connection for BoringTlsConn<TcpStream> {
         fn connected(&self) -> Connected {
             let connected = self.inner.inner().get_ref().connected();
             if self.inner.inner().ssl().selected_alpn_protocol() == Some(b"h2") {
@@ -742,14 +743,9 @@ mod tls_conn {
         }
     }
 
-    impl Connection for BoringTlsConn<TokioIo<MaybeHttpsStream<TokioIo<TcpStream>>>> {
+    impl Connection for BoringTlsConn<TokioIo<MaybeHttpsStream<TcpStream>>> {
         fn connected(&self) -> Connected {
-            let connected = self.inner.inner().get_ref().connected();
-            if self.inner.inner().ssl().selected_alpn_protocol() == Some(b"h2") {
-                connected.negotiated_h2()
-            } else {
-                connected
-            }
+            self.inner.inner().get_ref().connected()
         }
     }
 
