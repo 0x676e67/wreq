@@ -53,7 +53,7 @@ pub(crate) struct ConnectorBuilder {
     /// This lets us avoid an extra `Box::pin` indirection layer
     /// since `tokio::time::Timeout` is `Unpin`
     timeout: Option<Duration>,
-    nodelay: bool,
+    tcp_nodelay: bool,
     #[cfg(feature = "socks")]
     resolver: DynResolver,
 
@@ -131,7 +131,7 @@ impl ConnectorBuilder {
     /// Set the nodelay flag for the connector.
     #[inline(always)]
     pub(crate) fn tcp_nodelay(mut self, enabled: bool) -> ConnectorBuilder {
-        self.nodelay = enabled;
+        self.tcp_nodelay = enabled;
         self.http.set_nodelay(enabled);
         self
     }
@@ -229,7 +229,7 @@ impl ConnectorBuilder {
             // The timeout is initially set to None and will be reassigned later
             // based on the presence or absence of user-provided layers.
             timeout: None,
-            nodelay: self.nodelay,
+            nodelay: self.tcp_nodelay,
             #[cfg(feature = "socks")]
             resolver: self.resolver,
             tls_info: self.tls_info,
@@ -309,7 +309,7 @@ impl Connector {
             proxies,
             verbose: verbose::OFF,
             timeout: None,
-            nodelay: false,
+            tcp_nodelay: false,
 
             // TLS connector and its configuration
             tls_info: false,
@@ -332,10 +332,10 @@ impl Service<ConnRequest> for Connector {
     }
 
     #[inline(always)]
-    fn call(&mut self, dst: ConnRequest) -> Self::Future {
+    fn call(&mut self, req: ConnRequest) -> Self::Future {
         match self {
-            Connector::Simple(service) => service.call(dst),
-            Connector::WithLayers(service) => service.call(Unnameable(dst)),
+            Connector::Simple(service) => service.call(req),
+            Connector::WithLayers(service) => service.call(Unnameable(req)),
         }
     }
 }
