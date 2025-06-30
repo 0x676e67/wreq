@@ -384,9 +384,7 @@ impl ConnectorService {
             MaybeHttpsStream::Https(stream) => {
                 if !self.tcp_nodelay {
                     stream
-                        .inner()
                         .get_ref()
-                        .inner()
                         .inner()
                         .set_nodelay(false)?;
                 }

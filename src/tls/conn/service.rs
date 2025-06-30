@@ -75,7 +75,6 @@ where
             inner
                 .connect(&uri, host, conn)
                 .await
-                .map(TokioIo::new)
                 .map(MaybeHttpsStream::Https)
         };
 
