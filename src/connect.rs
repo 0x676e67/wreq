@@ -10,6 +10,7 @@ use std::{
 use http::uri::Scheme;
 use pin_project_lite::pin_project;
 use sealed::{Conn, Unnameable};
+use tls_conn::BoringTlsConn;
 use tokio::net::TcpStream;
 use tokio_boring2::SslStream;
 use tower::{
@@ -19,7 +20,6 @@ use tower::{
 };
 use tower_service::Service;
 
-use self::tls_conn::BoringTlsConn;
 use crate::{
     core::{
         client::{
