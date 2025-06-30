@@ -68,7 +68,6 @@
 //! [`Write`]: crate::core::rt::Write
 //! [`Connection`]: Connection
 
-pub(crate) mod capture;
 pub mod dns;
 mod http;
 mod options;

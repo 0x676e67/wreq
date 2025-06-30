@@ -38,10 +38,7 @@ use crate::{
         client::{
             config::{TransportConfig, http1::Http1Config, http2::Http2Config},
             conn::TrySendError as ConnTrySendError,
-            connect::{
-                Alpn, Connect, Connected, Connection, TcpConnectOptions,
-                capture::CaptureConnectionExtension,
-            },
+            connect::{Alpn, Connect, Connected, Connection, TcpConnectOptions},
         },
         common::{Exec, Lazy, lazy as hyper_lazy, timer},
         error::BoxError,
@@ -386,10 +383,6 @@ where
             // `connection_for` already retries checkout errors, so if
             // it returns an error, there's not much else to retry
             .map_err(TrySendError::Nope)?;
-
-        if let Some(conn) = req.extensions_mut().get_mut::<CaptureConnectionExtension>() {
-            conn.set(&pooled.conn_info)
-        }
 
         if pooled.is_http1() {
             if req.version() == Version::HTTP_2 {
