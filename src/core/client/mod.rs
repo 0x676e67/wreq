@@ -14,11 +14,9 @@ mod pool;
 pub mod proxy;
 
 use std::{
-    borrow::Cow,
     error::Error as StdError,
     fmt,
     future::Future,
-    net::{Ipv4Addr, Ipv6Addr},
     num::NonZeroU32,
     pin::Pin,
     task::{self, Poll},
@@ -30,7 +28,7 @@ use futures_util::future::{self, Either, FutureExt, TryFutureExt};
 use http::{
     HeaderValue, Method, Request, Response, Uri, Version,
     header::HOST,
-    uri::{Authority, PathAndQuery, Scheme},
+    uri::{PathAndQuery, Scheme},
 };
 use http_body::Body;
 use pool::Ver;
@@ -41,18 +39,19 @@ use crate::{
         client::{
             config::{http1::Http1Config, http2::Http2Config},
             conn::TrySendError as ConnTrySendError,
-            connect::{Alpn, Connect, Connected, Connection, capture::CaptureConnectionExtension},
+            connect::{
+                capture::CaptureConnectionExtension, options::TcpConnectOptions, Alpn, Connect, Connected, Connection
+            },
         },
         common,
         error::BoxError,
         ext::{
-            RequestConfig, RequestHttpVersionPref, RequestInterface, RequestIpv4Addr,
-            RequestIpv6Addr, RequestProxyMatcher,
+            RequestConfig, RequestHttpVersionPref, RequestProxyMatcher, RequestTcpConnectOptions, RequestTransportConfig,
         },
         rt::Timer,
     },
     proxy::Matcher as ProxyMacher,
-    tls::AlpnProtocol,
+    tls::{AlpnProtocol, TlsConfig},
 };
 
 type BoxSendFuture = Pin<Box<dyn Future<Output = ()> + Send>>;
@@ -61,17 +60,21 @@ type BoxSendFuture = Pin<Box<dyn Future<Output = ()> + Send>>;
 #[derive(Debug, Clone)]
 pub struct ConnectRequest {
     uri: Uri,
-    pool_key: PoolKey,
+    alpn: Option<AlpnProtocol>,
+    proxy_matcher: Option<ProxyMacher>,
+    tcp_connect_options: Option<TcpConnectOptions>,
+    tls_config: Option<TlsConfig>,
 }
 
 impl ConnectRequest {
-    /// Creates a new `Dst`.
+    /// Creates a new `ConnectRequest`.
     ///
-    /// This method initializes a new `Dst` instance based on the provided URI, HTTP connect flag,
-    /// network scheme, and HTTP version.
+    /// This method initializes a new `ConnectRequest` instance based on the provided URI, HTTP
+    /// connect flag, network scheme, and HTTP version.
     pub(crate) fn new<B>(
         req: &mut Request<B>,
         is_http_connect: bool,
+        tls_config: Option<TlsConfig>,
     ) -> Result<ConnectRequest, Error> {
         let uri = req.uri_mut();
         let (scheme, auth) = match (uri.scheme().cloned(), uri.authority().cloned()) {
@@ -102,30 +105,15 @@ impl ConnectRequest {
 
         let extensions = req.extensions_mut();
 
-        let version = RequestConfig::<RequestHttpVersionPref>::remove(extensions);
-
-        let alpn = match version {
+        let alpn = match RequestConfig::<RequestHttpVersionPref>::remove(extensions) {
             Some(Version::HTTP_11 | Version::HTTP_10 | Version::HTTP_09) => {
                 Some(AlpnProtocol::HTTP1)
             }
             Some(Version::HTTP_2) => Some(AlpnProtocol::HTTP2),
             _ => None,
         };
-
-        let interface = RequestConfig::<RequestInterface>::remove(extensions);
-        let local_ipv4_address = RequestConfig::<RequestIpv4Addr>::remove(extensions);
-        let local_ipv6_address = RequestConfig::<RequestIpv6Addr>::remove(extensions);
+        let tcp_connect_options = RequestConfig::<RequestTcpConnectOptions>::remove(extensions);
         let proxy_matcher = RequestConfig::<RequestProxyMatcher>::remove(extensions);
-
-        let pool_key = PoolKey {
-            scheme: scheme.clone(),
-            authority: auth.clone(),
-            alpn,
-            interface,
-            local_ipv4_address,
-            local_ipv6_address,
-            proxy_matcher,
-        };
 
         // Convert the scheme and host to a URI
         let uri = Uri::builder()
@@ -134,62 +122,58 @@ impl ConnectRequest {
             .path_and_query(PathAndQuery::from_static("/"))
             .build()?;
 
-        Ok(ConnectRequest { uri, pool_key })
+        Ok(ConnectRequest {
+            uri,
+            alpn,
+            proxy_matcher,
+            tcp_connect_options,
+            tls_config
+        })
     }
 
-    #[inline(always)]
+    #[inline]
     pub(crate) fn uri(&self) -> &Uri {
         &self.uri
     }
 
-    #[inline(always)]
+    #[inline]
     pub(crate) fn set_uri(&mut self, mut uri: Uri) {
         std::mem::swap(&mut self.uri, &mut uri);
     }
 
-    #[inline(always)]
+    #[inline]
     pub(crate) fn alpn(&self) -> Option<AlpnProtocol> {
-        self.pool_key.alpn
+        self.alpn
     }
 
-    #[inline(always)]
-    pub(crate) fn addresses(&self) -> (Option<Ipv4Addr>, Option<Ipv6Addr>) {
-        (
-            self.pool_key.local_ipv4_address,
-            self.pool_key.local_ipv6_address,
-        )
+    #[inline]
+    pub(crate) fn take_tcp_connect_options(&mut self) -> Option<TcpConnectOptions> {
+        self.tcp_connect_options.take()
     }
 
-    #[cfg(any(
-        target_os = "android",
-        target_os = "fuchsia",
-        target_os = "illumos",
-        target_os = "ios",
-        target_os = "linux",
-        target_os = "macos",
-        target_os = "solaris",
-        target_os = "tvos",
-        target_os = "visionos",
-        target_os = "watchos",
-    ))]
-    #[inline(always)]
-    pub(crate) fn interface(&self) -> Option<std::borrow::Cow<'static, str>> {
-        self.pool_key.interface.clone()
-    }
-
-    #[inline(always)]
+    #[inline]
     pub(crate) fn take_proxy_matcher(&mut self) -> Option<ProxyMacher> {
-        self.pool_key.proxy_matcher.clone()
+        self.proxy_matcher.take()
     }
 
-    #[inline(always)]
+    #[inline]
+    pub(crate) fn take_tls_config(&mut self) -> Option<TlsConfig> {
+        self.tls_config.take()
+    }
+
+    #[inline]
     fn only_http2(&self) -> bool {
-        self.pool_key.alpn == Some(AlpnProtocol::HTTP2)
+        self.alpn == Some(AlpnProtocol::HTTP2)
     }
 
-    #[inline(always)]
-    fn pool_key(&self) -> &PoolKey {
-        &self.pool_key
+    #[inline]
+    fn pool_key(&self) -> PoolKey {
+        PoolKey {
+            uri: self.uri.clone(),
+            alpn: self.alpn,
+            proxy_matcher: self.proxy_matcher.clone(),
+            tcp_connect_options: self.tcp_connect_options.clone(),
+        }
     }
 }
 
@@ -260,16 +244,12 @@ macro_rules! e {
     };
 }
 
-// We might change this... :shrug:
 #[derive(Clone, Hash, Debug, Eq, PartialEq)]
 struct PoolKey {
-    scheme: Scheme,
-    authority: Authority,
+    uri: Uri,
     alpn: Option<AlpnProtocol>,
-    interface: Option<Cow<'static, str>>,
-    local_ipv4_address: Option<Ipv4Addr>,
-    local_ipv6_address: Option<Ipv6Addr>,
     proxy_matcher: Option<ProxyMacher>,
+    tcp_connect_options: Option<TcpConnectOptions>,
 }
 
 #[allow(clippy::large_enum_variant)]
@@ -378,25 +358,28 @@ where
             other => return ResponseFuture::error_version(other),
         };
 
-        let dst = match ConnectRequest::new(&mut req, is_http_connect) {
-            Ok(dst) => dst,
+        let mut transport_config = RequestConfig::<RequestTransportConfig>::remove(req.extensions_mut());
+        let _tls_config = transport_config.as_mut().and_then(|cfg| cfg.tls.take());
+        
+        match ConnectRequest::new(&mut req, is_http_connect, _tls_config) {
+            Ok(connect_request) => {
+                ResponseFuture::new(self.clone().send_request(req, connect_request))
+            },
             Err(err) => {
-                return ResponseFuture::new(future::err(err));
+                ResponseFuture::new(future::err(err))
             }
-        };
-
-        ResponseFuture::new(self.clone().send_request(req, dst))
+        }
     }
 
     async fn send_request(
         self,
         mut req: Request<B>,
-        dst: ConnectRequest,
+        connect_request: ConnectRequest,
     ) -> Result<Response<crate::core::body::Incoming>, Error> {
         let uri = req.uri().clone();
 
         loop {
-            req = match self.try_send_request(req, dst.clone()).await {
+            req = match self.try_send_request(req, connect_request.clone()).await {
                 Ok(resp) => return Ok(resp),
                 Err(TrySendError::Nope(err)) => return Err(err),
                 Err(TrySendError::Retryable {
@@ -424,10 +407,10 @@ where
     async fn try_send_request(
         &self,
         mut req: Request<B>,
-        dst: ConnectRequest,
+        connect_request: ConnectRequest,
     ) -> Result<Response<crate::core::body::Incoming>, TrySendError<B>> {
         let mut pooled = self
-            .connection_for(dst)
+            .connection_for(connect_request)
             .await
             // `connection_for` already retries checkout errors, so if
             // it returns an error, there's not much else to retry
@@ -517,10 +500,10 @@ where
 
     async fn connection_for(
         &self,
-        dst: ConnectRequest,
+        connect_request: ConnectRequest,
     ) -> Result<pool::Pooled<PoolClient<B>, PoolKey>, Error> {
         loop {
-            match self.one_connection_for(dst.clone()).await {
+            match self.one_connection_for(connect_request.clone()).await {
                 Ok(pooled) => return Ok(pooled),
                 Err(ClientConnectError::Normal(err)) => return Err(err),
                 Err(ClientConnectError::CheckoutIsClosed(reason)) => {
@@ -540,12 +523,12 @@ where
 
     async fn one_connection_for(
         &self,
-        dst: ConnectRequest,
+        connect_request: ConnectRequest,
     ) -> Result<pool::Pooled<PoolClient<B>, PoolKey>, ClientConnectError> {
         // Return a single connection if pooling is not enabled
         if !self.pool.is_enabled() {
             return self
-                .connect_to(dst)
+                .connect_to(connect_request)
                 .await
                 .map_err(ClientConnectError::Normal);
         }
@@ -560,8 +543,8 @@ where
         // - If a new connection is started, but the Checkout wins after (an idle connection became
         //   available first), the started connection future is spawned into the runtime to
         //   complete, and then be inserted into the pool as an idle connection.
-        let checkout = self.pool.checkout(dst.pool_key().clone());
-        let connect = self.connect_to(dst);
+        let checkout = self.pool.checkout(connect_request.pool_key().clone());
+        let connect = self.connect_to(connect_request);
         let is_ver_h2 = self.config.ver == Ver::Http2;
 
         // The order of the `select` is depended on below...
@@ -628,7 +611,7 @@ where
 
     fn connect_to(
         &self,
-        dst: ConnectRequest,
+        connect_request: ConnectRequest,
     ) -> impl Lazy<Output = Result<pool::Pooled<PoolClient<B>, PoolKey>, Error>> + Send + Unpin + 'static
     {
         let executor = self.exec.clone();
@@ -636,7 +619,7 @@ where
 
         let h1_builder = self.h1_builder.clone();
         let h2_builder = self.h2_builder.clone();
-        let ver = if dst.only_http2() {
+        let ver = if connect_request.only_http2() {
             Ver::Http2
         } else {
             self.config.ver
@@ -649,7 +632,7 @@ where
             // If the pool_key is for HTTP/2, and there is already a
             // connection being established, then this can't take a
             // second lock. The "connect_to" future is Canceled.
-            let connecting = match pool.connecting(dst.pool_key(), ver) {
+            let connecting = match pool.connecting(connect_request.pool_key(), ver) {
                 Some(lock) => lock,
                 None => {
                     let canceled = e!(Canceled);
@@ -660,7 +643,7 @@ where
             };
             Either::Left(
                 connector
-                    .connect(dst)
+                    .connect(connect_request)
                     .map_err(|src| e!(Connect, src))
                     .and_then(move |io| {
                         let connected = io.connected();
@@ -808,11 +791,6 @@ where
         })
     }
 
-    #[allow(dead_code)]
-    #[inline]
-    pub(crate) fn connector_mut(&mut self) -> &mut C {
-        &mut self.connector
-    }
 
     #[allow(dead_code)]
     #[inline]

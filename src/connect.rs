@@ -1,7 +1,6 @@
 use std::{
     future::Future,
     io::{self, IoSlice},
-    net::{IpAddr, Ipv4Addr, Ipv6Addr},
     pin::Pin,
     sync::Arc,
     task::{Context, Poll},
@@ -22,11 +21,10 @@ use tower_service::Service;
 
 use self::tls_conn::BoringTlsConn;
 use crate::{
-    Error,
     core::{
         client::{
             ConnectRequest,
-            connect::{Connected, Connection, proxy::Tunnel},
+            connect::{Connected, Connection, options::TcpConnectOptions, proxy::Tunnel},
         },
         rt::{Read, ReadBufCursor, TokioIo, Write},
     },
@@ -115,55 +113,11 @@ impl ConnectorBuilder {
     /// Sets the name of the interface to bind sockets produced by this
     /// connector.
     #[inline(always)]
-    pub(crate) fn interface(
-        #[allow(unused_mut)] mut self,
-        #[cfg(any(
-            target_os = "android",
-            target_os = "fuchsia",
-            target_os = "illumos",
-            target_os = "ios",
-            target_os = "linux",
-            target_os = "macos",
-            target_os = "solaris",
-            target_os = "tvos",
-            target_os = "visionos",
-            target_os = "watchos",
-        ))]
-        iface: Option<std::borrow::Cow<'static, str>>,
-    ) -> ConnectorBuilder {
-        #[cfg(any(
-            target_os = "android",
-            target_os = "fuchsia",
-            target_os = "illumos",
-            target_os = "ios",
-            target_os = "linux",
-            target_os = "macos",
-            target_os = "solaris",
-            target_os = "tvos",
-            target_os = "visionos",
-            target_os = "watchos",
-        ))]
-        self.http.set_interface(iface);
-        self
-    }
-
-    /// Set that all sockets are bound to the configured IPv4 or IPv6 address (depending on host's
-    /// preferences) before connection.
-    #[inline(always)]
-    pub(crate) fn local_addresses(
+    pub(crate) fn tcp_connect_options(
         mut self,
-        local_ipv4_address: Option<Ipv4Addr>,
-        local_ipv6_address: Option<Ipv6Addr>,
+        options: Option<TcpConnectOptions>,
     ) -> ConnectorBuilder {
-        match (local_ipv4_address, local_ipv6_address) {
-            (Some(ipv4), None) => self.http.set_local_address(Some(IpAddr::from(ipv4))),
-            (None, Some(ipv6)) => self.http.set_local_address(Some(IpAddr::from(ipv6))),
-            (Some(ipv4), Some(ipv6)) => {
-                self.http.set_local_addresses(ipv4, ipv6);
-            }
-            (None, None) => {}
-        }
-
+        self.http.set_tcp_connect_options(options);
         self
     }
 
@@ -278,8 +232,8 @@ impl ConnectorBuilder {
         if let Some(layers) = layers {
             // otherwise we have user provided layers
             // so we need type erasure all the way through
-            // as well as mapping the unnameable type of the layers back to Dst for the inner
-            // service
+            // as well as mapping the unnameable type of the layers back to ConnectRequest for the
+            // inner service
             let service = layers.into_iter().fold(
                 BoxCloneSyncService::new(
                     ServiceBuilder::new()
@@ -398,20 +352,106 @@ pub(crate) struct ConnectorService {
     // Note: these are not used in the `TlsConnectorBuilder` but rather
     // in the `TlsConnector` that is built from it.
     tls_info: bool,
-    #[allow(unused)]
     tls_builder: Arc<TlsConnectorBuilder>,
 }
 
 impl ConnectorService {
+    async fn connect_with_maybe_proxy(
+        self,
+        mut req: ConnectRequest,
+        is_proxy: bool,
+    ) -> Result<Conn, BoxError> {
+        let uri = req.uri().clone();
+        let mut http = self.http.clone();
+
+        // Disable Nagle's algorithm for TLS handshake
+        //
+        // https://www.openssl.org/docs/man1.1.1/man3/SSL_connect.html#NOTES
+        if !self.nodelay && (uri.scheme() == Some(&Scheme::HTTPS)) {
+            http.set_nodelay(true);
+        }
+
+        trace!("connect with maybe proxy");
+        let mut connector = self.create_https_connector(http, &mut req)?;
+        let io = connector.call(uri).await?;
+
+        let inner = if let MaybeHttpsStream::Https(stream) = io {
+            if !self.nodelay {
+                stream
+                    .inner()
+                    .get_ref()
+                    .inner()
+                    .inner()
+                    .set_nodelay(false)?;
+            }
+
+            self.verbose.wrap(BoringTlsConn { inner: stream })
+        } else {
+            self.verbose.wrap(io)
+        };
+
+        Ok(Conn {
+            inner,
+            is_proxy,
+            tls_info: self.tls_info,
+        })
+    }
+
+    async fn connect_via_proxy(
+        self,
+        mut req: ConnectRequest,
+        proxy: Intercepted,
+    ) -> Result<Conn, BoxError> {
+        let uri = req.uri().clone();
+        debug!("proxy({:?}) intercepts '{:?}'", proxy, uri);
+
+        #[cfg(feature = "socks")]
+        if let Some("socks4" | "socks4a" | "socks5" | "socks5h") = proxy.uri().scheme_str() {
+            return self.connect_socks(req, proxy).await;
+        }
+
+        let proxy_dst = proxy.uri().clone();
+        let auth = proxy.basic_auth().cloned();
+
+        if uri.scheme() == Some(&Scheme::HTTPS) {
+            trace!("tunneling HTTPS over proxy");
+            let mut connector = self.create_https_connector(self.http.clone(), &mut req)?;
+
+            let mut tunnel = Tunnel::new(proxy_dst, connector.clone());
+            if let Some(auth) = auth {
+                tunnel = tunnel.with_auth(auth);
+            }
+
+            if let Some(headers) = proxy.custom_headers() {
+                tunnel = tunnel.with_headers(headers.clone());
+            }
+
+            // We don't wrap this again in an HttpsConnector since that uses Maybe,
+            // and we know this is definitely HTTPS.
+            let tunneled = tunnel.call(uri.clone()).await?;
+            let io = connector.call((uri, tunneled)).await?;
+
+            return Ok(Conn {
+                inner: self.verbose.wrap(BoringTlsConn {
+                    inner: TokioIo::new(io),
+                }),
+                is_proxy: false,
+                tls_info: self.tls_info,
+            });
+        }
+
+        req.set_uri(proxy_dst);
+
+        self.connect_with_maybe_proxy(req, true).await
+    }
+
     #[cfg(feature = "socks")]
     async fn connect_socks(
         &self,
-        mut dst: ConnectRequest,
+        mut req: ConnectRequest,
         proxy: Intercepted,
     ) -> Result<Conn, BoxError> {
         use crate::core::client::connect::proxy::Socks;
-
-        let uri = dst.uri().clone();
 
         let mut socks = Socks::new_with_resolver(
             self.http.clone(),
@@ -420,16 +460,13 @@ impl ConnectorService {
             proxy.raw_auth(),
         );
 
+        let uri = req.uri().clone();
+
         if uri.scheme() == Some(&Scheme::HTTPS) {
-            use crate::Error;
-
-            let http = HttpsConnector::new(self.http.clone(), self.tls.clone(), &mut dst);
-
             trace!("socks HTTPS over proxy");
+            let mut connector = self.create_https_connector(self.http.clone(), &mut req)?;
             let conn = socks.call(uri.clone()).await?;
-
-            let host = uri.host().ok_or(Error::uri_bad_host())?;
-            let io = http.connect(&uri, host, conn).await?;
+            let io = connector.call((uri, conn)).await?;
 
             return Ok(Conn {
                 inner: self.verbose.wrap(BoringTlsConn {
@@ -451,96 +488,22 @@ impl ConnectorService {
             .map_err(Into::into)
     }
 
-    async fn connect_with_maybe_proxy(
-        self,
-        mut dst: ConnectRequest,
-        is_proxy: bool,
-    ) -> Result<Conn, BoxError> {
-        let uri = dst.uri().clone();
-        let mut http = self.http.clone();
-
-        // Disable Nagle's algorithm for TLS handshake
-        //
-        // https://www.openssl.org/docs/man1.1.1/man3/SSL_connect.html#NOTES
-        if !self.nodelay && (uri.scheme() == Some(&Scheme::HTTPS)) {
-            http.set_nodelay(true);
-        }
-
-        trace!("connect with maybe proxy");
-        let mut http = HttpsConnector::new(http, self.tls, &mut dst);
-        let io = http.call(uri).await?;
-
-        if let MaybeHttpsStream::Https(stream) = io {
-            if !self.nodelay {
-                stream
-                    .inner()
-                    .get_ref()
-                    .inner()
-                    .inner()
-                    .set_nodelay(false)?;
-            }
-            Ok(Conn {
-                inner: self.verbose.wrap(BoringTlsConn { inner: stream }),
-                is_proxy,
-                tls_info: self.tls_info,
-            })
+    fn create_https_connector(
+        &self,
+        http: HttpConnector,
+        req: &mut ConnectRequest,
+    ) -> Result<HttpsConnector<HttpConnector>, BoxError> {
+        let tls = if let Some(cfg) = req.take_tls_config() {
+            <TlsConnectorBuilder as Clone>::clone(&self.tls_builder).build(cfg)?
         } else {
-            Ok(Conn {
-                inner: self.verbose.wrap(io),
-                is_proxy,
-                tls_info: self.tls_info,
-            })
-        }
-    }
+            self.tls.clone()
+        };
 
-    async fn connect_via_proxy(
-        self,
-        mut dst: ConnectRequest,
-        proxy: Intercepted,
-    ) -> Result<Conn, BoxError> {
-        let uri = dst.uri().clone();
-        debug!("proxy({:?}) intercepts '{:?}'", proxy, dst);
+        let mut connector = HttpsConnector::with_connector(http, tls);
+        connector.set_alpn_protocol(req.alpn());
+        connector.set_tcp_connect_options(req.take_tcp_connect_options());
 
-        #[cfg(feature = "socks")]
-        if let Some("socks4" | "socks4a" | "socks5" | "socks5h") = proxy.uri().scheme_str() {
-            return self.connect_socks(dst, proxy).await;
-        }
-
-        let proxy_dst = proxy.uri().clone();
-        let auth = proxy.basic_auth().cloned();
-
-        if uri.scheme() == Some(&Scheme::HTTPS) {
-            trace!("tunneling HTTPS over proxy");
-            let http = HttpsConnector::new(self.http.clone(), self.tls, &mut dst);
-
-            let mut tunnel = Tunnel::new(proxy_dst, http.clone());
-            if let Some(auth) = auth {
-                tunnel = tunnel.with_auth(auth);
-            }
-
-            if let Some(headers) = proxy.custom_headers() {
-                tunnel = tunnel.with_headers(headers.clone());
-            }
-
-            let host = uri.host().ok_or(Error::uri_bad_host())?;
-
-            // We don't wrap this again in an HttpsConnector since that uses Maybe,
-            // and we know this is definitely HTTPS.
-            let tunneled = tunnel.call(uri.clone()).await?;
-            let io = http.connect(&uri, host, tunneled).await?;
-
-            return Ok(Conn {
-                inner: self.verbose.wrap(BoringTlsConn {
-                    inner: TokioIo::new(io),
-                }),
-                is_proxy: false,
-                tls_info: self.tls_info,
-            });
-        }
-
-        dst.set_uri(proxy_dst);
-
-        self.connect_with_maybe_proxy(dst, true).await
+        Ok(connector)
     }
 }
 
@@ -569,27 +532,27 @@ impl Service<ConnectRequest> for ConnectorService {
         Poll::Ready(Ok(()))
     }
 
-    fn call(&mut self, mut dst: ConnectRequest) -> Self::Future {
-        debug!("starting new connection: {:?}", dst.uri());
+    fn call(&mut self, mut req: ConnectRequest) -> Self::Future {
+        debug!("starting new connection: {:?}", req.uri());
 
-        let intercepted = dst
+        let intercepted = req
             .take_proxy_matcher()
-            .and_then(|scheme| scheme.intercept(dst.uri()))
+            .and_then(|scheme| scheme.intercept(req.uri()))
             .or_else(|| {
                 self.proxies
                     .iter()
-                    .find_map(|prox| prox.intercept(dst.uri()))
+                    .find_map(|prox| prox.intercept(req.uri()))
             });
 
         if let Some(intercepted) = intercepted {
             return Box::pin(with_timeout(
-                self.clone().connect_via_proxy(dst, intercepted),
+                self.clone().connect_via_proxy(req, intercepted),
                 self.timeout,
             ));
         }
 
         Box::pin(with_timeout(
-            self.clone().connect_with_maybe_proxy(dst, false),
+            self.clone().connect_with_maybe_proxy(req, false),
             self.timeout,
         ))
     }

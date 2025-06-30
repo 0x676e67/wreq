@@ -57,7 +57,7 @@ use crate::{
         sealed::{Conn, Unnameable},
     },
     core::{
-        client::{Builder, Client as HyperClient},
+        client::{Builder, Client as HyperClient, connect::options::TcpConnectOptions},
         ext::RequestConfig,
         rt::{TokioExecutor, tokio::TokioTimer},
     },
@@ -138,21 +138,7 @@ struct Config {
     referer: bool,
     timeout: Option<Duration>,
     read_timeout: Option<Duration>,
-    #[cfg(any(
-        target_os = "android",
-        target_os = "fuchsia",
-        target_os = "illumos",
-        target_os = "ios",
-        target_os = "linux",
-        target_os = "macos",
-        target_os = "solaris",
-        target_os = "tvos",
-        target_os = "visionos",
-        target_os = "watchos",
-    ))]
-    interface: Option<std::borrow::Cow<'static, str>>,
-    local_ipv4_address: Option<Ipv4Addr>,
-    local_ipv6_address: Option<Ipv6Addr>,
+    tcp_connect_options: Option<TcpConnectOptions>,
     nodelay: bool,
     #[cfg(feature = "cookies")]
     cookie_store: Option<Arc<dyn cookie::CookieStore>>,
@@ -221,21 +207,7 @@ impl ClientBuilder {
                 referer: true,
                 timeout: None,
                 read_timeout: None,
-                #[cfg(any(
-                    target_os = "android",
-                    target_os = "fuchsia",
-                    target_os = "illumos",
-                    target_os = "ios",
-                    target_os = "linux",
-                    target_os = "macos",
-                    target_os = "solaris",
-                    target_os = "tvos",
-                    target_os = "visionos",
-                    target_os = "watchos",
-                ))]
-                interface: None,
-                local_ipv4_address: None,
-                local_ipv6_address: None,
+                tcp_connect_options: None,
                 nodelay: true,
                 #[cfg(feature = "hickory-dns")]
                 hickory_dns: cfg!(feature = "hickory-dns"),
@@ -334,7 +306,7 @@ impl ClientBuilder {
                 .keepalive(config.tcp_keepalive)
                 .tcp_keepalive_interval(config.tcp_keepalive_interval)
                 .tcp_keepalive_retries(config.tcp_keepalive_retries)
-                .local_addresses(config.local_ipv4_address, config.local_ipv6_address)
+                .tcp_connect_options(config.tcp_connect_options)
                 .nodelay(config.nodelay)
                 .verbose(config.connection_verbose)
                 .tls_max_version(config.max_tls_version)
@@ -346,21 +318,6 @@ impl ClientBuilder {
                 .tls_cert_store(config.tls_cert_store)
                 .tls_identity(config.tls_identity)
                 .tls_keylog_policy(config.tls_keylog_policy)
-                .interface(
-                    #[cfg(any(
-                        target_os = "android",
-                        target_os = "fuchsia",
-                        target_os = "illumos",
-                        target_os = "ios",
-                        target_os = "linux",
-                        target_os = "macos",
-                        target_os = "solaris",
-                        target_os = "tvos",
-                        target_os = "visionos",
-                        target_os = "watchos",
-                    ))]
-                    config.interface,
-                )
                 .tcp_user_timeout(
                     #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
                     config.tcp_user_timeout,
@@ -912,11 +869,10 @@ impl ClientBuilder {
     where
         T: Into<Option<IpAddr>>,
     {
-        match addr.into() {
-            Some(IpAddr::V4(addr)) => self.config.local_ipv4_address = Some(addr),
-            Some(IpAddr::V6(addr)) => self.config.local_ipv6_address = Some(addr),
-            _ => {}
-        }
+        self.config
+            .tcp_connect_options
+            .get_or_insert_default()
+            .set_local_address(addr.into());
         self
     }
 
@@ -927,8 +883,10 @@ impl ClientBuilder {
         V4: Into<Option<Ipv4Addr>>,
         V6: Into<Option<Ipv6Addr>>,
     {
-        self.config.local_ipv4_address = ipv4.into();
-        self.config.local_ipv6_address = ipv6.into();
+        self.config
+            .tcp_connect_options
+            .get_or_insert_default()
+            .set_local_addresses(ipv4.into(), ipv6.into());
         self
     }
 
@@ -959,7 +917,10 @@ impl ClientBuilder {
     where
         T: Into<std::borrow::Cow<'static, str>>,
     {
-        self.config.interface = Some(interface.into());
+        self.config
+            .tcp_connect_options
+            .get_or_insert_default()
+            .set_interface(interface.into());
         self
     }
 

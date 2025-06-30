@@ -16,27 +16,17 @@ use super::{
     client::{Client, Pending},
     response::Response,
 };
-#[cfg(any(
-    target_os = "android",
-    target_os = "fuchsia",
-    target_os = "illumos",
-    target_os = "ios",
-    target_os = "linux",
-    target_os = "macos",
-    target_os = "solaris",
-    target_os = "tvos",
-    target_os = "visionos",
-    target_os = "watchos",
-))]
-use crate::core::ext::RequestInterface;
 use crate::{
     Error, Method, OriginalHeaders, Proxy, Url,
     config::{
         RequestReadTimeout, RequestRedirectPolicy, RequestSkipDefaultHeaders, RequestTotalTimeout,
     },
-    core::ext::{
-        RequestConfig, RequestHttpVersionPref, RequestIpv4Addr, RequestIpv6Addr,
-        RequestOriginalHeaders, RequestProxyMatcher,
+    core::{
+        client::connect::options::TcpConnectOptions,
+        ext::{
+            RequestConfig, RequestHttpVersionPref, RequestOriginalHeaders, RequestProxyMatcher,
+            RequestTcpConnectOptions,
+        },
     },
     header::{CONTENT_TYPE, HeaderMap, HeaderName, HeaderValue},
     proxy::Matcher as ProxyMatcher,
@@ -165,34 +155,10 @@ impl Request {
         RequestConfig::<RequestReadTimeout>::get_mut(&mut self.extensions)
     }
 
-    /// Get a mutable reference to the local ipv4 address.
+    /// Get a mutable reference to the tcp connect options.
     #[inline(always)]
-    pub fn local_ipv4_address_mut(&mut self) -> &mut Option<Ipv4Addr> {
-        RequestConfig::<RequestIpv4Addr>::get_mut(&mut self.extensions)
-    }
-
-    /// Get a mutable reference to the local ipv6 address.
-    #[inline(always)]
-    pub fn local_ipv6_address_mut(&mut self) -> &mut Option<Ipv6Addr> {
-        RequestConfig::<RequestIpv6Addr>::get_mut(&mut self.extensions)
-    }
-
-    /// Get a mutable reference to the interface.
-    #[cfg(any(
-        target_os = "android",
-        target_os = "fuchsia",
-        target_os = "illumos",
-        target_os = "ios",
-        target_os = "linux",
-        target_os = "macos",
-        target_os = "solaris",
-        target_os = "tvos",
-        target_os = "visionos",
-        target_os = "watchos",
-    ))]
-    #[inline(always)]
-    pub fn interface_mut(&mut self) -> &mut Option<std::borrow::Cow<'static, str>> {
-        RequestConfig::<RequestInterface>::get_mut(&mut self.extensions)
+    pub(crate) fn tcp_connect_options_mut(&mut self) -> &mut Option<TcpConnectOptions> {
+        RequestConfig::<RequestTcpConnectOptions>::get_mut(&mut self.extensions)
     }
 
     /// Get a mutable reference to the proxy matcher.
@@ -637,14 +603,9 @@ impl RequestBuilder {
     where
         V: Into<Option<IpAddr>>,
     {
-        if let Ok(ref mut req) = self.request {
-            if let Some(addr) = local_address.into() {
-                match addr {
-                    IpAddr::V4(ipv4) => *req.local_ipv4_address_mut() = Some(ipv4),
-                    IpAddr::V6(ipv6) => *req.local_ipv6_address_mut() = Some(ipv6),
-                }
-            }
-        }
+        self.set_tcp_connect_options(|options| {
+            options.set_local_address(local_address.into());
+        });
         self
     }
 
@@ -654,10 +615,9 @@ impl RequestBuilder {
         V4: Into<Option<Ipv4Addr>>,
         V6: Into<Option<Ipv6Addr>>,
     {
-        if let Ok(ref mut req) = self.request {
-            *req.local_ipv4_address_mut() = ipv4.into();
-            *req.local_ipv6_address_mut() = ipv6.into();
-        }
+        self.set_tcp_connect_options(|options| {
+            options.set_local_addresses(ipv4.into(), ipv6.into());
+        });
         self
     }
 
@@ -678,10 +638,26 @@ impl RequestBuilder {
     where
         I: Into<std::borrow::Cow<'static, str>>,
     {
-        if let Ok(ref mut req) = self.request {
-            *req.interface_mut() = Some(interface.into());
-        }
+        self.set_tcp_connect_options(|options| {
+            options.set_interface(interface.into());
+        });
         self
+    }
+
+    fn set_tcp_connect_options<F>(&mut self, setter: F)
+    where
+        F: FnOnce(&mut TcpConnectOptions),
+    {
+        if let Ok(ref mut req) = self.request {
+            let accept_encoding = req.tcp_connect_options_mut();
+            if let Some(accept_encoding) = accept_encoding {
+                setter(accept_encoding);
+            } else {
+                let mut default = TcpConnectOptions::default();
+                setter(&mut default);
+                *accept_encoding = Some(default);
+            }
+        }
     }
 
     /// Send a form body.

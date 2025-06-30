@@ -83,6 +83,7 @@ use crate::core::error::BoxError;
 
 pub mod dns;
 mod http;
+pub mod options;
 pub mod proxy;
 
 pub(crate) mod capture;

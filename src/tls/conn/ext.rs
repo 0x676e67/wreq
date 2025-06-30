@@ -8,7 +8,7 @@ use bytes::Bytes;
 
 use crate::tls::{
     CertStore, CertificateCompressionAlgorithm, Identity,
-    conn::cert_compressor::{
+    conn::cert_compression::{
         BrotliCertificateCompressor, ZlibCertificateCompressor, ZstdCertificateCompressor,
     },
 };
@@ -16,16 +16,16 @@ use crate::tls::{
 /// SslConnectorBuilderExt trait for `SslConnectorBuilder`.
 pub trait SslConnectorBuilderExt {
     /// Configure the identity for the given `SslConnectorBuilder`.
-    fn identity(self, identity: Option<Identity>) -> crate::Result<SslConnectorBuilder>;
+    fn set_identity(self, identity: Option<Identity>) -> crate::Result<SslConnectorBuilder>;
 
     /// Configure the CertStore for the given `SslConnectorBuilder`.
-    fn cert_store(self, store: Option<CertStore>) -> crate::Result<SslConnectorBuilder>;
+    fn set_cert_store(self, store: Option<CertStore>) -> crate::Result<SslConnectorBuilder>;
 
     /// Configure the certificate verification for the given `SslConnectorBuilder`.
-    fn cert_verification(self, enable: bool) -> crate::Result<SslConnectorBuilder>;
+    fn set_cert_verification(self, enable: bool) -> crate::Result<SslConnectorBuilder>;
 
     /// Configure the certificate compression algorithm for the given `SslConnectorBuilder`.
-    fn certificate_compression_algorithms(
+    fn add_certificate_compression_algorithms(
         self,
         algs: Option<Cow<'static, [CertificateCompressionAlgorithm]>>,
     ) -> crate::Result<SslConnectorBuilder>;
@@ -34,7 +34,7 @@ pub trait SslConnectorBuilderExt {
 /// ConnectConfigurationExt trait for `ConnectConfiguration`.
 pub trait ConnectConfigurationExt {
     /// Configure the ALPS for the given `ConnectConfiguration`.
-    fn alps_protos(
+    fn set_alps_protos(
         &mut self,
         alps: Option<Bytes>,
         use_new_codepoint: bool,
@@ -46,7 +46,7 @@ pub trait ConnectConfigurationExt {
 
 impl SslConnectorBuilderExt for SslConnectorBuilder {
     #[inline(always)]
-    fn cert_store(mut self, store: Option<CertStore>) -> crate::Result<SslConnectorBuilder> {
+    fn set_cert_store(mut self, store: Option<CertStore>) -> crate::Result<SslConnectorBuilder> {
         if let Some(store) = store {
             store.add_to_tls(&mut self);
         } else {
@@ -57,7 +57,7 @@ impl SslConnectorBuilderExt for SslConnectorBuilder {
     }
 
     #[inline(always)]
-    fn cert_verification(mut self, enable: bool) -> crate::Result<SslConnectorBuilder> {
+    fn set_cert_verification(mut self, enable: bool) -> crate::Result<SslConnectorBuilder> {
         if enable {
             self.set_verify(SslVerifyMode::PEER);
         } else {
@@ -67,7 +67,7 @@ impl SslConnectorBuilderExt for SslConnectorBuilder {
     }
 
     #[inline(always)]
-    fn identity(mut self, identity: Option<Identity>) -> crate::Result<SslConnectorBuilder> {
+    fn set_identity(mut self, identity: Option<Identity>) -> crate::Result<SslConnectorBuilder> {
         if let Some(identity) = identity {
             identity.add_to_tls(&mut self)?;
         }
@@ -76,7 +76,7 @@ impl SslConnectorBuilderExt for SslConnectorBuilder {
     }
 
     #[inline]
-    fn certificate_compression_algorithms(
+    fn add_certificate_compression_algorithms(
         mut self,
         algs: Option<Cow<'static, [CertificateCompressionAlgorithm]>>,
     ) -> crate::Result<SslConnectorBuilder> {
@@ -108,7 +108,7 @@ impl SslConnectorBuilderExt for SslConnectorBuilder {
 
 impl ConnectConfigurationExt for ConnectConfiguration {
     #[inline]
-    fn alps_protos(
+    fn set_alps_protos(
         &mut self,
         alps: Option<Bytes>,
         use_new_codepoint: bool,

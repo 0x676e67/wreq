@@ -119,34 +119,24 @@ where
 }
 
 #[derive(Clone, Copy)]
+pub(crate) struct RequestTcpConnectOptions;
+
+impl RequestConfigValue for RequestTcpConnectOptions {
+    type Value = crate::core::client::connect::options::TcpConnectOptions;
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct RequestTransportConfig;
+
+impl RequestConfigValue for RequestTransportConfig {
+    type Value = crate::core::client::config::TransportConfig;
+}
+
+#[derive(Clone, Copy)]
 pub(crate) struct RequestHttpVersionPref;
 
 impl RequestConfigValue for RequestHttpVersionPref {
     type Value = http::Version;
-}
-
-/// Request ipv4 address configuration.
-#[derive(Clone, Copy)]
-pub(crate) struct RequestIpv4Addr;
-
-impl RequestConfigValue for RequestIpv4Addr {
-    type Value = std::net::Ipv4Addr;
-}
-
-/// Request ipv6 address configuration.
-#[derive(Clone, Copy)]
-pub(crate) struct RequestIpv6Addr;
-
-impl RequestConfigValue for RequestIpv6Addr {
-    type Value = std::net::Ipv6Addr;
-}
-
-/// Request interface configuration.
-#[derive(Clone, Copy)]
-pub(crate) struct RequestInterface;
-
-impl RequestConfigValue for RequestInterface {
-    type Value = std::borrow::Cow<'static, str>;
 }
 
 #[derive(Clone, Copy)]
