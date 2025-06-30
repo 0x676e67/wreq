@@ -363,11 +363,9 @@ pub(crate) struct ConnectorService {
 }
 
 impl ConnectorService {
-    async fn connect_with_maybe_proxy(
-        self,
-        mut req: ConnRequest,
-        is_proxy: bool,
-    ) -> Result<Conn, BoxError> {
+    async fn connect(self, mut req: ConnRequest, is_proxy: bool) -> Result<Conn, BoxError> {
+        trace!("connect with maybe proxy: {:?}", is_proxy);
+
         let uri = req.uri().clone();
         let mut http = self.http.clone();
 
@@ -378,18 +376,20 @@ impl ConnectorService {
             http.set_nodelay(true);
         }
 
-        trace!("connect with maybe proxy");
         let mut connector = self.create_https_connector(http, &mut req)?;
-        let inner = match connector.call(uri).await? {
-            MaybeHttpsStream::Https(stream) => {
-                if !self.tcp_nodelay {
-                    stream.get_ref().set_nodelay(false)?;
-                }
-                self.verbose.wrap(TlsConn {
-                    inner: TokioIo::new(stream),
-                })
+        let io = connector.call(uri).await?;
+
+        // If the connection is HTTPS, wrap the TLS stream in a TlsConn for unified handling.
+        // For plain HTTP, use the stream directly without additional wrapping.
+        let inner = if let MaybeHttpsStream::Https(stream) = io {
+            if !self.tcp_nodelay {
+                stream.get_ref().set_nodelay(false)?;
             }
-            other => self.verbose.wrap(other),
+            self.verbose.wrap(TlsConn {
+                inner: TokioIo::new(stream),
+            })
+        } else {
+            self.verbose.wrap(io)
         };
 
         Ok(Conn {
@@ -404,24 +404,23 @@ impl ConnectorService {
         mut req: ConnRequest,
         proxy: Intercepted,
     ) -> Result<Conn, BoxError> {
-        let uri = req.uri().clone();
-        debug!("proxy({:?}) intercepts '{:?}'", proxy, uri);
-
         #[cfg(feature = "socks")]
         if let Some("socks4" | "socks4a" | "socks5" | "socks5h") = proxy.uri().scheme_str() {
+            trace!("connecting via SOCKS proxy: {:?}", proxy.uri());
             return self.connect_socks(req, proxy).await;
         }
 
+        let uri = req.uri().clone();
         let proxy_uri = proxy.uri().clone();
-        let auth = proxy.basic_auth().cloned();
 
+        // Handle HTTPS proxy tunneling connection
         if uri.scheme() == Some(&Scheme::HTTPS) {
-            trace!("tunneling HTTPS over proxy");
+            trace!("tunneling HTTPS over HTTP proxy: {:?}", proxy_uri);
             let mut connector = self.create_https_connector(self.http.clone(), &mut req)?;
 
             let mut tunnel = Tunnel::new(proxy_uri, connector.clone());
-            if let Some(auth) = auth {
-                tunnel = tunnel.with_auth(auth);
+            if let Some(auth) = proxy.basic_auth() {
+                tunnel = tunnel.with_auth(auth.clone());
             }
 
             if let Some(headers) = proxy.custom_headers() {
@@ -444,9 +443,10 @@ impl ConnectorService {
             });
         }
 
+        // Update the connect URI to the proxy URI
         *req.uri_mut() = proxy_uri;
 
-        self.connect_with_maybe_proxy(req, true).await
+        self.connect(req, true).await
     }
 
     #[cfg(feature = "socks")]
@@ -556,10 +556,7 @@ impl Service<ConnRequest> for ConnectorService {
             ));
         }
 
-        Box::pin(with_timeout(
-            self.clone().connect_with_maybe_proxy(req, false),
-            self.timeout,
-        ))
+        Box::pin(with_timeout(self.clone().connect(req, false), self.timeout))
     }
 }
 
