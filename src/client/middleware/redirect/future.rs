@@ -11,10 +11,10 @@ use http::{
     header::{CONTENT_ENCODING, CONTENT_LENGTH, CONTENT_TYPE, LOCATION, TRANSFER_ENCODING},
 };
 use http_body::Body;
-use iri_string::types::{UriAbsoluteString, UriReferenceStr};
 use pin_project_lite::pin_project;
 use tower::util::Oneshot;
 use tower_service::Service;
+use url::Url;
 
 use super::{
     BodyRepr, RequestUri,
@@ -155,8 +155,11 @@ where
 
 /// Try to resolve a URI reference `relative` against a base URI `base`.
 fn resolve_uri(relative: &str, base: &Uri) -> Option<Uri> {
-    let relative = UriReferenceStr::new(relative).ok()?;
-    let base = UriAbsoluteString::try_from(base.to_string()).ok()?;
-    let uri = relative.resolve_against(&base).to_string();
-    Uri::try_from(uri).ok()
+    let mut buffer = String::with_capacity(relative.len() + 10);
+    std::fmt::Write::write_fmt(&mut buffer, format_args!("{base}")).ok()?;
+    let resolved = Url::options()
+        .base_url(Url::parse(&buffer).as_ref().ok())
+        .parse(relative)
+        .ok()?;
+    Uri::try_from(resolved.to_string()).ok()
 }
