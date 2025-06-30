@@ -431,8 +431,8 @@ impl ConnectorService {
             // We don't wrap this again in an HttpsConnector since that uses Maybe,
             // and we know this is definitely HTTPS.
             let tunneled = tunnel.call(uri.clone()).await?;
-            let tunneled = TokioIo::new(TokioIo::new(tunneled));
-
+            let tunneled = TokioIo::new(tunneled);
+            let tunneled = TokioIo::new(tunneled);
             let io = connector.call((uri, tunneled)).await?;
 
             return Ok(Conn {
