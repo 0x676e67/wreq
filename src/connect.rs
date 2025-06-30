@@ -24,7 +24,7 @@ use crate::{
     core::{
         client::{
             ConnRequest,
-            connect::{Connected, Connection, options::TcpConnectOptions, proxy::Tunnel},
+            connect::{self, Connected, Connection, options::TcpConnectOptions, proxy::Tunnel},
         },
         rt::{Read, ReadBufCursor, TokioIo, Write},
     },
@@ -37,7 +37,7 @@ use crate::{
     },
 };
 
-pub(crate) type HttpConnector = crate::core::client::connect::HttpConnector<DynResolver>;
+pub(crate) type HttpConnector = connect::HttpConnector<DynResolver>;
 
 pub(crate) type BoxedConnectorService = BoxCloneSyncService<Unnameable, Conn, BoxError>;
 
@@ -373,21 +373,19 @@ impl ConnectorService {
 
         trace!("connect with maybe proxy");
         let mut connector = self.create_https_connector(http, &mut req)?;
-        let io = connector.call(uri).await?;
-
-        let inner = if let MaybeHttpsStream::Https(stream) = io {
-            if !self.nodelay {
-                stream
-                    .inner()
-                    .get_ref()
-                    .inner()
-                    .inner()
-                    .set_nodelay(false)?;
+        let inner = match connector.call(uri).await? {
+            MaybeHttpsStream::Https(stream) => {
+                if !self.nodelay {
+                    stream
+                        .inner()
+                        .get_ref()
+                        .inner()
+                        .inner()
+                        .set_nodelay(false)?;
+                }
+                self.verbose.wrap(BoringTlsConn { inner: stream })
             }
-
-            self.verbose.wrap(BoringTlsConn { inner: stream })
-        } else {
-            self.verbose.wrap(io)
+            other => self.verbose.wrap(other),
         };
 
         Ok(Conn {
@@ -410,14 +408,14 @@ impl ConnectorService {
             return self.connect_socks(req, proxy).await;
         }
 
-        let proxy_dst = proxy.uri().clone();
+        let proxy_uri = proxy.uri().clone();
         let auth = proxy.basic_auth().cloned();
 
         if uri.scheme() == Some(&Scheme::HTTPS) {
             trace!("tunneling HTTPS over proxy");
             let mut connector = self.create_https_connector(self.http.clone(), &mut req)?;
 
-            let mut tunnel = Tunnel::new(proxy_dst, connector.clone());
+            let mut tunnel = Tunnel::new(proxy_uri, connector.clone());
             if let Some(auth) = auth {
                 tunnel = tunnel.with_auth(auth);
             }
@@ -440,7 +438,7 @@ impl ConnectorService {
             });
         }
 
-        req.set_uri(proxy_dst);
+        *req.uri_mut() = proxy_uri;
 
         self.connect_with_maybe_proxy(req, true).await
     }

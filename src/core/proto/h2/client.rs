@@ -29,7 +29,7 @@ use super::{
 };
 use crate::core::{
     body::Incoming as IncomingBody,
-    client::dispatch::{Callback, SendWhen, TrySendError},
+    client::dispatch::{self, Callback, SendWhen, TrySendError},
     common::{either::Either, io::Compat, time::Time},
     error::BoxError,
     ext::{Protocol, RequestConfig, RequestOriginalHeaders},
@@ -38,7 +38,7 @@ use crate::core::{
     upgrade::Upgraded,
 };
 
-type ClientRx<B> = crate::core::client::dispatch::Receiver<Request<B>, Response<IncomingBody>>;
+type ClientRx<B> = dispatch::Receiver<Request<B>, Response<IncomingBody>>;
 
 ///// An mpsc channel is used to help notify the `Connection` task when *all*
 ///// other handles to it have been dropped, so that it can shutdown.

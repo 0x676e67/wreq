@@ -7,7 +7,6 @@ pub mod conn;
 pub(super) mod dispatch;
 
 pub mod connect;
-#[doc(hidden)]
 // Publicly available, but just for legacy purposes. A better pool will be
 // designed.
 mod pool;
@@ -23,7 +22,6 @@ use std::{
     time::Duration,
 };
 
-use common::{Exec, Lazy, lazy as hyper_lazy, timer};
 use futures_util::future::{self, Either, FutureExt, TryFutureExt};
 use http::{
     HeaderValue, Method, Request, Response, Uri, Version,
@@ -36,6 +34,7 @@ use sync_wrapper::SyncWrapper;
 
 use crate::{
     core::{
+        body::Incoming,
         client::{
             config::{TransportConfig, http1::Http1Config, http2::Http2Config},
             conn::TrySendError as ConnTrySendError,
@@ -44,13 +43,13 @@ use crate::{
                 options::TcpConnectOptions,
             },
         },
-        common,
+        common::{Exec, Lazy, lazy as hyper_lazy, timer},
         error::BoxError,
         ext::{
             RequestConfig, RequestHttpVersionPref, RequestProxyMatcher, RequestTcpConnectOptions,
             RequestTransportConfig,
         },
-        rt::Timer,
+        rt::{Executor, Timer},
     },
     proxy::Matcher as ProxyMacher,
     tls::{AlpnProtocol, TlsConfig},
@@ -58,32 +57,44 @@ use crate::{
 
 type BoxSendFuture = Pin<Box<dyn Future<Output = ()> + Send>>;
 
-/// A Client Connect request.
+/// Represents a client connection request, including all parameters needed to establish a network
+/// connection.
+///
+/// `ConnRequest` encapsulates the URI, HTTP version, proxy matcher, TCP options, and TLS
+/// configuration for a single outgoing connection. This struct is used internally to manage and
+/// customize how each connection is established, including protocol negotiation and proxy handling.
 #[derive(Debug, Clone)]
 pub struct ConnRequest {
     uri: Uri,
     version: Option<Version>,
-    tcp_connect_options: Option<TcpConnectOptions>,
     proxy_matcher: Option<ProxyMacher>,
+    tcp_opts: Option<TcpConnectOptions>,
     tls_config: Option<TlsConfig>,
 }
 
 impl ConnRequest {
+    /// Returns a reference to the target URI for this connection request.
     #[inline]
     pub(crate) fn uri(&self) -> &Uri {
         &self.uri
     }
 
+    /// Returns a mutable reference to the target URI for this connection request.
     #[inline]
-    pub(crate) fn set_uri(&mut self, mut uri: Uri) {
-        std::mem::swap(&mut self.uri, &mut uri);
+    pub(crate) fn uri_mut(&mut self) -> &mut Uri {
+        &mut self.uri
     }
 
+    /// Takes and returns the proxy matcher, if any, consuming it from the request.
     #[inline]
     pub(crate) fn take_proxy_matcher(&mut self) -> Option<ProxyMacher> {
         self.proxy_matcher.take()
     }
 
+    /// Takes and returns a tuple of TCP options, TLS config, and negotiated ALPN protocol.
+    ///
+    /// This method consumes the TCP and TLS options from the request, and determines the ALPN
+    /// protocol based on the HTTP version (HTTP/1.x or HTTP/2).
     #[inline]
     pub(crate) fn take_config_bundle(
         &mut self,
@@ -92,9 +103,6 @@ impl ConnRequest {
         Option<TlsConfig>,
         Option<AlpnProtocol>,
     ) {
-        let tcp = self.tcp_connect_options.take();
-        let tls = self.tls_config.take();
-
         let alpn = match self.version {
             Some(Version::HTTP_11 | Version::HTTP_10 | Version::HTTP_09) => {
                 Some(AlpnProtocol::HTTP1)
@@ -103,16 +111,20 @@ impl ConnRequest {
             _ => None,
         };
 
-        (tcp, tls, alpn)
+        (self.tcp_opts.take(), self.tls_config.take(), alpn)
     }
 
+    /// Returns a `PoolKey` representing the unique identity of this connection for pooling
+    /// purposes.
+    ///
+    /// The key includes the URI, HTTP version, proxy matcher, and TCP options.
     #[inline]
     fn pool_key(&self) -> PoolKey {
         PoolKey {
             uri: self.uri.clone(),
             version: self.version,
             proxy_matcher: self.proxy_matcher.clone(),
-            tcp_connect_options: self.tcp_connect_options.clone(),
+            tcp_connect_options: self.tcp_opts.clone(),
         }
     }
 }
@@ -125,8 +137,8 @@ pub struct Client<C, B> {
     config: Config,
     connector: C,
     exec: Exec,
-    h1_builder: crate::core::client::conn::http1::Builder,
-    h2_builder: crate::core::client::conn::http2::Builder<Exec>,
+    h1_builder: conn::http1::Builder,
+    h2_builder: conn::http2::Builder<Exec>,
     pool: pool::Pool<PoolClient<B>, PoolKey>,
 }
 
@@ -202,9 +214,8 @@ enum TrySendError<B> {
     Nope(Error),
 }
 
-type ResponseWrapper = SyncWrapper<
-    Pin<Box<dyn Future<Output = Result<Response<crate::core::body::Incoming>, Error>> + Send>>,
->;
+type ResponseWrapper =
+    SyncWrapper<Pin<Box<dyn Future<Output = Result<Response<Incoming>, Error>> + Send>>>;
 
 /// A `Future` that will resolve to an HTTP Response.
 ///
@@ -241,7 +252,7 @@ impl Client<(), ()> {
     /// ```
     pub fn builder<E>(executor: E) -> Builder
     where
-        E: crate::core::rt::Executor<BoxSendFuture> + Send + Sync + Clone + 'static,
+        E: Executor<BoxSendFuture> + Send + Sync + Clone + 'static,
     {
         Builder::new(executor)
     }
@@ -324,7 +335,7 @@ where
             uri,
             version,
             proxy_matcher,
-            tcp_connect_options,
+            tcp_opts: tcp_connect_options,
             tls_config,
         };
 
@@ -335,7 +346,7 @@ where
         self,
         mut req: Request<B>,
         conn_req: ConnRequest,
-    ) -> Result<Response<crate::core::body::Incoming>, Error> {
+    ) -> Result<Response<Incoming>, Error> {
         let uri = req.uri().clone();
 
         loop {
@@ -368,7 +379,7 @@ where
         &self,
         mut req: Request<B>,
         conn_req: ConnRequest,
-    ) -> Result<Response<crate::core::body::Incoming>, TrySendError<B>> {
+    ) -> Result<Response<Incoming>, TrySendError<B>> {
         let mut pooled = self
             .connection_for(conn_req)
             .await
@@ -758,7 +769,7 @@ where
     B::Data: Send,
     B::Error: Into<BoxError>,
 {
-    type Response = Response<crate::core::body::Incoming>;
+    type Response = Response<Incoming>;
     type Error = Error;
     type Future = ResponseFuture;
 
@@ -778,7 +789,7 @@ where
     B::Data: Send,
     B::Error: Into<BoxError>,
 {
-    type Response = Response<crate::core::body::Incoming>;
+    type Response = Response<Incoming>;
     type Error = Error;
     type Future = ResponseFuture;
 
@@ -816,7 +827,7 @@ impl<C, B> fmt::Debug for Client<C, B> {
 impl ResponseFuture {
     fn new<F>(value: F) -> Self
     where
-        F: Future<Output = Result<Response<crate::core::body::Incoming>, Error>> + Send + 'static,
+        F: Future<Output = Result<Response<Incoming>, Error>> + Send + 'static,
     {
         Self {
             inner: SyncWrapper::new(Box::pin(value)),
@@ -836,7 +847,7 @@ impl fmt::Debug for ResponseFuture {
 }
 
 impl Future for ResponseFuture {
-    type Output = Result<Response<crate::core::body::Incoming>, Error>;
+    type Output = Result<Response<Incoming>, Error>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<Self::Output> {
         self.inner.get_mut().as_mut().poll(cx)
@@ -853,9 +864,9 @@ struct PoolClient<B> {
 }
 
 enum PoolTx<B> {
-    Http1(crate::core::client::conn::http1::SendRequest<B>),
+    Http1(conn::http1::SendRequest<B>),
 
-    Http2(crate::core::client::conn::http2::SendRequest<B>),
+    Http2(conn::http2::SendRequest<B>),
 }
 
 impl<B> PoolClient<B> {
@@ -899,7 +910,7 @@ impl<B: Body + 'static> PoolClient<B> {
     fn try_send_request(
         &mut self,
         req: Request<B>,
-    ) -> impl Future<Output = Result<Response<crate::core::body::Incoming>, ConnTrySendError<Request<B>>>>
+    ) -> impl Future<Output = Result<Response<Incoming>, ConnTrySendError<Request<B>>>>
     where
         B: Send,
     {
@@ -1096,8 +1107,8 @@ pub struct Builder {
     client_config: Config,
     exec: Exec,
 
-    h1_builder: crate::core::client::conn::http1::Builder,
-    h2_builder: crate::core::client::conn::http2::Builder<Exec>,
+    h1_builder: conn::http1::Builder,
+    h2_builder: conn::http2::Builder<Exec>,
     pool_config: pool::Config,
     pool_timer: Option<timer::Timer>,
 }
@@ -1117,8 +1128,8 @@ impl Builder {
             },
             exec: exec.clone(),
 
-            h1_builder: crate::core::client::conn::http1::Builder::new(),
-            h2_builder: crate::core::client::conn::http2::Builder::new(exec),
+            h1_builder: conn::http1::Builder::new(),
+            h2_builder: conn::http2::Builder::new(exec),
             pool_config: pool::Config {
                 idle_timeout: Some(Duration::from_secs(90)),
                 max_idle_per_host: usize::MAX,

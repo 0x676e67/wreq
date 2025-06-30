@@ -27,7 +27,7 @@ type TrailersSender = oneshot::Sender<HeaderMap>;
 ///
 /// ```rust,ignore
 /// async fn echo(
-///    req: Request<crate::core::body::Incoming>,
+///    req: Request<Incoming>,
 /// ) -> Result<Response<BoxBody<Bytes, crate::core::Error>>, crate::core::Error> {
 ///    //Here, you can process `Incoming`
 /// }
