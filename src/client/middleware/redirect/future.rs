@@ -155,7 +155,11 @@ where
 
 /// Try to resolve a URI reference `relative` against a base URI `base`.
 fn resolve_uri(relative: &str, base: &Uri) -> Option<Uri> {
-    let base = Url::parse(&base.to_string()).ok()?;
-    let resolved = base.join(relative).ok()?;
-    Uri::try_from(resolved.as_str()).ok()
+    let mut buffer = String::with_capacity(relative.len() + 10);
+    std::fmt::Write::write_fmt(&mut buffer, format_args!("{}", base)).ok()?;
+    let resolved = Url::options()
+        .base_url(Url::parse(&buffer).as_ref().ok())
+        .parse(relative)
+        .ok()?;
+    Uri::try_from(resolved.to_string()).ok()
 }
