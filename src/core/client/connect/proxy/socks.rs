@@ -61,6 +61,12 @@ impl<C> From<std::str::Utf8Error> for SocksError<C> {
     }
 }
 
+impl<C> From<tokio_socks::Error> for SocksError<C> {
+    fn from(err: tokio_socks::Error) -> Self {
+        Self::Socks(err)
+    }
+}
+
 pin_project! {
     // Not publicly exported (so missing_docs doesn't trigger).
     //
@@ -201,20 +207,15 @@ where
                             username,
                             password,
                         )
-                        .await
-                        .map_err(SocksError::Socks)?
+                        .await?
                     }
-                    None => Socks5Stream::connect_with_socket(socket, target_addr)
-                        .await
-                        .map_err(SocksError::Socks)?,
+                    None => Socks5Stream::connect_with_socket(socket, target_addr).await?,
                 };
 
                 Ok(stream.into_inner().into_inner())
             } else {
                 // For SOCKS4, we connect directly to the target address.
-                let stream = Socks4Stream::connect_with_socket(socket, (host, port))
-                    .await
-                    .map_err(SocksError::Socks)?;
+                let stream = Socks4Stream::connect_with_socket(socket, target_addr).await?;
 
                 Ok(stream.into_inner().into_inner())
             }
