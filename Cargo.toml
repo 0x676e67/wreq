@@ -53,7 +53,7 @@ hickory-dns = ["dep:hickory-resolver"]
 
 stream = ["tokio/fs", "dep:tokio-util"]
 
-socks = []
+socks = ["dep:tokio-socks"]
 
 webpki-roots = ["dep:webpki-root-certs"]
 
@@ -129,6 +129,9 @@ cookie_store = { version = "0.21", features = ["preserve_order"], optional = tru
 
 ## tokio util
 tokio-util = { version = "0.7.15", default-features = false, features = ["codec","io"], optional = true }
+
+## socks
+tokio-socks = { version = "0.5.2", optional = true }
 
 ## websocket
 tokio-tungstenite = { version = "0.27.0", default-features = false, features = ["handshake"], optional = true }

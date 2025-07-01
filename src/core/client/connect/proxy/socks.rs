@@ -1,0 +1,229 @@
+#![allow(unused)]
+use std::{
+    borrow::Cow,
+    pin::Pin,
+    task::{Context, Poll},
+};
+
+use bytes::Bytes;
+use http::Uri;
+use pin_project_lite::pin_project;
+use tokio_socks::{
+    TargetAddr,
+    tcp::{Socks4Stream, Socks5Stream},
+};
+use tower_service::Service;
+
+use crate::core::{
+    client::connect::dns::{GaiResolver, Name, Resolve},
+    rt::{Read, TokioIo, Write},
+};
+
+#[derive(Debug)]
+pub enum SocksError<C> {
+    Inner(C),
+    Socks(tokio_socks::Error),
+    Io(std::io::Error),
+    Utf8(std::str::Utf8Error),
+
+    DnsFailure,
+    MissingHost,
+}
+
+impl<C> std::fmt::Display for SocksError<C> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("SOCKS error: ")?;
+
+        match self {
+            Self::Inner(_) => f.write_str("failed to create underlying connection"),
+            Self::Socks(e) => f.write_fmt(format_args!("error during SOCKS handshake: {e}")),
+            Self::Io(e) => f.write_fmt(format_args!("io error during SOCKS handshake: {e}")),
+            Self::Utf8(e) => f.write_fmt(format_args!(
+                "invalid UTF-8 during SOCKS authentication: {e}"
+            )),
+
+            Self::DnsFailure => f.write_str("could not resolve to acceptable address type"),
+            Self::MissingHost => f.write_str("missing destination host"),
+        }
+    }
+}
+
+impl<C: std::fmt::Debug + std::fmt::Display> std::error::Error for SocksError<C> {}
+
+impl<C> From<std::io::Error> for SocksError<C> {
+    fn from(err: std::io::Error) -> Self {
+        Self::Io(err)
+    }
+}
+
+impl<C> From<std::str::Utf8Error> for SocksError<C> {
+    fn from(err: std::str::Utf8Error) -> Self {
+        Self::Utf8(err)
+    }
+}
+
+pin_project! {
+    // Not publicly exported (so missing_docs doesn't trigger).
+    //
+    // We return this `Future` instead of the `Pin<Box<dyn Future>>` directly
+    // so that users don't rely on it fitting in a `Pin<Box<dyn Future>>` slot
+    // (and thus we can change the type in the future).
+    #[must_use = "futures do nothing unless polled"]
+    #[allow(missing_debug_implementations)]
+    pub struct Handshaking<F, T, E> {
+        #[pin]
+        fut: BoxHandshaking<T, E>,
+        _marker: std::marker::PhantomData<F>
+    }
+}
+
+type BoxHandshaking<T, E> = Pin<Box<dyn Future<Output = Result<T, SocksError<E>>> + Send>>;
+
+impl<F, T, E> Future for Handshaking<F, T, E>
+where
+    F: Future<Output = Result<T, E>>,
+{
+    type Output = Result<T, SocksError<E>>;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        self.project().fut.poll(cx)
+    }
+}
+
+#[derive(Debug)]
+pub struct Socks<C, R = GaiResolver> {
+    inner: C,
+    resolver: R,
+    proxy: Uri,
+    auth: Option<(Bytes, Bytes)>,
+    is_v5: bool,
+    local_dns: bool,
+}
+
+impl<C, R> Socks<C, R>
+where
+    R: Resolve + Clone,
+{
+    /// Create a new SOCKS service with the given inner service, resolver, proxy destination,
+    /// and optional authentication credentials.
+    ///
+    /// The `proxy` should be a valid URI with a scheme of `socks5`, `socks5h`, `socks4`, or
+    /// `socks4a`.
+    ///
+    /// The `auth` parameter is optional and can be used to provide a username and password for
+    /// SOCKS authentication. If provided, it should be a tuple containing the username and
+    /// password.
+    pub fn new_with_resolver(
+        inner: C,
+        resolver: R,
+        proxy: Uri,
+        auth: Option<(Bytes, Bytes)>,
+    ) -> Self {
+        let scheme = proxy.scheme_str();
+        let (is_v5, local_dns) = match scheme {
+            Some("socks5") => (true, true),
+            Some("socks5h") => (true, false),
+            Some("socks4") => (false, true),
+            Some("socks4a") => (false, false),
+            _ => unreachable!("connect_socks is only called for socks proxies"),
+        };
+
+        Socks {
+            inner,
+            resolver,
+            proxy,
+            auth,
+            is_v5,
+            local_dns,
+        }
+    }
+}
+
+impl<C, R> Service<Uri> for Socks<C, R>
+where
+    C: Service<Uri>,
+    C::Future: Send + 'static,
+    C::Response: Read + Write + Unpin + Send + 'static,
+    C::Error: Send + Sync + 'static,
+    R: Resolve + Clone + Send + 'static,
+    <R as Resolve>::Future: Send + 'static,
+{
+    type Response = C::Response;
+    type Error = SocksError<C::Error>;
+    type Future = Handshaking<C::Future, C::Response, C::Error>;
+
+    fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        self.inner.poll_ready(cx).map_err(SocksError::Inner)
+    }
+
+    fn call(&mut self, dst: Uri) -> Self::Future {
+        let connecting = self.inner.call(self.proxy.clone());
+
+        let mut resolver = self.resolver.clone();
+        let auth = self.auth.clone();
+        let local_dns = self.local_dns;
+        let is_v5 = self.is_v5;
+
+        let fut = async move {
+            let port = dst.port().map(|p| p.as_u16()).unwrap_or(443);
+            let host = dst.host().ok_or(SocksError::MissingHost)?;
+
+            // Attempt to tcp connect to the proxy server.
+            // This will return a `tokio::net::TcpStream` if successful.
+            let socket = connecting
+                .await
+                .map(TokioIo::new)
+                .map_err(SocksError::Inner)?;
+
+            // Resolve the target address using the provided resolver.
+            let target_addr = if local_dns {
+                let mut socket_addr = resolver
+                    .resolve(Name::new(host.into()))
+                    .await
+                    .map_err(|_| SocksError::DnsFailure)?
+                    .next()
+                    .ok_or(SocksError::DnsFailure)?;
+                socket_addr.set_port(port);
+                TargetAddr::Ip(socket_addr)
+            } else {
+                TargetAddr::Domain(Cow::Borrowed(host), port)
+            };
+
+            if is_v5 {
+                // For SOCKS5, we need to handle authentication if provided.
+                // The `auth` is an optional tuple of (username, password).
+                let stream = match auth {
+                    Some((username, password)) => {
+                        let username = std::str::from_utf8(&username)?;
+                        let password = std::str::from_utf8(&password)?;
+                        Socks5Stream::connect_with_password_and_socket(
+                            socket,
+                            target_addr,
+                            username,
+                            password,
+                        )
+                        .await
+                        .map_err(SocksError::Socks)?
+                    }
+                    None => Socks5Stream::connect_with_socket(socket, target_addr)
+                        .await
+                        .map_err(SocksError::Socks)?,
+                };
+
+                Ok(stream.into_inner().into_inner())
+            } else {
+                // For SOCKS4, we connect directly to the target address.
+                let stream = Socks4Stream::connect_with_socket(socket, (host, port))
+                    .await
+                    .map_err(SocksError::Socks)?;
+
+                Ok(stream.into_inner().into_inner())
+            }
+        };
+
+        Handshaking {
+            fut: Box::pin(fut),
+            _marker: Default::default(),
+        }
+    }
+}
