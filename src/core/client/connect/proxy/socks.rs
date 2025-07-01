@@ -1,4 +1,3 @@
-#![allow(unused)]
 use std::{
     borrow::Cow,
     pin::Pin,
