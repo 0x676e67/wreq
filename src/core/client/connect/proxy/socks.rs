@@ -185,8 +185,8 @@ where
 
         let version = self.version;
         let dns_resolve = self.dns_resolve;
-        let mut resolver = self.resolver.clone();
         let auth = self.auth.clone();
+        let mut resolver = self.resolver.clone();
 
         let fut = async move {
             let port = dst.port().map(|p| p.as_u16()).unwrap_or(443);
@@ -218,7 +218,6 @@ where
                 SocksVersion::V4 => {
                     // For SOCKS4, we connect directly to the target address.
                     let stream = Socks4Stream::connect_with_socket(socket, target_addr).await?;
-
                     Ok(stream.into_inner().into_inner())
                 }
                 SocksVersion::V5 => {
@@ -238,7 +237,6 @@ where
                         }
                         None => Socks5Stream::connect_with_socket(socket, target_addr).await?,
                     };
-
                     Ok(stream.into_inner().into_inner())
                 }
             }

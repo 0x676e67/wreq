@@ -416,10 +416,10 @@ impl ConnectorService {
             use proxy::{DnsResolve, Socks, SocksVersion};
 
             if let Some((version, dns_resolve)) = match proxy.uri().scheme_str() {
-                Some("socks5") => Some((SocksVersion::V5, DnsResolve::Local)),
-                Some("socks5h") => Some((SocksVersion::V5, DnsResolve::Remote)),
                 Some("socks4") => Some((SocksVersion::V4, DnsResolve::Local)),
                 Some("socks4a") => Some((SocksVersion::V4, DnsResolve::Remote)),
+                Some("socks5") => Some((SocksVersion::V5, DnsResolve::Local)),
+                Some("socks5h") => Some((SocksVersion::V5, DnsResolve::Remote)),
                 _ => None,
             } {
                 trace!("connecting via SOCKS proxy: {:?}", proxy_uri);
