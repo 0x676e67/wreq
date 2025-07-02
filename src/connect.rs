@@ -24,7 +24,7 @@ use crate::{
     core::{
         client::{
             ConnRequest,
-            connect::{self, Connected, Connection, TcpConnectOptions, proxy::Tunnel},
+            connect::{self, Connected, Connection, TcpConnectOptions, proxy},
         },
         rt::{Read, ReadBufCursor, TokioIo, Write},
     },
@@ -413,7 +413,7 @@ impl ConnectorService {
 
         #[cfg(feature = "socks")]
         {
-            use crate::core::client::connect::proxy::{DnsResolve, Socks, SocksVersion};
+            use proxy::{DnsResolve, Socks, SocksVersion};
 
             if let Some((version, dns_resolve)) = match proxy.uri().scheme_str() {
                 Some("socks5") => Some((SocksVersion::V5, DnsResolve::Local)),
@@ -462,7 +462,7 @@ impl ConnectorService {
             trace!("tunneling HTTPS over HTTP proxy: {:?}", proxy_uri);
             let mut connector = self.create_https_connector(self.http.clone(), &mut req)?;
 
-            let mut tunnel = Tunnel::new(proxy_uri, connector.clone());
+            let mut tunnel = proxy::Tunnel::new(proxy_uri, connector.clone());
             if let Some(auth) = proxy.basic_auth() {
                 tunnel = tunnel.with_auth(auth.clone());
             }
