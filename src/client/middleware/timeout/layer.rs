@@ -9,8 +9,10 @@ use tower_service::Service;
 
 use super::future::{ResponseBodyTimeoutFuture, ResponseFuture};
 use crate::{
-    client::middleware::timeout::TimeoutBody,
-    config::{RequestReadTimeout, RequestTotalTimeout},
+    client::middleware::{
+        config::{RequestReadTimeout, RequestTotalTimeout},
+        timeout::TimeoutBody,
+    },
     core::ext::RequestConfig,
     error::BoxError,
 };

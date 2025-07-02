@@ -8,7 +8,7 @@ use tower::Service;
 
 use super::{Body, future::CorePending};
 use crate::{
-    config::RequestSkipDefaultHeaders,
+    client::middleware::config::RequestSkipDefaultHeaders,
     connect::Connector,
     core::{
         body::Incoming,

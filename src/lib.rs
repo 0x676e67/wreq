@@ -282,7 +282,6 @@ mod trace;
 pub use http::{Method, StatusCode, Version, header};
 pub use url::Url;
 
-mod config;
 mod error;
 mod into_url;
 mod response;

@@ -12,11 +12,13 @@ use crate::{
     Url,
     client::{
         Body,
-        middleware::redirect::policy::{
-            Action as TowerAction, Attempt as TowerAttempt, Policy as TowerPolicy,
+        middleware::{
+            config::RequestRedirectPolicy,
+            redirect::policy::{
+                Action as TowerAction, Attempt as TowerAttempt, Policy as TowerPolicy,
+            },
         },
     },
-    config::RequestRedirectPolicy,
     core::ext::RequestConfig,
     error::{BoxError, Error},
     header::{AUTHORIZATION, COOKIE, PROXY_AUTHORIZATION, REFERER, WWW_AUTHENTICATE},

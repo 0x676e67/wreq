@@ -16,9 +16,16 @@ use super::{
     client::{Client, Pending},
     response::Response,
 };
+#[cfg(any(
+    feature = "gzip",
+    feature = "zstd",
+    feature = "brotli",
+    feature = "deflate",
+))]
+use crate::client::middleware::{config::RequestAcceptEncoding, decoder::AcceptEncoding};
 use crate::{
     EmulationProviderFactory, Error, Method, OriginalHeaders, Proxy, Url,
-    config::{
+    client::middleware::config::{
         RequestReadTimeout, RequestRedirectPolicy, RequestSkipDefaultHeaders, RequestTotalTimeout,
     },
     core::{
@@ -32,13 +39,6 @@ use crate::{
     proxy::Matcher as ProxyMatcher,
     redirect,
 };
-#[cfg(any(
-    feature = "gzip",
-    feature = "zstd",
-    feature = "brotli",
-    feature = "deflate",
-))]
-use crate::{client::middleware::decoder::AcceptEncoding, config::RequestAcceptEncoding};
 
 /// A request which can be executed with `Client::execute()`.
 pub struct Request {
