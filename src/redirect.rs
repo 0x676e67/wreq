@@ -233,8 +233,6 @@ impl fmt::Debug for PolicyKind {
     }
 }
 
-// pub(crate)
-
 #[derive(Debug)]
 pub(crate) enum ActionKind {
     Follow,
