@@ -9,25 +9,25 @@ use std::{
 use http::{Extensions, Request as HttpRequest, Uri, Version, request::Parts};
 use serde::Serialize;
 
-#[cfg(feature = "multipart")]
-use super::multipart;
-use super::{
-    body::Body,
-    client::{Client, Pending},
-    response::Response,
-};
 #[cfg(any(
     feature = "gzip",
     feature = "zstd",
     feature = "brotli",
     feature = "deflate",
 ))]
-use crate::client::middleware::{config::RequestAcceptEncoding, decoder::AcceptEncoding};
-use crate::{
-    EmulationProviderFactory, Error, Method, OriginalHeaders, Proxy, Url,
-    client::middleware::config::{
+use super::middleware::{config::RequestAcceptEncoding, decoder::AcceptEncoding};
+#[cfg(feature = "multipart")]
+use super::multipart;
+use super::{
+    body::Body,
+    client::{Client, Pending},
+    middleware::config::{
         RequestReadTimeout, RequestRedirectPolicy, RequestSkipDefaultHeaders, RequestTotalTimeout,
     },
+    response::Response,
+};
+use crate::{
+    EmulationProviderFactory, Error, Method, OriginalHeaders, Proxy, Url,
     core::{
         client::{config::TransportConfig, connect::TcpConnectOptions},
         ext::{
