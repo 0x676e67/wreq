@@ -331,44 +331,21 @@ impl Proxy {
             no_proxy,
         } = self;
 
-        let maybe_has_http_auth;
-        let maybe_has_http_custom_headers;
+        let (url, builder_fn): (_, fn(matcher::Builder, String) -> matcher::Builder) =
+            match intercept {
+                Intercept::All(url) => (url, matcher::Builder::all),
+                Intercept::Http(url) => (url, matcher::Builder::http),
+                Intercept::Https(url) => (url, matcher::Builder::https),
+            };
 
-        let inner = match intercept {
-            Intercept::All(url) => {
-                maybe_has_http_auth = cache_maybe_has_http_auth(&url, &extra.auth);
-                maybe_has_http_custom_headers =
-                    cache_maybe_has_http_custom_headers(&url, &extra.misc);
-                Box::new(
-                    matcher::Matcher::builder()
-                        .all(String::from(url))
-                        .no(no_proxy.as_ref().map(|n| n.inner.as_ref()).unwrap_or(""))
-                        .build(),
-                )
-            }
-            Intercept::Http(url) => {
-                maybe_has_http_auth = cache_maybe_has_http_auth(&url, &extra.auth);
-                maybe_has_http_custom_headers =
-                    cache_maybe_has_http_custom_headers(&url, &extra.misc);
-                Box::new(
-                    matcher::Matcher::builder()
-                        .http(String::from(url))
-                        .no(no_proxy.as_ref().map(|n| n.inner.as_ref()).unwrap_or(""))
-                        .build(),
-                )
-            }
-            Intercept::Https(url) => {
-                maybe_has_http_auth = cache_maybe_has_http_auth(&url, &extra.auth);
-                maybe_has_http_custom_headers =
-                    cache_maybe_has_http_custom_headers(&url, &extra.misc);
-                Box::new(
-                    matcher::Matcher::builder()
-                        .https(String::from(url))
-                        .no(no_proxy.as_ref().map(|n| n.inner.as_ref()).unwrap_or(""))
-                        .build(),
-                )
-            }
-        };
+        let maybe_has_http_auth = cache_maybe_has_http_auth(&url, &extra.auth);
+        let maybe_has_http_custom_headers = cache_maybe_has_http_custom_headers(&url, &extra.misc);
+        let no_proxy_str = no_proxy.as_ref().map(|n| n.inner.as_ref()).unwrap_or("");
+        let inner = Box::new(
+            builder_fn(matcher::Matcher::builder(), String::from(url))
+                .no(no_proxy_str)
+                .build(),
+        );
 
         Matcher {
             inner,
@@ -453,9 +430,7 @@ impl Matcher {
     }
 
     pub(crate) fn intercept(&self, dst: &Uri) -> Option<Intercepted> {
-        let inner = self.inner.intercept(dst);
-
-        inner.map(|inner| Intercepted {
+        self.inner.intercept(dst).map(|inner| Intercepted {
             inner,
             extra: self.extra.clone(),
         })

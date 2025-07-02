@@ -67,6 +67,22 @@ impl<C> From<tokio_socks::Error> for SocksError<C> {
     }
 }
 
+/// Represents the SOCKS protocol version.
+#[derive(Clone, Copy)]
+#[repr(u8)]
+pub enum SocksVersion {
+    V4,
+    V5,
+}
+
+/// Represents the DNS resolution strategy for SOCKS connections.
+#[derive(Clone, Copy)]
+#[repr(u8)]
+pub enum DnsResolve {
+    Local,
+    Remote,
+}
+
 pin_project! {
     // Not publicly exported (so missing_docs doesn't trigger).
     //
@@ -95,14 +111,13 @@ where
     }
 }
 
-#[derive(Debug)]
 pub struct Socks<C, R = GaiResolver> {
     inner: C,
     resolver: R,
     proxy: Uri,
     auth: Option<(Bytes, Bytes)>,
-    is_v5: bool,
-    local_dns: bool,
+    version: SocksVersion,
+    dns_resolve: DnsResolve,
 }
 
 impl<C, R> Socks<C, R>
@@ -118,28 +133,32 @@ where
     /// The `auth` parameter is optional and can be used to provide a username and password for
     /// SOCKS authentication. If provided, it should be a tuple containing the username and
     /// password.
-    pub fn new_with_resolver(
-        inner: C,
-        resolver: R,
-        proxy: Uri,
-        auth: Option<(Bytes, Bytes)>,
-    ) -> Self {
-        let scheme = proxy.scheme_str();
-        let (is_v5, local_dns) = match scheme {
-            Some("socks5") => (true, true),
-            Some("socks5h") => (true, false),
-            Some("socks4") => (false, true),
-            Some("socks4a") => (false, false),
-            _ => unreachable!("connect_socks is only called for socks proxies"),
-        };
-
+    pub fn new_with_resolver(inner: C, resolver: R, proxy: Uri) -> Self {
         Socks {
             inner,
             resolver,
             proxy,
-            auth,
-            is_v5,
-            local_dns,
+            version: SocksVersion::V5,
+            dns_resolve: DnsResolve::Local,
+            auth: None,
+        }
+    }
+
+    /// Sets the authentication credentials for the SOCKS proxy connection.
+    pub fn with_auth(self, auth: Option<(Bytes, Bytes)>) -> Self {
+        Socks { auth, ..self }
+    }
+
+    /// Sets whether to use the SOCKS5 protocol for the proxy connection.
+    pub fn with_version(self, version: SocksVersion) -> Self {
+        Socks { version, ..self }
+    }
+
+    /// Sets whether to resolve DNS locally or let the proxy handle DNS resolution.
+    pub fn with_local_dns(self, dns_resolve: DnsResolve) -> Self {
+        Socks {
+            dns_resolve,
+            ..self
         }
     }
 }
@@ -164,10 +183,10 @@ where
     fn call(&mut self, dst: Uri) -> Self::Future {
         let connecting = self.inner.call(self.proxy.clone());
 
+        let version = self.version;
+        let dns_resolve = self.dns_resolve;
         let mut resolver = self.resolver.clone();
         let auth = self.auth.clone();
-        let local_dns = self.local_dns;
-        let is_v5 = self.is_v5;
 
         let fut = async move {
             let port = dst.port().map(|p| p.as_u16()).unwrap_or(443);
@@ -181,43 +200,47 @@ where
                 .map_err(SocksError::Inner)?;
 
             // Resolve the target address using the provided resolver.
-            let target_addr = if local_dns {
-                let mut socket_addr = resolver
-                    .resolve(Name::new(host.into()))
-                    .await
-                    .map_err(|_| SocksError::DnsFailure)?
-                    .next()
-                    .ok_or(SocksError::DnsFailure)?;
-                socket_addr.set_port(port);
-                TargetAddr::Ip(socket_addr)
-            } else {
-                TargetAddr::Domain(Cow::Borrowed(host), port)
+            let target_addr = match dns_resolve {
+                DnsResolve::Local => {
+                    let mut socket_addr = resolver
+                        .resolve(Name::new(host.into()))
+                        .await
+                        .map_err(|_| SocksError::DnsFailure)?
+                        .next()
+                        .ok_or(SocksError::DnsFailure)?;
+                    socket_addr.set_port(port);
+                    TargetAddr::Ip(socket_addr)
+                }
+                DnsResolve::Remote => TargetAddr::Domain(Cow::Borrowed(host), port),
             };
 
-            if is_v5 {
-                // For SOCKS5, we need to handle authentication if provided.
-                // The `auth` is an optional tuple of (username, password).
-                let stream = match auth {
-                    Some((username, password)) => {
-                        let username = std::str::from_utf8(&username)?;
-                        let password = std::str::from_utf8(&password)?;
-                        Socks5Stream::connect_with_password_and_socket(
-                            socket,
-                            target_addr,
-                            username,
-                            password,
-                        )
-                        .await?
-                    }
-                    None => Socks5Stream::connect_with_socket(socket, target_addr).await?,
-                };
+            match version {
+                SocksVersion::V4 => {
+                    // For SOCKS4, we connect directly to the target address.
+                    let stream = Socks4Stream::connect_with_socket(socket, target_addr).await?;
 
-                Ok(stream.into_inner().into_inner())
-            } else {
-                // For SOCKS4, we connect directly to the target address.
-                let stream = Socks4Stream::connect_with_socket(socket, target_addr).await?;
+                    Ok(stream.into_inner().into_inner())
+                }
+                SocksVersion::V5 => {
+                    // For SOCKS5, we need to handle authentication if provided.
+                    // The `auth` is an optional tuple of (username, password).
+                    let stream = match auth {
+                        Some((username, password)) => {
+                            let username = std::str::from_utf8(&username)?;
+                            let password = std::str::from_utf8(&password)?;
+                            Socks5Stream::connect_with_password_and_socket(
+                                socket,
+                                target_addr,
+                                username,
+                                password,
+                            )
+                            .await?
+                        }
+                        None => Socks5Stream::connect_with_socket(socket, target_addr).await?,
+                    };
 
-                Ok(stream.into_inner().into_inner())
+                    Ok(stream.into_inner().into_inner())
+                }
             }
         };
 

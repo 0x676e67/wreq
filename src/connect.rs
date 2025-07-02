@@ -408,14 +408,54 @@ impl ConnectorService {
         mut req: ConnRequest,
         proxy: Intercepted,
     ) -> Result<Conn, BoxError> {
-        #[cfg(feature = "socks")]
-        if let Some("socks4" | "socks4a" | "socks5" | "socks5h") = proxy.uri().scheme_str() {
-            trace!("connecting via SOCKS proxy: {:?}", proxy.uri());
-            return self.connect_socks(req, proxy).await;
-        }
-
         let uri = req.uri().clone();
         let proxy_uri = proxy.uri().clone();
+
+        #[cfg(feature = "socks")]
+        {
+            use crate::core::client::connect::proxy::{DnsResolve, Socks, SocksVersion};
+
+            if let Some((version, dns_resolve)) = match proxy.uri().scheme_str() {
+                Some("socks5") => Some((SocksVersion::V5, DnsResolve::Local)),
+                Some("socks5h") => Some((SocksVersion::V5, DnsResolve::Remote)),
+                Some("socks4") => Some((SocksVersion::V4, DnsResolve::Local)),
+                Some("socks4a") => Some((SocksVersion::V4, DnsResolve::Remote)),
+                _ => None,
+            } {
+                trace!("connecting via SOCKS proxy: {:?}", proxy_uri);
+
+                let mut socks = Socks::new_with_resolver(
+                    self.http.clone(),
+                    self.resolver.clone(),
+                    proxy_uri.clone(),
+                )
+                .with_auth(proxy.raw_auth())
+                .with_version(version)
+                .with_local_dns(dns_resolve);
+
+                let conn = socks.call(uri.clone()).await?;
+
+                return if uri.scheme() == Some(&Scheme::HTTPS) {
+                    trace!("socks HTTPS over proxy");
+                    let mut connector = self.create_https_connector(self.http.clone(), &mut req)?;
+                    let io = connector.call((uri, conn)).await?;
+
+                    Ok(Conn {
+                        inner: self.verbose.wrap(TlsConn {
+                            inner: TokioIo::new(io),
+                        }),
+                        is_proxy: false,
+                        tls_info: self.tls_info,
+                    })
+                } else {
+                    Ok(Conn {
+                        inner: self.verbose.wrap(conn),
+                        is_proxy: false,
+                        tls_info: false,
+                    })
+                };
+            }
+        }
 
         // Handle HTTPS proxy tunneling connection
         if uri.scheme() == Some(&Scheme::HTTPS) {
@@ -451,49 +491,6 @@ impl ConnectorService {
         *req.uri_mut() = proxy_uri;
 
         self.connect(req, true).await
-    }
-
-    #[cfg(feature = "socks")]
-    async fn connect_socks(
-        &self,
-        mut req: ConnRequest,
-        proxy: Intercepted,
-    ) -> Result<Conn, BoxError> {
-        use crate::core::client::connect::proxy::Socks;
-
-        let mut socks = Socks::new_with_resolver(
-            self.http.clone(),
-            self.resolver.clone(),
-            proxy.uri().clone(),
-            proxy.raw_auth(),
-        );
-
-        let uri = req.uri().clone();
-
-        if uri.scheme() == Some(&Scheme::HTTPS) {
-            trace!("socks HTTPS over proxy");
-            let mut connector = self.create_https_connector(self.http.clone(), &mut req)?;
-            let conn = socks.call(uri.clone()).await?;
-            let io = connector.call((uri, conn)).await?;
-
-            return Ok(Conn {
-                inner: self.verbose.wrap(TlsConn {
-                    inner: TokioIo::new(io),
-                }),
-                is_proxy: false,
-                tls_info: self.tls_info,
-            });
-        }
-
-        socks
-            .call(uri)
-            .await
-            .map(|tcp| Conn {
-                inner: self.verbose.wrap(tcp),
-                is_proxy: false,
-                tls_info: false,
-            })
-            .map_err(Into::into)
     }
 
     fn create_https_connector(
