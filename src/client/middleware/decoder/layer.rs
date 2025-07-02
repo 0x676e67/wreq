@@ -8,9 +8,8 @@ use tower_http::decompression::{
 };
 use tower_service::Service;
 
-use crate::{
-    client::decoder::AcceptEncoding, config::RequestAcceptEncoding, core::ext::RequestConfig,
-};
+use super::AcceptEncoding;
+use crate::{config::RequestAcceptEncoding, core::ext::RequestConfig};
 
 /// Decompresses response bodies of the underlying service.
 ///

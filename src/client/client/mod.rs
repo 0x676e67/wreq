@@ -29,6 +29,13 @@ use types::{BoxedClientService, BoxedClientServiceLayer, GenericClientService, R
 #[cfg(feature = "cookies")]
 use {super::middleware::cookie::CookieManagerLayer, crate::cookie};
 
+#[cfg(any(
+    feature = "gzip",
+    feature = "zstd",
+    feature = "brotli",
+    feature = "deflate",
+))]
+use super::middleware::decoder::{AcceptEncoding, DecompressionLayer};
 #[cfg(feature = "websocket")]
 use super::websocket::WebSocketRequestBuilder;
 use super::{
@@ -41,13 +48,6 @@ use super::{
     request::{Request, RequestBuilder},
     response::Response,
 };
-#[cfg(any(
-    feature = "gzip",
-    feature = "zstd",
-    feature = "brotli",
-    feature = "deflate",
-))]
-use super::{decoder::AcceptEncoding, middleware::decoder::DecompressionLayer};
 #[cfg(feature = "hickory-dns")]
 use crate::dns::hickory::{HickoryDnsResolver, LookupIpStrategy};
 use crate::{
@@ -118,7 +118,7 @@ struct Config {
         feature = "brotli",
         feature = "deflate",
     ))]
-    accepts: AcceptEncoding,
+    accept_encoding: AcceptEncoding,
     connect_timeout: Option<Duration>,
     connection_verbose: bool,
     pool_idle_timeout: Option<Duration>,
@@ -186,7 +186,7 @@ impl ClientBuilder {
                     feature = "brotli",
                     feature = "deflate",
                 ))]
-                accepts: AcceptEncoding::default(),
+                accept_encoding: AcceptEncoding::default(),
                 connect_timeout: None,
                 connection_verbose: false,
                 pool_idle_timeout: Some(Duration::from_secs(90)),
@@ -346,7 +346,7 @@ impl ClientBuilder {
                 feature = "deflate",
             ))]
             let service = ServiceBuilder::new()
-                .layer(DecompressionLayer::new(config.accepts))
+                .layer(DecompressionLayer::new(config.accept_encoding))
                 .service(service);
 
             let service = ServiceBuilder::new()
@@ -553,7 +553,7 @@ impl ClientBuilder {
     /// This requires the optional `gzip` feature to be enabled
     #[cfg(feature = "gzip")]
     pub fn gzip(mut self, enable: bool) -> ClientBuilder {
-        self.config.accepts.gzip = enable;
+        self.config.accept_encoding.gzip(enable);
         self
     }
 
@@ -575,7 +575,7 @@ impl ClientBuilder {
     /// This requires the optional `brotli` feature to be enabled
     #[cfg(feature = "brotli")]
     pub fn brotli(mut self, enable: bool) -> ClientBuilder {
-        self.config.accepts.brotli = enable;
+        self.config.accept_encoding.brotli(enable);
         self
     }
 
@@ -597,7 +597,7 @@ impl ClientBuilder {
     /// This requires the optional `zstd` feature to be enabled
     #[cfg(feature = "zstd")]
     pub fn zstd(mut self, enable: bool) -> ClientBuilder {
-        self.config.accepts.zstd = enable;
+        self.config.accept_encoding.zstd(enable);
         self
     }
 
@@ -619,7 +619,7 @@ impl ClientBuilder {
     /// This requires the optional `deflate` feature to be enabled
     #[cfg(feature = "deflate")]
     pub fn deflate(mut self, enable: bool) -> ClientBuilder {
-        self.config.accepts.deflate = enable;
+        self.config.accept_encoding.deflate(enable);
         self
     }
 

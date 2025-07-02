@@ -10,13 +10,6 @@ pub use self::{
 pub mod body;
 #[allow(clippy::module_inception)]
 mod client;
-#[cfg(any(
-    feature = "gzip",
-    feature = "zstd",
-    feature = "brotli",
-    feature = "deflate",
-))]
-pub mod decoder;
 mod emulation;
 pub(crate) mod middleware;
 #[cfg(feature = "multipart")]

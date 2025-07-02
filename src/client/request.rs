@@ -38,7 +38,7 @@ use crate::{
     feature = "brotli",
     feature = "deflate",
 ))]
-use crate::{client::decoder::AcceptEncoding, config::RequestAcceptEncoding};
+use crate::{client::middleware::decoder::AcceptEncoding, config::RequestAcceptEncoding};
 
 /// A request which can be executed with `Client::execute()`.
 pub struct Request {
