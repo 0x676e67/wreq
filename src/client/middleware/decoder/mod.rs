@@ -14,35 +14,32 @@ pub(crate) struct AcceptEncoding {
     pub(super) deflate: bool,
 }
 
-// ===== impl AcceptEncoding =====
-
 impl AcceptEncoding {
-    #[cfg(feature = "gzip")]
     #[inline(always)]
+    #[cfg(feature = "gzip")]
     pub fn gzip(&mut self, enabled: bool) {
         self.gzip = enabled;
     }
 
-    #[cfg(feature = "brotli")]
     #[inline(always)]
+    #[cfg(feature = "brotli")]
     pub fn brotli(&mut self, enabled: bool) {
         self.brotli = enabled;
     }
 
-    #[cfg(feature = "zstd")]
     #[inline(always)]
+    #[cfg(feature = "zstd")]
     pub fn zstd(&mut self, enabled: bool) {
         self.zstd = enabled;
     }
 
-    #[cfg(feature = "deflate")]
     #[inline(always)]
+    #[cfg(feature = "deflate")]
     pub fn deflate(&mut self, enabled: bool) {
         self.deflate = enabled;
     }
 }
 
-#[allow(clippy::all)]
 impl Default for AcceptEncoding {
     fn default() -> AcceptEncoding {
         AcceptEncoding {
