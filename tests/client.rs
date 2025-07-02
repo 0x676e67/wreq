@@ -11,6 +11,7 @@ use http::{
 };
 use http_body_util::BodyExt;
 use support::server;
+use tokio::io::AsyncWriteExt;
 use wreq::{Client, OriginalHeaders};
 
 #[tokio::test]
@@ -645,6 +646,41 @@ async fn close_connection_after_idle_timeout() {
             .iter()
             .any(|e| matches!(e, server::Event::ConnectionClosed))
     );
+}
+
+#[tokio::test]
+async fn http1_reason_phrase() {
+    let server = server::low_level_with_response(|_raw_request, client_socket| {
+        Box::new(async move {
+            client_socket
+                .write_all(b"HTTP/1.1 418 I'm not a teapot\r\nContent-Length: 0\r\n\r\n")
+                .await
+                .expect("response write_all failed");
+        })
+    });
+
+    let client = Client::new();
+
+    let res = client
+        .get(&format!("http://{}", server.addr()))
+        .send()
+        .await
+        .expect("Failed to get");
+
+    assert_eq!(
+        res.error_for_status().unwrap_err().to_string(),
+        format!(
+            "HTTP status client error (418 I'm not a teapot) for url (http://{}/)",
+            server.addr()
+        )
+    );
+}
+
+#[tokio::test]
+async fn error_has_url() {
+    let u = "http://does.not.exist.local/ever";
+    let err = wreq::Client::new().get(u).send().await.unwrap_err();
+    assert_eq!(err.url().map(AsRef::as_ref), Some(u), "{err:?}");
 }
 
 #[tokio::test]

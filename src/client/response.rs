@@ -13,7 +13,10 @@ use url::Url;
 use super::body::{Body, ResponseBody};
 #[cfg(feature = "cookies")]
 use crate::cookie;
-use crate::{Error, Upgraded, core::client::connect::HttpInfo};
+use crate::{
+    Error, Upgraded,
+    core::{client::connect::HttpInfo, ext::ReasonPhrase},
+};
 
 /// A Response to a submitted `Request`.
 pub struct Response {
@@ -367,8 +370,9 @@ impl Response {
     /// ```
     pub fn error_for_status(self) -> crate::Result<Self> {
         let status = self.status();
+        let reason = self.extensions().get::<ReasonPhrase>().cloned();
         if status.is_client_error() || status.is_server_error() {
-            Err(Error::status_code(*self.url, status))
+            Err(crate::Error::status_code(*self.url, status, reason))
         } else {
             Ok(self)
         }
@@ -394,8 +398,9 @@ impl Response {
     /// ```
     pub fn error_for_status_ref(&self) -> crate::Result<&Self> {
         let status = self.status();
+        let reason = self.extensions().get::<ReasonPhrase>().cloned();
         if status.is_client_error() || status.is_server_error() {
-            Err(Error::status_code(*self.url.clone(), status))
+            Err(crate::Error::status_code(*self.url.clone(), status, reason))
         } else {
             Ok(self)
         }

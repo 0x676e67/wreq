@@ -858,6 +858,7 @@ mod verbose {
                 rt::{Read, ReadBufCursor, Write},
             },
             tls::TlsInfo,
+            util::Escape,
         };
 
         pub(super) struct Verbose<T> {
@@ -883,7 +884,7 @@ mod verbose {
                 let mut vbuf = crate::core::rt::ReadBuf::uninit(unsafe { buf.as_mut() });
                 match Pin::new(&mut self.inner).poll_read(cx, vbuf.unfilled()) {
                     Poll::Ready(Ok(())) => {
-                        trace!("{:08x} read: {:?}", self.id, Escape(vbuf.filled()));
+                        trace!("{:08x} read: {:?}", self.id, Escape::new(vbuf.filled()));
                         let len = vbuf.filled().len();
                         // SAFETY: The two cursors were for the same buffer. What was
                         // filled in one is safe in the other.
@@ -906,7 +907,7 @@ mod verbose {
             ) -> Poll<Result<usize, std::io::Error>> {
                 match Pin::new(&mut self.inner).poll_write(cx, buf) {
                     Poll::Ready(Ok(n)) => {
-                        trace!("{:08x} write: {:?}", self.id, Escape(&buf[..n]));
+                        trace!("{:08x} write: {:?}", self.id, Escape::new(&buf[..n]));
                         Poll::Ready(Ok(n))
                     }
                     Poll::Ready(Err(e)) => Poll::Ready(Err(e)),
@@ -958,35 +959,6 @@ mod verbose {
             }
         }
 
-        struct Escape<'a>(&'a [u8]);
-
-        impl fmt::Debug for Escape<'_> {
-            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-                write!(f, "b\"")?;
-                for &c in self.0 {
-                    // https://doc.rust-lang.org/reference.html#byte-escapes
-                    if c == b'\n' {
-                        write!(f, "\\n")?;
-                    } else if c == b'\r' {
-                        write!(f, "\\r")?;
-                    } else if c == b'\t' {
-                        write!(f, "\\t")?;
-                    } else if c == b'\\' || c == b'"' {
-                        write!(f, "\\{}", c as char)?;
-                    } else if c == b'\0' {
-                        write!(f, "\\0")?;
-                        // ASCII printable
-                    } else if (0x20..0x7f).contains(&c) {
-                        write!(f, "{}", c as char)?;
-                    } else {
-                        write!(f, "\\x{c:02x}")?;
-                    }
-                }
-                write!(f, "\"")?;
-                Ok(())
-            }
-        }
-
         struct Vectored<'a, 'b> {
             bufs: &'a [IoSlice<'b>],
             nwritten: usize,
@@ -1000,7 +972,7 @@ mod verbose {
                         break;
                     }
                     let n = std::cmp::min(left, buf.len());
-                    Escape(&buf[..n]).fmt(f)?;
+                    Escape::new(&buf[..n]).fmt(f)?;
                     left -= n;
                 }
                 Ok(())

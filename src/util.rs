@@ -1,3 +1,5 @@
+use std::fmt;
+
 use crate::header::{Entry, HeaderMap, HeaderValue, OccupiedEntry};
 
 pub fn basic_auth<U, P>(username: U, password: Option<P>) -> HeaderValue
@@ -85,5 +87,45 @@ pub(crate) fn replace_headers(dst: &mut HeaderMap, src: HeaderMap) {
                 None => unreachable!("HeaderMap::into_iter yielded None first"),
             },
         }
+    }
+}
+
+pub(crate) struct Escape<'a>(&'a [u8]);
+
+impl<'a> Escape<'a> {
+    pub(crate) fn new(bytes: &'a [u8]) -> Self {
+        Escape(bytes)
+    }
+}
+
+impl fmt::Debug for Escape<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "b\"{}\"", self)?;
+        Ok(())
+    }
+}
+
+impl fmt::Display for Escape<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        for &c in self.0 {
+            // https://doc.rust-lang.org/reference.html#byte-escapes
+            if c == b'\n' {
+                write!(f, "\\n")?;
+            } else if c == b'\r' {
+                write!(f, "\\r")?;
+            } else if c == b'\t' {
+                write!(f, "\\t")?;
+            } else if c == b'\\' || c == b'"' {
+                write!(f, "\\{}", c as char)?;
+            } else if c == b'\0' {
+                write!(f, "\\0")?;
+            // ASCII printable
+            } else if c >= 0x20 && c < 0x7f {
+                write!(f, "{}", c as char)?;
+            } else {
+                write!(f, "\\x{c:02x}")?;
+            }
+        }
+        Ok(())
     }
 }

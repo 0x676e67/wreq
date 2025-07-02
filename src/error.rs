@@ -1,6 +1,6 @@
 use std::{error::Error as StdError, fmt, io};
 
-use crate::{StatusCode, Url};
+use crate::{StatusCode, Url, core::ext::ReasonPhrase, util::Escape};
 
 /// A `Result` alias where the `Err` case is `wreq::Error`.
 pub type Result<T> = std::result::Result<T, Error>;
@@ -61,8 +61,8 @@ impl Error {
         Error::new(Kind::Upgrade, Some(e))
     }
 
-    pub(crate) fn status_code(url: Url, status: StatusCode) -> Error {
-        Error::new(Kind::Status(status), None::<Error>).with_url(url)
+    pub(crate) fn status_code(url: Url, status: StatusCode, reason: Option<ReasonPhrase>) -> Error {
+        Error::new(Kind::Status(status, reason), None::<Error>).with_url(url)
     }
 
     pub(crate) fn url_bad_scheme(url: Url) -> Error {
@@ -129,7 +129,7 @@ impl Error {
 
     /// Returns true if the error is from `Response::error_for_status`.
     pub fn is_status(&self) -> bool {
-        matches!(self.inner.kind, Kind::Status(_))
+        matches!(self.inner.kind, Kind::Status(_, _))
     }
 
     /// Returns true if the error is related to a timeout.
@@ -215,7 +215,7 @@ impl Error {
     /// Returns the status code, if the error was generated from a response.
     pub fn status(&self) -> Option<StatusCode> {
         match self.inner.kind {
-            Kind::Status(code) => Some(code),
+            Kind::Status(code, _) => Some(code),
             _ => None,
         }
     }
@@ -271,14 +271,23 @@ impl fmt::Display for Error {
             Kind::Decode => f.write_str("error decoding response body")?,
             Kind::Redirect => f.write_str("error following redirect")?,
             Kind::Upgrade => f.write_str("error upgrading connection")?,
-            Kind::Status(ref code) => {
+            Kind::Status(ref code, ref reason) => {
                 let prefix = if code.is_client_error() {
                     "HTTP status client error"
                 } else {
                     debug_assert!(code.is_server_error());
                     "HTTP status server error"
                 };
-                write!(f, "{prefix} ({code})")?;
+                if let Some(reason) = reason {
+                    write!(
+                        f,
+                        "{prefix} ({} {})",
+                        code.as_str(),
+                        Escape::new(reason.as_bytes())
+                    )?;
+                } else {
+                    write!(f, "{prefix} ({code})")?;
+                }
             }
         };
 
@@ -345,7 +354,7 @@ pub(crate) enum Kind {
     Builder,
     Request,
     Redirect,
-    Status(StatusCode),
+    Status(StatusCode, Option<ReasonPhrase>),
     Body,
     Decode,
     Upgrade,
