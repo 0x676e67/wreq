@@ -662,7 +662,7 @@ async fn http1_reason_phrase() {
     let client = Client::new();
 
     let res = client
-        .get(&format!("http://{}", server.addr()))
+        .get(format!("http://{}", server.addr()))
         .send()
         .await
         .expect("Failed to get");

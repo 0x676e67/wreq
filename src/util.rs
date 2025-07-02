@@ -100,7 +100,7 @@ impl<'a> Escape<'a> {
 
 impl fmt::Debug for Escape<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "b\"{}\"", self)?;
+        write!(f, "b\"{self}\"")?;
         Ok(())
     }
 }
@@ -120,7 +120,7 @@ impl fmt::Display for Escape<'_> {
             } else if c == b'\0' {
                 write!(f, "\\0")?;
             // ASCII printable
-            } else if c >= 0x20 && c < 0x7f {
+            } else if (0x20..0x7f).contains(&c) {
                 write!(f, "{}", c as char)?;
             } else {
                 write!(f, "\\x{c:02x}")?;
