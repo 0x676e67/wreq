@@ -55,7 +55,7 @@ impl AlpnProtocol {
 
     #[inline]
     pub(crate) fn encode(self) -> Bytes {
-        encode_sequence(std::iter::once(&self))
+        Bytes::from_static(self.0)
     }
 
     #[inline]
