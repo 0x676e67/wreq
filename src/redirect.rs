@@ -12,12 +12,7 @@ use crate::{
     Url,
     client::{
         Body,
-        middleware::{
-            config::RequestRedirectPolicy,
-            redirect::policy::{
-                Action as TowerAction, Attempt as TowerAttempt, Policy as TowerPolicy,
-            },
-        },
+        middleware::{config::RequestRedirectPolicy, redirect::policy},
     },
     core::ext::RequestConfig,
     error::{BoxError, Error},
@@ -306,8 +301,8 @@ fn make_referer(next: &Url, previous: &Url) -> Option<HeaderValue> {
     referer.as_str().parse().ok()
 }
 
-impl TowerPolicy<Body, BoxError> for RedirectPolicy {
-    fn redirect(&mut self, attempt: &TowerAttempt<'_>) -> Result<TowerAction, BoxError> {
+impl policy::Policy<Body, BoxError> for RedirectPolicy {
+    fn redirect(&mut self, attempt: &policy::Attempt<'_>) -> Result<policy::Action, BoxError> {
         // Parse the next URL from the attempt.
         let previous_url = IntoUrlSealed::into_url(attempt.previous().to_string())?;
         let next_url = IntoUrlSealed::into_url(attempt.location().to_string())?;
@@ -316,11 +311,10 @@ impl TowerPolicy<Body, BoxError> for RedirectPolicy {
         self.urls.push(previous_url.clone());
 
         // Get policy from config
-        let policy = self.policy.as_ref().ok_or_else(|| {
-            BoxError::from(Error::request(
-                "RequestRedirectPolicy not set in request config",
-            ))
-        })?;
+        let policy = self
+            .policy
+            .as_ref()
+            .ok_or_else(|| Error::request("RequestRedirectPolicy not set in request config"))?;
 
         // Check if the next URL is already in the list of URLs.
         match policy.check(attempt.status(), &next_url, &self.urls) {
@@ -335,16 +329,15 @@ impl TowerPolicy<Body, BoxError> for RedirectPolicy {
                         next_url,
                     )));
                 }
-                Ok(TowerAction::Follow)
+                Ok(policy::Action::Follow)
             }
-            ActionKind::Stop => Ok(TowerAction::Stop),
+            ActionKind::Stop => Ok(policy::Action::Stop),
             ActionKind::Error(e) => Err(BoxError::from(Error::redirect(e, previous_url))),
         }
     }
 
     #[inline(always)]
     fn on_request(&mut self, req: &mut http::Request<Body>) {
-        // Parse the request URL and update the list of URLs.
         if let Ok(next_url) = Url::parse(&req.uri().to_string()) {
             remove_sensitive_headers(req.headers_mut(), &next_url, &self.urls);
             if self.referer {
@@ -357,21 +350,21 @@ impl TowerPolicy<Body, BoxError> for RedirectPolicy {
         };
     }
 
-    // This is must have implemented to make 307 and 308 redirects work
+    #[inline(always)]
+    fn load(&mut self, req: &http::Request<Body>) {
+        self.policy.load(req.extensions());
+    }
+
+    #[inline(always)]
+    fn allowed(&self) -> bool {
+        self.policy
+            .as_ref()
+            .is_some_and(|policy| !matches!(policy.inner, PolicyKind::None))
+    }
+
     #[inline(always)]
     fn clone_body(&self, body: &Body) -> Option<Body> {
         body.try_clone()
-    }
-
-    // Check if a redirect is allowed for the given request.
-    fn is_redirect_allowed(&mut self, req: &mut http::Request<Body>) -> bool {
-        // If the request has a `RequestRedirectPolicy` extension, use it to
-        // override the current policy.
-        self.policy.replace_from(req.extensions());
-        self.policy
-            .as_ref()
-            .map(|policy| !matches!(policy.inner, PolicyKind::None))
-            .unwrap_or(false)
     }
 }
 

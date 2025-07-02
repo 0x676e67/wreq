@@ -77,7 +77,9 @@ where
         let service = self.inner.clone();
         let mut service = mem::replace(&mut self.inner, service);
         let mut policy = self.policy.clone();
-        if policy.is_redirect_allowed(&mut req) {
+        policy.load(&req);
+
+        if policy.allowed() {
             let mut body = BodyRepr::None;
             body.try_clone_from(req.body(), &policy);
             policy.on_request(&mut req);

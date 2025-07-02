@@ -19,6 +19,22 @@ pub trait Policy<B, E> {
     /// The default implementation does nothing.
     fn on_request(&mut self, _request: &mut Request<B>) {}
 
+    /// Loads redirect policy configuration from the request's [`Extensions`].
+    ///
+    /// This is typically used to extract request-specific redirect settings (e.g., max redirect
+    /// count, HTTPS-only rules) that override global client configuration.
+    ///
+    /// This method is called before any redirection decisions are made.
+    fn load(&mut self, _request: &Request<B>);
+
+    /// Returns whether redirection is currently permitted by this policy.
+    ///
+    /// This check typically occurs after [`load()`] has initialized the internal state
+    /// and determines whether any redirect should proceed at all.
+    ///
+    /// If redirection is not allowed, the client will return the original `3xx` response as-is.
+    fn allowed(&self) -> bool;
+
     /// Try to clone a request body before the service makes a redirected request.
     ///
     /// If the request body cannot be cloned, return `None`.
@@ -30,9 +46,6 @@ pub trait Policy<B, E> {
     fn clone_body(&self, _body: &B) -> Option<B> {
         None
     }
-
-    /// Determine if redirection is permitted by the current policy
-    fn is_redirect_allowed(&mut self, _request: &mut Request<B>) -> bool;
 }
 
 impl<B, E, P> Policy<B, E> for &mut P
@@ -50,13 +63,18 @@ where
     }
 
     #[inline(always)]
-    fn clone_body(&self, body: &B) -> Option<B> {
-        (**self).clone_body(body)
+    fn load(&mut self, request: &Request<B>) {
+        (**self).load(request)
     }
 
     #[inline(always)]
-    fn is_redirect_allowed(&mut self, request: &mut Request<B>) -> bool {
-        (**self).is_redirect_allowed(request)
+    fn allowed(&self) -> bool {
+        (**self).allowed()
+    }
+
+    #[inline(always)]
+    fn clone_body(&self, body: &B) -> Option<B> {
+        (**self).clone_body(body)
     }
 }
 

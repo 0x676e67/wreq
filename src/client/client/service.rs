@@ -131,9 +131,7 @@ impl Service<Request<Body>> for ClientService {
         }
 
         // Apply original headers if they are set in the request extensions.
-        self.config
-            .original_headers
-            .replace_to(req.extensions_mut());
+        self.config.original_headers.store(req.extensions_mut());
 
         // Apply proxy headers if the request is routed through a proxy.
         self.apply_proxy_headers(&mut req);
