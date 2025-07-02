@@ -1,3 +1,5 @@
+//! Middleware for retrying requests.
+
 use futures_util::future;
 use http::{Request, Response};
 use tower::retry::Policy;
