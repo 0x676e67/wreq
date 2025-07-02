@@ -2,7 +2,10 @@ mod parser;
 
 use std::{fmt::Debug, path::Path, sync::Arc};
 
-use boring2::x509::store::{X509Store, X509StoreBuilder};
+use boring2::{
+    ssl::SslConnectorBuilder,
+    x509::store::{X509Store, X509StoreBuilder},
+};
 use parser::{
     filter_map_certs, parse_certs_with_iter, parse_certs_with_stack, process_certs_with_builder,
 };
@@ -99,7 +102,7 @@ impl CertStoreBuilder {
     pub fn set_default_paths(mut self) -> Self {
         if let Ok(ref mut builder) = self.builder {
             if let Err(err) = builder.set_default_paths() {
-                self.builder = Err(err.into());
+                self.builder = Err(Error::tls(err));
             }
         }
         self
@@ -123,7 +126,7 @@ impl CertStoreBuilder {
             let input = cert.into();
             let result = input
                 .with_parser(parser)
-                .and_then(|cert| builder.add_cert(cert.0).map_err(Into::into));
+                .and_then(|cert| builder.add_cert(cert.0).map_err(Error::tls));
 
             if let Err(err) = result {
                 self.builder = Err(err);
@@ -240,8 +243,8 @@ impl CertStore {
 }
 
 impl CertStore {
-    #[inline(always)]
-    pub(crate) fn add_to_tls(&self, tls: &mut boring2::ssl::SslConnectorBuilder) {
+    #[inline]
+    pub(crate) fn add_to_tls(&self, tls: &mut SslConnectorBuilder) {
         tls.set_cert_store_ref(&self.0);
     }
 }

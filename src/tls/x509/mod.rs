@@ -7,6 +7,7 @@ pub use self::{
     identity::Identity,
     store::{CertStore, CertStoreBuilder},
 };
+use crate::Error;
 
 /// A certificate input.
 pub enum CertificateInput<'c> {
@@ -48,19 +49,19 @@ impl Certificate {
     /// Parse a certificate from DER data.
     #[inline(always)]
     pub fn from_der<C: AsRef<[u8]>>(cert: C) -> crate::Result<Self> {
-        X509::from_der(cert.as_ref()).map(Self).map_err(Into::into)
+        X509::from_der(cert.as_ref()).map(Self).map_err(Error::tls)
     }
 
     /// Parse a certificate from PEM data.
     #[inline(always)]
     pub fn from_pem<C: AsRef<[u8]>>(cert: C) -> crate::Result<Self> {
-        X509::from_pem(cert.as_ref()).map(Self).map_err(Into::into)
+        X509::from_pem(cert.as_ref()).map(Self).map_err(Error::tls)
     }
 
     /// Parse a stack of certificates from DER data.
     #[inline(always)]
     pub fn stack_from_pem<C: AsRef<[u8]>>(cert: C) -> crate::Result<Vec<Self>> {
-        let certs = X509::stack_from_pem(cert.as_ref())?;
+        let certs = X509::stack_from_pem(cert.as_ref()).map_err(Error::tls)?;
         Ok(certs.into_iter().map(Self).collect())
     }
 }

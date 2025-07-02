@@ -46,8 +46,8 @@ impl Identity {
     ///
     /// This requires the `native-tls` Cargo feature enabled.
     pub fn from_pkcs12_der(buf: &[u8], pass: &str) -> crate::Result<Identity> {
-        let pkcs12 = Pkcs12::from_der(buf)?;
-        let parsed = pkcs12.parse(pass)?;
+        let pkcs12 = Pkcs12::from_der(buf).map_err(Error::tls)?;
+        let parsed = pkcs12.parse(pass).map_err(Error::tls)?;
         Ok(Identity {
             pkey: parsed.pkey,
             cert: parsed.cert,
@@ -87,8 +87,8 @@ impl Identity {
             return Err(Error::builder("expected PKCS#8 PEM"));
         }
 
-        let pkey = PKey::private_key_from_pem(key)?;
-        let mut cert_chain = X509::stack_from_pem(buf)?.into_iter();
+        let pkey = PKey::private_key_from_pem(key).map_err(Error::tls)?;
+        let mut cert_chain = X509::stack_from_pem(buf).map_err(Error::tls)?.into_iter();
         let cert = cert_chain.next().ok_or_else(|| {
             Error::builder("at least one certificate must be provided to create an identity")
         })?;
@@ -100,13 +100,15 @@ impl Identity {
         &self,
         connector: &mut boring2::ssl::SslConnectorBuilder,
     ) -> crate::Result<()> {
-        connector.set_certificate(&self.cert)?;
-        connector.set_private_key(&self.pkey)?;
+        connector.set_certificate(&self.cert).map_err(Error::tls)?;
+        connector.set_private_key(&self.pkey).map_err(Error::tls)?;
         for cert in self.chain.iter() {
             // https://www.openssl.org/docs/manmaster/man3/SSL_CTX_add_extra_chain_cert.html
             // specifies that "When sending a certificate chain, extra chain certificates are
             // sent in order following the end entity certificate."
-            connector.add_extra_chain_cert(cert.clone())?;
+            connector
+                .add_extra_chain_cert(cert.clone())
+                .map_err(Error::tls)?;
         }
         Ok(())
     }

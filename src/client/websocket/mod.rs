@@ -323,7 +323,10 @@ impl WebSocketRequestBuilder {
 
                 headers.insert(header::UPGRADE, HeaderValue::from_static("websocket"));
                 headers.insert(header::CONNECTION, HeaderValue::from_static("upgrade"));
-                headers.insert(header::SEC_WEBSOCKET_KEY, HeaderValue::from_str(&nonce)?);
+                headers.insert(
+                    header::SEC_WEBSOCKET_KEY,
+                    HeaderValue::from_str(&nonce).map_err(Error::builder)?,
+                );
 
                 *request.method_mut() = Method::GET;
                 *request.version_mut() = Some(Version::HTTP_11);
@@ -352,9 +355,10 @@ impl WebSocketRequestBuilder {
                     .collect::<Vec<&str>>()
                     .join(", ");
 
-                request
-                    .headers_mut()
-                    .insert(header::SEC_WEBSOCKET_PROTOCOL, subprotocols.parse()?);
+                request.headers_mut().insert(
+                    header::SEC_WEBSOCKET_PROTOCOL,
+                    subprotocols.parse().map_err(Error::builder)?,
+                );
             }
         }
 
@@ -553,7 +557,7 @@ impl WebSocket {
         self.inner
             .send(msg.into_tungstenite())
             .await
-            .map_err(Into::into)
+            .map_err(Error::upgrade)
     }
 
     /// Return the selected WebSocket subprotocol, if one has been chosen.
@@ -572,7 +576,7 @@ impl WebSocket {
                     .into_tungstenite(),
             }))
             .await
-            .map_err(Into::into)
+            .map_err(Error::upgrade)
     }
 }
 
@@ -599,23 +603,29 @@ impl Sink<Message> for WebSocket {
 
     #[inline(always)]
     fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        Pin::new(&mut self.inner).poll_ready(cx).map_err(Into::into)
+        Pin::new(&mut self.inner)
+            .poll_ready(cx)
+            .map_err(Error::upgrade)
     }
 
     #[inline(always)]
     fn start_send(mut self: Pin<&mut Self>, item: Message) -> Result<(), Self::Error> {
         Pin::new(&mut self.inner)
             .start_send(item.into_tungstenite())
-            .map_err(Into::into)
+            .map_err(Error::upgrade)
     }
 
     #[inline(always)]
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        Pin::new(&mut self.inner).poll_flush(cx).map_err(Into::into)
+        Pin::new(&mut self.inner)
+            .poll_flush(cx)
+            .map_err(Error::upgrade)
     }
 
     #[inline(always)]
     fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        Pin::new(&mut self.inner).poll_close(cx).map_err(Into::into)
+        Pin::new(&mut self.inner)
+            .poll_close(cx)
+            .map_err(Error::upgrade)
     }
 }

@@ -1,6 +1,7 @@
 use serde::{Serialize, de::DeserializeOwned};
 
 use super::{Message, Utf8Bytes};
+use crate::Error;
 
 impl Message {
     /// Tries to serialize the JSON as a [`Message::Text`].
@@ -18,7 +19,7 @@ impl Message {
         serde_json::to_string(json)
             .map(Utf8Bytes::from)
             .map(Message::Text)
-            .map_err(Into::into)
+            .map_err(Error::decode)
     }
 
     /// Tries to serialize the JSON as a [`Message::Binary`].
@@ -36,7 +37,7 @@ impl Message {
         serde_json::to_vec(json)
             .map(bytes::Bytes::from)
             .map(Message::Binary)
-            .map_err(Into::into)
+            .map_err(Error::decode)
     }
 
     /// Tries to deserialize the message body as JSON.
@@ -56,12 +57,12 @@ impl Message {
     pub fn json<T: DeserializeOwned>(&self) -> crate::Result<T> {
         use serde::de::Error as _;
         match self {
-            Self::Text(x) => serde_json::from_str(x).map_err(Into::into),
-            Self::Binary(x) => serde_json::from_slice(x).map_err(Into::into),
+            Self::Text(x) => serde_json::from_str(x).map_err(Error::decode),
+            Self::Binary(x) => serde_json::from_slice(x).map_err(Error::decode),
             #[allow(deprecated)]
-            Self::Ping(_) | Self::Pong(_) | Self::Close { .. } => {
-                Err(serde_json::Error::custom("neither text nor binary").into())
-            }
+            Self::Ping(_) | Self::Pong(_) | Self::Close { .. } => Err(Error::decode(
+                serde_json::Error::custom("neither text nor binary"),
+            )),
         }
     }
 }

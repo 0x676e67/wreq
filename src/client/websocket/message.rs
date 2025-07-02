@@ -1,6 +1,8 @@
 use bytes::Bytes;
 use tokio_tungstenite::tungstenite as ts;
 
+use crate::Error;
+
 /// UTF-8 wrapper for [Bytes].
 ///
 /// An [Utf8Bytes] is always guaranteed to contain valid UTF-8.
@@ -355,7 +357,7 @@ impl Message {
         match self {
             Self::Text(string) => Ok(string),
             Self::Binary(data) | Self::Ping(data) | Self::Pong(data) => {
-                Utf8Bytes::try_from(data).map_err(Into::into)
+                Utf8Bytes::try_from(data).map_err(Error::decode)
             }
             Self::Close(None) => Ok(Utf8Bytes::default()),
             Self::Close(Some(frame)) => Ok(frame.reason),
@@ -368,7 +370,7 @@ impl Message {
         match *self {
             Self::Text(ref string) => Ok(string.as_str()),
             Self::Binary(ref data) | Self::Ping(ref data) | Self::Pong(ref data) => {
-                std::str::from_utf8(data).map_err(Into::into)
+                std::str::from_utf8(data).map_err(Error::decode)
             }
             Self::Close(None) => Ok(""),
             Self::Close(Some(ref frame)) => Ok(&frame.reason),

@@ -45,29 +45,20 @@ pub struct AlpnProtocol(&'static [u8]);
 
 impl AlpnProtocol {
     /// Prefer HTTP/1.1
-    pub const HTTP1: AlpnProtocol = {
-        const ENC_HTTP1: [u8; 9] = encode_alpns!(*b"http/1.1");
-        AlpnProtocol(&ENC_HTTP1)
-    };
+    pub const HTTP1: AlpnProtocol = AlpnProtocol(b"\x08http/1.1");
 
     /// Prefer HTTP/2
-    pub const HTTP2: AlpnProtocol = {
-        const ENC_HTTP2: [u8; 3] = encode_alpns!(*b"h2");
-        AlpnProtocol(&ENC_HTTP2)
-    };
+    pub const HTTP2: AlpnProtocol = AlpnProtocol(b"\x02h2");
 
     /// Prefer HTTP/3
-    pub const HTTP3: AlpnProtocol = {
-        const ENC_HTTP3: [u8; 3] = encode_alpns!(*b"h3");
-        AlpnProtocol(&ENC_HTTP3)
-    };
+    pub const HTTP3: AlpnProtocol = AlpnProtocol(b"\x02h3");
 
-    #[inline(always)]
+    #[inline]
     pub(crate) fn encode(self) -> Bytes {
-        Bytes::from_static(self.0)
+        encode_sequence(std::iter::once(&self))
     }
 
-    #[inline(always)]
+    #[inline]
     pub(crate) fn encode_sequence<'a, I>(items: I) -> Bytes
     where
         I: IntoIterator<Item = &'a AlpnProtocol>,
@@ -97,12 +88,12 @@ impl AlpsProtocol {
     /// Application Settings protocol for HTTP/3
     pub const HTTP3: AlpsProtocol = AlpsProtocol(b"h3");
 
-    #[inline(always)]
-    pub(crate) fn encode_sequence<'a, I>(alps: I) -> Bytes
+    #[inline]
+    pub(crate) fn encode_sequence<'a, I>(items: I) -> Bytes
     where
         I: IntoIterator<Item = &'a AlpsProtocol>,
     {
-        encode_sequence(alps)
+        encode_sequence(items)
     }
 }
 

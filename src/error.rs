@@ -45,6 +45,10 @@ impl Error {
         Error::new(Kind::Body, Some(e))
     }
 
+    pub(crate) fn tls<E: Into<BoxError>>(e: E) -> Error {
+        Error::new(Kind::Tls, Some(e))
+    }
+
     pub(crate) fn decode<E: Into<BoxError>>(e: E) -> Error {
         Error::new(Kind::Decode, Some(e))
     }
@@ -202,6 +206,11 @@ impl Error {
         matches!(self.inner.kind, Kind::Body)
     }
 
+    /// Returns true if the error is related to TLS
+    pub fn is_tls(&self) -> bool {
+        matches!(self.inner.kind, Kind::Tls)
+    }
+
     /// Returns true if the error is related to decoding the response's body
     pub fn is_decode(&self) -> bool {
         matches!(self.inner.kind, Kind::Decode)
@@ -268,6 +277,7 @@ impl fmt::Display for Error {
             Kind::Builder => f.write_str("builder error")?,
             Kind::Request => f.write_str("error sending request")?,
             Kind::Body => f.write_str("request or response body error")?,
+            Kind::Tls => f.write_str("tls error")?,
             Kind::Decode => f.write_str("error decoding response body")?,
             Kind::Redirect => f.write_str("error following redirect")?,
             Kind::Upgrade => f.write_str("error upgrading connection")?,
@@ -309,46 +319,6 @@ impl StdError for Error {
     }
 }
 
-#[cfg(feature = "websocket")]
-impl From<tokio_tungstenite::tungstenite::Error> for Error {
-    fn from(err: tokio_tungstenite::tungstenite::Error) -> Error {
-        Error::new(Kind::Upgrade, Some(err))
-    }
-}
-
-#[cfg(feature = "websocket")]
-impl From<std::str::Utf8Error> for Error {
-    fn from(err: std::str::Utf8Error) -> Error {
-        Error::new(Kind::Decode, Some(err))
-    }
-}
-
-impl From<http::header::InvalidHeaderValue> for Error {
-    fn from(err: http::header::InvalidHeaderValue) -> Error {
-        Error::new(Kind::Builder, Some(err))
-    }
-}
-
-#[cfg(feature = "json")]
-impl From<serde_json::Error> for Error {
-    fn from(err: serde_json::Error) -> Error {
-        Error::new(Kind::Decode, Some(err))
-    }
-}
-
-impl From<boring2::error::ErrorStack> for Error {
-    fn from(err: boring2::error::ErrorStack) -> Error {
-        Error::new(Kind::Builder, Some(format!("boring tls error: {err:?}")))
-    }
-}
-
-#[cfg(feature = "hickory-dns")]
-impl From<hickory_resolver::ResolveError> for Error {
-    fn from(err: hickory_resolver::ResolveError) -> Error {
-        Error::new(Kind::Builder, Some(err))
-    }
-}
-
 #[derive(Debug)]
 pub(crate) enum Kind {
     Builder,
@@ -356,6 +326,7 @@ pub(crate) enum Kind {
     Redirect,
     Status(StatusCode, Option<ReasonPhrase>),
     Body,
+    Tls,
     Decode,
     Upgrade,
 }

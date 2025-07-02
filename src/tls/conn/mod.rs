@@ -26,6 +26,7 @@ use tokio_boring2::SslStream;
 use tower_service::Service;
 
 use crate::{
+    Error,
     connect::HttpConnector,
     core::{
         client::connect::{Connected, Connection, TcpConnectOptions},
@@ -189,11 +190,13 @@ pub struct TlsConnector {
 
 impl HttpsConnector<HttpConnector> {
     /// Sets the ALPN protocol to be used for the connection.
+    #[inline]
     pub fn set_alpn_protocol(&mut self, alpn: Option<AlpnProtocol>) {
         self.inner.config.alpn_protos = alpn.map(|p| p.encode());
     }
 
     /// Sets the tcp connect options for the connector.
+    #[inline]
     pub fn set_tcp_connect_options(&mut self, options: Option<TcpConnectOptions>) {
         self.http.set_tcp_connect_options(options);
     }
@@ -341,7 +344,8 @@ impl TlsConnectorBuilder {
         cfg.max_tls_version = cfg.max_tls_version.or(self.max_version);
         cfg.min_tls_version = cfg.min_tls_version.or(self.min_version);
 
-        let mut connector = SslConnector::no_default_verify_builder(SslMethod::tls_client())?
+        let mut connector = SslConnector::no_default_verify_builder(SslMethod::tls_client())
+            .map_err(Error::tls)?
             .set_cert_store(self.cert_store.as_ref())?
             .set_cert_verification(self.cert_verification)?
             .add_certificate_compression_algorithms(cfg.certificate_compression_algorithms)?;
