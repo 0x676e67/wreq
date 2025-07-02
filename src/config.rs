@@ -1,8 +1,6 @@
 use std::time::Duration;
 
-use crate::{
-    client::middleware::decoder::AcceptEncoding, core::ext::RequestConfigValue, redirect::Policy,
-};
+use crate::{core::ext::RequestConfigValue, redirect::Policy};
 
 // ================================
 //
@@ -49,7 +47,7 @@ pub(crate) struct RequestAcceptEncoding;
     feature = "deflate",
 ))]
 impl RequestConfigValue for RequestAcceptEncoding {
-    type Value = AcceptEncoding;
+    type Value = crate::client::middleware::decoder::AcceptEncoding;
 }
 
 #[derive(Clone, Copy)]
