@@ -625,40 +625,6 @@ mod tests {
     use super::*;
     use crate::core::common::io::Compat;
 
-    // #[cfg(feature = "nightly")]
-    // use test::Bencher;
-
-    /*
-    impl<T: Read> MemRead for AsyncIo<T> {
-        fn read_mem(&mut self, len: usize) -> Poll<Bytes, io::Error> {
-            let mut v = vec![0; len];
-            let n = try_nb!(self.read(v.as_mut_slice()));
-            Ok(Async::Ready(BytesMut::from(&v[..n]).freeze()))
-        }
-    }
-    */
-
-    #[tokio::test]
-    #[ignore]
-    async fn iobuf_write_empty_slice() {
-        // TODO(eliza): can i have writev back pls T_T
-        // // First, let's just check that the Mock would normally return an
-        // // error on an unexpected write, even if the buffer is empty...
-        // let mut mock = Mock::new().build();
-        // std::future::poll_fn(|cx| {
-        //     Pin::new(&mut mock).poll_write_buf(cx, &mut Cursor::new(&[]))
-        // })
-        // .await
-        // .expect_err("should be a broken pipe");
-
-        // // underlying io will return the logic error upon write,
-        // // so we are testing that the io_buf does not trigger a write
-        // // when there is nothing to flush
-        // let mock = Mock::new().build();
-        // let mut io_buf = Buffered::<_, Cursor<Vec<u8>>>::new(mock);
-        // io_buf.flush().await.expect("should short-circuit flush");
-    }
-
     #[cfg(not(miri))]
     #[tokio::test]
     async fn parse_reads_until_blocked() {
