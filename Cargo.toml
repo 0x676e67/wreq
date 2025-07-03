@@ -168,6 +168,7 @@ tokio = { version = "1.0", default-features = false, features = [
     "macros",
     "rt-multi-thread",
 ] }
+futures = { version = "0.3.0", default-features = false, features = ["std"] }
 tower = { version = "0.5.2", default-features = false, features = ["limit"] }
 libc = "0.2"
 
