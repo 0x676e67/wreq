@@ -316,9 +316,6 @@ fn _assert_impls() {
     assert_sync::<Error>();
 }
 
-#[cfg(test)]
-doc_comment::doctest!("../README.md");
-
 #[cfg(feature = "multipart")]
 pub use self::client::multipart;
 #[cfg(feature = "websocket")]

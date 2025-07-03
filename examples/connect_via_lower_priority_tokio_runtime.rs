@@ -17,6 +17,9 @@
 
 #[tokio::main]
 async fn main() -> wreq::Result<()> {
+    tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::TRACE)
+        .init();
     background_threadpool::init_background_runtime();
     tokio::time::sleep(std::time::Duration::from_millis(10)).await;
 
@@ -83,7 +86,7 @@ mod background_threadpool {
                                 *libc::__errno_location() = 0;
                                 if libc::nice(10) == -1 && *libc::__errno_location() != 0 {
                                     let error = std::io::Error::last_os_error();
-                                    log::error!("failed to set threadpool niceness: {error}");
+                                    tracing::error!("failed to set threadpool niceness: {error}");
                                 }
                             }
                         }
@@ -92,7 +95,7 @@ mod background_threadpool {
                     .build()
                     .unwrap_or_else(|e| panic!("cpu heavy runtime failed_to_initialize: {e}"));
                 rt.block_on(async {
-                    log::debug!("starting background cpu-heavy work");
+                    tracing::debug!("starting background cpu-heavy work");
                     process_cpu_work().await;
                 });
             })
@@ -122,7 +125,7 @@ mod background_threadpool {
                 panic!("background cpu heavy runtime channel is closed")
             }
             Err(TrySendError::Full(msg)) => {
-                log::warn!(
+                tracing::warn!(
                     "background cpu heavy runtime channel is full, task spawning loop delayed"
                 );
                 let tx = tx.clone();
