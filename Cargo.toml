@@ -60,9 +60,6 @@ webpki-roots = ["dep:webpki-root-certs"]
 # Use the system's proxy configuration.
 system-proxy = ["dep:system-configuration", "dep:windows-registry"]
 
-# Deprecated, switch to system-proxy.
-macos-system-configuration = ["system-proxy"]
-
 # Optional enable tracing
 tracing = ["http2/tracing", "dep:tracing"]
 
