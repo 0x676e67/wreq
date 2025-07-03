@@ -7,7 +7,7 @@ use std::{
 
 use bytes::Bytes;
 use futures_channel::{mpsc, oneshot};
-use futures_core::{Stream, stream::FusedStream};
+use futures_util::{Stream, stream::FusedStream};
 use http::HeaderMap;
 use http_body::{Body, Frame, SizeHint};
 

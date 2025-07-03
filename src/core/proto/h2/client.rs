@@ -13,7 +13,10 @@ use futures_channel::{
     mpsc::{Receiver, Sender},
     oneshot,
 };
-use futures_core::{FusedFuture, FusedStream, Stream};
+use futures_util::{
+    future::FusedFuture,
+    stream::{FusedStream, Stream},
+};
 use http::{Method, Request, Response, StatusCode};
 use http_body::Body;
 use http2::{

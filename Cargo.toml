@@ -84,7 +84,7 @@ tokio = { version = "1", default-features = false, features = ["net","time","rt"
 atomic-waker = "1.1.2"
 futures-channel = "0.3.31"
 futures-util = { version = "0.3.31", default-features = false }
-http2 = { version = "0.5.3", features = ["unstable"]}
+http2 = { version = "0.5.4", features = ["unstable"]}
 http-body-util = "0.1"
 httparse = "1.9"
 pin-project-lite = "0.2.4"

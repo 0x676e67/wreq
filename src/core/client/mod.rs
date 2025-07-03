@@ -40,7 +40,7 @@ use crate::{
             conn::TrySendError as ConnTrySendError,
             connect::{Alpn, Connect, Connected, Connection, TcpConnectOptions},
         },
-        common::{Exec, Lazy, lazy as hyper_lazy, timer},
+        common::{Exec, Lazy, lazy, timer},
         error::BoxError,
         ext::{
             RequestConfig, RequestHttpVersionPref, RequestProxyMatcher, RequestTcpConnectOptions,
@@ -589,7 +589,7 @@ where
         };
         let is_ver_h2 = ver == Ver::Http2;
         let connector = self.connector.clone();
-        hyper_lazy(move || {
+        lazy(move || {
             // Try to take a "connecting lock".
             //
             // If the pool_key is for HTTP/2, and there is already a
@@ -599,8 +599,7 @@ where
                 Some(lock) => lock,
                 None => {
                     let canceled = e!(Canceled);
-                    // TODO
-                    //crate::Error::new_canceled().with("HTTP/2 connection in progress");
+                    // HTTP/2 connection in progress.
                     return Either::Right(future::err(canceled));
                 }
             };
@@ -1094,7 +1093,6 @@ fn is_schema_secure(uri: &Uri) -> bool {
 /// # }
 /// # fn main() {}
 /// ```
-#[cfg_attr(docsrs, doc(cfg(any(feature = "http1", feature = "http2"))))]
 #[derive(Clone)]
 pub struct Builder {
     client_config: Config,
