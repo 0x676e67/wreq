@@ -69,7 +69,6 @@ url = "2.5"
 serde = { version = "1.0", features = ["derive"] }
 serde_urlencoded = "0.7.1"
 tower = { version = "0.5.2", default-features = false, features = ["timeout", "util", "retry"] }
-tower-http = { version = "0.6.6", default-features = false, optional = true }
 tower-service = "0.3"
 sync_wrapper = { version = "1.0", features = ["futures"] }
 
@@ -85,7 +84,6 @@ http-body-util = "0.1"
 httparse = "1.9"
 pin-project-lite = "0.2.4"
 smallvec = { version = "1.12", features = ["const_generics", "const_new"] }
-tracing = { version = "0.1", default-features = false, features = ["std"], optional = true }
 want = "0.3"
 socket2 = { version = "0.5.10", features = ["all"] }
 percent-encoding = "2.3"
@@ -119,6 +117,9 @@ webpki-root-certs = { version = "1.0.0", optional = true }
 cookie_crate = { version = "0.18", package = "cookie", optional = true }
 cookie_store = { version = "0.21", features = ["preserve_order"], optional = true }
 
+## tower http
+tower-http = { version = "0.6.6", default-features = false, optional = true }
+
 ## tokio util
 tokio-util = { version = "0.7.15", default-features = false, features = ["codec","io"], optional = true }
 
@@ -131,6 +132,9 @@ tokio-tungstenite = { version = "0.27.0", default-features = false, features = [
 ## hickory-dns
 hickory-resolver = { version = "0.25.2", optional = true }
 
+## tracing
+tracing = { version = "0.1", default-features = false, features = ["std"], optional = true }
+
 ## windows system proxy
 [target.'cfg(windows)'.dependencies]
 windows-registry = { version = "0.5.2", optional = true }
@@ -139,7 +143,7 @@ windows-registry = { version = "0.5.2", optional = true }
 [target.'cfg(target_os = "macos")'.dependencies]
 system-configuration = { version = "0.6.1", optional = true }
 
-## Interface binding
+## interface binding
 [target.'cfg(any(target_os = "ios", target_os = "visionos", target_os = "macos", target_os = "tvos", target_os = "watchos", target = "illumos", target = "solaris"))'.dependencies]
 libc = "0.2.173"
 
