@@ -78,7 +78,6 @@ bytes = "1.2"
 http = "1"
 http-body = "1"
 tokio = { version = "1", default-features = false, features = ["net","time","rt"] }
-atomic-waker = "1.1.2"
 futures-channel = "0.3.31"
 futures-util = { version = "0.3.31", default-features = false }
 http2 = { version = "0.5.4", features = ["unstable"]}

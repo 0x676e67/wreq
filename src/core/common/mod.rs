@@ -1,5 +1,4 @@
 pub(crate) mod buf;
-pub(crate) mod either;
 pub(crate) mod io;
 pub(crate) mod task;
 pub(crate) mod time;

@@ -12,7 +12,7 @@ use std::{
     task,
 };
 
-use atomic_waker::AtomicWaker;
+use futures_util::task::AtomicWaker;
 
 type Value = usize;
 

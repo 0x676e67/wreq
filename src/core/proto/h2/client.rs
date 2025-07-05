@@ -14,7 +14,7 @@ use futures_channel::{
     oneshot,
 };
 use futures_util::{
-    future::FusedFuture,
+    future::{Either, FusedFuture},
     stream::{FusedStream, Stream},
 };
 use http::{Method, Request, Response, StatusCode};
@@ -33,7 +33,7 @@ use super::{
 use crate::core::{
     body::Incoming as IncomingBody,
     client::dispatch::{self, Callback, SendWhen, TrySendError},
-    common::{either::Either, io::Compat, time::Time},
+    common::{io::Compat, time::Time},
     error::BoxError,
     ext::{Protocol, RequestConfig, RequestOriginalHeaders},
     proto::{Dispatched, h2::UpgradedSendStream, headers},
@@ -225,9 +225,9 @@ where
         let (recorder, ponger) = ping::channel(pp, ping_config, timer);
 
         let conn: Conn<_, B> = Conn::new(ponger, conn);
-        (Either::left(conn), recorder)
+        (Either::Left(conn), recorder)
     } else {
-        (Either::right(conn), ping::disabled())
+        (Either::Right(conn), ping::disabled())
     };
     let conn: ConnMapErr<T, B> = ConnMapErr {
         conn,
