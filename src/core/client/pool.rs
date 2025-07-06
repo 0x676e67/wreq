@@ -13,6 +13,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use ahash::RandomState;
 use schnellru::{ByLength, LruMap};
 use tokio::sync::oneshot;
 
@@ -63,7 +64,6 @@ pub enum Ver {
 /// Specifically, HTTP/1 requires a unique reservation, but HTTP/2 can be
 /// used for multiple requests.
 // FIXME: allow() required due to `impl Trait` leaking types to this lint
-#[allow(missing_debug_implementations)]
 pub enum Reservation<T> {
     /// This connection could be used multiple times, the first one will be
     /// reinserted into the `idle` pool, and the second will be given to
@@ -80,10 +80,10 @@ struct PoolInner<T, K: Eq + Hash> {
     // A flag that a connection is being established, and the connection
     // should be shared. This prevents making multiple HTTP/2 connections
     // to the same host.
-    connecting: HashSet<K>,
+    connecting: HashSet<K, RandomState>,
     // These are internal Conns sitting in the event loop in the KeepAlive
     // state, waiting to receive a new Request to send on the socket.
-    idle: LruMap<K, Vec<Idle<T>>>,
+    idle: LruMap<K, Vec<Idle<T>>, ByLength, RandomState>,
     max_idle_per_host: usize,
     // These are outstanding Checkouts that are waiting for a socket to be
     // able to send a Request one. This is used when "racing" for a new
@@ -94,7 +94,7 @@ struct PoolInner<T, K: Eq + Hash> {
     // this list is checked for any parked Checkouts, and tries to notify
     // them that the Conn could be used instead of waiting for a brand new
     // connection.
-    waiters: HashMap<K, VecDeque<oneshot::Sender<T>>>,
+    waiters: HashMap<K, VecDeque<oneshot::Sender<T>>, RandomState>,
     // A oneshot channel is used to allow the interval to be notified when
     // the Pool completely drops. That way, the interval can cancel immediately.
     idle_interval_ref: Option<oneshot::Sender<Infallible>>,
@@ -128,25 +128,17 @@ impl<T, K: Key> Pool<T, K> {
     {
         let exec = Exec::new(executor);
         let timer = timer.map(Timer::new);
-        let idle = {
-            // Copy from `ahash` constructor, so that the seed is always the same.
-            let seed = [
-                0x243f_6a88_85a3_08d3,
-                0x1319_8a2e_0370_7344,
-                0xa409_3822_299f_31d0,
-                0x082e_fa98_ec4e_6c89,
-            ];
-            let pool_size = config.max_pool_size.map(|v| v.get()).unwrap_or(u32::MAX);
-            LruMap::with_seed(ByLength::new(pool_size), seed)
-        };
 
         let inner = if config.is_enabled() {
             Some(Arc::new(Mutex::new(PoolInner {
-                connecting: HashSet::new(),
-                idle,
+                connecting: HashSet::with_hasher(RandomState::new()),
+                idle: LruMap::with_hasher(
+                    ByLength::new(config.max_pool_size.map_or(u32::MAX, NonZero::get)),
+                    RandomState::new(),
+                ),
                 idle_interval_ref: None,
                 max_idle_per_host: config.max_idle_per_host,
-                waiters: HashMap::new(),
+                waiters: HashMap::with_hasher(RandomState::new()),
                 exec,
                 timer,
                 timeout: config.idle_timeout,
@@ -154,6 +146,7 @@ impl<T, K: Key> Pool<T, K> {
         } else {
             None
         };
+
         Pool { inner }
     }
 
