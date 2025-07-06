@@ -19,7 +19,11 @@ use tokio::sync::oneshot;
 
 use crate::{
     core::{
-        common::{exec, exec::Exec, timer::Timer},
+        common::{
+            exec::{self, Exec},
+            timer::Timer,
+        },
+        map::RANDOM_STATE,
         rt::{Sleep, Timer as _},
     },
     sync::Mutex,
@@ -126,13 +130,6 @@ impl<T, K: Key> Pool<T, K> {
         E: crate::core::rt::Executor<exec::BoxSendFuture> + Send + Sync + Clone + 'static,
         M: crate::core::rt::Timer + Send + Sync + Clone + 'static,
     {
-        const RANDOM_STATE: RandomState = RandomState::with_seeds(
-            0x243f_6a88_85a3_08d3,
-            0x1319_8a2e_0370_7344,
-            0xa409_3822_299f_31d0,
-            0x082e_fa98_ec4e_6c89,
-        );
-
         let inner = if config.is_enabled() {
             Some(Arc::new(Mutex::new(PoolInner {
                 connecting: HashSet::with_hasher(RANDOM_STATE),

@@ -1,16 +1,16 @@
 use std::{
     borrow::Borrow,
-    collections::hash_map::{Entry, HashMap},
+    collections::hash_map::Entry,
     hash::{Hash, Hasher},
 };
 
 use boring2::ssl::{SslSession, SslSessionRef, SslVersion};
-use linked_hash_set::LinkedHashSet;
+use schnellru::ByLength;
 
-use crate::core::client::ConnKey;
+use crate::core::map::{HashMap, LruMap, RANDOM_STATE};
 
 #[derive(Hash, PartialEq, Eq, Clone)]
-pub struct SessionKey(pub ConnKey);
+pub struct SessionKey<T>(pub T);
 
 #[derive(Clone)]
 struct HashSession(SslSession);
@@ -38,42 +38,50 @@ impl Borrow<[u8]> for HashSession {
     }
 }
 
-pub struct SessionCache {
-    sessions: HashMap<SessionKey, LinkedHashSet<HashSession>>,
-    reverse: HashMap<HashSession, SessionKey>,
-    /// Maximum capacity of LinkedHashSet per SessionKey
-    per_key_session_capacity: usize,
+pub struct SessionCache<T> {
+    sessions: HashMap<SessionKey<T>, LruMap<HashSession, ()>>,
+    reverse: HashMap<HashSession, SessionKey<T>>,
+    per_host_session_capacity: usize,
 }
 
-impl SessionCache {
-    pub fn with_capacity(per_key_session_capacity: usize) -> SessionCache {
+impl<T> SessionCache<T>
+where
+    T: Hash + Eq + Clone,
+{
+    pub fn with_capacity(per_host_session_capacity: usize) -> SessionCache<T> {
         SessionCache {
-            sessions: HashMap::new(),
-            reverse: HashMap::new(),
-            per_key_session_capacity,
+            sessions: HashMap::with_hasher(RANDOM_STATE),
+            reverse: HashMap::with_hasher(RANDOM_STATE),
+            per_host_session_capacity,
         }
     }
 
-    pub fn insert(&mut self, key: SessionKey, session: SslSession) {
-        let session = HashSession(session);
+    pub fn insert(&mut self, key: SessionKey<T>, session: SslSession) {
+        let per_host_sessions = self.sessions.entry(key.clone()).or_insert_with(|| {
+            LruMap::with_hasher(
+                ByLength::new(self.per_host_session_capacity as _),
+                RANDOM_STATE,
+            )
+        });
 
-        let sessions = self.sessions.entry(key.clone()).or_default();
-
-        // if sessions exceed capacity, discard oldest
-        if sessions.len() >= self.per_key_session_capacity {
-            if let Some(hash) = sessions.pop_front() {
-                self.reverse.remove(&hash);
+        // Enforce per-key capacity limit by evicting the least recently used session
+        if per_host_sessions.len() >= self.per_host_session_capacity {
+            if let Some((evicted_session, _)) = per_host_sessions.pop_oldest() {
+                // Remove from reverse lookup to maintain consistency
+                self.reverse.remove(&evicted_session);
             }
         }
 
-        sessions.insert(session.clone());
+        let session = HashSession(session);
+        per_host_sessions.insert(session.clone(), ());
         self.reverse.insert(session, key);
     }
 
-    pub fn get(&mut self, key: &SessionKey) -> Option<SslSession> {
+    pub fn get(&mut self, key: &SessionKey<T>) -> Option<SslSession> {
         let session = {
-            let sessions = self.sessions.get_mut(key)?;
-            sessions.front().cloned()?.0
+            let entry = self.sessions.get_mut(key)?;
+            let hash_session = entry.iter().next()?.0.clone(); // get oldest (LRU)
+            hash_session.0.clone()
         };
 
         // https://tools.ietf.org/html/rfc8446#appendix-C.4
@@ -93,7 +101,7 @@ impl SessionCache {
         };
 
         if let Entry::Occupied(mut sessions) = self.sessions.entry(key) {
-            sessions.get_mut().remove(session.id());
+            sessions.get_mut().remove(&HashSession(session.to_owned()));
             if sessions.get().is_empty() {
                 sessions.remove();
             }

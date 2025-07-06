@@ -29,7 +29,7 @@ use crate::{
     Error,
     core::{
         client::{
-            ConnRequest,
+            ConnKey, ConnRequest,
             connect::{Connected, Connection},
         },
         rt::{Read, ReadBufCursor, TokioIo, Write},
@@ -42,8 +42,8 @@ use crate::{
     },
 };
 
-fn key_index() -> Result<Index<Ssl, SessionKey>, ErrorStack> {
-    static IDX: LazyLock<Result<Index<Ssl, SessionKey>, ErrorStack>> =
+fn key_index() -> Result<Index<Ssl, SessionKey<ConnKey>>, ErrorStack> {
+    static IDX: LazyLock<Result<Index<Ssl, SessionKey<ConnKey>>, ErrorStack>> =
         LazyLock::new(Ssl::new_ex_index);
     IDX.clone()
 }
@@ -147,14 +147,14 @@ pub struct HttpsConnector<T> {
 #[derive(Clone)]
 struct Inner {
     ssl: SslConnector,
-    cache: Option<Arc<Mutex<SessionCache>>>,
+    cache: Option<Arc<Mutex<SessionCache<ConnKey>>>>,
     config: HandshakeConfig,
 }
 
 /// A builder for creating a `TlsConnector`.
 #[derive(Clone)]
 pub struct TlsConnectorBuilder {
-    session_cache: Arc<Mutex<SessionCache>>,
+    session_cache: Arc<Mutex<SessionCache<ConnKey>>>,
     keylog: Option<KeyLogPolicy>,
     max_version: Option<TlsVersion>,
     min_version: Option<TlsVersion>,
