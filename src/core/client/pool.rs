@@ -126,8 +126,6 @@ impl<T, K: Key> Pool<T, K> {
         E: crate::core::rt::Executor<exec::BoxSendFuture> + Send + Sync + Clone + 'static,
         M: crate::core::rt::Timer + Send + Sync + Clone + 'static,
     {
-        let exec = Exec::new(executor);
-        let timer = timer.map(Timer::new);
         const RANDOM_STATE: RandomState = RandomState::with_seeds(
             0x243f_6a88_85a3_08d3,
             0x1319_8a2e_0370_7344,
@@ -145,8 +143,8 @@ impl<T, K: Key> Pool<T, K> {
                 idle_interval_ref: None,
                 max_idle_per_host: config.max_idle_per_host,
                 waiters: HashMap::with_hasher(RANDOM_STATE),
-                exec,
-                timer,
+                exec: Exec::new(executor),
+                timer: timer.map(Timer::new),
                 timeout: config.idle_timeout,
             })))
         } else {
