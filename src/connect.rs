@@ -373,14 +373,11 @@ impl ConnectorService {
         req: &mut ConnRequest,
     ) -> Result<HttpsConnector<HttpConnector>, BoxError> {
         let ex_data = req.ex_data();
-        let tls = ex_data
-            .tls_config()
-            .cloned()
-            .map(|cfg| self.tls_builder.build(cfg))
-            .transpose()?
-            .unwrap_or_else(|| self.tls.clone());
-
         http.set_tcp_connect_options(ex_data.tcp_connect_options().cloned());
+        let tls = match ex_data.tls_config() {
+            Some(cfg) => self.tls_builder.build(cfg.clone())?,
+            None => self.tls.clone(),
+        };
         Ok(HttpsConnector::with_connector(http, tls))
     }
 
