@@ -7,7 +7,7 @@ mod header;
 use std::fmt;
 
 pub(crate) use config::{
-    RequestConfig, RequestConfigValue, RequestHttpVersionPref, RequestOriginalHeaders,
+    RequestConfig, RequestConfigValue, RequestEnforcedHttpVersion, RequestOriginalHeaders,
     RequestProxyMatcher, RequestTcpConnectOptions, RequestTransportConfig,
 };
 pub(crate) use h1_reason_phrase::ReasonPhrase;

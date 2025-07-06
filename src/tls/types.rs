@@ -1,21 +1,22 @@
+use boring2::ssl;
 use bytes::{Bytes, BytesMut};
 
 /// A TLS protocol version.
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
-pub struct TlsVersion(pub(super) boring2::ssl::SslVersion);
+pub struct TlsVersion(pub(super) ssl::SslVersion);
 
 impl TlsVersion {
     /// Version 1.0 of the TLS protocol.
-    pub const TLS_1_0: TlsVersion = TlsVersion(boring2::ssl::SslVersion::TLS1);
+    pub const TLS_1_0: TlsVersion = TlsVersion(ssl::SslVersion::TLS1);
 
     /// Version 1.1 of the TLS protocol.
-    pub const TLS_1_1: TlsVersion = TlsVersion(boring2::ssl::SslVersion::TLS1_1);
+    pub const TLS_1_1: TlsVersion = TlsVersion(ssl::SslVersion::TLS1_1);
 
     /// Version 1.2 of the TLS protocol.
-    pub const TLS_1_2: TlsVersion = TlsVersion(boring2::ssl::SslVersion::TLS1_2);
+    pub const TLS_1_2: TlsVersion = TlsVersion(ssl::SslVersion::TLS1_2);
 
     /// Version 1.3 of the TLS protocol.
-    pub const TLS_1_3: TlsVersion = TlsVersion(boring2::ssl::SslVersion::TLS1_3);
+    pub const TLS_1_3: TlsVersion = TlsVersion(ssl::SslVersion::TLS1_3);
 }
 
 /// A TLS ALPN protocol.
@@ -42,14 +43,11 @@ impl AlpnProtocol {
     where
         I: IntoIterator<Item = &'a AlpnProtocol>,
     {
-        encode_sequence(items)
-    }
-}
-
-impl AsRef<[u8]> for AlpnProtocol {
-    #[inline(always)]
-    fn as_ref(&self) -> &[u8] {
-        self.0
+        let mut buf = BytesMut::new();
+        for item in items {
+            buf.extend_from_slice(item.0);
+        }
+        buf.freeze()
     }
 }
 
@@ -72,170 +70,142 @@ impl AlpsProtocol {
     where
         I: IntoIterator<Item = &'a AlpsProtocol>,
     {
-        encode_sequence(items)
-    }
-}
-
-impl AsRef<[u8]> for AlpsProtocol {
-    #[inline(always)]
-    fn as_ref(&self) -> &[u8] {
-        self.0
+        let mut buf = BytesMut::new();
+        for item in items {
+            buf.extend_from_slice(item.0);
+        }
+        buf.freeze()
     }
 }
 
 /// IANA assigned identifier of compression algorithm.
 /// See <https://www.rfc-editor.org/rfc/rfc8879.html#name-compression-algorithms>
 #[derive(Debug, Copy, Clone, Hash, PartialEq, Eq)]
-pub struct CertificateCompressionAlgorithm(boring2::ssl::CertificateCompressionAlgorithm);
+pub struct CertificateCompressionAlgorithm(ssl::CertificateCompressionAlgorithm);
 
 impl CertificateCompressionAlgorithm {
     /// Zlib compression algorithm.
     pub const ZLIB: CertificateCompressionAlgorithm =
-        CertificateCompressionAlgorithm(boring2::ssl::CertificateCompressionAlgorithm::ZLIB);
+        CertificateCompressionAlgorithm(ssl::CertificateCompressionAlgorithm::ZLIB);
 
     /// Brotli compression algorithm.
     pub const BROTLI: CertificateCompressionAlgorithm =
-        CertificateCompressionAlgorithm(boring2::ssl::CertificateCompressionAlgorithm::BROTLI);
+        CertificateCompressionAlgorithm(ssl::CertificateCompressionAlgorithm::BROTLI);
 
     /// Zstd compression algorithm.
     pub const ZSTD: CertificateCompressionAlgorithm =
-        CertificateCompressionAlgorithm(boring2::ssl::CertificateCompressionAlgorithm::ZSTD);
+        CertificateCompressionAlgorithm(ssl::CertificateCompressionAlgorithm::ZSTD);
 }
 
 /// A TLS extension type.
 #[derive(Debug, Copy, Clone, Hash, PartialEq, Eq)]
-pub struct ExtensionType(pub(super) boring2::ssl::ExtensionType);
+pub struct ExtensionType(pub(super) ssl::ExtensionType);
 
 impl ExtensionType {
     /// Server Name Indication extension.
-    pub const SERVER_NAME: ExtensionType = ExtensionType(boring2::ssl::ExtensionType::SERVER_NAME);
+    pub const SERVER_NAME: ExtensionType = ExtensionType(ssl::ExtensionType::SERVER_NAME);
 
     /// Certificate Status Request extension.
-    pub const STATUS_REQUEST: ExtensionType =
-        ExtensionType(boring2::ssl::ExtensionType::STATUS_REQUEST);
+    pub const STATUS_REQUEST: ExtensionType = ExtensionType(ssl::ExtensionType::STATUS_REQUEST);
 
     /// EC Point Formats extension.
-    pub const EC_POINT_FORMATS: ExtensionType =
-        ExtensionType(boring2::ssl::ExtensionType::EC_POINT_FORMATS);
+    pub const EC_POINT_FORMATS: ExtensionType = ExtensionType(ssl::ExtensionType::EC_POINT_FORMATS);
 
     /// Signature Algorithms extension.
     pub const SIGNATURE_ALGORITHMS: ExtensionType =
-        ExtensionType(boring2::ssl::ExtensionType::SIGNATURE_ALGORITHMS);
+        ExtensionType(ssl::ExtensionType::SIGNATURE_ALGORITHMS);
 
     /// SRTP extension.
-    pub const SRTP: ExtensionType = ExtensionType(boring2::ssl::ExtensionType::SRTP);
+    pub const SRTP: ExtensionType = ExtensionType(ssl::ExtensionType::SRTP);
 
     /// Application Layer Protocol Negotiation extension.
     pub const APPLICATION_LAYER_PROTOCOL_NEGOTIATION: ExtensionType =
-        ExtensionType(boring2::ssl::ExtensionType::APPLICATION_LAYER_PROTOCOL_NEGOTIATION);
+        ExtensionType(ssl::ExtensionType::APPLICATION_LAYER_PROTOCOL_NEGOTIATION);
 
     /// Padding extension.
-    pub const PADDING: ExtensionType = ExtensionType(boring2::ssl::ExtensionType::PADDING);
+    pub const PADDING: ExtensionType = ExtensionType(ssl::ExtensionType::PADDING);
 
     /// Extended Master Secret extension.
     pub const EXTENDED_MASTER_SECRET: ExtensionType =
-        ExtensionType(boring2::ssl::ExtensionType::EXTENDED_MASTER_SECRET);
+        ExtensionType(ssl::ExtensionType::EXTENDED_MASTER_SECRET);
 
     /// QUIC Transport Parameters (legacy) extension.
     pub const QUIC_TRANSPORT_PARAMETERS_LEGACY: ExtensionType =
-        ExtensionType(boring2::ssl::ExtensionType::QUIC_TRANSPORT_PARAMETERS_LEGACY);
+        ExtensionType(ssl::ExtensionType::QUIC_TRANSPORT_PARAMETERS_LEGACY);
 
     /// QUIC Transport Parameters (standard) extension.
     pub const QUIC_TRANSPORT_PARAMETERS_STANDARD: ExtensionType =
-        ExtensionType(boring2::ssl::ExtensionType::QUIC_TRANSPORT_PARAMETERS_STANDARD);
+        ExtensionType(ssl::ExtensionType::QUIC_TRANSPORT_PARAMETERS_STANDARD);
 
     /// Certificate Compression extension.
-    pub const CERT_COMPRESSION: ExtensionType =
-        ExtensionType(boring2::ssl::ExtensionType::CERT_COMPRESSION);
+    pub const CERT_COMPRESSION: ExtensionType = ExtensionType(ssl::ExtensionType::CERT_COMPRESSION);
 
     /// Session Ticket extension.
-    pub const SESSION_TICKET: ExtensionType =
-        ExtensionType(boring2::ssl::ExtensionType::SESSION_TICKET);
+    pub const SESSION_TICKET: ExtensionType = ExtensionType(ssl::ExtensionType::SESSION_TICKET);
 
     /// Supported Groups extension.
-    pub const SUPPORTED_GROUPS: ExtensionType =
-        ExtensionType(boring2::ssl::ExtensionType::SUPPORTED_GROUPS);
+    pub const SUPPORTED_GROUPS: ExtensionType = ExtensionType(ssl::ExtensionType::SUPPORTED_GROUPS);
 
     /// Pre-Shared Key extension.
-    pub const PRE_SHARED_KEY: ExtensionType =
-        ExtensionType(boring2::ssl::ExtensionType::PRE_SHARED_KEY);
+    pub const PRE_SHARED_KEY: ExtensionType = ExtensionType(ssl::ExtensionType::PRE_SHARED_KEY);
 
     /// Early Data extension.
-    pub const EARLY_DATA: ExtensionType = ExtensionType(boring2::ssl::ExtensionType::EARLY_DATA);
+    pub const EARLY_DATA: ExtensionType = ExtensionType(ssl::ExtensionType::EARLY_DATA);
 
     /// Supported Versions extension.
     pub const SUPPORTED_VERSIONS: ExtensionType =
-        ExtensionType(boring2::ssl::ExtensionType::SUPPORTED_VERSIONS);
+        ExtensionType(ssl::ExtensionType::SUPPORTED_VERSIONS);
 
     /// Cookie extension.
-    pub const COOKIE: ExtensionType = ExtensionType(boring2::ssl::ExtensionType::COOKIE);
+    pub const COOKIE: ExtensionType = ExtensionType(ssl::ExtensionType::COOKIE);
 
     /// PSK Key Exchange Modes extension.
     pub const PSK_KEY_EXCHANGE_MODES: ExtensionType =
-        ExtensionType(boring2::ssl::ExtensionType::PSK_KEY_EXCHANGE_MODES);
+        ExtensionType(ssl::ExtensionType::PSK_KEY_EXCHANGE_MODES);
 
     /// Certificate Authorities extension.
     pub const CERTIFICATE_AUTHORITIES: ExtensionType =
-        ExtensionType(boring2::ssl::ExtensionType::CERTIFICATE_AUTHORITIES);
+        ExtensionType(ssl::ExtensionType::CERTIFICATE_AUTHORITIES);
 
     /// Signature Algorithms Certificate extension.
     pub const SIGNATURE_ALGORITHMS_CERT: ExtensionType =
-        ExtensionType(boring2::ssl::ExtensionType::SIGNATURE_ALGORITHMS_CERT);
+        ExtensionType(ssl::ExtensionType::SIGNATURE_ALGORITHMS_CERT);
 
     /// Key Share extension.
-    pub const KEY_SHARE: ExtensionType = ExtensionType(boring2::ssl::ExtensionType::KEY_SHARE);
+    pub const KEY_SHARE: ExtensionType = ExtensionType(ssl::ExtensionType::KEY_SHARE);
 
     /// Renegotiation extension.
-    pub const RENEGOTIATE: ExtensionType = ExtensionType(boring2::ssl::ExtensionType::RENEGOTIATE);
+    pub const RENEGOTIATE: ExtensionType = ExtensionType(ssl::ExtensionType::RENEGOTIATE);
 
     /// Delegated Credential extension.
     pub const DELEGATED_CREDENTIAL: ExtensionType =
-        ExtensionType(boring2::ssl::ExtensionType::DELEGATED_CREDENTIAL);
+        ExtensionType(ssl::ExtensionType::DELEGATED_CREDENTIAL);
 
     /// Application Settings extension.
     pub const APPLICATION_SETTINGS: ExtensionType =
-        ExtensionType(boring2::ssl::ExtensionType::APPLICATION_SETTINGS);
+        ExtensionType(ssl::ExtensionType::APPLICATION_SETTINGS);
 
     /// Application Settings New extension.
     pub const APPLICATION_SETTINGS_NEW: ExtensionType =
-        ExtensionType(boring2::ssl::ExtensionType::APPLICATION_SETTINGS_NEW);
+        ExtensionType(ssl::ExtensionType::APPLICATION_SETTINGS_NEW);
 
     /// Encrypted Client Hello extension.
     pub const ENCRYPTED_CLIENT_HELLO: ExtensionType =
-        ExtensionType(boring2::ssl::ExtensionType::ENCRYPTED_CLIENT_HELLO);
+        ExtensionType(ssl::ExtensionType::ENCRYPTED_CLIENT_HELLO);
 
     /// Certificate Timestamp extension.
     pub const CERTIFICATE_TIMESTAMP: ExtensionType =
-        ExtensionType(boring2::ssl::ExtensionType::CERTIFICATE_TIMESTAMP);
+        ExtensionType(ssl::ExtensionType::CERTIFICATE_TIMESTAMP);
 
     /// Next Protocol Negotiation extension.
-    pub const NEXT_PROTO_NEG: ExtensionType =
-        ExtensionType(boring2::ssl::ExtensionType::NEXT_PROTO_NEG);
+    pub const NEXT_PROTO_NEG: ExtensionType = ExtensionType(ssl::ExtensionType::NEXT_PROTO_NEG);
 
     /// Channel ID extension.
-    pub const CHANNEL_ID: ExtensionType = ExtensionType(boring2::ssl::ExtensionType::CHANNEL_ID);
+    pub const CHANNEL_ID: ExtensionType = ExtensionType(ssl::ExtensionType::CHANNEL_ID);
 
     /// Record Size Limit extension.
     pub const RECORD_SIZE_LIMIT: ExtensionType =
-        ExtensionType(boring2::ssl::ExtensionType::RECORD_SIZE_LIMIT);
-}
-
-impl From<u16> for ExtensionType {
-    fn from(value: u16) -> Self {
-        ExtensionType(boring2::ssl::ExtensionType::from(value))
-    }
-}
-
-fn encode_sequence<'a, T, I>(items: I) -> Bytes
-where
-    T: AsRef<[u8]> + 'a,
-    I: IntoIterator<Item = &'a T>,
-{
-    let mut buf = BytesMut::new();
-    for item in items {
-        buf.extend_from_slice(item.as_ref());
-    }
-    buf.freeze()
+        ExtensionType(ssl::ExtensionType::RECORD_SIZE_LIMIT);
 }
 
 #[cfg(test)]

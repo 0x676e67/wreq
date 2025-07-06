@@ -42,8 +42,8 @@ use crate::{
         common::{Exec, Lazy, lazy, timer},
         error::BoxError,
         ext::{
-            RequestConfig, RequestHttpVersionPref, RequestProxyMatcher, RequestTcpConnectOptions,
-            RequestTransportConfig,
+            RequestConfig, RequestEnforcedHttpVersion, RequestProxyMatcher,
+            RequestTcpConnectOptions, RequestTransportConfig,
         },
         rt::{Executor, Timer},
     },
@@ -1041,7 +1041,7 @@ fn extract_request_configs(
     Option<TcpConnectOptions>,
 ) {
     let transport_config = RequestConfig::<RequestTransportConfig>::remove(extensions);
-    let version = RequestConfig::<RequestHttpVersionPref>::remove(extensions);
+    let version = RequestConfig::<RequestEnforcedHttpVersion>::remove(extensions);
     let proxy = RequestConfig::<RequestProxyMatcher>::remove(extensions);
     let tcp = RequestConfig::<RequestTcpConnectOptions>::remove(extensions);
     (transport_config, version, proxy, tcp)

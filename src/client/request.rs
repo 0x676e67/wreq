@@ -31,7 +31,7 @@ use crate::{
     core::{
         client::{config::TransportConfig, connect::TcpConnectOptions},
         ext::{
-            RequestConfig, RequestHttpVersionPref, RequestOriginalHeaders, RequestProxyMatcher,
+            RequestConfig, RequestEnforcedHttpVersion, RequestOriginalHeaders, RequestProxyMatcher,
             RequestTcpConnectOptions, RequestTransportConfig,
         },
     },
@@ -134,13 +134,13 @@ impl Request {
     /// Get the http version.
     #[inline]
     pub fn version(&self) -> Option<&Version> {
-        RequestConfig::<RequestHttpVersionPref>::get(&self.extensions)
+        RequestConfig::<RequestEnforcedHttpVersion>::get(&self.extensions)
     }
 
     /// Get a mutable reference to the http version.
     #[inline(always)]
     pub fn version_mut(&mut self) -> &mut Option<Version> {
-        RequestConfig::<RequestHttpVersionPref>::get_mut(&mut self.extensions)
+        RequestConfig::<RequestEnforcedHttpVersion>::get_mut(&mut self.extensions)
     }
 
     /// Get a mutable reference to the timeout.

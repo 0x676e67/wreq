@@ -142,9 +142,9 @@ impl RequestConfigValue for RequestTransportConfig {
 }
 
 #[derive(Clone, Copy)]
-pub(crate) struct RequestHttpVersionPref;
+pub(crate) struct RequestEnforcedHttpVersion;
 
-impl RequestConfigValue for RequestHttpVersionPref {
+impl RequestConfigValue for RequestEnforcedHttpVersion {
     type Value = http::Version;
 }
 
