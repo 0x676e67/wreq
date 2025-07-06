@@ -24,7 +24,7 @@ pub use self::{
     x509::{CertStore, CertStoreBuilder, Certificate, CertificateInput, Identity},
 };
 
-/// Hyper extension carrying extra TLS layer information.
+/// Http extension carrying extra TLS layer information.
 /// Made available to clients on responses when `tls_info` is set.
 #[derive(Debug, Clone)]
 pub struct TlsInfo {

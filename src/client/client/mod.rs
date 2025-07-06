@@ -54,7 +54,7 @@ use crate::{
     IntoUrl, Method, OriginalHeaders, Proxy,
     connect::{BoxedConnectorLayer, BoxedConnectorService, Conn, Connector, Unnameable},
     core::{
-        client::{Builder, Client as HyperClient, connect::TcpConnectOptions},
+        client::{Builder, Client as NativeClient, connect::TcpConnectOptions},
         ext::RequestConfig,
         rt::{TokioExecutor, tokio::TokioTimer},
     },
@@ -192,7 +192,7 @@ impl ClientBuilder {
                 pool_idle_timeout: Some(Duration::from_secs(90)),
                 pool_max_idle_per_host: usize::MAX,
                 pool_max_size: None,
-                // TODO: Re-enable default duration once hyper's HttpConnector is fixed
+                // TODO: Re-enable default duration once core's HttpConnector is fixed
                 // to no longer error when an option fails.
                 tcp_keepalive: None,
                 tcp_keepalive_interval: None,
@@ -215,7 +215,7 @@ impl ClientBuilder {
                 dns_overrides: HashMap::new(),
                 dns_resolver: None,
                 http_version_pref: HttpVersionPref::All,
-                builder: HyperClient::builder(TokioExecutor::new()),
+                builder: NativeClient::builder(TokioExecutor::new()),
                 https_only: false,
                 http1_config: Http1Config::default(),
                 http2_config: Http2Config::default(),

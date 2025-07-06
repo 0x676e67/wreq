@@ -10,7 +10,7 @@ use std::{
 
 use tower_service::Service;
 
-use crate::{core::client::connect::dns::Name as HyperName, error::BoxError};
+use crate::{core::client::connect::dns::Name as NativeName, error::BoxError};
 
 /// Alias for an `Iterator` trait object over `SocketAddr`.
 pub type Addrs = Box<dyn Iterator<Item = SocketAddr> + Send>;
@@ -37,7 +37,7 @@ pub trait Resolve: Send + Sync {
 
 /// A name that must be resolved to addresses.
 #[derive(Debug)]
-pub struct Name(pub(super) HyperName);
+pub struct Name(pub(super) NativeName);
 
 impl Name {
     /// View the name as a string.
@@ -50,7 +50,7 @@ impl FromStr for Name {
     type Err = sealed::InvalidNameError;
 
     fn from_str(host: &str) -> Result<Self, Self::Err> {
-        HyperName::from_str(host)
+        NativeName::from_str(host)
             .map(Name)
             .map_err(|_| sealed::InvalidNameError { _ext: () })
     }
@@ -67,7 +67,7 @@ impl DynResolver {
     }
 }
 
-impl Service<HyperName> for DynResolver {
+impl Service<NativeName> for DynResolver {
     type Response = Addrs;
     type Error = BoxError;
     type Future = Resolving;
@@ -76,7 +76,7 @@ impl Service<HyperName> for DynResolver {
         Poll::Ready(Ok(()))
     }
 
-    fn call(&mut self, name: HyperName) -> Self::Future {
+    fn call(&mut self, name: NativeName) -> Self::Future {
         self.resolver.resolve(Name(name))
     }
 }

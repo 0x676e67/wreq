@@ -430,7 +430,7 @@ mod tests {
 
     #[test]
     fn test_remove_sensitive_headers() {
-        use hyper::header::{ACCEPT, AUTHORIZATION, COOKIE, HeaderValue};
+        use http::header::{ACCEPT, AUTHORIZATION, COOKIE, HeaderValue};
 
         let mut headers = HeaderMap::new();
         headers.insert(ACCEPT, HeaderValue::from_static("*/*"));

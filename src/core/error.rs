@@ -278,7 +278,7 @@ impl Error {
             Kind::Parse(Parse::TooLarge) => "message head is too large",
             Kind::Parse(Parse::Status) => "invalid HTTP status-code parsed",
             Kind::Parse(Parse::Internal) => {
-                "internal error inside Hyper and/or its dependencies, please report"
+                "internal error inside wreq and/or its dependencies, please report"
             }
 
             Kind::IncompleteMessage => "connection closed before message completed",

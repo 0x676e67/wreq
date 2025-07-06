@@ -1,5 +1,5 @@
 #![allow(dead_code)]
-//! Tokio IO integration for hyper
+//! Tokio IO integration for core.
 use std::{
     future::Future,
     pin::Pin,
@@ -18,7 +18,7 @@ pub struct TokioExecutor {}
 
 pin_project! {
     /// A wrapper that implements Tokio's IO traits for an inner type that
-    /// implements hyper's IO traits, or vice versa (implements hyper's IO
+    /// implements core's IO traits, or vice versa (implements core's IO
     /// traits for a type that implements Tokio's IO traits).
     #[derive(Debug)]
     pub struct TokioIo<T> {
@@ -64,7 +64,7 @@ impl TokioExecutor {
 // ==== impl TokioIo =====
 
 impl<T> TokioIo<T> {
-    /// Wrap a type implementing Tokio's or hyper's IO traits.
+    /// Wrap a type implementing Tokio's or core's IO traits.
     pub fn new(inner: T) -> Self {
         Self { inner }
     }

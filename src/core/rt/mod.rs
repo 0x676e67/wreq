@@ -21,7 +21,7 @@ pub use self::{
 
 /// An executor of futures.
 ///
-/// This trait allows Hyper to abstract over async runtimes. Implement this trait for your own type.
+/// This trait allows abstract over async runtimes. Implement this trait for your own type.
 ///
 /// # Example
 ///

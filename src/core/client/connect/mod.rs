@@ -328,7 +328,7 @@ pub(super) mod sealed {
     /// # Trait Alias
     ///
     /// This is really just an *alias* for the `tower::Service` trait, with
-    /// additional bounds set for convenience *inside* hyper. You don't actually
+    /// additional bounds set for convenience *inside* core. You don't actually
     /// implement this trait, but `tower::Service<Uri>` instead.
     // The `Sized` bound is to prevent creating `dyn Connect`, since they cannot
     // fit the `Connect` bounds because of the blanket impl for `Service`.

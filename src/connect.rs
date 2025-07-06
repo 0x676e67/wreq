@@ -627,7 +627,7 @@ mod conn {
 
     pin_project! {
         /// Note: the `is_proxy` member means *is plain text HTTP proxy*.
-        /// This tells hyper whether the URI should be written in
+        /// This tells core whether the URI should be written in
         /// * origin-form (`GET /just/a/path HTTP/1.1`), when `is_proxy == false`, or
         /// * absolute-form (`GET http://foo.bar/and/a/path HTTP/1.1`), otherwise.
         pub struct Conn {

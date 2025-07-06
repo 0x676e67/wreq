@@ -1,6 +1,6 @@
 //! HTTP2 Ping usage
 //!
-//! hyper uses HTTP2 pings for two purposes:
+//! core uses HTTP2 pings for two purposes:
 //!
 //! 1. Adaptive flow control using BDP
 //! 2. Connection keep-alive

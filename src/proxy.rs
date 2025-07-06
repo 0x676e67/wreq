@@ -20,7 +20,7 @@ use crate::{
 //
 // The user creates a builder (`wreq::Proxy`), and configures any extras.
 // Once that type is passed to the `ClientBuilder`, we convert it into the
-// built matcher types, making use of `hyper-util`'s matchers.
+// built matcher types, making use of `core`'s matchers.
 
 /// Configuration of a proxy that a `Client` should pass requests to.
 ///
@@ -408,7 +408,6 @@ impl NoProxy {
     ///
     /// The URL `http://notgoogle.com/` would not match.
     pub fn from_string(no_proxy_list: &str) -> Option<Self> {
-        // lazy parsed, to not make the type public in hyper-util
         Some(NoProxy {
             inner: no_proxy_list.into(),
         })
