@@ -79,9 +79,8 @@ where
 
     pub fn get(&mut self, key: &SessionKey<T>) -> Option<SslSession> {
         let session = {
-            let entry = self.sessions.get_mut(key)?;
-            let hash_session = entry.iter().next()?.0.clone(); // get oldest (LRU)
-            hash_session.0.clone()
+            let per_host_sessions = self.sessions.get_mut(key)?;
+            per_host_sessions.peek_oldest()?.0.clone().0
         };
 
         // https://tools.ietf.org/html/rfc8446#appendix-C.4
