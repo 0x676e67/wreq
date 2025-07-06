@@ -128,7 +128,7 @@ impl<T, K: Key> Pool<T, K> {
     {
         let exec = Exec::new(executor);
         let timer = timer.map(Timer::new);
-        let state = RandomState::with_seeds(
+        const RANDOM_STATE: RandomState = RandomState::with_seeds(
             0x243f_6a88_85a3_08d3,
             0x1319_8a2e_0370_7344,
             0xa409_3822_299f_31d0,
@@ -137,14 +137,14 @@ impl<T, K: Key> Pool<T, K> {
 
         let inner = if config.is_enabled() {
             Some(Arc::new(Mutex::new(PoolInner {
-                connecting: HashSet::with_hasher(state.clone()),
+                connecting: HashSet::with_hasher(RANDOM_STATE),
                 idle: LruMap::with_hasher(
                     ByLength::new(config.max_pool_size.map_or(u32::MAX, NonZero::get)),
-                    state.clone(),
+                    RANDOM_STATE,
                 ),
                 idle_interval_ref: None,
                 max_idle_per_host: config.max_idle_per_host,
-                waiters: HashMap::with_hasher(state),
+                waiters: HashMap::with_hasher(RANDOM_STATE),
                 exec,
                 timer,
                 timeout: config.idle_timeout,
