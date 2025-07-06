@@ -305,7 +305,6 @@ impl Connector {
             #[cfg(feature = "socks")]
             resolver: resolver.clone(),
             http: {
-                // Create a new HttpConnector with the provided resolver
                 let mut http = HttpConnector::new_with_resolver(resolver);
                 http.enforce_http(false);
                 http
@@ -314,8 +313,6 @@ impl Connector {
             verbose: verbose::OFF,
             timeout: None,
             tcp_nodelay: false,
-
-            // TLS connector and its configuration
             tls_info: false,
             tls_builder: TlsConnector::builder(),
         }
@@ -506,20 +503,30 @@ impl ConnectorService {
         *req.uri_mut() = proxy_uri;
         self.connect(req, true).await
     }
-}
 
-async fn with_timeout<T, F>(f: F, timeout: Option<Duration>) -> Result<T, BoxError>
-where
-    F: Future<Output = Result<T, BoxError>>,
-{
-    if let Some(to) = timeout {
-        match tokio::time::timeout(to, f).await {
-            Err(_elapsed) => Err(Box::new(TimedOut) as BoxError),
-            Ok(Ok(try_res)) => Ok(try_res),
-            Ok(Err(e)) => Err(e),
+    async fn connect_maybe_proxy(
+        self,
+        req: ConnRequest,
+        proxy: Option<Intercepted>,
+    ) -> Result<Conn, BoxError> {
+        debug!("starting new connection: {:?}", req.uri());
+
+        let timeout = self.timeout;
+        let fut = async {
+            if let Some(intercepted) = proxy {
+                self.connect_via_proxy(req, intercepted).await
+            } else {
+                self.connect(req, false).await
+            }
+        };
+
+        if let Some(to) = timeout {
+            tokio::time::timeout(to, fut)
+                .await
+                .map_err(|_| BoxError::from(TimedOut))?
+        } else {
+            fut.await
         }
-    } else {
-        f.await
     }
 }
 
@@ -534,8 +541,6 @@ impl Service<ConnRequest> for ConnectorService {
     }
 
     fn call(&mut self, req: ConnRequest) -> Self::Future {
-        debug!("starting new connection: {:?}", req.uri());
-
         let intercepted = req
             .ex_data()
             .proxy_matcher()
@@ -546,14 +551,7 @@ impl Service<ConnRequest> for ConnectorService {
                     .find_map(|prox| prox.intercept(req.uri()))
             });
 
-        if let Some(intercepted) = intercepted {
-            return Box::pin(with_timeout(
-                self.clone().connect_via_proxy(req, intercepted),
-                self.timeout,
-            ));
-        }
-
-        Box::pin(with_timeout(self.clone().connect(req, false), self.timeout))
+        Box::pin(self.clone().connect_maybe_proxy(req, intercepted))
     }
 }
 
