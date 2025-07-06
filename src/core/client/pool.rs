@@ -128,7 +128,12 @@ impl<T, K: Key> Pool<T, K> {
     {
         let exec = Exec::new(executor);
         let timer = timer.map(Timer::new);
-        let state = RandomState::with_seed(0x082e_fa98_ec4e_6c89);
+        let state = RandomState::with_seeds(
+            0x243f_6a88_85a3_08d3,
+            0x1319_8a2e_0370_7344,
+            0xa409_3822_299f_31d0,
+            0x082e_fa98_ec4e_6c89,
+        );
 
         let inner = if config.is_enabled() {
             Some(Arc::new(Mutex::new(PoolInner {
