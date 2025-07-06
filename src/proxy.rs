@@ -6,7 +6,7 @@ use http::{HeaderMap, Uri, header::HeaderValue, uri::Scheme};
 
 use crate::{
     Url,
-    core::client::proxy::matcher,
+    core::proxy::matcher,
     error::{BadScheme, Error},
     into_url::{IntoUrl, IntoUrlSealed},
 };

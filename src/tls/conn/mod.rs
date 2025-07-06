@@ -431,26 +431,26 @@ impl TlsConnectorBuilder {
         // Set TLS key shares limit
         set_option!(cfg, key_shares_limit, connector, set_key_shares_limit);
 
-        // Set TLS extension permutation
-        set_option_ref_try!(
-            cfg,
-            extension_permutation,
-            connector,
-            set_extension_permutation
-        );
-
         // Set TLS aes hardware override
         set_option!(cfg, aes_hw_override, connector, set_aes_hw_override);
 
         // Set TLS prefer chacha20 (Encryption order between AES-256-GCM/AES-128-GCM)
         set_option!(cfg, prefer_chacha20, connector, set_prefer_chacha20);
 
-        // Set TLS keylog policy if provided
+        // Set TLS extension permutation
+        if let Some(val) = cfg.extension_permutation {
+            let indices = val.into_iter().map(|ext| ext.0).collect::<Vec<_>>();
+            connector
+                .set_extension_permutation(&indices)
+                .map_err(Error::tls)?;
+        }
+
+        // Set TLS keylog policy if provided.
         if let Some(ref policy) = self.keylog {
             let handle = policy
                 .clone()
                 .open_handle()
-                .map_err(crate::Error::builder)?;
+                .map_err(Error::tls)?;
             connector.set_keylog_callback(move |_, line| {
                 handle.write_log_line(line);
             });

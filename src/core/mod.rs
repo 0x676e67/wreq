@@ -10,5 +10,6 @@ pub mod ext;
 
 pub mod header;
 mod proto;
+pub mod proxy;
 pub mod rt;
 pub mod upgrade;

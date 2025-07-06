@@ -1,10 +1,10 @@
 use std::borrow::Cow;
 
-use boring2::ssl::ExtensionType;
 use bytes::Bytes;
 
-use super::{AlpnProtocol, AlpsProtocol, TlsVersion};
-use crate::tls::CertificateCompressionAlgorithm;
+use super::{
+    AlpnProtocol, AlpsProtocol, CertificateCompressionAlgorithm, ExtensionType, TlsVersion,
+};
 
 /// Builder for `[`TlsConfig`]`.
 #[must_use]
@@ -16,7 +16,7 @@ pub struct TlsConfigBuilder {
 /// Configuration settings for TLS connections.
 ///
 /// This struct defines various parameters to fine-tune the behavior of a TLS connection,
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Hash, PartialEq, Eq)]
 pub struct TlsConfig {
     pub(crate) alpn_protos: Option<Bytes>,
     pub(crate) alps_protos: Option<Bytes>,
