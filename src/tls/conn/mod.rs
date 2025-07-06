@@ -27,15 +27,17 @@ use tower_service::Service;
 
 use crate::{
     Error,
-    connect::HttpConnector,
     core::{
-        client::connect::{Connected, Connection, TcpConnectOptions},
+        client::{
+            ConnRequest,
+            connect::{Connected, Connection},
+        },
         rt::{Read, ReadBufCursor, TokioIo, Write},
     },
     error::BoxError,
     sync::Mutex,
     tls::{
-        AlpnProtocol, CertStore, Identity, KeyLogPolicy, TlsConfig, TlsVersion,
+        CertStore, Identity, KeyLogPolicy, TlsConfig, TlsVersion,
         conn::ext::{ConnectConfigurationExt, SslConnectorBuilderExt},
     },
 };
@@ -54,34 +56,19 @@ pub struct HandshakeConfigBuilder {
 /// Settings for [`TlsConnector`]
 #[derive(Clone)]
 pub struct HandshakeConfig {
-    session_cache_capacity: usize,
-    session_cache: bool,
-    skip_session_ticket: bool,
+    no_ticket: bool,
     enable_ech_grease: bool,
     verify_hostname: bool,
     tls_sni: bool,
-    alpn_protos: Option<Bytes>,
     alps_protos: Option<Bytes>,
     alps_use_new_codepoint: bool,
     random_aes_hw_override: bool,
 }
 
 impl HandshakeConfigBuilder {
-    /// Sets the session cache capacity.
-    pub fn session_cache_capacity(mut self, capacity: usize) -> Self {
-        self.settings.session_cache_capacity = capacity;
-        self
-    }
-
-    /// Enables or disables session cache.
-    pub fn session_cache(mut self, enabled: bool) -> Self {
-        self.settings.session_cache = enabled;
-        self
-    }
-
     /// Skips the session ticket.
-    pub fn skip_session_ticket(mut self, skip: bool) -> Self {
-        self.settings.skip_session_ticket = skip;
+    pub fn no_ticket(mut self, skip: bool) -> Self {
+        self.settings.no_ticket = skip;
         self
     }
 
@@ -139,13 +126,10 @@ impl HandshakeConfig {
 impl Default for HandshakeConfig {
     fn default() -> Self {
         Self {
-            session_cache_capacity: 8,
-            session_cache: false,
-            skip_session_ticket: false,
+            no_ticket: false,
             enable_ech_grease: false,
             verify_hostname: true,
             tls_sni: true,
-            alpn_protos: None,
             alps_protos: None,
             alps_use_new_codepoint: false,
             random_aes_hw_override: false,
@@ -170,7 +154,8 @@ struct Inner {
 /// A builder for creating a `TlsConnector`.
 #[derive(Clone)]
 pub struct TlsConnectorBuilder {
-    keylog_policy: Option<KeyLogPolicy>,
+    session_cache: Arc<Mutex<SessionCache>>,
+    keylog: Option<KeyLogPolicy>,
     max_version: Option<TlsVersion>,
     min_version: Option<TlsVersion>,
     tls_sni: bool,
@@ -187,20 +172,6 @@ pub struct TlsConnector {
 }
 
 // ===== impl HttpsConnector =====
-
-impl HttpsConnector<HttpConnector> {
-    /// Sets the ALPN protocol to be used for the connection.
-    #[inline]
-    pub fn set_alpn_protocol(&mut self, alpn: Option<AlpnProtocol>) {
-        self.inner.config.alpn_protos = alpn.map(|p| p.encode());
-    }
-
-    /// Sets the tcp connect options for the connector.
-    #[inline]
-    pub fn set_tcp_connect_options(&mut self, options: Option<TcpConnectOptions>) {
-        self.http.set_tcp_connect_options(options);
-    }
-}
 
 impl<S, T> HttpsConnector<S>
 where
@@ -221,7 +192,15 @@ where
 // ===== impl Inner =====
 
 impl Inner {
-    fn setup_ssl(&self, uri: &Uri, host: &str) -> Result<Ssl, ErrorStack> {
+    fn setup_ssl(&self, uri: Uri) -> Result<Ssl, BoxError> {
+        let cfg = self.ssl.configure()?;
+        let host = uri.host().ok_or("URI missing host")?;
+        let host = Self::normalize_host(host);
+        let ssl = cfg.into_ssl(host)?;
+        Ok(ssl)
+    }
+
+    fn setup_ssl2(&self, req: ConnRequest) -> Result<Ssl, BoxError> {
         let mut cfg = self.ssl.configure()?;
 
         // Use server name indication
@@ -238,27 +217,29 @@ impl Inner {
 
         // Set ALPS protos
         cfg.set_alps_protos(
-            self.config.alps_protos.clone(),
+            self.config.alps_protos.as_ref(),
             self.config.alps_use_new_codepoint,
         )?;
 
         // Set ALPN protocols
-        if let Some(ref alpn_protos) = self.config.alpn_protos {
-            cfg.set_alpn_protos(alpn_protos)?;
+        if let Some(alpn) = req.alpn_protocol() {
+            cfg.set_alpn_protos(&alpn.encode())?;
         }
 
-        if let Some(authority) = uri.authority() {
-            let key = SessionKey(authority.clone());
+        let uri = req.uri().clone();
+        let host = uri.host().ok_or("URI missing host")?;
+        let host = Self::normalize_host(host);
 
-            if let Some(ref cache) = self.cache {
-                if let Some(session) = cache.lock().get(&key) {
-                    unsafe {
-                        cfg.set_session(&session)?;
-                    }
+        if let Some(ref cache) = self.cache {
+            let key = SessionKey(req.into_key());
 
-                    if self.config.skip_session_ticket {
-                        cfg.set_options(SslOptions::NO_TICKET)?;
-                    }
+            // If the session cache is enabled, we try to retrieve the session
+            // associated with the key. If it exists, we set it in the SSL configuration.
+            if let Some(session) = cache.lock().get(&key) {
+                cfg.set_seesion2(&session)?;
+
+                if self.config.no_ticket {
+                    cfg.set_options(SslOptions::NO_TICKET)?;
                 }
             }
 
@@ -266,7 +247,28 @@ impl Inner {
             cfg.set_ex_data(idx, key);
         }
 
-        cfg.into_ssl(host)
+        let ssl = cfg.into_ssl(host)?;
+        Ok(ssl)
+    }
+
+    /// If `host` is an IPv6 address, we must strip away the square brackets that surround
+    /// it (otherwise, boring will fail to parse the host as an IP address, eventually
+    /// causing the handshake to fail due a hostname verification error).
+    fn normalize_host(host: &str) -> &str {
+        if host.is_empty() {
+            return host;
+        }
+
+        let last = host.len() - 1;
+        let mut chars = host.chars();
+
+        if let (Some('['), Some(']')) = (chars.next(), chars.last()) {
+            if host[1..last].parse::<std::net::Ipv6Addr>().is_ok() {
+                return &host[1..last];
+            }
+        }
+
+        host
     }
 }
 
@@ -276,7 +278,7 @@ impl TlsConnectorBuilder {
     /// Sets the TLS keylog policy.
     #[inline(always)]
     pub fn keylog(mut self, policy: Option<KeyLogPolicy>) -> Self {
-        self.keylog_policy = policy;
+        self.keylog = policy;
         self
     }
 
@@ -444,7 +446,7 @@ impl TlsConnectorBuilder {
         set_option!(cfg, prefer_chacha20, connector, set_prefer_chacha20);
 
         // Set TLS keylog policy if provided
-        if let Some(ref policy) = self.keylog_policy {
+        if let Some(ref policy) = self.keylog {
             let handle = policy
                 .clone()
                 .open_handle()
@@ -456,9 +458,7 @@ impl TlsConnectorBuilder {
 
         // Create the `HandshakeConfig` with the default session cache capacity.
         let config = HandshakeConfig::builder()
-            .session_cache_capacity(8)
-            .session_cache(cfg.pre_shared_key)
-            .skip_session_ticket(cfg.psk_skip_session_ticket)
+            .no_ticket(cfg.psk_skip_session_ticket)
             .alps_protos(cfg.alps_protos)
             .alps_use_new_codepoint(cfg.alps_use_new_codepoint)
             .enable_ech_grease(cfg.enable_ech_grease)
@@ -468,10 +468,8 @@ impl TlsConnectorBuilder {
             .build();
 
         // If the session cache is disabled, we don't need to set up any callbacks.
-        let cache = config.session_cache.then(|| {
-            let cache = Arc::new(Mutex::new(SessionCache::with_capacity(
-                config.session_cache_capacity,
-            )));
+        let cache = cfg.pre_shared_key.then(|| {
+            let cache = self.session_cache.clone();
 
             connector.set_session_cache_mode(SslSessionCacheMode::CLIENT);
             connector.set_new_session_callback({
@@ -501,8 +499,12 @@ impl TlsConnectorBuilder {
 impl TlsConnector {
     /// Creates a new `TlsConnectorBuilder` with the given configuration.
     pub fn builder() -> TlsConnectorBuilder {
+        const DEFAULT_SESSION_CACHE_CAPACITY: usize = 8;
         TlsConnectorBuilder {
-            keylog_policy: None,
+            session_cache: Arc::new(Mutex::new(SessionCache::with_capacity(
+                DEFAULT_SESSION_CACHE_CAPACITY,
+            ))),
+            keylog: None,
             identity: None,
             cert_store: None,
             cert_verification: true,
@@ -520,6 +522,12 @@ pub enum MaybeHttpsStream<T> {
     Http(T),
     /// An SSL-wrapped HTTP stream.
     Https(SslStream<T>),
+}
+
+/// A connection that has been established with a TLS handshake.
+pub struct EstablishedConn<IO> {
+    req: ConnRequest,
+    inner: TokioIo<IO>,
 }
 
 // ===== impl MaybeHttpsStream =====
@@ -600,5 +608,14 @@ where
             MaybeHttpsStream::Http(inner) => Pin::new(&mut TokioIo::new(inner)).poll_shutdown(ctx),
             MaybeHttpsStream::Https(inner) => Pin::new(&mut TokioIo::new(inner)).poll_shutdown(ctx),
         }
+    }
+}
+
+// ===== impl EstablishedConn =====
+
+impl<IO> EstablishedConn<IO> {
+    #[inline]
+    pub fn new(req: ConnRequest, inner: TokioIo<IO>) -> Self {
+        Self { req, inner }
     }
 }

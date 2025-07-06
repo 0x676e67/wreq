@@ -336,7 +336,7 @@ pub(super) mod sealed {
         #[doc(hidden)]
         type _Svc: ConnectSvc;
         #[doc(hidden)]
-        fn connect(self, dst: ConnRequest) -> <Self::_Svc as ConnectSvc>::Future;
+        fn connect(self, _: Internal, req: ConnRequest) -> <Self::_Svc as ConnectSvc>::Future;
     }
 
     pub trait ConnectSvc {
@@ -344,7 +344,7 @@ pub(super) mod sealed {
         type Error: Into<BoxError>;
         type Future: Future<Output = Result<Self::Connection, Self::Error>> + Unpin + Send + 'static;
 
-        fn connect(self, dst: ConnRequest) -> Self::Future;
+        fn connect(self, _: Internal, req: ConnRequest) -> Self::Future;
     }
 
     impl<S, T> Connect for S
@@ -356,8 +356,8 @@ pub(super) mod sealed {
     {
         type _Svc = S;
 
-        fn connect(self, dst: ConnRequest) -> Oneshot<S, ConnRequest> {
-            Oneshot::new(self, dst)
+        fn connect(self, _: Internal, req: ConnRequest) -> Oneshot<S, ConnRequest> {
+            Oneshot::new(self, req)
         }
     }
 
@@ -372,8 +372,8 @@ pub(super) mod sealed {
         type Error = S::Error;
         type Future = Oneshot<S, ConnRequest>;
 
-        fn connect(self, dst: ConnRequest) -> Self::Future {
-            Oneshot::new(self, dst)
+        fn connect(self, _: Internal, req: ConnRequest) -> Self::Future {
+            Oneshot::new(self, req)
         }
     }
 
@@ -387,4 +387,5 @@ pub(super) mod sealed {
     }
 
     pub trait Sealed {}
+    pub struct Internal;
 }

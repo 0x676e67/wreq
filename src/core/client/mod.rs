@@ -11,7 +11,6 @@ pub mod connect;
 // designed.
 mod pool;
 pub mod proxy;
-
 use std::{
     error::Error as StdError,
     fmt,
@@ -54,75 +53,76 @@ use crate::{
 
 type BoxSendFuture = Pin<Box<dyn Future<Output = ()> + Send>>;
 
-/// Represents a client connection request, including all parameters needed to establish a network
-/// connection.
+/// Uniquely identifies a reusable connection.
 ///
-/// `ConnRequest` encapsulates the URI, HTTP version, proxy matcher, TCP options, and TLS
-/// configuration for a single outgoing connection. This struct is used internally to manage and
-/// customize how each connection is established, including protocol negotiation and proxy handling.
-#[derive(Debug, Clone)]
-pub struct ConnRequest {
+/// `ConnKey` is used to group connections that share identical
+/// connection-level parameters such as the target URI, HTTP version,
+/// proxy rules, and low-level TCP options. This is typically used as
+/// a key in connection pooling logic to determine whether a new
+/// connection can be reused.
+///
+/// This type implements `Hash`, `Eq`, and `Clone` to support use
+/// in maps, caches, or deduplicated pools.
+#[derive(Clone, Hash, Debug, Eq, PartialEq)]
+pub(crate) struct ConnKey {
     uri: Uri,
     version: Option<Version>,
     proxy_matcher: Option<ProxyMacher>,
-    tcp_opts: Option<TcpConnectOptions>,
+    tcp_options: Option<TcpConnectOptions>,
+}
+
+/// Describes all the parameters needed to initiate a client connection.
+///
+/// A `ConnRequest` encapsulates the information required to initiate
+/// an outgoing network connection, including the HTTP target URI, protocol
+/// version, optional proxy handling, TCP options, and TLS configuration.
+///
+/// This struct is used internally to drive the connection setup process
+/// and may influence connection pooling, ALPN negotiation, and proxy routing.
+#[derive(Debug, Clone)]
+pub struct ConnRequest {
+    inner: ConnKey,
     tls_config: Option<TlsConfig>,
 }
 
 impl ConnRequest {
-    /// Returns a reference to the target URI for this connection request.
-    #[inline]
-    pub(crate) fn uri(&self) -> &Uri {
-        &self.uri
+    /// Returns a reference to the destination URI for this request.
+    pub fn uri(&self) -> &Uri {
+        &self.inner.uri
     }
 
     /// Returns a mutable reference to the target URI for this connection request.
     #[inline]
     pub(crate) fn uri_mut(&mut self) -> &mut Uri {
-        &mut self.uri
+        &mut self.inner.uri
     }
 
-    /// Takes and returns the proxy matcher, if any, consuming it from the request.
-    #[inline]
-    pub(crate) fn take_proxy_matcher(&mut self) -> Option<ProxyMacher> {
-        self.proxy_matcher.take()
-    }
-
-    /// Takes and returns a tuple of TCP options, TLS config, and negotiated ALPN protocol.
-    ///
-    /// This method consumes the TCP and TLS options from the request, and determines the ALPN
-    /// protocol based on the HTTP version (HTTP/1.x or HTTP/2).
-    #[inline]
-    pub(crate) fn take_config_bundle(
-        &mut self,
-    ) -> (
-        Option<TcpConnectOptions>,
-        Option<TlsConfig>,
-        Option<AlpnProtocol>,
-    ) {
-        let alpn = match self.version {
+    /// Returns the negotiated ALPN protocol, based on HTTP version.
+    pub(crate) fn alpn_protocol(&self) -> Option<AlpnProtocol> {
+        match self.inner.version {
             Some(Version::HTTP_11 | Version::HTTP_10 | Version::HTTP_09) => {
                 Some(AlpnProtocol::HTTP1)
             }
             Some(Version::HTTP_2) => Some(AlpnProtocol::HTTP2),
             _ => None,
-        };
-
-        (self.tcp_opts.take(), self.tls_config.take(), alpn)
+        }
     }
 
-    /// Returns a `PoolKey` representing the unique identity of this connection for pooling
-    /// purposes.
-    ///
-    /// The key includes the URI, HTTP version, proxy matcher, and TCP options.
+    /// Returns a reference to the proxy matcher.
     #[inline]
-    fn pool_key(&self) -> PoolKey {
-        PoolKey {
-            uri: self.uri.clone(),
-            version: self.version,
-            proxy_matcher: self.proxy_matcher.clone(),
-            tcp_connect_options: self.tcp_opts.clone(),
-        }
+    pub(crate) fn proxy_matcher(&self) -> Option<&ProxyMacher> {
+        self.inner.proxy_matcher.as_ref()
+    }
+
+    /// Return the TCP and TLS connection options.
+    pub(crate) fn connection_options(&self) -> (Option<TcpConnectOptions>, Option<TlsConfig>) {
+        (self.inner.tcp_options.clone(), self.tls_config.clone())
+    }
+
+    /// Converts the request into its corresponding `ConnKey`.
+    #[inline]
+    pub(crate) fn into_key(self) -> ConnKey {
+        self.inner
     }
 }
 
@@ -136,7 +136,7 @@ pub struct Client<C, B> {
     exec: Exec,
     h1_builder: conn::http1::Builder,
     h2_builder: conn::http2::Builder<Exec>,
-    pool: pool::Pool<PoolClient<B>, PoolKey>,
+    pool: pool::Pool<PoolClient<B>, ConnKey>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -191,14 +191,6 @@ macro_rules! e {
             connect_info: None,
         }
     };
-}
-
-#[derive(Clone, Hash, Debug, Eq, PartialEq)]
-struct PoolKey {
-    uri: Uri,
-    version: Option<Version>,
-    proxy_matcher: Option<ProxyMacher>,
-    tcp_connect_options: Option<TcpConnectOptions>,
 }
 
 #[allow(clippy::large_enum_variant)]
@@ -329,10 +321,12 @@ where
         }
 
         let conn_req = ConnRequest {
-            uri,
-            version,
-            proxy_matcher,
-            tcp_opts: tcp_connect_options,
+            inner: ConnKey {
+                uri: uri.clone(),
+                version,
+                proxy_matcher,
+                tcp_options: tcp_connect_options,
+            },
             tls_config,
         };
 
@@ -465,7 +459,7 @@ where
     async fn connection_for(
         &self,
         conn_req: ConnRequest,
-    ) -> Result<pool::Pooled<PoolClient<B>, PoolKey>, Error> {
+    ) -> Result<pool::Pooled<PoolClient<B>, ConnKey>, Error> {
         loop {
             match self.one_connection_for(conn_req.clone()).await {
                 Ok(pooled) => return Ok(pooled),
@@ -488,7 +482,7 @@ where
     async fn one_connection_for(
         &self,
         conn_req: ConnRequest,
-    ) -> Result<pool::Pooled<PoolClient<B>, PoolKey>, ClientConnectError> {
+    ) -> Result<pool::Pooled<PoolClient<B>, ConnKey>, ClientConnectError> {
         // Return a single connection if pooling is not enabled
         if !self.pool.is_enabled() {
             return self
@@ -507,7 +501,7 @@ where
         // - If a new connection is started, but the Checkout wins after (an idle connection became
         //   available first), the started connection future is spawned into the runtime to
         //   complete, and then be inserted into the pool as an idle connection.
-        let checkout = self.pool.checkout(conn_req.pool_key().clone());
+        let checkout = self.pool.checkout(conn_req.inner.clone());
         let connect = self.connect_to(conn_req);
         let is_ver_h2 = self.config.ver == Ver::Http2;
 
@@ -576,14 +570,14 @@ where
     fn connect_to(
         &self,
         conn_req: ConnRequest,
-    ) -> impl Lazy<Output = Result<pool::Pooled<PoolClient<B>, PoolKey>, Error>> + Send + Unpin + 'static
+    ) -> impl Lazy<Output = Result<pool::Pooled<PoolClient<B>, ConnKey>, Error>> + Send + Unpin + 'static
     {
         let executor = self.exec.clone();
         let pool = self.pool.clone();
 
         let h1_builder = self.h1_builder.clone();
         let h2_builder = self.h2_builder.clone();
-        let ver = match conn_req.version {
+        let ver = match conn_req.inner.version {
             Some(Version::HTTP_2) => Ver::Http2,
             _ => self.config.ver,
         };
@@ -595,7 +589,7 @@ where
             // If the pool_key is for HTTP/2, and there is already a
             // connection being established, then this can't take a
             // second lock. The "connect_to" future is Canceled.
-            let connecting = match pool.connecting(conn_req.pool_key(), ver) {
+            let connecting = match pool.connecting(conn_req.inner.clone(), ver) {
                 Some(lock) => lock,
                 None => {
                     let canceled = e!(Canceled);
@@ -605,7 +599,7 @@ where
             };
             Either::Left(
                 connector
-                    .connect(conn_req)
+                    .connect(connect::sealed::Internal, conn_req)
                     .map_err(|src| e!(Connect, src))
                     .and_then(move |io| {
                         let connected = io.connected();

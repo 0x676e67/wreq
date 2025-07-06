@@ -2,7 +2,7 @@ use std::borrow::Cow;
 
 use boring2::{
     error::ErrorStack,
-    ssl::{ConnectConfiguration, SslConnectorBuilder, SslVerifyMode},
+    ssl::{ConnectConfiguration, SslConnectorBuilder, SslSessionRef, SslVerifyMode},
 };
 use bytes::Bytes;
 
@@ -33,12 +33,15 @@ pub trait SslConnectorBuilderExt {
 
 /// ConnectConfigurationExt trait for `ConnectConfiguration`.
 pub trait ConnectConfigurationExt {
+    /// Configure the session for the given `ConnectConfiguration`.
+    fn set_seesion2(&mut self, session: &SslSessionRef) -> Result<(), ErrorStack>;
+
     /// Configure the ALPS for the given `ConnectConfiguration`.
     fn set_alps_protos(
         &mut self,
-        alps: Option<Bytes>,
+        alps: Option<&Bytes>,
         use_new_codepoint: bool,
-    ) -> Result<&mut ConnectConfiguration, ErrorStack>;
+    ) -> Result<(), ErrorStack>;
 
     /// Configure the random aes hardware override for the given `ConnectConfiguration`.
     fn set_random_aes_hw_override(&mut self, enable: bool);
@@ -102,11 +105,11 @@ impl ConnectConfigurationExt for ConnectConfiguration {
     #[inline]
     fn set_alps_protos(
         &mut self,
-        alps: Option<Bytes>,
+        alps: Option<&Bytes>,
         use_new_codepoint: bool,
-    ) -> Result<&mut ConnectConfiguration, ErrorStack> {
+    ) -> Result<(), ErrorStack> {
         if let Some(alps) = alps {
-            self.add_application_settings(&alps)?;
+            self.add_application_settings(alps)?;
 
             // By default, the old endpoint is used. Avoid unnecessary FFI calls.
             if use_new_codepoint {
@@ -114,7 +117,7 @@ impl ConnectConfigurationExt for ConnectConfiguration {
             }
         }
 
-        Ok(self)
+        Ok(())
     }
 
     #[inline]
@@ -123,5 +126,14 @@ impl ConnectConfigurationExt for ConnectConfiguration {
             let random_bool = (crate::util::fast_random() % 2) == 0;
             self.set_aes_hw_override(random_bool);
         }
+    }
+
+    #[inline]
+    fn set_seesion2(&mut self, session: &SslSessionRef) -> Result<(), ErrorStack> {
+        unsafe {
+            self.set_session(session)?;
+        }
+
+        Ok(())
     }
 }

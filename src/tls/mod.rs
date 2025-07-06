@@ -14,7 +14,9 @@ mod x509;
 pub use boring2::ssl::ExtensionType;
 use bytes::{Bytes, BytesMut};
 
-pub(crate) use self::conn::{HttpsConnector, MaybeHttpsStream, TlsConnector, TlsConnectorBuilder};
+pub(crate) use self::conn::{
+    EstablishedConn, HttpsConnector, MaybeHttpsStream, TlsConnector, TlsConnectorBuilder,
+};
 pub use self::{
     config::TlsConfig,
     keylog::KeyLogPolicy,

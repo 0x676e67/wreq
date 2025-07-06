@@ -6,11 +6,12 @@ use std::{
 };
 
 use boring2::ssl::{SslSession, SslSessionRef, SslVersion};
-use http::uri::Authority;
 use linked_hash_set::LinkedHashSet;
 
+use crate::core::client::ConnKey;
+
 #[derive(Hash, PartialEq, Eq, Clone)]
-pub struct SessionKey(pub Authority);
+pub struct SessionKey(pub ConnKey);
 
 #[derive(Clone)]
 struct HashSession(SslSession);
