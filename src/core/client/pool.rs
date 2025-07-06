@@ -128,17 +128,18 @@ impl<T, K: Key> Pool<T, K> {
     {
         let exec = Exec::new(executor);
         let timer = timer.map(Timer::new);
+        let state = RandomState::with_seed(0x082e_fa98_ec4e_6c89);
 
         let inner = if config.is_enabled() {
             Some(Arc::new(Mutex::new(PoolInner {
-                connecting: HashSet::with_hasher(RandomState::new()),
+                connecting: HashSet::with_hasher(state.clone()),
                 idle: LruMap::with_hasher(
                     ByLength::new(config.max_pool_size.map_or(u32::MAX, NonZero::get)),
-                    RandomState::new(),
+                    state.clone(),
                 ),
                 idle_interval_ref: None,
                 max_idle_per_host: config.max_idle_per_host,
-                waiters: HashMap::with_hasher(RandomState::new()),
+                waiters: HashMap::with_hasher(state),
                 exec,
                 timer,
                 timeout: config.idle_timeout,
