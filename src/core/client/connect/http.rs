@@ -606,11 +606,11 @@ impl<'a> ConnectingTcp<'a> {
                 config
                     .tcp_connect_options
                     .as_ref()
-                    .and_then(|opt| opt.local_address_ipv4),
+                    .and_then(|opt| opt.local_ipv4),
                 config
                     .tcp_connect_options
                     .as_ref()
-                    .and_then(|opt| opt.local_address_ipv6),
+                    .and_then(|opt| opt.local_ipv6),
             );
             if fallback_addrs.is_empty() {
                 return ConnectingTcp {
@@ -813,11 +813,11 @@ fn connect(
         &config
             .tcp_connect_options
             .as_ref()
-            .and_then(|opt| opt.local_address_ipv4),
+            .and_then(|opt| opt.local_ipv4),
         &config
             .tcp_connect_options
             .as_ref()
-            .and_then(|opt| opt.local_address_ipv6),
+            .and_then(|opt| opt.local_ipv6),
     )
     .map_err(ConnectError::m("tcp bind local error"))?;
 
