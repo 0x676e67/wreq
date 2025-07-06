@@ -56,13 +56,13 @@ impl AlpnProtocol {
 pub struct AlpsProtocol(&'static [u8]);
 
 impl AlpsProtocol {
-    /// Application Settings protocol for HTTP/1.1
+    /// Prefer HTTP/1.1
     pub const HTTP1: AlpsProtocol = AlpsProtocol(b"http/1.1");
 
-    /// Application Settings protocol for HTTP/2
+    /// Prefer HTTP/2
     pub const HTTP2: AlpsProtocol = AlpsProtocol(b"h2");
 
-    /// Application Settings protocol for HTTP/3
+    /// Prefer HTTP/3
     pub const HTTP3: AlpsProtocol = AlpsProtocol(b"h3");
 
     #[inline]
