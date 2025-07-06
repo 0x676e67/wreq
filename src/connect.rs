@@ -504,16 +504,22 @@ impl ConnectorService {
         self.connect(req, true).await
     }
 
-    async fn connect_maybe_proxy(
-        self,
-        req: ConnRequest,
-        proxy: Option<Intercepted>,
-    ) -> Result<Conn, BoxError> {
+    async fn connect_maybe_proxy(self, req: ConnRequest) -> Result<Conn, BoxError> {
         debug!("starting new connection: {:?}", req.uri());
+
+        let intercepted = req
+            .ex_data()
+            .proxy_matcher()
+            .and_then(|scheme| scheme.intercept(req.uri()))
+            .or_else(|| {
+                self.proxies
+                    .iter()
+                    .find_map(|prox| prox.intercept(req.uri()))
+            });
 
         let timeout = self.timeout;
         let fut = async {
-            if let Some(intercepted) = proxy {
+            if let Some(intercepted) = intercepted {
                 self.connect_via_proxy(req, intercepted).await
             } else {
                 self.connect(req, false).await
@@ -540,18 +546,9 @@ impl Service<ConnRequest> for ConnectorService {
         Poll::Ready(Ok(()))
     }
 
+    #[inline(always)]
     fn call(&mut self, req: ConnRequest) -> Self::Future {
-        let intercepted = req
-            .ex_data()
-            .proxy_matcher()
-            .and_then(|scheme| scheme.intercept(req.uri()))
-            .or_else(|| {
-                self.proxies
-                    .iter()
-                    .find_map(|prox| prox.intercept(req.uri()))
-            });
-
-        Box::pin(self.clone().connect_maybe_proxy(req, intercepted))
+        Box::pin(self.clone().connect_maybe_proxy(req))
     }
 }
 
