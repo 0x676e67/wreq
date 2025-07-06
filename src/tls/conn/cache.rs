@@ -39,8 +39,8 @@ impl Borrow<[u8]> for HashSession {
 }
 
 pub struct SessionCache<T> {
-    sessions: HashMap<SessionKey<T>, LruMap<HashSession, ()>>,
     reverse: HashMap<HashSession, SessionKey<T>>,
+    per_host_sessions: HashMap<SessionKey<T>, LruMap<HashSession, ()>>,
     per_host_session_capacity: usize,
 }
 
@@ -50,19 +50,22 @@ where
 {
     pub fn with_capacity(per_host_session_capacity: usize) -> SessionCache<T> {
         SessionCache {
-            sessions: HashMap::with_hasher(RANDOM_STATE),
+            per_host_sessions: HashMap::with_hasher(RANDOM_STATE),
             reverse: HashMap::with_hasher(RANDOM_STATE),
             per_host_session_capacity,
         }
     }
 
     pub fn insert(&mut self, key: SessionKey<T>, session: SslSession) {
-        let per_host_sessions = self.sessions.entry(key.clone()).or_insert_with(|| {
-            LruMap::with_hasher(
-                ByLength::new(self.per_host_session_capacity as _),
-                RANDOM_STATE,
-            )
-        });
+        let per_host_sessions = self
+            .per_host_sessions
+            .entry(key.clone())
+            .or_insert_with(|| {
+                LruMap::with_hasher(
+                    ByLength::new(self.per_host_session_capacity as _),
+                    RANDOM_STATE,
+                )
+            });
 
         // Enforce per-key capacity limit by evicting the least recently used session
         if per_host_sessions.len() >= self.per_host_session_capacity {
@@ -79,7 +82,7 @@ where
 
     pub fn get(&mut self, key: &SessionKey<T>) -> Option<SslSession> {
         let session = {
-            let per_host_sessions = self.sessions.get_mut(key)?;
+            let per_host_sessions = self.per_host_sessions.get_mut(key)?;
             per_host_sessions.peek_oldest()?.0.clone().0
         };
 
@@ -99,10 +102,12 @@ where
             None => return,
         };
 
-        if let Entry::Occupied(mut sessions) = self.sessions.entry(key) {
-            sessions.get_mut().remove(&HashSession(session.to_owned()));
-            if sessions.get().is_empty() {
-                sessions.remove();
+        if let Entry::Occupied(mut per_host_sessions) = self.per_host_sessions.entry(key) {
+            per_host_sessions
+                .get_mut()
+                .remove(&HashSession(session.to_owned()));
+            if per_host_sessions.get().is_empty() {
+                per_host_sessions.remove();
             }
         }
     }
