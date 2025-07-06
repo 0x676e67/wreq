@@ -439,7 +439,7 @@ impl TlsConnectorBuilder {
 
         // Set TLS extension permutation
         if let Some(val) = cfg.extension_permutation {
-            let indices = val.into_iter().map(|ext| ext.0).collect::<Vec<_>>();
+            let indices = val.iter().map(|ext| ext.0).collect::<Vec<_>>();
             connector
                 .set_extension_permutation(&indices)
                 .map_err(Error::tls)?;

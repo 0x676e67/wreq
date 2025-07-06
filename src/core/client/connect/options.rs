@@ -31,17 +31,6 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 ///
 /// ❗ This only applies to certain socket types (e.g. `AF_INET`), and may require
 /// elevated permissions (e.g. `CAP_NET_RAW` on Linux).
-///
-/// # Example
-///
-/// ```
-/// use std::net::{IpAddr, Ipv4Addr};
-/// use mycrate::TcpConnectOptions;
-///
-/// let opts = TcpConnectOptions::default()
-///     .set_local_address(Some(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 10))))
-///     .set_interface("eth0").unwrap();
-/// ```
 #[derive(Debug, Clone, Hash, PartialEq, Eq, Default)]
 pub struct TcpConnectOptions {
     #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
@@ -73,13 +62,6 @@ impl TcpConnectOptions {
     ///
     /// On platforms that require a `CString` (e.g. macOS), this will return an error if the
     /// interface name contains an internal null byte (`\0`), which is invalid in C strings.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// opts.set_interface("eth0")?;
-    /// opts.set_interface(None)?; // Disable binding
-    /// ```
     ///
     /// # See Also
     /// - [VRF documentation](https://www.kernel.org/doc/Documentation/networking/vrf.txt)
@@ -126,12 +108,6 @@ impl TcpConnectOptions {
     /// - If an `Ipv6Addr` is given, it will set `local_ipv6` and clear `local_ipv4`.
     ///
     /// If `None` is passed, both addresses are cleared and the OS will choose automatically.
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// opts.set_local_address(Some("10.0.0.42".parse().unwrap()));
-    /// ```
     #[inline]
     pub fn set_local_address(&mut self, local_addr: Option<IpAddr>) {
         match local_addr {
@@ -150,15 +126,6 @@ impl TcpConnectOptions {
     /// Use this method to assign both address families independently.
     ///
     /// If either argument is `None`, the socket will not be bound for that protocol.
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// opts.set_local_addresses(
-    ///     Some("10.0.0.10".parse().unwrap()),
-    ///     Some("fe80::1".parse().unwrap()),
-    /// );
-    /// ```
     #[inline]
     pub fn set_local_addresses(
         &mut self,
