@@ -329,13 +329,23 @@ where
         };
 
         // Extract config extensions
-        let (transport_config, version, proxy_matcher, tcp_options) =
+        let (transport_cfg, version, proxy_matcher, tcp_options) =
             extract_request_configs(req.extensions_mut());
 
         let mut tls_config = None;
         let mut this = self.clone();
 
-        if let Some(mut cfg) = transport_config {
+        // Parse to specific ALPN protocol
+        let alpn_protocol = match version {
+            Some(Version::HTTP_11 | Version::HTTP_10 | Version::HTTP_09) => {
+                Some(AlpnProtocol::HTTP1)
+            }
+            Some(Version::HTTP_2) => Some(AlpnProtocol::HTTP2),
+            _ => None,
+        };
+
+        // Apply transport configuration
+        if let Some(mut cfg) = transport_cfg {
             if let Some(config) = cfg.http1_config.take() {
                 this.h1_builder.config(config);
             }
@@ -349,13 +359,7 @@ where
             extra: Box::new(ConnExtra {
                 scheme: uri.scheme().cloned(),
                 authority: uri.authority().cloned(),
-                alpn_protocol: match version {
-                    Some(Version::HTTP_11 | Version::HTTP_10 | Version::HTTP_09) => {
-                        Some(AlpnProtocol::HTTP1)
-                    }
-                    Some(Version::HTTP_2) => Some(AlpnProtocol::HTTP2),
-                    _ => None,
-                },
+                alpn_protocol,
                 proxy_matcher,
                 tcp_options,
                 tls_config,
