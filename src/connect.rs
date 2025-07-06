@@ -367,6 +367,23 @@ pub(crate) struct ConnectorService {
 }
 
 impl ConnectorService {
+    fn create_https_connector(
+        &self,
+        mut http: HttpConnector,
+        req: &mut ConnRequest,
+    ) -> Result<HttpsConnector<HttpConnector>, BoxError> {
+        let ex_data = req.ex_data();
+        let tls = ex_data
+            .tls_config()
+            .cloned()
+            .map(|cfg| self.tls_builder.build(cfg))
+            .transpose()?
+            .unwrap_or_else(|| self.tls.clone());
+
+        http.set_tcp_connect_options(ex_data.tcp_connect_options().cloned());
+        Ok(HttpsConnector::with_connector(http, tls))
+    }
+
     async fn connect(self, mut req: ConnRequest, is_proxy: bool) -> Result<Conn, BoxError> {
         trace!("connect with maybe proxy: {:?}", is_proxy);
 
@@ -489,26 +506,8 @@ impl ConnectorService {
             });
         }
 
-        // Update the connect URI to the proxy URI
         *req.uri_mut() = proxy_uri;
-
         self.connect(req, true).await
-    }
-
-    fn create_https_connector(
-        &self,
-        mut http: HttpConnector,
-        req: &mut ConnRequest,
-    ) -> Result<HttpsConnector<HttpConnector>, BoxError> {
-        let tls = req
-            .tls_config()
-            .cloned()
-            .map(|cfg| self.tls_builder.build(cfg))
-            .transpose()?
-            .unwrap_or_else(|| self.tls.clone());
-
-        http.set_tcp_connect_options(req.tcp_connect_options().cloned());
-        Ok(HttpsConnector::with_connector(http, tls))
     }
 }
 
@@ -541,6 +540,7 @@ impl Service<ConnRequest> for ConnectorService {
         debug!("starting new connection: {:?}", req.uri());
 
         let intercepted = req
+            .ex_data()
             .proxy_matcher()
             .and_then(|scheme| scheme.intercept(req.uri()))
             .or_else(|| {

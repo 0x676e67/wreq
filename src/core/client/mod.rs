@@ -64,11 +64,38 @@ type BoxSendFuture = Pin<Box<dyn Future<Output = ()> + Send>>;
 /// It implements `Eq`, `Hash`, and `Clone` to support caching and deduplication.
 #[derive(Clone, Hash, Debug, Eq, PartialEq)]
 pub struct ConnExtra {
-    uri: Uri,
-    version: Option<Version>,
+    scheme: Option<Scheme>,
+    authority: Option<Authority>,
+    alpn_protocol: Option<AlpnProtocol>,
     proxy_matcher: Option<ProxyMacher>,
     tcp_options: Option<TcpConnectOptions>,
     tls_config: Option<TlsConfig>,
+}
+
+impl ConnExtra {
+    /// Returns the negotiated ALPN protocol.
+    #[inline]
+    pub(crate) fn alpn_protocol(&self) -> Option<AlpnProtocol> {
+        self.alpn_protocol
+    }
+
+    /// Return a reference to the proxy matcher.
+    #[inline]
+    pub(crate) fn proxy_matcher(&self) -> Option<&ProxyMacher> {
+        self.proxy_matcher.as_ref()
+    }
+
+    /// Return the TCP connection options.
+    #[inline]
+    pub(crate) fn tcp_connect_options(&self) -> Option<&TcpConnectOptions> {
+        self.tcp_options.as_ref()
+    }
+
+    /// Return the TLS configuration.
+    #[inline]
+    pub(crate) fn tls_config(&self) -> Option<&TlsConfig> {
+        self.tls_config.as_ref()
+    }
 }
 
 /// Uniquely identifies a reusable connection.
@@ -94,50 +121,27 @@ pub(crate) struct ConnKey(Box<ConnExtra>);
 /// and may influence connection pooling, ALPN negotiation, and proxy routing.
 #[derive(Debug, Clone)]
 pub struct ConnRequest {
+    uri: Uri,
     extra: Box<ConnExtra>,
 }
 
 impl ConnRequest {
-    /// Returns a reference to the destination URI for this request.
+    /// Return a reference to the destination URI for this request.
     #[inline]
     pub(crate) fn uri(&self) -> &Uri {
-        &self.extra.uri
+        &self.uri
     }
 
-    /// Returns a mutable reference to the target URI for this connection request.
+    /// Return a mutable reference to the target URI for this connection request.
     #[inline]
     pub(crate) fn uri_mut(&mut self) -> &mut Uri {
-        &mut self.extra.uri
+        &mut self.uri
     }
 
-    /// Returns the negotiated ALPN protocol, based on HTTP version.
+    /// Return the extra connection parameters for this request.
     #[inline]
-    pub(crate) fn alpn_protocol(&self) -> Option<AlpnProtocol> {
-        match self.extra.version {
-            Some(Version::HTTP_11 | Version::HTTP_10 | Version::HTTP_09) => {
-                Some(AlpnProtocol::HTTP1)
-            }
-            Some(Version::HTTP_2) => Some(AlpnProtocol::HTTP2),
-            _ => None,
-        }
-    }
-
-    /// Returns a reference to the proxy matcher.
-    #[inline]
-    pub(crate) fn proxy_matcher(&self) -> Option<&ProxyMacher> {
-        self.extra.proxy_matcher.as_ref()
-    }
-
-    /// Return the TCP connection options.
-    #[inline]
-    pub(crate) fn tcp_connect_options(&self) -> Option<&TcpConnectOptions> {
-        self.extra.tcp_options.as_ref()
-    }
-
-    /// Return the TLS configuration.
-    #[inline]
-    pub(crate) fn tls_config(&self) -> Option<&TlsConfig> {
-        self.extra.tls_config.as_ref()
+    pub(crate) fn ex_data(&self) -> &ConnExtra {
+        &self.extra
     }
 
     /// Converts the request into its corresponding `ConnKey`.
@@ -343,12 +347,20 @@ where
 
         let conn_req = ConnRequest {
             extra: Box::new(ConnExtra {
-                uri: uri.clone(),
-                version,
+                scheme: uri.scheme().cloned(),
+                authority: uri.authority().cloned(),
+                alpn_protocol: match version {
+                    Some(Version::HTTP_11 | Version::HTTP_10 | Version::HTTP_09) => {
+                        Some(AlpnProtocol::HTTP1)
+                    }
+                    Some(Version::HTTP_2) => Some(AlpnProtocol::HTTP2),
+                    _ => None,
+                },
                 proxy_matcher,
                 tcp_options,
                 tls_config,
             }),
+            uri,
         };
 
         ResponseFuture::new(this.send_request(req, conn_req))
@@ -598,8 +610,8 @@ where
 
         let h1_builder = self.h1_builder.clone();
         let h2_builder = self.h2_builder.clone();
-        let ver = match conn_req.extra.version {
-            Some(Version::HTTP_2) => Ver::Http2,
+        let ver = match conn_req.extra.alpn_protocol {
+            Some(AlpnProtocol::HTTP2) => Ver::Http2,
             _ => self.config.ver,
         };
         let is_ver_h2 = ver == Ver::Http2;

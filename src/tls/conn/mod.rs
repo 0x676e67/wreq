@@ -222,7 +222,7 @@ impl Inner {
         )?;
 
         // Set ALPN protocols
-        if let Some(alpn) = req.alpn_protocol() {
+        if let Some(alpn) = req.ex_data().alpn_protocol() {
             cfg.set_alpn_protos(&alpn.encode())?;
         }
 
@@ -447,10 +447,7 @@ impl TlsConnectorBuilder {
 
         // Set TLS keylog policy if provided.
         if let Some(ref policy) = self.keylog {
-            let handle = policy
-                .clone()
-                .open_handle()
-                .map_err(Error::tls)?;
+            let handle = policy.clone().open_handle().map_err(Error::tls)?;
             connector.set_keylog_callback(move |_, line| {
                 handle.write_log_line(line);
             });
