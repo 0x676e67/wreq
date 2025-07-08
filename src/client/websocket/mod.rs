@@ -60,6 +60,7 @@ impl WebSocketRequestBuilder {
     /// # Returns
     ///
     /// * `Self` - The modified instance with the custom WebSocket accept key.
+    #[inline]
     pub fn accept_key<K>(mut self, key: K) -> Self
     where
         K: Into<Cow<'static, str>>,
@@ -90,6 +91,7 @@ impl WebSocketRequestBuilder {
     ///     .protocols(["protocol1", "protocol2"])
     ///     .build();
     /// ```
+    #[inline]
     pub fn protocols<P>(mut self, protocols: P) -> Self
     where
         P: IntoIterator,
@@ -101,36 +103,42 @@ impl WebSocketRequestBuilder {
     }
 
     /// Sets the websocket max_frame_size configuration.
+    #[inline]
     pub fn max_frame_size(mut self, max_frame_size: usize) -> Self {
         self.config.max_frame_size = Some(max_frame_size);
         self
     }
 
     /// Sets the websocket read_buffer_size configuration.
+    #[inline]
     pub fn read_buffer_size(mut self, read_buffer_size: usize) -> Self {
         self.config.read_buffer_size = read_buffer_size;
         self
     }
 
     /// Sets the websocket write_buffer_size configuration.
+    #[inline]
     pub fn write_buffer_size(mut self, write_buffer_size: usize) -> Self {
         self.config.write_buffer_size = write_buffer_size;
         self
     }
 
     /// Sets the websocket max_write_buffer_size configuration.
+    #[inline]
     pub fn max_write_buffer_size(mut self, max_write_buffer_size: usize) -> Self {
         self.config.max_write_buffer_size = max_write_buffer_size;
         self
     }
 
     /// Sets the websocket max_message_size configuration.
+    #[inline]
     pub fn max_message_size(mut self, max_message_size: usize) -> Self {
         self.config.max_message_size = Some(max_message_size);
         self
     }
 
     /// Sets the websocket accept_unmasked_frames configuration.
+    #[inline]
     pub fn accept_unmasked_frames(mut self, accept_unmasked_frames: bool) -> Self {
         self.config.accept_unmasked_frames = accept_unmasked_frames;
         self
@@ -145,12 +153,14 @@ impl WebSocketRequestBuilder {
     /// # Returns
     ///
     /// * `Self` - The modified instance with the HTTP version set to HTTP/2.
+    #[inline]
     pub fn use_http2(mut self) -> Self {
         self.inner = self.inner.version(Version::HTTP_2);
         self
     }
 
     /// Add a `Header` to this Request.
+    #[inline]
     pub fn header<K, V>(mut self, key: K, value: V) -> Self
     where
         HeaderName: TryFrom<K>,
@@ -163,6 +173,7 @@ impl WebSocketRequestBuilder {
     }
 
     /// Add a `Header` to append to the request.
+    #[inline]
     pub fn header_append<K, V>(mut self, key: K, value: V) -> Self
     where
         HeaderName: TryFrom<K>,
@@ -177,18 +188,21 @@ impl WebSocketRequestBuilder {
     /// Add a set of Headers to the existing ones on this Request.
     ///
     /// The headers will be merged in to any already set.
+    #[inline]
     pub fn headers(mut self, headers: HeaderMap) -> Self {
         self.inner = self.inner.headers(headers);
         self
     }
 
     /// Set the original headers for this request.
+    #[inline]
     pub fn original_headers(mut self, original_headers: OriginalHeaders) -> Self {
         self.inner = self.inner.original_headers(original_headers);
         self
     }
 
     /// Enable HTTP authentication.
+    #[inline]
     pub fn auth<V>(mut self, value: V) -> Self
     where
         HeaderValue: TryFrom<V>,
@@ -199,6 +213,7 @@ impl WebSocketRequestBuilder {
     }
 
     /// Enable HTTP basic authentication.
+    #[inline]
     pub fn basic_auth<U, P>(mut self, username: U, password: Option<P>) -> Self
     where
         U: fmt::Display,
@@ -209,6 +224,7 @@ impl WebSocketRequestBuilder {
     }
 
     /// Enable HTTP bearer authentication.
+    #[inline]
     pub fn bearer_auth<T>(mut self, token: T) -> Self
     where
         T: fmt::Display,
@@ -218,18 +234,21 @@ impl WebSocketRequestBuilder {
     }
 
     /// Modify the query string of the URL.
+    #[inline]
     pub fn query<T: Serialize + ?Sized>(mut self, query: &T) -> Self {
         self.inner = self.inner.query(query);
         self
     }
 
     /// Set the proxy for this request.
+    #[inline]
     pub fn proxy(mut self, proxy: Proxy) -> Self {
         self.inner = self.inner.proxy(proxy);
         self
     }
 
     /// Set the local address for this request.
+    #[inline]
     pub fn local_address<V>(mut self, local_address: V) -> Self
     where
         V: Into<Option<IpAddr>>,
@@ -239,6 +258,7 @@ impl WebSocketRequestBuilder {
     }
 
     /// Set the local addresses for this request.
+    #[inline]
     pub fn local_addresses<V4, V6>(mut self, ipv4: V4, ipv6: V6) -> Self
     where
         V4: Into<Option<Ipv4Addr>>,
@@ -261,6 +281,7 @@ impl WebSocketRequestBuilder {
         target_os = "visionos",
         target_os = "watchos",
     ))]
+    #[inline]
     pub fn interface<I>(mut self, interface: I) -> Self
     where
         I: Into<std::borrow::Cow<'static, str>>,
@@ -275,6 +296,7 @@ impl WebSocketRequestBuilder {
     /// to use the specified HTTP context. It allows the client to mimic the behavior of different
     /// versions or setups, which can be useful for testing or ensuring compatibility with various
     /// environments.
+    #[inline]
     pub fn emulation<P>(mut self, factory: P) -> RequestBuilder
     where
         P: EmulationProviderFactory,
@@ -548,11 +570,13 @@ impl WebSocket {
     /// Receive another message.
     ///
     /// Returns `None` if the stream has closed.
+    #[inline]
     pub async fn recv(&mut self) -> Option<Result<Message, Error>> {
         self.next().await
     }
 
     /// Send a message.
+    #[inline]
     pub async fn send(&mut self, msg: Message) -> Result<(), Error> {
         self.inner
             .send(msg.into_tungstenite())
@@ -561,6 +585,7 @@ impl WebSocket {
     }
 
     /// Return the selected WebSocket subprotocol, if one has been chosen.
+    #[inline]
     pub fn protocol(&self) -> Option<&HeaderValue> {
         self.protocol.as_ref()
     }
@@ -601,28 +626,28 @@ impl Stream for WebSocket {
 impl Sink<Message> for WebSocket {
     type Error = Error;
 
-    #[inline(always)]
+    #[inline]
     fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         Pin::new(&mut self.inner)
             .poll_ready(cx)
             .map_err(Error::upgrade)
     }
 
-    #[inline(always)]
+    #[inline]
     fn start_send(mut self: Pin<&mut Self>, item: Message) -> Result<(), Self::Error> {
         Pin::new(&mut self.inner)
             .start_send(item.into_tungstenite())
             .map_err(Error::upgrade)
     }
 
-    #[inline(always)]
+    #[inline]
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         Pin::new(&mut self.inner)
             .poll_flush(cx)
             .map_err(Error::upgrade)
     }
 
-    #[inline(always)]
+    #[inline]
     fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         Pin::new(&mut self.inner)
             .poll_close(cx)
