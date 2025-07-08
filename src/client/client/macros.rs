@@ -17,3 +17,13 @@ macro_rules! take_err {
         }
     };
 }
+
+macro_rules! apply_option {
+    ($self:expr, $emulation:expr, $(($field:ident, $method:ident)),*) => {
+        $(
+            if let Some(value) = $emulation.$field {
+                $self = $self.$method(value);
+            }
+        )*
+    };
+}

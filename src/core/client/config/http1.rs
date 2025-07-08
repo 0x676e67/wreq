@@ -54,12 +54,8 @@ impl Http1ConfigBuilder {
     /// Set whether to support preserving original header cases.
     ///
     /// Currently, this will record the original cases received, and store them
-    /// in a private extension on the `Response`. It will also look for and use
+    /// in a http extension on the `Response`. It will also look for and use
     /// such an extension in any provided `Request`.
-    ///
-    /// Since the relevant extension is still private, there is no way to
-    /// interact with the original cases. The only effect this can have now is
-    /// to forward the cases in a proxy-like fashion.
     ///
     /// Default is false.
     pub fn preserve_header_case(mut self, preserve_header_case: bool) -> Self {

@@ -228,13 +228,12 @@ name = "form"
 path = "examples/form.rs"
 
 [[example]]
-name = "hickory_dns"
-path = "examples/hickory_dns.rs"
-required-features = ["hickory-dns", "tracing"]
+name = "http1_send_case_sensitive_headers"
+path = "examples/http1_send_case_sensitive_headers.rs"
 
 [[example]]
-name = "http1_case_sensitive_headers"
-path = "examples/http1_case_sensitive_headers.rs"
+name = "http1_recv_case_sensitive_headers"
+path = "examples/http1_recv_case_sensitive_headers.rs"
 
 [[example]]
 name = "emulation_firefox"

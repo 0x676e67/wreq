@@ -485,12 +485,14 @@ impl ClientBuilder {
     /// # Ok(())
     /// # }
     /// ```
+    #[inline]
     pub fn default_headers(mut self, headers: HeaderMap) -> ClientBuilder {
         crate::util::replace_headers(&mut self.config.headers, headers);
         self
     }
 
     /// Sets the original headers for every request.
+    #[inline]
     pub fn original_headers(mut self, original_headers: OriginalHeaders) -> ClientBuilder {
         self.config.original_headers = Some(original_headers);
         self
@@ -506,6 +508,7 @@ impl ClientBuilder {
     /// # Optional
     ///
     /// This requires the optional `cookies` feature to be enabled.
+    #[inline]
     #[cfg(feature = "cookies")]
     pub fn cookie_store(mut self, enable: bool) -> ClientBuilder {
         if enable {
@@ -526,6 +529,7 @@ impl ClientBuilder {
     /// # Optional
     ///
     /// This requires the optional `cookies` feature to be enabled.
+    #[inline]
     #[cfg(feature = "cookies")]
     pub fn cookie_provider<C: cookie::CookieStore + 'static>(
         mut self,
@@ -551,6 +555,7 @@ impl ClientBuilder {
     /// # Optional
     ///
     /// This requires the optional `gzip` feature to be enabled
+    #[inline]
     #[cfg(feature = "gzip")]
     pub fn gzip(mut self, enable: bool) -> ClientBuilder {
         self.config.accept_encoding.gzip(enable);
@@ -573,6 +578,7 @@ impl ClientBuilder {
     /// # Optional
     ///
     /// This requires the optional `brotli` feature to be enabled
+    #[inline]
     #[cfg(feature = "brotli")]
     pub fn brotli(mut self, enable: bool) -> ClientBuilder {
         self.config.accept_encoding.brotli(enable);
@@ -595,6 +601,7 @@ impl ClientBuilder {
     /// # Optional
     ///
     /// This requires the optional `zstd` feature to be enabled
+    #[inline]
     #[cfg(feature = "zstd")]
     pub fn zstd(mut self, enable: bool) -> ClientBuilder {
         self.config.accept_encoding.zstd(enable);
@@ -617,6 +624,7 @@ impl ClientBuilder {
     /// # Optional
     ///
     /// This requires the optional `deflate` feature to be enabled
+    #[inline]
     #[cfg(feature = "deflate")]
     pub fn deflate(mut self, enable: bool) -> ClientBuilder {
         self.config.accept_encoding.deflate(enable);
@@ -628,6 +636,7 @@ impl ClientBuilder {
     /// This method exists even if the optional `zstd` feature is not enabled.
     /// This can be used to ensure a `Client` doesn't use zstd decompression
     /// even if another dependency were to enable the optional `zstd` feature.
+    #[inline]
     pub fn no_zstd(self) -> ClientBuilder {
         #[cfg(feature = "zstd")]
         {
@@ -645,6 +654,7 @@ impl ClientBuilder {
     /// This method exists even if the optional `gzip` feature is not enabled.
     /// This can be used to ensure a `Client` doesn't use gzip decompression
     /// even if another dependency were to enable the optional `gzip` feature.
+    #[inline]
     pub fn no_gzip(self) -> ClientBuilder {
         #[cfg(feature = "gzip")]
         {
@@ -662,6 +672,7 @@ impl ClientBuilder {
     /// This method exists even if the optional `brotli` feature is not enabled.
     /// This can be used to ensure a `Client` doesn't use brotli decompression
     /// even if another dependency were to enable the optional `brotli` feature.
+    #[inline]
     pub fn no_brotli(self) -> ClientBuilder {
         #[cfg(feature = "brotli")]
         {
@@ -679,6 +690,7 @@ impl ClientBuilder {
     /// This method exists even if the optional `deflate` feature is not enabled.
     /// This can be used to ensure a `Client` doesn't use deflate decompression
     /// even if another dependency were to enable the optional `deflate` feature.
+    #[inline]
     pub fn no_deflate(self) -> ClientBuilder {
         #[cfg(feature = "deflate")]
         {
@@ -696,6 +708,7 @@ impl ClientBuilder {
     /// Set a `RedirectPolicy` for this client.
     ///
     /// Default will follow redirects up to a maximum of 10.
+    #[inline]
     pub fn redirect(mut self, policy: redirect::Policy) -> ClientBuilder {
         self.config.redirect_policy = policy;
         self
@@ -704,6 +717,7 @@ impl ClientBuilder {
     /// Enable or disable automatic setting of the `Referer` header.
     ///
     /// Default is `true`.
+    #[inline]
     pub fn referer(mut self, enable: bool) -> ClientBuilder {
         self.config.referer = enable;
         self
@@ -727,6 +741,7 @@ impl ClientBuilder {
     /// let proxy = Proxy::http("http://proxy:8080").unwrap();
     /// let client = Client::builder().proxy(proxy).build().unwrap();
     /// ```
+    #[inline]
     pub fn proxy(mut self, proxy: Proxy) -> ClientBuilder {
         self.config.proxies.push(proxy.into_matcher());
         self.config.auto_sys_proxy = false;
@@ -740,6 +755,7 @@ impl ClientBuilder {
     /// on all desired proxies instead.
     ///
     /// This also disables the automatic usage of the "system" proxy.
+    #[inline]
     pub fn no_proxy(mut self) -> ClientBuilder {
         self.config.proxies.clear();
         self.config.auto_sys_proxy = false;
@@ -754,6 +770,7 @@ impl ClientBuilder {
     /// response body has finished.
     ///
     /// Default is no timeout.
+    #[inline]
     pub fn timeout(mut self, timeout: Duration) -> ClientBuilder {
         self.config.timeout = Some(timeout);
         self
@@ -762,6 +779,7 @@ impl ClientBuilder {
     /// Set a timeout for only the read phase of a `Client`.
     ///
     /// Default is `None`.
+    #[inline]
     pub fn read_timeout(mut self, timeout: Duration) -> ClientBuilder {
         self.config.read_timeout = Some(timeout);
         self
@@ -775,6 +793,7 @@ impl ClientBuilder {
     ///
     /// This **requires** the futures be executed in a tokio runtime with
     /// a tokio timer enabled.
+    #[inline]
     pub fn connect_timeout(mut self, timeout: Duration) -> ClientBuilder {
         self.config.connect_timeout = Some(timeout);
         self
@@ -786,6 +805,7 @@ impl ClientBuilder {
     /// for read and write operations on connections.
     ///
     /// [log]: https://crates.io/crates/log
+    #[inline]
     pub fn connection_verbose(mut self, verbose: bool) -> ClientBuilder {
         self.config.connection_verbose = verbose;
         self
@@ -798,6 +818,7 @@ impl ClientBuilder {
     /// Pass `None` to disable timeout.
     ///
     /// Default is 90 seconds.
+    #[inline]
     pub fn pool_idle_timeout<D>(mut self, val: D) -> ClientBuilder
     where
         D: Into<Option<Duration>>,
@@ -807,18 +828,21 @@ impl ClientBuilder {
     }
 
     /// Sets the maximum idle connection per host allowed in the pool.
+    #[inline]
     pub fn pool_max_idle_per_host(mut self, max: usize) -> ClientBuilder {
         self.config.pool_max_idle_per_host = max;
         self
     }
 
     /// Sets the maximum number of connections in the pool.
+    #[inline]
     pub fn pool_max_size(mut self, max: u32) -> ClientBuilder {
         self.config.pool_max_size = NonZeroU32::new(max);
         self
     }
 
     /// Disable keep-alive for the client.
+    #[inline]
     pub fn no_keepalive(mut self) -> ClientBuilder {
         self.config.pool_max_idle_per_host = 0;
         self.config.tcp_keepalive = None;
@@ -826,20 +850,48 @@ impl ClientBuilder {
     }
 
     /// Only use HTTP/1.
+    #[inline]
     pub fn http1_only(mut self) -> ClientBuilder {
         self.config.http_version_pref = HttpVersionPref::Http1;
         self
     }
 
     /// Only use HTTP/2.
+    #[inline]
     pub fn http2_only(mut self) -> ClientBuilder {
         self.config.http_version_pref = HttpVersionPref::Http2;
         self
     }
 
+    /// Restrict the Client to be used with HTTPS only requests.
+    ///
+    /// Defaults to false.
+    #[inline]
+    pub fn https_only(mut self, enabled: bool) -> ClientBuilder {
+        self.config.https_only = enabled;
+        self
+    }
+
     /// Sets the maximum number of safe retries for HTTP/2 connections.
+    ///
+    /// Default is 2.
+    #[inline]
     pub fn http2_max_retry(mut self, max: usize) -> ClientBuilder {
         self.config.http2_max_retry = max;
+        self
+    }
+
+    /// Sets the HTTP/1 configuration for the client.
+    #[inline]
+    pub fn http1_config(mut self, config: Http1Config) -> ClientBuilder {
+        self.config.http1_config = config;
+        self
+    }
+
+    /// Sets the HTTP/2 configuration for the client.
+    #[inline]
+    pub fn http2_config(mut self, config: Http2Config) -> ClientBuilder {
+        self.config.http2_config = config;
         self
     }
 
@@ -848,6 +900,7 @@ impl ClientBuilder {
     /// Set whether sockets have `TCP_NODELAY` enabled.
     ///
     /// Default is `true`.
+    #[inline]
     pub fn tcp_nodelay(mut self, enabled: bool) -> ClientBuilder {
         self.config.tcp_nodelay = enabled;
         self
@@ -856,6 +909,7 @@ impl ClientBuilder {
     /// Set that all sockets have `SO_KEEPALIVE` set with the supplied duration.
     ///
     /// If `None`, the option will not be set.
+    #[inline]
     pub fn tcp_keepalive<D>(mut self, val: D) -> ClientBuilder
     where
         D: Into<Option<Duration>>,
@@ -867,6 +921,7 @@ impl ClientBuilder {
     /// Set that all sockets have `SO_KEEPALIVE` set with the supplied interval.
     ///
     /// If `None`, the option will not be set.
+    #[inline]
     pub fn tcp_keepalive_interval<D>(mut self, val: D) -> ClientBuilder
     where
         D: Into<Option<Duration>>,
@@ -878,6 +933,7 @@ impl ClientBuilder {
     /// Set that all sockets have `SO_KEEPALIVE` set with the supplied retry count.
     ///
     /// If `None`, the option will not be set.
+    #[inline]
     pub fn tcp_keepalive_retries<C>(mut self, retries: C) -> ClientBuilder
     where
         C: Into<Option<u32>>,
@@ -892,6 +948,7 @@ impl ClientBuilder {
     /// the connection is force-closed.
     ///
     /// The current default is `None` (option disabled).
+    #[inline]
     #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
     pub fn tcp_user_timeout<D>(mut self, val: D) -> ClientBuilder
     where
@@ -902,6 +959,7 @@ impl ClientBuilder {
     }
 
     /// Set whether sockets have `SO_REUSEADDR` enabled.
+    #[inline]
     pub fn tcp_reuse_address(mut self, enabled: bool) -> ClientBuilder {
         self.config.tcp_reuse_address = enabled;
         self
@@ -919,6 +977,7 @@ impl ClientBuilder {
     ///     .build()
     ///     .unwrap();
     /// ```
+    #[inline]
     pub fn local_address<T>(mut self, addr: T) -> ClientBuilder
     where
         T: Into<Option<IpAddr>>,
@@ -932,6 +991,7 @@ impl ClientBuilder {
 
     /// Set that all sockets are bound to the configured IPv4 or IPv6 address (depending on host's
     /// preferences) before connection.
+    #[inline]
     pub fn local_addresses<V4, V6>(mut self, ipv4: V4, ipv6: V6) -> ClientBuilder
     where
         V4: Into<Option<Ipv4Addr>>,
@@ -955,6 +1015,7 @@ impl ClientBuilder {
     ///     .build()
     ///     .unwrap();
     /// ```
+    #[inline]
     #[cfg(any(
         target_os = "android",
         target_os = "fuchsia",
@@ -978,66 +1039,7 @@ impl ClientBuilder {
         self
     }
 
-    // TLS/HTTP2 emulation options
-
-    /// Configures the client builder to emulation the specified HTTP context.
-    ///
-    /// This method sets the necessary headers, HTTP/1 and HTTP/2 configurations, and TLS config
-    /// to use the specified HTTP context. It allows the client to mimic the behavior of different
-    /// versions or setups, which can be useful for testing or ensuring compatibility with various
-    /// environments.
-    ///
-    /// # Note
-    /// This will overwrite the existing configuration.
-    /// You must set emulation before you can perform subsequent HTTP1/HTTP2/TLS fine-tuning.
-    ///
-    /// # Example
-    ///
-    /// ```rust
-    /// use wreq::{
-    ///     Client,
-    ///     Emulation,
-    /// };
-    /// use wreq_util::Emulation;
-    ///
-    /// let client = Client::builder()
-    ///     .emulation(Emulation::Firefox128)
-    ///     .build()
-    ///     .unwrap();
-    /// ```
-    pub fn emulation<P>(mut self, factory: P) -> ClientBuilder
-    where
-        P: EmulationProviderFactory,
-    {
-        use std::mem::swap;
-
-        let mut emulation = factory.emulation();
-
-        if let Some(mut headers) = emulation.default_headers {
-            swap(&mut self.config.headers, &mut headers);
-        }
-
-        if emulation.original_headers.is_some() {
-            swap(
-                &mut self.config.original_headers,
-                &mut emulation.original_headers,
-            );
-        }
-
-        if let Some(mut http1_config) = emulation.http1_config.take() {
-            swap(&mut self.config.http1_config, &mut http1_config);
-        }
-
-        if let Some(mut http2_config) = emulation.http2_config.take() {
-            swap(&mut self.config.http2_config, &mut http2_config);
-        }
-
-        if let Some(mut tls_config) = emulation.tls_config.take() {
-            swap(&mut self.config.tls_config, &mut tls_config);
-        }
-
-        self
-    }
+    /// TLS options
 
     /// Configures SSL/TLS certificate pinning for the client.
     ///
@@ -1051,21 +1053,21 @@ impl ClientBuilder {
     ///
     /// - `certs`: An iterator of DER-encoded certificates. Each certificate should be provided as a
     ///   byte slice (`&[u8]`).
+    #[inline]
     pub fn ssl_pinning<'c, I>(mut self, certs: I) -> ClientBuilder
     where
         I: IntoIterator,
         I::Item: Into<CertificateInput<'c>>,
     {
         match CertStore::from_der_certs(certs) {
-            Ok(store) => {
-                self.config.tls_cert_store = store;
-            }
+            Ok(store) => self.config.tls_cert_store = store,
             Err(err) => self.config.error = Some(err),
         }
         self
     }
 
     /// Sets the identity to be used for client certificate authentication.
+    #[inline]
     pub fn identity(mut self, identity: Identity) -> ClientBuilder {
         self.config.tls_identity = Some(identity);
         self
@@ -1082,6 +1084,7 @@ impl ClientBuilder {
     /// will be trusted for use. This includes expired certificates. This
     /// introduces significant vulnerabilities, and should only be used
     /// as a last resort.
+    #[inline]
     pub fn cert_verification(mut self, cert_verification: bool) -> ClientBuilder {
         self.config.tls_cert_verification = cert_verification;
         self
@@ -1103,6 +1106,7 @@ impl ClientBuilder {
     ///   specific certificates that are not included in the system's default store.
     /// - Ensure that the provided verify certificate store is properly configured to avoid
     ///   potential security risks.
+    #[inline]
     pub fn cert_store(mut self, store: CertStore) -> ClientBuilder {
         self.config.tls_cert_store = store;
         self
@@ -1111,12 +1115,14 @@ impl ClientBuilder {
     /// Configures the use of Server Name Indication (SNI) when connecting.
     ///
     /// Defaults to `true`.
+    #[inline]
     pub fn tls_sni(mut self, tls_sni: bool) -> ClientBuilder {
         self.config.tls_sni = tls_sni;
         self
     }
 
     /// Configures TLS key logging policy for the client.
+    #[inline]
     pub fn keylog(mut self, policy: KeyLogPolicy) -> ClientBuilder {
         self.config.tls_keylog_policy = Some(policy);
         self
@@ -1130,6 +1136,7 @@ impl ClientBuilder {
     /// You should think very carefully before you use this method. If hostname verification is not
     /// used, *any* valid certificate for *any* site will be trusted for use from any other. This
     /// introduces a significant vulnerability to man-in-the-middle attacks.
+    #[inline]
     pub fn verify_hostname(mut self, verify_hostname: bool) -> ClientBuilder {
         self.config.tls_verify_hostname = verify_hostname;
         self
@@ -1138,6 +1145,7 @@ impl ClientBuilder {
     /// Set the minimum required TLS version for connections.
     ///
     /// By default the TLS backend's own default is used.
+    #[inline]
     pub fn min_tls_version(mut self, version: TlsVersion) -> ClientBuilder {
         self.config.min_tls_version = Some(version);
         self
@@ -1146,6 +1154,7 @@ impl ClientBuilder {
     /// Set the maximum allowed TLS version for connections.
     ///
     /// By default there's no maximum.
+    #[inline]
     pub fn max_tls_version(mut self, version: TlsVersion) -> ClientBuilder {
         self.config.max_tls_version = Some(version);
         self
@@ -1156,16 +1165,16 @@ impl ClientBuilder {
     /// # Optional
     ///
     /// feature to be enabled.
+    #[inline]
     pub fn tls_info(mut self, tls_info: bool) -> ClientBuilder {
         self.config.tls_info = tls_info;
         self
     }
 
-    /// Restrict the Client to be used with HTTPS only requests.
-    ///
-    /// Defaults to false.
-    pub fn https_only(mut self, enabled: bool) -> ClientBuilder {
-        self.config.https_only = enabled;
+    /// Sets the TLS configuration for the client.
+    #[inline]
+    pub fn tls_config(mut self, config: TlsConfig) -> ClientBuilder {
+        self.config.tls_config = config;
         self
     }
 
@@ -1176,6 +1185,7 @@ impl ClientBuilder {
     /// This method exists even if the optional `hickory-dns` feature is not enabled.
     /// This can be used to ensure a `Client` doesn't use the hickory-dns async resolver
     /// even if another dependency were to enable the optional `hickory-dns` feature.
+    #[inline]
     #[cfg(feature = "hickory-dns")]
     pub fn no_hickory_dns(mut self) -> ClientBuilder {
         self.config.hickory_dns = false;
@@ -1190,6 +1200,7 @@ impl ClientBuilder {
     /// traffic to a particular port you must include this port in the URL
     /// itself, any port in the overridden addr will be ignored and traffic sent
     /// to the conventional port for the given scheme (e.g. 80 for http).
+    #[inline]
     pub fn resolve(self, domain: &str, addr: SocketAddr) -> ClientBuilder {
         self.resolve_to_addrs(domain, &[addr])
     }
@@ -1202,6 +1213,7 @@ impl ClientBuilder {
     /// traffic to a particular port you must include this port in the URL
     /// itself, any port in the overridden addresses will be ignored and traffic sent
     /// to the conventional port for the given scheme (e.g. 80 for http).
+    #[inline]
     pub fn resolve_to_addrs(mut self, domain: &str, addrs: &[SocketAddr]) -> ClientBuilder {
         self.config
             .dns_overrides
@@ -1214,10 +1226,13 @@ impl ClientBuilder {
     /// Pass an `Arc` wrapping a trait object implementing `Resolve`.
     /// Overrides for specific names passed to `resolve` and `resolve_to_addrs` will
     /// still be applied on top of this resolver.
+    #[inline]
     pub fn dns_resolver<R: Resolve + 'static>(mut self, resolver: Arc<R>) -> ClientBuilder {
         self.config.dns_resolver = Some(resolver as _);
         self
     }
+
+    // Tower middleware options
 
     /// Adds a new Tower [`Layer`](https://docs.rs/tower/latest/tower/trait.Layer.html) to the
     /// request [`Service`](https://docs.rs/tower/latest/tower/trait.Service.html) which is responsible
@@ -1237,6 +1252,7 @@ impl ClientBuilder {
     ///     .build()
     ///     .unwrap();
     /// ```
+    #[inline]
     pub fn layer<L>(mut self, layer: L) -> ClientBuilder
     where
         L: Layer<BoxedClientService> + Clone + Send + Sync + 'static,
@@ -1276,6 +1292,7 @@ impl ClientBuilder {
     ///     .build()
     ///     .unwrap();
     /// ```
+    #[inline]
     pub fn connector_layer<L>(mut self, layer: L) -> ClientBuilder
     where
         L: Layer<BoxedConnectorService> + Clone + Send + Sync + 'static,
@@ -1288,6 +1305,51 @@ impl ClientBuilder {
             .connector_layers
             .get_or_insert_default()
             .push(layer);
+        self
+    }
+
+    // TLS/HTTP2 emulation options
+
+    /// Configures the client builder to emulation the specified HTTP context.
+    ///
+    /// This method sets the necessary headers, HTTP/1 and HTTP/2 configurations, and TLS config
+    /// to use the specified HTTP context. It allows the client to mimic the behavior of different
+    /// versions or setups, which can be useful for testing or ensuring compatibility with various
+    /// environments.
+    ///
+    /// # Note
+    /// This will overwrite the existing configuration.
+    /// You must set emulation before you can perform subsequent HTTP1/HTTP2/TLS fine-tuning.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use wreq::{
+    ///     Client,
+    ///     Emulation,
+    /// };
+    /// use wreq_util::Emulation;
+    ///
+    /// let client = Client::builder()
+    ///     .emulation(Emulation::Firefox128)
+    ///     .build()
+    ///     .unwrap();
+    /// ```
+    #[inline]
+    pub fn emulation<P>(mut self, factory: P) -> ClientBuilder
+    where
+        P: EmulationProviderFactory,
+    {
+        let emulation = factory.emulation();
+        apply_option!(
+            self,
+            emulation,
+            (default_headers, default_headers),
+            (original_headers, original_headers),
+            (http1_config, http1_config),
+            (http2_config, http2_config),
+            (tls_config, tls_config)
+        );
         self
     }
 }
@@ -1308,6 +1370,7 @@ impl Client {
     ///
     /// Use `Client::builder()` if you wish to handle the failure as an `Error`
     /// instead of panicking.
+    #[inline]
     pub fn new() -> Client {
         ClientBuilder::new().build().expect("Client::new()")
     }
@@ -1316,6 +1379,7 @@ impl Client {
     ///
     /// This method configures the `ClientBuilder` to use HTTP/1.0 only, which is required for
     /// certain WebSocket connections.
+    #[inline]
     pub fn builder() -> ClientBuilder {
         ClientBuilder::new()
     }
@@ -1325,6 +1389,7 @@ impl Client {
     /// # Errors
     ///
     /// This method fails whenever the supplied `Url` cannot be parsed.
+    #[inline]
     pub fn get<U: IntoUrl>(&self, url: U) -> RequestBuilder {
         self.request(Method::GET, url)
     }
@@ -1333,6 +1398,7 @@ impl Client {
     /// websocket handshake. This returns a wrapped type, so you must do
     /// this after you set up your request, and just before you send the
     /// request.
+    #[inline]
     #[cfg(feature = "websocket")]
     pub fn websocket<U: IntoUrl>(&self, url: U) -> WebSocketRequestBuilder {
         WebSocketRequestBuilder::new(self.request(Method::GET, url))
@@ -1343,6 +1409,7 @@ impl Client {
     /// # Errors
     ///
     /// This method fails whenever the supplied `Url` cannot be parsed.
+    #[inline]
     pub fn post<U: IntoUrl>(&self, url: U) -> RequestBuilder {
         self.request(Method::POST, url)
     }
@@ -1352,6 +1419,7 @@ impl Client {
     /// # Errors
     ///
     /// This method fails whenever the supplied `Url` cannot be parsed.
+    #[inline]
     pub fn put<U: IntoUrl>(&self, url: U) -> RequestBuilder {
         self.request(Method::PUT, url)
     }
@@ -1361,6 +1429,7 @@ impl Client {
     /// # Errors
     ///
     /// This method fails whenever the supplied `Url` cannot be parsed.
+    #[inline]
     pub fn patch<U: IntoUrl>(&self, url: U) -> RequestBuilder {
         self.request(Method::PATCH, url)
     }
@@ -1370,6 +1439,7 @@ impl Client {
     /// # Errors
     ///
     /// This method fails whenever the supplied `Url` cannot be parsed.
+    #[inline]
     pub fn delete<U: IntoUrl>(&self, url: U) -> RequestBuilder {
         self.request(Method::DELETE, url)
     }
@@ -1379,6 +1449,7 @@ impl Client {
     /// # Errors
     ///
     /// This method fails whenever the supplied `Url` cannot be parsed.
+    #[inline]
     pub fn head<U: IntoUrl>(&self, url: U) -> RequestBuilder {
         self.request(Method::HEAD, url)
     }

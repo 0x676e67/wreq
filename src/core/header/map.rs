@@ -60,6 +60,12 @@ impl OriginalHeaders {
         self.0.extend(iter);
     }
 
+    /// Returns an iterator over all header names and their original spellings.
+    #[inline]
+    pub fn iter(&self) -> impl Iterator<Item = (&HeaderName, &Bytes)> {
+        self.0.iter()
+    }
+
     /// Returns the number of header names in the collection.
     #[inline]
     pub fn len(&self) -> usize {
@@ -101,10 +107,29 @@ impl OriginalHeaders {
 }
 
 impl Default for OriginalHeaders {
-    /// Creates an empty `OriginalHeaders` with a default capacity of 12.
     #[inline]
     fn default() -> Self {
         Self::with_capacity(12)
+    }
+}
+
+impl<'a> IntoIterator for &'a OriginalHeaders {
+    type Item = (&'a HeaderName, &'a Bytes);
+    type IntoIter = <&'a HeaderMap<Bytes> as IntoIterator>::IntoIter;
+
+    #[inline]
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.iter()
+    }
+}
+
+impl IntoIterator for OriginalHeaders {
+    type Item = (Option<HeaderName>, Bytes);
+    type IntoIter = <HeaderMap<Bytes> as IntoIterator>::IntoIter;
+
+    #[inline]
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.into_iter()
     }
 }
 
