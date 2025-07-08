@@ -3,7 +3,7 @@ use wreq::{OriginalHeaders, http1::Http1Config};
 #[tokio::main]
 async fn main() -> wreq::Result<()> {
     let client = wreq::Client::builder()
-        .http1_config(
+        .configure_http1(
             Http1Config::builder()
                 .preserve_header_case(true)
                 .http09_responses(true)

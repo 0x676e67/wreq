@@ -883,14 +883,14 @@ impl ClientBuilder {
 
     /// Sets the HTTP/1 configuration for the client.
     #[inline]
-    pub fn http1_config(mut self, config: Http1Config) -> ClientBuilder {
+    pub fn configure_http1(mut self, config: Http1Config) -> ClientBuilder {
         self.config.http1_config = config;
         self
     }
 
     /// Sets the HTTP/2 configuration for the client.
     #[inline]
-    pub fn http2_config(mut self, config: Http2Config) -> ClientBuilder {
+    pub fn configure_http2(mut self, config: Http2Config) -> ClientBuilder {
         self.config.http2_config = config;
         self
     }
@@ -1173,7 +1173,7 @@ impl ClientBuilder {
 
     /// Sets the TLS configuration for the client.
     #[inline]
-    pub fn tls_config(mut self, config: TlsConfig) -> ClientBuilder {
+    pub fn configure_tls(mut self, config: TlsConfig) -> ClientBuilder {
         self.config.tls_config = config;
         self
     }
@@ -1346,9 +1346,9 @@ impl ClientBuilder {
             emulation,
             (default_headers, default_headers),
             (original_headers, original_headers),
-            (http1_config, http1_config),
-            (http2_config, http2_config),
-            (tls_config, tls_config)
+            (http1_config, configure_http1),
+            (http2_config, configure_http2),
+            (tls_config, configure_tls)
         );
         self
     }
