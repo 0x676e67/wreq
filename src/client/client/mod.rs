@@ -1039,7 +1039,7 @@ impl ClientBuilder {
         self
     }
 
-    /// TLS options
+    // TLS options
 
     /// Configures SSL/TLS certificate pinning for the client.
     ///
