@@ -22,6 +22,7 @@ use std::{
 };
 
 use futures_util::future::{self, Either, FutureExt, TryFutureExt};
+use hashmemo::HashMemo;
 use http::{
     HeaderValue, Method, Request, Response, Uri, Version,
     header::HOST,
@@ -45,6 +46,7 @@ use crate::{
             RequestConfig, RequestEnforcedHttpVersion, RequestProxyMatcher,
             RequestTcpConnectOptions, RequestTransportConfig,
         },
+        map::RANDOM_STATE,
         rt::{Executor, Timer},
     },
     proxy::Matcher as ProxyMacher,
@@ -109,7 +111,7 @@ impl ConnExtra {
 /// This type implements `Hash`, `Eq`, and `Clone` to support use
 /// in maps, caches, or deduplicated pools.
 #[derive(Clone, Hash, Debug, Eq, PartialEq)]
-pub(crate) struct ConnKey(Box<ConnExtra>);
+pub(crate) struct ConnKey(Box<HashMemo<ConnExtra, ahash::RandomState>>);
 
 /// Describes all the parameters needed to initiate a client connection.
 ///
@@ -122,7 +124,7 @@ pub(crate) struct ConnKey(Box<ConnExtra>);
 #[derive(Debug, Clone)]
 pub struct ConnRequest {
     uri: Uri,
-    extra: Box<ConnExtra>,
+    extra: Box<HashMemo<ConnExtra, ahash::RandomState>>,
 }
 
 impl ConnRequest {
@@ -141,7 +143,7 @@ impl ConnRequest {
     /// Return the extra connection parameters for this request.
     #[inline]
     pub(crate) fn ex_data(&self) -> &ConnExtra {
-        &self.extra
+        self.extra.as_ref().as_ref()
     }
 
     /// Converts the request into its corresponding `ConnKey`.
@@ -356,14 +358,17 @@ where
         }
 
         let conn_req = ConnRequest {
-            extra: Box::new(ConnExtra {
-                scheme: uri.scheme().cloned(),
-                authority: uri.authority().cloned(),
-                alpn_protocol,
-                proxy_matcher,
-                tcp_options,
-                tls_config,
-            }),
+            extra: Box::new(HashMemo::with_hasher(
+                ConnExtra {
+                    scheme: uri.scheme().cloned(),
+                    authority: uri.authority().cloned(),
+                    alpn_protocol,
+                    proxy_matcher,
+                    tcp_options,
+                    tls_config,
+                },
+                RANDOM_STATE,
+            )),
             uri,
         };
 
@@ -495,10 +500,10 @@ where
 
     async fn connection_for(
         &self,
-        conn_req: ConnRequest,
+        req: ConnRequest,
     ) -> Result<pool::Pooled<PoolClient<B>, ConnKey>, Error> {
         loop {
-            match self.one_connection_for(conn_req.clone()).await {
+            match self.one_connection_for(req.clone()).await {
                 Ok(pooled) => return Ok(pooled),
                 Err(ClientConnectError::Normal(err)) => return Err(err),
                 Err(ClientConnectError::CheckoutIsClosed(reason)) => {
@@ -518,12 +523,12 @@ where
 
     async fn one_connection_for(
         &self,
-        conn_req: ConnRequest,
+        req: ConnRequest,
     ) -> Result<pool::Pooled<PoolClient<B>, ConnKey>, ClientConnectError> {
         // Return a single connection if pooling is not enabled
         if !self.pool.is_enabled() {
             return self
-                .connect_to(conn_req)
+                .connect_to(req)
                 .await
                 .map_err(ClientConnectError::Normal);
         }
@@ -538,8 +543,8 @@ where
         // - If a new connection is started, but the Checkout wins after (an idle connection became
         //   available first), the started connection future is spawned into the runtime to
         //   complete, and then be inserted into the pool as an idle connection.
-        let checkout = self.pool.checkout(ConnKey(conn_req.extra.clone()));
-        let connect = self.connect_to(conn_req);
+        let checkout = self.pool.checkout(ConnKey(req.extra.clone()));
+        let connect = self.connect_to(req);
         let is_ver_h2 = self.config.ver == Ver::Http2;
 
         // The order of the `select` is depended on below...
@@ -606,7 +611,7 @@ where
 
     fn connect_to(
         &self,
-        conn_req: ConnRequest,
+        req: ConnRequest,
     ) -> impl Lazy<Output = Result<pool::Pooled<PoolClient<B>, ConnKey>, Error>> + Send + Unpin + 'static
     {
         let executor = self.exec.clone();
@@ -614,7 +619,7 @@ where
 
         let h1_builder = self.h1_builder.clone();
         let h2_builder = self.h2_builder.clone();
-        let ver = match conn_req.extra.alpn_protocol {
+        let ver = match req.ex_data().alpn_protocol() {
             Some(AlpnProtocol::HTTP2) => Ver::Http2,
             _ => self.config.ver,
         };
@@ -626,7 +631,7 @@ where
             // If the pool_key is for HTTP/2, and there is already a
             // connection being established, then this can't take a
             // second lock. The "connect_to" future is Canceled.
-            let connecting = match pool.connecting(ConnKey(conn_req.extra.clone()), ver) {
+            let connecting = match pool.connecting(ConnKey(req.extra.clone()), ver) {
                 Some(lock) => lock,
                 None => {
                     let canceled = e!(Canceled);
@@ -636,7 +641,7 @@ where
             };
             Either::Left(
                 connector
-                    .connect(connect::sealed::Internal, conn_req)
+                    .connect(connect::sealed::Internal, req)
                     .map_err(|src| e!(Connect, src))
                     .and_then(move |io| {
                         let connected = io.connected();
