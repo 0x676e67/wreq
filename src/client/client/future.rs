@@ -3,14 +3,14 @@ use std::{
     task::{Context, Poll},
 };
 
-use http::Response as HttpResponse;
+use http::{Request as HttpRequest, Response as HttpResponse};
 use pin_project_lite::pin_project;
 use tower::util::Oneshot;
 use url::Url;
 
 use super::{
     Response,
-    types::{BoxedClientService, CoreResponseFuture, GenericClientService, HttpRequest},
+    alias::{BoxedClientService, CoreResponseFuture, GenericClientService},
 };
 use crate::{
     Body, Error,

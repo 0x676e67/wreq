@@ -1,4 +1,4 @@
-pub use http::{Request as HttpRequest, Response as HttpResponse};
+use http::{Request as HttpRequest, Response as HttpResponse};
 use tower::{
     retry::Retry,
     util::{BoxCloneSyncService, BoxCloneSyncServiceLayer, MapErr},
@@ -17,10 +17,10 @@ use crate::{
 };
 
 #[cfg(not(feature = "cookies"))]
-type MaybeCookieLayer<T> = T;
+type CookieLayer<T> = T;
 
 #[cfg(feature = "cookies")]
-type MaybeCookieLayer<T> = crate::client::middleware::cookie::CookieManager<T>;
+type CookieLayer<T> = crate::client::middleware::cookie::CookieManager<T>;
 
 #[cfg(not(any(
     feature = "gzip",
@@ -28,7 +28,7 @@ type MaybeCookieLayer<T> = crate::client::middleware::cookie::CookieManager<T>;
     feature = "brotli",
     feature = "deflate"
 )))]
-type MaybeDecompression<T> = T;
+type Decompression<T> = T;
 
 #[cfg(any(
     feature = "gzip",
@@ -36,7 +36,7 @@ type MaybeDecompression<T> = T;
     feature = "brotli",
     feature = "deflate"
 ))]
-type MaybeDecompression<T> = crate::client::middleware::decoder::Decompression<T>;
+type Decompression<T> = crate::client::middleware::decoder::Decompression<T>;
 
 #[cfg(any(
     feature = "gzip",
@@ -54,10 +54,8 @@ pub type ResponseBody = TimeoutBody<tower_http::decompression::DecompressionBody
 )))]
 pub type ResponseBody = TimeoutBody<Incoming>;
 
-type RedirectLayer = FollowRedirect<
-    MaybeCookieLayer<ResponseBodyTimeout<MaybeDecompression<ClientService>>>,
-    RedirectPolicy,
->;
+pub type RedirectLayer =
+    FollowRedirect<CookieLayer<ResponseBodyTimeout<Decompression<ClientService>>>, RedirectPolicy>;
 
 pub type CoreResponseFuture = crate::core::client::ResponseFuture;
 

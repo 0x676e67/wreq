@@ -1,9 +1,11 @@
 //! Hash Value Memoization
 
-use std::borrow::Borrow;
-use std::hash::{BuildHasher, BuildHasherDefault, Hash, Hasher};
-use std::num::NonZeroU64;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::{
+    borrow::Borrow,
+    hash::{BuildHasher, BuildHasherDefault, Hash, Hasher},
+    num::NonZeroU64,
+    sync::atomic::{AtomicU64, Ordering},
+};
 
 use ahash::RandomState;
 

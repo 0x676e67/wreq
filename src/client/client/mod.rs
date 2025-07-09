@@ -1,8 +1,8 @@
 #[macro_use]
 mod macros;
+mod alias;
 mod future;
 mod service;
-mod types;
 
 use std::{
     collections::HashMap,
@@ -14,6 +14,7 @@ use std::{
     time::Duration,
 };
 
+use alias::{BoxedClientService, BoxedClientServiceLayer, GenericClientService, ResponseBody};
 pub use future::Pending;
 use http::{
     Request as HttpRequest, Response as HttpResponse,
@@ -25,7 +26,6 @@ use tower::{
     retry::RetryLayer,
     util::{BoxCloneSyncService, BoxCloneSyncServiceLayer},
 };
-use types::{BoxedClientService, BoxedClientServiceLayer, GenericClientService, ResponseBody};
 #[cfg(feature = "cookies")]
 use {super::middleware::cookie::CookieManagerLayer, crate::cookie};
 
