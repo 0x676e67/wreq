@@ -1,6 +1,6 @@
 #[macro_use]
 mod macros;
-mod alias;
+mod aliases;
 mod future;
 mod service;
 
@@ -14,7 +14,7 @@ use std::{
     time::Duration,
 };
 
-use alias::{BoxedClientService, BoxedClientServiceLayer, GenericClientService, ResponseBody};
+use aliases::{BoxedClientService, BoxedClientServiceLayer, GenericClientService, ResponseBody};
 pub use future::Pending;
 use http::{
     Request as HttpRequest, Response as HttpResponse,

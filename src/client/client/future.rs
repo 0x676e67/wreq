@@ -10,7 +10,7 @@ use url::Url;
 
 use super::{
     Response,
-    alias::{BoxedClientService, CoreResponseFuture, GenericClientService},
+    aliases::{BoxedClientService, CoreResponseFuture, GenericClientService},
 };
 use crate::{
     Body, Error,

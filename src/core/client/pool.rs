@@ -18,11 +18,11 @@ use tokio::sync::oneshot;
 
 use crate::{
     core::{
+        collections::{HashMap, HashSet, LruMap, RANDOM_STATE},
         common::{
             exec::{self, Exec},
             timer::Timer,
         },
-        map::{HashMap, HashSet, LruMap, RANDOM_STATE},
         rt::{Sleep, Timer as _},
     },
     sync::Mutex,

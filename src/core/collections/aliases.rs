@@ -1,5 +1,3 @@
-pub mod memo;
-
 use ahash::RandomState;
 use schnellru::ByLength;
 

@@ -7,11 +7,19 @@ use std::{
 use boring2::ssl::{SslSession, SslSessionRef, SslVersion};
 use schnellru::ByLength;
 
-use crate::core::map::{HashMap, LruMap, RANDOM_STATE};
+use crate::core::collections::{HashMap, LruMap, RANDOM_STATE};
 
+/// A typed key for indexing TLS sessions in the cache.
+///
+/// This wrapper provides type safety and allows different key types
+/// (e.g., hostname, connection parameters) to be used for session lookup.
 #[derive(Hash, PartialEq, Eq, Clone)]
 pub struct SessionKey<T>(pub T);
 
+/// A hashable wrapper around `SslSession` for use in hash-based collections.
+///
+/// Uses the session ID for hashing and equality, enabling efficient
+/// storage and lookup in HashMap/HashSet while maintaining session semantics.
 #[derive(Clone)]
 struct HashSession(SslSession);
 
@@ -38,6 +46,10 @@ impl Borrow<[u8]> for HashSession {
     }
 }
 
+/// A two-level cache for TLS sessions organized by host keys with LRU eviction.
+///
+/// Maintains both forward (key → sessions) and reverse (session → key) lookups
+/// for efficient session storage, retrieval, and cleanup operations.
 pub struct SessionCache<T> {
     reverse: HashMap<HashSession, SessionKey<T>>,
     per_host_sessions: HashMap<SessionKey<T>, LruMap<HashSession, ()>>,
@@ -96,7 +108,7 @@ where
         Some(session)
     }
 
-    pub fn remove(&mut self, session: &SslSessionRef) {
+    fn remove(&mut self, session: &SslSessionRef) {
         let key = match self.reverse.remove(session.id()) {
             Some(key) => key,
             None => return,
