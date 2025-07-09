@@ -90,7 +90,6 @@ percent-encoding = "2.3"
 ipnet = "2.11.0"
 schnellru = { version = "0.2.4", default-features = false }
 ahash = { version = "0.8.11", default-features = false }
-hashmemo = "0.2.0"
 
 ## boring-tls
 boring2 = { version = "5.0.0-alpha.4", features = ["pq-experimental"] }
