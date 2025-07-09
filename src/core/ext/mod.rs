@@ -4,13 +4,12 @@ mod config;
 mod h1_reason_phrase;
 mod header;
 
-use std::fmt;
-
 pub(crate) use config::{
     RequestConfig, RequestConfigValue, RequestEnforcedHttpVersion, RequestOriginalHeaders,
     RequestProxyMatcher, RequestTcpConnectOptions, RequestTransportConfig,
 };
 pub(crate) use h1_reason_phrase::ReasonPhrase;
+pub use header::OriginalHeaders;
 
 /// Represents the `:protocol` pseudo-header used by
 /// the [Extended CONNECT Protocol].
@@ -49,8 +48,8 @@ impl AsRef<[u8]> for Protocol {
     }
 }
 
-impl fmt::Debug for Protocol {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+impl std::fmt::Debug for Protocol {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         self.inner.fmt(f)
     }
 }

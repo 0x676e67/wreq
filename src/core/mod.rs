@@ -9,7 +9,6 @@ mod error;
 pub mod ext;
 
 pub mod collections;
-pub mod header;
 mod proto;
 pub mod proxy;
 pub mod rt;

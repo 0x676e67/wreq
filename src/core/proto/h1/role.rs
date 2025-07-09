@@ -13,8 +13,7 @@ use smallvec::{SmallVec, smallvec, smallvec_inline};
 use crate::core::{
     body::DecodedLength,
     error::Parse,
-    ext::{RequestConfig, RequestOriginalHeaders},
-    header::OriginalHeaders,
+    ext::{OriginalHeaders, RequestConfig, RequestOriginalHeaders},
     proto::{
         BodyLength, MessageHead, RequestHead, RequestLine,
         h1::{Encode, Encoder, Http1Transaction, ParseContext, ParseResult, ParsedMessage},
