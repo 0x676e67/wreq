@@ -4,7 +4,6 @@ use std::borrow::Borrow;
 use std::hash::{BuildHasher, BuildHasherDefault, Hash, Hasher};
 use std::num::NonZeroU64;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::u64;
 
 use ahash::RandomState;
 
@@ -86,9 +85,7 @@ where
             return;
         }
 
-        let mut hasher = self.hasher.build_hasher();
-        self.value.hash(&mut hasher);
-        let computed_hash = NonZeroU64::new(hasher.finish())
+        let computed_hash = NonZeroU64::new(self.hasher.hash_one(&self.value))
             .map(NonZeroU64::get)
             .unwrap_or(u64::MIN | 1);
 
