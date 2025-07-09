@@ -1454,6 +1454,16 @@ impl Client {
         self.request(Method::HEAD, url)
     }
 
+    /// Convenience method to make a `OPTIONS` request to a URL.
+    ///
+    /// # Errors
+    ///
+    /// This method fails whenever the supplied `Url` cannot be parsed.
+    #[inline]
+    pub fn options<U: IntoUrl>(&self, url: U) -> RequestBuilder {
+        self.request(Method::OPTIONS, url)
+    }
+
     /// Start building a `Request` with the `Method` and `Url`.
     ///
     /// Returns a `RequestBuilder`, which will allow setting headers and
