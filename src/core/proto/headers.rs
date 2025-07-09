@@ -86,7 +86,7 @@ fn from_digits(bytes: &[u8]) -> Option<u64> {
 pub(super) fn method_has_defined_payload_semantics(method: &Method) -> bool {
     !matches!(
         *method,
-        Method::GET | Method::HEAD | Method::DELETE | Method::CONNECT
+        Method::GET | Method::HEAD | Method::DELETE | Method::CONNECT | Method::OPTIONS
     )
 }
 
