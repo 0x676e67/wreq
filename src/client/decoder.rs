@@ -604,44 +604,52 @@ impl Accepts {
         }
     }
 
-    #[cfg(feature = "gzip")]
     const fn is_gzip(&self) -> bool {
-        self.gzip
+        #[cfg(feature = "gzip")]
+        {
+            self.gzip
+        }
+
+        #[cfg(not(feature = "gzip"))]
+        {
+            false
+        }
     }
 
-    #[cfg(not(feature = "gzip"))]
-    const fn is_gzip(&self) -> bool {
-        false
-    }
-
-    #[cfg(feature = "brotli")]
     const fn is_brotli(&self) -> bool {
-        self.brotli
+        #[cfg(feature = "brotli")]
+        {
+            self.brotli
+        }
+
+        #[cfg(not(feature = "brotli"))]
+        {
+            false
+        }
     }
 
-    #[cfg(not(feature = "brotli"))]
-    const fn is_brotli(&self) -> bool {
-        false
-    }
-
-    #[cfg(feature = "zstd")]
     const fn is_zstd(&self) -> bool {
-        self.zstd
+        #[cfg(feature = "zstd")]
+        {
+            self.zstd
+        }
+
+        #[cfg(not(feature = "zstd"))]
+        {
+            false
+        }
     }
 
-    #[cfg(not(feature = "zstd"))]
-    const fn is_zstd(&self) -> bool {
-        false
-    }
-
-    #[cfg(feature = "deflate")]
     const fn is_deflate(&self) -> bool {
-        self.deflate
-    }
+        #[cfg(feature = "deflate")]
+        {
+            self.deflate
+        }
 
-    #[cfg(not(feature = "deflate"))]
-    const fn is_deflate(&self) -> bool {
-        false
+        #[cfg(not(feature = "deflate"))]
+        {
+            false
+        }
     }
 }
 
