@@ -4,20 +4,19 @@ use httparse::ParserConfig;
 
 use crate::core::proto;
 
-/// Builder for `Http1Config`.
+/// Builder for `Http1Options`.
 #[must_use]
 #[derive(Debug)]
-pub struct Http1ConfigBuilder {
-    config: Http1Config,
+pub struct Http1OptionsBuilder {
+    config: Http1Options,
 }
 
-/// Configuration config for HTTP/1 connections.
+/// HTTP/1 protocol options for customizing connection behavior.
 ///
-/// The `Http1Config` struct provides various configuration options for HTTP/1 connections.
-/// These config allow you to customize the behavior of the HTTP/1 client, such as
-/// enabling support for HTTP/0.9 responses, allowing spaces after header names, and more.
+/// These options allow you to customize the behavior of HTTP/1 connections,
+/// such as enabling support for HTTP/0.9 responses, header case preservation, etc.
 #[derive(Debug, Default, Clone)]
-pub struct Http1Config {
+pub struct Http1Options {
     pub(crate) h09_responses: bool,
     pub(crate) h1_parser_config: ParserConfig,
     pub(crate) h1_writev: Option<bool>,
@@ -27,7 +26,7 @@ pub struct Http1Config {
     pub(crate) h1_max_buf_size: Option<usize>,
 }
 
-impl Http1ConfigBuilder {
+impl Http1OptionsBuilder {
     /// Set the `http09_responses` field.
     pub fn http09_responses(mut self, enabled: bool) -> Self {
         self.config.h09_responses = enabled;
@@ -164,17 +163,17 @@ impl Http1ConfigBuilder {
         self
     }
 
-    /// Build the `Http1Config` instance.
-    pub fn build(self) -> Http1Config {
+    /// Build the `Http1Options` instance.
+    pub fn build(self) -> Http1Options {
         self.config
     }
 }
 
-impl Http1Config {
-    /// Create a new `Http1ConfigBuilder`.
-    pub fn builder() -> Http1ConfigBuilder {
-        Http1ConfigBuilder {
-            config: Http1Config::default(),
+impl Http1Options {
+    /// Create a new `Http1OptionsBuilder`.
+    pub fn builder() -> Http1OptionsBuilder {
+        Http1OptionsBuilder {
+            config: Http1Options::default(),
         }
     }
 }

@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use wreq::{
     Client, EmulationProvider,
-    tls::{AlpsProtocol, TlsConfig, TlsInfo, TlsVersion},
+    tls::{AlpsProtocol, TlsInfo, TlsOptions, TlsVersion},
 };
 
 macro_rules! join {
@@ -60,8 +60,8 @@ const CURVES_LIST: &str = join!(
 #[tokio::test]
 async fn test_3des_support() -> wreq::Result<()> {
     let emulation = EmulationProvider::builder()
-        .tls_config(
-            TlsConfig::builder()
+        .with_tls(
+            TlsOptions::builder()
                 .cipher_list(join!(
                     ":",
                     "TLS_ECDHE_ECDSA_WITH_3DES_EDE_CBC_SHA",
@@ -94,8 +94,8 @@ async fn test_3des_support() -> wreq::Result<()> {
 #[tokio::test]
 async fn test_firefox_7x_100_cipher() -> wreq::Result<()> {
     let emulation = EmulationProvider::builder()
-        .tls_config(
-            TlsConfig::builder()
+        .with_tls(
+            TlsOptions::builder()
                 .cipher_list(join!(
                     ":",
                     "TLS_DHE_RSA_WITH_AES_128_CBC_SHA",
@@ -129,8 +129,8 @@ async fn test_firefox_7x_100_cipher() -> wreq::Result<()> {
 #[tokio::test]
 async fn test_alps_new_endpoint() -> wreq::Result<()> {
     let emulation = EmulationProvider::builder()
-        .tls_config(
-            TlsConfig::builder()
+        .with_tls(
+            TlsOptions::builder()
                 .min_tls_version(TlsVersion::TLS_1_2)
                 .max_tls_version(TlsVersion::TLS_1_3)
                 .alps_protos(&[AlpsProtocol::HTTP2])
@@ -173,8 +173,8 @@ async fn test_aes_hw_override() -> wreq::Result<()> {
     );
 
     let emulation = EmulationProvider::builder()
-        .tls_config(
-            TlsConfig::builder()
+        .with_tls(
+            TlsOptions::builder()
                 .cipher_list(CIPHER_LIST)
                 .min_tls_version(TlsVersion::TLS_1_2)
                 .max_tls_version(TlsVersion::TLS_1_3)

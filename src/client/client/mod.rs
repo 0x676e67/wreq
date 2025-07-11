@@ -54,18 +54,20 @@ use crate::{
     IntoUrl, Method, OriginalHeaders, Proxy,
     connect::{BoxedConnectorLayer, BoxedConnectorService, Conn, Connector, Unnameable},
     core::{
-        client::{Builder, Client as NativeClient, connect::TcpConnectOptions},
+        client::{
+            Builder, Client as NativeClient, config::TransportOptions, connect::TcpConnectOptions,
+        },
         ext::RequestConfig,
         rt::{TokioExecutor, tokio::TokioTimer},
     },
     dns::{DnsResolverWithOverrides, DynResolver, Resolve, gai::GaiResolver},
     error::{self, BoxError, Error},
-    http1::Http1Config,
-    http2::Http2Config,
+    http1::Http1Options,
+    http2::Http2Options,
     proxy::Matcher as ProxyMatcher,
     redirect::{self, RedirectPolicy},
     tls::{
-        AlpnProtocol, CertStore, CertificateInput, Identity, KeyLogPolicy, TlsConfig, TlsVersion,
+        AlpnProtocol, CertStore, CertificateInput, Identity, KeyLogPolicy, TlsOptions, TlsVersion,
     },
 };
 
@@ -146,8 +148,8 @@ struct Config {
     dns_resolver: Option<Arc<dyn Resolve>>,
     http_version_pref: HttpVersionPref,
     https_only: bool,
-    http1_config: Http1Config,
-    http2_config: Http2Config,
+    http1_options: Http1Options,
+    http2_options: Http2Options,
     http2_max_retry: usize,
     request_layers: Option<Vec<BoxedClientServiceLayer>>,
     connector_layers: Option<Vec<BoxedConnectorLayer>>,
@@ -161,7 +163,7 @@ struct Config {
     tls_cert_verification: bool,
     min_tls_version: Option<TlsVersion>,
     max_tls_version: Option<TlsVersion>,
-    tls_config: TlsConfig,
+    tls_options: TlsOptions,
 }
 
 impl Default for ClientBuilder {
@@ -217,8 +219,8 @@ impl ClientBuilder {
                 http_version_pref: HttpVersionPref::All,
                 builder: NativeClient::builder(TokioExecutor::new()),
                 https_only: false,
-                http1_config: Http1Config::default(),
-                http2_config: Http2Config::default(),
+                http1_options: Http1Options::default(),
+                http2_options: Http2Options::default(),
                 http2_max_retry: 2,
                 request_layers: None,
                 connector_layers: None,
@@ -231,7 +233,7 @@ impl ClientBuilder {
                 tls_cert_verification: true,
                 min_tls_version: None,
                 max_tls_version: None,
-                tls_config: TlsConfig::default(),
+                tls_options: TlsOptions::default(),
             },
         }
     }
@@ -261,8 +263,8 @@ impl ClientBuilder {
 
         config
             .builder
-            .http1_config(config.http1_config)
-            .http2_config(config.http2_config)
+            .http1_options(config.http1_options)
+            .http2_options(config.http2_options)
             .http2_only(matches!(config.http_version_pref, HttpVersionPref::Http2))
             .http2_timer(TokioTimer::new())
             .pool_timer(TokioTimer::new())
@@ -292,10 +294,10 @@ impl ClientBuilder {
 
             match config.http_version_pref {
                 HttpVersionPref::Http1 => {
-                    config.tls_config.alpn_protos = Some(AlpnProtocol::HTTP1.encode());
+                    config.tls_options.alpn_protos = Some(AlpnProtocol::HTTP1.encode());
                 }
                 HttpVersionPref::Http2 => {
-                    config.tls_config.alpn_protos = Some(AlpnProtocol::HTTP2.encode());
+                    config.tls_options.alpn_protos = Some(AlpnProtocol::HTTP2.encode());
                 }
                 _ => {}
             }
@@ -322,7 +324,7 @@ impl ClientBuilder {
                     #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
                     config.tcp_user_timeout,
                 )
-                .build(config.tls_config, config.connector_layers)?
+                .build(config.tls_options, config.connector_layers)?
         };
 
         let service = {
@@ -881,17 +883,17 @@ impl ClientBuilder {
         self
     }
 
-    /// Sets the HTTP/1 configuration for the client.
+    /// Sets the HTTP/1 options configuration for the client.
     #[inline]
-    pub fn configure_http1(mut self, config: Http1Config) -> ClientBuilder {
-        self.config.http1_config = config;
+    pub fn http1_options(mut self, opts: Http1Options) -> ClientBuilder {
+        self.config.http1_options = opts;
         self
     }
 
-    /// Sets the HTTP/2 configuration for the client.
+    /// Sets the HTTP/2 options configuration for the client.
     #[inline]
-    pub fn configure_http2(mut self, config: Http2Config) -> ClientBuilder {
-        self.config.http2_config = config;
+    pub fn http2_options(mut self, opts: Http2Options) -> ClientBuilder {
+        self.config.http2_options = opts;
         self
     }
 
@@ -1171,10 +1173,10 @@ impl ClientBuilder {
         self
     }
 
-    /// Sets the TLS configuration for the client.
+    /// Sets the TLS options configuration for the client.
     #[inline]
-    pub fn configure_tls(mut self, config: TlsConfig) -> ClientBuilder {
-        self.config.tls_config = config;
+    pub fn tls_options(mut self, opts: TlsOptions) -> ClientBuilder {
+        self.config.tls_options = opts;
         self
     }
 
@@ -1340,15 +1342,22 @@ impl ClientBuilder {
     where
         P: EmulationProviderFactory,
     {
-        let emulation = factory.emulation();
+        let (transport_opts, default_headers, original_headers) = factory.emulation().into_parts();
+        if let Some((tls_opts, http1_opts, http2_opts)) =
+            transport_opts.map(TransportOptions::into_parts)
+        {
+            apply_option!(
+                self,
+                (tls_opts, tls_options),
+                (http1_opts, http1_options),
+                (http2_opts, http2_options)
+            );
+        }
+
         apply_option!(
             self,
-            emulation,
             (default_headers, default_headers),
-            (original_headers, original_headers),
-            (http1_config, configure_http1),
-            (http2_config, configure_http2),
-            (tls_config, configure_tls)
+            (original_headers, original_headers)
         );
         self
     }

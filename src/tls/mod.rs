@@ -16,7 +16,7 @@ pub(crate) use self::conn::{
     EstablishedConn, HttpsConnector, MaybeHttpsStream, TlsConnector, TlsConnectorBuilder,
 };
 pub use self::{
-    config::TlsConfig,
+    config::TlsOptions,
     keylog::KeyLogPolicy,
     types::{
         AlpnProtocol, AlpsProtocol, CertificateCompressionAlgorithm, ExtensionType, TlsVersion,

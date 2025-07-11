@@ -19,10 +19,10 @@ macro_rules! take_err {
 }
 
 macro_rules! apply_option {
-    ($self:expr, $emulation:expr, $(($field:ident, $method:ident)),*) => {
+    ($builder:expr, $(($option:expr, $method:ident)),* $(,)?) => {
         $(
-            if let Some(value) = $emulation.$field {
-                $self = $self.$method(value);
+            if let Some(value) = $option {
+                $builder = $builder.$method(value);
             }
         )*
     };

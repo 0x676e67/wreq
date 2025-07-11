@@ -11,11 +11,11 @@ use crate::core::proto::{
     {self},
 };
 
-/// Builder for `Http2Config`.
+/// Builder for `Http2Options`.
 #[must_use]
 #[derive(Debug)]
-pub struct Http2ConfigBuilder {
-    config: Http2Config,
+pub struct Http2OptionsBuilder {
+    config: Http2Options,
 }
 
 /// Configuration config for an HTTP/2 connection.
@@ -23,11 +23,11 @@ pub struct Http2ConfigBuilder {
 /// This struct defines various parameters to fine-tune the behavior of an HTTP/2 connection,
 /// including stream management, window sizes, frame limits, and header config.
 #[derive(Debug, Clone, Default)]
-pub struct Http2Config {
+pub struct Http2Options {
     pub(crate) h2_builder: Config,
 }
 
-impl Http2ConfigBuilder {
+impl Http2OptionsBuilder {
     /// Sets the [`SETTINGS_INITIAL_WINDOW_SIZE`][spec] option for HTTP2
     /// stream-level flow control.
     ///
@@ -275,17 +275,17 @@ impl Http2ConfigBuilder {
         self
     }
 
-    /// Builds the `Http2Config` instance.
-    pub fn build(self) -> Http2Config {
+    /// Builds the `Http2Options` instance.
+    pub fn build(self) -> Http2Options {
         self.config
     }
 }
 
-impl Http2Config {
-    /// Creates a new `Http2ConfigBuilder` instance.
-    pub fn builder() -> Http2ConfigBuilder {
-        Http2ConfigBuilder {
-            config: Http2Config::default(),
+impl Http2Options {
+    /// Creates a new `Http2OptionsBuilder` instance.
+    pub fn builder() -> Http2OptionsBuilder {
+        Http2OptionsBuilder {
+            config: Http2Options::default(),
         }
     }
 }

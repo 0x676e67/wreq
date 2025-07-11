@@ -33,7 +33,7 @@ use crate::{
     proxy::{Intercepted, Matcher as ProxyMatcher},
     tls::{
         CertStore, EstablishedConn, HttpsConnector, Identity, KeyLogPolicy, MaybeHttpsStream,
-        TlsConfig, TlsConnector, TlsConnectorBuilder, TlsInfo, TlsVersion,
+        TlsConnector, TlsConnectorBuilder, TlsInfo, TlsOptions, TlsVersion,
     },
 };
 
@@ -222,12 +222,12 @@ impl ConnectorBuilder {
     /// Builds the connector with the provided TLS configuration and optional layers.
     pub(crate) fn build(
         self,
-        tls_config: TlsConfig,
+        opts: TlsOptions,
         layers: Option<Vec<BoxedConnectorLayer>>,
     ) -> crate::Result<Connector> {
         let mut service = ConnectorService {
             http: self.http,
-            tls: self.tls_builder.build(tls_config)?,
+            tls: self.tls_builder.build(opts)?,
             proxies: self.proxies,
             verbose: self.verbose,
             // The timeout is initially set to None and will be reassigned later
@@ -365,15 +365,14 @@ pub(crate) struct ConnectorService {
 
 impl ConnectorService {
     /// Constructs an HTTPS connector by wrapping an `HttpConnector`
-    /// with the appropriate TLS configuration.
     fn build_tls_connector(
         &self,
         mut http: HttpConnector,
-        req: &mut ConnRequest,
+        req: &ConnRequest,
     ) -> Result<HttpsConnector<HttpConnector>, BoxError> {
         let ex_data = req.ex_data();
         http.set_tcp_connect_options(ex_data.tcp_connect_options().cloned());
-        let tls = match ex_data.tls_config() {
+        let tls = match ex_data.tls_options() {
             Some(cfg) => self.tls_builder.build(cfg.clone())?,
             None => self.tls.clone(),
         };

@@ -37,7 +37,7 @@ use crate::{
     core::{
         body::Incoming,
         client::{
-            config::{TransportConfig, http1::Http1Config, http2::Http2Config},
+            config::{TransportOptions, http1::Http1Options, http2::Http2Options},
             conn::TrySendError as ConnTrySendError,
             connect::{Alpn, Connect, Connected, Connection, TcpConnectOptions},
         },
@@ -46,12 +46,12 @@ use crate::{
         error::BoxError,
         ext::{
             RequestConfig, RequestEnforcedHttpVersion, RequestProxyMatcher,
-            RequestTcpConnectOptions, RequestTransportConfig,
+            RequestTcpConnectOptions, RequestTransportOptions,
         },
         rt::{Executor, Timer},
     },
     proxy::Matcher as ProxyMacher,
-    tls::{AlpnProtocol, TlsConfig},
+    tls::{AlpnProtocol, TlsOptions},
 };
 
 type BoxSendFuture = Pin<Box<dyn Future<Output = ()> + Send>>;
@@ -72,7 +72,7 @@ pub struct ConnExtra {
     alpn_protocol: Option<AlpnProtocol>,
     proxy_matcher: Option<ProxyMacher>,
     tcp_options: Option<TcpConnectOptions>,
-    tls_config: Option<TlsConfig>,
+    tls_options: Option<TlsOptions>,
 }
 
 impl ConnExtra {
@@ -96,8 +96,8 @@ impl ConnExtra {
 
     /// Return the TLS configuration.
     #[inline]
-    pub(crate) fn tls_config(&self) -> Option<&TlsConfig> {
-        self.tls_config.as_ref()
+    pub(crate) fn tls_options(&self) -> Option<&TlsOptions> {
+        self.tls_options.as_ref()
     }
 }
 
@@ -332,10 +332,10 @@ where
         };
 
         // Extract config extensions
-        let (transport_cfg, version, proxy_matcher, tcp_options) =
+        let (transport_options, version, proxy_matcher, tcp_options) =
             extract_request_configs(req.extensions_mut());
 
-        let mut tls_config = None;
+        let mut tls_options = None;
         let mut this = self.clone();
 
         // Parse to specific ALPN protocol
@@ -347,15 +347,16 @@ where
             _ => None,
         };
 
-        // Apply transport configuration
-        if let Some(mut cfg) = transport_cfg {
-            if let Some(config) = cfg.http1_config.take() {
-                this.h1_builder.config(config);
+        // Apply transport options configuration
+        if let Some(opts) = transport_options {
+            let (tls, http1, http2) = opts.into_parts();
+            tls_options = tls;
+            if let Some(opts) = http1 {
+                this.h1_builder.config(opts);
             }
-            if let Some(config) = cfg.http2_config.take() {
-                this.h2_builder.config(config);
+            if let Some(opts) = http2 {
+                this.h2_builder.config(opts);
             }
-            tls_config = cfg.tls_config.take();
         }
 
         let conn_req = ConnRequest {
@@ -366,7 +367,7 @@ where
                     alpn_protocol,
                     proxy_matcher,
                     tcp_options,
-                    tls_config,
+                    tls_options,
                 },
                 RANDOM_STATE,
             )),
@@ -1041,12 +1042,12 @@ fn authority_form(uri: &mut Uri) {
 fn extract_request_configs(
     extensions: &mut http::Extensions,
 ) -> (
-    Option<TransportConfig>,
+    Option<TransportOptions>,
     Option<Version>,
     Option<ProxyMacher>,
     Option<TcpConnectOptions>,
 ) {
-    let transport_config = RequestConfig::<RequestTransportConfig>::remove(extensions);
+    let transport_config = RequestConfig::<RequestTransportOptions>::remove(extensions);
     let version = RequestConfig::<RequestEnforcedHttpVersion>::remove(extensions);
     let proxy = RequestConfig::<RequestProxyMatcher>::remove(extensions);
     let tcp = RequestConfig::<RequestTcpConnectOptions>::remove(extensions);
@@ -1250,14 +1251,14 @@ impl Builder {
     }
 
     /// Provide a configuration for HTTP/1.
-    pub fn http1_config(&mut self, config: Http1Config) -> &mut Self {
-        self.h1_builder.config(config);
+    pub fn http1_options(&mut self, opts: Http1Options) -> &mut Self {
+        self.h1_builder.config(opts);
         self
     }
 
     /// Provide a configuration for HTTP/2.
-    pub fn http2_config(&mut self, config: Http2Config) -> &mut Self {
-        self.h2_builder.config(config);
+    pub fn http2_options(&mut self, opts: Http2Options) -> &mut Self {
+        self.h2_builder.config(opts);
         self
     }
 

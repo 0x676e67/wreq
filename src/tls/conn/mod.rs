@@ -37,7 +37,7 @@ use crate::{
     error::BoxError,
     sync::Mutex,
     tls::{
-        CertStore, Identity, KeyLogPolicy, TlsConfig, TlsVersion,
+        CertStore, Identity, KeyLogPolicy, TlsOptions, TlsVersion,
         conn::ext::{ConnectConfigurationExt, SslConnectorBuilderExt},
     },
 };
@@ -341,7 +341,7 @@ impl TlsConnectorBuilder {
     }
 
     /// Build the `TlsConnector` with the provided configuration.
-    pub fn build(&self, mut cfg: TlsConfig) -> crate::Result<TlsConnector> {
+    pub fn build(&self, mut cfg: TlsOptions) -> crate::Result<TlsConnector> {
         // Replace the default configuration with the provided one
         cfg.max_tls_version = cfg.max_tls_version.or(self.max_version);
         cfg.min_tls_version = cfg.min_tls_version.or(self.min_version);

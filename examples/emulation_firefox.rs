@@ -1,12 +1,12 @@
 use http::{HeaderMap, HeaderValue, header};
 use wreq::{
     Client, EmulationProvider, OriginalHeaders,
-    http1::Http1Config,
+    http1::Http1Options,
     http2::{
-        Http2Config, Priorities, Priority, PseudoId, PseudoOrder, SettingId, SettingsOrder,
+        Http2Options, Priorities, Priority, PseudoId, PseudoOrder, SettingId, SettingsOrder,
         StreamDependency, StreamId,
     },
-    tls::{AlpnProtocol, CertificateCompressionAlgorithm, ExtensionType, TlsConfig, TlsVersion},
+    tls::{AlpnProtocol, CertificateCompressionAlgorithm, ExtensionType, TlsOptions, TlsVersion},
 };
 
 macro_rules! join {
@@ -22,7 +22,7 @@ async fn main() -> wreq::Result<()> {
         .init();
 
     // TLS config
-    let tls = TlsConfig::builder()
+    let tls = TlsOptions::builder()
         .curves_list(join!(
             ":",
             "X25519",
@@ -108,7 +108,7 @@ async fn main() -> wreq::Result<()> {
         .build();
 
     // HTTP/1 config
-    let http1 = Http1Config::builder()
+    let http1 = Http1Options::builder()
         .allow_obsolete_multiline_headers_in_responses(true)
         .max_headers(100)
         .build();
@@ -169,7 +169,7 @@ async fn main() -> wreq::Result<()> {
             ])
             .build();
 
-        Http2Config::builder()
+        Http2Options::builder()
             .initial_stream_id(15)
             .header_table_size(65536)
             .initial_stream_window_size(131072)
@@ -213,11 +213,11 @@ async fn main() -> wreq::Result<()> {
     // Create emulation provider with all configurations
     // This provider encapsulates TLS, HTTP/1, HTTP/2, default headers, and original headers
     let emulation = EmulationProvider::builder()
-        .tls_config(tls)
-        .http1_config(http1)
-        .http2_config(http2)
-        .default_headers(headers)
-        .original_headers(original_headers)
+        .with_tls(tls)
+        .with_config(http1)
+        .with_http2(http2)
+        .with_headers(headers)
+        .with_original_headers(original_headers)
         .build();
 
     // Build a client with emulation config

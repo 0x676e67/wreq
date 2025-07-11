@@ -21,7 +21,7 @@ use crate::{
         proto,
         rt::{Read, Timer, Write, bounds::Http2ClientConnExec},
     },
-    http2::Http2Config,
+    http2::Http2Options,
 };
 
 /// The sender side of an established connection.
@@ -64,7 +64,7 @@ where
 pub struct Builder<Ex> {
     pub(super) exec: Ex,
     pub(super) timer: Time,
-    config: Http2Config,
+    config: Http2Options,
 }
 
 // ===== impl SendRequest
@@ -208,7 +208,7 @@ where
     }
 
     /// Provide a configuration for HTTP/2.
-    pub fn config(&mut self, config: Http2Config) -> &mut Builder<Ex> {
+    pub fn config(&mut self, config: Http2Options) -> &mut Builder<Ex> {
         self.config = config;
         self
     }

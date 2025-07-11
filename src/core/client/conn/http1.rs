@@ -14,7 +14,7 @@ use http_body::Body;
 use crate::core::{
     body::Incoming as IncomingBody,
     client::{
-        config::http1::Http1Config,
+        config::http1::Http1Options,
         dispatch::{self, TrySendError},
     },
     error::BoxError,
@@ -88,7 +88,7 @@ where
 /// are subject to change at any time.
 #[derive(Clone, Debug)]
 pub struct Builder {
-    config: Http1Config,
+    config: Http1Options,
 }
 
 // ===== impl SendRequest
@@ -231,7 +231,7 @@ impl Builder {
         }
     }
 
-    pub fn config(&mut self, config: Http1Config) {
+    pub fn config(&mut self, config: Http1Options) {
         self.config = config;
     }
 

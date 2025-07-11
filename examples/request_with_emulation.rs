@@ -1,8 +1,8 @@
 use http::{HeaderMap, HeaderValue, header};
 use wreq::{
     Client, EmulationProvider, OriginalHeaders,
-    http2::{Http2Config, PseudoId, PseudoOrder},
-    tls::{AlpnProtocol, TlsConfig, TlsVersion},
+    http2::{Http2Options, PseudoId, PseudoOrder},
+    tls::{AlpnProtocol, TlsOptions, TlsVersion},
 };
 
 macro_rules! join {
@@ -18,7 +18,7 @@ async fn main() -> wreq::Result<()> {
         .init();
 
     // TLS config
-    let tls = TlsConfig::builder()
+    let tls = TlsOptions::builder()
         .enable_ocsp_stapling(true)
         .curves_list(join!(":", "X25519", "P-256", "P-384"))
         .cipher_list(join!(
@@ -51,7 +51,7 @@ async fn main() -> wreq::Result<()> {
         .build();
 
     // HTTP/2 config
-    let http2 = Http2Config::builder()
+    let http2 = Http2Options::builder()
         .initial_stream_id(3)
         .initial_stream_window_size(16777216)
         .initial_connection_window_size(16711681 + 65535)
@@ -100,10 +100,10 @@ async fn main() -> wreq::Result<()> {
     // Create emulation provider with all configurations
     // This provider encapsulates TLS, HTTP/1, HTTP/2, default headers, and original headers
     let emulation = EmulationProvider::builder()
-        .tls_config(tls)
-        .http2_config(http2)
-        .default_headers(headers)
-        .original_headers(original_headers)
+        .with_tls(tls)
+        .with_http2(http2)
+        .with_headers(headers)
+        .with_original_headers(original_headers)
         .build();
 
     // Use the API you're already familiar with

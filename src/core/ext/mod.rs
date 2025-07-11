@@ -6,7 +6,7 @@ mod header;
 
 pub(crate) use config::{
     RequestConfig, RequestConfigValue, RequestEnforcedHttpVersion, RequestOriginalHeaders,
-    RequestProxyMatcher, RequestTcpConnectOptions, RequestTransportConfig,
+    RequestProxyMatcher, RequestTcpConnectOptions, RequestTransportOptions,
 };
 pub(crate) use h1_reason_phrase::ReasonPhrase;
 pub use header::OriginalHeaders;

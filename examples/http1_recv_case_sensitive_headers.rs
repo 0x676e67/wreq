@@ -1,10 +1,10 @@
-use wreq::{OriginalHeaders, http1::Http1Config};
+use wreq::{OriginalHeaders, http1::Http1Options};
 
 #[tokio::main]
 async fn main() -> wreq::Result<()> {
     let client = wreq::Client::builder()
-        .configure_http1(
-            Http1Config::builder()
+        .http1_options(
+            Http1Options::builder()
                 .preserve_header_case(true)
                 .http09_responses(true)
                 .build(),

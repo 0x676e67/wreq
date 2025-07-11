@@ -29,10 +29,10 @@ use super::{
 use crate::{
     EmulationProviderFactory, Error, Method, OriginalHeaders, Proxy, Url,
     core::{
-        client::{config::TransportConfig, connect::TcpConnectOptions},
+        client::{config::TransportOptions, connect::TcpConnectOptions},
         ext::{
             RequestConfig, RequestEnforcedHttpVersion, RequestOriginalHeaders, RequestProxyMatcher,
-            RequestTcpConnectOptions, RequestTransportConfig,
+            RequestTcpConnectOptions, RequestTransportOptions,
         },
     },
     header::{CONTENT_TYPE, HeaderMap, HeaderName, HeaderValue},
@@ -185,9 +185,10 @@ impl Request {
         RequestConfig::<RequestSkipDefaultHeaders>::get_mut(&mut self.extensions)
     }
 
+    // Get a mutable reference to the transport options.
     #[inline]
-    pub(crate) fn transport_config_mut(&mut self) -> &mut Option<TransportConfig> {
-        RequestConfig::<RequestTransportConfig>::get_mut(&mut self.extensions)
+    pub(crate) fn transport_options_mut(&mut self) -> &mut Option<TransportOptions> {
+        RequestConfig::<RequestTransportOptions>::get_mut(&mut self.extensions)
     }
 
     /// Get the extensions.
@@ -654,18 +655,18 @@ impl RequestBuilder {
         P: EmulationProviderFactory,
     {
         if let Ok(ref mut req) = self.request {
-            let transport_config = req.transport_config_mut().get_or_insert_default();
+            let opts = req.transport_options_mut().get_or_insert_default();
             let emulation = factory.emulation();
+            let (transport_opts, default_headers, original_headers) = emulation.into_parts();
+            if let Some(transport_opts) = transport_opts {
+                *opts = transport_opts;
+            }
 
-            transport_config.set_http1_config(emulation.http1_config);
-            transport_config.set_http2_config(emulation.http2_config);
-            transport_config.set_tls_config(emulation.tls_config);
-
-            if let Some(default_headers) = emulation.default_headers {
+            if let Some(default_headers) = default_headers {
                 self = self.headers(default_headers);
             }
 
-            if let Some(original_headers) = emulation.original_headers {
+            if let Some(original_headers) = original_headers {
                 self = self.original_headers(original_headers);
             }
         }

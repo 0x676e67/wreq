@@ -1,31 +1,15 @@
 use http::HeaderMap;
 
-use crate::{OriginalHeaders, http1::Http1Config, http2::Http2Config, tls::TlsConfig};
+use crate::{
+    OriginalHeaders, core::client::config::TransportOptions, http1::Http1Options,
+    http2::Http2Options, tls::TlsOptions,
+};
 
 /// Trait defining the interface for providing an `EmulationProvider`.
 ///
 /// The `EmulationProviderFactory` trait is designed to be implemented by types that can provide
 /// an `EmulationProvider` instance. This trait abstracts the creation and configuration of
 /// `EmulationProvider`, allowing different types to offer their own specific configurations.
-///
-/// # Example
-///
-/// ```rust
-/// use wreq::{
-///     EmulationProvider,
-///     EmulationProviderFactory,
-/// };
-///
-/// struct MyEmulationProvider;
-///
-/// impl EmulationProviderFactory for MyEmulationProvider {
-///     fn emulation(self) -> EmulationProvider {
-///         EmulationProvider::default()
-///     }
-/// }
-///
-/// let provider = MyEmulationProvider.emulation();
-/// ```
 pub trait EmulationProviderFactory {
     /// Provides an `EmulationProvider` instance.
     fn emulation(self) -> EmulationProvider;
@@ -43,64 +27,52 @@ pub struct EmulationProviderBuilder {
 /// The `EmulationProvider` provides a complete environment for HTTP connections,
 /// including both HTTP-specific settings and the underlying TLS configuration.
 /// This unified context ensures consistent behavior across connections.
-///
-/// # Components
-///
-/// - **TLS Configuration**: Manages secure connection settings.
-/// - **HTTP Settings**: Controls HTTP/1 and HTTP/2 behaviors.
-/// - **Header Management**: Handles default headers and their ordering.
-///
-/// # Example
-///
-/// ```rust
-/// use wreq::{
-///     EmulationProvider,
-///     TlsConfig,
-/// };
-///
-/// let provider = EmulationProvider::builder()
-///     .tls_config(TlsConfig::default())
-///     .build();
-/// ```
 #[derive(Default, Debug)]
 pub struct EmulationProvider {
-    pub(crate) tls_config: Option<TlsConfig>,
-    pub(crate) http1_config: Option<Http1Config>,
-    pub(crate) http2_config: Option<Http2Config>,
-    pub(crate) default_headers: Option<HeaderMap>,
-    pub(crate) original_headers: Option<OriginalHeaders>,
+    transport_options: Option<TransportOptions>,
+    default_headers: Option<HeaderMap>,
+    original_headers: Option<OriginalHeaders>,
 }
 
 impl EmulationProviderBuilder {
     /// Sets the TLS configuration for the `EmulationProvider`.
-    pub fn tls_config<C>(mut self, config: C) -> Self
+    pub fn with_tls<C>(mut self, config: C) -> Self
     where
-        C: Into<Option<TlsConfig>>,
+        C: Into<Option<TlsOptions>>,
     {
-        self.provider.tls_config = config.into();
+        self.provider
+            .transport_options
+            .get_or_insert_with(TransportOptions::default)
+            .configure_tls(config);
         self
     }
 
     /// Sets the HTTP/1 configuration for the `EmulationProvider`.
-    pub fn http1_config<C>(mut self, config: C) -> Self
+    pub fn with_config<C>(mut self, config: C) -> Self
     where
-        C: Into<Option<Http1Config>>,
+        C: Into<Option<Http1Options>>,
     {
-        self.provider.http1_config = config.into();
+        self.provider
+            .transport_options
+            .get_or_insert_with(TransportOptions::default)
+            .configure_http1(config);
         self
     }
 
     /// Sets the HTTP/2 configuration for the `EmulationProvider`.
-    pub fn http2_config<C>(mut self, config: C) -> Self
+    pub fn with_http2<C>(mut self, config: C) -> Self
     where
-        C: Into<Option<Http2Config>>,
+        C: Into<Option<Http2Options>>,
     {
-        self.provider.http2_config = config.into();
+        self.provider
+            .transport_options
+            .get_or_insert_with(TransportOptions::default)
+            .configure_http2(config);
         self
     }
 
     /// Sets the default headers for the `EmulationProvider`.
-    pub fn default_headers<H>(mut self, headers: H) -> Self
+    pub fn with_headers<H>(mut self, headers: H) -> Self
     where
         H: Into<Option<HeaderMap>>,
     {
@@ -109,7 +81,7 @@ impl EmulationProviderBuilder {
     }
 
     /// Sets the original headers for the `EmulationProvider`.
-    pub fn original_headers<H>(mut self, headers: H) -> Self
+    pub fn with_original_headers<H>(mut self, headers: H) -> Self
     where
         H: Into<Option<OriginalHeaders>>,
     {
@@ -129,10 +101,27 @@ impl EmulationProvider {
     /// # Returns
     ///
     /// Returns a new `EmulationProviderBuilder` instance.
+    #[inline]
     pub fn builder() -> EmulationProviderBuilder {
         EmulationProviderBuilder {
             provider: EmulationProvider::default(),
         }
+    }
+
+    /// Decomposes the `EmulationProvider` into its components.
+    #[inline]
+    pub(crate) fn into_parts(
+        self,
+    ) -> (
+        Option<TransportOptions>,
+        Option<HeaderMap>,
+        Option<OriginalHeaders>,
+    ) {
+        (
+            self.transport_options,
+            self.default_headers,
+            self.original_headers,
+        )
     }
 }
 

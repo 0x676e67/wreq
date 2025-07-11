@@ -6,18 +6,18 @@ use super::{
     AlpnProtocol, AlpsProtocol, CertificateCompressionAlgorithm, ExtensionType, TlsVersion,
 };
 
-/// Builder for `[`TlsConfig`]`.
+/// Builder for `[`TlsOptions`]`.
 #[must_use]
 #[derive(Debug, Clone)]
-pub struct TlsConfigBuilder {
-    config: TlsConfig,
+pub struct TlsOptionsBuilder {
+    config: TlsOptions,
 }
 
 /// Configuration settings for TLS connections.
 ///
 /// This struct defines various parameters to fine-tune the behavior of a TLS connection,
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
-pub struct TlsConfig {
+pub struct TlsOptions {
     pub(crate) alpn_protos: Option<Bytes>,
     pub(crate) alps_protos: Option<Bytes>,
     pub(crate) alps_use_new_codepoint: bool,
@@ -47,9 +47,9 @@ pub struct TlsConfig {
     pub(crate) random_aes_hw_override: bool,
 }
 
-impl TlsConfigBuilder {
-    /// Builds the `TlsConfig` from the builder.
-    pub fn build(self) -> TlsConfig {
+impl TlsOptionsBuilder {
+    /// Builds the `TlsOptions` from the builder.
+    pub fn build(self) -> TlsOptions {
         self.config
     }
 
@@ -258,18 +258,18 @@ impl TlsConfigBuilder {
     }
 }
 
-impl TlsConfig {
-    /// Creates a new `TlsConfigBuilder` instance.
-    pub fn builder() -> TlsConfigBuilder {
-        TlsConfigBuilder {
-            config: TlsConfig::default(),
+impl TlsOptions {
+    /// Creates a new `TlsOptionsBuilder` instance.
+    pub fn builder() -> TlsOptionsBuilder {
+        TlsOptionsBuilder {
+            config: TlsOptions::default(),
         }
     }
 }
 
-impl Default for TlsConfig {
+impl Default for TlsOptions {
     fn default() -> Self {
-        TlsConfig {
+        TlsOptions {
             alpn_protos: Some(AlpnProtocol::encode_sequence(&[
                 AlpnProtocol::HTTP2,
                 AlpnProtocol::HTTP1,
