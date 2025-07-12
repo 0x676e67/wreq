@@ -1328,9 +1328,11 @@ impl ClientBuilder {
         if let Some((tls_opts, http1_opts, http2_opts)) =
             transport_opts.map(TransportOptions::into_parts)
         {
-            self.config.transport_options.configure_http1(http1_opts);
-            self.config.transport_options.configure_http2(http2_opts);
-            self.config.transport_options.configure_tls(tls_opts);
+            self.config
+                .transport_options
+                .with_http1(http1_opts)
+                .with_http2(http2_opts)
+                .with_tls(tls_opts);
         }
         if let Some(headers) = headers {
             self = self.default_headers(headers);

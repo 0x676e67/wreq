@@ -21,29 +21,38 @@ pub(crate) struct TransportOptions {
 impl TransportOptions {
     /// Sets the HTTP/1 options configuration.
     #[inline]
-    pub fn configure_http1<C>(&mut self, config: C)
+    pub fn with_http1<C>(&mut self, config: C) -> &mut Self
     where
         C: Into<Option<Http1Options>>,
     {
-        self.http1 = config.into();
+        if let Some(http1) = config.into() {
+            self.http1 = Some(http1);
+        }
+        self
     }
 
     /// Sets the HTTP/2 options configuration.
     #[inline]
-    pub fn configure_http2<C>(&mut self, config: C)
+    pub fn with_http2<C>(&mut self, config: C) -> &mut Self
     where
         C: Into<Option<Http2Options>>,
     {
-        self.http2 = config.into();
+        if let Some(http2) = config.into() {
+            self.http2 = Some(http2);
+        }
+        self
     }
 
     /// Sets the TLS options configuration.
     #[inline]
-    pub fn configure_tls<C>(&mut self, config: C)
+    pub fn with_tls<C>(&mut self, config: C) -> &mut Self
     where
         C: Into<Option<TlsOptions>>,
     {
-        self.tls = config.into();
+        if let Some(tls) = config.into() {
+            self.tls = Some(tls);
+        }
+        self
     }
 
     /// Consumes the transport options and returns the individual parts.
