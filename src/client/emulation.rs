@@ -24,11 +24,12 @@ pub struct EmulationBuilder {
     emulation: Emulation,
 }
 
-/// HTTP emulation configuration for mimicking different browsers or clients.
+/// HTTP emulation configuration for mimicking different HTTP clients.
 ///
 /// This struct combines transport-layer options (HTTP/1, HTTP/2, TLS) with
 /// request-level settings (headers, header case preservation) to provide
-/// a complete emulation profile.
+/// a complete emulation profile for web browsers, mobile applications,
+/// API clients, and other HTTP implementations.
 #[derive(Default, Debug)]
 pub struct Emulation {
     transport: Option<TransportOptions>,
