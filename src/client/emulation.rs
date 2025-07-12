@@ -84,7 +84,8 @@ impl EmulationBuilder {
         H: Into<Option<HeaderMap>>,
     {
         if let Some(src) = headers.into() {
-            crate::util::replace_headers(self.emulation.headers.get_or_insert_default(), src);
+            let dst = self.emulation.headers.get_or_insert_default();
+            crate::util::replace_headers(dst, src);
         }
         self
     }
