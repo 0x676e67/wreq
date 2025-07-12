@@ -1,5 +1,7 @@
 //! SSL support via BoringSSL.
 
+#[macro_use]
+mod macros;
 mod cache;
 mod cert_compression;
 mod ext;
