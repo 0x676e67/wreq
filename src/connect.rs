@@ -264,7 +264,7 @@ impl ConnectorService {
         let ex_data = req.ex_data();
         http.set_connect_options(ex_data.tcp_connect_options().cloned());
         let tls = match ex_data.tls_options() {
-            Some(cfg) => self.tls_builder.build(cfg)?,
+            Some(opts) => self.tls_builder.build(opts)?,
             None => self.tls.clone(),
         };
         Ok(HttpsConnector::with_connector(http, tls))
