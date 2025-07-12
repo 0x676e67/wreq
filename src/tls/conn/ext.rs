@@ -1,5 +1,3 @@
-use std::borrow::Cow;
-
 use boring2::{
     error::ErrorStack,
     ssl::{ConnectConfiguration, SslConnectorBuilder, SslSessionRef, SslVerifyMode},
@@ -27,7 +25,7 @@ pub trait SslConnectorBuilderExt {
     /// Configure the certificate compression algorithm for the given `SslConnectorBuilder`.
     fn add_certificate_compression_algorithms(
         self,
-        algs: Option<Cow<'static, [CertificateCompressionAlgorithm]>>,
+        algs: Option<&[CertificateCompressionAlgorithm]>,
     ) -> crate::Result<SslConnectorBuilder>;
 }
 
@@ -72,7 +70,7 @@ impl SslConnectorBuilderExt for SslConnectorBuilder {
     #[inline]
     fn add_certificate_compression_algorithms(
         mut self,
-        algs: Option<Cow<'static, [CertificateCompressionAlgorithm]>>,
+        algs: Option<&[CertificateCompressionAlgorithm]>,
     ) -> crate::Result<SslConnectorBuilder> {
         if let Some(algs) = algs {
             for algorithm in algs.iter() {

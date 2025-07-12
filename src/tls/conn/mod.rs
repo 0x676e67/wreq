@@ -8,6 +8,7 @@ mod ext;
 mod service;
 
 use std::{
+    borrow::Cow,
     fmt::{self, Debug},
     io,
     pin::Pin,
@@ -351,37 +352,46 @@ impl TlsConnectorBuilder {
     }
 
     /// Build the `TlsConnector` with the provided configuration.
-    pub fn build(&self, mut cfg: TlsOptions) -> crate::Result<TlsConnector> {
-        // Replace the default configuration with the provided one
-        cfg.max_tls_version = cfg.max_tls_version.or(self.max_version);
-        cfg.min_tls_version = cfg.min_tls_version.or(self.min_version);
-        cfg.alpn_protos = self
-            .alpn_protocol
-            .as_ref()
-            .map(|p| p.encode())
-            .or(cfg.alpn_protos);
+    pub fn build<'a, C>(&self, opts: C) -> crate::Result<TlsConnector>
+    where
+        C: Into<Cow<'a, TlsOptions>>,
+    {
+        let opts = opts.into();
 
+        // Replace the default configuration with the provided one
+        let max_tls_version = opts.max_tls_version.or(self.max_version);
+        let min_tls_version = opts.min_tls_version.or(self.min_version);
+        let alpn_protos = self
+            .alpn_protocol
+            .map(|p| p.encode())
+            .or(opts.alpn_protos.clone());
+
+        // Create the SslConnector with the provided options
         let mut connector = SslConnector::no_default_verify_builder(SslMethod::tls_client())
             .map_err(Error::tls)?
             .set_cert_store(self.cert_store.as_ref())?
             .set_cert_verification(self.cert_verification)?
-            .add_certificate_compression_algorithms(cfg.certificate_compression_algorithms)?;
+            .add_certificate_compression_algorithms(
+                opts.certificate_compression_algorithms.as_deref(),
+            )?;
 
         // Set Identity
-        call_option_ref_try!(self, identity, &mut connector, add_to_tls);
+        if let Some(ref identity) = self.identity {
+            identity.add_to_tls(&mut connector)?;
+        }
 
         // Set minimum TLS version
-        set_option_inner_try!(cfg, min_tls_version, connector, set_min_proto_version);
+        set_option_inner_try!(min_tls_version, connector, set_min_proto_version);
 
         // Set maximum TLS version
-        set_option_inner_try!(cfg, max_tls_version, connector, set_max_proto_version);
+        set_option_inner_try!(max_tls_version, connector, set_max_proto_version);
 
         // Set OCSP stapling
-        set_bool!(cfg, enable_ocsp_stapling, connector, enable_ocsp_stapling);
+        set_bool!(opts, enable_ocsp_stapling, connector, enable_ocsp_stapling);
 
         // Set Signed Certificate Timestamps (SCT)
         set_bool!(
-            cfg,
+            opts,
             enable_signed_cert_timestamps,
             connector,
             enable_signed_cert_timestamps
@@ -389,7 +399,7 @@ impl TlsConnectorBuilder {
 
         // Set TLS Session ticket options
         set_bool!(
-            cfg,
+            opts,
             !session_ticket,
             connector,
             set_options,
@@ -398,7 +408,7 @@ impl TlsConnectorBuilder {
 
         // Set TLS PSK DHE key exchange options
         set_bool!(
-            cfg,
+            opts,
             !psk_dhe_ke,
             connector,
             set_options,
@@ -407,7 +417,7 @@ impl TlsConnectorBuilder {
 
         // Set TLS No Renegotiation options
         set_bool!(
-            cfg,
+            opts,
             !renegotiation,
             connector,
             set_options,
@@ -415,46 +425,49 @@ impl TlsConnectorBuilder {
         );
 
         // Set TLS grease options
-        set_option!(cfg, grease_enabled, connector, set_grease_enabled);
+        set_option!(opts, grease_enabled, connector, set_grease_enabled);
 
         // Set TLS permute extensions options
-        set_option!(cfg, permute_extensions, connector, set_permute_extensions);
+        set_option!(opts, permute_extensions, connector, set_permute_extensions);
 
         // Set TLS ALPN protocols
-        set_option_ref_try!(cfg, alpn_protos, connector, set_alpn_protos);
+        set_option_ref_try!(alpn_protos, connector, set_alpn_protos);
 
         // Set TLS curves list
-        set_option_ref_try!(cfg, curves_list, connector, set_curves_list);
+        set_option_ref_try!(opts, curves_list, connector, set_curves_list);
 
         // Set TLS signature algorithms list
-        set_option_ref_try!(cfg, sigalgs_list, connector, set_sigalgs_list);
+        set_option_ref_try!(opts, sigalgs_list, connector, set_sigalgs_list);
 
         // Set TLS cipher list
-        set_option_ref_try!(cfg, cipher_list, connector, set_cipher_list);
+        set_option_ref_try!(opts, cipher_list, connector, set_cipher_list);
 
         // Set TLS delegated credentials
         set_option_ref_try!(
-            cfg,
+            opts,
             delegated_credentials,
             connector,
             set_delegated_credentials
         );
 
         // Set TLS record size limit
-        set_option!(cfg, record_size_limit, connector, set_record_size_limit);
+        set_option!(opts, record_size_limit, connector, set_record_size_limit);
 
         // Set TLS key shares limit
-        set_option!(cfg, key_shares_limit, connector, set_key_shares_limit);
+        set_option!(opts, key_shares_limit, connector, set_key_shares_limit);
 
         // Set TLS aes hardware override
-        set_option!(cfg, aes_hw_override, connector, set_aes_hw_override);
+        set_option!(opts, aes_hw_override, connector, set_aes_hw_override);
 
         // Set TLS prefer chacha20 (Encryption order between AES-256-GCM/AES-128-GCM)
-        set_option!(cfg, prefer_chacha20, connector, set_prefer_chacha20);
+        set_option!(opts, prefer_chacha20, connector, set_prefer_chacha20);
 
         // Set TLS extension permutation
-        if let Some(val) = cfg.extension_permutation {
-            let indices = val.iter().map(|ext| ext.0).collect::<Vec<_>>();
+        if let Some(ref extension_permutation) = opts.extension_permutation {
+            let indices = extension_permutation
+                .iter()
+                .map(|ext| ext.0)
+                .collect::<Vec<_>>();
             connector
                 .set_extension_permutation(&indices)
                 .map_err(Error::tls)?;
@@ -470,17 +483,17 @@ impl TlsConnectorBuilder {
 
         // Create the `HandshakeConfig` with the default session cache capacity.
         let config = HandshakeConfig::builder()
-            .no_ticket(cfg.psk_skip_session_ticket)
-            .alps_protos(cfg.alps_protos)
-            .alps_use_new_codepoint(cfg.alps_use_new_codepoint)
-            .enable_ech_grease(cfg.enable_ech_grease)
+            .no_ticket(opts.psk_skip_session_ticket)
+            .alps_protos(opts.alps_protos.clone())
+            .alps_use_new_codepoint(opts.alps_use_new_codepoint)
+            .enable_ech_grease(opts.enable_ech_grease)
             .tls_sni(self.tls_sni)
             .verify_hostname(self.verify_hostname)
-            .random_aes_hw_override(cfg.random_aes_hw_override)
+            .random_aes_hw_override(opts.random_aes_hw_override)
             .build();
 
         // If the session cache is disabled, we don't need to set up any callbacks.
-        let cache = cfg.pre_shared_key.then(|| {
+        let cache = opts.pre_shared_key.then(|| {
             let cache = self.session_cache.clone();
 
             connector.set_session_cache_mode(SslSessionCacheMode::CLIENT);

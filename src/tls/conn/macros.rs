@@ -20,6 +20,11 @@ macro_rules! set_option {
 }
 
 macro_rules! set_option_ref_try {
+    ($field:ident, $conn:expr, $setter:ident) => {
+        if let Some(val) = $field.as_ref() {
+            $conn.$setter(val).map_err(Error::tls)?;
+        }
+    };
     ($cfg:expr, $field:ident, $conn:expr, $setter:ident) => {
         if let Some(val) = $cfg.$field.as_ref() {
             $conn.$setter(val).map_err(Error::tls)?;
@@ -28,17 +33,12 @@ macro_rules! set_option_ref_try {
 }
 
 macro_rules! set_option_inner_try {
+    ($field:ident, $conn:expr, $setter:ident) => {
+        $conn.$setter($field.map(|v| v.0)).map_err(Error::tls)?;
+    };
     ($cfg:expr, $field:ident, $conn:expr, $setter:ident) => {
         $conn
             .$setter($cfg.$field.map(|v| v.0))
             .map_err(Error::tls)?;
-    };
-}
-
-macro_rules! call_option_ref_try {
-    ($owner:expr, $field:ident, $target:expr, $method:ident) => {
-        if let Some(val) = $owner.$field.as_ref() {
-            val.$method($target)?;
-        }
     };
 }

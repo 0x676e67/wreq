@@ -304,3 +304,17 @@ impl Default for TlsOptions {
         }
     }
 }
+
+impl<'a> From<TlsOptions> for Cow<'a, TlsOptions> {
+    #[inline]
+    fn from(opts: TlsOptions) -> Self {
+        Cow::Owned(opts)
+    }
+}
+
+impl<'a> From<&'a TlsOptions> for Cow<'a, TlsOptions> {
+    #[inline]
+    fn from(opts: &'a TlsOptions) -> Self {
+        Cow::Borrowed(opts)
+    }
+}
