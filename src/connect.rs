@@ -272,7 +272,7 @@ impl ConnectorService {
 
     /// Establishes a direct connection to the target URI without using a proxy.
     /// May perform a plain TCP or a TLS handshake depending on the URI scheme.
-    async fn connect_direct(self, mut req: ConnRequest, is_proxy: bool) -> Result<Conn, BoxError> {
+    async fn connect_direct(self, req: ConnRequest, is_proxy: bool) -> Result<Conn, BoxError> {
         trace!("connect with maybe proxy: {:?}", is_proxy);
 
         let uri = req.uri().clone();
@@ -285,7 +285,7 @@ impl ConnectorService {
             http.set_nodelay(true);
         }
 
-        let mut connector = self.build_tls_connector(http, &mut req)?;
+        let mut connector = self.build_tls_connector(http, &req)?;
         let io = connector.call(req).await?;
 
         // If the connection is HTTPS, wrap the TLS stream in a TlsConn for unified handling.
@@ -344,7 +344,7 @@ impl ConnectorService {
 
                 return if uri.scheme() == Some(&Scheme::HTTPS) {
                     trace!("socks HTTPS over proxy");
-                    let mut connector = self.build_tls_connector(self.http.clone(), &mut req)?;
+                    let mut connector = self.build_tls_connector(self.http.clone(), &req)?;
                     let established_conn = EstablishedConn::new(req, conn);
                     let io = connector.call(established_conn).await?;
 
@@ -368,7 +368,7 @@ impl ConnectorService {
         // Handle HTTPS proxy tunneling connection
         if uri.scheme() == Some(&Scheme::HTTPS) {
             trace!("tunneling HTTPS over HTTP proxy: {:?}", proxy_uri);
-            let mut connector = self.build_tls_connector(self.http.clone(), &mut req)?;
+            let mut connector = self.build_tls_connector(self.http.clone(), &req)?;
 
             let mut tunnel = proxy::Tunnel::new(proxy_uri, connector.clone());
             if let Some(auth) = proxy.basic_auth() {

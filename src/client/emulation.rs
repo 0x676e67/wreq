@@ -39,6 +39,7 @@ pub struct Emulation {
 
 impl EmulationBuilder {
     /// Sets the  TLS options configuration for the emulation.
+    #[inline]
     pub fn with_tls<C>(mut self, config: C) -> Self
     where
         C: Into<Option<TlsOptions>>,
@@ -51,6 +52,7 @@ impl EmulationBuilder {
     }
 
     /// Sets the  HTTP/1 options configuration for the emulation.
+    #[inline]
     pub fn with_http1<C>(mut self, config: C) -> Self
     where
         C: Into<Option<Http1Options>>,
@@ -63,6 +65,7 @@ impl EmulationBuilder {
     }
 
     /// Sets the HTTP/2 options configuration for the emulation.
+    #[inline]
     pub fn with_http2<C>(mut self, config: C) -> Self
     where
         C: Into<Option<Http2Options>>,
@@ -75,6 +78,7 @@ impl EmulationBuilder {
     }
 
     /// Sets the default headers for the emulation.
+    #[inline]
     pub fn with_headers<H>(mut self, headers: H) -> Self
     where
         H: Into<Option<HeaderMap>>,
@@ -84,6 +88,7 @@ impl EmulationBuilder {
     }
 
     /// Sets the original headers for the emulation.
+    #[inline]
     pub fn with_original_headers<H>(mut self, headers: H) -> Self
     where
         H: Into<Option<OriginalHeaders>>,
@@ -93,6 +98,7 @@ impl EmulationBuilder {
     }
 
     /// Builds the `Emulation` instance.
+    #[inline]
     pub fn build(self) -> Emulation {
         self.emulation
     }
@@ -121,24 +127,28 @@ impl Emulation {
 }
 
 impl EmulationFactory for Emulation {
+    #[inline]
     fn emulation(self) -> Emulation {
         self
     }
 }
 
 impl EmulationFactory for Http1Options {
+    #[inline]
     fn emulation(self) -> Emulation {
         Emulation::builder().with_http1(self).build()
     }
 }
 
 impl EmulationFactory for Http2Options {
+    #[inline]
     fn emulation(self) -> Emulation {
         Emulation::builder().with_http2(self).build()
     }
 }
 
 impl EmulationFactory for TlsOptions {
+    #[inline]
     fn emulation(self) -> Emulation {
         Emulation::builder().with_tls(self).build()
     }

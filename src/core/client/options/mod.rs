@@ -10,6 +10,7 @@ use crate::tls::TlsOptions;
 ///
 /// This struct allows you to customize protocol-specific and TLS settings
 /// for network connections made by the client.
+#[must_use]
 #[derive(Debug, Default, Clone)]
 pub(crate) struct TransportOptions {
     tls: Option<TlsOptions>,
@@ -18,7 +19,7 @@ pub(crate) struct TransportOptions {
 }
 
 impl TransportOptions {
-    /// Configures HTTP/1 settings.
+    /// Sets the HTTP/1 options configuration.
     #[inline]
     pub fn configure_http1<C>(&mut self, config: C)
     where
@@ -27,7 +28,7 @@ impl TransportOptions {
         self.http1 = config.into();
     }
 
-    /// Configures HTTP/2 settings.
+    /// Sets the HTTP/2 options configuration.
     #[inline]
     pub fn configure_http2<C>(&mut self, config: C)
     where
@@ -36,7 +37,7 @@ impl TransportOptions {
         self.http2 = config.into();
     }
 
-    /// Configures TLS settings for the transport layer.
+    /// Sets the TLS options configuration.
     #[inline]
     pub fn configure_tls<C>(&mut self, config: C)
     where
@@ -45,7 +46,8 @@ impl TransportOptions {
         self.tls = config.into();
     }
 
-    /// Decomposes the transport options into individual protocol configurations.
+    /// Consumes the transport options and returns the individual parts.
+    #[inline]
     pub fn into_parts(
         self,
     ) -> (
