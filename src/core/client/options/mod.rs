@@ -12,7 +12,7 @@ use crate::tls::TlsOptions;
 /// for network connections made by the client.
 #[must_use]
 #[derive(Debug, Default, Clone)]
-pub(crate) struct TransportOptions {
+pub struct TransportOptions {
     tls: Option<TlsOptions>,
     http1: Option<Http1Options>,
     http2: Option<Http2Options>,
