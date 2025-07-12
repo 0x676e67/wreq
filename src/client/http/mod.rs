@@ -50,7 +50,9 @@ use super::{
 use crate::dns::hickory::{HickoryDnsResolver, LookupIpStrategy};
 use crate::{
     IntoUrl, Method, OriginalHeaders, Proxy,
-    connect::{BoxedConnectorLayer, BoxedConnectorService, Conn, Connector, Unnameable},
+    connect::{
+        BoxedConnectorLayer, BoxedConnectorService, Conn, Connector, HttpConnector, Unnameable,
+    },
     core::{
         client::{
             Builder, Client as NativeClient, connect::TcpConnectOptions, options::TransportOptions,
@@ -62,7 +64,10 @@ use crate::{
     error::{self, BoxError, Error},
     proxy::Matcher as ProxyMatcher,
     redirect::{self, RedirectPolicy},
-    tls::{AlpnProtocol, CertStore, CertificateInput, Identity, KeyLogPolicy, TlsVersion},
+    tls::{
+        AlpnProtocol, CertStore, CertificateInput, Identity, KeyLogPolicy, TlsConnectorBuilder,
+        TlsVersion,
+    },
 };
 
 /// An `Client` to make Requests with.
@@ -285,40 +290,42 @@ impl ClientBuilder {
                 DynResolver::new(resolver)
             };
 
-            let tls_opts = tls_opts.unwrap_or_default();
-            let alpn_protocol = match config.http_version_pref {
-                HttpVersionPref::Http1 => Some(AlpnProtocol::HTTP1),
+            let http = |http: &mut HttpConnector| {
+                http.set_keepalive(config.tcp_keepalive);
+                http.set_keepalive_interval(config.tcp_keepalive_interval);
+                http.set_keepalive_retries(config.tcp_keepalive_retries);
+                http.set_reuse_address(config.tcp_reuse_address);
+                http.set_connect_options(config.tcp_connect_options);
+                http.set_nodelay(config.tcp_nodelay);
+                #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
+                http.set_tcp_user_timeout(dur);
+            };
 
-                HttpVersionPref::Http2 => Some(AlpnProtocol::HTTP2),
-                _ => None,
+            let tls = |tls: TlsConnectorBuilder| {
+                let alpn_protocol = match config.http_version_pref {
+                    HttpVersionPref::Http1 => Some(AlpnProtocol::HTTP1),
+
+                    HttpVersionPref::Http2 => Some(AlpnProtocol::HTTP2),
+                    _ => None,
+                };
+                tls.alpn_protocol(alpn_protocol)
+                    .max_version(config.max_tls_version)
+                    .min_version(config.min_tls_version)
+                    .tls_sni(config.tls_sni)
+                    .verify_hostname(config.tls_verify_hostname)
+                    .cert_verification(config.tls_cert_verification)
+                    .cert_store(config.tls_cert_store)
+                    .identity(config.tls_identity)
+                    .keylog(config.tls_keylog_policy)
             };
 
             Connector::builder(proxies.clone(), resolver)
                 .connect_timeout(config.connect_timeout)
                 .tls_info(config.tls_info)
                 .verbose(config.connection_verbose)
-                .with_http(|http| {
-                    http.set_keepalive(config.tcp_keepalive);
-                    http.set_keepalive_interval(config.tcp_keepalive_interval);
-                    http.set_keepalive_retries(config.tcp_keepalive_retries);
-                    http.set_reuse_address(config.tcp_reuse_address);
-                    http.set_connect_options(config.tcp_connect_options);
-                    http.set_nodelay(config.tcp_nodelay);
-                    #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
-                    http.set_tcp_user_timeout(dur);
-                })
-                .with_tls(|tls| {
-                    tls.alpn_protocol(alpn_protocol)
-                        .max_version(config.max_tls_version)
-                        .min_version(config.min_tls_version)
-                        .tls_sni(config.tls_sni)
-                        .verify_hostname(config.tls_verify_hostname)
-                        .cert_verification(config.tls_cert_verification)
-                        .cert_store(config.tls_cert_store)
-                        .identity(config.tls_identity)
-                        .keylog(config.tls_keylog_policy)
-                })
-                .build(tls_opts, config.connector_layers)?
+                .with_http(http)
+                .with_tls(tls)
+                .build(tls_opts.unwrap_or_default(), config.connector_layers)?
         };
 
         let service = {
