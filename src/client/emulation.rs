@@ -40,7 +40,7 @@ pub struct Emulation {
 impl EmulationBuilder {
     /// Sets the  TLS options configuration for the emulation.
     #[inline]
-    pub fn with_tls<C>(mut self, config: C) -> Self
+    pub fn tls_options<C>(mut self, config: C) -> Self
     where
         C: Into<Option<TlsOptions>>,
     {
@@ -53,7 +53,7 @@ impl EmulationBuilder {
 
     /// Sets the  HTTP/1 options configuration for the emulation.
     #[inline]
-    pub fn with_http1<C>(mut self, config: C) -> Self
+    pub fn http1_options<C>(mut self, config: C) -> Self
     where
         C: Into<Option<Http1Options>>,
     {
@@ -66,7 +66,7 @@ impl EmulationBuilder {
 
     /// Sets the HTTP/2 options configuration for the emulation.
     #[inline]
-    pub fn with_http2<C>(mut self, config: C) -> Self
+    pub fn http2_options<C>(mut self, config: C) -> Self
     where
         C: Into<Option<Http2Options>>,
     {
@@ -79,21 +79,28 @@ impl EmulationBuilder {
 
     /// Sets the default headers for the emulation.
     #[inline]
-    pub fn with_headers<H>(mut self, headers: H) -> Self
+    pub fn headers<H>(mut self, headers: H) -> Self
     where
         H: Into<Option<HeaderMap>>,
     {
-        self.emulation.headers = headers.into();
+        if let Some(src) = headers.into() {
+            crate::util::replace_headers(self.emulation.headers.get_or_insert_default(), src);
+        }
         self
     }
 
     /// Sets the original headers for the emulation.
     #[inline]
-    pub fn with_original_headers<H>(mut self, headers: H) -> Self
+    pub fn original_headers<H>(mut self, headers: H) -> Self
     where
         H: Into<Option<OriginalHeaders>>,
     {
-        self.emulation.original_headers = headers.into();
+        if let Some(src) = headers.into() {
+            self.emulation
+                .original_headers
+                .get_or_insert_default()
+                .extend(src);
+        }
         self
     }
 
@@ -136,20 +143,20 @@ impl EmulationFactory for Emulation {
 impl EmulationFactory for Http1Options {
     #[inline]
     fn emulation(self) -> Emulation {
-        Emulation::builder().with_http1(self).build()
+        Emulation::builder().http1_options(self).build()
     }
 }
 
 impl EmulationFactory for Http2Options {
     #[inline]
     fn emulation(self) -> Emulation {
-        Emulation::builder().with_http2(self).build()
+        Emulation::builder().http2_options(self).build()
     }
 }
 
 impl EmulationFactory for TlsOptions {
     #[inline]
     fn emulation(self) -> Emulation {
-        Emulation::builder().with_tls(self).build()
+        Emulation::builder().tls_options(self).build()
     }
 }

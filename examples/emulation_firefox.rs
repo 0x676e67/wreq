@@ -198,7 +198,6 @@ async fn main() -> wreq::Result<()> {
         headers
     };
 
-    // Original headers
     // The headers keep the original case and order
     let original_headers = {
         let mut original_headers = OriginalHeaders::new();
@@ -210,14 +209,13 @@ async fn main() -> wreq::Result<()> {
         original_headers
     };
 
-    // Create emulation provider with all configurations
     // This provider encapsulates TLS, HTTP/1, HTTP/2, default headers, and original headers
     let emulation = Emulation::builder()
-        .with_tls(tls)
-        .with_http1(http1)
-        .with_http2(http2)
-        .with_headers(headers)
-        .with_original_headers(original_headers)
+        .tls_options(tls)
+        .http1_options(http1)
+        .http2_options(http2)
+        .headers(headers)
+        .original_headers(original_headers)
         .build();
 
     // Build a client with emulation config

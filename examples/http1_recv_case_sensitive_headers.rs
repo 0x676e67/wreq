@@ -1,4 +1,4 @@
-use wreq::{OriginalHeaders, http1::Http1Options};
+use wreq::{Client, OriginalHeaders, http1::Http1Options};
 
 #[tokio::main]
 async fn main() -> wreq::Result<()> {
@@ -10,7 +10,7 @@ async fn main() -> wreq::Result<()> {
         .build();
 
     // Create a client with the HTTP/1 options
-    let client = wreq::Client::builder()
+    let client = Client::builder()
         .emulation(http1_options)
         .http1_only()
         .build()?;

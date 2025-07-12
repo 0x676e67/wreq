@@ -37,6 +37,7 @@ impl OriginalHeaders {
     /// of the list of values currently associated with the key. The key is not
     /// updated, though; this matters for types that can be `==` without being
     /// identical.
+    #[inline]
     pub fn insert<N>(&mut self, orig: N) -> bool
     where
         N: TryInto<OriginalHeaderName>,
@@ -47,17 +48,10 @@ impl OriginalHeaders {
         }
     }
 
-    /// Extends a collection with the contents of an iterator.
-    pub fn extend<I>(&mut self, iter: I)
-    where
-        I: IntoIterator,
-        I::Item: TryInto<OriginalHeaderName>,
-    {
-        let iter = iter.into_iter().filter_map(|item| match item.try_into() {
-            Ok(orig) => Some((orig.name, orig.orig)),
-            Err(_) => None,
-        });
-        self.0.extend(iter);
+    /// Extends a a collection with the contents of an iterator.
+    #[inline]
+    pub fn extend(&mut self, iter: OriginalHeaders) {
+        self.0.extend(iter.0);
     }
 
     /// Returns an iterator over all header names and their original spellings.
@@ -81,7 +75,7 @@ impl OriginalHeaders {
 
 impl OriginalHeaders {
     /// Appends a header name to the end of the collection.
-    #[inline(always)]
+    #[inline]
     pub(crate) fn append<N>(&mut self, name: N, orig: Bytes)
     where
         N: IntoHeaderName,
@@ -91,7 +85,7 @@ impl OriginalHeaders {
 
     /// Returns a view of all spellings associated with that header name,
     /// in the order they were found.
-    #[inline(always)]
+    #[inline]
     pub(crate) fn get_all<'a>(
         &'a self,
         name: &HeaderName,
@@ -100,7 +94,7 @@ impl OriginalHeaders {
     }
 
     /// Returns an iterator over all header names and their original spellings.
-    #[inline(always)]
+    #[inline]
     pub(crate) fn keys(&self) -> impl Iterator<Item = &HeaderName> {
         self.0.keys()
     }

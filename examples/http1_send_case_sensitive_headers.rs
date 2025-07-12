@@ -1,9 +1,9 @@
 use http::{HeaderMap, HeaderName, HeaderValue};
-use wreq::OriginalHeaders;
+use wreq::{Client, OriginalHeaders};
 
 #[tokio::main]
 async fn main() -> wreq::Result<()> {
-    let client = wreq::Client::builder()
+    let client = Client::builder()
         .cert_verification(false)
         .http1_only()
         .build()?;
@@ -12,7 +12,7 @@ async fn main() -> wreq::Result<()> {
     let mut original_headers = OriginalHeaders::new();
     original_headers.insert("Host");
     original_headers.insert("X-custom-Header1");
-    original_headers.extend(["x-Custom-Header2"]);
+    original_headers.insert("x-Custom-Header2");
     original_headers.insert(HeaderName::from_static("x-custom-header3"));
 
     // Use the API you're already familiar with
