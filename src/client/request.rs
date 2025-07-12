@@ -658,8 +658,13 @@ impl RequestBuilder {
             let emulation = factory.emulation();
             let (transport_opts, default_headers, original_headers) = emulation.into_parts();
 
-            if let Some(transport_opts) = transport_opts {
-                *req.transport_options_mut() = Some(transport_opts);
+            if let Some((tls_opts, http1_opts, http2_opts)) =
+                transport_opts.map(TransportOptions::into_parts)
+            {
+                let transport_opts = req.transport_options_mut().get_or_insert_default();
+                transport_opts.configure_http1(http1_opts);
+                transport_opts.configure_http2(http2_opts);
+                transport_opts.configure_tls(tls_opts);
             }
 
             if let Some(default_headers) = default_headers {
