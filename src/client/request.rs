@@ -15,21 +15,21 @@ use serde::Serialize;
     feature = "brotli",
     feature = "deflate",
 ))]
-use super::middleware::{config::RequestAcceptEncoding, decoder::AcceptEncoding};
+use super::layer::{config::RequestAcceptEncoding, decoder::AcceptEncoding};
 #[cfg(feature = "multipart")]
 use super::multipart;
 use super::{
     body::Body,
-    client::{Client, Pending},
-    middleware::config::{
+    http::{Client, Pending},
+    layer::config::{
         RequestReadTimeout, RequestRedirectPolicy, RequestSkipDefaultHeaders, RequestTotalTimeout,
     },
     response::Response,
 };
 use crate::{
-    EmulationProviderFactory, Error, Method, OriginalHeaders, Proxy, Url,
+    EmulationFactory, Error, Method, OriginalHeaders, Proxy, Url,
     core::{
-        client::{config::TransportOptions, connect::TcpConnectOptions},
+        client::{connect::TcpConnectOptions, options::TransportOptions},
         ext::{
             RequestConfig, RequestEnforcedHttpVersion, RequestOriginalHeaders, RequestProxyMatcher,
             RequestTcpConnectOptions, RequestTransportOptions,
@@ -646,20 +646,20 @@ impl RequestBuilder {
 
     /// Configures the request builder to emulation the specified HTTP context.
     ///
-    /// This method sets the necessary headers, HTTP/1 and HTTP/2 configurations, and TLS config
-    /// to use the specified HTTP context. It allows the client to mimic the behavior of different
-    /// versions or setups, which can be useful for testing or ensuring compatibility with various
-    /// environments.
+    /// This method sets the necessary headers, HTTP/1 and HTTP/2 options configurations, and  TLS
+    /// options config to use the specified HTTP context. It allows the client to mimic the
+    /// behavior of different versions or setups, which can be useful for testing or ensuring
+    /// compatibility with various environments.
     pub fn emulation<P>(mut self, factory: P) -> RequestBuilder
     where
-        P: EmulationProviderFactory,
+        P: EmulationFactory,
     {
         if let Ok(ref mut req) = self.request {
-            let opts = req.transport_options_mut().get_or_insert_default();
             let emulation = factory.emulation();
             let (transport_opts, default_headers, original_headers) = emulation.into_parts();
+
             if let Some(transport_opts) = transport_opts {
-                *opts = transport_opts;
+                *req.transport_options_mut() = Some(transport_opts);
             }
 
             if let Some(default_headers) = default_headers {

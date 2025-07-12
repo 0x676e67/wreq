@@ -290,7 +290,7 @@ impl<R> HttpConnector<R> {
 
     /// Set the connect options to be used when connecting.
     #[inline]
-    pub fn set_tcp_connect_options(&mut self, options: Option<TcpConnectOptions>) {
+    pub fn set_connect_options(&mut self, options: Option<TcpConnectOptions>) {
         self.config_mut().tcp_connect_options = options;
     }
 

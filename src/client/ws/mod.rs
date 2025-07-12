@@ -21,8 +21,8 @@ use tungstenite::protocol::WebSocketConfig;
 
 pub use self::message::{CloseCode, CloseFrame, Message, Utf8Bytes};
 use crate::{
-    EmulationProviderFactory, Error, OriginalHeaders, RequestBuilder, Response,
-    core::ext::Protocol, proxy::Proxy,
+    EmulationFactory, Error, OriginalHeaders, RequestBuilder, Response, core::ext::Protocol,
+    proxy::Proxy,
 };
 
 /// A WebSocket stream.
@@ -292,14 +292,14 @@ impl WebSocketRequestBuilder {
 
     /// Configures the request builder to emulation the specified WebSocket context.
     ///
-    /// This method sets the necessary headers, HTTP/1 and HTTP/2 configurations, and TLS config
-    /// to use the specified HTTP context. It allows the client to mimic the behavior of different
-    /// versions or setups, which can be useful for testing or ensuring compatibility with various
-    /// environments.
+    /// This method sets the necessary headers, HTTP/1 and HTTP/2 options configurations, and  TLS
+    /// options config to use the specified HTTP context. It allows the client to mimic the
+    /// behavior of different versions or setups, which can be useful for testing or ensuring
+    /// compatibility with various environments.
     #[inline]
     pub fn emulation<P>(mut self, factory: P) -> RequestBuilder
     where
-        P: EmulationProviderFactory,
+        P: EmulationFactory,
     {
         self.inner = self.inner.emulation(factory);
         self.inner

@@ -1,5 +1,5 @@
 use boring2::ssl;
-use bytes::{Bytes, BytesMut};
+use bytes::{BufMut, Bytes, BytesMut};
 
 /// A TLS protocol version.
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
@@ -25,17 +25,17 @@ pub struct AlpnProtocol(&'static [u8]);
 
 impl AlpnProtocol {
     /// Prefer HTTP/1.1
-    pub const HTTP1: AlpnProtocol = AlpnProtocol(b"\x08http/1.1");
+    pub const HTTP1: AlpnProtocol = AlpnProtocol(b"http/1.1");
 
     /// Prefer HTTP/2
-    pub const HTTP2: AlpnProtocol = AlpnProtocol(b"\x02h2");
+    pub const HTTP2: AlpnProtocol = AlpnProtocol(b"h2");
 
     /// Prefer HTTP/3
-    pub const HTTP3: AlpnProtocol = AlpnProtocol(b"\x02h3");
+    pub const HTTP3: AlpnProtocol = AlpnProtocol(b"h3");
 
     #[inline]
     pub(crate) fn encode(self) -> Bytes {
-        Bytes::from_static(self.0)
+        Self::encode_sequence(std::iter::once(&self))
     }
 
     #[inline]
@@ -45,6 +45,7 @@ impl AlpnProtocol {
     {
         let mut buf = BytesMut::new();
         for item in items {
+            buf.put_u8(item.0.len() as u8);
             buf.extend_from_slice(item.0);
         }
         buf.freeze()

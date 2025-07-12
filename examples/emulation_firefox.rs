@@ -1,6 +1,6 @@
 use http::{HeaderMap, HeaderValue, header};
 use wreq::{
-    Client, EmulationProvider, OriginalHeaders,
+    Client, Emulation, OriginalHeaders,
     http1::Http1Options,
     http2::{
         Http2Options, Priorities, Priority, PseudoId, PseudoOrder, SettingId, SettingsOrder,
@@ -21,7 +21,7 @@ async fn main() -> wreq::Result<()> {
         .with_max_level(tracing::Level::TRACE)
         .init();
 
-    // TLS config
+    //  TLS options config
     let tls = TlsOptions::builder()
         .curves_list(join!(
             ":",
@@ -107,13 +107,13 @@ async fn main() -> wreq::Result<()> {
         ])
         .build();
 
-    // HTTP/1 config
+    //  HTTP/1 options config
     let http1 = Http1Options::builder()
         .allow_obsolete_multiline_headers_in_responses(true)
         .max_headers(100)
         .build();
 
-    // HTTP/2 config
+    // HTTP/2 options config
     let http2 = {
         // HTTP/2 headers frame pseudo-header order
         let headers_pseudo_order = PseudoOrder::builder()
@@ -212,9 +212,9 @@ async fn main() -> wreq::Result<()> {
 
     // Create emulation provider with all configurations
     // This provider encapsulates TLS, HTTP/1, HTTP/2, default headers, and original headers
-    let emulation = EmulationProvider::builder()
+    let emulation = Emulation::builder()
         .with_tls(tls)
-        .with_config(http1)
+        .with_http1(http1)
         .with_http2(http2)
         .with_headers(headers)
         .with_original_headers(original_headers)

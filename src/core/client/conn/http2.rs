@@ -199,18 +199,18 @@ where
     }
 
     /// Provide a timer to execute background HTTP2 tasks.
-    pub fn timer<M>(&mut self, timer: M) -> &mut Builder<Ex>
+    pub fn timer<M>(&mut self, timer: M)
     where
         M: Timer + Send + Sync + 'static,
     {
         self.timer = Time::Timer(Arc::new(timer));
-        self
     }
 
     /// Provide a configuration for HTTP/2.
-    pub fn config(&mut self, config: Http2Options) -> &mut Builder<Ex> {
-        self.config = config;
-        self
+    pub fn config(&mut self, opts: Option<Http2Options>) {
+        if let Some(config) = opts {
+            self.config = config;
+        }
     }
 
     /// Constructs a connection with the configured options and IO.

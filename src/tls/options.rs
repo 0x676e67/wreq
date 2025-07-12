@@ -13,9 +13,11 @@ pub struct TlsOptionsBuilder {
     config: TlsOptions,
 }
 
-/// Configuration settings for TLS connections.
+/// TLS connection configuration options.
 ///
-/// This struct defines various parameters to fine-tune the behavior of a TLS connection,
+/// This struct provides fine-grained control over TLS connection behavior,
+/// allowing customization of protocol versions, cipher suites, extensions,
+/// and various security features.
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
 pub struct TlsOptions {
     pub(crate) alpn_protos: Option<Bytes>,

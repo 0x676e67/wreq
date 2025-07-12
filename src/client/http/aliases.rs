@@ -6,7 +6,7 @@ use tower::{
 
 use super::{Body, service::ClientService};
 use crate::{
-    client::middleware::{
+    client::layer::{
         redirect::FollowRedirect,
         retry::Http2RetryPolicy,
         timeout::{ResponseBodyTimeout, Timeout, TimeoutBody},
@@ -20,7 +20,7 @@ use crate::{
 type CookieLayer<T> = T;
 
 #[cfg(feature = "cookies")]
-type CookieLayer<T> = crate::client::middleware::cookie::CookieManager<T>;
+type CookieLayer<T> = crate::client::layer::cookie::CookieManager<T>;
 
 #[cfg(not(any(
     feature = "gzip",
@@ -36,7 +36,7 @@ type Decompression<T> = T;
     feature = "brotli",
     feature = "deflate"
 ))]
-type Decompression<T> = crate::client::middleware::decoder::Decompression<T>;
+type Decompression<T> = crate::client::layer::decoder::Decompression<T>;
 
 #[cfg(any(
     feature = "gzip",

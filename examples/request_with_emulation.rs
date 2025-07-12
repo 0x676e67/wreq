@@ -1,6 +1,6 @@
 use http::{HeaderMap, HeaderValue, header};
 use wreq::{
-    Client, EmulationProvider, OriginalHeaders,
+    Client, Emulation, OriginalHeaders,
     http2::{Http2Options, PseudoId, PseudoOrder},
     tls::{AlpnProtocol, TlsOptions, TlsVersion},
 };
@@ -17,7 +17,7 @@ async fn main() -> wreq::Result<()> {
         .with_max_level(tracing::Level::TRACE)
         .init();
 
-    // TLS config
+    //  TLS options config
     let tls = TlsOptions::builder()
         .enable_ocsp_stapling(true)
         .curves_list(join!(":", "X25519", "P-256", "P-384"))
@@ -50,7 +50,7 @@ async fn main() -> wreq::Result<()> {
         .max_tls_version(TlsVersion::TLS_1_3)
         .build();
 
-    // HTTP/2 config
+    // HTTP/2 options config
     let http2 = Http2Options::builder()
         .initial_stream_id(3)
         .initial_stream_window_size(16777216)
@@ -99,7 +99,7 @@ async fn main() -> wreq::Result<()> {
 
     // Create emulation provider with all configurations
     // This provider encapsulates TLS, HTTP/1, HTTP/2, default headers, and original headers
-    let emulation = EmulationProvider::builder()
+    let emulation = Emulation::builder()
         .with_tls(tls)
         .with_http2(http2)
         .with_headers(headers)

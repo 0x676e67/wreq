@@ -37,7 +37,7 @@ use crate::{
     error::BoxError,
     sync::Mutex,
     tls::{
-        CertStore, Identity, KeyLogPolicy, TlsOptions, TlsVersion,
+        AlpnProtocol, CertStore, Identity, KeyLogPolicy, TlsOptions, TlsVersion,
         conn::ext::{ConnectConfigurationExt, SslConnectorBuilderExt},
     },
 };
@@ -155,7 +155,7 @@ struct Inner {
 #[derive(Clone)]
 pub struct TlsConnectorBuilder {
     session_cache: Arc<Mutex<SessionCache<ConnKey>>>,
-    keylog: Option<KeyLogPolicy>,
+    alpn_protocol: Option<AlpnProtocol>,
     max_version: Option<TlsVersion>,
     min_version: Option<TlsVersion>,
     tls_sni: bool,
@@ -163,6 +163,7 @@ pub struct TlsConnectorBuilder {
     identity: Option<Identity>,
     cert_store: Option<CertStore>,
     cert_verification: bool,
+    keylog: Option<KeyLogPolicy>,
 }
 
 /// A layer which wraps services in an `SslConnector`.
@@ -275,6 +276,13 @@ impl Inner {
 // ====== impl TlsConnectorBuilder =====
 
 impl TlsConnectorBuilder {
+    /// Sets the alpn protocol to be used.
+    #[inline(always)]
+    pub fn alpn_protocol(mut self, protocol: Option<AlpnProtocol>) -> Self {
+        self.alpn_protocol = protocol;
+        self
+    }
+
     /// Sets the TLS keylog policy.
     #[inline(always)]
     pub fn keylog(mut self, policy: Option<KeyLogPolicy>) -> Self {
@@ -345,6 +353,11 @@ impl TlsConnectorBuilder {
         // Replace the default configuration with the provided one
         cfg.max_tls_version = cfg.max_tls_version.or(self.max_version);
         cfg.min_tls_version = cfg.min_tls_version.or(self.min_version);
+        cfg.alpn_protos = self
+            .alpn_protocol
+            .as_ref()
+            .map(|p| p.encode())
+            .or(cfg.alpn_protos);
 
         let mut connector = SslConnector::no_default_verify_builder(SslMethod::tls_client())
             .map_err(Error::tls)?
@@ -501,14 +514,15 @@ impl TlsConnector {
             session_cache: Arc::new(Mutex::new(SessionCache::with_capacity(
                 DEFAULT_SESSION_CACHE_CAPACITY,
             ))),
-            keylog: None,
+            alpn_protocol: None,
+            min_version: None,
+            max_version: None,
             identity: None,
             cert_store: None,
             cert_verification: true,
-            min_version: None,
-            max_version: None,
             tls_sni: true,
             verify_hostname: true,
+            keylog: None,
         }
     }
 }

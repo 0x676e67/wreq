@@ -9,7 +9,7 @@ use tower_service::Service;
 
 use super::future::{ResponseBodyTimeoutFuture, ResponseFuture};
 use crate::{
-    client::middleware::{
+    client::layer::{
         config::{RequestReadTimeout, RequestTotalTimeout},
         timeout::TimeoutBody,
     },

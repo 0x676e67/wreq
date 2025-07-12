@@ -2,13 +2,16 @@ use wreq::{OriginalHeaders, http1::Http1Options};
 
 #[tokio::main]
 async fn main() -> wreq::Result<()> {
+    // Enable case-sensitive header handling in HTTP/1
+    let http1_options = Http1Options::builder()
+        .preserve_header_case(true)
+        .http09_responses(true)
+        .max_headers(100)
+        .build();
+
+    // Create a client with the HTTP/1 options
     let client = wreq::Client::builder()
-        .http1_options(
-            Http1Options::builder()
-                .preserve_header_case(true)
-                .http09_responses(true)
-                .build(),
-        )
+        .emulation(http1_options)
         .http1_only()
         .build()?;
 

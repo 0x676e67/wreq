@@ -24,7 +24,7 @@ use crate::{
     core::{
         client::{
             ConnRequest,
-            connect::{self, Connected, Connection, TcpConnectOptions, proxy},
+            connect::{self, Connected, Connection, proxy},
         },
         rt::{Read, ReadBufCursor, TokioIo, Write},
     },
@@ -32,8 +32,8 @@ use crate::{
     error::{BoxError, TimedOut, map_timeout_to_connector_error},
     proxy::{Intercepted, Matcher as ProxyMatcher},
     tls::{
-        CertStore, EstablishedConn, HttpsConnector, Identity, KeyLogPolicy, MaybeHttpsStream,
-        TlsConnector, TlsConnectorBuilder, TlsInfo, TlsOptions, TlsVersion,
+        EstablishedConn, HttpsConnector, MaybeHttpsStream, TlsConnector, TlsConnectorBuilder,
+        TlsInfo, TlsOptions,
     },
 };
 
@@ -66,47 +66,23 @@ pub(crate) struct ConnectorBuilder {
 }
 
 impl ConnectorBuilder {
-    /// Set that all sockets have `SO_KEEPALIVE` set with the supplied duration
-    /// to remain idle before sending TCP keepalive probes.
-    #[inline(always)]
-    pub(crate) fn tcp_keepalive(mut self, dur: Option<Duration>) -> ConnectorBuilder {
-        self.http.set_keepalive(dur);
+    /// Set the HTTP connector to use.
+    #[inline]
+    pub(crate) fn with_http<F>(mut self, call: F) -> ConnectorBuilder
+    where
+        F: FnOnce(&mut HttpConnector),
+    {
+        call(&mut self.http);
         self
     }
 
-    /// Set the duration between two successive TCP keepalive retransmissions,
-    /// if acknowledgement to the previous keepalive transmission is not received.
-    #[inline(always)]
-    pub(crate) fn tcp_keepalive_interval(mut self, dur: Option<Duration>) -> ConnectorBuilder {
-        self.http.set_keepalive_interval(dur);
-        self
-    }
-
-    /// Set the number of retransmissions to be carried out before declaring that remote end is not
-    /// available.
-    #[inline(always)]
-    pub(crate) fn tcp_keepalive_retries(mut self, retries: Option<u32>) -> ConnectorBuilder {
-        self.http.set_keepalive_retries(retries);
-        self
-    }
-
-    /// Sets the value of the `SO_REUSEADDR` option on the socket.
-    #[inline(always)]
-    pub(crate) fn tcp_reuse_address(mut self, enabled: bool) -> ConnectorBuilder {
-        self.http.set_reuse_address(enabled);
-        self
-    }
-
-    /// Sets the value of the TCP_USER_TIMEOUT option on the socket.
-    #[inline(always)]
-    pub(crate) fn tcp_user_timeout(
-        #[allow(unused_mut)] mut self,
-        #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))] dur: Option<
-            Duration,
-        >,
-    ) -> ConnectorBuilder {
-        #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
-        self.http.set_tcp_user_timeout(dur);
+    /// Set the TLS connector builder to use.
+    #[inline]
+    pub(crate) fn with_tls<F>(mut self, call: F) -> ConnectorBuilder
+    where
+        F: FnOnce(TlsConnectorBuilder) -> TlsConnectorBuilder,
+    {
+        self.tls_builder = call(self.tls_builder);
         self
     }
 
@@ -114,29 +90,9 @@ impl ConnectorBuilder {
     ///
     /// If a domain resolves to multiple IP addresses, the timeout will be
     /// evenly divided across them.
-    #[inline(always)]
+    #[inline]
     pub(crate) fn connect_timeout(mut self, timeout: Option<Duration>) -> ConnectorBuilder {
         self.timeout = timeout;
-        self.http.set_connect_timeout(timeout);
-        self
-    }
-
-    /// Sets the name of the interface to bind sockets produced by this
-    /// connector.
-    #[inline(always)]
-    pub(crate) fn tcp_connect_options(
-        mut self,
-        options: Option<TcpConnectOptions>,
-    ) -> ConnectorBuilder {
-        self.http.set_tcp_connect_options(options);
-        self
-    }
-
-    /// Set the tcp_nodelay flag for the connector.
-    #[inline(always)]
-    pub(crate) fn tcp_nodelay(mut self, enabled: bool) -> ConnectorBuilder {
-        self.tcp_nodelay = enabled;
-        self.http.set_nodelay(enabled);
         self
     }
 
@@ -147,36 +103,6 @@ impl ConnectorBuilder {
         self
     }
 
-    /// Sets the maximum TLS version to be used.
-    #[inline(always)]
-    pub(crate) fn tls_max_version<T>(mut self, version: T) -> ConnectorBuilder
-    where
-        T: Into<Option<TlsVersion>>,
-    {
-        self.tls_builder = self.tls_builder.max_version(version);
-        self
-    }
-
-    /// Sets the minimum TLS version to be used.
-    #[inline(always)]
-    pub(crate) fn tls_min_version<T>(mut self, version: T) -> ConnectorBuilder
-    where
-        T: Into<Option<TlsVersion>>,
-    {
-        self.tls_builder = self.tls_builder.min_version(version);
-        self
-    }
-
-    /// Sets the TLS keylog policy.
-    #[inline(always)]
-    pub(crate) fn tls_keylog_policy(
-        mut self,
-        keylog_policy: Option<KeyLogPolicy>,
-    ) -> ConnectorBuilder {
-        self.tls_builder = self.tls_builder.keylog(keylog_policy);
-        self
-    }
-
     /// Sets the TLS info flag.
     #[inline(always)]
     pub(crate) fn tls_info(mut self, enabled: bool) -> ConnectorBuilder {
@@ -184,42 +110,7 @@ impl ConnectorBuilder {
         self
     }
 
-    /// Sets the Server Name Indication (SNI) flag.
-    #[inline(always)]
-    pub(crate) fn tls_sni(mut self, enabled: bool) -> ConnectorBuilder {
-        self.tls_builder = self.tls_builder.tls_sni(enabled);
-        self
-    }
-
-    /// Sets the hostname verification flag.
-    #[inline(always)]
-    pub(crate) fn tls_verify_hostname(mut self, enabled: bool) -> ConnectorBuilder {
-        self.tls_builder = self.tls_builder.verify_hostname(enabled);
-        self
-    }
-
-    /// Sets the identity to be used for client certificate authentication.
-    #[inline(always)]
-    pub(crate) fn tls_identity(mut self, identity: Option<Identity>) -> ConnectorBuilder {
-        self.tls_builder = self.tls_builder.identity(identity);
-        self
-    }
-
-    /// Sets the certificate store used for TLS verification.
-    #[inline(always)]
-    pub(crate) fn tls_cert_store(mut self, cert_store: CertStore) -> ConnectorBuilder {
-        self.tls_builder = self.tls_builder.cert_store(cert_store);
-        self
-    }
-
-    /// Sets the certificate verification flag.
-    #[inline(always)]
-    pub(crate) fn tls_cert_verification(mut self, enabled: bool) -> ConnectorBuilder {
-        self.tls_builder = self.tls_builder.cert_verification(enabled);
-        self
-    }
-
-    /// Builds the connector with the provided TLS configuration and optional layers.
+    /// Builds the connector with the provided  TLS options configuration and optional layers.
     pub(crate) fn build(
         self,
         opts: TlsOptions,
@@ -356,7 +247,7 @@ pub(crate) struct ConnectorService {
     #[cfg(feature = "socks")]
     resolver: DynResolver,
 
-    // TLS configuration
+    //  TLS options configuration
     // Note: these are not used in the `TlsConnectorBuilder` but rather
     // in the `TlsConnector` that is built from it.
     tls_info: bool,
@@ -371,7 +262,7 @@ impl ConnectorService {
         req: &ConnRequest,
     ) -> Result<HttpsConnector<HttpConnector>, BoxError> {
         let ex_data = req.ex_data();
-        http.set_tcp_connect_options(ex_data.tcp_connect_options().cloned());
+        http.set_connect_options(ex_data.tcp_connect_options().cloned());
         let tls = match ex_data.tls_options() {
             Some(cfg) => self.tls_builder.build(cfg.clone())?,
             None => self.tls.clone(),

@@ -138,7 +138,7 @@ impl RequestConfigValue for RequestTcpConnectOptions {
 pub(crate) struct RequestTransportOptions;
 
 impl RequestConfigValue for RequestTransportOptions {
-    type Value = crate::core::client::config::TransportOptions;
+    type Value = crate::core::client::options::TransportOptions;
 }
 
 #[derive(Clone, Copy)]

@@ -1,5 +1,3 @@
-#[macro_use]
-mod macros;
 mod aliases;
 mod future;
 mod service;
@@ -27,7 +25,7 @@ use tower::{
     util::{BoxCloneSyncService, BoxCloneSyncServiceLayer},
 };
 #[cfg(feature = "cookies")]
-use {super::middleware::cookie::CookieManagerLayer, crate::cookie};
+use {super::layer::cookie::CookieManagerLayer, crate::cookie};
 
 #[cfg(any(
     feature = "gzip",
@@ -35,12 +33,12 @@ use {super::middleware::cookie::CookieManagerLayer, crate::cookie};
     feature = "brotli",
     feature = "deflate",
 ))]
-use super::middleware::decoder::{AcceptEncoding, DecompressionLayer};
+use super::layer::decoder::{AcceptEncoding, DecompressionLayer};
 #[cfg(feature = "websocket")]
-use super::websocket::WebSocketRequestBuilder;
+use super::ws::WebSocketRequestBuilder;
 use super::{
-    Body, EmulationProviderFactory,
-    middleware::{
+    Body, EmulationFactory,
+    layer::{
         redirect::FollowRedirectLayer,
         retry::Http2RetryPolicy,
         timeout::{ResponseBodyTimeoutLayer, TimeoutLayer},
@@ -55,20 +53,16 @@ use crate::{
     connect::{BoxedConnectorLayer, BoxedConnectorService, Conn, Connector, Unnameable},
     core::{
         client::{
-            Builder, Client as NativeClient, config::TransportOptions, connect::TcpConnectOptions,
+            Builder, Client as NativeClient, connect::TcpConnectOptions, options::TransportOptions,
         },
         ext::RequestConfig,
         rt::{TokioExecutor, tokio::TokioTimer},
     },
     dns::{DnsResolverWithOverrides, DynResolver, Resolve, gai::GaiResolver},
     error::{self, BoxError, Error},
-    http1::Http1Options,
-    http2::Http2Options,
     proxy::Matcher as ProxyMatcher,
     redirect::{self, RedirectPolicy},
-    tls::{
-        AlpnProtocol, CertStore, CertificateInput, Identity, KeyLogPolicy, TlsOptions, TlsVersion,
-    },
+    tls::{AlpnProtocol, CertStore, CertificateInput, Identity, KeyLogPolicy, TlsVersion},
 };
 
 /// An `Client` to make Requests with.
@@ -148,8 +142,6 @@ struct Config {
     dns_resolver: Option<Arc<dyn Resolve>>,
     http_version_pref: HttpVersionPref,
     https_only: bool,
-    http1_options: Http1Options,
-    http2_options: Http2Options,
     http2_max_retry: usize,
     request_layers: Option<Vec<BoxedClientServiceLayer>>,
     connector_layers: Option<Vec<BoxedConnectorLayer>>,
@@ -163,7 +155,7 @@ struct Config {
     tls_cert_verification: bool,
     min_tls_version: Option<TlsVersion>,
     max_tls_version: Option<TlsVersion>,
-    tls_options: TlsOptions,
+    transport_options: TransportOptions,
 }
 
 impl Default for ClientBuilder {
@@ -219,8 +211,6 @@ impl ClientBuilder {
                 http_version_pref: HttpVersionPref::All,
                 builder: NativeClient::builder(TokioExecutor::new()),
                 https_only: false,
-                http1_options: Http1Options::default(),
-                http2_options: Http2Options::default(),
                 http2_max_retry: 2,
                 request_layers: None,
                 connector_layers: None,
@@ -233,7 +223,8 @@ impl ClientBuilder {
                 tls_cert_verification: true,
                 min_tls_version: None,
                 max_tls_version: None,
-                tls_options: TlsOptions::default(),
+                // Transport options for HTTP/1/2 and TLS.
+                transport_options: TransportOptions::default(),
             },
         }
     }
@@ -261,10 +252,12 @@ impl ClientBuilder {
             .iter()
             .any(ProxyMatcher::maybe_has_http_custom_headers);
 
+        let (tls_opts, http1_opts, http2_opts) = config.transport_options.into_parts();
+
         config
             .builder
-            .http1_options(config.http1_options)
-            .http2_options(config.http2_options)
+            .http1_options(http1_opts)
+            .http2_options(http2_opts)
             .http2_only(matches!(config.http_version_pref, HttpVersionPref::Http2))
             .http2_timer(TokioTimer::new())
             .pool_timer(TokioTimer::new())
@@ -292,39 +285,40 @@ impl ClientBuilder {
                 DynResolver::new(resolver)
             };
 
-            match config.http_version_pref {
-                HttpVersionPref::Http1 => {
-                    config.tls_options.alpn_protos = Some(AlpnProtocol::HTTP1.encode());
-                }
-                HttpVersionPref::Http2 => {
-                    config.tls_options.alpn_protos = Some(AlpnProtocol::HTTP2.encode());
-                }
-                _ => {}
-            }
+            let tls_opts = tls_opts.unwrap_or_default();
+            let alpn_protocol = match config.http_version_pref {
+                HttpVersionPref::Http1 => Some(AlpnProtocol::HTTP1),
+
+                HttpVersionPref::Http2 => Some(AlpnProtocol::HTTP2),
+                _ => None,
+            };
 
             Connector::builder(proxies.clone(), resolver)
                 .connect_timeout(config.connect_timeout)
-                .tcp_keepalive(config.tcp_keepalive)
-                .tcp_keepalive_interval(config.tcp_keepalive_interval)
-                .tcp_keepalive_retries(config.tcp_keepalive_retries)
-                .tcp_reuse_address(config.tcp_reuse_address)
-                .tcp_connect_options(config.tcp_connect_options)
-                .tcp_nodelay(config.tcp_nodelay)
-                .verbose(config.connection_verbose)
-                .tls_max_version(config.max_tls_version)
-                .tls_min_version(config.min_tls_version)
                 .tls_info(config.tls_info)
-                .tls_sni(config.tls_sni)
-                .tls_verify_hostname(config.tls_verify_hostname)
-                .tls_cert_verification(config.tls_cert_verification)
-                .tls_cert_store(config.tls_cert_store)
-                .tls_identity(config.tls_identity)
-                .tls_keylog_policy(config.tls_keylog_policy)
-                .tcp_user_timeout(
+                .verbose(config.connection_verbose)
+                .with_http(|http| {
+                    http.set_keepalive(config.tcp_keepalive);
+                    http.set_keepalive_interval(config.tcp_keepalive_interval);
+                    http.set_keepalive_retries(config.tcp_keepalive_retries);
+                    http.set_reuse_address(config.tcp_reuse_address);
+                    http.set_connect_options(config.tcp_connect_options);
+                    http.set_nodelay(config.tcp_nodelay);
                     #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
-                    config.tcp_user_timeout,
-                )
-                .build(config.tls_options, config.connector_layers)?
+                    http.set_tcp_user_timeout(dur);
+                })
+                .with_tls(|tls| {
+                    tls.alpn_protocol(alpn_protocol)
+                        .max_version(config.max_tls_version)
+                        .min_version(config.min_tls_version)
+                        .tls_sni(config.tls_sni)
+                        .verify_hostname(config.tls_verify_hostname)
+                        .cert_verification(config.tls_cert_verification)
+                        .cert_store(config.tls_cert_store)
+                        .identity(config.tls_identity)
+                        .keylog(config.tls_keylog_policy)
+                })
+                .build(tls_opts, config.connector_layers)?
         };
 
         let service = {
@@ -883,20 +877,6 @@ impl ClientBuilder {
         self
     }
 
-    /// Sets the HTTP/1 options configuration for the client.
-    #[inline]
-    pub fn http1_options(mut self, opts: Http1Options) -> ClientBuilder {
-        self.config.http1_options = opts;
-        self
-    }
-
-    /// Sets the HTTP/2 options configuration for the client.
-    #[inline]
-    pub fn http2_options(mut self, opts: Http2Options) -> ClientBuilder {
-        self.config.http2_options = opts;
-        self
-    }
-
     // TCP options
 
     /// Set whether sockets have `TCP_NODELAY` enabled.
@@ -1173,13 +1153,6 @@ impl ClientBuilder {
         self
     }
 
-    /// Sets the TLS options configuration for the client.
-    #[inline]
-    pub fn tls_options(mut self, opts: TlsOptions) -> ClientBuilder {
-        self.config.tls_options = opts;
-        self
-    }
-
     // DNS options
 
     /// Disables the hickory-dns async resolver.
@@ -1314,10 +1287,10 @@ impl ClientBuilder {
 
     /// Configures the client builder to emulation the specified HTTP context.
     ///
-    /// This method sets the necessary headers, HTTP/1 and HTTP/2 configurations, and TLS config
-    /// to use the specified HTTP context. It allows the client to mimic the behavior of different
-    /// versions or setups, which can be useful for testing or ensuring compatibility with various
-    /// environments.
+    /// This method sets the necessary headers, HTTP/1 and HTTP/2 options configurations, and  TLS
+    /// options config to use the specified HTTP context. It allows the client to mimic the
+    /// behavior of different versions or setups, which can be useful for testing or ensuring
+    /// compatibility with various environments.
     ///
     /// # Note
     /// This will overwrite the existing configuration.
@@ -1340,25 +1313,20 @@ impl ClientBuilder {
     #[inline]
     pub fn emulation<P>(mut self, factory: P) -> ClientBuilder
     where
-        P: EmulationProviderFactory,
+        P: EmulationFactory,
     {
-        let (transport_opts, default_headers, original_headers) = factory.emulation().into_parts();
-        if let Some((tls_opts, http1_opts, http2_opts)) =
-            transport_opts.map(TransportOptions::into_parts)
-        {
-            apply_option!(
-                self,
-                (tls_opts, tls_options),
-                (http1_opts, http1_options),
-                (http2_opts, http2_options)
-            );
-        }
+        let emulation = factory.emulation();
+        let (transport_opts, headers, original_headers) = emulation.into_parts();
 
-        apply_option!(
-            self,
-            (default_headers, default_headers),
-            (original_headers, original_headers)
-        );
+        if let Some(transport_opts) = transport_opts {
+            self.config.transport_options = transport_opts;
+        }
+        if let Some(headers) = headers {
+            self = self.default_headers(headers);
+        }
+        if let Some(original_headers) = original_headers {
+            self = self.original_headers(original_headers);
+        }
         self
     }
 }
@@ -1401,16 +1369,6 @@ impl Client {
     #[inline]
     pub fn get<U: IntoUrl>(&self, url: U) -> RequestBuilder {
         self.request(Method::GET, url)
-    }
-
-    /// Upgrades the [`RequestBuilder`] to perform a
-    /// websocket handshake. This returns a wrapped type, so you must do
-    /// this after you set up your request, and just before you send the
-    /// request.
-    #[inline]
-    #[cfg(feature = "websocket")]
-    pub fn websocket<U: IntoUrl>(&self, url: U) -> WebSocketRequestBuilder {
-        WebSocketRequestBuilder::new(self.request(Method::GET, url))
     }
 
     /// Convenience method to make a `POST` request to a URL.
@@ -1484,6 +1442,16 @@ impl Client {
     pub fn request<U: IntoUrl>(&self, method: Method, url: U) -> RequestBuilder {
         let req = url.into_url().map(move |url| Request::new(method, url));
         RequestBuilder::new(self.clone(), req)
+    }
+
+    /// Upgrades the [`RequestBuilder`] to perform a
+    /// websocket handshake. This returns a wrapped type, so you must do
+    /// this after you set up your request, and just before you send the
+    /// request.
+    #[inline]
+    #[cfg(feature = "websocket")]
+    pub fn websocket<U: IntoUrl>(&self, url: U) -> WebSocketRequestBuilder {
+        WebSocketRequestBuilder::new(self.request(Method::GET, url))
     }
 
     /// Executes a `Request`.

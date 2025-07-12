@@ -1,114 +1,112 @@
 use http::HeaderMap;
 
 use crate::{
-    OriginalHeaders, core::client::config::TransportOptions, http1::Http1Options,
+    OriginalHeaders, core::client::options::TransportOptions, http1::Http1Options,
     http2::Http2Options, tls::TlsOptions,
 };
 
-/// Trait defining the interface for providing an `EmulationProvider`.
+/// Factory trait for creating emulation configurations.
 ///
-/// The `EmulationProviderFactory` trait is designed to be implemented by types that can provide
-/// an `EmulationProvider` instance. This trait abstracts the creation and configuration of
-/// `EmulationProvider`, allowing different types to offer their own specific configurations.
-pub trait EmulationProviderFactory {
-    /// Provides an `EmulationProvider` instance.
-    fn emulation(self) -> EmulationProvider;
+/// This trait allows different types (enums, structs, etc.) to provide
+/// their own emulation configurations. It's particularly useful for:
+/// - Predefined browser profiles
+/// - Dynamic configuration based on runtime conditions
+/// - User-defined custom emulation strategies
+pub trait EmulationFactory {
+    /// Creates an `Emulation` instance from this factory.
+    fn emulation(self) -> Emulation;
 }
 
-/// Builder for creating an `EmulationProvider`.
+/// Builder for creating an `Emulation` configuration.
 #[must_use]
 #[derive(Debug)]
-pub struct EmulationProviderBuilder {
-    provider: EmulationProvider,
+pub struct EmulationBuilder {
+    emulation: Emulation,
 }
 
-/// HTTP connection context that manages both HTTP and TLS configurations.
+/// HTTP emulation configuration for mimicking different browsers or clients.
 ///
-/// The `EmulationProvider` provides a complete environment for HTTP connections,
-/// including both HTTP-specific settings and the underlying TLS configuration.
-/// This unified context ensures consistent behavior across connections.
+/// This struct combines transport-layer options (HTTP/1, HTTP/2, TLS) with
+/// request-level settings (headers, header case preservation) to provide
+/// a complete emulation profile.
 #[derive(Default, Debug)]
-pub struct EmulationProvider {
-    transport_options: Option<TransportOptions>,
-    default_headers: Option<HeaderMap>,
+pub struct Emulation {
+    transport: Option<TransportOptions>,
+    headers: Option<HeaderMap>,
     original_headers: Option<OriginalHeaders>,
 }
 
-impl EmulationProviderBuilder {
-    /// Sets the TLS configuration for the `EmulationProvider`.
+impl EmulationBuilder {
+    /// Sets the  TLS options configuration for the emulation.
     pub fn with_tls<C>(mut self, config: C) -> Self
     where
         C: Into<Option<TlsOptions>>,
     {
-        self.provider
-            .transport_options
+        self.emulation
+            .transport
             .get_or_insert_with(TransportOptions::default)
             .configure_tls(config);
         self
     }
 
-    /// Sets the HTTP/1 configuration for the `EmulationProvider`.
-    pub fn with_config<C>(mut self, config: C) -> Self
+    /// Sets the  HTTP/1 options configuration for the emulation.
+    pub fn with_http1<C>(mut self, config: C) -> Self
     where
         C: Into<Option<Http1Options>>,
     {
-        self.provider
-            .transport_options
+        self.emulation
+            .transport
             .get_or_insert_with(TransportOptions::default)
             .configure_http1(config);
         self
     }
 
-    /// Sets the HTTP/2 configuration for the `EmulationProvider`.
+    /// Sets the HTTP/2 options configuration for the emulation.
     pub fn with_http2<C>(mut self, config: C) -> Self
     where
         C: Into<Option<Http2Options>>,
     {
-        self.provider
-            .transport_options
+        self.emulation
+            .transport
             .get_or_insert_with(TransportOptions::default)
             .configure_http2(config);
         self
     }
 
-    /// Sets the default headers for the `EmulationProvider`.
+    /// Sets the default headers for the emulation.
     pub fn with_headers<H>(mut self, headers: H) -> Self
     where
         H: Into<Option<HeaderMap>>,
     {
-        self.provider.default_headers = headers.into();
+        self.emulation.headers = headers.into();
         self
     }
 
-    /// Sets the original headers for the `EmulationProvider`.
+    /// Sets the original headers for the emulation.
     pub fn with_original_headers<H>(mut self, headers: H) -> Self
     where
         H: Into<Option<OriginalHeaders>>,
     {
-        self.provider.original_headers = headers.into();
+        self.emulation.original_headers = headers.into();
         self
     }
 
-    /// Builds the `EmulationProvider` instance.
-    pub fn build(self) -> EmulationProvider {
-        self.provider
+    /// Builds the `Emulation` instance.
+    pub fn build(self) -> Emulation {
+        self.emulation
     }
 }
 
-impl EmulationProvider {
-    /// Creates a new `EmulationProviderBuilder`.
-    ///
-    /// # Returns
-    ///
-    /// Returns a new `EmulationProviderBuilder` instance.
+impl Emulation {
+    /// Creates a new `EmulationBuilder`.
     #[inline]
-    pub fn builder() -> EmulationProviderBuilder {
-        EmulationProviderBuilder {
-            provider: EmulationProvider::default(),
+    pub fn builder() -> EmulationBuilder {
+        EmulationBuilder {
+            emulation: Emulation::default(),
         }
     }
 
-    /// Decomposes the `EmulationProvider` into its components.
+    /// Decomposes the emulation into its components.
     #[inline]
     pub(crate) fn into_parts(
         self,
@@ -117,20 +115,30 @@ impl EmulationProvider {
         Option<HeaderMap>,
         Option<OriginalHeaders>,
     ) {
-        (
-            self.transport_options,
-            self.default_headers,
-            self.original_headers,
-        )
+        (self.transport, self.headers, self.original_headers)
     }
 }
 
-/// Implement `EmulationProviderFactory` for `EmulationProvider`.
-///
-/// This implementation allows an `EmulationProvider` to be used wherever an
-/// `EmulationProviderFactory` is required, providing a default emulation configuration.
-impl EmulationProviderFactory for EmulationProvider {
-    fn emulation(self) -> EmulationProvider {
+impl EmulationFactory for Emulation {
+    fn emulation(self) -> Emulation {
         self
+    }
+}
+
+impl EmulationFactory for Http1Options {
+    fn emulation(self) -> Emulation {
+        Emulation::builder().with_http1(self).build()
+    }
+}
+
+impl EmulationFactory for Http2Options {
+    fn emulation(self) -> Emulation {
+        Emulation::builder().with_http2(self).build()
+    }
+}
+
+impl EmulationFactory for TlsOptions {
+    fn emulation(self) -> Emulation {
+        Emulation::builder().with_tls(self).build()
     }
 }

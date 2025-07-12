@@ -12,7 +12,7 @@ use crate::{
     Url,
     client::{
         Body,
-        middleware::{config::RequestRedirectPolicy, redirect::policy},
+        layer::{config::RequestRedirectPolicy, redirect::policy},
     },
     core::ext::RequestConfig,
     error::{BoxError, Error},

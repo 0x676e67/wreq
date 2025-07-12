@@ -2,9 +2,9 @@
 //!
 //! crate::core: provides HTTP over a single connection. See the [`conn`] module.
 
-pub mod config;
 pub mod conn;
 pub(super) mod dispatch;
+pub mod options;
 pub mod proxy;
 
 pub mod connect;
@@ -37,9 +37,9 @@ use crate::{
     core::{
         body::Incoming,
         client::{
-            config::{TransportOptions, http1::Http1Options, http2::Http2Options},
             conn::TrySendError as ConnTrySendError,
             connect::{Alpn, Connect, Connected, Connection, TcpConnectOptions},
+            options::{TransportOptions, http1::Http1Options, http2::Http2Options},
         },
         collections::{RANDOM_STATE, memo::HashMemo},
         common::{Exec, Lazy, lazy, timer},
@@ -94,7 +94,7 @@ impl ConnExtra {
         self.tcp_options.as_ref()
     }
 
-    /// Return the TLS configuration.
+    /// Return the  TLS options configuration.
     #[inline]
     pub(crate) fn tls_options(&self) -> Option<&TlsOptions> {
         self.tls_options.as_ref()
@@ -118,7 +118,7 @@ pub(crate) struct ConnKey(Arc<HashMemo<ConnExtra>>);
 ///
 /// A `ConnRequest` encapsulates the information required to initiate
 /// an outgoing network connection, including the HTTP target URI, protocol
-/// version, optional proxy handling, TCP options, and TLS configuration.
+/// version, optional proxy handling, TCP options, and  TLS options configuration.
 ///
 /// This struct is used internally to drive the connection setup process
 /// and may influence connection pooling, ALPN negotiation, and proxy routing.
@@ -351,12 +351,8 @@ where
         if let Some(opts) = transport_options {
             let (tls, http1, http2) = opts.into_parts();
             tls_options = tls;
-            if let Some(opts) = http1 {
-                this.h1_builder.config(opts);
-            }
-            if let Some(opts) = http2 {
-                this.h2_builder.config(opts);
-            }
+            this.h1_builder.config(http1);
+            this.h2_builder.config(http2);
         }
 
         let conn_req = ConnRequest {
@@ -1251,13 +1247,13 @@ impl Builder {
     }
 
     /// Provide a configuration for HTTP/1.
-    pub fn http1_options(&mut self, opts: Http1Options) -> &mut Self {
+    pub fn http1_options(&mut self, opts: Option<Http1Options>) -> &mut Self {
         self.h1_builder.config(opts);
         self
     }
 
     /// Provide a configuration for HTTP/2.
-    pub fn http2_options(&mut self, opts: Http2Options) -> &mut Self {
+    pub fn http2_options(&mut self, opts: Option<Http2Options>) -> &mut Self {
         self.h2_builder.config(opts);
         self
     }

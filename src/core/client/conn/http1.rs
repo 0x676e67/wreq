@@ -14,8 +14,8 @@ use http_body::Body;
 use crate::core::{
     body::Incoming as IncomingBody,
     client::{
-        config::http1::Http1Options,
         dispatch::{self, TrySendError},
+        options::http1::Http1Options,
     },
     error::BoxError,
     proto,
@@ -231,8 +231,10 @@ impl Builder {
         }
     }
 
-    pub fn config(&mut self, config: Http1Options) {
-        self.config = config;
+    pub fn config(&mut self, opts: Option<Http1Options>) {
+        if let Some(config) = opts {
+            self.config = config;
+        }
     }
 
     /// Constructs a connection with the configured options and IO.

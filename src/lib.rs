@@ -53,7 +53,7 @@
 //! use std::time::Duration;
 //!
 //! use futures_util::{SinkExt, StreamExt, TryStreamExt};
-//! use wreq::{Client, header, websocket::Message};
+//! use wreq::{Client, header, ws::Message};
 //!
 //! #[tokio::main]
 //! async fn main() -> wreq::Result<()> {
@@ -304,13 +304,13 @@ fn _assert_impls() {
     assert_send::<Request>();
     assert_send::<RequestBuilder>();
     #[cfg(feature = "websocket")]
-    assert_send::<websocket::WebSocketRequestBuilder>();
+    assert_send::<ws::WebSocketRequestBuilder>();
 
     assert_send::<Response>();
     #[cfg(feature = "websocket")]
-    assert_send::<websocket::WebSocketResponse>();
+    assert_send::<ws::WebSocketResponse>();
     #[cfg(feature = "websocket")]
-    assert_send::<websocket::WebSocket>();
+    assert_send::<ws::WebSocket>();
 
     assert_send::<Error>();
     assert_sync::<Error>();
@@ -319,14 +319,14 @@ fn _assert_impls() {
 #[cfg(feature = "multipart")]
 pub use self::client::multipart;
 #[cfg(feature = "websocket")]
-pub use self::client::websocket;
+pub use self::client::ws;
 pub use self::{
     client::{
-        Body, Client, ClientBuilder, EmulationProvider, EmulationProviderFactory, Request,
-        RequestBuilder, Response, Upgraded,
+        Body, Client, ClientBuilder, Emulation, EmulationFactory, Request, RequestBuilder,
+        Response, Upgraded,
     },
     core::{
-        client::config::{http1, http2},
+        client::options::{http1, http2},
         ext::{OriginalHeaders, Protocol},
     },
     proxy::{NoProxy, Proxy},
