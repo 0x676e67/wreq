@@ -298,7 +298,7 @@ impl ClientBuilder {
                 http.set_connect_options(config.tcp_connect_options);
                 http.set_nodelay(config.tcp_nodelay);
                 #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
-                http.set_tcp_user_timeout(dur);
+                http.set_tcp_user_timeout(config.tcp_user_timeout);
             };
 
             let tls = |tls: TlsConnectorBuilder| {
