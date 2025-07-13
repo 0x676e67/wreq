@@ -186,7 +186,7 @@ async fn test_aes_hw_override() -> wreq::Result<()> {
 }
 
 #[tokio::test]
-async fn test_ssl_signed_cert() {
+async fn test_tls_self_signed_cert() {
     let client = wreq::Client::builder()
         .cert_verification(false)
         .connect_timeout(Duration::from_secs(360))
@@ -206,12 +206,17 @@ async fn test_ssl_signed_cert() {
         .and_then(|info| info.peer_certificate())
         .unwrap();
 
-    let store = CertStore::builder()
+    let self_signed_cert_store = CertStore::builder()
         .add_der_cert(peer_cert_der)
         .build()
         .unwrap();
 
-    let resp = wreq::Client::builder().cert_store(store).build().unwrap()
+    let client = wreq::Client::builder()
+        .cert_store(self_signed_cert_store)
+        .build()
+        .unwrap();
+
+    let resp = client
         .get("https://self-signed.badssl.com/")
         .send()
         .await

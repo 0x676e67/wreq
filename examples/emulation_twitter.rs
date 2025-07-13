@@ -85,7 +85,6 @@ async fn main() -> wreq::Result<()> {
         headers
     };
 
-    // Original headers
     // The headers keep the original case and order
     let original_headers = {
         let mut original_headers = OriginalHeaders::new();

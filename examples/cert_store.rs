@@ -16,27 +16,23 @@ use wreq::{
 ///
 /// ## Scenarios requiring custom certificate store:
 ///
-/// ### 1. SSL Pinning (Certificate Pinning)
-/// - To enhance security by pinning specific certificates or public keys
-/// - Prevent man-in-the-middle attacks and maliciously issued CA certificates
-///
-/// ### 2. Self-signed Certificates
+/// ### 1. Self-signed Certificates
 /// - Connect to internal services using self-signed certificates
 /// - Test servers in development environments
 ///
-/// ### 3. Enterprise Internal CA
+/// ### 2. Enterprise Internal CA
 /// - Add root certificates from enterprise internal certificate authorities
 /// - Access HTTPS services on corporate intranets
 ///
-/// ### 4. Certificate Updates and Management
+/// ### 3. Certificate Updates and Management
 /// - Dynamically update certificates in the certificate store
 /// - Remove revoked or expired certificates
 ///
-/// ### 5. Compliance Requirements
+/// ### 4. Compliance Requirements
 /// - Special compliance requirements for certain industries or regions
 /// - Need to use specific certificate collections
 ///
-/// ### 6. Performance Optimization
+/// ### 5. Performance Optimization
 /// - Reduce certificate store size to improve TLS handshake performance
 /// - Include only necessary root certificates
 #[tokio::main]
@@ -50,22 +46,33 @@ async fn main() -> wreq::Result<()> {
         .cert_store(CertStore::from_der_certs(
             webpki_root_certs::TLS_SERVER_ROOT_CERTS,
         )?)
-        .tls_info(true)
         .build()?;
 
-    // Extract TLS peer certificate information
     // Use the API you're already familiar with
-    let resp = client.get("https://tls.peet.ws/api/all").send().await?;
+    client.get("https://www.google.com").send().await?;
+
+    // Self-signed certificate Client
+    // Skip certificate verification for self-signed certificates
+    let client = Client::builder()
+        .tls_info(true)
+        .cert_verification(false)
+        .build()?;
+
+    // Use the API you're already familiar with
+    let resp = client.get("https://self-signed.badssl.com/").send().await?;
     if let Some(val) = resp.extensions().get::<TlsInfo>() {
         if let Some(peer_cert_der) = val.peer_certificate() {
-            // Create a client with SSL pinning using the peer certificate
+            // Create self-signed certificate Store
+            let self_signed_store = CertStore::from_der_certs(&[peer_cert_der])?;
+
+            // Create a client with self-signed certificate store
             let client = Client::builder()
-                .ssl_pinning([peer_cert_der])
-                .timeout(Duration::from_secs(10))
+                .cert_store(self_signed_store)
+                .connect_timeoutc(Duration::from_secs(10))
                 .build()?;
 
             // Use the API you're already familiar with
-            let resp = client.get("https://tls.peet.ws/api/all").send().await?;
+            let resp = client.get("https://self-signed.badssl.com/").send().await?;
             println!("{}", resp.text().await?);
         }
     }
