@@ -1,6 +1,6 @@
 //! HTTP Client
 //!
-//! crate::core: provides HTTP over a single connection. See the [`conn`] module.
+//! Provides HTTP over a single connection. See the [`conn`] module.
 
 pub mod conn;
 pub(super) mod dispatch;
@@ -332,7 +332,7 @@ where
         };
 
         // Extract config extensions
-        let (tcp_opts, transport_opts, version, proxy_matcher) =
+        let (tcp_options, transport_options, version, proxy_matcher) =
             extract_request_configs(req.extensions_mut());
 
         let mut tls_options = None;
@@ -346,7 +346,7 @@ where
             _ => None,
         };
 
-        if let Some(opts) = transport_opts {
+        if let Some(opts) = transport_options {
             let (tls, http1, http2) = opts.into_parts();
             tls_options = tls;
             this.h1_builder.config(http1);
@@ -360,7 +360,7 @@ where
                     authority: uri.authority().cloned(),
                     alpn_protocol,
                     proxy_matcher,
-                    tcp_options: tcp_opts,
+                    tcp_options,
                     tls_options,
                 },
                 RANDOM_STATE,
