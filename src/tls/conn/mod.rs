@@ -363,8 +363,7 @@ impl TlsConnectorBuilder {
         let min_tls_version = opts.min_tls_version.or(self.min_version);
         let alpn_protocols = self
             .alpn_protocol
-            .map(|p| p.encode())
-            .or(opts.alpn_protocols.clone());
+            .map_or(opts.alpn_protocols.clone(), |p| Some(p.encode()));
 
         // Create the SslConnector with the provided options
         let mut connector = SslConnector::no_default_verify_builder(SslMethod::tls_client())
