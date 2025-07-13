@@ -733,10 +733,7 @@ impl ClientBuilder {
     ///
     /// # Example
     /// ```
-    /// use wreq::{
-    ///     Client,
-    ///     Proxy,
-    /// };
+    /// use wreq::{Client, Proxy};
     ///
     /// let proxy = Proxy::http("http://proxy:8080").unwrap();
     /// let client = Client::builder().proxy(proxy).build().unwrap();
@@ -977,6 +974,18 @@ impl ClientBuilder {
 
     /// Set that all sockets are bound to the configured IPv4 or IPv6 address (depending on host's
     /// preferences) before connection.
+    ///
+    ///  # Example
+    /// ///
+    /// ```
+    /// use std::net::{Ipv4Addr, Ipv6Addr};
+    /// let ipv4 = Ipv4Addr::new(127, 0, 0, 1);
+    /// let ipv6 = Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 1);
+    /// let client = wreq::Client::builder()
+    ///     .local_addresses(ipv4, ipv6)
+    ///     .build()
+    ///     .unwrap();
+    /// ```
     #[inline]
     pub fn local_addresses<V4, V6>(mut self, ipv4: V4, ipv6: V6) -> ClientBuilder
     where
@@ -990,30 +999,38 @@ impl ClientBuilder {
         self
     }
 
-    /// Bind to an interface by `SO_BINDTODEVICE`.
+    /// Bind connections only on the specified network interface.
+    ///
+    /// This option is only available on the following operating systems:
+    ///
+    /// - Android
+    /// - Fuchsia
+    /// - Linux,
+    /// - macOS and macOS-like systems (iOS, tvOS, watchOS and visionOS)
+    /// - Solaris and illumos
+    ///
+    /// On Android, Linux, and Fuchsia, this uses the
+    /// [`SO_BINDTODEVICE`][man-7-socket] socket option. On macOS and macOS-like
+    /// systems, Solaris, and illumos, this instead uses the [`IP_BOUND_IF` and
+    /// `IPV6_BOUND_IF`][man-7p-ip] socket options (as appropriate).
+    ///
+    /// Note that connections will fail if the provided interface name is not a
+    /// network interface that currently exists when a connection is established.
     ///
     /// # Example
     ///
     /// ```
+    /// # fn doc() -> Result<(), wreq::Error> {
     /// let interface = "lo";
     /// let client = wreq::Client::builder()
     ///     .interface(interface)
-    ///     .build()
-    ///     .unwrap();
+    ///     .build()?;
+    /// # Ok(())
+    /// # }
     /// ```
-    #[inline]
-    #[cfg(any(
-        target_os = "android",
-        target_os = "fuchsia",
-        target_os = "illumos",
-        target_os = "ios",
-        target_os = "linux",
-        target_os = "macos",
-        target_os = "solaris",
-        target_os = "tvos",
-        target_os = "visionos",
-        target_os = "watchos",
-    ))]
+    ///
+    /// [man-7-socket]: https://man7.org/linux/man-pages/man7/socket.7.html
+    /// [man-7p-ip]: https://docs.oracle.com/cd/E86824_01/html/E54777/ip-7p.html
     pub fn interface<T>(mut self, interface: T) -> ClientBuilder
     where
         T: Into<std::borrow::Cow<'static, str>>,
@@ -1025,10 +1042,22 @@ impl ClientBuilder {
         self
     }
 
+    // TLS options
+
     /// Sets the identity to be used for client certificate authentication.
     #[inline]
     pub fn identity(mut self, identity: Identity) -> ClientBuilder {
         self.config.tls_identity = Some(identity);
+        self
+    }
+
+    /// Sets the verify certificate store for the client.
+    ///
+    /// This method allows you to specify a custom verify certificate store to be used
+    /// for TLS connections. By default, the system's verify certificate store is used.
+    #[inline]
+    pub fn cert_store(mut self, store: CertStore) -> ClientBuilder {
+        self.config.tls_cert_store = store;
         self
     }
 
@@ -1049,25 +1078,17 @@ impl ClientBuilder {
         self
     }
 
-    /// Sets the verify certificate store for the client.
+    /// Configures the use of hostname verification when connecting.
     ///
-    /// This method allows you to specify a custom verify certificate store to be used
-    /// for TLS connections. By default, the system's verify certificate store is used.
+    /// Defaults to `true`.
+    /// # Warning
     ///
-    /// # Parameters
-    ///
-    /// - `store`: The verify certificate store to use. This can be a custom implementation of the
-    ///   `IntoCertStore` trait or one of the predefined options.
-    ///
-    /// # Notes
-    ///
-    /// - Using a custom verify certificate store can be useful in scenarios where you need to trust
-    ///   specific certificates that are not included in the system's default store.
-    /// - Ensure that the provided verify certificate store is properly configured to avoid
-    ///   potential security risks.
+    /// You should think very carefully before you use this method. If hostname verification is not
+    /// used, *any* valid certificate for *any* site will be trusted for use from any other. This
+    /// introduces a significant vulnerability to man-in-the-middle attacks.
     #[inline]
-    pub fn cert_store(mut self, store: CertStore) -> ClientBuilder {
-        self.config.tls_cert_store = store;
+    pub fn verify_hostname(mut self, verify_hostname: bool) -> ClientBuilder {
+        self.config.tls_verify_hostname = verify_hostname;
         self
     }
 
@@ -1084,20 +1105,6 @@ impl ClientBuilder {
     #[inline]
     pub fn keylog(mut self, policy: KeyLogPolicy) -> ClientBuilder {
         self.config.tls_keylog_policy = Some(policy);
-        self
-    }
-
-    /// Configures the use of hostname verification when connecting.
-    ///
-    /// Defaults to `true`.
-    /// # Warning
-    ///
-    /// You should think very carefully before you use this method. If hostname verification is not
-    /// used, *any* valid certificate for *any* site will be trusted for use from any other. This
-    /// introduces a significant vulnerability to man-in-the-middle attacks.
-    #[inline]
-    pub fn verify_hostname(mut self, verify_hostname: bool) -> ClientBuilder {
-        self.config.tls_verify_hostname = verify_hostname;
         self
     }
 
