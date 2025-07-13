@@ -68,7 +68,7 @@ async fn main() -> wreq::Result<()> {
             // Create a client with self-signed certificate store
             let client = Client::builder()
                 .cert_store(self_signed_store)
-                .connect_timeoutc(Duration::from_secs(10))
+                .connect_timeout(Duration::from_secs(10))
                 .build()?;
 
             // Use the API you're already familiar with
