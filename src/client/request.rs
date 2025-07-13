@@ -15,7 +15,7 @@ use serde::Serialize;
     feature = "brotli",
     feature = "deflate",
 ))]
-use super::layer::{config::RequestAcceptEncoding, decoder::AcceptEncoding};
+use super::layer::config::RequestAcceptEncoding;
 #[cfg(feature = "multipart")]
 use super::multipart;
 use super::{
@@ -29,14 +29,13 @@ use super::{
 use crate::{
     EmulationFactory, Error, Method, OriginalHeaders, Proxy, Url,
     core::{
-        client::{connect::TcpConnectOptions, options::TransportOptions},
+        client::options::TransportOptions,
         ext::{
-            RequestConfig, RequestEnforcedHttpVersion, RequestOriginalHeaders, RequestProxyMatcher,
-            RequestTcpConnectOptions, RequestTransportOptions,
+            RequestConfig, RequestConfigValue, RequestEnforcedHttpVersion, RequestOriginalHeaders,
+            RequestProxyMatcher, RequestTcpConnectOptions, RequestTransportOptions,
         },
     },
     header::{CONTENT_TYPE, HeaderMap, HeaderName, HeaderValue},
-    proxy::Matcher as ProxyMatcher,
     redirect,
 };
 
@@ -107,18 +106,6 @@ impl Request {
         &mut self.headers
     }
 
-    /// Get a mutable reference to the original headers.
-    #[inline]
-    pub fn original_headers_mut(&mut self) -> &mut Option<OriginalHeaders> {
-        RequestConfig::<RequestOriginalHeaders>::get_mut(&mut self.extensions)
-    }
-
-    /// Get a mutable reference to the redirect policy.
-    #[inline]
-    pub fn redirect_mut(&mut self) -> &mut Option<redirect::Policy> {
-        RequestConfig::<RequestRedirectPolicy>::get_mut(&mut self.extensions)
-    }
-
     /// Get the body.
     #[inline]
     pub fn body(&self) -> Option<&Body> {
@@ -140,55 +127,13 @@ impl Request {
     /// Get a mutable reference to the http version.
     #[inline]
     pub fn version_mut(&mut self) -> &mut Option<Version> {
-        RequestConfig::<RequestEnforcedHttpVersion>::get_mut(&mut self.extensions)
+        self.config_mut::<RequestEnforcedHttpVersion>()
     }
 
-    /// Get a mutable reference to the timeout.
+    /// Get a mutable reference to the request config value.
     #[inline]
-    pub fn timeout_mut(&mut self) -> &mut Option<Duration> {
-        RequestConfig::<RequestTotalTimeout>::get_mut(&mut self.extensions)
-    }
-
-    /// Get a mutable reference to the read timeout.
-    #[inline]
-    pub fn read_timeout_mut(&mut self) -> &mut Option<Duration> {
-        RequestConfig::<RequestReadTimeout>::get_mut(&mut self.extensions)
-    }
-
-    /// Get a mutable reference to the tcp connect options.
-    #[inline]
-    pub(crate) fn tcp_connect_options_mut(&mut self) -> &mut Option<TcpConnectOptions> {
-        RequestConfig::<RequestTcpConnectOptions>::get_mut(&mut self.extensions)
-    }
-
-    /// Get a mutable reference to the proxy matcher.
-    #[inline]
-    pub(crate) fn proxy_matcher_mut(&mut self) -> &mut Option<ProxyMatcher> {
-        RequestConfig::<RequestProxyMatcher>::get_mut(&mut self.extensions)
-    }
-
-    /// Get the accepts encoding.
-    #[cfg(any(
-        feature = "gzip",
-        feature = "zstd",
-        feature = "brotli",
-        feature = "deflate",
-    ))]
-    #[inline]
-    pub(crate) fn accpet_encoding_mut(&mut self) -> &mut Option<AcceptEncoding> {
-        RequestConfig::<RequestAcceptEncoding>::get_mut(&mut self.extensions)
-    }
-
-    /// Skip client default headers.
-    #[inline]
-    pub(crate) fn default_headers_mut(&mut self) -> &mut Option<bool> {
-        RequestConfig::<RequestSkipDefaultHeaders>::get_mut(&mut self.extensions)
-    }
-
-    // Get a mutable reference to the transport options.
-    #[inline]
-    pub(crate) fn transport_options_mut(&mut self) -> &mut Option<TransportOptions> {
-        RequestConfig::<RequestTransportOptions>::get_mut(&mut self.extensions)
+    pub(crate) fn config_mut<T: RequestConfigValue>(&mut self) -> &mut Option<T::Value> {
+        RequestConfig::<T>::get_mut(&mut self.extensions)
     }
 
     /// Get the extensions.
@@ -336,7 +281,7 @@ impl RequestBuilder {
     /// Set the original headers for this request.
     pub fn original_headers(mut self, original_headers: OriginalHeaders) -> RequestBuilder {
         if let Ok(ref mut req) = self.request {
-            *req.original_headers_mut() = Some(original_headers);
+            *req.config_mut::<RequestOriginalHeaders>() = Some(original_headers);
         }
         self
     }
@@ -344,7 +289,7 @@ impl RequestBuilder {
     /// Set skip client default headers for this request.
     pub fn default_headers(mut self, skip: bool) -> RequestBuilder {
         if let Ok(ref mut req) = self.request {
-            *req.default_headers_mut() = Some(skip);
+            *req.config_mut::<RequestSkipDefaultHeaders>() = Some(skip);
         }
         self
     }
@@ -419,7 +364,7 @@ impl RequestBuilder {
     /// the timeout configured using `ClientBuilder::timeout()`.
     pub fn timeout(mut self, timeout: Duration) -> RequestBuilder {
         if let Ok(ref mut req) = self.request {
-            *req.timeout_mut() = Some(timeout);
+            *req.config_mut::<RequestTotalTimeout>() = Some(timeout);
         }
         self
     }
@@ -431,7 +376,7 @@ impl RequestBuilder {
     /// overrides the read timeout configured using `ClientBuilder::read_timeout()`.
     pub fn read_timeout(mut self, timeout: Duration) -> RequestBuilder {
         if let Ok(ref mut req) = self.request {
-            *req.read_timeout_mut() = Some(timeout);
+            *req.config_mut::<RequestReadTimeout>() = Some(timeout);
         }
         self
     }
@@ -524,7 +469,7 @@ impl RequestBuilder {
     /// Set the redirect policy for this request.
     pub fn redirect(mut self, policy: redirect::Policy) -> RequestBuilder {
         if let Ok(ref mut req) = self.request {
-            *req.redirect_mut() = Some(policy);
+            *req.config_mut::<RequestRedirectPolicy>() = Some(policy);
         }
         self
     }
@@ -533,8 +478,9 @@ impl RequestBuilder {
     #[cfg(feature = "gzip")]
     pub fn gzip(mut self, gzip: bool) -> RequestBuilder {
         if let Ok(ref mut req) = self.request {
-            let accept_encoding = req.accpet_encoding_mut().get_or_insert_default();
-            accept_encoding.gzip(gzip);
+            req.config_mut::<RequestAcceptEncoding>()
+                .get_or_insert_default()
+                .gzip(gzip);
         }
         self
     }
@@ -543,8 +489,9 @@ impl RequestBuilder {
     #[cfg(feature = "brotli")]
     pub fn brotli(mut self, brotli: bool) -> RequestBuilder {
         if let Ok(ref mut req) = self.request {
-            let accept_encoding = req.accpet_encoding_mut().get_or_insert_default();
-            accept_encoding.brotli(brotli);
+            req.config_mut::<RequestAcceptEncoding>()
+                .get_or_insert_default()
+                .brotli(brotli);
         }
         self
     }
@@ -553,8 +500,9 @@ impl RequestBuilder {
     #[cfg(feature = "deflate")]
     pub fn deflate(mut self, deflate: bool) -> RequestBuilder {
         if let Ok(ref mut req) = self.request {
-            let accept_encoding = req.accpet_encoding_mut().get_or_insert_default();
-            accept_encoding.deflate(deflate);
+            req.config_mut::<RequestAcceptEncoding>()
+                .get_or_insert_default()
+                .deflate(deflate);
         }
         self
     }
@@ -563,8 +511,9 @@ impl RequestBuilder {
     #[cfg(feature = "zstd")]
     pub fn zstd(mut self, zstd: bool) -> RequestBuilder {
         if let Ok(ref mut req) = self.request {
-            let accept_encoding = req.accpet_encoding_mut().get_or_insert_default();
-            accept_encoding.zstd(zstd);
+            req.config_mut::<RequestAcceptEncoding>()
+                .get_or_insert_default()
+                .zstd(zstd);
         }
         self
     }
@@ -590,7 +539,7 @@ impl RequestBuilder {
     /// ```
     pub fn proxy(mut self, proxy: Proxy) -> RequestBuilder {
         if let Ok(ref mut req) = self.request {
-            *req.proxy_matcher_mut() = Some(proxy.into_matcher());
+            *req.config_mut::<RequestProxyMatcher>() = Some(proxy.into_matcher());
         }
         self
     }
@@ -601,8 +550,9 @@ impl RequestBuilder {
         V: Into<Option<IpAddr>>,
     {
         if let Ok(ref mut req) = self.request {
-            let tcp_connect_options = req.tcp_connect_options_mut().get_or_insert_default();
-            tcp_connect_options.set_local_address(local_address.into());
+            req.config_mut::<RequestTcpConnectOptions>()
+                .get_or_insert_default()
+                .set_local_address(local_address.into());
         }
         self
     }
@@ -614,8 +564,9 @@ impl RequestBuilder {
         V6: Into<Option<Ipv6Addr>>,
     {
         if let Ok(ref mut req) = self.request {
-            let tcp_connect_options = req.tcp_connect_options_mut().get_or_insert_default();
-            tcp_connect_options.set_local_addresses(ipv4.into(), ipv6.into());
+            req.config_mut::<RequestTcpConnectOptions>()
+                .get_or_insert_default()
+                .set_local_addresses(ipv4.into(), ipv6.into());
         }
         self
     }
@@ -638,8 +589,9 @@ impl RequestBuilder {
         I: Into<std::borrow::Cow<'static, str>>,
     {
         if let Ok(ref mut req) = self.request {
-            let tcp_connect_options = req.tcp_connect_options_mut().get_or_insert_default();
-            tcp_connect_options.set_interface(interface.into());
+            req.config_mut::<RequestTcpConnectOptions>()
+                .get_or_insert_default()
+                .set_interface(interface.into());
         }
         self
     }
@@ -661,7 +613,7 @@ impl RequestBuilder {
             if let Some((tls_opts, http1_opts, http2_opts)) =
                 transport_opts.map(TransportOptions::into_parts)
             {
-                req.transport_options_mut()
+                req.config_mut::<RequestTransportOptions>()
                     .get_or_insert_default()
                     .http1_options(http1_opts)
                     .http2_options(http2_opts)
