@@ -47,7 +47,7 @@ impl EmulationBuilder {
         self.emulation
             .transport
             .get_or_insert_default()
-            .with_tls(config);
+            .tls_options(config);
         self
     }
 
@@ -60,7 +60,7 @@ impl EmulationBuilder {
         self.emulation
             .transport
             .get_or_insert_default()
-            .with_http1(config);
+            .http1_options(config);
         self
     }
 
@@ -73,7 +73,7 @@ impl EmulationBuilder {
         self.emulation
             .transport
             .get_or_insert_default()
-            .with_http2(config);
+            .http2_options(config);
         self
     }
 

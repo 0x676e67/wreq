@@ -663,9 +663,9 @@ impl RequestBuilder {
             {
                 req.transport_options_mut()
                     .get_or_insert_default()
-                    .with_http1(http1_opts)
-                    .with_http2(http2_opts)
-                    .with_tls(tls_opts);
+                    .http1_options(http1_opts)
+                    .http2_options(http2_opts)
+                    .tls_options(tls_opts);
             }
             if let Some(default_headers) = default_headers {
                 self = self.headers(default_headers);

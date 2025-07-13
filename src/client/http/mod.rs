@@ -1330,9 +1330,9 @@ impl ClientBuilder {
         {
             self.config
                 .transport_options
-                .with_http1(http1_opts)
-                .with_http2(http2_opts)
-                .with_tls(tls_opts);
+                .http1_options(http1_opts)
+                .http2_options(http2_opts)
+                .tls_options(tls_opts);
         }
         if let Some(headers) = headers {
             self = self.default_headers(headers);

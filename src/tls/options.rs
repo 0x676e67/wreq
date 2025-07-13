@@ -20,8 +20,8 @@ pub struct TlsOptionsBuilder {
 /// and various security features.
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
 pub struct TlsOptions {
-    pub(crate) alpn_protos: Option<Bytes>,
-    pub(crate) alps_protos: Option<Bytes>,
+    pub(crate) alpn_protocols: Option<Bytes>,
+    pub(crate) alps_protocols: Option<Bytes>,
     pub(crate) alps_use_new_codepoint: bool,
     pub(crate) session_ticket: bool,
     pub(crate) min_tls_version: Option<TlsVersion>,
@@ -56,20 +56,20 @@ impl TlsOptionsBuilder {
     }
 
     /// Sets the ALPN protocols to use.
-    pub fn alpn_protos<'a, I>(mut self, alpn: I) -> Self
+    pub fn alpn_protocols<'a, I>(mut self, alpn: I) -> Self
     where
         I: IntoIterator<Item = &'a AlpnProtocol>,
     {
-        self.config.alpn_protos = Some(AlpnProtocol::encode_sequence(alpn));
+        self.config.alpn_protocols = Some(AlpnProtocol::encode_sequence(alpn));
         self
     }
 
     /// Sets the ALPS protocols to use.
-    pub fn alps_protos<'a, I>(mut self, alps: I) -> Self
+    pub fn alps_protocols<'a, I>(mut self, alps: I) -> Self
     where
         I: IntoIterator<Item = &'a AlpsProtocol>,
     {
-        self.config.alps_protos = Some(AlpsProtocol::encode_sequence(alps));
+        self.config.alps_protocols = Some(AlpsProtocol::encode_sequence(alps));
         self
     }
 
@@ -272,11 +272,11 @@ impl TlsOptions {
 impl Default for TlsOptions {
     fn default() -> Self {
         TlsOptions {
-            alpn_protos: Some(AlpnProtocol::encode_sequence(&[
+            alpn_protocols: Some(AlpnProtocol::encode_sequence(&[
                 AlpnProtocol::HTTP2,
                 AlpnProtocol::HTTP1,
             ])),
-            alps_protos: None,
+            alps_protocols: None,
             alps_use_new_codepoint: false,
             session_ticket: true,
             min_tls_version: None,

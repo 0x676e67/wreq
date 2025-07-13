@@ -13,44 +13,44 @@ use crate::tls::TlsOptions;
 #[must_use]
 #[derive(Debug, Default, Clone)]
 pub struct TransportOptions {
-    tls: Option<TlsOptions>,
-    http1: Option<Http1Options>,
-    http2: Option<Http2Options>,
+    tls_options: Option<TlsOptions>,
+    http1_options: Option<Http1Options>,
+    http2_options: Option<Http2Options>,
 }
 
 impl TransportOptions {
     /// Sets the HTTP/1 options configuration.
     #[inline]
-    pub fn with_http1<C>(&mut self, config: C) -> &mut Self
+    pub fn http1_options<C>(&mut self, config: C) -> &mut Self
     where
         C: Into<Option<Http1Options>>,
     {
         if let Some(http1) = config.into() {
-            self.http1 = Some(http1);
+            self.http1_options = Some(http1);
         }
         self
     }
 
     /// Sets the HTTP/2 options configuration.
     #[inline]
-    pub fn with_http2<C>(&mut self, config: C) -> &mut Self
+    pub fn http2_options<C>(&mut self, config: C) -> &mut Self
     where
         C: Into<Option<Http2Options>>,
     {
         if let Some(http2) = config.into() {
-            self.http2 = Some(http2);
+            self.http2_options = Some(http2);
         }
         self
     }
 
     /// Sets the TLS options configuration.
     #[inline]
-    pub fn with_tls<C>(&mut self, config: C) -> &mut Self
+    pub fn tls_options<C>(&mut self, config: C) -> &mut Self
     where
         C: Into<Option<TlsOptions>>,
     {
         if let Some(tls) = config.into() {
-            self.tls = Some(tls);
+            self.tls_options = Some(tls);
         }
         self
     }
@@ -64,6 +64,6 @@ impl TransportOptions {
         Option<Http1Options>,
         Option<Http2Options>,
     ) {
-        (self.tls, self.http1, self.http2)
+        (self.tls_options, self.http1_options, self.http2_options)
     }
 }

@@ -63,7 +63,7 @@ pub struct HandshakeConfig {
     enable_ech_grease: bool,
     verify_hostname: bool,
     tls_sni: bool,
-    alps_protos: Option<Bytes>,
+    alps_protocols: Option<Bytes>,
     alps_use_new_codepoint: bool,
     random_aes_hw_override: bool,
 }
@@ -94,8 +94,8 @@ impl HandshakeConfigBuilder {
     }
 
     /// Sets ALPS protocol.
-    pub fn alps_protos(mut self, protos: Option<Bytes>) -> Self {
-        self.settings.alps_protos = protos;
+    pub fn alps_protocols(mut self, protos: Option<Bytes>) -> Self {
+        self.settings.alps_protocols = protos;
         self
     }
 
@@ -133,7 +133,7 @@ impl Default for HandshakeConfig {
             enable_ech_grease: false,
             verify_hostname: true,
             tls_sni: true,
-            alps_protos: None,
+            alps_protocols: None,
             alps_use_new_codepoint: false,
             random_aes_hw_override: false,
         }
@@ -221,7 +221,7 @@ impl Inner {
 
         // Set ALPS protos
         cfg.set_alps_protos(
-            self.config.alps_protos.as_ref(),
+            self.config.alps_protocols.as_ref(),
             self.config.alps_use_new_codepoint,
         )?;
 
@@ -361,10 +361,10 @@ impl TlsConnectorBuilder {
         // Replace the default configuration with the provided one
         let max_tls_version = opts.max_tls_version.or(self.max_version);
         let min_tls_version = opts.min_tls_version.or(self.min_version);
-        let alpn_protos = self
+        let alpn_protocols = self
             .alpn_protocol
             .map(|p| p.encode())
-            .or(opts.alpn_protos.clone());
+            .or(opts.alpn_protocols.clone());
 
         // Create the SslConnector with the provided options
         let mut connector = SslConnector::no_default_verify_builder(SslMethod::tls_client())
@@ -431,7 +431,7 @@ impl TlsConnectorBuilder {
         set_option!(opts, permute_extensions, connector, set_permute_extensions);
 
         // Set TLS ALPN protocols
-        set_option_ref_try!(alpn_protos, connector, set_alpn_protos);
+        set_option_ref_try!(alpn_protocols, connector, set_alpn_protos);
 
         // Set TLS curves list
         set_option_ref_try!(opts, curves_list, connector, set_curves_list);
@@ -484,7 +484,7 @@ impl TlsConnectorBuilder {
         // Create the `HandshakeConfig` with the default session cache capacity.
         let config = HandshakeConfig::builder()
             .no_ticket(opts.psk_skip_session_ticket)
-            .alps_protos(opts.alps_protos.clone())
+            .alps_protocols(opts.alps_protocols.clone())
             .alps_use_new_codepoint(opts.alps_use_new_codepoint)
             .enable_ech_grease(opts.enable_ech_grease)
             .tls_sni(self.tls_sni)
