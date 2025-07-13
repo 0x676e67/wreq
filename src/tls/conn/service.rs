@@ -1,5 +1,4 @@
 use std::{
-    error::Error,
     fmt::Debug,
     future::Future,
     pin::Pin,
@@ -114,7 +113,7 @@ where
     IO: AsyncRead + AsyncWrite + Unpin + Send + Sync + Debug + 'static,
 {
     type Response = SslStream<IO>;
-    type Error = Box<dyn Error + Sync + Send>;
+    type Error = BoxError;
     type Future = BoxFuture<Self::Response, Self::Error>;
 
     #[inline]

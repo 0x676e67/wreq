@@ -6,9 +6,10 @@
 pub use self::h2_client::Http2ClientConnExec;
 
 mod h2_client {
-    use std::{error::Error, future::Future};
+    use std::future::Future;
 
     use crate::core::{
+        error::BoxError,
         proto::h2::client::H2ClientFuture,
         rt::{Executor, Read, Write},
     };
@@ -24,7 +25,7 @@ mod h2_client {
     pub trait Http2ClientConnExec<B, T>: sealed_client::Sealed<(B, T)>
     where
         B: http_body::Body,
-        B::Error: Into<Box<dyn Error + Send + Sync>>,
+        B::Error: Into<BoxError>,
         T: Read + Write + Unpin,
     {
         #[doc(hidden)]
@@ -35,7 +36,7 @@ mod h2_client {
     where
         E: Executor<H2ClientFuture<B, T>>,
         B: http_body::Body + 'static,
-        B::Error: Into<Box<dyn Error + Send + Sync>>,
+        B::Error: Into<BoxError>,
         H2ClientFuture<B, T>: Future<Output = ()>,
         T: Read + Write + Unpin,
     {
@@ -48,7 +49,7 @@ mod h2_client {
     where
         E: Executor<H2ClientFuture<B, T>>,
         B: http_body::Body + 'static,
-        B::Error: Into<Box<dyn Error + Send + Sync>>,
+        B::Error: Into<BoxError>,
         H2ClientFuture<B, T>: Future<Output = ()>,
         T: Read + Write + Unpin,
     {
