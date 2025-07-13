@@ -9,11 +9,9 @@ use http_body::Body;
 use pin_project_lite::pin_project;
 use tokio::sync::{mpsc, oneshot};
 
-use crate::core::{body::Incoming, proto::h2::client::ResponseFutMap};
+use crate::core::{Error, body::Incoming, proto::h2::client::ResponseFutMap};
 
 pub(crate) type RetryPromise<T, U> = oneshot::Receiver<Result<U, TrySendError<T>>>;
-#[allow(unused)]
-pub(crate) type Promise<T> = oneshot::Receiver<Result<T, crate::core::Error>>;
 
 /// An error when calling `try_send_request`.
 ///
@@ -23,7 +21,7 @@ pub(crate) type Promise<T> = oneshot::Receiver<Result<T, crate::core::Error>>;
 /// caller, as it was never fully sent.
 #[derive(Debug)]
 pub struct TrySendError<T> {
-    pub(crate) error: crate::core::Error,
+    pub(crate) error: Error,
     pub(crate) message: Option<T>,
 }
 
@@ -69,9 +67,7 @@ pub(crate) struct UnboundedSender<T, U> {
 
 impl<T, U> Sender<T, U> {
     pub(crate) fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<crate::core::Result<()>> {
-        self.giver
-            .poll_want(cx)
-            .map_err(|_| crate::core::Error::new_closed())
+        self.giver.poll_want(cx).map_err(|_| Error::new_closed())
     }
 
     pub(crate) fn is_ready(&self) -> bool {
@@ -97,7 +93,7 @@ impl<T, U> Sender<T, U> {
         }
         let (tx, rx) = oneshot::channel();
         self.inner
-            .send(Envelope(Some((val, Callback::Retry(Some(tx))))))
+            .send(Envelope(Some((val, Callback(Some(tx))))))
             .map(move |_| rx)
             .map_err(|mut e| (e.0).0.take().expect("envelope not dropped").0)
     }
@@ -122,7 +118,7 @@ impl<T, U> UnboundedSender<T, U> {
     pub(crate) fn try_send(&mut self, val: T) -> Result<RetryPromise<T, U>, T> {
         let (tx, rx) = oneshot::channel();
         self.inner
-            .send(Envelope(Some((val, Callback::Retry(Some(tx))))))
+            .send(Envelope(Some((val, Callback(Some(tx))))))
             .map(move |_| rx)
             .map_err(|mut e| (e.0).0.take().expect("envelope not dropped").0)
     }
@@ -183,44 +179,30 @@ impl<T, U> Drop for Envelope<T, U> {
     fn drop(&mut self) {
         if let Some((val, cb)) = self.0.take() {
             cb.send(Err(TrySendError {
-                error: crate::core::Error::new_canceled().with("connection closed"),
+                error: Error::new_canceled().with("connection closed"),
                 message: Some(val),
             }));
         }
     }
 }
 
-pub(crate) enum Callback<T, U> {
-    #[allow(unused)]
-    Retry(Option<oneshot::Sender<Result<U, TrySendError<T>>>>),
-    #[allow(unused)]
-    NoRetry(Option<oneshot::Sender<Result<U, crate::core::Error>>>),
-}
+pub(crate) struct Callback<T, U>(Option<oneshot::Sender<Result<U, TrySendError<T>>>>);
 
 impl<T, U> Drop for Callback<T, U> {
     fn drop(&mut self) {
-        match self {
-            Callback::Retry(tx) => {
-                if let Some(tx) = tx.take() {
-                    let _ = tx.send(Err(TrySendError {
-                        error: dispatch_gone(),
-                        message: None,
-                    }));
-                }
-            }
-            Callback::NoRetry(tx) => {
-                if let Some(tx) = tx.take() {
-                    let _ = tx.send(Err(dispatch_gone()));
-                }
-            }
+        if let Some(tx) = self.0.take() {
+            let _ = tx.send(Err(TrySendError {
+                error: dispatch_gone(),
+                message: None,
+            }));
         }
     }
 }
 
 #[cold]
-fn dispatch_gone() -> crate::core::Error {
+fn dispatch_gone() -> Error {
     // FIXME(nox): What errors do we want here?
-    crate::core::Error::new_user_dispatch_gone().with(if std::thread::panicking() {
+    Error::new_user_dispatch_gone().with(if std::thread::panicking() {
         "user code panicked"
     } else {
         "runtime dropped the dispatch task"
@@ -229,30 +211,23 @@ fn dispatch_gone() -> crate::core::Error {
 
 impl<T, U> Callback<T, U> {
     pub(crate) fn is_canceled(&self) -> bool {
-        match *self {
-            Callback::Retry(Some(ref tx)) => tx.is_closed(),
-            Callback::NoRetry(Some(ref tx)) => tx.is_closed(),
-            _ => unreachable!(),
+        if let Some(ref tx) = self.0 {
+            return tx.is_closed();
         }
+
+        unreachable!()
     }
 
     pub(crate) fn poll_canceled(&mut self, cx: &mut Context<'_>) -> Poll<()> {
-        match *self {
-            Callback::Retry(Some(ref mut tx)) => tx.poll_closed(cx),
-            Callback::NoRetry(Some(ref mut tx)) => tx.poll_closed(cx),
-            _ => unreachable!(),
+        if let Some(ref mut tx) = self.0 {
+            return tx.poll_closed(cx);
         }
+
+        unreachable!()
     }
 
     pub(crate) fn send(mut self, val: Result<U, TrySendError<T>>) {
-        match self {
-            Callback::Retry(ref mut tx) => {
-                let _ = tx.take().unwrap().send(val);
-            }
-            Callback::NoRetry(ref mut tx) => {
-                let _ = tx.take().unwrap().send(val.map_err(|e| e.error));
-            }
-        }
+        let _ = self.0.take().unwrap().send(val);
     }
 }
 
@@ -267,7 +242,7 @@ impl<T> TrySendError<T> {
     }
 
     /// Consumes this to return the inner error.
-    pub fn into_error(self) -> crate::core::Error {
+    pub fn into_error(self) -> Error {
         self.error
     }
 }

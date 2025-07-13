@@ -281,27 +281,6 @@ impl Sender {
         std::future::poll_fn(|cx| self.poll_ready(cx)).await
     }
 
-    /// Send data on data channel when it is ready.
-    #[cfg(test)]
-    #[allow(unused)]
-    pub(crate) async fn send_data(&mut self, chunk: Bytes) -> crate::core::Result<()> {
-        self.ready().await?;
-        self.data_tx
-            .try_send(Ok(chunk))
-            .map_err(|_| crate::core::Error::new_closed())
-    }
-
-    /// Send trailers on trailers channel.
-    #[allow(unused)]
-    pub(crate) async fn send_trailers(&mut self, trailers: HeaderMap) -> crate::core::Result<()> {
-        let tx = match self.trailers_tx.take() {
-            Some(tx) => tx,
-            None => return Err(crate::core::Error::new_closed()),
-        };
-        tx.send(trailers)
-            .map_err(|_| crate::core::Error::new_closed())
-    }
-
     /// Try to send data on this channel.
     ///
     /// # Errors
