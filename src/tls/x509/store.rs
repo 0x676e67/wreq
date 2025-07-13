@@ -12,10 +12,6 @@ use super::{
 use crate::{Error, Result};
 
 /// A builder for constructing a `CertStore`.
-///
-/// This builder provides methods to add certificates to the store from various formats,
-/// and to set default paths for the certificate store. Once all desired certificates
-/// have been added, the `build` method can be used to create the `CertStore`.
 pub struct CertStoreBuilder {
     builder: Result<X509StoreBuilder>,
 }
