@@ -19,7 +19,7 @@ pub use self::{
     types::{
         AlpnProtocol, AlpsProtocol, CertificateCompressionAlgorithm, ExtensionType, TlsVersion,
     },
-    x509::{CertStore, CertStoreBuilder, Certificate, CertificateInput, Identity},
+    x509::{CertStore, CertStoreBuilder, Certificate, Identity},
 };
 
 /// Http extension carrying extra TLS layer information.

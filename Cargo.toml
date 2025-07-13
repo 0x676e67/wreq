@@ -245,8 +245,8 @@ path = "examples/emulation_twitter.rs"
 required-features = ["full", "tracing"]
 
 [[example]]
-name = "set_cert_store"
-path = "examples/set_cert_store.rs"
+name = "cert_store"
+path = "examples/cert_store.rs"
 required-features = ["webpki-roots", "tracing"]
 
 [[example]]

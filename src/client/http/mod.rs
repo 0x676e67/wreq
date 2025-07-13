@@ -64,10 +64,7 @@ use crate::{
     error::{self, BoxError, Error},
     proxy::Matcher as ProxyMatcher,
     redirect::{self, RedirectPolicy},
-    tls::{
-        AlpnProtocol, CertStore, CertificateInput, Identity, KeyLogPolicy, TlsConnectorBuilder,
-        TlsVersion,
-    },
+    tls::{AlpnProtocol, CertStore, Identity, KeyLogPolicy, TlsConnectorBuilder, TlsVersion},
 };
 
 /// An `Client` to make Requests with.
@@ -1025,33 +1022,6 @@ impl ClientBuilder {
             .tcp_connect_options
             .get_or_insert_default()
             .set_interface(interface.into());
-        self
-    }
-
-    // TLS options
-
-    /// Configures SSL/TLS certificate pinning for the client.
-    ///
-    /// This method allows you to specify a set of PEM-encoded certificates that the client
-    /// will pin to, ensuring that only these certificates are trusted during SSL/TLS connections.
-    /// This provides an additional layer of security by preventing man-in-the-middle (MITM)
-    /// attacks, even if a malicious certificate is issued by a trusted Certificate Authority
-    /// (CA).
-    ///
-    /// # Parameters
-    ///
-    /// - `certs`: An iterator of DER-encoded certificates. Each certificate should be provided as a
-    ///   byte slice (`&[u8]`).
-    #[inline]
-    pub fn ssl_pinning<'c, I>(mut self, certs: I) -> ClientBuilder
-    where
-        I: IntoIterator,
-        I::Item: Into<CertificateInput<'c>>,
-    {
-        match CertStore::from_der_certs(certs) {
-            Ok(store) => self.config.tls_cert_store = store,
-            Err(err) => self.config.error = Some(err),
-        }
         self
     }
 
