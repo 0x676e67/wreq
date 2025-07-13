@@ -36,7 +36,7 @@ use crate::core::{
     client::dispatch::{self, Callback, SendWhen, TrySendError},
     common::{io::Compat, time::Time},
     error::BoxError,
-    ext::{Protocol, RequestConfig, RequestOriginalHeaders},
+    ext::{RequestConfig, RequestExtendedConnectProtocol, RequestOriginalHeaders},
     proto::{Dispatched, h2::UpgradedSendStream, headers},
     rt::{Read, Write, bounds::Http2ClientConnExec},
     upgrade::Upgraded,
@@ -726,8 +726,12 @@ where
                         continue;
                     }
 
-                    if let Some(protocol) = req.extensions_mut().remove::<Protocol>() {
-                        req.extensions_mut().insert(protocol.into_inner());
+                    // Transfer :protocol pseudo-header from RequestConfig to extensions
+                    // for Extended CONNECT Protocol handling in HTTP/2
+                    if let Some(protocol) = RequestConfig::<RequestExtendedConnectProtocol>::remove(
+                        req.extensions_mut(),
+                    ) {
+                        req.extensions_mut().insert(protocol);
                     }
 
                     let (fut, body_tx) = match self.h2_tx.send_request(req, !is_connect && eos) {

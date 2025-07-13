@@ -15,14 +15,15 @@ use std::{
 
 use futures_util::{Sink, SinkExt, Stream, StreamExt};
 use http::{HeaderMap, HeaderName, HeaderValue, Method, StatusCode, Version, header, uri::Scheme};
+use http2::ext::Protocol;
 use serde::Serialize;
 use tokio_tungstenite::tungstenite::{self, protocol};
 use tungstenite::protocol::WebSocketConfig;
 
 pub use self::message::{CloseCode, CloseFrame, Message, Utf8Bytes};
 use crate::{
-    EmulationFactory, Error, OriginalHeaders, RequestBuilder, Response, core::ext::Protocol,
-    proxy::Proxy,
+    EmulationFactory, Error, OriginalHeaders, RequestBuilder, Response,
+    core::ext::RequestExtendedConnectProtocol, proxy::Proxy,
 };
 
 /// A WebSocket stream.
@@ -357,9 +358,8 @@ impl WebSocketRequestBuilder {
             Version::HTTP_2 => {
                 *request.method_mut() = Method::CONNECT;
                 *request.version_mut() = Some(Version::HTTP_2);
-                request
-                    .extensions_mut()
-                    .insert(Protocol::from_static("websocket"));
+                *request.config_mut::<RequestExtendedConnectProtocol>() =
+                    Some(Protocol::from_static("websocket"));
                 None
             }
             _ => {

@@ -327,7 +327,7 @@ pub use self::{
     },
     core::{
         client::options::{http1, http2},
-        ext::{OriginalHeaders, Protocol},
+        ext::OriginalHeaders,
     },
     proxy::{NoProxy, Proxy},
 };

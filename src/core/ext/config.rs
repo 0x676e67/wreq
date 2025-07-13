@@ -127,6 +127,18 @@ where
     }
 }
 
+/// Represents the `:protocol` pseudo-header used by
+/// the [Extended CONNECT Protocol].
+///
+/// [Extended CONNECT Protocol]: https://datatracker.ietf.org/doc/html/rfc8441#section-4
+#[derive(Clone, Copy)]
+pub(crate) struct RequestExtendedConnectProtocol;
+
+impl RequestConfigValue for RequestExtendedConnectProtocol {
+    type Value = http2::ext::Protocol;
+}
+
+/// Request TCP connect options for the request.
 #[derive(Clone, Copy)]
 pub(crate) struct RequestTcpConnectOptions;
 
@@ -134,6 +146,7 @@ impl RequestConfigValue for RequestTcpConnectOptions {
     type Value = crate::core::client::connect::TcpConnectOptions;
 }
 
+/// Request transport options for the request.
 #[derive(Clone, Copy)]
 pub(crate) struct RequestTransportOptions;
 
@@ -141,6 +154,7 @@ impl RequestConfigValue for RequestTransportOptions {
     type Value = crate::core::client::options::TransportOptions;
 }
 
+/// Request enforced HTTP version for the request.
 #[derive(Clone, Copy)]
 pub(crate) struct RequestEnforcedHttpVersion;
 
@@ -148,6 +162,7 @@ impl RequestConfigValue for RequestEnforcedHttpVersion {
     type Value = http::Version;
 }
 
+/// Request proxy matcher for the request.
 #[derive(Clone, Copy)]
 pub(crate) struct RequestProxyMatcher;
 
@@ -155,9 +170,10 @@ impl RequestConfigValue for RequestProxyMatcher {
     type Value = crate::proxy::Matcher;
 }
 
+/// Request original headers for the request.
 #[derive(Clone, Copy)]
 pub(crate) struct RequestOriginalHeaders;
 
 impl RequestConfigValue for RequestOriginalHeaders {
-    type Value = crate::core::ext::OriginalHeaders;
+    type Value = super::header::OriginalHeaders;
 }
