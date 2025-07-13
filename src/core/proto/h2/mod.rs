@@ -20,6 +20,7 @@ use pin_project_lite::pin_project;
 
 pub(crate) use self::client::ClientTask;
 use crate::core::{
+    Error,
     error::BoxError,
     proto::h2::ping::Recorder,
     rt::{Read, ReadBufCursor, Write},
@@ -126,27 +127,23 @@ where
                         Some(Ok(0)) => {}
                         Some(Ok(_)) => break,
                         Some(Err(e)) => {
-                            return Poll::Ready(Err(crate::core::Error::new_body_write(e)));
+                            return Poll::Ready(Err(Error::new_body_write(e)));
                         }
                         None => {
                             // None means the stream is no longer in a
                             // streaming state, we either finished it
                             // somehow, or the remote reset us.
-                            return Poll::Ready(Err(crate::core::Error::new_body_write(
+                            return Poll::Ready(Err(Error::new_body_write(
                                 "send stream capacity unexpectedly closed",
                             )));
                         }
                     }
                 }
-            } else if let Poll::Ready(reason) = me
-                .body_tx
-                .poll_reset(cx)
-                .map_err(crate::core::Error::new_body_write)?
+            } else if let Poll::Ready(reason) =
+                me.body_tx.poll_reset(cx).map_err(Error::new_body_write)?
             {
                 debug!("stream received RST_STREAM: {:?}", reason);
-                return Poll::Ready(Err(crate::core::Error::new_body_write(
-                    ::http2::Error::from(reason),
-                )));
+                return Poll::Ready(Err(Error::new_body_write(::http2::Error::from(reason))));
             }
 
             match ready!(me.stream.as_mut().poll_frame(cx)) {
@@ -163,7 +160,7 @@ where
                         let buf = SendBuf::Buf(chunk);
                         me.body_tx
                             .send_data(buf, is_eos)
-                            .map_err(crate::core::Error::new_body_write)?;
+                            .map_err(Error::new_body_write)?;
 
                         if is_eos {
                             return Poll::Ready(Ok(()));
@@ -173,7 +170,7 @@ where
                         me.body_tx.reserve_capacity(0);
                         me.body_tx
                             .send_trailers(frame.into_trailers().unwrap_or_else(|_| unreachable!()))
-                            .map_err(crate::core::Error::new_body_write)?;
+                            .map_err(Error::new_body_write)?;
                         return Poll::Ready(Ok(()));
                     } else {
                         trace!("discarding unknown frame");
@@ -193,18 +190,18 @@ where
 }
 
 trait SendStreamExt {
-    fn on_user_err<E>(&mut self, err: E) -> crate::core::Error
+    fn on_user_err<E>(&mut self, err: E) -> Error
     where
         E: Into<BoxError>;
     fn send_eos_frame(&mut self) -> crate::core::Result<()>;
 }
 
 impl<B: Buf> SendStreamExt for SendStream<SendBuf<B>> {
-    fn on_user_err<E>(&mut self, err: E) -> crate::core::Error
+    fn on_user_err<E>(&mut self, err: E) -> Error
     where
         E: Into<BoxError>,
     {
-        let err = crate::core::Error::new_user_body(err);
+        let err = Error::new_user_body(err);
         debug!("send body user stream error: {}", err);
         self.send_reset(err.h2_reason());
         err
@@ -213,7 +210,7 @@ impl<B: Buf> SendStreamExt for SendStream<SendBuf<B>> {
     fn send_eos_frame(&mut self) -> crate::core::Result<()> {
         trace!("send body eos");
         self.send_data(SendBuf::None, true)
-            .map_err(crate::core::Error::new_body_write)
+            .map_err(Error::new_body_write)
     }
 }
 

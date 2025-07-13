@@ -12,9 +12,9 @@ use http::HeaderMap;
 use http_body::{Body, Frame, SizeHint};
 
 use super::DecodedLength;
-use crate::core::{common::watch, proto::h2::ping};
+use crate::core::{Error, common::watch, proto::h2::ping};
 
-type BodySender = mpsc::Sender<Result<Bytes, crate::core::Error>>;
+type BodySender = mpsc::Sender<Result<Bytes, Error>>;
 type TrailersSender = oneshot::Sender<HeaderMap>;
 
 /// A stream of `Bytes`, used when receiving bodies from the network.
@@ -42,7 +42,7 @@ enum Kind {
     Chan {
         content_length: DecodedLength,
         want_tx: watch::Sender,
-        data_rx: mpsc::Receiver<Result<Bytes, crate::core::Error>>,
+        data_rx: mpsc::Receiver<Result<Bytes, Error>>,
         trailers_rx: oneshot::Receiver<HeaderMap>,
     },
     H2 {
@@ -142,7 +142,7 @@ impl Incoming {
 
 impl Body for Incoming {
     type Data = Bytes;
-    type Error = crate::core::Error;
+    type Error = Error;
 
     fn poll_frame(
         mut self: Pin<&mut Self>,
@@ -193,7 +193,7 @@ impl Body for Incoming {
                                 Some(http2::Reason::NO_ERROR) | Some(http2::Reason::CANCEL) => {
                                     Poll::Ready(None)
                                 }
-                                _ => Poll::Ready(Some(Err(crate::core::Error::new_body(e)))),
+                                _ => Poll::Ready(Some(Err(Error::new_body(e)))),
                             };
                         }
                         None => {
@@ -209,7 +209,7 @@ impl Body for Incoming {
                         ping.record_non_data();
                         Poll::Ready(Ok(t.map(Frame::trailers)).transpose())
                     }
-                    Err(e) => Poll::Ready(Some(Err(crate::core::Error::new_h2(e)))),
+                    Err(e) => Poll::Ready(Some(Err(Error::new_h2(e)))),
                 }
             }
         }
@@ -262,16 +262,14 @@ impl Sender {
     pub(crate) fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<crate::core::Result<()>> {
         // Check if the receiver end has tried polling for the body yet
         ready!(self.poll_want(cx)?);
-        self.data_tx
-            .poll_ready(cx)
-            .map_err(|_| crate::core::Error::new_closed())
+        self.data_tx.poll_ready(cx).map_err(|_| Error::new_closed())
     }
 
     fn poll_want(&mut self, cx: &mut Context<'_>) -> Poll<crate::core::Result<()>> {
         match self.want_rx.load(cx) {
             WANT_READY => Poll::Ready(Ok(())),
             WANT_PENDING => Poll::Pending,
-            watch::CLOSED => Poll::Ready(Err(crate::core::Error::new_closed())),
+            watch::CLOSED => Poll::Ready(Err(Error::new_closed())),
             unexpected => unreachable!("want_rx value: {}", unexpected),
         }
     }
@@ -313,10 +311,10 @@ impl Sender {
 
     #[cfg(test)]
     pub(crate) fn abort(mut self) {
-        self.send_error(crate::core::Error::new_body_write_aborted());
+        self.send_error(Error::new_body_write_aborted());
     }
 
-    pub(crate) fn send_error(&mut self, err: crate::core::Error) {
+    pub(crate) fn send_error(&mut self, err: Error) {
         let _ = self
             .data_tx
             // clone so the send works even if buffer is full

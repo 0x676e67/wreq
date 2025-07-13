@@ -11,6 +11,7 @@ use http::{
 use smallvec::{SmallVec, smallvec, smallvec_inline};
 
 use crate::core::{
+    Error,
     body::DecodedLength,
     error::Parse,
     ext::{OriginalHeaders, RequestConfig, RequestOriginalHeaders},
@@ -306,7 +307,7 @@ impl Http1Transaction for Client {
         Ok(body)
     }
 
-    fn on_error(_err: &crate::core::Error) -> Option<MessageHead<Self::Outgoing>> {
+    fn on_error(_err: &Error) -> Option<MessageHead<Self::Outgoing>> {
         // we can't tell the server about any errors it creates
         None
     }

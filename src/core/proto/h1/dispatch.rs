@@ -11,6 +11,7 @@ use http_body::Body;
 
 use super::{Http1Transaction, Wants};
 use crate::core::{
+    Error,
     body::{DecodedLength, Incoming as IncomingBody},
     client::dispatch::{self, TrySendError},
     error::BoxError,
@@ -93,7 +94,7 @@ where
         Poll::Ready(ready!(self.poll_inner(cx, should_shutdown)).or_else(|e| {
             // Be sure to alert a streaming body of the failure.
             if let Some(mut body) = self.body_tx.take() {
-                body.send_error(crate::core::Error::new_body("connection error"));
+                body.send_error(Error::new_body("connection error"));
             }
             // An error means we're shutting down either way.
             // We just try to give the error to the user,
@@ -118,7 +119,7 @@ where
                 self.conn.take_error()?;
                 return Poll::Ready(Ok(Dispatched::Upgrade(pending)));
             } else if should_shutdown {
-                ready!(self.conn.poll_shutdown(cx)).map_err(crate::core::Error::new_shutdown)?;
+                ready!(self.conn.poll_shutdown(cx)).map_err(Error::new_shutdown)?;
             }
             self.conn.take_error()?;
             Poll::Ready(Ok(Dispatched::Shutdown))
@@ -223,7 +224,7 @@ where
                             return Poll::Pending;
                         }
                         Poll::Ready(Some(Err(e))) => {
-                            body.send_error(crate::core::Error::new_body(e));
+                            body.send_error(Error::new_body(e));
                         }
                     }
                 } else {
@@ -301,7 +302,7 @@ where
                 && self.dispatch.should_poll()
             {
                 if let Some(msg) = ready!(Pin::new(&mut self.dispatch).poll_msg(cx)) {
-                    let (head, body) = msg.map_err(crate::core::Error::new_user_service)?;
+                    let (head, body) = msg.map_err(Error::new_user_service)?;
 
                     let body_type = if body.is_end_stream() {
                         self.body_rx.set(None);
@@ -341,7 +342,7 @@ where
                     if let Some(item) = item {
                         let frame = item.map_err(|e| {
                             *clear_body = true;
-                            crate::core::Error::new_user_body(e)
+                            Error::new_user_body(e)
                         })?;
 
                         if frame.is_data() {
@@ -390,7 +391,7 @@ where
     fn poll_flush(&mut self, cx: &mut Context<'_>) -> Poll<crate::core::Result<()>> {
         self.conn.poll_flush(cx).map_err(|err| {
             debug!("error writing: {}", err);
-            crate::core::Error::new_body_write(err)
+            Error::new_body_write(err)
         })
     }
 
@@ -537,7 +538,7 @@ where
                     // Getting here is likely a bug! An error should have happened
                     // in Conn::require_empty_read() before ever parsing a
                     // full message!
-                    Err(crate::core::Error::new_unexpected_message())
+                    Err(Error::new_unexpected_message())
                 }
             }
             Err(err) => {
@@ -554,7 +555,7 @@ where
                         // in this case, the message was never even started, so it's safe to tell
                         // the user that the request was completely canceled
                         cb.send(Err(TrySendError {
-                            error: crate::core::Error::new_canceled().with(err),
+                            error: Error::new_canceled().with(err),
                             message: Some(req),
                         }));
                         Ok(())

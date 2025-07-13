@@ -17,6 +17,7 @@ use super::{
     Decoder, Encode, EncodedBuf, Encoder, Http1Transaction, ParseContext, Wants, io::Buffered,
 };
 use crate::core::{
+    Error,
     body::DecodedLength,
     proto::{BodyLength, MessageHead, headers},
     rt::{Read, Write},
@@ -224,10 +225,7 @@ where
         Poll::Ready(Some(Ok((msg.head, msg.decode, wants))))
     }
 
-    fn on_read_head_error<Z>(
-        &mut self,
-        e: crate::core::Error,
-    ) -> Poll<Option<crate::core::Result<Z>>> {
+    fn on_read_head_error<Z>(&mut self, e: Error) -> Poll<Option<crate::core::Result<Z>>> {
         // If we are currently waiting on a message, then an empty
         // message should be reported as an error. If not, it is just
         // the connection closing gracefully.
@@ -357,15 +355,15 @@ where
 
         if !self.io.read_buf().is_empty() {
             debug!("received an unexpected {} bytes", self.io.read_buf().len());
-            return Poll::Ready(Err(crate::core::Error::new_unexpected_message()));
+            return Poll::Ready(Err(Error::new_unexpected_message()));
         }
 
-        let num_read = ready!(self.force_io_read(cx)).map_err(crate::core::Error::new_io)?;
+        let num_read = ready!(self.force_io_read(cx)).map_err(Error::new_io)?;
 
         if num_read == 0 {
             let ret = if self.should_error_on_eof() {
                 trace!("found unexpected EOF on busy connection: {:?}", self.state);
-                Poll::Ready(Err(crate::core::Error::new_incomplete()))
+                Poll::Ready(Err(Error::new_incomplete()))
             } else {
                 trace!("found EOF on idle connection, closing");
                 Poll::Ready(Ok(()))
@@ -380,7 +378,7 @@ where
             "received unexpected {} bytes on an idle connection",
             num_read
         );
-        Poll::Ready(Err(crate::core::Error::new_unexpected_message()))
+        Poll::Ready(Err(Error::new_unexpected_message()))
     }
 
     fn mid_message_detect_eof(&mut self, cx: &mut Context<'_>) -> Poll<crate::core::Result<()>> {
@@ -391,12 +389,12 @@ where
             return Poll::Pending;
         }
 
-        let num_read = ready!(self.force_io_read(cx)).map_err(crate::core::Error::new_io)?;
+        let num_read = ready!(self.force_io_read(cx)).map_err(Error::new_io)?;
 
         if num_read == 0 {
             trace!("found unexpected EOF on busy connection: {:?}", self.state);
             self.state.close_read();
-            Poll::Ready(Err(crate::core::Error::new_incomplete()))
+            Poll::Ready(Err(Error::new_incomplete()))
         } else {
             Poll::Ready(Ok(()))
         }
@@ -453,7 +451,7 @@ where
                     Poll::Ready(Err(e)) => {
                         trace!("maybe_notify; read_from_io error: {}", e);
                         self.state.close();
-                        self.state.error = Some(crate::core::Error::new_io(e));
+                        self.state.error = Some(Error::new_io(e));
                     }
                 }
             }
@@ -679,7 +677,7 @@ where
             }
             Err(not_eof) => {
                 self.state.writing = Writing::Closed;
-                Err(crate::core::Error::new_body_write_aborted().with(not_eof))
+                Err(Error::new_body_write_aborted().with(not_eof))
             }
         }
     }
@@ -689,10 +687,10 @@ where
     //
     // - Client: there is nothing we can do
     // - Server: if Response hasn't been written yet, we can send a 4xx response
-    fn on_parse_error(&mut self, err: crate::core::Error) -> crate::core::Result<()> {
+    fn on_parse_error(&mut self, err: Error) -> crate::core::Result<()> {
         if let Writing::Init = self.state.writing {
             if self.has_h2_prefix() {
-                return Err(crate::core::Error::new_version_h2());
+                return Err(Error::new_version_h2());
             }
             if let Some(msg) = T::on_error(&err) {
                 // Drop the cached headers so as to not trigger a debug
@@ -787,7 +785,7 @@ struct State {
     cached_headers: Option<HeaderMap>,
     /// If an error occurs when there wasn't a direct way to return it
     /// back to the user, this is set.
-    error: Option<crate::core::Error>,
+    error: Option<Error>,
     /// Current keep-alive status.
     keep_alive: KA,
     /// If mid-message, the HTTP Method that started it.

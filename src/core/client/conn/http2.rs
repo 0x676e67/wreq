@@ -1,7 +1,6 @@
 //! HTTP/2 client connections
 
 use std::{
-    error::Error,
     fmt,
     future::Future,
     marker::PhantomData,
@@ -18,6 +17,7 @@ use crate::{
         body::Incoming as IncomingBody,
         client::dispatch::{self, TrySendError},
         common::time::Time,
+        error::{BoxError, Error},
         proto,
         rt::{Read, Timer, Write, bounds::Http2ClientConnExec},
     },
@@ -49,7 +49,7 @@ where
     T: Read + Write + Unpin,
     B: Body + 'static,
     E: Http2ClientConnExec<B, T> + Unpin,
-    B::Error: Into<Box<dyn Error + Send + Sync>>,
+    B::Error: Into<BoxError>,
 {
     inner: (PhantomData<T>, proto::h2::ClientTask<B, E, T>),
 }
@@ -75,7 +75,7 @@ impl<B> SendRequest<B> {
     /// If the associated connection is closed, this returns an Error.
     pub fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<crate::core::Result<()>> {
         if self.is_closed() {
-            Poll::Ready(Err(crate::core::Error::new_closed()))
+            Poll::Ready(Err(Error::new_closed()))
         } else {
             Poll::Ready(Ok(()))
         }
@@ -132,7 +132,7 @@ where
                 },
                 Err(req) => {
                     debug!("connection was not ready");
-                    let error = crate::core::Error::new_canceled().with("connection was not ready");
+                    let error = Error::new_canceled().with("connection was not ready");
                     Err(TrySendError {
                         error,
                         message: Some(req),
@@ -156,7 +156,7 @@ where
     T: Read + Write + fmt::Debug + 'static + Unpin,
     B: Body + 'static,
     E: Http2ClientConnExec<B, T> + Unpin,
-    B::Error: Into<Box<dyn Error + Send + Sync>>,
+    B::Error: Into<BoxError>,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Connection").finish()
@@ -169,7 +169,7 @@ where
     B: Body + 'static + Unpin,
     B::Data: Send,
     E: Unpin,
-    B::Error: Into<Box<dyn Error + Send + Sync>>,
+    B::Error: Into<BoxError>,
     E: Http2ClientConnExec<B, T> + Unpin,
 {
     type Output = crate::core::Result<()>;
@@ -226,7 +226,7 @@ where
         T: Read + Write + Unpin,
         B: Body + 'static,
         B::Data: Send,
-        B::Error: Into<Box<dyn Error + Send + Sync>>,
+        B::Error: Into<BoxError>,
         Ex: Http2ClientConnExec<B, T> + Unpin,
     {
         let opts = self.clone();

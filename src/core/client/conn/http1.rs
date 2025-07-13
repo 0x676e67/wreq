@@ -12,6 +12,7 @@ use http::{Request, Response};
 use http_body::Body;
 
 use crate::core::{
+    Error,
     body::Incoming as IncomingBody,
     client::{
         dispatch::{self, TrySendError},
@@ -147,7 +148,7 @@ where
                 },
                 Err(req) => {
                     debug!("connection was not ready");
-                    let error = crate::core::Error::new_canceled().with("connection was not ready");
+                    let error = Error::new_canceled().with("connection was not ready");
                     Err(TrySendError {
                         error,
                         message: Some(req),

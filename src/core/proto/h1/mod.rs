@@ -11,6 +11,7 @@ pub(crate) use self::{
     encode::{EncodedBuf, Encoder},
 };
 use crate::core::{
+    Error,
     body::DecodedLength,
     proto::{BodyLength, MessageHead},
 };
@@ -32,7 +33,7 @@ pub(crate) trait Http1Transaction {
     fn parse(bytes: &mut BytesMut, ctx: ParseContext<'_>) -> ParseResult<Self::Incoming>;
     fn encode(enc: Encode<'_, Self::Outgoing>, dst: &mut Vec<u8>) -> crate::core::Result<Encoder>;
 
-    fn on_error(err: &crate::core::Error) -> Option<MessageHead<Self::Outgoing>>;
+    fn on_error(err: &Error) -> Option<MessageHead<Self::Outgoing>>;
 
     fn is_client() -> bool {
         !Self::is_server()

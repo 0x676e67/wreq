@@ -31,6 +31,7 @@ use super::{
     ping::{Ponger, Recorder},
 };
 use crate::core::{
+    Error,
     body::Incoming as IncomingBody,
     client::dispatch::{self, Callback, SendWhen, TrySendError},
     common::{io::Compat, time::Time},
@@ -209,7 +210,7 @@ where
     let (h2_tx, mut conn) = new_builder(config)
         .handshake::<_, SendBuf<B::Data>>(Compat::new(io))
         .await
-        .map_err(crate::core::Error::new_h2)?;
+        .map_err(Error::new_h2)?;
 
     // An mpsc channel is used entirely to detect when the
     // 'Client' has been dropped. This is to get around a bug
@@ -595,8 +596,7 @@ impl<B> Future for ResponseFutMap<B>
 where
     B: Body + 'static,
 {
-    type Output =
-        Result<Response<crate::core::body::Incoming>, (crate::core::Error, Option<Request<B>>)>;
+    type Output = Result<Response<crate::core::body::Incoming>, (Error, Option<Request<B>>)>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let mut this = self.project();
@@ -618,7 +618,7 @@ where
 
                         send_stream.send_reset(http2::Reason::INTERNAL_ERROR);
                         return Poll::Ready(Err((
-                            crate::core::Error::new_h2(http2::Reason::INTERNAL_ERROR.into()),
+                            Error::new_h2(http2::Reason::INTERNAL_ERROR.into()),
                             None::<Request<B>>,
                         )));
                     }
@@ -650,7 +650,7 @@ where
                 ping.ensure_not_timed_out().map_err(|e| (e, None))?;
 
                 debug!("client response error: {}", err);
-                Poll::Ready(Err((crate::core::Error::new_h2(err), None::<Request<B>>)))
+                Poll::Ready(Err((Error::new_h2(err), None::<Request<B>>)))
             }
         }
     }
@@ -676,7 +676,7 @@ where
                         trace!("connection gracefully shutdown");
                         Poll::Ready(Ok(Dispatched::Shutdown))
                     } else {
-                        Poll::Ready(Err(crate::core::Error::new_h2(err)))
+                        Poll::Ready(Err(Error::new_h2(err)))
                     };
                 }
             };
@@ -720,7 +720,7 @@ where
                     {
                         debug!("h2 connect request with non-zero body not supported");
                         cb.send(Err(TrySendError {
-                            error: crate::core::Error::new_user_invalid_connect(),
+                            error: Error::new_user_invalid_connect(),
                             message: None,
                         }));
                         continue;
@@ -735,7 +735,7 @@ where
                         Err(err) => {
                             debug!("client send request error: {}", err);
                             cb.send(Err(TrySendError {
-                                error: crate::core::Error::new_h2(err),
+                                error: Error::new_h2(err),
                                 message: None,
                             }));
                             continue;
@@ -763,7 +763,7 @@ where
                         Poll::Ready(Ok(())) => (),
                         Poll::Ready(Err(err)) => {
                             f.cb.send(Err(TrySendError {
-                                error: crate::core::Error::new_h2(err),
+                                error: Error::new_h2(err),
                                 message: None,
                             }));
                             continue;

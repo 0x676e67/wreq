@@ -27,7 +27,7 @@ use std::{
 
 use http2::{Ping, PingPong};
 
-use crate::core::{common::time::Time, rt::Sleep};
+use crate::core::{Error, common::time::Time, rt::Sleep};
 
 type WindowSize = u32;
 
@@ -489,8 +489,8 @@ impl KeepAlive {
 // ===== impl KeepAliveTimedOut =====
 
 impl KeepAliveTimedOut {
-    pub(super) fn crate_error(self) -> crate::core::Error {
-        crate::core::Error::new(crate::core::error::Kind::Http2).with(self)
+    pub(super) fn crate_error(self) -> Error {
+        Error::new(crate::core::error::Kind::Http2).with(self)
     }
 }
 

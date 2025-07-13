@@ -37,6 +37,7 @@ use bytes::Bytes;
 use tokio::sync::oneshot;
 
 use crate::core::{
+    Error,
     common::io::Rewind,
     rt::{Read, ReadBufCursor, Write},
 };
@@ -196,7 +197,7 @@ impl OnUpgrade {
 }
 
 impl Future for OnUpgrade {
-    type Output = Result<Upgraded, crate::core::Error>;
+    type Output = Result<Upgraded, Error>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         match self.rx {
@@ -205,11 +206,9 @@ impl Future for OnUpgrade {
                 .map(|res| match res {
                     Ok(Ok(upgraded)) => Ok(upgraded),
                     Ok(Err(err)) => Err(err),
-                    Err(_oneshot_canceled) => {
-                        Err(crate::core::Error::new_canceled().with(UpgradeExpected))
-                    }
+                    Err(_oneshot_canceled) => Err(Error::new_canceled().with(UpgradeExpected)),
                 }),
-            None => Poll::Ready(Err(crate::core::Error::new_user_no_upgrade())),
+            None => Poll::Ready(Err(Error::new_user_no_upgrade())),
         }
     }
 }
@@ -232,9 +231,7 @@ impl Pending {
     /// upgrades are handled manually.
     pub(super) fn manual(self) {
         trace!("pending upgrade handled manually");
-        let _ = self
-            .tx
-            .send(Err(crate::core::Error::new_user_manual_upgrade()));
+        let _ = self.tx.send(Err(Error::new_user_manual_upgrade()));
     }
 }
 

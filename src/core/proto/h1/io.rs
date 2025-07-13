@@ -9,6 +9,7 @@ use bytes::{Buf, BufMut, Bytes, BytesMut};
 
 use super::{Http1Transaction, ParseContext, ParsedMessage};
 use crate::core::{
+    Error,
     common::buf::BufList,
     rt::{Read, ReadBuf, Write},
 };
@@ -182,7 +183,7 @@ where
                     let curr_len = self.read_buf.len();
                     if curr_len >= max {
                         debug!("max_buf_size ({}) reached, closing", max);
-                        return Poll::Ready(Err(crate::core::Error::new_too_large()));
+                        return Poll::Ready(Err(Error::new_too_large()));
                     }
                     if curr_len > 0 {
                         trace!("partial headers; {} bytes so far", curr_len);
@@ -193,9 +194,9 @@ where
                     }
                 }
             }
-            if ready!(self.poll_read_from_io(cx)).map_err(crate::core::Error::new_io)? == 0 {
+            if ready!(self.poll_read_from_io(cx)).map_err(Error::new_io)? == 0 {
                 trace!("parse eof");
-                return Poll::Ready(Err(crate::core::Error::new_incomplete()));
+                return Poll::Ready(Err(Error::new_incomplete()));
             }
         }
     }
