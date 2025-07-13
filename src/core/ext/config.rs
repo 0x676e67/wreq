@@ -114,7 +114,9 @@ where
     /// `Option<T::Value>`.
     #[inline]
     pub(crate) fn get_mut(ext: &mut Extensions) -> &mut Option<T::Value> {
-        &mut ext.get_or_insert_default::<RequestConfig<T>>().0
+        &mut ext
+            .get_or_insert_with::<RequestConfig<T>, _>(Default::default)
+            .0
     }
 
     /// Removes and returns the stored value from the given `Extensions`, if present.
