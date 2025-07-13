@@ -1031,6 +1031,18 @@ impl ClientBuilder {
     ///
     /// [man-7-socket]: https://man7.org/linux/man-pages/man7/socket.7.html
     /// [man-7p-ip]: https://docs.oracle.com/cd/E86824_01/html/E54777/ip-7p.html
+    #[cfg(any(
+        target_os = "android",
+        target_os = "fuchsia",
+        target_os = "illumos",
+        target_os = "ios",
+        target_os = "linux",
+        target_os = "macos",
+        target_os = "solaris",
+        target_os = "tvos",
+        target_os = "visionos",
+        target_os = "watchos",
+    ))]
     pub fn interface<T>(mut self, interface: T) -> ClientBuilder
     where
         T: Into<std::borrow::Cow<'static, str>>,
