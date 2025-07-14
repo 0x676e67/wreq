@@ -786,7 +786,7 @@ where
     }
 }
 
-impl<C, B> tower_service::Service<Request<B>> for Client<C, B>
+impl<C, B> tower::Service<Request<B>> for Client<C, B>
 where
     C: Connect + Clone + Send + Sync + 'static,
     B: Body + Send + 'static + Unpin,
@@ -806,7 +806,7 @@ where
     }
 }
 
-impl<C, B> tower_service::Service<Request<B>> for &'_ Client<C, B>
+impl<C, B> tower::Service<Request<B>> for &'_ Client<C, B>
 where
     C: Connect + Clone + Send + Sync + 'static,
     B: Body + Send + 'static + Unpin,

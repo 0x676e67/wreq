@@ -8,7 +8,7 @@ use std::{
     task::{Context, Poll},
 };
 
-use tower_service::Service;
+use tower::Service;
 
 use crate::{core::client::connect::dns::Name as NativeName, error::BoxError};
 
@@ -23,7 +23,7 @@ pub trait Resolve: Send + Sync {
     /// Performs DNS resolution on a `Name`.
     /// The return type is a future containing an iterator of `SocketAddr`.
     ///
-    /// It differs from `tower_service::Service<Name>` in several ways:
+    /// It differs from `tower::Service<Name>` in several ways:
     ///  * It is assumed that `resolve` will always be ready to poll.
     ///  * It does not need a mutable reference to `self`.
     ///  * Since trait objects cannot make use of associated types, it requires wrapping the

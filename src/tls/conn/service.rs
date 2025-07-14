@@ -8,7 +8,7 @@ use std::{
 use http::{Uri, uri::Scheme};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_boring2::{SslStream, SslStreamBuilder};
-use tower_service::Service;
+use tower::Service;
 
 use super::{EstablishedConn, HttpsConnector, MaybeHttpsStream};
 use crate::{

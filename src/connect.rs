@@ -13,11 +13,10 @@ use tls_conn::TlsConn;
 use tokio::net::TcpStream;
 use tokio_boring2::SslStream;
 use tower::{
-    ServiceBuilder,
+    Service, ServiceBuilder,
     timeout::TimeoutLayer,
     util::{BoxCloneSyncService, BoxCloneSyncServiceLayer, MapRequestLayer},
 };
-use tower_service::Service;
 
 pub(crate) use self::conn::{Conn, Unnameable};
 use crate::{

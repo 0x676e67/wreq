@@ -26,7 +26,7 @@ use cache::{SessionCache, SessionKey};
 use http::Uri;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_boring2::SslStream;
-use tower_service::Service;
+use tower::Service;
 
 use crate::{
     Error,

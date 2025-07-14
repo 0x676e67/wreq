@@ -4,8 +4,7 @@ use std::{
 };
 
 use http::{Request, Response, header::COOKIE};
-use tower::Layer;
-use tower_service::Service;
+use tower::{Layer, Service};
 
 use super::future::ResponseFuture;
 use crate::cookie::CookieStore;

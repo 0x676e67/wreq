@@ -11,8 +11,7 @@ use std::{
 use futures_util::future::Either;
 use http::{Request, Response, Uri};
 use http_body::Body;
-use tower::Layer;
-use tower_service::Service;
+use tower::{Layer, Service};
 
 use self::{future::ResponseFuture, policy::Policy};
 

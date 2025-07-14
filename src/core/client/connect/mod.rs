@@ -36,7 +36,7 @@
 //!     },
 //! };
 //! use tokio::net::TcpStream;
-//! use tower_service::Service;
+//! use tower::Service;
 //!
 //! #[derive(Clone)]
 //! struct LocalConnector;
@@ -62,7 +62,7 @@
 //! better starting place to extend from.
 //!
 //! [`HttpConnector`]: HttpConnector
-//! [`Service`]: tower_service::Service
+//! [`Service`]: tower::Service
 //! [`Uri`]: ::http::Uri
 //! [`Read`]: crate::core::rt::Read
 //! [`Write`]: crate::core::rt::Write
@@ -349,7 +349,7 @@ pub(super) mod sealed {
 
     impl<S, T> Connect for S
     where
-        S: tower_service::Service<ConnRequest, Response = T> + Send + 'static,
+        S: tower::Service<ConnRequest, Response = T> + Send + 'static,
         S::Error: Into<BoxError>,
         S::Future: Unpin + Send,
         T: Read + Write + Connection + Unpin + Send + 'static,
@@ -363,7 +363,7 @@ pub(super) mod sealed {
 
     impl<S, T> ConnectSvc for S
     where
-        S: tower_service::Service<ConnRequest, Response = T> + Send + 'static,
+        S: tower::Service<ConnRequest, Response = T> + Send + 'static,
         S::Error: Into<BoxError>,
         S::Future: Unpin + Send,
         T: Read + Write + Connection + Unpin + Send + 'static,
@@ -379,7 +379,7 @@ pub(super) mod sealed {
 
     impl<S, T> Sealed for S
     where
-        S: tower_service::Service<ConnRequest, Response = T> + Send,
+        S: tower::Service<ConnRequest, Response = T> + Send,
         S::Error: Into<BoxError>,
         S::Future: Unpin + Send,
         T: Read + Write + Connection + Unpin + Send + 'static,

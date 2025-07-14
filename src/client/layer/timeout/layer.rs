@@ -4,8 +4,7 @@ use std::{
 };
 
 use http::{Request, Response};
-use tower::Layer;
-use tower_service::Service;
+use tower::{Layer, Service};
 
 use super::future::{ResponseBodyTimeoutFuture, ResponseFuture};
 use crate::{

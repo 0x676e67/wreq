@@ -2,11 +2,10 @@ use std::task::{Context, Poll};
 
 use http::{Request, Response};
 use http_body::Body;
-use tower::Layer;
+use tower::{Layer, Service};
 use tower_http::decompression::{
     Decompression as TowerDecompression, DecompressionBody, ResponseFuture,
 };
-use tower_service::Service;
 
 use super::AcceptEncoding;
 use crate::{client::layer::config::RequestAcceptEncoding, core::ext::RequestConfig};

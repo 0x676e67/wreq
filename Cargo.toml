@@ -69,7 +69,6 @@ url = "2.5"
 serde = { version = "1.0", features = ["derive"] }
 serde_urlencoded = "0.7.1"
 tower = { version = "0.5.2", default-features = false, features = ["timeout", "util", "retry"] }
-tower-service = "0.3"
 sync_wrapper = { version = "1.0", features = ["futures"] }
 
 # core

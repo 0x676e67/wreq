@@ -11,7 +11,7 @@ use tokio_socks::{
     TargetAddr,
     tcp::{Socks4Stream, Socks5Stream},
 };
-use tower_service::Service;
+use tower::Service;
 
 use crate::core::{
     client::connect::dns::{GaiResolver, Name, Resolve},

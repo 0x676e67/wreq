@@ -12,8 +12,7 @@ use http::{
 };
 use http_body::Body;
 use pin_project_lite::pin_project;
-use tower::util::Oneshot;
-use tower_service::Service;
+use tower::{Service, util::Oneshot};
 use url::Url;
 
 use super::{

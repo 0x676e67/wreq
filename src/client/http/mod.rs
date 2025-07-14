@@ -1031,6 +1031,7 @@ impl ClientBuilder {
     ///
     /// [man-7-socket]: https://man7.org/linux/man-pages/man7/socket.7.html
     /// [man-7p-ip]: https://docs.oracle.com/cd/E86824_01/html/E54777/ip-7p.html
+    #[inline]
     #[cfg(any(
         target_os = "android",
         target_os = "fuchsia",
@@ -1489,7 +1490,7 @@ impl Client {
     }
 }
 
-impl tower_service::Service<Request> for Client {
+impl tower::Service<Request> for Client {
     type Response = Response;
     type Error = Error;
     type Future = Pending;
@@ -1505,7 +1506,7 @@ impl tower_service::Service<Request> for Client {
     }
 }
 
-impl tower_service::Service<Request> for &'_ Client {
+impl tower::Service<Request> for &'_ Client {
     type Response = Response;
     type Error = Error;
     type Future = Pending;

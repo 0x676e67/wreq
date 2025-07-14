@@ -33,7 +33,7 @@ use std::{
 };
 
 use tokio::task::JoinHandle;
-use tower_service::Service;
+use tower::Service;
 
 pub(super) use self::sealed::Resolve;
 
@@ -267,7 +267,7 @@ mod sealed {
         task::{self, Poll},
     };
 
-    use tower_service::Service;
+    use tower::Service;
 
     use super::{Name, SocketAddr};
     use crate::error::BoxError;

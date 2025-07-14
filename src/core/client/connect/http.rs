@@ -359,7 +359,7 @@ impl<R: fmt::Debug> fmt::Debug for HttpConnector<R> {
     }
 }
 
-impl<R> tower_service::Service<Uri> for HttpConnector<R>
+impl<R> tower::Service<Uri> for HttpConnector<R>
 where
     R: Resolve + Clone + Send + Sync + 'static,
     R::Future: Send,

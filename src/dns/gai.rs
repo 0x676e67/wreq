@@ -1,4 +1,4 @@
-use tower_service::Service;
+use tower::Service;
 
 use crate::{
     core::client::connect::dns::GaiResolver as NativeGaiResolver,

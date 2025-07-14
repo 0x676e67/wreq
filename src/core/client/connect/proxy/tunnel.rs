@@ -7,7 +7,7 @@ use std::{
 
 use http::{HeaderMap, HeaderValue, Uri};
 use pin_project_lite::pin_project;
-use tower_service::Service;
+use tower::Service;
 
 use crate::core::{
     error::BoxError,
@@ -269,7 +269,7 @@ mod tests {
         io::{AsyncReadExt, AsyncWriteExt},
         net::TcpListener,
     };
-    use tower_service::Service;
+    use tower::Service;
 
     use super::Tunnel;
     use crate::core::client::connect::HttpConnector;
