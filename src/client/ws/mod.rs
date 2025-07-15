@@ -23,8 +23,7 @@ use tungstenite::protocol::WebSocketConfig;
 pub use self::message::{CloseCode, CloseFrame, Message, Utf8Bytes};
 use crate::{
     EmulationFactory, Error, OriginalHeaders, RequestBuilder, Response,
-    core::ext::{RequestConfig, RequestExtendedConnectProtocol},
-    proxy::Proxy,
+    core::ext::RequestExtendedConnectProtocol, proxy::Proxy,
 };
 
 /// A WebSocket stream.
@@ -327,8 +326,7 @@ impl WebSocketRequestBuilder {
             .map_err(|_| Error::url_bad_scheme(url.clone()))?;
 
         // Get the version of the request
-        // If the version is not set, use the default version
-        let version = request.version().cloned().unwrap_or(Version::HTTP_11);
+        let version = request.version().unwrap_or(Version::HTTP_11);
 
         // Set the headers for the websocket handshake
         let headers = request.headers_mut();
@@ -359,9 +357,8 @@ impl WebSocketRequestBuilder {
             Version::HTTP_2 => {
                 *request.method_mut() = Method::CONNECT;
                 *request.version_mut() = Some(Version::HTTP_2);
-                *RequestConfig::<RequestExtendedConnectProtocol>::get_mut(
-                    request.extensions_mut(),
-                ) = Some(Protocol::from_static("websocket"));
+                *request.config_mut::<RequestExtendedConnectProtocol>() =
+                    Some(Protocol::from_static("websocket"));
                 None
             }
             _ => {

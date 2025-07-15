@@ -92,6 +92,12 @@ impl PerRequestOptions {
         &mut self.proxy_matcher
     }
 
+    /// Get the enforced HTTP version.
+    #[inline]
+    pub fn enforced_version(&self) -> Option<Version> {
+        self.enforced_version
+    }
+
     /// Get mutable reference to the enforced HTTP version.
     #[inline]
     pub fn enforced_version_mut(&mut self) -> &mut Option<Version> {
