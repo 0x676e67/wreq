@@ -224,7 +224,7 @@ async fn test_redirect_policy_can_stop_redirects_without_an_error() {
     let url = format!("http://{}/no-redirect", server.addr());
 
     let res = wreq::Client::builder()
-        .redirect(wreq::redirect::Policy::none())
+        .redirect(Policy::none())
         .build()
         .unwrap()
         .get(&url)
@@ -382,7 +382,7 @@ async fn test_scheme_only_check_after_policy_return_follow() {
 
     let url = format!("http://{}/yikes", server.addr());
     let res = wreq::Client::builder()
-        .redirect(wreq::redirect::Policy::custom(|attempt| attempt.stop()))
+        .redirect(Policy::custom(|attempt| attempt.stop()))
         .build()
         .unwrap()
         .get(&url)
@@ -393,7 +393,7 @@ async fn test_scheme_only_check_after_policy_return_follow() {
     assert_eq!(res.unwrap().status(), wreq::StatusCode::FOUND);
 
     let res = wreq::Client::builder()
-        .redirect(wreq::redirect::Policy::custom(|attempt| attempt.follow()))
+        .redirect(Policy::custom(|attempt| attempt.follow()))
         .build()
         .unwrap()
         .get(&url)
@@ -448,6 +448,7 @@ async fn test_redirect_301_302_303_empty_payload_headers() {
         let dst = format!("http://{}/{}", redirect.addr(), "dst");
         let res = client
             .post(&url)
+            .redirect(Policy::default())
             .body("Hello")
             .header(wreq::header::CONTENT_TYPE, "text/plain")
             .header(wreq::header::CONTENT_LENGTH, "5")

@@ -8,7 +8,7 @@ async fn main() -> wreq::Result<()> {
 
     let resp = wreq::Client::new()
         .get("http://google.com/")
-        .redirect(Policy::none())
+        .redirect(Policy::default())
         .send()
         .await?
         .text()
