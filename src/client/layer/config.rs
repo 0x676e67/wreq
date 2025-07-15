@@ -1,5 +1,3 @@
-use std::time::Duration;
-
 use crate::{core::ext::RequestConfigValue, redirect::Policy};
 
 // ================================
@@ -15,15 +13,11 @@ use crate::{core::ext::RequestConfigValue, redirect::Policy};
 // ================================
 
 #[derive(Clone, Copy)]
-pub(crate) struct RequestTimeout;
+pub(crate) struct RequestTimeoutOptions;
 
-impl RequestConfigValue for RequestTimeout {
-    type Value = Duration;
+impl RequestConfigValue for RequestTimeoutOptions {
+    type Value = super::timeout::TimeoutOptions;
 }
-
-pub(crate) type RequestTotalTimeout = RequestTimeout;
-
-pub(crate) type RequestReadTimeout = RequestTimeout;
 
 #[derive(Clone, Copy)]
 pub(crate) struct RequestRedirectPolicy;

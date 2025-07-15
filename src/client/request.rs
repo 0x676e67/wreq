@@ -21,9 +21,7 @@ use super::multipart;
 use super::{
     body::Body,
     http::{Client, Pending},
-    layer::config::{
-        RequestReadTimeout, RequestRedirectPolicy, RequestSkipDefaultHeaders, RequestTotalTimeout,
-    },
+    layer::config::{RequestRedirectPolicy, RequestSkipDefaultHeaders, RequestTimeoutOptions},
     response::Response,
 };
 use crate::{
@@ -373,7 +371,8 @@ impl RequestBuilder {
     /// the timeout configured using `ClientBuilder::timeout()`.
     pub fn timeout(mut self, timeout: Duration) -> RequestBuilder {
         if let Ok(ref mut req) = self.request {
-            *req.config_mut::<RequestTotalTimeout>() = Some(timeout);
+            req.config_mut_or_default::<RequestTimeoutOptions>()
+                .total_timeout_mut(timeout);
         }
         self
     }
@@ -385,7 +384,8 @@ impl RequestBuilder {
     /// overrides the read timeout configured using `ClientBuilder::read_timeout()`.
     pub fn read_timeout(mut self, timeout: Duration) -> RequestBuilder {
         if let Ok(ref mut req) = self.request {
-            *req.config_mut::<RequestReadTimeout>() = Some(timeout);
+            req.config_mut_or_default::<RequestTimeoutOptions>()
+                .read_timeout_mut(timeout);
         }
         self
     }
