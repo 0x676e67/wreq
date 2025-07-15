@@ -25,9 +25,9 @@ async fn main() -> wreq::Result<()> {
     // Use the API you're already familiar with
     let websocket = client
         .websocket("wss://127.0.0.1:3000/ws")
+        .force_http2()
         .header(header::USER_AGENT, env!("CARGO_PKG_NAME"))
         .read_buffer_size(1024 * 1024)
-        .use_http2()
         .send()
         .await?;
 

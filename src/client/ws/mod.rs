@@ -43,7 +43,7 @@ impl WebSocketRequestBuilder {
     /// Creates a new WebSocket request builder.
     pub fn new(inner: RequestBuilder) -> Self {
         Self {
-            inner,
+            inner: inner.version(Version::HTTP_11),
             accept_key: None,
             protocols: None,
             config: WebSocketConfig::default(),
@@ -145,21 +145,6 @@ impl WebSocketRequestBuilder {
         self
     }
 
-    /// Configures the WebSocket connection to use HTTP/2.
-    ///
-    /// This method sets the HTTP version to HTTP/2 for the WebSocket connection.
-    /// If the server does not support HTTP/2 WebSocket connections, the connection attempt will
-    /// fail.
-    ///
-    /// # Returns
-    ///
-    /// * `Self` - The modified instance with the HTTP version set to HTTP/2.
-    #[inline]
-    pub fn use_http2(mut self) -> Self {
-        self.inner = self.inner.version(Version::HTTP_2);
-        self
-    }
-
     /// Add a `Header` to this Request.
     #[inline]
     pub fn header<K, V>(mut self, key: K, value: V) -> Self
@@ -238,6 +223,23 @@ impl WebSocketRequestBuilder {
     #[inline]
     pub fn query<T: Serialize + ?Sized>(mut self, query: &T) -> Self {
         self.inner = self.inner.query(query);
+        self
+    }
+
+    /// Forces the WebSocket connection to use HTTP/2 protocol.
+    ///
+    /// This method configures the WebSocket connection to use HTTP/2's Extended
+    /// CONNECT Protocol (RFC 8441) for the handshake instead of the traditional
+    /// HTTP/1.1 upgrade mechanism.
+    ///
+    /// # Behavior
+    ///
+    /// - Uses `CONNECT` method with `:protocol: websocket` pseudo-header
+    /// - Requires server support for HTTP/2 WebSocket connections
+    /// - Will fail if server doesn't support HTTP/2 WebSocket upgrade
+    #[inline]
+    pub fn force_http2(mut self) -> Self {
+        self.inner = self.inner.version(Version::HTTP_2);
         self
     }
 
@@ -326,7 +328,7 @@ impl WebSocketRequestBuilder {
             .map_err(|_| Error::url_bad_scheme(url.clone()))?;
 
         // Get the version of the request
-        let version = request.version().unwrap_or(Version::HTTP_11);
+        let version = request.version();
 
         // Set the headers for the websocket handshake
         let headers = request.headers_mut();
@@ -337,7 +339,7 @@ impl WebSocketRequestBuilder {
 
         // Ensure the request is HTTP 1.1/HTTP 2
         let accept_key = match version {
-            Version::HTTP_10 | Version::HTTP_11 => {
+            Some(Version::HTTP_10 | Version::HTTP_11) => {
                 // Generate a nonce if one wasn't provided
                 let nonce = self
                     .accept_key
@@ -354,7 +356,7 @@ impl WebSocketRequestBuilder {
                 *request.version_mut() = Some(Version::HTTP_11);
                 Some(nonce)
             }
-            Version::HTTP_2 => {
+            Some(Version::HTTP_2) => {
                 *request.method_mut() = Method::CONNECT;
                 *request.version_mut() = Some(Version::HTTP_2);
                 *request.config_mut::<RequestExtendedConnectProtocol>() =
@@ -391,7 +393,6 @@ impl WebSocketRequestBuilder {
                 accept_key,
                 protocols: self.protocols,
                 config: self.config,
-                version,
             })
     }
 }
@@ -406,7 +407,6 @@ pub struct WebSocketResponse {
     accept_key: Option<Cow<'static, str>>,
     protocols: Option<Vec<Cow<'static, str>>>,
     config: WebSocketConfig,
-    version: Version,
 }
 
 impl Deref for WebSocketResponse {
@@ -431,17 +431,7 @@ impl WebSocketResponse {
             let status = self.inner.status();
             let headers = self.inner.headers();
 
-            if !matches!(
-                self.inner.version(),
-                Version::HTTP_10 | Version::HTTP_11 | Version::HTTP_2
-            ) {
-                return Err(Error::upgrade(format!(
-                    "unexpected version: {:?}",
-                    self.inner.version()
-                )));
-            }
-
-            match self.version {
+            match self.inner.version() {
                 Version::HTTP_10 | Version::HTTP_11 => {
                     if status != StatusCode::SWITCHING_PROTOCOLS {
                         let body = self.inner.text().await?;
@@ -482,7 +472,7 @@ impl WebSocketResponse {
                 _ => {
                     return Err(Error::upgrade(format!(
                         "unsupported version: {:?}",
-                        self.version
+                        self.inner.version()
                     )));
                 }
             }
