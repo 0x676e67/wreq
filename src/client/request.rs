@@ -372,7 +372,7 @@ impl RequestBuilder {
     pub fn timeout(mut self, timeout: Duration) -> RequestBuilder {
         if let Ok(ref mut req) = self.request {
             req.config_mut_or_default::<RequestTimeoutOptions>()
-                .total_timeout_mut(timeout);
+                .total_timeout(timeout);
         }
         self
     }
@@ -385,7 +385,7 @@ impl RequestBuilder {
     pub fn read_timeout(mut self, timeout: Duration) -> RequestBuilder {
         if let Ok(ref mut req) = self.request {
             req.config_mut_or_default::<RequestTimeoutOptions>()
-                .read_timeout_mut(timeout);
+                .read_timeout(timeout);
         }
         self
     }

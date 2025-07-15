@@ -13,22 +13,22 @@ pub use self::{
 
 #[derive(Debug, Clone, Default)]
 pub struct TimeoutOptions {
-    total: Option<Duration>,
-    read: Option<Duration>,
+    total_timeout: Option<Duration>,
+    read_timeout: Option<Duration>,
 }
 
 impl TimeoutOptions {
-    /// Get a mutable reference to the read timeout.
+    /// Sets the total timeout for the options.
     #[inline]
-    pub fn read_timeout_mut(&mut self, read: Duration) -> &mut Self {
-        self.read = Some(read);
+    pub fn read_timeout(&mut self, read_timeout: Duration) -> &mut Self {
+        self.read_timeout = Some(read_timeout);
         self
     }
 
-    /// Get a mutable reference to the total timeout.
+    /// Sets the total timeout for the options.
     #[inline]
-    pub fn total_timeout_mut(&mut self, total: Duration) -> &mut Self {
-        self.total = Some(total);
+    pub fn total_timeout(&mut self, total_timeout: Duration) -> &mut Self {
+        self.total_timeout = Some(total_timeout);
         self
     }
 }

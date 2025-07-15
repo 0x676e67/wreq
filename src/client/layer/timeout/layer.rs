@@ -27,7 +27,10 @@ impl TimeoutLayer {
     /// Create a timeout from a duration
     pub const fn new(total: Option<Duration>, read: Option<Duration>) -> Self {
         TimeoutLayer {
-            timeout: RequestConfig::new(Some(TimeoutOptions { total, read })),
+            timeout: RequestConfig::new(Some(TimeoutOptions {
+                total_timeout: total,
+                read_timeout: read,
+            })),
         }
     }
 }
@@ -91,7 +94,10 @@ impl ResponseBodyTimeoutLayer {
     /// Creates a new [`ResponseBodyTimeoutLayer`].
     pub const fn new(total: Option<Duration>, read: Option<Duration>) -> Self {
         Self {
-            timeout: RequestConfig::new(Some(TimeoutOptions { total, read })),
+            timeout: RequestConfig::new(Some(TimeoutOptions {
+                total_timeout: total,
+                read_timeout: read,
+            })),
         }
     }
 }
@@ -147,11 +153,11 @@ fn resolve_timeout_config(
 
     match (layer_opts.as_ref(), request_opts) {
         (Some(layer_opts), Some(request_opts)) => (
-            request_opts.total.or(layer_opts.total),
-            request_opts.read.or(layer_opts.read),
+            request_opts.total_timeout.or(layer_opts.total_timeout),
+            request_opts.read_timeout.or(layer_opts.read_timeout),
         ),
-        (Some(layer_opts), None) => (layer_opts.total, layer_opts.read),
-        (None, Some(request_opts)) => (request_opts.total, request_opts.read),
+        (Some(layer_opts), None) => (layer_opts.total_timeout, layer_opts.read_timeout),
+        (None, Some(request_opts)) => (request_opts.total_timeout, request_opts.read_timeout),
         (None, None) => (None, None),
     }
 }
