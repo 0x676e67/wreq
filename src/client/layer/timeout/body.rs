@@ -103,6 +103,7 @@ where
     type Data = B::Data;
     type Error = BoxError;
 
+    #[inline(always)]
     fn poll_frame(
         self: Pin<&mut Self>,
         cx: &mut Context<'_>,
