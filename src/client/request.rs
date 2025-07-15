@@ -30,10 +30,7 @@ use crate::{
     EmulationFactory, Error, Method, OriginalHeaders, Proxy, Url,
     core::{
         client::options::TransportOptions,
-        ext::{
-            RequestConfig, RequestConfigValue, RequestEnforcedHttpVersion, RequestOriginalHeaders,
-            RequestProxyMatcher, RequestTcpConnectOptions, RequestTransportOptions,
-        },
+        ext::{RequestConfig, RequestConfigValue, RequestOriginalHeaders, RequestScopedOptions},
     },
     header::{CONTENT_TYPE, HeaderMap, HeaderName, HeaderValue},
     redirect,
@@ -43,6 +40,7 @@ use crate::{
 pub struct Request {
     method: Method,
     url: Url,
+    version: Option<Version>,
     headers: HeaderMap,
     body: Option<Body>,
     extensions: Extensions,
@@ -64,6 +62,7 @@ impl Request {
         Request {
             method,
             url,
+            version: None,
             headers: HeaderMap::new(),
             body: None,
             extensions: Extensions::new(),
@@ -121,19 +120,24 @@ impl Request {
     /// Get the http version.
     #[inline]
     pub fn version(&self) -> Option<&Version> {
-        RequestConfig::<RequestEnforcedHttpVersion>::get(&self.extensions)
+        self.version.as_ref()
     }
 
     /// Get a mutable reference to the http version.
     #[inline]
     pub fn version_mut(&mut self) -> &mut Option<Version> {
-        self.config_mut::<RequestEnforcedHttpVersion>()
+        self.config_mut::<RequestScopedOptions>()
+            .enforced_version_mut()
     }
 
     /// Get a mutable reference to the request config value.
     #[inline]
-    pub(crate) fn config_mut<T: RequestConfigValue>(&mut self) -> &mut Option<T::Value> {
-        RequestConfig::<T>::get_mut(&mut self.extensions)
+    pub(crate) fn config_mut<T>(&mut self) -> &mut T::Value
+    where
+        T: RequestConfigValue,
+        T::Value: Default,
+    {
+        RequestConfig::<T>::get_mut(&mut self.extensions).get_or_insert_default()
     }
 
     /// Get the extensions.
@@ -281,7 +285,7 @@ impl RequestBuilder {
     /// Set the original headers for this request.
     pub fn original_headers(mut self, original_headers: OriginalHeaders) -> RequestBuilder {
         if let Ok(ref mut req) = self.request {
-            *req.config_mut::<RequestOriginalHeaders>() = Some(original_headers);
+            *req.config_mut::<RequestOriginalHeaders>() = original_headers;
         }
         self
     }
@@ -289,7 +293,7 @@ impl RequestBuilder {
     /// Set skip client default headers for this request.
     pub fn default_headers(mut self, skip: bool) -> RequestBuilder {
         if let Ok(ref mut req) = self.request {
-            *req.config_mut::<RequestSkipDefaultHeaders>() = Some(skip);
+            *req.config_mut::<RequestSkipDefaultHeaders>() = skip;
         }
         self
     }
@@ -364,7 +368,7 @@ impl RequestBuilder {
     /// the timeout configured using `ClientBuilder::timeout()`.
     pub fn timeout(mut self, timeout: Duration) -> RequestBuilder {
         if let Ok(ref mut req) = self.request {
-            *req.config_mut::<RequestTotalTimeout>() = Some(timeout);
+            *req.config_mut::<RequestTotalTimeout>() = timeout;
         }
         self
     }
@@ -376,7 +380,7 @@ impl RequestBuilder {
     /// overrides the read timeout configured using `ClientBuilder::read_timeout()`.
     pub fn read_timeout(mut self, timeout: Duration) -> RequestBuilder {
         if let Ok(ref mut req) = self.request {
-            *req.config_mut::<RequestReadTimeout>() = Some(timeout);
+            *req.config_mut::<RequestReadTimeout>() = timeout;
         }
         self
     }
@@ -469,7 +473,7 @@ impl RequestBuilder {
     /// Set the redirect policy for this request.
     pub fn redirect(mut self, policy: redirect::Policy) -> RequestBuilder {
         if let Ok(ref mut req) = self.request {
-            *req.config_mut::<RequestRedirectPolicy>() = Some(policy);
+            *req.config_mut::<RequestRedirectPolicy>() = policy;
         }
         self
     }
@@ -478,9 +482,7 @@ impl RequestBuilder {
     #[cfg(feature = "gzip")]
     pub fn gzip(mut self, gzip: bool) -> RequestBuilder {
         if let Ok(ref mut req) = self.request {
-            req.config_mut::<RequestAcceptEncoding>()
-                .get_or_insert_default()
-                .gzip(gzip);
+            req.config_mut::<RequestAcceptEncoding>().gzip(gzip);
         }
         self
     }
@@ -489,9 +491,7 @@ impl RequestBuilder {
     #[cfg(feature = "brotli")]
     pub fn brotli(mut self, brotli: bool) -> RequestBuilder {
         if let Ok(ref mut req) = self.request {
-            req.config_mut::<RequestAcceptEncoding>()
-                .get_or_insert_default()
-                .brotli(brotli);
+            req.config_mut::<RequestAcceptEncoding>().brotli(brotli);
         }
         self
     }
@@ -500,9 +500,7 @@ impl RequestBuilder {
     #[cfg(feature = "deflate")]
     pub fn deflate(mut self, deflate: bool) -> RequestBuilder {
         if let Ok(ref mut req) = self.request {
-            req.config_mut::<RequestAcceptEncoding>()
-                .get_or_insert_default()
-                .deflate(deflate);
+            req.config_mut::<RequestAcceptEncoding>().deflate(deflate);
         }
         self
     }
@@ -511,9 +509,7 @@ impl RequestBuilder {
     #[cfg(feature = "zstd")]
     pub fn zstd(mut self, zstd: bool) -> RequestBuilder {
         if let Ok(ref mut req) = self.request {
-            req.config_mut::<RequestAcceptEncoding>()
-                .get_or_insert_default()
-                .zstd(zstd);
+            req.config_mut::<RequestAcceptEncoding>().zstd(zstd);
         }
         self
     }
@@ -539,7 +535,8 @@ impl RequestBuilder {
     /// ```
     pub fn proxy(mut self, proxy: Proxy) -> RequestBuilder {
         if let Ok(ref mut req) = self.request {
-            *req.config_mut::<RequestProxyMatcher>() = Some(proxy.into_matcher());
+            *req.config_mut::<RequestScopedOptions>().proxy_matcher_mut() =
+                Some(proxy.into_matcher());
         }
         self
     }
@@ -550,7 +547,8 @@ impl RequestBuilder {
         V: Into<Option<IpAddr>>,
     {
         if let Ok(ref mut req) = self.request {
-            req.config_mut::<RequestTcpConnectOptions>()
+            req.config_mut::<RequestScopedOptions>()
+                .tcp_connect_opts_mut()
                 .get_or_insert_default()
                 .set_local_address(local_address.into());
         }
@@ -564,7 +562,8 @@ impl RequestBuilder {
         V6: Into<Option<Ipv6Addr>>,
     {
         if let Ok(ref mut req) = self.request {
-            req.config_mut::<RequestTcpConnectOptions>()
+            req.config_mut::<RequestScopedOptions>()
+                .tcp_connect_opts_mut()
                 .get_or_insert_default()
                 .set_local_addresses(ipv4.into(), ipv6.into());
         }
@@ -589,7 +588,8 @@ impl RequestBuilder {
         I: Into<std::borrow::Cow<'static, str>>,
     {
         if let Ok(ref mut req) = self.request {
-            req.config_mut::<RequestTcpConnectOptions>()
+            req.config_mut::<RequestScopedOptions>()
+                .tcp_connect_opts_mut()
                 .get_or_insert_default()
                 .set_interface(interface.into());
         }
@@ -613,7 +613,8 @@ impl RequestBuilder {
             if let Some((tls_opts, http1_opts, http2_opts)) =
                 transport_opts.map(TransportOptions::into_parts)
             {
-                req.config_mut::<RequestTransportOptions>()
+                req.config_mut::<RequestScopedOptions>()
+                    .transport_opts_mut()
                     .get_or_insert_default()
                     .http1_options(http1_opts)
                     .http2_options(http2_opts)
@@ -837,6 +838,7 @@ where
         let Parts {
             method,
             uri,
+            version,
             headers,
             ..
         } = parts;
@@ -844,6 +846,7 @@ where
         Ok(Request {
             method,
             url,
+            version: Some(version),
             headers,
             body: Some(body.into()),
             extensions: Extensions::new(),

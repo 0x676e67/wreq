@@ -39,15 +39,12 @@ use crate::{
         client::{
             conn::TrySendError as ConnTrySendError,
             connect::{Alpn, Connect, Connected, Connection, TcpConnectOptions},
-            options::{TransportOptions, http1::Http1Options, http2::Http2Options},
+            options::{http1::Http1Options, http2::Http2Options},
         },
         collections::{RANDOM_STATE, memo::HashMemo},
         common::{Exec, Lazy, lazy, timer},
         error::BoxError,
-        ext::{
-            RequestConfig, RequestEnforcedHttpVersion, RequestProxyMatcher,
-            RequestTcpConnectOptions, RequestTransportOptions,
-        },
+        ext::{RequestConfig, RequestScopedOptions},
         rt::{Executor, Timer},
     },
     proxy::Matcher as ProxyMacher,
@@ -65,10 +62,9 @@ type BoxSendFuture = Pin<Box<dyn Future<Output = ()> + Send>>;
 /// and is shared across `ConnRequest` and other connection-related logic.
 ///
 /// It implements `Eq`, `Hash`, and `Clone` to support caching and deduplication.
-#[derive(Clone, Hash, Debug, Eq, PartialEq)]
+#[derive(Debug, Clone, Hash, Eq, PartialEq)]
 pub struct ConnExtra {
-    scheme: Option<Scheme>,
-    authority: Option<Authority>,
+    uri: Uri,
     alpn_protocol: Option<AlpnProtocol>,
     proxy_matcher: Option<ProxyMacher>,
     tcp_options: Option<TcpConnectOptions>,
@@ -111,7 +107,7 @@ impl ConnExtra {
 ///
 /// This type implements `Hash`, `Eq`, and `Clone` to support use
 /// in maps, caches, or deduplicated pools.
-#[derive(Clone, Hash, Debug, Eq, PartialEq)]
+#[derive(Debug, Clone, Hash, Eq, PartialEq)]
 pub(crate) struct ConnKey(Arc<HashMemo<ConnExtra>>);
 
 /// Describes all the parameters needed to initiate a client connection.
@@ -332,13 +328,14 @@ where
         };
 
         // Extract config extensions
-        let (tcp_options, transport_options, version, proxy_matcher) =
-            extract_request_configs(req.extensions_mut());
+        let (proxy_matcher, enforced_version, tcp_options, transport_options) =
+            RequestConfig::<RequestScopedOptions>::remove(req.extensions_mut())
+                .unwrap_or_default()
+                .into_parts();
 
-        let mut tls_options = None;
         let mut this = self.clone();
-
-        let alpn_protocol = match version {
+        let mut tls_options = None;
+        let alpn_protocol = match enforced_version {
             Some(Version::HTTP_11 | Version::HTTP_10 | Version::HTTP_09) => {
                 Some(AlpnProtocol::HTTP1)
             }
@@ -356,8 +353,7 @@ where
         let conn_req = ConnRequest {
             extra: Arc::new(HashMemo::with_hasher(
                 ConnExtra {
-                    scheme: uri.scheme().cloned(),
-                    authority: uri.authority().cloned(),
+                    uri: uri.clone(),
                     alpn_protocol,
                     proxy_matcher,
                     tcp_options,
@@ -1031,28 +1027,6 @@ fn authority_form(uri: &mut Uri) {
             unreachable!("authority_form with relative uri");
         }
     };
-}
-
-fn extract_request_configs(
-    extensions: &mut http::Extensions,
-) -> (
-    Option<TcpConnectOptions>,
-    Option<TransportOptions>,
-    Option<Version>,
-    Option<ProxyMacher>,
-) {
-    macro_rules! take {
-        ($type:ty) => {
-            RequestConfig::<$type>::remove(extensions)
-        };
-    }
-
-    (
-        take!(RequestTcpConnectOptions),
-        take!(RequestTransportOptions),
-        take!(RequestEnforcedHttpVersion),
-        take!(RequestProxyMatcher),
-    )
 }
 
 fn normalize_uri<B>(req: &mut Request<B>, is_http_connect: bool) -> Result<Uri, Error> {
