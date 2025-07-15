@@ -60,7 +60,6 @@ serde_urlencoded = "0.7.1"
 tower = { version = "0.5.2", default-features = false, features = ["timeout", "util", "retry"] }
 sync_wrapper = { version = "1.0", features = ["futures"] }
 
-# core
 bytes = "1.2"
 http = "1"
 http-body = "1"
@@ -79,7 +78,6 @@ ipnet = "2.11.0"
 schnellru = { version = "0.2.4", default-features = false }
 ahash = { version = "0.8.11", default-features = false }
 
-## boring-tls
 boring2 = { version = "5.0.0-alpha.4", features = ["pq-experimental"] }
 tokio-boring2 = { version = "5.0.0-alpha.4", features = ["pq-experimental"] }
 brotli = "8.0.1"
@@ -98,7 +96,7 @@ mime_guess = { version = "2.0", default-features = false, optional = true }
 encoding_rs = { version = "0.8", optional = true }
 mime = { version = "0.3.17", optional = true }
 
-# root certs
+## root certs
 webpki-root-certs = { version = "1.0.0", optional = true }
 
 ## cookies
