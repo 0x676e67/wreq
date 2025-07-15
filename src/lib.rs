@@ -248,7 +248,6 @@
 //! The following are a list of [Cargo features][cargo-features] that can be
 //! enabled or disabled:
 //!
-//! - **full**: Enables all optional features.
 //! - **websocket**: Provides websocket support.
 //! - **cookies**: Provides cookie session support.
 //! - **gzip**: Provides response body gzip decompression.
