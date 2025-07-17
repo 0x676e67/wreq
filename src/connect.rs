@@ -90,7 +90,7 @@ impl ConnectorBuilder {
     /// If a domain resolves to multiple IP addresses, the timeout will be
     /// evenly divided across them.
     #[inline]
-    pub(crate) fn connect_timeout(mut self, timeout: Option<Duration>) -> ConnectorBuilder {
+    pub(crate) fn timeout(mut self, timeout: Option<Duration>) -> ConnectorBuilder {
         self.timeout = timeout;
         self
     }

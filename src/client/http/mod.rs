@@ -293,6 +293,7 @@ impl ClientBuilder {
                 http.set_keepalive_retries(config.tcp_keepalive_retries);
                 http.set_reuse_address(config.tcp_reuse_address);
                 http.set_connect_options(config.tcp_connect_options);
+                http.set_connect_timeout(config.connect_timeout);
                 http.set_nodelay(config.tcp_nodelay);
                 #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
                 http.set_tcp_user_timeout(config.tcp_user_timeout);
@@ -317,7 +318,7 @@ impl ClientBuilder {
             };
 
             Connector::builder(proxies.clone(), resolver)
-                .connect_timeout(config.connect_timeout)
+                .timeout(config.connect_timeout)
                 .tls_info(config.tls_info)
                 .verbose(config.connection_verbose)
                 .with_http(http)
