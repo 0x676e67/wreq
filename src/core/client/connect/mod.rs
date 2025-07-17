@@ -86,7 +86,6 @@ use ::http::Extensions;
 pub use self::{
     http::{HttpConnector, HttpInfo},
     options::TcpConnectOptions,
-    sealed::Connect,
 };
 
 /// Describes a type returned by a connector.
@@ -306,86 +305,4 @@ where
         self.0.set(res);
         res.insert(self.1.clone());
     }
-}
-
-pub(super) mod sealed {
-    use std::future::Future;
-
-    use tower::util::Oneshot;
-
-    use super::Connection;
-    use crate::core::{
-        client::ConnRequest,
-        error::BoxError,
-        rt::{Read, Write},
-    };
-
-    /// Connect to a destination, returning an IO transport.
-    ///
-    /// A connector receives a [`Uri`] and returns a `Future` of the
-    /// ready connection.
-    ///
-    /// # Trait Alias
-    ///
-    /// This is really just an *alias* for the `tower::Service` trait, with
-    /// additional bounds set for convenience *inside* core. You don't actually
-    /// implement this trait, but `tower::Service<Uri>` instead.
-    // The `Sized` bound is to prevent creating `dyn Connect`, since they cannot
-    // fit the `Connect` bounds because of the blanket impl for `Service`.
-    pub trait Connect: Sealed + Sized {
-        #[doc(hidden)]
-        type _Svc: ConnectSvc;
-        #[doc(hidden)]
-        fn connect(self, _: Internal, req: ConnRequest) -> <Self::_Svc as ConnectSvc>::Future;
-    }
-
-    pub trait ConnectSvc {
-        type Connection: Read + Write + Connection + Unpin + Send + 'static;
-        type Error: Into<BoxError>;
-        type Future: Future<Output = Result<Self::Connection, Self::Error>> + Unpin + Send + 'static;
-
-        fn connect(self, _: Internal, req: ConnRequest) -> Self::Future;
-    }
-
-    impl<S, T> Connect for S
-    where
-        S: tower::Service<ConnRequest, Response = T> + Send + 'static,
-        S::Error: Into<BoxError>,
-        S::Future: Unpin + Send,
-        T: Read + Write + Connection + Unpin + Send + 'static,
-    {
-        type _Svc = S;
-
-        fn connect(self, _: Internal, req: ConnRequest) -> Oneshot<S, ConnRequest> {
-            Oneshot::new(self, req)
-        }
-    }
-
-    impl<S, T> ConnectSvc for S
-    where
-        S: tower::Service<ConnRequest, Response = T> + Send + 'static,
-        S::Error: Into<BoxError>,
-        S::Future: Unpin + Send,
-        T: Read + Write + Connection + Unpin + Send + 'static,
-    {
-        type Connection = T;
-        type Error = S::Error;
-        type Future = Oneshot<S, ConnRequest>;
-
-        fn connect(self, _: Internal, req: ConnRequest) -> Self::Future {
-            Oneshot::new(self, req)
-        }
-    }
-
-    impl<S, T> Sealed for S
-    where
-        S: tower::Service<ConnRequest, Response = T> + Send,
-        S::Error: Into<BoxError>,
-        S::Future: Unpin + Send,
-        T: Read + Write + Connection + Unpin + Send + 'static,
-    {
-    }
-
-    pub trait Sealed {}
-    pub struct Internal;
 }

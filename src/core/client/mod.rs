@@ -32,20 +32,21 @@ use http::{
 use http_body::Body;
 use pool::Ver;
 use sync_wrapper::SyncWrapper;
+use tower::util::Oneshot;
 
 use crate::{
     core::{
         body::Incoming,
         client::{
             conn::TrySendError as ConnTrySendError,
-            connect::{Alpn, Connect, Connected, Connection, TcpConnectOptions},
+            connect::{Alpn, Connected, Connection, TcpConnectOptions},
             options::{http1::Http1Options, http2::Http2Options},
         },
         collections::{RANDOM_STATE, memo::HashMemo},
         common::{Exec, Lazy, lazy, timer},
         error::BoxError,
         ext::{RequestConfig, RequestScopedOptions},
-        rt::{Executor, Timer},
+        rt::{Executor, Read, Timer, Write},
     },
     proxy::Matcher as ProxyMacher,
     tls::{AlpnProtocol, TlsOptions},
@@ -273,7 +274,10 @@ impl Client<(), ()> {
 
 impl<C, B> Client<C, B>
 where
-    C: Connect + Clone + Send + Sync + 'static,
+    C: tower::Service<ConnRequest> + Clone + Send + Sync + 'static,
+    C::Response: Read + Write + Connection + Unpin + Send + 'static,
+    C::Error: Into<BoxError>,
+    C::Future: Unpin + Send + 'static,
     B: Body + Send + 'static + Unpin,
     B::Data: Send,
     B::Error: Into<BoxError>,
@@ -632,8 +636,7 @@ where
                 }
             };
             Either::Left(
-                connector
-                    .connect(connect::sealed::Internal, req)
+                Oneshot::new(connector, req)
                     .map_err(|src| e!(Connect, src))
                     .and_then(move |io| {
                         let connected = io.connected();
@@ -784,7 +787,10 @@ where
 
 impl<C, B> tower::Service<Request<B>> for Client<C, B>
 where
-    C: Connect + Clone + Send + Sync + 'static,
+    C: tower::Service<ConnRequest> + Clone + Send + Sync + 'static,
+    C::Response: Read + Write + Connection + Unpin + Send + 'static,
+    C::Error: Into<BoxError>,
+    C::Future: Unpin + Send + 'static,
     B: Body + Send + 'static + Unpin,
     B::Data: Send,
     B::Error: Into<BoxError>,
@@ -804,7 +810,10 @@ where
 
 impl<C, B> tower::Service<Request<B>> for &'_ Client<C, B>
 where
-    C: Connect + Clone + Send + Sync + 'static,
+    C: tower::Service<ConnRequest> + Clone + Send + Sync + 'static,
+    C::Response: Read + Write + Connection + Unpin + Send + 'static,
+    C::Error: Into<BoxError>,
+    C::Future: Unpin + Send + 'static,
     B: Body + Send + 'static + Unpin,
     B::Data: Send,
     B::Error: Into<BoxError>,
@@ -1278,7 +1287,10 @@ impl Builder {
     /// Combine the configuration of this builder with a connector to create a `Client`.
     pub fn build<C, B>(&self, connector: C) -> Client<C, B>
     where
-        C: Connect + Clone,
+        C: tower::Service<ConnRequest> + Clone + Send + Sync + 'static,
+        C::Response: Read + Write + Connection + Unpin + Send + 'static,
+        C::Error: Into<BoxError>,
+        C::Future: Unpin + Send + 'static,
         B: Body + Send,
         B::Data: Send,
     {
