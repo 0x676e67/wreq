@@ -401,6 +401,10 @@ impl<T: Poolable, K: Key> PoolInner<T, K> {
             return;
         };
 
+        if dur == Duration::ZERO {
+            return;
+        }
+
         let timer = if let Some(timer) = self.timer.clone() {
             timer
         } else {
