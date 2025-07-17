@@ -96,14 +96,14 @@ impl ConnectorBuilder {
     }
 
     /// Set connecting verbose mode.
-    #[inline(always)]
+    #[inline]
     pub(crate) fn verbose(mut self, enabled: bool) -> ConnectorBuilder {
         self.verbose.0 = enabled;
         self
     }
 
     /// Sets the TLS info flag.
-    #[inline(always)]
+    #[inline]
     pub(crate) fn tls_info(mut self, enabled: bool) -> ConnectorBuilder {
         self.tls_info = enabled;
         self
