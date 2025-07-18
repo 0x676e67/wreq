@@ -238,7 +238,8 @@ where
             let h2 = proto::h2::client::handshake(
                 io,
                 rx,
-                &builder.opts.config,
+                builder.opts.builder,
+                builder.opts.ping_config,
                 builder.exec,
                 builder.timer,
             )

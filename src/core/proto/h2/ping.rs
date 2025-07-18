@@ -87,8 +87,8 @@ pub(super) fn channel(ping_pong: PingPong, config: Config, __timer: Time) -> (Re
     )
 }
 
-#[derive(Clone)]
-pub(super) struct Config {
+#[derive(Debug, Clone)]
+pub(crate) struct Config {
     pub(super) bdp_initial_window: Option<WindowSize>,
     /// If no frames are received in this amount of time, a PING frame is sent.
     pub(super) keep_alive_interval: Option<Duration>,
@@ -175,6 +175,26 @@ pub(super) struct KeepAliveTimedOut;
 // ===== impl Config =====
 
 impl Config {
+    /// Creates a new `Config` with the specified parameters.
+    pub(crate) fn new(
+        adaptive_window: bool,
+        initial_window_size: u32,
+        keep_alive_interval: Option<Duration>,
+        keep_alive_timeout: Duration,
+        keep_alive_while_idle: bool,
+    ) -> Self {
+        Config {
+            bdp_initial_window: if adaptive_window {
+                Some(initial_window_size)
+            } else {
+                None
+            },
+            keep_alive_interval,
+            keep_alive_timeout,
+            keep_alive_while_idle,
+        }
+    }
+
     pub(super) fn is_enabled(&self) -> bool {
         self.bdp_initial_window.is_some() || self.keep_alive_interval.is_some()
     }

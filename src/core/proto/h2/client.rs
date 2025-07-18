@@ -4,7 +4,6 @@ use std::{
     marker::PhantomData,
     pin::Pin,
     task::{Context, Poll, ready},
-    time::Duration,
 };
 
 use bytes::Bytes;
@@ -22,7 +21,6 @@ use http_body::Body;
 use http2::{
     SendStream,
     client::{Builder, Connection, ResponseFuture, SendRequest},
-    frame::{ExperimentalSettings, Priorities, PseudoOrder, SettingsOrder, StreamDependency},
 };
 use pin_project_lite::pin_project;
 
@@ -52,151 +50,11 @@ type ConnDropRef = mpsc::Sender<Infallible>;
 ///// the "dispatch" task will be notified and can shutdown sooner.
 type ConnEof = oneshot::Receiver<Infallible>;
 
-// Our defaults are chosen for the "majority" case, which usually are not
-// resource constrained, and so the spec default of 64kb can be too limiting
-// for performance.
-const DEFAULT_CONN_WINDOW: u32 = 1024 * 1024 * 5; // 5mb
-const DEFAULT_STREAM_WINDOW: u32 = 1024 * 1024 * 2; // 2mb
-const DEFAULT_MAX_SEND_BUF_SIZE: usize = 1024 * 1024; // 1mb
-
-// The maximum number of concurrent streams that the client is allowed to open
-// before it receives the initial SETTINGS frame from the server.
-// This default value is derived from what the HTTP/2 spec recommends as the
-// minimum value that endpoints advertise to their peers. It means that using
-// this value will minimize the chance of the failure where the local endpoint
-// attempts to open too many streams and gets rejected by the remote peer with
-// the `REFUSED_STREAM` error.
-const DEFAULT_INITIAL_MAX_SEND_STREAMS: usize = 100;
-
-#[derive(Clone, Debug)]
-pub(crate) struct Config {
-    pub(crate) adaptive_window: bool,
-    pub(crate) initial_stream_id: Option<u32>,
-    pub(crate) initial_conn_window_size: u32,
-    pub(crate) initial_stream_window_size: u32,
-    pub(crate) initial_max_send_streams: usize,
-    pub(crate) max_frame_size: Option<u32>,
-    pub(crate) keep_alive_interval: Option<Duration>,
-    pub(crate) keep_alive_timeout: Duration,
-    pub(crate) keep_alive_while_idle: bool,
-    pub(crate) max_concurrent_reset_streams: Option<usize>,
-    pub(crate) max_send_buffer_size: usize,
-    pub(crate) max_concurrent_streams: Option<u32>,
-    pub(crate) max_header_list_size: Option<u32>,
-    pub(crate) max_pending_accept_reset_streams: Option<usize>,
-    pub(crate) enable_push: Option<bool>,
-    pub(crate) header_table_size: Option<u32>,
-    pub(crate) enable_connect_protocol: Option<bool>,
-    pub(crate) no_rfc7540_priorities: Option<bool>,
-    pub(crate) headers_pseudo_order: Option<PseudoOrder>,
-    pub(crate) headers_stream_dependency: Option<StreamDependency>,
-    pub(crate) experimental_settings: Option<ExperimentalSettings>,
-    pub(crate) settings_order: Option<SettingsOrder>,
-    pub(crate) priorities: Option<Priorities>,
-}
-
-impl Default for Config {
-    fn default() -> Config {
-        Config {
-            adaptive_window: false,
-            initial_stream_id: None,
-            initial_conn_window_size: DEFAULT_CONN_WINDOW,
-            initial_stream_window_size: DEFAULT_STREAM_WINDOW,
-            initial_max_send_streams: DEFAULT_INITIAL_MAX_SEND_STREAMS,
-            max_frame_size: None,
-            max_header_list_size: None,
-            keep_alive_interval: None,
-            keep_alive_timeout: Duration::from_secs(20),
-            keep_alive_while_idle: false,
-            max_concurrent_reset_streams: None,
-            max_send_buffer_size: DEFAULT_MAX_SEND_BUF_SIZE,
-            max_pending_accept_reset_streams: None,
-            header_table_size: None,
-            max_concurrent_streams: None,
-            enable_push: None,
-            enable_connect_protocol: None,
-            no_rfc7540_priorities: None,
-            experimental_settings: None,
-            settings_order: None,
-            headers_pseudo_order: None,
-            headers_stream_dependency: None,
-            priorities: None,
-        }
-    }
-}
-
-fn new_builder(config: &Config) -> Builder {
-    let mut builder = Builder::default();
-    builder
-        .initial_max_send_streams(config.initial_max_send_streams)
-        .initial_window_size(config.initial_stream_window_size)
-        .initial_connection_window_size(config.initial_conn_window_size)
-        .max_send_buffer_size(config.max_send_buffer_size);
-    if let Some(id) = config.initial_stream_id {
-        builder.initial_stream_id(id);
-    }
-    if let Some(max) = config.max_pending_accept_reset_streams {
-        builder.max_pending_accept_reset_streams(max);
-    }
-    if let Some(max) = config.max_concurrent_reset_streams {
-        builder.max_concurrent_reset_streams(max);
-    }
-    if let Some(max) = config.max_concurrent_streams {
-        builder.max_concurrent_streams(max);
-    }
-    if let Some(max) = config.max_header_list_size {
-        builder.max_header_list_size(max);
-    }
-    if let Some(opt) = config.enable_push {
-        builder.enable_push(opt);
-    }
-    if let Some(max) = config.max_frame_size {
-        builder.max_frame_size(max);
-    }
-    if let Some(max) = config.header_table_size {
-        builder.header_table_size(max);
-    }
-    if let Some(v) = config.enable_connect_protocol {
-        builder.enable_connect_protocol(v);
-    }
-    if let Some(v) = config.no_rfc7540_priorities {
-        builder.no_rfc7540_priorities(v);
-    }
-    if let Some(ref order) = config.settings_order {
-        builder.settings_order(order.clone());
-    }
-    if let Some(ref experimental_settings) = config.experimental_settings {
-        builder.experimental_settings(experimental_settings.clone());
-    }
-    if let Some(stream_dependency) = config.headers_stream_dependency {
-        builder.headers_stream_dependency(stream_dependency);
-    }
-    if let Some(ref order) = config.headers_pseudo_order {
-        builder.headers_pseudo_order(order.clone());
-    }
-    if let Some(ref priority) = config.priorities {
-        builder.priorities(priority.clone());
-    }
-    builder
-}
-
-fn new_ping_config(config: &Config) -> ping::Config {
-    ping::Config {
-        bdp_initial_window: if config.adaptive_window {
-            Some(config.initial_stream_window_size)
-        } else {
-            None
-        },
-        keep_alive_interval: config.keep_alive_interval,
-        keep_alive_timeout: config.keep_alive_timeout,
-        keep_alive_while_idle: config.keep_alive_while_idle,
-    }
-}
-
 pub(crate) async fn handshake<T, B, E>(
     io: T,
     req_rx: ClientRx<B>,
-    config: &Config,
+    builder: Builder,
+    ping_config: ping::Config,
     mut exec: E,
     timer: Time,
 ) -> crate::core::Result<ClientTask<B, E, T>>
@@ -207,7 +65,7 @@ where
     E: Http2ClientConnExec<B, T> + Unpin,
     B::Error: Into<BoxError>,
 {
-    let (h2_tx, mut conn) = new_builder(config)
+    let (h2_tx, mut conn) = builder
         .handshake::<_, SendBuf<B::Data>>(Compat::new(io))
         .await
         .map_err(Error::new_h2)?;
@@ -218,8 +76,6 @@ where
     // parked Connection.
     let (conn_drop_ref, conn_drop_rx) = mpsc::channel(1);
     let (cancel_tx, conn_eof) = oneshot::channel();
-
-    let ping_config = new_ping_config(config);
 
     let (conn, ping) = if ping_config.is_enabled() {
         let pp = conn.ping_pong().expect("conn.ping_pong");

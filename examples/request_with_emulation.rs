@@ -53,7 +53,7 @@ async fn main() -> wreq::Result<()> {
     // HTTP/2 options config
     let http2 = Http2Options::builder()
         .initial_stream_id(3)
-        .initial_stream_window_size(16777216)
+        .initial_window_size(16777216)
         .initial_connection_window_size(16711681 + 65535)
         .headers_pseudo_order(
             PseudoOrder::builder()

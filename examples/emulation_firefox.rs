@@ -172,7 +172,7 @@ async fn main() -> wreq::Result<()> {
         Http2Options::builder()
             .initial_stream_id(15)
             .header_table_size(65536)
-            .initial_stream_window_size(131072)
+            .initial_window_size(131072)
             .max_frame_size(16384)
             .initial_connection_window_size(12517377 + 65535)
             .headers_stream_dependency(StreamDependency::new(StreamId::from(13), 41, false))

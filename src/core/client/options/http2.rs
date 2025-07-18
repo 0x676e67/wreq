@@ -1,30 +1,51 @@
 //! Re-export the `http2` module for HTTP/2 frame types and utilities.
 
-use http2::frame::ExperimentalSettings;
+use std::time::Duration;
+
 pub use http2::frame::{
     Priorities, PrioritiesBuilder, Priority, PseudoId, PseudoOrder, Setting, SettingId,
     SettingsOrder, SettingsOrderBuilder, StreamDependency, StreamId,
 };
+use http2::{client::Builder, frame::ExperimentalSettings};
 
-use crate::core::proto::{
-    h2::client::Config,
-    {self},
-};
+use crate::core::proto::{self, h2::ping};
+
+// Our defaults are chosen for the "majority" case, which usually are not
+// resource constrained, and so the spec default of 64kb can be too limiting
+// for performance.
+const DEFAULT_CONN_WINDOW_SIZE: u32 = 1024 * 1024 * 5; // 5mb
+const DEFAULT_WINDOW_SIZE: u32 = 1024 * 1024 * 2; // 2mb
+const DEFAULT_MAX_SEND_BUF_SIZE: usize = 1024 * 1024; // 1mb
+
+// The maximum number of concurrent streams that the client is allowed to open
+// before it receives the initial SETTINGS frame from the server.
+// This default value is derived from what the HTTP/2 spec recommends as the
+// minimum value that endpoints advertise to their peers. It means that using
+// this value will minimize the chance of the failure where the local endpoint
+// attempts to open too many streams and gets rejected by the remote peer with
+// the `REFUSED_STREAM` error.
+const DEFAULT_INITIAL_MAX_SEND_STREAMS: usize = 100;
 
 /// Builder for `Http2Options`.
 #[must_use]
 #[derive(Debug)]
 pub struct Http2OptionsBuilder {
-    config: Config,
+    builder: Builder,
+    adaptive_window: bool,
+    initial_window_size: u32,
+    keep_alive_interval: Option<Duration>,
+    keep_alive_timeout: Duration,
+    keep_alive_while_idle: bool,
 }
 
 /// Configuration config for an HTTP/2 connection.
 ///
 /// This struct defines various parameters to fine-tune the behavior of an HTTP/2 connection,
 /// including stream management, window sizes, frame limits, and header config.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct Http2Options {
-    pub(crate) config: Config,
+    pub(crate) builder: Builder,
+    pub(crate) ping_config: ping::Config,
 }
 
 impl Http2OptionsBuilder {
@@ -36,10 +57,11 @@ impl Http2OptionsBuilder {
     /// If not set, crate::core: will use a default.
     ///
     /// [spec]: https://httpwg.org/specs/rfc9113.html#SETTINGS_INITIAL_WINDOW_SIZE
-    pub fn initial_stream_window_size(mut self, sz: impl Into<Option<u32>>) -> Self {
+    pub fn initial_window_size(mut self, sz: impl Into<Option<u32>>) -> Self {
         if let Some(sz) = sz.into() {
-            self.config.adaptive_window = false;
-            self.config.initial_stream_window_size = sz;
+            self.adaptive_window = false;
+            self.initial_window_size = sz;
+            self.builder.initial_window_size(sz);
         }
         self
     }
@@ -51,8 +73,8 @@ impl Http2OptionsBuilder {
     /// If not set, crate::core: will use a default.
     pub fn initial_connection_window_size(mut self, sz: impl Into<Option<u32>>) -> Self {
         if let Some(sz) = sz.into() {
-            self.config.adaptive_window = false;
-            self.config.initial_conn_window_size = sz;
+            self.adaptive_window = false;
+            self.builder.initial_connection_window_size(sz);
         }
         self
     }
@@ -69,14 +91,16 @@ impl Http2OptionsBuilder {
     /// [connection preface]: https://httpwg.org/specs/rfc9113.html#preface
     pub fn initial_max_send_streams(mut self, initial: impl Into<Option<usize>>) -> Self {
         if let Some(initial) = initial.into() {
-            self.config.initial_max_send_streams = initial;
+            self.builder.initial_max_send_streams(initial);
         }
         self
     }
 
     /// Sets the initial stream id for the connection.
     pub fn initial_stream_id(mut self, id: impl Into<Option<u32>>) -> Self {
-        self.config.initial_stream_id = id.into();
+        if let Some(id) = id.into() {
+            self.builder.initial_stream_id(id);
+        }
         self
     }
 
@@ -88,10 +112,12 @@ impl Http2OptionsBuilder {
     pub fn adaptive_window(mut self, enabled: bool) -> Self {
         use proto::h2::SPEC_WINDOW_SIZE;
 
-        self.config.adaptive_window = enabled;
+        self.adaptive_window = enabled;
         if enabled {
-            self.config.initial_conn_window_size = SPEC_WINDOW_SIZE;
-            self.config.initial_stream_window_size = SPEC_WINDOW_SIZE;
+            self.initial_window_size = SPEC_WINDOW_SIZE;
+            self.builder
+                .initial_window_size(SPEC_WINDOW_SIZE)
+                .initial_connection_window_size(SPEC_WINDOW_SIZE);
         }
         self
     }
@@ -100,7 +126,9 @@ impl Http2OptionsBuilder {
     ///
     /// Default is currently 16KB, but can change.
     pub fn max_frame_size(mut self, sz: impl Into<Option<u32>>) -> Self {
-        self.config.max_frame_size = sz.into();
+        if let Some(sz) = sz.into() {
+            self.builder.max_frame_size(sz);
+        }
         self
     }
 
@@ -108,7 +136,7 @@ impl Http2OptionsBuilder {
     ///
     /// Default is currently 16KB, but can change.
     pub fn max_header_list_size(mut self, max: u32) -> Self {
-        self.config.max_header_list_size = Some(max);
+        self.builder.max_header_list_size(max);
         self
     }
 
@@ -120,7 +148,9 @@ impl Http2OptionsBuilder {
     ///
     /// The default value of crate `h2` is 4,096.
     pub fn header_table_size(mut self, size: impl Into<Option<u32>>) -> Self {
-        self.config.header_table_size = size.into();
+        if let Some(size) = size.into() {
+            self.builder.header_table_size(size);
+        }
         self
     }
 
@@ -148,7 +178,44 @@ impl Http2OptionsBuilder {
     ///
     /// [Section 5.1.2]: https://http2.github.io/http2-spec/#rfc.section.5.1.2
     pub fn max_concurrent_streams(mut self, max: impl Into<Option<u32>>) -> Self {
-        self.config.max_concurrent_streams = max.into();
+        if let Some(max) = max.into() {
+            self.builder.max_concurrent_streams(max);
+        }
+        self
+    }
+
+    /// Sets an interval for HTTP2 Ping frames should be sent to keep a
+    /// connection alive.
+    ///
+    /// Pass `None` to disable HTTP2 keep-alive.
+    ///
+    /// Default is currently disabled.
+    pub fn keep_alive_interval(&mut self, interval: impl Into<Option<Duration>>) -> &mut Self {
+        self.keep_alive_interval = interval.into();
+        self
+    }
+
+    /// Sets a timeout for receiving an acknowledgement of the keep-alive ping.
+    ///
+    /// If the ping is not acknowledged within the timeout, the connection will
+    /// be closed. Does nothing if `keep_alive_interval` is disabled.
+    ///
+    /// Default is 20 seconds.
+    pub fn keep_alive_timeout(&mut self, timeout: Duration) -> &mut Self {
+        self.keep_alive_timeout = timeout;
+        self
+    }
+
+    /// Sets whether HTTP2 keep-alive should apply while the connection is idle.
+    ///
+    /// If disabled, keep-alive pings are only sent while there are open
+    /// request/responses streams. If enabled, pings are also sent when no
+    /// streams are active. Does nothing if `keep_alive_interval` is
+    /// disabled.
+    ///
+    /// Default is `false`.
+    pub fn keep_alive_while_idle(&mut self, enabled: bool) -> &mut Self {
+        self.keep_alive_while_idle = enabled;
         self
     }
 
@@ -156,20 +223,20 @@ impl Http2OptionsBuilder {
     ///
     /// Passing `None` will do nothing.
     pub fn enable_push(mut self, opt: bool) -> Self {
-        self.config.enable_push = Some(opt);
+        self.builder.enable_push(opt);
         self
     }
 
     /// Sets the enable connect protocol.
     pub fn enable_connect_protocol(mut self, opt: bool) -> Self {
-        self.config.enable_connect_protocol = Some(opt);
+        self.builder.enable_connect_protocol(opt);
         self
     }
 
     /// Disable RFC 7540 Stream Priorities (set to `true` to disable).
     /// [RFC 9218]: <https://www.rfc-editor.org/rfc/rfc9218.html#section-2.1>
     pub fn no_rfc7540_priorities(mut self, opt: bool) -> Self {
-        self.config.no_rfc7540_priorities = Some(opt);
+        self.builder.no_rfc7540_priorities(opt);
         self
     }
 
@@ -182,7 +249,7 @@ impl Http2OptionsBuilder {
     ///
     /// [`http2::client::Builder::max_concurrent_reset_streams`]: https://docs.rs/h2/client/struct.Builder.html#method.max_concurrent_reset_streams
     pub fn max_concurrent_reset_streams(mut self, max: usize) -> Self {
-        self.config.max_concurrent_reset_streams = Some(max);
+        self.builder.max_concurrent_reset_streams(max);
         self
     }
 
@@ -195,7 +262,7 @@ impl Http2OptionsBuilder {
     /// The value must be no larger than `u32::MAX`.
     pub fn max_send_buf_size(mut self, max: usize) -> Self {
         assert!(max <= u32::MAX as usize);
-        self.config.max_send_buffer_size = max;
+        self.builder.max_send_buffer_size(max);
         self
     }
 
@@ -203,7 +270,9 @@ impl Http2OptionsBuilder {
     ///
     /// See <https://github.com/hyperium/hyper/issues/2877> for more information.
     pub fn max_pending_accept_reset_streams(mut self, max: impl Into<Option<usize>>) -> Self {
-        self.config.max_pending_accept_reset_streams = max.into();
+        if let Some(max) = max.into() {
+            self.builder.max_pending_accept_reset_streams(max);
+        }
         self
     }
 
@@ -216,7 +285,9 @@ impl Http2OptionsBuilder {
     where
         T: Into<Option<StreamDependency>>,
     {
-        self.config.headers_stream_dependency = stream_dependency.into();
+        if let Some(stream_dependency) = stream_dependency.into() {
+            self.builder.headers_stream_dependency(stream_dependency);
+        }
         self
     }
 
@@ -229,7 +300,9 @@ impl Http2OptionsBuilder {
     where
         T: Into<Option<PseudoOrder>>,
     {
-        self.config.headers_pseudo_order = headers_pseudo_order.into();
+        if let Some(headers_pseudo_order) = headers_pseudo_order.into() {
+            self.builder.headers_pseudo_order(headers_pseudo_order);
+        }
         self
     }
 
@@ -242,7 +315,9 @@ impl Http2OptionsBuilder {
     where
         T: Into<Option<ExperimentalSettings>>,
     {
-        self.config.experimental_settings = experimental_settings.into();
+        if let Some(experimental_settings) = experimental_settings.into() {
+            self.builder.experimental_settings(experimental_settings);
+        }
         self
     }
 
@@ -254,7 +329,9 @@ impl Http2OptionsBuilder {
     where
         T: Into<Option<SettingsOrder>>,
     {
-        self.config.settings_order = settings_order.into();
+        if let Some(settings_order) = settings_order.into() {
+            self.builder.settings_order(settings_order);
+        }
         self
     }
 
@@ -271,14 +348,23 @@ impl Http2OptionsBuilder {
     where
         T: Into<Option<Priorities>>,
     {
-        self.config.priorities = priorities.into();
+        if let Some(priorities) = priorities.into() {
+            self.builder.priorities(priorities);
+        }
         self
     }
 
     /// Builds the `Http2Options` instance.
     pub fn build(self) -> Http2Options {
         Http2Options {
-            config: self.config,
+            builder: self.builder,
+            ping_config: ping::Config::new(
+                self.adaptive_window,
+                self.initial_window_size,
+                self.keep_alive_interval,
+                self.keep_alive_timeout,
+                self.keep_alive_while_idle,
+            ),
         }
     }
 }
@@ -286,8 +372,26 @@ impl Http2OptionsBuilder {
 impl Http2Options {
     /// Creates a new `Http2OptionsBuilder` instance.
     pub fn builder() -> Http2OptionsBuilder {
+        let mut builder = Builder::default();
+        builder
+            .initial_window_size(DEFAULT_WINDOW_SIZE)
+            .initial_max_send_streams(DEFAULT_INITIAL_MAX_SEND_STREAMS)
+            .initial_connection_window_size(DEFAULT_CONN_WINDOW_SIZE)
+            .max_send_buffer_size(DEFAULT_MAX_SEND_BUF_SIZE);
         Http2OptionsBuilder {
-            config: Config::default(),
+            builder,
+            adaptive_window: false,
+            keep_alive_interval: None,
+            keep_alive_timeout: Duration::from_secs(20),
+            keep_alive_while_idle: false,
+            initial_window_size: DEFAULT_WINDOW_SIZE,
         }
+    }
+}
+
+impl Default for Http2Options {
+    #[inline]
+    fn default() -> Self {
+        Http2Options::builder().build()
     }
 }
