@@ -20,7 +20,7 @@ use crate::core::{
 /// another connector, and after getting an underlying connection, it creates
 /// an HTTP CONNECT tunnel over it.
 #[derive(Debug)]
-pub struct Tunnel<C> {
+pub struct TunnelConnector<C> {
     headers: Headers,
     inner: C,
     proxy_dst: Uri,
@@ -60,13 +60,13 @@ pin_project! {
 
 type BoxTunneling<T> = Pin<Box<dyn Future<Output = Result<T, TunnelError>> + Send>>;
 
-impl<C> Tunnel<C> {
-    /// Create a new Tunnel service.
+impl<C> TunnelConnector<C> {
+    /// Create a new tunnel connector.
     ///
     /// This wraps an underlying connector, and stores the address of a
     /// tunneling proxy server.
     ///
-    /// A `Tunnel` can then be called with any destination. The `dst` passed to
+    /// A `TunnelConnector` can then be called with any destination. The `proxy_dst` passed to
     /// `call` will not be used to create the underlying connection, but will
     /// be used in an HTTP CONNECT request sent to the proxy destination.
     pub fn new(proxy_dst: Uri, connector: C) -> Self {
@@ -119,7 +119,7 @@ impl<C> Tunnel<C> {
     }
 }
 
-impl<C> Service<Uri> for Tunnel<C>
+impl<C> Service<Uri> for TunnelConnector<C>
 where
     C: Service<Uri>,
     C::Future: Send + 'static,
@@ -270,7 +270,7 @@ mod tests {
     };
     use tower::Service;
 
-    use super::Tunnel;
+    use super::TunnelConnector;
     use crate::core::client::connect::HttpConnector;
 
     #[cfg(not(miri))]
@@ -280,7 +280,7 @@ mod tests {
         let addr = tcp.local_addr().expect("local_addr");
 
         let proxy_dst = format!("http://{addr}").parse().expect("uri");
-        let mut connector = Tunnel::new(proxy_dst, HttpConnector::new());
+        let mut connector = TunnelConnector::new(proxy_dst, HttpConnector::new());
         let t1 = tokio::spawn(async move {
             let _conn = connector
                 .call("https://hyper.rs".parse().unwrap())

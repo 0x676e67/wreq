@@ -70,7 +70,7 @@ impl<C> From<tokio_socks::Error> for SocksError<C> {
 /// Represents the SOCKS protocol version.
 #[derive(Clone, Copy)]
 #[repr(u8)]
-pub enum SocksVersion {
+pub enum Version {
     V4,
     V5,
 }
@@ -110,34 +110,33 @@ where
     }
 }
 
-pub struct Socks<C, R = GaiResolver> {
+pub struct SocksConnector<C, R = GaiResolver> {
     inner: C,
     resolver: R,
-    proxy: Uri,
+    proxy_dst: Uri,
     auth: Option<(Bytes, Bytes)>,
-    version: SocksVersion,
+    version: Version,
     dns_resolve: DnsResolve,
 }
 
-impl<C, R> Socks<C, R>
+impl<C, R> SocksConnector<C, R>
 where
     R: Resolve + Clone,
 {
-    /// Create a new SOCKS service with the given inner service, resolver, proxy destination,
-    /// and optional authentication credentials.
+    /// Create a new SOCKS connector with the given inner service.
     ///
-    /// The `proxy` should be a valid URI with a scheme of `socks5`, `socks5h`, `socks4`, or
-    /// `socks4a`.
+    /// The wraps an underlying connector, and stores the address of a
+    /// SOCKS proxy server.
     ///
-    /// The `auth` parameter is optional and can be used to provide a username and password for
-    /// SOCKS authentication. If provided, it should be a tuple containing the username and
-    /// password.
-    pub fn new_with_resolver(inner: C, resolver: R, proxy: Uri) -> Self {
-        Socks {
+    /// A `SocksConnector` can then be called with any destination. The `proxy_dst` passed to
+    /// `call` will not be used to create the underlying connection, but will
+    /// be used in a SOCKS handshake sent to the proxy destination.
+    pub fn new_with_resolver(proxy_dst: Uri, inner: C, resolver: R) -> Self {
+        SocksConnector {
             inner,
             resolver,
-            proxy,
-            version: SocksVersion::V5,
+            proxy_dst,
+            version: Version::V5,
             dns_resolve: DnsResolve::Local,
             auth: None,
         }
@@ -145,24 +144,24 @@ where
 
     /// Sets the authentication credentials for the SOCKS proxy connection.
     pub fn with_auth(self, auth: Option<(Bytes, Bytes)>) -> Self {
-        Socks { auth, ..self }
+        SocksConnector { auth, ..self }
     }
 
     /// Sets whether to use the SOCKS5 protocol for the proxy connection.
-    pub fn with_version(self, version: SocksVersion) -> Self {
-        Socks { version, ..self }
+    pub fn with_version(self, version: Version) -> Self {
+        SocksConnector { version, ..self }
     }
 
     /// Sets whether to resolve DNS locally or let the proxy handle DNS resolution.
     pub fn with_local_dns(self, dns_resolve: DnsResolve) -> Self {
-        Socks {
+        SocksConnector {
             dns_resolve,
             ..self
         }
     }
 }
 
-impl<C, R> Service<Uri> for Socks<C, R>
+impl<C, R> Service<Uri> for SocksConnector<C, R>
 where
     C: Service<Uri>,
     C::Future: Send + 'static,
@@ -180,7 +179,7 @@ where
     }
 
     fn call(&mut self, dst: Uri) -> Self::Future {
-        let connecting = self.inner.call(self.proxy.clone());
+        let connecting = self.inner.call(self.proxy_dst.clone());
 
         let version = self.version;
         let dns_resolve = self.dns_resolve;
@@ -214,12 +213,12 @@ where
             };
 
             match version {
-                SocksVersion::V4 => {
+                Version::V4 => {
                     // For SOCKS4, we connect directly to the target address.
                     let stream = Socks4Stream::connect_with_socket(socket, target_addr).await?;
                     Ok(stream.into_inner().into_inner())
                 }
-                SocksVersion::V5 => {
+                Version::V5 => {
                     // For SOCKS5, we need to handle authentication if provided.
                     // The `auth` is an optional tuple of (username, password).
                     let stream = match auth {

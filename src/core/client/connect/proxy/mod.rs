@@ -4,5 +4,5 @@ mod socks;
 mod tunnel;
 
 #[cfg(feature = "socks")]
-pub use self::socks::{DnsResolve, Socks, SocksVersion};
-pub use self::tunnel::Tunnel;
+pub use self::socks::{DnsResolve, SocksConnector, Version};
+pub use self::tunnel::TunnelConnector;

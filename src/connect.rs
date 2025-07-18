@@ -22,8 +22,11 @@ pub(crate) use self::conn::{Conn, Unnameable};
 use crate::{
     core::{
         client::{
-            ConnRequest,
-            connect::{self, Connected, Connection, proxy},
+            ConnExtra, ConnRequest,
+            connect::{
+                self, Connected, Connection,
+                proxy::{self, TunnelConnector},
+            },
         },
         rt::{Read, ReadBufCursor, TokioIo, Write},
     },
@@ -258,9 +261,8 @@ impl ConnectorService {
     fn build_tls_connector(
         &self,
         mut http: HttpConnector,
-        req: &ConnRequest,
+        ex_data: &ConnExtra,
     ) -> Result<HttpsConnector<HttpConnector>, BoxError> {
-        let ex_data = req.ex_data();
         http.set_connect_options(ex_data.tcp_connect_options().cloned());
         let tls = match ex_data.tls_options() {
             Some(opts) => self.tls_builder.build(opts)?,
@@ -284,7 +286,7 @@ impl ConnectorService {
             http.set_nodelay(true);
         }
 
-        let mut connector = self.build_tls_connector(http, &req)?;
+        let mut connector = self.build_tls_connector(http, req.ex_data())?;
         let io = connector.call(req).await?;
 
         // If the connection is HTTPS, wrap the TLS stream in a TlsConn for unified handling.
@@ -319,31 +321,36 @@ impl ConnectorService {
 
         #[cfg(feature = "socks")]
         {
-            use proxy::{DnsResolve, Socks, SocksVersion};
+            use proxy::{DnsResolve, SocksConnector, Version};
 
             if let Some((version, dns_resolve)) = match proxy.uri().scheme_str() {
-                Some("socks4") => Some((SocksVersion::V4, DnsResolve::Local)),
-                Some("socks4a") => Some((SocksVersion::V4, DnsResolve::Remote)),
-                Some("socks5") => Some((SocksVersion::V5, DnsResolve::Local)),
-                Some("socks5h") => Some((SocksVersion::V5, DnsResolve::Remote)),
+                Some("socks4") => Some((Version::V4, DnsResolve::Local)),
+                Some("socks4a") => Some((Version::V4, DnsResolve::Remote)),
+                Some("socks5") => Some((Version::V5, DnsResolve::Local)),
+                Some("socks5h") => Some((Version::V5, DnsResolve::Remote)),
                 _ => None,
             } {
                 trace!("connecting via SOCKS proxy: {:?}", proxy_uri);
 
-                let mut socks = Socks::new_with_resolver(
+                // Create a SOCKS connector with the specified version and DNS resolution strategy.
+                let mut socks = SocksConnector::new_with_resolver(
+                    proxy_uri,
                     self.http.clone(),
                     self.resolver.clone(),
-                    proxy_uri.clone(),
                 )
                 .with_auth(proxy.raw_auth())
                 .with_version(version)
                 .with_local_dns(dns_resolve);
 
-                let conn = socks.call(uri.clone()).await?;
+                let is_https = uri.scheme() == Some(&Scheme::HTTPS);
+                let conn = socks.call(uri).await?;
 
-                return if uri.scheme() == Some(&Scheme::HTTPS) {
+                return if is_https {
                     trace!("socks HTTPS over proxy");
-                    let mut connector = self.build_tls_connector(self.http.clone(), &req)?;
+
+                    // Create a TLS connector for the established connection.
+                    let mut connector =
+                        self.build_tls_connector(self.http.clone(), req.ex_data())?;
                     let established_conn = EstablishedConn::new(req, conn);
                     let io = connector.call(established_conn).await?;
 
@@ -367,13 +374,17 @@ impl ConnectorService {
         // Handle HTTPS proxy tunneling connection
         if uri.scheme() == Some(&Scheme::HTTPS) {
             trace!("tunneling HTTPS over HTTP proxy: {:?}", proxy_uri);
-            let mut connector = self.build_tls_connector(self.http.clone(), &req)?;
 
-            let mut tunnel = proxy::Tunnel::new(proxy_uri, connector.clone());
+            // Create a tunnel connector with the proxy URI and the HTTP connector.
+            let mut connector = self.build_tls_connector(self.http.clone(), req.ex_data())?;
+            let mut tunnel = TunnelConnector::new(proxy_uri, connector.clone());
+
+            // If the proxy has basic authentication, add it to the tunnel.
             if let Some(auth) = proxy.basic_auth() {
                 tunnel = tunnel.with_auth(auth.clone());
             }
 
+            // If the proxy has custom headers, add them to the tunnel.
             if let Some(headers) = proxy.custom_headers() {
                 tunnel = tunnel.with_headers(headers.clone());
             }
@@ -383,6 +394,8 @@ impl ConnectorService {
             let tunneled = tunnel.call(uri).await?;
             let tunneled = TokioIo::new(tunneled);
             let tunneled = TokioIo::new(tunneled);
+
+            // Create established connection with the tunneled stream.
             let established_conn = EstablishedConn::new(req, tunneled);
             let io = connector.call(established_conn).await?;
 
