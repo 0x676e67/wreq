@@ -125,7 +125,7 @@ where
 {
     /// Create a new SOCKS connector with the given inner service.
     ///
-    /// The wraps an underlying connector, and stores the address of a
+    /// This wraps an underlying connector, and stores the address of a
     /// SOCKS proxy server.
     ///
     /// A `SocksConnector` can then be called with any destination. The `proxy_dst` passed to
