@@ -159,7 +159,7 @@ pub struct HttpClient<C, B> {
     exec: Exec,
     h1_builder: conn::http1::Builder,
     h2_builder: conn::http2::Builder<Exec>,
-    pool: pool::Pool<PooledConnection<B>, ConnKey>,
+    pool: pool::Pool<PoolClient<B>, ConnKey>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -444,7 +444,7 @@ where
     async fn connection_for(
         &self,
         req: ConnRequest,
-    ) -> Result<pool::Pooled<PooledConnection<B>, ConnKey>, Error> {
+    ) -> Result<pool::Pooled<PoolClient<B>, ConnKey>, Error> {
         loop {
             match self.one_connection_for(req.clone()).await {
                 Ok(pooled) => return Ok(pooled),
@@ -467,7 +467,7 @@ where
     async fn one_connection_for(
         &self,
         req: ConnRequest,
-    ) -> Result<pool::Pooled<PooledConnection<B>, ConnKey>, ClientConnectError> {
+    ) -> Result<pool::Pooled<PoolClient<B>, ConnKey>, ClientConnectError> {
         // Return a single connection if pooling is not enabled
         if !self.pool.is_enabled() {
             return self
@@ -555,10 +555,8 @@ where
     fn connect_to(
         &self,
         req: ConnRequest,
-    ) -> impl Lazy<Output = Result<pool::Pooled<PooledConnection<B>, ConnKey>, Error>>
-    + Send
-    + Unpin
-    + 'static {
+    ) -> impl Lazy<Output = Result<pool::Pooled<PoolClient<B>, ConnKey>, Error>> + Send + Unpin + 'static
+    {
         let executor = self.exec.clone();
         let pool = self.pool.clone();
 
@@ -722,7 +720,7 @@ where
 
                             Ok(pool.pooled(
                                 connecting,
-                                PooledConnection {
+                                PoolClient {
                                     conn_info: connected,
                                     tx,
                                 },
@@ -833,7 +831,7 @@ impl Future for ResponseFuture {
 }
 
 /// A pooled HTTP connection that can send requests
-struct PooledConnection<B> {
+struct PoolClient<B> {
     conn_info: Connected,
     tx: PoolTx<B>,
 }
@@ -843,9 +841,9 @@ enum PoolTx<B> {
     Http2(conn::http2::SendRequest<B>),
 }
 
-// ===== impl PooledConnection =====
+// ===== impl PoolClient =====
 
-impl<B> PooledConnection<B> {
+impl<B> PoolClient<B> {
     fn poll_ready(&mut self, cx: &mut task::Context<'_>) -> Poll<Result<(), Error>> {
         match self.tx {
             PoolTx::Http1(ref mut tx) => tx.poll_ready(cx).map_err(Error::closed),
@@ -879,7 +877,7 @@ impl<B> PooledConnection<B> {
     }
 }
 
-impl<B: Body + 'static> PooledConnection<B> {
+impl<B: Body + 'static> PoolClient<B> {
     fn try_send_request(
         &mut self,
         req: Request<B>,
@@ -894,7 +892,7 @@ impl<B: Body + 'static> PooledConnection<B> {
     }
 }
 
-impl<B> pool::Poolable for PooledConnection<B>
+impl<B> pool::Poolable for PoolClient<B>
 where
     B: Send + 'static,
 {
@@ -904,17 +902,17 @@ where
 
     fn reserve(self) -> pool::Reservation<Self> {
         match self.tx {
-            PoolTx::Http1(tx) => pool::Reservation::Unique(PooledConnection {
+            PoolTx::Http1(tx) => pool::Reservation::Unique(PoolClient {
                 conn_info: self.conn_info,
                 tx: PoolTx::Http1(tx),
             }),
 
             PoolTx::Http2(tx) => {
-                let b = PooledConnection {
+                let b = PoolClient {
                     conn_info: self.conn_info.clone(),
                     tx: PoolTx::Http2(tx.clone()),
                 };
-                let a = PooledConnection {
+                let a = PoolClient {
                     conn_info: self.conn_info,
                     tx: PoolTx::Http2(tx),
                 };
