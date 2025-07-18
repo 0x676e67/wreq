@@ -229,8 +229,6 @@ type ResponseWrapper =
     SyncWrapper<Pin<Box<dyn Future<Output = Result<Response<Incoming>, Error>> + Send>>>;
 
 /// A `Future` that will resolve to an HTTP Response.
-///
-/// This is returned by `Client::request` (and `Client::get`).
 #[must_use = "futures do nothing unless polled"]
 pub struct ResponseFuture {
     inner: ResponseWrapper,
@@ -239,7 +237,7 @@ pub struct ResponseFuture {
 // ===== impl HttpClient =====
 
 impl HttpClient<(), ()> {
-    /// Create a builder to configure a new `Client`.
+    /// Create a builder to configure a new `HttpClient`.
     pub fn builder<E>(executor: E) -> Builder
     where
         E: Executor<BoxSendFuture> + Send + Sync + Clone + 'static,
@@ -258,7 +256,7 @@ where
     B::Data: Send,
     B::Error: Into<BoxError>,
 {
-    /// Send a constructed `Request` using this `Client`.
+    /// Send a constructed `Request` using this `HttpClient`.
     pub fn request(&self, mut req: Request<B>) -> ResponseFuture {
         let is_http_connect = req.method() == Method::CONNECT;
         // Validate HTTP version early
@@ -794,7 +792,7 @@ impl<C: Clone, B> Clone for HttpClient<C, B> {
 
 impl<C, B> fmt::Debug for HttpClient<C, B> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Client").finish()
+        f.debug_struct("HttpClient").finish()
     }
 }
 
@@ -1035,28 +1033,7 @@ fn is_schema_secure(uri: &Uri) -> bool {
         .unwrap_or_default()
 }
 
-/// A builder to configure a new [`Client`].
-///
-/// # Example
-///
-/// ```
-/// #
-/// # fn run () {
-/// use crate::{
-///     core::rt::TokioExecutor,
-///     util::client::Client,
-/// };
-/// use std::time::Duration;
-///
-/// let client = Client::builder(TokioExecutor::new())
-///     .pool_idle_timeout(Duration::from_secs(30))
-///     .http2_only(true)
-///     .build_http();
-/// # let infer: Client<_, http_body_util::Full<bytes::Bytes>> = client;
-/// # drop(infer);
-/// # }
-/// # fn main() {}
-/// ```
+/// A builder to configure a new [`HttpClient`].
 #[derive(Clone)]
 pub struct Builder {
     client_config: Config,
@@ -1099,30 +1076,6 @@ impl Builder {
     /// Pass `None` to disable timeout.
     ///
     /// Default is 90 seconds.
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// #
-    /// # fn run () {
-    /// use crate::{
-    ///     core::rt::{
-    ///         TokioExecutor,
-    ///         TokioTimer,
-    ///     },
-    ///     util::client::Client,
-    /// };
-    /// use std::time::Duration;
-    ///
-    /// let client = Client::builder(TokioExecutor::new())
-    ///     .pool_idle_timeout(Duration::from_secs(30))
-    ///     .pool_timer(TokioTimer::new())
-    ///     .build_http();
-    ///
-    /// # let infer: Client<_, http_body_util::Full<bytes::Bytes>> = client;
-    /// # }
-    /// # fn main() {}
-    /// ```
     pub fn pool_idle_timeout<D>(&mut self, val: D) -> &mut Self
     where
         D: Into<Option<Duration>>,
@@ -1151,7 +1104,7 @@ impl Builder {
     ///
     /// The destination must either allow HTTP2 Prior Knowledge, or the
     /// `Connect` should be configured to do use ALPN to upgrade to `h2`
-    /// as part of the connection process. This will not make the `Client`
+    /// as part of the connection process. This will not make the `HttpClient`
     /// utilize ALPN by itself.
     ///
     /// Note that setting this to true prevents HTTP/1 from being allowed.
@@ -1226,7 +1179,7 @@ impl Builder {
         self
     }
 
-    /// Combine the configuration of this builder with a connector to create a `Client`.
+    /// Combine the configuration of this builder with a connector to create a `HttpClient`.
     pub fn build<C, B>(&self, connector: C) -> HttpClient<C, B>
     where
         C: tower::Service<ConnRequest> + Clone + Send + Sync + 'static,
