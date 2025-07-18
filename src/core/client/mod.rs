@@ -649,7 +649,7 @@ where
                                     // Errors are sent via err_tx to ensure they can be checked if the sender (tx) fails.
                                     executor.execute(
                                         conn.with_upgrades()
-                                                                        .map_err(|e| {
+                                                .map_err(|e| {
                                                 // Log the connection error at debug level for diagnostic purposes.
                                                 debug!("client connection error: {:?}", e);
                                                 // Log that the error is being sent to the error channel.
