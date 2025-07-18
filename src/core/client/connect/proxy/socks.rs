@@ -90,7 +90,6 @@ pin_project! {
     // so that users don't rely on it fitting in a `Pin<Box<dyn Future>>` slot
     // (and thus we can change the type in the future).
     #[must_use = "futures do nothing unless polled"]
-    #[allow(missing_debug_implementations)]
     pub struct Handshaking<F, T, E> {
         #[pin]
         fut: BoxHandshaking<T, E>,

@@ -115,7 +115,6 @@ impl Incoming {
         Incoming { kind }
     }
 
-    #[allow(dead_code)]
     pub(crate) fn empty() -> Incoming {
         Incoming::new(Kind::Empty)
     }

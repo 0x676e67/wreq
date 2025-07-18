@@ -59,7 +59,6 @@ impl Message {
         match self {
             Self::Text(x) => serde_json::from_str(x).map_err(Error::decode),
             Self::Binary(x) => serde_json::from_slice(x).map_err(Error::decode),
-            #[allow(deprecated)]
             Self::Ping(_) | Self::Pong(_) | Self::Close { .. } => Err(Error::decode(
                 serde_json::Error::custom("neither text nor binary"),
             )),

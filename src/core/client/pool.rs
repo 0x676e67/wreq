@@ -28,8 +28,6 @@ use crate::{
     sync::Mutex,
 };
 
-// FIXME: allow() required due to `impl Trait` leaking types to this lint
-#[allow(missing_debug_implementations)]
 pub struct Pool<T, K: Key> {
     // If the pool is disabled, this is None.
     inner: Option<Arc<Mutex<PoolInner<T, K>>>>,
@@ -561,8 +559,6 @@ struct Idle<T> {
     value: T,
 }
 
-// FIXME: allow() required due to `impl Trait` leaking types to this lint
-#[allow(missing_debug_implementations)]
 pub struct Checkout<T, K: Key> {
     key: K,
     pool: Pool<T, K>,
@@ -706,8 +702,6 @@ impl<T, K: Key> Drop for Checkout<T, K> {
     }
 }
 
-// FIXME: allow() required due to `impl Trait` leaking types to this lint
-#[allow(missing_debug_implementations)]
 pub struct Connecting<T: Poolable, K: Key> {
     key: K,
     pool: WeakOpt<Mutex<PoolInner<T, K>>>,

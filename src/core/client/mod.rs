@@ -885,8 +885,6 @@ impl Future for ResponseFuture {
 
 // ===== impl PoolClient =====
 
-// FIXME: allow() required due to `impl Trait` leaking types to this lint
-#[allow(missing_debug_implementations)]
 struct PoolClient<B> {
     conn_info: Connected,
     tx: PoolTx<B>,
@@ -899,10 +897,7 @@ enum PoolTx<B> {
 }
 
 impl<B> PoolClient<B> {
-    fn poll_ready(
-        &mut self,
-        #[allow(unused_variables)] cx: &mut task::Context<'_>,
-    ) -> Poll<Result<(), Error>> {
+    fn poll_ready(&mut self, cx: &mut task::Context<'_>) -> Poll<Result<(), Error>> {
         match self.tx {
             PoolTx::Http1(ref mut tx) => tx.poll_ready(cx).map_err(Error::closed),
 

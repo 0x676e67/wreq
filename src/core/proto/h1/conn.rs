@@ -17,7 +17,7 @@ use super::{
     Decoder, Encode, EncodedBuf, Encoder, Http1Transaction, ParseContext, Wants, io::Buffered,
 };
 use crate::core::{
-    Error,
+    Error, Result,
     body::DecodedLength,
     proto::{BodyLength, MessageHead, headers},
     rt::{Read, Write},
@@ -151,7 +151,7 @@ where
     pub(super) fn poll_read_head(
         &mut self,
         cx: &mut Context<'_>,
-    ) -> Poll<Option<crate::core::Result<(MessageHead<T::Incoming>, DecodedLength, Wants)>>> {
+    ) -> Poll<Option<Result<(MessageHead<T::Incoming>, DecodedLength, Wants)>>> {
         debug_assert!(self.can_read_head());
         trace!("Conn::read_head");
 
