@@ -89,7 +89,7 @@ where
 /// are subject to change at any time.
 #[derive(Clone, Debug)]
 pub struct Builder {
-    config: Http1Options,
+    opts: Http1Options,
 }
 
 // ===== impl SendRequest
@@ -228,13 +228,14 @@ impl Builder {
     #[inline]
     pub fn new() -> Builder {
         Builder {
-            config: Default::default(),
+            opts: Default::default(),
         }
     }
 
-    pub fn config(&mut self, opts: Option<Http1Options>) {
-        if let Some(config) = opts {
-            self.config = config;
+    /// Provide a options configuration for the HTTP/1 connection.
+    pub fn options(&mut self, opts: Option<Http1Options>) {
+        if let Some(opts) = opts {
+            self.opts = opts;
         }
     }
 
@@ -253,7 +254,7 @@ impl Builder {
         B::Data: Send,
         B::Error: Into<BoxError>,
     {
-        let opts = self.config.clone();
+        let opts = self.opts.clone();
 
         async move {
             trace!("client handshake HTTP/1");
