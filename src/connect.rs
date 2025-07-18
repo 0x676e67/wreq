@@ -23,10 +23,7 @@ use crate::{
     core::{
         client::{
             ConnExtra, ConnRequest,
-            connect::{
-                self, Connected, Connection,
-                proxy::{self, TunnelConnector},
-            },
+            connect::{self, Connected, Connection, proxy},
         },
         rt::{Read, ReadBufCursor, TokioIo, Write},
     },
@@ -321,7 +318,7 @@ impl ConnectorService {
 
         #[cfg(feature = "socks")]
         {
-            use proxy::{DnsResolve, SocksConnector, Version};
+            use proxy::socks::{DnsResolve, SocksConnector, Version};
 
             if let Some((version, dns_resolve)) = match proxy.uri().scheme_str() {
                 Some("socks4") => Some((Version::V4, DnsResolve::Local)),
@@ -377,7 +374,7 @@ impl ConnectorService {
 
             // Create a tunnel connector with the proxy URI and the HTTP connector.
             let mut connector = self.build_tls_connector(self.http.clone(), req.ex_data())?;
-            let mut tunnel = TunnelConnector::new(proxy_uri, connector.clone());
+            let mut tunnel = proxy::tunnel::TunnelConnector::new(proxy_uri, connector.clone());
 
             // If the proxy has basic authentication, add it to the tunnel.
             if let Some(auth) = proxy.basic_auth() {
