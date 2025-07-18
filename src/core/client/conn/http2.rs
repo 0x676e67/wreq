@@ -229,14 +229,20 @@ where
         B::Error: Into<BoxError>,
         Ex: Http2ClientConnExec<B, T> + Unpin,
     {
-        let opts = self.clone();
+        let builder = self.clone();
 
         async move {
             trace!("client handshake HTTP/2");
 
             let (tx, rx) = dispatch::channel();
-            let h2 = proto::h2::client::handshake(io, rx, &opts.opts.config, opts.exec, opts.timer)
-                .await?;
+            let h2 = proto::h2::client::handshake(
+                io,
+                rx,
+                &builder.opts.config,
+                builder.exec,
+                builder.timer,
+            )
+            .await?;
             Ok((
                 SendRequest {
                     dispatch: tx.unbound(),
