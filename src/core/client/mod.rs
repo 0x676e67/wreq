@@ -2,15 +2,13 @@
 //!
 //! Provides HTTP over a single connection. See the [`conn`] module.
 
+mod pool;
+
 pub mod conn;
+pub mod connect;
 pub(super) mod dispatch;
 pub mod options;
 pub mod proxy;
-
-pub mod connect;
-// Publicly available, but just for legacy purposes. A better pool will be
-// designed.
-mod pool;
 
 use std::{
     error::Error as StdError,
@@ -151,17 +149,17 @@ impl ConnRequest {
     }
 }
 
-/// A Client to make outgoing HTTP requests.
+/// A HttpClient to make outgoing HTTP requests.
 ///
-/// `Client` is cheap to clone and cloning is the recommended way to share a `Client`. The
+/// `HttpClient` is cheap to clone and cloning is the recommended way to share a `HttpClient`. The
 /// underlying connection pool will be reused.
-pub struct Client<C, B> {
+pub struct HttpClient<C, B> {
     config: Config,
     connector: C,
     exec: Exec,
     h1_builder: conn::http1::Builder,
     h2_builder: conn::http2::Builder<Exec>,
-    pool: pool::Pool<PoolClient<B>, ConnKey>,
+    pool: pool::Pool<PooledConnection<B>, ConnKey>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -171,7 +169,6 @@ struct Config {
     ver: Ver,
 }
 
-/// Client errors
 pub struct Error {
     kind: ErrorKind,
     source: Option<BoxError>,
@@ -239,31 +236,10 @@ pub struct ResponseFuture {
     inner: ResponseWrapper,
 }
 
-// ===== impl Client =====
+// ===== impl HttpClient =====
 
-impl Client<(), ()> {
+impl HttpClient<(), ()> {
     /// Create a builder to configure a new `Client`.
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// #
-    /// # fn run () {
-    /// use crate::{
-    ///     core::rt::TokioExecutor,
-    ///     util::client::Client,
-    /// };
-    /// use std::time::Duration;
-    ///
-    /// let client = Client::builder(TokioExecutor::new())
-    ///     .pool_idle_timeout(Duration::from_secs(30))
-    ///     .http2_only(true)
-    ///     .build_http();
-    /// # let infer: Client<_, http_body_util::Full<bytes::Bytes>> = client;
-    /// # drop(infer);
-    /// # }
-    /// # fn main() {}
-    /// ```
     pub fn builder<E>(executor: E) -> Builder
     where
         E: Executor<BoxSendFuture> + Send + Sync + Clone + 'static,
@@ -272,7 +248,7 @@ impl Client<(), ()> {
     }
 }
 
-impl<C, B> Client<C, B>
+impl<C, B> HttpClient<C, B>
 where
     C: tower::Service<ConnRequest> + Clone + Send + Sync + 'static,
     C::Response: Read + Write + Connection + Unpin + Send + 'static,
@@ -283,35 +259,6 @@ where
     B::Error: Into<BoxError>,
 {
     /// Send a constructed `Request` using this `Client`.
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// #
-    /// # fn run () {
-    /// use crate::{
-    ///     core::{
-    ///         Method,
-    ///         Request,
-    ///         rt::TokioExecutor,
-    ///     },
-    ///     util::client::Client,
-    /// };
-    /// use bytes::Bytes;
-    /// use http_body_util::Full;
-    ///
-    /// let client: Client<_, Full<Bytes>> = Client::builder(TokioExecutor::new()).build_http();
-    ///
-    /// let req: Request<Full<Bytes>> = Request::builder()
-    ///     .method(Method::POST)
-    ///     .uri("http://httpbin.org/post")
-    ///     .body(Full::from("Hallo!"))
-    ///     .expect("request builder");
-    ///
-    /// let future = client.request(req);
-    /// # }
-    /// # fn main() {}
-    /// ```
     pub fn request(&self, mut req: Request<B>) -> ResponseFuture {
         let is_http_connect = req.method() == Method::CONNECT;
         // Validate HTTP version early
@@ -497,7 +444,7 @@ where
     async fn connection_for(
         &self,
         req: ConnRequest,
-    ) -> Result<pool::Pooled<PoolClient<B>, ConnKey>, Error> {
+    ) -> Result<pool::Pooled<PooledConnection<B>, ConnKey>, Error> {
         loop {
             match self.one_connection_for(req.clone()).await {
                 Ok(pooled) => return Ok(pooled),
@@ -520,7 +467,7 @@ where
     async fn one_connection_for(
         &self,
         req: ConnRequest,
-    ) -> Result<pool::Pooled<PoolClient<B>, ConnKey>, ClientConnectError> {
+    ) -> Result<pool::Pooled<PooledConnection<B>, ConnKey>, ClientConnectError> {
         // Return a single connection if pooling is not enabled
         if !self.pool.is_enabled() {
             return self
@@ -608,8 +555,10 @@ where
     fn connect_to(
         &self,
         req: ConnRequest,
-    ) -> impl Lazy<Output = Result<pool::Pooled<PoolClient<B>, ConnKey>, Error>> + Send + Unpin + 'static
-    {
+    ) -> impl Lazy<Output = Result<pool::Pooled<PooledConnection<B>, ConnKey>, Error>>
+    + Send
+    + Unpin
+    + 'static {
         let executor = self.exec.clone();
         let pool = self.pool.clone();
 
@@ -773,7 +722,7 @@ where
 
                             Ok(pool.pooled(
                                 connecting,
-                                PoolClient {
+                                PooledConnection {
                                     conn_info: connected,
                                     tx,
                                 },
@@ -785,7 +734,7 @@ where
     }
 }
 
-impl<C, B> tower::Service<Request<B>> for Client<C, B>
+impl<C, B> tower::Service<Request<B>> for HttpClient<C, B>
 where
     C: tower::Service<ConnRequest> + Clone + Send + Sync + 'static,
     C::Response: Read + Write + Connection + Unpin + Send + 'static,
@@ -808,7 +757,7 @@ where
     }
 }
 
-impl<C, B> tower::Service<Request<B>> for &'_ Client<C, B>
+impl<C, B> tower::Service<Request<B>> for &'_ HttpClient<C, B>
 where
     C: tower::Service<ConnRequest> + Clone + Send + Sync + 'static,
     C::Response: Read + Write + Connection + Unpin + Send + 'static,
@@ -831,9 +780,9 @@ where
     }
 }
 
-impl<C: Clone, B> Clone for Client<C, B> {
-    fn clone(&self) -> Client<C, B> {
-        Client {
+impl<C: Clone, B> Clone for HttpClient<C, B> {
+    fn clone(&self) -> HttpClient<C, B> {
+        HttpClient {
             config: self.config,
             exec: self.exec.clone(),
 
@@ -845,7 +794,7 @@ impl<C: Clone, B> Clone for Client<C, B> {
     }
 }
 
-impl<C, B> fmt::Debug for Client<C, B> {
+impl<C, B> fmt::Debug for HttpClient<C, B> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Client").finish()
     }
@@ -883,20 +832,20 @@ impl Future for ResponseFuture {
     }
 }
 
-// ===== impl PoolClient =====
-
-struct PoolClient<B> {
+/// A pooled HTTP connection that can send requests
+struct PooledConnection<B> {
     conn_info: Connected,
     tx: PoolTx<B>,
 }
 
 enum PoolTx<B> {
     Http1(conn::http1::SendRequest<B>),
-
     Http2(conn::http2::SendRequest<B>),
 }
 
-impl<B> PoolClient<B> {
+// ===== impl PooledConnection =====
+
+impl<B> PooledConnection<B> {
     fn poll_ready(&mut self, cx: &mut task::Context<'_>) -> Poll<Result<(), Error>> {
         match self.tx {
             PoolTx::Http1(ref mut tx) => tx.poll_ready(cx).map_err(Error::closed),
@@ -930,7 +879,7 @@ impl<B> PoolClient<B> {
     }
 }
 
-impl<B: Body + 'static> PoolClient<B> {
+impl<B: Body + 'static> PooledConnection<B> {
     fn try_send_request(
         &mut self,
         req: Request<B>,
@@ -945,7 +894,7 @@ impl<B: Body + 'static> PoolClient<B> {
     }
 }
 
-impl<B> pool::Poolable for PoolClient<B>
+impl<B> pool::Poolable for PooledConnection<B>
 where
     B: Send + 'static,
 {
@@ -955,17 +904,17 @@ where
 
     fn reserve(self) -> pool::Reservation<Self> {
         match self.tx {
-            PoolTx::Http1(tx) => pool::Reservation::Unique(PoolClient {
+            PoolTx::Http1(tx) => pool::Reservation::Unique(PooledConnection {
                 conn_info: self.conn_info,
                 tx: PoolTx::Http1(tx),
             }),
 
             PoolTx::Http2(tx) => {
-                let b = PoolClient {
+                let b = PooledConnection {
                     conn_info: self.conn_info.clone(),
                     tx: PoolTx::Http2(tx.clone()),
                 };
-                let a = PoolClient {
+                let a = PooledConnection {
                     conn_info: self.conn_info,
                     tx: PoolTx::Http2(tx),
                 };
@@ -1280,7 +1229,7 @@ impl Builder {
     }
 
     /// Combine the configuration of this builder with a connector to create a `Client`.
-    pub fn build<C, B>(&self, connector: C) -> Client<C, B>
+    pub fn build<C, B>(&self, connector: C) -> HttpClient<C, B>
     where
         C: tower::Service<ConnRequest> + Clone + Send + Sync + 'static,
         C::Response: Read + Write + Connection + Unpin + Send + 'static,
@@ -1291,7 +1240,7 @@ impl Builder {
     {
         let exec = self.exec.clone();
         let timer = self.pool_timer.clone();
-        Client {
+        HttpClient {
             config: self.client_config,
             exec: exec.clone(),
 

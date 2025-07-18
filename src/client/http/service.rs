@@ -12,7 +12,7 @@ use crate::{
     connect::Connector,
     core::{
         body::Incoming,
-        client::Client,
+        client::HttpClient,
         ext::{RequestConfig, RequestOriginalHeaders},
     },
     error::{BoxError, Error},
@@ -22,7 +22,7 @@ use crate::{
 
 #[derive(Clone)]
 pub struct ClientService {
-    pub(super) client: Client<Connector, Body>,
+    pub(super) client: HttpClient<Connector, Body>,
     pub(super) config: Arc<ClientConfig>,
 }
 

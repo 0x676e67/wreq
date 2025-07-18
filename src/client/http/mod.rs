@@ -54,9 +54,7 @@ use crate::{
         BoxedConnectorLayer, BoxedConnectorService, Conn, Connector, HttpConnector, Unnameable,
     },
     core::{
-        client::{
-            Builder, Client as NativeClient, connect::TcpConnectOptions, options::TransportOptions,
-        },
+        client::{HttpClient, connect::TcpConnectOptions, options::TransportOptions},
         ext::RequestConfig,
         rt::{TokioExecutor, tokio::TokioTimer},
     },
@@ -147,7 +145,6 @@ struct Config {
     http2_max_retry: usize,
     request_layers: Option<Vec<BoxedClientServiceLayer>>,
     connector_layers: Option<Vec<BoxedConnectorLayer>>,
-    builder: Builder,
     tls_keylog_policy: Option<KeyLogPolicy>,
     tls_info: bool,
     tls_sni: bool,
@@ -211,7 +208,6 @@ impl ClientBuilder {
                 dns_overrides: HashMap::new(),
                 dns_resolver: None,
                 http_version_pref: HttpVersionPref::All,
-                builder: NativeClient::builder(TokioExecutor::new()),
                 https_only: false,
                 http2_max_retry: 2,
                 request_layers: None,
@@ -238,7 +234,7 @@ impl ClientBuilder {
     /// This method fails if a TLS backend cannot be initialized, or the resolver
     /// cannot load the system configuration.
     pub fn build(self) -> crate::Result<Client> {
-        let mut config = self.config;
+        let config = self.config;
 
         if let Some(err) = config.error {
             return Err(err);
@@ -255,17 +251,6 @@ impl ClientBuilder {
             .any(ProxyMatcher::maybe_has_http_custom_headers);
 
         let (tls_opts, http1_opts, http2_opts) = config.transport_options.into_parts();
-
-        config
-            .builder
-            .http1_options(http1_opts)
-            .http2_options(http2_opts)
-            .http2_only(matches!(config.http_version_pref, HttpVersionPref::Http2))
-            .http2_timer(TokioTimer::new())
-            .pool_timer(TokioTimer::new())
-            .pool_idle_timeout(config.pool_idle_timeout)
-            .pool_max_idle_per_host(config.pool_max_idle_per_host)
-            .pool_max_size(config.pool_max_size);
 
         let connector = {
             let resolver = {
@@ -326,9 +311,24 @@ impl ClientBuilder {
                 .build(tls_opts.unwrap_or_default(), config.connector_layers)?
         };
 
+        let client = {
+            let http2_only = matches!(config.http_version_pref, HttpVersionPref::Http2);
+            let mut builder = HttpClient::builder(TokioExecutor::new());
+            builder
+                .http1_options(http1_opts)
+                .http2_options(http2_opts)
+                .http2_only(http2_only)
+                .http2_timer(TokioTimer::new())
+                .pool_timer(TokioTimer::new())
+                .pool_idle_timeout(config.pool_idle_timeout)
+                .pool_max_idle_per_host(config.pool_max_idle_per_host)
+                .pool_max_size(config.pool_max_size);
+            builder.build(connector)
+        };
+
         let service = {
             let service = ClientService {
-                client: config.builder.build(connector),
+                client,
                 config: Arc::new(ClientConfig {
                     default_headers: config.headers,
                     original_headers: RequestConfig::new(config.original_headers),
