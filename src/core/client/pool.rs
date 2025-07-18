@@ -409,6 +409,13 @@ impl<T: Poolable, K: Key> PoolInner<T, K> {
             return;
         };
 
+        // While someone might want a shorter duration, and it will be respected
+        // at checkout time, there's no need to wake up and proactively evict
+        // faster than this.
+        const MIN_CHECK: Duration = Duration::from_millis(90);
+
+        let dur = dur.max(MIN_CHECK);
+
         let (tx, rx) = oneshot::channel();
         self.idle_interval_ref = Some(tx);
 
@@ -982,8 +989,15 @@ mod tests {
 
         // Let the timer tick passed the expiration...
         tokio::time::sleep(Duration::from_millis(30)).await;
-        // Yield so the Interval can reap...
-        tokio::task::yield_now().await;
+
+        // But minimum interval is higher, so nothing should have been reaped
+        assert_eq!(
+            pool.locked().idle.get(&key).map(|entries| entries.len()),
+            Some(3)
+        );
+
+        // Now wait passed the minimum interval more
+        tokio::time::sleep(Duration::from_millis(70)).await;
 
         assert!(pool.locked().idle.get(&key).is_none());
     }
