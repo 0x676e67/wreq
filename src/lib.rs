@@ -10,8 +10,8 @@
 //!
 //! - Plain bodies, [JSON](#json), [urlencoded](#forms), [multipart]
 //! - Cookies Store
-//! - Header Order
 //! - [Redirect Policy](#redirect-policies)
+//! - Original Header
 //! - Rotating [Proxies](#proxies)
 //! - [Certificate Store](#certificate-store)
 //! - [Tower](https://docs.rs/tower/latest/tower) Middleware
