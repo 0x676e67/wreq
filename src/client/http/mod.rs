@@ -54,9 +54,12 @@ use super::{
 use crate::dns::hickory::{HickoryDnsResolver, LookupIpStrategy};
 use crate::{
     IntoUrl, Method, OriginalHeaders, Proxy,
-    client::http::{
-        aliases::HttpConnector,
-        connect::{Conn, Connector, Unnameable},
+    client::{
+        http::{
+            aliases::HttpConnector,
+            connect::{Conn, Connector, Unnameable},
+        },
+        layer::timeout::TimeoutOptions,
     },
     core::{
         client::{HttpClient, connect::TcpConnectOptions, options::TransportOptions},
@@ -136,8 +139,7 @@ struct Config {
     auto_sys_proxy: bool,
     redirect_policy: RedirectPolicy,
     referer: bool,
-    timeout: Option<Duration>,
-    read_timeout: Option<Duration>,
+    timeout_options: TimeoutOptions,
     #[cfg(feature = "cookies")]
     cookie_store: Option<Arc<dyn cookie::CookieStore>>,
     #[cfg(feature = "hickory-dns")]
@@ -203,8 +205,7 @@ impl ClientBuilder {
                 auto_sys_proxy: true,
                 redirect_policy: RedirectPolicy::none(),
                 referer: true,
-                timeout: None,
-                read_timeout: None,
+                timeout_options: TimeoutOptions::default(),
                 #[cfg(feature = "hickory-dns")]
                 hickory_dns: cfg!(feature = "hickory-dns"),
                 #[cfg(feature = "cookies")]
@@ -351,10 +352,7 @@ impl ClientBuilder {
                 .service(service);
 
             let service = ServiceBuilder::new()
-                .layer(ResponseBodyTimeoutLayer::new(
-                    config.timeout,
-                    config.read_timeout,
-                ))
+                .layer(ResponseBodyTimeoutLayer::new(config.timeout_options))
                 .service(service);
 
             #[cfg(feature = "cookies")]
@@ -380,7 +378,7 @@ impl ClientBuilder {
 
             if config.layers.is_empty() {
                 let service = ServiceBuilder::new()
-                    .layer(TimeoutLayer::new(config.timeout, config.read_timeout))
+                    .layer(TimeoutLayer::new(config.timeout_options))
                     .service(service);
 
                 let service = ServiceBuilder::new()
@@ -397,7 +395,7 @@ impl ClientBuilder {
                 );
 
                 let service = ServiceBuilder::new()
-                    .layer(TimeoutLayer::new(config.timeout, config.read_timeout))
+                    .layer(TimeoutLayer::new(config.timeout_options))
                     .service(service);
 
                 let service = ServiceBuilder::new()
@@ -769,7 +767,7 @@ impl ClientBuilder {
     /// Default is no timeout.
     #[inline]
     pub fn timeout(mut self, timeout: Duration) -> ClientBuilder {
-        self.config.timeout = Some(timeout);
+        self.config.timeout_options.total_timeout(timeout);
         self
     }
 
@@ -778,7 +776,7 @@ impl ClientBuilder {
     /// Default is `None`.
     #[inline]
     pub fn read_timeout(mut self, timeout: Duration) -> ClientBuilder {
-        self.config.read_timeout = Some(timeout);
+        self.config.timeout_options.read_timeout(timeout);
         self
     }
 

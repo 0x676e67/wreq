@@ -11,7 +11,7 @@ pub use self::{
     layer::{ResponseBodyTimeout, ResponseBodyTimeoutLayer, Timeout, TimeoutLayer},
 };
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Copy, Default)]
 pub struct TimeoutOptions {
     total_timeout: Option<Duration>,
     read_timeout: Option<Duration>,

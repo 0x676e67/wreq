@@ -24,13 +24,10 @@ pub struct TimeoutLayer {
 }
 
 impl TimeoutLayer {
-    /// Create a timeout from a duration
-    pub const fn new(total: Option<Duration>, read: Option<Duration>) -> Self {
+    /// Create a new [`TimeoutLayer`].
+    pub const fn new(options: TimeoutOptions) -> Self {
         TimeoutLayer {
-            timeout: RequestConfig::new(Some(TimeoutOptions {
-                total_timeout: total,
-                read_timeout: read,
-            })),
+            timeout: RequestConfig::new(Some(options)),
         }
     }
 }
@@ -92,12 +89,9 @@ pub struct ResponseBodyTimeoutLayer {
 
 impl ResponseBodyTimeoutLayer {
     /// Creates a new [`ResponseBodyTimeoutLayer`].
-    pub const fn new(total: Option<Duration>, read: Option<Duration>) -> Self {
+    pub const fn new(options: TimeoutOptions) -> Self {
         Self {
-            timeout: RequestConfig::new(Some(TimeoutOptions {
-                total_timeout: total,
-                read_timeout: read,
-            })),
+            timeout: RequestConfig::new(Some(options)),
         }
     }
 }
