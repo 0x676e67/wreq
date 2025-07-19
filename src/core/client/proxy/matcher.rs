@@ -113,11 +113,15 @@ impl Matcher {
             return None;
         }
 
-        match dst.scheme_str() {
-            Some("http") => self.http.clone(),
-            Some("https") => self.https.clone(),
-            _ => None,
+        if dst.scheme() == Some(&http::uri::Scheme::HTTP) {
+            return self.http.clone();
         }
+
+        if dst.scheme() == Some(&http::uri::Scheme::HTTPS) {
+            return self.https.clone();
+        }
+
+        None
     }
 }
 
