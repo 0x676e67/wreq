@@ -12,7 +12,7 @@ use std::{
     time::Duration,
 };
 
-use aliases::{BoxedClientService, BoxedClientServiceLayer, GenericClientService, ResponseBody};
+use aliases::{BoxedClientLayer, BoxedClientService, GenericClientService, ResponseBody};
 pub use future::Pending;
 use http::{
     Request as HttpRequest, Response as HttpResponse,
@@ -143,15 +143,15 @@ struct Config {
     http_version_pref: HttpVersionPref,
     https_only: bool,
     http2_max_retry: usize,
-    request_layers: Option<Vec<BoxedClientServiceLayer>>,
+    layers: Option<Vec<BoxedClientLayer>>,
     connector_layers: Option<Vec<BoxedConnectorLayer>>,
-    tls_keylog_policy: Option<KeyLogPolicy>,
+    keylog_policy: Option<KeyLogPolicy>,
     tls_info: bool,
     tls_sni: bool,
-    tls_verify_hostname: bool,
-    tls_identity: Option<Identity>,
-    tls_cert_store: CertStore,
-    tls_cert_verification: bool,
+    verify_hostname: bool,
+    identity: Option<Identity>,
+    cert_store: CertStore,
+    cert_verification: bool,
     min_tls_version: Option<TlsVersion>,
     max_tls_version: Option<TlsVersion>,
     transport_options: TransportOptions,
@@ -210,15 +210,15 @@ impl ClientBuilder {
                 http_version_pref: HttpVersionPref::All,
                 https_only: false,
                 http2_max_retry: 2,
-                request_layers: None,
+                layers: None,
                 connector_layers: None,
-                tls_keylog_policy: None,
+                keylog_policy: None,
                 tls_info: false,
                 tls_sni: true,
-                tls_verify_hostname: true,
-                tls_identity: None,
-                tls_cert_store: CertStore::default(),
-                tls_cert_verification: true,
+                verify_hostname: true,
+                identity: None,
+                cert_store: CertStore::default(),
+                cert_verification: true,
                 min_tls_version: None,
                 max_tls_version: None,
                 // Transport options for HTTP/1/2 and TLS.
@@ -297,11 +297,11 @@ impl ClientBuilder {
                     .max_version(config.max_tls_version)
                     .min_version(config.min_tls_version)
                     .tls_sni(config.tls_sni)
-                    .verify_hostname(config.tls_verify_hostname)
-                    .cert_verification(config.tls_cert_verification)
-                    .cert_store(config.tls_cert_store)
-                    .identity(config.tls_identity)
-                    .keylog(config.tls_keylog_policy)
+                    .verify_hostname(config.verify_hostname)
+                    .cert_verification(config.cert_verification)
+                    .cert_store(config.cert_store)
+                    .identity(config.identity)
+                    .keylog(config.keylog_policy)
             };
 
             Connector::builder(proxies.clone(), resolver)
@@ -382,7 +382,7 @@ impl ClientBuilder {
                 )))
                 .service(service);
 
-            match config.request_layers {
+            match config.layers {
                 Some(layers) => {
                     let service = layers.into_iter().fold(
                         BoxCloneSyncService::new(service),
@@ -1067,7 +1067,7 @@ impl ClientBuilder {
     /// Sets the identity to be used for client certificate authentication.
     #[inline]
     pub fn identity(mut self, identity: Identity) -> ClientBuilder {
-        self.config.tls_identity = Some(identity);
+        self.config.identity = Some(identity);
         self
     }
 
@@ -1077,7 +1077,7 @@ impl ClientBuilder {
     /// for TLS connections. By default, the system's verify certificate store is used.
     #[inline]
     pub fn cert_store(mut self, store: CertStore) -> ClientBuilder {
-        self.config.tls_cert_store = store;
+        self.config.cert_store = store;
         self
     }
 
@@ -1094,7 +1094,7 @@ impl ClientBuilder {
     /// as a last resort.
     #[inline]
     pub fn cert_verification(mut self, cert_verification: bool) -> ClientBuilder {
-        self.config.tls_cert_verification = cert_verification;
+        self.config.cert_verification = cert_verification;
         self
     }
 
@@ -1108,7 +1108,7 @@ impl ClientBuilder {
     /// introduces a significant vulnerability to man-in-the-middle attacks.
     #[inline]
     pub fn verify_hostname(mut self, verify_hostname: bool) -> ClientBuilder {
-        self.config.tls_verify_hostname = verify_hostname;
+        self.config.verify_hostname = verify_hostname;
         self
     }
 
@@ -1124,7 +1124,7 @@ impl ClientBuilder {
     /// Configures TLS key logging policy for the client.
     #[inline]
     pub fn keylog(mut self, policy: KeyLogPolicy) -> ClientBuilder {
-        self.config.tls_keylog_policy = Some(policy);
+        self.config.keylog_policy = Some(policy);
         self
     }
 
@@ -1243,10 +1243,7 @@ impl ClientBuilder {
         <L::Service as Service<HttpRequest<Body>>>::Future: Send + 'static,
     {
         let layer = BoxCloneSyncServiceLayer::new(layer);
-        self.config
-            .request_layers
-            .get_or_insert_default()
-            .push(layer);
+        self.config.layers.get_or_insert_default().push(layer);
         self
     }
 

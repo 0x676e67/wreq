@@ -67,7 +67,7 @@ pub type GenericClientService =
 pub type BoxedClientService =
     BoxCloneSyncService<HttpRequest<Body>, HttpResponse<ResponseBody>, BoxError>;
 
-pub type BoxedClientServiceLayer = BoxCloneSyncServiceLayer<
+pub type BoxedClientLayer = BoxCloneSyncServiceLayer<
     BoxedClientService,
     HttpRequest<Body>,
     HttpResponse<ResponseBody>,
