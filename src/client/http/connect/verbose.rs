@@ -7,14 +7,11 @@ impl Wrapper {
     #[cfg_attr(not(feature = "tracing"), inline(always))]
     pub(super) fn wrap<T: AsyncConnWithInfo>(&self, conn: T) -> Box<dyn AsyncConnWithInfo> {
         #[cfg(feature = "tracing")]
-        {
-            if self.0 {
-                return Box::new(sealed::Verbose {
-                    // truncate is fine
-                    id: crate::util::fast_random() as u32,
-                    inner: conn,
-                });
-            }
+        if self.0 {
+            return Box::new(sealed::Verbose {
+                id: crate::util::fast_random(),
+                inner: conn,
+            });
         }
 
         Box::new(conn)
@@ -41,7 +38,7 @@ mod sealed {
     };
 
     pub(super) struct Verbose<T> {
-        pub(super) id: u32,
+        pub(super) id: u64,
         pub(super) inner: T,
     }
 

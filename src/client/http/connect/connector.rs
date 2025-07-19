@@ -275,18 +275,12 @@ impl ConnectorService {
             if !self.config.tcp_nodelay {
                 stream.get_ref().set_nodelay(false)?;
             }
-            self.config.verbose.wrap(TlsConn {
-                inner: TokioIo::new(stream),
-            })
+            self.config.verbose.wrap(TlsConn::new(stream))
         } else {
             self.config.verbose.wrap(io)
         };
 
-        Ok(Conn {
-            inner,
-            is_proxy,
-            tls_info: self.config.tls_info,
-        })
+        Ok(Conn::new(inner, is_proxy, self.config.tls_info))
     }
 
     /// Establishes a connection through a specified proxy.
@@ -325,7 +319,7 @@ impl ConnectorService {
                 let is_https = uri.scheme() == Some(&Scheme::HTTPS);
                 let conn = socks.call(uri).await?;
 
-                return if is_https {
+                let conn = if is_https {
                     trace!("socks HTTPS over proxy");
 
                     // Create a TLS connector for the established connection.
@@ -334,20 +328,16 @@ impl ConnectorService {
                     let established_conn = EstablishedConn::new(req, conn);
                     let io = connector.call(established_conn).await?;
 
-                    Ok(Conn {
-                        inner: self.config.verbose.wrap(TlsConn {
-                            inner: TokioIo::new(io),
-                        }),
-                        is_proxy: false,
-                        tls_info: self.config.tls_info,
-                    })
+                    Conn::new(
+                        self.config.verbose.wrap(TlsConn::new(io)),
+                        false,
+                        self.config.tls_info,
+                    )
                 } else {
-                    Ok(Conn {
-                        inner: self.config.verbose.wrap(conn),
-                        is_proxy: false,
-                        tls_info: false,
-                    })
+                    Conn::new(self.config.verbose.wrap(conn), false, false)
                 };
+
+                return Ok(conn);
             }
         }
 
@@ -379,13 +369,12 @@ impl ConnectorService {
             let established_conn = EstablishedConn::new(req, tunneled);
             let io = connector.call(established_conn).await?;
 
-            return Ok(Conn {
-                inner: self.config.verbose.wrap(TlsConn {
-                    inner: TokioIo::new(io),
-                }),
-                is_proxy: false,
-                tls_info: self.config.tls_info,
-            });
+            let conn = Conn::new(
+                self.config.verbose.wrap(TlsConn::new(io)),
+                false,
+                self.config.tls_info,
+            );
+            return Ok(conn);
         }
 
         *req.uri_mut() = proxy_uri;

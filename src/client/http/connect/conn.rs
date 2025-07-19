@@ -32,13 +32,37 @@ pin_project! {
     /// * absolute-form (`GET http://foo.bar/and/a/path HTTP/1.1`), otherwise.
     pub struct Conn {
         #[pin]
-        pub(super) inner: Box<dyn AsyncConnWithInfo>,
-        pub(super) is_proxy: bool,
-        pub(super) tls_info: bool,
+        inner: Box<dyn AsyncConnWithInfo>,
+        is_proxy: bool,
+        tls_info: bool,
+    }
+}
+
+pin_project! {
+    /// A wrapper around `SslStream` that adapts it for use as a generic async connection.
+    ///
+    /// This type enables unified handling of plain TCP and TLS-encrypted streams by providing
+    /// implementations of `Connection`, `Read`, `Write`, and `TlsInfoFactory`.
+    /// It is mainly used internally to abstract over different connection types.
+    pub(super) struct TlsConn<T> {
+        #[pin]
+        inner: TokioIo<SslStream<T>>,
     }
 }
 
 // ==== impl Conn ====
+
+impl Conn {
+    /// Creates a new `Conn` instance with the given inner connection and TLS info flag.
+    #[inline(always)]
+    pub(super) fn new(inner: Box<dyn AsyncConnWithInfo>, is_proxy: bool, tls_info: bool) -> Self {
+        Self {
+            inner,
+            is_proxy,
+            tls_info,
+        }
+    }
+}
 
 impl Connection for Conn {
     fn connected(&self) -> Connected {
@@ -101,14 +125,20 @@ impl Write for Conn {
     }
 }
 
-pin_project! {
-    pub(super) struct TlsConn<T> {
-        #[pin]
-        pub(super) inner: TokioIo<SslStream<T>>,
+// ==== impl TlsConn ====
+
+impl<T> TlsConn<T>
+where
+    T: AsyncRead + AsyncWrite + Unpin,
+{
+    /// Creates a new `TlsConn` wrapping the provided `SslStream`.
+    #[inline(always)]
+    pub fn new(inner: SslStream<T>) -> Self {
+        Self {
+            inner: TokioIo::new(inner),
+        }
     }
 }
-
-// ==== impl TlsConn ====
 
 impl Connection for TlsConn<TcpStream> {
     fn connected(&self) -> Connected {
