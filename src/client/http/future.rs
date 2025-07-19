@@ -10,12 +10,12 @@ use url::Url;
 
 use super::{
     Response,
-    aliases::{BoxedClientService, CoreResponseFuture, GenericClientService},
+    aliases::{BoxedClientService, GenericClientService},
 };
 use crate::{
     Body, Error,
     client::{body, layer::redirect::RequestUri},
-    core::body::Incoming,
+    core::{body::Incoming, client::future::ResponseFuture as CoreResponseFuture},
     error::BoxError,
     into_url::IntoUrlSealed,
 };

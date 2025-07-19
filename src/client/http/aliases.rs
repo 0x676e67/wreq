@@ -59,8 +59,6 @@ pub type RedirectLayer = FollowRedirect<
     FollowRedirectPolicy,
 >;
 
-pub type CoreResponseFuture = crate::core::client::ResponseFuture;
-
 pub type GenericClientService =
     MapErr<Timeout<Retry<Http2RetryPolicy, RedirectLayer>>, fn(BoxError) -> BoxError>;
 

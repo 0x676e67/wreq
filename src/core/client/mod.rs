@@ -7,6 +7,7 @@ mod pool;
 pub mod conn;
 pub mod connect;
 pub(super) mod dispatch;
+pub mod future;
 pub mod options;
 pub mod proxy;
 
@@ -21,7 +22,8 @@ use std::{
     time::Duration,
 };
 
-use futures_util::future::{self, Either, FutureExt, TryFutureExt};
+use future::ResponseFuture;
+use futures_util::future::{Either, FutureExt, TryFutureExt};
 use http::{
     HeaderValue, Method, Request, Response, Uri, Version,
     header::HOST,
@@ -29,7 +31,6 @@ use http::{
 };
 use http_body::Body;
 use pool::Ver;
-use sync_wrapper::SyncWrapper;
 use tower::util::Oneshot;
 
 use crate::{
@@ -225,15 +226,6 @@ enum TrySendError<B> {
     Nope(Error),
 }
 
-type ResponseWrapper =
-    SyncWrapper<Pin<Box<dyn Future<Output = Result<Response<Incoming>, Error>> + Send>>>;
-
-/// A `Future` that will resolve to an HTTP Response.
-#[must_use = "futures do nothing unless polled"]
-pub struct ResponseFuture {
-    inner: ResponseWrapper,
-}
-
 // ===== impl HttpClient =====
 
 impl HttpClient<(), ()> {
@@ -263,17 +255,22 @@ where
         match req.version() {
             Version::HTTP_10 if is_http_connect => {
                 warn!("CONNECT is not allowed for HTTP/1.0");
-                return ResponseFuture::new(future::err(e!(UserUnsupportedRequestMethod)));
+                return ResponseFuture::new(futures_util::future::err(e!(
+                    UserUnsupportedRequestMethod
+                )));
             }
             Version::HTTP_10 | Version::HTTP_11 | Version::HTTP_2 => {}
             // completely unsupported HTTP version (like HTTP/0.9)!
-            unsupported => return ResponseFuture::error_version(unsupported),
+            _unsupported => {
+                warn!("Request has unsupported version \"{:?}\"", _unsupported);
+                return ResponseFuture::new(futures_util::future::err(e!(UserUnsupportedVersion)));
+            }
         };
 
         // Extract and normalize URI
         let uri = match normalize_uri(&mut req, is_http_connect) {
             Ok(uri) => uri,
-            Err(err) => return ResponseFuture::new(future::err(err)),
+            Err(err) => return ResponseFuture::new(futures_util::future::err(err)),
         };
 
         // Extract config extensions
@@ -490,7 +487,7 @@ where
 
         // The order of the `select` is depended on below...
 
-        match future::select(checkout, connect).await {
+        match futures_util::future::select(checkout, connect).await {
             // Checkout won, connect future may have been started or not.
             //
             // If it has, let it finish and insert back into the pool,
@@ -577,7 +574,7 @@ where
                 None => {
                     let canceled = e!(Canceled);
                     // HTTP/2 connection in progress.
-                    return Either::Right(future::err(canceled));
+                    return Either::Right(futures_util::future::err(canceled));
                 }
             };
             Either::Left(
@@ -598,7 +595,7 @@ where
                                     // Another connection has already upgraded,
                                     // the pool checkout should finish up for us.
                                     let canceled = e!(Canceled, "ALPN upgraded to HTTP/2");
-                                    return Either::Right(future::err(canceled));
+                                    return Either::Right(futures_util::future::err(canceled));
                                 }
                             }
                         } else {
@@ -793,38 +790,6 @@ impl<C: Clone, B> Clone for HttpClient<C, B> {
 impl<C, B> fmt::Debug for HttpClient<C, B> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("HttpClient").finish()
-    }
-}
-
-// ===== impl ResponseFuture =====
-
-impl ResponseFuture {
-    fn new<F>(value: F) -> Self
-    where
-        F: Future<Output = Result<Response<Incoming>, Error>> + Send + 'static,
-    {
-        Self {
-            inner: SyncWrapper::new(Box::pin(value)),
-        }
-    }
-
-    fn error_version(_ver: Version) -> Self {
-        warn!("Request has unsupported version \"{:?}\"", _ver);
-        ResponseFuture::new(Box::pin(future::err(e!(UserUnsupportedVersion))))
-    }
-}
-
-impl fmt::Debug for ResponseFuture {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.pad("Future<Response>")
-    }
-}
-
-impl Future for ResponseFuture {
-    type Output = Result<Response<Incoming>, Error>;
-
-    fn poll(mut self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<Self::Output> {
-        self.inner.get_mut().as_mut().poll(cx)
     }
 }
 
