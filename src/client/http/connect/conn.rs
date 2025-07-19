@@ -14,16 +14,11 @@ use tokio_boring2::SslStream;
 use super::{AsyncConnWithInfo, TlsInfoFactory};
 use crate::{
     core::{
-        client::{
-            ConnRequest,
-            connect::{Connected, Connection},
-        },
+        client::connect::{Connected, Connection},
         rt::{Read, ReadBufCursor, TokioIo, Write},
     },
     tls::{MaybeHttpsStream, TlsInfo},
 };
-
-pub struct Unnameable(pub(super) ConnRequest);
 
 pin_project! {
     /// Note: the `is_proxy` member means *is plain text HTTP proxy*.

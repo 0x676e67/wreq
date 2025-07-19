@@ -1,14 +1,19 @@
 use super::AsyncConnWithInfo;
 
 #[derive(Clone, Copy)]
-pub(super) struct Wrapper(pub(super) bool);
+pub struct Verbose(pub(super) bool);
 
-impl Wrapper {
+impl Verbose {
+    pub const OFF: Verbose = Verbose(false);
+
     #[cfg_attr(not(feature = "tracing"), inline(always))]
-    pub(super) fn wrap<T: AsyncConnWithInfo>(&self, conn: T) -> Box<dyn AsyncConnWithInfo> {
+    pub(super) fn wrap<T>(&self, conn: T) -> Box<dyn AsyncConnWithInfo>
+    where
+        T: AsyncConnWithInfo + 'static,
+    {
         #[cfg(feature = "tracing")]
         if self.0 {
-            return Box::new(sealed::Verbose {
+            return Box::new(sealed::Wrapper {
                 id: crate::util::fast_random(),
                 inner: conn,
             });
@@ -37,18 +42,18 @@ mod sealed {
         util::Escape,
     };
 
-    pub(super) struct Verbose<T> {
+    pub(super) struct Wrapper<T> {
         pub(super) id: u64,
         pub(super) inner: T,
     }
 
-    impl<T: Connection + Read + Write + Unpin> Connection for Verbose<T> {
+    impl<T: Connection + Read + Write + Unpin> Connection for Wrapper<T> {
         fn connected(&self) -> Connected {
             self.inner.connected()
         }
     }
 
-    impl<T: Read + Write + Unpin> Read for Verbose<T> {
+    impl<T: Read + Write + Unpin> Read for Wrapper<T> {
         fn poll_read(
             mut self: Pin<&mut Self>,
             cx: &mut Context,
@@ -75,7 +80,7 @@ mod sealed {
         }
     }
 
-    impl<T: Read + Write + Unpin> Write for Verbose<T> {
+    impl<T: Read + Write + Unpin> Write for Wrapper<T> {
         fn poll_write(
             mut self: Pin<&mut Self>,
             cx: &mut Context,
@@ -129,7 +134,7 @@ mod sealed {
         }
     }
 
-    impl<T: TlsInfoFactory> TlsInfoFactory for Verbose<T> {
+    impl<T: TlsInfoFactory> TlsInfoFactory for Wrapper<T> {
         fn tls_info(&self) -> Option<TlsInfo> {
             self.inner.tls_info()
         }

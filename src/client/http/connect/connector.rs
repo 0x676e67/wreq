@@ -15,8 +15,9 @@ use tower::{
 
 use super::{
     super::aliases::{BoxedConnectorLayer, BoxedConnectorService, HttpConnector},
-    conn::{Conn, TlsConn, Unnameable},
-    verbose,
+    Unnameable,
+    conn::{Conn, TlsConn},
+    verbose::Verbose,
 };
 use crate::{
     core::{
@@ -38,7 +39,7 @@ type Connecting = Pin<Box<dyn Future<Output = Result<Conn, BoxError>> + Send>>;
 #[derive(Clone)]
 struct Config {
     proxies: Arc<Vec<ProxyMatcher>>,
-    verbose: verbose::Wrapper,
+    verbose: Verbose,
     tcp_nodelay: bool,
     tls_info: bool,
     /// When there is a single timeout layer and no other layers,
@@ -199,7 +200,7 @@ impl Connector {
         ConnectorBuilder {
             config: Config {
                 proxies,
-                verbose: verbose::Wrapper(false),
+                verbose: Verbose::OFF,
                 tcp_nodelay: false,
                 tls_info: false,
                 timeout: None,
