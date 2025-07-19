@@ -39,6 +39,7 @@ use crate::{
 
 type Connecting = Pin<Box<dyn Future<Output = Result<Conn, BoxError>> + Send>>;
 
+/// Configuration for the connector service.
 #[derive(Clone)]
 struct Config {
     proxies: Arc<Vec<ProxyMatcher>>,
@@ -52,6 +53,7 @@ struct Config {
     timeout: Option<Duration>,
 }
 
+/// Builder for `Connector`.
 pub struct ConnectorBuilder {
     config: Config,
     #[cfg(feature = "socks")]
@@ -60,12 +62,14 @@ pub struct ConnectorBuilder {
     tls_builder: TlsConnectorBuilder,
 }
 
+/// Connector service that establishes connections.
 #[derive(Clone)]
 pub enum Connector {
     Simple(ConnectorService),
     WithLayers(BoxedConnectorService),
 }
 
+/// Service that establishes connections to HTTP servers.
 #[derive(Clone)]
 pub struct ConnectorService {
     config: Config,
