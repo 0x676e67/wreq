@@ -34,7 +34,7 @@ use {super::layer::cookie::CookieManagerLayer, crate::cookie};
     feature = "deflate",
 ))]
 use super::layer::decoder::{AcceptEncoding, DecompressionLayer};
-#[cfg(feature = "websocket")]
+#[cfg(feature = "ws")]
 use super::ws::WebSocketRequestBuilder;
 use super::{
     Body, EmulationFactory,
@@ -326,7 +326,7 @@ impl ClientBuilder {
             builder.build(connector)
         };
 
-        let service = {
+        let client = {
             let service = ClientService {
                 client,
                 config: Arc::new(ClientConfig {
@@ -410,7 +410,7 @@ impl ClientBuilder {
         };
 
         Ok(Client {
-            inner: Arc::new(service),
+            inner: Arc::new(client),
         })
     }
 
@@ -1453,7 +1453,7 @@ impl Client {
     /// this after you set up your request, and just before you send the
     /// request.
     #[inline]
-    #[cfg(feature = "websocket")]
+    #[cfg(feature = "ws")]
     pub fn websocket<U: IntoUrl>(&self, url: U) -> WebSocketRequestBuilder {
         WebSocketRequestBuilder::new(self.request(Method::GET, url))
     }

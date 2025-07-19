@@ -1,3 +1,17 @@
+mod emulation;
+mod http;
+mod response;
+mod upgrade;
+
+pub(crate) mod layer;
+pub(crate) mod request;
+
+pub mod body;
+#[cfg(feature = "multipart")]
+pub mod multipart;
+#[cfg(feature = "ws")]
+pub mod ws;
+
 pub use self::{
     body::Body,
     emulation::{Emulation, EmulationFactory},
@@ -6,15 +20,3 @@ pub use self::{
     response::Response,
     upgrade::Upgraded,
 };
-
-pub mod body;
-mod emulation;
-mod http;
-pub(crate) mod layer;
-#[cfg(feature = "multipart")]
-pub mod multipart;
-pub(crate) mod request;
-mod response;
-mod upgrade;
-#[cfg(feature = "websocket")]
-pub mod ws;

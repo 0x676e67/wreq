@@ -248,7 +248,6 @@
 //! The following are a list of [Cargo features][cargo-features] that can be
 //! enabled or disabled:
 //!
-//! - **websocket**: Provides websocket support.
 //! - **cookies**: Provides cookie session support.
 //! - **gzip**: Provides response body gzip decompression.
 //! - **brotli**: Provides response body brotli decompression.
@@ -259,6 +258,7 @@
 //! - **charset** *(enabled by default)*: Improved support for decoding text.
 //! - **stream**: Adds support for `futures::Stream`.
 //! - **socks**: Provides SOCKS5 and SOCKS4 proxy support.
+//! - **ws**: Provides websocket support.
 //! - **hickory-dns**: Enables a hickory-dns async resolver instead of default threadpool using
 //!   `getaddrinfo`.
 //! - **webpki-roots** *(enabled by default)*: Use the webpki-roots crate for root certificates.
@@ -297,7 +297,7 @@ pub use url::Url;
 
 #[cfg(feature = "multipart")]
 pub use self::client::multipart;
-#[cfg(feature = "websocket")]
+#[cfg(feature = "ws")]
 pub use self::client::ws;
 pub use self::{
     client::{
@@ -325,13 +325,13 @@ fn _assert_impls() {
 
     assert_send::<Request>();
     assert_send::<RequestBuilder>();
-    #[cfg(feature = "websocket")]
+    #[cfg(feature = "ws")]
     assert_send::<ws::WebSocketRequestBuilder>();
 
     assert_send::<Response>();
-    #[cfg(feature = "websocket")]
+    #[cfg(feature = "ws")]
     assert_send::<ws::WebSocketResponse>();
-    #[cfg(feature = "websocket")]
+    #[cfg(feature = "ws")]
     assert_send::<ws::WebSocket>();
 
     assert_send::<Error>();

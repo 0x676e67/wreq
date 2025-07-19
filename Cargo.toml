@@ -20,36 +20,49 @@ targets = ["x86_64-unknown-linux-gnu"]
 [features]
 default = ["webpki-roots", "charset", "system-proxy"]
 
-websocket = ["dep:tokio-tungstenite"]
-
+# Enable HTTP/1 and HTTP/2 support.
 charset = ["dep:encoding_rs", "dep:mime"]
 
+# Enable cookies store support.
 cookies = ["dep:cookie_crate", "dep:cookie_store"]
 
+# Enable gzip compression support.
 gzip = ["tower-http/decompression-gzip"]
 
+# Enable Brotli compression support.
 brotli = ["tower-http/decompression-br"]
 
+# Enable Zstandard compression support.
 zstd = ["tower-http/decompression-zstd"]
 
+# Enable deflate compression support.
 deflate = ["tower-http/decompression-deflate"]
 
+# Enable JSON support.
 json = ["dep:serde_json"]
 
+# Enable multipart/form-data support.
 multipart = ["dep:mime_guess"]
 
+# Enable hickory DNS resolver.
 hickory-dns = ["dep:hickory-resolver"]
 
+# Enable streaming support.
 stream = ["tokio/fs", "dep:tokio-util"]
 
+# Enable socks4 and socks5 proxy support.
 socks = ["dep:tokio-socks"]
 
+# Enable HTTP/1 and HTTP/2 WebSocket support.
+ws = ["dep:tokio-tungstenite"]
+
+# Enable webpki-roots for TLS certificate validation.
 webpki-roots = ["dep:webpki-root-certs"]
 
 # Use the system's proxy configuration.
 system-proxy = ["dep:system-configuration", "dep:windows-registry"]
 
-# Optional enable tracing
+# Enable tracing logging.
 tracing = ["http2/tracing", "dep:tracing"]
 
 [dependencies]
@@ -273,12 +286,12 @@ required-features = ["tracing"]
 [[example]]
 name = "http1_websocket"
 path = "examples/http1_websocket.rs"
-required-features = ["websocket", "futures-util/std", "tracing"]
+required-features = ["ws", "futures-util/std", "tracing"]
 
 [[example]]
 name = "http2_websocket"
 path = "examples/http2_websocket.rs"
-required-features = ["websocket", "futures-util/std", "tracing"]
+required-features = ["ws", "futures-util/std", "tracing"]
 
 [[example]]
 name = "keylog"
