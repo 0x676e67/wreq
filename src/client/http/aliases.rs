@@ -4,14 +4,19 @@ use tower::{
     util::{BoxCloneSyncService, BoxCloneSyncServiceLayer, MapErr},
 };
 
-use super::{Body, service::ClientService};
+use super::{
+    Body,
+    connect::{Conn, Unnameable},
+    service::ClientService,
+};
 use crate::{
     client::layer::{
         redirect::FollowRedirect,
         retry::Http2RetryPolicy,
         timeout::{ResponseBodyTimeout, Timeout, TimeoutBody},
     },
-    core::body::Incoming,
+    core::{body::Incoming, client::connect},
+    dns::DynResolver,
     error::BoxError,
     redirect::FollowRedirectPolicy,
 };
@@ -54,13 +59,13 @@ pub type ResponseBody = TimeoutBody<tower_http::decompression::DecompressionBody
 )))]
 pub type ResponseBody = TimeoutBody<Incoming>;
 
-pub type RedirectLayer = FollowRedirect<
+pub type FollowRedirectLayer = FollowRedirect<
     CookieLayer<ResponseBodyTimeout<Decompression<ClientService>>>,
     FollowRedirectPolicy,
 >;
 
 pub type GenericClientService =
-    MapErr<Timeout<Retry<Http2RetryPolicy, RedirectLayer>>, fn(BoxError) -> BoxError>;
+    MapErr<Timeout<Retry<Http2RetryPolicy, FollowRedirectLayer>>, fn(BoxError) -> BoxError>;
 
 pub type BoxedClientService =
     BoxCloneSyncService<HttpRequest<Body>, HttpResponse<ResponseBody>, BoxError>;
@@ -71,3 +76,10 @@ pub type BoxedClientLayer = BoxCloneSyncServiceLayer<
     HttpResponse<ResponseBody>,
     BoxError,
 >;
+
+pub type HttpConnector = connect::HttpConnector<DynResolver>;
+
+pub type BoxedConnectorService = BoxCloneSyncService<Unnameable, Conn, BoxError>;
+
+pub type BoxedConnectorLayer =
+    BoxCloneSyncServiceLayer<BoxedConnectorService, Unnameable, Conn, BoxError>;

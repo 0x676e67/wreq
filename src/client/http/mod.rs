@@ -1,4 +1,5 @@
 mod aliases;
+mod connect;
 mod future;
 mod service;
 
@@ -12,13 +13,16 @@ use std::{
     time::Duration,
 };
 
-use aliases::{BoxedClientLayer, BoxedClientService, GenericClientService, ResponseBody};
+use aliases::{
+    BoxedClientLayer, BoxedClientService, BoxedConnectorLayer, BoxedConnectorService,
+    GenericClientService, ResponseBody,
+};
 pub use future::Pending;
 use http::{
     Request as HttpRequest, Response as HttpResponse,
     header::{HeaderMap, HeaderValue, USER_AGENT},
 };
-use service::{ClientConfig, ClientService};
+use service::ClientService;
 use tower::{
     Layer, Service, ServiceBuilder, ServiceExt,
     retry::RetryLayer,
@@ -50,12 +54,12 @@ use super::{
 use crate::dns::hickory::{HickoryDnsResolver, LookupIpStrategy};
 use crate::{
     IntoUrl, Method, OriginalHeaders, Proxy,
-    connect::{
-        BoxedConnectorLayer, BoxedConnectorService, Conn, Connector, HttpConnector, Unnameable,
+    client::http::{
+        aliases::HttpConnector,
+        connect::{Conn, Connector, Unnameable},
     },
     core::{
         client::{HttpClient, connect::TcpConnectOptions, options::TransportOptions},
-        ext::RequestConfig,
         rt::{TokioExecutor, tokio::TokioTimer},
     },
     dns::{DnsResolverWithOverrides, DynResolver, Resolve, gai::GaiResolver},
@@ -245,10 +249,6 @@ impl ClientBuilder {
             proxies.push(ProxyMatcher::system());
         }
         let proxies = Arc::new(proxies);
-        let proxies_maybe_http_auth = proxies.iter().any(ProxyMatcher::maybe_has_http_auth);
-        let proxies_maybe_http_custom_headers = proxies
-            .iter()
-            .any(ProxyMatcher::maybe_has_http_custom_headers);
 
         let (tls_opts, http1_opts, http2_opts) = config.transport_options.into_parts();
 
@@ -275,6 +275,7 @@ impl ClientBuilder {
 
             // Apply http connector options
             let http = |http: &mut HttpConnector| {
+                http.enforce_http(false);
                 http.set_keepalive(config.tcp_keepalive);
                 http.set_keepalive_interval(config.tcp_keepalive_interval);
                 http.set_keepalive_retries(config.tcp_keepalive_retries);
@@ -308,8 +309,8 @@ impl ClientBuilder {
                 .timeout(config.connect_timeout)
                 .tls_info(config.tls_info)
                 .verbose(config.connection_verbose)
-                .with_http(http)
                 .with_tls(tls)
+                .with_http(http)
                 .build(tls_opts.unwrap_or_default(), config.connector_layers)?
         };
 
@@ -331,18 +332,13 @@ impl ClientBuilder {
 
         // Create the client with the configured service layers
         let client = {
-            let service = ClientService {
+            let service = ClientService::new(
                 client,
-                config: Arc::new(ClientConfig {
-                    default_headers: config.headers,
-                    original_headers: RequestConfig::new(config.original_headers),
-                    skip_default_headers: RequestConfig::default(),
-                    https_only: config.https_only,
-                    proxies,
-                    proxies_maybe_http_auth,
-                    proxies_maybe_http_custom_headers,
-                }),
-            };
+                config.headers,
+                config.original_headers,
+                config.https_only,
+                proxies,
+            );
 
             #[cfg(any(
                 feature = "gzip",

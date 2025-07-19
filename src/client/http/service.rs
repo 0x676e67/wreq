@@ -6,10 +6,10 @@ use std::{
 use http::{HeaderMap, Request, Response, header::PROXY_AUTHORIZATION, uri::Scheme};
 use tower::Service;
 
-use super::{Body, future::CorePending};
+use super::{Body, connect::Connector, future::CorePending};
 use crate::{
+    OriginalHeaders,
     client::layer::config::RequestSkipDefaultHeaders,
-    connect::Connector,
     core::{
         body::Incoming,
         client::HttpClient,
@@ -20,23 +20,52 @@ use crate::{
     proxy::Matcher as ProxyMatcher,
 };
 
-#[derive(Clone)]
-pub struct ClientService {
-    pub(super) client: HttpClient<Connector, Body>,
-    pub(super) config: Arc<ClientConfig>,
+/// HTTP client service configuration.
+struct Config {
+    headers: HeaderMap,
+    skip_default_headers: RequestConfig<RequestSkipDefaultHeaders>,
+    original_headers: RequestConfig<RequestOriginalHeaders>,
+    https_only: bool,
+    proxies: Arc<Vec<ProxyMatcher>>,
+    proxies_maybe_http_auth: bool,
+    proxies_maybe_http_custom_headers: bool,
 }
 
-pub(super) struct ClientConfig {
-    pub(super) default_headers: HeaderMap,
-    pub(super) skip_default_headers: RequestConfig<RequestSkipDefaultHeaders>,
-    pub(super) original_headers: RequestConfig<RequestOriginalHeaders>,
-    pub(super) https_only: bool,
-    pub(super) proxies: Arc<Vec<ProxyMatcher>>,
-    pub(super) proxies_maybe_http_auth: bool,
-    pub(super) proxies_maybe_http_custom_headers: bool,
+/// Tower service wrapper around the HTTP client.
+#[derive(Clone)]
+pub struct ClientService {
+    client: HttpClient<Connector, Body>,
+    config: Arc<Config>,
 }
 
 impl ClientService {
+    /// Creates a new `ClientService` with the provided HTTP client and configuration.
+    pub(super) fn new(
+        client: HttpClient<Connector, Body>,
+        headers: HeaderMap,
+        original_headers: Option<OriginalHeaders>,
+        https_only: bool,
+        proxies: Arc<Vec<ProxyMatcher>>,
+    ) -> Self {
+        let proxies_maybe_http_auth = proxies.iter().any(ProxyMatcher::maybe_has_http_auth);
+        let proxies_maybe_http_custom_headers = proxies
+            .iter()
+            .any(ProxyMatcher::maybe_has_http_custom_headers);
+
+        ClientService {
+            client,
+            config: Arc::new(Config {
+                headers,
+                original_headers: RequestConfig::new(original_headers),
+                skip_default_headers: RequestConfig::default(),
+                https_only,
+                proxies,
+                proxies_maybe_http_auth,
+                proxies_maybe_http_custom_headers,
+            }),
+        }
+    }
+
     #[inline]
     fn apply_proxy_headers(&self, req: &mut Request<Body>) {
         // Skip if the destination is not plain HTTP.
@@ -121,9 +150,9 @@ impl Service<Request<Body>> for ClientService {
         if !skip {
             let headers = req.headers_mut();
             // Insert default headers if they are not already present in the request.
-            for name in self.config.default_headers.keys() {
+            for name in self.config.headers.keys() {
                 if !headers.contains_key(name) {
-                    for value in self.config.default_headers.get_all(name) {
+                    for value in self.config.headers.get_all(name) {
                         headers.append(name, value.clone());
                     }
                 }

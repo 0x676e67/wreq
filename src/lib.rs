@@ -277,7 +277,6 @@
 #[macro_use]
 mod trace;
 mod client;
-mod connect;
 mod core;
 mod error;
 mod into_url;
