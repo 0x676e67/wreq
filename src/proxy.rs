@@ -611,24 +611,33 @@ mod tests {
         assert!(m.maybe_has_http_auth(), "http forwards");
     }
 
+    fn test_socks_proxy_default_port(url: &str) {
+        let m = Proxy::all(url).unwrap().into_matcher();
+
+        let http = "http://hyper.rs";
+        let https = "https://hyper.rs";
+
+        assert_eq!(intercepted_uri(&m, http).port_u16(), Some(1080));
+        assert_eq!(intercepted_uri(&m, https).port_u16(), Some(1080));
+
+        // custom port
+        let m = Proxy::all("socks5://example.com:1234")
+            .unwrap()
+            .into_matcher();
+
+        assert_eq!(intercepted_uri(&m, http).port_u16(), Some(1234));
+        assert_eq!(intercepted_uri(&m, https).port_u16(), Some(1234));
+    }
+
     #[test]
-    fn test_socks_proxy_default_port() {
-        {
-            let m = Proxy::all("socks5://example.com").unwrap().into_matcher();
+    fn test_socks4_proxy_default_port() {
+        test_socks_proxy_default_port("socks4://example.com");
+        test_socks_proxy_default_port("socks4a://example.com");
+    }
 
-            let http = "http://hyper.rs";
-            let https = "https://hyper.rs";
-
-            assert_eq!(intercepted_uri(&m, http).port_u16(), Some(1080));
-            assert_eq!(intercepted_uri(&m, https).port_u16(), Some(1080));
-
-            // custom port
-            let m = Proxy::all("socks5://example.com:1234")
-                .unwrap()
-                .into_matcher();
-
-            assert_eq!(intercepted_uri(&m, http).port_u16(), Some(1234));
-            assert_eq!(intercepted_uri(&m, https).port_u16(), Some(1234));
-        }
+    #[test]
+    fn test_socks5_proxy_default_port() {
+        test_socks_proxy_default_port("socks5://example.com");
+        test_socks_proxy_default_port("socks5h://example.com");
     }
 }

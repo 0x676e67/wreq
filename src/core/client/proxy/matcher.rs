@@ -335,7 +335,7 @@ fn parse_env_uri(val: &str) -> Option<Intercept> {
             if s == &http::uri::Scheme::HTTP || s == &http::uri::Scheme::HTTPS {
                 is_httpish = true;
                 s.clone()
-            } else if s.as_str() == "socks5" || s.as_str() == "socks5h" {
+            } else if matches!(s.as_str(), "socks4" | "socks4a" | "socks5" | "socks5h") {
                 s.clone()
             } else {
                 // can't use this proxy scheme
