@@ -147,8 +147,8 @@ struct Config {
     http_version_pref: HttpVersionPref,
     https_only: bool,
     http2_max_retry: usize,
-    layers: Option<Vec<BoxedClientLayer>>,
-    connector_layers: Option<Vec<BoxedConnectorLayer>>,
+    layers: Vec<BoxedClientLayer>,
+    connector_layers: Vec<BoxedConnectorLayer>,
     keylog_policy: Option<KeyLogPolicy>,
     tls_info: bool,
     tls_sni: bool,
@@ -214,8 +214,8 @@ impl ClientBuilder {
                 http_version_pref: HttpVersionPref::All,
                 https_only: false,
                 http2_max_retry: 2,
-                layers: None,
-                connector_layers: None,
+                layers: Vec::new(),
+                connector_layers: Vec::new(),
                 keylog_policy: None,
                 tls_info: false,
                 tls_sni: true,
@@ -378,36 +378,33 @@ impl ClientBuilder {
                 )))
                 .service(service);
 
-            match config.layers {
-                Some(layers) => {
-                    let service = layers.into_iter().fold(
-                        BoxCloneSyncService::new(service),
-                        |client_service, layer| {
-                            ServiceBuilder::new().layer(layer).service(client_service)
-                        },
-                    );
+            if config.layers.is_empty() {
+                let service = ServiceBuilder::new()
+                    .layer(TimeoutLayer::new(config.timeout, config.read_timeout))
+                    .service(service);
 
-                    let service = ServiceBuilder::new()
-                        .layer(TimeoutLayer::new(config.timeout, config.read_timeout))
-                        .service(service);
+                let service = ServiceBuilder::new()
+                    .map_err(error::map_timeout_to_request_error as _)
+                    .service(service);
 
-                    let service = ServiceBuilder::new()
-                        .map_err(error::map_timeout_to_request_error)
-                        .service(service);
+                ClientRef::Generic(service)
+            } else {
+                let service = config.layers.into_iter().fold(
+                    BoxCloneSyncService::new(service),
+                    |client_service, layer| {
+                        ServiceBuilder::new().layer(layer).service(client_service)
+                    },
+                );
 
-                    ClientRef::Boxed(BoxCloneSyncService::new(service))
-                }
-                None => {
-                    let service = ServiceBuilder::new()
-                        .layer(TimeoutLayer::new(config.timeout, config.read_timeout))
-                        .service(service);
+                let service = ServiceBuilder::new()
+                    .layer(TimeoutLayer::new(config.timeout, config.read_timeout))
+                    .service(service);
 
-                    let service = ServiceBuilder::new()
-                        .map_err(error::map_timeout_to_request_error as _)
-                        .service(service);
+                let service = ServiceBuilder::new()
+                    .map_err(error::map_timeout_to_request_error)
+                    .service(service);
 
-                    ClientRef::Generic(service)
-                }
+                ClientRef::Boxed(BoxCloneSyncService::new(service))
             }
         };
 
@@ -1239,7 +1236,7 @@ impl ClientBuilder {
         <L::Service as Service<HttpRequest<Body>>>::Future: Send + 'static,
     {
         let layer = BoxCloneSyncServiceLayer::new(layer);
-        self.config.layers.get_or_insert_default().push(layer);
+        self.config.layers.push(layer);
         self
     }
 
@@ -1273,10 +1270,7 @@ impl ClientBuilder {
         <L::Service as Service<Unnameable>>::Future: Send + 'static,
     {
         let layer = BoxCloneSyncServiceLayer::new(layer);
-        self.config
-            .connector_layers
-            .get_or_insert_default()
-            .push(layer);
+        self.config.connector_layers.push(layer);
         self
     }
 

@@ -195,13 +195,12 @@ impl CertStore {
 impl Default for CertStore {
     fn default() -> Self {
         #[cfg(feature = "webpki-roots")]
-        pub(super) static LOAD_CERTS: std::sync::LazyLock<CertStore> =
-            std::sync::LazyLock::new(|| {
-                CertStore::builder()
-                    .add_der_certs(webpki_root_certs::TLS_SERVER_ROOT_CERTS)
-                    .build()
-                    .expect("failed to load default cert store")
-            });
+        static LOAD_CERTS: std::sync::LazyLock<CertStore> = std::sync::LazyLock::new(|| {
+            CertStore::builder()
+                .add_der_certs(webpki_root_certs::TLS_SERVER_ROOT_CERTS)
+                .build()
+                .expect("failed to load default cert store")
+        });
 
         #[cfg(not(feature = "webpki-roots"))]
         {

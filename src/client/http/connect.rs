@@ -131,7 +131,7 @@ impl ConnectorBuilder {
     pub fn build(
         self,
         opts: TlsOptions,
-        layers: Option<Vec<BoxedConnectorLayer>>,
+        layers: Vec<BoxedConnectorLayer>,
     ) -> crate::Result<Connector> {
         let mut service = ConnectorService {
             config: Config {
@@ -147,49 +147,49 @@ impl ConnectorBuilder {
             tls_builder: Arc::new(self.tls_builder),
         };
 
-        if let Some(layers) = layers {
-            // otherwise we have user provided layers
-            // so we need type erasure all the way through
-            // as well as mapping the unnameable type of the layers back to ConnectRequest for the
-            // inner service
-            let service = layers.into_iter().fold(
-                BoxCloneSyncService::new(
-                    ServiceBuilder::new()
-                        .layer(MapRequestLayer::new(|request: Unnameable| request.0))
-                        .service(service),
-                ),
-                |service, layer| ServiceBuilder::new().layer(layer).service(service),
-            );
-
-            // now we handle the concrete stuff - any `connect_timeout`,
-            // plus a final map_err layer we can use to cast default tower layer
-            // errors to internal errors
-            match self.config.timeout {
-                Some(timeout) => {
-                    let service = ServiceBuilder::new()
-                        .layer(TimeoutLayer::new(timeout))
-                        .service(service);
-                    let service = ServiceBuilder::new()
-                        .map_err(map_timeout_to_connector_error)
-                        .service(service);
-                    let service = BoxCloneSyncService::new(service);
-                    Ok(Connector::WithLayers(service))
-                }
-                None => {
-                    // no timeout, but still map err
-                    // no named timeout layer but we still map errors since
-                    // we might have user-provided timeout layer
-                    let service = ServiceBuilder::new()
-                        .map_err(map_timeout_to_connector_error)
-                        .service(service);
-                    let service = BoxCloneSyncService::new(service);
-                    Ok(Connector::WithLayers(service))
-                }
-            }
-        } else {
-            // we have no user-provided layers, only use concrete types
+        // we have no user-provided layers, only use concrete types
+        if layers.is_empty() {
             service.config.timeout = self.config.timeout;
-            Ok(Connector::Simple(service))
+            return Ok(Connector::Simple(service));
+        }
+
+        // otherwise we have user provided layers
+        // so we need type erasure all the way through
+        // as well as mapping the unnameable type of the layers back to ConnectRequest for the
+        // inner service
+        let service = layers.into_iter().fold(
+            BoxCloneSyncService::new(
+                ServiceBuilder::new()
+                    .layer(MapRequestLayer::new(|request: Unnameable| request.0))
+                    .service(service),
+            ),
+            |service, layer| ServiceBuilder::new().layer(layer).service(service),
+        );
+
+        // now we handle the concrete stuff - any `connect_timeout`,
+        // plus a final map_err layer we can use to cast default tower layer
+        // errors to internal errors
+        match self.config.timeout {
+            Some(timeout) => {
+                let service = ServiceBuilder::new()
+                    .layer(TimeoutLayer::new(timeout))
+                    .service(service);
+                let service = ServiceBuilder::new()
+                    .map_err(map_timeout_to_connector_error)
+                    .service(service);
+                let service = BoxCloneSyncService::new(service);
+                Ok(Connector::WithLayers(service))
+            }
+            None => {
+                // no timeout, but still map err
+                // no named timeout layer but we still map errors since
+                // we might have user-provided timeout layer
+                let service = ServiceBuilder::new()
+                    .map_err(map_timeout_to_connector_error)
+                    .service(service);
+                let service = BoxCloneSyncService::new(service);
+                Ok(Connector::WithLayers(service))
+            }
         }
     }
 }
