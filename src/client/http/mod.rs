@@ -61,7 +61,7 @@ use crate::{
     dns::{DnsResolverWithOverrides, DynResolver, Resolve, gai::GaiResolver},
     error::{self, BoxError, Error},
     proxy::Matcher as ProxyMatcher,
-    redirect::{self, RedirectPolicy},
+    redirect,
     tls::{AlpnProtocol, CertStore, Identity, KeyLogPolicy, TlsConnectorBuilder, TlsVersion},
 };
 
@@ -362,7 +362,7 @@ impl ClientBuilder {
                 .layer(CookieManagerLayer::new(config.cookie_store))
                 .service(service);
 
-            let policy = RedirectPolicy::new(config.redirect_policy)
+            let policy = redirect::RedirectPolicy::new(config.redirect_policy)
                 .with_referer(config.referer)
                 .with_https_only(config.https_only);
 
