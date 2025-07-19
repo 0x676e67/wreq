@@ -261,14 +261,14 @@ impl fmt::Display for TooManyRedirects {
 impl StdError for TooManyRedirects {}
 
 #[derive(Clone)]
-pub(crate) struct RedirectPolicy {
+pub(crate) struct FollowRedirectPolicy {
     policy: RequestConfig<RequestRedirectPolicy>,
     referer: bool,
     urls: Vec<Url>,
     https_only: bool,
 }
 
-impl RedirectPolicy {
+impl FollowRedirectPolicy {
     pub(crate) const fn new(policy: Policy) -> Self {
         Self {
             policy: RequestConfig::new(Some(policy)),
@@ -301,7 +301,7 @@ fn make_referer(next: &Url, previous: &Url) -> Option<HeaderValue> {
     referer.as_str().parse().ok()
 }
 
-impl policy::Policy<Body, BoxError> for RedirectPolicy {
+impl policy::Policy<Body, BoxError> for FollowRedirectPolicy {
     fn redirect(&mut self, attempt: &policy::Attempt<'_>) -> Result<policy::Action, BoxError> {
         // Parse the next URL from the attempt.
         let previous_url = IntoUrlSealed::into_url(attempt.previous().to_string())?;

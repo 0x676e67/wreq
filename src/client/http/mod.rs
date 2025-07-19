@@ -61,7 +61,7 @@ use crate::{
     dns::{DnsResolverWithOverrides, DynResolver, Resolve, gai::GaiResolver},
     error::{self, BoxError, Error},
     proxy::Matcher as ProxyMatcher,
-    redirect,
+    redirect::{self, FollowRedirectPolicy, Policy as RedirectPolicy},
     tls::{AlpnProtocol, CertStore, Identity, KeyLogPolicy, TlsConnectorBuilder, TlsVersion},
 };
 
@@ -130,7 +130,7 @@ struct Config {
     tcp_user_timeout: Option<Duration>,
     proxies: Vec<ProxyMatcher>,
     auto_sys_proxy: bool,
-    redirect_policy: redirect::Policy,
+    redirect_policy: RedirectPolicy,
     referer: bool,
     timeout: Option<Duration>,
     read_timeout: Option<Duration>,
@@ -197,7 +197,7 @@ impl ClientBuilder {
                 tcp_user_timeout: None,
                 proxies: Vec::new(),
                 auto_sys_proxy: true,
-                redirect_policy: redirect::Policy::none(),
+                redirect_policy: RedirectPolicy::none(),
                 referer: true,
                 timeout: None,
                 read_timeout: None,
@@ -252,6 +252,7 @@ impl ClientBuilder {
 
         let (tls_opts, http1_opts, http2_opts) = config.transport_options.into_parts();
 
+        // Create the TLS connector with the provided options.
         let connector = {
             let resolver = {
                 let mut resolver: Arc<dyn Resolve> = match config.dns_resolver {
@@ -272,6 +273,7 @@ impl ClientBuilder {
                 DynResolver::new(resolver)
             };
 
+            // Apply http connector options
             let http = |http: &mut HttpConnector| {
                 http.set_keepalive(config.tcp_keepalive);
                 http.set_keepalive_interval(config.tcp_keepalive_interval);
@@ -284,10 +286,10 @@ impl ClientBuilder {
                 http.set_tcp_user_timeout(config.tcp_user_timeout);
             };
 
+            // Apply tls connector options
             let tls = |tls: TlsConnectorBuilder| {
                 let alpn_protocol = match config.http_version_pref {
                     HttpVersionPref::Http1 => Some(AlpnProtocol::HTTP1),
-
                     HttpVersionPref::Http2 => Some(AlpnProtocol::HTTP2),
                     _ => None,
                 };
@@ -311,6 +313,7 @@ impl ClientBuilder {
                 .build(tls_opts.unwrap_or_default(), config.connector_layers)?
         };
 
+        // Create client with the configured connector
         let client = {
             let http2_only = matches!(config.http_version_pref, HttpVersionPref::Http2);
             let mut builder = HttpClient::builder(TokioExecutor::new());
@@ -326,6 +329,7 @@ impl ClientBuilder {
             builder.build(connector)
         };
 
+        // Create the client with the configured service layers
         let client = {
             let service = ClientService {
                 client,
@@ -362,13 +366,15 @@ impl ClientBuilder {
                 .layer(CookieManagerLayer::new(config.cookie_store))
                 .service(service);
 
-            let policy = redirect::RedirectPolicy::new(config.redirect_policy)
-                .with_referer(config.referer)
-                .with_https_only(config.https_only);
+            let service = {
+                let policy = FollowRedirectPolicy::new(config.redirect_policy)
+                    .with_referer(config.referer)
+                    .with_https_only(config.https_only);
 
-            let service = ServiceBuilder::new()
-                .layer(FollowRedirectLayer::with_policy(policy))
-                .service(service);
+                ServiceBuilder::new()
+                    .layer(FollowRedirectLayer::with_policy(policy))
+                    .service(service)
+            };
 
             let service = ServiceBuilder::new()
                 .layer(RetryLayer::new(Http2RetryPolicy::new(

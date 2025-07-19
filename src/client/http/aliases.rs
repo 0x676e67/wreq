@@ -13,7 +13,7 @@ use crate::{
     },
     core::body::Incoming,
     error::BoxError,
-    redirect::RedirectPolicy,
+    redirect::FollowRedirectPolicy,
 };
 
 #[cfg(not(feature = "cookies"))]
@@ -54,8 +54,10 @@ pub type ResponseBody = TimeoutBody<tower_http::decompression::DecompressionBody
 )))]
 pub type ResponseBody = TimeoutBody<Incoming>;
 
-pub type RedirectLayer =
-    FollowRedirect<CookieLayer<ResponseBodyTimeout<Decompression<ClientService>>>, RedirectPolicy>;
+pub type RedirectLayer = FollowRedirect<
+    CookieLayer<ResponseBodyTimeout<Decompression<ClientService>>>,
+    FollowRedirectPolicy,
+>;
 
 pub type CoreResponseFuture = crate::core::client::ResponseFuture;
 
