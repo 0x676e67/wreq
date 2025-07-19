@@ -38,7 +38,7 @@ impl<S> Layer<S> for TimeoutLayer {
     fn layer(&self, service: S) -> Self::Service {
         Timeout {
             inner: service,
-            timeout: self.timeout.clone(),
+            timeout: self.timeout,
         }
     }
 }
@@ -102,7 +102,7 @@ impl<S> Layer<S> for ResponseBodyTimeoutLayer {
     fn layer(&self, inner: S) -> Self::Service {
         ResponseBodyTimeout {
             inner,
-            timeout: self.timeout.clone(),
+            timeout: self.timeout,
         }
     }
 }
