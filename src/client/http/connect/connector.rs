@@ -1,6 +1,5 @@
 use std::{
     future::Future,
-    io::{self, IoSlice},
     pin::Pin,
     sync::Arc,
     task::{Context, Poll},
@@ -8,32 +7,28 @@ use std::{
 };
 
 use http::uri::Scheme;
-use pin_project_lite::pin_project;
-use tls_conn::TlsConn;
-use tokio::net::TcpStream;
-use tokio_boring2::SslStream;
 use tower::{
     Service, ServiceBuilder,
     timeout::TimeoutLayer,
     util::{BoxCloneSyncService, MapRequestLayer},
 };
 
-pub(super) use self::conn::{Conn, Unnameable};
-use super::aliases::{BoxedConnectorLayer, BoxedConnectorService, HttpConnector};
+use super::{
+    super::aliases::{BoxedConnectorLayer, BoxedConnectorService, HttpConnector},
+    conn::{Conn, TlsConn, Unnameable},
+    verbose,
+};
 use crate::{
     core::{
-        client::{
-            ConnExtra, ConnRequest,
-            connect::{Connected, Connection, proxy},
-        },
-        rt::{Read, ReadBufCursor, TokioIo, Write},
+        client::{ConnExtra, ConnRequest, connect::proxy},
+        rt::TokioIo,
     },
     dns::DynResolver,
     error::{BoxError, TimedOut, map_timeout_to_connector_error},
     proxy::{Intercepted, Matcher as ProxyMatcher},
     tls::{
         EstablishedConn, HttpsConnector, MaybeHttpsStream, TlsConnector, TlsConnectorBuilder,
-        TlsInfo, TlsOptions,
+        TlsOptions,
     },
 };
 
@@ -204,7 +199,7 @@ impl Connector {
         ConnectorBuilder {
             config: Config {
                 proxies,
-                verbose: verbose::OFF,
+                verbose: verbose::Wrapper(false),
                 tcp_nodelay: false,
                 tls_info: false,
                 timeout: None,
@@ -446,424 +441,5 @@ impl Service<ConnRequest> for ConnectorService {
     #[inline(always)]
     fn call(&mut self, req: ConnRequest) -> Self::Future {
         Box::pin(self.clone().connect_auto(req))
-    }
-}
-
-trait TlsInfoFactory {
-    fn tls_info(&self) -> Option<TlsInfo>;
-}
-
-impl TlsInfoFactory for TcpStream {
-    fn tls_info(&self) -> Option<TlsInfo> {
-        None
-    }
-}
-
-impl<T: TlsInfoFactory> TlsInfoFactory for TokioIo<T> {
-    fn tls_info(&self) -> Option<TlsInfo> {
-        self.inner().tls_info()
-    }
-}
-
-impl TlsInfoFactory for SslStream<TcpStream> {
-    fn tls_info(&self) -> Option<TlsInfo> {
-        self.ssl()
-            .peer_certificate()
-            .and_then(|c| c.to_der().ok())
-            .map(|c| TlsInfo {
-                peer_certificate: Some(c),
-            })
-    }
-}
-
-impl TlsInfoFactory for MaybeHttpsStream<TcpStream> {
-    fn tls_info(&self) -> Option<TlsInfo> {
-        match self {
-            MaybeHttpsStream::Https(tls) => tls.tls_info(),
-            MaybeHttpsStream::Http(_) => None,
-        }
-    }
-}
-
-impl TlsInfoFactory for SslStream<TokioIo<MaybeHttpsStream<TcpStream>>> {
-    fn tls_info(&self) -> Option<TlsInfo> {
-        self.ssl()
-            .peer_certificate()
-            .and_then(|c| c.to_der().ok())
-            .map(|c| TlsInfo {
-                peer_certificate: Some(c),
-            })
-    }
-}
-
-pub(crate) trait AsyncConn:
-    Read + Write + Connection + Send + Sync + Unpin + 'static
-{
-}
-
-impl<T: Read + Write + Connection + Send + Sync + Unpin + 'static> AsyncConn for T {}
-
-trait AsyncConnWithInfo: AsyncConn + TlsInfoFactory {}
-
-impl<T: AsyncConn + TlsInfoFactory> AsyncConnWithInfo for T {}
-
-type BoxConn = Box<dyn AsyncConnWithInfo>;
-
-mod conn {
-    use super::*;
-
-    #[derive(Debug)]
-    pub struct Unnameable(pub(super) ConnRequest);
-
-    pin_project! {
-        /// Note: the `is_proxy` member means *is plain text HTTP proxy*.
-        /// This tells core whether the URI should be written in
-        /// * origin-form (`GET /just/a/path HTTP/1.1`), when `is_proxy == false`, or
-        /// * absolute-form (`GET http://foo.bar/and/a/path HTTP/1.1`), otherwise.
-        pub struct Conn {
-            #[pin]
-            pub(super) inner: BoxConn,
-            pub(super) is_proxy: bool,
-            pub(super) tls_info: bool,
-        }
-    }
-
-    impl Connection for Conn {
-        fn connected(&self) -> Connected {
-            let connected = self.inner.connected().proxy(self.is_proxy);
-
-            if self.tls_info {
-                if let Some(tls_info) = self.inner.tls_info() {
-                    connected.extra(tls_info)
-                } else {
-                    connected
-                }
-            } else {
-                connected
-            }
-        }
-    }
-
-    impl Read for Conn {
-        fn poll_read(
-            self: Pin<&mut Self>,
-            cx: &mut Context,
-            buf: ReadBufCursor<'_>,
-        ) -> Poll<io::Result<()>> {
-            let this = self.project();
-            Read::poll_read(this.inner, cx, buf)
-        }
-    }
-
-    impl Write for Conn {
-        fn poll_write(
-            self: Pin<&mut Self>,
-            cx: &mut Context,
-            buf: &[u8],
-        ) -> Poll<Result<usize, io::Error>> {
-            let this = self.project();
-            Write::poll_write(this.inner, cx, buf)
-        }
-
-        fn poll_write_vectored(
-            self: Pin<&mut Self>,
-            cx: &mut Context<'_>,
-            bufs: &[IoSlice<'_>],
-        ) -> Poll<Result<usize, io::Error>> {
-            let this = self.project();
-            Write::poll_write_vectored(this.inner, cx, bufs)
-        }
-
-        fn is_write_vectored(&self) -> bool {
-            self.inner.is_write_vectored()
-        }
-
-        fn poll_flush(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), io::Error>> {
-            let this = self.project();
-            Write::poll_flush(this.inner, cx)
-        }
-
-        fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), io::Error>> {
-            let this = self.project();
-            Write::poll_shutdown(this.inner, cx)
-        }
-    }
-}
-
-mod tls_conn {
-    use std::{
-        io::{self, IoSlice},
-        pin::Pin,
-        task::{Context, Poll},
-    };
-
-    use pin_project_lite::pin_project;
-    use tokio::{
-        io::{AsyncRead, AsyncWrite},
-        net::TcpStream,
-    };
-    use tokio_boring2::SslStream;
-
-    use super::{TlsInfo, TlsInfoFactory};
-    use crate::{
-        core::{
-            client::connect::{Connected, Connection},
-            rt::{Read, ReadBufCursor, TokioIo, Write},
-        },
-        tls::MaybeHttpsStream,
-    };
-
-    pin_project! {
-        pub(super) struct TlsConn<T> {
-            #[pin]
-            pub(super) inner: TokioIo<SslStream<T>>,
-        }
-    }
-
-    impl Connection for TlsConn<TcpStream> {
-        fn connected(&self) -> Connected {
-            let connected = self.inner.inner().get_ref().connected();
-            if self.inner.inner().ssl().selected_alpn_protocol() == Some(b"h2") {
-                connected.negotiated_h2()
-            } else {
-                connected
-            }
-        }
-    }
-
-    impl Connection for TlsConn<TokioIo<MaybeHttpsStream<TcpStream>>> {
-        fn connected(&self) -> Connected {
-            let connected = self.inner.inner().get_ref().connected();
-            if self.inner.inner().ssl().selected_alpn_protocol() == Some(b"h2") {
-                connected.negotiated_h2()
-            } else {
-                connected
-            }
-        }
-    }
-
-    impl<T: AsyncRead + AsyncWrite + Unpin> Read for TlsConn<T> {
-        fn poll_read(
-            self: Pin<&mut Self>,
-            cx: &mut Context,
-            buf: ReadBufCursor<'_>,
-        ) -> Poll<tokio::io::Result<()>> {
-            let this = self.project();
-            Read::poll_read(this.inner, cx, buf)
-        }
-    }
-
-    impl<T: AsyncRead + AsyncWrite + Unpin> Write for TlsConn<T> {
-        fn poll_write(
-            self: Pin<&mut Self>,
-            cx: &mut Context,
-            buf: &[u8],
-        ) -> Poll<Result<usize, tokio::io::Error>> {
-            let this = self.project();
-            Write::poll_write(this.inner, cx, buf)
-        }
-
-        fn poll_write_vectored(
-            self: Pin<&mut Self>,
-            cx: &mut Context<'_>,
-            bufs: &[IoSlice<'_>],
-        ) -> Poll<Result<usize, io::Error>> {
-            let this = self.project();
-            Write::poll_write_vectored(this.inner, cx, bufs)
-        }
-
-        fn is_write_vectored(&self) -> bool {
-            self.inner.is_write_vectored()
-        }
-
-        fn poll_flush(
-            self: Pin<&mut Self>,
-            cx: &mut Context,
-        ) -> Poll<Result<(), tokio::io::Error>> {
-            let this = self.project();
-            Write::poll_flush(this.inner, cx)
-        }
-
-        fn poll_shutdown(
-            self: Pin<&mut Self>,
-            cx: &mut Context,
-        ) -> Poll<Result<(), tokio::io::Error>> {
-            let this = self.project();
-            Write::poll_shutdown(this.inner, cx)
-        }
-    }
-
-    impl<T> TlsInfoFactory for TlsConn<T>
-    where
-        TokioIo<SslStream<T>>: TlsInfoFactory,
-    {
-        fn tls_info(&self) -> Option<TlsInfo> {
-            self.inner.tls_info()
-        }
-    }
-}
-
-mod verbose {
-    use super::{AsyncConnWithInfo, BoxConn};
-
-    pub(super) const OFF: Wrapper = Wrapper(false);
-
-    #[derive(Clone, Copy)]
-    pub(super) struct Wrapper(pub(super) bool);
-
-    impl Wrapper {
-        #[cfg_attr(not(feature = "tracing"), inline(always))]
-        pub(super) fn wrap<T: AsyncConnWithInfo>(&self, conn: T) -> BoxConn {
-            #[cfg(feature = "tracing")]
-            {
-                if self.0 {
-                    return Box::new(sealed::Verbose {
-                        // truncate is fine
-                        id: crate::util::fast_random() as u32,
-                        inner: conn,
-                    });
-                }
-            }
-
-            Box::new(conn)
-        }
-    }
-
-    #[cfg(feature = "tracing")]
-    mod sealed {
-        use std::{
-            fmt,
-            io::{self, IoSlice},
-            pin::Pin,
-            task::{Context, Poll},
-        };
-
-        use super::super::TlsInfoFactory;
-        use crate::{
-            core::{
-                client::connect::{Connected, Connection},
-                rt::{Read, ReadBufCursor, Write},
-            },
-            tls::TlsInfo,
-            util::Escape,
-        };
-
-        pub(super) struct Verbose<T> {
-            pub(super) id: u32,
-            pub(super) inner: T,
-        }
-
-        impl<T: Connection + Read + Write + Unpin> Connection for Verbose<T> {
-            fn connected(&self) -> Connected {
-                self.inner.connected()
-            }
-        }
-
-        impl<T: Read + Write + Unpin> Read for Verbose<T> {
-            fn poll_read(
-                mut self: Pin<&mut Self>,
-                cx: &mut Context,
-                mut buf: ReadBufCursor<'_>,
-            ) -> Poll<std::io::Result<()>> {
-                // TODO: This _does_ forget the `init` len, so it could result in
-                // re-initializing twice. Needs upstream support, perhaps.
-                // SAFETY: Passing to a ReadBuf will never de-initialize any bytes.
-                let mut vbuf = crate::core::rt::ReadBuf::uninit(unsafe { buf.as_mut() });
-                match Pin::new(&mut self.inner).poll_read(cx, vbuf.unfilled()) {
-                    Poll::Ready(Ok(())) => {
-                        trace!("{:08x} read: {:?}", self.id, Escape::new(vbuf.filled()));
-                        let len = vbuf.filled().len();
-                        // SAFETY: The two cursors were for the same buffer. What was
-                        // filled in one is safe in the other.
-                        unsafe {
-                            buf.advance(len);
-                        }
-                        Poll::Ready(Ok(()))
-                    }
-                    Poll::Ready(Err(e)) => Poll::Ready(Err(e)),
-                    Poll::Pending => Poll::Pending,
-                }
-            }
-        }
-
-        impl<T: Read + Write + Unpin> Write for Verbose<T> {
-            fn poll_write(
-                mut self: Pin<&mut Self>,
-                cx: &mut Context,
-                buf: &[u8],
-            ) -> Poll<Result<usize, std::io::Error>> {
-                match Pin::new(&mut self.inner).poll_write(cx, buf) {
-                    Poll::Ready(Ok(n)) => {
-                        trace!("{:08x} write: {:?}", self.id, Escape::new(&buf[..n]));
-                        Poll::Ready(Ok(n))
-                    }
-                    Poll::Ready(Err(e)) => Poll::Ready(Err(e)),
-                    Poll::Pending => Poll::Pending,
-                }
-            }
-
-            fn poll_write_vectored(
-                mut self: Pin<&mut Self>,
-                cx: &mut Context<'_>,
-                bufs: &[IoSlice<'_>],
-            ) -> Poll<Result<usize, io::Error>> {
-                match Pin::new(&mut self.inner).poll_write_vectored(cx, bufs) {
-                    Poll::Ready(Ok(nwritten)) => {
-                        trace!(
-                            "{:08x} write (vectored): {:?}",
-                            self.id,
-                            Vectored { bufs, nwritten }
-                        );
-                        Poll::Ready(Ok(nwritten))
-                    }
-                    Poll::Ready(Err(e)) => Poll::Ready(Err(e)),
-                    Poll::Pending => Poll::Pending,
-                }
-            }
-
-            fn is_write_vectored(&self) -> bool {
-                self.inner.is_write_vectored()
-            }
-
-            fn poll_flush(
-                mut self: Pin<&mut Self>,
-                cx: &mut Context,
-            ) -> Poll<Result<(), std::io::Error>> {
-                Pin::new(&mut self.inner).poll_flush(cx)
-            }
-
-            fn poll_shutdown(
-                mut self: Pin<&mut Self>,
-                cx: &mut Context,
-            ) -> Poll<Result<(), std::io::Error>> {
-                Pin::new(&mut self.inner).poll_shutdown(cx)
-            }
-        }
-
-        impl<T: TlsInfoFactory> TlsInfoFactory for Verbose<T> {
-            fn tls_info(&self) -> Option<TlsInfo> {
-                self.inner.tls_info()
-            }
-        }
-
-        struct Vectored<'a, 'b> {
-            bufs: &'a [IoSlice<'b>],
-            nwritten: usize,
-        }
-
-        impl fmt::Debug for Vectored<'_, '_> {
-            fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-                let mut left = self.nwritten;
-                for buf in self.bufs.iter() {
-                    if left == 0 {
-                        break;
-                    }
-                    let n = std::cmp::min(left, buf.len());
-                    Escape::new(&buf[..n]).fmt(f)?;
-                    left -= n;
-                }
-                Ok(())
-            }
-        }
     }
 }
