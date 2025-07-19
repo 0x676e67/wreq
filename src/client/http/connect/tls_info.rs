@@ -6,6 +6,10 @@ use crate::{
     tls::{MaybeHttpsStream, TlsInfo},
 };
 
+/// A trait for extracting TLS information from a connection.
+///
+/// Implementors can provide access to peer certificate data or other TLS-related metadata.
+/// For non-TLS connections, this typically returns `None`.
 pub trait TlsInfoFactory {
     fn tls_info(&self) -> Option<TlsInfo>;
 }
