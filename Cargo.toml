@@ -20,7 +20,7 @@ targets = ["x86_64-unknown-linux-gnu"]
 [features]
 default = ["webpki-roots", "charset", "system-proxy"]
 
-# Enable HTTP/1 and HTTP/2 support.
+# Enable support for decoding text.
 charset = ["dep:encoding_rs", "dep:mime"]
 
 # Enable cookies store support.
@@ -50,10 +50,10 @@ hickory-dns = ["dep:hickory-resolver"]
 # Enable streaming support.
 stream = ["tokio/fs", "dep:tokio-util"]
 
-# Enable socks4 and socks5 proxy support.
+# Enable SOCKS proxy support.
 socks = ["dep:tokio-socks"]
 
-# Enable HTTP/1 and HTTP/2 WebSocket support.
+# Enable WebSocket support.
 ws = ["dep:tokio-tungstenite"]
 
 # Enable webpki-roots for TLS certificate validation.
