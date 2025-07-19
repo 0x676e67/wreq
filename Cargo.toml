@@ -84,7 +84,7 @@ httparse = "1.9"
 pin-project-lite = "0.2.4"
 smallvec = { version = "1.12", features = ["const_generics", "const_new"] }
 want = "0.3"
-socket2 = { version = "0.5.10", features = ["all"] }
+socket2 = { version = "0.6.0", features = ["all"] }
 percent-encoding = "2.3"
 ipnet = "2.11.0"
 schnellru = { version = "0.2.4", default-features = false }
