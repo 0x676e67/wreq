@@ -144,8 +144,7 @@ fn http2_options_template() -> Http2Options {
         .build()
 }
 
-#[tokio::test]
-async fn test_emulation() -> wreq::Result<()> {
+fn emulation_template() -> Emulation {
     //  HTTP/1 options config
     let http1 = Http1Options::builder()
         .allow_obsolete_multiline_headers_in_responses(true)
@@ -153,15 +152,18 @@ async fn test_emulation() -> wreq::Result<()> {
         .build();
 
     // This provider encapsulates TLS, HTTP/1, HTTP/2, default headers, and original headers
-    let emulation = Emulation::builder()
+    Emulation::builder()
         .tls_options(tls_options_template())
         .http1_options(http1)
         .http2_options(http2_options_template())
-        .build();
+        .build()
+}
 
+#[tokio::test]
+async fn test_emulation() -> wreq::Result<()> {
     // Build a client with emulation config
     let client = Client::builder()
-        .emulation(emulation)
+        .emulation(emulation_template())
         .connect_timeout(Duration::from_secs(10))
         .cert_verification(false)
         .build()?;
@@ -183,19 +185,6 @@ async fn test_emulation() -> wreq::Result<()> {
 
 #[tokio::test]
 async fn test_request_with_emulation() -> wreq::Result<()> {
-    //  HTTP/1 options config
-    let http1 = Http1Options::builder()
-        .allow_obsolete_multiline_headers_in_responses(true)
-        .max_headers(100)
-        .build();
-
-    // This provider encapsulates TLS, HTTP/1, HTTP/2, default headers, and original headers
-    let emulation = Emulation::builder()
-        .tls_options(tls_options_template())
-        .http1_options(http1)
-        .http2_options(http2_options_template())
-        .build();
-
     // Build a client with emulation config
     let client = Client::builder()
         .connect_timeout(Duration::from_secs(10))
@@ -205,7 +194,7 @@ async fn test_request_with_emulation() -> wreq::Result<()> {
     // Use the API you're already familiar with
     let resp = client
         .post("https://tls.browserleaks.com/")
-        .emulation(emulation)
+        .emulation(emulation_template())
         .send()
         .await?;
     let text = resp.text().await?;
