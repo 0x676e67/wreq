@@ -14,7 +14,7 @@ pub mod ws;
 
 pub use self::{
     body::Body,
-    emulation::{Emulation, EmulationFactory},
+    emulation::{Emulation, EmulationBuilder, EmulationFactory},
     http::{Client, ClientBuilder},
     request::{Request, RequestBuilder},
     response::Response,

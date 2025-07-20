@@ -300,8 +300,8 @@ pub use self::client::multipart;
 pub use self::client::ws;
 pub use self::{
     client::{
-        Body, Client, ClientBuilder, Emulation, EmulationFactory, Request, RequestBuilder,
-        Response, Upgraded,
+        Body, Client, ClientBuilder, Emulation, EmulationBuilder, EmulationFactory, Request,
+        RequestBuilder, Response, Upgraded,
     },
     core::{
         client::options::{http1, http2},
