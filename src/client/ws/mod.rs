@@ -417,8 +417,7 @@ impl WebSocketResponse {
             match self.inner.version() {
                 Version::HTTP_10 | Version::HTTP_11 => {
                     if status != StatusCode::SWITCHING_PROTOCOLS {
-                        let body = self.inner.text().await?;
-                        return Err(Error::upgrade(format!("unexpected status code: {body}")));
+                        return Err(Error::upgrade(format!("unexpected status code: {status}")));
                     }
 
                     if !header_contains(self.inner.headers(), header::CONNECTION, "upgrade") {
