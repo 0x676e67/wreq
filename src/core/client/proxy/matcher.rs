@@ -838,4 +838,25 @@ mod tests {
 
         assert!(m.intercept(&"http://rick.roll".parse().unwrap()).is_none());
     }
+
+    fn test_parse_socks(url: &str) {
+        let p = p! {
+            all = url,
+        };
+
+        let proxy = intercept(&p, "https://example.local");
+        assert_eq!(proxy.uri(), url);
+    }
+
+    #[test]
+    fn test_parse_socks4() {
+        test_parse_socks("socks4://localhost:8887");
+        test_parse_socks("socks4a://localhost:8887");
+    }
+
+    #[test]
+    fn test_parse_socks5() {
+        test_parse_socks("socks5://localhost:8887");
+        test_parse_socks("socks5h://localhost:8887");
+    }
 }
