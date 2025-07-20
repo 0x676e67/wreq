@@ -12,10 +12,10 @@
 //! An [`Intercept`] includes the destination for the proxy, and any parsed
 //! authentication to be used.
 
-use std::{fmt, net::IpAddr};
+use std::{fmt, net::IpAddr, str::FromStr};
 
 use bytes::Bytes;
-use http::header::HeaderValue;
+use http::{header::HeaderValue, uri::Authority};
 use ipnet::IpNet;
 use percent_encoding::percent_decode_str;
 
@@ -328,6 +328,7 @@ fn parse_env_uri(val: &str) -> Option<Intercept> {
     let uri = val.parse::<http::Uri>().ok()?;
     let mut builder = http::Uri::builder();
     let mut is_httpish = false;
+    let mut is_socks = false;
     let mut auth = Auth::Empty;
 
     builder = builder.scheme(match uri.scheme() {
@@ -336,6 +337,7 @@ fn parse_env_uri(val: &str) -> Option<Intercept> {
                 is_httpish = true;
                 s.clone()
             } else if matches!(s.as_str(), "socks4" | "socks4a" | "socks5" | "socks5h") {
+                is_socks = true;
                 s.clone()
             } else {
                 // can't use this proxy scheme
@@ -350,6 +352,12 @@ fn parse_env_uri(val: &str) -> Option<Intercept> {
     });
 
     let authority = uri.authority()?;
+    let authority = if is_socks && authority.port().is_none() {
+        // if no port is specified, assume the default for socks5
+        Authority::from_str(&format!("{authority}:1080")).ok()?
+    } else {
+        authority.clone()
+    };
 
     if let Some((userinfo, host_port)) = authority.as_str().split_once('@') {
         let (user, pass) = userinfo.split_once(':')?;
@@ -365,7 +373,7 @@ fn parse_env_uri(val: &str) -> Option<Intercept> {
         }
         builder = builder.authority(host_port);
     } else {
-        builder = builder.authority(authority.clone());
+        builder = builder.authority(authority);
     }
 
     // removing any path, but we MUST specify one or the builder errors

@@ -126,15 +126,7 @@ pub trait IntoProxy {
 impl<S: IntoUrl> IntoProxy for S {
     fn into_proxy(self) -> crate::Result<Url> {
         match self.as_str().into_url() {
-            Ok(mut url) => {
-                // If the scheme is a SOCKS protocol and no port is specified, set the default
-                if url.port().is_none()
-                    && matches!(url.scheme(), "socks4" | "socks4a" | "socks5" | "socks5h")
-                {
-                    let _ = url.set_port(Some(1080));
-                }
-                Ok(url)
-            }
+            Ok(url) => Ok(url),
             Err(e) => {
                 let mut presumed_to_have_scheme = true;
                 let mut source = e.source();
