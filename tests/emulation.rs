@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use wreq::{
     Client, Emulation,
     http1::Http1Options,
@@ -13,8 +15,7 @@ macro_rules! join {
     };
 }
 
-#[tokio::test]
-async fn test_emulation_firefox() -> wreq::Result<()> {
+fn tls_options_template() -> TlsOptions {
     //  TLS options config
     let tls = TlsOptions::builder()
         .curves_list(join!(
@@ -105,60 +106,65 @@ async fn test_emulation_firefox() -> wreq::Result<()> {
         ])
         .build();
 
+    tls
+}
+
+fn http2_options_template() -> Http2Options {
+    // HTTP/2 headers frame pseudo-header order
+    let headers_pseudo_order = PseudoOrder::builder()
+        .extend([
+            PseudoId::Method,
+            PseudoId::Path,
+            PseudoId::Authority,
+            PseudoId::Scheme,
+        ])
+        .build();
+
+    // HTTP/2 settings frame order
+    let settings_order = SettingsOrder::builder()
+        .extend([
+            SettingId::HeaderTableSize,
+            SettingId::EnablePush,
+            SettingId::MaxConcurrentStreams,
+            SettingId::InitialWindowSize,
+            SettingId::MaxFrameSize,
+            SettingId::MaxHeaderListSize,
+            SettingId::EnableConnectProtocol,
+            SettingId::NoRfc7540Priorities,
+        ])
+        .build();
+
+    Http2Options::builder()
+        .header_table_size(65536)
+        .enable_push(false)
+        .initial_window_size(131072)
+        .max_frame_size(16384)
+        .initial_connection_window_size(12517377 + 65535)
+        .headers_stream_dependency(StreamDependency::new(StreamId::ZERO, 41, false))
+        .headers_pseudo_order(headers_pseudo_order)
+        .settings_order(settings_order)
+        .build()
+}
+
+#[tokio::test]
+async fn test_emulation() -> wreq::Result<()> {
     //  HTTP/1 options config
     let http1 = Http1Options::builder()
         .allow_obsolete_multiline_headers_in_responses(true)
         .max_headers(100)
         .build();
 
-    // HTTP/2 options config
-    let http2 = {
-        // HTTP/2 headers frame pseudo-header order
-        let headers_pseudo_order = PseudoOrder::builder()
-            .extend([
-                PseudoId::Method,
-                PseudoId::Path,
-                PseudoId::Authority,
-                PseudoId::Scheme,
-            ])
-            .build();
-
-        // HTTP/2 settings frame order
-        let settings_order = SettingsOrder::builder()
-            .extend([
-                SettingId::HeaderTableSize,
-                SettingId::EnablePush,
-                SettingId::MaxConcurrentStreams,
-                SettingId::InitialWindowSize,
-                SettingId::MaxFrameSize,
-                SettingId::MaxHeaderListSize,
-                SettingId::EnableConnectProtocol,
-                SettingId::NoRfc7540Priorities,
-            ])
-            .build();
-
-        Http2Options::builder()
-            .header_table_size(65536)
-            .enable_push(false)
-            .initial_window_size(131072)
-            .max_frame_size(16384)
-            .initial_connection_window_size(12517377 + 65535)
-            .headers_stream_dependency(StreamDependency::new(StreamId::ZERO, 41, false))
-            .headers_pseudo_order(headers_pseudo_order)
-            .settings_order(settings_order)
-            .build()
-    };
-
     // This provider encapsulates TLS, HTTP/1, HTTP/2, default headers, and original headers
     let emulation = Emulation::builder()
-        .tls_options(tls)
+        .tls_options(tls_options_template())
         .http1_options(http1)
-        .http2_options(http2)
+        .http2_options(http2_options_template())
         .build();
 
     // Build a client with emulation config
     let client = Client::builder()
         .emulation(emulation)
+        .connect_timeout(Duration::from_secs(10))
         .cert_verification(false)
         .build()?;
 
@@ -169,6 +175,92 @@ async fn test_emulation_firefox() -> wreq::Result<()> {
         text.contains("t13d1717h2_5b57614c22b0_3cbfd9057e0d"),
         "Response ja4_hash fingerprint not found"
     );
+    assert!(
+        text.contains("6ea73faa8fc5aac76bded7bd238f6433"),
+        "Response akamai_hash fingerprint not found"
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_request_with_emulation() -> wreq::Result<()> {
+    //  HTTP/1 options config
+    let http1 = Http1Options::builder()
+        .allow_obsolete_multiline_headers_in_responses(true)
+        .max_headers(100)
+        .build();
+
+    // This provider encapsulates TLS, HTTP/1, HTTP/2, default headers, and original headers
+    let emulation = Emulation::builder()
+        .tls_options(tls_options_template())
+        .http1_options(http1)
+        .http2_options(http2_options_template())
+        .build();
+
+    // Build a client with emulation config
+    let client = Client::builder()
+        .connect_timeout(Duration::from_secs(10))
+        .cert_verification(false)
+        .build()?;
+
+    // Use the API you're already familiar with
+    let resp = client
+        .post("https://tls.browserleaks.com/")
+        .emulation(emulation)
+        .send()
+        .await?;
+    let text = resp.text().await?;
+    assert!(
+        text.contains("t13d1717h2_5b57614c22b0_3cbfd9057e0d"),
+        "Response ja4_hash fingerprint not found"
+    );
+    assert!(
+        text.contains("6ea73faa8fc5aac76bded7bd238f6433"),
+        "Response akamai_hash fingerprint not found"
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_request_with_emulation_tls() -> wreq::Result<()> {
+    // Build a client with emulation config
+    let client = Client::builder()
+        .connect_timeout(Duration::from_secs(10))
+        .cert_verification(false)
+        .build()?;
+
+    // Use the API you're already familiar with
+    let resp = client
+        .get("https://tls.browserleaks.com/")
+        .emulation(tls_options_template())
+        .send()
+        .await?;
+    let text = resp.text().await?;
+    assert!(
+        text.contains("t13d1717h2_5b57614c22b0_3cbfd9057e0d"),
+        "Response ja4_hash fingerprint not found"
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_request_with_emulation_http2() -> wreq::Result<()> {
+    // Build a client with emulation config
+    let client = Client::builder()
+        .connect_timeout(Duration::from_secs(10))
+        .cert_verification(false)
+        .build()?;
+
+    // Use the API you're already familiar with
+    let resp = client
+        .get("https://tls.browserleaks.com/")
+        .emulation(http2_options_template())
+        .send()
+        .await?;
+    let text = resp.text().await?;
     assert!(
         text.contains("6ea73faa8fc5aac76bded7bd238f6433"),
         "Response akamai_hash fingerprint not found"
