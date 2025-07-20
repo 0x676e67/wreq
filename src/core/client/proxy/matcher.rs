@@ -353,7 +353,7 @@ fn parse_env_uri(val: &str) -> Option<Intercept> {
 
     let authority = uri.authority()?;
     let authority = if is_socks && authority.port().is_none() {
-        // if no port is specified, assume the default for socks5
+        // If the scheme is a SOCKS protocol and no port is specified, set the default
         Authority::from_str(&format!("{authority}:1080")).ok()?
     } else {
         authority.clone()
@@ -379,9 +379,9 @@ fn parse_env_uri(val: &str) -> Option<Intercept> {
     // removing any path, but we MUST specify one or the builder errors
     builder = builder.path_and_query("/");
 
-    let dst = builder.build().ok()?;
+    let uri = builder.build().ok()?;
 
-    Some(Intercept { uri: dst, auth })
+    Some(Intercept { uri, auth })
 }
 
 fn encode_basic_auth(user: &str, pass: Option<&str>) -> HeaderValue {
