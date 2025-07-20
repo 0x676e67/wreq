@@ -12,7 +12,7 @@
 //! An [`Intercept`] includes the destination for the proxy, and any parsed
 //! authentication to be used.
 
-use std::{fmt, net::IpAddr, str::FromStr};
+use std::{fmt, net::IpAddr};
 
 use bytes::Bytes;
 use http::{header::HeaderValue, uri::Authority};
@@ -351,10 +351,10 @@ fn parse_env_uri(val: &str) -> Option<Intercept> {
         }
     });
 
+    // If the scheme is a SOCKS protocol and no port is specified, set the default port to 1080.
     let authority = uri.authority()?;
     let authority = if is_socks && authority.port().is_none() {
-        // If the scheme is a SOCKS protocol and no port is specified, set the default
-        Authority::from_str(&format!("{authority}:1080")).ok()?
+        format!("{authority}:1080").parse::<Authority>().ok()?
     } else {
         authority.clone()
     };
