@@ -17,7 +17,7 @@ macro_rules! join {
 
 fn tls_options_template() -> TlsOptions {
     //  TLS options config
-    let tls = TlsOptions::builder()
+    TlsOptions::builder()
         .curves_list(join!(
             ":",
             "X25519MLKEM768",
@@ -104,9 +104,7 @@ fn tls_options_template() -> TlsOptions {
             ExtensionType::CERT_COMPRESSION,
             ExtensionType::ENCRYPTED_CLIENT_HELLO,
         ])
-        .build();
-
-    tls
+        .build()
 }
 
 fn http2_options_template() -> Http2Options {
