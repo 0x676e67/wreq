@@ -131,15 +131,10 @@ impl ConnectorBuilder {
         self
     }
 
-    /// Builds the connector with the provided  TLS options configuration and optional layers.
+    /// Builds the connector with the provided layers.
     pub fn build(self, layers: Vec<BoxedConnectorLayer>) -> crate::Result<Connector> {
         let mut service = ConnectorService {
-            config: Config {
-                // The timeout is initially set to None and will be reassigned later
-                // based on the presence or absence of user-provided layers.
-                timeout: None,
-                ..self.config
-            },
+            config: self.config,
             #[cfg(feature = "socks")]
             resolver: self.resolver.clone(),
             http: self.http,
@@ -151,9 +146,11 @@ impl ConnectorBuilder {
 
         // we have no user-provided layers, only use concrete types
         if layers.is_empty() {
-            service.config.timeout = self.config.timeout;
             return Ok(Connector::Simple(service));
         }
+
+        // user-provided layers exist, the timeout will be applied as an additional layer.
+        let timeout = service.config.timeout.take();
 
         // otherwise we have user provided layers
         // so we need type erasure all the way through
@@ -171,7 +168,7 @@ impl ConnectorBuilder {
         // now we handle the concrete stuff - any `connect_timeout`,
         // plus a final map_err layer we can use to cast default tower layer
         // errors to internal errors
-        match self.config.timeout {
+        match timeout {
             Some(timeout) => {
                 let service = ServiceBuilder::new()
                     .layer(TimeoutLayer::new(timeout))
