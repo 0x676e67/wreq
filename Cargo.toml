@@ -116,7 +116,7 @@ webpki-root-certs = { version = "1.0.2", optional = true }
 
 ## cookies
 cookie_crate = { version = "0.18", package = "cookie", optional = true }
-cookie_store = { version = "0.21", features = ["preserve_order"], optional = true }
+cookie_store = { version = "0.22", features = ["preserve_order"], optional = true }
 
 ## tower http
 tower-http = { version = "0.6.6", default-features = false, optional = true }
