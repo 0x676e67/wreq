@@ -4,37 +4,49 @@ mod layer;
 
 pub use layer::{Decompression, DecompressionLayer};
 
+/// Configuration for supported content-encoding algorithms.
+///
+/// `AcceptEncoding` controls which compression formats are enabled for decoding
+/// response bodies. Each field corresponds to a specific algorithm and is only
+/// available if the corresponding feature is enabled.
 #[derive(Clone, Debug)]
 pub(crate) struct AcceptEncoding {
     #[cfg(feature = "gzip")]
-    pub(super) gzip: bool,
+    gzip: bool,
+
     #[cfg(feature = "brotli")]
-    pub(super) brotli: bool,
+    brotli: bool,
+
     #[cfg(feature = "zstd")]
-    pub(super) zstd: bool,
+    zstd: bool,
+
     #[cfg(feature = "deflate")]
-    pub(super) deflate: bool,
+    deflate: bool,
 }
 
 impl AcceptEncoding {
+    /// Enable or disable gzip decoding.
     #[inline(always)]
     #[cfg(feature = "gzip")]
     pub fn gzip(&mut self, enabled: bool) {
         self.gzip = enabled;
     }
 
+    /// Enable or disable brotli decoding.
     #[inline(always)]
     #[cfg(feature = "brotli")]
     pub fn brotli(&mut self, enabled: bool) {
         self.brotli = enabled;
     }
 
+    /// Enable or disable zstd decoding.
     #[inline(always)]
     #[cfg(feature = "zstd")]
     pub fn zstd(&mut self, enabled: bool) {
         self.zstd = enabled;
     }
 
+    /// Enable or disable deflate decoding.
     #[inline(always)]
     #[cfg(feature = "deflate")]
     pub fn deflate(&mut self, enabled: bool) {
