@@ -15,7 +15,7 @@ use super::{
 use crate::{
     Body, Error,
     client::{body, layer::redirect::RequestUri},
-    core::{body::Incoming, client::future::ResponseFuture as CoreResponseFuture},
+    core::{body::Incoming, client::future::ResponseFuture as RawResponseFuture},
     error::BoxError,
     into_url::IntoUrlSealed,
 };
@@ -60,10 +60,10 @@ pin_project! {
 
 pin_project! {
     #[project = CorePendingProj]
-    pub enum CorePending {
+    pub enum RawPending {
         Request {
             #[pin]
-            fut: CoreResponseFuture,
+            fut: RawResponseFuture,
         },
         Error {
             error: Option<Error>,
@@ -72,6 +72,38 @@ pin_project! {
 }
 
 // ======== Pending impl ========
+
+impl Pending {
+    /// Creates a new `Pending` from a boxed request future.
+    #[inline(always)]
+    pub(crate) fn boxed_request(
+        url: Url,
+        fut: Oneshot<BoxedClientService, HttpRequest<Body>>,
+    ) -> Self {
+        Pending::BoxedRequest {
+            url: Some(url),
+            fut,
+        }
+    }
+
+    /// Creates a new `Pending` from a generic request future.
+    #[inline(always)]
+    pub(crate) fn generic_request(
+        url: Url,
+        fut: Oneshot<GenericClientService, HttpRequest<Body>>,
+    ) -> Self {
+        Pending::GenericRequest {
+            url: Some(url),
+            fut: Box::pin(fut),
+        }
+    }
+
+    /// Creates a new `Pending` with an error.
+    #[inline(always)]
+    pub(crate) fn error(error: Error) -> Self {
+        Pending::Error { error: Some(error) }
+    }
+}
 
 impl Future for Pending {
     type Output = Result<Response, Error>;
@@ -108,9 +140,23 @@ impl Future for Pending {
     }
 }
 
-// ======== CorePending impl ========
+// ======== RawPending impl ========
 
-impl Future for CorePending {
+impl RawPending {
+    /// Creates a new `RawPending` from a `RawResponseFuture`.
+    #[inline(always)]
+    pub(crate) fn new(fut: RawResponseFuture) -> Self {
+        RawPending::Request { fut }
+    }
+
+    /// Creates a new `RawPending` with an error.
+    #[inline(always)]
+    pub(crate) fn error(error: Error) -> Self {
+        RawPending::Error { error: Some(error) }
+    }
+}
+
+impl Future for RawPending {
     type Output = Result<HttpResponse<Incoming>, BoxError>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {

@@ -72,6 +72,10 @@ impl Error {
     pub(crate) fn url_bad_scheme(url: Url) -> Error {
         Error::new(Kind::Builder, Some(BadScheme)).with_url(url)
     }
+
+    pub(crate) fn url_bad_scheme2() -> Error {
+        Error::new(Kind::Builder, Some(BadScheme))
+    }
 }
 
 impl Error {

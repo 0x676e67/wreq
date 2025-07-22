@@ -69,13 +69,10 @@ where
         let total_timeout = total_timeout.map(tokio::time::sleep);
         let read_timeout = read_timeout.map(tokio::time::sleep);
 
-        let uri = req.uri().clone();
-        let response = self.inner.call(req);
         ResponseFuture {
-            response,
+            response: self.inner.call(req),
             total_timeout,
             read_timeout,
-            uri,
         }
     }
 }

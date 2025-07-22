@@ -5,27 +5,23 @@ use std::{
     time::Duration,
 };
 
-use http::{Response, Uri};
+use http::Response;
 use pin_project_lite::pin_project;
 use tokio::time::Sleep;
 
 use super::body::TimeoutBody;
-use crate::{
-    error::{BoxError, Error, TimedOut},
-    into_url::IntoUrlSealed,
-};
+use crate::error::{BoxError, Error, TimedOut};
 
 pin_project! {
     /// [`Timeout`] response future
     #[derive(Debug)]
-    pub struct ResponseFuture<T> {
+    pub struct ResponseFuture<F> {
         #[pin]
-        pub(crate) response: T,
+        pub(crate) response: F,
         #[pin]
         pub(crate) total_timeout: Option<Sleep>,
         #[pin]
         pub(crate) read_timeout: Option<Sleep>,
-        pub(crate) uri: Uri,
     }
 }
 
@@ -49,17 +45,7 @@ where
         let mut check_timeout = |sleep: Option<Pin<&mut Sleep>>| {
             if let Some(sleep) = sleep {
                 if sleep.poll(cx).is_ready() {
-                    let err = match IntoUrlSealed::into_url(this.uri.to_string()) {
-                        Ok(url) => Error::request(TimedOut).with_url(url).into(),
-                        Err(_err) => {
-                            warn!(
-                                "Failed to convert URI to URL: {}, falling back to generic error: {}",
-                                this.uri, _err,
-                            );
-                            Error::builder(TimedOut).into()
-                        }
-                    };
-                    return Some(Poll::Ready(Err(err)));
+                    return Some(Poll::Ready(Err(Error::request(TimedOut).into())));
                 }
             }
             None
