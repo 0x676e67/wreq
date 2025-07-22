@@ -22,7 +22,7 @@ pub trait CookieStore: Send + Sync {
 
 /// A single HTTP cookie.
 #[derive(Debug, Clone)]
-pub struct Cookie<'a>(cookie_crate::Cookie<'a>);
+pub struct Cookie<'a>(RawCookie<'a>);
 
 /// A builder for a `Cookie`.
 #[derive(Debug, Clone)]
@@ -93,13 +93,13 @@ impl<'a> Cookie<'a> {
     /// Returns true if  'SameSite' directive is 'Lax'.
     #[inline]
     pub fn same_site_lax(&self) -> bool {
-        self.0.same_site() == Some(cookie_crate::SameSite::Lax)
+        self.0.same_site() == Some(SameSite::Lax)
     }
 
     /// Returns true if  'SameSite' directive is 'Strict'.
     #[inline]
     pub fn same_site_strict(&self) -> bool {
-        self.0.same_site() == Some(cookie_crate::SameSite::Strict)
+        self.0.same_site() == Some(SameSite::Strict)
     }
 
     /// Returns the path directive of the cookie, if set.
@@ -124,9 +124,15 @@ impl<'a> Cookie<'a> {
     #[inline]
     pub fn expires(&self) -> Option<SystemTime> {
         match self.0.expires() {
-            Some(cookie_crate::Expiration::DateTime(offset)) => Some(SystemTime::from(offset)),
-            None | Some(cookie_crate::Expiration::Session) => None,
+            Some(Expiration::DateTime(offset)) => Some(SystemTime::from(offset)),
+            None | Some(Expiration::Session) => None,
         }
+    }
+
+    /// Returns the raw cookie.
+    #[inline]
+    pub fn into_raw(self) -> RawCookie<'a> {
+        self.0
     }
 
     /// Converts `self` into a `Cookie` with a static lifetime with as few
@@ -170,7 +176,7 @@ impl<'c> CookieBuilder<'c> {
 
     /// Set the 'SameSite' directive.
     #[inline]
-    pub fn same_site(mut self, same_site: cookie_crate::SameSite) -> Self {
+    pub fn same_site(mut self, same_site: SameSite) -> Self {
         self.0 = self.0.same_site(same_site);
         self
     }
