@@ -244,10 +244,10 @@ impl ConnectorService {
     fn build_tls_connector(
         &self,
         mut http: HttpConnector,
-        ex_data: &ConnectMeta,
+        meta: &ConnectMeta,
     ) -> Result<HttpsConnector<HttpConnector>, BoxError> {
-        http.set_connect_options(ex_data.tcp_options().cloned());
-        let tls = match ex_data.tls_options() {
+        http.set_connect_options(meta.tcp_options().cloned());
+        let tls = match meta.tls_options() {
             Some(opts) => self.tls_builder.build(opts)?,
             None => self.tls.clone(),
         };

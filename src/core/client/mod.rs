@@ -9,5 +9,5 @@ pub mod conn;
 pub mod connect;
 pub mod options;
 
-pub use self::service::{HttpClient, ResponseFuture, error::Error, ConnectRequest};
 pub(crate) use self::service::meta::{ConnectMeta, Identifier};
+pub use self::service::{ConnectRequest, HttpClient, ResponseFuture, error::Error};
