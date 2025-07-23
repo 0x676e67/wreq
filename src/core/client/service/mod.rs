@@ -8,18 +8,19 @@ use std::{
     future::Future,
     num::NonZeroU32,
     pin::Pin,
+    sync::Arc,
     task::{self, Poll},
     time::Duration,
 };
 
 use futures_util::future::{Either, FutureExt, TryFutureExt};
-use http::{HeaderValue, Method, Request, Response, Version, header::HOST};
+use http::{HeaderValue, Method, Request, Response, Uri, Version, header::HOST};
 use http_body::Body;
 use tower::util::Oneshot;
 
 use self::{
     error::{ClientConnectError, Error, ErrorKind, TrySendError},
-    meta::{ConnectMeta, ConnectRequest, Identifier},
+    meta::{ConnectMeta, Identifier},
 };
 use super::pool::Ver;
 use crate::{
@@ -31,6 +32,7 @@ use crate::{
             options::{http1::Http1Options, http2::Http2Options},
             pool,
         },
+        collections::{RANDOM_STATE, memo::HashMemo},
         common::{Exec, Lazy, lazy, timer},
         error::BoxError,
         ext::{RequestConfig, RequestScopedOptions},
@@ -40,6 +42,46 @@ use crate::{
 };
 
 type BoxSendFuture = Pin<Box<dyn Future<Output = ()> + Send>>;
+
+/// Parameters required to initiate a new connection.
+///
+/// [`ConnectRequest`] holds the target URI and all connection-specific options
+/// (protocol, proxy, TCP/TLS settings) needed to establish a new network connection.
+/// Used by connectors to drive the connection setup process.
+#[must_use]
+#[derive(Clone)]
+pub struct ConnectRequest {
+    uri: Uri,
+    extra: Arc<HashMemo<ConnectMeta>>,
+}
+
+// ===== impl ConnectRequest =====
+
+impl ConnectRequest {
+    /// Returns a reference to the [`Uri`].
+    #[inline]
+    pub(crate) fn uri(&self) -> &Uri {
+        &self.uri
+    }
+
+    /// Returns a mutable reference to the [`Uri`].
+    #[inline]
+    pub(crate) fn uri_mut(&mut self) -> &mut Uri {
+        &mut self.uri
+    }
+
+    /// Returns the [`ConnectMeta`] connection parameters (ALPN, proxy, TCP/TLS options).
+    #[inline]
+    pub(crate) fn ex_data(&self) -> &ConnectMeta {
+        self.extra.as_ref().as_ref()
+    }
+
+    /// Returns a unique [`Identifier`].
+    #[inline]
+    pub(crate) fn identify(&self) -> Identifier {
+        self.extra.clone()
+    }
+}
 
 /// A HttpClient to make outgoing HTTP requests.
 ///
@@ -132,14 +174,19 @@ where
             this.h2_builder.options(http2);
         }
 
-        let extra = ConnectMeta {
+        let connect_req = ConnectRequest {
             uri: uri.clone(),
-            alpn,
-            proxy,
-            tls_options,
-            tcp_options,
+            extra: Arc::new(HashMemo::with_hasher(
+                ConnectMeta {
+                    uri,
+                    alpn,
+                    proxy,
+                    tls_options,
+                    tcp_options,
+                },
+                RANDOM_STATE,
+            )),
         };
-        let connect_req = ConnectRequest::new(uri, extra);
         ResponseFuture::new(this.send_request(req, connect_req))
     }
 

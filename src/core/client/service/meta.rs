@@ -3,10 +3,7 @@ use std::sync::Arc;
 use http::Uri;
 
 use crate::{
-    core::{
-        client::connect::TcpConnectOptions,
-        collections::{RANDOM_STATE, memo::HashMemo},
-    },
+    core::{client::connect::TcpConnectOptions, collections::memo::HashMemo},
     proxy::Matcher as ProxyMacher,
     tls::{AlpnProtocol, TlsOptions},
 };
@@ -16,8 +13,7 @@ use crate::{
 /// [`Identifier`] serves as the unique key for a connection, representing all parameters
 /// that define its identity (URI, protocol, proxy, TCP/TLS options). It is used for pooling,
 /// caching, and tracking connections throughout their entire lifecycle.
-#[derive(Debug, Clone, Hash, Eq, PartialEq)]
-pub(crate) struct Identifier(Arc<HashMemo<ConnectMeta>>);
+pub(crate) type Identifier = Arc<HashMemo<ConnectMeta>>;
 
 /// Metadata describing a reusable network connection.
 ///
@@ -41,7 +37,7 @@ pub(crate) struct ConnectMeta {
 // ===== impl ConnectMeta =====
 
 impl ConnectMeta {
-    /// Returns the negotiated [`AlpnProtocol`].
+    /// Return the negotiated [`AlpnProtocol`].
     #[inline]
     pub(crate) fn alpn(&self) -> Option<AlpnProtocol> {
         self.alpn
@@ -53,62 +49,15 @@ impl ConnectMeta {
         self.proxy.as_ref()
     }
 
-    /// Return the [`TlsOptions`] configuration.
+    /// Return a reference to the [`TlsOptions`].
     #[inline]
     pub(crate) fn tls_options(&self) -> Option<&TlsOptions> {
         self.tls_options.as_ref()
     }
 
-    /// Return the [`TcpConnectOptions`].
+    /// Return a reference to the [`TcpConnectOptions`].
     #[inline]
     pub(crate) fn tcp_options(&self) -> Option<&TcpConnectOptions> {
         self.tcp_options.as_ref()
-    }
-}
-
-/// Parameters required to initiate a new connection.
-///
-/// [`ConnectRequest`] holds the target URI and all connection-specific options
-/// (protocol, proxy, TCP/TLS settings) needed to establish a new network connection.
-/// Used by connectors to drive the connection setup process.
-#[must_use]
-#[derive(Clone)]
-pub struct ConnectRequest {
-    uri: Uri,
-    extra: Arc<HashMemo<ConnectMeta>>,
-}
-
-// ===== impl ConnectRequest =====
-
-impl ConnectRequest {
-    /// Creates a new [`ConnectRequest`] with the specified [`Uri`] and connection parameters.
-    #[inline]
-    pub(super) fn new(uri: Uri, extra: ConnectMeta) -> Self {
-        let extra = Arc::new(HashMemo::with_hasher(extra, RANDOM_STATE));
-        ConnectRequest { uri, extra }
-    }
-
-    /// Returns a reference to the [`Uri`].
-    #[inline]
-    pub(crate) fn uri(&self) -> &Uri {
-        &self.uri
-    }
-
-    /// Returns a mutable reference to the [`Uri`].
-    #[inline]
-    pub(crate) fn uri_mut(&mut self) -> &mut Uri {
-        &mut self.uri
-    }
-
-    /// Returns the [`ConnectMeta`] connection parameters (ALPN, proxy, TCP/TLS options).
-    #[inline]
-    pub(crate) fn ex_data(&self) -> &ConnectMeta {
-        self.extra.as_ref().as_ref()
-    }
-
-    /// Returns a unique [`Identifier`].
-    #[inline]
-    pub(crate) fn identify(&self) -> Identifier {
-        Identifier(self.extra.clone())
     }
 }
