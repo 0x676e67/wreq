@@ -179,26 +179,6 @@ impl<'data> ReadBuf<'data> {
     }
 
     #[inline]
-    pub(crate) unsafe fn set_init(&mut self, n: usize) {
-        self.init = self.init.max(n);
-    }
-
-    #[inline]
-    pub(crate) unsafe fn set_filled(&mut self, n: usize) {
-        self.filled = self.filled.max(n);
-    }
-
-    #[inline]
-    pub(crate) fn len(&self) -> usize {
-        self.filled
-    }
-
-    #[inline]
-    pub(crate) fn init_len(&self) -> usize {
-        self.init
-    }
-
-    #[inline]
     fn remaining(&self) -> usize {
         self.capacity() - self.filled
     }

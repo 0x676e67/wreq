@@ -75,6 +75,13 @@ impl<T> TokioIo<T> {
         &self.inner
     }
 
+    /// Mutably borrow the inner type.
+    #[cfg(test)]
+    #[inline]
+    pub fn inner_mut(&mut self) -> &mut T {
+        &mut self.inner
+    }
+
     /// Consume this wrapper and get the inner type.
     #[inline]
     pub fn into_inner(self) -> T {
@@ -156,7 +163,6 @@ where
         cx: &mut Context<'_>,
         tbuf: &mut tokio::io::ReadBuf<'_>,
     ) -> Poll<Result<(), std::io::Error>> {
-        //let init = tbuf.initialized().len();
         let filled = tbuf.filled().len();
         let sub_filled = unsafe {
             let mut buf = ReadBuf::uninit(tbuf.unfilled_mut());

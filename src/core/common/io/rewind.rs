@@ -40,10 +40,6 @@ impl<T> Rewind<T> {
     pub(crate) fn into_inner(self) -> (T, Bytes) {
         (self.inner, self.pre.unwrap_or_default())
     }
-
-    // pub(crate) fn get_mut(&mut self) -> &mut T {
-    //     &mut self.inner
-    // }
 }
 
 impl<T> Read for Rewind<T>
@@ -127,7 +123,7 @@ mod tests {
         stream.read_exact(&mut buf).await.expect("read1");
 
         // Rewind the stream so that it is as if we never read in the first place.
-        stream.0.rewind(Bytes::copy_from_slice(&buf[..]));
+        stream.inner_mut().rewind(Bytes::copy_from_slice(&buf[..]));
 
         let mut buf = [0; 5];
         stream.read_exact(&mut buf).await.expect("read1");
@@ -148,7 +144,7 @@ mod tests {
         stream.read_exact(&mut buf).await.expect("read1");
 
         // Rewind the stream so that it is as if we never read in the first place.
-        stream.0.rewind(Bytes::copy_from_slice(&buf[..]));
+        stream.inner_mut().rewind(Bytes::copy_from_slice(&buf[..]));
 
         let mut buf = [0; 5];
         stream.read_exact(&mut buf).await.expect("read1");
