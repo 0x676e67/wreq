@@ -17,48 +17,30 @@ use crate::{
 /// that define its identity (URI, protocol, proxy, TCP/TLS options). It is used for pooling,
 /// caching, and tracking connections throughout their entire lifecycle.
 #[derive(Debug, Clone, Hash, Eq, PartialEq)]
-pub(crate) struct Identifier(Arc<HashMemo<Extra>>);
+pub(crate) struct Identifier(Arc<HashMemo<ConnectMeta>>);
 
 /// Metadata describing a reusable network connection.
 ///
-/// [`Extra`] holds connection-specific parameters such as the target URI, ALPN protocol,
+/// [`ConnectMeta`] holds connection-specific parameters such as the target URI, ALPN protocol,
 /// proxy settings, and optional TCP/TLS options. Used for connection
 #[must_use]
 #[derive(Debug, Clone, Hash, Eq, PartialEq)]
-pub(crate) struct Extra {
+pub(crate) struct ConnectMeta {
     /// The target URI for the connection.
-    uri: Uri,
+    pub(super) uri: Uri,
     /// The negotiated ALPN protocol.
-    alpn: Option<AlpnProtocol>,
+    pub(super) alpn: Option<AlpnProtocol>,
     /// The proxy matcher.
-    proxy: Option<ProxyMacher>,
+    pub(super) proxy: Option<ProxyMacher>,
     /// Optional TLS options.
-    tls_options: Option<TlsOptions>,
+    pub(super) tls_options: Option<TlsOptions>,
     /// Optional TCP connection options.
-    tcp_options: Option<TcpConnectOptions>,
+    pub(super) tcp_options: Option<TcpConnectOptions>,
 }
 
-// ===== impl Extra =====
+// ===== impl ConnectMeta =====
 
-impl Extra {
-    /// Creates a new [`Extra`] instance with the specified parameters.
-    #[inline]
-    pub(super) fn new(
-        uri: Uri,
-        alpn: Option<AlpnProtocol>,
-        proxy: Option<ProxyMacher>,
-        tls_options: Option<TlsOptions>,
-        tcp_options: Option<TcpConnectOptions>,
-    ) -> Self {
-        Extra {
-            uri,
-            alpn,
-            proxy,
-            tls_options,
-            tcp_options,
-        }
-    }
-
+impl ConnectMeta {
     /// Returns the negotiated [`AlpnProtocol`].
     #[inline]
     pub(crate) fn alpn(&self) -> Option<AlpnProtocol> {
@@ -93,7 +75,7 @@ impl Extra {
 #[derive(Clone)]
 pub struct ConnectRequest {
     uri: Uri,
-    extra: Arc<HashMemo<Extra>>,
+    extra: Arc<HashMemo<ConnectMeta>>,
 }
 
 // ===== impl ConnectRequest =====
@@ -101,7 +83,7 @@ pub struct ConnectRequest {
 impl ConnectRequest {
     /// Creates a new [`ConnectRequest`] with the specified [`Uri`] and connection parameters.
     #[inline]
-    pub(super) fn new(uri: Uri, extra: Extra) -> Self {
+    pub(super) fn new(uri: Uri, extra: ConnectMeta) -> Self {
         let extra = Arc::new(HashMemo::with_hasher(extra, RANDOM_STATE));
         ConnectRequest { uri, extra }
     }
@@ -118,9 +100,9 @@ impl ConnectRequest {
         &mut self.uri
     }
 
-    /// Returns the [`Extra`] connection parameters (ALPN, proxy, TCP/TLS options).
+    /// Returns the [`ConnectMeta`] connection parameters (ALPN, proxy, TCP/TLS options).
     #[inline]
-    pub(crate) fn ex_data(&self) -> &Extra {
+    pub(crate) fn ex_data(&self) -> &ConnectMeta {
         self.extra.as_ref().as_ref()
     }
 

@@ -21,7 +21,7 @@ use super::{
 };
 use crate::{
     core::{
-        client::{ConnectRequest, Extra, connect::proxy},
+        client::{ConnectMeta, ConnectRequest, connect::proxy},
         rt::TokioIo,
     },
     dns::DynResolver,
@@ -244,7 +244,7 @@ impl ConnectorService {
     fn build_tls_connector(
         &self,
         mut http: HttpConnector,
-        ex_data: &Extra,
+        ex_data: &ConnectMeta,
     ) -> Result<HttpsConnector<HttpConnector>, BoxError> {
         http.set_connect_options(ex_data.tcp_options().cloned());
         let tls = match ex_data.tls_options() {

@@ -19,7 +19,7 @@ use tower::util::Oneshot;
 
 use self::{
     error::{ClientConnectError, Error, ErrorKind, TrySendError},
-    meta::{ConnectRequest, Extra, Identifier},
+    meta::{ConnectMeta, ConnectRequest, Identifier},
 };
 use super::pool::Ver;
 use crate::{
@@ -98,7 +98,7 @@ where
             Version::HTTP_10 | Version::HTTP_11 | Version::HTTP_2 => {}
             // completely unsupported HTTP version (like HTTP/0.9)!
             _unsupported => {
-                warn!("Request has unsupported version \"{:?}\"", _unsupported);
+                warn!("Request has unsupported version: {:?}", _unsupported);
                 return ResponseFuture::new(futures_util::future::err(e!(UserUnsupportedVersion)));
             }
         };
@@ -132,20 +132,26 @@ where
             this.h2_builder.options(http2);
         }
 
-        let extra = Extra::new(uri.clone(), alpn, proxy, tls_options, tcp_options);
-        let conn_req = ConnectRequest::new(uri, extra);
-        ResponseFuture::new(this.send_request(req, conn_req))
+        let extra = ConnectMeta {
+            uri: uri.clone(),
+            alpn,
+            proxy,
+            tls_options,
+            tcp_options,
+        };
+        let connect_req = ConnectRequest::new(uri, extra);
+        ResponseFuture::new(this.send_request(req, connect_req))
     }
 
     async fn send_request(
         self,
         mut req: Request<B>,
-        conn_req: ConnectRequest,
+        connect_req: ConnectRequest,
     ) -> Result<Response<Incoming>, Error> {
         let uri = req.uri().clone();
 
         loop {
-            req = match self.try_send_request(req, conn_req.clone()).await {
+            req = match self.try_send_request(req, connect_req.clone()).await {
                 Ok(resp) => return Ok(resp),
                 Err(TrySendError::Nope(err)) => return Err(err),
                 Err(TrySendError::Retryable {
@@ -173,10 +179,10 @@ where
     async fn try_send_request(
         &self,
         mut req: Request<B>,
-        conn_req: ConnectRequest,
+        connect_req: ConnectRequest,
     ) -> Result<Response<Incoming>, TrySendError<B>> {
         let mut pooled = self
-            .connection_for(conn_req)
+            .connection_for(connect_req)
             .await
             // `connection_for` already retries checkout errors, so if
             // it returns an error, there's not much else to retry
