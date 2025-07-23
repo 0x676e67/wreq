@@ -63,6 +63,21 @@ jobs:
       - name: Run hack script
         run: cargo hack check --each-feature
 
+  miri:
+    name: Test with Miri
+    needs: [style]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: miri
+      - name: Test
+        env:
+          # Can't enable tcp feature since Miri does not support the tokio runtime
+          MIRIFLAGS: "-Zmiri-disable-isolation"
+        run: cargo miri test --all-features
+
   tests:
     name: Tests
     runs-on: ubuntu-latest
