@@ -25,7 +25,7 @@ pub(crate) struct Identifier(Arc<HashMemo<Extra>>);
 /// proxy settings, and optional TCP/TLS options. Used for connection
 #[must_use]
 #[derive(Debug, Clone, Hash, Eq, PartialEq)]
-pub struct Extra {
+pub(crate) struct Extra {
     /// The target URI for the connection.
     uri: Uri,
     /// The negotiated ALPN protocol.
@@ -61,13 +61,13 @@ impl Extra {
 
     /// Returns the negotiated [`AlpnProtocol`].
     #[inline]
-    pub(crate) fn alpn_protocol(&self) -> Option<AlpnProtocol> {
+    pub(crate) fn alpn(&self) -> Option<AlpnProtocol> {
         self.alpn
     }
 
     /// Return a reference to the [`ProxyMacher`].
     #[inline]
-    pub(crate) fn proxy_matcher(&self) -> Option<&ProxyMacher> {
+    pub(crate) fn proxy(&self) -> Option<&ProxyMacher> {
         self.proxy.as_ref()
     }
 

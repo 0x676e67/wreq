@@ -383,7 +383,7 @@ where
 
         let h1_builder = self.h1_builder.clone();
         let h2_builder = self.h2_builder.clone();
-        let ver = match req.ex_data().alpn_protocol() {
+        let ver = match req.ex_data().alpn() {
             Some(AlpnProtocol::HTTP2) => Ver::Http2,
             _ => self.config.ver,
         };

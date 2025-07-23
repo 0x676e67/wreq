@@ -392,8 +392,8 @@ impl ConnectorService {
 
         let intercepted = req
             .ex_data()
-            .proxy_matcher()
-            .and_then(|scheme| scheme.intercept(req.uri()))
+            .proxy()
+            .and_then(|prox| prox.intercept(req.uri()))
             .or_else(|| {
                 self.config
                     .proxies
