@@ -86,7 +86,7 @@ impl Response {
     /// This requires the optional `cookies` feature to be enabled.
     #[cfg(feature = "cookies")]
     #[inline]
-    pub fn cookies(&self) -> impl Iterator<Item = cookie::Cookie> {
+    pub fn cookies(&self) -> impl Iterator<Item = cookie::Cookie<'_>> {
         cookie::extract_response_cookies(self.res.headers()).filter_map(Result::ok)
     }
 
