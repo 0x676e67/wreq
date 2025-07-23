@@ -15,7 +15,7 @@ pub(crate) use self::conn::{
 };
 pub use self::{
     keylog::KeyLogPolicy,
-    options::TlsOptions,
+    options::{TlsOptions, TlsOptionsBuilder},
     types::{
         AlpnProtocol, AlpsProtocol, CertificateCompressionAlgorithm, ExtensionType, TlsVersion,
     },

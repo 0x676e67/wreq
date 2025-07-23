@@ -21,7 +21,7 @@ use super::{
 };
 use crate::{
     core::{
-        client::{ConnExtra, ConnRequest, connect::proxy},
+        client::{ConnectRequest, Extra, connect::proxy},
         rt::TokioIo,
     },
     dns::DynResolver,
@@ -215,7 +215,7 @@ impl Connector {
     }
 }
 
-impl Service<ConnRequest> for Connector {
+impl Service<ConnectRequest> for Connector {
     type Response = Conn;
     type Error = BoxError;
     type Future = Connecting;
@@ -229,7 +229,7 @@ impl Service<ConnRequest> for Connector {
     }
 
     #[inline]
-    fn call(&mut self, req: ConnRequest) -> Self::Future {
+    fn call(&mut self, req: ConnectRequest) -> Self::Future {
         match self {
             Connector::Simple(service) => service.call(req),
             Connector::WithLayers(service) => service.call(Unnameable(req)),
@@ -244,9 +244,9 @@ impl ConnectorService {
     fn build_tls_connector(
         &self,
         mut http: HttpConnector,
-        ex_data: &ConnExtra,
+        ex_data: &Extra,
     ) -> Result<HttpsConnector<HttpConnector>, BoxError> {
-        http.set_connect_options(ex_data.tcp_connect_options().cloned());
+        http.set_connect_options(ex_data.tcp_options().cloned());
         let tls = match ex_data.tls_options() {
             Some(opts) => self.tls_builder.build(opts)?,
             None => self.tls.clone(),
@@ -256,7 +256,7 @@ impl ConnectorService {
 
     /// Establishes a direct connection to the target URI without using a proxy.
     /// May perform a plain TCP or a TLS handshake depending on the URI scheme.
-    async fn connect_direct(self, req: ConnRequest, is_proxy: bool) -> Result<Conn, BoxError> {
+    async fn connect_direct(self, req: ConnectRequest, is_proxy: bool) -> Result<Conn, BoxError> {
         trace!("connect with maybe proxy: {:?}", is_proxy);
 
         let uri = req.uri().clone();
@@ -290,7 +290,7 @@ impl ConnectorService {
     /// Supports both SOCKS and HTTP tunneling proxies.
     async fn connect_with_proxy(
         self,
-        mut req: ConnRequest,
+        mut req: ConnectRequest,
         proxy: Intercepted,
     ) -> Result<Conn, BoxError> {
         let uri = req.uri().clone();
@@ -387,7 +387,7 @@ impl ConnectorService {
     /// Automatically selects between a direct or proxied connection
     /// based on the request and configured proxy matchers.
     /// Applies a timeout if configured.
-    async fn connect_auto(self, req: ConnRequest) -> Result<Conn, BoxError> {
+    async fn connect_auto(self, req: ConnectRequest) -> Result<Conn, BoxError> {
         debug!("starting new connection: {:?}", req.uri());
 
         let intercepted = req
@@ -420,7 +420,7 @@ impl ConnectorService {
     }
 }
 
-impl Service<ConnRequest> for ConnectorService {
+impl Service<ConnectRequest> for ConnectorService {
     type Response = Conn;
     type Error = BoxError;
     type Future = Connecting;
@@ -431,7 +431,7 @@ impl Service<ConnRequest> for ConnectorService {
     }
 
     #[inline(always)]
-    fn call(&mut self, req: ConnRequest) -> Self::Future {
+    fn call(&mut self, req: ConnectRequest) -> Self::Future {
         Box::pin(self.clone().connect_auto(req))
     }
 }

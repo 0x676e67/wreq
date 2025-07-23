@@ -32,7 +32,7 @@ use crate::{
     Error,
     core::{
         client::{
-            ConnKey, ConnRequest,
+            ConnectRequest, Identifier,
             connect::{Connected, Connection},
         },
         rt::{Read, ReadBufCursor, TokioIo, Write},
@@ -45,8 +45,8 @@ use crate::{
     },
 };
 
-fn key_index() -> Result<Index<Ssl, SessionKey<ConnKey>>, ErrorStack> {
-    static IDX: LazyLock<Result<Index<Ssl, SessionKey<ConnKey>>, ErrorStack>> =
+fn key_index() -> Result<Index<Ssl, SessionKey<Identifier>>, ErrorStack> {
+    static IDX: LazyLock<Result<Index<Ssl, SessionKey<Identifier>>, ErrorStack>> =
         LazyLock::new(Ssl::new_ex_index);
     IDX.clone()
 }
@@ -150,14 +150,14 @@ pub struct HttpsConnector<T> {
 #[derive(Clone)]
 struct Inner {
     ssl: SslConnector,
-    cache: Option<Arc<Mutex<SessionCache<ConnKey>>>>,
+    cache: Option<Arc<Mutex<SessionCache<Identifier>>>>,
     config: HandshakeConfig,
 }
 
 /// A builder for creating a `TlsConnector`.
 #[derive(Clone)]
 pub struct TlsConnectorBuilder {
-    session_cache: Arc<Mutex<SessionCache<ConnKey>>>,
+    session_cache: Arc<Mutex<SessionCache<Identifier>>>,
     alpn_protocol: Option<AlpnProtocol>,
     max_version: Option<TlsVersion>,
     min_version: Option<TlsVersion>,
@@ -204,7 +204,7 @@ impl Inner {
         Ok(ssl)
     }
 
-    fn setup_ssl2(&self, req: ConnRequest) -> Result<Ssl, BoxError> {
+    fn setup_ssl2(&self, req: ConnectRequest) -> Result<Ssl, BoxError> {
         let mut cfg = self.ssl.configure()?;
 
         // Use server name indication
@@ -235,7 +235,7 @@ impl Inner {
         let host = Self::normalize_host(host);
 
         if let Some(ref cache) = self.cache {
-            let key = SessionKey(req.into_key());
+            let key = SessionKey(req.identify());
 
             // If the session cache is enabled, we try to retrieve the session
             // associated with the key. If it exists, we set it in the SSL configuration.
@@ -551,7 +551,7 @@ pub enum MaybeHttpsStream<T> {
 
 /// A connection that has been established with a TLS handshake.
 pub struct EstablishedConn<IO> {
-    req: ConnRequest,
+    req: ConnectRequest,
     inner: TokioIo<IO>,
 }
 
@@ -640,7 +640,7 @@ where
 
 impl<IO> EstablishedConn<IO> {
     #[inline]
-    pub fn new(req: ConnRequest, inner: TokioIo<IO>) -> Self {
+    pub fn new(req: ConnectRequest, inner: TokioIo<IO>) -> Self {
         Self { req, inner }
     }
 }

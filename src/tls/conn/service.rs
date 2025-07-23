@@ -13,7 +13,7 @@ use tower::Service;
 use super::{EstablishedConn, HttpsConnector, MaybeHttpsStream};
 use crate::{
     core::{
-        client::{ConnRequest, connect::Connection},
+        client::{ConnectRequest, connect::Connection},
         rt::TokioIo,
     },
     error::BoxError,
@@ -62,7 +62,7 @@ where
     }
 }
 
-impl<T, S> Service<ConnRequest> for HttpsConnector<S>
+impl<T, S> Service<ConnectRequest> for HttpsConnector<S>
 where
     S: Service<Uri, Response = TokioIo<T>> + Send,
     S::Error: Into<BoxError>,
@@ -78,7 +78,7 @@ where
         self.http.poll_ready(cx).map_err(Into::into)
     }
 
-    fn call(&mut self, req: ConnRequest) -> Self::Future {
+    fn call(&mut self, req: ConnectRequest) -> Self::Future {
         let uri = req.uri().clone();
         let connect = self.http.call(uri.clone());
         let inner = self.inner.clone();

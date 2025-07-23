@@ -5,16 +5,16 @@ mod verbose;
 
 pub(super) use self::{conn::Conn, connector::Connector, tls_info::TlsInfoFactory};
 use crate::core::{
-    client::{ConnRequest, connect::Connection},
+    client::{ConnectRequest, connect::Connection},
     rt::{Read, Write},
 };
 
-/// A wrapper type for [`ConnRequest`] used to erase its concrete type.
+/// A wrapper type for [`ConnectRequest`] used to erase its concrete type.
 ///
 /// [`Unnameable`] allows passing connection requests through trait objects or
 /// type-erased interfaces where the concrete type of the request is not important.
 /// This is mainly used internally to simplify service composition and dynamic dispatch.
-pub struct Unnameable(pub(super) ConnRequest);
+pub struct Unnameable(pub(super) ConnectRequest);
 
 /// A trait alias for types that can be used as async connections.
 ///

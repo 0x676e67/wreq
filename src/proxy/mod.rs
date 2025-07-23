@@ -1,3 +1,5 @@
+mod matcher;
+
 use std::{error::Error as StdError, fmt};
 
 #[cfg(feature = "socks")]
@@ -6,7 +8,6 @@ use http::{HeaderMap, Uri, header::HeaderValue, uri::Scheme};
 
 use crate::{
     Url,
-    core::client::proxy::matcher,
     error::{BadScheme, Error},
     into_url::{IntoUrl, IntoUrlSealed},
 };
