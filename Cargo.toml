@@ -18,7 +18,7 @@ rustdoc-args = ["--cfg", "docsrs"]
 targets = ["x86_64-unknown-linux-gnu"]
 
 [features]
-default = ["webpki-roots", "charset", "system-proxy"]
+default = ["webpki-roots", "charset", "system-proxy", "stream"]
 
 # Enable support for decoding text.
 charset = ["dep:encoding_rs", "dep:mime"]
@@ -48,7 +48,7 @@ multipart = ["dep:mime_guess", "dep:sync_wrapper"]
 hickory-dns = ["dep:hickory-resolver"]
 
 # Enable streaming support.
-stream = ["tokio/fs", "dep:sync_wrapper"]
+stream = ["tokio/fs", "dep:tokio-util", "dep:sync_wrapper"]
 
 # Enable SOCKS proxy support.
 socks = ["dep:tokio-socks"]
@@ -128,6 +128,9 @@ cookie_store = { version = "0.22", optional = true }
 
 ## tower http
 tower-http = { version = "0.6.6", default-features = false, optional = true }
+
+## tokio util
+tokio-util = { version = "0.7.15", default-features = false, optional = true }
 
 ## socks
 tokio-socks = { version = "0.5.2", optional = true }

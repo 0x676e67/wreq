@@ -9,13 +9,7 @@ use http_body::Body as HttpBody;
 use http_body_util::combinators::BoxBody;
 use pin_project_lite::pin_project;
 #[cfg(feature = "stream")]
-use {
-    bytes::{BufMut, BytesMut},
-    futures_util::stream::Stream,
-    std::io,
-    tokio::fs::File,
-    tokio::io::{AsyncRead, ReadBuf},
-};
+use {tokio::fs::File, tokio_util::io::ReaderStream};
 
 use crate::error::{BoxError, Error};
 
@@ -32,21 +26,6 @@ enum Inner {
 /// Converts any `impl Body` into a `impl Stream` of just its DATA frames.
 #[cfg(any(feature = "stream", feature = "multipart"))]
 pub(crate) struct DataStream<B>(pub(crate) B);
-
-#[cfg(feature = "stream")]
-pin_project! {
-    /// A stream that reads from a `tokio::fs::File`.
-    pub struct ReaderStream<R> {
-        // Reader itself.
-        //
-        // This value is `None` if the stream has terminated.
-        #[pin]
-        reader: Option<R>,
-        // Working buffer, used to optimize allocations.
-        buf: BytesMut,
-        capacity: usize,
-    }
-}
 
 // ===== impl Body =====
 
@@ -315,86 +294,6 @@ where
                 Some(Err(err)) => Poll::Ready(Some(Err(err))),
                 None => Poll::Ready(None),
             };
-        }
-    }
-}
-
-// ===== impl ReaderStream =====
-
-#[cfg(feature = "stream")]
-impl<R: AsyncRead> ReaderStream<R> {
-    /// Creates a new `ReaderStream` with the given reader and buffer size.
-    pub fn new(reader: R) -> Self {
-        Self {
-            reader: Some(reader),
-            buf: BytesMut::new(),
-            capacity: 4096,
-        }
-    }
-
-    fn poll_read_buf<T: AsyncRead + ?Sized, B: BufMut>(
-        io: Pin<&mut T>,
-        cx: &mut Context<'_>,
-        buf: &mut B,
-    ) -> Poll<io::Result<usize>> {
-        if !buf.has_remaining_mut() {
-            return Poll::Ready(Ok(0));
-        }
-
-        let n = {
-            let dst = buf.chunk_mut();
-
-            // Safety: `chunk_mut()` returns a `&mut UninitSlice`, and `UninitSlice` is a
-            // transparent wrapper around `[MaybeUninit<u8>]`.
-            let dst = unsafe { dst.as_uninit_slice_mut() };
-            let mut buf = ReadBuf::uninit(dst);
-            let ptr = buf.filled().as_ptr();
-            ready!(io.poll_read(cx, &mut buf)?);
-
-            // Ensure the pointer does not change from under us
-            assert_eq!(ptr, buf.filled().as_ptr());
-            buf.filled().len()
-        };
-
-        // Safety: This is guaranteed to be the number of initialized (and read)
-        // bytes due to the invariants provided by `ReadBuf::filled`.
-        unsafe {
-            buf.advance_mut(n);
-        }
-
-        Poll::Ready(Ok(n))
-    }
-}
-
-#[cfg(feature = "stream")]
-impl<R: AsyncRead> Stream for ReaderStream<R> {
-    type Item = io::Result<Bytes>;
-    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        let mut this = self.as_mut().project();
-
-        let reader = match this.reader.as_pin_mut() {
-            Some(r) => r,
-            None => return Poll::Ready(None),
-        };
-
-        if this.buf.capacity() == 0 {
-            this.buf.reserve(*this.capacity);
-        }
-
-        match Self::poll_read_buf(reader, cx, &mut this.buf) {
-            Poll::Pending => Poll::Pending,
-            Poll::Ready(Err(err)) => {
-                self.project().reader.set(None);
-                Poll::Ready(Some(Err(err)))
-            }
-            Poll::Ready(Ok(0)) => {
-                self.project().reader.set(None);
-                Poll::Ready(None)
-            }
-            Poll::Ready(Ok(_)) => {
-                let chunk = this.buf.split();
-                Poll::Ready(Some(Ok(chunk.freeze())))
-            }
         }
     }
 }
