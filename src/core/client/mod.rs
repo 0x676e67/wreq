@@ -2,11 +2,10 @@
 
 mod body;
 mod bounds;
+mod dispatch;
 mod pool;
 mod proto;
 mod service;
-
-pub(super) mod dispatch;
 
 pub mod conn;
 pub mod connect;
