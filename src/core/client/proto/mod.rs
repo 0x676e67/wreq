@@ -3,10 +3,10 @@
 mod headers;
 
 pub(crate) mod h1;
+pub(crate) mod h2;
 
 pub(crate) use self::h1::{Conn, dispatch};
-
-pub(crate) mod h2;
+use crate::core::client::upgrade;
 
 /// An Incoming Message head. Includes request/status line, and headers.
 #[derive(Debug, Default)]
@@ -43,7 +43,7 @@ pub(crate) enum Dispatched {
     /// Dispatcher completely shutdown connection.
     Shutdown,
     /// Dispatcher has pending upgrade, and so did not shutdown.
-    Upgrade(crate::core::upgrade::Pending),
+    Upgrade(upgrade::Pending),
 }
 
 impl MessageHead<http::StatusCode> {

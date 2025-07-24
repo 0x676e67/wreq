@@ -421,7 +421,7 @@ impl Response {
 
     /// Consumes the response and returns a future for a possible HTTP upgrade.
     pub async fn upgrade(self) -> crate::Result<Upgraded> {
-        crate::core::upgrade::on(self.res)
+        crate::core::client::upgrade::on(self.res)
             .await
             .map(Upgraded::from)
             .map_err(Error::upgrade)

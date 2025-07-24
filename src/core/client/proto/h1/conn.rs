@@ -21,6 +21,7 @@ use crate::core::{
     client::{
         body::DecodedLength,
         proto::{BodyLength, MessageHead, headers},
+        upgrade,
     },
     rt::{Read, Write},
 };
@@ -108,7 +109,7 @@ where
         self.io.into_inner()
     }
 
-    pub(crate) fn pending_upgrade(&mut self) -> Option<crate::core::upgrade::Pending> {
+    pub(crate) fn pending_upgrade(&mut self) -> Option<upgrade::Pending> {
         self.state.upgrade.take()
     }
 
@@ -763,7 +764,7 @@ where
         }
     }
 
-    pub(super) fn on_upgrade(&mut self) -> crate::core::upgrade::OnUpgrade {
+    pub(super) fn on_upgrade(&mut self) -> upgrade::OnUpgrade {
         trace!("{}: prepare possible HTTP upgrade", T::LOG);
         self.state.prepare_upgrade()
     }
@@ -807,7 +808,7 @@ struct State {
     /// State of allowed writes
     writing: Writing,
     /// An expected pending HTTP upgrade.
-    upgrade: Option<crate::core::upgrade::Pending>,
+    upgrade: Option<upgrade::Pending>,
     /// Either HTTP/1.0 or 1.1 connection
     version: Version,
     /// Flag to track if trailer fields are allowed to be sent
@@ -991,8 +992,8 @@ impl State {
         matches!(self.writing, Writing::Closed)
     }
 
-    fn prepare_upgrade(&mut self) -> crate::core::upgrade::OnUpgrade {
-        let (tx, rx) = crate::core::upgrade::pending();
+    fn prepare_upgrade(&mut self) -> upgrade::OnUpgrade {
+        let (tx, rx) = upgrade::pending();
         self.upgrade = Some(tx);
         rx
     }

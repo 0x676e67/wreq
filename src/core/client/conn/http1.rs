@@ -296,7 +296,7 @@ impl Builder {
 
 mod upgrades {
     use super::*;
-    use crate::core::upgrade::Upgraded;
+    use crate::core::client::upgrade::Upgraded;
 
     // A future binding a connection with a Service with Upgrade support.
     //

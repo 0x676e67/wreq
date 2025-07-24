@@ -16,10 +16,10 @@ use crate::core::{
         body::{self, DecodedLength, Incoming as IncomingBody},
         dispatch::{self, TrySendError},
         proto::{self, BodyLength, Conn, Dispatched, MessageHead, RequestHead},
+        upgrade::OnUpgrade,
     },
     error::BoxError,
     rt::{Read, Write},
-    upgrade::OnUpgrade,
 };
 
 pub(crate) struct Dispatcher<D, Bs: Body, I, T> {

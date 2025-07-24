@@ -35,12 +35,12 @@ use crate::core::{
         bounds::Http2ClientConnExec,
         dispatch::{self, Callback, SendWhen, TrySendError},
         proto::{Dispatched, h2::UpgradedSendStream, headers},
+        upgrade::{self, Upgraded},
     },
     common::{io::Compat, time::Time},
     error::BoxError,
     ext::{RequestConfig, RequestExtendedConnectProtocol, RequestOriginalHeaders},
     rt::{Read, Write},
-    upgrade::Upgraded,
 };
 
 type ClientRx<B> = dispatch::Receiver<Request<B>, Response<IncomingBody>>;
@@ -484,7 +484,7 @@ where
                     let (parts, recv_stream) = res.into_parts();
                     let mut res = Response::from_parts(parts, IncomingBody::empty());
 
-                    let (pending, on_upgrade) = crate::core::upgrade::pending();
+                    let (pending, on_upgrade) = upgrade::pending();
                     let io = H2Upgraded {
                         ping,
                         send_stream: unsafe { UpgradedSendStream::new(send_stream) },

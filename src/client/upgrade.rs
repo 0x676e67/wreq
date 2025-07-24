@@ -6,11 +6,11 @@ use std::{
 
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 
-use crate::core::rt::TokioIo;
+use crate::core::{client::upgrade, rt::TokioIo};
 
 /// An upgraded HTTP connection.
 pub struct Upgraded {
-    inner: TokioIo<crate::core::upgrade::Upgraded>,
+    inner: TokioIo<upgrade::Upgraded>,
 }
 
 impl AsyncRead for Upgraded {
@@ -59,8 +59,8 @@ impl fmt::Debug for Upgraded {
     }
 }
 
-impl From<crate::core::upgrade::Upgraded> for Upgraded {
-    fn from(inner: crate::core::upgrade::Upgraded) -> Self {
+impl From<upgrade::Upgraded> for Upgraded {
+    fn from(inner: upgrade::Upgraded) -> Self {
         Upgraded {
             inner: TokioIo::new(inner),
         }
