@@ -12,7 +12,7 @@ use tower::retry::Policy;
 use tower_http::decompression::DecompressionBody;
 
 use super::timeout::TimeoutBody;
-use crate::{Body, core::client::body::Incoming, error::BoxError};
+use crate::{Body, core::client::Incoming, error::BoxError};
 
 /// A retry policy for HTTP/2 requests that safely determines whether and how many times
 /// a request should be retried based on error type and a maximum retry count.
