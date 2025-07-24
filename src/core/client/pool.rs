@@ -18,7 +18,6 @@ use tokio::sync::oneshot;
 
 use crate::{
     core::{
-        collections::{HashMap, HashSet, LruMap, RANDOM_STATE},
         common::{
             exec::{self, Exec},
             timer::Timer,
@@ -26,6 +25,7 @@ use crate::{
         rt::Timer as _,
     },
     sync::Mutex,
+    util::hash::{HASHER, HashMap, HashSet, LruMap},
 };
 
 pub struct Pool<T, K: Key> {
@@ -129,14 +129,14 @@ impl<T, K: Key> Pool<T, K> {
     {
         let inner = if config.is_enabled() {
             Some(Arc::new(Mutex::new(PoolInner {
-                connecting: HashSet::with_hasher(RANDOM_STATE),
+                connecting: HashSet::with_hasher(HASHER),
                 idle: LruMap::with_hasher(
                     ByLength::new(config.max_pool_size.map_or(u32::MAX, NonZero::get)),
-                    RANDOM_STATE,
+                    HASHER,
                 ),
                 idle_interval_ref: None,
                 max_idle_per_host: config.max_idle_per_host,
-                waiters: HashMap::with_hasher(RANDOM_STATE),
+                waiters: HashMap::with_hasher(HASHER),
                 exec: Exec::new(executor),
                 timer: timer.map(Timer::new),
                 timeout: config.idle_timeout,

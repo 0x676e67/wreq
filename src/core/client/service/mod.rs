@@ -32,13 +32,13 @@ use crate::{
             options::{http1::Http1Options, http2::Http2Options},
             pool,
         },
-        collections::{RANDOM_STATE, memo::HashMemo},
         common::{Exec, Lazy, lazy, timer},
         error::BoxError,
         ext::{RequestConfig, RequestScopedOptions},
         rt::{Executor, Read, Timer, Write},
     },
     tls::AlpnProtocol,
+    util::hash::{HASHER, HashMemo},
 };
 
 type BoxSendFuture = Pin<Box<dyn Future<Output = ()> + Send>>;
@@ -184,7 +184,7 @@ where
                     tls_options,
                     tcp_options,
                 },
-                RANDOM_STATE,
+                HASHER,
             )),
         };
         ResponseFuture::new(this.send_request(req, connect_req))

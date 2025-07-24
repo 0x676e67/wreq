@@ -7,7 +7,7 @@ use std::{
 use boring2::ssl::{SslSession, SslSessionRef, SslVersion};
 use schnellru::ByLength;
 
-use crate::core::collections::{HashMap, LruMap, RANDOM_STATE};
+use crate::util::hash::{HASHER, HashMap, LruMap};
 
 /// A typed key for indexing TLS sessions in the cache.
 ///
@@ -62,8 +62,8 @@ where
 {
     pub fn with_capacity(per_host_session_capacity: usize) -> SessionCache<T> {
         SessionCache {
-            per_host_sessions: HashMap::with_hasher(RANDOM_STATE),
-            reverse: HashMap::with_hasher(RANDOM_STATE),
+            per_host_sessions: HashMap::with_hasher(HASHER),
+            reverse: HashMap::with_hasher(HASHER),
             per_host_session_capacity,
         }
     }
@@ -73,10 +73,7 @@ where
             .per_host_sessions
             .entry(key.clone())
             .or_insert_with(|| {
-                LruMap::with_hasher(
-                    ByLength::new(self.per_host_session_capacity as _),
-                    RANDOM_STATE,
-                )
+                LruMap::with_hasher(ByLength::new(self.per_host_session_capacity as _), HASHER)
             });
 
         // Enforce per-key capacity limit by evicting the least recently used session

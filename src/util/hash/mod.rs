@@ -1,6 +1,7 @@
-pub mod memo;
+mod memo;
 
 use ahash::RandomState;
+pub use memo::HashMemo;
 use schnellru::ByLength;
 
 /// Pre-seeded [`RandomState`] for consistent internal hashing.
@@ -9,7 +10,7 @@ use schnellru::ByLength;
 /// program runs. Primarily used for connection pools and internal caches.
 ///
 /// **Note**: Not cryptographically secure due to fixed seeds.
-pub const RANDOM_STATE: RandomState = RandomState::with_seeds(
+pub const HASHER: RandomState = RandomState::with_seeds(
     0x6b68_d618_a4b5_3c57,
     0xadc8_c4d5_82bb_1313,
     0x2f72_c2c1_9b04_2d4c,

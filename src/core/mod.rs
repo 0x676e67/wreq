@@ -6,7 +6,6 @@ mod proto;
 
 pub mod body;
 pub mod client;
-pub mod collections;
 pub mod ext;
 pub mod rt;
 pub mod upgrade;

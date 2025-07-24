@@ -3,9 +3,10 @@ use std::sync::Arc;
 use http::Uri;
 
 use crate::{
-    core::{client::connect::TcpConnectOptions, collections::memo::HashMemo},
+    core::client::connect::TcpConnectOptions,
     proxy::Matcher as ProxyMacher,
     tls::{AlpnProtocol, TlsOptions},
+    util::hash::HashMemo,
 };
 
 /// Uniquely identifies a connection configuration and its lifecycle.

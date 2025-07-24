@@ -1,3 +1,5 @@
+pub mod hash;
+
 use std::fmt;
 
 use crate::header::{Entry, HeaderMap, HeaderValue, OccupiedEntry};

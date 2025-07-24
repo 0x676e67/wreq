@@ -20,8 +20,6 @@ mod h2_client {
     /// trait for any future.
     ///
     /// This trait is sealed and cannot be implemented for types outside this crate.
-    ///
-    /// [`Executor`]: crate::core::rt::Executor
     pub trait Http2ClientConnExec<B, T>: sealed_client::Sealed<(B, T)>
     where
         B: http_body::Body,
