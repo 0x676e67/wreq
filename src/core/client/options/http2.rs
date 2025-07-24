@@ -8,7 +8,7 @@ pub use http2::frame::{
 };
 use http2::{client::Builder, frame::ExperimentalSettings};
 
-use crate::core::proto::{self, h2::ping};
+use super::super::proto::{self, h2::ping};
 
 // Our defaults are chosen for the "majority" case, which usually are not
 // resource constrained, and so the spec default of 64kb can be too limiting

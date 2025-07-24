@@ -2,7 +2,7 @@
 
 use httparse::ParserConfig;
 
-use crate::core::proto;
+use super::super::proto;
 
 /// Builder for `Http1Options`.
 #[must_use]

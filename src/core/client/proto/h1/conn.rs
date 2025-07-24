@@ -18,8 +18,10 @@ use super::{
 };
 use crate::core::{
     Error, Result,
-    body::DecodedLength,
-    proto::{BodyLength, MessageHead, headers},
+    client::{
+        body::DecodedLength,
+        proto::{BodyLength, MessageHead, headers},
+    },
     rt::{Read, Write},
 };
 

@@ -7,7 +7,6 @@
 //! - Timers
 //! - IO transports
 
-pub mod bounds;
 mod io;
 mod timer;
 pub mod tokio;

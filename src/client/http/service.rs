@@ -11,8 +11,7 @@ use crate::{
     OriginalHeaders,
     client::layer::config::RequestSkipDefaultHeaders,
     core::{
-        body::Incoming,
-        client::HttpClient,
+        client::{HttpClient, body::Incoming},
         ext::{RequestConfig, RequestOriginalHeaders},
     },
     error::{BoxError, Error},

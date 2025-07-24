@@ -9,7 +9,8 @@ use http_body::Body;
 use pin_project_lite::pin_project;
 use tokio::sync::{mpsc, oneshot};
 
-use crate::core::{Error, body::Incoming, proto::h2::client::ResponseFutMap};
+use super::{body::Incoming, proto::h2::client::ResponseFutMap};
+use crate::core::Error;
 
 pub(crate) type RetryPromise<T, U> = oneshot::Receiver<Result<U, TrySendError<T>>>;
 

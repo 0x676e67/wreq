@@ -628,7 +628,7 @@ mod tests {
 
     #[tokio::test]
     async fn parse_reads_until_blocked() {
-        use crate::core::proto::h1::ClientTransaction;
+        use crate::core::client::proto::h1::ClientTransaction;
 
         let _ = pretty_env_logger::try_init();
         let mock = Mock::new()

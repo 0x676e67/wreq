@@ -15,7 +15,7 @@ use crate::{
         retry::Http2RetryPolicy,
         timeout::{ResponseBodyTimeout, Timeout, TimeoutBody},
     },
-    core::{body::Incoming, client::connect},
+    core::client::{body::Incoming, connect},
     dns::DynResolver,
     error::BoxError,
     redirect::FollowRedirectPolicy,

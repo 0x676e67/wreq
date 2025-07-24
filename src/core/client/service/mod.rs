@@ -25,8 +25,8 @@ use self::{
 use super::pool::Ver;
 use crate::{
     core::{
-        body::Incoming,
         client::{
+            body::Incoming,
             conn::{self, TrySendError as ConnTrySendError},
             connect::{Alpn, Connected, Connection},
             options::{http1::Http1Options, http2::Http2Options},

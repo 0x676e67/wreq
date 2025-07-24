@@ -2,9 +2,7 @@
 
 mod common;
 mod error;
-mod proto;
 
-pub mod body;
 pub mod client;
 pub mod ext;
 pub mod rt;

@@ -21,8 +21,8 @@ use pin_project_lite::pin_project;
 pub(crate) use self::client::ClientTask;
 use crate::core::{
     Error,
+    client::proto::h2::ping::Recorder,
     error::BoxError,
-    proto::h2::ping::Recorder,
     rt::{Read, ReadBufCursor, Write},
 };
 

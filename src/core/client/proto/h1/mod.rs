@@ -12,8 +12,10 @@ pub(crate) use self::{
 };
 use crate::core::{
     Error,
-    body::DecodedLength,
-    proto::{BodyLength, MessageHead},
+    client::{
+        body::DecodedLength,
+        proto::{BodyLength, MessageHead},
+    },
 };
 
 mod conn;

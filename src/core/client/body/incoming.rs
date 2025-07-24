@@ -12,7 +12,7 @@ use http::HeaderMap;
 use http_body::{Body, Frame, SizeHint};
 
 use super::DecodedLength;
-use crate::core::{Error, common::watch, proto::h2::ping};
+use crate::core::{Error, client::proto::h2::ping, common::watch};
 
 type BodySender = mpsc::Sender<Result<Bytes, Error>>;
 type TrailersSender = oneshot::Sender<HeaderMap>;

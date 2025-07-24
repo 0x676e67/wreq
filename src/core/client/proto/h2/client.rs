@@ -30,13 +30,16 @@ use super::{
 };
 use crate::core::{
     Error,
-    body::Incoming as IncomingBody,
-    client::dispatch::{self, Callback, SendWhen, TrySendError},
+    client::{
+        body::{self, Incoming as IncomingBody},
+        bounds::Http2ClientConnExec,
+        dispatch::{self, Callback, SendWhen, TrySendError},
+        proto::{Dispatched, h2::UpgradedSendStream, headers},
+    },
     common::{io::Compat, time::Time},
     error::BoxError,
     ext::{RequestConfig, RequestExtendedConnectProtocol, RequestOriginalHeaders},
-    proto::{Dispatched, h2::UpgradedSendStream, headers},
-    rt::{Read, Write, bounds::Http2ClientConnExec},
+    rt::{Read, Write},
     upgrade::Upgraded,
 };
 
@@ -452,7 +455,7 @@ impl<B> Future for ResponseFutMap<B>
 where
     B: Body + 'static,
 {
-    type Output = Result<Response<crate::core::body::Incoming>, (Error, Option<Request<B>>)>;
+    type Output = Result<Response<body::Incoming>, (Error, Option<Request<B>>)>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let mut this = self.project();

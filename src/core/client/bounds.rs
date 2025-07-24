@@ -9,8 +9,8 @@ mod h2_client {
     use std::future::Future;
 
     use crate::core::{
+        client::proto::h2::client::H2ClientFuture,
         error::BoxError,
-        proto::h2::client::H2ClientFuture,
         rt::{Executor, Read, Write},
     };
 

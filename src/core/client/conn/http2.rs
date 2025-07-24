@@ -14,12 +14,15 @@ use http_body::Body;
 
 use crate::{
     core::{
-        body::Incoming as IncomingBody,
-        client::dispatch::{self, TrySendError},
+        client::{
+            body::Incoming as IncomingBody,
+            bounds::Http2ClientConnExec,
+            dispatch::{self, TrySendError},
+            proto,
+        },
         common::time::Time,
         error::{BoxError, Error},
-        proto,
-        rt::{Read, Timer, Write, bounds::Http2ClientConnExec},
+        rt::{Read, Timer, Write},
     },
     http2::Http2Options,
 };

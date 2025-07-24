@@ -12,10 +12,12 @@ use http_body::Body;
 use super::{Http1Transaction, Wants};
 use crate::core::{
     Error,
-    body::{DecodedLength, Incoming as IncomingBody},
-    client::dispatch::{self, TrySendError},
+    client::{
+        body::{self, DecodedLength, Incoming as IncomingBody},
+        dispatch::{self, TrySendError},
+        proto::{self, BodyLength, Conn, Dispatched, MessageHead, RequestHead},
+    },
     error::BoxError,
-    proto::{BodyLength, Conn, Dispatched, MessageHead, RequestHead},
     rt::{Read, Write},
     upgrade::OnUpgrade,
 };
@@ -23,7 +25,7 @@ use crate::core::{
 pub(crate) struct Dispatcher<D, Bs: Body, I, T> {
     conn: Conn<I, Bs::Data, T>,
     dispatch: D,
-    body_tx: Option<crate::core::body::Sender>,
+    body_tx: Option<body::Sender>,
     body_rx: Pin<Box<Option<Bs>>>,
     is_closing: bool,
 }
@@ -485,7 +487,7 @@ where
     type PollItem = RequestHead;
     type PollBody = B;
     type PollError = Infallible;
-    type RecvItem = crate::core::proto::ResponseHead;
+    type RecvItem = proto::ResponseHead;
 
     fn poll_msg(
         mut self: Pin<&mut Self>,
@@ -505,7 +507,7 @@ where
                         let (parts, body) = req.into_parts();
                         let head = RequestHead {
                             version: parts.version,
-                            subject: crate::core::proto::RequestLine(parts.method, parts.uri),
+                            subject: proto::RequestLine(parts.method, parts.uri),
                             headers: parts.headers,
                             extensions: parts.extensions,
                         };
@@ -591,8 +593,8 @@ where
 mod tests {
     use std::time::Duration;
 
-    use super::*;
-    use crate::core::{common::io::Compat, proto::h1::ClientTransaction};
+    use super::{proto::h1::ClientTransaction, *};
+    use crate::core::common::io::Compat;
 
     #[test]
     fn client_read_bytes_before_writing_request() {
