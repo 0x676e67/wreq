@@ -11,12 +11,10 @@ use pin_project_lite::pin_project;
 #[cfg(feature = "stream")]
 use {
     bytes::{BufMut, BytesMut},
+    futures_util::stream::Stream,
     std::io,
     tokio::fs::File,
-    {
-        futures_util::stream::Stream,
-        tokio::io::{AsyncRead, ReadBuf},
-    },
+    tokio::io::{AsyncRead, ReadBuf},
 };
 
 use crate::error::{BoxError, Error};
