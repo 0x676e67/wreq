@@ -1,4 +1,3 @@
-#![allow(unused)]
 use std::{
     error::Error as StdError,
     fmt,
@@ -131,13 +130,13 @@ impl TcpKeepaliveConfig {
             dirty = true
         }
 
-        /// Set the value of the `TCP_KEEPINTVL` option. On Windows, this sets the
-        /// value of the `tcp_keepalive` struct's `keepaliveinterval` field.
-        ///
-        /// Sets the time interval between TCP keepalive probes.
-        ///
-        /// Some platforms specify this value in seconds, so sub-second
-        /// specifications may be omitted.
+        // Set the value of the `TCP_KEEPINTVL` option. On Windows, this sets the
+        // value of the `tcp_keepalive` struct's `keepaliveinterval` field.
+        //
+        // Sets the time interval between TCP keepalive probes.
+        //
+        // Some platforms specify this value in seconds, so sub-second
+        // specifications may be omitted.
         #[cfg(any(
             target_os = "android",
             target_os = "dragonfly",
@@ -161,10 +160,10 @@ impl TcpKeepaliveConfig {
             };
         }
 
-        /// Set the value of the `TCP_KEEPCNT` option.
-        ///
-        /// Set the maximum number of TCP keepalive probes that will be sent before
-        /// dropping a connection, if TCP keepalive is enabled on this socket.
+        // Set the value of the `TCP_KEEPCNT` option.
+        //
+        // Set the maximum number of TCP keepalive probes that will be sent before
+        // dropping a connection, if TCP keepalive is enabled on this socket.
         #[cfg(any(
             target_os = "android",
             target_os = "dragonfly",
@@ -311,6 +310,7 @@ impl<R> HttpConnector<R> {
     /// Default is 300 milliseconds.
     ///
     /// [RFC 6555]: https://tools.ietf.org/html/rfc6555
+    #[allow(unused)]
     #[inline]
     pub fn set_happy_eyeballs_timeout(&mut self, dur: Option<Duration>) {
         self.config_mut().happy_eyeballs_timeout = dur;
@@ -456,8 +456,8 @@ where
 
         let sock = c.connect().await?;
 
-        if let Err(e) = sock.set_nodelay(config.nodelay) {
-            warn!("tcp set_nodelay error: {}", e);
+        if let Err(_e) = sock.set_nodelay(config.nodelay) {
+            warn!("tcp set_nodelay error: {_e}");
         }
 
         Ok(TokioIo::new(sock))
@@ -731,8 +731,8 @@ fn connect(
         .map_err(ConnectError::m("tcp set_nonblocking error"))?;
 
     if let Some(tcp_keepalive) = &config.tcp_keepalive_config.into_tcpkeepalive() {
-        if let Err(e) = socket.set_tcp_keepalive(tcp_keepalive) {
-            warn!("tcp set_keepalive error: {}", e);
+        if let Err(_e) = socket.set_tcp_keepalive(tcp_keepalive) {
+            warn!("tcp set_keepalive error: {_e}");
         }
     }
 
@@ -783,6 +783,7 @@ fn connect(
                     io::Error::last_os_error(),
                 )
             })?;
+
             // Different setsockopt calls are necessary depending on whether the
             // address is IPv4 or IPv6.
             match addr {
@@ -823,6 +824,7 @@ fn connect(
         use std::os::unix::io::{FromRawFd, IntoRawFd};
         TcpSocket::from_raw_fd(socket.into_raw_fd())
     };
+
     #[cfg(windows)]
     let socket = unsafe {
         // Safety: `from_raw_socket` is only safe to call if ownership of the raw
@@ -834,20 +836,20 @@ fn connect(
     };
 
     if config.reuse_address {
-        if let Err(e) = socket.set_reuseaddr(true) {
-            warn!("tcp set_reuse_address error: {}", e);
+        if let Err(_e) = socket.set_reuseaddr(true) {
+            warn!("tcp set_reuse_address error: {_e}");
         }
     }
 
     if let Some(size) = config.send_buffer_size {
-        if let Err(e) = socket.set_send_buffer_size(size.try_into().unwrap_or(u32::MAX)) {
-            warn!("tcp set_buffer_size error: {}", e);
+        if let Err(_e) = socket.set_send_buffer_size(size.try_into().unwrap_or(u32::MAX)) {
+            warn!("tcp set_buffer_size error: {_e}");
         }
     }
 
     if let Some(size) = config.recv_buffer_size {
-        if let Err(e) = socket.set_recv_buffer_size(size.try_into().unwrap_or(u32::MAX)) {
-            warn!("tcp set_recv_buffer_size error: {}", e);
+        if let Err(_e) = socket.set_recv_buffer_size(size.try_into().unwrap_or(u32::MAX)) {
+            warn!("tcp set_recv_buffer_size error: {_e}");
         }
     }
 

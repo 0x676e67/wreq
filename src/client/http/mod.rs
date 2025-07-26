@@ -132,6 +132,8 @@ struct Config {
     tcp_keepalive: Option<Duration>,
     tcp_keepalive_interval: Option<Duration>,
     tcp_keepalive_retries: Option<u32>,
+    tcp_send_buffer_size: Option<usize>,
+    tcp_recv_buffer_size: Option<usize>,
     tcp_connect_options: Option<TcpConnectOptions>,
     #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
     tcp_user_timeout: Option<Duration>,
@@ -199,6 +201,8 @@ impl ClientBuilder {
                 tcp_connect_options: None,
                 tcp_nodelay: true,
                 tcp_reuse_address: false,
+                tcp_send_buffer_size: None,
+                tcp_recv_buffer_size: None,
                 #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
                 tcp_user_timeout: None,
                 proxies: Vec::new(),
@@ -284,6 +288,8 @@ impl ClientBuilder {
                 http.set_connect_options(config.tcp_connect_options);
                 http.set_connect_timeout(config.connect_timeout);
                 http.set_nodelay(config.tcp_nodelay);
+                http.set_send_buffer_size(config.tcp_send_buffer_size);
+                http.set_recv_buffer_size(config.tcp_recv_buffer_size);
                 #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
                 http.set_tcp_user_timeout(config.tcp_user_timeout);
             };
@@ -944,6 +950,30 @@ impl ClientBuilder {
     #[inline]
     pub fn tcp_reuse_address(mut self, enabled: bool) -> ClientBuilder {
         self.config.tcp_reuse_address = enabled;
+        self
+    }
+
+    /// Sets the size of the TCP send buffer on this client socket.
+    ///
+    /// On most operating systems, this sets the `SO_SNDBUF` socket option.
+    #[inline]
+    pub fn tcp_send_buffer_size<S>(mut self, size: S) -> ClientBuilder
+    where
+        S: Into<Option<usize>>,
+    {
+        self.config.tcp_send_buffer_size = size.into();
+        self
+    }
+
+    /// Sets the size of the TCP receive buffer on this client socket.
+    ///
+    /// On most operating systems, this sets the `SO_RCVBUF` socket option.
+    #[inline]
+    pub fn tcp_recv_buffer_size<S>(mut self, size: S) -> ClientBuilder
+    where
+        S: Into<Option<usize>>,
+    {
+        self.config.tcp_recv_buffer_size = size.into();
         self
     }
 
