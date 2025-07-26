@@ -88,12 +88,8 @@ impl TransportOptions {
     }
 }
 
-/// Internal options that are extracted from request extensions and applied before connection
-/// establishment.
-///
-/// This struct holds configuration that affects how a specific request will be processed,
-/// including proxy settings, protocol enforcement, and connection parameters.
-/// These options are typically set per-request and override any client-level defaults.
+/// Per-request configuration for proxy, protocol, and transport options.
+/// Overrides client defaults for a single request.
 #[must_use]
 #[derive(Debug, Default, Clone, Hash, PartialEq, Eq)]
 pub(crate) struct RequestOptions {
@@ -110,7 +106,7 @@ impl RequestOptions {
         self.proxy_matcher.as_ref()
     }
 
-    /// Get mutable reference to the proxy matcher.
+    /// Get a mutable reference to the proxy matcher.
     #[inline]
     pub fn proxy_matcher_mut(&mut self) -> &mut Option<Matcher> {
         &mut self.proxy_matcher
@@ -122,7 +118,7 @@ impl RequestOptions {
         self.enforced_version
     }
 
-    /// Get mutable reference to the enforced HTTP version.
+    /// Get a mutable reference to the enforced HTTP version.
     #[inline]
     pub fn enforced_version_mut(&mut self) -> &mut Option<Version> {
         &mut self.enforced_version
@@ -134,7 +130,7 @@ impl RequestOptions {
         self.tcp_connect_opts.as_ref()
     }
 
-    /// Get mutable reference to the TCP connection options.
+    /// Get a mutable reference to the TCP connection options.
     #[inline]
     pub fn tcp_connect_opts_mut(&mut self) -> &mut Option<TcpConnectOptions> {
         &mut self.tcp_connect_opts
@@ -146,7 +142,7 @@ impl RequestOptions {
         self.transport_opts.as_ref()
     }
 
-    /// Get mutable reference to the transport options.
+    /// Get a mutable reference to the transport options.
     #[inline]
     pub fn transport_opts_mut(&mut self) -> &mut Option<TransportOptions> {
         &mut self.transport_opts
