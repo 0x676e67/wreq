@@ -29,12 +29,12 @@ use crate::{
             body::Incoming,
             conn::{self, TrySendError as ConnTrySendError},
             connect::{Alpn, Connected, Connection},
-            options::{http1::Http1Options, http2::Http2Options},
+            options::{TransportOptions, http1::Http1Options, http2::Http2Options},
             pool,
         },
         common::{Exec, Lazy, lazy, timer},
         error::BoxError,
-        ext::{RequestConfig, RequestScopedOptions},
+        ext::{RequestConfig, RequestLevelOptions},
         rt::{Executor, Read, Timer, Write},
     },
     tls::AlpnProtocol,
@@ -151,45 +151,34 @@ where
             Err(err) => return ResponseFuture::new(futures_util::future::err(err)),
         };
 
-        // Extract config extensions
-        let (proxy, enforced_version, tcp_options, transport_options) =
-            RequestConfig::<RequestScopedOptions>::remove(req.extensions_mut())
-                .unwrap_or_default()
-                .into_parts();
-
         let mut this = self.clone();
-        let mut http1_options = None;
-        let mut tls_options = None;
-        let alpn = match enforced_version {
-            Some(Version::HTTP_11 | Version::HTTP_10 | Version::HTTP_09) => {
-                Some(AlpnProtocol::HTTP1)
-            }
-            Some(Version::HTTP_2) => Some(AlpnProtocol::HTTP2),
-            _ => None,
-        };
 
-        if let Some(opts) = transport_options {
-            let (tls, http1, http2) = opts.into_parts();
-            tls_options = tls;
-            http1_options = http1.clone();
-            this.h1_builder.options(http1);
-            this.h2_builder.options(http2);
+        // Extract per-request options from the request extensions and apply them to the client
+        // builder. This allows each request to override HTTP/1 and HTTP/2 options as
+        // needed.
+        let options = RequestConfig::<RequestLevelOptions>::remove(req.extensions_mut());
+        if let Some(ref opts) = options {
+            if let Some(http1) = opts
+                .transport_opts()
+                .and_then(TransportOptions::http1_options)
+            {
+                this.h1_builder.options(Some(http1.clone()));
+            }
+            if let Some(http2) = opts
+                .transport_opts()
+                .and_then(TransportOptions::http2_options)
+            {
+                this.h2_builder.options(Some(http2.clone()));
+            }
         }
 
+        let connect_meta = ConnectMeta::new(uri.clone(), options);
+        let extra = Arc::new(HashMemo::with_hasher(connect_meta, HASHER));
         let connect_req = ConnectRequest {
             uri: uri.clone(),
-            extra: Arc::new(HashMemo::with_hasher(
-                ConnectMeta {
-                    uri,
-                    alpn,
-                    proxy,
-                    http1_options,
-                    tls_options,
-                    tcp_options,
-                },
-                HASHER,
-            )),
+            extra,
         };
+
         ResponseFuture::new(this.send_request(req, connect_req))
     }
 

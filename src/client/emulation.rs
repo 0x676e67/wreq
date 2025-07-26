@@ -38,42 +38,43 @@ pub struct Emulation {
 }
 
 impl EmulationBuilder {
-    /// Sets the  TLS options configuration for the emulation.
-    #[inline]
-    pub fn tls_options<C>(mut self, config: C) -> Self
-    where
-        C: Into<Option<TlsOptions>>,
-    {
-        self.emulation
-            .transport
-            .get_or_insert_default()
-            .tls_options(config);
-        self
-    }
-
     /// Sets the  HTTP/1 options configuration for the emulation.
     #[inline]
-    pub fn http1_options<C>(mut self, config: C) -> Self
+    pub fn http1_options<C>(mut self, opts: C) -> Self
     where
         C: Into<Option<Http1Options>>,
     {
         self.emulation
             .transport
             .get_or_insert_default()
-            .http1_options(config);
+            .set_http1_options(opts);
         self
     }
 
     /// Sets the HTTP/2 options configuration for the emulation.
     #[inline]
-    pub fn http2_options<C>(mut self, config: C) -> Self
+    pub fn http2_options<C>(mut self, opts: C) -> Self
     where
         C: Into<Option<Http2Options>>,
     {
         self.emulation
             .transport
             .get_or_insert_default()
-            .http2_options(config);
+            .set_http2_options(opts);
+        self
+    }
+
+    /// Sets the  TLS options configuration for the emulation.
+    #[inline]
+    pub fn tls_options<C>(mut self, opts: C) -> Self
+    where
+        C: Into<Option<TlsOptions>>,
+    {
+        self.emulation
+            .transport
+            .get_or_insert_default()
+            .set_tls_options(opts);
+
         self
     }
 

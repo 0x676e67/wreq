@@ -139,12 +139,12 @@ impl RequestConfigValue for RequestExtendedConnectProtocol {
     type Value = http2::ext::Protocol;
 }
 
-/// Request-scoped options that affect request processing.
+/// Request-level options that affect request processing.
 #[derive(Clone, Copy)]
-pub(crate) struct RequestScopedOptions;
+pub(crate) struct RequestLevelOptions;
 
-impl RequestConfigValue for RequestScopedOptions {
-    type Value = crate::core::client::options::PerRequestOptions;
+impl RequestConfigValue for RequestLevelOptions {
+    type Value = crate::core::client::options::RequestOptions;
 }
 
 /// Request original headers for the request.

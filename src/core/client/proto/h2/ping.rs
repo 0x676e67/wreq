@@ -89,14 +89,14 @@ pub(super) fn channel(ping_pong: PingPong, config: Config, __timer: Time) -> (Re
 
 #[derive(Debug, Clone)]
 pub(crate) struct Config {
-    pub(super) bdp_initial_window: Option<WindowSize>,
+    bdp_initial_window: Option<WindowSize>,
     /// If no frames are received in this amount of time, a PING frame is sent.
-    pub(super) keep_alive_interval: Option<Duration>,
+    keep_alive_interval: Option<Duration>,
     /// After sending a keepalive PING, the connection will be closed if
     /// a pong is not received in this amount of time.
-    pub(super) keep_alive_timeout: Duration,
+    keep_alive_timeout: Duration,
     /// If true, sends pings even when there are no active streams.
-    pub(super) keep_alive_while_idle: bool,
+    keep_alive_while_idle: bool,
 }
 
 #[derive(Clone)]

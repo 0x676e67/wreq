@@ -18,7 +18,7 @@ use crate::{
             body::Incoming as IncomingBody,
             bounds::Http2ClientConnExec,
             dispatch::{self, TrySendError},
-            proto,
+            proto::{self, h2::ping},
         },
         common::time::Time,
         error::{BoxError, Error},
@@ -235,16 +235,76 @@ where
         async move {
             trace!("client handshake HTTP/2");
 
+            // Crate the HTTP/2 client with the provided options.
+            let builder = {
+                let mut builder = http2::client::Builder::default();
+                builder
+                    .initial_max_send_streams(self.opts.initial_max_send_streams)
+                    .initial_window_size(self.opts.initial_window_size)
+                    .initial_connection_window_size(self.opts.initial_conn_window_size)
+                    .max_send_buffer_size(self.opts.max_send_buffer_size);
+                if let Some(id) = self.opts.initial_stream_id {
+                    builder.initial_stream_id(id);
+                }
+                if let Some(max) = self.opts.max_pending_accept_reset_streams {
+                    builder.max_pending_accept_reset_streams(max);
+                }
+                if let Some(max) = self.opts.max_concurrent_reset_streams {
+                    builder.max_concurrent_reset_streams(max);
+                }
+                if let Some(max) = self.opts.max_concurrent_streams {
+                    builder.max_concurrent_streams(max);
+                }
+                if let Some(max) = self.opts.max_header_list_size {
+                    builder.max_header_list_size(max);
+                }
+                if let Some(opt) = self.opts.enable_push {
+                    builder.enable_push(opt);
+                }
+                if let Some(max) = self.opts.max_frame_size {
+                    builder.max_frame_size(max);
+                }
+                if let Some(max) = self.opts.header_table_size {
+                    builder.header_table_size(max);
+                }
+                if let Some(v) = self.opts.enable_connect_protocol {
+                    builder.enable_connect_protocol(v);
+                }
+                if let Some(v) = self.opts.no_rfc7540_priorities {
+                    builder.no_rfc7540_priorities(v);
+                }
+                if let Some(order) = self.opts.settings_order {
+                    builder.settings_order(order);
+                }
+                if let Some(experimental_settings) = self.opts.experimental_settings {
+                    builder.experimental_settings(experimental_settings);
+                }
+                if let Some(stream_dependency) = self.opts.headers_stream_dependency {
+                    builder.headers_stream_dependency(stream_dependency);
+                }
+                if let Some(order) = self.opts.headers_pseudo_order {
+                    builder.headers_pseudo_order(order);
+                }
+                if let Some(priority) = self.opts.priorities {
+                    builder.priorities(priority);
+                }
+
+                builder
+            };
+
+            // Create the ping configuration for the connection.
+            let ping_config = ping::Config::new(
+                self.opts.adaptive_window,
+                self.opts.initial_window_size,
+                self.opts.keep_alive_interval,
+                self.opts.keep_alive_timeout,
+                self.opts.keep_alive_while_idle,
+            );
+
             let (tx, rx) = dispatch::channel();
-            let h2 = proto::h2::client::handshake(
-                io,
-                rx,
-                self.opts.builder,
-                self.opts.ping_config,
-                self.exec,
-                self.timer,
-            )
-            .await?;
+            let h2 =
+                proto::h2::client::handshake(io, rx, builder, ping_config, self.exec, self.timer)
+                    .await?;
             Ok((
                 SendRequest {
                     dispatch: tx.unbound(),

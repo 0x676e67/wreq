@@ -1313,9 +1313,9 @@ impl ClientBuilder {
         {
             self.config
                 .transport_options
-                .http1_options(http1_opts)
-                .http2_options(http2_opts)
-                .tls_options(tls_opts);
+                .set_http1_options(http1_opts)
+                .set_http2_options(http2_opts)
+                .set_tls_options(tls_opts);
         }
         if let Some(headers) = headers {
             self = self.default_headers(headers);
