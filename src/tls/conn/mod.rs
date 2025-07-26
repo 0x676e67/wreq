@@ -226,7 +226,7 @@ impl Inner {
         )?;
 
         // Set ALPN protocols
-        if let Some(alpn) = req.ex_data().alpn() {
+        if let Some(alpn) = req.metadata().alpn_protocol() {
             cfg.set_alpn_protos(&alpn.encode())?;
         }
 

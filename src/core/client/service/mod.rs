@@ -72,7 +72,7 @@ impl ConnectRequest {
 
     /// Returns the [`ConnectMeta`] connection parameters (ALPN, proxy, TCP/TLS options).
     #[inline]
-    pub(crate) fn ex_data(&self) -> &ConnectMeta {
+    pub(crate) fn metadata(&self) -> &ConnectMeta {
         self.extra.as_ref().as_ref()
     }
 
@@ -428,7 +428,7 @@ where
 
         let h1_builder = self.h1_builder.clone();
         let h2_builder = self.h2_builder.clone();
-        let ver = match req.ex_data().alpn() {
+        let ver = match req.metadata().alpn_protocol() {
             Some(AlpnProtocol::HTTP2) => Ver::Http2,
             _ => self.config.ver,
         };

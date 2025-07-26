@@ -269,7 +269,7 @@ impl ConnectorService {
             http.set_nodelay(true);
         }
 
-        let mut connector = self.build_tls_connector(http, req.ex_data())?;
+        let mut connector = self.build_tls_connector(http, req.metadata())?;
         let io = connector.call(req).await?;
 
         // If the connection is HTTPS, wrap the TLS stream in a TlsConn for unified handling.
@@ -327,7 +327,7 @@ impl ConnectorService {
 
                     // Create a TLS connector for the established connection.
                     let mut connector =
-                        self.build_tls_connector(self.http.clone(), req.ex_data())?;
+                        self.build_tls_connector(self.http.clone(), req.metadata())?;
                     let established_conn = EstablishedConn::new(req, conn);
                     let io = connector.call(established_conn).await?;
 
@@ -349,7 +349,7 @@ impl ConnectorService {
             trace!("tunneling HTTPS over HTTP proxy: {:?}", proxy_uri);
 
             // Create a tunnel connector with the proxy URI and the HTTP connector.
-            let mut connector = self.build_tls_connector(self.http.clone(), req.ex_data())?;
+            let mut connector = self.build_tls_connector(self.http.clone(), req.metadata())?;
             let mut tunnel = proxy::tunnel::TunnelConnector::new(proxy_uri, connector.clone());
 
             // If the proxy has basic authentication, add it to the tunnel.
@@ -391,8 +391,8 @@ impl ConnectorService {
         debug!("starting new connection: {:?}", req.uri());
 
         let intercepted = req
-            .ex_data()
-            .proxy()
+            .metadata()
+            .proxy_matcher()
             .and_then(|prox| prox.intercept(req.uri()))
             .or_else(|| {
                 self.config

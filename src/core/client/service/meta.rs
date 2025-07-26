@@ -42,7 +42,7 @@ impl ConnectMeta {
     }
 
     /// Return the negotiated [`AlpnProtocol`].
-    pub(crate) fn alpn(&self) -> Option<AlpnProtocol> {
+    pub(crate) fn alpn_protocol(&self) -> Option<AlpnProtocol> {
         match self
             .options
             .as_ref()
@@ -58,7 +58,7 @@ impl ConnectMeta {
 
     /// Return a reference to the [`ProxyMacher`].
     #[inline]
-    pub(crate) fn proxy(&self) -> Option<&ProxyMacher> {
+    pub(crate) fn proxy_matcher(&self) -> Option<&ProxyMacher> {
         self.options
             .as_ref()
             .and_then(RequestOptions::proxy_matcher)
