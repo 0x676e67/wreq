@@ -264,9 +264,7 @@ impl Builder {
         let h1_parser_config = {
             let mut h1_parser_config = ParserConfig::default();
             h1_parser_config
-                .ignore_invalid_headers_in_responses(
-                    self.opts.ignore_invalid_headers_in_responses,
-                )
+                .ignore_invalid_headers_in_responses(self.opts.ignore_invalid_headers_in_responses)
                 .allow_spaces_after_header_name_in_responses(
                     self.opts.allow_spaces_after_header_name_in_responses,
                 )

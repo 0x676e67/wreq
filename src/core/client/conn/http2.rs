@@ -301,9 +301,8 @@ where
         );
 
         let (tx, rx) = dispatch::channel();
-        let h2 =
-            proto::h2::client::handshake(io, rx, builder, ping_config, self.exec, self.timer)
-                .await?;
+        let h2 = proto::h2::client::handshake(io, rx, builder, ping_config, self.exec, self.timer)
+            .await?;
         Ok((
             SendRequest {
                 dispatch: tx.unbound(),
