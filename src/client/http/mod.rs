@@ -134,6 +134,7 @@ struct Config {
     tcp_keepalive_retries: Option<u32>,
     tcp_send_buffer_size: Option<usize>,
     tcp_recv_buffer_size: Option<usize>,
+    tcp_happy_eyeballs_timeout: Option<Duration>,
     tcp_connect_options: Option<TcpConnectOptions>,
     #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
     tcp_user_timeout: Option<Duration>,
@@ -203,6 +204,7 @@ impl ClientBuilder {
                 tcp_reuse_address: false,
                 tcp_send_buffer_size: None,
                 tcp_recv_buffer_size: None,
+                tcp_happy_eyeballs_timeout: Some(Duration::from_millis(300)),
                 #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
                 tcp_user_timeout: None,
                 proxies: Vec::new(),
@@ -290,6 +292,7 @@ impl ClientBuilder {
                 http.set_nodelay(config.tcp_nodelay);
                 http.set_send_buffer_size(config.tcp_send_buffer_size);
                 http.set_recv_buffer_size(config.tcp_recv_buffer_size);
+                http.set_happy_eyeballs_timeout(config.tcp_happy_eyeballs_timeout);
                 #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
                 http.set_tcp_user_timeout(config.tcp_user_timeout);
             };
@@ -974,6 +977,27 @@ impl ClientBuilder {
         S: Into<Option<usize>>,
     {
         self.config.tcp_recv_buffer_size = size.into();
+        self
+    }
+
+    /// Set timeout for [RFC 6555 (Happy Eyeballs)][RFC 6555] algorithm.
+    ///
+    /// If hostname resolves to both IPv4 and IPv6 addresses and connection
+    /// cannot be established using preferred address family before timeout
+    /// elapses, then connector will in parallel attempt connection using other
+    /// address family.
+    ///
+    /// If `None`, parallel connection attempts are disabled.
+    ///
+    /// Default is 300 milliseconds.
+    ///
+    /// [RFC 6555]: https://tools.ietf.org/html/rfc6555
+    #[inline]
+    pub fn tcp_happy_eyeballs_timeout<D>(mut self, val: D) -> ClientBuilder
+    where
+        D: Into<Option<Duration>>,
+    {
+        self.config.tcp_happy_eyeballs_timeout = val.into();
         self
     }
 

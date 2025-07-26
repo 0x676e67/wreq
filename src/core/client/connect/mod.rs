@@ -2,7 +2,6 @@
 
 pub mod dns;
 mod http;
-mod options;
 pub mod proxy;
 
 use std::{
@@ -15,10 +14,7 @@ use std::{
 
 use ::http::Extensions;
 
-pub use self::{
-    http::{HttpConnector, HttpInfo},
-    options::TcpConnectOptions,
-};
+pub use self::http::{HttpConnector, HttpInfo, TcpConnectOptions};
 
 /// Describes a type returned by a connector.
 pub trait Connection {
