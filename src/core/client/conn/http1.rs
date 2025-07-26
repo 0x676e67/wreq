@@ -245,78 +245,76 @@ impl Builder {
     ///
     /// Note, if [`Connection`] is not `await`-ed, [`SendRequest`] will
     /// do nothing.
-    pub fn handshake<T, B>(
+    pub async fn handshake<T, B>(
         self,
         io: T,
-    ) -> impl Future<Output = crate::core::Result<(SendRequest<B>, Connection<T, B>)>>
+    ) -> crate::core::Result<(SendRequest<B>, Connection<T, B>)>
     where
         T: Read + Write + Unpin,
         B: Body + 'static,
         B::Data: Send,
         B::Error: Into<BoxError>,
     {
-        async move {
-            trace!("client handshake HTTP/1");
+        trace!("client handshake HTTP/1");
 
-            let (tx, rx) = dispatch::channel();
-            let mut conn = proto::Conn::new(io);
+        let (tx, rx) = dispatch::channel();
+        let mut conn = proto::Conn::new(io);
 
-            // Set the HTTP/1 parser configuration
-            let h1_parser_config = {
-                let mut h1_parser_config = ParserConfig::default();
-                h1_parser_config
-                    .ignore_invalid_headers_in_responses(
-                        self.opts.ignore_invalid_headers_in_responses,
-                    )
-                    .allow_spaces_after_header_name_in_responses(
-                        self.opts.allow_spaces_after_header_name_in_responses,
-                    )
-                    .allow_obsolete_multiline_headers_in_responses(
-                        self.opts.allow_obsolete_multiline_headers_in_responses,
-                    );
-                h1_parser_config
-            };
-            conn.set_h1_parser_config(h1_parser_config);
+        // Set the HTTP/1 parser configuration
+        let h1_parser_config = {
+            let mut h1_parser_config = ParserConfig::default();
+            h1_parser_config
+                .ignore_invalid_headers_in_responses(
+                    self.opts.ignore_invalid_headers_in_responses,
+                )
+                .allow_spaces_after_header_name_in_responses(
+                    self.opts.allow_spaces_after_header_name_in_responses,
+                )
+                .allow_obsolete_multiline_headers_in_responses(
+                    self.opts.allow_obsolete_multiline_headers_in_responses,
+                );
+            h1_parser_config
+        };
+        conn.set_h1_parser_config(h1_parser_config);
 
-            // Set the h1 write strategy
-            if let Some(writev) = self.opts.h1_writev {
-                if writev {
-                    conn.set_write_strategy_queue();
-                } else {
-                    conn.set_write_strategy_flatten();
-                }
+        // Set the h1 write strategy
+        if let Some(writev) = self.opts.h1_writev {
+            if writev {
+                conn.set_write_strategy_queue();
+            } else {
+                conn.set_write_strategy_flatten();
             }
-
-            // Set the maximum size of the request line
-            if self.opts.h1_preserve_header_case {
-                conn.set_preserve_header_case();
-            }
-
-            // Set the maximum size of the request headers
-            if let Some(max_headers) = self.opts.h1_max_headers {
-                conn.set_http1_max_headers(max_headers);
-            }
-
-            // Enable HTTP/0.9 responses if requested
-            if self.opts.h09_responses {
-                conn.set_h09_responses();
-            }
-
-            // Set the read buffer size if specified
-            if let Some(sz) = self.opts.h1_read_buf_exact_size {
-                conn.set_read_buf_exact_size(sz);
-            }
-
-            // Set the maximum buffer size for HTTP/1 connections
-            if let Some(max) = self.opts.h1_max_buf_size {
-                conn.set_max_buf_size(max);
-            }
-
-            let cd = proto::h1::dispatch::Client::new(rx);
-            let proto = proto::h1::Dispatcher::new(cd, conn);
-
-            Ok((SendRequest { dispatch: tx }, Connection { inner: proto }))
         }
+
+        // Set the maximum size of the request line
+        if self.opts.h1_preserve_header_case {
+            conn.set_preserve_header_case();
+        }
+
+        // Set the maximum size of the request headers
+        if let Some(max_headers) = self.opts.h1_max_headers {
+            conn.set_http1_max_headers(max_headers);
+        }
+
+        // Enable HTTP/0.9 responses if requested
+        if self.opts.h09_responses {
+            conn.set_h09_responses();
+        }
+
+        // Set the read buffer size if specified
+        if let Some(sz) = self.opts.h1_read_buf_exact_size {
+            conn.set_read_buf_exact_size(sz);
+        }
+
+        // Set the maximum buffer size for HTTP/1 connections
+        if let Some(max) = self.opts.h1_max_buf_size {
+            conn.set_max_buf_size(max);
+        }
+
+        let cd = proto::h1::dispatch::Client::new(rx);
+        let proto = proto::h1::Dispatcher::new(cd, conn);
+
+        Ok((SendRequest { dispatch: tx }, Connection { inner: proto }))
     }
 }
 
