@@ -1,7 +1,5 @@
 //! This module provides a builder pattern for configuring HTTP/1 connections.
 
-use httparse::ParserConfig;
-
 use super::super::proto;
 
 /// Builder for `Http1Options`.
@@ -15,15 +13,17 @@ pub struct Http1OptionsBuilder {
 ///
 /// These options allow you to customize the behavior of HTTP/1 connections,
 /// such as enabling support for HTTP/0.9 responses, header case preservation, etc.
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, Hash, PartialEq, Eq)]
 pub struct Http1Options {
     pub(crate) h09_responses: bool,
-    pub(crate) h1_parser_config: ParserConfig,
     pub(crate) h1_writev: Option<bool>,
     pub(crate) h1_preserve_header_case: bool,
     pub(crate) h1_max_headers: Option<usize>,
     pub(crate) h1_read_buf_exact_size: Option<usize>,
     pub(crate) h1_max_buf_size: Option<usize>,
+    pub(crate) ignore_invalid_headers_in_responses: bool,
+    pub(crate) allow_spaces_after_header_name_in_responses: bool,
+    pub(crate) allow_obsolete_multiline_headers_in_responses: bool,
 }
 
 impl Http1OptionsBuilder {
@@ -130,9 +130,7 @@ impl Http1OptionsBuilder {
     ///
     /// [RFC 7230 Section 3.2.4.]: https://tools.ietf.org/html/rfc7230#section-3.2.4
     pub fn allow_spaces_after_header_name_in_responses(mut self, enabled: bool) -> Self {
-        self.opts
-            .h1_parser_config
-            .allow_spaces_after_header_name_in_responses(enabled);
+        self.opts.allow_spaces_after_header_name_in_responses = enabled;
         self
     }
 
@@ -144,22 +142,13 @@ impl Http1OptionsBuilder {
     ///
     /// Default is false.
     pub fn ignore_invalid_headers_in_responses(mut self, enabled: bool) -> Self {
-        self.opts
-            .h1_parser_config
-            .ignore_invalid_headers_in_responses(enabled);
+        self.opts.ignore_invalid_headers_in_responses = enabled;
         self
     }
 
     /// Set the `allow_obsolete_multiline_headers_in_responses` field.
-    pub fn allow_obsolete_multiline_headers_in_responses(
-        mut self,
-        allow_obsolete_multiline_headers_in_responses: bool,
-    ) -> Self {
-        self.opts
-            .h1_parser_config
-            .allow_obsolete_multiline_headers_in_responses(
-                allow_obsolete_multiline_headers_in_responses,
-            );
+    pub fn allow_obsolete_multiline_headers_in_responses(mut self, value: bool) -> Self {
+        self.opts.allow_obsolete_multiline_headers_in_responses = value;
         self
     }
 

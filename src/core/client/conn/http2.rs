@@ -222,7 +222,7 @@ where
     /// Note, if [`Connection`] is not `await`-ed, [`SendRequest`] will
     /// do nothing.
     pub fn handshake<T, B>(
-        &self,
+        self,
         io: T,
     ) -> impl Future<Output = crate::core::Result<(SendRequest<B>, Connection<T, B, Ex>)>>
     where
@@ -232,8 +232,6 @@ where
         B::Error: Into<BoxError>,
         Ex: Http2ClientConnExec<B, T> + Unpin,
     {
-        let builder = self.clone();
-
         async move {
             trace!("client handshake HTTP/2");
 
@@ -241,10 +239,10 @@ where
             let h2 = proto::h2::client::handshake(
                 io,
                 rx,
-                builder.opts.builder,
-                builder.opts.ping_config,
-                builder.exec,
-                builder.timer,
+                self.opts.builder,
+                self.opts.ping_config,
+                self.exec,
+                self.timer,
             )
             .await?;
             Ok((

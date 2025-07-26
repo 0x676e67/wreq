@@ -158,6 +158,7 @@ where
                 .into_parts();
 
         let mut this = self.clone();
+        let mut http1_options = None;
         let mut tls_options = None;
         let alpn = match enforced_version {
             Some(Version::HTTP_11 | Version::HTTP_10 | Version::HTTP_09) => {
@@ -170,6 +171,7 @@ where
         if let Some(opts) = transport_options {
             let (tls, http1, http2) = opts.into_parts();
             tls_options = tls;
+            http1_options = http1.clone();
             this.h1_builder.options(http1);
             this.h2_builder.options(http2);
         }
@@ -181,6 +183,7 @@ where
                     uri,
                     alpn,
                     proxy,
+                    http1_options,
                     tls_options,
                     tcp_options,
                 },
@@ -946,7 +949,7 @@ impl Builder {
     }
 
     /// Combine the configuration of this builder with a connector to create a `HttpClient`.
-    pub fn build<C, B>(&self, connector: C) -> HttpClient<C, B>
+    pub fn build<C, B>(self, connector: C) -> HttpClient<C, B>
     where
         C: tower::Service<ConnectRequest> + Clone + Send + Sync + 'static,
         C::Response: Read + Write + Connection + Unpin + Send + 'static,
@@ -961,8 +964,8 @@ impl Builder {
             config: self.client_config,
             exec: exec.clone(),
 
-            h1_builder: self.h1_builder.clone(),
-            h2_builder: self.h2_builder.clone(),
+            h1_builder: self.h1_builder,
+            h2_builder: self.h2_builder,
             connector,
             pool: pool::Pool::new(self.pool_config, exec, timer),
         }

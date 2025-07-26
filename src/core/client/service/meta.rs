@@ -4,6 +4,7 @@ use http::Uri;
 
 use crate::{
     core::client::connect::TcpConnectOptions,
+    http1::Http1Options,
     proxy::Matcher as ProxyMacher,
     tls::{AlpnProtocol, TlsOptions},
     util::hash::HashMemo,
@@ -23,12 +24,14 @@ pub(crate) type Identifier = Arc<HashMemo<ConnectMeta>>;
 #[must_use]
 #[derive(Debug, Clone, Hash, Eq, PartialEq)]
 pub(crate) struct ConnectMeta {
-    /// The target URI for the connection.
+    /// Target URI.
     pub(super) uri: Uri,
-    /// The negotiated ALPN protocol.
+    /// Negotiated ALPN protocol.
     pub(super) alpn: Option<AlpnProtocol>,
-    /// The proxy matcher.
+    /// Proxy matcher.
     pub(super) proxy: Option<ProxyMacher>,
+    /// Optional HTTP/1 options.
+    pub(super) http1_options: Option<Http1Options>,
     /// Optional TLS options.
     pub(super) tls_options: Option<TlsOptions>,
     /// Optional TCP connection options.

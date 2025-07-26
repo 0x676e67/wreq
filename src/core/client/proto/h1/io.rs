@@ -782,29 +782,6 @@ mod tests {
         buffered.buffer(Cursor::new(Vec::new()));
     }
 
-    /*
-    TODO: needs tokio_test::io to allow configure write_buf calls
-    #[test]
-    fn write_buf_queue() {
-        let _ = pretty_env_logger::try_init();
-
-        let mock = AsyncIo::new_buf(vec![], 1024);
-        let mut buffered = Buffered::<_, Cursor<Vec<u8>>>::new(mock);
-
-
-        buffered.headers_buf().extend(b"hello ");
-        buffered.buffer(Cursor::new(b"world, ".to_vec()));
-        buffered.buffer(Cursor::new(b"it's ".to_vec()));
-        buffered.buffer(Cursor::new(b"crate::core:!".to_vec()));
-        assert_eq!(buffered.write_buf.queue.bufs_cnt(), 3);
-        buffered.flush().unwrap();
-
-        assert_eq!(buffered.io, b"hello world, it's crate::core:!");
-        assert_eq!(buffered.io.num_writes(), 1);
-        assert_eq!(buffered.write_buf.queue.bufs_cnt(), 0);
-    }
-    */
-
     #[tokio::test]
     async fn write_buf_flatten() {
         let _ = pretty_env_logger::try_init();
