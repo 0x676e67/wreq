@@ -228,7 +228,7 @@ where
         Poll::Ready(Some(Ok((msg.head, msg.decode, wants))))
     }
 
-    fn on_read_head_error<Z>(&mut self, e: Error) -> Poll<Option<crate::core::Result<Z>>> {
+    fn on_read_head_error<Z>(&mut self, e: Error) -> Poll<Option<Result<Z>>> {
         // If we are currently waiting on a message, then an empty
         // message should be reported as an error. If not, it is just
         // the connection closing gracefully.
@@ -325,10 +325,7 @@ where
         ret
     }
 
-    pub(crate) fn poll_read_keep_alive(
-        &mut self,
-        cx: &mut Context<'_>,
-    ) -> Poll<crate::core::Result<()>> {
+    pub(crate) fn poll_read_keep_alive(&mut self, cx: &mut Context<'_>) -> Poll<Result<()>> {
         debug_assert!(!self.can_read_head() && !self.can_read_body());
 
         if self.is_read_closed() {
@@ -351,7 +348,7 @@ where
     //
     // This should only be called for Clients wanting to enter the idle
     // state.
-    fn require_empty_read(&mut self, cx: &mut Context<'_>) -> Poll<crate::core::Result<()>> {
+    fn require_empty_read(&mut self, cx: &mut Context<'_>) -> Poll<Result<()>> {
         debug_assert!(!self.can_read_head() && !self.can_read_body() && !self.is_read_closed());
         debug_assert!(!self.is_mid_message());
         debug_assert!(T::is_client());
@@ -384,7 +381,7 @@ where
         Poll::Ready(Err(Error::new_unexpected_message()))
     }
 
-    fn mid_message_detect_eof(&mut self, cx: &mut Context<'_>) -> Poll<crate::core::Result<()>> {
+    fn mid_message_detect_eof(&mut self, cx: &mut Context<'_>) -> Poll<Result<()>> {
         debug_assert!(!self.can_read_head() && !self.can_read_body() && !self.is_read_closed());
         debug_assert!(self.is_mid_message());
 
@@ -655,7 +652,7 @@ where
         self.state.writing = state;
     }
 
-    pub(crate) fn end_body(&mut self) -> crate::core::Result<()> {
+    pub(crate) fn end_body(&mut self) -> Result<()> {
         debug_assert!(self.can_write_body());
 
         let encoder = match self.state.writing {
@@ -690,7 +687,7 @@ where
     //
     // - Client: there is nothing we can do
     // - Server: if Response hasn't been written yet, we can send a 4xx response
-    fn on_parse_error(&mut self, err: Error) -> crate::core::Result<()> {
+    fn on_parse_error(&mut self, err: Error) -> Result<()> {
         if let Writing::Init = self.state.writing {
             if self.has_h2_prefix() {
                 return Err(Error::new_version_h2());
@@ -756,7 +753,7 @@ where
         self.state.close_write();
     }
 
-    pub(crate) fn take_error(&mut self) -> crate::core::Result<()> {
+    pub(crate) fn take_error(&mut self) -> Result<()> {
         if let Some(err) = self.state.error.take() {
             Err(err)
         } else {

@@ -11,7 +11,7 @@ use http_body::Body;
 
 use super::{Http1Transaction, Wants};
 use crate::core::{
-    Error,
+    Error, Result,
     client::{
         body::{self, DecodedLength, Incoming as IncomingBody},
         dispatch::{self, TrySendError},
@@ -40,12 +40,9 @@ pub(crate) trait Dispatch {
     fn poll_msg(
         self: Pin<&mut Self>,
         cx: &mut Context<'_>,
-    ) -> Poll<Option<Result<(Self::PollItem, Self::PollBody), Self::PollError>>>;
-    fn recv_msg(
-        &mut self,
-        msg: crate::core::Result<(Self::RecvItem, IncomingBody)>,
-    ) -> crate::core::Result<()>;
-    fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), ()>>;
+    ) -> Poll<Option<std::result::Result<(Self::PollItem, Self::PollBody), Self::PollError>>>;
+    fn recv_msg(&mut self, msg: Result<(Self::RecvItem, IncomingBody)>) -> Result<()>;
+    fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<std::result::Result<(), ()>>;
     fn should_poll(&self) -> bool;
 }
 
@@ -92,7 +89,7 @@ where
         &mut self,
         cx: &mut Context<'_>,
         should_shutdown: bool,
-    ) -> Poll<crate::core::Result<Dispatched>> {
+    ) -> Poll<Result<Dispatched>> {
         Poll::Ready(ready!(self.poll_inner(cx, should_shutdown)).or_else(|e| {
             // Be sure to alert a streaming body of the failure.
             if let Some(mut body) = self.body_tx.take() {
@@ -111,7 +108,7 @@ where
         &mut self,
         cx: &mut Context<'_>,
         should_shutdown: bool,
-    ) -> Poll<crate::core::Result<Dispatched>> {
+    ) -> Poll<Result<Dispatched>> {
         T::update_date();
 
         ready!(self.poll_loop(cx))?;
@@ -130,7 +127,7 @@ where
         }
     }
 
-    fn poll_loop(&mut self, cx: &mut Context<'_>) -> Poll<crate::core::Result<()>> {
+    fn poll_loop(&mut self, cx: &mut Context<'_>) -> Poll<Result<()>> {
         // Limit the looping on this connection, in case it is ready far too
         // often, so that other futures don't starve.
         //
@@ -162,7 +159,7 @@ where
         Poll::Pending
     }
 
-    fn poll_read(&mut self, cx: &mut Context<'_>) -> Poll<crate::core::Result<()>> {
+    fn poll_read(&mut self, cx: &mut Context<'_>) -> Poll<Result<()>> {
         loop {
             if self.is_closing {
                 return Poll::Ready(Ok(()));
@@ -238,7 +235,7 @@ where
         }
     }
 
-    fn poll_read_head(&mut self, cx: &mut Context<'_>) -> Poll<crate::core::Result<()>> {
+    fn poll_read_head(&mut self, cx: &mut Context<'_>) -> Poll<Result<()>> {
         // can dispatch receive, or does it still care about other incoming message?
         match ready!(self.dispatch.poll_ready(cx)) {
             Ok(()) => (),
@@ -295,7 +292,7 @@ where
         }
     }
 
-    fn poll_write(&mut self, cx: &mut Context<'_>) -> Poll<crate::core::Result<()>> {
+    fn poll_write(&mut self, cx: &mut Context<'_>) -> Poll<Result<()>> {
         loop {
             if self.is_closing {
                 return Poll::Ready(Ok(()));
@@ -390,7 +387,7 @@ where
         }
     }
 
-    fn poll_flush(&mut self, cx: &mut Context<'_>) -> Poll<crate::core::Result<()>> {
+    fn poll_flush(&mut self, cx: &mut Context<'_>) -> Poll<Result<()>> {
         self.conn.poll_flush(cx).map_err(|err| {
             debug!("error writing: {}", err);
             Error::new_body_write(err)
@@ -434,7 +431,7 @@ where
     Bs: Body + 'static,
     Bs::Error: Into<BoxError>,
 {
-    type Output = crate::core::Result<Dispatched>;
+    type Output = Result<Dispatched>;
 
     #[inline]
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
@@ -492,7 +489,7 @@ where
     fn poll_msg(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
-    ) -> Poll<Option<Result<(Self::PollItem, Self::PollBody), Infallible>>> {
+    ) -> Poll<Option<std::result::Result<(Self::PollItem, Self::PollBody), Infallible>>> {
         let mut this = self.as_mut();
         debug_assert!(!this.rx_closed);
         match this.rx.poll_recv(cx) {
@@ -526,10 +523,7 @@ where
         }
     }
 
-    fn recv_msg(
-        &mut self,
-        msg: crate::core::Result<(Self::RecvItem, IncomingBody)>,
-    ) -> crate::core::Result<()> {
+    fn recv_msg(&mut self, msg: Result<(Self::RecvItem, IncomingBody)>) -> Result<()> {
         match msg {
             Ok((msg, body)) => {
                 if let Some(cb) = self.callback.take() {
@@ -571,7 +565,7 @@ where
         }
     }
 
-    fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), ()>> {
+    fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<std::result::Result<(), ()>> {
         match self.callback {
             Some(ref mut cb) => match cb.poll_canceled(cx) {
                 Poll::Ready(()) => {

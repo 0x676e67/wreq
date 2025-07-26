@@ -11,11 +11,11 @@ pub(crate) use self::{
     encode::{EncodedBuf, Encoder},
 };
 use crate::core::{
-    Error,
     client::{
         body::DecodedLength,
         proto::{BodyLength, MessageHead},
     },
+    error::{Error, Parse, Result},
 };
 
 mod conn;
@@ -33,7 +33,7 @@ pub(crate) trait Http1Transaction {
     #[cfg(feature = "tracing")]
     const LOG: &'static str;
     fn parse(bytes: &mut BytesMut, ctx: ParseContext<'_>) -> ParseResult<Self::Incoming>;
-    fn encode(enc: Encode<'_, Self::Outgoing>, dst: &mut Vec<u8>) -> crate::core::Result<Encoder>;
+    fn encode(enc: Encode<'_, Self::Outgoing>, dst: &mut Vec<u8>) -> Result<Encoder>;
 
     fn on_error(err: &Error) -> Option<MessageHead<Self::Outgoing>>;
 
@@ -57,7 +57,7 @@ pub(crate) trait Http1Transaction {
 }
 
 /// Result newtype for Http1Transaction::parse.
-pub(crate) type ParseResult<T> = Result<Option<ParsedMessage<T>>, crate::core::error::Parse>;
+pub(crate) type ParseResult<T> = std::result::Result<Option<ParsedMessage<T>>, Parse>;
 
 #[derive(Debug)]
 pub(crate) struct ParsedMessage<T> {

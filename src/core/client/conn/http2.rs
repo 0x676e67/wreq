@@ -14,6 +14,7 @@ use http_body::Body;
 
 use crate::{
     core::{
+        Result,
         client::{
             body::Incoming as IncomingBody,
             bounds::Http2ClientConnExec,
@@ -76,7 +77,7 @@ impl<B> SendRequest<B> {
     /// Polls to determine whether this sender can be used yet for a request.
     ///
     /// If the associated connection is closed, this returns an Error.
-    pub fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<crate::core::Result<()>> {
+    pub fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<Result<()>> {
         if self.is_closed() {
             Poll::Ready(Err(Error::new_closed()))
         } else {
@@ -87,7 +88,7 @@ impl<B> SendRequest<B> {
     /// Waits until the dispatcher is ready
     ///
     /// If the associated connection is closed, this returns an Error.
-    pub async fn ready(&mut self) -> crate::core::Result<()> {
+    pub async fn ready(&mut self) -> Result<()> {
         std::future::poll_fn(|cx| self.poll_ready(cx)).await
     }
 
@@ -123,7 +124,8 @@ where
     pub fn try_send_request(
         &mut self,
         req: Request<B>,
-    ) -> impl Future<Output = Result<Response<IncomingBody>, TrySendError<Request<B>>>> {
+    ) -> impl Future<Output = std::result::Result<Response<IncomingBody>, TrySendError<Request<B>>>>
+    {
         let sent = self.dispatch.try_send(req);
         async move {
             match sent {
@@ -175,7 +177,7 @@ where
     B::Error: Into<BoxError>,
     E: Http2ClientConnExec<B, T> + Unpin,
 {
-    type Output = crate::core::Result<()>;
+    type Output = Result<()>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         match ready!(Pin::new(&mut self.inner.1).poll(cx))? {
@@ -221,10 +223,7 @@ where
     ///
     /// Note, if [`Connection`] is not `await`-ed, [`SendRequest`] will
     /// do nothing.
-    pub async fn handshake<T, B>(
-        self,
-        io: T,
-    ) -> crate::core::Result<(SendRequest<B>, Connection<T, B, Ex>)>
+    pub async fn handshake<T, B>(self, io: T) -> Result<(SendRequest<B>, Connection<T, B, Ex>)>
     where
         T: Read + Write + Unpin,
         B: Body + 'static,

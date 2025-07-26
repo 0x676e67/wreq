@@ -37,7 +37,7 @@ use bytes::Bytes;
 use tokio::sync::oneshot;
 
 use crate::core::{
-    Error,
+    Error, Result,
     common::io::Rewind,
     rt::{Read, ReadBufCursor, Write},
 };
@@ -59,7 +59,7 @@ pub struct Upgraded {
 /// If no upgrade was available, or it doesn't succeed, yields an `Error`.
 #[derive(Clone)]
 pub struct OnUpgrade {
-    rx: Option<Arc<Mutex<oneshot::Receiver<crate::core::Result<Upgraded>>>>>,
+    rx: Option<Arc<Mutex<oneshot::Receiver<Result<Upgraded>>>>>,
 }
 
 /// The deconstructed parts of an [`Upgraded`] type.
@@ -95,7 +95,7 @@ pub fn on<T: sealed::CanUpgrade>(msg: T) -> OnUpgrade {
 }
 
 pub(super) struct Pending {
-    tx: oneshot::Sender<crate::core::Result<Upgraded>>,
+    tx: oneshot::Sender<Result<Upgraded>>,
 }
 
 pub(super) fn pending() -> (Pending, OnUpgrade) {
@@ -124,7 +124,9 @@ impl Upgraded {
     ///
     /// On success, returns the downcasted parts. On error, returns the
     /// `Upgraded` back.
-    pub fn downcast<T: Read + Write + Unpin + 'static>(self) -> Result<Parts<T>, Self> {
+    pub fn downcast<T: Read + Write + Unpin + 'static>(
+        self,
+    ) -> std::result::Result<Parts<T>, Self> {
         let (io, buf) = self.io.into_inner();
         match io.__hyper_downcast() {
             Ok(t) => Ok(Parts {
@@ -197,7 +199,7 @@ impl OnUpgrade {
 }
 
 impl Future for OnUpgrade {
-    type Output = Result<Upgraded, Error>;
+    type Output = std::result::Result<Upgraded, Error>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         match self.rx {
@@ -268,7 +270,7 @@ impl dyn Io + Send {
         self.__hyper_type_id() == t
     }
 
-    fn __hyper_downcast<T: Io>(self: Box<Self>) -> Result<Box<T>, Box<Self>> {
+    fn __hyper_downcast<T: Io>(self: Box<Self>) -> std::result::Result<Box<T>, Box<Self>> {
         if self.__hyper_is::<T>() {
             // Taken from `std::error::Error::downcast()`.
             unsafe {

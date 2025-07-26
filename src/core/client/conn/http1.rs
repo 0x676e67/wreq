@@ -13,7 +13,7 @@ use http_body::Body;
 use httparse::ParserConfig;
 
 use crate::core::{
-    Error,
+    Error, Result,
     client::{
         body::Incoming as IncomingBody,
         dispatch::{self, TrySendError},
@@ -99,14 +99,14 @@ impl<B> SendRequest<B> {
     /// Polls to determine whether this sender can be used yet for a request.
     ///
     /// If the associated connection is closed, this returns an Error.
-    pub fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<crate::core::Result<()>> {
+    pub fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<()>> {
         self.dispatch.poll_ready(cx)
     }
 
     /// Waits until the dispatcher is ready
     ///
     /// If the associated connection is closed, this returns an Error.
-    pub async fn ready(&mut self) -> crate::core::Result<()> {
+    pub async fn ready(&mut self) -> Result<()> {
         std::future::poll_fn(|cx| self.poll_ready(cx)).await
     }
 
@@ -137,7 +137,8 @@ where
     pub fn try_send_request(
         &mut self,
         req: Request<B>,
-    ) -> impl Future<Output = Result<Response<IncomingBody>, TrySendError<Request<B>>>> {
+    ) -> impl Future<Output = std::result::Result<Response<IncomingBody>, TrySendError<Request<B>>>>
+    {
         let sent = self.dispatch.try_send(req);
         async move {
             match sent {
@@ -199,7 +200,7 @@ where
     B::Data: Send,
     B::Error: Into<BoxError>,
 {
-    type Output = crate::core::Result<()>;
+    type Output = Result<()>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         match ready!(Pin::new(&mut self.inner).poll(cx))? {
@@ -245,10 +246,7 @@ impl Builder {
     ///
     /// Note, if [`Connection`] is not `await`-ed, [`SendRequest`] will
     /// do nothing.
-    pub async fn handshake<T, B>(
-        self,
-        io: T,
-    ) -> crate::core::Result<(SendRequest<B>, Connection<T, B>)>
+    pub async fn handshake<T, B>(self, io: T) -> Result<(SendRequest<B>, Connection<T, B>)>
     where
         T: Read + Write + Unpin,
         B: Body + 'static,
@@ -340,7 +338,7 @@ mod upgrades {
         B::Data: Send,
         B::Error: Into<BoxError>,
     {
-        type Output = crate::core::Result<()>;
+        type Output = Result<()>;
 
         fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
             match ready!(Pin::new(&mut self.inner.as_mut().unwrap().inner).poll(cx)) {
