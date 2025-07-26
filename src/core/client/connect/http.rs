@@ -796,8 +796,8 @@ fn connect(
 
     #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
     if let Some(tcp_user_timeout) = &config.tcp_user_timeout {
-        if let Err(e) = socket.set_tcp_user_timeout(Some(*tcp_user_timeout)) {
-            warn!("tcp set_tcp_user_timeout error: {}", e);
+        if let Err(_e) = socket.set_tcp_user_timeout(Some(*tcp_user_timeout)) {
+            warn!("tcp set_tcp_user_timeout error: {_e}");
         }
     }
 
