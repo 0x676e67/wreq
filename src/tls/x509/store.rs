@@ -134,7 +134,18 @@ impl CertStoreBuilder {
     }
 }
 
-/// A collection of certificates Store.
+/// A thread-safe certificate store for TLS connections.
+///
+/// `CertStore` manages a collection of trusted certificates used for verifying peer identities.
+/// It is designed to be shared and reused across requests and connections, similar to `Client`.
+///
+/// Internally, `CertStore` uses an [`Arc`] for reference counting, so you do **not** need to wrap
+/// it in an additional [`Rc`] or [`Arc`] for sharing between threads or tasks.
+///
+/// To configure a `CertStore`, use [`CertStore::builder()`]. You can also construct it from DER or
+/// PEM certificates, or load system defaults.
+///
+/// [`Arc`]: std::sync::Arc
 #[derive(Clone)]
 pub struct CertStore(Arc<X509Store>);
 
