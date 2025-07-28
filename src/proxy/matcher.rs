@@ -364,7 +364,7 @@ fn parse_env_uri(val: &str) -> Option<Intercept> {
         let user = percent_decode_str(user).decode_utf8_lossy();
         let pass = percent_decode_str(pass).decode_utf8_lossy();
         if is_httpish {
-            auth = Auth::Basic(encode_basic_auth(&user, Some(&pass)));
+            auth = Auth::Basic(crate::util::basic_auth(&user, Some(&pass)));
         } else {
             auth = Auth::Raw(
                 Bytes::from(user.into_owned()),
@@ -382,24 +382,6 @@ fn parse_env_uri(val: &str) -> Option<Intercept> {
     let uri = builder.build().ok()?;
 
     Some(Intercept { uri, auth })
-}
-
-fn encode_basic_auth(user: &str, pass: Option<&str>) -> HeaderValue {
-    use std::io::Write;
-
-    use base64::{prelude::BASE64_STANDARD, write::EncoderWriter};
-
-    let mut buf = b"Basic ".to_vec();
-    {
-        let mut encoder = EncoderWriter::new(&mut buf, &BASE64_STANDARD);
-        let _ = write!(encoder, "{user}:");
-        if let Some(password) = pass {
-            let _ = write!(encoder, "{password}");
-        }
-    }
-    let mut header = HeaderValue::from_bytes(&buf).expect("base64 is always valid HeaderValue");
-    header.set_sensitive(true);
-    header
 }
 
 impl NoProxy {
