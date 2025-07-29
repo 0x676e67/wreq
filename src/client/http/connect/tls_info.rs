@@ -28,12 +28,9 @@ impl<T: TlsInfoFactory> TlsInfoFactory for TokioIo<T> {
 
 impl TlsInfoFactory for SslStream<TcpStream> {
     fn tls_info(&self) -> Option<TlsInfo> {
-        self.ssl()
-            .peer_certificate()
-            .and_then(|c| c.to_der().ok())
-            .map(|c| TlsInfo {
-                peer_certificate: Some(c),
-            })
+        self.ssl().peer_certificate().map(|c| TlsInfo {
+            peer_certificate: c.to_der().ok(),
+        })
     }
 }
 
@@ -48,11 +45,8 @@ impl TlsInfoFactory for MaybeHttpsStream<TcpStream> {
 
 impl TlsInfoFactory for SslStream<TokioIo<MaybeHttpsStream<TcpStream>>> {
     fn tls_info(&self) -> Option<TlsInfo> {
-        self.ssl()
-            .peer_certificate()
-            .and_then(|c| c.to_der().ok())
-            .map(|c| TlsInfo {
-                peer_certificate: Some(c),
-            })
+        self.ssl().peer_certificate().map(|c| TlsInfo {
+            peer_certificate: c.to_der().ok(),
+        })
     }
 }
