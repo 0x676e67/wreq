@@ -32,6 +32,6 @@ pub struct TlsInfo {
 impl TlsInfo {
     /// Get the DER encoded leaf certificate of the peer.
     pub fn peer_certificate(&self) -> Option<&[u8]> {
-        self.peer_certificate.as_ref().map(Vec::as_slice)
+        self.peer_certificate.as_deref()
     }
 }
