@@ -1,7 +1,7 @@
 use http::{Request as HttpRequest, Response as HttpResponse};
 use tower::{
     retry::Retry,
-    util::{BoxCloneSyncService, BoxCloneSyncServiceLayer, MapErr, Oneshot},
+    util::{BoxCloneSyncService, BoxCloneSyncServiceLayer, Either, MapErr, Oneshot},
 };
 
 use super::{
@@ -94,7 +94,7 @@ pub type BoxedConnectorLayer =
     BoxCloneSyncServiceLayer<BoxedConnectorService, Unnameable, Conn, BoxError>;
 
 /// Either a generic or boxed client service, used for dynamic dispatch.
-pub type ClientServiceEither = tower::util::Either<GenericClientService, BoxedClientService>;
+pub type ClientServiceEither = Either<GenericClientService, BoxedClientService>;
 
 /// Future for sending an HTTP request using a client service.
 pub type ResponseFuture = Oneshot<ClientServiceEither, HttpRequest<Body>>;
