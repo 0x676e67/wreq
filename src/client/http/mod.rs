@@ -1,7 +1,7 @@
-mod aliases;
 mod connect;
 mod future;
 mod service;
+mod types;
 
 use std::{
     collections::HashMap,
@@ -13,10 +13,6 @@ use std::{
     time::Duration,
 };
 
-use aliases::{
-    BoxedClientLayer, BoxedClientService, BoxedConnectorLayer, BoxedConnectorService,
-    GenericClientService, ResponseBody,
-};
 pub use future::Pending;
 use futures_util::future::Either;
 use http::{
@@ -28,6 +24,10 @@ use tower::{
     Layer, Service, ServiceBuilder, ServiceExt,
     retry::RetryLayer,
     util::{BoxCloneSyncService, BoxCloneSyncServiceLayer},
+};
+use types::{
+    BoxedClientLayer, BoxedClientService, BoxedConnectorLayer, BoxedConnectorService,
+    GenericClientService, ResponseBody,
 };
 #[cfg(feature = "cookies")]
 use {super::layer::cookie::CookieManagerLayer, crate::cookie};
@@ -57,8 +57,8 @@ use crate::{
     IntoUrl, Method, OriginalHeaders, Proxy,
     client::{
         http::{
-            aliases::HttpConnector,
             connect::{Conn, Connector, Unnameable},
+            types::HttpConnector,
         },
         layer::timeout::TimeoutOptions,
     },
@@ -396,7 +396,7 @@ impl ClientBuilder {
                     .map_err(error::map_timeout_to_request_error as _)
                     .service(service);
 
-                ClientRef::Generic(service)
+                ClientRef::Generic(Box::new(service))
             } else {
                 let service = config.layers.into_iter().fold(
                     BoxCloneSyncService::new(service),
@@ -1519,20 +1519,16 @@ impl Client {
     /// redirect loop was detected or redirect limit was exhausted.
     pub fn execute(&self, request: Request) -> Pending {
         match request.try_into() {
-            Ok((url, req)) => {
-                // Prepare the future request by ensuring we use the exact same Service instance
-                // for both poll_ready and call.
-                match *self.inner {
-                    ClientRef::Boxed(ref service) => {
-                        let fut = service.clone().oneshot(req);
-                        Pending::request(url, Either::Left(fut))
-                    }
-                    ClientRef::Generic(ref service) => {
-                        let fut = Box::new(service.clone()).oneshot(req);
-                        Pending::request(url, Either::Right(fut))
-                    }
+            // Prepare the future request by ensuring we use the exact same Service instance
+            // for both poll_ready and call.
+            Ok((url, req)) => match *self.inner {
+                ClientRef::Boxed(ref service) => {
+                    Pending::request(url, Either::Left(service.clone().oneshot(req)))
                 }
-            }
+                ClientRef::Generic(ref service) => {
+                    Pending::request(url, Either::Right(service.clone().oneshot(req)))
+                }
+            },
             Err(err) => Pending::error(err),
         }
     }

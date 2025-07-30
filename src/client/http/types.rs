@@ -65,7 +65,7 @@ pub type FollowRedirectLayer = FollowRedirect<
 >;
 
 pub type GenericClientService =
-    MapErr<Timeout<Retry<Http2RetryPolicy, FollowRedirectLayer>>, fn(BoxError) -> BoxError>;
+    Box<MapErr<Timeout<Retry<Http2RetryPolicy, FollowRedirectLayer>>, fn(BoxError) -> BoxError>>;
 
 pub type BoxedClientService =
     BoxCloneSyncService<HttpRequest<Body>, HttpResponse<ResponseBody>, BoxError>;

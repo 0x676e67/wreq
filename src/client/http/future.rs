@@ -9,10 +9,7 @@ use pin_project_lite::pin_project;
 use tower::util::Oneshot;
 use url::Url;
 
-use super::{
-    Response,
-    aliases::{BoxedClientService, GenericClientService},
-};
+use super::{BoxedClientService, GenericClientService, Response};
 use crate::{
     Body, Error,
     client::{body, layer::redirect::RequestUri},
@@ -43,7 +40,7 @@ macro_rules! take_err {
 
 type ResponseFuture = Either<
     Oneshot<BoxedClientService, HttpRequest<Body>>,
-    Oneshot<Box<GenericClientService>, HttpRequest<Body>>,
+    Oneshot<GenericClientService, HttpRequest<Body>>,
 >;
 
 type RawResponseFuture = crate::core::client::ResponseFuture;

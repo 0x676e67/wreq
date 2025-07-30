@@ -14,7 +14,7 @@ use tower::{
 };
 
 use super::{
-    super::aliases::{BoxedConnectorLayer, BoxedConnectorService, HttpConnector},
+    super::{BoxedConnectorLayer, BoxedConnectorService, HttpConnector},
     Unnameable,
     conn::{Conn, TlsConn},
     verbose::Verbose,
