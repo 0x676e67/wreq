@@ -333,6 +333,8 @@ impl ClientBuilder {
 
         // Create the client with the configured service layers
         let client = {
+            // Start with the base client service, which handles headers, original headers,
+            // HTTPS-only, and proxies.
             let service = ClientService::new(
                 client,
                 config.headers,
@@ -347,19 +349,23 @@ impl ClientBuilder {
                 feature = "brotli",
                 feature = "deflate",
             ))]
+            // Add response decompression support (gzip, zstd, brotli, deflate) if enabled.
             let service = ServiceBuilder::new()
                 .layer(DecompressionLayer::new(config.accept_encoding))
                 .service(service);
 
+            // Add a timeout layer for the response body.
             let service = ServiceBuilder::new()
                 .layer(ResponseBodyTimeoutLayer::new(config.timeout_options))
                 .service(service);
 
             #[cfg(feature = "cookies")]
+            // Add cookie management support if enabled.
             let service = ServiceBuilder::new()
                 .layer(CookieManagerLayer::new(config.cookie_store))
                 .service(service);
 
+            // Add redirect following logic with the configured policy.
             let service = {
                 let policy = FollowRedirectPolicy::new(config.redirect_policy)
                     .with_referer(config.referer)
@@ -370,6 +376,7 @@ impl ClientBuilder {
                     .service(service)
             };
 
+            // Add HTTP/2 retry logic.
             let service = ServiceBuilder::new()
                 .layer(RetryLayer::new(Http2RetryPolicy::new(
                     config.http2_max_retry,
@@ -377,6 +384,7 @@ impl ClientBuilder {
                 .service(service);
 
             if config.layers.is_empty() {
+                // Add a request timeout layer and map timeout errors to request errors.
                 let service = ServiceBuilder::new()
                     .layer(TimeoutLayer::new(config.timeout_options))
                     .service(service);
@@ -387,6 +395,7 @@ impl ClientBuilder {
 
                 ClientServiceEither::Left(service)
             } else {
+                // If custom layers are configured, wrap the service with each layer in order.
                 let service = config.layers.into_iter().fold(
                     BoxCloneSyncService::new(service),
                     |client_service, layer| {
@@ -394,6 +403,7 @@ impl ClientBuilder {
                     },
                 );
 
+                // Add a request timeout layer and map timeout errors to request errors.
                 let service = ServiceBuilder::new()
                     .layer(TimeoutLayer::new(config.timeout_options))
                     .service(service);
