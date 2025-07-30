@@ -3,6 +3,7 @@ use std::{
     task::{Context, Poll},
 };
 
+use futures_util::future::Either;
 use http::{Request as HttpRequest, Response as HttpResponse};
 use pin_project_lite::pin_project;
 use tower::util::Oneshot;
@@ -15,7 +16,7 @@ use super::{
 use crate::{
     Body, Error,
     client::{body, layer::redirect::RequestUri},
-    core::client::{ResponseFuture as RawResponseFuture, body::Incoming},
+    core::client::body::Incoming,
     error::BoxError,
     into_url::IntoUrlSealed,
 };
@@ -40,17 +41,20 @@ macro_rules! take_err {
     };
 }
 
+type ResponseFuture = Either<
+    Oneshot<BoxedClientService, HttpRequest<Body>>,
+    Pin<Box<Oneshot<GenericClientService, HttpRequest<Body>>>>,
+>;
+
+type RawResponseFuture = crate::core::client::ResponseFuture;
+
 pin_project! {
     #[project = PendingProj]
     pub enum Pending {
-        BoxedRequest {
+        Request {
             url: Option<Url>,
             #[pin]
-            fut: Oneshot<BoxedClientService, HttpRequest<Body>>,
-        },
-        GenericRequest {
-            url: Option<Url>,
-            fut: Pin<Box<Oneshot<GenericClientService, HttpRequest<Body>>>>,
+            fut: ResponseFuture,
         },
         Error {
             error: Option<Error>,
@@ -74,31 +78,16 @@ pin_project! {
 // ======== Pending impl ========
 
 impl Pending {
-    /// Creates a new `Pending` from a boxed request future.
+    /// Creates a new [`Pending`] from a [`ResponseFuture`].
     #[inline(always)]
-    pub(crate) fn boxed_request(
-        url: Url,
-        fut: Oneshot<BoxedClientService, HttpRequest<Body>>,
-    ) -> Self {
-        Pending::BoxedRequest {
+    pub(crate) fn request(url: Url, fut: ResponseFuture) -> Self {
+        Pending::Request {
             url: Some(url),
             fut,
         }
     }
 
-    /// Creates a new `Pending` from a generic request future.
-    #[inline(always)]
-    pub(crate) fn generic_request(
-        url: Url,
-        fut: Oneshot<GenericClientService, HttpRequest<Body>>,
-    ) -> Self {
-        Pending::GenericRequest {
-            url: Some(url),
-            fut: Box::pin(fut),
-        }
-    }
-
-    /// Creates a new `Pending` with an error.
+    /// Creates a new [`Pending`] with an error.
     #[inline(always)]
     pub(crate) fn error(error: Error) -> Self {
         Pending::Error { error: Some(error) }
@@ -110,8 +99,7 @@ impl Future for Pending {
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let (url, res) = match self.project() {
-            PendingProj::BoxedRequest { url, fut } => (url, fut.poll(cx)),
-            PendingProj::GenericRequest { url, fut } => (url, fut.as_mut().poll(cx)),
+            PendingProj::Request { url, fut } => (url, fut.poll(cx)),
             PendingProj::Error { error } => return Poll::Ready(Err(take_err!(error))),
         };
 
@@ -143,13 +131,13 @@ impl Future for Pending {
 // ======== RawPending impl ========
 
 impl RawPending {
-    /// Creates a new `RawPending` from a `RawResponseFuture`.
+    /// Creates a new [`RawPending`] from a [`RawResponseFuture`].
     #[inline(always)]
     pub(crate) fn new(fut: RawResponseFuture) -> Self {
         RawPending::Request { fut }
     }
 
-    /// Creates a new `RawPending` with an error.
+    /// Creates a new [`RawPending`] with an error.
     #[inline(always)]
     pub(crate) fn error(error: Error) -> Self {
         RawPending::Error { error: Some(error) }
@@ -159,13 +147,10 @@ impl RawPending {
 impl Future for RawPending {
     type Output = Result<HttpResponse<Incoming>, BoxError>;
 
+    #[inline]
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         match self.project() {
-            CorePendingProj::Request { fut } => match fut.poll(cx) {
-                Poll::Ready(Ok(res)) => Poll::Ready(Ok(res)),
-                Poll::Ready(Err(err)) => Poll::Ready(Err(err.into())),
-                Poll::Pending => Poll::Pending,
-            },
+            CorePendingProj::Request { fut } => fut.poll(cx).map(|res| res.map_err(Into::into)),
             CorePendingProj::Error { error } => Poll::Ready(Err(take_err!(error).into())),
         }
     }

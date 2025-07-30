@@ -18,6 +18,7 @@ use aliases::{
     GenericClientService, ResponseBody,
 };
 pub use future::Pending;
+use futures_util::future::Either;
 use http::{
     Request as HttpRequest, Response as HttpResponse,
     header::{HeaderMap, HeaderValue, USER_AGENT},
@@ -1524,11 +1525,11 @@ impl Client {
                 match *self.inner {
                     ClientRef::Boxed(ref service) => {
                         let fut = service.clone().oneshot(req);
-                        Pending::boxed_request(url, fut)
+                        Pending::request(url, Either::Left(fut))
                     }
                     ClientRef::Generic(ref service) => {
                         let fut = service.clone().oneshot(req);
-                        Pending::generic_request(url, fut)
+                        Pending::request(url, Either::Right(Box::pin(fut)))
                     }
                 }
             }
