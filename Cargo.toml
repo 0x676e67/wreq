@@ -1,6 +1,6 @@
 [package]
 name = "wreq"
-version = "5.2.0"
+version = "5.3.0"
 description = "A blazing-fast Rust HTTP Client with TLS fingerprint"
 keywords = ["http", "client", "websocket", "ja3", "ja4"]
 categories = ["web-programming::http-client"]
