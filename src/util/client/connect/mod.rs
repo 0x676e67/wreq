@@ -3,8 +3,7 @@
 //!
 //! This module contains:
 //!
-//! - A default [`HttpConnector`][] that does DNS resolution and establishes
-//!   connections over TCP.
+//! - A default [`HttpConnector`][] that does DNS resolution and establishes connections over TCP.
 //! - Types to build custom connectors.
 //!
 //! # Connectors
@@ -304,15 +303,13 @@ where
 }
 
 pub(super) mod sealed {
-    use std::error::Error as StdError;
-    use std::future::Future;
+    use std::{error::Error as StdError, future::Future};
 
     use ::http::Uri;
     use hyper2::rt::{Read, Write};
 
-    use crate::util::{client::Dst, service};
-
     use super::Connection;
+    use crate::util::{client::Dst, service};
 
     /// Connect to a destination, returning an IO transport.
     ///

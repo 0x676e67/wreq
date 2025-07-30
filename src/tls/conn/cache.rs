@@ -1,11 +1,14 @@
+use std::{
+    borrow::Borrow,
+    collections::hash_map::{Entry, HashMap},
+    hash::{Hash, Hasher},
+};
+
 /// referrer: https://github.com/cloudflare/boring/blob/master/hyper-boring/src/cache.rs
 use boring2::ssl::SslVersion;
 use boring2::ssl::{SslSession, SslSessionRef};
 use http::uri::Authority;
 use linked_hash_set::LinkedHashSet;
-use std::borrow::Borrow;
-use std::collections::hash_map::{Entry, HashMap};
-use std::hash::{Hash, Hasher};
 
 #[derive(Hash, PartialEq, Eq, Clone)]
 pub struct SessionKey(pub Authority);
@@ -75,8 +78,8 @@ impl SessionCache {
         };
 
         // https://tools.ietf.org/html/rfc8446#appendix-C.4
-        // OpenSSL will remove the session from its cache after the handshake completes anyway, but this ensures
-        // that concurrent handshakes don't end up with the same session.
+        // OpenSSL will remove the session from its cache after the handshake completes anyway, but
+        // this ensures that concurrent handshakes don't end up with the same session.
         if session.protocol_version() == SslVersion::TLS1_3 {
             self.remove(&session);
         }

@@ -1,8 +1,10 @@
-use std::fmt;
-use std::future::Future;
-use std::pin::Pin;
-use std::task::{Context, Poll, ready};
-use std::time::Duration;
+use std::{
+    fmt,
+    future::Future,
+    pin::Pin,
+    task::{Context, Poll, ready},
+    time::Duration,
+};
 
 use bytes::Bytes;
 use http_body::Body as HttpBody;

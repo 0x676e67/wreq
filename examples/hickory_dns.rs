@@ -1,5 +1,6 @@
-use wreq::dns::{HickoryDnsResolver, LookupIpStrategy};
 use std::sync::Arc;
+
+use wreq::dns::{HickoryDnsResolver, LookupIpStrategy};
 
 #[tokio::main]
 async fn main() -> Result<(), wreq::Error> {

@@ -1,29 +1,25 @@
-use std::fmt;
-use std::net::SocketAddr;
-use std::pin::Pin;
-use std::time::Duration;
+use std::{fmt, net::SocketAddr, pin::Pin, time::Duration};
 
 use bytes::Bytes;
+#[cfg(feature = "charset")]
+use encoding_rs::{Encoding, UTF_8};
 use http_body_util::BodyExt;
 use hyper2::{HeaderMap, StatusCode, Version};
+#[cfg(feature = "charset")]
+use mime::Mime;
 #[cfg(feature = "json")]
 use serde::de::DeserializeOwned;
 use tokio::time::Sleep;
 use url::Url;
 use util::client::connect::HttpInfo;
 
-use super::body::Body;
-use super::body::ResponseBody;
-use super::decoder::{Accepts, Decoder};
-
+use super::{
+    body::{Body, ResponseBody},
+    decoder::{Accepts, Decoder},
+};
 #[cfg(any(feature = "cookies", feature = "cookies-abstract"))]
 use crate::cookie;
 use crate::util;
-
-#[cfg(feature = "charset")]
-use encoding_rs::{Encoding, UTF_8};
-#[cfg(feature = "charset")]
-use mime::Mime;
 
 /// A Response to a submitted `Request`.
 pub struct Response {
@@ -87,10 +83,9 @@ impl Response {
     ///
     /// Reasons it may not be known:
     ///
-    /// - The response does not include a body (e.g. it responds to a `HEAD`
-    ///   request).
-    /// - The response is gzipped and automatically decoded (thus changing the
-    ///   actual decoded length).
+    /// - The response does not include a body (e.g. it responds to a `HEAD` request).
+    /// - The response is gzipped and automatically decoded (thus changing the actual decoded
+    ///   length).
     pub fn content_length(&self) -> Option<u64> {
         use hyper2::body::Body;
 
@@ -491,10 +486,11 @@ impl From<Response> for Body {
 
 #[cfg(test)]
 mod tests {
-    use super::Response;
-    use crate::ResponseBuilderExt;
     use http::response::Builder;
     use url::Url;
+
+    use super::Response;
+    use crate::ResponseBuilderExt;
 
     #[test]
     fn test_from_http_response() {

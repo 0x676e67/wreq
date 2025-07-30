@@ -1,9 +1,10 @@
 //! Request network scheme.
-use crate::proxy::ProxyScheme;
 use std::{
     fmt,
     net::{IpAddr, Ipv4Addr, Ipv6Addr},
 };
+
+use crate::proxy::ProxyScheme;
 
 /// Represents the network configuration scheme.
 ///
@@ -37,8 +38,8 @@ pub enum NetworkScheme {
         /// Specifies IP addresses to bind sockets before establishing a connection.
         ///
         /// - **Tuple Structure:** `(Option<Ipv4Addr>, Option<Ipv6Addr>)`
-        /// - **Purpose:** Ensures that all sockets use the specified IP addresses
-        ///   for both IPv4 and IPv6 connections.
+        /// - **Purpose:** Ensures that all sockets use the specified IP addresses for both IPv4
+        ///   and IPv6 connections.
         addresses: (Option<Ipv4Addr>, Option<Ipv6Addr>),
 
         /// Defines the proxy scheme for network requests.

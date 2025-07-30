@@ -1,8 +1,8 @@
 #![cfg(not(target_arch = "wasm32"))]
 mod support;
 
-use http_body_util::BodyExt;
-use support::server;
+#[cfg(feature = "json")]
+use std::collections::HashMap;
 
 use http::{
     HeaderMap, Version,
@@ -10,9 +10,9 @@ use http::{
         AUTHORIZATION, CACHE_CONTROL, CONTENT_LENGTH, CONTENT_TYPE, REFERER, TRANSFER_ENCODING,
     },
 };
+use http_body_util::BodyExt;
+use support::server;
 use wreq::Client;
-#[cfg(feature = "json")]
-use std::collections::HashMap;
 
 #[tokio::test]
 async fn auto_headers() {
@@ -76,8 +76,10 @@ async fn auto_headers() {
 #[tokio::test]
 async fn test_headers_order_with_client() {
     use http::{HeaderName, HeaderValue};
-    use wreq::Client;
-    use wreq::header::{ACCEPT, CONTENT_TYPE, USER_AGENT};
+    use wreq::{
+        Client,
+        header::{ACCEPT, CONTENT_TYPE, USER_AGENT},
+    };
 
     let server = server::http(move |req| async move {
         assert_eq!(req.method(), "POST");
@@ -153,8 +155,10 @@ async fn test_headers_order_with_client() {
 #[tokio::test]
 async fn test_headers_order_with_request() {
     use http::{HeaderName, HeaderValue};
-    use wreq::Client;
-    use wreq::header::{ACCEPT, CONTENT_TYPE, USER_AGENT};
+    use wreq::{
+        Client,
+        header::{ACCEPT, CONTENT_TYPE, USER_AGENT},
+    };
 
     let server = server::http(move |req| async move {
         assert_eq!(req.method(), "POST");

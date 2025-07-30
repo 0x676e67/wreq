@@ -15,20 +15,21 @@ pub struct CaptureConnection {
 
 /// Capture the connection for a given request
 ///
-/// When making a request with Hyper, the underlying connection must implement the [`Connection`] trait.
-/// [`capture_connection`] allows a caller to capture the returned [`Connected`] structure as soon
-/// as the connection is established.
+/// When making a request with Hyper, the underlying connection must implement the [`Connection`]
+/// trait. [`capture_connection`] allows a caller to capture the returned [`Connected`] structure as
+/// soon as the connection is established.
 ///
 /// [`Connection`]: crate::util::client::connect::Connection
 ///
-/// *Note*: If establishing a connection fails, [`CaptureConnection::connection_metadata`] will always return none.
+/// *Note*: If establishing a connection fails, [`CaptureConnection::connection_metadata`] will
+/// always return none.
 ///
 /// # Examples
 ///
 /// **Synchronous access**:
-/// The [`CaptureConnection::connection_metadata`] method allows callers to check if a connection has been
-/// established. This is ideal for situations where you are certain the connection has already
-/// been established (e.g. after the response future has already completed).
+/// The [`CaptureConnection::connection_metadata`] method allows callers to check if a connection
+/// has been established. This is ideal for situations where you are certain the connection has
+/// already been established (e.g. after the response future has already completed).
 /// ```rust
 /// use crate::util::client::connect::capture_connection;
 /// let mut request = http::Request::builder()
@@ -43,8 +44,8 @@ pub struct CaptureConnection {
 /// ```
 ///
 /// **Asynchronous access**:
-/// The [`CaptureConnection::wait_for_connection_metadata`] method returns a future resolves as soon as the
-/// connection is available.
+/// The [`CaptureConnection::wait_for_connection_metadata`] method returns a future resolves as soon
+/// as the connection is available.
 ///
 /// ```rust
 /// # #[cfg(feature  = "tokio")]

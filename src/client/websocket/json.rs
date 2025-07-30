@@ -1,8 +1,8 @@
-use crate::{Error, Message};
 use bytes::Bytes;
 use serde::{Serialize, de::DeserializeOwned};
 
 use super::Utf8Bytes;
+use crate::{Error, Message};
 
 impl Message {
     /// Tries to serialize the JSON as a [`Message::Text`].

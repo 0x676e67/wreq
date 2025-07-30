@@ -1,8 +1,8 @@
 #![cfg(not(target_arch = "wasm32"))]
 mod support;
-use support::server;
-
 use std::time::Duration;
+
+use support::server;
 
 #[tokio::test]
 async fn client_timeout() {

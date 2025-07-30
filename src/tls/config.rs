@@ -1,7 +1,9 @@
-use super::{AlpnProtos, AlpsProtos, CertStore, TlsVersion};
-use boring2::ssl::{CertCompressionAlgorithm, SslCurve};
 use std::borrow::Cow;
+
+use boring2::ssl::{CertCompressionAlgorithm, SslCurve};
 use typed_builder::TypedBuilder;
+
+use super::{AlpnProtos, AlpsProtos, CertStore, TlsVersion};
 
 /// Configuration settings for TLS connections.
 ///
@@ -55,11 +57,13 @@ pub struct TlsConfig {
     #[builder(default = false)]
     pub alps_use_new_codepoint: bool,
 
-    /// **Session Tickets** (RFC 5077) allow **session resumption** without the need for server-side state.
+    /// **Session Tickets** (RFC 5077) allow **session resumption** without the need for
+    /// server-side state.
     ///
     /// This mechanism works as follows:
     /// 1. The server maintains a **secret ticket key**.
-    /// 2. The server sends the client **opaque encrypted session parameters**, referred to as a **ticket**.
+    /// 2. The server sends the client **opaque encrypted session parameters**, referred to as a
+    ///    **ticket**.
     /// 3. When resuming the session, the client sends the **ticket** to the server.
     /// 4. The server decrypts the ticket to recover the session state.
     ///
@@ -158,7 +162,8 @@ pub struct TlsConfig {
     ///
     /// This configuration language manages two ordered lists:
     /// - **Enabled Ciphers**: An ordered list of currently active cipher suites.
-    /// - **Disabled but Available Ciphers**: An ordered list of cipher suites that are currently inactive but can be enabled.
+    /// - **Disabled but Available Ciphers**: An ordered list of cipher suites that are currently
+    ///   inactive but can be enabled.
     ///
     /// Initially, **all ciphers are disabled** and follow a **default ordering**.
     ///
@@ -233,12 +238,14 @@ impl<T: IntoCertStore> IntoCertStore for Option<T> {
     }
 }
 
-/// A trait for converting various types into an optional `Cow` containing a slice of `CertCompressionAlgorithm`.
+/// A trait for converting various types into an optional `Cow` containing a slice of
+/// `CertCompressionAlgorithm`.
 ///
 /// This trait is used to provide a unified way to convert different types
 /// into an optional `Cow` containing a slice of `CertCompressionAlgorithm`.
 pub(crate) trait IntoCertCompressionAlgorithm {
-    /// Converts the given value into an optional `Cow` containing a slice of `CertCompressionAlgorithm`.
+    /// Converts the given value into an optional `Cow` containing a slice of
+    /// `CertCompressionAlgorithm`.
     fn into(self) -> Option<Cow<'static, [CertCompressionAlgorithm]>>;
 }
 

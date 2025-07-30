@@ -423,7 +423,8 @@ async fn test_chunked_fragmented_multiple_frames_in_one_chunk() {
 
             // Prepare the initial response part: headers + chunk size
             let headers = [
-                COMPRESSED_RESPONSE_HEADERS, // e.g., "HTTP/1.1 200 OK\r\nContent-Encoding: zstd\r\n"
+                COMPRESSED_RESPONSE_HEADERS, /* e.g., "HTTP/1.1 200 OK\r\nContent-Encoding:
+                                              * zstd\r\n" */
                 b"Transfer-Encoding: chunked\r\n\r\n", // Indicate chunked encoding
                 format!("{:x}\r\n", chunk_size).as_bytes(), // Chunk size in hex
             ]
@@ -476,7 +477,8 @@ async fn test_connection_reuse_with_chunked_fragmented_multiple_frames_in_one_ch
     let peer_addrs = std::sync::Arc::new(std::sync::Mutex::new(Vec::<std::net::SocketAddr>::new()));
     let peer_addrs_clone = peer_addrs.clone();
 
-    // Set up a low-level server (it will reuse existing client connection, executing callback for each client request)
+    // Set up a low-level server (it will reuse existing client connection, executing callback for
+    // each client request)
     let server = server::low_level_with_response(move |_raw_request, client_socket| {
         let peer_addrs = peer_addrs_clone.clone();
         Box::new(async move {
@@ -497,7 +499,8 @@ async fn test_connection_reuse_with_chunked_fragmented_multiple_frames_in_one_ch
 
             // Prepare the initial response part: headers + chunk size
             let headers = [
-                COMPRESSED_RESPONSE_HEADERS, // e.g., "HTTP/1.1 200 OK\r\nContent-Encoding: zstd\r\n"
+                COMPRESSED_RESPONSE_HEADERS, /* e.g., "HTTP/1.1 200 OK\r\nContent-Encoding:
+                                              * zstd\r\n" */
                 b"Transfer-Encoding: chunked\r\n\r\n", // Indicate chunked encoding
                 format!("{:x}\r\n", chunk_size).as_bytes(), // Chunk size in hex
             ]

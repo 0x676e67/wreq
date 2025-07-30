@@ -1,8 +1,8 @@
 #![cfg(not(target_arch = "wasm32"))]
 mod support;
 use http_body_util::BodyExt;
-use wreq::{Body, redirect::Policy};
 use support::server;
+use wreq::{Body, redirect::Policy};
 
 #[tokio::test]
 async fn test_redirect_301_and_302_and_303_changes_post_to_get() {

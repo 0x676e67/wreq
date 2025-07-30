@@ -1,24 +1,30 @@
-use std::error::Error as StdError;
-use std::fmt;
-use std::future::Future;
-use std::io;
-use std::marker::PhantomData;
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
-use std::pin::Pin;
-use std::sync::Arc;
-use std::task::{self, Poll, ready};
-use std::time::Duration;
+use std::{
+    error::Error as StdError,
+    fmt,
+    future::Future,
+    io,
+    marker::PhantomData,
+    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
+    pin::Pin,
+    sync::Arc,
+    task::{self, Poll, ready},
+    time::Duration,
+};
 
 use futures_util::future::Either;
 use http::uri::{Scheme, Uri};
 use log::{debug, trace, warn};
 use pin_project_lite::pin_project;
 use socket2::TcpKeepalive;
-use tokio::net::{TcpSocket, TcpStream};
-use tokio::time::Sleep;
+use tokio::{
+    net::{TcpSocket, TcpStream},
+    time::Sleep,
+};
 
-use super::dns::{self, GaiResolver, Resolve, resolve};
-use super::{Connected, Connection};
+use super::{
+    Connected, Connection,
+    dns::{self, GaiResolver, Resolve, resolve},
+};
 use crate::util::rt::TokioIo;
 
 /// A connector for the `http` scheme.
@@ -228,7 +234,8 @@ impl HttpConnector {
 impl<R> HttpConnector<R> {
     /// Construct a new HttpConnector.
     ///
-    /// Takes a [`Resolver`](crate::util::client::connect::dns#resolvers-are-services) to handle DNS lookups.
+    /// Takes a [`Resolver`](crate::util::client::connect::dns#resolvers-are-services) to handle DNS
+    /// lookups.
     pub fn new_with_resolver(resolver: R) -> HttpConnector<R> {
         HttpConnector {
             config: Arc::new(Config {
@@ -291,7 +298,8 @@ impl<R> HttpConnector<R> {
         self.config_mut().tcp_keepalive_config.interval = interval;
     }
 
-    /// Set the number of retransmissions to be carried out before declaring that remote end is not available.
+    /// Set the number of retransmissions to be carried out before declaring that remote end is not
+    /// available.
     #[inline]
     pub fn set_keepalive_retries(&mut self, retries: Option<u32>) {
         self.config_mut().tcp_keepalive_config.retries = retries;

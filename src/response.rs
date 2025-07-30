@@ -20,9 +20,10 @@ impl ResponseBuilderExt for http::response::Builder {
 
 #[cfg(test)]
 mod tests {
-    use super::{ResponseBuilderExt, ResponseUrl};
     use http::response::Builder;
     use url::Url;
+
+    use super::{ResponseBuilderExt, ResponseUrl};
 
     #[test]
     fn test_response_builder_ext() {

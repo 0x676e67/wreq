@@ -1,15 +1,16 @@
-use crate::util::client::connect::dns::Name as HyperName;
+use std::{
+    collections::HashMap,
+    future::Future,
+    net::SocketAddr,
+    pin::Pin,
+    str::FromStr,
+    sync::Arc,
+    task::{Context, Poll},
+};
+
 use tower_service::Service;
 
-use std::collections::HashMap;
-use std::future::Future;
-use std::net::SocketAddr;
-use std::pin::Pin;
-use std::str::FromStr;
-use std::sync::Arc;
-use std::task::{Context, Poll};
-
-use crate::error::BoxError;
+use crate::{error::BoxError, util::client::connect::dns::Name as HyperName};
 
 /// Alias for an `Iterator` trait object over `SocketAddr`.
 pub type Addrs = Box<dyn Iterator<Item = SocketAddr> + Send>;
@@ -25,11 +26,12 @@ pub trait Resolve: Send + Sync {
     /// It differs from `tower_service::Service<Name>` in several ways:
     ///  * It is assumed that `resolve` will always be ready to poll.
     ///  * It does not need a mutable reference to `self`.
-    ///  * Since trait objects cannot make use of associated types, it requires
-    ///    wrapping the returned `Future` and its contained `Iterator` with `Box`.
+    ///  * Since trait objects cannot make use of associated types, it requires wrapping the
+    ///    returned `Future` and its contained `Iterator` with `Box`.
     ///
     /// Explicitly specified port in the URL will override any port in the resolved `SocketAddr`s.
-    /// Otherwise, port `0` will be replaced by the conventional port for the given scheme (e.g. 80 for http).
+    /// Otherwise, port `0` will be replaced by the conventional port for the given scheme (e.g. 80
+    /// for http).
     fn resolve(&self, name: Name) -> Resolving;
 }
 

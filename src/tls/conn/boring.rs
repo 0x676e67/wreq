@@ -1,35 +1,39 @@
-/// referrer: https://github.com/cloudflare/boring/blob/master/hyper-boring/src/lib.rs
-use super::cache::{SessionCache, SessionKey};
-use super::{HandshakeSettings, MaybeHttpsStream, key_index};
-
-use crate::Dst;
-use crate::connect::HttpConnector;
-use crate::error::BoxError;
-use crate::tls::TlsConfig;
-use crate::tls::ext::{ConnectConfigurationExt, SslConnectorBuilderExt, SslRefExt};
-use crate::util::client::connect::Connection;
-use crate::util::rt::TokioIo;
+use std::{
+    error::Error,
+    fmt::Debug,
+    future::Future,
+    net::{IpAddr, Ipv6Addr},
+    pin::Pin,
+    sync::Arc,
+    task::{Context, Poll},
+};
 
 use antidote::Mutex;
-use boring2::error::ErrorStack;
-use boring2::ssl::{
-    ConnectConfiguration, Ssl, SslConnector, SslConnectorBuilder, SslMethod, SslOptions, SslRef,
-    SslSessionCacheMode,
+use boring2::{
+    error::ErrorStack,
+    ssl::{
+        ConnectConfiguration, Ssl, SslConnector, SslConnectorBuilder, SslMethod, SslOptions,
+        SslRef, SslSessionCacheMode,
+    },
 };
-use http::Uri;
-use http::uri::Scheme;
+use http::{Uri, uri::Scheme};
 use hyper2::rt::{Read, Write};
-
 use tokio_boring2::SslStream;
 use tower_service::Service;
 
-use std::error::Error;
-use std::fmt::Debug;
-use std::future::Future;
-use std::net::{IpAddr, Ipv6Addr};
-use std::pin::Pin;
-use std::sync::Arc;
-use std::task::{Context, Poll};
+/// referrer: https://github.com/cloudflare/boring/blob/master/hyper-boring/src/lib.rs
+use super::cache::{SessionCache, SessionKey};
+use super::{HandshakeSettings, MaybeHttpsStream, key_index};
+use crate::{
+    Dst,
+    connect::HttpConnector,
+    error::BoxError,
+    tls::{
+        TlsConfig,
+        ext::{ConnectConfigurationExt, SslConnectorBuilderExt, SslRefExt},
+    },
+    util::{client::connect::Connection, rt::TokioIo},
+};
 
 /// A Connector using BoringSSL to support `http` and `https` schemes.
 #[derive(Clone)]
@@ -97,7 +101,8 @@ where
 
     /// Registers a callback which can customize the SSL context for a given URI.
     ///
-    /// This callback is executed after the callback registered by [`Self::set_ssl_callback`] is executed.
+    /// This callback is executed after the callback registered by [`Self::set_ssl_callback`] is
+    /// executed.
     #[inline]
     pub fn set_ssl_callback<F>(&mut self, callback: F)
     where

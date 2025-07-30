@@ -1,4 +1,5 @@
 use std::borrow::Cow;
+
 use url::Url;
 
 /// A trait to try to convert some type into a `Url`.

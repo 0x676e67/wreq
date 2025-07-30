@@ -1,21 +1,28 @@
-use std::convert::TryFrom;
-use std::fmt;
-use std::future::Future;
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
-use std::time::Duration;
+use std::{
+    convert::TryFrom,
+    fmt,
+    future::Future,
+    net::{IpAddr, Ipv4Addr, Ipv6Addr},
+    time::Duration,
+};
 
 use http::{Request as HttpRequest, Version, request::Parts};
 use serde::Serialize;
 
-use super::body::Body;
-use super::http::{Client, Pending};
 #[cfg(feature = "multipart")]
 use super::multipart;
-use super::response::Response;
-use crate::header::{CONTENT_TYPE, HeaderMap, HeaderName, HeaderValue};
-use crate::proxy::IntoProxy;
-use crate::util::client::{NetworkScheme, NetworkSchemeBuilder};
-use crate::{Method, Url, redirect};
+use super::{
+    body::Body,
+    http::{Client, Pending},
+    response::Response,
+};
+use crate::{
+    Method, Url,
+    header::{CONTENT_TYPE, HeaderMap, HeaderName, HeaderValue},
+    proxy::IntoProxy,
+    redirect,
+    util::client::{NetworkScheme, NetworkSchemeBuilder},
+};
 
 /// A request which can be executed with `Client::execute()`.
 pub struct Request {
@@ -322,7 +329,8 @@ impl RequestBuilder {
                             value.set_sensitive(true);
                         }
 
-                        // If or_insert is true, we want to skip the insertion if the header already exists
+                        // If or_insert is true, we want to skip the insertion if the header already
+                        // exists
                         if or_insert {
                             req.headers_mut().entry(key).or_insert(value);
                         } else if overwrite {
@@ -536,8 +544,8 @@ impl RequestBuilder {
 
     /// Sets if this request will announce that it accepts compression.
     ///
-    /// This value defaults to true. Note that this only lets the browser know that this request supports
-    /// compression, the server might choose not to compress the content.
+    /// This value defaults to true. Note that this only lets the browser know that this request
+    /// supports compression, the server might choose not to compress the content.
     #[cfg(any(
         feature = "gzip",
         feature = "brotli",

@@ -1,12 +1,11 @@
-use std::{cmp, io};
-
-use bytes::{Buf, Bytes};
-use hyper2::rt::{Read, ReadBufCursor, Write};
-
 use std::{
+    cmp, io,
     pin::Pin,
     task::{self, Poll},
 };
+
+use bytes::{Buf, Bytes};
+use hyper2::rt::{Read, ReadBufCursor, Write};
 
 /// Combine a buffer with an IO, rewinding reads to use the buffer.
 #[derive(Debug)]
