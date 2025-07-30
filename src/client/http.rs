@@ -293,7 +293,7 @@ impl ClientBuilder {
             http.set_keepalive_interval(config.tcp_keepalive_interval);
             http.set_keepalive_retries(config.tcp_keepalive_retries);
             #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
-            http.set_tcp_user_timeout(tcp_user_timeout);
+            http.set_tcp_user_timeout(config.tcp_user_timeout);
 
             let tls = {
                 let mut tls_config = config.tls_config.unwrap_or_default();
