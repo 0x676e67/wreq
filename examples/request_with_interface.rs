@@ -1,4 +1,4 @@
-use rquest::Client;
+use wreq::Client;
 
 #[cfg(any(
     target_os = "android",
@@ -11,7 +11,7 @@ use rquest::Client;
     target_os = "watchos"
 ))]
 #[tokio::main]
-async fn main() -> Result<(), rquest::Error> {
+async fn main() -> Result<(), wreq::Error> {
     tracing_subscriber::fmt()
         .with_max_level(tracing::Level::TRACE)
         .init();

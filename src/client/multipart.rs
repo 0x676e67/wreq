@@ -76,7 +76,7 @@ impl Form {
     /// # Examples
     ///
     /// ```
-    /// let form = rquest::multipart::Form::new()
+    /// let form = wreq::multipart::Form::new()
     ///     .text("username", "seanmonstar")
     ///     .text("password", "secret");
     /// ```
@@ -96,7 +96,7 @@ impl Form {
     ///
     /// ```no_run
     /// # async fn run() -> std::io::Result<()> {
-    /// let form = rquest::multipart::Form::new()
+    /// let form = wreq::multipart::Form::new()
     ///     .file("key", "/path/to/file").await?;
     /// # Ok(())
     /// # }

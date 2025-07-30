@@ -1,9 +1,9 @@
 use http::HeaderValue;
 
 #[tokio::main]
-async fn main() -> Result<(), rquest::Error> {
+async fn main() -> Result<(), wreq::Error> {
     // Build a client
-    let client = rquest::Client::builder().cookie_store(true).build()?;
+    let client = wreq::Client::builder().cookie_store(true).build()?;
 
     let url = "https://tls.peet.ws/api/all".parse().expect("Invalid url");
 

@@ -9,9 +9,9 @@
     target_os = "watchos"
 ))]
 #[tokio::main]
-async fn main() -> Result<(), rquest::Error> {
+async fn main() -> Result<(), wreq::Error> {
     use http::{HeaderName, header};
-    use rquest::Client;
+    use wreq::Client;
 
     const HEADER_ORDER: &[HeaderName] = &[
         header::ACCEPT_LANGUAGE,

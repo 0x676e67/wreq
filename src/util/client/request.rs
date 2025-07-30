@@ -42,7 +42,7 @@ where
     /// # Example
     ///
     /// ```rust
-    /// use rquest::util::client::request::InnerRequest;
+    /// use wreq::util::client::request::InnerRequest;
     /// use http::Method;
     ///
     /// let request = InnerRequest::builder()
@@ -72,7 +72,7 @@ where
     /// # Example
     ///
     /// ```rust
-    /// use rquest::util::client::request::InnerRequest;
+    /// use wreq::util::client::request::InnerRequest;
     /// use http::Method;
     ///
     /// let request = InnerRequest::builder()

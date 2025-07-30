@@ -17,7 +17,7 @@ pub type Addrs = Box<dyn Iterator<Item = SocketAddr> + Send>;
 /// Alias for the `Future` type returned by a DNS resolver.
 pub type Resolving = Pin<Box<dyn Future<Output = Result<Addrs, BoxError>> + Send>>;
 
-/// Trait for customizing DNS resolution in rquest.
+/// Trait for customizing DNS resolution in wreq.
 pub trait Resolve: Send + Sync {
     /// Performs DNS resolution on a `Name`.
     /// The return type is a future containing an iterator of `SocketAddr`.

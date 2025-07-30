@@ -1,12 +1,12 @@
 #![cfg(not(target_arch = "wasm32"))]
 mod support;
 use http_body_util::BodyExt;
-use rquest::{Body, redirect::Policy};
+use wreq::{Body, redirect::Policy};
 use support::server;
 
 #[tokio::test]
 async fn test_redirect_301_and_302_and_303_changes_post_to_get() {
-    let client = rquest::Client::new();
+    let client = wreq::Client::new();
     let codes = [301u16, 302, 303];
 
     for &code in &codes {
@@ -38,9 +38,9 @@ async fn test_redirect_301_and_302_and_303_changes_post_to_get() {
             .await
             .unwrap();
         assert_eq!(res.url().as_str(), dst);
-        assert_eq!(res.status(), rquest::StatusCode::OK);
+        assert_eq!(res.status(), wreq::StatusCode::OK);
         assert_eq!(
-            res.headers().get(rquest::header::SERVER).unwrap(),
+            res.headers().get(wreq::header::SERVER).unwrap(),
             &"test-dst"
         );
     }
@@ -48,7 +48,7 @@ async fn test_redirect_301_and_302_and_303_changes_post_to_get() {
 
 #[tokio::test]
 async fn test_redirect_307_and_308_tries_to_get_again() {
-    let client = rquest::Client::new();
+    let client = wreq::Client::new();
     let codes = [307u16, 308];
     for &code in &codes {
         let redirect = server::http(move |req| async move {
@@ -79,9 +79,9 @@ async fn test_redirect_307_and_308_tries_to_get_again() {
             .await
             .unwrap();
         assert_eq!(res.url().as_str(), dst);
-        assert_eq!(res.status(), rquest::StatusCode::OK);
+        assert_eq!(res.status(), wreq::StatusCode::OK);
         assert_eq!(
-            res.headers().get(rquest::header::SERVER).unwrap(),
+            res.headers().get(wreq::header::SERVER).unwrap(),
             &"test-dst"
         );
     }
@@ -90,7 +90,7 @@ async fn test_redirect_307_and_308_tries_to_get_again() {
 #[tokio::test]
 async fn test_redirect_307_and_308_tries_to_post_again() {
     let _ = env_logger::try_init();
-    let client = rquest::Client::new();
+    let client = wreq::Client::new();
     let codes = [307u16, 308];
     for &code in &codes {
         let redirect = server::http(move |mut req| async move {
@@ -134,9 +134,9 @@ async fn test_redirect_307_and_308_tries_to_post_again() {
             .await
             .unwrap();
         assert_eq!(res.url().as_str(), dst);
-        assert_eq!(res.status(), rquest::StatusCode::OK);
+        assert_eq!(res.status(), wreq::StatusCode::OK);
         assert_eq!(
-            res.headers().get(rquest::header::SERVER).unwrap(),
+            res.headers().get(wreq::header::SERVER).unwrap(),
             &"test-dst"
         );
     }
@@ -176,14 +176,14 @@ async fn test_redirect_removes_sensitive_headers() {
 
     tx.send(Some(mid_server.addr())).unwrap();
 
-    rquest::Client::builder()
+    wreq::Client::builder()
         .redirect(Policy::default())
         .build()
         .unwrap()
         .get(format!("http://{}/sensitive", mid_server.addr()))
         .header(
-            rquest::header::COOKIE,
-            rquest::header::HeaderValue::from_static("foo=bar"),
+            wreq::header::COOKIE,
+            wreq::header::HeaderValue::from_static("foo=bar"),
         )
         .send()
         .await
@@ -202,7 +202,7 @@ async fn test_redirect_policy_can_return_errors() {
     });
 
     let url = format!("http://{}/loop", server.addr());
-    let err = rquest::Client::new()
+    let err = wreq::Client::new()
         .get(&url)
         .redirect(Policy::default())
         .send()
@@ -224,8 +224,8 @@ async fn test_redirect_policy_can_stop_redirects_without_an_error() {
 
     let url = format!("http://{}/no-redirect", server.addr());
 
-    let res = rquest::Client::builder()
-        .redirect(rquest::redirect::Policy::none())
+    let res = wreq::Client::builder()
+        .redirect(wreq::redirect::Policy::none())
         .build()
         .unwrap()
         .get(&url)
@@ -234,7 +234,7 @@ async fn test_redirect_policy_can_stop_redirects_without_an_error() {
         .unwrap();
 
     assert_eq!(res.url().as_str(), url);
-    assert_eq!(res.status(), rquest::StatusCode::FOUND);
+    assert_eq!(res.status(), wreq::StatusCode::FOUND);
 }
 
 #[tokio::test]
@@ -254,7 +254,7 @@ async fn test_referer_is_not_set_if_disabled() {
         }
     });
 
-    rquest::Client::builder()
+    wreq::Client::builder()
         .referer(false)
         .build()
         .unwrap()
@@ -276,10 +276,10 @@ async fn test_invalid_location_stops_redirect_gh484() {
 
     let url = format!("http://{}/yikes", server.addr());
 
-    let res = rquest::Client::new().get(&url).send().await.unwrap();
+    let res = wreq::Client::new().get(&url).send().await.unwrap();
 
     assert_eq!(res.url().as_str(), url);
-    assert_eq!(res.status(), rquest::StatusCode::FOUND);
+    assert_eq!(res.status(), wreq::StatusCode::FOUND);
 }
 
 #[tokio::test]
@@ -294,7 +294,7 @@ async fn test_invalid_scheme_is_rejected() {
 
     let url = format!("http://{}/yikes", server.addr());
 
-    let err = rquest::Client::new()
+    let err = wreq::Client::new()
         .get(&url)
         .redirect(Policy::default())
         .send()
@@ -325,7 +325,7 @@ async fn test_redirect_302_with_set_cookies() {
     let url = format!("http://{}/{}", server.addr(), code);
     let dst = format!("http://{}/{}", server.addr(), "dst");
 
-    let client = rquest::ClientBuilder::new()
+    let client = wreq::ClientBuilder::new()
         .cookie_store(true)
         .redirect(Policy::default())
         .build()
@@ -333,5 +333,5 @@ async fn test_redirect_302_with_set_cookies() {
     let res = client.get(&url).send().await.unwrap();
 
     assert_eq!(res.url().as_str(), dst);
-    assert_eq!(res.status(), rquest::StatusCode::OK);
+    assert_eq!(res.status(), wreq::StatusCode::OK);
 }

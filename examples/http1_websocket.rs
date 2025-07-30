@@ -1,10 +1,10 @@
 use futures_util::{SinkExt, StreamExt, TryStreamExt};
 use http::header;
-use rquest::{Client, Message};
+use wreq::{Client, Message};
 use std::time::Duration;
 
 #[tokio::main]
-async fn main() -> Result<(), rquest::Error> {
+async fn main() -> Result<(), wreq::Error> {
     // Build a client
     let client = Client::builder()
         .cert_verification(false)

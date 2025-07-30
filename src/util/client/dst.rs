@@ -32,7 +32,7 @@ impl Dst {
     /// # Example
     ///
     /// ```rust
-    /// use rquest::util::client::dst::Dst;
+    /// use wreq::util::client::dst::Dst;
     /// use http::Uri;
     ///
     /// let mut uri: Uri = "http://example.com".parse().unwrap();

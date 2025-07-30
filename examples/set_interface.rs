@@ -1,4 +1,4 @@
-use rquest::Client;
+use wreq::Client;
 
 #[cfg(any(
     target_os = "android",
@@ -11,7 +11,7 @@ use rquest::Client;
     target_os = "watchos"
 ))]
 #[tokio::main]
-async fn main() -> Result<(), rquest::Error> {
+async fn main() -> Result<(), wreq::Error> {
     // Build a client
     let client = Client::builder().interface("eth0").build()?;
 

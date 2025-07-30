@@ -1,11 +1,11 @@
 use http::{HeaderMap, HeaderName, HeaderValue, header};
-use rquest::{
+use wreq::{
     AlpnProtos, AlpsProtos, CertCompressionAlgorithm, ExtensionType, Http1Builder, Http1Config,
     Http2Builder, SslCurve, TlsConfig, TlsVersion,
 };
-use rquest::{Client, EmulationProvider};
-use rquest::{Http2Config, PseudoOrder::*, SettingsOrder::*};
-use rquest::{Priority, StreamDependency, StreamId};
+use wreq::{Client, EmulationProvider};
+use wreq::{Http2Config, PseudoOrder::*, SettingsOrder::*};
+use wreq::{Priority, StreamDependency, StreamId};
 
 // ============== TLS Extension Algorithms ==============
 
@@ -117,7 +117,7 @@ const HEADER_ORDER: &[HeaderName] = &[
 ];
 
 #[tokio::main]
-async fn main() -> Result<(), rquest::Error> {
+async fn main() -> Result<(), wreq::Error> {
     tracing_subscriber::fmt()
         .with_max_level(tracing::Level::TRACE)
         .init();

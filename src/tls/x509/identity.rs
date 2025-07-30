@@ -35,7 +35,7 @@ impl Identity {
     /// let mut buf = Vec::new();
     /// File::open("my-ident.pfx")?
     ///     .read_to_end(&mut buf)?;
-    /// let pkcs12 = rquest::Identity::from_pkcs12_der(&buf, "my-privkey-password")?;
+    /// let pkcs12 = wreq::Identity::from_pkcs12_der(&buf, "my-privkey-password")?;
     /// # drop(pkcs12);
     /// # Ok(())
     /// # }
@@ -72,7 +72,7 @@ impl Identity {
     /// # fn pkcs8() -> Result<(), Box<dyn std::error::Error>> {
     /// let cert = fs::read("client.pem")?;
     /// let key = fs::read("key.pem")?;
-    /// let pkcs8 = rquest::Identity::from_pkcs8_pem(&cert, &key)?;
+    /// let pkcs8 = wreq::Identity::from_pkcs8_pem(&cert, &key)?;
     /// # drop(pkcs8);
     /// # Ok(())
     /// # }

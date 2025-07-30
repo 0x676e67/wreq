@@ -9,9 +9,9 @@ const HEADER_ORDER: &[HeaderName] = &[
 ];
 
 #[tokio::main]
-async fn main() -> Result<(), rquest::Error> {
+async fn main() -> Result<(), wreq::Error> {
     // Build a client
-    let client = rquest::Client::builder()
+    let client = wreq::Client::builder()
         .headers_order(HEADER_ORDER)
         .cookie_store(true)
         .build()?;

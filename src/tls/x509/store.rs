@@ -12,7 +12,7 @@ use std::{fmt::Debug, path::Path};
 /// # Example
 ///
 /// ```rust
-/// use rquest::CertStore;
+/// use wreq::CertStore;
 ///
 /// let store = CertStore::builder()
 ///     .add_cert(&der_or_pem_cert)

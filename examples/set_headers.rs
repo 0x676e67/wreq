@@ -1,9 +1,9 @@
 use http::{HeaderValue, header};
 
 #[tokio::main]
-async fn main() -> Result<(), rquest::Error> {
+async fn main() -> Result<(), wreq::Error> {
     // Build a client
-    let client = rquest::Client::new();
+    let client = wreq::Client::new();
 
     // Use the API you're already familiar with
     let resp = client.get("https://tls.peet.ws/api/all").send().await?;

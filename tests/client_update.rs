@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use http::header::{AUTHORIZATION, CACHE_CONTROL, REFERER};
 use http_body_util::BodyExt;
-use rquest::{CertStore, EmulationProvider, TlsConfig, TlsInfo};
+use wreq::{CertStore, EmulationProvider, TlsConfig, TlsInfo};
 use support::server;
 
 #[tokio::test]
@@ -19,7 +19,7 @@ async fn update_headers() {
         http::Response::default()
     });
 
-    let client = rquest::Client::new();
+    let client = wreq::Client::new();
 
     client
         .update()
@@ -70,8 +70,8 @@ async fn update_headers() {
 #[tokio::test]
 async fn test_headers_order_with_client_update() {
     use http::{HeaderName, HeaderValue};
-    use rquest::Client;
-    use rquest::header::{ACCEPT, CONTENT_TYPE, USER_AGENT};
+    use wreq::Client;
+    use wreq::header::{ACCEPT, CONTENT_TYPE, USER_AGENT};
 
     let server = server::http(move |req| async move {
         assert_eq!(req.method(), "POST");
@@ -142,7 +142,7 @@ async fn test_headers_order_with_client_update() {
         .await
         .unwrap();
 
-    assert_eq!(res.status(), rquest::StatusCode::OK);
+    assert_eq!(res.status(), wreq::StatusCode::OK);
 }
 
 #[tokio::test]
@@ -156,7 +156,7 @@ async fn update_emulation() {
         http::Response::default()
     });
 
-    let client = rquest::Client::new();
+    let client = wreq::Client::new();
 
     client
         .update()
@@ -229,7 +229,7 @@ async fn updatea_cloned() {
         http::Response::default()
     });
 
-    let client = rquest::Client::new();
+    let client = wreq::Client::new();
 
     client
         .update()
@@ -289,7 +289,7 @@ async fn updatea_cloned() {
 
 #[tokio::test]
 async fn update_ssl_verify() {
-    let client = rquest::Client::builder()
+    let client = wreq::Client::builder()
         .connect_timeout(Duration::from_secs(360))
         .cert_verification(false)
         .no_proxy()
@@ -311,7 +311,7 @@ async fn update_ssl_verify() {
 
 #[tokio::test]
 async fn update_ssl_certs_verify_stroe() {
-    let client = rquest::Client::builder()
+    let client = wreq::Client::builder()
         .connect_timeout(Duration::from_secs(360))
         .cert_verification(false)
         .tls_info(true)
@@ -335,7 +335,7 @@ async fn update_ssl_certs_verify_stroe() {
         .build()
         .unwrap();
 
-    let client = rquest::Client::builder()
+    let client = wreq::Client::builder()
         .cert_store(store)
         .connect_timeout(Duration::from_secs(360))
         .no_proxy()

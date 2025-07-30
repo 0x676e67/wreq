@@ -3,7 +3,7 @@ use url::Url;
 
 /// A trait to try to convert some type into a `Url`.
 ///
-/// This trait is "sealed", such that only types within rquest can
+/// This trait is "sealed", such that only types within wreq can
 /// implement it.
 pub trait IntoUrl: IntoUrlSealed {}
 

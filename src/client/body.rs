@@ -66,7 +66,7 @@ impl Body {
     /// # Example
     ///
     /// ```
-    /// # use rquest::Body;
+    /// # use wreq::Body;
     /// # use futures_util;
     /// # fn main() {
     /// let chunks: Vec<Result<_, ::std::io::Error>> = vec![
@@ -131,7 +131,7 @@ impl Body {
     /// # Example
     ///
     /// ```
-    /// # use rquest::Body;
+    /// # use wreq::Body;
     /// # use futures_util;
     /// # fn main() {
     /// let content = "hello,world!".to_string();

@@ -1,11 +1,11 @@
 [package]
-name = "rquest"
+name = "wreq"
 version = "5.2.0"
 description = "A blazing-fast Rust HTTP Client with TLS fingerprint"
 keywords = ["http", "client", "websocket", "ja3", "ja4"]
 categories = ["web-programming::http-client"]
-repository = "https://github.com/0x676e67/rquest"
-documentation = "https://docs.rs/rquest"
+repository = "https://github.com/0x676e67/wreq"
+documentation = "https://docs.rs/wreq"
 authors = ["0x676e67 <gngppz@gmail.com>"]
 readme = "README.md"
 license = "Apache-2.0"
@@ -88,11 +88,14 @@ url = "2.5"
 bytes = "1.10.1"
 serde = { version = "1.0", features = ["derive"] }
 serde_urlencoded = "0.7.1"
-tower = { version = "0.5.2", default-features = false, features = ["timeout","util"] }
+tower = { version = "0.5.2", default-features = false, features = [
+    "timeout",
+    "util",
+] }
 tower-service = "0.3"
 futures-util = { version = "0.3.0", default-features = false }
 sync_wrapper = { version = "1.0", features = ["futures"] }
-antidote = "1" 
+antidote = "1"
 typed-builder = "0.21.0"
 
 # Optional deps...
@@ -112,13 +115,20 @@ lru = { version = "0.13", default-features = false }
 log = "0.4.27"
 mime = "0.3.17"
 percent-encoding = "2.3"
-tokio = { version = "1", default-features = false, features = ["net","time","rt"] }
+tokio = { version = "1", default-features = false, features = [
+    "net",
+    "time",
+    "rt",
+] }
 pin-project-lite = "0.2.0"
 ipnet = "2.11.0"
 arc-swap = "1.7.0"
 
 ## boring-tls
-boring2 = { version = "4.15.11", features = ["pq-experimental", "cert-compression"] }
+boring2 = { version = "4.15.11", features = [
+    "pq-experimental",
+    "cert-compression",
+] }
 tokio-boring2 = { version = "4.15.11", features = ["pq-experimental"] }
 linked_hash_set = "0.1"
 
@@ -133,14 +143,21 @@ cookie_crate = { version = "0.18", package = "cookie", optional = true }
 cookie_store = { version = "0.21", optional = true }
 
 ## compression
-async-compression = { version = "0.4.21", default-features = false, features = ["tokio"], optional = true }
-tokio-util = { version = "0.7.0", default-features = false, features = ["codec","io"], optional = true }
+async-compression = { version = "0.4.21", default-features = false, features = [
+    "tokio",
+], optional = true }
+tokio-util = { version = "0.7.0", default-features = false, features = [
+    "codec",
+    "io",
+], optional = true }
 
 ## socks
 tokio-socks = { version = "0.5.2", optional = true }
 
 ## websocket
-tokio-tungstenite = { version = "0.26.2", default-features = false, features = ["handshake"], optional = true }
+tokio-tungstenite = { version = "0.26.2", default-features = false, features = [
+    "handshake",
+], optional = true }
 
 ## hickory-dns
 hickory-resolver = { version = "0.25.1", optional = true }

@@ -16,7 +16,7 @@ async fn client_timeout() {
         }
     });
 
-    let client = rquest::Client::builder()
+    let client = wreq::Client::builder()
         .timeout(Duration::from_millis(100))
         .no_proxy()
         .build()
@@ -44,7 +44,7 @@ async fn request_timeout() {
         }
     });
 
-    let client = rquest::Client::builder().no_proxy().build().unwrap();
+    let client = wreq::Client::builder().no_proxy().build().unwrap();
 
     let url = format!("http://{}/slow", server.addr());
 
@@ -69,7 +69,7 @@ async fn request_timeout() {
 async fn connect_timeout() {
     let _ = env_logger::try_init();
 
-    let client = rquest::Client::builder()
+    let client = wreq::Client::builder()
         .connect_timeout(Duration::from_millis(100))
         .no_proxy()
         .build()
@@ -96,7 +96,7 @@ async fn connect_many_timeout_succeeds() {
     let server = server::http(move |_req| async { http::Response::default() });
     let port = server.addr().port();
 
-    let client = rquest::Client::builder()
+    let client = wreq::Client::builder()
         .resolve_to_addrs(
             "many_addrs",
             &["192.0.2.1:81".parse().unwrap(), server.addr()],
@@ -121,7 +121,7 @@ async fn connect_many_timeout_succeeds() {
 async fn connect_many_timeout() {
     let _ = env_logger::try_init();
 
-    let client = rquest::Client::builder()
+    let client = wreq::Client::builder()
         .resolve_to_addrs(
             "many_addrs",
             &[
@@ -152,7 +152,7 @@ async fn response_timeout() {
     let server = server::http(move |_req| {
         async {
             // immediate response, but delayed body
-            let body = rquest::Body::wrap_stream(futures_util::stream::once(async {
+            let body = wreq::Body::wrap_stream(futures_util::stream::once(async {
                 tokio::time::sleep(Duration::from_secs(1)).await;
                 Ok::<_, std::convert::Infallible>("Hello")
             }));
@@ -161,7 +161,7 @@ async fn response_timeout() {
         }
     });
 
-    let client = rquest::Client::builder()
+    let client = wreq::Client::builder()
         .timeout(Duration::from_millis(500))
         .no_proxy()
         .build()
@@ -188,7 +188,7 @@ async fn read_timeout_applies_to_headers() {
         }
     });
 
-    let client = rquest::Client::builder()
+    let client = wreq::Client::builder()
         .read_timeout(Duration::from_millis(100))
         .no_proxy()
         .build()
@@ -212,7 +212,7 @@ async fn read_timeout_applies_to_body() {
     let server = server::http(move |_req| {
         async {
             // immediate response, but delayed body
-            let body = rquest::Body::wrap_stream(futures_util::stream::once(async {
+            let body = wreq::Body::wrap_stream(futures_util::stream::once(async {
                 tokio::time::sleep(Duration::from_millis(300)).await;
                 Ok::<_, std::convert::Infallible>("Hello")
             }));
@@ -221,7 +221,7 @@ async fn read_timeout_applies_to_body() {
         }
     });
 
-    let client = rquest::Client::builder()
+    let client = wreq::Client::builder()
         .read_timeout(Duration::from_millis(100))
         .no_proxy()
         .build()
@@ -256,13 +256,13 @@ async fn read_timeout_allows_slow_response_body() {
                     None
                 }
             });
-            let body = rquest::Body::wrap_stream(slow);
+            let body = wreq::Body::wrap_stream(slow);
 
             http::Response::new(body)
         }
     });
 
-    let client = rquest::Client::builder()
+    let client = wreq::Client::builder()
         .read_timeout(Duration::from_millis(200))
         //.timeout(Duration::from_millis(200))
         .no_proxy()
@@ -282,7 +282,7 @@ async fn response_body_timeout_forwards_size_hint() {
 
     let server = server::http(move |_req| async { http::Response::new(b"hello".to_vec().into()) });
 
-    let client = rquest::Client::builder().no_proxy().build().unwrap();
+    let client = wreq::Client::builder().no_proxy().build().unwrap();
 
     let url = format!("http://{}/slow", server.addr());
 

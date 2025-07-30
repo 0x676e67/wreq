@@ -291,7 +291,7 @@ impl Jar {
     /// # Example
     ///
     /// ```
-    /// use rquest::{cookie::Jar, Url};
+    /// use wreq::{cookie::Jar, Url};
     ///
     /// let cookie = "foo=bar; Domain=yolo.local";
     /// let url = "https://yolo.local".parse::<Url>().unwrap();
