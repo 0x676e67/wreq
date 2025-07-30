@@ -151,7 +151,7 @@ mod test {
 
     #[test]
     fn test_future_size() {
-        let s = std::mem::size_of::<crate::client::http::types::ResponseFuture>();
+        let s = std::mem::size_of::<super::Pending>();
         assert!(s <= 360, "size_of::<Pending>() == {s}, too big");
     }
 
