@@ -49,6 +49,7 @@ type ResponseFuture = Either<
 type RawResponseFuture = crate::core::client::ResponseFuture;
 
 pin_project! {
+    /// Pending HTTP request future, representing either an in-flight request or an error state.
     #[project = PendingProj]
     pub enum Pending {
         Request {
@@ -63,6 +64,7 @@ pin_project! {
 }
 
 pin_project! {
+    /// RawPending wraps a low-level HTTP response future or an error state for
     #[project = CorePendingProj]
     pub enum RawPending {
         Request {
