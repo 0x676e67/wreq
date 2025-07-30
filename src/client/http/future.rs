@@ -50,13 +50,15 @@ impl Future for Pending {
     type Output = Result<Response, Error>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let (mut url, res) = match self.project() {
-            PendingProj::Request { url, fut } => {
-                let url = url
-                    .take()
-                    .expect("Pending::Request polled after completion");
-                (url, fut.as_mut().poll(cx))
-            }
+        macro_rules! take_url {
+            ($url:ident) => {
+                $url.take()
+                    .expect("Pending::Request polled after completion")
+            };
+        }
+
+        let (url, res) = match self.project() {
+            PendingProj::Request { url, fut } => (url, fut.as_mut().poll(cx)),
             PendingProj::Error { error } => {
                 let err = error
                     .take()
@@ -68,17 +70,17 @@ impl Future for Pending {
         let res = match ready!(res) {
             Ok(res) => {
                 if let Some(uri) = res.extensions().get::<RequestUri>() {
-                    let mut redirect_url = IntoUrlSealed::into_url(uri.0.to_string())?;
-                    std::mem::swap(&mut url, &mut redirect_url);
+                    let redirect_url = IntoUrlSealed::into_url(uri.0.to_string())?;
+                    std::mem::swap(url, &mut Some(redirect_url));
                 }
-                Ok(Response::new(res.map(body::boxed), url))
+                Ok(Response::new(res.map(body::boxed), take_url!(url)))
             }
             Err(err) => {
                 let mut err = err
                     .downcast::<Error>()
                     .map_or_else(Error::request, |err| *err);
                 if err.url().is_none() {
-                    err = err.with_url(url);
+                    err = err.with_url(take_url!(url));
                 }
                 Err(err)
             }
