@@ -6,7 +6,7 @@ use std::{
 use http::{HeaderMap, Request, Response, header::PROXY_AUTHORIZATION, uri::Scheme};
 use tower::Service;
 
-use super::{Body, connect::Connector, future::RawPending};
+use super::{Body, connect::Connector, future::CorePending};
 use crate::{
     OriginalHeaders,
     client::layer::config::RequestSkipDefaultHeaders,
@@ -115,7 +115,7 @@ impl ClientService {
 impl Service<Request<Body>> for ClientService {
     type Error = BoxError;
     type Response = Response<Incoming>;
-    type Future = RawPending;
+    type Future = CorePending;
 
     #[inline(always)]
     fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
@@ -129,7 +129,7 @@ impl Service<Request<Body>> for ClientService {
         if (scheme != Some(&Scheme::HTTP) && scheme != Some(&Scheme::HTTPS))
             || (self.config.https_only && scheme != Some(&Scheme::HTTPS))
         {
-            return RawPending::error(Error::url_bad_scheme2());
+            return CorePending::error(Error::url_bad_scheme2());
         }
 
         // Only skip setting default headers if skip_default_headers is explicitly Some(true).
@@ -158,6 +158,6 @@ impl Service<Request<Body>> for ClientService {
         // Apply proxy headers if the request is routed through a proxy.
         self.apply_proxy_headers(&mut req);
 
-        RawPending::new(self.client.call(req))
+        CorePending::new(self.client.call(req))
     }
 }

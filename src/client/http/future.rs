@@ -8,7 +8,7 @@ use url::Url;
 
 use super::{
     Response,
-    types::{RawResponseFuture, ResponseFuture},
+    types::{CoreResponseFuture, ResponseFuture},
 };
 use crate::{
     Error,
@@ -39,12 +39,11 @@ macro_rules! take_err {
 }
 
 pin_project! {
-    /// Pending HTTP request future, representing either an in-flight request or an error state.
+    /// [`Pending`] HTTP request future, representing either an in-flight request or an error state.
     #[project = PendingProj]
     pub enum Pending {
         Request {
-            #[pin]
-            fut: ResponseFuture,
+            fut: Pin<Box<ResponseFuture>>,
             url: Option<Url>,
         },
         Error {
@@ -54,12 +53,12 @@ pin_project! {
 }
 
 pin_project! {
-    /// RawPending wraps a low-level HTTP response future or an error state for
+    /// [`CorePending`] wraps a low-level HTTP response future or an error state for
     #[project = CorePendingProj]
-    pub enum RawPending {
+    pub enum CorePending {
         Request {
             #[pin]
-            fut: RawResponseFuture,
+            fut: CoreResponseFuture,
         },
         Error {
             error: Option<Error>,
@@ -74,7 +73,7 @@ impl Pending {
     #[inline(always)]
     pub(crate) fn request(fut: ResponseFuture, url: Url) -> Self {
         Pending::Request {
-            fut,
+            fut: Box::pin(fut),
             url: Some(url),
         }
     }
@@ -91,7 +90,7 @@ impl Future for Pending {
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let (url, res) = match self.project() {
-            PendingProj::Request { url, fut } => (url, fut.poll(cx)),
+            PendingProj::Request { url, fut } => (url, fut.as_mut().poll(cx)),
             PendingProj::Error { error } => return Poll::Ready(Err(take_err!(error))),
         };
 
@@ -119,23 +118,23 @@ impl Future for Pending {
     }
 }
 
-// ======== RawPending impl ========
+// ======== CorePending impl ========
 
-impl RawPending {
-    /// Creates a new [`RawPending`] from a [`RawResponseFuture`].
+impl CorePending {
+    /// Creates a new [`CorePending`] from a [`CoreResponseFuture`].
     #[inline(always)]
-    pub(crate) fn new(fut: RawResponseFuture) -> Self {
-        RawPending::Request { fut }
+    pub(crate) fn new(fut: CoreResponseFuture) -> Self {
+        CorePending::Request { fut }
     }
 
-    /// Creates a new [`RawPending`] with an error.
+    /// Creates a new [`CorePending`] with an error.
     #[inline(always)]
     pub(crate) fn error(error: Error) -> Self {
-        RawPending::Error { error: Some(error) }
+        CorePending::Error { error: Some(error) }
     }
 }
 
-impl Future for RawPending {
+impl Future for CorePending {
     type Output = Result<http::Response<Incoming>, BoxError>;
 
     #[inline]
@@ -152,7 +151,7 @@ mod test {
 
     #[test]
     fn test_future_size() {
-        let s = std::mem::size_of::<super::Pending>();
+        let s = std::mem::size_of::<crate::client::http::types::ResponseFuture>();
         assert!(s <= 360, "size_of::<Pending>() == {s}, too big");
     }
 

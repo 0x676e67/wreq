@@ -69,7 +69,7 @@ pub type FollowRedirectLayer = FollowRedirect<
 
 /// HTTP client service with retry, timeout, redirect, and error mapping for HTTP/2.
 pub type GenericClientService =
-    Box<MapErr<Timeout<Retry<Http2RetryPolicy, FollowRedirectLayer>>, fn(BoxError) -> BoxError>>;
+    MapErr<Timeout<Retry<Http2RetryPolicy, FollowRedirectLayer>>, fn(BoxError) -> BoxError>;
 
 /// Boxed HTTP client service object-safe type for requests and responses.
 pub type BoxedClientService =
@@ -100,4 +100,4 @@ pub type ClientServiceEither = Either<GenericClientService, BoxedClientService>;
 pub type ResponseFuture = Oneshot<ClientServiceEither, HttpRequest<Body>>;
 
 /// Future for sending a raw HTTP request and receiving a response.
-pub type RawResponseFuture = crate::core::client::ResponseFuture;
+pub type CoreResponseFuture = crate::core::client::ResponseFuture;

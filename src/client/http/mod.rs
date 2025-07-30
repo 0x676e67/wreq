@@ -385,7 +385,7 @@ impl ClientBuilder {
                     .map_err(error::map_timeout_to_request_error as _)
                     .service(service);
 
-                ClientServiceEither::Left(Box::new(service))
+                ClientServiceEither::Left(service)
             } else {
                 let service = config.layers.into_iter().fold(
                     BoxCloneSyncService::new(service),
