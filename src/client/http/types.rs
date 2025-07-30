@@ -43,6 +43,7 @@ type Decompression<T> = T;
 ))]
 type Decompression<T> = crate::client::layer::decoder::Decompression<T>;
 
+/// The HTTP response body type, with optional decompression and timeout.
 #[cfg(any(
     feature = "gzip",
     feature = "zstd",
@@ -51,6 +52,7 @@ type Decompression<T> = crate::client::layer::decoder::Decompression<T>;
 ))]
 pub type ResponseBody = TimeoutBody<tower_http::decompression::DecompressionBody<Incoming>>;
 
+/// The HTTP response body type, with timeout but no decompression.
 #[cfg(not(any(
     feature = "gzip",
     feature = "zstd",
@@ -59,17 +61,21 @@ pub type ResponseBody = TimeoutBody<tower_http::decompression::DecompressionBody
 )))]
 pub type ResponseBody = TimeoutBody<Incoming>;
 
+/// Layer that adds redirect, cookie, timeout, and decompression support to a client service.
 pub type FollowRedirectLayer = FollowRedirect<
     CookieLayer<ResponseBodyTimeout<Decompression<ClientService>>>,
     FollowRedirectPolicy,
 >;
 
+/// HTTP client service with retry, timeout, redirect, and error mapping for HTTP/2.
 pub type GenericClientService =
     Box<MapErr<Timeout<Retry<Http2RetryPolicy, FollowRedirectLayer>>, fn(BoxError) -> BoxError>>;
 
+/// Boxed HTTP client service object-safe type for requests and responses.
 pub type BoxedClientService =
     BoxCloneSyncService<HttpRequest<Body>, HttpResponse<ResponseBody>, BoxError>;
 
+/// Boxed layer for building a boxed client service.
 pub type BoxedClientLayer = BoxCloneSyncServiceLayer<
     BoxedClientService,
     HttpRequest<Body>,
@@ -77,15 +83,21 @@ pub type BoxedClientLayer = BoxCloneSyncServiceLayer<
     BoxError,
 >;
 
+/// HTTP connector with dynamic DNS resolver.
 pub type HttpConnector = connect::HttpConnector<DynResolver>;
 
+/// Boxed connector service for establishing connections.
 pub type BoxedConnectorService = BoxCloneSyncService<Unnameable, Conn, BoxError>;
 
+/// Boxed layer for building a boxed connector service.
 pub type BoxedConnectorLayer =
     BoxCloneSyncServiceLayer<BoxedConnectorService, Unnameable, Conn, BoxError>;
 
+/// Either a generic or boxed client service, used for dynamic dispatch.
 pub type ClientServiceEither = tower::util::Either<GenericClientService, BoxedClientService>;
 
+/// Future for sending an HTTP request using a client service.
 pub type ResponseFuture = Oneshot<ClientServiceEither, HttpRequest<Body>>;
 
+/// Future for sending a raw HTTP request and receiving a response.
 pub type RawResponseFuture = crate::core::client::ResponseFuture;
