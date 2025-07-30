@@ -114,8 +114,10 @@ impl ClientService {
 }
 
 impl Service<Request<Body>> for ClientService {
-    type Response = Response<Incoming>;
     type Error = BoxError;
+
+    type Response = Response<Incoming>;
+
     type Future = Either<
         MapErr<ResponseFuture, fn(Error) -> Self::Error>,
         Ready<Result<Self::Response, Self::Error>>,
