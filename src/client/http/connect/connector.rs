@@ -8,7 +8,7 @@ use std::{
 
 use http::uri::Scheme;
 use tower::{
-    Service, ServiceBuilder,
+    Service, ServiceBuilder, ServiceExt,
     timeout::TimeoutLayer,
     util::{BoxCloneSyncService, MapRequestLayer},
 };
@@ -172,22 +172,20 @@ impl ConnectorBuilder {
             Some(timeout) => {
                 let service = ServiceBuilder::new()
                     .layer(TimeoutLayer::new(timeout))
-                    .service(service);
-                let service = ServiceBuilder::new()
-                    .map_err(map_timeout_to_connector_error)
-                    .service(service);
-                let service = BoxCloneSyncService::new(service);
-                Ok(Connector::WithLayers(service))
+                    .service(service)
+                    .map_err(map_timeout_to_connector_error);
+
+                Ok(Connector::WithLayers(BoxCloneSyncService::new(service)))
             }
             None => {
                 // no timeout, but still map err
                 // no named timeout layer but we still map errors since
                 // we might have user-provided timeout layer
                 let service = ServiceBuilder::new()
-                    .map_err(map_timeout_to_connector_error)
-                    .service(service);
-                let service = BoxCloneSyncService::new(service);
-                Ok(Connector::WithLayers(service))
+                    .service(service)
+                    .map_err(map_timeout_to_connector_error);
+
+                Ok(Connector::WithLayers(BoxCloneSyncService::new(service)))
             }
         }
     }

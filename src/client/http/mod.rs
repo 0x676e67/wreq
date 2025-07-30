@@ -387,11 +387,8 @@ impl ClientBuilder {
                 // Add a request timeout layer and map timeout errors to request errors.
                 let service = ServiceBuilder::new()
                     .layer(TimeoutLayer::new(config.timeout_options))
-                    .service(service);
-
-                let service = ServiceBuilder::new()
-                    .map_err(error::map_timeout_to_request_error as _)
-                    .service(service);
+                    .service(service)
+                    .map_err(error::map_timeout_to_request_error as _);
 
                 ClientRef::Left(service)
             } else {
@@ -406,11 +403,8 @@ impl ClientBuilder {
                 // Add a request timeout layer and map timeout errors to request errors.
                 let service = ServiceBuilder::new()
                     .layer(TimeoutLayer::new(config.timeout_options))
-                    .service(service);
-
-                let service = ServiceBuilder::new()
-                    .map_err(error::map_timeout_to_request_error)
-                    .service(service);
+                    .service(service)
+                    .map_err(error::map_timeout_to_request_error);
 
                 ClientRef::Right(BoxCloneSyncService::new(service))
             }
