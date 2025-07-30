@@ -43,7 +43,7 @@ macro_rules! take_err {
 
 type ResponseFuture = Either<
     Oneshot<BoxedClientService, HttpRequest<Body>>,
-    Pin<Box<Oneshot<GenericClientService, HttpRequest<Body>>>>,
+    Oneshot<Box<GenericClientService>, HttpRequest<Body>>,
 >;
 
 type RawResponseFuture = crate::core::client::ResponseFuture;
@@ -105,28 +105,27 @@ impl Future for Pending {
             PendingProj::Error { error } => return Poll::Ready(Err(take_err!(error))),
         };
 
-        let res = match res {
-            Poll::Ready(Ok(res)) => res.map(body::boxed),
-            Poll::Ready(Err(err)) => {
-                let mut err = match err.downcast::<Error>() {
-                    Ok(err) => *err,
-                    Err(e) => Error::request(e),
-                };
+        match res {
+            Poll::Ready(Ok(res)) => {
+                if let Some(uri) = res.extensions().get::<RequestUri>() {
+                    *url = Some(IntoUrlSealed::into_url(uri.0.to_string())?);
+                }
 
+                let resp = Response::new(res.map(body::boxed), take_url!(url));
+                Poll::Ready(Ok(resp))
+            }
+            Poll::Ready(Err(err)) => {
+                let mut err = err
+                    .downcast::<Error>()
+                    .map_or_else(Error::request, |err| *err);
                 if err.url().is_none() {
                     err = err.with_url(take_url!(url));
                 }
 
-                return Poll::Ready(Err(err));
+                Poll::Ready(Err(err))
             }
-            Poll::Pending => return Poll::Pending,
-        };
-
-        if let Some(uri) = res.extensions().get::<RequestUri>() {
-            *url = Some(IntoUrlSealed::into_url(uri.0.to_string())?);
+            Poll::Pending => Poll::Pending,
         }
-
-        Poll::Ready(Ok(Response::new(res, take_url!(url))))
     }
 }
 

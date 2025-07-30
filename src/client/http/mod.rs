@@ -1528,8 +1528,8 @@ impl Client {
                         Pending::request(url, Either::Left(fut))
                     }
                     ClientRef::Generic(ref service) => {
-                        let fut = service.clone().oneshot(req);
-                        Pending::request(url, Either::Right(Box::pin(fut)))
+                        let fut = Box::new(service.clone()).oneshot(req);
+                        Pending::request(url, Either::Right(fut))
                     }
                 }
             }
