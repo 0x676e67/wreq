@@ -1,5 +1,6 @@
-use wreq::redirect::Policy;
 use std::net::IpAddr;
+
+use wreq::redirect::Policy;
 
 #[tokio::main]
 async fn main() -> Result<(), wreq::Error> {

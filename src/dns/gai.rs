@@ -1,9 +1,11 @@
-use crate::util::client::connect::dns::GaiResolver as HyperGaiResolver;
 use futures_util::future::FutureExt;
 use tower_service::Service;
 
-use crate::dns::{Addrs, Name, Resolve, Resolving};
-use crate::error::BoxError;
+use crate::{
+    dns::{Addrs, Name, Resolve, Resolving},
+    error::BoxError,
+    util::client::connect::dns::GaiResolver as HyperGaiResolver,
+};
 
 #[derive(Debug)]
 pub struct GaiResolver(HyperGaiResolver);

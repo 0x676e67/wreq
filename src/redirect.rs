@@ -4,22 +4,23 @@
 //! maximum redirect chain of 10 hops. To customize this behavior, a
 //! `redirect::Policy` can be used with a `ClientBuilder`.
 
-use std::fmt;
-use std::{error::Error as StdError, sync::Arc};
+use std::{error::Error as StdError, fmt, sync::Arc};
 
-use crate::header::{AUTHORIZATION, COOKIE, HeaderMap, PROXY_AUTHORIZATION, WWW_AUTHENTICATE};
 use http::Method;
 use hyper2::StatusCode;
 
-use crate::Url;
+use crate::{
+    Url,
+    header::{AUTHORIZATION, COOKIE, HeaderMap, PROXY_AUTHORIZATION, WWW_AUTHENTICATE},
+};
 
 /// A type that controls the policy on how to handle the following of redirects.
 ///
 /// The default value will catch redirect loops, and has a maximum of 10
 /// redirects it will follow in a chain before returning an error.
 ///
-/// - `limited` can be used have the same as the default behavior, but adjust
-///   the allowed maximum redirect hops in a chain.
+/// - `limited` can be used have the same as the default behavior, but adjust the allowed maximum
+///   redirect hops in a chain.
 /// - `none` can be used to disable all redirect behavior.
 /// - `custom` can be used to create a customized policy.
 #[derive(Clone)]

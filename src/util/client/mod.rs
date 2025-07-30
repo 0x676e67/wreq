@@ -13,35 +13,36 @@ mod network;
 mod pool;
 mod request;
 
-use std::error::Error as StdError;
-use std::fmt;
-use std::future::Future;
-use std::num::NonZeroUsize;
-use std::ops::{Deref, DerefMut};
-use std::pin::Pin;
-use std::task::{self, Poll};
-use std::time::Duration;
-
-use futures_util::future::{self, Either, FutureExt, TryFutureExt};
-use http::uri::Scheme;
-use hyper2::client::conn::TrySendError as ConnTrySendError;
-use hyper2::header::{HOST, HeaderValue};
-use hyper2::rt::Timer;
-use hyper2::{Method, Request, Response, Uri, Version, body::Body};
-use log::{debug, trace, warn};
-use sync_wrapper::SyncWrapper;
-
-use crate::AlpnProtos;
-use crate::util::common;
-use connect::capture::CaptureConnectionExtension;
-use connect::{Alpn, Connect, Connected, Connection};
-use pool::Ver;
+use std::{
+    error::Error as StdError,
+    fmt,
+    future::Future,
+    num::NonZeroUsize,
+    ops::{Deref, DerefMut},
+    pin::Pin,
+    task::{self, Poll},
+    time::Duration,
+};
 
 use common::{Exec, Lazy, lazy as hyper_lazy, timer};
-
+use connect::{Alpn, Connect, Connected, Connection, capture::CaptureConnectionExtension};
 pub use dst::Dst;
+use futures_util::future::{self, Either, FutureExt, TryFutureExt};
+use http::uri::Scheme;
+use hyper2::{
+    Method, Request, Response, Uri, Version,
+    body::Body,
+    client::conn::TrySendError as ConnTrySendError,
+    header::{HOST, HeaderValue},
+    rt::Timer,
+};
+use log::{debug, trace, warn};
 pub use network::{NetworkScheme, NetworkSchemeBuilder};
+use pool::Ver;
 pub use request::InnerRequest;
+use sync_wrapper::SyncWrapper;
+
+use crate::{AlpnProtos, util::common};
 
 type BoxSendFuture = Pin<Box<dyn Future<Output = ()> + Send>>;
 
@@ -421,16 +422,13 @@ where
         // This actually races 2 different futures to try to get a ready
         // connection the fastest, and to reduce connection churn.
         //
-        // - If the pool has an idle connection waiting, that's used
-        //   immediately.
-        // - Otherwise, the Connector is asked to start connecting to
-        //   the destination Uri.
-        // - Meanwhile, the pool Checkout is watching to see if any other
-        //   request finishes and tries to insert an idle connection.
-        // - If a new connection is started, but the Checkout wins after
-        //   (an idle connection became available first), the started
-        //   connection future is spawned into the runtime to complete,
-        //   and then be inserted into the pool as an idle connection.
+        // - If the pool has an idle connection waiting, that's used immediately.
+        // - Otherwise, the Connector is asked to start connecting to the destination Uri.
+        // - Meanwhile, the pool Checkout is watching to see if any other request finishes and tries
+        //   to insert an idle connection.
+        // - If a new connection is started, but the Checkout wins after (an idle connection became
+        //   available first), the started connection future is spawned into the runtime to
+        //   complete, and then be inserted into the pool as an idle connection.
         let checkout = self.pool.checkout(dst.pool_key().clone());
         let connect = self.connect_to(dst);
         let is_ver_h2 = self.config.ver == Ver::Http2;
@@ -469,10 +467,9 @@ where
             Either::Right((Ok(connected), _checkout)) => Ok(connected),
             // Either checkout or connect could get canceled:
             //
-            // 1. Connect is canceled if this is HTTP/2 and there is
-            //    an outstanding HTTP/2 connecting task.
-            // 2. Checkout is canceled if the pool cannot deliver an
-            //    idle connection reliably.
+            // 1. Connect is canceled if this is HTTP/2 and there is an outstanding HTTP/2
+            //    connecting task.
+            // 2. Checkout is canceled if the pool cannot deliver an idle connection reliably.
             //
             // In both cases, we should just wait for the other future.
             Either::Left((Err(err), connecting)) => {

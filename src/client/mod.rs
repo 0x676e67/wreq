@@ -1,10 +1,12 @@
-pub use self::body::Body;
-pub use self::config::{Http1Config, Http2Config};
-pub use self::emulation::{EmulationProvider, EmulationProviderFactory};
-pub use self::http::{Client, ClientBuilder, ClientUpdate};
-pub use self::request::{Request, RequestBuilder};
-pub use self::response::Response;
-pub use self::upgrade::Upgraded;
+pub use self::{
+    body::Body,
+    config::{Http1Config, Http2Config},
+    emulation::{EmulationProvider, EmulationProviderFactory},
+    http::{Client, ClientBuilder, ClientUpdate},
+    request::{Request, RequestBuilder},
+    response::Response,
+    upgrade::Upgraded,
+};
 
 pub mod body;
 mod config;

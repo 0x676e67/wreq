@@ -5,7 +5,8 @@
 
 //! # wreq
 //!
-//! An ergonomic all-in-one HTTP client for browser emulation with TLS, JA3/JA4, and HTTP/2 fingerprints.
+//! An ergonomic all-in-one HTTP client for browser emulation with TLS, JA3/JA4, and HTTP/2
+//! fingerprints.
 //!
 //! - Plain bodies, [JSON](#json), [urlencoded](#forms), [multipart]
 //! - Cookies Store
@@ -50,13 +51,13 @@
 //! The `websocket` module provides a way to upgrade a connection to a websocket.
 //!
 //! ```rust,no_run
-//!use futures_util::{SinkExt, StreamExt, TryStreamExt};
-//!use http::header;
-//!use wreq::{Client, Message};
-//!use std::time::Duration;
+//! use futures_util::{SinkExt, StreamExt, TryStreamExt};
+//! use http::header;
+//! use wreq::{Client, Message};
+//! use std::time::Duration;
 //!
-//!#[tokio::main]
-//!async fn main() -> Result<(), wreq::Error> {
+//! #[tokio::main]
+//! async fn main() -> Result<(), wreq::Error> {
 //!    // Build a client
 //!    let client = Client::builder()
 //!        .cert_verification(false)
@@ -89,7 +90,7 @@
 //!    }
 //!
 //!    Ok(())
-//!}
+//! }
 //! ```
 //!
 //! ## Making a GET request
@@ -227,17 +228,18 @@
 //!
 //! By default, clients will utilize BoringSSL transport layer security to connect to HTTPS targets.
 //!
-//! - Various parts of TLS can also be configured or even disabled on the
-//!   `ClientBuilder`.
+//! - Various parts of TLS can also be configured or even disabled on the `ClientBuilder`.
 //!
 //! ## Certificate Store
 //!
 //! By default, wreq uses Mozilla's root certificates through the webpki-roots crate.
-//! This static root certificate bundle is not automatically updated and ignores any root certificates installed on the host.
-//! You can disable default-features to use the system's default certificate path.
-//! Additionally, wreq provides a certificate store for users to customize and update certificates.
+//! This static root certificate bundle is not automatically updated and ignores any root
+//! certificates installed on the host. You can disable default-features to use the system's default
+//! certificate path. Additionally, wreq provides a certificate store for users to customize and
+//! update certificates.
 //!
-//! Custom Certificate Store verification supports Root CA certificates, peer certificates, and self-signed certificate SSL pinning.
+//! Custom Certificate Store verification supports Root CA certificates, peer certificates, and
+//! self-signed certificate SSL pinning.
 //!
 //! ## Optional Features
 //!
@@ -247,9 +249,12 @@
 //! - **full**: Enables all optional features.
 //! - **websocket**: Provides websocket support.
 //! - **cookies**: Provides cookie session support.
-//! - **cookies-preserve-order**: uses [indexmap::IndexMap](https://docs.rs/indexmap/latest/indexmap/map/struct.IndexMap.html) in lieu of [HashMap](https://doc.rust-lang.org/std/collections/struct.HashMap.html)  internally, so cookies are maintained in insertion/creation order.
+//! - **cookies-preserve-order**: uses [indexmap::IndexMap](https://docs.rs/indexmap/latest/indexmap/map/struct.IndexMap.html)
+//!   in lieu of [HashMap](https://doc.rust-lang.org/std/collections/struct.HashMap.html)
+//!   internally, so cookies are maintained in insertion/creation order.
 //! - **cookies-abstract**: Provides abstract cookie session support.
-//! - **cookies-multiple**: By default, all cookies are squeezed and sent. Enabling this feature will send multiple cookie headers.
+//! - **cookies-multiple**: By default, all cookies are squeezed and sent. Enabling this feature
+//!   will send multiple cookie headers.
 //! - **gzip**: Provides response body gzip decompression.
 //! - **brotli**: Provides response body brotli decompression.
 //! - **zstd**: Provides response body zstd decompression.
@@ -258,8 +263,8 @@
 //! - **multipart**: Provides functionality for multipart forms.
 //! - **stream**: Adds support for `futures::Stream`.
 //! - **socks**: Provides SOCKS5 proxy support.
-//! - **hickory-dns**: Enables a hickory-dns async resolver instead of default
-//!   threadpool using `getaddrinfo`.
+//! - **hickory-dns**: Enables a hickory-dns async resolver instead of default threadpool using
+//!   `getaddrinfo`.
 //! - **native-roots**: Use the native system root certificate store.
 //! - **webpki-roots**: Use the webpki-roots crate for root certificates.
 //! - **apple-network-device-binding**: Use the Apple Network Device Binding
@@ -278,9 +283,7 @@
 
 #[cfg(feature = "hickory-dns")]
 pub use hickory_resolver;
-pub use http::Method;
-pub use http::header;
-pub use http::{StatusCode, Version};
+pub use http::{Method, StatusCode, Version, header};
 pub use url::Url;
 
 // universal mods
@@ -289,9 +292,11 @@ mod error;
 mod into_url;
 mod response;
 
-pub use self::error::{Error, Result};
-pub use self::into_url::IntoUrl;
-pub use self::response::ResponseBuilderExt;
+pub use self::{
+    error::{Error, Result},
+    into_url::IntoUrl,
+    response::ResponseBuilderExt,
+};
 
 fn _assert_impls() {
     fn assert_send<T: Send>() {}
@@ -320,6 +325,9 @@ fn _assert_impls() {
 #[cfg(test)]
 doc_comment::doctest!("../README.md");
 
+pub use boring2::ssl::{CertCompressionAlgorithm, ExtensionType, SslCurve};
+pub use hyper2::{Priority, PseudoOrder, SettingsOrder, StreamDependency, StreamId};
+
 #[cfg(feature = "multipart")]
 pub use self::client::multipart;
 #[cfg(feature = "websocket")]
@@ -329,17 +337,18 @@ pub use self::client::websocket::{
     CloseCode, CloseFrame, Message, Utf8Bytes, WebSocket, WebSocketRequestBuilder,
     WebSocketResponse,
 };
-pub use self::client::{
-    Body, Client, ClientBuilder, ClientUpdate, EmulationProvider, EmulationProviderFactory,
-    Http1Config, Http2Config, Request, RequestBuilder, Response, Upgraded,
+pub use self::{
+    client::{
+        Body, Client, ClientBuilder, ClientUpdate, EmulationProvider, EmulationProviderFactory,
+        Http1Config, Http2Config, Request, RequestBuilder, Response, Upgraded,
+    },
+    proxy::{NoProxy, Proxy},
+    tls::{
+        AlpnProtos, AlpsProtos, CertStore, CertStoreBuilder, Identity, TlsConfig, TlsInfo,
+        TlsVersion,
+    },
+    util::client::{Dst, Http1Builder, Http2Builder},
 };
-pub use self::proxy::{NoProxy, Proxy};
-pub use self::tls::{
-    AlpnProtos, AlpsProtos, CertStore, CertStoreBuilder, Identity, TlsConfig, TlsInfo, TlsVersion,
-};
-pub use self::util::client::{Dst, Http1Builder, Http2Builder};
-pub use boring2::ssl::{CertCompressionAlgorithm, ExtensionType, SslCurve};
-pub use hyper2::{Priority, PseudoOrder, SettingsOrder, StreamDependency, StreamId};
 
 mod client;
 mod connect;

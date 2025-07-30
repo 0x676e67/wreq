@@ -1,48 +1,15 @@
-use std::borrow::Cow;
-use std::future::Future;
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
-use std::num::NonZeroUsize;
-use std::pin::Pin;
-
-use std::sync::Arc;
-use std::task::{Context, Poll};
-use std::time::Duration;
-use std::{collections::HashMap, convert::TryInto, net::SocketAddr};
-
-use crate::connect::{
-    BoxedConnectorLayer, BoxedConnectorService, Connector, ConnectorBuilder,
-    sealed::{Conn, Unnameable},
+use std::{
+    borrow::Cow,
+    collections::HashMap,
+    convert::TryInto,
+    future::Future,
+    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
+    num::NonZeroUsize,
+    pin::Pin,
+    sync::Arc,
+    task::{Context, Poll},
+    time::Duration,
 };
-#[cfg(any(feature = "cookies", feature = "cookies-abstract"))]
-use crate::cookie;
-#[cfg(feature = "hickory-dns")]
-use crate::dns::hickory::{HickoryDnsResolver, LookupIpStrategy};
-use crate::dns::{DnsResolverWithOverrides, DynResolver, Resolve, gai::GaiResolver};
-use crate::error::{BoxError, Error};
-use crate::into_url::try_uri;
-use crate::proxy::IntoProxy;
-use crate::tls::{CertificateInput, IntoCertStore};
-use crate::util::{
-    self,
-    client::{
-        Builder, Client as HyperClient, Http1Builder, Http2Builder, InnerRequest, NetworkScheme,
-        NetworkSchemeBuilder, connect::HttpConnector,
-    },
-    rt::{TokioExecutor, tokio::TokioTimer},
-};
-use crate::{CertStore, Http1Config, Http2Config, TlsConfig, error};
-use crate::{IntoUrl, Method, Proxy, StatusCode, Url};
-use crate::{
-    redirect,
-    tls::{AlpnProtos, TlsConnector, TlsVersion},
-};
-
-use super::decoder::Accepts;
-use super::request::{Request, RequestBuilder};
-use super::response::Response;
-#[cfg(feature = "websocket")]
-use super::websocket::WebSocketRequestBuilder;
-use super::{Body, EmulationProvider, EmulationProviderFactory};
 
 use arc_swap::{ArcSwap, Guard};
 use bytes::Bytes;
@@ -56,10 +23,43 @@ use http::{
 };
 use log::{debug, trace};
 use pin_project_lite::pin_project;
-
 use tokio::time::Sleep;
-use tower::util::BoxCloneSyncServiceLayer;
-use tower::{Layer, Service};
+use tower::{Layer, Service, util::BoxCloneSyncServiceLayer};
+
+#[cfg(feature = "websocket")]
+use super::websocket::WebSocketRequestBuilder;
+use super::{
+    Body, EmulationProvider, EmulationProviderFactory,
+    decoder::Accepts,
+    request::{Request, RequestBuilder},
+    response::Response,
+};
+#[cfg(any(feature = "cookies", feature = "cookies-abstract"))]
+use crate::cookie;
+#[cfg(feature = "hickory-dns")]
+use crate::dns::hickory::{HickoryDnsResolver, LookupIpStrategy};
+use crate::{
+    CertStore, Http1Config, Http2Config, IntoUrl, Method, Proxy, StatusCode, TlsConfig, Url,
+    connect::{
+        BoxedConnectorLayer, BoxedConnectorService, Connector, ConnectorBuilder,
+        sealed::{Conn, Unnameable},
+    },
+    dns::{DnsResolverWithOverrides, DynResolver, Resolve, gai::GaiResolver},
+    error,
+    error::{BoxError, Error},
+    into_url::try_uri,
+    proxy::IntoProxy,
+    redirect,
+    tls::{AlpnProtos, CertificateInput, IntoCertStore, TlsConnector, TlsVersion},
+    util::{
+        self,
+        client::{
+            Builder, Client as HyperClient, Http1Builder, Http2Builder, InnerRequest,
+            NetworkScheme, NetworkSchemeBuilder, connect::HttpConnector,
+        },
+        rt::{TokioExecutor, tokio::TokioTimer},
+    },
+};
 
 macro_rules! impl_debug {
     ($type:ty, { $($field_name:ident),* }) => {
@@ -112,6 +112,10 @@ struct Config {
     pool_max_idle_per_host: usize,
     pool_max_size: Option<NonZeroUsize>,
     tcp_keepalive: Option<Duration>,
+    tcp_keepalive_interval: Option<Duration>,
+    tcp_keepalive_retries: Option<u32>,
+    #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
+    tcp_user_timeout: Option<Duration>,
     proxies: Vec<Proxy>,
     auto_sys_proxy: bool,
     redirect_policy: redirect::Policy,
@@ -202,9 +206,11 @@ impl ClientBuilder {
                 pool_idle_timeout: Some(Duration::from_secs(90)),
                 pool_max_idle_per_host: usize::MAX,
                 pool_max_size: None,
-                // TODO: Re-enable default duration once hyper's HttpConnector is fixed
-                // to no longer error when an option fails.
-                tcp_keepalive: None,
+                tcp_keepalive: Some(Duration::from_secs(15)),
+                tcp_keepalive_interval: Some(Duration::from_secs(15)),
+                tcp_keepalive_retries: Some(3),
+                #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
+                tcp_user_timeout: Some(Duration::from_secs(30)),
                 proxies: Vec::new(),
                 auto_sys_proxy: true,
                 redirect_policy: redirect::Policy::none(),
@@ -284,6 +290,10 @@ impl ClientBuilder {
 
             let mut http = HttpConnector::new_with_resolver(DynResolver::new(resolver));
             http.set_connect_timeout(config.connect_timeout);
+            http.set_keepalive_interval(config.tcp_keepalive_interval);
+            http.set_keepalive_retries(config.tcp_keepalive_retries);
+            #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
+            http.set_tcp_user_timeout(tcp_user_timeout);
 
             let tls = {
                 let mut tls_config = config.tls_config.unwrap_or_default();
@@ -500,12 +510,12 @@ impl ClientBuilder {
     ///
     /// If auto gzip decompression is turned on:
     ///
-    /// - When sending a request and if the request's headers do not already contain
-    ///   an `Accept-Encoding` **and** `Range` values, the `Accept-Encoding` header is set to `gzip`.
+    /// - When sending a request and if the request's headers do not already contain an
+    ///   `Accept-Encoding` **and** `Range` values, the `Accept-Encoding` header is set to `gzip`.
     ///   The request body is **not** automatically compressed.
-    /// - When receiving a response, if its headers contain a `Content-Encoding` value of
-    ///   `gzip`, both `Content-Encoding` and `Content-Length` are removed from the
-    ///   headers' set. The response body is automatically decompressed.
+    /// - When receiving a response, if its headers contain a `Content-Encoding` value of `gzip`,
+    ///   both `Content-Encoding` and `Content-Length` are removed from the headers' set. The
+    ///   response body is automatically decompressed.
     ///
     /// If the `gzip` feature is turned on, the default option is enabled.
     ///
@@ -523,12 +533,12 @@ impl ClientBuilder {
     ///
     /// If auto brotli decompression is turned on:
     ///
-    /// - When sending a request and if the request's headers do not already contain
-    ///   an `Accept-Encoding` **and** `Range` values, the `Accept-Encoding` header is set to `br`.
-    ///   The request body is **not** automatically compressed.
-    /// - When receiving a response, if its headers contain a `Content-Encoding` value of
-    ///   `br`, both `Content-Encoding` and `Content-Length` are removed from the
-    ///   headers' set. The response body is automatically decompressed.
+    /// - When sending a request and if the request's headers do not already contain an
+    ///   `Accept-Encoding` **and** `Range` values, the `Accept-Encoding` header is set to `br`. The
+    ///   request body is **not** automatically compressed.
+    /// - When receiving a response, if its headers contain a `Content-Encoding` value of `br`, both
+    ///   `Content-Encoding` and `Content-Length` are removed from the headers' set. The response
+    ///   body is automatically decompressed.
     ///
     /// If the `brotli` feature is turned on, the default option is enabled.
     ///
@@ -546,12 +556,12 @@ impl ClientBuilder {
     ///
     /// If auto zstd decompression is turned on:
     ///
-    /// - When sending a request and if the request's headers do not already contain
-    ///   an `Accept-Encoding` **and** `Range` values, the `Accept-Encoding` header is set to `zstd`.
+    /// - When sending a request and if the request's headers do not already contain an
+    ///   `Accept-Encoding` **and** `Range` values, the `Accept-Encoding` header is set to `zstd`.
     ///   The request body is **not** automatically compressed.
-    /// - When receiving a response, if its headers contain a `Content-Encoding` value of
-    ///   `zstd`, both `Content-Encoding` and `Content-Length` are removed from the
-    ///   headers' set. The response body is automatically decompressed.
+    /// - When receiving a response, if its headers contain a `Content-Encoding` value of `zstd`,
+    ///   both `Content-Encoding` and `Content-Length` are removed from the headers' set. The
+    ///   response body is automatically decompressed.
     ///
     /// If the `zstd` feature is turned on, the default option is enabled.
     ///
@@ -569,11 +579,11 @@ impl ClientBuilder {
     ///
     /// If auto deflate decompression is turned on:
     ///
-    /// - When sending a request and if the request's headers do not already contain
-    ///   an `Accept-Encoding` **and** `Range` values, the `Accept-Encoding` header is set to `deflate`.
-    ///   The request body is **not** automatically compressed.
-    /// - When receiving a response, if it's headers contain a `Content-Encoding` value that
-    ///   equals to `deflate`, both values `Content-Encoding` and `Content-Length` are removed from the
+    /// - When sending a request and if the request's headers do not already contain an
+    ///   `Accept-Encoding` **and** `Range` values, the `Accept-Encoding` header is set to
+    ///   `deflate`. The request body is **not** automatically compressed.
+    /// - When receiving a response, if it's headers contain a `Content-Encoding` value that equals
+    ///   to `deflate`, both values `Content-Encoding` and `Content-Length` are removed from the
     ///   headers' set. The response body is automatically decompressed.
     ///
     /// If the `deflate` feature is turned on, the default option is enabled.
@@ -955,11 +965,58 @@ impl ClientBuilder {
     /// Set that all sockets have `SO_KEEPALIVE` set with the supplied duration.
     ///
     /// If `None`, the option will not be set.
+    ///
+    /// Default is 15 seconds.
+    #[inline]
     pub fn tcp_keepalive<D>(mut self, val: D) -> ClientBuilder
     where
         D: Into<Option<Duration>>,
     {
         self.config.tcp_keepalive = val.into();
+        self
+    }
+
+    /// Set that all sockets have `SO_KEEPALIVE` set with the supplied interval.
+    ///
+    /// If `None`, the option will not be set.
+    ///
+    /// Default is 15 seconds.
+    #[inline]
+    pub fn tcp_keepalive_interval<D>(mut self, val: D) -> ClientBuilder
+    where
+        D: Into<Option<Duration>>,
+    {
+        self.config.tcp_keepalive_interval = val.into();
+        self
+    }
+
+    /// Set that all sockets have `SO_KEEPALIVE` set with the supplied retry count.
+    ///
+    /// If `None`, the option will not be set.
+    ///
+    /// Default is 3 retries.
+    #[inline]
+    pub fn tcp_keepalive_retries<C>(mut self, retries: C) -> ClientBuilder
+    where
+        C: Into<Option<u32>>,
+    {
+        self.config.tcp_keepalive_retries = retries.into();
+        self
+    }
+
+    /// Set that all sockets have `TCP_USER_TIMEOUT` set with the supplied duration.
+    ///
+    /// This option controls how long transmitted data may remain unacknowledged before
+    /// the connection is force-closed.
+    ///
+    /// Default is 30 seconds.
+    #[inline]
+    #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
+    pub fn tcp_user_timeout<D>(mut self, val: D) -> ClientBuilder
+    where
+        D: Into<Option<Duration>>,
+    {
+        self.config.tcp_user_timeout = val.into();
         self
     }
 
@@ -969,7 +1026,8 @@ impl ClientBuilder {
     ///
     /// This method sets the necessary headers, HTTP/1 and HTTP/2 configurations, and TLS config
     /// to use the specified HTTP context. It allows the client to mimic the behavior of different
-    /// versions or setups, which can be useful for testing or ensuring compatibility with various environments.
+    /// versions or setups, which can be useful for testing or ensuring compatibility with various
+    /// environments.
     ///
     /// # Note
     /// This will overwrite the existing configuration.
@@ -1023,13 +1081,14 @@ impl ClientBuilder {
     ///
     /// This method allows you to specify a set of PEM-encoded certificates that the client
     /// will pin to, ensuring that only these certificates are trusted during SSL/TLS connections.
-    /// This provides an additional layer of security by preventing man-in-the-middle (MITM) attacks,
-    /// even if a malicious certificate is issued by a trusted Certificate Authority (CA).
+    /// This provides an additional layer of security by preventing man-in-the-middle (MITM)
+    /// attacks, even if a malicious certificate is issued by a trusted Certificate Authority
+    /// (CA).
     ///
     /// # Parameters
     ///
-    /// - `certs`: An iterator of PEM-encoded certificates. Each certificate should be provided
-    ///   as a byte slice (`&[u8]`).
+    /// - `certs`: An iterator of PEM-encoded certificates. Each certificate should be provided as a
+    ///   byte slice (`&[u8]`).
     ///
     /// # How It Works
     ///
@@ -1037,13 +1096,15 @@ impl ClientBuilder {
     /// the system's default root certificate store. This is particularly useful in scenarios
     /// where:
     /// - You want to trust a specific self-signed certificate.
-    /// - You want to restrict trust to a specific server's certificate, even if it is signed
-    ///   by a public CA.
+    /// - You want to restrict trust to a specific server's certificate, even if it is signed by a
+    ///   public CA.
     ///
     /// The certificates provided to this method can be:
     /// - **Self-signed certificates**: Useful for internal systems or development environments.
-    /// - **Server certificates**: The exact certificate presented by the server during the TLS handshake.
-    /// - **Intermediate certificates**: Certificates in the chain between the server and the root CA.
+    /// - **Server certificates**: The exact certificate presented by the server during the TLS
+    ///   handshake.
+    /// - **Intermediate certificates**: Certificates in the chain between the server and the root
+    ///   CA.
     ///
     /// # Example
     ///
@@ -1065,8 +1126,8 @@ impl ClientBuilder {
     ///   will fail.
     /// - Ensure that the provided certificates are up-to-date. If the server's certificate changes
     ///   (e.g., due to expiration), you will need to update the pinned certificates in your client.
-    /// - This method does not support public key pinning. If you need to pin to a public key instead
-    ///   of a certificate, you will need to implement custom logic.
+    /// - This method does not support public key pinning. If you need to pin to a public key
+    ///   instead of a certificate, you will need to implement custom logic.
     ///
     /// # Errors
     ///
@@ -1109,13 +1170,13 @@ impl ClientBuilder {
     ///
     /// # Parameters
     ///
-    /// - `store`: The verify certificate store to use. This can be a custom implementation
-    ///   of the `IntoCertStore` trait or one of the predefined options.
+    /// - `store`: The verify certificate store to use. This can be a custom implementation of the
+    ///   `IntoCertStore` trait or one of the predefined options.
     ///
     /// # Notes
     ///
-    /// - Using a custom verify certificate store can be useful in scenarios where you need
-    ///   to trust specific certificates that are not included in the system's default store.
+    /// - Using a custom verify certificate store can be useful in scenarios where you need to trust
+    ///   specific certificates that are not included in the system's default store.
     /// - Ensure that the provided verify certificate store is properly configured to avoid
     ///   potential security risks.
     pub fn cert_store<S>(mut self, store: S) -> ClientBuilder
@@ -1184,7 +1245,8 @@ impl ClientBuilder {
 
     // DNS options
 
-    /// Enables the `hickory-dns` asynchronous resolver instead of the default threadpool-based `getaddrinfo`.
+    /// Enables the `hickory-dns` asynchronous resolver instead of the default threadpool-based
+    /// `getaddrinfo`.
     ///
     /// By default, if the `hickory-dns` feature is enabled, this option is used.
     ///
@@ -1268,7 +1330,6 @@ impl ClientBuilder {
     ///                      .build()
     ///                      .unwrap();
     /// ```
-    ///
     pub fn connector_layer<L>(mut self, layer: L) -> ClientBuilder
     where
         L: Layer<BoxedConnectorService> + Clone + Send + Sync + 'static,
@@ -1307,7 +1368,8 @@ impl Client {
 
     /// Create a `ClientBuilder` specifically configured for WebSocket connections.
     ///
-    /// This method configures the `ClientBuilder` to use HTTP/1.0 only, which is required for certain WebSocket connections.
+    /// This method configures the `ClientBuilder` to use HTTP/1.0 only, which is required for
+    /// certain WebSocket connections.
     pub fn builder() -> ClientBuilder {
         ClientBuilder::new()
     }
@@ -1534,7 +1596,8 @@ impl Client {
     ///
     /// # Returns
     ///
-    /// An `Option<HeaderValue>` containing the `User-Agent` header value if it is set, or `None` if it is not.
+    /// An `Option<HeaderValue>` containing the `User-Agent` header value if it is set, or `None` if
+    /// it is not.
     #[inline]
     pub fn user_agent(&self) -> Option<HeaderValue> {
         self.inner.load().headers.get(USER_AGENT).cloned()
@@ -1939,7 +2002,8 @@ impl<'c> ClientUpdate<'c> {
     ///
     /// This method sets the necessary headers, HTTP/1 and HTTP/2 configurations, and TLS config
     /// to use the specified HTTP context. It allows the client to mimic the behavior of different
-    /// versions or setups, which can be useful for testing or ensuring compatibility with various environments.
+    /// versions or setups, which can be useful for testing or ensuring compatibility with various
+    /// environments.
     ///
     /// The configuration set by this method will have the highest priority, overriding any other
     /// config that may have been previously set.

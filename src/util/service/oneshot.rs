@@ -1,7 +1,10 @@
+use std::{
+    future::Future,
+    pin::Pin,
+    task::{Context, Poll, ready},
+};
+
 use pin_project_lite::pin_project;
-use std::future::Future;
-use std::pin::Pin;
-use std::task::{Context, Poll, ready};
 use tower_service::Service;
 
 // Vendored from tower::util to reduce dependencies, the code is small enough.

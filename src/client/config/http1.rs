@@ -81,7 +81,8 @@ pub struct Http1Config {
     ///
     /// # Panics
     ///
-    /// The minimum value allowed is 8192. This method panics if the passed `max` is less than the minimum.
+    /// The minimum value allowed is 8192. This method panics if the passed `max` is less than the
+    /// minimum.
     #[builder(default = 4096 * 100)]
     pub max_buf_size: usize,
 

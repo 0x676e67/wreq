@@ -1,11 +1,9 @@
 use http::{HeaderMap, HeaderName, HeaderValue, header};
 use wreq::{
-    AlpnProtos, AlpsProtos, CertCompressionAlgorithm, ExtensionType, Http1Builder, Http1Config,
-    Http2Builder, SslCurve, TlsConfig, TlsVersion,
+    AlpnProtos, AlpsProtos, CertCompressionAlgorithm, Client, EmulationProvider, ExtensionType,
+    Http1Builder, Http1Config, Http2Builder, Http2Config, Priority, PseudoOrder::*,
+    SettingsOrder::*, SslCurve, StreamDependency, StreamId, TlsConfig, TlsVersion,
 };
-use wreq::{Client, EmulationProvider};
-use wreq::{Http2Config, PseudoOrder::*, SettingsOrder::*};
-use wreq::{Priority, StreamDependency, StreamId};
 
 // ============== TLS Extension Algorithms ==============
 

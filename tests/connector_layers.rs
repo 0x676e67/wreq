@@ -4,11 +4,8 @@ mod support;
 use std::time::Duration;
 
 use futures_util::future::join_all;
-use tower::layer::util::Identity;
-use tower::limit::ConcurrencyLimitLayer;
-use tower::timeout::TimeoutLayer;
-
 use support::{delay_layer::DelayLayer, server};
+use tower::{layer::util::Identity, limit::ConcurrencyLimitLayer, timeout::TimeoutLayer};
 
 #[cfg(not(target_arch = "wasm32"))]
 #[tokio::test]

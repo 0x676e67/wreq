@@ -1,6 +1,7 @@
 //! HTTP/2 config.
-use hyper2::{Priority, PseudoOrder, SettingsOrder, StreamDependency, StreamId};
 use std::borrow::Cow;
+
+use hyper2::{Priority, PseudoOrder, SettingsOrder, StreamDependency, StreamId};
 use typed_builder::TypedBuilder;
 
 /// Configuration config for an HTTP/2 connection.
@@ -18,7 +19,8 @@ pub struct Http2Config {
     // ============== Window Update Frame Settings ==============
     /// The initial connection-level window size.
     ///
-    /// - **Purpose:** Controls the maximum amount of data the connection can send without acknowledgment.
+    /// - **Purpose:** Controls the maximum amount of data the connection can send without
+    ///   acknowledgment.
     #[builder(default, setter(into))]
     pub initial_connection_window_size: Option<u32>,
 

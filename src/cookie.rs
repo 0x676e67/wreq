@@ -1,13 +1,12 @@
 //! HTTP Cookies
 
-use crate::header::{HeaderValue, SET_COOKIE};
+use std::{borrow::Cow, convert::TryInto, fmt, time::SystemTime};
+
 #[cfg(feature = "cookies")]
 use antidote::RwLock;
 pub use cookie_crate::{Cookie as RawCookie, Expiration, SameSite, time::Duration};
-use std::borrow::Cow;
-use std::convert::TryInto;
-use std::fmt;
-use std::time::SystemTime;
+
+use crate::header::{HeaderValue, SET_COOKIE};
 
 /// Actions for a persistent cookie store providing session support.
 pub trait CookieStore: Send + Sync {

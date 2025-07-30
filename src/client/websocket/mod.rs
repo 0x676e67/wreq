@@ -13,15 +13,15 @@ use std::{
     task::{Context, Poll, ready},
 };
 
-use crate::{Error, RequestBuilder, Response, error, proxy::IntoProxy};
 use futures_util::{Sink, SinkExt, Stream, StreamExt};
 use http::{HeaderMap, HeaderName, HeaderValue, Method, StatusCode, Version, header, uri::Scheme};
 use hyper2::ext::Protocol;
+pub use message::{CloseCode, CloseFrame, Message, Utf8Bytes};
 use serde::Serialize;
 use tokio_tungstenite::tungstenite::{self, protocol};
 use tungstenite::protocol::WebSocketConfig;
 
-pub use message::{CloseCode, CloseFrame, Message, Utf8Bytes};
+use crate::{Error, RequestBuilder, Response, error, proxy::IntoProxy};
 
 /// A WebSocket stream.
 pub type WebSocketStream = tokio_tungstenite::WebSocketStream<crate::Upgraded>;
@@ -74,7 +74,8 @@ impl WebSocketRequestBuilder {
     ///
     /// # Arguments
     ///
-    /// * `protocols` - A list of subprotocols, which can be converted into a `Cow<'static, [String]>`.
+    /// * `protocols` - A list of subprotocols, which can be converted into a `Cow<'static,
+    ///   [String]>`.
     ///
     /// # Returns
     ///
@@ -136,7 +137,8 @@ impl WebSocketRequestBuilder {
     /// Configures the WebSocket connection to use HTTP/2.
     ///
     /// This method sets the HTTP version to HTTP/2 for the WebSocket connection.
-    /// If the server does not support HTTP/2 WebSocket connections, the connection attempt will fail.
+    /// If the server does not support HTTP/2 WebSocket connections, the connection attempt will
+    /// fail.
     ///
     /// # Returns
     ///

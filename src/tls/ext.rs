@@ -1,6 +1,5 @@
-#[cfg(any(feature = "webpki-roots", feature = "native-roots"))]
-use super::x509::LOAD_CERTS;
-use super::{AlpnProtos, AlpsProtos, CertStore, TlsVersion};
+use std::borrow::Cow;
+
 use boring2::{
     error::ErrorStack,
     ssl::{
@@ -8,7 +7,10 @@ use boring2::{
         SslVerifyMode,
     },
 };
-use std::borrow::Cow;
+
+#[cfg(any(feature = "webpki-roots", feature = "native-roots"))]
+use super::x509::LOAD_CERTS;
+use super::{AlpnProtos, AlpsProtos, CertStore, TlsVersion};
 
 /// SslConnectorBuilderExt trait for `SslConnectorBuilder`.
 pub trait SslConnectorBuilderExt {
@@ -128,7 +130,8 @@ impl SslConnectorBuilderExt for SslConnectorBuilder {
                 }
             };
         } else {
-            // WebPKI root certificates are enabled (regardless of whether native-roots is also enabled).
+            // WebPKI root certificates are enabled (regardless of whether native-roots is also
+            // enabled).
             #[cfg(any(feature = "webpki-roots", feature = "native-roots"))]
             {
                 if let Some(store) = LOAD_CERTS.as_ref() {

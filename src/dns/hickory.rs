@@ -1,12 +1,14 @@
 //! DNS resolution via the [hickory-resolver](https://github.com/hickory-dns/hickory-dns) crate
 
-use super::{Addrs, Name, Resolve, Resolving};
+use std::{net::SocketAddr, sync::Arc};
+
 pub use hickory_resolver::config::LookupIpStrategy;
-use hickory_resolver::config::ResolverConfig;
-use hickory_resolver::name_server::TokioConnectionProvider;
-use hickory_resolver::{TokioResolver, lookup_ip::LookupIpIntoIter};
-use std::net::SocketAddr;
-use std::sync::Arc;
+use hickory_resolver::{
+    TokioResolver, config::ResolverConfig, lookup_ip::LookupIpIntoIter,
+    name_server::TokioConnectionProvider,
+};
+
+use super::{Addrs, Name, Resolve, Resolving};
 
 /// Wrapper around an `AsyncResolver`, which implements the `Resolve` trait.
 #[derive(Debug, Clone)]

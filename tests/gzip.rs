@@ -1,7 +1,7 @@
 mod support;
-use support::server;
-
 use std::io::Write;
+
+use support::server;
 use tokio::io::AsyncWriteExt;
 
 #[tokio::test]

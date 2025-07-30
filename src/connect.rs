@@ -1,27 +1,39 @@
-use self::tls_conn::BoringTlsConn;
-use crate::tls::{HttpsConnector, MaybeHttpsStream, TlsConnector};
-use crate::util::client::Dst;
-use crate::util::client::connect::{Connected, Connection};
-use crate::util::rt::TokioIo;
-use crate::util::{self, into_uri};
+use std::{
+    future::Future,
+    io::{self, IoSlice},
+    pin::Pin,
+    task::{Context, Poll},
+    time::Duration,
+};
+
 use http::uri::Scheme;
 use hyper2::rt::{Read, ReadBufCursor, Write};
 use pin_project_lite::pin_project;
 use sealed::{Conn, Unnameable};
 use tokio_boring2::SslStream;
-use tower::util::{BoxCloneSyncServiceLayer, MapRequestLayer};
-use tower::{ServiceBuilder, timeout::TimeoutLayer, util::BoxCloneSyncService};
+use tower::{
+    ServiceBuilder,
+    timeout::TimeoutLayer,
+    util::{BoxCloneSyncService, BoxCloneSyncServiceLayer, MapRequestLayer},
+};
 use tower_service::Service;
 
-use std::future::Future;
-use std::io::{self, IoSlice};
-use std::pin::Pin;
-use std::task::{Context, Poll};
-use std::time::Duration;
-
-use crate::dns::DynResolver;
-use crate::error::{BoxError, cast_to_internal_error};
-use crate::proxy::ProxyScheme;
+use self::tls_conn::BoringTlsConn;
+use crate::{
+    dns::DynResolver,
+    error::{BoxError, cast_to_internal_error},
+    proxy::ProxyScheme,
+    tls::{HttpsConnector, MaybeHttpsStream, TlsConnector},
+    util::{
+        self,
+        client::{
+            Dst,
+            connect::{Connected, Connection},
+        },
+        into_uri,
+        rt::TokioIo,
+    },
+};
 
 pub(crate) type HttpConnector = util::client::connect::HttpConnector<DynResolver>;
 
@@ -57,7 +69,8 @@ impl ConnectorBuilder {
             Some(layers) => {
                 // otherwise we have user provided layers
                 // so we need type erasure all the way through
-                // as well as mapping the unnameable type of the layers back to Dst for the inner service
+                // as well as mapping the unnameable type of the layers back to Dst for the inner
+                // service
                 let service = layers.iter().fold(
                     BoxCloneSyncService::new(
                         ServiceBuilder::new()
@@ -538,6 +551,20 @@ pub(crate) mod sealed {
 pub(crate) type Connecting = Pin<Box<dyn Future<Output = Result<Conn, BoxError>> + Send>>;
 
 mod tls_conn {
+    use std::{
+        io::{self, IoSlice},
+        pin::Pin,
+        task::{Context, Poll},
+    };
+
+    use hyper2::rt::{Read, ReadBufCursor, Write};
+    use pin_project_lite::pin_project;
+    use tokio::{
+        io::{AsyncRead, AsyncWrite},
+        net::TcpStream,
+    };
+    use tokio_boring2::SslStream;
+
     use super::TlsInfoFactory;
     use crate::{
         tls::MaybeHttpsStream,
@@ -546,18 +573,6 @@ mod tls_conn {
             rt::TokioIo,
         },
     };
-    use hyper2::rt::{Read, ReadBufCursor, Write};
-    use pin_project_lite::pin_project;
-    use std::{
-        io::{self, IoSlice},
-        pin::Pin,
-        task::{Context, Poll},
-    };
-    use tokio::{
-        io::{AsyncRead, AsyncWrite},
-        net::TcpStream,
-    };
-    use tokio_boring2::SslStream;
 
     pin_project! {
         pub(super) struct BoringTlsConn<T> {
@@ -649,12 +664,14 @@ mod tls_conn {
 }
 
 mod tunnel {
-    use super::BoxError;
-    use crate::util::rt::TokioIo;
+    use std::sync::Arc;
+
     use http::{HeaderMap, HeaderValue};
     use hyper2::rt::{Read, Write};
-    use std::sync::Arc;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    use super::BoxError;
+    use crate::util::rt::TokioIo;
 
     const USER_AGENT: HeaderValue = HeaderValue::from_static(concat!(
         env!("CARGO_PKG_NAME"),
@@ -823,13 +840,17 @@ mod socks {
 }
 
 mod verbose {
-    use crate::util::client::connect::{Connected, Connection};
+    use std::{
+        cmp::min,
+        fmt,
+        io::{self, IoSlice},
+        pin::Pin,
+        task::{Context, Poll},
+    };
+
     use hyper2::rt::{Read, ReadBufCursor, Write};
-    use std::cmp::min;
-    use std::fmt;
-    use std::io::{self, IoSlice};
-    use std::pin::Pin;
-    use std::task::{Context, Poll};
+
+    use crate::util::client::connect::{Connected, Connection};
 
     pub(super) const OFF: Wrapper = Wrapper(false);
 

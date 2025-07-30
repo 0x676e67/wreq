@@ -1,7 +1,7 @@
 mod support;
 use http::HeaderValue;
-use wreq::cookie::{self, Cookie, CookieStore, Jar};
 use support::server;
+use wreq::cookie::{self, Cookie, CookieStore, Jar};
 
 #[tokio::test]
 async fn cookie_response_accessor() {
@@ -85,10 +85,7 @@ async fn cookie_store_simple() {
             .unwrap()
     });
 
-    let client = wreq::Client::builder()
-        .cookie_store(true)
-        .build()
-        .unwrap();
+    let client = wreq::Client::builder().cookie_store(true).build().unwrap();
 
     let url = format!("http://{}/", server.addr());
     client.get(&url).send().await.unwrap();
@@ -118,10 +115,7 @@ async fn cookie_store_overwrite_existing() {
         }
     });
 
-    let client = wreq::Client::builder()
-        .cookie_store(true)
-        .build()
-        .unwrap();
+    let client = wreq::Client::builder().cookie_store(true).build().unwrap();
 
     let url = format!("http://{}/", server.addr());
     client.get(&url).send().await.unwrap();
@@ -143,10 +137,7 @@ async fn cookie_store_max_age() {
             .unwrap()
     });
 
-    let client = wreq::Client::builder()
-        .cookie_store(true)
-        .build()
-        .unwrap();
+    let client = wreq::Client::builder().cookie_store(true).build().unwrap();
     let url = format!("http://{}/", server.addr());
     client.get(&url).send().await.unwrap();
     client.get(&url).send().await.unwrap();
@@ -165,10 +156,7 @@ async fn cookie_store_expires() {
             .unwrap()
     });
 
-    let client = wreq::Client::builder()
-        .cookie_store(true)
-        .build()
-        .unwrap();
+    let client = wreq::Client::builder().cookie_store(true).build().unwrap();
 
     let url = format!("http://{}/", server.addr());
     client.get(&url).send().await.unwrap();
@@ -191,10 +179,7 @@ async fn cookie_store_path() {
         }
     });
 
-    let client = wreq::Client::builder()
-        .cookie_store(true)
-        .build()
-        .unwrap();
+    let client = wreq::Client::builder().cookie_store(true).build().unwrap();
 
     let url = format!("http://{}/", server.addr());
     client.get(&url).send().await.unwrap();
@@ -217,10 +202,7 @@ async fn cookie_setter() {
             .unwrap()
     });
 
-    let client = wreq::Client::builder()
-        .cookie_store(true)
-        .build()
-        .unwrap();
+    let client = wreq::Client::builder().cookie_store(true).build().unwrap();
 
     let url = format!("http://{}/", server.addr()).parse().unwrap();
 
@@ -243,10 +225,7 @@ async fn clear_cookies() {
             .unwrap()
     });
 
-    let client = wreq::Client::builder()
-        .cookie_store(true)
-        .build()
-        .unwrap();
+    let client = wreq::Client::builder().cookie_store(true).build().unwrap();
 
     let url = format!("http://{}/", server.addr()).parse().unwrap();
     client.get(&url).send().await.unwrap();
@@ -271,10 +250,7 @@ async fn set_cookie() {
             .unwrap()
     });
 
-    let client = wreq::Client::builder()
-        .cookie_store(true)
-        .build()
-        .unwrap();
+    let client = wreq::Client::builder().cookie_store(true).build().unwrap();
 
     let url = format!("http://{}/", server.addr()).parse().unwrap();
     client.get(&url).send().await.unwrap();
@@ -339,10 +315,7 @@ async fn remove_cookie() {
             .unwrap()
     });
 
-    let client = wreq::Client::builder()
-        .cookie_store(true)
-        .build()
-        .unwrap();
+    let client = wreq::Client::builder().cookie_store(true).build().unwrap();
 
     let url = format!("http://{}/", server.addr()).parse().unwrap();
     client.get(&url).send().await.unwrap();
@@ -396,10 +369,7 @@ async fn multiple_cookies() {
         http::Response::default()
     });
 
-    let client = wreq::Client::builder()
-        .cookie_store(true)
-        .build()
-        .unwrap();
+    let client = wreq::Client::builder().cookie_store(true).build().unwrap();
 
     let url = format!("http://{}/", server.addr()).parse().unwrap();
     client.set_cookies(

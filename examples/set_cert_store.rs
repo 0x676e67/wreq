@@ -1,6 +1,6 @@
-use wreq::Client;
-use wreq::{CertStore, Error};
 use std::sync::LazyLock;
+
+use wreq::{CertStore, Client, Error};
 
 #[tokio::main]
 async fn main() -> Result<(), wreq::Error> {

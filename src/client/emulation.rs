@@ -1,7 +1,9 @@
-use crate::{Http1Config, Http2Config, TlsConfig};
-use http::{HeaderMap, HeaderName};
 use std::borrow::Cow;
+
+use http::{HeaderMap, HeaderName};
 use typed_builder::TypedBuilder;
+
+use crate::{Http1Config, Http2Config, TlsConfig};
 
 /// Trait defining the interface for providing an `EmulationProvider`.
 ///

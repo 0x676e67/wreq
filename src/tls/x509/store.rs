@@ -1,7 +1,9 @@
 #![allow(missing_debug_implementations)]
-use super::{Certificate, CertificateInput, Identity};
-use boring2::x509::store::{X509Store, X509StoreBuilder};
 use std::{fmt::Debug, path::Path};
+
+use boring2::x509::store::{X509Store, X509StoreBuilder};
+
+use super::{Certificate, CertificateInput, Identity};
 
 /// A builder for constructing a `CertStore`.
 ///
@@ -252,7 +254,6 @@ impl CertStore {
     /// # Parameters
     ///
     /// - `identity`: An `Identity` object.
-    ///
     #[inline]
     pub fn from_identity(identity: Identity) -> CertStore {
         CertStore {

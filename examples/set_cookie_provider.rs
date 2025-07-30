@@ -1,6 +1,7 @@
+use std::sync::Arc;
+
 use http::HeaderValue;
 use wreq::cookie::Jar;
-use std::sync::Arc;
 
 #[tokio::main]
 async fn main() -> Result<(), wreq::Error> {

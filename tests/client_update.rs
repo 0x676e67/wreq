@@ -5,8 +5,8 @@ use std::time::Duration;
 
 use http::header::{AUTHORIZATION, CACHE_CONTROL, REFERER};
 use http_body_util::BodyExt;
-use wreq::{CertStore, EmulationProvider, TlsConfig, TlsInfo};
 use support::server;
+use wreq::{CertStore, EmulationProvider, TlsConfig, TlsInfo};
 
 #[tokio::test]
 async fn update_headers() {
@@ -70,8 +70,10 @@ async fn update_headers() {
 #[tokio::test]
 async fn test_headers_order_with_client_update() {
     use http::{HeaderName, HeaderValue};
-    use wreq::Client;
-    use wreq::header::{ACCEPT, CONTENT_TYPE, USER_AGENT};
+    use wreq::{
+        Client,
+        header::{ACCEPT, CONTENT_TYPE, USER_AGENT},
+    };
 
     let server = server::http(move |req| async move {
         assert_eq!(req.method(), "POST");

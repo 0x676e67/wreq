@@ -1,10 +1,13 @@
-use std::pin::Pin;
-use std::task::{self, Poll};
-use std::{fmt, io};
+use std::{
+    fmt, io,
+    pin::Pin,
+    task::{self, Poll},
+};
 
-use crate::util::rt::TokioIo;
 use futures_util::TryFutureExt;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
+
+use crate::util::rt::TokioIo;
 
 /// An upgraded HTTP connection.
 pub struct Upgraded {

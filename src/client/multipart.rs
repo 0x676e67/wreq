@@ -1,20 +1,16 @@
 //! multipart/form-data
-use std::borrow::Cow;
-use std::fmt;
-use std::pin::Pin;
-
 #[cfg(feature = "stream")]
 use std::io;
 #[cfg(feature = "stream")]
 use std::path::Path;
+use std::{borrow::Cow, fmt, pin::Pin};
 
 use bytes::Bytes;
+use futures_util::{Stream, StreamExt, future, stream};
 use mime_guess::Mime;
 use percent_encoding::{self, AsciiSet, NON_ALPHANUMERIC};
 #[cfg(feature = "stream")]
 use tokio::fs::File;
-
-use futures_util::{Stream, StreamExt, future, stream};
 
 use super::Body;
 use crate::header::HeaderMap;
@@ -599,10 +595,10 @@ fn gen_boundary() -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use futures_util::TryStreamExt;
-    use futures_util::{future, stream};
+    use futures_util::{TryStreamExt, future, stream};
     use tokio::{self, runtime};
+
+    use super::*;
 
     #[test]
     fn form_empty() {

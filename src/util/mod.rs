@@ -10,20 +10,21 @@ pub mod common;
 pub mod rt;
 pub mod service;
 
-use crate::header::{Entry, HeaderMap, HeaderValue, OccupiedEntry};
 use http::{
     Uri,
     uri::{Authority, PathAndQuery, Scheme},
 };
+
+use crate::header::{Entry, HeaderMap, HeaderValue, OccupiedEntry};
 
 pub fn basic_auth<U, P>(username: U, password: Option<P>) -> HeaderValue
 where
     U: std::fmt::Display,
     P: std::fmt::Display,
 {
-    use base64::prelude::BASE64_STANDARD;
-    use base64::write::EncoderWriter;
     use std::io::Write;
+
+    use base64::{prelude::BASE64_STANDARD, write::EncoderWriter};
 
     let mut buf = b"Basic ".to_vec();
     {
@@ -40,10 +41,12 @@ where
 
 // xor-shift
 pub(crate) fn fast_random() -> u64 {
-    use std::cell::Cell;
-    use std::collections::hash_map::RandomState;
-    use std::hash::{BuildHasher, Hasher};
-    use std::num::Wrapping;
+    use std::{
+        cell::Cell,
+        collections::hash_map::RandomState,
+        hash::{BuildHasher, Hasher},
+        num::Wrapping,
+    };
 
     thread_local! {
         static RNG: Cell<Wrapping<u64>> = Cell::new(Wrapping(seed()));

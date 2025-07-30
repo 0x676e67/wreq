@@ -1,13 +1,15 @@
 #![allow(missing_debug_implementations)]
 
-use super::NetworkScheme;
-use crate::error::BoxError;
+use std::{any::Any, marker::PhantomData};
+
 use http::{
     Error, HeaderMap, HeaderName, HeaderValue, Method, Request, Uri, Version,
     header::CONTENT_LENGTH, request::Builder,
 };
 use http_body::Body;
-use std::{any::Any, marker::PhantomData};
+
+use super::NetworkScheme;
+use crate::error::BoxError;
 
 /// Represents an HTTP request with additional metadata.
 ///
@@ -67,7 +69,8 @@ where
     ///
     /// # Returns
     ///
-    /// A tuple `(Request<B>, NetworkScheme, Option<Version>)` containing the components of the request.
+    /// A tuple `(Request<B>, NetworkScheme, Option<Version>)` containing the components of the
+    /// request.
     ///
     /// # Example
     ///
@@ -339,8 +342,9 @@ fn sort_headers(headers: &mut HeaderMap, headers_order: &[HeaderName]) {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use http::header::{HeaderMap, HeaderName, HeaderValue};
+
+    use super::*;
 
     #[test]
     fn test_sort_headers() {

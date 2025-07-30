@@ -1,7 +1,8 @@
+use std::time::Duration;
+
 use futures_util::{SinkExt, StreamExt, TryStreamExt};
 use http::header;
 use wreq::{Client, Message};
-use std::time::Duration;
 
 #[tokio::main]
 async fn main() -> Result<(), wreq::Error> {

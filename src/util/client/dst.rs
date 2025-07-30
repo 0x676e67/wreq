@@ -1,14 +1,18 @@
-use super::{Error, ErrorKind, NetworkScheme, PoolKey, set_scheme};
-use crate::proxy::ProxyScheme;
-use crate::{AlpnProtos, util::into_uri};
+use std::{
+    net::{Ipv4Addr, Ipv6Addr},
+    ops::Deref,
+};
+
 use http::{Uri, Version, uri::Scheme};
-use std::net::{Ipv4Addr, Ipv6Addr};
-use std::ops::Deref;
+
+use super::{Error, ErrorKind, NetworkScheme, PoolKey, set_scheme};
+use crate::{AlpnProtos, proxy::ProxyScheme, util::into_uri};
 
 /// Destination of the request.
 ///
-/// The `Dst` struct is used to store the destination of the request, including the HTTP version preference,
-/// network scheme, and the pool key. It provides methods to create and manipulate the destination.
+/// The `Dst` struct is used to store the destination of the request, including the HTTP version
+/// preference, network scheme, and the pool key. It provides methods to create and manipulate the
+/// destination.
 #[derive(Debug, Clone)]
 pub struct Dst(PoolKey);
 

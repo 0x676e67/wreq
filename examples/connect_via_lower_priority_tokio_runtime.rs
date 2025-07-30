@@ -1,7 +1,8 @@
 #![deny(warnings)]
 // This example demonstrates how to delegate the connect calls, which contain TLS handshakes,
 // to a secondary tokio runtime of lower OS thread priority using a custom tower layer.
-// This helps to ensure that long-running futures during handshake crypto operations don't block other I/O futures.
+// This helps to ensure that long-running futures during handshake crypto operations don't block
+// other I/O futures.
 //
 // This does introduce overhead of additional threads, channels, extra vtables, etc,
 // so it is best suited to services with large numbers of incoming connections or that
@@ -135,9 +136,10 @@ mod background_threadpool {
         }
     }
 
-    // This tower layer injects futures with a oneshot channel, and then sends them to the background runtime for processing.
-    // We don't use the Buffer service because that is intended to process sequentially on a single task, whereas we want to
-    // spawn a new task per call.
+    // This tower layer injects futures with a oneshot channel, and then sends them to the
+    // background runtime for processing. We don't use the Buffer service because that is
+    // intended to process sequentially on a single task, whereas we want to spawn a new task
+    // per call.
     #[derive(Copy, Clone)]
     pub struct BackgroundProcessorLayer {}
     impl BackgroundProcessorLayer {
@@ -158,7 +160,8 @@ mod background_threadpool {
         }
     }
 
-    // This tower service injects futures with a oneshot channel, and then sends them to the background runtime for processing.
+    // This tower service injects futures with a oneshot channel, and then sends them to the
+    // background runtime for processing.
     #[derive(Debug, Clone)]
     pub struct BackgroundProcessor<S> {
         inner: S,
