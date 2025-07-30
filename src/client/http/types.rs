@@ -98,6 +98,3 @@ pub type ClientRef = Either<GenericClientService, BoxedClientService>;
 
 /// Future for sending an HTTP request using a client service.
 pub type ResponseFuture = Oneshot<ClientRef, HttpRequest<Body>>;
-
-/// Future for sending a raw HTTP request and receiving a response.
-pub type CoreResponseFuture = crate::core::client::ResponseFuture;

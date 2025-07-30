@@ -1,45 +1,22 @@
 use std::{
     pin::Pin,
-    task::{Context, Poll},
+    task::{Context, Poll, ready},
 };
 
 use pin_project_lite::pin_project;
 use url::Url;
 
-use super::{
-    Response,
-    types::{CoreResponseFuture, ResponseFuture},
-};
+use super::{Response, types::ResponseFuture};
 use crate::{
     Error,
     client::{body, layer::redirect::RequestUri},
-    core::client::body::Incoming,
-    error::BoxError,
     into_url::IntoUrlSealed,
 };
 
-macro_rules! take_url {
-    ($url:ident) => {
-        match $url.take() {
-            Some(url) => url,
-            None => {
-                return Poll::Ready(Err(Error::builder("URL already taken in Pending::Request")))
-            }
-        }
-    };
-}
-
-macro_rules! take_err {
-    ($err:ident) => {
-        match $err.take() {
-            Some(err) => err,
-            None => Error::builder("Error already taken in Error"),
-        }
-    };
-}
-
 pin_project! {
-    /// [`Pending`] HTTP request future, representing either an in-flight request or an error state.
+    /// [`Pending`] is a future representing the state of an HTTP request, which may be either
+    /// an in-flight request (with its associated future and URL) or an error state.
+    /// Used to drive the HTTP request to completion or report an error.
     #[project = PendingProj]
     pub enum Pending {
         Request {
@@ -52,25 +29,9 @@ pin_project! {
     }
 }
 
-pin_project! {
-    /// [`CorePending`] wraps a low-level HTTP response future or an error state for
-    #[project = CorePendingProj]
-    pub enum CorePending {
-        Request {
-            #[pin]
-            fut: CoreResponseFuture,
-        },
-        Error {
-            error: Option<Error>,
-        },
-    }
-}
-
-// ======== Pending impl ========
-
 impl Pending {
     /// Creates a new [`Pending`] representing an in-flight HTTP request with the given URL and
-    #[inline(always)]
+    #[inline]
     pub(crate) fn request(fut: ResponseFuture, url: Url) -> Self {
         Pending::Request {
             fut: Box::pin(fut),
@@ -79,7 +40,7 @@ impl Pending {
     }
 
     /// Creates a new [`Pending`] with an error.
-    #[inline(always)]
+    #[inline]
     pub(crate) fn error(error: Error) -> Self {
         Pending::Error { error: Some(error) }
     }
@@ -89,60 +50,41 @@ impl Future for Pending {
     type Output = Result<Response, Error>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let (url, res) = match self.project() {
-            PendingProj::Request { url, fut } => (url, fut.as_mut().poll(cx)),
-            PendingProj::Error { error } => return Poll::Ready(Err(take_err!(error))),
+        let (mut url, res) = match self.project() {
+            PendingProj::Request { url, fut } => {
+                let url = url
+                    .take()
+                    .expect("Pending::Request polled after completion");
+                (url, fut.as_mut().poll(cx))
+            }
+            PendingProj::Error { error } => {
+                let err = error
+                    .take()
+                    .expect("Pending::Error polled after completion");
+                return Poll::Ready(Err(err));
+            }
         };
 
-        match res {
-            Poll::Ready(Ok(res)) => {
+        let res = match ready!(res) {
+            Ok(res) => {
                 if let Some(uri) = res.extensions().get::<RequestUri>() {
-                    *url = Some(IntoUrlSealed::into_url(uri.0.to_string())?);
+                    let mut redirect_url = IntoUrlSealed::into_url(uri.0.to_string())?;
+                    std::mem::swap(&mut url, &mut redirect_url);
                 }
-
-                let resp = Response::new(res.map(body::boxed), take_url!(url));
-                Poll::Ready(Ok(resp))
+                Ok(Response::new(res.map(body::boxed), url))
             }
-            Poll::Ready(Err(err)) => {
+            Err(err) => {
                 let mut err = err
                     .downcast::<Error>()
                     .map_or_else(Error::request, |err| *err);
                 if err.url().is_none() {
-                    err = err.with_url(take_url!(url));
+                    err = err.with_url(url);
                 }
-
-                Poll::Ready(Err(err))
+                Err(err)
             }
-            Poll::Pending => Poll::Pending,
-        }
-    }
-}
+        };
 
-// ======== CorePending impl ========
-
-impl CorePending {
-    /// Creates a new [`CorePending`] from a [`CoreResponseFuture`].
-    #[inline(always)]
-    pub(crate) fn new(fut: CoreResponseFuture) -> Self {
-        CorePending::Request { fut }
-    }
-
-    /// Creates a new [`CorePending`] with an error.
-    #[inline(always)]
-    pub(crate) fn error(error: Error) -> Self {
-        CorePending::Error { error: Some(error) }
-    }
-}
-
-impl Future for CorePending {
-    type Output = Result<http::Response<Incoming>, BoxError>;
-
-    #[inline]
-    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        match self.project() {
-            CorePendingProj::Request { fut } => fut.poll(cx).map(|res| res.map_err(Into::into)),
-            CorePendingProj::Error { error } => Poll::Ready(Err(take_err!(error).into())),
-        }
+        Poll::Ready(res)
     }
 }
 

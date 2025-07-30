@@ -3,18 +3,19 @@ use std::{
     task::{Context, Poll},
 };
 
+use futures_util::future::{self, Either, MapErr, Ready, TryFutureExt};
 use http::{HeaderMap, Request, Response, header::PROXY_AUTHORIZATION, uri::Scheme};
 use tower::Service;
 
-use super::{Body, connect::Connector, future::CorePending};
+use super::{Body, connect::Connector};
 use crate::{
     OriginalHeaders,
     client::layer::config::RequestSkipDefaultHeaders,
     core::{
-        client::{HttpClient, body::Incoming},
+        client::{Error, HttpClient, ResponseFuture, body::Incoming},
         ext::{RequestConfig, RequestOriginalHeaders},
     },
-    error::{BoxError, Error},
+    error::BoxError,
     proxy::Matcher as ProxyMatcher,
 };
 
@@ -65,7 +66,7 @@ impl ClientService {
     }
 
     #[inline]
-    fn apply_proxy_headers(&self, req: &mut Request<Body>) {
+    fn ensure_proxy_headers(&self, req: &mut Request<Body>) {
         // Skip if the destination is not plain HTTP.
         // For HTTPS, the proxy headers should be part of the CONNECT tunnel instead.
         if req.uri().scheme() != Some(&Scheme::HTTP) {
@@ -113,9 +114,12 @@ impl ClientService {
 }
 
 impl Service<Request<Body>> for ClientService {
-    type Error = BoxError;
     type Response = Response<Incoming>;
-    type Future = CorePending;
+    type Error = BoxError;
+    type Future = Either<
+        MapErr<ResponseFuture, fn(Error) -> Self::Error>,
+        Ready<Result<Self::Response, Self::Error>>,
+    >;
 
     #[inline(always)]
     fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
@@ -125,14 +129,14 @@ impl Service<Request<Body>> for ClientService {
     fn call(&mut self, mut req: Request<Body>) -> Self::Future {
         let scheme = req.uri().scheme();
 
-        // Check for invalid schemes
+        // Validate scheme (http/https), enforce https if required
         if (scheme != Some(&Scheme::HTTP) && scheme != Some(&Scheme::HTTPS))
             || (self.config.https_only && scheme != Some(&Scheme::HTTPS))
         {
-            return CorePending::error(Error::url_bad_scheme2());
+            return Either::Right(future::err(crate::Error::url_bad_scheme2().into()));
         }
 
-        // Only skip setting default headers if skip_default_headers is explicitly Some(true).
+        // Optionally insert default headers
         let skip = self
             .config
             .skip_default_headers
@@ -142,7 +146,7 @@ impl Service<Request<Body>> for ClientService {
 
         if !skip {
             let headers = req.headers_mut();
-            // Insert default headers if they are not already present in the request.
+            // Insert missing default headers
             for name in self.config.headers.keys() {
                 if !headers.contains_key(name) {
                     for value in self.config.headers.get_all(name) {
@@ -152,12 +156,13 @@ impl Service<Request<Body>> for ClientService {
             }
         }
 
-        // Apply original headers if they are set in the request extensions.
+        // Store original headers if present
         self.config.original_headers.store(req.extensions_mut());
 
-        // Apply proxy headers if the request is routed through a proxy.
-        self.apply_proxy_headers(&mut req);
+        // Insert proxy headers if needed
+        self.ensure_proxy_headers(&mut req);
 
-        CorePending::new(self.client.call(req))
+        // Call inner HTTP client, map errors to BoxError
+        Either::Left(self.client.call(req).map_err(From::from))
     }
 }
