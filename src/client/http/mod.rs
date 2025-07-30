@@ -25,8 +25,8 @@ use tower::{
     util::{BoxCloneSyncService, BoxCloneSyncServiceLayer},
 };
 use types::{
-    BoxedClientLayer, BoxedClientService, BoxedConnectorLayer, BoxedConnectorService,
-    ClientServiceEither, HttpConnector, ResponseBody,
+    BoxedClientLayer, BoxedClientService, BoxedConnectorLayer, BoxedConnectorService, ClientRef,
+    HttpConnector, ResponseBody,
 };
 #[cfg(feature = "cookies")]
 use {super::layer::cookie::CookieManagerLayer, crate::cookie};
@@ -84,7 +84,7 @@ use crate::{
 /// [`Rc`]: std::rc::Rc
 #[derive(Clone)]
 pub struct Client {
-    inner: Arc<ClientServiceEither>,
+    inner: Arc<ClientRef>,
 }
 
 /// A `ClientBuilder` can be used to create a `Client` with custom configuration.
@@ -393,7 +393,7 @@ impl ClientBuilder {
                     .map_err(error::map_timeout_to_request_error as _)
                     .service(service);
 
-                ClientServiceEither::Left(service)
+                ClientRef::Left(service)
             } else {
                 // If custom layers are configured, wrap the service with each layer in order.
                 let service = config.layers.into_iter().fold(
@@ -412,7 +412,7 @@ impl ClientBuilder {
                     .map_err(error::map_timeout_to_request_error)
                     .service(service);
 
-                ClientServiceEither::Right(BoxCloneSyncService::new(service))
+                ClientRef::Right(BoxCloneSyncService::new(service))
             }
         };
 
