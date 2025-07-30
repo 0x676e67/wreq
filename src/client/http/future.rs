@@ -71,7 +71,7 @@ impl Future for Pending {
             Ok(res) => {
                 if let Some(uri) = res.extensions().get::<RequestUri>() {
                     let redirect_url = IntoUrlSealed::into_url(uri.0.to_string())?;
-                    std::mem::swap(url, &mut Some(redirect_url));
+                    *url = Some(redirect_url);
                 }
                 Ok(Response::new(res.map(body::boxed), take_url!(url)))
             }
