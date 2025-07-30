@@ -1,7 +1,7 @@
 use http::{Request as HttpRequest, Response as HttpResponse};
 use tower::{
     retry::Retry,
-    util::{BoxCloneSyncService, BoxCloneSyncServiceLayer, MapErr},
+    util::{BoxCloneSyncService, BoxCloneSyncServiceLayer, MapErr, Oneshot},
 };
 
 use super::{
@@ -83,3 +83,9 @@ pub type BoxedConnectorService = BoxCloneSyncService<Unnameable, Conn, BoxError>
 
 pub type BoxedConnectorLayer =
     BoxCloneSyncServiceLayer<BoxedConnectorService, Unnameable, Conn, BoxError>;
+
+pub type ClientServiceEither = tower::util::Either<GenericClientService, BoxedClientService>;
+
+pub type ResponseFuture = Oneshot<ClientServiceEither, HttpRequest<Body>>;
+
+pub type RawResponseFuture = crate::core::client::ResponseFuture;

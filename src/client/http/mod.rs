@@ -14,7 +14,6 @@ use std::{
 };
 
 pub use future::Pending;
-use futures_util::future::Either;
 use http::{
     Request as HttpRequest, Response as HttpResponse,
     header::{HeaderMap, HeaderValue, USER_AGENT},
@@ -27,7 +26,7 @@ use tower::{
 };
 use types::{
     BoxedClientLayer, BoxedClientService, BoxedConnectorLayer, BoxedConnectorService,
-    GenericClientService, ResponseBody,
+    ClientServiceEither, HttpConnector, ResponseBody,
 };
 #[cfg(feature = "cookies")]
 use {super::layer::cookie::CookieManagerLayer, crate::cookie};
@@ -56,10 +55,7 @@ use crate::dns::hickory::{HickoryDnsResolver, LookupIpStrategy};
 use crate::{
     IntoUrl, Method, OriginalHeaders, Proxy,
     client::{
-        http::{
-            connect::{Conn, Connector, Unnameable},
-            types::HttpConnector,
-        },
+        http::connect::{Conn, Connector, Unnameable},
         layer::timeout::TimeoutOptions,
     },
     core::{
@@ -88,14 +84,7 @@ use crate::{
 /// [`Rc`]: std::rc::Rc
 #[derive(Clone)]
 pub struct Client {
-    inner: Arc<ClientRef>,
-}
-
-#[allow(clippy::large_enum_variant)]
-#[derive(Clone)]
-enum ClientRef {
-    Boxed(BoxedClientService),
-    Generic(GenericClientService),
+    inner: Arc<ClientServiceEither>,
 }
 
 /// A `ClientBuilder` can be used to create a `Client` with custom configuration.
@@ -396,7 +385,7 @@ impl ClientBuilder {
                     .map_err(error::map_timeout_to_request_error as _)
                     .service(service);
 
-                ClientRef::Generic(Box::new(service))
+                ClientServiceEither::Left(Box::new(service))
             } else {
                 let service = config.layers.into_iter().fold(
                     BoxCloneSyncService::new(service),
@@ -413,7 +402,7 @@ impl ClientBuilder {
                     .map_err(error::map_timeout_to_request_error)
                     .service(service);
 
-                ClientRef::Boxed(BoxCloneSyncService::new(service))
+                ClientServiceEither::Right(BoxCloneSyncService::new(service))
             }
         };
 
@@ -1519,16 +1508,12 @@ impl Client {
     /// redirect loop was detected or redirect limit was exhausted.
     pub fn execute(&self, request: Request) -> Pending {
         match request.try_into() {
-            // Prepare the future request by ensuring we use the exact same Service instance
-            // for both poll_ready and call.
-            Ok((url, req)) => match *self.inner {
-                ClientRef::Boxed(ref service) => {
-                    Pending::request(url, Either::Left(service.clone().oneshot(req)))
-                }
-                ClientRef::Generic(ref service) => {
-                    Pending::request(url, Either::Right(service.clone().oneshot(req)))
-                }
-            },
+            Ok((url, req)) => {
+                // Prepare the future request by ensuring we use the exact same Service instance
+                // for both poll_ready and call.
+                let fut = self.inner.as_ref().clone().oneshot(req);
+                Pending::request(fut, url)
+            }
             Err(err) => Pending::error(err),
         }
     }

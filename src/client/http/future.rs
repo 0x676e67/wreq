@@ -3,15 +3,15 @@ use std::{
     task::{Context, Poll},
 };
 
-use futures_util::future::Either;
-use http::{Request as HttpRequest, Response as HttpResponse};
 use pin_project_lite::pin_project;
-use tower::util::Oneshot;
 use url::Url;
 
-use super::{BoxedClientService, GenericClientService, Response};
+use super::{
+    Response,
+    types::{RawResponseFuture, ResponseFuture},
+};
 use crate::{
-    Body, Error,
+    Error,
     client::{body, layer::redirect::RequestUri},
     core::client::body::Incoming,
     error::BoxError,
@@ -38,21 +38,14 @@ macro_rules! take_err {
     };
 }
 
-type ResponseFuture = Either<
-    Oneshot<BoxedClientService, HttpRequest<Body>>,
-    Oneshot<GenericClientService, HttpRequest<Body>>,
->;
-
-type RawResponseFuture = crate::core::client::ResponseFuture;
-
 pin_project! {
     /// Pending HTTP request future, representing either an in-flight request or an error state.
     #[project = PendingProj]
     pub enum Pending {
         Request {
-            url: Option<Url>,
             #[pin]
             fut: ResponseFuture,
+            url: Option<Url>,
         },
         Error {
             error: Option<Error>,
@@ -77,12 +70,12 @@ pin_project! {
 // ======== Pending impl ========
 
 impl Pending {
-    /// Creates a new [`Pending`] from a [`ResponseFuture`].
+    /// Creates a new [`Pending`] representing an in-flight HTTP request with the given URL and
     #[inline(always)]
-    pub(crate) fn request(url: Url, fut: ResponseFuture) -> Self {
+    pub(crate) fn request(fut: ResponseFuture, url: Url) -> Self {
         Pending::Request {
-            url: Some(url),
             fut,
+            url: Some(url),
         }
     }
 
@@ -143,7 +136,7 @@ impl RawPending {
 }
 
 impl Future for RawPending {
-    type Output = Result<HttpResponse<Incoming>, BoxError>;
+    type Output = Result<http::Response<Incoming>, BoxError>;
 
     #[inline]
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
