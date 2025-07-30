@@ -122,12 +122,12 @@ struct Config {
     tcp_keepalive: Option<Duration>,
     tcp_keepalive_interval: Option<Duration>,
     tcp_keepalive_retries: Option<u32>,
+    #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
+    tcp_user_timeout: Option<Duration>,
     tcp_send_buffer_size: Option<usize>,
     tcp_recv_buffer_size: Option<usize>,
     tcp_happy_eyeballs_timeout: Option<Duration>,
     tcp_connect_options: Option<TcpConnectOptions>,
-    #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
-    tcp_user_timeout: Option<Duration>,
     proxies: Vec<ProxyMatcher>,
     auto_sys_proxy: bool,
     redirect_policy: RedirectPolicy,
@@ -186,17 +186,17 @@ impl ClientBuilder {
                 pool_max_size: None,
                 // TODO: Re-enable default duration once core's HttpConnector is fixed
                 // to no longer error when an option fails.
-                tcp_keepalive: None,
-                tcp_keepalive_interval: None,
-                tcp_keepalive_retries: None,
+                tcp_keepalive: Some(Duration::from_secs(15)),
+                tcp_keepalive_interval: Some(Duration::from_secs(15)),
+                tcp_keepalive_retries: Some(3),
+                #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
+                tcp_user_timeout: Some(Duration::from_secs(30)),
                 tcp_connect_options: None,
                 tcp_nodelay: true,
                 tcp_reuse_address: false,
                 tcp_send_buffer_size: None,
                 tcp_recv_buffer_size: None,
                 tcp_happy_eyeballs_timeout: Some(Duration::from_millis(300)),
-                #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
-                tcp_user_timeout: None,
                 proxies: Vec::new(),
                 auto_sys_proxy: true,
                 redirect_policy: RedirectPolicy::none(),
@@ -894,6 +894,8 @@ impl ClientBuilder {
     /// Set that all sockets have `SO_KEEPALIVE` set with the supplied duration.
     ///
     /// If `None`, the option will not be set.
+    ///
+    /// Default is 15 seconds.
     #[inline]
     pub fn tcp_keepalive<D>(mut self, val: D) -> ClientBuilder
     where
@@ -906,6 +908,8 @@ impl ClientBuilder {
     /// Set that all sockets have `SO_KEEPALIVE` set with the supplied interval.
     ///
     /// If `None`, the option will not be set.
+    ///
+    /// Default is 15 seconds.
     #[inline]
     pub fn tcp_keepalive_interval<D>(mut self, val: D) -> ClientBuilder
     where
@@ -918,6 +922,8 @@ impl ClientBuilder {
     /// Set that all sockets have `SO_KEEPALIVE` set with the supplied retry count.
     ///
     /// If `None`, the option will not be set.
+    ///
+    /// Default is 3 retries.
     #[inline]
     pub fn tcp_keepalive_retries<C>(mut self, retries: C) -> ClientBuilder
     where
@@ -932,7 +938,7 @@ impl ClientBuilder {
     /// This option controls how long transmitted data may remain unacknowledged before
     /// the connection is force-closed.
     ///
-    /// The current default is `None` (option disabled).
+    /// Default is 30 seconds.
     #[inline]
     #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
     pub fn tcp_user_timeout<D>(mut self, val: D) -> ClientBuilder
