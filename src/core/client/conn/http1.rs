@@ -235,6 +235,7 @@ impl Builder {
     }
 
     /// Provide a options configuration for the HTTP/1 connection.
+    #[inline]
     pub fn options(&mut self, opts: Http1Options) {
         self.opts = opts;
     }
