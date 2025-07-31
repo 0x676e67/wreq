@@ -127,7 +127,7 @@ struct Config {
     tcp_send_buffer_size: Option<usize>,
     tcp_recv_buffer_size: Option<usize>,
     tcp_happy_eyeballs_timeout: Option<Duration>,
-    tcp_connect_options: Option<TcpConnectOptions>,
+    tcp_connect_options: TcpConnectOptions,
     proxies: Vec<ProxyMatcher>,
     auto_sys_proxy: bool,
     redirect_policy: RedirectPolicy,
@@ -189,7 +189,7 @@ impl ClientBuilder {
                 tcp_keepalive_retries: Some(3),
                 #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
                 tcp_user_timeout: Some(Duration::from_secs(30)),
-                tcp_connect_options: None,
+                tcp_connect_options: TcpConnectOptions::default(),
                 tcp_nodelay: true,
                 tcp_reuse_address: false,
                 tcp_send_buffer_size: None,
@@ -245,7 +245,8 @@ impl ClientBuilder {
         }
         let proxies = Arc::new(proxies);
 
-        let (tls_opts, http1_opts, http2_opts) = config.transport_options.into_parts();
+        // Into parts for transport options
+        let (tls_options, http1_options, http2_options) = config.transport_options.into_parts();
 
         // Create the TLS connector with the provided options.
         let connector = {
@@ -307,7 +308,7 @@ impl ClientBuilder {
                 .timeout(config.connect_timeout)
                 .tls_info(config.tls_info)
                 .verbose(config.connection_verbose)
-                .tls_options(tls_opts)
+                .tls_options(tls_options)
                 .with_tls(tls)
                 .with_http(http)
                 .build(config.connector_layers)?
@@ -318,8 +319,8 @@ impl ClientBuilder {
             let http2_only = matches!(config.http_version_pref, HttpVersionPref::Http2);
             let mut builder = HttpClient::builder(TokioExecutor::new());
             builder
-                .http1_options(http1_opts)
-                .http2_options(http2_opts)
+                .http1_options(http1_options)
+                .http2_options(http2_options)
                 .http2_only(http2_only)
                 .http2_timer(TokioTimer::new())
                 .pool_timer(TokioTimer::new())
@@ -1020,7 +1021,6 @@ impl ClientBuilder {
     {
         self.config
             .tcp_connect_options
-            .get_or_insert_default()
             .set_local_address(addr.into());
         self
     }
@@ -1047,7 +1047,6 @@ impl ClientBuilder {
     {
         self.config
             .tcp_connect_options
-            .get_or_insert_default()
             .set_local_addresses(ipv4.into(), ipv6.into());
         self
     }
@@ -1103,7 +1102,6 @@ impl ClientBuilder {
     {
         self.config
             .tcp_connect_options
-            .get_or_insert_default()
             .set_interface(interface.into());
         self
     }
@@ -1362,21 +1360,18 @@ impl ClientBuilder {
         let emulation = factory.emulation();
         let (transport_opts, headers, original_headers) = emulation.into_parts();
 
-        if let Some((tls_opts, http1_opts, http2_opts)) =
-            transport_opts.map(TransportOptions::into_parts)
-        {
-            self.config
-                .transport_options
-                .set_http1_options(http1_opts)
-                .set_http2_options(http2_opts)
-                .set_tls_options(tls_opts);
-        }
+        self.config
+            .transport_options
+            .apply_transport_options(transport_opts);
+
         if let Some(headers) = headers {
             self = self.default_headers(headers);
         }
+
         if let Some(original_headers) = original_headers {
             self = self.original_headers(original_headers);
         }
+
         self
     }
 }

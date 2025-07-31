@@ -69,15 +69,13 @@ impl ConnectMeta {
     pub(crate) fn tls_options(&self) -> Option<&TlsOptions> {
         self.options
             .as_ref()
-            .and_then(RequestOptions::transport_opts)
+            .map(RequestOptions::transport_opts)
             .and_then(TransportOptions::tls_options)
     }
 
     /// Return a reference to the [`TcpConnectOptions`].
     #[inline]
     pub(crate) fn tcp_options(&self) -> Option<&TcpConnectOptions> {
-        self.options
-            .as_ref()
-            .and_then(RequestOptions::tcp_connect_opts)
+        self.options.as_ref().map(RequestOptions::tcp_connect_opts)
     }
 }

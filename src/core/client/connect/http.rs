@@ -98,6 +98,7 @@ pub struct HttpInfo {
 /// ❗ This only applies to certain socket types (e.g. `AF_INET`), and may require
 /// elevated permissions (e.g. `CAP_NET_RAW` on Linux).
 #[derive(Debug, Clone, Hash, PartialEq, Eq, Default)]
+#[non_exhaustive]
 pub struct TcpConnectOptions {
     #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
     pub(super) interface: Option<std::borrow::Cow<'static, str>>,
@@ -201,6 +202,32 @@ impl TcpConnectOptions {
         self.local_ipv4 = local_ipv4;
         self.local_ipv6 = local_ipv6;
     }
+
+    /// Apply the tcp connect options.
+    pub(crate) fn apply_tcp_connect_options(&mut self, opts: TcpConnectOptions) -> &mut Self {
+        #[cfg(any(
+            target_os = "android",
+            target_os = "fuchsia",
+            target_os = "illumos",
+            target_os = "ios",
+            target_os = "linux",
+            target_os = "macos",
+            target_os = "solaris",
+            target_os = "tvos",
+            target_os = "visionos",
+            target_os = "watchos",
+        ))]
+        if let Some(interface) = opts.interface {
+            self.interface = Some(interface.into());
+        }
+        if let Some(local_ipv4) = opts.local_ipv4 {
+            self.set_local_address(Some(local_ipv4.into()));
+        }
+        if let Some(local_ipv6) = opts.local_ipv6 {
+            self.set_local_address(Some(local_ipv6.into()));
+        }
+        self
+    }
 }
 
 #[derive(Clone)]
@@ -209,7 +236,7 @@ struct Config {
     enforce_http: bool,
     happy_eyeballs_timeout: Option<Duration>,
     tcp_keepalive_config: TcpKeepaliveConfig,
-    tcp_connect_options: Option<TcpConnectOptions>,
+    tcp_connect_options: TcpConnectOptions,
     nodelay: bool,
     reuse_address: bool,
     send_buffer_size: Option<usize>,
@@ -353,7 +380,7 @@ impl<R> HttpConnector<R> {
                 enforce_http: true,
                 happy_eyeballs_timeout: Some(Duration::from_millis(300)),
                 tcp_keepalive_config: TcpKeepaliveConfig::default(),
-                tcp_connect_options: None,
+                tcp_connect_options: TcpConnectOptions::default(),
                 nodelay: false,
                 reuse_address: false,
                 send_buffer_size: None,
@@ -420,8 +447,10 @@ impl<R> HttpConnector<R> {
 
     /// Set the connect options to be used when connecting.
     #[inline]
-    pub fn set_connect_options(&mut self, options: Option<TcpConnectOptions>) {
-        self.config_mut().tcp_connect_options = options;
+    pub fn set_connect_options(&mut self, opts: TcpConnectOptions) {
+        self.config_mut()
+            .tcp_connect_options
+            .apply_tcp_connect_options(opts);
     }
 
     /// Set the connect timeout.
@@ -732,14 +761,8 @@ impl<'a> ConnectingTcp<'a> {
     fn new(remote_addrs: dns::SocketAddrs, config: &'a Config) -> Self {
         if let Some(fallback_timeout) = config.happy_eyeballs_timeout {
             let (preferred_addrs, fallback_addrs) = remote_addrs.split_by_preference(
-                config
-                    .tcp_connect_options
-                    .as_ref()
-                    .and_then(|opt| opt.local_ipv4),
-                config
-                    .tcp_connect_options
-                    .as_ref()
-                    .and_then(|opt| opt.local_ipv6),
+                config.tcp_connect_options.local_ipv4,
+                config.tcp_connect_options.local_ipv6,
             );
             if fallback_addrs.is_empty() {
                 return ConnectingTcp {
@@ -885,11 +908,7 @@ fn connect(
         target_os = "visionos",
         target_os = "watchos",
     ))]
-    if let Some(interface) = config
-        .tcp_connect_options
-        .as_ref()
-        .and_then(|opt| opt.interface.as_ref())
-    {
+    if let Some(interface) = &config.tcp_connect_options.interface {
         // On Linux-like systems, set the interface to bind using
         // `SO_BINDTODEVICE`.
         #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
@@ -940,14 +959,8 @@ fn connect(
     bind_local_address(
         &socket,
         addr,
-        &config
-            .tcp_connect_options
-            .as_ref()
-            .and_then(|opt| opt.local_ipv4),
-        &config
-            .tcp_connect_options
-            .as_ref()
-            .and_then(|opt| opt.local_ipv6),
+        &config.tcp_connect_options.local_ipv4,
+        &config.tcp_connect_options.local_ipv6,
     )
     .map_err(ConnectError::m("tcp bind local error"))?;
 

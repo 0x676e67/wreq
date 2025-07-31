@@ -29,7 +29,7 @@ use crate::{
             body::Incoming,
             conn::{self, TrySendError as ConnTrySendError},
             connect::{Alpn, Connected, Connection},
-            options::{TransportOptions, http1::Http1Options, http2::Http2Options},
+            options::{http1::Http1Options, http2::Http2Options},
             pool,
         },
         common::{Exec, Lazy, lazy, timer},
@@ -158,16 +158,10 @@ where
         // needed.
         let options = RequestConfig::<RequestLevelOptions>::remove(req.extensions_mut());
         if let Some(ref opts) = options {
-            if let Some(http1) = opts
-                .transport_opts()
-                .and_then(TransportOptions::http1_options)
-            {
+            if let Some(http1) = opts.transport_opts().http1_options() {
                 this.h1_builder.options(Some(http1.clone()));
             }
-            if let Some(http2) = opts
-                .transport_opts()
-                .and_then(TransportOptions::http2_options)
-            {
+            if let Some(http2) = opts.transport_opts().http2_options() {
                 this.h2_builder.options(Some(http2.clone()));
             }
         }

@@ -97,12 +97,18 @@ async fn main() -> wreq::Result<()> {
     };
 
     // This provider encapsulates TLS, HTTP/1, HTTP/2, default headers, and original headers
-    let emulation = Emulation::builder()
+    let mut emulation = Emulation::builder()
         .tls_options(tls)
         .http2_options(http2)
         .headers(headers)
         .original_headers(original_headers)
         .build();
+
+    emulation.http1_options_mut().map(|http1| {
+        http1
+            .set_max_header_list_size(8192)
+            .set_max_header_value_size(8192)
+    });
 
     // Build a client with emulation config
     let client = Client::builder()

@@ -1,7 +1,5 @@
 //! This module provides a builder pattern for configuring HTTP/1 connections.
 
-use super::super::proto;
-
 /// Builder for `Http1Options`.
 #[must_use]
 #[derive(Debug)]
@@ -14,20 +12,39 @@ pub struct Http1OptionsBuilder {
 /// These options allow you to customize the behavior of HTTP/1 connections,
 /// such as enabling support for HTTP/0.9 responses, header case preservation, etc.
 #[derive(Debug, Default, Clone, Hash, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct Http1Options {
-    pub(crate) h09_responses: bool,
-    pub(crate) h1_writev: Option<bool>,
-    pub(crate) h1_preserve_header_case: bool,
-    pub(crate) h1_max_headers: Option<usize>,
-    pub(crate) h1_read_buf_exact_size: Option<usize>,
-    pub(crate) h1_max_buf_size: Option<usize>,
-    pub(crate) ignore_invalid_headers_in_responses: bool,
-    pub(crate) allow_spaces_after_header_name_in_responses: bool,
-    pub(crate) allow_obsolete_multiline_headers_in_responses: bool,
+    /// Enable support for HTTP/0.9 responses.
+    pub h09_responses: bool,
+
+    /// Whether to use vectored writes for HTTP/1 connections.
+    pub h1_writev: Option<bool>,
+
+    /// Whether to preserve the original case of headers in HTTP/1 responses.
+    pub h1_preserve_header_case: bool,
+
+    /// Maximum number of headers allowed in HTTP/1 responses.
+    pub h1_max_headers: Option<usize>,
+
+    /// Exact size of the read buffer to use for HTTP/1 connections.
+    pub h1_read_buf_exact_size: Option<usize>,
+
+    /// Maximum buffer size for HTTP/1 connections.
+    pub h1_max_buf_size: Option<usize>,
+
+    /// Whether to ignore invalid headers in HTTP/1 responses.
+    pub ignore_invalid_headers_in_responses: bool,
+
+    /// Whether to allow spaces after header names in HTTP/1 responses.
+    pub allow_spaces_after_header_name_in_responses: bool,
+
+    /// Whether to allow obsolete multiline headers in HTTP/1 responses.
+    pub allow_obsolete_multiline_headers_in_responses: bool,
 }
 
 impl Http1OptionsBuilder {
     /// Set the `http09_responses` field.
+    #[inline]
     pub fn http09_responses(mut self, enabled: bool) -> Self {
         self.opts.h09_responses = enabled;
         self
@@ -45,6 +62,7 @@ impl Http1OptionsBuilder {
     ///
     /// Default is `auto`. In this mode crate::core: will try to guess which
     /// mode to use
+    #[inline]
     pub fn writev(mut self, writev: Option<bool>) -> Self {
         self.opts.h1_writev = writev;
         self
@@ -57,6 +75,7 @@ impl Http1OptionsBuilder {
     /// such an extension in any provided `Request`.
     ///
     /// Default is false.
+    #[inline]
     pub fn preserve_header_case(mut self, preserve_header_case: bool) -> Self {
         self.opts.h1_preserve_header_case = preserve_header_case;
         self
@@ -75,6 +94,7 @@ impl Http1OptionsBuilder {
     /// allocation will occur for each response, and there will be a performance drop of about 5%.
     ///
     /// Default is 100.
+    #[inline]
     pub fn max_headers(mut self, max_headers: usize) -> Self {
         self.opts.h1_max_headers = Some(max_headers);
         self
@@ -85,6 +105,7 @@ impl Http1OptionsBuilder {
     /// Note that setting this option unsets the `max_buf_size` option.
     ///
     /// Default is an adaptive read buffer.
+    #[inline]
     pub fn read_buf_exact_size(mut self, sz: Option<usize>) -> Self {
         self.opts.h1_read_buf_exact_size = sz;
         self.opts.h1_max_buf_size = None;
@@ -101,9 +122,10 @@ impl Http1OptionsBuilder {
     ///
     /// The minimum value allowed is 8192. This method panics if the passed `max` is less than the
     /// minimum.
+    #[inline]
     pub fn max_buf_size(mut self, max: usize) -> Self {
         assert!(
-            max >= proto::h1::MINIMUM_MAX_BUFFER_SIZE,
+            max >= super::super::proto::h1::MINIMUM_MAX_BUFFER_SIZE,
             "the max_buf_size cannot be smaller than the minimum that h1 specifies."
         );
 
@@ -129,6 +151,7 @@ impl Http1OptionsBuilder {
     /// Default is false.
     ///
     /// [RFC 7230 Section 3.2.4.]: https://tools.ietf.org/html/rfc7230#section-3.2.4
+    #[inline]
     pub fn allow_spaces_after_header_name_in_responses(mut self, enabled: bool) -> Self {
         self.opts.allow_spaces_after_header_name_in_responses = enabled;
         self
@@ -141,25 +164,28 @@ impl Http1OptionsBuilder {
     /// and no error will be reported.
     ///
     /// Default is false.
+    #[inline]
     pub fn ignore_invalid_headers_in_responses(mut self, enabled: bool) -> Self {
         self.opts.ignore_invalid_headers_in_responses = enabled;
         self
     }
 
     /// Set the `allow_obsolete_multiline_headers_in_responses` field.
+    #[inline]
     pub fn allow_obsolete_multiline_headers_in_responses(mut self, value: bool) -> Self {
         self.opts.allow_obsolete_multiline_headers_in_responses = value;
         self
     }
 
-    /// Build the `Http1Options` instance.
+    /// Build the [`Http1Options`] instance.
+    #[inline]
     pub fn build(self) -> Http1Options {
         self.opts
     }
 }
 
 impl Http1Options {
-    /// Create a new `Http1OptionsBuilder`.
+    /// Create a new [`Http1OptionsBuilder`].
     pub fn builder() -> Http1OptionsBuilder {
         Http1OptionsBuilder {
             opts: Http1Options::default(),

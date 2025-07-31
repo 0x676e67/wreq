@@ -1,7 +1,5 @@
 use std::borrow::Cow;
 
-use bytes::Bytes;
-
 use super::{
     AlpnProtocol, AlpsProtocol, CertificateCompressionAlgorithm, ExtensionType, TlsVersion,
 };
@@ -19,34 +17,85 @@ pub struct TlsOptionsBuilder {
 /// allowing customization of protocol versions, cipher suites, extensions,
 /// and various security features.
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct TlsOptions {
-    pub(crate) alpn_protocols: Option<Bytes>,
-    pub(crate) alps_protocols: Option<Bytes>,
-    pub(crate) alps_use_new_codepoint: bool,
-    pub(crate) session_ticket: bool,
-    pub(crate) min_tls_version: Option<TlsVersion>,
-    pub(crate) max_tls_version: Option<TlsVersion>,
-    pub(crate) pre_shared_key: bool,
-    pub(crate) enable_ech_grease: bool,
-    pub(crate) permute_extensions: Option<bool>,
-    pub(crate) grease_enabled: Option<bool>,
-    pub(crate) enable_ocsp_stapling: bool,
-    pub(crate) enable_signed_cert_timestamps: bool,
-    pub(crate) record_size_limit: Option<u16>,
-    pub(crate) psk_skip_session_ticket: bool,
-    pub(crate) key_shares_limit: Option<u8>,
-    pub(crate) psk_dhe_ke: bool,
-    pub(crate) renegotiation: bool,
-    pub(crate) delegated_credentials: Option<Cow<'static, str>>,
-    pub(crate) curves_list: Option<Cow<'static, str>>,
-    pub(crate) cipher_list: Option<Cow<'static, str>>,
-    pub(crate) sigalgs_list: Option<Cow<'static, str>>,
-    pub(crate) certificate_compression_algorithms:
-        Option<Cow<'static, [CertificateCompressionAlgorithm]>>,
-    pub(crate) extension_permutation: Option<Cow<'static, [ExtensionType]>>,
-    pub(crate) aes_hw_override: Option<bool>,
-    pub(crate) prefer_chacha20: Option<bool>,
-    pub(crate) random_aes_hw_override: bool,
+    /// ALPN protocols to use for the TLS connection.
+    pub alpn_protocols: Option<Cow<'static, [AlpnProtocol]>>,
+
+    /// ALPS protocols to use for the TLS connection.
+    pub alps_protocols: Option<Cow<'static, [AlpsProtocol]>>,
+
+    /// Whether to use a new codepoint for ALPS.
+    pub alps_use_new_codepoint: bool,
+
+    /// Whether to use session tickets for TLS session resumption.
+    pub session_ticket: bool,
+
+    /// Minimum TLS version to use for the connection.
+    pub min_tls_version: Option<TlsVersion>,
+
+    /// Maximum TLS version to use for the connection.
+    pub max_tls_version: Option<TlsVersion>,
+
+    /// Whether to use pre-shared keys (PSK) for the connection.
+    pub pre_shared_key: bool,
+
+    /// Whether to enable ECH (Encrypted ClientHello) GREASE extension.
+    pub enable_ech_grease: bool,
+
+    /// Whether to permute ClientHello extensions.
+    pub permute_extensions: Option<bool>,
+
+    /// Whether to enable GREASE (Generate Random Extensions And Sustain Extensibility).
+    pub grease_enabled: Option<bool>,
+
+    /// Whether to enable OCSP stapling for the connection.
+    pub enable_ocsp_stapling: bool,
+
+    /// Whether to enable signed certificate timestamps (SCT) for the connection.
+    pub enable_signed_cert_timestamps: bool,
+
+    /// Maximum size of TLS record.
+    pub record_size_limit: Option<u16>,
+
+    /// Whether to skip session ticket for PSK (Pre-Shared Key) connections.
+    pub psk_skip_session_ticket: bool,
+
+    /// Maximum number of key shares to include in the ClientHello.
+    pub key_shares_limit: Option<u8>,
+
+    /// Whether to use PSK DHE (Diffie-Hellman Ephemeral) key establishment.
+    pub psk_dhe_ke: bool,
+
+    /// Whether to allow renegotiation of the TLS session.
+    pub renegotiation: bool,
+
+    /// Delegated credentials for the TLS connection.
+    pub delegated_credentials: Option<Cow<'static, str>>,
+
+    /// List of curves to use for the TLS connection.
+    pub curves_list: Option<Cow<'static, str>>,
+
+    /// List of ciphers to use for the TLS connection.
+    pub cipher_list: Option<Cow<'static, str>>,
+
+    /// List of signature algorithms to use for the TLS connection.
+    pub sigalgs_list: Option<Cow<'static, str>>,
+
+    /// List of supported curves for the TLS connection.
+    pub certificate_compression_algorithms: Option<Cow<'static, [CertificateCompressionAlgorithm]>>,
+
+    /// List of supported extensions for the TLS connection.
+    pub extension_permutation: Option<Cow<'static, [ExtensionType]>>,
+
+    /// Whether to override the AES hardware acceleration.
+    pub aes_hw_override: Option<bool>,
+
+    /// Whether to prefer ChaCha20 over AES.
+    pub prefer_chacha20: Option<bool>,
+
+    /// Whether to override the random AES hardware acceleration.
+    pub random_aes_hw_override: bool,
 }
 
 impl TlsOptionsBuilder {
@@ -56,20 +105,20 @@ impl TlsOptionsBuilder {
     }
 
     /// Sets the ALPN protocols to use.
-    pub fn alpn_protocols<'a, I>(mut self, alpn: I) -> Self
+    pub fn alpn_protocols<I>(mut self, alpn: I) -> Self
     where
-        I: IntoIterator<Item = &'a AlpnProtocol>,
+        I: IntoIterator<Item = AlpnProtocol>,
     {
-        self.config.alpn_protocols = Some(AlpnProtocol::encode_sequence(alpn));
+        self.config.alpn_protocols = Some(Cow::Owned(alpn.into_iter().collect()));
         self
     }
 
     /// Sets the ALPS protocols to use.
-    pub fn alps_protocols<'a, I>(mut self, alps: I) -> Self
+    pub fn alps_protocols<I>(mut self, alps: I) -> Self
     where
-        I: IntoIterator<Item = &'a AlpsProtocol>,
+        I: IntoIterator<Item = AlpsProtocol>,
     {
-        self.config.alps_protocols = Some(AlpsProtocol::encode_sequence(alps));
+        self.config.alps_protocols = Some(Cow::Owned(alps.into_iter().collect()));
         self
     }
 
@@ -272,10 +321,7 @@ impl TlsOptions {
 impl Default for TlsOptions {
     fn default() -> Self {
         TlsOptions {
-            alpn_protocols: Some(AlpnProtocol::encode_sequence(&[
-                AlpnProtocol::HTTP2,
-                AlpnProtocol::HTTP1,
-            ])),
+            alpn_protocols: Some(Cow::Borrowed(&[AlpnProtocol::HTTP2, AlpnProtocol::HTTP1])),
             alps_protocols: None,
             alps_use_new_codepoint: false,
             session_ticket: true,
@@ -302,19 +348,5 @@ impl Default for TlsOptions {
             prefer_chacha20: None,
             random_aes_hw_override: false,
         }
-    }
-}
-
-impl<'a> From<TlsOptions> for Cow<'a, TlsOptions> {
-    #[inline]
-    fn from(opts: TlsOptions) -> Self {
-        Cow::Owned(opts)
-    }
-}
-
-impl<'a> From<&'a TlsOptions> for Cow<'a, TlsOptions> {
-    #[inline]
-    fn from(opts: &'a TlsOptions) -> Self {
-        Cow::Borrowed(opts)
     }
 }

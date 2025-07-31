@@ -55,7 +55,7 @@ pub struct ConnectorBuilder {
     #[cfg(feature = "socks")]
     resolver: DynResolver,
     http: HttpConnector,
-    tls_options: Option<TlsOptions>,
+    tls_options: TlsOptions,
     tls_builder: TlsConnectorBuilder,
 }
 
@@ -127,20 +127,20 @@ impl ConnectorBuilder {
     /// Sets the TLS options to use.
     #[inline]
     pub fn tls_options(mut self, opts: Option<TlsOptions>) -> ConnectorBuilder {
-        self.tls_options = opts;
+        if let Some(opts) = opts {
+            self.tls_options = opts;
+        }
         self
     }
 
-    /// Builds the connector with the provided layers.
+    /// Build a [`Connector`] with the provided layers.
     pub fn build(self, layers: Vec<BoxedConnectorLayer>) -> crate::Result<Connector> {
         let mut service = ConnectorService {
             config: self.config,
             #[cfg(feature = "socks")]
             resolver: self.resolver.clone(),
             http: self.http,
-            tls: self
-                .tls_builder
-                .build(self.tls_options.unwrap_or_default())?,
+            tls: self.tls_builder.build(&self.tls_options)?,
             tls_builder: Arc::new(self.tls_builder),
         };
 
@@ -194,7 +194,7 @@ impl ConnectorBuilder {
 // ===== impl Connector =====
 
 impl Connector {
-    /// Creates a new `Connector` with the provided configuration and optional layers.
+    /// Creates a new [`Connector`] with the provided configuration and optional layers.
     pub fn builder(proxies: Arc<Vec<ProxyMatcher>>, resolver: DynResolver) -> ConnectorBuilder {
         ConnectorBuilder {
             config: Config {
@@ -207,7 +207,7 @@ impl Connector {
             #[cfg(feature = "socks")]
             resolver: resolver.clone(),
             http: HttpConnector::new_with_resolver(resolver),
-            tls_options: None,
+            tls_options: TlsOptions::default(),
             tls_builder: TlsConnector::builder(),
         }
     }
@@ -238,17 +238,25 @@ impl Service<ConnectRequest> for Connector {
 // ===== impl ConnectorService =====
 
 impl ConnectorService {
-    /// Constructs an HTTPS connector by wrapping an `HttpConnector`
+    /// Constructs an HTTPS connector by wrapping an [`HttpConnector`].
+    /// Applies TCP options if present and builds the TLS connector with the correct options.
     fn build_tls_connector(
         &self,
         mut http: HttpConnector,
         meta: &ConnectMeta,
     ) -> Result<HttpsConnector<HttpConnector>, BoxError> {
-        http.set_connect_options(meta.tcp_options().cloned());
-        let tls = match meta.tls_options() {
-            Some(opts) => self.tls_builder.build(opts)?,
-            None => self.tls.clone(),
-        };
+        // Apply TCP options if provided in metadata
+        if let Some(opts) = meta.tcp_options() {
+            http.set_connect_options(opts.clone());
+        }
+
+        // Prefer TLS options from metadata, fallback to default
+        let tls = meta
+            .tls_options()
+            .map(|opts| self.tls_builder.build(opts))
+            .transpose()?
+            .unwrap_or_else(|| self.tls.clone());
+
         Ok(HttpsConnector::with_connector(http, tls))
     }
 

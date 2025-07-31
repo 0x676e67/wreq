@@ -126,7 +126,7 @@ async fn test_alps_new_endpoint() -> wreq::Result<()> {
     let tls_options = TlsOptions::builder()
         .min_tls_version(TlsVersion::TLS_1_2)
         .max_tls_version(TlsVersion::TLS_1_3)
-        .alps_protocols(&[AlpsProtocol::HTTP2])
+        .alps_protocols([AlpsProtocol::HTTP2])
         .alps_use_new_codepoint(true)
         .build();
 

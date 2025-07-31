@@ -37,7 +37,7 @@ pub trait ConnectConfigurationExt {
     /// Configure the ALPS for the given `ConnectConfiguration`.
     fn set_alps_protos(
         &mut self,
-        alps: Option<&Bytes>,
+        alps: Option<Bytes>,
         use_new_codepoint: bool,
     ) -> Result<(), ErrorStack>;
 
@@ -103,11 +103,11 @@ impl ConnectConfigurationExt for ConnectConfiguration {
     #[inline]
     fn set_alps_protos(
         &mut self,
-        alps: Option<&Bytes>,
+        alps: Option<Bytes>,
         use_new_codepoint: bool,
     ) -> Result<(), ErrorStack> {
         if let Some(alps) = alps {
-            self.add_application_settings(alps)?;
+            self.add_application_settings(&alps)?;
 
             // By default, the old endpoint is used. Avoid unnecessary FFI calls.
             if use_new_codepoint {

@@ -21,7 +21,6 @@ use boring2::{
     ex_data::Index,
     ssl::{Ssl, SslConnector, SslMethod, SslOptions, SslSessionCacheMode},
 };
-use bytes::Bytes;
 use cache::{SessionCache, SessionKey};
 use http::Uri;
 use tokio::io::{AsyncRead, AsyncWrite};
@@ -40,7 +39,7 @@ use crate::{
     error::BoxError,
     sync::Mutex,
     tls::{
-        AlpnProtocol, CertStore, Identity, KeyLogPolicy, TlsOptions, TlsVersion,
+        AlpnProtocol, AlpsProtocol, CertStore, Identity, KeyLogPolicy, TlsOptions, TlsVersion,
         conn::ext::{ConnectConfigurationExt, SslConnectorBuilderExt},
     },
 };
@@ -63,7 +62,7 @@ pub struct HandshakeConfig {
     enable_ech_grease: bool,
     verify_hostname: bool,
     tls_sni: bool,
-    alps_protocols: Option<Bytes>,
+    alps_protocols: Option<Cow<'static, [AlpsProtocol]>>,
     alps_use_new_codepoint: bool,
     random_aes_hw_override: bool,
 }
@@ -94,8 +93,11 @@ impl HandshakeConfigBuilder {
     }
 
     /// Sets ALPS protocol.
-    pub fn alps_protocols(mut self, protos: Option<Bytes>) -> Self {
-        self.settings.alps_protocols = protos;
+    pub fn alps_protocols<P>(mut self, alps_protocols: P) -> Self
+    where
+        P: Into<Option<Cow<'static, [AlpsProtocol]>>>,
+    {
+        self.settings.alps_protocols = alps_protocols.into();
         self
     }
 
@@ -221,7 +223,10 @@ impl Inner {
 
         // Set ALPS protos
         cfg.set_alps_protos(
-            self.config.alps_protocols.as_ref(),
+            self.config
+                .alps_protocols
+                .as_deref()
+                .map(AlpsProtocol::encode_sequence),
             self.config.alps_use_new_codepoint,
         )?;
 
@@ -352,18 +357,15 @@ impl TlsConnectorBuilder {
     }
 
     /// Build the `TlsConnector` with the provided configuration.
-    pub fn build<'a, C>(&self, opts: C) -> crate::Result<TlsConnector>
-    where
-        C: Into<Cow<'a, TlsOptions>>,
-    {
-        let opts = opts.into();
-
+    pub fn build(&self, opts: &TlsOptions) -> crate::Result<TlsConnector> {
         // Replace the default configuration with the provided one
         let max_tls_version = opts.max_tls_version.or(self.max_version);
         let min_tls_version = opts.min_tls_version.or(self.min_version);
-        let alpn_protocols = self
-            .alpn_protocol
-            .map_or(opts.alpn_protocols.clone(), |p| Some(p.encode()));
+        let alpn_protocols = self.alpn_protocol.map(AlpnProtocol::encode).or_else(|| {
+            opts.alpn_protocols
+                .as_ref()
+                .map(|x| AlpnProtocol::encode_sequence(x.as_ref()))
+        });
 
         // Create the SslConnector with the provided options
         let mut connector = SslConnector::no_default_verify_builder(SslMethod::tls_client())

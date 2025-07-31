@@ -27,7 +27,7 @@ use super::{
 use crate::{
     EmulationFactory, Error, Method, OriginalHeaders, Proxy, Url,
     core::{
-        client::options::{RequestOptions, TransportOptions},
+        client::options::RequestOptions,
         ext::{RequestConfig, RequestConfigValue, RequestLevelOptions, RequestOriginalHeaders},
     },
     header::{CONTENT_TYPE, HeaderMap, HeaderName, HeaderValue},
@@ -123,36 +123,8 @@ impl Request {
     /// Get a mutable reference to the http version.
     #[inline]
     pub fn version_mut(&mut self) -> &mut Option<Version> {
-        self.config_mut_or_default::<RequestLevelOptions>()
+        self.config_mut::<RequestLevelOptions>()
             .enforced_version_mut()
-    }
-
-    /// Get a  reference to the request config value.
-    #[inline]
-    pub(crate) fn config<T>(&self) -> Option<&T::Value>
-    where
-        T: RequestConfigValue,
-    {
-        RequestConfig::<T>::get(&self.extensions)
-    }
-
-    /// Get a mutable reference to the request config value.
-    #[inline]
-    pub(crate) fn config_mut<T>(&mut self) -> &mut Option<T::Value>
-    where
-        T: RequestConfigValue,
-    {
-        RequestConfig::<T>::get_mut(&mut self.extensions)
-    }
-
-    /// Get a default mutable reference to the request config value.
-    #[inline]
-    pub(crate) fn config_mut_or_default<T>(&mut self) -> &mut T::Value
-    where
-        T: RequestConfigValue,
-        T::Value: Default,
-    {
-        RequestConfig::<T>::get_mut(&mut self.extensions).get_or_insert_default()
     }
 
     /// Attempt to clone the request.
@@ -169,6 +141,25 @@ impl Request {
         req.extensions = self.extensions.clone();
         req.body = body;
         Some(req)
+    }
+
+    /// Get a  reference to the request config value.
+    #[inline]
+    fn config<T>(&self) -> Option<&T::Value>
+    where
+        T: RequestConfigValue,
+    {
+        RequestConfig::<T>::get(&self.extensions)
+    }
+
+    /// Get a mutable reference to the request config value.
+    #[inline]
+    fn config_mut<T>(&mut self) -> &mut T::Value
+    where
+        T: RequestConfigValue,
+        T::Value: Default,
+    {
+        RequestConfig::<T>::get_mut(&mut self.extensions).get_or_insert_default()
     }
 }
 
@@ -288,7 +279,7 @@ impl RequestBuilder {
     /// Set the original headers for this request.
     pub fn original_headers(mut self, original_headers: OriginalHeaders) -> RequestBuilder {
         if let Ok(ref mut req) = self.request {
-            *req.config_mut::<RequestOriginalHeaders>() = Some(original_headers);
+            *req.config_mut::<RequestOriginalHeaders>() = original_headers;
         }
         self
     }
@@ -296,7 +287,7 @@ impl RequestBuilder {
     /// Set skip client default headers for this request.
     pub fn default_headers(mut self, skip: bool) -> RequestBuilder {
         if let Ok(ref mut req) = self.request {
-            *req.config_mut::<RequestSkipDefaultHeaders>() = Some(skip);
+            *req.config_mut::<RequestSkipDefaultHeaders>() = skip;
         }
         self
     }
@@ -371,7 +362,7 @@ impl RequestBuilder {
     /// the timeout configured using `ClientBuilder::timeout()`.
     pub fn timeout(mut self, timeout: Duration) -> RequestBuilder {
         if let Ok(ref mut req) = self.request {
-            req.config_mut_or_default::<RequestTimeoutOptions>()
+            req.config_mut::<RequestTimeoutOptions>()
                 .total_timeout(timeout);
         }
         self
@@ -384,7 +375,7 @@ impl RequestBuilder {
     /// overrides the read timeout configured using `ClientBuilder::read_timeout()`.
     pub fn read_timeout(mut self, timeout: Duration) -> RequestBuilder {
         if let Ok(ref mut req) = self.request {
-            req.config_mut_or_default::<RequestTimeoutOptions>()
+            req.config_mut::<RequestTimeoutOptions>()
                 .read_timeout(timeout);
         }
         self
@@ -478,7 +469,7 @@ impl RequestBuilder {
     /// Set the redirect policy for this request.
     pub fn redirect(mut self, policy: redirect::Policy) -> RequestBuilder {
         if let Ok(ref mut req) = self.request {
-            *req.config_mut::<RequestRedirectPolicy>() = Some(policy);
+            *req.config_mut::<RequestRedirectPolicy>() = policy;
         }
         self
     }
@@ -544,8 +535,8 @@ impl RequestBuilder {
     /// ```
     pub fn proxy(mut self, proxy: Proxy) -> RequestBuilder {
         if let Ok(ref mut req) = self.request {
-            *req.config_mut_or_default::<RequestLevelOptions>()
-                .proxy_matcher_mut() = Some(proxy.into_matcher());
+            *req.config_mut::<RequestLevelOptions>().proxy_matcher_mut() =
+                Some(proxy.into_matcher());
         }
         self
     }
@@ -556,9 +547,8 @@ impl RequestBuilder {
         V: Into<Option<IpAddr>>,
     {
         if let Ok(ref mut req) = self.request {
-            req.config_mut_or_default::<RequestLevelOptions>()
+            req.config_mut::<RequestLevelOptions>()
                 .tcp_connect_opts_mut()
-                .get_or_insert_default()
                 .set_local_address(local_address.into());
         }
         self
@@ -571,9 +561,8 @@ impl RequestBuilder {
         V6: Into<Option<Ipv6Addr>>,
     {
         if let Ok(ref mut req) = self.request {
-            req.config_mut_or_default::<RequestLevelOptions>()
+            req.config_mut::<RequestLevelOptions>()
                 .tcp_connect_opts_mut()
-                .get_or_insert_default()
                 .set_local_addresses(ipv4.into(), ipv6.into());
         }
         self
@@ -597,9 +586,8 @@ impl RequestBuilder {
         I: Into<std::borrow::Cow<'static, str>>,
     {
         if let Ok(ref mut req) = self.request {
-            req.config_mut_or_default::<RequestLevelOptions>()
+            req.config_mut::<RequestLevelOptions>()
                 .tcp_connect_opts_mut()
-                .get_or_insert_default()
                 .set_interface(interface.into());
         }
         self
@@ -619,19 +607,14 @@ impl RequestBuilder {
             let emulation = factory.emulation();
             let (transport_opts, default_headers, original_headers) = emulation.into_parts();
 
-            if let Some((tls_opts, http1_opts, http2_opts)) =
-                transport_opts.map(TransportOptions::into_parts)
-            {
-                req.config_mut_or_default::<RequestLevelOptions>()
-                    .transport_opts_mut()
-                    .get_or_insert_default()
-                    .set_http1_options(http1_opts)
-                    .set_http2_options(http2_opts)
-                    .set_tls_options(tls_opts);
-            }
+            req.config_mut::<RequestLevelOptions>()
+                .transport_opts_mut()
+                .apply_transport_options(transport_opts);
+
             if let Some(default_headers) = default_headers {
                 self = self.headers(default_headers);
             }
+
             if let Some(original_headers) = original_headers {
                 self = self.original_headers(original_headers);
             }

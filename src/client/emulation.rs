@@ -13,13 +13,13 @@ use crate::{
 /// - Dynamic configuration based on runtime conditions
 /// - User-defined custom emulation strategies
 pub trait EmulationFactory {
-    /// Creates an `Emulation` instance from this factory.
+    /// Creates an [`Emulation`] instance from this factory.
     fn emulation(self) -> Emulation;
 }
 
-/// Builder for creating an `Emulation` configuration.
-#[must_use]
+/// Builder for creating an [`Emulation`] configuration.
 #[derive(Debug)]
+#[must_use]
 pub struct EmulationBuilder {
     emulation: Emulation,
 }
@@ -30,12 +30,15 @@ pub struct EmulationBuilder {
 /// request-level settings (headers, header case preservation) to provide
 /// a complete emulation profile for web browsers, mobile applications,
 /// API clients, and other HTTP implementations.
-#[derive(Default, Debug)]
+#[derive(Debug, Default)]
+#[non_exhaustive]
 pub struct Emulation {
-    transport: Option<TransportOptions>,
+    transport: TransportOptions,
     headers: Option<HeaderMap>,
     original_headers: Option<OriginalHeaders>,
 }
+
+// ==== impl EmulationBuilder ====
 
 impl EmulationBuilder {
     /// Sets the  HTTP/1 options configuration for the emulation.
@@ -44,10 +47,9 @@ impl EmulationBuilder {
     where
         C: Into<Option<Http1Options>>,
     {
-        self.emulation
-            .transport
-            .get_or_insert_default()
-            .set_http1_options(opts);
+        if let Some(opts) = opts.into() {
+            *self.emulation.http1_options_mut() = Some(opts);
+        }
         self
     }
 
@@ -57,10 +59,9 @@ impl EmulationBuilder {
     where
         C: Into<Option<Http2Options>>,
     {
-        self.emulation
-            .transport
-            .get_or_insert_default()
-            .set_http2_options(opts);
+        if let Some(opts) = opts.into() {
+            *self.emulation.http2_options_mut() = Some(opts);
+        }
         self
     }
 
@@ -70,11 +71,9 @@ impl EmulationBuilder {
     where
         C: Into<Option<TlsOptions>>,
     {
-        self.emulation
-            .transport
-            .get_or_insert_default()
-            .set_tls_options(opts);
-
+        if let Some(opts) = opts.into() {
+            *self.emulation.tls_options_mut() = Some(opts);
+        }
         self
     }
 
@@ -113,8 +112,10 @@ impl EmulationBuilder {
     }
 }
 
+// ==== impl Emulation ====
+
 impl Emulation {
-    /// Creates a new `EmulationBuilder`.
+    /// Creates a new [`EmulationBuilder`].
     #[inline]
     pub fn builder() -> EmulationBuilder {
         EmulationBuilder {
@@ -122,15 +123,41 @@ impl Emulation {
         }
     }
 
-    /// Decomposes the emulation into its components.
+    /// Returns a mutable reference to the TLS options, if set.
+    #[inline]
+    pub fn tls_options_mut(&mut self) -> &mut Option<TlsOptions> {
+        self.transport.tls_options_mut()
+    }
+
+    /// Returns a mutable reference to the HTTP/1 options, if set.
+    #[inline]
+    pub fn http1_options_mut(&mut self) -> &mut Option<Http1Options> {
+        self.transport.http1_options_mut()
+    }
+
+    /// Returns a mutable reference to the HTTP/2 options, if set.
+    #[inline]
+    pub fn http2_options_mut(&mut self) -> &mut Option<Http2Options> {
+        self.transport.http2_options_mut()
+    }
+
+    /// Returns a mutable reference to the emulation headers, if set.
+    #[inline]
+    pub fn headers_mut(&mut self) -> &mut Option<HeaderMap> {
+        &mut self.headers
+    }
+
+    /// Returns a mutable reference to the original headers, if set.
+    #[inline]
+    pub fn original_headers_mut(&mut self) -> &mut Option<OriginalHeaders> {
+        &mut self.original_headers
+    }
+
+    /// Decomposes the [`Emulation`] into its components.
     #[inline]
     pub(crate) fn into_parts(
         self,
-    ) -> (
-        Option<TransportOptions>,
-        Option<HeaderMap>,
-        Option<OriginalHeaders>,
-    ) {
+    ) -> (TransportOptions, Option<HeaderMap>, Option<OriginalHeaders>) {
         (self.transport, self.headers, self.original_headers)
     }
 }
