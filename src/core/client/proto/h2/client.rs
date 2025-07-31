@@ -39,7 +39,7 @@ use crate::core::{
     },
     common::{io::Compat, time::Time},
     error::BoxError,
-    ext::{RequestConfig, RequestExtendedConnectProtocol, RequestOriginalHeaders},
+    ext::{RequestConfig, RequestOriginalHeaders},
     rt::{Read, Write},
 };
 
@@ -583,14 +583,6 @@ where
                             message: None,
                         }));
                         continue;
-                    }
-
-                    // Transfer :protocol pseudo-header from RequestConfig to extensions
-                    // for Extended CONNECT Protocol handling in HTTP/2
-                    if let Some(protocol) = RequestConfig::<RequestExtendedConnectProtocol>::remove(
-                        req.extensions_mut(),
-                    ) {
-                        req.extensions_mut().insert(protocol);
                     }
 
                     let (fut, body_tx) = match self.h2_tx.send_request(req, !is_connect && eos) {

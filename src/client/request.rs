@@ -143,6 +143,11 @@ impl Request {
         Some(req)
     }
 
+    /// Get a mutable reference to the request extensions.
+    pub(crate) fn extensions_mut(&mut self) -> &mut Extensions {
+        &mut self.extensions
+    }
+
     /// Get a  reference to the request config value.
     #[inline]
     fn config<T>(&self) -> Option<&T::Value>
@@ -478,8 +483,7 @@ impl RequestBuilder {
     #[cfg(feature = "gzip")]
     pub fn gzip(mut self, gzip: bool) -> RequestBuilder {
         if let Ok(ref mut req) = self.request {
-            req.config_mut_or_default::<RequestAcceptEncoding>()
-                .gzip(gzip);
+            req.config_mut::<RequestAcceptEncoding>().gzip(gzip);
         }
         self
     }
@@ -488,8 +492,7 @@ impl RequestBuilder {
     #[cfg(feature = "brotli")]
     pub fn brotli(mut self, brotli: bool) -> RequestBuilder {
         if let Ok(ref mut req) = self.request {
-            req.config_mut_or_default::<RequestAcceptEncoding>()
-                .brotli(brotli);
+            req.config_mut::<RequestAcceptEncoding>().brotli(brotli);
         }
         self
     }
@@ -498,8 +501,7 @@ impl RequestBuilder {
     #[cfg(feature = "deflate")]
     pub fn deflate(mut self, deflate: bool) -> RequestBuilder {
         if let Ok(ref mut req) = self.request {
-            req.config_mut_or_default::<RequestAcceptEncoding>()
-                .deflate(deflate);
+            req.config_mut::<RequestAcceptEncoding>().deflate(deflate);
         }
         self
     }
@@ -508,8 +510,7 @@ impl RequestBuilder {
     #[cfg(feature = "zstd")]
     pub fn zstd(mut self, zstd: bool) -> RequestBuilder {
         if let Ok(ref mut req) = self.request {
-            req.config_mut_or_default::<RequestAcceptEncoding>()
-                .zstd(zstd);
+            req.config_mut::<RequestAcceptEncoding>().zstd(zstd);
         }
         self
     }

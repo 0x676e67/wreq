@@ -128,17 +128,6 @@ where
     }
 }
 
-/// Represents the `:protocol` pseudo-header used by
-/// the [Extended CONNECT Protocol].
-///
-/// [Extended CONNECT Protocol]: https://datatracker.ietf.org/doc/html/rfc8441#section-4
-#[derive(Clone, Copy)]
-pub(crate) struct RequestExtendedConnectProtocol;
-
-impl RequestConfigValue for RequestExtendedConnectProtocol {
-    type Value = http2::ext::Protocol;
-}
-
 /// Request-level options that affect request processing.
 #[derive(Clone, Copy)]
 pub(crate) struct RequestLevelOptions;

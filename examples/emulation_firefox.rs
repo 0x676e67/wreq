@@ -78,7 +78,7 @@ async fn main() -> wreq::Result<()> {
             CertificateCompressionAlgorithm::BROTLI,
             CertificateCompressionAlgorithm::ZSTD,
         ])
-        .alpn_protocols(&[AlpnProtocol::HTTP2, AlpnProtocol::HTTP1])
+        .alpn_protocols([AlpnProtocol::HTTP2, AlpnProtocol::HTTP1])
         .record_size_limit(0x4001)
         .pre_shared_key(true)
         .enable_ech_grease(true)

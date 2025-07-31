@@ -22,8 +22,7 @@ use tungstenite::protocol::WebSocketConfig;
 
 pub use self::message::{CloseCode, CloseFrame, Message, Utf8Bytes};
 use crate::{
-    EmulationFactory, Error, OriginalHeaders, RequestBuilder, Response,
-    core::ext::RequestExtendedConnectProtocol, proxy::Proxy,
+    EmulationFactory, Error, OriginalHeaders, RequestBuilder, Response, proxy::Proxy,
 };
 
 /// A WebSocket stream.
@@ -342,8 +341,9 @@ impl WebSocketRequestBuilder {
             Some(Version::HTTP_2) => {
                 *request.method_mut() = Method::CONNECT;
                 *request.version_mut() = Some(Version::HTTP_2);
-                *request.config_mut::<RequestExtendedConnectProtocol>() =
-                    Some(Protocol::from_static("websocket"));
+                request
+                    .extensions_mut()
+                    .insert(Protocol::from_static("websocket"));
                 None
             }
             _ => {
