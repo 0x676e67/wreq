@@ -43,37 +43,37 @@ pub struct Http2Options {
     /// Whether to use adaptive flow control.
     pub adaptive_window: bool,
 
-    /// The initial window size for HTTP/2 streams.
+    /// The initial stream ID for the connection.
     pub initial_stream_id: Option<u32>,
 
     /// The initial window size for HTTP/2 connection-level flow control.
     pub initial_conn_window_size: u32,
 
-    /// The initial maximum number of locally initiated (send) streams.
+    /// The initial window size for HTTP/2 streams.
     pub initial_window_size: u32,
 
     /// The initial maximum number of locally initiated (send) streams.
     pub initial_max_send_streams: usize,
 
-    /// The initial stream ID for the connection.
+    /// The maximum frame size to use for HTTP/2.
     pub max_frame_size: Option<u32>,
 
-    /// The maximum size of received header frames.
+    /// The interval for HTTP/2 keep-alive ping frames.
     pub keep_alive_interval: Option<Duration>,
 
-    /// The maximum size of received header frames.
+    /// The timeout for receiving an acknowledgement of the keep-alive ping.
     pub keep_alive_timeout: Duration,
 
-    /// Whether to keep the connection alive while idle.
+    /// Whether HTTP/2 keep-alive should apply while the connection is idle.
     pub keep_alive_while_idle: bool,
 
-    /// The maximum number of concurrent reset streams.
+    /// The maximum number of concurrent locally reset streams.
     pub max_concurrent_reset_streams: Option<usize>,
 
     /// The maximum size of the send buffer for HTTP/2 streams.
     pub max_send_buffer_size: usize,
 
-    /// The maximum size of the receive buffer for HTTP/2 streams.
+    /// The maximum number of concurrent streams initiated by the remote peer.
     pub max_concurrent_streams: Option<u32>,
 
     /// The maximum size of the header list.
@@ -85,28 +85,28 @@ pub struct Http2Options {
     /// Whether to enable push promises.
     pub enable_push: Option<bool>,
 
-    /// The header table size.
+    /// The header table size for HPACK compression.
     pub header_table_size: Option<u32>,
 
     /// Whether to enable the CONNECT protocol.
     pub enable_connect_protocol: Option<bool>,
 
-    /// Whether to use the HTTP/2 PRIORITY frame.
+    /// Whether to disable RFC 7540 Stream Priorities.
     pub no_rfc7540_priorities: Option<bool>,
 
-    /// Whether to use the HTTP/2 PRIORITY_UPDATE frame.
+    /// The HTTP/2 pseudo-header field order for outgoing HEADERS frames.
     pub headers_pseudo_order: Option<PseudoOrder>,
 
-    /// The stream dependency for the headers frame.
+    /// The stream dependency for the outgoing HEADERS frame.
     pub headers_stream_dependency: Option<StreamDependency>,
 
-    /// The priority for the headers frame.
+    /// Custom experimental HTTP/2 settings.
     pub experimental_settings: Option<ExperimentalSettings>,
 
-    /// The settings order for HTTP/2.
+    /// The order of settings parameters in the initial SETTINGS frame.
     pub settings_order: Option<SettingsOrder>,
 
-    /// The priority frame.
+    /// The list of PRIORITY frames to be sent after connection establishment.
     pub priorities: Option<Priorities>,
 }
 
