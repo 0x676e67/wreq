@@ -831,6 +831,7 @@ impl Builder {
     /// Pass `None` to disable timeout.
     ///
     /// Default is 90 seconds.
+    #[inline]
     pub fn pool_idle_timeout<D>(&mut self, val: D) -> &mut Self
     where
         D: Into<Option<Duration>>,
@@ -842,6 +843,7 @@ impl Builder {
     /// Sets the maximum idle connection per host allowed in the pool.
     ///
     /// Default is `usize::MAX` (no limit).
+    #[inline]
     pub fn pool_max_idle_per_host(&mut self, max_idle: usize) -> &mut Self {
         self.pool_config.max_idle_per_host = max_idle;
         self
@@ -850,6 +852,7 @@ impl Builder {
     /// Sets the maximum number of connections in the pool.
     ///
     /// Default is `None` (no limit).
+    #[inline]
     pub fn pool_max_size(&mut self, max_size: impl Into<Option<NonZeroU32>>) -> &mut Self {
         self.pool_config.max_pool_size = max_size.into();
         self
@@ -865,6 +868,7 @@ impl Builder {
     /// Note that setting this to true prevents HTTP/1 from being allowed.
     ///
     /// Default is false.
+    #[inline]
     pub fn http2_only(&mut self, val: bool) -> &mut Self {
         self.client_config.ver = if val { Ver::Http2 } else { Ver::Auto };
         self
@@ -876,6 +880,7 @@ impl Builder {
     /// details.
     ///
     /// [`http2::client::Builder::timer`]: https://docs.rs/http2/latest/http2/client/struct.Builder.html#method.timer
+    #[inline]
     pub fn http2_timer<M>(&mut self, timer: M) -> &mut Self
     where
         M: Timer + Send + Sync + 'static,
@@ -885,6 +890,7 @@ impl Builder {
     }
 
     /// Provide a configuration for HTTP/1.
+    #[inline]
     pub fn http1_options<O>(&mut self, opts: O) -> &mut Self
     where
         O: Into<Option<Http1Options>>,
@@ -897,6 +903,7 @@ impl Builder {
     }
 
     /// Provide a configuration for HTTP/2.
+    #[inline]
     pub fn http2_options<O>(&mut self, opts: O) -> &mut Self
     where
         O: Into<Option<Http2Options>>,
@@ -908,6 +915,7 @@ impl Builder {
     }
 
     /// Provide a timer to be used for timeouts and intervals in connection pools.
+    #[inline]
     pub fn pool_timer<M>(&mut self, timer: M) -> &mut Self
     where
         M: Timer + Clone + Send + Sync + 'static,
