@@ -212,10 +212,8 @@ where
     }
 
     /// Provide a options configuration for the HTTP/2 connection.
-    pub fn options(&mut self, opts: Option<Http2Options>) {
-        if let Some(opts) = opts {
-            self.opts = opts;
-        }
+    pub fn options(&mut self, opts: Http2Options) {
+        self.opts = opts;
     }
 
     /// Constructs a connection with the configured options and IO.

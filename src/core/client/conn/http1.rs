@@ -235,10 +235,8 @@ impl Builder {
     }
 
     /// Provide a options configuration for the HTTP/1 connection.
-    pub fn options(&mut self, opts: Option<Http1Options>) {
-        if let Some(opts) = opts {
-            self.opts = opts;
-        }
+    pub fn options(&mut self, opts: Http1Options) {
+        self.opts = opts;
     }
 
     /// Constructs a connection with the configured options and IO.
