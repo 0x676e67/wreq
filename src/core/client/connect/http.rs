@@ -101,7 +101,7 @@ pub struct HttpInfo {
 #[non_exhaustive]
 pub struct TcpConnectOptions {
     #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
-    pub(super) interface: Option<std::borrow::Cow<'static, str>>,
+    interface: Option<std::borrow::Cow<'static, str>>,
     #[cfg(any(
         target_os = "illumos",
         target_os = "ios",
@@ -111,9 +111,9 @@ pub struct TcpConnectOptions {
         target_os = "visionos",
         target_os = "watchos",
     ))]
-    pub(super) interface: Option<std::ffi::CString>,
-    pub(super) local_ipv4: Option<Ipv4Addr>,
-    pub(super) local_ipv6: Option<Ipv6Addr>,
+    interface: Option<std::ffi::CString>,
+    local_ipv4: Option<Ipv4Addr>,
+    local_ipv6: Option<Ipv6Addr>,
 }
 
 impl TcpConnectOptions {
@@ -201,32 +201,6 @@ impl TcpConnectOptions {
     ) {
         self.local_ipv4 = local_ipv4;
         self.local_ipv6 = local_ipv6;
-    }
-
-    /// Apply the tcp connect options.
-    pub(crate) fn apply_tcp_connect_options(&mut self, opts: TcpConnectOptions) -> &mut Self {
-        #[cfg(any(
-            target_os = "android",
-            target_os = "fuchsia",
-            target_os = "illumos",
-            target_os = "ios",
-            target_os = "linux",
-            target_os = "macos",
-            target_os = "solaris",
-            target_os = "tvos",
-            target_os = "visionos",
-            target_os = "watchos",
-        ))]
-        if let Some(interface) = opts.interface {
-            self.interface = Some(interface.into());
-        }
-        if let Some(local_ipv4) = opts.local_ipv4 {
-            self.set_local_address(Some(local_ipv4.into()));
-        }
-        if let Some(local_ipv6) = opts.local_ipv6 {
-            self.set_local_address(Some(local_ipv6.into()));
-        }
-        self
     }
 }
 
@@ -448,9 +422,33 @@ impl<R> HttpConnector<R> {
     /// Set the connect options to be used when connecting.
     #[inline]
     pub fn set_connect_options(&mut self, opts: TcpConnectOptions) {
-        self.config_mut()
-            .tcp_connect_options
-            .apply_tcp_connect_options(opts);
+        let this = self.config_mut();
+
+        #[cfg(any(
+            target_os = "android",
+            target_os = "fuchsia",
+            target_os = "illumos",
+            target_os = "ios",
+            target_os = "linux",
+            target_os = "macos",
+            target_os = "solaris",
+            target_os = "tvos",
+            target_os = "visionos",
+            target_os = "watchos",
+        ))]
+        if let Some(interface) = opts.interface {
+            this.tcp_connect_options.interface = Some(interface);
+        }
+
+        if let Some(local_ipv4) = opts.local_ipv4 {
+            this.tcp_connect_options
+                .set_local_address(Some(local_ipv4.into()));
+        }
+
+        if let Some(local_ipv6) = opts.local_ipv6 {
+            this.tcp_connect_options
+                .set_local_address(Some(local_ipv6.into()));
+        }
     }
 
     /// Set the connect timeout.
