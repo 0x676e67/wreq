@@ -21,9 +21,7 @@ use tokio_tungstenite::tungstenite::{self, protocol};
 use tungstenite::protocol::WebSocketConfig;
 
 pub use self::message::{CloseCode, CloseFrame, Message, Utf8Bytes};
-use crate::{
-    EmulationFactory, Error, OriginalHeaders, RequestBuilder, Response, proxy::Proxy,
-};
+use crate::{EmulationFactory, Error, OriginalHeaders, RequestBuilder, Response, proxy::Proxy};
 
 /// A WebSocket stream.
 type WebSocketStream = tokio_tungstenite::WebSocketStream<crate::Upgraded>;
