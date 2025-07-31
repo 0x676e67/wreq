@@ -254,8 +254,9 @@ impl Proxy {
             Intercept::All(ref mut s)
             | Intercept::Http(ref mut s)
             | Intercept::Https(ref mut s) => {
-                url_auth(s, username, password);
-                let header = encode_basic_auth(username, password);
+                s.set_username(username).expect("is a base");
+                s.set_password(Some(password)).expect("is a base");
+                let header = crate::util::basic_auth(username, Some(password));
                 self.extra.auth = Some(header);
             }
         }
@@ -516,15 +517,6 @@ enum Intercept {
     All(Url),
     Http(Url),
     Https(Url),
-}
-
-fn url_auth(url: &mut Url, username: &str, password: &str) {
-    url.set_username(username).expect("is a base");
-    url.set_password(Some(password)).expect("is a base");
-}
-
-pub(crate) fn encode_basic_auth(username: &str, password: &str) -> HeaderValue {
-    crate::util::basic_auth(username, Some(password))
 }
 
 #[cfg(test)]
