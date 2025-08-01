@@ -128,7 +128,6 @@ where
     }
 }
 
-/// Request-level options that affect request processing.
 #[derive(Clone, Copy)]
 pub(crate) struct RequestLevelOptions;
 
@@ -136,10 +135,9 @@ impl RequestConfigValue for RequestLevelOptions {
     type Value = crate::core::client::options::RequestOptions;
 }
 
-/// Request original headers for the request.
 #[derive(Clone, Copy)]
-pub(crate) struct RequestOriginalHeaders;
+pub(crate) struct RequestOrigHeaderMap;
 
-impl RequestConfigValue for RequestOriginalHeaders {
-    type Value = super::header::OriginalHeaders;
+impl RequestConfigValue for RequestOrigHeaderMap {
+    type Value = crate::header::OrigHeaderMap;
 }

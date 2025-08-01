@@ -1,5 +1,5 @@
 use http::{HeaderMap, HeaderName, HeaderValue};
-use wreq::{Client, OriginalHeaders};
+use wreq::{Client, header::OrigHeaderMap};
 
 #[tokio::main]
 async fn main() -> wreq::Result<()> {
@@ -9,16 +9,16 @@ async fn main() -> wreq::Result<()> {
         .build()?;
 
     // Create a request with a case-sensitive header
-    let mut original_headers = OriginalHeaders::new();
-    original_headers.insert("Host");
-    original_headers.insert("X-custom-Header1");
-    original_headers.insert("x-Custom-Header2");
-    original_headers.insert(HeaderName::from_static("x-custom-header3"));
+    let mut orig_headers = OrigHeaderMap::new();
+    orig_headers.insert("Host");
+    orig_headers.insert("X-custom-Header1");
+    orig_headers.insert("x-Custom-Header2");
+    orig_headers.insert(HeaderName::from_static("x-custom-header3"));
 
     // Use the API you're already familiar with
     let resp = client
         .get("https://tls.peet.ws/api/all")
-        .original_headers(original_headers)
+        .orig_headers(orig_headers)
         .headers({
             let mut headers = HeaderMap::new();
             headers.insert("x-custom-header1", HeaderValue::from_static("value1"));

@@ -1,4 +1,4 @@
-use wreq::{Client, OriginalHeaders, http1::Http1Options};
+use wreq::{Client, header::OrigHeaderMap, http1::Http1Options};
 
 #[tokio::main]
 async fn main() -> wreq::Result<()> {
@@ -17,8 +17,8 @@ async fn main() -> wreq::Result<()> {
 
     // Use the API you're already familiar with
     let resp = client.post("https://httpbin.org").send().await?;
-    if let Some(original) = resp.extensions().get::<OriginalHeaders>() {
-        for (name, raw_name) in original.iter() {
+    if let Some(headers) = resp.extensions().get::<OrigHeaderMap>() {
+        for (name, raw_name) in headers.iter() {
             println!(
                 "Header: {} (original: {})",
                 name,

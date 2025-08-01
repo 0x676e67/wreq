@@ -4,7 +4,7 @@ use http::{
     header::{CONTENT_LENGTH, HeaderValue, ValueIter},
 };
 
-use crate::OriginalHeaders;
+use crate::header::OrigHeaderMap;
 
 pub(super) fn connection_keep_alive(value: &HeaderValue) -> bool {
     connection_has(value, "keep-alive")
@@ -144,7 +144,7 @@ pub(super) fn add_chunked(mut entry: http::header::OccupiedEntry<'_, HeaderValue
 /// Headers in `headers_order` are sorted to the front, preserving their order.
 /// Remaining headers are appended in their original order.
 #[inline]
-pub(super) fn sort_headers(headers: &mut HeaderMap, orig: &OriginalHeaders) {
+pub(super) fn sort_headers(headers: &mut HeaderMap, orig: &OrigHeaderMap) {
     if headers.len() <= 1 {
         return;
     }

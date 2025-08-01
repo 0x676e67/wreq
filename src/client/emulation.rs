@@ -1,7 +1,7 @@
 use http::HeaderMap;
 
 use crate::{
-    OriginalHeaders, core::client::options::TransportOptions, http1::Http1Options,
+    core::client::options::TransportOptions, header::OrigHeaderMap, http1::Http1Options,
     http2::Http2Options, tls::TlsOptions,
 };
 
@@ -35,77 +35,52 @@ pub struct EmulationBuilder {
 pub struct Emulation {
     transport: TransportOptions,
     headers: Option<HeaderMap>,
-    original_headers: Option<OriginalHeaders>,
+    orig_headers: Option<OrigHeaderMap>,
 }
 
 // ==== impl EmulationBuilder ====
 
 impl EmulationBuilder {
-    /// Sets the  HTTP/1 options configuration for the emulation.
+    /// Sets the  HTTP/1 options configuration.
     #[inline]
-    pub fn http1_options<C>(mut self, opts: C) -> Self
-    where
-        C: Into<Option<Http1Options>>,
-    {
-        if let Some(opts) = opts.into() {
-            *self.emulation.http1_options_mut() = Some(opts);
-        }
+    pub fn http1_options(mut self, opts: Http1Options) -> Self {
+        *self.emulation.http1_options_mut() = Some(opts);
         self
     }
 
-    /// Sets the HTTP/2 options configuration for the emulation.
+    /// Sets the HTTP/2 options configuration.
     #[inline]
-    pub fn http2_options<C>(mut self, opts: C) -> Self
-    where
-        C: Into<Option<Http2Options>>,
-    {
-        if let Some(opts) = opts.into() {
-            *self.emulation.http2_options_mut() = Some(opts);
-        }
+    pub fn http2_options(mut self, opts: Http2Options) -> Self {
+        *self.emulation.http2_options_mut() = Some(opts);
         self
     }
 
-    /// Sets the  TLS options configuration for the emulation.
+    /// Sets the  TLS options configuration.
     #[inline]
-    pub fn tls_options<C>(mut self, opts: C) -> Self
-    where
-        C: Into<Option<TlsOptions>>,
-    {
-        if let Some(opts) = opts.into() {
-            *self.emulation.tls_options_mut() = Some(opts);
-        }
+    pub fn tls_options(mut self, opts: TlsOptions) -> Self {
+        *self.emulation.tls_options_mut() = Some(opts);
         self
     }
 
-    /// Sets the default headers for the emulation.
+    /// Sets the default headers.
     #[inline]
-    pub fn headers<H>(mut self, headers: H) -> Self
-    where
-        H: Into<Option<HeaderMap>>,
-    {
-        if let Some(src) = headers.into() {
-            let dst = self.emulation.headers.get_or_insert_default();
-            crate::util::replace_headers(dst, src);
-        }
+    pub fn headers(mut self, src: HeaderMap) -> Self {
+        let dst = self.emulation.headers.get_or_insert_default();
+        crate::util::replace_headers(dst, src);
         self
     }
 
-    /// Sets the original headers for the emulation.
+    /// Sets the original headers.
     #[inline]
-    pub fn original_headers<H>(mut self, headers: H) -> Self
-    where
-        H: Into<Option<OriginalHeaders>>,
-    {
-        if let Some(src) = headers.into() {
-            self.emulation
-                .original_headers
-                .get_or_insert_default()
-                .extend(src);
-        }
+    pub fn orig_headers(mut self, src: OrigHeaderMap) -> Self {
+        self.emulation
+            .orig_headers
+            .get_or_insert_default()
+            .extend(src);
         self
     }
 
-    /// Builds the `Emulation` instance.
+    /// Builds the [`Emulation`] instance.
     #[inline]
     pub fn build(self) -> Emulation {
         self.emulation
@@ -149,16 +124,14 @@ impl Emulation {
 
     /// Returns a mutable reference to the original headers, if set.
     #[inline]
-    pub fn original_headers_mut(&mut self) -> &mut Option<OriginalHeaders> {
-        &mut self.original_headers
+    pub fn orig_headers_mut(&mut self) -> &mut Option<OrigHeaderMap> {
+        &mut self.orig_headers
     }
 
     /// Decomposes the [`Emulation`] into its components.
     #[inline]
-    pub(crate) fn into_parts(
-        self,
-    ) -> (TransportOptions, Option<HeaderMap>, Option<OriginalHeaders>) {
-        (self.transport, self.headers, self.original_headers)
+    pub(crate) fn into_parts(self) -> (TransportOptions, Option<HeaderMap>, Option<OrigHeaderMap>) {
+        (self.transport, self.headers, self.orig_headers)
     }
 }
 
