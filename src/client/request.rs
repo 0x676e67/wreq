@@ -557,7 +557,7 @@ impl RequestBuilder {
         if let Ok(ref mut req) = self.request {
             req.config_mut::<RequestLevelOptions>()
                 .tcp_connect_opts_mut()
-                .set_local_addresses(ipv4.into(), ipv6.into());
+                .set_local_addresses(ipv4, ipv6);
         }
         self
     }
@@ -582,7 +582,7 @@ impl RequestBuilder {
         if let Ok(ref mut req) = self.request {
             req.config_mut::<RequestLevelOptions>()
                 .tcp_connect_opts_mut()
-                .set_interface(interface.into());
+                .set_interface(interface);
         }
         self
     }

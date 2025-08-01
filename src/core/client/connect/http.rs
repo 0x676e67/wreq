@@ -149,32 +149,26 @@ impl TcpConnectOptions {
     #[inline]
     pub fn set_interface<S>(&mut self, interface: S) -> &mut Self
     where
-        S: Into<Option<std::borrow::Cow<'static, str>>>,
+        S: Into<std::borrow::Cow<'static, str>>,
     {
         #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
         {
-            self.interface = interface.into();
+            self.interface = Some(interface.into());
         }
 
         #[cfg(not(any(target_os = "android", target_os = "fuchsia", target_os = "linux")))]
         {
-            self.interface = interface
-                .into()
-                .and_then(|iface| std::ffi::CString::new(iface.into_owned()).ok());
+            self.interface = std::ffi::CString::new(interface.into().into_owned()).ok()
         }
 
         self
     }
 
-    /// Sets the local address the socket will bind to before connecting.
+    /// Set that all sockets are bound to the configured address before connection.
     ///
-    /// If an address is provided, the socket will explicitly bind to it,
-    /// ensuring that the outgoing connection uses this address as the source.
+    /// If `None`, the sockets will not be bound.
     ///
-    /// - If an `Ipv4Addr` is given, it will set `local_ipv4` and clear `local_ipv6`.
-    /// - If an `Ipv6Addr` is given, it will set `local_ipv6` and clear `local_ipv4`.
-    ///
-    /// If `None` is passed, both addresses are cleared and the OS will choose automatically.
+    /// Default is `None`.
     #[inline]
     pub fn set_local_address(&mut self, local_addr: Option<IpAddr>) {
         match local_addr {
@@ -188,19 +182,16 @@ impl TcpConnectOptions {
         };
     }
 
-    /// Sets both local IPv4 and IPv6 addresses explicitly.
-    ///
-    /// Use this method to assign both address families independently.
-    ///
-    /// If either argument is `None`, the socket will not be bound for that protocol.
+    /// Set that all sockets are bound to the configured IPv4 or IPv6 address (depending on host's
+    /// preferences) before connection.
     #[inline]
-    pub fn set_local_addresses(
-        &mut self,
-        local_ipv4: Option<Ipv4Addr>,
-        local_ipv6: Option<Ipv6Addr>,
-    ) {
-        self.local_ipv4 = local_ipv4;
-        self.local_ipv6 = local_ipv6;
+    pub fn set_local_addresses<V4, V6>(&mut self, local_ipv4: V4, local_ipv6: V6)
+    where
+        V4: Into<Option<Ipv4Addr>>,
+        V6: Into<Option<Ipv6Addr>>,
+    {
+        self.local_ipv4 = local_ipv4.into();
+        self.local_ipv6 = local_ipv6.into();
     }
 }
 

@@ -1044,7 +1044,7 @@ impl ClientBuilder {
     {
         self.config
             .tcp_connect_options
-            .set_local_addresses(ipv4.into(), ipv6.into());
+            .set_local_addresses(ipv4, ipv6);
         self
     }
 
@@ -1097,9 +1097,7 @@ impl ClientBuilder {
     where
         T: Into<std::borrow::Cow<'static, str>>,
     {
-        self.config
-            .tcp_connect_options
-            .set_interface(interface.into());
+        self.config.tcp_connect_options.set_interface(interface);
         self
     }
 
