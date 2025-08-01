@@ -76,23 +76,20 @@ struct Extra {
 
 impl std::hash::Hash for Extra {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        // Hash the auth header value bytes if present
-        if let Some(ref auth) = self.auth {
-            state.write(auth.as_bytes());
-        } else {
-            state.write_u8(0);
-        }
+        // Hash the optional Proxy-Authorization header value, if present.
+        self.auth.hash(state);
 
         // Hash the misc headers by name and value bytes, in sorted order for determinism
         if let Some(ref misc) = self.misc {
-            let mut items: Vec<_> = misc.iter().collect();
-            items.sort_by_key(|(k, _)| k.as_str());
-            for (k, v) in items {
-                state.write(k.as_str().as_bytes());
-                state.write(v.as_bytes());
+            for (k, v) in misc.iter() {
+                // Hash the header name as bytes.
+                k.as_str().hash(state);
+                // Hash the header value as bytes.
+                v.as_bytes().hash(state);
             }
         } else {
-            state.write_u8(0);
+            // Distinguish between None and Some(empty) for misc.
+            0u8.hash(state);
         }
     }
 }
