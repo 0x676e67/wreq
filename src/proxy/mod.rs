@@ -79,7 +79,8 @@ impl std::hash::Hash for Extra {
         // Hash the optional Proxy-Authorization header value, if present.
         self.auth.hash(state);
 
-        // Hash the misc headers by name and value bytes, in sorted order for determinism
+        // Hash the misc headers by name and value bytes, in insertion order.
+        // HeaderMap preserves insertion order, so no need to sort for determinism.
         if let Some(ref misc) = self.misc {
             for (k, v) in misc.iter() {
                 // Hash the header name as bytes.
