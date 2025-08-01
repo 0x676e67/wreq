@@ -142,8 +142,8 @@ impl CertStoreBuilder {
 /// Internally, [`CertStore`] uses an [`Arc`] for reference counting, so you do **not** need to wrap
 /// it in an additional [`Rc`] or [`Arc`] for sharing between threads or tasks.
 ///
-/// To configure a [`CertStore`], use [`CertStore::builder()`]. You can also construct it from DER or
-/// PEM certificates, or load system defaults.
+/// To configure a [`CertStore`], use [`CertStore::builder()`]. You can also construct it from DER
+/// or PEM certificates, or load system defaults.
 ///
 /// [`Rc`]: std::rc::Rc
 /// [`Arc`]: std::sync::Arc
