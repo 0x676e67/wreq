@@ -1,13 +1,11 @@
-pub mod hash;
-
 use std::fmt;
 
 use crate::header::{Entry, HeaderMap, HeaderValue, OccupiedEntry};
 
 pub fn basic_auth<U, P>(username: U, password: Option<P>) -> HeaderValue
 where
-    U: std::fmt::Display,
-    P: std::fmt::Display,
+    U: fmt::Display,
+    P: fmt::Display,
 {
     use std::io::Write;
 

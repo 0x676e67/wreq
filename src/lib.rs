@@ -279,6 +279,7 @@ mod trace;
 mod client;
 mod core;
 mod error;
+mod hash;
 mod into_url;
 mod proxy;
 mod response;

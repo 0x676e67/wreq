@@ -7,9 +7,9 @@ use crate::{
         connect::TcpConnectOptions,
         options::{RequestOptions, TransportOptions},
     },
+    hash::HashMemo,
     proxy::Matcher as ProxyMacher,
     tls::{AlpnProtocol, TlsOptions},
-    util::hash::HashMemo,
 };
 
 /// Uniquely identifies a connection configuration and its lifecycle.

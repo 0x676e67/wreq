@@ -37,8 +37,8 @@ use crate::{
         ext::{RequestConfig, RequestLevelOptions},
         rt::{Executor, Read, Timer, Write},
     },
+    hash::{HASHER, HashMemo},
     tls::AlpnProtocol,
-    util::hash::{HASHER, HashMemo},
 };
 
 type BoxSendFuture = Pin<Box<dyn Future<Output = ()> + Send>>;

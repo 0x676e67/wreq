@@ -7,7 +7,7 @@ use std::{
 use boring2::ssl::{SslSession, SslSessionRef, SslVersion};
 use schnellru::ByLength;
 
-use crate::util::hash::{HASHER, HashMap, LruMap};
+use crate::hash::{HASHER, HashMap, LruMap};
 
 /// A typed key for indexing TLS sessions in the cache.
 ///

@@ -24,8 +24,8 @@ use crate::{
         },
         rt::Timer as _,
     },
+    hash::{HASHER, HashMap, HashSet, LruMap},
     sync::Mutex,
-    util::hash::{HASHER, HashMap, HashSet, LruMap},
 };
 
 pub struct Pool<T, K: Key> {

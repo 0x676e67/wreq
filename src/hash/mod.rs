@@ -1,7 +1,6 @@
 mod memo;
 
 use ahash::RandomState;
-pub use memo::HashMemo;
 use schnellru::ByLength;
 
 /// Pre-seeded [`RandomState`] for consistent internal hashing.
@@ -16,6 +15,9 @@ pub const HASHER: RandomState = RandomState::with_seeds(
     0x2f72_c2c1_9b04_2d4c,
     0x94e5_8d83_a26c_3f28,
 );
+
+/// A type alias for a hash memoization structure using `ahash` with a pre-seeded `RandomState`.
+pub type HashMemo<K> = memo::HashMemo<K, RandomState>;
 
 /// A type alias for a hash set using `ahash` with a pre-seeded `RandomState`.
 pub type HashSet<T> = std::collections::HashSet<T, RandomState>;

@@ -69,16 +69,16 @@ use crate::{
     tls::{AlpnProtocol, CertStore, Identity, KeyLogPolicy, TlsConnectorBuilder, TlsVersion},
 };
 
-/// An `Client` to make Requests with.
+/// An [`Client`] to make Requests with.
 ///
 /// The Client has various configuration values to tweak, but the defaults
 /// are set to what is usually the most commonly desired value. To configure a
-/// `Client`, use `Client::builder()`.
+/// [`Client`], use [`Client::builder()`].
 ///
-/// The `Client` holds a connection pool internally, so it is advised that
+/// The [`Client`] holds a connection pool internally, so it is advised that
 /// you create one and **reuse** it.
 ///
-/// You do **not** have to wrap the `Client` in an [`Rc`] or [`Arc`] to **reuse** it,
+/// You do **not** have to wrap the [`Client`] in an [`Rc`] or [`Arc`] to **reuse** it,
 /// because it already uses an [`Arc`] internally.
 ///
 /// [`Rc`]: std::rc::Rc
@@ -87,7 +87,7 @@ pub struct Client {
     inner: Arc<ClientRef>,
 }
 
-/// A `ClientBuilder` can be used to create a `Client` with custom configuration.
+/// A [`ClientBuilder`] can be used to create a [`Client`] with custom configuration.
 #[must_use]
 pub struct ClientBuilder {
     config: Config,
@@ -163,9 +163,9 @@ impl Default for ClientBuilder {
 }
 
 impl ClientBuilder {
-    /// Constructs a new `ClientBuilder`.
+    /// Constructs a new [`ClientBuilder`].
     ///
-    /// This is the same as `Client::builder()`.
+    /// This is the same as [`Client::builder()`].
     pub fn new() -> ClientBuilder {
         ClientBuilder {
             config: Config {
@@ -220,13 +220,12 @@ impl ClientBuilder {
                 cert_verification: true,
                 min_tls_version: None,
                 max_tls_version: None,
-                // Transport options for HTTP/1/2 and TLS.
                 transport_options: TransportOptions::default(),
             },
         }
     }
 
-    /// Returns a `Client` that uses this `ClientBuilder` configuration.
+    /// Returns a [`Client`] that uses this [`ClientBuilder`] configuration.
     ///
     /// # Errors
     ///
@@ -382,8 +381,8 @@ impl ClientBuilder {
                 )))
                 .service(service);
 
+            // Add the configured layers to the service.
             if config.layers.is_empty() {
-                // Add a request timeout layer and map timeout errors to request errors.
                 let service = ServiceBuilder::new()
                     .layer(TimeoutLayer::new(config.timeout_options))
                     .service(service)
@@ -391,7 +390,6 @@ impl ClientBuilder {
 
                 ClientRef::Left(service)
             } else {
-                // If custom layers are configured, wrap the service with each layer in order.
                 let service = config.layers.into_iter().fold(
                     BoxCloneSyncService::new(service),
                     |client_service, layer| {
@@ -399,7 +397,6 @@ impl ClientBuilder {
                     },
                 );
 
-                // Add a request timeout layer and map timeout errors to request errors.
                 let service = ServiceBuilder::new()
                     .layer(TimeoutLayer::new(config.timeout_options))
                     .service(service)

@@ -1,5 +1,3 @@
-//! Hash Value Memoization
-
 use std::{
     borrow::Borrow,
     hash::{BuildHasher, BuildHasherDefault, Hash, Hasher},
