@@ -220,8 +220,8 @@ impl Inner {
 
         // Set random AES hardware override
         if self.config.random_aes_hw_override {
-            let random_bool = (crate::util::fast_random() & 1) == 0;
-            cfg.set_aes_hw_override(random_bool);
+            let random = (crate::util::fast_random() & 1) == 0;
+            cfg.set_aes_hw_override(random);
         }
 
         // Set ALPS protos
