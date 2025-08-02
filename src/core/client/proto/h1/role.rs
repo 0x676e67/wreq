@@ -24,7 +24,7 @@ use crate::{
         error::Parse,
         ext::{RequestConfig, RequestOrigHeaderMap},
     },
-    header::OrigHeaderMap,
+    header::{OrigHeaderMap, OrigHeaderName},
 };
 
 pub(crate) const DEFAULT_MAX_HEADERS: usize = 100;
@@ -224,7 +224,10 @@ impl Http1Transaction for Client {
                 }
 
                 if let Some(ref mut header_case_map) = header_case_map {
-                    header_case_map.append(&name, slice.slice(header.name.0..header.name.1));
+                    header_case_map.append(
+                        &name,
+                        OrigHeaderName::Original(slice.slice(header.name.0..header.name.1)),
+                    );
                 }
 
                 headers.append(name, value);

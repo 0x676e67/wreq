@@ -19,11 +19,7 @@ async fn main() -> wreq::Result<()> {
     let resp = client.post("https://httpbin.org").send().await?;
     if let Some(headers) = resp.extensions().get::<OrigHeaderMap>() {
         for (name, raw_name) in headers.iter() {
-            println!(
-                "Header: {} (original: {})",
-                name,
-                String::from_utf8_lossy(raw_name)
-            );
+            println!("Header: {} (original: {:?})", name, raw_name);
         }
     }
     Ok(())

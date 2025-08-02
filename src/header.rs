@@ -1,9 +1,26 @@
 //! Header module
 //! re-exports the `http::header` module for easier access
 
-use bytes::Bytes;
 pub use http::header::*;
-use sealed::OrigHeaderName;
+pub use name::OrigHeaderName;
+use sealed::{Sealed, SealedBorrow};
+
+/// Trait for types that can be converted into an [`OrigHeaderName`] (case-preserved header).
+///
+/// This trait is sealed, so only known types can implement it.
+/// Supported types:
+/// - `&'static str`
+/// - `String`
+/// - `Vec<u8>`
+/// - `Bytes`
+/// - `&[u8]`
+/// - `&Bytes`
+/// - `HeaderName`
+/// - `&HeaderName`
+pub trait IntoOrigHeaderName: Sealed {
+    /// Converts the type into an [`OrigHeaderName`].
+    fn into_orig_header_name(self) -> OrigHeaderName;
+}
 
 /// A map from header names to their original casing as received in an HTTP message.
 ///
@@ -34,7 +51,7 @@ use sealed::OrigHeaderName;
 /// [`OrigHeaderMap`] can also be used as a header ordering map, preserving the order in which
 /// headers were added. This is useful for scenarios where header order must be retained.
 #[derive(Debug, Clone, Default)]
-pub struct OrigHeaderMap(HeaderMap<Bytes>);
+pub struct OrigHeaderMap(HeaderMap<OrigHeaderName>);
 
 impl OrigHeaderMap {
     /// Creates a new, empty [`OrigHeaderMap`].
@@ -61,23 +78,29 @@ impl OrigHeaderMap {
     #[inline]
     pub fn insert<N>(&mut self, orig: N) -> bool
     where
-        N: TryInto<OrigHeaderName>,
+        N: IntoOrigHeaderName,
     {
-        match orig.try_into() {
-            Ok(orig) => self.0.append(orig.name, orig.orig),
-            Err(_) => false,
+        let orig_header_name = orig.into_orig_header_name();
+        match &orig_header_name {
+            OrigHeaderName::Original(bytes) => {
+                let name = HeaderName::from_bytes(bytes.as_ref()).unwrap();
+                self.0.append(name, orig_header_name)
+            }
+            OrigHeaderName::Normalized(header_name) => {
+                self.0.append(header_name.clone(), orig_header_name)
+            }
         }
     }
 
-    /// Extends a a collection with the contents of an iterator.
+    /// Extends the map with all entries from another [`OrigHeaderMap`], preserving order.
     #[inline]
     pub fn extend(&mut self, iter: OrigHeaderMap) {
         self.0.extend(iter.0);
     }
 
-    /// Returns an iterator over all header names and their original spellings.
+    /// Returns an iterator over all header names and their original spellings, in insertion order.
     #[inline]
-    pub fn iter(&self) -> impl Iterator<Item = (&HeaderName, &Bytes)> {
+    pub fn iter(&self) -> impl Iterator<Item = (&HeaderName, &OrigHeaderName)> {
         self.0.iter()
     }
 }
@@ -85,7 +108,7 @@ impl OrigHeaderMap {
 impl OrigHeaderMap {
     /// Appends a header name to the end of the collection.
     #[inline]
-    pub(crate) fn append<N>(&mut self, name: N, orig: Bytes)
+    pub(crate) fn append<N>(&mut self, name: N, orig: OrigHeaderName)
     where
         N: IntoHeaderName,
     {
@@ -110,8 +133,8 @@ impl OrigHeaderMap {
 }
 
 impl<'a> IntoIterator for &'a OrigHeaderMap {
-    type Item = (&'a HeaderName, &'a Bytes);
-    type IntoIter = <&'a HeaderMap<Bytes> as IntoIterator>::IntoIter;
+    type Item = (&'a HeaderName, &'a OrigHeaderName);
+    type IntoIter = <&'a HeaderMap<OrigHeaderName> as IntoIterator>::IntoIter;
 
     #[inline]
     fn into_iter(self) -> Self::IntoIter {
@@ -120,8 +143,8 @@ impl<'a> IntoIterator for &'a OrigHeaderMap {
 }
 
 impl IntoIterator for OrigHeaderMap {
-    type Item = (Option<HeaderName>, Bytes);
-    type IntoIter = <HeaderMap<Bytes> as IntoIterator>::IntoIter;
+    type Item = (Option<HeaderName>, OrigHeaderName);
+    type IntoIter = <HeaderMap<OrigHeaderName> as IntoIterator>::IntoIter;
 
     #[inline]
     fn into_iter(self) -> Self::IntoIter {
@@ -129,114 +152,102 @@ impl IntoIterator for OrigHeaderMap {
     }
 }
 
-mod sealed {
-    use std::borrow::Cow;
-
+mod name {
     use bytes::Bytes;
     use http::HeaderName;
 
-    /// Represents an HTTP header name with its original casing preserved.
+    use super::{IntoOrigHeaderName, Sealed, SealedBorrow};
+
+    /// An HTTP header name with both normalized and original casing.
     ///
-    /// [`OrigHeaderName`] is used to store the original case-sensitive form of an HTTP header name
-    /// as it appeared in the request or response. While HTTP header names are case-insensitive
-    /// according to the specification, preserving the original casing can be important for
-    /// certain applications, such as proxies, logging, debugging, or when reproducing requests
-    /// exactly as received.
-    ///
-    /// This type allows you to associate a normalized `HeaderName` with its original string
-    /// representation, enabling accurate restoration or inspection of header names in their
-    /// original form.
-    pub struct OrigHeaderName {
-        /// The original header name in its original case.
-        pub orig: Bytes,
-        /// The normalized header name in lowercase.
-        pub name: HeaderName,
+    /// While HTTP headers are case-insensitive, this type stores both
+    /// the canonical `HeaderName` and the original casing as received,
+    /// useful for preserving header order and formatting in proxies,
+    /// debugging, or exact HTTP message reproduction.
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub enum OrigHeaderName {
+        /// The original casing of the header name as received.
+        Original(Bytes),
+        /// The canonical (normalized, lowercased) header name.
+        Normalized(HeaderName),
     }
 
-    impl From<HeaderName> for OrigHeaderName {
-        fn from(name: HeaderName) -> Self {
-            Self {
-                orig: Bytes::from_owner(name.clone()),
-                name,
+    impl AsRef<[u8]> for OrigHeaderName {
+        #[inline]
+        fn as_ref(&self) -> &[u8] {
+            match self {
+                OrigHeaderName::Normalized(name) => name.as_ref(),
+                OrigHeaderName::Original(orig) => orig.as_ref(),
             }
         }
     }
 
-    impl<'a> From<&'a HeaderName> for OrigHeaderName {
-        fn from(src: &'a HeaderName) -> OrigHeaderName {
-            Self::from(src.clone())
+    impl IntoOrigHeaderName for String {
+        fn into_orig_header_name(self) -> OrigHeaderName {
+            Vec::into_orig_header_name(self.into_bytes())
         }
     }
 
-    impl TryFrom<String> for OrigHeaderName {
-        type Error = http::Error;
-
-        fn try_from(orig: String) -> Result<Self, Self::Error> {
-            let name = HeaderName::from_bytes(orig.as_bytes())?;
-            Ok(Self {
-                orig: Bytes::from_owner(orig),
-                name,
-            })
+    impl IntoOrigHeaderName for Vec<u8> {
+        fn into_orig_header_name(self) -> OrigHeaderName {
+            Bytes::from(self).into_orig_header_name()
         }
     }
 
-    impl TryFrom<Cow<'static, str>> for OrigHeaderName {
-        type Error = http::Error;
-
-        fn try_from(orig: Cow<'static, str>) -> Result<Self, Self::Error> {
-            match orig {
-                Cow::Borrowed(orig) => Self::try_from(orig.as_bytes()),
-                Cow::Owned(orig) => Self::try_from(orig),
-            }
+    impl IntoOrigHeaderName for Bytes {
+        fn into_orig_header_name(self) -> OrigHeaderName {
+            OrigHeaderName::Original(self)
         }
     }
 
-    impl TryFrom<Bytes> for OrigHeaderName {
-        type Error = http::Error;
-
-        fn try_from(orig: Bytes) -> Result<Self, Self::Error> {
-            let name = HeaderName::from_bytes(&orig)?;
-            Ok(Self { orig, name })
+    impl IntoOrigHeaderName for HeaderName {
+        fn into_orig_header_name(self) -> OrigHeaderName {
+            OrigHeaderName::Normalized(self)
         }
     }
 
-    impl<'a> TryFrom<&'a Bytes> for OrigHeaderName {
-        type Error = http::Error;
-
-        fn try_from(orig: &'a Bytes) -> Result<Self, Self::Error> {
-            let name = HeaderName::from_bytes(orig)?;
-            Ok(Self {
-                orig: orig.clone(),
-                name,
-            })
-        }
-    }
-
-    impl TryFrom<&'static [u8]> for OrigHeaderName {
-        type Error = http::Error;
-
-        fn try_from(orig: &'static [u8]) -> Result<Self, Self::Error> {
-            let name = HeaderName::from_bytes(orig)?;
-            Ok(Self {
-                orig: Bytes::from_static(orig),
-                name,
-            })
-        }
-    }
-
-    impl TryFrom<&'static str> for OrigHeaderName {
-        type Error = http::Error;
-
-        fn try_from(orig: &'static str) -> Result<Self, Self::Error> {
-            Self::try_from(orig.as_bytes())
+    impl<T> IntoOrigHeaderName for T
+    where
+        T: AsRef<[u8]> + SealedBorrow + Sealed,
+    {
+        fn into_orig_header_name(self) -> OrigHeaderName {
+            OrigHeaderName::Original(Bytes::copy_from_slice(self.as_ref()))
         }
     }
 }
 
+mod sealed {
+
+    use bytes::Bytes;
+    use http::HeaderName;
+
+    pub trait Sealed {}
+    pub trait SealedBorrow {}
+
+    macro_rules! impl_sealed_borrow {
+        ($($ty:ty),* $(,)?) => {
+            $(
+                impl Sealed for $ty {}
+                impl SealedBorrow for $ty {}
+            )*
+        };
+    }
+
+    impl_sealed_borrow! {
+        &'static str,
+        &'static [u8],
+        &Bytes,
+        &HeaderName,
+    }
+
+    impl Sealed for String {}
+    impl Sealed for Bytes {}
+    impl Sealed for Vec<u8> {}
+    impl Sealed for HeaderName {}
+}
+
 #[cfg(test)]
 mod test {
-    use bytes::Bytes;
-
     use super::OrigHeaderMap;
 
     #[test]
@@ -244,15 +255,36 @@ mod test {
         let mut headers = OrigHeaderMap::new();
 
         // Insert headers with different cases and order
-        headers.append("X-Test", Bytes::from("X-Test"));
-        headers.append("X-Another", Bytes::from("X-Another"));
-        headers.append("x-test2", Bytes::from("x-test2"));
+        headers.insert("X-Test");
+        headers.insert("X-Another");
+        headers.insert("x-test2");
 
         // Check order and case
         let mut iter = headers.iter();
-        assert_eq!(iter.next().unwrap().1, "X-Test");
-        assert_eq!(iter.next().unwrap().1, "X-Another");
-        assert_eq!(iter.next().unwrap().1, "x-test2");
+        assert_eq!(iter.next().unwrap().1.as_ref(), b"X-Test");
+        assert_eq!(iter.next().unwrap().1.as_ref(), b"X-Another");
+        assert_eq!(iter.next().unwrap().1.as_ref(), b"x-test2");
+    }
+
+    #[test]
+    fn test_extend_preserves_order() {
+        use super::OrigHeaderMap;
+
+        let mut map1 = OrigHeaderMap::new();
+        map1.insert("A-Header");
+        map1.insert("B-Header");
+
+        let mut map2 = OrigHeaderMap::new();
+        map2.insert("C-Header");
+        map2.insert("D-Header");
+
+        map1.extend(map2);
+
+        let names: Vec<_> = map1.iter().map(|(_, orig)| orig.as_ref()).collect();
+        assert_eq!(
+            names,
+            vec![b"A-Header", b"B-Header", b"C-Header", b"D-Header"]
+        );
     }
 
     #[test]
@@ -260,8 +292,8 @@ mod test {
         let mut headers = OrigHeaderMap::new();
 
         // Insert headers with different cases
-        headers.append("X-Test", Bytes::from("X-Test"));
-        headers.append("x-test", Bytes::from("x-test"));
+        headers.insert("X-Test");
+        headers.insert("x-test");
 
         // Check that both headers are stored
         let all_x_test: Vec<_> = headers.get_all(&"X-Test".parse().unwrap()).collect();
@@ -275,9 +307,9 @@ mod test {
         let mut headers = OrigHeaderMap::new();
 
         // Insert multiple headers with the same name but different cases
-        headers.append("X-test", Bytes::from("X-test"));
-        headers.append("x-test", Bytes::from("x-test"));
-        headers.append("X-test", Bytes::from("X-test"));
+        headers.insert("X-test");
+        headers.insert("x-test");
+        headers.insert("X-test");
 
         // Check that all variations are stored
         let all_x_test: Vec<_> = headers.get_all(&"x-test".parse().unwrap()).collect();
