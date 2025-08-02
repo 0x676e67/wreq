@@ -3,7 +3,7 @@
 
 pub use http::header::*;
 pub use name::OrigHeaderName;
-use sealed::{Sealed, SealedBorrow};
+use sealed::Sealed;
 
 /// Trait for types that can be converted into an [`OrigHeaderName`] (case-preserved header).
 ///
@@ -11,12 +11,11 @@ use sealed::{Sealed, SealedBorrow};
 /// Supported types:
 /// - `&'static str`
 /// - `String`
-/// - `Vec<u8>`
 /// - `Bytes`
-/// - `&[u8]`
-/// - `&Bytes`
 /// - `HeaderName`
 /// - `&HeaderName`
+/// - `OrigHeaderName`
+/// - `&OrigHeaderName`
 pub trait IntoOrigHeaderName: Sealed {
     /// Converts the type into an [`OrigHeaderName`].
     fn into_orig_header_name(self) -> OrigHeaderName;
@@ -155,7 +154,7 @@ mod name {
     use bytes::Bytes;
     use http::HeaderName;
 
-    use super::{IntoOrigHeaderName, Sealed, SealedBorrow};
+    use super::IntoOrigHeaderName;
 
     /// An HTTP header name with both normalized and original casing.
     ///
@@ -181,14 +180,13 @@ mod name {
         }
     }
 
-    impl IntoOrigHeaderName for String {
-        #[inline]
+    impl IntoOrigHeaderName for &'static str {
         fn into_orig_header_name(self) -> OrigHeaderName {
-            Bytes::from(self).into_orig_header_name()
+            Bytes::from_static(self.as_bytes()).into_orig_header_name()
         }
     }
 
-    impl IntoOrigHeaderName for Vec<u8> {
+    impl IntoOrigHeaderName for String {
         #[inline]
         fn into_orig_header_name(self) -> OrigHeaderName {
             Bytes::from(self).into_orig_header_name()
@@ -202,6 +200,13 @@ mod name {
         }
     }
 
+    impl IntoOrigHeaderName for &HeaderName {
+        #[inline]
+        fn into_orig_header_name(self) -> OrigHeaderName {
+            OrigHeaderName::Standard(self.clone())
+        }
+    }
+
     impl IntoOrigHeaderName for HeaderName {
         #[inline]
         fn into_orig_header_name(self) -> OrigHeaderName {
@@ -209,13 +214,17 @@ mod name {
         }
     }
 
-    impl<T> IntoOrigHeaderName for T
-    where
-        T: AsRef<[u8]> + SealedBorrow + Sealed,
-    {
+    impl IntoOrigHeaderName for OrigHeaderName {
         #[inline]
         fn into_orig_header_name(self) -> OrigHeaderName {
-            OrigHeaderName::Cased(Bytes::copy_from_slice(self.as_ref()))
+            self
+        }
+    }
+
+    impl IntoOrigHeaderName for &OrigHeaderName {
+        #[inline]
+        fn into_orig_header_name(self) -> OrigHeaderName {
+            self.clone()
         }
     }
 }
@@ -225,29 +234,17 @@ mod sealed {
     use bytes::Bytes;
     use http::HeaderName;
 
+    use crate::header::OrigHeaderName;
+
     pub trait Sealed {}
-    pub trait SealedBorrow {}
 
-    macro_rules! impl_sealed_borrow {
-        ($($ty:ty),* $(,)?) => {
-            $(
-                impl Sealed for $ty {}
-                impl SealedBorrow for $ty {}
-            )*
-        };
-    }
-
-    impl_sealed_borrow! {
-        &'static str,
-        &'static [u8],
-        &Bytes,
-        &HeaderName,
-    }
-
+    impl Sealed for &'static str {}
     impl Sealed for String {}
     impl Sealed for Bytes {}
-    impl Sealed for Vec<u8> {}
+    impl Sealed for &HeaderName {}
     impl Sealed for HeaderName {}
+    impl Sealed for &OrigHeaderName {}
+    impl Sealed for OrigHeaderName {}
 }
 
 #[cfg(test)]
