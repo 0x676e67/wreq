@@ -105,7 +105,7 @@ enum HttpVersionPref {
 struct Config {
     error: Option<Error>,
     headers: HeaderMap,
-    orig_headers: Option<OrigHeaderMap>,
+    orig_headers: OrigHeaderMap,
     #[cfg(any(
         feature = "gzip",
         feature = "zstd",
@@ -172,7 +172,7 @@ impl ClientBuilder {
             config: Config {
                 error: None,
                 headers: HeaderMap::new(),
-                orig_headers: None,
+                orig_headers: OrigHeaderMap::new(),
                 #[cfg(any(
                     feature = "gzip",
                     feature = "zstd",
@@ -493,7 +493,7 @@ impl ClientBuilder {
     /// Sets the original headers for every request.
     #[inline]
     pub fn orig_headers(mut self, orig_headers: OrigHeaderMap) -> ClientBuilder {
-        self.config.orig_headers = Some(orig_headers);
+        self.config.orig_headers.extend(orig_headers);
         self
     }
 
@@ -1359,16 +1359,7 @@ impl ClientBuilder {
         self.config
             .transport_options
             .apply_transport_options(transport_opts);
-
-        if let Some(headers) = headers {
-            self = self.default_headers(headers);
-        }
-
-        if let Some(orig_headers) = orig_headers {
-            self = self.orig_headers(orig_headers);
-        }
-
-        self
+        self.default_headers(headers).orig_headers(orig_headers)
     }
 }
 

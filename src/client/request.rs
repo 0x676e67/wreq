@@ -605,13 +605,7 @@ impl RequestBuilder {
                 .transport_opts_mut()
                 .apply_transport_options(transport_opts);
 
-            if let Some(default_headers) = default_headers {
-                self = self.headers(default_headers);
-            }
-
-            if let Some(orig_headers) = orig_headers {
-                self = self.orig_headers(orig_headers);
-            }
+            self = self.headers(default_headers).orig_headers(orig_headers);
         }
 
         self

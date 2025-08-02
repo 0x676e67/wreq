@@ -42,7 +42,7 @@ impl ClientService {
     pub(super) fn new(
         client: HttpClient<Connector, Body>,
         headers: HeaderMap,
-        orig_headers: Option<OrigHeaderMap>,
+        orig_headers: OrigHeaderMap,
         https_only: bool,
         proxies: Arc<Vec<ProxyMatcher>>,
     ) -> Self {
@@ -55,7 +55,7 @@ impl ClientService {
             client,
             config: Arc::new(Config {
                 headers,
-                orig_headers: RequestConfig::new(orig_headers),
+                orig_headers: RequestConfig::new(Some(orig_headers)),
                 skip_default_headers: RequestConfig::default(),
                 https_only,
                 proxies,

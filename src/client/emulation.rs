@@ -34,8 +34,8 @@ pub struct EmulationBuilder {
 #[non_exhaustive]
 pub struct Emulation {
     transport: TransportOptions,
-    headers: Option<HeaderMap>,
-    orig_headers: Option<OrigHeaderMap>,
+    headers: HeaderMap,
+    orig_headers: OrigHeaderMap,
 }
 
 // ==== impl EmulationBuilder ====
@@ -65,18 +65,14 @@ impl EmulationBuilder {
     /// Sets the default headers.
     #[inline]
     pub fn headers(mut self, src: HeaderMap) -> Self {
-        let dst = self.emulation.headers.get_or_insert_default();
-        crate::util::replace_headers(dst, src);
+        crate::util::replace_headers(&mut self.emulation.headers, src);
         self
     }
 
     /// Sets the original headers.
     #[inline]
     pub fn orig_headers(mut self, src: OrigHeaderMap) -> Self {
-        self.emulation
-            .orig_headers
-            .get_or_insert_default()
-            .extend(src);
+        self.emulation.orig_headers.extend(src);
         self
     }
 
@@ -118,19 +114,19 @@ impl Emulation {
 
     /// Returns a mutable reference to the emulation headers, if set.
     #[inline]
-    pub fn headers_mut(&mut self) -> &mut Option<HeaderMap> {
+    pub fn headers_mut(&mut self) -> &mut HeaderMap {
         &mut self.headers
     }
 
     /// Returns a mutable reference to the original headers, if set.
     #[inline]
-    pub fn orig_headers_mut(&mut self) -> &mut Option<OrigHeaderMap> {
+    pub fn orig_headers_mut(&mut self) -> &mut OrigHeaderMap {
         &mut self.orig_headers
     }
 
     /// Decomposes the [`Emulation`] into its components.
     #[inline]
-    pub(crate) fn into_parts(self) -> (TransportOptions, Option<HeaderMap>, Option<OrigHeaderMap>) {
+    pub(crate) fn into_parts(self) -> (TransportOptions, HeaderMap, OrigHeaderMap) {
         (self.transport, self.headers, self.orig_headers)
     }
 }
