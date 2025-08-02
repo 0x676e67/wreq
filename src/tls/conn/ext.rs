@@ -139,7 +139,7 @@ impl ConnectConfigurationExt for ConnectConfiguration {
     }
 
     #[inline]
-    fn set_seesion2(&mut self, session: &SslSessionRef) -> Result<(), ErrorStack> {
+    fn set_session2(&mut self, session: &SslSessionRef) -> Result<(), ErrorStack> {
         unsafe {
             self.set_session(session)?;
         }
