@@ -2,12 +2,11 @@ use boring2::{
     error::ErrorStack,
     ssl::{ConnectConfiguration, SslConnectorBuilder, SslSessionRef, SslVerifyMode},
 };
-use bytes::Bytes;
 
 use crate::{
     Error,
     tls::{
-        CertStore, CertificateCompressionAlgorithm,
+        AlpnProtocol, AlpsProtocol, CertStore, CertificateCompressionAlgorithm,
         conn::cert_compression::{
             BrotliCertificateCompressor, ZlibCertificateCompressor, ZstdCertificateCompressor,
         },
@@ -34,10 +33,13 @@ pub trait ConnectConfigurationExt {
     /// Configure the session for the given `ConnectConfiguration`.
     fn set_seesion2(&mut self, session: &SslSessionRef) -> Result<(), ErrorStack>;
 
+    /// Configure the ALPN protocols for the given `ConnectConfiguration`.
+    fn set_alpn_protocols(&mut self, alpn: Option<AlpnProtocol>) -> Result<(), ErrorStack>;
+
     /// Configure the ALPS for the given `ConnectConfiguration`.
-    fn set_alps_protos(
+    fn set_alps_protocols(
         &mut self,
-        alps: Option<Bytes>,
+        alps_values: Option<&[AlpsProtocol]>,
         use_new_codepoint: bool,
     ) -> Result<(), ErrorStack>;
 
@@ -101,13 +103,23 @@ impl SslConnectorBuilderExt for SslConnectorBuilder {
 
 impl ConnectConfigurationExt for ConnectConfiguration {
     #[inline]
-    fn set_alps_protos(
+    fn set_alpn_protocols(&mut self, alpn: Option<AlpnProtocol>) -> Result<(), ErrorStack> {
+        if let Some(alpn) = alpn {
+            self.set_alpn_protos(&alpn.encode())?;
+        }
+        Ok(())
+    }
+
+    #[inline]
+    fn set_alps_protocols(
         &mut self,
-        alps: Option<Bytes>,
+        alps_values: Option<&[AlpsProtocol]>,
         use_new_codepoint: bool,
     ) -> Result<(), ErrorStack> {
-        if let Some(alps) = alps {
-            self.add_application_settings(&alps)?;
+        if let Some(values) = alps_values {
+            for alps in values {
+                self.add_application_settings(alps.value())?;
+            }
 
             // By default, the old endpoint is used. Avoid unnecessary FFI calls.
             if use_new_codepoint {

@@ -222,18 +222,13 @@ impl Inner {
         cfg.set_random_aes_hw_override(self.config.random_aes_hw_override);
 
         // Set ALPS protos
-        cfg.set_alps_protos(
-            self.config
-                .alps_protocols
-                .as_deref()
-                .map(AlpsProtocol::encode_sequence),
+        cfg.set_alps_protocols(
+            self.config.alps_protocols.as_deref(),
             self.config.alps_use_new_codepoint,
         )?;
 
         // Set ALPN protocols
-        if let Some(alpn) = req.metadata().alpn_protocol() {
-            cfg.set_alpn_protos(&alpn.encode())?;
-        }
+        cfg.set_alpn_protocols(req.metadata().alpn_protocol())?;
 
         let uri = req.uri().clone();
         let host = uri.host().ok_or("URI missing host")?;

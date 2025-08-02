@@ -67,15 +67,8 @@ impl AlpsProtocol {
     pub const HTTP3: AlpsProtocol = AlpsProtocol(b"h3");
 
     #[inline]
-    pub(crate) fn encode_sequence<'a, I>(items: I) -> Bytes
-    where
-        I: IntoIterator<Item = &'a AlpsProtocol>,
-    {
-        let mut buf = BytesMut::new();
-        for item in items {
-            buf.extend_from_slice(item.0);
-        }
-        buf.freeze()
+    pub(crate) const fn value(self) -> &'static [u8] {
+        self.0
     }
 }
 
