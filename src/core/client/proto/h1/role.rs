@@ -226,7 +226,7 @@ impl Http1Transaction for Client {
                 if let Some(ref mut header_case_map) = header_case_map {
                     header_case_map.append(
                         &name,
-                        OrigHeaderName::Original(slice.slice(header.name.0..header.name.1)),
+                        OrigHeaderName::Cased(slice.slice(header.name.0..header.name.1)),
                     );
                 }
 

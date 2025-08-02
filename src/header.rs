@@ -82,10 +82,10 @@ impl OrigHeaderMap {
     {
         let orig_header_name = orig.into_orig_header_name();
         match &orig_header_name {
-            OrigHeaderName::Original(bytes) => HeaderName::from_bytes(bytes)
+            OrigHeaderName::Cased(bytes) => HeaderName::from_bytes(bytes)
                 .map(|name| self.0.append(name, orig_header_name))
                 .unwrap_or(false),
-            OrigHeaderName::Normalized(header_name) => {
+            OrigHeaderName::Standard(header_name) => {
                 self.0.append(header_name.clone(), orig_header_name)
             }
         }
@@ -166,42 +166,46 @@ mod name {
     #[derive(Debug, Clone, PartialEq, Eq)]
     pub enum OrigHeaderName {
         /// The original casing of the header name as received.
-        Original(Bytes),
+        Cased(Bytes),
         /// The canonical (normalized, lowercased) header name.
-        Normalized(HeaderName),
+        Standard(HeaderName),
     }
 
     impl AsRef<[u8]> for OrigHeaderName {
         #[inline]
         fn as_ref(&self) -> &[u8] {
             match self {
-                OrigHeaderName::Normalized(name) => name.as_ref(),
-                OrigHeaderName::Original(orig) => orig.as_ref(),
+                OrigHeaderName::Standard(name) => name.as_ref(),
+                OrigHeaderName::Cased(orig) => orig.as_ref(),
             }
         }
     }
 
     impl IntoOrigHeaderName for String {
+        #[inline]
         fn into_orig_header_name(self) -> OrigHeaderName {
-            Vec::into_orig_header_name(self.into_bytes())
+            Bytes::from(self).into_orig_header_name()
         }
     }
 
     impl IntoOrigHeaderName for Vec<u8> {
+        #[inline]
         fn into_orig_header_name(self) -> OrigHeaderName {
             Bytes::from(self).into_orig_header_name()
         }
     }
 
     impl IntoOrigHeaderName for Bytes {
+        #[inline]
         fn into_orig_header_name(self) -> OrigHeaderName {
-            OrigHeaderName::Original(self)
+            OrigHeaderName::Cased(self)
         }
     }
 
     impl IntoOrigHeaderName for HeaderName {
+        #[inline]
         fn into_orig_header_name(self) -> OrigHeaderName {
-            OrigHeaderName::Normalized(self)
+            OrigHeaderName::Standard(self)
         }
     }
 
@@ -209,8 +213,9 @@ mod name {
     where
         T: AsRef<[u8]> + SealedBorrow + Sealed,
     {
+        #[inline]
         fn into_orig_header_name(self) -> OrigHeaderName {
-            OrigHeaderName::Original(Bytes::copy_from_slice(self.as_ref()))
+            OrigHeaderName::Cased(Bytes::copy_from_slice(self.as_ref()))
         }
     }
 }
