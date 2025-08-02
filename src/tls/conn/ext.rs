@@ -31,7 +31,7 @@ pub trait SslConnectorBuilderExt {
 /// ConnectConfigurationExt trait for `ConnectConfiguration`.
 pub trait ConnectConfigurationExt {
     /// Configure the session for the given `ConnectConfiguration`.
-    fn set_seesion2(&mut self, session: &SslSessionRef) -> Result<(), ErrorStack>;
+    fn set_session2(&mut self, session: &SslSessionRef) -> Result<(), ErrorStack>;
 
     /// Configure the ALPN protocols for the given `ConnectConfiguration`.
     fn set_alpn_protocols(&mut self, alpn: Option<AlpnProtocol>) -> Result<(), ErrorStack>;
