@@ -1,6 +1,6 @@
-use http::{HeaderMap, HeaderValue, header};
 use wreq::{
-    Client, Emulation, OrigHeaderMap,
+    Client, Emulation,
+    header::{HeaderMap, HeaderValue, OrigHeaderMap, header},
     http2::{Http2Options, PseudoId, PseudoOrder},
     tls::{AlpnProtocol, TlsOptions, TlsVersion},
 };
