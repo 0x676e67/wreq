@@ -9,40 +9,40 @@ use tower::Service;
 
 use super::{Body, connect::Connector};
 use crate::{
-    OriginalHeaders,
     client::layer::config::RequestSkipDefaultHeaders,
     core::{
         client::{Error, HttpClient, ResponseFuture, body::Incoming},
-        ext::{RequestConfig, RequestOriginalHeaders},
+        ext::{RequestConfig, RequestOrigHeaderMap},
     },
     error::BoxError,
+    header::OrigHeaderMap,
     proxy::Matcher as ProxyMatcher,
 };
 
-/// HTTP client service configuration.
-struct Config {
-    headers: HeaderMap,
-    skip_default_headers: RequestConfig<RequestSkipDefaultHeaders>,
-    original_headers: RequestConfig<RequestOriginalHeaders>,
-    https_only: bool,
-    proxies: Arc<Vec<ProxyMatcher>>,
-    proxies_maybe_http_auth: bool,
-    proxies_maybe_http_custom_headers: bool,
-}
-
-/// Tower service wrapper around the HTTP client.
+/// A Tower service HTTP client.
 #[derive(Clone)]
 pub struct ClientService {
     client: HttpClient<Connector, Body>,
     config: Arc<Config>,
 }
 
+/// Configuration for the [`ClientService`].
+struct Config {
+    headers: HeaderMap,
+    orig_headers: RequestConfig<RequestOrigHeaderMap>,
+    skip_default_headers: RequestConfig<RequestSkipDefaultHeaders>,
+    https_only: bool,
+    proxies: Arc<Vec<ProxyMatcher>>,
+    proxies_maybe_http_auth: bool,
+    proxies_maybe_http_custom_headers: bool,
+}
+
 impl ClientService {
-    /// Creates a new `ClientService` with the provided HTTP client and configuration.
+    /// Creates a new [`ClientService`] with the provided HTTP client and configuration.
     pub(super) fn new(
         client: HttpClient<Connector, Body>,
         headers: HeaderMap,
-        original_headers: Option<OriginalHeaders>,
+        orig_headers: OrigHeaderMap,
         https_only: bool,
         proxies: Arc<Vec<ProxyMatcher>>,
     ) -> Self {
@@ -55,7 +55,7 @@ impl ClientService {
             client,
             config: Arc::new(Config {
                 headers,
-                original_headers: RequestConfig::new(original_headers),
+                orig_headers: RequestConfig::new(Some(orig_headers)),
                 skip_default_headers: RequestConfig::default(),
                 https_only,
                 proxies,
@@ -158,13 +158,9 @@ impl Service<Request<Body>> for ClientService {
             }
         }
 
-        // Store original headers if present
-        self.config.original_headers.store(req.extensions_mut());
-
-        // Insert proxy headers if needed
+        self.config.orig_headers.store(req.extensions_mut());
         self.ensure_proxy_headers(&mut req);
 
-        // Call inner HTTP client, map errors to BoxError
         Either::Left(self.client.call(req).map_err(From::from))
     }
 }

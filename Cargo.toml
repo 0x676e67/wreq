@@ -243,14 +243,6 @@ name = "form"
 path = "examples/form.rs"
 
 [[example]]
-name = "http1_send_case_sensitive_headers"
-path = "examples/http1_send_case_sensitive_headers.rs"
-
-[[example]]
-name = "http1_recv_case_sensitive_headers"
-path = "examples/http1_recv_case_sensitive_headers.rs"
-
-[[example]]
 name = "emulation_firefox"
 path = "examples/emulation_firefox.rs"
 required-features = ["gzip", "brotli", "zstd", "deflate", "tracing"]

@@ -21,7 +21,9 @@ use tokio_tungstenite::tungstenite::{self, protocol};
 use tungstenite::protocol::WebSocketConfig;
 
 pub use self::message::{CloseCode, CloseFrame, Message, Utf8Bytes};
-use crate::{EmulationFactory, Error, OriginalHeaders, RequestBuilder, Response, proxy::Proxy};
+use crate::{
+    EmulationFactory, Error, RequestBuilder, Response, header::OrigHeaderMap, proxy::Proxy,
+};
 
 /// A WebSocket stream.
 type WebSocketStream = tokio_tungstenite::WebSocketStream<crate::Upgraded>;
@@ -179,8 +181,8 @@ impl WebSocketRequestBuilder {
 
     /// Set the original headers for this request.
     #[inline]
-    pub fn original_headers(mut self, original_headers: OriginalHeaders) -> Self {
-        self.inner = self.inner.original_headers(original_headers);
+    pub fn orig_headers(mut self, orig_headers: OrigHeaderMap) -> Self {
+        self.inner = self.inner.orig_headers(orig_headers);
         self
     }
 

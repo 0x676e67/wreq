@@ -25,12 +25,12 @@ use super::{
     response::Response,
 };
 use crate::{
-    EmulationFactory, Error, Method, OriginalHeaders, Proxy, Url,
+    EmulationFactory, Error, Method, Proxy, Url,
     core::{
         client::options::RequestOptions,
-        ext::{RequestConfig, RequestConfigValue, RequestLevelOptions, RequestOriginalHeaders},
+        ext::{RequestConfig, RequestConfigValue, RequestLevelOptions, RequestOrigHeaderMap},
     },
-    header::{CONTENT_TYPE, HeaderMap, HeaderName, HeaderValue},
+    header::{CONTENT_TYPE, HeaderMap, HeaderName, HeaderValue, OrigHeaderMap},
     redirect,
 };
 
@@ -275,9 +275,9 @@ impl RequestBuilder {
     }
 
     /// Set the original headers for this request.
-    pub fn original_headers(mut self, original_headers: OriginalHeaders) -> RequestBuilder {
+    pub fn orig_headers(mut self, orig_headers: OrigHeaderMap) -> RequestBuilder {
         if let Ok(ref mut req) = self.request {
-            *req.config_mut::<RequestOriginalHeaders>() = original_headers;
+            *req.config_mut::<RequestOrigHeaderMap>() = orig_headers;
         }
         self
     }
@@ -599,19 +599,13 @@ impl RequestBuilder {
     {
         if let Ok(ref mut req) = self.request {
             let emulation = factory.emulation();
-            let (transport_opts, default_headers, original_headers) = emulation.into_parts();
+            let (transport_opts, default_headers, orig_headers) = emulation.into_parts();
 
             req.config_mut::<RequestLevelOptions>()
                 .transport_opts_mut()
                 .apply_transport_options(transport_opts);
 
-            if let Some(default_headers) = default_headers {
-                self = self.headers(default_headers);
-            }
-
-            if let Some(original_headers) = original_headers {
-                self = self.original_headers(original_headers);
-            }
+            self = self.headers(default_headers).orig_headers(orig_headers);
         }
 
         self

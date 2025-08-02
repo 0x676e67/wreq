@@ -1,6 +1,7 @@
 use http::{HeaderMap, HeaderValue, header};
 use wreq::{
-    Client, Emulation, OriginalHeaders,
+    Client, Emulation,
+    header::OrigHeaderMap,
     http1::Http1Options,
     http2::{
         Http2Options, Priorities, Priority, PseudoId, PseudoOrder, SettingId, SettingsOrder,
@@ -199,14 +200,14 @@ async fn main() -> wreq::Result<()> {
     };
 
     // The headers keep the original case and order
-    let original_headers = {
-        let mut original_headers = OriginalHeaders::new();
-        original_headers.insert("cookie");
-        original_headers.insert("content-length");
-        original_headers.insert("USER-AGENT");
-        original_headers.insert("ACCEPT-LANGUAGE");
-        original_headers.insert("ACCEPT-ENCODING");
-        original_headers
+    let orig_headers = {
+        let mut orig_headers = OrigHeaderMap::new();
+        orig_headers.insert("cookie");
+        orig_headers.insert("content-length");
+        orig_headers.insert("USER-AGENT");
+        orig_headers.insert("ACCEPT-LANGUAGE");
+        orig_headers.insert("ACCEPT-ENCODING");
+        orig_headers
     };
 
     // This provider encapsulates TLS, HTTP/1, HTTP/2, default headers, and original headers
@@ -215,7 +216,7 @@ async fn main() -> wreq::Result<()> {
         .http1_options(http1)
         .http2_options(http2)
         .headers(headers)
-        .original_headers(original_headers)
+        .orig_headers(orig_headers)
         .build();
 
     // Build a client with emulation config

@@ -13,7 +13,7 @@ use http_body_util::BodyExt;
 use pretty_env_logger::env_logger;
 use support::server;
 use tokio::io::AsyncWriteExt;
-use wreq::{Client, OriginalHeaders};
+use wreq::{Client, header::OrigHeaderMap};
 
 #[tokio::test]
 async fn auto_headers() {
@@ -131,16 +131,16 @@ async fn test_headers_order_with_client() {
             headers.insert(CACHE_CONTROL, HeaderValue::from_static("no-cache"));
             headers
         })
-        .original_headers({
-            let mut original_headers = OriginalHeaders::new();
-            original_headers.insert("cookie");
-            original_headers.insert("user-agent");
-            original_headers.insert("accept");
-            original_headers.insert("content-type");
-            original_headers.insert("authorization");
-            original_headers.insert("referer");
-            original_headers.insert("cache-control");
-            original_headers
+        .orig_headers({
+            let mut orig_headers = OrigHeaderMap::new();
+            orig_headers.insert("cookie");
+            orig_headers.insert("user-agent");
+            orig_headers.insert("accept");
+            orig_headers.insert("content-type");
+            orig_headers.insert("authorization");
+            orig_headers.insert("referer");
+            orig_headers.insert("cache-control");
+            orig_headers
         })
         .build()
         .unwrap();
@@ -214,16 +214,16 @@ async fn test_headers_order_with_request() {
             headers.insert(CACHE_CONTROL, HeaderValue::from_static("no-cache"));
             headers
         })
-        .original_headers({
-            let mut original_headers = OriginalHeaders::new();
-            original_headers.insert("user-agent");
-            original_headers.insert("accept");
-            original_headers.insert("content-type");
-            original_headers.insert("authorization");
-            original_headers.insert("referer");
-            original_headers.insert("cookie");
-            original_headers.insert("cache-control");
-            original_headers
+        .orig_headers({
+            let mut orig_headers = OrigHeaderMap::new();
+            orig_headers.insert("user-agent");
+            orig_headers.insert("accept");
+            orig_headers.insert("content-type");
+            orig_headers.insert("authorization");
+            orig_headers.insert("referer");
+            orig_headers.insert("cookie");
+            orig_headers.insert("cache-control");
+            orig_headers
         })
         .body(r#"{"message":"hello"}"#)
         .send()
@@ -778,14 +778,14 @@ async fn connection_pool_cache() {
 #[ignore = "The server is shuddown, this test is not needed anymore"]
 async fn http1_send_case_sensitive_headers() {
     // Create a request with a case-sensitive header
-    let mut original_headers = OriginalHeaders::new();
-    original_headers.insert("X-custom-header");
-    original_headers.insert("Host");
+    let mut orig_headers = OrigHeaderMap::new();
+    orig_headers.insert("X-custom-header");
+    orig_headers.insert("Host");
 
     let resp = wreq::Client::new()
         .get("https://tls.peet.ws/api/all")
         .header("X-Custom-Header", "value")
-        .original_headers(original_headers)
+        .orig_headers(orig_headers)
         .version(Version::HTTP_11)
         .send()
         .await

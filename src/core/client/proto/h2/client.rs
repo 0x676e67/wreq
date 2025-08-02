@@ -39,7 +39,7 @@ use crate::core::{
     },
     common::{io::Compat, time::Time},
     error::BoxError,
-    ext::{RequestConfig, RequestOriginalHeaders},
+    ext::{RequestConfig, RequestOrigHeaderMap},
     rt::{Read, Write},
 };
 
@@ -565,7 +565,7 @@ where
 
                     // Sort headers if we have the original headers
                     if let Some(orig) =
-                        RequestConfig::<RequestOriginalHeaders>::remove(req.extensions_mut())
+                        RequestConfig::<RequestOrigHeaderMap>::remove(req.extensions_mut())
                     {
                         headers::sort_headers(req.headers_mut(), &orig);
                     }

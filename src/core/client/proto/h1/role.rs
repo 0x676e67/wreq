@@ -10,18 +10,21 @@ use http::{
 };
 use smallvec::{SmallVec, smallvec, smallvec_inline};
 
-use crate::core::{
-    Error,
-    client::{
-        body::DecodedLength,
-        proto::{
-            self, BodyLength, MessageHead, RequestHead, RequestLine,
-            h1::{Encode, Encoder, Http1Transaction, ParseContext, ParseResult, ParsedMessage},
-            headers,
+use crate::{
+    core::{
+        Error,
+        client::{
+            body::DecodedLength,
+            proto::{
+                self, BodyLength, MessageHead, RequestHead, RequestLine,
+                h1::{Encode, Encoder, Http1Transaction, ParseContext, ParseResult, ParsedMessage},
+                headers,
+            },
         },
+        error::Parse,
+        ext::{RequestConfig, RequestOrigHeaderMap},
     },
-    error::Parse,
-    ext::{OriginalHeaders, RequestConfig, RequestOriginalHeaders},
+    header::{OrigHeaderMap, OrigHeaderName},
 };
 
 pub(crate) const DEFAULT_MAX_HEADERS: usize = 100;
@@ -197,7 +200,7 @@ impl Http1Transaction for Client {
             let mut keep_alive = version == Version::HTTP_11;
 
             let mut header_case_map = if ctx.preserve_header_case {
-                Some(OriginalHeaders::default())
+                Some(OrigHeaderMap::default())
             } else {
                 None
             };
@@ -221,7 +224,10 @@ impl Http1Transaction for Client {
                 }
 
                 if let Some(ref mut header_case_map) = header_case_map {
-                    header_case_map.append(&name, slice.slice(header.name.0..header.name.1));
+                    header_case_map.append(
+                        &name,
+                        OrigHeaderName::Cased(slice.slice(header.name.0..header.name.1)),
+                    );
                 }
 
                 headers.append(name, value);
@@ -295,8 +301,7 @@ impl Http1Transaction for Client {
         }
         extend(dst, b"\r\n");
 
-        if let Some(orig_headers) =
-            RequestConfig::<RequestOriginalHeaders>::get(&msg.head.extensions)
+        if let Some(orig_headers) = RequestConfig::<RequestOrigHeaderMap>::get(&msg.head.extensions)
         {
             write_headers_original_case(&mut msg.head.headers, orig_headers, dst);
         } else {
@@ -646,7 +651,7 @@ pub(crate) fn write_headers(headers: &HeaderMap, dst: &mut Vec<u8>) {
 
 fn write_headers_original_case(
     headers: &mut HeaderMap,
-    orig_case: &OriginalHeaders,
+    orig_case: &OrigHeaderMap,
     dst: &mut Vec<u8>,
 ) {
     proto::headers::sort_headers(headers, orig_case);

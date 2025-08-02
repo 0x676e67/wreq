@@ -53,7 +53,7 @@ use super::{
 #[cfg(feature = "hickory-dns")]
 use crate::dns::hickory::{HickoryDnsResolver, LookupIpStrategy};
 use crate::{
-    IntoUrl, Method, OriginalHeaders, Proxy,
+    IntoUrl, Method, Proxy,
     client::{
         http::connect::{Conn, Connector, Unnameable},
         layer::timeout::TimeoutOptions,
@@ -64,6 +64,7 @@ use crate::{
     },
     dns::{DnsResolverWithOverrides, DynResolver, Resolve, gai::GaiResolver},
     error::{self, BoxError, Error},
+    header::OrigHeaderMap,
     proxy::Matcher as ProxyMatcher,
     redirect::{self, FollowRedirectPolicy, Policy as RedirectPolicy},
     tls::{AlpnProtocol, CertStore, Identity, KeyLogPolicy, TlsConnectorBuilder, TlsVersion},
@@ -104,7 +105,7 @@ enum HttpVersionPref {
 struct Config {
     error: Option<Error>,
     headers: HeaderMap,
-    original_headers: Option<OriginalHeaders>,
+    orig_headers: OrigHeaderMap,
     #[cfg(any(
         feature = "gzip",
         feature = "zstd",
@@ -171,7 +172,7 @@ impl ClientBuilder {
             config: Config {
                 error: None,
                 headers: HeaderMap::new(),
-                original_headers: None,
+                orig_headers: OrigHeaderMap::new(),
                 #[cfg(any(
                     feature = "gzip",
                     feature = "zstd",
@@ -336,7 +337,7 @@ impl ClientBuilder {
             let service = ClientService::new(
                 client,
                 config.headers,
-                config.original_headers,
+                config.orig_headers,
                 config.https_only,
                 proxies,
             );
@@ -491,8 +492,8 @@ impl ClientBuilder {
 
     /// Sets the original headers for every request.
     #[inline]
-    pub fn original_headers(mut self, original_headers: OriginalHeaders) -> ClientBuilder {
-        self.config.original_headers = Some(original_headers);
+    pub fn orig_headers(mut self, orig_headers: OrigHeaderMap) -> ClientBuilder {
+        self.config.orig_headers.extend(orig_headers);
         self
     }
 
@@ -1353,21 +1354,12 @@ impl ClientBuilder {
         P: EmulationFactory,
     {
         let emulation = factory.emulation();
-        let (transport_opts, headers, original_headers) = emulation.into_parts();
+        let (transport_opts, headers, orig_headers) = emulation.into_parts();
 
         self.config
             .transport_options
             .apply_transport_options(transport_opts);
-
-        if let Some(headers) = headers {
-            self = self.default_headers(headers);
-        }
-
-        if let Some(original_headers) = original_headers {
-            self = self.original_headers(original_headers);
-        }
-
-        self
+        self.default_headers(headers).orig_headers(orig_headers)
     }
 }
 

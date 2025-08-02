@@ -1,4 +1,4 @@
-//! Re-export the `http2` module for HTTP/2 frame types and utilities.
+//! This module provides a builder pattern for configuring HTTP/2 connections.
 
 use std::time::Duration;
 
