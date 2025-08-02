@@ -1,6 +1,7 @@
 use http::{HeaderMap, HeaderValue, header};
 use wreq::{
-    Client, Emulation, OrigHeaderMap,
+    Client, Emulation,
+    header::OrigHeaderMap,
     http1::Http1Options,
     http2::{
         Http2Options, Priorities, Priority, PseudoId, PseudoOrder, SettingId, SettingsOrder,

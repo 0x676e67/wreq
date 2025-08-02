@@ -3,7 +3,7 @@
 
 use bytes::Bytes;
 pub use http::header::*;
-use sealed::HeaderCaseName;
+use sealed::OrigHeaderName;
 
 /// A map from header names to their original casing as received in an HTTP message.
 ///
@@ -61,7 +61,7 @@ impl OrigHeaderMap {
     #[inline]
     pub fn insert<N>(&mut self, orig: N) -> bool
     where
-        N: TryInto<HeaderCaseName>,
+        N: TryInto<OrigHeaderName>,
     {
         match orig.try_into() {
             Ok(orig) => self.0.append(orig.name, orig.orig),
@@ -137,8 +137,8 @@ mod sealed {
 
     /// Represents an HTTP header name with its original casing preserved.
     ///
-    /// `HeaderCaseName` is used to store the original case-sensitive form of an HTTP header name as
-    /// it appeared in the request or response. While HTTP header names are case-insensitive
+    /// [`OrigHeaderName`] is used to store the original case-sensitive form of an HTTP header name
+    /// as it appeared in the request or response. While HTTP header names are case-insensitive
     /// according to the specification, preserving the original casing can be important for
     /// certain applications, such as proxies, logging, debugging, or when reproducing requests
     /// exactly as received.
@@ -146,14 +146,14 @@ mod sealed {
     /// This type allows you to associate a normalized `HeaderName` with its original string
     /// representation, enabling accurate restoration or inspection of header names in their
     /// original form.
-    pub struct HeaderCaseName {
+    pub struct OrigHeaderName {
         /// The original header name in its original case.
         pub orig: Bytes,
         /// The normalized header name in lowercase.
         pub name: HeaderName,
     }
 
-    impl From<HeaderName> for HeaderCaseName {
+    impl From<HeaderName> for OrigHeaderName {
         fn from(name: HeaderName) -> Self {
             Self {
                 orig: Bytes::from_owner(name.clone()),
@@ -162,13 +162,13 @@ mod sealed {
         }
     }
 
-    impl<'a> From<&'a HeaderName> for HeaderCaseName {
-        fn from(src: &'a HeaderName) -> HeaderCaseName {
+    impl<'a> From<&'a HeaderName> for OrigHeaderName {
+        fn from(src: &'a HeaderName) -> OrigHeaderName {
             Self::from(src.clone())
         }
     }
 
-    impl TryFrom<String> for HeaderCaseName {
+    impl TryFrom<String> for OrigHeaderName {
         type Error = http::Error;
 
         fn try_from(orig: String) -> Result<Self, Self::Error> {
@@ -180,7 +180,7 @@ mod sealed {
         }
     }
 
-    impl TryFrom<Cow<'static, str>> for HeaderCaseName {
+    impl TryFrom<Cow<'static, str>> for OrigHeaderName {
         type Error = http::Error;
 
         fn try_from(orig: Cow<'static, str>) -> Result<Self, Self::Error> {
@@ -191,7 +191,7 @@ mod sealed {
         }
     }
 
-    impl TryFrom<Bytes> for HeaderCaseName {
+    impl TryFrom<Bytes> for OrigHeaderName {
         type Error = http::Error;
 
         fn try_from(orig: Bytes) -> Result<Self, Self::Error> {
@@ -200,7 +200,7 @@ mod sealed {
         }
     }
 
-    impl<'a> TryFrom<&'a Bytes> for HeaderCaseName {
+    impl<'a> TryFrom<&'a Bytes> for OrigHeaderName {
         type Error = http::Error;
 
         fn try_from(orig: &'a Bytes) -> Result<Self, Self::Error> {
@@ -212,7 +212,7 @@ mod sealed {
         }
     }
 
-    impl TryFrom<&'static [u8]> for HeaderCaseName {
+    impl TryFrom<&'static [u8]> for OrigHeaderName {
         type Error = http::Error;
 
         fn try_from(orig: &'static [u8]) -> Result<Self, Self::Error> {
@@ -224,7 +224,7 @@ mod sealed {
         }
     }
 
-    impl TryFrom<&'static str> for HeaderCaseName {
+    impl TryFrom<&'static str> for OrigHeaderName {
         type Error = http::Error;
 
         fn try_from(orig: &'static str) -> Result<Self, Self::Error> {
