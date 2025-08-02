@@ -1,6 +1,6 @@
 use boring2::{
     error::ErrorStack,
-    ssl::{ConnectConfiguration, SslConnectorBuilder, SslSessionRef, SslVerifyMode},
+    ssl::{ConnectConfiguration, SslConnectorBuilder, SslVerifyMode},
 };
 
 use crate::{
@@ -30,9 +30,6 @@ pub trait SslConnectorBuilderExt {
 
 /// ConnectConfigurationExt trait for `ConnectConfiguration`.
 pub trait ConnectConfigurationExt {
-    /// Configure the session for the given `ConnectConfiguration`.
-    fn set_session2(&mut self, session: &SslSessionRef) -> Result<(), ErrorStack>;
-
     /// Configure the ALPN protocols for the given `ConnectConfiguration`.
     fn set_alpn_protocols(&mut self, alpn: Option<AlpnProtocol>) -> Result<(), ErrorStack>;
 
@@ -136,14 +133,5 @@ impl ConnectConfigurationExt for ConnectConfiguration {
             let random_bool = (crate::util::fast_random() % 2) == 0;
             self.set_aes_hw_override(random_bool);
         }
-    }
-
-    #[inline]
-    fn set_session2(&mut self, session: &SslSessionRef) -> Result<(), ErrorStack> {
-        unsafe {
-            self.set_session(session)?;
-        }
-
-        Ok(())
     }
 }
