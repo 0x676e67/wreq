@@ -33,9 +33,9 @@ pub struct EmulationBuilder {
 #[derive(Debug, Clone, Default)]
 #[non_exhaustive]
 pub struct Emulation {
-    transport: TransportOptions,
     headers: HeaderMap,
     orig_headers: OrigHeaderMap,
+    transport: TransportOptions,
 }
 
 // ==== impl EmulationBuilder ====
