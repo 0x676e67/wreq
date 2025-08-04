@@ -148,7 +148,6 @@ impl Service<Request<Body>> for ClientService {
 
         if !skip {
             let headers = req.headers_mut();
-            // Insert missing default headers
             for name in self.config.headers.keys() {
                 if !headers.contains_key(name) {
                     for value in self.config.headers.get_all(name) {
@@ -158,6 +157,7 @@ impl Service<Request<Body>> for ClientService {
             }
         }
 
+        // Apply original headers and proxy headers
         self.config.orig_headers.store(req.extensions_mut());
         self.ensure_proxy_headers(&mut req);
 

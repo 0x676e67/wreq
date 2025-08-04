@@ -40,6 +40,32 @@ pub struct CookieManager<S> {
     cookie_store: Option<Arc<dyn CookieStore>>,
 }
 
+impl<S> CookieManager<S> {
+    fn inject_cookies_if_needed<B>(
+        &self,
+        req: &mut Request<B>,
+        cookie_store: &Arc<dyn CookieStore>,
+    ) -> Option<url::Url> {
+        // // Skip if request already has cookies
+        if req.headers().get(COOKIE).is_some() {
+            return None;
+        }
+
+        // Parse URL first - we need it for both injection and response processing
+        let url = url::Url::parse(&req.uri().to_string()).ok()?;
+
+        // Only inject cookies if request doesn't already have them
+        if let Some(cookies) = cookie_store.cookies(&url) {
+            let headers = req.headers_mut();
+            for header in cookies {
+                headers.append(COOKIE, header);
+            }
+        }
+
+        Some(url)
+    }
+}
+
 impl<ReqBody, ResBody, S> Service<Request<ReqBody>> for CookieManager<S>
 where
     S: Service<Request<ReqBody>, Response = Response<ResBody>>,
@@ -54,33 +80,23 @@ where
     }
 
     fn call(&mut self, mut req: Request<ReqBody>) -> Self::Future {
-        // If a cookie store is present, inject cookies for this URL if not already set.
-        if let Some(ref cookie_store) = self.cookie_store {
-            // Try to extract the request URL.
-            let mut url = None;
-            if req.headers().get(COOKIE).is_none() {
-                url = url::Url::parse(&req.uri().to_string()).ok();
+        // Check if cookie store is configured
+        let Some(cookie_store) = &self.cookie_store else {
+            return ResponseFuture::Direct {
+                future: self.inner.call(req),
+            };
+        };
 
-                if let Some(ref url) = url {
-                    let headers = req.headers_mut();
-                    if let Some(cookie_headers) = cookie_store.cookies(url) {
-                        for header in cookie_headers {
-                            headers.append(COOKIE, header);
-                        }
-                    }
-                }
-            }
-
-            ResponseFuture::WithCookieStore {
+        // Try to inject cookies and get URL for response processing
+        match self.inject_cookies_if_needed(&mut req, cookie_store) {
+            Some(url) => ResponseFuture::Managed {
                 future: self.inner.call(req),
                 cookie_store: cookie_store.clone(),
                 url,
-            }
-        } else {
-            // If no cookie store is present, just call the inner service.
-            ResponseFuture::WithoutCookieStore {
+            },
+            None => ResponseFuture::Direct {
                 future: self.inner.call(req),
-            }
+            },
         }
     }
 }

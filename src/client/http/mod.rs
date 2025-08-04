@@ -342,6 +342,12 @@ impl ClientBuilder {
                 proxies,
             );
 
+            // Add cookie management support if enabled.
+            #[cfg(feature = "cookies")]
+            let service = ServiceBuilder::new()
+                .layer(CookieManagerLayer::new(config.cookie_store))
+                .service(service);
+
             #[cfg(any(
                 feature = "gzip",
                 feature = "zstd",
@@ -356,12 +362,6 @@ impl ClientBuilder {
             // Add a timeout layer for the response body.
             let service = ServiceBuilder::new()
                 .layer(ResponseBodyTimeoutLayer::new(config.timeout_options))
-                .service(service);
-
-            #[cfg(feature = "cookies")]
-            // Add cookie management support if enabled.
-            let service = ServiceBuilder::new()
-                .layer(CookieManagerLayer::new(config.cookie_store))
                 .service(service);
 
             // Add redirect following logic with the configured policy.

@@ -17,13 +17,13 @@ pin_project! {
     /// Response future for [`CookieManager`].
     #[project=ResponseFutureProj]
     pub enum ResponseFuture<F> {
-        WithCookieStore {
+        Managed {
             #[pin]
             future: F,
             cookie_store: Arc<dyn CookieStore>,
-            url: Option<Url>,
+            url: Url,
         },
-        WithoutCookieStore {
+        Direct {
             #[pin]
             future: F,
         },
@@ -38,29 +38,24 @@ where
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         match self.project() {
-            ResponseFutureProj::WithCookieStore {
+            ResponseFutureProj::Managed {
                 future,
                 cookie_store,
                 url,
             } => {
                 let res = ready!(future.poll(cx)?);
-                if let Some(url) = url {
-                    let mut cookies = res
-                        .headers()
-                        .get_all(http::header::SET_COOKIE)
-                        .iter()
-                        .peekable();
-                    if cookies.peek().is_some() {
-                        cookie_store.set_cookies(&mut cookies, &*url);
-                    }
+                let mut cookies = res
+                    .headers()
+                    .get_all(http::header::SET_COOKIE)
+                    .iter()
+                    .peekable();
+                if cookies.peek().is_some() {
+                    cookie_store.set_cookies(&mut cookies, &*url);
                 }
 
                 Poll::Ready(Ok(res))
             }
-            ResponseFutureProj::WithoutCookieStore { mut future } => {
-                let res = ready!(future.as_mut().poll(cx)?);
-                Poll::Ready(Ok(res))
-            }
+            ResponseFutureProj::Direct { mut future } => future.as_mut().poll(cx),
         }
     }
 }
