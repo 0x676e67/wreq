@@ -605,7 +605,7 @@ mod mac {
     }
 }
 
-#[cfg(all(target_os = "windows", feature = "system-proxy"))]
+#[cfg(all(windows, feature = "system-proxy"))]
 mod win {
     pub(super) fn with_system(builder: &mut super::Builder) {
         let settings = if let Ok(settings) = windows_registry::CURRENT_USER
