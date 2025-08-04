@@ -33,7 +33,7 @@ pub struct Http2OptionsBuilder {
     opts: Http2Options,
 }
 
-/// Configuration config for an HTTP/2 connection.
+/// Configuration for an HTTP/2 connection.
 ///
 /// This struct defines various parameters to fine-tune the behavior of an HTTP/2 connection,
 /// including stream management, window sizes, frame limits, and header config.
