@@ -4,8 +4,6 @@ use http::{
     header::{CONTENT_LENGTH, HeaderValue, ValueIter},
 };
 
-use crate::header::OrigHeaderMap;
-
 pub(super) fn connection_keep_alive(value: &HeaderValue) -> bool {
     connection_has(value, "keep-alive")
 }
@@ -137,35 +135,4 @@ pub(super) fn add_chunked(mut entry: http::header::OccupiedEntry<'_, HeaderValue
     }
 
     entry.insert(HeaderValue::from_static(CHUNKED));
-}
-
-/// Sorts the headers in the specified order.
-///
-/// Headers in `headers_order` are sorted to the front, preserving their order.
-/// Remaining headers are appended in their original order.
-#[inline]
-pub(super) fn sort_headers(headers: &mut HeaderMap, orig: &OrigHeaderMap) {
-    if headers.len() <= 1 {
-        return;
-    }
-
-    // Create a new header map to store the sorted headers
-    let mut sorted_headers = HeaderMap::with_capacity(headers.keys_len());
-
-    // First insert headers in the specified order
-    for name in orig.keys() {
-        for value in headers.get_all(name) {
-            sorted_headers.append(name.clone(), value.clone());
-        }
-        headers.remove(name);
-    }
-
-    // Then insert any remaining headers that were not ordered
-    for (key, value) in headers.drain() {
-        if let Some(key) = key {
-            sorted_headers.append(key, value);
-        }
-    }
-
-    std::mem::swap(headers, &mut sorted_headers);
 }

@@ -96,6 +96,22 @@ impl OrigHeaderMap {
         self.0.extend(iter.0);
     }
 
+    /// Returns the number of headers stored in the map.
+    ///
+    /// This number represents the total number of **values** stored in the map.
+    /// This number can be greater than or equal to the number of **keys**
+    /// stored given that a single key may have more than one associated value.
+    #[inline]
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    /// Returns true if the map contains no elements.
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
     /// Returns an iterator over all header names and their original spellings, in insertion order.
     #[inline]
     pub fn iter(&self) -> impl Iterator<Item = (&HeaderName, &OrigHeaderName)> {
@@ -123,10 +139,43 @@ impl OrigHeaderMap {
         self.0.get_all(name).into_iter()
     }
 
-    /// Returns an iterator over all header names and their original spellings.
-    #[inline]
-    pub(crate) fn keys(&self) -> impl Iterator<Item = &HeaderName> {
-        self.0.keys()
+    /// Sorts headers according to the order defined in this map, preserving original casing.
+    ///
+    /// Headers specified in this map are placed first in the given order, followed by any
+    /// remaining headers. This maintains both the desired ordering and original case formatting.
+    pub(crate) fn sort_headers(&self, headers: &mut HeaderMap) {
+        if headers.len() <= 1 || self.0.is_empty() {
+            return;
+        }
+
+        // Create a new header map to store the sorted headers
+        let mut sorted_headers = HeaderMap::with_capacity(headers.keys_len());
+
+        // First insert headers in the specified order
+        for name in self.0.keys() {
+            for value in headers.get_all(name) {
+                sorted_headers.append(name.clone(), value.clone());
+            }
+            headers.remove(name);
+        }
+
+        // Then insert any remaining headers that were not ordered
+        let mut current_header_name: Option<HeaderName> = None;
+        for (name, value) in headers.drain() {
+            match name {
+                Some(name) => {
+                    current_header_name = Some(name.clone());
+                    sorted_headers.insert(name, value);
+                }
+                None => {
+                    if let Some(ref name) = current_header_name {
+                        sorted_headers.append(name, value);
+                    }
+                }
+            }
+        }
+
+        std::mem::swap(headers, &mut sorted_headers);
     }
 }
 
@@ -250,6 +299,7 @@ mod sealed {
 #[cfg(test)]
 mod test {
     use super::OrigHeaderMap;
+    use http::{HeaderMap, HeaderValue};
 
     #[test]
     fn test_header_order() {
@@ -318,5 +368,124 @@ mod test {
         assert!(all_x_test.iter().any(|v| v.as_ref() == b"X-test"));
         assert!(all_x_test.iter().any(|v| v.as_ref() == b"x-test"));
         assert!(all_x_test.iter().any(|v| v.as_ref() == b"X-test"));
+    }
+
+    #[test]
+    fn test_sort_headers_preserves_multiple_cookie_values() {
+        // Create original header map for ordering
+        let mut orig_headers = OrigHeaderMap::new();
+        orig_headers.insert("Cookie");
+        orig_headers.insert("User-Agent");
+        orig_headers.insert("Accept");
+
+        // Create headers with multiple Cookie values
+        let mut headers = HeaderMap::new();
+
+        // Add multiple Cookie headers (this simulates how cookies are often sent)
+        headers.append("cookie", HeaderValue::from_static("session=abc123"));
+        headers.append("cookie", HeaderValue::from_static("theme=dark"));
+        headers.append("cookie", HeaderValue::from_static("lang=en"));
+
+        // Add other headers
+        headers.insert("user-agent", HeaderValue::from_static("Mozilla/5.0"));
+        headers.insert("accept", HeaderValue::from_static("text/html"));
+        headers.insert("host", HeaderValue::from_static("example.com"));
+
+        // Record original cookie values for comparison
+        let original_cookies: Vec<_> = headers
+            .get_all("cookie")
+            .iter()
+            .map(|v| v.to_str().unwrap().to_string())
+            .collect();
+
+        // Sort headers according to orig_headers order
+        orig_headers.sort_headers(&mut headers);
+
+        // Verify all cookie values are preserved
+        let sorted_cookies: Vec<_> = headers
+            .get_all("cookie")
+            .iter()
+            .map(|v| v.to_str().unwrap().to_string())
+            .collect();
+
+        assert_eq!(
+            original_cookies.len(),
+            sorted_cookies.len(),
+            "Cookie count should be preserved"
+        );
+        assert_eq!(original_cookies.len(), 3, "Should have 3 cookie values");
+
+        // Verify all original cookies are still present (order might change but content preserved)
+        for original_cookie in &original_cookies {
+            assert!(
+                sorted_cookies.contains(original_cookie),
+                "Cookie '{}' should be preserved",
+                original_cookie
+            );
+        }
+
+        // Verify header ordering - Cookie should come first
+        let header_names: Vec<_> = headers.keys().collect();
+        assert_eq!(
+            header_names[0].as_str(),
+            "cookie",
+            "Cookie should be first header"
+        );
+
+        // Verify all headers are preserved
+        assert_eq!(
+            headers.len(),
+            6,
+            "Should have 6 total header values (3 cookies + 3 others)"
+        );
+        assert!(headers.contains_key("user-agent"));
+        assert!(headers.contains_key("accept"));
+        assert!(headers.contains_key("host"));
+    }
+
+    #[test]
+    fn test_sort_headers_multiple_values_different_headers() {
+        let mut orig_headers = OrigHeaderMap::new();
+        orig_headers.insert("Accept");
+        orig_headers.insert("Cookie");
+
+        let mut headers = HeaderMap::new();
+
+        // Multiple Accept headers
+        headers.append("accept", HeaderValue::from_static("text/html"));
+        headers.append("accept", HeaderValue::from_static("application/json"));
+
+        // Multiple Cookie headers
+        headers.append("cookie", HeaderValue::from_static("a=1"));
+        headers.append("cookie", HeaderValue::from_static("b=2"));
+
+        // Single header
+        headers.insert("host", HeaderValue::from_static("example.com"));
+
+        let total_before = headers.len();
+
+        orig_headers.sort_headers(&mut headers);
+
+        // Verify all values preserved
+        assert_eq!(
+            headers.len(),
+            total_before,
+            "Total header count should be preserved"
+        );
+        assert_eq!(
+            headers.get_all("accept").iter().count(),
+            2,
+            "Accept headers should be preserved"
+        );
+        assert_eq!(
+            headers.get_all("cookie").iter().count(),
+            2,
+            "Cookie headers should be preserved"
+        );
+        assert_eq!(
+            headers.get_all("host").iter().count(),
+            1,
+            "Host header should be preserved"
+        );
     }
 }

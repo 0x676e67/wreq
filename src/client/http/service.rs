@@ -50,12 +50,16 @@ impl ClientService {
         let proxies_maybe_http_custom_headers = proxies
             .iter()
             .any(ProxyMatcher::maybe_has_http_custom_headers);
+        let orig_headers = orig_headers
+            .is_empty()
+            .then(|| None)
+            .unwrap_or(Some(orig_headers));
 
         ClientService {
             client,
             config: Arc::new(Config {
                 headers,
-                orig_headers: RequestConfig::new(Some(orig_headers)),
+                orig_headers: RequestConfig::new(orig_headers),
                 skip_default_headers: RequestConfig::default(),
                 https_only,
                 proxies,

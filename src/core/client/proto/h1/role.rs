@@ -16,7 +16,7 @@ use crate::{
         client::{
             body::DecodedLength,
             proto::{
-                self, BodyLength, MessageHead, RequestHead, RequestLine,
+                BodyLength, MessageHead, RequestHead, RequestLine,
                 h1::{Encode, Encoder, Http1Transaction, ParseContext, ParseResult, ParsedMessage},
                 headers,
             },
@@ -654,7 +654,7 @@ fn write_headers_original_case(
     orig_case: &OrigHeaderMap,
     dst: &mut Vec<u8>,
 ) {
-    proto::headers::sort_headers(headers, orig_case);
+    orig_case.sort_headers(headers);
 
     // For each header name/value pair, there may be a value in the casemap
     // that corresponds to the HeaderValue. So, we iterator all the keys,

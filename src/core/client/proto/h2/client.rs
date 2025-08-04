@@ -567,7 +567,7 @@ where
                     if let Some(orig) =
                         RequestConfig::<RequestOrigHeaderMap>::remove(req.extensions_mut())
                     {
-                        headers::sort_headers(req.headers_mut(), &orig);
+                        orig.sort_headers(req.headers_mut());
                     }
 
                     let is_connect = req.method() == Method::CONNECT;
