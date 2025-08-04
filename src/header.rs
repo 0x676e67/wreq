@@ -419,8 +419,7 @@ mod test {
         for original_cookie in &original_cookies {
             assert!(
                 sorted_cookies.contains(original_cookie),
-                "Cookie '{}' should be preserved",
-                original_cookie
+                "Cookie '{original_cookie}' should be preserved"
             );
         }
 
