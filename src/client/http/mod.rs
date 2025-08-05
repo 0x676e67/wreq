@@ -1246,8 +1246,11 @@ impl ClientBuilder {
     /// Overrides for specific names passed to `resolve` and `resolve_to_addrs` will
     /// still be applied on top of this resolver.
     #[inline]
-    pub fn dns_resolver<R: Resolve + 'static>(mut self, resolver: Arc<R>) -> ClientBuilder {
-        self.config.dns_resolver = Some(resolver as _);
+    pub fn dns_resolver<R>(mut self, resolver: R) -> ClientBuilder
+    where
+        R: Into<Arc<dyn Resolve + 'static>>,
+    {
+        self.config.dns_resolver = Some(resolver.into());
         self
     }
 
