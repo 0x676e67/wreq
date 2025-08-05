@@ -46,13 +46,13 @@ impl<S> CookieManager<S> {
         req: &mut Request<B>,
         cookie_store: &Arc<dyn CookieStore>,
     ) -> Option<url::Url> {
-        // // Skip if request already has cookies
-        if req.headers().get(COOKIE).is_some() {
-            return None;
-        }
-
         // Parse URL first - we need it for both injection and response processing
         let url = url::Url::parse(&req.uri().to_string()).ok()?;
+
+        // // Skip if request already has cookies
+        if req.headers().get(COOKIE).is_some() {
+            return Some(url);
+        }
 
         // Only inject cookies if request doesn't already have them
         if let Some(cookies) = cookie_store.cookies(&url) {

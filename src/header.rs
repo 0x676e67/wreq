@@ -298,8 +298,9 @@ mod sealed {
 
 #[cfg(test)]
 mod test {
-    use super::OrigHeaderMap;
     use http::{HeaderMap, HeaderValue};
+
+    use super::OrigHeaderMap;
 
     #[test]
     fn test_header_order() {

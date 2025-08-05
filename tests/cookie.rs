@@ -1,5 +1,6 @@
 mod support;
 use support::server;
+use wreq::Client;
 
 #[tokio::test]
 async fn cookie_response_accessor() {
@@ -185,4 +186,37 @@ async fn cookie_store_path() {
 
     let url = format!("http://{}/subpath", server.addr());
     client.get(&url).send().await.unwrap();
+}
+
+#[tokio::test]
+async fn cookie_store_stores_response_cookie_with_manual_cookie() {
+    let server = server::http(|req| async move {
+        if req.uri() == "/1" {
+            assert_eq!(req.headers()["cookie"], "key=val");
+        }
+
+        if req.uri() == "/2" {
+            assert_eq!(req.headers()["cookie"], "key=val");
+        }
+
+        dbg!(req);
+
+        http::Response::builder()
+            .header("Set-Cookie", "key=val; HttpOnly")
+            .body(Default::default())
+            .unwrap()
+    });
+
+    let client = Client::builder().cookie_store(true).build().unwrap();
+
+    let set_url = format!("http://{}/1", server.addr());
+    let _ = client
+        .get(&set_url)
+        .header("cookie", "key=val")
+        .send()
+        .await
+        .unwrap();
+
+    let check_url = format!("http://{}/2", server.addr());
+    let _ = client.get(&check_url).send().await.unwrap();
 }
