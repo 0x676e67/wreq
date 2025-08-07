@@ -18,7 +18,6 @@ use futures_util::{Sink, SinkExt, Stream, StreamExt};
 use http::{HeaderMap, HeaderName, HeaderValue, Method, StatusCode, Version, header, uri::Scheme};
 use http2::ext::Protocol;
 use serde::Serialize;
-use tokio_util::compat::TokioAsyncReadCompatExt;
 use tungstenite::protocol::WebSocketConfig;
 
 pub use self::message::{CloseCode, CloseFrame, Message, Utf8Bytes};
@@ -27,8 +26,7 @@ use crate::{
 };
 
 /// A WebSocket stream.
-pub type WebSocketStream =
-    async_tungstenite::WebSocketStream<tokio_util::compat::Compat<crate::Upgraded>>;
+pub type WebSocketStream = async_tungstenite::WebSocketStream<crate::Upgraded>;
 
 /// Wrapper for [`RequestBuilder`] that performs the
 /// websocket handshake when sent.
@@ -495,7 +493,7 @@ impl WebSocketResponse {
 
             let upgraded = self.inner.upgrade().await?;
             let inner = WebSocketStream::from_raw_socket(
-                upgraded.compat(),
+                upgraded,
                 protocol::Role::Client,
                 Some(self.config),
             )

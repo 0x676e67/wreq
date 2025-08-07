@@ -226,6 +226,24 @@ where
     }
 }
 
+impl<T> futures_util::AsyncRead for TokioIo<T>
+where
+    T: tokio::io::AsyncRead + Unpin,
+{
+    fn poll_read(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut [u8],
+    ) -> Poll<std::io::Result<usize>> {
+        let mut read_buf = tokio::io::ReadBuf::new(buf);
+        match tokio::io::AsyncRead::poll_read(self.project().inner, cx, &mut read_buf) {
+            Poll::Ready(Ok(())) => Poll::Ready(Ok(read_buf.filled().len())),
+            Poll::Ready(Err(e)) => Poll::Ready(Err(e)),
+            Poll::Pending => Poll::Pending,
+        }
+    }
+}
+
 // ==== impl TokioTimer =====
 
 impl Timer for TokioTimer {
