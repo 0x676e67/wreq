@@ -1,7 +1,7 @@
 use std::{
     fmt, io,
     pin::Pin,
-    task::{self, Poll, ready},
+    task::{self, Poll},
 };
 
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
@@ -61,7 +61,7 @@ impl futures_util::AsyncRead for Upgraded {
         buf: &mut [u8],
     ) -> Poll<io::Result<usize>> {
         let mut read_buf = ReadBuf::new(buf);
-        match ready!(Pin::new(&mut self.inner).poll_read(cx, &mut read_buf)) {
+        match std::task::ready!(Pin::new(&mut self.inner).poll_read(cx, &mut read_buf)) {
             Ok(()) => Poll::Ready(Ok(read_buf.filled().len())),
             Err(e) => Poll::Ready(Err(e)),
         }
