@@ -600,18 +600,20 @@ impl Sink<Message> for WebSocket {
     type Error = Error;
 
     fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        self.inner.poll_ready_unpin(cx).map_err(Into::into)
+        self.inner.poll_ready_unpin(cx).map_err(Error::decode)
     }
 
     fn start_send(mut self: Pin<&mut Self>, item: Message) -> Result<(), Self::Error> {
-        self.inner.start_send_unpin(item.into()).map_err(Into::into)
+        self.inner
+            .start_send_unpin(item.into_tungstenite())
+            .map_err(Error::decode)
     }
 
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        self.inner.poll_flush_unpin(cx).map_err(Into::into)
+        self.inner.poll_flush_unpin(cx).map_err(Error::decode)
     }
 
     fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        self.inner.poll_close_unpin(cx).map_err(Into::into)
+        self.inner.poll_close_unpin(cx).map_err(Error::decode)
     }
 }
