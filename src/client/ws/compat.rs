@@ -5,7 +5,7 @@
 
 use std::{
     pin::Pin,
-    task::{Context, Poll},
+    task::{Context, Poll, ready},
 };
 
 use pin_project_lite::pin_project;
@@ -38,10 +38,10 @@ where
     fn poll_read(
         self: Pin<&mut Self>,
         cx: &mut Context<'_>,
-        buf: &mut [u8],
+        slice: &mut [u8],
     ) -> Poll<std::io::Result<usize>> {
-        let mut buf = tokio::io::ReadBuf::new(buf);
-        std::task::ready!(self.project().inner.poll_read(cx, &mut buf))?;
+        let mut buf = tokio::io::ReadBuf::new(slice);
+        ready!(self.project().inner.poll_read(cx, &mut buf))?;
         Poll::Ready(Ok(buf.filled().len()))
     }
 }
