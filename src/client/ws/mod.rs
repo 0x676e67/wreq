@@ -13,11 +13,12 @@ use std::{
     task::{Context, Poll, ready},
 };
 
+use async_tungstenite::tungstenite::{self, protocol};
 use futures_util::{Sink, SinkExt, Stream, StreamExt};
 use http::{HeaderMap, HeaderName, HeaderValue, Method, StatusCode, Version, header, uri::Scheme};
 use http2::ext::Protocol;
 use serde::Serialize;
-use tokio_tungstenite::tungstenite::{self, protocol};
+use tokio_util::compat::TokioAsyncReadCompatExt;
 use tungstenite::protocol::WebSocketConfig;
 
 pub use self::message::{CloseCode, CloseFrame, Message, Utf8Bytes};
@@ -26,7 +27,8 @@ use crate::{
 };
 
 /// A WebSocket stream.
-type WebSocketStream = tokio_tungstenite::WebSocketStream<crate::Upgraded>;
+pub type WebSocketStream =
+    async_tungstenite::WebSocketStream<tokio_util::compat::Compat<crate::Upgraded>>;
 
 /// Wrapper for [`RequestBuilder`] that performs the
 /// websocket handshake when sent.
@@ -493,7 +495,7 @@ impl WebSocketResponse {
 
             let upgraded = self.inner.upgrade().await?;
             let inner = WebSocketStream::from_raw_socket(
-                upgraded,
+                upgraded.compat(),
                 protocol::Role::Client,
                 Some(self.config),
             )
@@ -597,31 +599,19 @@ impl Stream for WebSocket {
 impl Sink<Message> for WebSocket {
     type Error = Error;
 
-    #[inline]
     fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        Pin::new(&mut self.inner)
-            .poll_ready(cx)
-            .map_err(Error::upgrade)
+        self.inner.poll_ready_unpin(cx).map_err(Into::into)
     }
 
-    #[inline]
     fn start_send(mut self: Pin<&mut Self>, item: Message) -> Result<(), Self::Error> {
-        Pin::new(&mut self.inner)
-            .start_send(item.into_tungstenite())
-            .map_err(Error::upgrade)
+        self.inner.start_send_unpin(item.into()).map_err(Into::into)
     }
 
-    #[inline]
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        Pin::new(&mut self.inner)
-            .poll_flush(cx)
-            .map_err(Error::upgrade)
+        self.inner.poll_flush_unpin(cx).map_err(Into::into)
     }
 
-    #[inline]
     fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        Pin::new(&mut self.inner)
-            .poll_close(cx)
-            .map_err(Error::upgrade)
+        self.inner.poll_close_unpin(cx).map_err(Into::into)
     }
 }

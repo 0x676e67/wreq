@@ -1,5 +1,5 @@
+use async_tungstenite::tungstenite as ts;
 use bytes::Bytes;
-use tokio_tungstenite::tungstenite as ts;
 
 use crate::Error;
 
