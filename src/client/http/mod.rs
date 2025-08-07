@@ -29,7 +29,7 @@ use types::{
     HttpConnector, ResponseBody,
 };
 #[cfg(feature = "cookies")]
-use {super::layer::cookie::CookieManagerLayer, crate::cookie};
+use {super::layer::cookie::CookieServiceLayer, crate::cookie};
 
 #[cfg(any(
     feature = "gzip",
@@ -342,19 +342,19 @@ impl ClientBuilder {
                 proxies,
             );
 
-            // Add cookie management support if enabled.
+            // Add cookie service layer if cookies are enabled.
             #[cfg(feature = "cookies")]
             let service = ServiceBuilder::new()
-                .layer(CookieManagerLayer::new(config.cookie_store))
+                .layer(CookieServiceLayer::new(config.cookie_store))
                 .service(service);
 
+            // Add response decompression support (gzip, zstd, brotli, deflate) if enabled.
             #[cfg(any(
                 feature = "gzip",
                 feature = "zstd",
                 feature = "brotli",
                 feature = "deflate",
             ))]
-            // Add response decompression support (gzip, zstd, brotli, deflate) if enabled.
             let service = ServiceBuilder::new()
                 .layer(DecompressionLayer::new(config.accept_encoding))
                 .service(service);

@@ -14,7 +14,7 @@ use url::Url;
 use crate::cookie::CookieStore;
 
 pin_project! {
-    /// Response future for [`CookieManager`].
+    /// Response future for [`CookieService`].
     #[project=ResponseFutureProj]
     pub enum ResponseFuture<F> {
         Managed {

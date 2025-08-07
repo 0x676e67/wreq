@@ -25,7 +25,7 @@ use crate::{
 type CookieLayer<T> = T;
 
 #[cfg(feature = "cookies")]
-type CookieLayer<T> = crate::client::layer::cookie::CookieManager<T>;
+type CookieLayer<T> = crate::client::layer::cookie::CookieService<T>;
 
 #[cfg(not(any(
     feature = "gzip",
