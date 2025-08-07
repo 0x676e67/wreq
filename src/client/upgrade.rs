@@ -14,6 +14,7 @@ pub struct Upgraded {
 }
 
 impl AsyncRead for Upgraded {
+    #[inline]
     fn poll_read(
         mut self: Pin<&mut Self>,
         cx: &mut task::Context<'_>,
@@ -24,6 +25,7 @@ impl AsyncRead for Upgraded {
 }
 
 impl AsyncWrite for Upgraded {
+    #[inline]
     fn poll_write(
         mut self: Pin<&mut Self>,
         cx: &mut task::Context<'_>,
@@ -32,6 +34,7 @@ impl AsyncWrite for Upgraded {
         Pin::new(&mut self.inner).poll_write(cx, buf)
     }
 
+    #[inline]
     fn poll_write_vectored(
         mut self: Pin<&mut Self>,
         cx: &mut task::Context<'_>,
@@ -40,14 +43,17 @@ impl AsyncWrite for Upgraded {
         Pin::new(&mut self.inner).poll_write_vectored(cx, bufs)
     }
 
+    #[inline]
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<io::Result<()>> {
         Pin::new(&mut self.inner).poll_flush(cx)
     }
 
+    #[inline]
     fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<io::Result<()>> {
         Pin::new(&mut self.inner).poll_shutdown(cx)
     }
 
+    #[inline]
     fn is_write_vectored(&self) -> bool {
         self.inner.is_write_vectored()
     }
