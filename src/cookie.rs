@@ -11,8 +11,6 @@ use crate::{
     sync::RwLock,
 };
 
-const COOKIE_SEPARATOR: &[u8] = b"=";
-
 /// Actions for a persistent cookie store providing session support.
 pub trait CookieStore: Send + Sync {
     /// Store a set of Set-Cookie header values received from `url`
@@ -107,12 +105,6 @@ impl<'a> Cookie<'a> {
         }
     }
 
-    /// Returns the raw cookie.
-    #[inline]
-    pub fn into_raw(self) -> RawCookie<'a> {
-        self.0
-    }
-
     /// Converts `self` into a `Cookie` with a static lifetime with as few
     /// allocations as possible.
     #[inline]
@@ -171,16 +163,19 @@ impl CookieStore for Jar {
     }
 
     fn cookies(&self, url: &url::Url) -> Vec<HeaderValue> {
+        const COOKIE_SEPARATOR: &[u8] = b"=";
+
         self.0
             .read()
             .get_request_values(url)
             .filter_map(|(name, value)| {
-                let capacity = name.as_bytes().len() + 1 + value.as_bytes().len();
-                let mut cookie = bytes::BytesMut::with_capacity(capacity);
+                let name = name.as_bytes();
+                let value = value.as_bytes();
+                let mut cookie = bytes::BytesMut::with_capacity(name.len() + 1 + value.len());
 
-                cookie.put(name.as_bytes());
+                cookie.put(name);
                 cookie.put(COOKIE_SEPARATOR);
-                cookie.put(value.as_bytes());
+                cookie.put(value);
 
                 HeaderValue::from_maybe_shared(cookie).ok()
             })
