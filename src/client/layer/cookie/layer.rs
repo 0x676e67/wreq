@@ -55,11 +55,9 @@ impl<S> CookieManager<S> {
         }
 
         // Only inject cookies if request doesn't already have them
-        if let Some(cookies) = cookie_store.cookies(&url) {
-            let headers = req.headers_mut();
-            for header in cookies {
-                headers.append(COOKIE, header);
-            }
+        let headers = req.headers_mut();
+        for header in cookie_store.cookies(&url) {
+            headers.append(COOKIE, header);
         }
 
         Some(url)

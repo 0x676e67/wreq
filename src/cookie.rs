@@ -1,9 +1,9 @@
 //! HTTP Cookies
 
-use std::{borrow::Cow, convert::TryInto, fmt, time::SystemTime};
+use std::{convert::TryInto, fmt, time::SystemTime};
 
 use bytes::BufMut;
-pub use cookie_crate::{Cookie as RawCookie, Expiration, SameSite, time::Duration};
+use cookie_crate::{Cookie as RawCookie, Expiration, SameSite};
 
 use crate::{
     error::Error,
@@ -17,16 +17,12 @@ pub trait CookieStore: Send + Sync {
     fn set_cookies(&self, cookie_headers: &mut dyn Iterator<Item = &HeaderValue>, url: &url::Url);
 
     /// Get any Cookie values in the store for `url`
-    fn cookies(&self, url: &url::Url) -> Option<Vec<HeaderValue>>;
+    fn cookies(&self, url: &url::Url) -> Vec<HeaderValue>;
 }
 
 /// A single HTTP cookie.
 #[derive(Debug, Clone)]
 pub struct Cookie<'a>(RawCookie<'a>);
-
-/// A builder for a `Cookie`.
-#[derive(Debug, Clone)]
-pub struct CookieBuilder<'a>(cookie_crate::CookieBuilder<'a>);
 
 /// A good default `CookieStore` implementation.
 ///
@@ -44,26 +40,6 @@ impl<'a> Cookie<'a> {
             .and_then(cookie_crate::Cookie::parse)
             .map_err(Error::decode)
             .map(Cookie)
-    }
-
-    /// Creates a new `CookieBuilder` instance from the given name and value.
-    #[inline]
-    pub fn builder<N, V>(name: N, value: V) -> CookieBuilder<'a>
-    where
-        N: Into<Cow<'a, str>>,
-        V: Into<Cow<'a, str>>,
-    {
-        CookieBuilder::new(name, value)
-    }
-
-    /// Creates a new `Cookie` instance from the given name and value.
-    #[inline]
-    pub fn new<N, V>(name: N, value: V) -> Cookie<'a>
-    where
-        N: Into<Cow<'a, str>>,
-        V: Into<Cow<'a, str>>,
-    {
-        Cookie(RawCookie::new(name, value))
     }
 
     /// The name of the cookie.
@@ -149,82 +125,6 @@ impl fmt::Display for Cookie<'_> {
     }
 }
 
-// ===== impl CookieBuilder =====
-impl<'c> CookieBuilder<'c> {
-    /// Creates a new `CookieBuilder` instance from the given name and value.
-    pub fn new<N, V>(name: N, value: V) -> Self
-    where
-        N: Into<Cow<'c, str>>,
-        V: Into<Cow<'c, str>>,
-    {
-        CookieBuilder(cookie_crate::CookieBuilder::new(name, value))
-    }
-
-    /// Set the 'HttpOnly' directive.
-    #[inline]
-    pub fn http_only(mut self, enabled: bool) -> Self {
-        self.0 = self.0.http_only(enabled);
-        self
-    }
-
-    /// Set the 'Secure' directive.
-    #[inline]
-    pub fn secure(mut self, enabled: bool) -> Self {
-        self.0 = self.0.secure(enabled);
-        self
-    }
-
-    /// Set the 'SameSite' directive.
-    #[inline]
-    pub fn same_site(mut self, same_site: SameSite) -> Self {
-        self.0 = self.0.same_site(same_site);
-        self
-    }
-
-    /// Set the path directive.
-    #[inline]
-    pub fn path<P>(mut self, path: P) -> Self
-    where
-        P: Into<Cow<'c, str>>,
-    {
-        self.0 = self.0.path(path);
-        self
-    }
-
-    /// Set the domain directive.
-    #[inline]
-    pub fn domain<D>(mut self, domain: D) -> Self
-    where
-        D: Into<Cow<'c, str>>,
-    {
-        self.0 = self.0.domain(domain);
-        self
-    }
-
-    /// Set the Max-Age directive.
-    #[inline]
-    pub fn max_age(mut self, max_age: Duration) -> Self {
-        self.0 = self.0.max_age(max_age);
-        self
-    }
-
-    /// Set the expiration time.
-    #[inline]
-    pub fn expires<E>(mut self, expires: E) -> Self
-    where
-        E: Into<Expiration>,
-    {
-        self.0 = self.0.expires(expires);
-        self
-    }
-
-    /// Build the `Cookie`.
-    #[inline]
-    pub fn build(self) -> Cookie<'c> {
-        Cookie(self.0.build())
-    }
-}
-
 pub(crate) fn extract_response_cookies(
     headers: &http::HeaderMap,
 ) -> impl Iterator<Item = crate::Result<Cookie<'_>>> {
@@ -258,78 +158,6 @@ impl Jar {
             .into_iter();
         self.0.write().store_response_cookies(cookies, url);
     }
-
-    /// Add a cookie to this jar.
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use wreq::{
-    ///     Url,
-    ///     cookie::{
-    ///         Cookie,
-    ///         Jar,
-    ///     },
-    /// };
-    ///
-    /// let cookie = Cookie::new("foo", "bar");
-    /// let url = "https://yolo.local".parse::<Url>().unwrap();
-    ///
-    /// let jar = Jar::default();
-    /// jar.add_cookie(cookie, &url);
-    ///
-    /// // and now add to a `ClientBuilder`?
-    /// ```
-    pub fn add_cookie(&self, cookie: Cookie<'_>, url: &url::Url) {
-        let _ = self.0.write().insert_raw(&cookie.0, url);
-    }
-
-    /// Removes a `Cookie` from the store, returning the `Cookie` if it was in the jar.
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use wreq::{
-    ///     Url,
-    ///     cookie::Jar,
-    /// };
-    ///
-    /// // add a cookie
-    /// let cookie = "foo=bar; Domain=yolo.local";
-    /// let url = "https://yolo.local".parse::<Url>().unwrap();
-    /// let jar = Jar::default();
-    /// jar.add_cookie_str(cookie, &url);
-    ///
-    /// // remove the cookie
-    /// jar.remove("foo", &url);
-    /// ```
-    pub fn remove(&self, name: &str, url: &url::Url) {
-        if let Some(domain) = url.host_str() {
-            self.0.write().remove(domain, url.path(), name);
-        }
-    }
-
-    /// Clear the contents of the jar.
-    ///
-    /// # Example
-    /// ```
-    /// use wreq::{
-    ///     Url,
-    ///     cookie::Jar,
-    /// };
-    ///
-    /// // add a cookie
-    /// let cookie = "foo=bar; Domain=yolo.local";
-    /// let url = "https://yolo.local".parse::<Url>().unwrap();
-    /// let jar = Jar::default();
-    /// jar.add_cookie_str(cookie, &url);
-    ///
-    /// // remove all cookies
-    /// jar.clear();
-    /// ```
-    pub fn clear(&self) {
-        self.0.write().clear();
-    }
 }
 
 impl CookieStore for Jar {
@@ -340,24 +168,21 @@ impl CookieStore for Jar {
         self.0.write().store_response_cookies(iter, url);
     }
 
-    fn cookies(&self, url: &url::Url) -> Option<Vec<HeaderValue>> {
-        let mut cookies = Vec::new();
-        let lock = self.0.read();
-        for (name, value) in lock.get_request_values(url) {
-            let mut cookie = bytes::BytesMut::with_capacity(64);
-            cookie.put(name.as_bytes());
-            cookie.put(&b"="[..]);
-            cookie.put(value.as_bytes());
-            if let Ok(cookie) = HeaderValue::from_maybe_shared(cookie) {
-                cookies.push(cookie);
-            }
-        }
+    fn cookies(&self, url: &url::Url) -> Vec<HeaderValue> {
+        self.0
+            .read()
+            .get_request_values(url)
+            .filter_map(|(name, value)| {
+                let capacity = name.len() + 1 + value.len();
+                let mut cookie = bytes::BytesMut::with_capacity(capacity);
 
-        if cookies.is_empty() {
-            None
-        } else {
-            Some(cookies)
-        }
+                cookie.put(name.as_bytes());
+                cookie.put(&b"="[..]);
+                cookie.put(value.as_bytes());
+
+                HeaderValue::from_maybe_shared(cookie).ok()
+            })
+            .collect()
     }
 }
 
