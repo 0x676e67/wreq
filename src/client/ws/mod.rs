@@ -28,7 +28,7 @@ use crate::{
 };
 
 /// A WebSocket stream.
-pub type WebSocketStream = async_tungstenite::WebSocketStream<Compat<Upgraded>>;
+type WebSocketStream = async_tungstenite::WebSocketStream<Compat<Upgraded>>;
 
 /// Wrapper for [`RequestBuilder`] that performs the
 /// websocket handshake when sent.

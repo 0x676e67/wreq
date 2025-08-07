@@ -230,6 +230,12 @@ impl Error {
         matches!(self.inner.kind, Kind::Upgrade)
     }
 
+    #[cfg(feature = "ws")]
+    /// Returns true if the error is related to WebSocket operations
+    pub fn is_websocket(&self) -> bool {
+        matches!(self.inner.kind, Kind::WebSocket)
+    }
+
     /// Returns the status code, if the error was generated from a response.
     pub fn status(&self) -> Option<StatusCode> {
         match self.inner.kind {
