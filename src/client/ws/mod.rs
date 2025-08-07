@@ -1,5 +1,6 @@
 //! WebSocket Upgrade
 
+mod compat;
 #[cfg(feature = "json")]
 mod json;
 mod message;
@@ -22,11 +23,12 @@ use tungstenite::protocol::WebSocketConfig;
 
 pub use self::message::{CloseCode, CloseFrame, Message, Utf8Bytes};
 use crate::{
-    EmulationFactory, Error, RequestBuilder, Response, header::OrigHeaderMap, proxy::Proxy,
+    EmulationFactory, Error, RequestBuilder, Response, Upgraded, header::OrigHeaderMap,
+    proxy::Proxy, ws::compat::Compat,
 };
 
 /// A WebSocket stream.
-pub type WebSocketStream = async_tungstenite::WebSocketStream<crate::Upgraded>;
+pub type WebSocketStream = async_tungstenite::WebSocketStream<Compat<Upgraded>>;
 
 /// Wrapper for [`RequestBuilder`] that performs the
 /// websocket handshake when sent.
@@ -493,7 +495,7 @@ impl WebSocketResponse {
 
             let upgraded = self.inner.upgrade().await?;
             let inner = WebSocketStream::from_raw_socket(
-                upgraded,
+                Compat::new(upgraded),
                 protocol::Role::Client,
                 Some(self.config),
             )
@@ -598,20 +600,20 @@ impl Sink<Message> for WebSocket {
     type Error = Error;
 
     fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        self.inner.poll_ready_unpin(cx).map_err(Error::decode)
+        self.inner.poll_ready_unpin(cx).map_err(Error::websocket)
     }
 
     fn start_send(mut self: Pin<&mut Self>, item: Message) -> Result<(), Self::Error> {
         self.inner
             .start_send_unpin(item.into_tungstenite())
-            .map_err(Error::decode)
+            .map_err(Error::websocket)
     }
 
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        self.inner.poll_flush_unpin(cx).map_err(Error::decode)
+        self.inner.poll_flush_unpin(cx).map_err(Error::websocket)
     }
 
     fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        self.inner.poll_close_unpin(cx).map_err(Error::decode)
+        self.inner.poll_close_unpin(cx).map_err(Error::websocket)
     }
 }

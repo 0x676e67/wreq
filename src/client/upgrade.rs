@@ -53,40 +53,6 @@ impl AsyncWrite for Upgraded {
     }
 }
 
-#[cfg(feature = "ws")]
-impl futures_util::AsyncRead for Upgraded {
-    fn poll_read(
-        mut self: Pin<&mut Self>,
-        cx: &mut task::Context<'_>,
-        buf: &mut [u8],
-    ) -> Poll<io::Result<usize>> {
-        let mut read_buf = ReadBuf::new(buf);
-        match std::task::ready!(Pin::new(&mut self.inner).poll_read(cx, &mut read_buf)) {
-            Ok(()) => Poll::Ready(Ok(read_buf.filled().len())),
-            Err(e) => Poll::Ready(Err(e)),
-        }
-    }
-}
-
-#[cfg(feature = "ws")]
-impl futures_util::AsyncWrite for Upgraded {
-    fn poll_write(
-        mut self: Pin<&mut Self>,
-        cx: &mut task::Context<'_>,
-        buf: &[u8],
-    ) -> Poll<io::Result<usize>> {
-        Pin::new(&mut self.inner).poll_write(cx, buf)
-    }
-
-    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<io::Result<()>> {
-        Pin::new(&mut self.inner).poll_flush(cx)
-    }
-
-    fn poll_close(mut self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<io::Result<()>> {
-        Pin::new(&mut self.inner).poll_shutdown(cx)
-    }
-}
-
 impl fmt::Debug for Upgraded {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Upgraded").finish()
