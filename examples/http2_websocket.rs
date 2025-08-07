@@ -8,7 +8,7 @@
 use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt, TryStreamExt};
-use wreq::{Client, header, ws::Message};
+use wreq::{Client, header, ws::message::Message};
 
 #[tokio::main]
 async fn main() -> wreq::Result<()> {
@@ -23,7 +23,7 @@ async fn main() -> wreq::Result<()> {
         .build()?;
 
     // Use the API you're already familiar with
-    let websocket = client
+    let resp = client
         .websocket("wss://127.0.0.1:3000/ws")
         .force_http2()
         .header(header::USER_AGENT, env!("CARGO_PKG_NAME"))
@@ -31,9 +31,14 @@ async fn main() -> wreq::Result<()> {
         .send()
         .await?;
 
-    assert_eq!(websocket.version(), http::Version::HTTP_2);
+    assert_eq!(resp.version(), http::Version::HTTP_2);
 
-    let (mut tx, mut rx) = websocket.into_websocket().await?.split();
+    let websocket = resp.into_websocket().await?;
+    if let Some(protocol) = websocket.protocol() {
+        println!("WebSocket subprotocol: {:?}", protocol);
+    }
+
+    let (mut tx, mut rx) = websocket.split();
 
     tokio::spawn(async move {
         for i in 1..11 {

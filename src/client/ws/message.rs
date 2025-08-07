@@ -1,3 +1,9 @@
+//! WebSocket message types and utilities
+//!
+//! This module provides WebSocket message types that wrap the underlying
+//! tungstenite message implementation, offering a more ergonomic API
+//! for working with WebSocket communications.
+
 use async_tungstenite::tungstenite as ts;
 use bytes::Bytes;
 

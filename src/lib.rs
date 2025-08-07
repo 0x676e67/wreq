@@ -53,7 +53,7 @@
 //! use std::time::Duration;
 //!
 //! use futures_util::{SinkExt, StreamExt, TryStreamExt};
-//! use wreq::{Client, header, ws::Message};
+//! use wreq::{Client, header, ws::message::Message};
 //!
 //! #[tokio::main]
 //! async fn main() -> wreq::Result<()> {

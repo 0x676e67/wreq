@@ -3,7 +3,7 @@
 mod compat;
 #[cfg(feature = "json")]
 mod json;
-mod message;
+pub mod message;
 
 use std::{
     borrow::Cow,
@@ -21,10 +21,13 @@ use http2::ext::Protocol;
 use serde::Serialize;
 use tungstenite::protocol::WebSocketConfig;
 
-pub use self::message::{CloseCode, CloseFrame, Message, Utf8Bytes};
+use self::{
+    compat::Compat,
+    message::{CloseCode, Message, Utf8Bytes},
+};
 use crate::{
     EmulationFactory, Error, RequestBuilder, Response, Upgraded, header::OrigHeaderMap,
-    proxy::Proxy, ws::compat::Compat,
+    proxy::Proxy,
 };
 
 /// A WebSocket stream.
@@ -540,6 +543,12 @@ pub struct WebSocket {
 }
 
 impl WebSocket {
+    /// Return the selected WebSocket subprotocol, if one has been chosen.
+    #[inline]
+    pub fn protocol(&self) -> Option<&HeaderValue> {
+        self.protocol.as_ref()
+    }
+
     /// Receive another message.
     ///
     /// Returns `None` if the stream has closed.
@@ -555,12 +564,6 @@ impl WebSocket {
             .send(msg.into_tungstenite())
             .await
             .map_err(Error::upgrade)
-    }
-
-    /// Return the selected WebSocket subprotocol, if one has been chosen.
-    #[inline]
-    pub fn protocol(&self) -> Option<&HeaderValue> {
-        self.protocol.as_ref()
     }
 
     /// Closes the connection with a given code and (optional) reason.
