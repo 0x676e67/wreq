@@ -40,7 +40,7 @@ pin_project! {
             body: BodyRepr<B>,
         },
 
-        NoRedirect {
+        Direct {
             #[pin]
             future: S::Future,
         },
@@ -144,7 +144,7 @@ where
                     Action::Stop => Poll::Ready(Ok(res)),
                 }
             }
-            ResponseFutureProj::NoRedirect { mut future } => {
+            ResponseFutureProj::Direct { mut future } => {
                 let res = ready!(future.as_mut().poll(cx)?);
                 Poll::Ready(Ok(res))
             }

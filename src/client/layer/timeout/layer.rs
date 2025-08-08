@@ -66,13 +66,10 @@ where
 
     fn call(&mut self, req: Request<ReqBody>) -> Self::Future {
         let (total_timeout, read_timeout) = resolve_timeout_config(&self.timeout, req.extensions());
-        let total_timeout = total_timeout.map(tokio::time::sleep);
-        let read_timeout = read_timeout.map(tokio::time::sleep);
-
         ResponseFuture {
             response: self.inner.call(req),
-            total_timeout,
-            read_timeout,
+            total_timeout: total_timeout.map(tokio::time::sleep),
+            read_timeout: read_timeout.map(tokio::time::sleep),
         }
     }
 }

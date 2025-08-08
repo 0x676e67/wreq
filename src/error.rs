@@ -74,11 +74,7 @@ impl Error {
         Error::new(Kind::Status(status, reason), None::<Error>).with_url(url)
     }
 
-    pub(crate) fn url_bad_scheme(url: Url) -> Error {
-        Error::new(Kind::Builder, Some(BadScheme)).with_url(url)
-    }
-
-    pub(crate) fn url_bad_scheme2() -> Error {
+    pub(crate) fn url_bad_scheme() -> Error {
         Error::new(Kind::Builder, Some(BadScheme))
     }
 }
@@ -340,14 +336,14 @@ impl StdError for Error {
 pub(crate) enum Kind {
     Builder,
     Request,
+    Tls,
     Redirect,
     Status(StatusCode, Option<ReasonPhrase>),
     Body,
-    Tls,
     Decode,
+    Upgrade,
     #[cfg(feature = "ws")]
     WebSocket,
-    Upgrade,
 }
 
 #[derive(Debug)]

@@ -6,7 +6,7 @@
 
 use std::{error::Error as StdError, fmt, sync::Arc};
 
-use http::{HeaderMap, HeaderValue, StatusCode};
+use http::{Extensions, HeaderMap, HeaderValue, StatusCode, uri::Scheme};
 
 use crate::{
     Url,
@@ -290,7 +290,7 @@ impl FollowRedirectPolicy {
 }
 
 fn make_referer(next: &Url, previous: &Url) -> Option<HeaderValue> {
-    if next.scheme() == "http" && previous.scheme() == "https" {
+    if Scheme::HTTP.eq(next.scheme()) && Scheme::HTTPS.eq(previous.scheme()) {
         return None;
     }
 
@@ -314,18 +314,20 @@ impl policy::Policy<Body, BoxError> for FollowRedirectPolicy {
         let policy = self
             .policy
             .as_ref()
-            .ok_or_else(|| Error::request("RequestRedirectPolicy not set in request config"))?;
+            .expect("FollowRedirectPolicy should always have a policy set");
 
         // Check if the next URL is already in the list of URLs.
         match policy.check(attempt.status(), &next_url, &self.urls) {
             ActionKind::Follow => {
-                if next_url.scheme() != "http" && next_url.scheme() != "https" {
-                    return Err(BoxError::from(Error::url_bad_scheme(next_url)));
+                // Validate the next URL's scheme.
+                if Scheme::HTTP.ne(next_url.scheme()) && Scheme::HTTPS.ne(next_url.scheme()) {
+                    return Err(BoxError::from(Error::url_bad_scheme().with_url(next_url)));
                 }
 
-                if self.https_only && next_url.scheme() != "https" {
+                // Validate HTTPS-only policy.
+                if self.https_only && Scheme::HTTPS.ne(next_url.scheme()) {
                     return Err(BoxError::from(Error::redirect(
-                        Error::url_bad_scheme(next_url.clone()),
+                        Error::url_bad_scheme().with_url(next_url.clone()),
                         next_url,
                     )));
                 }
@@ -351,8 +353,8 @@ impl policy::Policy<Body, BoxError> for FollowRedirectPolicy {
     }
 
     #[inline(always)]
-    fn load(&mut self, req: &http::Request<Body>) {
-        self.policy.load(req.extensions());
+    fn on_extensions(&mut self, extensions: &Extensions) {
+        self.policy.load(extensions);
     }
 
     #[inline(always)]

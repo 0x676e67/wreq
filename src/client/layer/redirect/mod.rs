@@ -76,7 +76,7 @@ where
         let service = self.inner.clone();
         let mut service = mem::replace(&mut self.inner, service);
         let mut policy = self.policy.clone();
-        policy.load(&req);
+        policy.on_extensions(req.extensions());
 
         if policy.allowed() {
             let mut body = BodyRepr::None;
@@ -94,7 +94,7 @@ where
                 policy,
             }
         } else {
-            ResponseFuture::NoRedirect {
+            ResponseFuture::Direct {
                 future: service.call(req),
             }
         }

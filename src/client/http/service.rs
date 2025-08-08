@@ -4,7 +4,11 @@ use std::{
 };
 
 use futures_util::future::{self, Either, MapErr, Ready, TryFutureExt};
-use http::{HeaderMap, Request, Response, header::PROXY_AUTHORIZATION, uri::Scheme};
+use http::{
+    HeaderMap, Request, Response,
+    header::{Entry, PROXY_AUTHORIZATION},
+    uri::Scheme,
+};
 use tower::Service;
 
 use super::{Body, connect::Connector};
@@ -38,7 +42,7 @@ struct Config {
 }
 
 impl ClientService {
-    /// Creates a new [`ClientService`] with the provided HTTP client and configuration.
+    /// Creates a new [`ClientService`].
     pub(super) fn new(
         client: HttpClient<Connector, Body>,
         headers: HeaderMap,
@@ -132,33 +136,38 @@ impl Service<Request<Body>> for ClientService {
     fn call(&mut self, mut req: Request<Body>) -> Self::Future {
         let scheme = req.uri().scheme();
 
-        // Validate scheme (http/https), enforce https if required
+        // check if the request URI scheme is valid.
         if (scheme != Some(&Scheme::HTTP) && scheme != Some(&Scheme::HTTPS))
             || (self.config.https_only && scheme != Some(&Scheme::HTTPS))
         {
-            return Either::Right(future::err(crate::Error::url_bad_scheme2().into()));
+            return Either::Right(future::err(BoxError::from(crate::Error::url_bad_scheme())));
         }
 
-        // Optionally insert default headers
-        let skip = self
+        // insert default headers in the request headers
+        // without overwriting already appended headers.
+        if self
             .config
             .skip_default_headers
             .fetch(req.extensions())
             .copied()
-            == Some(true);
-
-        if !skip {
+            != Some(true)
+        {
             let headers = req.headers_mut();
-            for name in self.config.headers.keys() {
-                if !headers.contains_key(name) {
-                    for value in self.config.headers.get_all(name) {
-                        headers.append(name, value.clone());
+            for (name, value) in &self.config.headers {
+                match headers.entry(name) {
+                    // If the header already exists but has a different value,
+                    // append the new value to the existing one.
+                    Entry::Occupied(mut entry) => {
+                        entry.append(value.clone());
+                    }
+                    // If the header does not exist, insert it.
+                    Entry::Vacant(entry) => {
+                        entry.insert(value.clone());
                     }
                 }
             }
         }
 
-        // Apply original headers and proxy headers
         self.config.orig_headers.store(req.extensions_mut());
         self.ensure_proxy_headers(&mut req);
 

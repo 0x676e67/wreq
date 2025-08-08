@@ -84,10 +84,8 @@ where
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let total_timeout = self.total_timeout;
         let read_timeout = self.read_timeout;
-        let this = self.project();
-        let res = ready!(this.inner.poll(cx))?;
-        Poll::Ready(Ok(
-            res.map(|body| TimeoutBody::new(total_timeout, read_timeout, body))
-        ))
+        let res = ready!(self.project().inner.poll(cx))?
+            .map(|body| TimeoutBody::new(total_timeout, read_timeout, body));
+        Poll::Ready(Ok(res))
     }
 }

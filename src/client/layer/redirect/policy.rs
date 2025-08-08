@@ -1,6 +1,6 @@
 //! Tools for customizing the behavior of a [`FollowRedirect`][super::FollowRedirect] middleware.
 
-use http::{Request, StatusCode, Uri};
+use http::{Extensions, Request, StatusCode, Uri};
 
 /// Trait for the policy on handling redirection responses.
 pub trait Policy<B, E> {
@@ -21,11 +21,14 @@ pub trait Policy<B, E> {
 
     /// Loads redirect policy configuration from the request's [`Extensions`].
     ///
-    /// This is typically used to extract request-specific redirect settings (e.g., max redirect
-    /// count, HTTPS-only rules) that override global client configuration.
+    /// This method is called once at the beginning of request processing to extract
+    /// request-specific redirect settings that may override the policy's default behavior.
+    /// Examples include per-request maximum redirect limits, allowed/blocked domains,
+    /// or security policies.
     ///
-    /// This method is called before any redirection decisions are made.
-    fn load(&mut self, _request: &Request<B>);
+    /// The default implementation does nothing, meaning the policy uses its default
+    /// configuration for all requests.
+    fn on_extensions(&mut self, _extensions: &Extensions);
 
     /// Returns whether redirection is currently permitted by this policy.
     ///
@@ -63,8 +66,8 @@ where
     }
 
     #[inline(always)]
-    fn load(&mut self, request: &Request<B>) {
-        (**self).load(request)
+    fn on_extensions(&mut self, extensions: &Extensions) {
+        (**self).on_extensions(extensions)
     }
 
     #[inline(always)]

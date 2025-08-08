@@ -27,7 +27,7 @@ impl IntoUrlSealed for Url {
         if self.has_host() {
             Ok(self)
         } else {
-            Err(Error::url_bad_scheme(self))
+            Err(Error::url_bad_scheme().with_url(self))
         }
     }
 
@@ -41,7 +41,7 @@ impl IntoUrlSealed for &Url {
         if self.has_host() {
             Ok(self.clone())
         } else {
-            Err(Error::url_bad_scheme(self.clone()))
+            Err(Error::url_bad_scheme().with_url(self.clone()))
         }
     }
 
