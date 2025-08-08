@@ -7,7 +7,7 @@ use std::{
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
     pin::Pin,
     sync::Arc,
-    task::{self, Poll, ready},
+    task::{self, Poll},
     time::Duration,
 };
 
@@ -22,7 +22,7 @@ use tokio::{
 
 use super::{
     Connected, Connection,
-    dns::{self, GaiResolver, Resolve, resolve},
+    dns::{self, GaiResolver, ResolveAdapter, resolve},
 };
 use crate::core::{error::BoxError, rt::TokioIo};
 
@@ -509,7 +509,7 @@ impl<R: fmt::Debug> fmt::Debug for HttpConnector<R> {
 
 impl<R> tower::Service<Uri> for HttpConnector<R>
 where
-    R: Resolve + Clone + Send + Sync + 'static,
+    R: ResolveAdapter + Clone + Send + Sync + 'static,
     R::Future: Send,
 {
     type Response = TokioIo<TcpStream>;
@@ -517,8 +517,7 @@ where
     type Future = HttpConnecting<R>;
 
     fn poll_ready(&mut self, cx: &mut task::Context<'_>) -> Poll<Result<(), Self::Error>> {
-        ready!(self.resolver.poll_ready(cx)).map_err(ConnectError::dns)?;
-        Poll::Ready(Ok(()))
+        self.resolver.poll_ready(cx).map_err(ConnectError::dns)
     }
 
     fn call(&mut self, dst: Uri) -> Self::Future {
@@ -580,7 +579,7 @@ fn get_host_port<'u>(config: &Config, dst: &'u Uri) -> Result<(&'u str, u16), Co
 
 impl<R> HttpConnector<R>
 where
-    R: Resolve,
+    R: ResolveAdapter,
 {
     async fn call_async(&mut self, dst: Uri) -> Result<TokioIo<TcpStream>, ConnectError> {
         let config = &self.config;
@@ -599,7 +598,6 @@ where
             let addrs = addrs
                 .map(|mut addr| {
                     set_port(&mut addr, port, dst.port().is_some());
-
                     addr
                 })
                 .collect();
@@ -672,7 +670,7 @@ pin_project! {
 type ConnectResult = Result<TokioIo<TcpStream>, ConnectError>;
 type BoxConnecting = Pin<Box<dyn Future<Output = ConnectResult> + Send>>;
 
-impl<R: Resolve> Future for HttpConnecting<R> {
+impl<R: ResolveAdapter> Future for HttpConnecting<R> {
     type Output = ConnectResult;
 
     fn poll(self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<Self::Output> {

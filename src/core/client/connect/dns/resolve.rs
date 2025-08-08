@@ -1,5 +1,7 @@
 use std::{
     collections::HashMap,
+    error::Error,
+    fmt,
     future::Future,
     net::SocketAddr,
     pin::Pin,
@@ -10,7 +12,59 @@ use std::{
 
 use tower::Service;
 
-use crate::{core::client::connect::dns::Name as NativeName, error::BoxError};
+use crate::core::error::BoxError;
+
+/// Error indicating a given string was not a valid domain name.
+#[derive(Debug)]
+pub struct InvalidNameError(());
+
+impl fmt::Display for InvalidNameError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("Not a valid domain name")
+    }
+}
+
+impl Error for InvalidNameError {}
+
+/// A domain name to resolve into IP addresses.
+#[derive(Clone, Hash, Eq, PartialEq)]
+pub struct Name {
+    host: Box<str>,
+}
+
+impl Name {
+    /// Creates a new [`Name`] from a string slice.
+    #[inline]
+    pub fn new(host: Box<str>) -> Name {
+        Name { host }
+    }
+
+    /// View the hostname as a string slice.
+    #[inline]
+    pub fn as_str(&self) -> &str {
+        &self.host
+    }
+}
+
+impl fmt::Debug for Name {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Debug::fmt(&self.host, f)
+    }
+}
+
+impl fmt::Display for Name {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(&self.host, f)
+    }
+}
+
+impl FromStr for Name {
+    type Err = InvalidNameError;
+
+    fn from_str(host: &str) -> Result<Self, Self::Err> {
+        Ok(Name::new(host.into()))
+    }
+}
 
 /// Alias for an `Iterator` trait object over `SocketAddr`.
 pub type Addrs = Box<dyn Iterator<Item = SocketAddr> + Send>;
@@ -35,39 +89,23 @@ pub trait Resolve: Send + Sync {
     fn resolve(&self, name: Name) -> Resolving;
 }
 
-/// A name that must be resolved to addresses.
-#[derive(Debug)]
-pub struct Name(pub(super) NativeName);
-
-impl Name {
-    /// View the name as a string.
-    pub fn as_str(&self) -> &str {
-        self.0.as_str()
-    }
-}
-
-impl FromStr for Name {
-    type Err = sealed::InvalidNameError;
-
-    fn from_str(host: &str) -> Result<Self, Self::Err> {
-        NativeName::from_str(host)
-            .map(Name)
-            .map_err(|_| sealed::InvalidNameError { _ext: () })
-    }
-}
-
+/// Adapter that wraps a [`Resolve`] trait object to work with Tower's `Service` trait.
+///
+/// This allows custom DNS resolvers implementing `Resolve` to be used in contexts
+/// that expect a `Service<Name>` implementation.
 #[derive(Clone)]
 pub(crate) struct DynResolver {
     resolver: Arc<dyn Resolve>,
 }
 
 impl DynResolver {
+    /// Creates a new [`DynResolver`] with the provided resolver.
     pub(crate) fn new(resolver: Arc<dyn Resolve>) -> Self {
         Self { resolver }
     }
 }
 
-impl Service<NativeName> for DynResolver {
+impl Service<Name> for DynResolver {
     type Response = Addrs;
     type Error = BoxError;
     type Future = Resolving;
@@ -76,17 +114,23 @@ impl Service<NativeName> for DynResolver {
         Poll::Ready(Ok(()))
     }
 
-    fn call(&mut self, name: NativeName) -> Self::Future {
-        self.resolver.resolve(Name(name))
+    fn call(&mut self, name: Name) -> Self::Future {
+        self.resolver.resolve(name)
     }
 }
 
+/// DNS resolver that supports hostname overrides.
+///
+/// This resolver first checks for manual hostname-to-IP mappings before
+/// falling back to the underlying DNS resolver. Useful for testing or
+/// bypassing DNS for specific domains.
 pub(crate) struct DnsResolverWithOverrides {
     dns_resolver: Arc<dyn Resolve>,
     overrides: Arc<HashMap<String, Vec<SocketAddr>>>,
 }
 
 impl DnsResolverWithOverrides {
+    /// Creates a new [`DnsResolverWithOverrides`] with the provided DNS resolver and overrides.
     pub(crate) fn new(
         dns_resolver: Arc<dyn Resolve>,
         overrides: HashMap<String, Vec<SocketAddr>>,
@@ -108,21 +152,4 @@ impl Resolve for DnsResolverWithOverrides {
             None => self.dns_resolver.resolve(name),
         }
     }
-}
-
-mod sealed {
-    use std::fmt;
-
-    #[derive(Debug)]
-    pub struct InvalidNameError {
-        pub(super) _ext: (),
-    }
-
-    impl fmt::Display for InvalidNameError {
-        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-            f.write_str("invalid DNS name")
-        }
-    }
-
-    impl std::error::Error for InvalidNameError {}
 }

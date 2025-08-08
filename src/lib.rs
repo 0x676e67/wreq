@@ -288,7 +288,6 @@ mod util;
 
 #[cfg(feature = "cookies")]
 pub mod cookie;
-pub mod dns;
 pub mod header;
 pub mod redirect;
 pub mod tls;
@@ -305,7 +304,10 @@ pub use self::{
         Body, Client, ClientBuilder, Emulation, EmulationBuilder, EmulationFactory, Request,
         RequestBuilder, Response, Upgraded,
     },
-    core::client::options::{http1, http2},
+    core::client::{
+        connect::dns,
+        options::{http1, http2},
+    },
     error::{Error, Result},
     into_url::IntoUrl,
     proxy::{NoProxy, Proxy},

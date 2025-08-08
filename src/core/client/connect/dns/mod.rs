@@ -1,0 +1,92 @@
+//! DNS Resolution used by the `HttpConnector`.
+//!
+//! This module contains:
+//!
+//! - A [`GaiResolver`] that is the default resolver for the `HttpConnector`.
+//! - The `Name` type used as an argument to custom resolvers.
+//!
+//! # Resolvers are `Service`s
+//!
+//! A resolver is just a
+//! `Service<Name, Response = impl Iterator<Item = SocketAddr>>`.
+//!
+//! A simple resolver that ignores the name and always returns a specific
+//! address:
+//!
+//! ```rust,ignore
+//! use std::{convert::Infallible, iter, net::SocketAddr};
+//!
+//! let resolver = tower::service_fn(|_name| async {
+//!     Ok::<_, Infallible>(iter::once(SocketAddr::from(([127, 0, 0, 1], 8080))))
+//! });
+//! ```
+
+pub(crate) mod gai;
+#[cfg(feature = "hickory-dns")]
+pub(crate) mod hickory;
+mod resolve;
+
+#[cfg(feature = "hickory-dns")]
+pub use hickory::{HickoryDnsResolver, LookupIpStrategy};
+pub use resolve::{Addrs, Name, Resolve, Resolving};
+
+pub(crate) use self::{
+    gai::{GaiResolver, SocketAddrs},
+    resolve::{DnsResolverWithOverrides, DynResolver},
+    sealed::{ResolveAdapter, resolve},
+};
+
+mod sealed {
+    use std::{
+        future::Future,
+        net::SocketAddr,
+        task::{self, Poll},
+    };
+
+    use tower::Service;
+
+    use super::Name;
+    use crate::error::BoxError;
+
+    /// Internal adapter trait for DNS resolvers.
+    ///
+    /// This trait provides a unified interface for different resolver implementations,
+    /// allowing both custom [`super::Resolve`] types and Tower [`Service`] implementations
+    /// to be used interchangeably within the connector.
+    pub trait ResolveAdapter {
+        type Addrs: Iterator<Item = SocketAddr>;
+        type Error: Into<BoxError>;
+        type Future: Future<Output = Result<Self::Addrs, Self::Error>>;
+
+        fn poll_ready(&mut self, cx: &mut task::Context<'_>) -> Poll<Result<(), Self::Error>>;
+        fn resolve(&mut self, name: Name) -> Self::Future;
+    }
+
+    /// Automatic implementation for any Tower [`Service`] that resolves names to socket addresses.
+    impl<S> ResolveAdapter for S
+    where
+        S: Service<Name>,
+        S::Response: Iterator<Item = SocketAddr>,
+        S::Error: Into<BoxError>,
+    {
+        type Addrs = S::Response;
+        type Error = S::Error;
+        type Future = S::Future;
+
+        fn poll_ready(&mut self, cx: &mut task::Context<'_>) -> Poll<Result<(), Self::Error>> {
+            Service::poll_ready(self, cx)
+        }
+
+        fn resolve(&mut self, name: Name) -> Self::Future {
+            Service::call(self, name)
+        }
+    }
+
+    pub async fn resolve<R>(resolver: &mut R, name: Name) -> Result<R::Addrs, R::Error>
+    where
+        R: ResolveAdapter,
+    {
+        std::future::poll_fn(|cx| resolver.poll_ready(cx)).await?;
+        resolver.resolve(name).await
+    }
+}

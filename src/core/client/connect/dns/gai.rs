@@ -1,33 +1,8 @@
-//! DNS Resolution used by the `HttpConnector`.
-//!
-//! This module contains:
-//!
-//! - A [`GaiResolver`] that is the default resolver for the `HttpConnector`.
-//! - The `Name` type used as an argument to custom resolvers.
-//!
-//! # Resolvers are `Service`s
-//!
-//! A resolver is just a
-//! `Service<Name, Response = impl Iterator<Item = SocketAddr>>`.
-//!
-//! A simple resolver that ignores the name and always returns a specific
-//! address:
-//!
-//! ```rust,ignore
-//! use std::{convert::Infallible, iter, net::SocketAddr};
-//!
-//! let resolver = tower::service_fn(|_name| async {
-//!     Ok::<_, Infallible>(iter::once(SocketAddr::from(([127, 0, 0, 1], 8080))))
-//! });
-//! ```
 use std::{
-    error::Error,
-    fmt,
-    future::{self, Future},
+    future::Future,
     io,
     net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6, ToSocketAddrs},
     pin::Pin,
-    str::FromStr,
     task::{self, Poll},
     vec,
 };
@@ -35,16 +10,10 @@ use std::{
 use tokio::task::JoinHandle;
 use tower::Service;
 
-pub(super) use self::sealed::Resolve;
-
-/// A domain name to resolve into IP addresses.
-#[derive(Clone, Hash, Eq, PartialEq)]
-pub struct Name {
-    host: Box<str>,
-}
+use super::{Addrs, Name, Resolve, Resolving};
 
 /// A resolver using blocking `getaddrinfo` calls in a threadpool.
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct GaiResolver {
     _priv: (),
 }
@@ -59,58 +28,15 @@ pub struct GaiFuture {
     inner: JoinHandle<Result<SocketAddrs, io::Error>>,
 }
 
-impl Name {
-    pub(super) fn new(host: Box<str>) -> Name {
-        Name { host }
-    }
-
-    /// View the hostname as a string slice.
-    pub fn as_str(&self) -> &str {
-        &self.host
-    }
+/// A wrapper around `SocketAddrs` to implement the `Iterator` trait.
+pub(crate) struct SocketAddrs {
+    iter: vec::IntoIter<SocketAddr>,
 }
 
-impl fmt::Debug for Name {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        fmt::Debug::fmt(&self.host, f)
-    }
-}
-
-impl fmt::Display for Name {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        fmt::Display::fmt(&self.host, f)
-    }
-}
-
-impl FromStr for Name {
-    type Err = InvalidNameError;
-
-    fn from_str(host: &str) -> Result<Self, Self::Err> {
-        // Possibly add validation later
-        Ok(Name::new(host.into()))
-    }
-}
-
-/// Error indicating a given string was not a valid domain name.
-#[derive(Debug)]
-pub struct InvalidNameError(());
-
-impl fmt::Display for InvalidNameError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("Not a valid domain name")
-    }
-}
-
-impl Error for InvalidNameError {}
-
-impl Default for GaiResolver {
-    fn default() -> Self {
-        Self::new()
-    }
-}
+// ==== impl GaiResolver ====
 
 impl GaiResolver {
-    /// Construct a new `GaiResolver`.
+    /// Creates a new [`GaiResolver`].
     pub fn new() -> Self {
         GaiResolver { _priv: () }
     }
@@ -127,8 +53,8 @@ impl Service<Name> for GaiResolver {
 
     fn call(&mut self, name: Name) -> Self::Future {
         let blocking = tokio::task::spawn_blocking(move || {
-            debug!("resolving {}", name.host);
-            (&*name.host, 0)
+            debug!("resolving {}", name);
+            (name.as_str(), 0)
                 .to_socket_addrs()
                 .map(|i| SocketAddrs { iter: i })
         });
@@ -137,11 +63,19 @@ impl Service<Name> for GaiResolver {
     }
 }
 
-impl fmt::Debug for GaiResolver {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.pad("GaiResolver")
+impl Resolve for GaiResolver {
+    fn resolve(&self, name: Name) -> Resolving {
+        let mut this = self.clone();
+        Box::pin(async move {
+            this.call(name)
+                .await
+                .map(|addrs| Box::new(addrs) as Addrs)
+                .map_err(Into::into)
+        })
     }
 }
+
+// ==== impl GaiFuture ====
 
 impl Future for GaiFuture {
     type Output = Result<GaiAddrs, io::Error>;
@@ -161,17 +95,13 @@ impl Future for GaiFuture {
     }
 }
 
-impl fmt::Debug for GaiFuture {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.pad("GaiFuture")
-    }
-}
-
 impl Drop for GaiFuture {
     fn drop(&mut self) {
         self.inner.abort();
     }
 }
+
+// ==== impl GaiAddrs ====
 
 impl Iterator for GaiAddrs {
     type Item = SocketAddr;
@@ -181,24 +111,16 @@ impl Iterator for GaiAddrs {
     }
 }
 
-impl fmt::Debug for GaiAddrs {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.pad("GaiAddrs")
-    }
-}
-
-pub(super) struct SocketAddrs {
-    iter: vec::IntoIter<SocketAddr>,
-}
+// ==== impl SocketAddrs ====
 
 impl SocketAddrs {
-    pub(super) fn new(addrs: Vec<SocketAddr>) -> Self {
+    pub(crate) fn new(addrs: Vec<SocketAddr>) -> Self {
         SocketAddrs {
             iter: addrs.into_iter(),
         }
     }
 
-    pub(super) fn try_parse(host: &str, port: u16) -> Option<SocketAddrs> {
+    pub(crate) fn try_parse(host: &str, port: u16) -> Option<SocketAddrs> {
         if let Ok(addr) = host.parse::<Ipv4Addr>() {
             let addr = SocketAddrV4::new(addr, port);
             return Some(SocketAddrs {
@@ -219,7 +141,7 @@ impl SocketAddrs {
         SocketAddrs::new(self.iter.filter(predicate).collect())
     }
 
-    pub(super) fn split_by_preference(
+    pub(crate) fn split_by_preference(
         self,
         local_addr_ipv4: Option<Ipv4Addr>,
         local_addr_ipv6: Option<Ipv6Addr>,
@@ -244,11 +166,11 @@ impl SocketAddrs {
         }
     }
 
-    pub(super) fn is_empty(&self) -> bool {
+    pub(crate) fn is_empty(&self) -> bool {
         self.iter.as_slice().is_empty()
     }
 
-    pub(super) fn len(&self) -> usize {
+    pub(crate) fn len(&self) -> usize {
         self.iter.as_slice().len()
     }
 }
@@ -261,57 +183,12 @@ impl Iterator for SocketAddrs {
     }
 }
 
-mod sealed {
-    use std::{
-        future::Future,
-        task::{self, Poll},
-    };
-
-    use tower::Service;
-
-    use super::{Name, SocketAddr};
-    use crate::error::BoxError;
-
-    pub trait Resolve {
-        type Addrs: Iterator<Item = SocketAddr>;
-        type Error: Into<BoxError>;
-        type Future: Future<Output = Result<Self::Addrs, Self::Error>>;
-
-        fn poll_ready(&mut self, cx: &mut task::Context<'_>) -> Poll<Result<(), Self::Error>>;
-        fn resolve(&mut self, name: Name) -> Self::Future;
-    }
-
-    impl<S> Resolve for S
-    where
-        S: Service<Name>,
-        S::Response: Iterator<Item = SocketAddr>,
-        S::Error: Into<BoxError>,
-    {
-        type Addrs = S::Response;
-        type Error = S::Error;
-        type Future = S::Future;
-
-        fn poll_ready(&mut self, cx: &mut task::Context<'_>) -> Poll<Result<(), Self::Error>> {
-            Service::poll_ready(self, cx)
-        }
-
-        fn resolve(&mut self, name: Name) -> Self::Future {
-            Service::call(self, name)
-        }
-    }
-}
-
-pub(super) async fn resolve<R>(resolver: &mut R, name: Name) -> Result<R::Addrs, R::Error>
-where
-    R: Resolve,
-{
-    future::poll_fn(|cx| resolver.poll_ready(cx)).await?;
-    resolver.resolve(name).await
-}
-
 #[cfg(test)]
 mod tests {
-    use std::net::{Ipv4Addr, Ipv6Addr};
+    use std::{
+        net::{Ipv4Addr, Ipv6Addr},
+        str::FromStr,
+    };
 
     use super::*;
 
