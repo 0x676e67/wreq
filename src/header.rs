@@ -1,5 +1,8 @@
-//! Header module
-//! re-exports the `http::header` module for easier access
+//! HTTP header types
+//!
+//! This module provides [`HeaderName`], [`HeaderMap`], [`OrigHeaderMap`], [`OrigHeaderName`], and a
+//! number of types used for interacting with `HeaderMap`. These types allow representing both
+//! HTTP/1 and HTTP/2 headers.
 
 pub use http::header::*;
 pub use name::OrigHeaderName;

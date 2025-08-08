@@ -1,4 +1,4 @@
-//! This module provides a builder pattern for configuring HTTP/1 connections.
+//! HTTP/1 connection configuration.
 
 /// Builder for `Http1Options`.
 #[must_use]

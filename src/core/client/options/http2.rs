@@ -1,4 +1,4 @@
-//! This module provides a builder pattern for configuring HTTP/2 connections.
+//! HTTP/2 connection configuration.
 
 use std::time::Duration;
 
