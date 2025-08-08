@@ -62,7 +62,7 @@ use crate::{
         client::{HttpClient, connect::TcpConnectOptions, options::TransportOptions},
         rt::{TokioExecutor, tokio::TokioTimer},
     },
-    dns::{DnsResolverWithOverrides, DynResolver, Resolve, gai::GaiResolver},
+    dns::{DnsResolverWithOverrides, DynResolver, GaiResolver, Resolve},
     error::{self, BoxError, Error},
     header::OrigHeaderMap,
     proxy::Matcher as ProxyMatcher,

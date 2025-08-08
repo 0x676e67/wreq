@@ -14,7 +14,7 @@ use tokio_socks::{
 use tower::Service;
 
 use crate::core::{
-    client::connect::dns::{GaiResolver, Name, Resolve},
+    client::connect::dns::{GaiResolver, InternalResolve, Name},
     rt::{Read, TokioIo, Write},
 };
 
@@ -119,7 +119,7 @@ pub struct SocksConnector<C, R = GaiResolver> {
 
 impl<C, R> SocksConnector<C, R>
 where
-    R: Resolve + Clone,
+    R: InternalResolve + Clone,
 {
     /// Create a new SOCKS connector with the given inner service.
     ///
@@ -165,8 +165,8 @@ where
     C::Future: Send + 'static,
     C::Response: Read + Write + Unpin + Send + 'static,
     C::Error: Send + Sync + 'static,
-    R: Resolve + Clone + Send + 'static,
-    <R as Resolve>::Future: Send + 'static,
+    R: InternalResolve + Clone + Send + 'static,
+    <R as InternalResolve>::Future: Send + 'static,
 {
     type Response = C::Response;
     type Error = SocksError<C::Error>;

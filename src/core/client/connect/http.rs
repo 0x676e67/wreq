@@ -22,7 +22,7 @@ use tokio::{
 
 use super::{
     Connected, Connection,
-    dns::{self, GaiResolver, ResolveAdapter, resolve},
+    dns::{self, GaiResolver, InternalResolve, resolve},
 };
 use crate::core::{error::BoxError, rt::TokioIo};
 
@@ -509,7 +509,7 @@ impl<R: fmt::Debug> fmt::Debug for HttpConnector<R> {
 
 impl<R> tower::Service<Uri> for HttpConnector<R>
 where
-    R: ResolveAdapter + Clone + Send + Sync + 'static,
+    R: InternalResolve + Clone + Send + Sync + 'static,
     R::Future: Send,
 {
     type Response = TokioIo<TcpStream>;
@@ -579,7 +579,7 @@ fn get_host_port<'u>(config: &Config, dst: &'u Uri) -> Result<(&'u str, u16), Co
 
 impl<R> HttpConnector<R>
 where
-    R: ResolveAdapter,
+    R: InternalResolve,
 {
     async fn call_async(&mut self, dst: Uri) -> Result<TokioIo<TcpStream>, ConnectError> {
         let config = &self.config;
@@ -670,7 +670,7 @@ pin_project! {
 type ConnectResult = Result<TokioIo<TcpStream>, ConnectError>;
 type BoxConnecting = Pin<Box<dyn Future<Output = ConnectResult> + Send>>;
 
-impl<R: ResolveAdapter> Future for HttpConnecting<R> {
+impl<R: InternalResolve> Future for HttpConnecting<R> {
     type Output = ConnectResult;
 
     fn poll(self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<Self::Output> {

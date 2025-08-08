@@ -1,18 +1,16 @@
 //! DNS resolution
 
-pub(crate) mod gai;
+mod gai;
 #[cfg(feature = "hickory-dns")]
-pub(crate) mod hickory;
+pub mod hickory;
 mod resolve;
 
-#[cfg(feature = "hickory-dns")]
-pub use hickory::{HickoryDnsResolver, LookupIpStrategy};
 pub use resolve::{Addrs, Name, Resolve, Resolving};
 
 pub(crate) use self::{
     gai::{GaiResolver, SocketAddrs},
     resolve::{DnsResolverWithOverrides, DynResolver},
-    sealed::{ResolveAdapter, resolve},
+    sealed::{InternalResolve, resolve},
 };
 
 mod sealed {
@@ -32,7 +30,7 @@ mod sealed {
     /// This trait provides a unified interface for different resolver implementations,
     /// allowing both custom [`super::Resolve`] types and Tower [`Service`] implementations
     /// to be used interchangeably within the connector.
-    pub trait ResolveAdapter {
+    pub trait InternalResolve {
         type Addrs: Iterator<Item = SocketAddr>;
         type Error: Into<BoxError>;
         type Future: Future<Output = Result<Self::Addrs, Self::Error>>;
@@ -42,7 +40,7 @@ mod sealed {
     }
 
     /// Automatic implementation for any Tower [`Service`] that resolves names to socket addresses.
-    impl<S> ResolveAdapter for S
+    impl<S> InternalResolve for S
     where
         S: Service<Name>,
         S::Response: Iterator<Item = SocketAddr>,
@@ -63,7 +61,7 @@ mod sealed {
 
     pub async fn resolve<R>(resolver: &mut R, name: Name) -> Result<R::Addrs, R::Error>
     where
-        R: ResolveAdapter,
+        R: InternalResolve,
     {
         std::future::poll_fn(|cx| resolver.poll_ready(cx)).await?;
         resolver.resolve(name).await
