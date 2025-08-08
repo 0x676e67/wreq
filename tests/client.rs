@@ -6,7 +6,8 @@ use std::collections::HashMap;
 use http::{
     HeaderMap, Version,
     header::{
-        AUTHORIZATION, CACHE_CONTROL, CONTENT_LENGTH, CONTENT_TYPE, REFERER, TRANSFER_ENCODING,
+        self, AUTHORIZATION, CACHE_CONTROL, CONTENT_LENGTH, CONTENT_TYPE, REFERER,
+        TRANSFER_ENCODING,
     },
 };
 use http_body_util::BodyExt;
@@ -917,5 +918,49 @@ async fn skip_default_headers() {
 
     let res = client.get(&url).send().await.unwrap();
     assert_eq!(res.url().as_str(), &url);
+    assert_eq!(res.status(), wreq::StatusCode::OK);
+}
+
+#[tokio::test]
+async fn test_client_same_header_values_append() {
+    use http::HeaderValue;
+    use wreq::{Client, header::HeaderMap};
+
+    let server = server::http(move |req| async move {
+        let cookie_values: Vec<_> = req.headers().get_all(header::COOKIE).iter().collect();
+        assert_eq!(cookie_values.len(), 4);
+
+        assert_eq!(cookie_values[0], "duplicate=same_value");
+        assert_eq!(cookie_values[1], "duplicate=same_value");
+        assert_eq!(cookie_values[2], "unique1=value1");
+        assert_eq!(cookie_values[3], "unique2=value2");
+
+        http::Response::default()
+    });
+
+    let url = format!("http://{}/duplicate-cookies", server.addr());
+
+    let client = Client::builder()
+        .no_proxy()
+        .default_headers({
+            let mut headers = HeaderMap::new();
+            headers.insert(
+                header::COOKIE,
+                HeaderValue::from_static("duplicate=same_value"),
+            );
+            headers.append(header::COOKIE, HeaderValue::from_static("unique1=value1"));
+            headers.append(header::COOKIE, HeaderValue::from_static("unique2=value2"));
+            headers
+        })
+        .build()
+        .unwrap();
+
+    let res = client
+        .get(&url)
+        .header(header::COOKIE, "duplicate=same_value")
+        .send()
+        .await
+        .unwrap();
+
     assert_eq!(res.status(), wreq::StatusCode::OK);
 }

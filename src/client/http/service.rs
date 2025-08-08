@@ -155,8 +155,7 @@ impl Service<Request<Body>> for ClientService {
             let headers = req.headers_mut();
             for (name, value) in &self.config.headers {
                 match headers.entry(name) {
-                    // If the header already exists but has a different value,
-                    // append the new value to the existing one.
+                    // If the header already exists, append the new value to it.
                     Entry::Occupied(mut entry) => {
                         entry.append(value.clone());
                     }
