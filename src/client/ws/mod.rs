@@ -306,15 +306,17 @@ impl WebSocketRequestBuilder {
             "ws" => Scheme::HTTP,
             "wss" => Scheme::HTTPS,
             _ => {
-                return Err(Error::url_bad_scheme(url.clone()));
+                return Err(Error::url_bad_scheme().with_url(url.clone()));
             }
         };
 
         // Update the scheme
         url.set_scheme(new_scheme.as_str())
-            .map_err(|_| Error::url_bad_scheme(url.clone()))?;
+            .map_err(|_| Error::url_bad_scheme().with_url(url.clone()))?;
 
         // Get the version of the request
+        // This is used to determine if we should use HTTP/1.1 or HTTP/2
+        // for the websocket handshake.
         let version = request.version();
 
         // Set the headers for the websocket handshake
@@ -351,8 +353,10 @@ impl WebSocketRequestBuilder {
                     .insert(Protocol::from_static("websocket"));
                 None
             }
-            _ => {
-                return Err(Error::upgrade(format!("unsupported version: {version:?}")));
+            unsupported => {
+                return Err(Error::upgrade(format!(
+                    "unsupported version: {unsupported:?}"
+                )));
             }
         };
 
