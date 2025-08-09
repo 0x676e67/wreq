@@ -147,7 +147,9 @@ pub struct TlsOptions {
     /// List of signature algorithms to use for the TLS connection.
     pub sigalgs_list: Option<Cow<'static, str>>,
 
-    /// Certificates in TLS 1.3 can be compressed [RFC 8879](https://datatracker.ietf.org/doc/html/rfc8879).
+    /// List of supported certificate compression algorithms for the TLS connection.
+    /// 
+    /// Certificate compression in TLS 1.3 is defined in [RFC 8879](https://datatracker.ietf.org/doc/html/rfc8879).
     pub certificate_compression_algorithms: Option<Cow<'static, [CertificateCompressionAlgorithm]>>,
 
     /// List of supported extensions for the TLS connection.
