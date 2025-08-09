@@ -27,7 +27,7 @@ pub struct TlsOptions {
     /// - Default use all protocols (HTTP/1.1/HTTP/2).
     pub alpn_protocols: Option<Cow<'static, [AlpnProtocol]>>,
 
-    /// The **ALPS extension** (*draft-vvv-tls-alps*) enables exchanging
+    /// The **ALPS extension** enables exchanging
     /// **application-layer settings** during the **TLS handshake**.
     ///
     /// This is specifically for applications negotiated via **ALPN**.
