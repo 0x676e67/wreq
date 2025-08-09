@@ -19,16 +19,38 @@ pub struct TlsOptionsBuilder {
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct TlsOptions {
-    /// ALPN protocols to use for the TLS connection.
+    /// The **ALPN extension** [RFC 7301](https://datatracker.ietf.org/doc/html/rfc7301) allows negotiating different
+    /// **application-layer protocols** over a **single port**.
+    ///
+    /// **Usage Example:**
+    /// - Commonly used to negotiate **HTTP/2**.
+    /// - Default use all protocols (HTTP/1.1/HTTP/2).
     pub alpn_protocols: Option<Cow<'static, [AlpnProtocol]>>,
 
-    /// ALPS protocols to use for the TLS connection.
+    /// The **ALPS extension** (*draft-vvv-tls-alps*) enables exchanging
+    /// **application-layer settings** during the **TLS handshake**.
+    ///
+    /// This is specifically for applications negotiated via **ALPN**.
     pub alps_protocols: Option<Cow<'static, [AlpsProtocol]>>,
 
-    /// Whether to use a new codepoint for ALPS.
+    /// Switching to a new codepoint for TLS ALPS extension to allow adding more data
+    /// in the ACCEPT_CH HTTP/2 and HTTP/3 frame. The ACCEPT_CH HTTP/2 frame with the
+    /// existing TLS ALPS extension had an arithmetic overflow bug in Chrome ALPS decoder.
+    /// It limits the capability to add more than 128 bytes data (in theory, the problem
+    /// range is 128 bytes to 255 bytes) to the ACCEPT_CH frame.
     pub alps_use_new_codepoint: bool,
 
-    /// Whether to use session tickets for TLS session resumption.
+    /// **Session Tickets** (RFC 5077) allow **session resumption** without the need for
+    /// server-side state.
+    ///
+    /// This mechanism works as follows:
+    /// 1. The server maintains a **secret ticket key**.
+    /// 2. The server sends the client **opaque encrypted session parameters**, referred to as a
+    ///    **ticket**.
+    /// 3. When resuming the session, the client sends the **ticket** to the server.
+    /// 4. The server decrypts the ticket to recover the session state.
+    ///
+    /// **Reference:** See [RFC 5077](https://tools.ietf.org/html/rfc5077) for further details on session tickets.
     pub session_ticket: bool,
 
     /// Minimum TLS version to use for the connection.
@@ -37,13 +59,35 @@ pub struct TlsOptions {
     /// Maximum TLS version to use for the connection.
     pub max_tls_version: Option<TlsVersion>,
 
-    /// Whether to use pre-shared keys (PSK) for the connection.
+    /// Connections can be configured with **PSK (Pre-Shared Key)** cipher suites.
+    ///
+    /// **PSK cipher suites** use **out-of-band pre-shared keys** for authentication,
+    /// instead of relying on certificates.
+    ///
+    /// **Reference:** See [RFC 4279](https://datatracker.ietf.org/doc/html/rfc4279) for details.
     pub pre_shared_key: bool,
 
-    /// Whether to enable ECH (Encrypted ClientHello) GREASE extension.
+    /// Configures whether the **client** will send a **GREASE ECH** extension
+    /// when no supported **ECHConfig** is available.
+    ///
+    /// GREASE (Generate Random Extensions And Sustain Extensibility)
+    /// helps prevent ossification of the TLS protocol by randomly
+    /// introducing unknown extensions into the handshake.
+    ///
+    /// **ECH (Encrypted Client Hello)** improves privacy by encrypting
+    /// sensitive handshake information, such as the Server Name Indication (SNI).
+    ///
+    /// When no valid **ECHConfig** is present, enabling this setting allows
+    /// the client to still send a GREASE extension for compatibility purposes.
+    ///
+    /// **Reference:** See [RFC 8701](https://datatracker.ietf.org/doc/html/rfc8701) for GREASE details.
     pub enable_ech_grease: bool,
 
-    /// Whether to permute ClientHello extensions.
+    /// Configures whether ClientHello extensions should be permuted.
+    ///
+    /// Note: This is gated to non-fips because the fips feature builds with a separate
+    /// version of BoringSSL which doesn't yet include these APIs.
+    /// Once the submoduled fips commit is upgraded, these gates can be removed.
     pub permute_extensions: Option<bool>,
 
     /// Whether to enable GREASE (Generate Random Extensions And Sustain Extensibility).
@@ -64,25 +108,46 @@ pub struct TlsOptions {
     /// Maximum number of key shares to include in the ClientHello.
     pub key_shares_limit: Option<u8>,
 
-    /// Whether to use PSK DHE (Diffie-Hellman Ephemeral) key establishment.
+    /// Sets PSK with (EC)DHE key establishment (psk_dhe_ke)
+    /// [Reference](https://github.com/openssl/openssl/issues/13918)
     pub psk_dhe_ke: bool,
 
-    /// Whether to allow renegotiation of the TLS session.
+    /// SSL Renegotiation is enabled by default on many servers.
+    /// This setting allows the client to send a renegotiation_info extension
     pub renegotiation: bool,
 
-    /// Delegated credentials for the TLS connection.
+    /// **Delegated Credentials** (RFC 9345) provide a mechanism for TLS 1.3 endpoints
+    /// to issue temporary credentials for authentication using their existing certificate.
+    ///
+    /// Once issued, **delegated credentials** **cannot be revoked**.
+    /// To minimize potential damage if the credential's secret key is compromised,
+    /// these credentials are valid only for a **short duration** (e.g., days, hours, or minutes).
+    ///
+    /// **Reference:** See [RFC 9345](https://datatracker.ietf.org/doc/html/rfc9345) for details.
     pub delegated_credentials: Option<Cow<'static, str>>,
 
     /// List of curves to use for the TLS connection.
     pub curves_list: Option<Cow<'static, str>>,
 
-    /// List of ciphers to use for the TLS connection.
+    /// BoringSSL uses a **mini-language** to configure **cipher suites**.
+    ///
+    /// This configuration language manages two ordered lists:
+    /// - **Enabled Ciphers**: An ordered list of currently active cipher suites.
+    /// - **Disabled but Available Ciphers**: An ordered list of cipher suites that are currently
+    ///   inactive but can be enabled.
+    ///
+    /// Initially, **all ciphers are disabled** and follow a **default ordering**.
+    ///
+    /// Developers can use this mini-language to fine-tune which ciphers are enabled,
+    /// their priority, and which ones are explicitly disabled.
+    ///
+    /// **Reference:** See [BoringSSL Cipher Suite Documentation](https://commondatastorage.googleapis.com/chromium-boringssl-docs/ssl.h.html#SSL_CTX_set_cipher_list) for details.
     pub cipher_list: Option<Cow<'static, str>>,
 
     /// List of signature algorithms to use for the TLS connection.
     pub sigalgs_list: Option<Cow<'static, str>>,
 
-    /// List of supported curves for the TLS connection.
+    /// Certificates in TLS 1.3 can be compressed [RFC 8879](https://datatracker.ietf.org/doc/html/rfc8879).
     pub certificate_compression_algorithms: Option<Cow<'static, [CertificateCompressionAlgorithm]>>,
 
     /// List of supported extensions for the TLS connection.
