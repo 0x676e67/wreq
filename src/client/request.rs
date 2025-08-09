@@ -21,7 +21,7 @@ use super::multipart;
 use super::{
     body::Body,
     http::{Client, Pending},
-    layer::config::{RequestRedirectPolicy, RequestSkipDefaultHeaders, RequestTimeoutOptions},
+    layer::config::{RequestDefaultHeaders, RequestRedirectPolicy, RequestTimeoutOptions},
     response::Response,
 };
 use crate::{
@@ -282,10 +282,12 @@ impl RequestBuilder {
         self
     }
 
-    /// Set skip client default headers for this request.
-    pub fn default_headers(mut self, skip: bool) -> RequestBuilder {
+    /// Enable or disable client default headers for this request.
+    ///
+    /// By default, client default headers are included. Set to `false` to skip them.
+    pub fn default_headers(mut self, enable: bool) -> RequestBuilder {
         if let Ok(ref mut req) = self.request {
-            *req.config_mut::<RequestSkipDefaultHeaders>() = skip;
+            *req.config_mut::<RequestDefaultHeaders>() = enable;
         }
         self
     }

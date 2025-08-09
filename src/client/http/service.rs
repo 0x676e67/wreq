@@ -13,7 +13,7 @@ use tower::Service;
 
 use super::{Body, connect::Connector};
 use crate::{
-    client::layer::config::RequestSkipDefaultHeaders,
+    client::layer::config::RequestDefaultHeaders,
     core::{
         client::{Error, HttpClient, ResponseFuture, body::Incoming},
         ext::{RequestConfig, RequestOrigHeaderMap},
@@ -34,7 +34,7 @@ pub struct ClientService {
 struct Config {
     headers: HeaderMap,
     orig_headers: RequestConfig<RequestOrigHeaderMap>,
-    skip_default_headers: RequestConfig<RequestSkipDefaultHeaders>,
+    default_headers: RequestConfig<RequestDefaultHeaders>,
     https_only: bool,
     proxies: Arc<Vec<ProxyMatcher>>,
     proxies_maybe_http_auth: bool,
@@ -61,7 +61,7 @@ impl ClientService {
             config: Arc::new(Config {
                 headers,
                 orig_headers: RequestConfig::new(org_headers),
-                skip_default_headers: RequestConfig::default(),
+                default_headers: RequestConfig::default(),
                 https_only,
                 proxies,
                 proxies_maybe_http_auth,
@@ -147,10 +147,10 @@ impl Service<Request<Body>> for ClientService {
         // without overwriting already appended headers.
         if self
             .config
-            .skip_default_headers
+            .default_headers
             .fetch(req.extensions())
             .copied()
-            != Some(true)
+            .unwrap_or(true)
         {
             let headers = req.headers_mut();
             for (name, value) in &self.config.headers {

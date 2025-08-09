@@ -890,7 +890,12 @@ async fn skip_default_headers() {
         .build()
         .unwrap();
 
-    let res = client.get(&url).default_headers(true).send().await.unwrap();
+    let res = client
+        .get(&url)
+        .default_headers(false)
+        .send()
+        .await
+        .unwrap();
     assert_eq!(res.url().as_str(), &url);
     assert_eq!(res.status(), wreq::StatusCode::OK);
 

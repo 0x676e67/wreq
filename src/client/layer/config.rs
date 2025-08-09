@@ -45,7 +45,7 @@ impl RequestConfigValue for RequestAcceptEncoding {
 }
 
 #[derive(Clone, Copy)]
-pub(crate) struct RequestSkipDefaultHeaders;
-impl RequestConfigValue for RequestSkipDefaultHeaders {
+pub(crate) struct RequestDefaultHeaders;
+impl RequestConfigValue for RequestDefaultHeaders {
     type Value = bool;
 }
