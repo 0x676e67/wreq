@@ -51,7 +51,7 @@ use super::{
     response::Response,
 };
 #[cfg(feature = "hickory-dns")]
-use crate::dns::hickory::{HickoryDnsResolver, LookupIpStrategy};
+use crate::dns::hickory::HickoryDnsResolver;
 use crate::{
     IntoUrl, Method, Proxy,
     client::{
@@ -254,9 +254,7 @@ impl ClientBuilder {
                 let mut resolver: Arc<dyn Resolve> = match config.dns_resolver {
                     Some(dns_resolver) => dns_resolver,
                     #[cfg(feature = "hickory-dns")]
-                    None if config.hickory_dns => {
-                        Arc::new(HickoryDnsResolver::new(LookupIpStrategy::Ipv4thenIpv6)?)
-                    }
+                    None if config.hickory_dns => Arc::new(HickoryDnsResolver::new()),
                     None => Arc::new(GaiResolver::new()),
                 };
 

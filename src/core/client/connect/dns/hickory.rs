@@ -1,44 +1,15 @@
 //! DNS resolution via the [hickory-resolver](https://github.com/hickory-dns/hickory-dns) crate
 
-use std::{net::SocketAddr, sync::Arc};
+use std::{net::SocketAddr, sync::LazyLock};
 
 use hickory_resolver::{
     TokioResolver,
-    config::{LookupIpStrategy as HickoryLookupIpStrategy, ResolverConfig},
+    config::{LookupIpStrategy, ResolverConfig},
     lookup_ip::LookupIpIntoIter,
     name_server::TokioConnectionProvider,
 };
 
 use super::{Addrs, Name, Resolve, Resolving};
-
-/// The lookup ip strategy
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
-#[repr(u8)]
-pub enum LookupIpStrategy {
-    /// Only query for A (Ipv4) records
-    Ipv4Only,
-    /// Only query for AAAA (Ipv6) records
-    Ipv6Only,
-    /// Query for A and AAAA in parallel
-    #[default]
-    Ipv4AndIpv6,
-    /// Query for Ipv6 if that fails, query for Ipv4
-    Ipv6thenIpv4,
-    /// Query for Ipv4 if that fails, query for Ipv6
-    Ipv4thenIpv6,
-}
-
-impl LookupIpStrategy {
-    const fn to_hickory(self) -> HickoryLookupIpStrategy {
-        match self {
-            LookupIpStrategy::Ipv4Only => HickoryLookupIpStrategy::Ipv4Only,
-            LookupIpStrategy::Ipv6Only => HickoryLookupIpStrategy::Ipv6Only,
-            LookupIpStrategy::Ipv4AndIpv6 => HickoryLookupIpStrategy::Ipv4AndIpv6,
-            LookupIpStrategy::Ipv6thenIpv4 => HickoryLookupIpStrategy::Ipv6thenIpv4,
-            LookupIpStrategy::Ipv4thenIpv6 => HickoryLookupIpStrategy::Ipv4thenIpv6,
-        }
-    }
-}
 
 /// Wrapper around an `AsyncResolver`, which implements the `Resolve` trait.
 #[derive(Debug, Clone)]
@@ -46,7 +17,7 @@ pub struct HickoryDnsResolver {
     /// Since we might not have been called in the context of a
     /// Tokio Runtime in initialization, so we must delay the actual
     /// construction of the resolver.
-    state: Arc<TokioResolver>,
+    state: &'static LazyLock<TokioResolver>,
 }
 
 impl HickoryDnsResolver {
@@ -54,29 +25,26 @@ impl HickoryDnsResolver {
     /// which reads from `/etc/resolve.conf`. The options are
     /// overriden to look up for both IPv4 and IPv6 addresses
     /// to work with "happy eyeballs" algorithm.
-    pub fn new<S>(strategy: S) -> crate::Result<Self>
-    where
-        S: Into<Option<LookupIpStrategy>>,
-    {
-        let mut resolver = match TokioResolver::builder_tokio() {
-            Ok(resolver) => resolver,
-            Err(_err) => {
-                debug!("error reading DNS system conf: {}", _err);
-                TokioResolver::builder_with_config(
-                    ResolverConfig::default(),
-                    TokioConnectionProvider::default(),
-                )
-            }
-        };
+    pub fn new() -> HickoryDnsResolver {
+        static STATE: LazyLock<TokioResolver> = LazyLock::new(|| {
+            let mut builder = match TokioResolver::builder_tokio() {
+                Ok(resolver) => {
+                    debug!("using system DNS configuration");
+                    resolver
+                }
+                Err(_err) => {
+                    debug!("error reading DNS system conf: {}, using defaults", _err);
+                    TokioResolver::builder_with_config(
+                        ResolverConfig::default(),
+                        TokioConnectionProvider::default(),
+                    )
+                }
+            };
+            builder.options_mut().ip_strategy = LookupIpStrategy::Ipv4AndIpv6;
+            builder.build()
+        });
 
-        resolver.options_mut().ip_strategy = strategy
-            .into()
-            .map(LookupIpStrategy::to_hickory)
-            .unwrap_or_default();
-
-        Ok(Self {
-            state: Arc::new(resolver.build()),
-        })
+        HickoryDnsResolver { state: &STATE }
     }
 }
 
