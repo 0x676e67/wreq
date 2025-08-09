@@ -11,13 +11,15 @@ use hickory_resolver::{
 
 use super::{Addrs, Name, Resolve, Resolving};
 
-/// Wrapper around an `AsyncResolver`, which implements the `Resolve` trait.
+/// Wrapper around an [`TokioResolver`], which implements the `Resolve` trait.
 #[derive(Debug, Clone)]
 pub struct HickoryDnsResolver {
-    /// Since we might not have been called in the context of a
-    /// Tokio Runtime in initialization, so we must delay the actual
-    /// construction of the resolver.
-    state: &'static LazyLock<TokioResolver>,
+    /// Shared, lazily-initialized Tokio-based DNS resolver.
+    ///
+    /// Backed by [`LazyLock`] to guarantee thread-safe, one-time creation.
+    /// On initialization, it attempts to load the system's DNS configuration;
+    /// if unavailable, it falls back to sensible default settings.
+    resolver: &'static LazyLock<TokioResolver>,
 }
 
 impl HickoryDnsResolver {
@@ -26,7 +28,7 @@ impl HickoryDnsResolver {
     /// overriden to look up for both IPv4 and IPv6 addresses
     /// to work with "happy eyeballs" algorithm.
     pub fn new() -> HickoryDnsResolver {
-        static STATE: LazyLock<TokioResolver> = LazyLock::new(|| {
+        static RESOLVER: LazyLock<TokioResolver> = LazyLock::new(|| {
             let mut builder = match TokioResolver::builder_tokio() {
                 Ok(resolver) => {
                     debug!("using system DNS configuration");
@@ -44,7 +46,9 @@ impl HickoryDnsResolver {
             builder.build()
         });
 
-        HickoryDnsResolver { state: &STATE }
+        HickoryDnsResolver {
+            resolver: &RESOLVER,
+        }
     }
 }
 
@@ -56,7 +60,7 @@ impl Resolve for HickoryDnsResolver {
     fn resolve(&self, name: Name) -> Resolving {
         let resolver = self.clone();
         Box::pin(async move {
-            let lookup = resolver.state.lookup_ip(name.as_str()).await?;
+            let lookup = resolver.resolver.lookup_ip(name.as_str()).await?;
             let addrs: Addrs = Box::new(SocketAddrs {
                 iter: lookup.into_iter(),
             });
