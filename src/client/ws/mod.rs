@@ -191,6 +191,14 @@ impl WebSocketRequestBuilder {
         self
     }
 
+    /// Enable or disable client default headers for this request.
+    ///
+    /// By default, client default headers are included. Set to `false` to skip them.
+    pub fn default_headers(mut self, enable: bool) -> RequestBuilder {
+        self.inner = self.inner.default_headers(enable);
+        self
+    }
+
     /// Enable HTTP authentication.
     #[inline]
     pub fn auth<V>(mut self, value: V) -> Self
