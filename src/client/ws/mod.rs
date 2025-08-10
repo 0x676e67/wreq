@@ -194,7 +194,7 @@ impl WebSocketRequestBuilder {
     /// Enable or disable client default headers for this request.
     ///
     /// By default, client default headers are included. Set to `false` to skip them.
-    pub fn default_headers(mut self, enable: bool) -> RequestBuilder {
+    pub fn default_headers(mut self, enable: bool) -> Self {
         self.inner = self.inner.default_headers(enable);
         self
     }
