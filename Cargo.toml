@@ -67,7 +67,7 @@ tracing = ["http2/tracing", "dep:tracing"]
 
 [dependencies]
 base64 = "0.22"
-url = "2.5"
+url = "2.5.4"
 serde = { version = "1.0", features = ["derive"] }
 serde_urlencoded = "0.7.1"
 percent-encoding = "2.3.1"
@@ -93,7 +93,7 @@ schnellru = { version = "0.2.4", default-features = false }
 ahash = { version = "0.8.12", default-features = false }
 
 ## runtime
-tokio = { version = "1.47.0", default-features = false, features = [
+tokio = { version = "1.47.1", default-features = false, features = [
     "net",
     "time",
     "rt",
@@ -132,7 +132,7 @@ cookie_store = { version = "0.22", optional = true }
 tower-http = { version = "0.6.6", default-features = false, optional = true }
 
 ## tokio util
-tokio-util = { version = "0.7.15", default-features = false, optional = true }
+tokio-util = { version = "0.7.16", default-features = false, optional = true }
 
 ## socks
 tokio-socks = { version = "0.5.2", optional = true }

@@ -6,7 +6,7 @@ use crate::{StatusCode, Url, core::ext::ReasonPhrase, util::Escape};
 pub type Result<T> = std::result::Result<T, Error>;
 
 /// A boxed error type that can be used for dynamic error handling.
-pub(crate) type BoxError = Box<dyn StdError + Send + Sync>;
+pub type BoxError = Box<dyn StdError + Send + Sync>;
 
 /// The Errors that may occur when processing a `Request`.
 ///
