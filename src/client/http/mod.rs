@@ -840,14 +840,6 @@ impl ClientBuilder {
         self
     }
 
-    /// Disable keep-alive for the client.
-    #[inline]
-    pub fn no_keepalive(mut self) -> ClientBuilder {
-        self.config.pool_max_idle_per_host = 0;
-        self.config.tcp_keepalive = None;
-        self
-    }
-
     /// Restrict the Client to be used with HTTPS only requests.
     ///
     /// Defaults to false.
