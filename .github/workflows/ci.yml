@@ -66,8 +66,24 @@ jobs:
   tests:
     name: Tests
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        feature-set:
+          - "--all-features"
+          - "--no-default-features"
+          - "--no-default-features --features webpki-roots"
+          - "--features cookies"
+          - "--features gzip,stream"
+          - "--features brotli,stream"
+          - "--features zstd,stream"
+          - "--features deflate,stream"
+          - "--features json"
+          - "--features multipart"
+          - "--features stream"
+          - "--features hickory-dns"
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v4
       - uses: actions-rs/toolchain@v1
         with:
           toolchain: stable
@@ -76,31 +92,8 @@ jobs:
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-nextest
-      - name: Tests --all-features
-        shell: bash
-        run: cargo nextest run --workspace --all-features
-      - name: Test --no-default-features
-        run: cargo nextest run --workspace --no-default-features
-      - name: Test webpki-roots feature
-        run: cargo nextest run --workspace --no-default-features --features webpki-roots
-      - name: Test cookies feature
-        run: cargo nextest run --workspace --features cookies
-      - name: Test --features gzip,stream
-        run: cargo nextest run --workspace --features gzip,stream
-      - name: Test --features brotli,stream
-        run: cargo nextest run --workspace --features brotli,stream
-      - name: Test --features zstd,stream
-        run: cargo nextest run --workspace --features zstd,stream
-      - name: Test --features deflate,stream
-        run: cargo nextest run --workspace --features deflate,stream
-      - name: Test --features json
-        run: cargo nextest run --workspace --features json
-      - name: Test --features multipart
-        run: cargo nextest run --workspace --features multipart
-      - name: Test --features stream
-        run: cargo nextest run --workspace --features stream
-      - name: Test --features hickory-dns
-        run: cargo nextest run --workspace --features hickory-dns
+      - name: Run tests (${{ matrix.feature-set }})
+        run: cargo nextest run --workspace ${{ matrix.feature-set }}
 
   windows:
     name: Windows
