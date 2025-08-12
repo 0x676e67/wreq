@@ -76,7 +76,7 @@ pub trait Resolve: Send + Sync {
 /// Trait for converting types into a shared DNS resolver ([`Arc<dyn Resolve>`]).
 ///
 /// Implemented for any [`Resolve`] type, [`Arc<T>`] where `T: Resolve`, and [`Arc<dyn Resolve>`].
-/// Enables ergonomic conversion to a trait object for use in APIs without manual
+/// Enables ergonomic conversion to a trait object for use in APIs without manual Arc wrapping.
 pub trait IntoResolve {
     /// Converts the implementor into an [`Arc<dyn Resolve>`].
     ///
