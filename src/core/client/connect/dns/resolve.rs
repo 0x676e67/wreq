@@ -1,11 +1,9 @@
 use std::{
     collections::HashMap,
-    error::Error,
     fmt,
     future::Future,
     net::SocketAddr,
     pin::Pin,
-    str::FromStr,
     sync::Arc,
     task::{Context, Poll},
 };
@@ -13,18 +11,6 @@ use std::{
 use tower::Service;
 
 use crate::core::error::BoxError;
-
-/// Error indicating a given string was not a valid domain name.
-#[derive(Debug)]
-pub struct InvalidNameError(());
-
-impl fmt::Display for InvalidNameError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("Not a valid domain name")
-    }
-}
-
-impl Error for InvalidNameError {}
 
 /// A domain name to resolve into IP addresses.
 #[derive(Clone, Hash, Eq, PartialEq)]
@@ -46,6 +32,12 @@ impl Name {
     }
 }
 
+impl From<&str> for Name {
+    fn from(value: &str) -> Self {
+        Name::new(value.into())
+    }
+}
+
 impl fmt::Debug for Name {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt::Debug::fmt(&self.host, f)
@@ -55,14 +47,6 @@ impl fmt::Debug for Name {
 impl fmt::Display for Name {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt::Display::fmt(&self.host, f)
-    }
-}
-
-impl FromStr for Name {
-    type Err = InvalidNameError;
-
-    fn from_str(host: &str) -> Result<Self, Self::Err> {
-        Ok(Name::new(host.into()))
     }
 }
 
@@ -87,6 +71,46 @@ pub trait Resolve: Send + Sync {
     /// Otherwise, port `0` will be replaced by the conventional port for the given scheme (e.g. 80
     /// for http).
     fn resolve(&self, name: Name) -> Resolving;
+}
+
+/// Trait for converting types into a shared DNS resolver ([`Arc<dyn Resolve>`]).
+///
+/// Implemented for any [`Resolve`] type, [`Arc<T>`] where `T: Resolve`, and [`Arc<dyn Resolve>`].
+/// Enables ergonomic conversion to a trait object for use in APIs without manual
+pub trait IntoResolve {
+    /// Converts the implementor into an [`Arc<dyn Resolve>`].
+    ///
+    /// This method enables ergonomic conversion of concrete resolvers, [`Arc<T>`], or
+    /// existing [`Arc<dyn Resolve>`] into a trait object suitable for APIs that expect
+    /// a shared DNS resolver.
+    fn into_resolve(self) -> Arc<dyn Resolve>;
+}
+
+impl IntoResolve for Arc<dyn Resolve> {
+    #[inline]
+    fn into_resolve(self) -> Arc<dyn Resolve> {
+        self
+    }
+}
+
+impl<R> IntoResolve for Arc<R>
+where
+    R: Resolve + 'static,
+{
+    #[inline]
+    fn into_resolve(self) -> Arc<dyn Resolve> {
+        self
+    }
+}
+
+impl<R> IntoResolve for R
+where
+    R: Resolve + 'static,
+{
+    #[inline]
+    fn into_resolve(self) -> Arc<dyn Resolve> {
+        Arc::new(self)
+    }
 }
 
 /// Adapter that wraps a [`Resolve`] trait object to work with Tower's `Service` trait.

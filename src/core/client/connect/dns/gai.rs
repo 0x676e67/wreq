@@ -185,10 +185,7 @@ impl Iterator for SocketAddrs {
 
 #[cfg(test)]
 mod tests {
-    use std::{
-        net::{Ipv4Addr, Ipv6Addr},
-        str::FromStr,
-    };
+    use std::net::{Ipv4Addr, Ipv6Addr};
 
     use super::*;
 
@@ -245,7 +242,7 @@ mod tests {
     #[test]
     fn test_name_from_str() {
         const DOMAIN: &str = "test.example.com";
-        let name = Name::from_str(DOMAIN).expect("Should be a valid domain");
+        let name = Name::from(DOMAIN);
         assert_eq!(name.as_str(), DOMAIN);
         assert_eq!(name.to_string(), DOMAIN);
     }

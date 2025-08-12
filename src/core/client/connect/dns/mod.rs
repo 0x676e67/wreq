@@ -9,7 +9,7 @@ pub use resolve::{Addrs, Name, Resolve, Resolving};
 
 pub(crate) use self::{
     gai::{GaiResolver, SocketAddrs},
-    resolve::{DnsResolverWithOverrides, DynResolver},
+    resolve::{DnsResolverWithOverrides, DynResolver, IntoResolve},
     sealed::{InternalResolve, resolve},
 };
 

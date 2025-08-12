@@ -62,7 +62,7 @@ use crate::{
         client::{HttpClient, connect::TcpConnectOptions, options::TransportOptions},
         rt::{TokioExecutor, tokio::TokioTimer},
     },
-    dns::{DnsResolverWithOverrides, DynResolver, GaiResolver, Resolve},
+    dns::{DnsResolverWithOverrides, DynResolver, GaiResolver, IntoResolve, Resolve},
     error::{self, BoxError, Error},
     header::OrigHeaderMap,
     http1::Http1Options,
@@ -250,10 +250,9 @@ impl ClientBuilder {
         }
         let proxies = Arc::new(proxies);
 
-        // Into parts for transport options
         let (tls_options, http1_options, http2_options) = config.transport_options.into_parts();
 
-        // Create the TLS connector with the provided options.
+        // create the TLS connector with the provided options.
         let connector = {
             let resolver = {
                 let mut resolver: Arc<dyn Resolve> = match config.dns_resolver {
@@ -272,7 +271,7 @@ impl ClientBuilder {
                 DynResolver::new(resolver)
             };
 
-            // Apply http connector options
+            // configured http connector options
             let http = |http: &mut HttpConnector| {
                 http.enforce_http(false);
                 http.set_keepalive(config.tcp_keepalive);
@@ -289,7 +288,7 @@ impl ClientBuilder {
                 http.set_tcp_user_timeout(config.tcp_user_timeout);
             };
 
-            // Apply tls connector options
+            // configured tls connector options
             let tls = |tls: TlsConnectorBuilder| {
                 let alpn_protocol = match config.http_version_pref {
                     HttpVersionPref::Http1 => Some(AlpnProtocol::HTTP1),
@@ -317,7 +316,7 @@ impl ClientBuilder {
                 .build(config.connector_layers)?
         };
 
-        // Create client with the configured connector
+        // create client with the configured connector
         let client = {
             let http2_only = matches!(config.http_version_pref, HttpVersionPref::Http2);
             let mut builder = HttpClient::builder(TokioExecutor::new());
@@ -333,10 +332,9 @@ impl ClientBuilder {
             builder.build(connector)
         };
 
-        // Create the client with the configured service layers
+        // create the client with the configured service layers
         let client = {
-            // Start with the base client service, which handles headers, original headers,
-            // HTTPS-only, and proxies.
+            // configured client service layer
             let service = ClientService::new(
                 client,
                 config.headers,
@@ -345,13 +343,13 @@ impl ClientBuilder {
                 proxies,
             );
 
-            // Add cookie service layer if cookies are enabled.
+            // configured cookie service layer if cookies are enabled.
             #[cfg(feature = "cookies")]
             let service = ServiceBuilder::new()
                 .layer(CookieServiceLayer::new(config.cookie_store))
                 .service(service);
 
-            // Add response decompression support (gzip, zstd, brotli, deflate) if enabled.
+            // configured response decompression support (gzip, zstd, brotli, deflate) if enabled.
             #[cfg(any(
                 feature = "gzip",
                 feature = "zstd",
@@ -362,12 +360,12 @@ impl ClientBuilder {
                 .layer(DecompressionLayer::new(config.accept_encoding))
                 .service(service);
 
-            // Add a timeout layer for the response body.
+            // configured timeout layer for the response body.
             let service = ServiceBuilder::new()
                 .layer(ResponseBodyTimeoutLayer::new(config.timeout_options))
                 .service(service);
 
-            // Add redirect following logic with the configured policy.
+            // configured redirect following logic with the configured policy.
             let service = {
                 let policy = FollowRedirectPolicy::new(config.redirect_policy)
                     .with_referer(config.referer)
@@ -378,14 +376,14 @@ impl ClientBuilder {
                     .service(service)
             };
 
-            // Add HTTP/2 retry logic.
+            // configured HTTP/2 retry logic.
             let service = ServiceBuilder::new()
                 .layer(RetryLayer::new(Http2RetryPolicy::new(
                     config.http2_max_retry,
                 )))
                 .service(service);
 
-            // Add the configured layers to the service.
+            // configured layers to the service.
             if config.layers.is_empty() {
                 let service = ServiceBuilder::new()
                     .layer(TimeoutLayer::new(config.timeout_options))
@@ -1262,8 +1260,11 @@ impl ClientBuilder {
     /// Overrides for specific names passed to `resolve` and `resolve_to_addrs` will
     /// still be applied on top of this resolver.
     #[inline]
-    pub fn dns_resolver(mut self, resolver: Arc<dyn Resolve>) -> ClientBuilder {
-        self.config.dns_resolver = Some(resolver);
+    pub fn dns_resolver<R>(mut self, resolver: R) -> ClientBuilder
+    where
+        R: IntoResolve + Send + Sync + 'static,
+    {
+        self.config.dns_resolver = Some(resolver.into_resolve());
         self
     }
 
