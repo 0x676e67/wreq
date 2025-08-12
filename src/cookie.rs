@@ -1,6 +1,6 @@
 //! HTTP Cookies
 
-use std::{convert::TryInto, fmt, time::SystemTime};
+use std::{convert::TryInto, fmt, sync::Arc, time::SystemTime};
 
 use bytes::BufMut;
 use cookie_crate::{Cookie as RawCookie, Expiration, SameSite};
@@ -20,6 +20,20 @@ pub trait CookieStore: Send + Sync {
     fn cookies(&self, url: &url::Url) -> Vec<HeaderValue>;
 }
 
+/// Trait for converting types into a shared cookie store ([`Arc<dyn CookieStore>`]).
+///
+/// Implemented for any [`CookieStore`] type, [`Arc<T>`] where `T: CookieStore`, and [`Arc<dyn
+/// CookieStore>`]. Enables ergonomic conversion to a trait object for use in APIs without manual
+/// boxing.
+pub trait IntoCookieStore {
+    /// Converts the implementor into an [`Arc<dyn CookieStore>`].
+    ///
+    /// This method allows ergonomic conversion of concrete cookie stores, [`Arc<T>`], or
+    /// existing [`Arc<dyn CookieStore>`] into a trait object suitable for APIs that expect
+    /// a shared cookie store.
+    fn into_cookie_store(self) -> Arc<dyn CookieStore>;
+}
+
 /// A single HTTP cookie.
 #[derive(Debug, Clone)]
 pub struct Cookie<'a>(RawCookie<'a>);
@@ -32,7 +46,37 @@ pub struct Cookie<'a>(RawCookie<'a>);
 #[derive(Debug)]
 pub struct Jar(RwLock<cookie_store::CookieStore>);
 
+// ===== impl IntoCookieStore =====
+
+impl IntoCookieStore for Arc<dyn CookieStore> {
+    #[inline]
+    fn into_cookie_store(self) -> Arc<dyn CookieStore> {
+        self
+    }
+}
+
+impl<R> IntoCookieStore for Arc<R>
+where
+    R: CookieStore + 'static,
+{
+    #[inline]
+    fn into_cookie_store(self) -> Arc<dyn CookieStore> {
+        self
+    }
+}
+
+impl<R> IntoCookieStore for R
+where
+    R: CookieStore + 'static,
+{
+    #[inline]
+    fn into_cookie_store(self) -> Arc<dyn CookieStore> {
+        Arc::new(self)
+    }
+}
+
 // ===== impl Cookie =====
+
 impl<'a> Cookie<'a> {
     fn parse(value: &'a HeaderValue) -> crate::Result<Cookie<'a>> {
         std::str::from_utf8(value.as_bytes())
@@ -126,6 +170,7 @@ pub(crate) fn extract_response_cookies(
 }
 
 // ===== impl Jar =====
+
 impl Jar {
     /// Add a cookie str to this jar.
     ///

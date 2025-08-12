@@ -531,11 +531,11 @@ impl ClientBuilder {
     /// This requires the optional `cookies` feature to be enabled.
     #[inline]
     #[cfg(feature = "cookies")]
-    pub fn cookie_provider<C: cookie::CookieStore + 'static>(
-        mut self,
-        cookie_store: Arc<C>,
-    ) -> ClientBuilder {
-        self.config.cookie_store = Some(cookie_store as _);
+    pub fn cookie_provider<C>(mut self, cookie_store: C) -> ClientBuilder
+    where
+        C: cookie::IntoCookieStore,
+    {
+        self.config.cookie_store = Some(cookie_store.into_cookie_store());
         self
     }
 
@@ -1256,13 +1256,13 @@ impl ClientBuilder {
 
     /// Override the DNS resolver implementation.
     ///
-    /// Pass an `Arc` wrapping a trait object implementing `Resolve`.
+    /// Pass an `Arc` wrapping a type implementing `Resolve`.
     /// Overrides for specific names passed to `resolve` and `resolve_to_addrs` will
     /// still be applied on top of this resolver.
     #[inline]
     pub fn dns_resolver<R>(mut self, resolver: R) -> ClientBuilder
     where
-        R: IntoResolve + Send + Sync + 'static,
+        R: IntoResolve,
     {
         self.config.dns_resolver = Some(resolver.into_resolve());
         self
