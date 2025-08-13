@@ -12,9 +12,7 @@ use std::{
     sync,
 };
 
-/// A `Mutex` that never poisons and has the same interface as `std::sync::Mutex`.
-///
-/// See [`crate::sync`] for more details.
+/// A `Mutex` that never poisons and has the same interface as [`std::sync::Mutex`].
 pub struct Mutex<T: ?Sized>(sync::Mutex<T>);
 
 impl<T: ?Sized + fmt::Debug> fmt::Debug for Mutex<T> {
@@ -24,7 +22,7 @@ impl<T: ?Sized + fmt::Debug> fmt::Debug for Mutex<T> {
 }
 
 impl<T> Mutex<T> {
-    /// Like `std::sync::Mutex::new`.
+    /// Like [`std::sync::Mutex::new`].
     #[inline]
     pub fn new(t: T) -> Mutex<T> {
         Mutex(sync::Mutex::new(t))
@@ -32,14 +30,14 @@ impl<T> Mutex<T> {
 }
 
 impl<T: ?Sized> Mutex<T> {
-    /// Like `std::sync::Mutex::lock`.
+    /// Like [`std::sync::Mutex::lock`].
     #[inline]
     pub fn lock(&self) -> MutexGuard<'_, T> {
         MutexGuard(self.0.lock().unwrap_or_else(|e| e.into_inner()))
     }
 }
 
-/// Like `std::sync::MutexGuard`.
+/// Like [`std::sync::MutexGuard`].
 #[must_use]
 pub struct MutexGuard<'a, T: ?Sized + 'a>(sync::MutexGuard<'a, T>);
 
@@ -59,9 +57,7 @@ impl<T: ?Sized> DerefMut for MutexGuard<'_, T> {
     }
 }
 
-/// A `RwLock` that never poisons and has the same interface as `std::sync::RwLock`.
-///
-/// See [`crate::sync`] for more details.
+/// A `RwLock` that never poisons and has the same interface as [`std::sync::RwLock`].
 pub struct RwLock<T: ?Sized>(sync::RwLock<T>);
 
 impl<T: ?Sized + fmt::Debug> fmt::Debug for RwLock<T> {
@@ -71,7 +67,7 @@ impl<T: ?Sized + fmt::Debug> fmt::Debug for RwLock<T> {
 }
 
 impl<T> RwLock<T> {
-    /// Like `std::sync::RwLock::new`.
+    /// Like [`std::sync::RwLock::new`].
     #[inline]
     pub fn new(t: T) -> RwLock<T> {
         RwLock(sync::RwLock::new(t))
@@ -79,20 +75,20 @@ impl<T> RwLock<T> {
 }
 
 impl<T: ?Sized> RwLock<T> {
-    /// Like `std::sync::RwLock::read`.
+    /// Like [`std::sync::RwLock::read`].
     #[inline]
     pub fn read(&self) -> RwLockReadGuard<'_, T> {
         RwLockReadGuard(self.0.read().unwrap_or_else(|e| e.into_inner()))
     }
 
-    /// Like `std::sync::RwLock::write`.
+    /// Like [`std::sync::RwLock::write`].
     #[inline]
     pub fn write(&self) -> RwLockWriteGuard<'_, T> {
         RwLockWriteGuard(self.0.write().unwrap_or_else(|e| e.into_inner()))
     }
 }
 
-/// Like `std::sync::RwLockReadGuard`.
+/// Like [`std::sync::RwLockReadGuard`].
 #[must_use]
 pub struct RwLockReadGuard<'a, T: ?Sized + 'a>(sync::RwLockReadGuard<'a, T>);
 
@@ -105,7 +101,7 @@ impl<T: ?Sized> Deref for RwLockReadGuard<'_, T> {
     }
 }
 
-/// Like `std::sync::RwLockWriteGuard`.
+/// Like [`std::sync::RwLockWriteGuard`].
 #[must_use]
 pub struct RwLockWriteGuard<'a, T: ?Sized + 'a>(sync::RwLockWriteGuard<'a, T>);
 
