@@ -179,6 +179,7 @@ impl<'a> Attempt<'a> {
     pub fn previous(&self) -> &[Url] {
         self.previous
     }
+
     /// Returns an action meaning wreq should follow the next URL.
     pub fn follow(self) -> Action {
         Action {
