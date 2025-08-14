@@ -6,7 +6,7 @@ use std::{
     time::Duration,
 };
 
-use http::{Extensions, Request as HttpRequest, Version, request::Parts};
+use http::{Extensions, Request as HttpRequest, Uri, Version, request::Parts};
 use serde::Serialize;
 
 #[cfg(any(
@@ -857,14 +857,19 @@ impl TryFrom<Request> for (Url, HttpRequest<Body>) {
             ..
         } = req;
 
-        let mut req = HttpRequest::builder()
-            .method(method)
-            .uri(url.as_str())
-            .body(body.unwrap_or_else(Body::empty))
-            .map_err(Error::builder)?;
+        match Uri::try_from(url.as_str()) {
+            Ok(uri) => {
+                let mut req = HttpRequest::builder()
+                    .method(method)
+                    .uri(uri)
+                    .body(body.unwrap_or_else(Body::empty))
+                    .map_err(Error::builder)?;
 
-        *req.headers_mut() = headers;
-        *req.extensions_mut() = extensions;
-        Ok((url, req))
+                *req.headers_mut() = headers;
+                *req.extensions_mut() = extensions;
+                Ok((url, req))
+            }
+            Err(err) => Err(Error::builder(err).with_url(url)),
+        }
     }
 }
