@@ -311,7 +311,7 @@ pub use self::{
     error::{Error, Result},
     into_url::IntoUrl,
     proxy::{NoProxy, Proxy},
-    response::ResponseBuilderExt,
+    response::{ResponseBuilderExt, ResponseExt},
 };
 
 fn _assert_impls() {

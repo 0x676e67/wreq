@@ -6,7 +6,7 @@ use std::{
     time::Duration,
 };
 
-use http::{Extensions, Request as HttpRequest, Uri, Version, request::Parts};
+use http::{Extensions, Request as HttpRequest, Version, request::Parts};
 use serde::Serialize;
 
 #[cfg(any(
@@ -31,6 +31,7 @@ use crate::{
         ext::{RequestConfig, RequestConfigValue, RequestLevelOptions, RequestOrigHeaderMap},
     },
     header::{CONTENT_TYPE, HeaderMap, HeaderName, HeaderValue, OrigHeaderMap},
+    into_url::IntoUrlSealed,
     redirect,
 };
 
@@ -823,7 +824,7 @@ where
             headers,
             ..
         } = parts;
-        let url = crate::into_url::IntoUrlSealed::into_url(uri.to_string())?;
+        let url = IntoUrlSealed::into_url(uri.to_string())?;
         Ok(Request {
             method,
             url,
@@ -837,6 +838,7 @@ where
 impl TryFrom<Request> for HttpRequest<Body> {
     type Error = crate::Error;
 
+    #[inline]
     fn try_from(req: Request) -> crate::Result<Self> {
         req.try_into().map(|(_, http_req)| http_req)
     }
@@ -855,19 +857,14 @@ impl TryFrom<Request> for (Url, HttpRequest<Body>) {
             ..
         } = req;
 
-        match Uri::try_from(url.as_str()) {
-            Ok(uri) => {
-                let mut req = HttpRequest::builder()
-                    .method(method)
-                    .uri(uri)
-                    .body(body.unwrap_or_else(Body::empty))
-                    .map_err(Error::builder)?;
+        let mut req = HttpRequest::builder()
+            .method(method)
+            .uri(url.as_str())
+            .body(body.unwrap_or_else(Body::empty))
+            .map_err(Error::builder)?;
 
-                *req.headers_mut() = headers;
-                *req.extensions_mut() = extensions;
-                Ok((url, req))
-            }
-            Err(err) => Err(Error::builder(err).with_url(url)),
-        }
+        *req.headers_mut() = headers;
+        *req.extensions_mut() = extensions;
+        Ok((url, req))
     }
 }

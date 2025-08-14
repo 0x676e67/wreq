@@ -16,6 +16,7 @@ use crate::cookie;
 use crate::{
     Error, Upgraded,
     core::{client::connect::HttpInfo, ext::ReasonPhrase},
+    response::ResponseUrl,
 };
 
 /// A Response to a submitted `Request`.
@@ -442,8 +443,6 @@ impl fmt::Debug for Response {
 // to use `http::Response`, not `wreq::Response`.
 impl<T: Into<Body>> From<http::Response<T>> for Response {
     fn from(r: http::Response<T>) -> Response {
-        use crate::response::ResponseUrl;
-
         let (mut parts, body) = r.into_parts();
         let body: super::body::Body = body.into();
         let url = parts
@@ -465,7 +464,9 @@ impl From<Response> for http::Response<Body> {
     fn from(r: Response) -> http::Response<Body> {
         let (parts, body) = r.res.into_parts();
         let body = Body::wrap(body);
-        http::Response::from_parts(parts, body)
+        let mut response = http::Response::from_parts(parts, body);
+        response.extensions_mut().insert(ResponseUrl(*r.url));
+        response
     }
 }
 
@@ -482,7 +483,7 @@ mod tests {
     use url::Url;
 
     use super::Response;
-    use crate::ResponseBuilderExt;
+    use crate::{ResponseBuilderExt, response::ResponseExt};
 
     #[test]
     fn test_from_http_response() {
@@ -496,5 +497,24 @@ mod tests {
 
         assert_eq!(response.status(), 200);
         assert_eq!(*response.url(), url);
+    }
+
+    #[test]
+    fn test_from_http_response_with_url() {
+        let url = Url::parse("http://example.com").unwrap();
+        let response = Builder::new()
+            .status(200)
+            .url(url.clone())
+            .body("foo")
+            .unwrap();
+        let response = Response::from(response);
+
+        assert_eq!(response.status(), 200);
+        assert_eq!(*response.url(), url);
+
+        let http_response = http::Response::from(response);
+        let resp_url = http_response.url();
+        assert_eq!(http_response.status(), 200);
+        assert_eq!(resp_url, Some(&url));
     }
 }
