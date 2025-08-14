@@ -34,12 +34,6 @@ impl ResponseExt for http::Response<Body> {
     }
 }
 
-impl ResponseExt for http::response::Parts {
-    fn url(&self) -> Option<&Url> {
-        self.extensions.get::<ResponseUrl>().map(|r| &r.0)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use http::response::Builder;
@@ -73,7 +67,5 @@ mod tests {
             .unwrap();
 
         assert_eq!(response.url(), Some(&url));
-        assert_eq!(response.url(), None);
-        assert_eq!(response.extensions().get::<ResponseUrl>(), None);
     }
 }
