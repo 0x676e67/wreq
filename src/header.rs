@@ -186,16 +186,16 @@ impl OrigHeaderMap {
         // After processing all ordered headers, append any remaining headers
         let mut prev_name: Option<HeaderName> = None;
         for (name, value) in headers.drain() {
-            let name = match (&name, &prev_name) {
+            match (name, &prev_name) {
                 (Some(name), _) => {
-                    prev_name = Some(name.clone());
-                    name
+                    dst(&name, None, &value);
+                    prev_name = Some(name);
                 }
-                (None, Some(prev_name)) => prev_name,
-                _ => continue,
+                (None, Some(prev_name)) => {
+                    dst(prev_name, None, &value);
+                }
+                _ => {}
             };
-
-            dst(name, None, &value);
         }
     }
 }
