@@ -17,10 +17,9 @@ use std::{
 
 use ::http::Extensions;
 
-pub use self::{
-    http::{HttpConnector, HttpInfo, TcpConnectOptions},
-    uds::{UnixConnectOptions, UnixConnector},
-};
+pub use self::http::{HttpConnector, HttpInfo, TcpConnectOptions};
+#[cfg(unix)]
+pub use self::uds::{UnixConnectOptions, UnixConnector};
 
 /// Describes a type returned by a connector.
 pub trait Connection {

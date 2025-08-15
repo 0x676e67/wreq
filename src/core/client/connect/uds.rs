@@ -15,7 +15,7 @@ pub type UnixConnectOptions = Option<Arc<Path>>;
 type ConnectResult = Result<TokioIo<UnixStream>, std::io::Error>;
 type BoxConnecting = Pin<Box<dyn Future<Output = ConnectResult> + Send>>;
 
-pub struct UnixConnector(pub Arc<Path>);
+pub struct UnixConnector(pub(crate) Arc<Path>);
 
 impl tower::Service<Uri> for UnixConnector {
     type Response = TokioIo<UnixStream>;

@@ -15,7 +15,7 @@ use std::{
 /// - `PathBuf`
 /// - `&Path`
 /// - `Arc<Path>`
-pub trait IntoUnixSocket {
+pub trait IntoUnixSocket: sealed::Sealed {
     /// Returns the Unix Domain Socket path as an [`Arc<Path>`].
     fn unix_socket(self) -> Arc<Path>;
 }
@@ -47,4 +47,20 @@ impl IntoUnixSocket for Arc<Path> {
     fn unix_socket(self) -> Arc<Path> {
         self
     }
+}
+
+mod sealed {
+    use std::{
+        path::{Path, PathBuf},
+        sync::Arc,
+    };
+
+    /// Sealed trait to prevent external implementations of `IntoUnixSocket`.
+    pub trait Sealed {}
+
+    impl Sealed for String {}
+    impl Sealed for &'_ str {}
+    impl Sealed for &'_ Path {}
+    impl Sealed for PathBuf {}
+    impl Sealed for Arc<Path> {}
 }
