@@ -1,4 +1,3 @@
-#[cfg(unix)]
 use std::{
     convert::TryFrom,
     fmt,
@@ -10,6 +9,8 @@ use std::{
 use http::{Extensions, Request as HttpRequest, Uri, Version, request::Parts};
 use serde::Serialize;
 
+#[cfg(unix)]
+use super::http::connect::uds;
 #[cfg(any(
     feature = "gzip",
     feature = "zstd",
@@ -25,8 +26,6 @@ use super::{
     layer::config::{RequestDefaultHeaders, RequestRedirectPolicy, RequestTimeoutOptions},
     response::Response,
 };
-#[cfg(unix)]
-use crate::client::http::connect::uds;
 use crate::{
     EmulationFactory, Error, Method, Proxy, Url,
     core::{
