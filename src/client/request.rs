@@ -593,7 +593,7 @@ impl RequestBuilder {
         self
     }
 
-    /// Set than the request will use this Unix socket.
+    /// Sets the request to use this Unix socket.
     #[cfg(unix)]
     pub fn unix_socket<P>(mut self, path: P) -> RequestBuilder
     where
