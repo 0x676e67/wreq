@@ -172,27 +172,27 @@ impl OrigHeaderMap {
     /// Headers in the map are processed first, others follow.
     pub(crate) fn sort_headers_for_each<F>(&self, headers: &mut HeaderMap, mut dst: F)
     where
-        F: FnMut(&HeaderName, Option<&OrigHeaderName>, &HeaderValue),
+        F: FnMut(&OrigHeaderName, &HeaderValue),
     {
         // First, sort headers according to the order defined in this map
         for (name, orig_name) in self.iter() {
             for value in headers.get_all(name) {
-                dst(name, Some(orig_name), value);
+                dst(orig_name, value);
             }
 
             headers.remove(name);
         }
 
         // After processing all ordered headers, append any remaining headers
-        let mut prev_name: Option<HeaderName> = None;
+        let mut prev_name: Option<OrigHeaderName> = None;
         for (name, value) in headers.drain() {
-            match (name, &prev_name) {
+            match (name.map(OrigHeaderName::Standard), &prev_name) {
                 (Some(name), _) => {
-                    dst(&name, None, &value);
+                    dst(&name, &value);
                     prev_name = Some(name);
                 }
                 (None, Some(prev_name)) => {
-                    dst(prev_name, None, &value);
+                    dst(prev_name, &value);
                 }
                 _ => {}
             };

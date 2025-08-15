@@ -655,11 +655,14 @@ fn write_headers_original_case(
     orig_headers: &OrigHeaderMap,
     dst: &mut Vec<u8>,
 ) {
-    orig_headers.sort_headers_for_each(headers, |name, orig_name, value| {
-        if let Some(orig_name) = orig_name {
-            extend(dst, orig_name.as_ref());
-        } else {
-            extend(dst, name.as_str().as_bytes());
+    orig_headers.sort_headers_for_each(headers, |orig_name, value| {
+        match orig_name {
+            OrigHeaderName::Cased(orig_name) => {
+                extend(dst, orig_name);
+            }
+            OrigHeaderName::Standard(name) => {
+                extend(dst, name.as_ref());
+            }
         }
 
         // Wanted for curl test cases that send `X-Custom-Header:\r\n`
