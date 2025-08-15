@@ -5,7 +5,7 @@ use http::Version;
 use http1::Http1Options;
 use http2::Http2Options;
 
-use super::connect::TcpConnectOptions;
+use super::connect::{TcpConnectOptions, UnixConnectOptions};
 use crate::{proxy::Matcher, tls::TlsOptions};
 
 /// Transport options for HTTP/1, HTTP/2, and TLS layers.
@@ -92,6 +92,7 @@ pub(crate) struct RequestOptions {
     proxy_matcher: Option<Matcher>,
     enforced_version: Option<Version>,
     tcp_connect_opts: TcpConnectOptions,
+    unix_connect_opts: UnixConnectOptions,
     transport_opts: TransportOptions,
 }
 
@@ -130,6 +131,18 @@ impl RequestOptions {
     #[inline]
     pub fn tcp_connect_opts_mut(&mut self) -> &mut TcpConnectOptions {
         &mut self.tcp_connect_opts
+    }
+
+    /// Get a reference to the Unix connection options.
+    #[inline]
+    pub fn unix_connect_opts(&self) -> &UnixConnectOptions {
+        &self.unix_connect_opts
+    }
+
+    /// Get a mutable reference to the Unix connection options.
+    #[inline]
+    pub fn unix_connect_opts_mut(&mut self) -> &mut UnixConnectOptions {
+        &mut self.unix_connect_opts
     }
 
     /// Get a reference to the transport options.

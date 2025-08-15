@@ -5,6 +5,8 @@ use std::{
 };
 
 use pin_project_lite::pin_project;
+#[cfg(unix)]
+use tokio::net::UnixStream;
 use tokio::{
     io::{AsyncRead, AsyncWrite},
     net::TcpStream,
@@ -50,8 +52,8 @@ pin_project! {
 impl Conn {
     /// Creates a new `Conn` instance with the given inner connection and TLS info flag.
     #[inline(always)]
-    pub(super) fn new(inner: Box<dyn AsyncConnWithInfo>, is_proxy: bool, tls_info: bool) -> Self {
-        Self {
+    pub(super) fn new(inner: Box<dyn AsyncConnWithInfo>, is_proxy: bool, tls_info: bool) -> Conn {
+        Conn {
             inner,
             is_proxy,
             tls_info,
@@ -135,6 +137,8 @@ where
     }
 }
 
+// ===== impl TcpStream =====
+
 impl Connection for TlsConn<TcpStream> {
     fn connected(&self) -> Connected {
         let connected = self.inner.inner().get_ref().connected();
@@ -147,6 +151,32 @@ impl Connection for TlsConn<TcpStream> {
 }
 
 impl Connection for TlsConn<TokioIo<MaybeHttpsStream<TcpStream>>> {
+    fn connected(&self) -> Connected {
+        let connected = self.inner.inner().get_ref().connected();
+        if self.inner.inner().ssl().selected_alpn_protocol() == Some(b"h2") {
+            connected.negotiated_h2()
+        } else {
+            connected
+        }
+    }
+}
+
+// ===== impl UnixStream =====
+
+#[cfg(unix)]
+impl Connection for TlsConn<UnixStream> {
+    fn connected(&self) -> Connected {
+        let connected = self.inner.inner().get_ref().connected();
+        if self.inner.inner().ssl().selected_alpn_protocol() == Some(b"h2") {
+            connected.negotiated_h2()
+        } else {
+            connected
+        }
+    }
+}
+
+#[cfg(unix)]
+impl Connection for TlsConn<TokioIo<MaybeHttpsStream<UnixStream>>> {
     fn connected(&self) -> Connected {
         let connected = self.inner.inner().get_ref().connected();
         if self.inner.inner().ssl().selected_alpn_protocol() == Some(b"h2") {

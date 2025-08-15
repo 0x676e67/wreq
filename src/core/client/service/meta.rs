@@ -4,7 +4,7 @@ use http::{Uri, Version};
 
 use crate::{
     core::client::{
-        connect::TcpConnectOptions,
+        connect::{TcpConnectOptions, UnixConnectOptions},
         options::{RequestOptions, TransportOptions},
     },
     hash::HashMemo,
@@ -77,5 +77,14 @@ impl ConnectMeta {
     #[inline]
     pub(crate) fn tcp_options(&self) -> Option<&TcpConnectOptions> {
         self.options.as_ref().map(RequestOptions::tcp_connect_opts)
+    }
+
+    /// Return a reference to the [`UnixConnectOptions`].
+    #[inline]
+    pub(crate) fn unix_options(&self) -> UnixConnectOptions {
+        self.options
+            .as_ref()
+            .map(RequestOptions::unix_connect_opts)?
+            .clone()
     }
 }

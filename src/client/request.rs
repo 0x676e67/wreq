@@ -1,3 +1,4 @@
+#[cfg(unix)]
 use std::{
     convert::TryFrom,
     fmt,
@@ -24,6 +25,8 @@ use super::{
     layer::config::{RequestDefaultHeaders, RequestRedirectPolicy, RequestTimeoutOptions},
     response::Response,
 };
+#[cfg(unix)]
+use crate::client::http::connect::uds;
 use crate::{
     EmulationFactory, Error, Method, Proxy, Url,
     core::{
@@ -586,6 +589,19 @@ impl RequestBuilder {
             req.config_mut::<RequestLevelOptions>()
                 .tcp_connect_opts_mut()
                 .set_interface(interface);
+        }
+        self
+    }
+
+    /// Set than the request will use this Unix socket.
+    #[cfg(unix)]
+    pub fn unix_socket<P>(mut self, path: P) -> RequestBuilder
+    where
+        P: uds::IntoUnixSocket,
+    {
+        if let Ok(ref mut req) = self.request {
+            *req.config_mut::<RequestLevelOptions>()
+                .unix_connect_opts_mut() = Some(path.unix_socket());
         }
         self
     }

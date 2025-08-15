@@ -1,4 +1,4 @@
-mod connect;
+pub(crate) mod connect;
 mod future;
 mod service;
 mod types;
@@ -134,6 +134,8 @@ struct Config {
     tcp_recv_buffer_size: Option<usize>,
     tcp_happy_eyeballs_timeout: Option<Duration>,
     tcp_connect_options: TcpConnectOptions,
+    #[cfg(unix)]
+    unix_socket: Option<Arc<std::path::Path>>,
     proxies: Vec<ProxyMatcher>,
     auto_sys_proxy: bool,
     redirect_policy: RedirectPolicy,
@@ -201,6 +203,8 @@ impl ClientBuilder {
                 tcp_send_buffer_size: None,
                 tcp_recv_buffer_size: None,
                 tcp_happy_eyeballs_timeout: Some(Duration::from_millis(300)),
+                #[cfg(unix)]
+                unix_socket: None,
                 proxies: Vec::new(),
                 auto_sys_proxy: true,
                 redirect_policy: RedirectPolicy::none(),
@@ -307,10 +311,11 @@ impl ClientBuilder {
             };
 
             Connector::builder(proxies.clone(), resolver)
+                .unix_socket(config.unix_socket)
                 .timeout(config.connect_timeout)
                 .tls_info(config.tls_info)
-                .verbose(config.connection_verbose)
                 .tls_options(tls_options)
+                .verbose(config.connection_verbose)
                 .with_tls(tls)
                 .with_http(http)
                 .build(config.connector_layers)?
@@ -881,6 +886,28 @@ impl ClientBuilder {
     #[inline]
     pub fn http2_max_retry(mut self, max: usize) -> ClientBuilder {
         self.config.http2_max_retry = max;
+        self
+    }
+
+    // Alt Transports
+
+    /// Set that all connections will use this Unix socket.
+    ///
+    /// If a request URI uses the `https` scheme, TLS will still be used over
+    /// the Unix socket.
+    ///
+    /// # Note
+    ///
+    /// This option is not compatible with any of the TCP or Proxy options.
+    /// Setting this will ignore all those options previously set.
+    ///
+    /// Likewise, DNS resolution will not be done on the domain name.
+    #[cfg(unix)]
+    pub fn unix_socket<P>(mut self, provider: P) -> ClientBuilder
+    where
+        P: connect::uds::IntoUnixSocket,
+    {
+        self.config.unix_socket = Some(provider.unix_socket());
         self
     }
 
