@@ -564,10 +564,10 @@ where
                     }
 
                     // Sort headers if we have the original headers
-                    if let Some(orig) =
+                    if let Some(orig_headers) =
                         RequestConfig::<RequestOrigHeaderMap>::remove(req.extensions_mut())
                     {
-                        orig.sort_headers(req.headers_mut());
+                        orig_headers.sort_headers(req.headers_mut());
                     }
 
                     let is_connect = req.method() == Method::CONNECT;

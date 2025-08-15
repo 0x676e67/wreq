@@ -132,20 +132,8 @@ impl OrigHeaderMap {
         self.0.append(name, orig);
     }
 
-    /// Returns a view of all spellings associated with that header name,
-    /// in the order they were found.
-    #[inline]
-    pub(crate) fn get_all<'a>(
-        &'a self,
-        name: &HeaderName,
-    ) -> impl Iterator<Item = impl AsRef<[u8]> + 'a> + 'a {
-        self.0.get_all(name).into_iter()
-    }
-
-    /// Sorts headers according to the order defined in this map, preserving original casing.
-    ///
-    /// Headers specified in this map are placed first in the given order, followed by any
-    /// remaining headers. This maintains both the desired ordering and original case formatting.
+    /// Sorts headers by this map, preserving original casing.
+    /// Headers in the map come first, others follow.
     pub(crate) fn sort_headers(&self, headers: &mut HeaderMap) {
         if headers.len() <= 1 || self.0.is_empty() {
             return;
@@ -163,21 +151,52 @@ impl OrigHeaderMap {
         }
 
         // Then insert any remaining headers that were not ordered
-        let mut prev_header_name: Option<HeaderName> = None;
+        let mut prev_name: Option<HeaderName> = None;
         for (name, value) in headers.drain() {
-            match (name, &prev_header_name) {
+            match (name, &prev_name) {
                 (Some(name), _) => {
-                    prev_header_name = Some(name.clone());
+                    prev_name = Some(name.clone());
                     sorted_headers.insert(name, value);
                 }
-                (None, Some(prev)) => {
-                    sorted_headers.append(prev, value);
+                (None, Some(prev_name)) => {
+                    sorted_headers.append(prev_name, value);
                 }
                 _ => {}
             }
         }
 
         std::mem::swap(headers, &mut sorted_headers);
+    }
+
+    /// Calls the given function for each header in this map's order, preserving original casing.
+    /// Headers in the map are processed first, others follow.
+    pub(crate) fn sort_headers_for_each<F>(&self, headers: &mut HeaderMap, mut dst: F)
+    where
+        F: FnMut(&HeaderName, Option<&OrigHeaderName>, &HeaderValue),
+    {
+        // First, sort headers according to the order defined in this map
+        for (name, orig_name) in self.iter() {
+            for value in headers.get_all(name) {
+                dst(name, Some(orig_name), value);
+            }
+
+            headers.remove(name);
+        }
+
+        // After processing all ordered headers, append any remaining headers
+        let mut prev_name: Option<HeaderName> = None;
+        for (name, value) in headers.drain() {
+            let name = match (&name, &prev_name) {
+                (Some(name), _) => {
+                    prev_name = Some(name.clone());
+                    name
+                }
+                (None, Some(prev_name)) => prev_name,
+                _ => continue,
+            };
+
+            dst(name, None, &value);
+        }
     }
 }
 
@@ -300,9 +319,19 @@ mod sealed {
 
 #[cfg(test)]
 mod test {
-    use http::{HeaderMap, HeaderValue};
+    use http::{HeaderMap, HeaderName, HeaderValue};
 
     use super::OrigHeaderMap;
+
+    /// Returns a view of all spellings associated with that header name,
+    /// in the order they were found.
+    #[inline]
+    pub(crate) fn get_all<'a>(
+        orig_headers: &'a OrigHeaderMap,
+        name: &HeaderName,
+    ) -> impl Iterator<Item = impl AsRef<[u8]> + 'a> + 'a {
+        orig_headers.0.get_all(name).into_iter()
+    }
 
     #[test]
     fn test_header_order() {
@@ -350,7 +379,7 @@ mod test {
         headers.insert("x-test");
 
         // Check that both headers are stored
-        let all_x_test: Vec<_> = headers.get_all(&"X-Test".parse().unwrap()).collect();
+        let all_x_test: Vec<_> = get_all(&headers, &"X-Test".parse().unwrap()).collect();
         assert_eq!(all_x_test.len(), 2);
         assert!(all_x_test.iter().any(|v| v.as_ref() == b"X-Test"));
         assert!(all_x_test.iter().any(|v| v.as_ref() == b"x-test"));
@@ -366,7 +395,7 @@ mod test {
         headers.insert("X-test");
 
         // Check that all variations are stored
-        let all_x_test: Vec<_> = headers.get_all(&"x-test".parse().unwrap()).collect();
+        let all_x_test: Vec<_> = get_all(&headers, &"x-test".parse().unwrap()).collect();
         assert_eq!(all_x_test.len(), 3);
         assert!(all_x_test.iter().any(|v| v.as_ref() == b"X-test"));
         assert!(all_x_test.iter().any(|v| v.as_ref() == b"x-test"));

@@ -112,9 +112,7 @@ where
     T::encode(enc, dst)
 }
 
-// There are 2 main roles, Client and Server.
-
-pub(crate) enum Client {}
+pub(crate) struct Client;
 
 impl Http1Transaction for Client {
     type Incoming = StatusCode;
@@ -224,10 +222,9 @@ impl Http1Transaction for Client {
                 }
 
                 if let Some(ref mut header_case_map) = header_case_map {
-                    header_case_map.append(
-                        &name,
-                        OrigHeaderName::Cased(slice.slice(header.name.0..header.name.1)),
-                    );
+                    let orig_name =
+                        OrigHeaderName::Cased(slice.slice(header.name.0..header.name.1));
+                    header_case_map.append(&name, orig_name);
                 }
 
                 headers.append(name, value);
@@ -372,7 +369,7 @@ impl Client {
             // If Transfer-Encoding header is present, and 'chunked' is
             // not the final encoding, and this is a Request, then it is
             // malformed. A server should respond with 400 Bad Request.
-            if inc.version == Version::HTTP_10 {
+            return if inc.version == Version::HTTP_10 {
                 debug!("HTTP/1.0 cannot have Transfer-Encoding header");
                 Err(Parse::transfer_encoding_unexpected())
             } else if headers::transfer_encoding_is_chunked(&inc.headers) {
@@ -380,16 +377,20 @@ impl Client {
             } else {
                 trace!("not chunked, read till eof");
                 Ok(Some((DecodedLength::CLOSE_DELIMITED, false)))
-            }
-        } else if let Some(len) = headers::content_length_parse_all(&inc.headers) {
-            Ok(Some((DecodedLength::checked_new(len)?, false)))
-        } else if inc.headers.contains_key(header::CONTENT_LENGTH) {
-            debug!("illegal Content-Length header");
-            Err(Parse::content_length_invalid())
-        } else {
-            trace!("neither Transfer-Encoding nor Content-Length");
-            Ok(Some((DecodedLength::CLOSE_DELIMITED, false)))
+            };
         }
+
+        if let Some(len) = headers::content_length_parse_all(&inc.headers) {
+            return Ok(Some((DecodedLength::checked_new(len)?, false)));
+        }
+
+        if inc.headers.contains_key(header::CONTENT_LENGTH) {
+            debug!("illegal Content-Length header");
+            return Err(Parse::content_length_invalid());
+        }
+
+        trace!("neither Transfer-Encoding nor Content-Length");
+        Ok(Some((DecodedLength::CLOSE_DELIMITED, false)))
     }
     fn set_length(head: &mut RequestHead, body: Option<BodyLength>) -> Encoder {
         let body = if let Some(body) = body {
@@ -651,36 +652,25 @@ pub(crate) fn write_headers(headers: &HeaderMap, dst: &mut Vec<u8>) {
 
 fn write_headers_original_case(
     headers: &mut HeaderMap,
-    orig_case: &OrigHeaderMap,
+    orig_headers: &OrigHeaderMap,
     dst: &mut Vec<u8>,
 ) {
-    orig_case.sort_headers(headers);
-
-    // For each header name/value pair, there may be a value in the casemap
-    // that corresponds to the HeaderValue. So, we iterator all the keys,
-    // and for each one, try to pair the originally cased name with the value.
-    //
-    // TODO: consider adding http::HeaderMap::entries() iterator
-    for name in headers.keys() {
-        let mut names = orig_case.get_all(name);
-
-        for value in headers.get_all(name) {
-            if let Some(orig_name) = names.next() {
-                extend(dst, orig_name.as_ref());
-            } else {
-                extend(dst, name.as_str().as_bytes());
-            }
-
-            // Wanted for curl test cases that send `X-Custom-Header:\r\n`
-            if value.is_empty() {
-                extend(dst, b":\r\n");
-            } else {
-                extend(dst, b": ");
-                extend(dst, value.as_bytes());
-                extend(dst, b"\r\n");
-            }
+    orig_headers.sort_headers_for_each(headers, |name, orig_name, value| {
+        if let Some(orig_name) = orig_name {
+            extend(dst, orig_name.as_ref());
+        } else {
+            extend(dst, name.as_str().as_bytes());
         }
-    }
+
+        // Wanted for curl test cases that send `X-Custom-Header:\r\n`
+        if value.is_empty() {
+            extend(dst, b":\r\n");
+        } else {
+            extend(dst, b": ");
+            extend(dst, value.as_bytes());
+            extend(dst, b"\r\n");
+        }
+    });
 }
 
 struct FastWrite<'a>(&'a mut Vec<u8>);
