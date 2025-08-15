@@ -112,7 +112,7 @@ where
     T::encode(enc, dst)
 }
 
-pub(crate) struct Client;
+pub(crate) enum Client {}
 
 impl Http1Transaction for Client {
     type Incoming = StatusCode;
