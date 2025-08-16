@@ -29,9 +29,9 @@ pin_project! {
     /// * absolute-form (`GET http://foo.bar/and/a/path HTTP/1.1`), otherwise.
     pub struct Conn {
         #[pin]
-        inner: Box<dyn AsyncConnWithInfo>,
-        is_proxy: bool,
-        tls_info: bool,
+        pub inner: Box<dyn AsyncConnWithInfo>,
+        pub tls_info: bool,
+        pub is_proxy: bool,
     }
 }
 
@@ -48,18 +48,6 @@ pin_project! {
 }
 
 // ==== impl Conn ====
-
-impl Conn {
-    /// Creates a new `Conn` instance with the given inner connection and TLS info flag.
-    #[inline(always)]
-    pub(super) fn new(inner: Box<dyn AsyncConnWithInfo>, is_proxy: bool, tls_info: bool) -> Conn {
-        Conn {
-            inner,
-            is_proxy,
-            tls_info,
-        }
-    }
-}
 
 impl Connection for Conn {
     fn connected(&self) -> Connected {

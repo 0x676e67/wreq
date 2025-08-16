@@ -16,17 +16,17 @@ pub trait TlsInfoFactory {
     fn tls_info(&self) -> Option<TlsInfo>;
 }
 
+impl<T: TlsInfoFactory> TlsInfoFactory for TokioIo<T> {
+    fn tls_info(&self) -> Option<TlsInfo> {
+        self.inner().tls_info()
+    }
+}
+
 // ===== impl TcpStream =====
 
 impl TlsInfoFactory for TcpStream {
     fn tls_info(&self) -> Option<TlsInfo> {
         None
-    }
-}
-
-impl<T: TlsInfoFactory> TlsInfoFactory for TokioIo<T> {
-    fn tls_info(&self) -> Option<TlsInfo> {
-        self.inner().tls_info()
     }
 }
 

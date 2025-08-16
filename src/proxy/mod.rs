@@ -1,11 +1,10 @@
 #[cfg(all(target_os = "macos", feature = "system-proxy"))]
 mod mac;
+mod matcher;
 #[cfg(unix)]
 mod uds;
 #[cfg(all(windows, feature = "system-proxy"))]
 mod win;
-
-pub(crate) mod matcher;
 
 use std::error::Error as StdError;
 #[cfg(unix)]

@@ -141,21 +141,18 @@ where
     }
 
     /// Sets the authentication credentials for the SOCKS proxy connection.
-    pub fn with_auth(self, auth: Option<(Bytes, Bytes)>) -> Self {
-        SocksConnector { auth, ..self }
+    pub fn set_auth(&mut self, auth: Option<(Bytes, Bytes)>) {
+        self.auth = auth;
     }
 
     /// Sets whether to use the SOCKS5 protocol for the proxy connection.
-    pub fn with_version(self, version: Version) -> Self {
-        SocksConnector { version, ..self }
+    pub fn set_version(&mut self, version: Version) {
+        self.version = version;
     }
 
     /// Sets whether to resolve DNS locally or let the proxy handle DNS resolution.
-    pub fn with_dns_mode(self, dns_resolve: DnsResolve) -> Self {
-        SocksConnector {
-            dns_resolve,
-            ..self
-        }
+    pub fn set_dns_mode(&mut self, dns_resolve: DnsResolve) {
+        self.dns_resolve = dns_resolve;
     }
 }
 
