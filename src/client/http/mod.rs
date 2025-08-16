@@ -310,15 +310,19 @@ impl ClientBuilder {
                     .keylog(config.keylog_policy)
             };
 
-            Connector::builder(proxies.clone(), resolver)
-                .unix_socket(config.unix_socket)
+            #[allow(unused_mut)]
+            let mut builder = Connector::builder(proxies.clone(), resolver)
                 .timeout(config.connect_timeout)
                 .tls_info(config.tls_info)
                 .tls_options(tls_options)
                 .verbose(config.connection_verbose)
                 .with_tls(tls)
-                .with_http(http)
-                .build(config.connector_layers)?
+                .with_http(http);
+            #[cfg(unix)]
+            {
+                builder = builder.unix_socket(config.unix_socket);
+            }
+            builder.build(config.connector_layers)?
         };
 
         // create client with the configured connector

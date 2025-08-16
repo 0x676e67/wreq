@@ -19,11 +19,13 @@ use super::{
     conn::{Conn, TlsConn},
     verbose::Verbose,
 };
+#[cfg(unix)]
+use crate::core::client::connect::UnixConnector;
 use crate::{
     core::{
         client::{
             ConnectMeta, ConnectRequest,
-            connect::{Connection, UnixConnector, proxy},
+            connect::{Connection, proxy},
         },
         rt::{Read, TokioIo, Write},
     },

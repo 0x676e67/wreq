@@ -2,9 +2,11 @@ use std::sync::Arc;
 
 use http::{Uri, Version};
 
+#[cfg(unix)]
+use crate::core::client::connect::UnixConnectOptions;
 use crate::{
     core::client::{
-        connect::{TcpConnectOptions, UnixConnectOptions},
+        connect::TcpConnectOptions,
         options::{RequestOptions, TransportOptions},
     },
     hash::HashMemo,
@@ -80,6 +82,7 @@ impl ConnectMeta {
     }
 
     /// Return a reference to the [`UnixConnectOptions`].
+    #[cfg(unix)]
     #[inline]
     pub(crate) fn unix_options(&self) -> UnixConnectOptions {
         self.options
