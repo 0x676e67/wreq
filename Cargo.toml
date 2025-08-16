@@ -19,7 +19,7 @@ rustdoc-args = ["--cfg", "docsrs"]
 targets = ["x86_64-unknown-linux-gnu"]
 
 [features]
-default = ["webpki-roots", "charset", "system-proxy"]
+default = ["webpki-roots"]
 
 # Enable support for decoding text.
 charset = ["dep:encoding_rs", "dep:mime"]
