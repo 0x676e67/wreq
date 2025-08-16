@@ -245,14 +245,13 @@ impl Service<ConnectRequest> for Connector {
 // ===== impl ConnectorService =====
 
 impl ConnectorService {
-    /// Automatically selects between a direct or proxied connection
-    /// based on the request and configured proxy matchers.
-    /// Applies a timeout if configured.
+    /// Automatically selects direct or proxy connection.
     async fn connect_auto(self, req: ConnectRequest) -> Result<Conn, BoxError> {
         debug!("starting new connection: {:?}", req.uri());
 
         let timeout = self.config.timeout;
 
+        // Determine if a proxy should be used for this request.
         let fut = async {
             let intercepted = req
                 .extra()
@@ -265,6 +264,7 @@ impl ConnectorService {
                         .find_map(|prox| prox.intercept(req.uri()))
                 });
 
+            // If a proxy is matched, connect via proxy; otherwise, connect directly.
             if let Some(intercepted) = intercepted {
                 self.connect_with_proxy(req, intercepted).await
             } else {
@@ -272,6 +272,7 @@ impl ConnectorService {
             }
         };
 
+        // Apply timeout if configured.
         if let Some(to) = timeout {
             tokio::time::timeout(to, fut)
                 .await
@@ -282,7 +283,6 @@ impl ConnectorService {
     }
 
     /// Establishes a direct connection to the target URI without using a proxy.
-    /// May perform a plain TCP or a TLS handshake depending on the URI scheme.
     async fn connect_direct(self, req: ConnectRequest, is_proxy: bool) -> Result<Conn, BoxError> {
         trace!("connect with maybe proxy: {:?}", is_proxy);
 
@@ -321,7 +321,6 @@ impl ConnectorService {
     }
 
     /// Establishes a connection through a specified proxy.
-    /// Supports both SOCKS and HTTP tunneling proxies.
     async fn connect_with_proxy(
         self,
         mut req: ConnectRequest,
@@ -439,9 +438,7 @@ impl ConnectorService {
                 // If the target URI is HTTPS, establish a CONNECT tunnel over the Unix socket,
                 // then upgrade the tunneled stream to TLS.
                 if uri.scheme() == Some(&Scheme::HTTPS) {
-                    // Use a dummy HTTP URI as the CONNECT target for the tunnel.
-                    // This ensures the HTTPS connector operates over the Unix socket
-                    // instead of attempting a direct TLS connection.
+                    // Use a dummy HTTP URI so the HTTPS connector works over the Unix socket.
                     let proxy_uri = Uri::from_static("http://localhost");
 
                     // Create a tunnel connector using the Unix socket and the HTTPS connector.
