@@ -12,9 +12,7 @@ use system_configuration::{
     },
 };
 
-use super::matcher::Builder;
-
-pub(super) fn with_system(builder: &mut Builder) {
+pub(super) fn with_system(builder: &mut super::matcher::Builder) {
     let store = SCDynamicStoreBuilder::new("").build();
 
     let proxies_map = if let Some(proxies_map) = store.get_proxies() {
