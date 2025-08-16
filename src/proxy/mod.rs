@@ -104,21 +104,28 @@ impl std::hash::Hash for Extra {
 
 // ===== Internal =====
 
+#[derive(Clone, Debug)]
+enum Intercept {
+    All(Url),
+    Http(Url),
+    Https(Url),
+    #[cfg(unix)]
+    Unix(Arc<Path>),
+}
+
+#[allow(clippy::large_enum_variant)]
+#[derive(Clone, PartialEq, Eq)]
+pub(crate) enum Intercepted {
+    Proxy(matcher::Intercept),
+    #[cfg(unix)]
+    Unix(Arc<Path>),
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub(crate) struct Matcher {
     inner: Box<matcher::Matcher>,
     maybe_has_http_auth: bool,
     maybe_has_http_custom_headers: bool,
-}
-
-/// Our own type, wrapping an `Intercept`, since we may have a few additional
-/// pieces attached thanks to `wreq`s extra proxy configuration.
-#[allow(clippy::large_enum_variant)]
-#[derive(Clone, PartialEq, Eq)]
-pub enum Intercepted {
-    Proxy(matcher::Intercept),
-    #[cfg(unix)]
-    Unix(Arc<Path>),
 }
 
 /// Trait used for converting into a proxy scheme. This trait supports
@@ -171,6 +178,8 @@ fn _implied_bounds() {
         prox(t);
     }
 }
+
+// ===== impl Proxy =====
 
 impl Proxy {
     /// Proxy all traffic to the passed Unix Domain Socket path.
@@ -435,6 +444,8 @@ impl Proxy {
     }
 }
 
+// ===== impl NoProxy =====
+
 impl NoProxy {
     /// Returns a new no-proxy configuration based on environment variables (or `None` if no
     /// variables are set) see [self::NoProxy::from_string()] for the string format
@@ -475,6 +486,8 @@ impl NoProxy {
         })
     }
 }
+
+// ===== impl Matcher =====
 
 impl Matcher {
     pub(crate) fn system() -> Self {
@@ -528,117 +541,120 @@ impl Matcher {
     }
 }
 
-#[derive(Clone, Debug)]
-enum Intercept {
-    All(Url),
-    Http(Url),
-    Https(Url),
-    #[cfg(unix)]
-    Unix(Arc<Path>),
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn uri(s: &str) -> Uri {
+        s.parse().unwrap()
+    }
+
+    fn intercepted_uri(p: &Matcher, s: &str) -> Uri {
+        match p.intercept(&s.parse().unwrap()).unwrap() {
+            Intercepted::Proxy(proxy) => proxy.uri().clone(),
+            _ => {
+                unreachable!("intercepted_uri should only be called with a Proxy matcher")
+            }
+        }
+    }
+
+    #[test]
+    fn test_http() {
+        let target = "http://example.domain/";
+        let p = Proxy::http(target).unwrap().into_matcher();
+
+        let http = "http://hyper.rs";
+        let other = "https://hyper.rs";
+
+        assert_eq!(intercepted_uri(&p, http), target);
+        assert!(p.intercept(&uri(other)).is_none());
+    }
+
+    #[test]
+    fn test_https() {
+        let target = "http://example.domain/";
+        let p = Proxy::https(target).unwrap().into_matcher();
+
+        let http = "http://hyper.rs";
+        let other = "https://hyper.rs";
+
+        assert!(p.intercept(&uri(http)).is_none());
+        assert_eq!(intercepted_uri(&p, other), target);
+    }
+
+    #[test]
+    fn test_all() {
+        let target = "http://example.domain/";
+        let p = Proxy::all(target).unwrap().into_matcher();
+
+        let http = "http://hyper.rs";
+        let https = "https://hyper.rs";
+        // no longer supported
+        //let other = "x-youve-never-heard-of-me-mr-proxy://hyper.rs";
+
+        assert_eq!(intercepted_uri(&p, http), target);
+        assert_eq!(intercepted_uri(&p, https), target);
+        //assert_eq!(intercepted_uri(&p, other), target);
+    }
+
+    #[test]
+    fn test_standard_with_custom_auth_header() {
+        let target = "http://example.domain/";
+        let p = Proxy::all(target)
+            .unwrap()
+            .custom_http_auth(http::HeaderValue::from_static("testme"))
+            .into_matcher();
+
+        let got = p.intercept(&uri("http://anywhere.local")).unwrap();
+        match got {
+            Intercepted::Proxy(got) => {
+                let auth = got.basic_auth().unwrap();
+                assert_eq!(auth, "testme");
+            }
+            _ => {
+                unreachable!("Expected a Proxy Intercepted");
+            }
+        }
+    }
+
+    #[test]
+    fn test_maybe_has_http_auth() {
+        let m = Proxy::all("https://letme:in@yo.local")
+            .unwrap()
+            .into_matcher();
+        assert!(!m.maybe_has_http_auth(), "https always tunnels");
+
+        let m = Proxy::all("http://letme:in@yo.local")
+            .unwrap()
+            .into_matcher();
+        assert!(m.maybe_has_http_auth(), "http forwards");
+    }
+
+    fn test_socks_proxy_default_port(url: &str, url2: &str, port: u16) {
+        let m = Proxy::all(url).unwrap().into_matcher();
+
+        let http = "http://hyper.rs";
+        let https = "https://hyper.rs";
+
+        assert_eq!(intercepted_uri(&m, http).port_u16(), Some(1080));
+        assert_eq!(intercepted_uri(&m, https).port_u16(), Some(1080));
+
+        // custom port
+        let m = Proxy::all(url2).unwrap().into_matcher();
+
+        assert_eq!(intercepted_uri(&m, http).port_u16(), Some(port));
+        assert_eq!(intercepted_uri(&m, https).port_u16(), Some(port));
+    }
+
+    #[test]
+    fn test_socks4_proxy_default_port() {
+        test_socks_proxy_default_port("socks4://example.com", "socks4://example.com:1234", 1234);
+        test_socks_proxy_default_port("socks4a://example.com", "socks4a://example.com:1234", 1234);
+    }
+
+    #[test]
+    fn test_socks5_proxy_default_port() {
+        test_socks_proxy_default_port("socks5://example.com", "socks5://example.com:1234", 1234);
+        test_socks_proxy_default_port("socks5h://example.com", "socks5h://example.com:1234", 1234);
+    }
 }
-
-// #[cfg(test)]
-// mod tests {
-//     use super::*;
-
-//     fn uri(s: &str) -> Uri {
-//         s.parse().unwrap()
-//     }
-
-//     fn intercepted_uri(p: &Matcher, s: &str) -> Uri {
-//         p.intercept(&s.parse().unwrap()).unwrap().uri().clone()
-//     }
-
-//     #[test]
-//     fn test_http() {
-//         let target = "http://example.domain/";
-//         let p = Proxy::http(target).unwrap().into_matcher();
-
-//         let http = "http://hyper.rs";
-//         let other = "https://hyper.rs";
-
-//         assert_eq!(intercepted_uri(&p, http), target);
-//         assert!(p.intercept(&uri(other)).is_none());
-//     }
-
-//     #[test]
-//     fn test_https() {
-//         let target = "http://example.domain/";
-//         let p = Proxy::https(target).unwrap().into_matcher();
-
-//         let http = "http://hyper.rs";
-//         let other = "https://hyper.rs";
-
-//         assert!(p.intercept(&uri(http)).is_none());
-//         assert_eq!(intercepted_uri(&p, other), target);
-//     }
-
-//     #[test]
-//     fn test_all() {
-//         let target = "http://example.domain/";
-//         let p = Proxy::all(target).unwrap().into_matcher();
-
-//         let http = "http://hyper.rs";
-//         let https = "https://hyper.rs";
-//         // no longer supported
-//         //let other = "x-youve-never-heard-of-me-mr-proxy://hyper.rs";
-
-//         assert_eq!(intercepted_uri(&p, http), target);
-//         assert_eq!(intercepted_uri(&p, https), target);
-//         //assert_eq!(intercepted_uri(&p, other), target);
-//     }
-
-//     #[test]
-//     fn test_standard_with_custom_auth_header() {
-//         let target = "http://example.domain/";
-//         let p = Proxy::all(target)
-//             .unwrap()
-//             .custom_http_auth(http::HeaderValue::from_static("testme"))
-//             .into_matcher();
-
-//         let got = p.intercept(&uri("http://anywhere.local")).unwrap();
-//         let auth = got.basic_auth().unwrap();
-//         assert_eq!(auth, "testme");
-//     }
-
-//     #[test]
-//     fn test_maybe_has_http_auth() {
-//         let m = Proxy::all("https://letme:in@yo.local")
-//             .unwrap()
-//             .into_matcher();
-//         assert!(!m.maybe_has_http_auth(), "https always tunnels");
-
-//         let m = Proxy::all("http://letme:in@yo.local")
-//             .unwrap()
-//             .into_matcher();
-//         assert!(m.maybe_has_http_auth(), "http forwards");
-//     }
-
-//     fn test_socks_proxy_default_port(url: &str, url2: &str, port: u16) {
-//         let m = Proxy::all(url).unwrap().into_matcher();
-
-//         let http = "http://hyper.rs";
-//         let https = "https://hyper.rs";
-
-//         assert_eq!(intercepted_uri(&m, http).port_u16(), Some(1080));
-//         assert_eq!(intercepted_uri(&m, https).port_u16(), Some(1080));
-
-//         // custom port
-//         let m = Proxy::all(url2).unwrap().into_matcher();
-
-//         assert_eq!(intercepted_uri(&m, http).port_u16(), Some(port));
-//         assert_eq!(intercepted_uri(&m, https).port_u16(), Some(port));
-//     }
-
-//     #[test]
-//     fn test_socks4_proxy_default_port() {
-//         test_socks_proxy_default_port("socks4://example.com", "socks4://example.com:1234", 1234);
-//         test_socks_proxy_default_port("socks4a://example.com", "socks4a://example.com:1234",
-// 1234);     }
-
-//     #[test]
-//     fn test_socks5_proxy_default_port() {
-//         test_socks_proxy_default_port("socks5://example.com", "socks5://example.com:1234", 1234);
-//         test_socks_proxy_default_port("socks5h://example.com", "socks5h://example.com:1234",
-// 1234);     }
-// }

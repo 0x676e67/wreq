@@ -1,3 +1,5 @@
+#![cfg(unix)]
+
 use std::{hash::BuildHasher, time::Duration};
 
 use http::Method;

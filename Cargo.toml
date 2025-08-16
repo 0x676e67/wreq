@@ -242,6 +242,11 @@ name = "form"
 path = "examples/form.rs"
 
 [[example]]
+name = "connect_via_lower_priority_tokio_runtime"
+path = "examples/connect_via_lower_priority_tokio_runtime.rs"
+required-features = ["tracing"]
+
+[[example]]
 name = "emulation_firefox"
 path = "examples/emulation_firefox.rs"
 required-features = ["gzip", "brotli", "zstd", "deflate", "tracing"]
@@ -277,11 +282,6 @@ path = "examples/request_with_emulation.rs"
 required-features = ["gzip", "brotli", "zstd", "deflate", "tracing"]
 
 [[example]]
-name = "connect_via_lower_priority_tokio_runtime"
-path = "examples/connect_via_lower_priority_tokio_runtime.rs"
-required-features = ["tracing"]
-
-[[example]]
 name = "request_with_local_address"
 path = "examples/request_with_local_address.rs"
 required-features = ["tracing"]
@@ -304,3 +304,7 @@ required-features = ["ws", "futures-util/std", "tracing"]
 [[example]]
 name = "keylog"
 path = "examples/keylog.rs"
+
+[[example]]
+name = "unix_socket"
+path = "examples/unix_socket.rs"
