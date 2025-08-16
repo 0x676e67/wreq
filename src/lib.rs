@@ -255,14 +255,14 @@
 //! - **deflate**: Provides response body deflate decompression.
 //! - **json**: Provides serialization and deserialization for JSON bodies.
 //! - **multipart**: Provides functionality for multipart forms.
-//! - **charset** *(enabled by default)*: Improved support for decoding text.
+//! - **charset**: Improved support for decoding text.
 //! - **stream**: Adds support for `futures::Stream`.
 //! - **socks**: Provides SOCKS5 and SOCKS4 proxy support.
 //! - **ws**: Provides websocket support.
 //! - **hickory-dns**: Enables a hickory-dns async resolver instead of default threadpool using
 //!   `getaddrinfo`.
 //! - **webpki-roots** *(enabled by default)*: Use the webpki-roots crate for root certificates.
-//! - **system-proxy** *(enabled by default)*: Enable system proxy support.
+//! - **system-proxy**: Enable system proxy support.
 //! - **tracing**: Enable tracing logging support.
 //!
 //! [client]: ./struct.Client.html
