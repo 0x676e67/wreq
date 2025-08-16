@@ -7,9 +7,9 @@ mod win;
 
 pub(crate) mod matcher;
 
+use std::error::Error as StdError;
 #[cfg(unix)]
-use std::path::Path;
-use std::{error::Error as StdError, sync::Arc};
+use std::{path::Path, sync::Arc};
 
 use http::{HeaderMap, Uri, header::HeaderValue, uri::Scheme};
 
@@ -291,6 +291,7 @@ impl Proxy {
                 let header = crate::util::basic_auth(username, Some(password));
                 self.extra.auth = Some(header);
             }
+            #[cfg(unix)]
             Intercept::Unix(_) => {
                 // For Unix sockets, we don't set the auth header.
                 // This is a no-op, but keeps the API consistent.
@@ -339,6 +340,7 @@ impl Proxy {
             Intercept::All(_) | Intercept::Http(_) | Intercept::Https(_) => {
                 self.extra.misc = Some(headers);
             }
+            #[cfg(unix)]
             Intercept::Unix(_) => {
                 // For Unix sockets, we don't set custom headers.
                 // This is a no-op, but keeps the API consistent.
@@ -412,6 +414,7 @@ impl Proxy {
                     .no(no_proxy.as_ref().map(|n| n.inner.as_ref()).unwrap_or(""))
                     .build(extra)
             }
+            #[cfg(unix)]
             Intercept::Unix(unix) => {
                 // Unix sockets don't use HTTP auth
                 maybe_has_http_auth = false;
