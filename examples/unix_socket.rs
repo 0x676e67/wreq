@@ -25,3 +25,6 @@ async fn main() -> wreq::Result<()> {
 
     Ok(())
 }
+
+#[cfg(not(unix))]
+fn main() {}
