@@ -3,9 +3,6 @@ mod connector;
 mod tls_info;
 mod verbose;
 
-#[cfg(unix)]
-pub(crate) mod uds;
-
 pub(super) use self::{conn::Conn, connector::Connector, tls_info::TlsInfoFactory};
 use crate::core::{
     client::{ConnectRequest, connect::Connection},

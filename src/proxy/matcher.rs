@@ -12,11 +12,13 @@
 //! An [`Intercept`] includes the destination for the proxy, and any parsed
 //! authentication to be used.
 
-use std::{fmt, net::IpAddr};
+#[cfg(unix)]
+use std::path::Path;
+use std::{net::IpAddr, sync::Arc};
 
 use bytes::Bytes;
 use http::{
-    Uri,
+    HeaderMap, Uri,
     header::HeaderValue,
     uri::{Authority, Scheme},
 };
@@ -27,6 +29,7 @@ use percent_encoding::percent_decode_str;
 pub use self::builder::IntoValue;
 #[cfg(not(docsrs))]
 use self::builder::IntoValue;
+use super::{Extra, Intercepted};
 
 /// A proxy matcher, usually built from environment variables.
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
@@ -34,15 +37,18 @@ pub struct Matcher {
     http: Option<Intercept>,
     https: Option<Intercept>,
     no: NoProxy,
+    #[cfg(unix)]
+    unix_socket: Option<Arc<Path>>,
 }
 
 /// A matched proxy,
 ///
 /// This is returned by a matcher if a proxy should be used.
-#[derive(Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Intercept {
     uri: Uri,
     auth: Auth,
+    extra: Extra,
 }
 
 /// A builder to create a [`Matcher`].
@@ -50,14 +56,16 @@ pub struct Intercept {
 /// Construct with [`Matcher::builder()`].
 #[derive(Default)]
 pub struct Builder {
-    is_cgi: bool,
-    all: String,
-    http: String,
-    https: String,
-    no: String,
+    pub(super) is_cgi: bool,
+    pub(super) all: String,
+    pub(super) http: String,
+    pub(super) https: String,
+    pub(super) no: String,
+    #[cfg(unix)]
+    pub(super) unix_socket: Option<Arc<Path>>,
 }
 
-#[derive(Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 enum Auth {
     Empty,
     Basic(HeaderValue),
@@ -99,7 +107,7 @@ impl Matcher {
     /// use `from_env` if you do not want the values to change based on an
     /// enabled feature.
     pub fn from_system() -> Self {
-        Builder::from_system().build()
+        Builder::from_system().build(Extra::default())
     }
 
     /// Start a builder to configure a matcher.
@@ -111,18 +119,23 @@ impl Matcher {
     ///
     /// If the proxy rules match the destination, a new `Uri` will be returned
     /// to connect to.
-    pub fn intercept(&self, dst: &Uri) -> Option<Intercept> {
+    pub fn intercept(&self, dst: &Uri) -> Option<Intercepted> {
+        // if unix sockets are configured, check them first
+        if let Some(unix_socket) = &self.unix_socket {
+            return Some(Intercepted::Unix(unix_socket.clone()));
+        }
+
         // TODO(perf): don't need to check `no` if below doesn't match...
         if self.no.contains(dst.host()?) {
             return None;
         }
 
         if dst.scheme() == Some(&Scheme::HTTP) {
-            return self.http.clone();
+            return self.http.clone().map(Intercepted::Proxy);
         }
 
         if dst.scheme() == Some(&Scheme::HTTPS) {
-            return self.https.clone();
+            return self.https.clone().map(Intercepted::Proxy);
         }
 
         None
@@ -132,30 +145,17 @@ impl Matcher {
 // ===== impl Intercept =====
 
 impl Intercept {
-    /// Get the [`http::Uri`] for the target proxy.
-    pub fn uri(&self) -> &Uri {
+    #[inline]
+    pub(crate) fn uri(&self) -> &Uri {
         &self.uri
     }
 
-    /// Get any configured basic authorization.
-    ///
-    /// This should usually be used with a `Proxy-Authorization` header, to
-    /// send in Basic format.
-    ///
-    /// # Example
-    ///
-    /// ```rust
-    /// # use hyper_util::client::proxy::matcher::Matcher;
-    /// # let uri = http::Uri::from_static("https://hyper.rs");
-    /// let m = Matcher::builder()
-    ///     .all("https://Aladdin:opensesame@localhost:8887")
-    ///     .build();
-    ///
-    /// let proxy = m.intercept(&uri).expect("example");
-    /// let auth = proxy.basic_auth().expect("example");
-    /// assert_eq!(auth, "Basic QWxhZGRpbjpvcGVuc2VzYW1l");
-    /// ```
-    pub fn basic_auth(&self) -> Option<&HeaderValue> {
+    #[inline]
+    pub(crate) fn basic_auth(&self) -> Option<&HeaderValue> {
+        if let Some(ref val) = self.extra.auth {
+            return Some(val);
+        }
+
         if let Auth::Basic(ref val) = self.auth {
             Some(val)
         } else {
@@ -163,40 +163,22 @@ impl Intercept {
         }
     }
 
-    /// Get any configured raw authorization.
-    ///
-    /// If not detected as another scheme, this is the username and password
-    /// that should be sent with whatever protocol the proxy handshake uses.
-    ///
-    /// # Example
-    ///
-    /// ```rust
-    /// # use hyper_util::client::proxy::matcher::Matcher;
-    /// # let uri = http::Uri::from_static("https://hyper.rs");
-    /// let m = Matcher::builder()
-    ///     .all("socks5h://Aladdin:opensesame@localhost:8887")
-    ///     .build();
-    ///
-    /// let proxy = m.intercept(&uri).expect("example");
-    /// let auth = proxy.raw_auth().expect("example");
-    /// assert_eq!(auth, ("Aladdin", "opensesame"));
-    /// ```
+    #[inline]
+    pub(crate) fn custom_headers(&self) -> Option<&HeaderMap> {
+        if let Some(ref val) = self.extra.misc {
+            return Some(val);
+        }
+        None
+    }
+
+    #[inline]
     #[cfg(feature = "socks")]
-    pub fn raw_auth(&self) -> Option<(Bytes, Bytes)> {
+    pub(crate) fn raw_auth(&self) -> Option<(Bytes, Bytes)> {
         if let Auth::Raw(ref u, ref p) = self.auth {
             Some((u.clone(), p.clone()))
         } else {
             None
         }
-    }
-}
-
-impl fmt::Debug for Intercept {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Intercept")
-            .field("uri", &self.uri)
-            // dont output auth, its sensitive
-            .finish()
     }
 }
 
@@ -210,6 +192,8 @@ impl Builder {
             http: get_first_env(&["HTTP_PROXY", "http_proxy"]),
             https: get_first_env(&["HTTPS_PROXY", "https_proxy"]),
             no: get_first_env(&["NO_PROXY", "no_proxy"]),
+            #[cfg(unix)]
+            unix_socket: None,
         }
     }
 
@@ -218,10 +202,10 @@ impl Builder {
         let mut builder = Self::from_env();
 
         #[cfg(all(target_os = "macos", feature = "system-proxy"))]
-        mac::with_system(&mut builder);
+        super::mac::with_system(&mut builder);
 
         #[cfg(all(windows, feature = "system-proxy"))]
-        win::with_system(&mut builder);
+        super::win::with_system(&mut builder);
 
         builder
     }
@@ -279,22 +263,50 @@ impl Builder {
         self
     }
 
+    // / Set the unix socket target proxy for all destinations.
+    #[cfg(unix)]
+    pub fn unix<S>(mut self, val: S) -> Self
+    where
+        S: super::uds::IntoUnixSocket,
+    {
+        self.unix_socket = Some(val.unix_socket());
+        self
+    }
+
     /// Construct a [`Matcher`] using the configured values.
-    pub fn build(self) -> Matcher {
+    pub(super) fn build(self, extra: Extra) -> Matcher {
         if self.is_cgi {
             return Matcher {
                 http: None,
                 https: None,
                 no: NoProxy::empty(),
+                #[cfg(unix)]
+                unix_socket: None,
             };
         }
 
-        let all = parse_env_uri(&self.all);
+        let mut all = parse_env_uri(&self.all);
+        let mut http = parse_env_uri(&self.http);
+        let mut https = parse_env_uri(&self.https);
+
+        if let Some(http) = http.as_mut() {
+            http.extra = extra.clone();
+        }
+        if let Some(https) = https.as_mut() {
+            https.extra = extra.clone();
+        }
+        if http.is_none() || https.is_none() {
+            if let Some(all) = all.as_mut() {
+                all.extra = extra;
+            }
+        }
 
         Matcher {
-            http: parse_env_uri(&self.http).or_else(|| all.clone()),
-            https: parse_env_uri(&self.https).or(all),
+            http: http.or_else(|| all.clone()),
+            https: https.or(all),
             no: NoProxy::from_string(&self.no),
+            #[cfg(unix)]
+            unix_socket: self.unix_socket,
         }
     }
 }
@@ -366,7 +378,11 @@ fn parse_env_uri(val: &str) -> Option<Intercept> {
 
     let uri = builder.build().ok()?;
 
-    Some(Intercept { uri, auth })
+    Some(Intercept {
+        uri,
+        auth,
+        extra: Extra::default(),
+    })
 }
 
 impl NoProxy {
@@ -519,129 +535,6 @@ mod builder {
     }
 }
 
-#[cfg(all(target_os = "macos", feature = "system-proxy"))]
-mod mac {
-    use system_configuration::{
-        core_foundation::{
-            base::CFType,
-            dictionary::CFDictionary,
-            number::CFNumber,
-            string::{CFString, CFStringRef},
-        },
-        dynamic_store::SCDynamicStoreBuilder,
-        sys::schema_definitions::{
-            kSCPropNetProxiesHTTPEnable, kSCPropNetProxiesHTTPPort, kSCPropNetProxiesHTTPProxy,
-            kSCPropNetProxiesHTTPSEnable, kSCPropNetProxiesHTTPSPort, kSCPropNetProxiesHTTPSProxy,
-        },
-    };
-
-    pub(super) fn with_system(builder: &mut super::Builder) {
-        let store = SCDynamicStoreBuilder::new("").build();
-
-        let proxies_map = if let Some(proxies_map) = store.get_proxies() {
-            proxies_map
-        } else {
-            return;
-        };
-
-        if builder.http.is_empty() {
-            let http_proxy_config = parse_setting_from_dynamic_store(
-                &proxies_map,
-                unsafe { kSCPropNetProxiesHTTPEnable },
-                unsafe { kSCPropNetProxiesHTTPProxy },
-                unsafe { kSCPropNetProxiesHTTPPort },
-            );
-            if let Some(http) = http_proxy_config {
-                builder.http = http;
-            }
-        }
-
-        if builder.https.is_empty() {
-            let https_proxy_config = parse_setting_from_dynamic_store(
-                &proxies_map,
-                unsafe { kSCPropNetProxiesHTTPSEnable },
-                unsafe { kSCPropNetProxiesHTTPSProxy },
-                unsafe { kSCPropNetProxiesHTTPSPort },
-            );
-
-            if let Some(https) = https_proxy_config {
-                builder.https = https;
-            }
-        }
-    }
-
-    fn parse_setting_from_dynamic_store(
-        proxies_map: &CFDictionary<CFString, CFType>,
-        enabled_key: CFStringRef,
-        host_key: CFStringRef,
-        port_key: CFStringRef,
-    ) -> Option<String> {
-        let proxy_enabled = proxies_map
-            .find(enabled_key)
-            .and_then(|flag| flag.downcast::<CFNumber>())
-            .and_then(|flag| flag.to_i32())
-            .unwrap_or(0)
-            == 1;
-
-        if proxy_enabled {
-            let proxy_host = proxies_map
-                .find(host_key)
-                .and_then(|host| host.downcast::<CFString>())
-                .map(|host| host.to_string());
-            let proxy_port = proxies_map
-                .find(port_key)
-                .and_then(|port| port.downcast::<CFNumber>())
-                .and_then(|port| port.to_i32());
-
-            return match (proxy_host, proxy_port) {
-                (Some(proxy_host), Some(proxy_port)) => Some(format!("{proxy_host}:{proxy_port}")),
-                (Some(proxy_host), None) => Some(proxy_host),
-                (None, Some(_)) => None,
-                (None, None) => None,
-            };
-        }
-
-        None
-    }
-}
-
-#[cfg(all(windows, feature = "system-proxy"))]
-mod win {
-    pub(super) fn with_system(builder: &mut super::Builder) {
-        let settings = if let Ok(settings) = windows_registry::CURRENT_USER
-            .open("Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings")
-        {
-            settings
-        } else {
-            return;
-        };
-
-        if settings.get_u32("ProxyEnable").unwrap_or(0) == 0 {
-            return;
-        }
-
-        if let Ok(val) = settings.get_string("ProxyServer") {
-            if builder.http.is_empty() {
-                builder.http = val.clone();
-            }
-            if builder.https.is_empty() {
-                builder.https = val;
-            }
-        }
-
-        if builder.no.is_empty() {
-            if let Ok(val) = settings.get_string("ProxyOverride") {
-                builder.no = val
-                    .split(';')
-                    .map(|s| s.trim())
-                    .collect::<Vec<&str>>()
-                    .join(",")
-                    .replace("*.", "");
-            }
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -727,11 +620,16 @@ mod tests {
         ($($n:ident = $v:expr,)*) => ({Builder {
             $($n: $v.into(),)*
             ..Builder::default()
-        }.build()});
+        }.build(Extra::default())});
     }
 
     fn intercept(p: &Matcher, u: &str) -> Intercept {
-        p.intercept(&u.parse().unwrap()).unwrap()
+        match p.intercept(&u.parse().unwrap()).unwrap() {
+            Intercepted::Proxy(intercept) => intercept,
+            Intercepted::Unix(path) => {
+                unreachable!("should not intercept unix socket: {path:?}")
+            }
+        }
     }
 
     #[test]
@@ -805,7 +703,7 @@ mod tests {
         let mut builder = Matcher::builder();
         builder.is_cgi = true;
         builder.http = "http://never.gonna.let.you.go".into();
-        let m = builder.build();
+        let m = builder.build(Extra::default());
 
         assert!(m.intercept(&"http://rick.roll".parse().unwrap()).is_none());
     }

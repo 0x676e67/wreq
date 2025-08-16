@@ -2,8 +2,6 @@ use std::sync::Arc;
 
 use http::{Uri, Version};
 
-#[cfg(unix)]
-use crate::core::client::connect::UnixConnectOptions;
 use crate::{
     core::client::{
         connect::TcpConnectOptions,
@@ -19,32 +17,32 @@ use crate::{
 /// [`Identifier`] serves as the unique key for a connection, representing all parameters
 /// that define its identity (URI, protocol, proxy, TCP/TLS options). It is used for pooling,
 /// caching, and tracking connections throughout their entire lifecycle.
-pub(crate) type Identifier = Arc<HashMemo<ConnectMeta>>;
+pub(crate) type Identifier = Arc<HashMemo<ConnectExtra>>;
 
 /// Metadata describing a reusable network connection.
 ///
-/// [`ConnectMeta`] holds connection-specific parameters such as the target URI, ALPN protocol,
+/// [`ConnectExtra`] holds connection-specific parameters such as the target URI, ALPN protocol,
 /// proxy settings, and optional TCP/TLS options. Used for connection
 #[must_use]
 #[derive(Debug, Clone, Hash, Eq, PartialEq)]
-pub(crate) struct ConnectMeta {
+pub(crate) struct ConnectExtra {
     /// Target URI.
     uri: Uri,
     /// Request options.
     options: Option<RequestOptions>,
 }
 
-// ===== impl ConnectMeta =====
+// ===== impl ConnectExtra =====
 
-impl ConnectMeta {
-    /// Create a new [`ConnectMeta`] with the given URI and options.
+impl ConnectExtra {
+    /// Create a new [`ConnectExtra`] with the given URI and options.
     #[inline]
-    pub(super) fn new(uri: Uri, options: Option<RequestOptions>) -> Self {
+    pub fn new(uri: Uri, options: Option<RequestOptions>) -> Self {
         Self { uri, options }
     }
 
     /// Return the negotiated [`AlpnProtocol`].
-    pub(crate) fn alpn_protocol(&self) -> Option<AlpnProtocol> {
+    pub fn alpn_protocol(&self) -> Option<AlpnProtocol> {
         match self
             .options
             .as_ref()
@@ -60,7 +58,7 @@ impl ConnectMeta {
 
     /// Return a reference to the [`ProxyMacher`].
     #[inline]
-    pub(crate) fn proxy_matcher(&self) -> Option<&ProxyMacher> {
+    pub fn proxy_matcher(&self) -> Option<&ProxyMacher> {
         self.options
             .as_ref()
             .and_then(RequestOptions::proxy_matcher)
@@ -68,7 +66,7 @@ impl ConnectMeta {
 
     /// Return a reference to the [`TlsOptions`].
     #[inline]
-    pub(crate) fn tls_options(&self) -> Option<&TlsOptions> {
+    pub fn tls_options(&self) -> Option<&TlsOptions> {
         self.options
             .as_ref()
             .map(RequestOptions::transport_opts)
@@ -77,17 +75,7 @@ impl ConnectMeta {
 
     /// Return a reference to the [`TcpConnectOptions`].
     #[inline]
-    pub(crate) fn tcp_options(&self) -> Option<&TcpConnectOptions> {
+    pub fn tcp_options(&self) -> Option<&TcpConnectOptions> {
         self.options.as_ref().map(RequestOptions::tcp_connect_opts)
-    }
-
-    /// Return a reference to the [`UnixConnectOptions`].
-    #[cfg(unix)]
-    #[inline]
-    pub(crate) fn unix_options(&self) -> UnixConnectOptions {
-        self.options
-            .as_ref()
-            .map(RequestOptions::unix_connect_opts)?
-            .clone()
     }
 }

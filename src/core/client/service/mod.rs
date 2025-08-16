@@ -1,6 +1,6 @@
 #[macro_use]
 pub mod error;
-pub mod meta;
+pub mod extra;
 mod util;
 
 use std::{
@@ -20,7 +20,7 @@ use tower::util::Oneshot;
 
 use self::{
     error::{ClientConnectError, Error, ErrorKind, TrySendError},
-    meta::{ConnectMeta, Identifier},
+    extra::{ConnectExtra, Identifier},
 };
 use super::pool::Ver;
 use crate::{
@@ -52,34 +52,45 @@ type BoxSendFuture = Pin<Box<dyn Future<Output = ()> + Send>>;
 #[derive(Clone)]
 pub struct ConnectRequest {
     uri: Uri,
-    extra: Arc<HashMemo<ConnectMeta>>,
+    extra: Arc<HashMemo<ConnectExtra>>,
 }
 
 // ===== impl ConnectRequest =====
 
 impl ConnectRequest {
+    /// Create a new [`ConnectRequest`] with the given URI and options.
+    #[inline]
+    fn new(uri: Uri, options: Option<RequestOptions>) -> ConnectRequest {
+        let extra = ConnectExtra::new(uri.clone(), options);
+        let extra = HashMemo::with_hasher(extra, HASHER);
+        ConnectRequest {
+            uri,
+            extra: Arc::new(extra),
+        }
+    }
+
     /// Returns a reference to the [`Uri`].
     #[inline]
-    pub(crate) fn uri(&self) -> &Uri {
+    pub fn uri(&self) -> &Uri {
         &self.uri
     }
 
     /// Returns a mutable reference to the [`Uri`].
     #[inline]
-    pub(crate) fn uri_mut(&mut self) -> &mut Uri {
+    pub fn uri_mut(&mut self) -> &mut Uri {
         &mut self.uri
-    }
-
-    /// Returns the [`ConnectMeta`] connection parameters (ALPN, proxy, TCP/TLS options).
-    #[inline]
-    pub(crate) fn metadata(&self) -> &ConnectMeta {
-        self.extra.as_ref().as_ref()
     }
 
     /// Returns a unique [`Identifier`].
     #[inline]
     pub(crate) fn identify(&self) -> Identifier {
         self.extra.clone()
+    }
+
+    /// Returns the [`ConnectExtra`] connection extra.
+    #[inline]
+    pub(crate) fn extra(&self) -> &ConnectExtra {
+        self.extra.as_ref().as_ref()
     }
 }
 
@@ -169,13 +180,7 @@ where
             }
         }
 
-        let connect_meta = ConnectMeta::new(uri.clone(), options);
-        let extra = Arc::new(HashMemo::with_hasher(connect_meta, HASHER));
-        let connect_req = ConnectRequest {
-            uri: uri.clone(),
-            extra,
-        };
-
+        let connect_req = ConnectRequest::new(uri, options);
         ResponseFuture::new(this.send_request(req, connect_req))
     }
 
@@ -425,7 +430,7 @@ where
 
         let h1_builder = self.h1_builder.clone();
         let h2_builder = self.h2_builder.clone();
-        let ver = match req.metadata().alpn_protocol() {
+        let ver = match req.extra().alpn_protocol() {
             Some(AlpnProtocol::HTTP2) => Ver::Http2,
             _ => self.config.ver,
         };

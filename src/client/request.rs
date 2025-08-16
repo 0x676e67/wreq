@@ -9,8 +9,6 @@ use std::{
 use http::{Extensions, Request as HttpRequest, Uri, Version, request::Parts};
 use serde::Serialize;
 
-#[cfg(unix)]
-use super::http::connect::uds;
 #[cfg(any(
     feature = "gzip",
     feature = "zstd",
@@ -588,19 +586,6 @@ impl RequestBuilder {
             req.config_mut::<RequestLevelOptions>()
                 .tcp_connect_opts_mut()
                 .set_interface(interface);
-        }
-        self
-    }
-
-    /// Sets the request to use this Unix socket.
-    #[cfg(unix)]
-    pub fn unix_socket<P>(mut self, path: P) -> RequestBuilder
-    where
-        P: uds::IntoUnixSocket,
-    {
-        if let Ok(ref mut req) = self.request {
-            *req.config_mut::<RequestLevelOptions>()
-                .unix_connect_opts_mut() = Some(path.unix_socket());
         }
         self
     }

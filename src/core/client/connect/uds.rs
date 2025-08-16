@@ -11,10 +11,10 @@ use tokio::net::UnixStream;
 use super::{Connected, Connection};
 use crate::core::rt::TokioIo;
 
-pub type UnixConnectOptions = Option<Arc<Path>>;
 type ConnectResult = Result<TokioIo<UnixStream>, std::io::Error>;
 type BoxConnecting = Pin<Box<dyn Future<Output = ConnectResult> + Send>>;
 
+#[derive(Clone)]
 pub struct UnixConnector(pub(crate) Arc<Path>);
 
 impl tower::Service<Uri> for UnixConnector {
@@ -37,6 +37,7 @@ impl tower::Service<Uri> for UnixConnector {
 }
 
 impl Connection for UnixStream {
+    #[inline]
     fn connected(&self) -> Connected {
         Connected::new()
     }
