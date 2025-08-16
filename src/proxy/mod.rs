@@ -113,9 +113,10 @@ pub(crate) struct Matcher {
 
 /// Our own type, wrapping an `Intercept`, since we may have a few additional
 /// pieces attached thanks to `wreq`s extra proxy configuration.
-#[derive(Clone, PartialEq, Eq, Hash)]
+#[allow(clippy::large_enum_variant)]
+#[derive(Clone, PartialEq, Eq)]
 pub enum Intercepted {
-    Proxy(Box<matcher::Intercept>),
+    Proxy(matcher::Intercept),
     #[cfg(unix)]
     Unix(Arc<Path>),
 }
@@ -187,8 +188,8 @@ impl Proxy {
     /// # fn main() {}
     /// ```
     #[cfg(unix)]
-    pub fn unix<P: uds::IntoUnixSocket>(unix_socket: P) -> crate::Result<Proxy> {
-        Ok(Proxy::new(Intercept::Unix(unix_socket.unix_socket())))
+    pub fn unix<P: uds::IntoUnixSocket>(unix: P) -> crate::Result<Proxy> {
+        Ok(Proxy::new(Intercept::Unix(unix.unix_socket())))
     }
 
     /// Proxy all HTTP traffic to the passed URL.
@@ -411,13 +412,13 @@ impl Proxy {
                     .no(no_proxy.as_ref().map(|n| n.inner.as_ref()).unwrap_or(""))
                     .build(extra)
             }
-            Intercept::Unix(unix_socket) => {
+            Intercept::Unix(unix) => {
                 // Unix sockets don't use HTTP auth
                 maybe_has_http_auth = false;
                 // Unix sockets don't use custom headers
                 maybe_has_http_custom_headers = false;
                 matcher::Matcher::builder()
-                    .unix(unix_socket)
+                    .unix(unix)
                     .no(no_proxy.as_ref().map(|n| n.inner.as_ref()).unwrap_or(""))
                     .build(extra)
             }

@@ -267,7 +267,7 @@ impl ConnectorService {
 
             if let Some(intercepted) = intercepted {
                 match intercepted {
-                    Intercepted::Proxy(intercept) => self.connect_with_proxy(req, *intercept).await,
+                    Intercepted::Proxy(intercept) => self.connect_with_proxy(req, intercept).await,
                     #[cfg(unix)]
                     Intercepted::Unix(unix_socket) => {
                         self.connect_with_unix_socket(req, unix_socket).await

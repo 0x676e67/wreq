@@ -12,9 +12,9 @@
 //! An [`Intercept`] includes the destination for the proxy, and any parsed
 //! authentication to be used.
 
+use std::net::IpAddr;
 #[cfg(unix)]
-use std::path::Path;
-use std::{net::IpAddr, sync::Arc};
+use std::{path::Path, sync::Arc};
 
 use bytes::Bytes;
 use http::{
@@ -32,13 +32,13 @@ use self::builder::IntoValue;
 use super::{Extra, Intercepted};
 
 /// A proxy matcher, usually built from environment variables.
-#[derive(Debug, Clone, Hash, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Matcher {
     http: Option<Intercept>,
     https: Option<Intercept>,
     no: NoProxy,
     #[cfg(unix)]
-    unix_socket: Option<Arc<Path>>,
+    unix: Option<Arc<Path>>,
 }
 
 /// A matched proxy,
@@ -62,7 +62,7 @@ pub struct Builder {
     pub(super) https: String,
     pub(super) no: String,
     #[cfg(unix)]
-    pub(super) unix_socket: Option<Arc<Path>>,
+    pub(super) unix: Option<Arc<Path>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -121,8 +121,9 @@ impl Matcher {
     /// to connect to.
     pub fn intercept(&self, dst: &Uri) -> Option<Intercepted> {
         // if unix sockets are configured, check them first
-        if let Some(unix_socket) = &self.unix_socket {
-            return Some(Intercepted::Unix(unix_socket.clone()));
+        #[cfg(unix)]
+        if let Some(unix) = &self.unix {
+            return Some(Intercepted::Unix(unix.clone()));
         }
 
         // TODO(perf): don't need to check `no` if below doesn't match...
@@ -131,11 +132,11 @@ impl Matcher {
         }
 
         if dst.scheme() == Some(&Scheme::HTTP) {
-            return self.http.clone().map(Box::new).map(Intercepted::Proxy);
+            return self.http.clone().map(Intercepted::Proxy);
         }
 
         if dst.scheme() == Some(&Scheme::HTTPS) {
-            return self.https.clone().map(Box::new).map(Intercepted::Proxy);
+            return self.https.clone().map(Intercepted::Proxy);
         }
 
         None
@@ -193,7 +194,7 @@ impl Builder {
             https: get_first_env(&["HTTPS_PROXY", "https_proxy"]),
             no: get_first_env(&["NO_PROXY", "no_proxy"]),
             #[cfg(unix)]
-            unix_socket: None,
+            unix: None,
         }
     }
 
@@ -269,7 +270,7 @@ impl Builder {
     where
         S: super::uds::IntoUnixSocket,
     {
-        self.unix_socket = Some(val.unix_socket());
+        self.unix = Some(val.unix_socket());
         self
     }
 
@@ -281,7 +282,7 @@ impl Builder {
                 https: None,
                 no: NoProxy::empty(),
                 #[cfg(unix)]
-                unix_socket: None,
+                unix: None,
             };
         }
 
@@ -306,7 +307,7 @@ impl Builder {
             https: https.or(all),
             no: NoProxy::from_string(&self.no),
             #[cfg(unix)]
-            unix_socket: self.unix_socket,
+            unix: self.unix,
         }
     }
 }
@@ -625,7 +626,7 @@ mod tests {
 
     fn intercept(p: &Matcher, u: &str) -> Intercept {
         match p.intercept(&u.parse().unwrap()).unwrap() {
-            Intercepted::Proxy(intercept) => *intercept,
+            Intercepted::Proxy(intercept) => intercept,
             Intercepted::Unix(path) => {
                 unreachable!("should not intercept unix socket: {path:?}")
             }
