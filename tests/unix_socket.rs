@@ -1,4 +1,4 @@
-use std::{fs, time::Duration};
+use std::{hash::BuildHasher, time::Duration};
 
 use http::Method;
 use http_body_util::Full;
@@ -10,12 +10,20 @@ use hyper_util::{
 use tokio::{net::UnixListener, task};
 use wreq::{Client, Proxy};
 
+fn random_sock_path() -> std::path::PathBuf {
+    let mut buf = std::env::temp_dir();
+    // libstd uses system random to create each one
+    let rng = std::collections::hash_map::RandomState::new();
+    let n = rng.hash_one("uds-sock");
+    buf.push(format!("test-uds-sock-{}", n));
+    buf
+}
+
 #[tokio::test]
 async fn test_unix_socket() {
-    let sock_path = "/tmp/test_wreq.sock";
-    let _ = fs::remove_file(sock_path);
+    let sock_path = random_sock_path();
 
-    let listener = UnixListener::bind(sock_path).unwrap();
+    let listener = UnixListener::bind(&sock_path).unwrap();
     let server = async move {
         loop {
             let (stream, _) = listener.accept().await.unwrap();
@@ -48,10 +56,9 @@ async fn test_unix_socket() {
 
 #[tokio::test]
 async fn test_proxy_unix_socket() {
-    let sock_path = "/tmp/test_wreq.sock";
-    let _ = fs::remove_file(sock_path);
+    let sock_path = random_sock_path();
 
-    let listener = UnixListener::bind(sock_path).unwrap();
+    let listener = UnixListener::bind(&sock_path).unwrap();
     let server = async move {
         loop {
             let (stream, _) = listener.accept().await.unwrap();

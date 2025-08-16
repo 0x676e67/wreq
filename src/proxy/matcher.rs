@@ -131,11 +131,11 @@ impl Matcher {
         }
 
         if dst.scheme() == Some(&Scheme::HTTP) {
-            return self.http.clone().map(Intercepted::Proxy);
+            return self.http.clone().map(Box::new).map(Intercepted::Proxy);
         }
 
         if dst.scheme() == Some(&Scheme::HTTPS) {
-            return self.https.clone().map(Intercepted::Proxy);
+            return self.https.clone().map(Box::new).map(Intercepted::Proxy);
         }
 
         None
@@ -625,7 +625,7 @@ mod tests {
 
     fn intercept(p: &Matcher, u: &str) -> Intercept {
         match p.intercept(&u.parse().unwrap()).unwrap() {
-            Intercepted::Proxy(intercept) => intercept,
+            Intercepted::Proxy(intercept) => *intercept,
             Intercepted::Unix(path) => {
                 unreachable!("should not intercept unix socket: {path:?}")
             }

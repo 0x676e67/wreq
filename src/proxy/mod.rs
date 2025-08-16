@@ -11,8 +11,6 @@ pub(crate) mod matcher;
 use std::path::Path;
 use std::{error::Error as StdError, sync::Arc};
 
-#[cfg(feature = "socks")]
-use bytes::Bytes;
 use http::{HeaderMap, Uri, header::HeaderValue, uri::Scheme};
 
 use crate::{
@@ -117,7 +115,7 @@ pub(crate) struct Matcher {
 /// pieces attached thanks to `wreq`s extra proxy configuration.
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub enum Intercepted {
-    Proxy(matcher::Intercept),
+    Proxy(Box<matcher::Intercept>),
     #[cfg(unix)]
     Unix(Arc<Path>),
 }
@@ -508,26 +506,20 @@ impl Matcher {
     }
 
     pub(crate) fn http_non_tunnel_basic_auth(&self, dst: &Uri) -> Option<HeaderValue> {
-        if let Some(proxy) = self.intercept(dst) {
-            if let Intercepted::Proxy(proxy) = proxy {
-                if proxy.uri().scheme() == Some(&Scheme::HTTP) {
-                    return proxy.basic_auth().cloned();
-                }
+        if let Some(Intercepted::Proxy(proxy)) = self.intercept(dst) {
+            if proxy.uri().scheme() == Some(&Scheme::HTTP) {
+                return proxy.basic_auth().cloned();
             }
         }
-
         None
     }
 
     pub(crate) fn http_non_tunnel_custom_headers(&self, dst: &Uri) -> Option<HeaderMap> {
-        if let Some(proxy) = self.intercept(dst) {
-            if let Intercepted::Proxy(proxy) = proxy {
-                if proxy.uri().scheme() == Some(&Scheme::HTTP) {
-                    return proxy.custom_headers().cloned();
-                }
+        if let Some(Intercepted::Proxy(proxy)) = self.intercept(dst) {
+            if proxy.uri().scheme() == Some(&Scheme::HTTP) {
+                return proxy.custom_headers().cloned();
             }
         }
-
         None
     }
 }

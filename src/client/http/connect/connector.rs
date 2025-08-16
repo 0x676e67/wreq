@@ -267,10 +267,10 @@ impl ConnectorService {
 
             if let Some(intercepted) = intercepted {
                 match intercepted {
-                    Intercepted::Proxy(intercept) => self.connect_with_proxy(req, intercept).await,
+                    Intercepted::Proxy(intercept) => self.connect_with_proxy(req, *intercept).await,
                     #[cfg(unix)]
                     Intercepted::Unix(unix_socket) => {
-                        return self.connect_with_unix_socket(req, unix_socket).await;
+                        self.connect_with_unix_socket(req, unix_socket).await
                     }
                 }
             } else {
@@ -373,7 +373,7 @@ impl ConnectorService {
 
                     // Create a TLS connector for the established connection.
                     let mut connector =
-                        self.build_tls_http_connector(self.http.clone(), req.metadata())?;
+                        self.build_tls_http_connector(self.http.clone(), req.extra())?;
                     let established_conn = EstablishedConn::new(req, conn);
                     let io = connector.call(established_conn).await?;
 
