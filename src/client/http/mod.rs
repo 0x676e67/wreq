@@ -1256,7 +1256,7 @@ impl ClientBuilder {
 
     /// Override the DNS resolver implementation.
     ///
-    /// Pass any type implementing [`IntoResolve`].
+    /// Pass any type implementing `IntoResolve`.
     /// Overrides for specific names passed to `resolve` and `resolve_to_addrs` will
     /// still be applied on top of this resolver.
     #[inline]
