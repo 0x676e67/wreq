@@ -435,7 +435,6 @@ impl ConnectorService {
                 // Create a Unix connector with the specified socket path.
                 let mut connector = self.build_tls_unix_connector(unix_socket, req.extra())?;
                 let is_proxy = false;
-                let uri = req.uri().clone();
 
                 // If the target URI is HTTPS, establish a CONNECT tunnel over the Unix socket,
                 // then upgrade the tunneled stream to TLS.
