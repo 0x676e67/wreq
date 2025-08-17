@@ -34,7 +34,7 @@ use crate::core::{
         body::{self, Incoming as IncomingBody},
         bounds::Http2ClientConnExec,
         dispatch::{self, Callback, SendWhen, TrySendError},
-        proto::{Dispatched, h2::UpgradedSendStream, headers},
+        proto::{Dispatched, headers},
         upgrade::{self, Upgraded},
     },
     common::{io::Compat, time::Time},
@@ -295,7 +295,8 @@ pin_project! {
 
 impl<B, T> Future for H2ClientFuture<B, T>
 where
-    B: http_body::Body + 'static,
+    B: Body + 'static,
+    B::Data: Send,
     B::Error: Into<BoxError>,
     T: Read + Write + Unpin,
 {
@@ -454,6 +455,7 @@ pin_project! {
 impl<B> Future for ResponseFutMap<B>
 where
     B: Body + 'static,
+    B::Data: Send,
 {
     type Output = Result<Response<body::Incoming>, (Error, Option<Request<B>>)>;
 
@@ -487,7 +489,7 @@ where
                     let (pending, on_upgrade) = upgrade::pending();
                     let io = H2Upgraded {
                         ping,
-                        send_stream: unsafe { UpgradedSendStream::new(send_stream) },
+                        send_stream,
                         recv_stream,
                         buf: Bytes::new(),
                     };

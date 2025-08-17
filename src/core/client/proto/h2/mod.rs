@@ -4,7 +4,6 @@ pub(crate) mod ping;
 use std::{
     future::Future,
     io::{Cursor, IoSlice},
-    mem,
     pin::Pin,
     task::{Context, Poll, ready},
 };
@@ -263,7 +262,7 @@ where
     B: Buf,
 {
     ping: Recorder,
-    send_stream: UpgradedSendStream<B>,
+    send_stream: SendStream<SendBuf<B>>,
     recv_stream: RecvStream,
     buf: Bytes,
 }
@@ -328,7 +327,7 @@ where
             None => Some(0),
             Some(Ok(cnt)) => self
                 .send_stream
-                .write(&buf[..cnt], false)
+                .send_data(SendBuf::Cursor(Cursor::new(buf[..cnt].into())), false)
                 .ok()
                 .map(|()| cnt),
             Some(Err(_)) => None,
@@ -357,7 +356,11 @@ where
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
     ) -> Poll<Result<(), std::io::Error>> {
-        if self.send_stream.write(&[], true).is_ok() {
+        if self
+            .send_stream
+            .send_data(SendBuf::Cursor(Cursor::new([].into())), true)
+            .is_ok()
+        {
             return Poll::Ready(Ok(()));
         }
 
@@ -379,67 +382,5 @@ fn h2_to_io_error(e: http2::Error) -> std::io::Error {
         e.into_io().unwrap()
     } else {
         std::io::Error::other(e)
-    }
-}
-
-struct UpgradedSendStream<B>(SendStream<SendBuf<Neutered<B>>>);
-
-impl<B> UpgradedSendStream<B>
-where
-    B: Buf,
-{
-    unsafe fn new(inner: SendStream<SendBuf<B>>) -> Self {
-        assert_eq!(mem::size_of::<B>(), mem::size_of::<Neutered<B>>());
-        #[allow(clippy::missing_transmute_annotations)]
-        Self(unsafe { mem::transmute(inner) })
-    }
-
-    fn reserve_capacity(&mut self, cnt: usize) {
-        unsafe { self.as_inner_unchecked().reserve_capacity(cnt) }
-    }
-
-    fn poll_capacity(&mut self, cx: &mut Context<'_>) -> Poll<Option<Result<usize, http2::Error>>> {
-        unsafe { self.as_inner_unchecked().poll_capacity(cx) }
-    }
-
-    fn poll_reset(&mut self, cx: &mut Context<'_>) -> Poll<Result<http2::Reason, http2::Error>> {
-        unsafe { self.as_inner_unchecked().poll_reset(cx) }
-    }
-
-    fn write(&mut self, buf: &[u8], end_of_stream: bool) -> Result<(), std::io::Error> {
-        let send_buf = SendBuf::Cursor(Cursor::new(buf.into()));
-        unsafe {
-            self.as_inner_unchecked()
-                .send_data(send_buf, end_of_stream)
-                .map_err(h2_to_io_error)
-        }
-    }
-
-    unsafe fn as_inner_unchecked(&mut self) -> &mut SendStream<SendBuf<B>> {
-        unsafe { &mut *(&mut self.0 as *mut _ as *mut _) }
-    }
-}
-
-#[repr(transparent)]
-struct Neutered<B> {
-    _inner: B,
-    impossible: Impossible,
-}
-
-enum Impossible {}
-
-unsafe impl<B> Send for Neutered<B> {}
-
-impl<B> Buf for Neutered<B> {
-    fn remaining(&self) -> usize {
-        match self.impossible {}
-    }
-
-    fn chunk(&self) -> &[u8] {
-        match self.impossible {}
-    }
-
-    fn advance(&mut self, _cnt: usize) {
-        match self.impossible {}
     }
 }

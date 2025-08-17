@@ -264,6 +264,7 @@ pin_project! {
 impl<B> Future for SendWhen<B>
 where
     B: Body + 'static,
+    B::Data: Send,
 {
     type Output = ();
 
