@@ -17,8 +17,7 @@ async fn main() -> wreq::Result<()> {
         .init();
 
     // Use the API you're already familiar with
-    let resp = wreq::Client::new()
-        .get("https://api.ip.sb/ip")
+    let resp = wreq::get("https://api.ip.sb/ip")
         .interface("utun4")
         .send()
         .await?;

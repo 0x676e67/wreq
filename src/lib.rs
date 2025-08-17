@@ -29,16 +29,14 @@
 //! The `emulation` module provides a way to simulate various browser TLS/HTTP2 fingerprints.
 //!
 //! ```rust,no_run
-//! use wreq::Client;
 //! use wreq_util::Emulation;
 //!
 //! #[tokio::main]
 //! async fn main() -> wreq::Result<()> {
-//!     // Build a client
-//!     let client = Client::builder().emulation(Emulation::Firefox136).build()?;
-//!
 //!     // Use the API you're already familiar with
-//!     let resp = client.get("https://tls.peet.ws/api/all").send().await?;
+//!     let resp = wreq::get("https://tls.peet.ws/api/all")
+//!         .emulation(Emulation::Firefox136)
+//!         .send().await?;
 //!     println!("{}", resp.text().await?);
 //!
 //!     Ok(())
@@ -50,22 +48,13 @@
 //! The `websocket` module provides a way to upgrade a connection to a websocket.
 //!
 //! ```rust,no_run
-//! use std::time::Duration;
-//!
 //! use futures_util::{SinkExt, StreamExt, TryStreamExt};
-//! use wreq::{Client, header, ws::message::Message};
+//! use wreq::{header, ws::message::Message};
 //!
 //! #[tokio::main]
 //! async fn main() -> wreq::Result<()> {
-//!     // Build a client
-//!     let client = Client::builder()
-//!         .cert_verification(false)
-//!         .connect_timeout(Duration::from_secs(10))
-//!         .build()?;
-//!
 //!     // Use the API you're already familiar with
-//!     let websocket = client
-//!         .websocket("wss://echo.websocket.org")
+//!     let websocket = wreq::websocket("wss://echo.websocket.org")
 //!         .header(header::USER_AGENT, env!("CARGO_PKG_NAME"))
 //!         .send()
 //!         .await?;
@@ -98,8 +87,7 @@
 //!
 //! ```rust
 //! # async fn run() -> wreq::Result<()> {
-//! let body = wreq::Client::new()
-//!     .get("https://www.rust-lang.org")
+//! let body = wreq::get("https://www.rust-lang.org")
 //!     .send()
 //!     .await?
 //!     .text()
@@ -336,4 +324,231 @@ fn _assert_impls() {
 
     assert_send::<Error>();
     assert_sync::<Error>();
+}
+
+/// Shortcut method to quickly make a `GET` request.
+///
+/// See also the methods on the [`wreq::RequestBuilder`](./struct.RequestBuilder.html)
+/// type.
+///
+/// **NOTE**: This function creates a new internal `Client` on each call,
+/// and so should not be used if making many requests. Create a
+/// [`Client`](./struct.Client.html) instead.
+///
+/// # Examples
+///
+/// ```rust
+/// # async fn run() -> wreq::Result<()> {
+/// let body = wreq::get("https://www.rust-lang.org")
+///     .send()
+///     .await?
+///     .text()
+///     .await?;
+/// # Ok(())
+/// # }
+/// ```
+#[inline]
+pub fn get<T: IntoUrl>(url: T) -> RequestBuilder {
+    Client::new().get(url)
+}
+
+/// Shortcut method to quickly make a `POST` request.
+///
+/// See also the methods on the [`wreq::RequestBuilder`](./struct.RequestBuilder.html)
+/// type.
+///
+/// **NOTE**: This function creates a new internal `Client` on each call,
+/// and so should not be used if making many requests. Create a
+/// [`Client`](./struct.Client.html) instead.
+///
+/// # Examples
+///
+/// ```rust
+/// # async fn run() -> wreq::Result<()> {
+/// let res = wreq::post("https://httpbin.org/post")
+///     .body("example body")
+///     .send()
+///     .await?;
+/// # Ok(())
+/// # }
+/// ```
+#[inline]
+pub fn post<T: IntoUrl>(url: T) -> RequestBuilder {
+    Client::new().post(url)
+}
+
+/// Shortcut method to quickly make a `PUT` request.
+///
+/// See also the methods on the [`wreq::RequestBuilder`](./struct.RequestBuilder.html)
+/// type.
+///
+/// **NOTE**: This function creates a new internal `Client` on each call,
+/// and so should not be used if making many requests. Create a
+/// [`Client`](./struct.Client.html) instead.
+///
+/// # Examples
+///
+/// ```rust
+/// # async fn run() -> wreq::Result<()> {
+/// let res = wreq::put("https://httpbin.org/put")
+///     .body("update content")
+///     .send()
+///     .await?;
+/// # Ok(())
+/// # }
+/// ```
+#[inline]
+pub fn put<T: IntoUrl>(url: T) -> RequestBuilder {
+    Client::new().put(url)
+}
+
+/// Shortcut method to quickly make a `DELETE` request.
+///
+/// See also the methods on the [`wreq::RequestBuilder`](./struct.RequestBuilder.html)
+/// type.
+///
+/// **NOTE**: This function creates a new internal `Client` on each call,
+/// and so should not be used if making many requests. Create a
+/// [`Client`](./struct.Client.html) instead.
+///
+/// # Examples
+///
+/// ```rust
+/// # async fn run() -> wreq::Result<()> {
+/// let res = wreq::delete("https://httpbin.org/delete")
+///     .send()
+///     .await?;
+/// # Ok(())
+/// # }
+/// ```
+#[inline]
+pub fn delete<T: IntoUrl>(url: T) -> RequestBuilder {
+    Client::new().delete(url)
+}
+
+/// Shortcut method to quickly make a `HEAD` request.
+///
+/// See also the methods on the [`wreq::RequestBuilder`](./struct.RequestBuilder.html)
+/// type.
+///
+/// **NOTE**: This function creates a new internal `Client` on each call,
+/// and so should not be used if making many requests. Create a
+/// [`Client`](./struct.Client.html) instead.
+///
+/// # Examples
+///
+/// ```rust
+/// # async fn run() -> wreq::Result<()> {
+/// let res = wreq::head("https://httpbin.org/get")
+///     .send()
+///     .await?;
+/// # Ok(())
+/// # }
+/// ```
+#[inline]
+pub fn head<T: IntoUrl>(url: T) -> RequestBuilder {
+    Client::new().head(url)
+}
+
+/// Shortcut method to quickly make a `PATCH` request.
+///
+/// See also the methods on the [`wreq::RequestBuilder`](./struct.RequestBuilder.html)
+/// type.
+///
+/// **NOTE**: This function creates a new internal `Client` on each call,
+/// and so should not be used if making many requests. Create a
+/// [`Client`](./struct.Client.html) instead.
+///
+/// # Examples
+///
+/// ```rust
+/// # async fn run() -> wreq::Result<()> {
+/// let res = wreq::patch("https://httpbin.org/patch")
+///     .body("patch content")
+///     .send()
+///     .await?;
+/// # Ok(())
+/// # }
+/// ```
+#[inline]
+pub fn patch<T: IntoUrl>(url: T) -> RequestBuilder {
+    Client::new().patch(url)
+}
+
+/// Shortcut method to quickly make an `OPTIONS` request.
+///
+/// See also the methods on the [`wreq::RequestBuilder`](./struct.RequestBuilder.html)
+/// type.
+///
+/// **NOTE**: This function creates a new internal `Client` on each call,
+/// and so should not be used if making many requests. Create a
+/// [`Client`](./struct.Client.html) instead.
+///
+/// # Examples
+///
+/// ```rust
+/// # async fn run() -> wreq::Result<()> {
+/// let res = wreq::options("https://httpbin.org/get")
+///     .send()
+///     .await?;
+/// # Ok(())
+/// # }
+/// ```
+#[inline]
+pub fn options<T: IntoUrl>(url: T) -> RequestBuilder {
+    Client::new().options(url)
+}
+
+/// Shortcut method to quickly make a WebSocket request.
+///
+/// See also the methods on the
+/// [`wreq::ws::WebSocketRequestBuilder`](./ws/struct.WebSocketRequestBuilder.html) type.
+///
+/// **NOTE**: This function creates a new internal `Client` on each call,
+/// and so should not be used if making many requests. Create a
+/// [`Client`](./struct.Client.html) instead.
+///
+/// # Examples
+///
+/// ```rust
+/// # async fn run() -> wreq::Result<()> {
+/// use futures_util::{SinkExt, StreamExt, TryStreamExt};
+/// use wreq::{header, ws::message::Message};
+///
+/// let resp = wreq::websocket("wss://echo.websocket.org")
+///     .header(header::USER_AGENT, env!("CARGO_PKG_NAME"))
+///     .read_buffer_size(1024 * 1024)
+///     .send()
+///     .await?;
+///
+/// assert_eq!(resp.version(), http::Version::HTTP_11);
+///
+/// let websocket = resp.into_websocket().await?;
+/// if let Some(protocol) = websocket.protocol() {
+///     println!("WebSocket subprotocol: {:?}", protocol);
+/// }
+///
+/// let (mut tx, mut rx) = websocket.split();
+///
+/// tokio::spawn(async move {
+///     for i in 1..11 {
+///         if let Err(err) = tx.send(Message::text(format!("Hello, World! {i}"))).await {
+///             eprintln!("failed to send message: {err}");
+///         }
+///     }
+/// });
+///
+/// while let Some(message) = rx.try_next().await? {
+///     if let Message::Text(text) = message {
+///         println!("received: {text}");
+///     }
+/// }
+/// # Ok(())
+/// # }
+/// ```
+#[inline]
+#[cfg(feature = "ws")]
+#[cfg_attr(docsrs, doc(cfg(feature = "ws")))]
+pub fn websocket<T: IntoUrl>(url: T) -> ws::WebSocketRequestBuilder {
+    Client::new().websocket(url)
 }

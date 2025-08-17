@@ -1,7 +1,5 @@
-use std::time::Duration;
-
 use futures_util::{SinkExt, StreamExt, TryStreamExt};
-use wreq::{Client, header, ws::message::Message};
+use wreq::{header, ws::message::Message};
 
 #[tokio::main]
 async fn main() -> wreq::Result<()> {
@@ -9,15 +7,8 @@ async fn main() -> wreq::Result<()> {
         .with_max_level(tracing::Level::TRACE)
         .init();
 
-    // Build a client
-    let client = Client::builder()
-        .cert_verification(false)
-        .connect_timeout(Duration::from_secs(10))
-        .build()?;
-
     // Use the API you're already familiar with
-    let resp = client
-        .websocket("wss://echo.websocket.org")
+    let resp = wreq::websocket("wss://echo.websocket.org")
         .header(header::USER_AGENT, env!("CARGO_PKG_NAME"))
         .read_buffer_size(1024 * 1024)
         .send()

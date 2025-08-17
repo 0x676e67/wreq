@@ -23,9 +23,7 @@ async fn test_zstd_empty_body() {
             .unwrap()
     });
 
-    let client = wreq::Client::new();
-    let res = client
-        .head(format!("http://{}/zstd", server.addr()))
+    let res = wreq::head(format!("http://{}/zstd", server.addr()))
         .send()
         .await
         .unwrap();
@@ -48,10 +46,7 @@ async fn test_accept_header_is_not_changed_if_set() {
         http::Response::default()
     });
 
-    let client = wreq::Client::new();
-
-    let res = client
-        .get(format!("http://{}/accept", server.addr()))
+    let res = wreq::get(format!("http://{}/accept", server.addr()))
         .header(
             wreq::header::ACCEPT,
             wreq::header::HeaderValue::from_static("application/json"),
@@ -71,10 +66,7 @@ async fn test_accept_encoding_header_is_not_changed_if_set() {
         http::Response::default()
     });
 
-    let client = wreq::Client::new();
-
-    let res = client
-        .get(format!("http://{}/accept-encoding", server.addr()))
+    let res = wreq::get(format!("http://{}/accept-encoding", server.addr()))
         .header(wreq::header::ACCEPT, "*/*")
         .header(
             wreq::header::ACCEPT_ENCODING,
@@ -137,10 +129,7 @@ async fn zstd_case(response_size: usize, chunk_size: usize) {
         }
     });
 
-    let client = wreq::Client::new();
-
-    let res = client
-        .get(format!("http://{}/zstd", server.addr()))
+    let res = wreq::get(format!("http://{}/zstd", server.addr()))
         .send()
         .await
         .expect("response");
@@ -182,8 +171,7 @@ async fn test_non_chunked_non_fragmented_response() {
         })
     });
 
-    let res = wreq::Client::new()
-        .get(format!("http://{}/", server.addr()))
+    let res = wreq::get(format!("http://{}/", server.addr()))
         .send()
         .await
         .expect("response");
@@ -235,8 +223,7 @@ async fn test_chunked_fragmented_response_1() {
     });
 
     let start = tokio::time::Instant::now();
-    let res = wreq::Client::new()
-        .get(format!("http://{}/", server.addr()))
+    let res = wreq::get(format!("http://{}/", server.addr()))
         .send()
         .await
         .expect("response");
@@ -290,8 +277,7 @@ async fn test_chunked_fragmented_response_2() {
     });
 
     let start = tokio::time::Instant::now();
-    let res = wreq::Client::new()
-        .get(format!("http://{}/", server.addr()))
+    let res = wreq::get(format!("http://{}/", server.addr()))
         .send()
         .await
         .expect("response");
@@ -344,8 +330,7 @@ async fn test_chunked_fragmented_response_with_extra_bytes() {
     });
 
     let start = tokio::time::Instant::now();
-    let res = wreq::Client::new()
-        .get(format!("http://{}/", server.addr()))
+    let res = wreq::get(format!("http://{}/", server.addr()))
         .send()
         .await
         .expect("response");
@@ -388,8 +373,7 @@ async fn test_non_chunked_non_fragmented_multiple_frames_response() {
         })
     });
 
-    let res = wreq::Client::new()
-        .get(format!("http://{}/", server.addr()))
+    let res = wreq::get(format!("http://{}/", server.addr()))
         .send()
         .await
         .expect("response");
@@ -453,8 +437,7 @@ async fn test_chunked_fragmented_multiple_frames_in_one_chunk() {
     // Record the start time for delay verification
     let start = tokio::time::Instant::now();
 
-    let res = wreq::Client::new()
-        .get(format!("http://{}/", server.addr()))
+    let res = wreq::get(format!("http://{}/", server.addr()))
         .send()
         .await
         .expect("Failed to get response");

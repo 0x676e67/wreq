@@ -105,10 +105,7 @@ async fn main() -> wreq::Result<()> {
         .build();
 
     // Use the API you're already familiar with
-    let resp = Client::builder()
-        .cert_verification(false)
-        .build()?
-        .post("https://tls.peet.ws/api/all")
+    let resp = wreq::post("https://tls.peet.ws/api/all")
         .emulation(emulation)
         .send()
         .await?;

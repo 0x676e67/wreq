@@ -9,8 +9,7 @@
 // `tokio = { version = "1", features = ["full"] }`
 #[tokio::main]
 async fn main() -> wreq::Result<()> {
-    let echo_json: serde_json::Value = wreq::Client::new()
-        .post("https://jsonplaceholder.typicode.com/posts")
+    let echo_json: serde_json::Value = wreq::post("https://jsonplaceholder.typicode.com/posts")
         .json(&serde_json::json!({
             "title": "wreq.rs",
             "body": "https://docs.rs/wreq",

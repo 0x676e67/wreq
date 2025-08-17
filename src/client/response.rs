@@ -307,7 +307,7 @@ impl Response {
     ///
     /// ```
     /// # async fn run() -> Result<(), Box<dyn std::error::Error>> {
-    /// let mut res = wreq::Client::new().get("https://hyper.rs").send().await?;
+    /// let mut res = wreq::get("https://hyper.rs").send().await?;
     ///
     /// while let Some(chunk) = res.chunk().await? {
     ///     println!("Chunk: {chunk:?}");

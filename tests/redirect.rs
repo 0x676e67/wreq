@@ -5,7 +5,6 @@ use wreq::{Body, redirect::Policy};
 
 #[tokio::test]
 async fn test_redirect_301_and_302_and_303_changes_post_to_get() {
-    let client = wreq::Client::new();
     let codes = [301u16, 302, 303];
 
     for &code in &codes {
@@ -30,8 +29,7 @@ async fn test_redirect_301_and_302_and_303_changes_post_to_get() {
 
         let url = format!("http://{}/{}", redirect.addr(), code);
         let dst = format!("http://{}/{}", redirect.addr(), "dst");
-        let res = client
-            .post(&url)
+        let res = wreq::post(&url)
             .redirect(Policy::default())
             .send()
             .await
@@ -47,7 +45,6 @@ async fn test_redirect_301_and_302_and_303_changes_post_to_get() {
 
 #[tokio::test]
 async fn test_redirect_307_and_308_tries_to_get_again() {
-    let client = wreq::Client::new();
     let codes = [307u16, 308];
     for &code in &codes {
         let redirect = server::http(move |req| async move {
@@ -71,8 +68,7 @@ async fn test_redirect_307_and_308_tries_to_get_again() {
 
         let url = format!("http://{}/{}", redirect.addr(), code);
         let dst = format!("http://{}/{}", redirect.addr(), "dst");
-        let res = client
-            .get(&url)
+        let res = wreq::get(&url)
             .redirect(Policy::default())
             .send()
             .await
@@ -89,7 +85,7 @@ async fn test_redirect_307_and_308_tries_to_get_again() {
 #[tokio::test]
 async fn test_redirect_307_and_308_tries_to_post_again() {
     let _ = pretty_env_logger::env_logger::try_init();
-    let client = wreq::Client::new();
+
     let codes = [307u16, 308];
     for &code in &codes {
         let redirect = server::http(move |mut req| async move {
@@ -125,8 +121,7 @@ async fn test_redirect_307_and_308_tries_to_post_again() {
 
         let url = format!("http://{}/{}", redirect.addr(), code);
         let dst = format!("http://{}/{}", redirect.addr(), "dst");
-        let res = client
-            .post(&url)
+        let res = wreq::post(&url)
             .redirect(Policy::default())
             .body("Hello")
             .send()
@@ -201,8 +196,7 @@ async fn test_redirect_policy_can_return_errors() {
     });
 
     let url = format!("http://{}/loop", server.addr());
-    let err = wreq::Client::new()
-        .get(&url)
+    let err = wreq::get(&url)
         .redirect(Policy::default())
         .send()
         .await
@@ -275,7 +269,7 @@ async fn test_invalid_location_stops_redirect_gh484() {
 
     let url = format!("http://{}/yikes", server.addr());
 
-    let res = wreq::Client::new().get(&url).send().await.unwrap();
+    let res = wreq::get(&url).send().await.unwrap();
 
     assert_eq!(res.url().as_str(), url);
     assert_eq!(res.status(), wreq::StatusCode::FOUND);
@@ -293,8 +287,7 @@ async fn test_invalid_scheme_is_rejected() {
 
     let url = format!("http://{}/yikes", server.addr());
 
-    let err = wreq::Client::new()
-        .get(&url)
+    let err = wreq::get(&url)
         .redirect(Policy::default())
         .send()
         .await
@@ -406,7 +399,6 @@ async fn test_scheme_only_check_after_policy_return_follow() {
 
 #[tokio::test]
 async fn test_redirect_301_302_303_empty_payload_headers() {
-    let client = wreq::Client::new();
     let codes = [301u16, 302, 303];
     for &code in &codes {
         let redirect = server::http(move |mut req| async move {
@@ -446,8 +438,7 @@ async fn test_redirect_301_302_303_empty_payload_headers() {
 
         let url = format!("http://{}/{}", redirect.addr(), code);
         let dst = format!("http://{}/{}", redirect.addr(), "dst");
-        let res = client
-            .post(&url)
+        let res = wreq::post(&url)
             .redirect(Policy::default())
             .body("Hello")
             .header(wreq::header::CONTENT_TYPE, "text/plain")

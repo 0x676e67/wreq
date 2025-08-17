@@ -5,8 +5,7 @@
 // `tokio = { version = "1", features = ["full"] }`
 #[tokio::main]
 async fn main() {
-    let response = wreq::Client::new()
-        .post("http://www.baidu.com")
+    let response = wreq::post("http://www.baidu.com")
         .form(&[("one", "1")])
         .send()
         .await

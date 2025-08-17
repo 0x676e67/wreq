@@ -27,8 +27,7 @@ async fn main() -> wreq::Result<()> {
         body: "https://docs.rs/wreq".into(),
         user_id: 1,
     };
-    let new_post: Post = wreq::Client::new()
-        .post("https://jsonplaceholder.typicode.com/posts")
+    let new_post: Post = wreq::post("https://jsonplaceholder.typicode.com/posts")
         .json(&new_post)
         .send()
         .await?

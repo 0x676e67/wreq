@@ -7,8 +7,7 @@ async fn main() -> wreq::Result<()> {
         .init();
 
     // Use the API you're already familiar with
-    let resp = wreq::Client::new()
-        .get("https://www.google.com")
+    let resp = wreq::get("https://www.google.com")
         .version(Version::HTTP_11)
         .send()
         .await?;

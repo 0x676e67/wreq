@@ -5,10 +5,8 @@
 //! cargo run -p example-websockets-http2
 //! ```
 
-use std::time::Duration;
-
 use futures_util::{SinkExt, StreamExt, TryStreamExt};
-use wreq::{Client, header, ws::message::Message};
+use wreq::{header, ws::message::Message};
 
 #[tokio::main]
 async fn main() -> wreq::Result<()> {
@@ -16,15 +14,8 @@ async fn main() -> wreq::Result<()> {
         .with_max_level(tracing::Level::TRACE)
         .init();
 
-    // Build a client
-    let client = Client::builder()
-        .connect_timeout(Duration::from_secs(10))
-        .cert_verification(false)
-        .build()?;
-
     // Use the API you're already familiar with
-    let resp = client
-        .websocket("wss://127.0.0.1:3000/ws")
+    let resp = wreq::websocket("wss://127.0.0.1:3000/ws")
         .force_http2()
         .header(header::USER_AGENT, env!("CARGO_PKG_NAME"))
         .read_buffer_size(1024 * 1024)

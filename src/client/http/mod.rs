@@ -510,6 +510,7 @@ impl ClientBuilder {
     /// This requires the optional `cookies` feature to be enabled.
     #[inline]
     #[cfg(feature = "cookies")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "cookies")))]
     pub fn cookie_store(mut self, enable: bool) -> ClientBuilder {
         if enable {
             self.cookie_provider(Arc::new(cookie::Jar::default()))
@@ -531,6 +532,7 @@ impl ClientBuilder {
     /// This requires the optional `cookies` feature to be enabled.
     #[inline]
     #[cfg(feature = "cookies")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "cookies")))]
     pub fn cookie_provider<C>(mut self, cookie_store: C) -> ClientBuilder
     where
         C: cookie::IntoCookieStore,
@@ -557,6 +559,7 @@ impl ClientBuilder {
     /// This requires the optional `gzip` feature to be enabled
     #[inline]
     #[cfg(feature = "gzip")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "gzip")))]
     pub fn gzip(mut self, enable: bool) -> ClientBuilder {
         self.config.accept_encoding.gzip(enable);
         self
@@ -580,6 +583,7 @@ impl ClientBuilder {
     /// This requires the optional `brotli` feature to be enabled
     #[inline]
     #[cfg(feature = "brotli")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "brotli")))]
     pub fn brotli(mut self, enable: bool) -> ClientBuilder {
         self.config.accept_encoding.brotli(enable);
         self
@@ -603,6 +607,7 @@ impl ClientBuilder {
     /// This requires the optional `zstd` feature to be enabled
     #[inline]
     #[cfg(feature = "zstd")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "zstd")))]
     pub fn zstd(mut self, enable: bool) -> ClientBuilder {
         self.config.accept_encoding.zstd(enable);
         self
@@ -626,6 +631,7 @@ impl ClientBuilder {
     /// This requires the optional `deflate` feature to be enabled
     #[inline]
     #[cfg(feature = "deflate")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "deflate")))]
     pub fn deflate(mut self, enable: bool) -> ClientBuilder {
         self.config.accept_encoding.deflate(enable);
         self
@@ -947,6 +953,10 @@ impl ClientBuilder {
     /// Default is 30 seconds.
     #[inline]
     #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
+    #[cfg_attr(
+        docsrs,
+        doc(cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux")))
+    )]
     pub fn tcp_user_timeout<D>(mut self, val: D) -> ClientBuilder
     where
         D: Into<Option<Duration>>,
@@ -1101,6 +1111,21 @@ impl ClientBuilder {
         target_os = "visionos",
         target_os = "watchos",
     ))]
+    #[cfg_attr(
+        docsrs,
+        doc(cfg(any(
+            target_os = "android",
+            target_os = "fuchsia",
+            target_os = "illumos",
+            target_os = "ios",
+            target_os = "linux",
+            target_os = "macos",
+            target_os = "solaris",
+            target_os = "tvos",
+            target_os = "visionos",
+            target_os = "watchos",
+        )))
+    )]
     pub fn interface<T>(mut self, interface: T) -> ClientBuilder
     where
         T: Into<std::borrow::Cow<'static, str>>,
@@ -1220,6 +1245,7 @@ impl ClientBuilder {
     /// even if another dependency were to enable the optional `hickory-dns` feature.
     #[inline]
     #[cfg(feature = "hickory-dns")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "hickory-dns")))]
     pub fn no_hickory_dns(mut self) -> ClientBuilder {
         self.config.hickory_dns = false;
         self
@@ -1499,6 +1525,7 @@ impl Client {
     /// request.
     #[inline]
     #[cfg(feature = "ws")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "ws")))]
     pub fn websocket<U: IntoUrl>(&self, url: U) -> WebSocketRequestBuilder {
         WebSocketRequestBuilder::new(self.request(Method::GET, url))
     }

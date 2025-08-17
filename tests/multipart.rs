@@ -45,12 +45,7 @@ async fn text_part() {
 
     let url = format!("http://{}/multipart/1", server.addr());
 
-    let res = wreq::Client::new()
-        .post(&url)
-        .multipart(form)
-        .send()
-        .await
-        .unwrap();
+    let res = wreq::post(&url).multipart(form).send().await.unwrap();
 
     assert_eq!(res.url().as_str(), &url);
     assert_eq!(res.status(), wreq::StatusCode::OK);
@@ -107,10 +102,7 @@ async fn stream_part() {
 
     let url = format!("http://{}/multipart/1", server.addr());
 
-    let client = wreq::Client::new();
-
-    let res = client
-        .post(&url)
+    let res = wreq::post(&url)
         .multipart(form)
         .send()
         .await
@@ -166,12 +158,7 @@ async fn async_impl_file_part() {
 
     let url = format!("http://{}/multipart/3", server.addr());
 
-    let res = wreq::Client::new()
-        .post(&url)
-        .multipart(form)
-        .send()
-        .await
-        .unwrap();
+    let res = wreq::post(&url).multipart(form).send().await.unwrap();
 
     assert_eq!(res.url().as_str(), &url);
     assert_eq!(res.status(), wreq::StatusCode::OK);

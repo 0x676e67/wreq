@@ -220,8 +220,7 @@ async fn no_generic_bounds_required_for_client_new() {
 
     let url = format!("http://{}", server.addr());
 
-    let client = wreq::Client::new();
-    let res = client.get(url).send().await;
+    let res = wreq::get(url).send().await;
 
     assert!(res.is_ok());
 }

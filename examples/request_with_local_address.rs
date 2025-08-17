@@ -9,8 +9,7 @@ async fn main() -> wreq::Result<()> {
         .init();
 
     // Use the API you're already familiar with
-    let resp = wreq::Client::new()
-        .get("http://www.baidu.com")
+    let resp = wreq::get("http://www.baidu.com")
         .redirect(Policy::default())
         .local_address(IpAddr::from([192, 168, 1, 226]))
         .send()

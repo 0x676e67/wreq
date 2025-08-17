@@ -681,7 +681,7 @@ async fn http1_reason_phrase() {
 #[tokio::test]
 async fn error_has_url() {
     let u = "http://does.not.exist.local/ever";
-    let err = wreq::Client::new().get(u).send().await.unwrap_err();
+    let err = wreq::get(u).send().await.unwrap_err();
     assert_eq!(err.url().map(AsRef::as_ref), Some(u), "{err:?}");
 }
 
@@ -783,8 +783,7 @@ async fn http1_send_case_sensitive_headers() {
     orig_headers.insert("X-custom-header");
     orig_headers.insert("Host");
 
-    let resp = wreq::Client::new()
-        .get("https://tls.peet.ws/api/all")
+    let resp = wreq::get("https://tls.peet.ws/api/all")
         .header("X-Custom-Header", "value")
         .orig_headers(orig_headers)
         .version(Version::HTTP_11)
