@@ -123,49 +123,6 @@ where
 }
 
 #[derive(Clone)]
-pub struct PrintPollReadyLayer(pub &'static str);
-
-impl<S> Layer<S> for PrintPollReadyLayer {
-    type Service = PrintPollReady<S>;
-
-    fn layer(&self, inner: S) -> Self::Service {
-        PrintPollReady::new(inner, self.0)
-    }
-}
-
-#[derive(Clone)]
-pub struct PrintPollReady<S> {
-    inner: S,
-    name: &'static str,
-}
-
-impl<S> PrintPollReady<S> {
-    pub fn new(inner: S, name: &'static str) -> Self {
-        Self { inner, name }
-    }
-}
-
-impl<S, Request> Service<Request> for PrintPollReady<S>
-where
-    S: Service<Request> + Clone + Send + 'static,
-    S::Future: Send + 'static,
-{
-    type Response = S::Response;
-    type Error = S::Error;
-    type Future = S::Future;
-
-    fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        println!("[{}] poll_ready called", self.name);
-        self.inner.poll_ready(cx)
-    }
-
-    fn call(&mut self, req: Request) -> Self::Future {
-        println!("[{}] call executed", self.name);
-        self.inner.call(req)
-    }
-}
-
-#[derive(Clone)]
 pub struct SharedConcurrencyLimitLayer {
     semaphore: std::sync::Arc<tokio::sync::Semaphore>,
 }

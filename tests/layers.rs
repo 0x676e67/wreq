@@ -5,7 +5,7 @@ use std::time::Duration;
 use futures_util::future::join_all;
 use pretty_env_logger::env_logger;
 use support::{
-    layer::{DelayLayer, PrintPollReadyLayer, SharedConcurrencyLimitLayer},
+    layer::{DelayLayer, SharedConcurrencyLimitLayer},
     server,
 };
 use tower::{layer::util::Identity, limit::ConcurrencyLimitLayer, timeout::TimeoutLayer};
@@ -224,9 +224,7 @@ async fn with_concurrency_limit_layer_success() {
     let client = wreq::Client::builder()
         .layer(DelayLayer::new(Duration::from_millis(100)))
         .layer(TimeoutLayer::new(Duration::from_millis(200)))
-        .layer(PrintPollReadyLayer("after_concurrency")) //3
         .layer(ConcurrencyLimitLayer::new(1)) //2
-        .layer(PrintPollReadyLayer("before_concurrency")) //1
         .timeout(Duration::from_millis(1000))
         .pool_max_idle_per_host(0) // disable connection reuse to force resource contention on the concurrency limit semaphore
         .no_proxy()
