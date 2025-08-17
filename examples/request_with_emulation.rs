@@ -1,5 +1,5 @@
 use wreq::{
-    Client, Emulation,
+    Emulation,
     header::{self, HeaderMap, HeaderValue, OrigHeaderMap},
     http2::{Http2Options, PseudoId, PseudoOrder},
     tls::{AlpnProtocol, TlsOptions, TlsVersion},
