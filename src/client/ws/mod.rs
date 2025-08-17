@@ -1,6 +1,5 @@
 //! WebSocket Upgrade
 
-mod compat;
 #[cfg(feature = "json")]
 mod json;
 pub mod message;
@@ -14,24 +13,21 @@ use std::{
     task::{Context, Poll, ready},
 };
 
-use async_tungstenite::tungstenite::{self, protocol};
 use futures_util::{Sink, SinkExt, Stream, StreamExt};
 use http::{HeaderMap, HeaderName, HeaderValue, Method, StatusCode, Version, header, uri::Scheme};
 use http2::ext::Protocol;
 use serde::Serialize;
+use tokio_tungstenite::tungstenite::{self, protocol};
 use tungstenite::protocol::WebSocketConfig;
 
-use self::{
-    compat::Compat,
-    message::{CloseCode, Message, Utf8Bytes},
-};
+use self::message::{CloseCode, Message, Utf8Bytes};
 use crate::{
     EmulationFactory, Error, RequestBuilder, Response, Upgraded, header::OrigHeaderMap,
     proxy::Proxy,
 };
 
 /// A WebSocket stream.
-type WebSocketStream = async_tungstenite::WebSocketStream<Compat<Upgraded>>;
+type WebSocketStream = tokio_tungstenite::WebSocketStream<Upgraded>;
 
 /// Wrapper for [`RequestBuilder`] that performs the
 /// websocket handshake when sent.
@@ -510,7 +506,7 @@ impl WebSocketResponse {
 
             let upgraded = self.inner.upgrade().await?;
             let inner = WebSocketStream::from_raw_socket(
-                Compat::new(upgraded),
+                upgraded,
                 protocol::Role::Client,
                 Some(self.config),
             )
@@ -575,21 +571,23 @@ impl WebSocket {
         self.inner
             .send(msg.into_tungstenite())
             .await
-            .map_err(Error::upgrade)
+            .map_err(Error::websocket)
     }
 
     /// Closes the connection with a given code and (optional) reason.
-    pub async fn close(self, code: CloseCode, reason: Option<Utf8Bytes>) -> Result<(), Error> {
-        let mut inner = self.inner;
-        inner
-            .close(Some(tungstenite::protocol::CloseFrame {
-                code: code.0.into(),
-                reason: reason
-                    .unwrap_or(Utf8Bytes::from_static("Goodbye"))
-                    .into_tungstenite(),
-            }))
+    pub async fn close<R>(mut self, code: CloseCode, reason: R) -> Result<(), Error>
+    where
+        R: Into<Option<Utf8Bytes>>,
+    {
+        let code = code.0.into();
+        let reason = reason
+            .into()
+            .unwrap_or(Utf8Bytes::from_static("Goodbye"))
+            .into_tungstenite();
+        self.inner
+            .close(Some(tungstenite::protocol::CloseFrame { code, reason }))
             .await
-            .map_err(Error::upgrade)
+            .map_err(Error::websocket)
     }
 }
 
@@ -614,21 +612,31 @@ impl Stream for WebSocket {
 impl Sink<Message> for WebSocket {
     type Error = Error;
 
+    #[inline]
     fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        self.inner.poll_ready_unpin(cx).map_err(Error::websocket)
-    }
-
-    fn start_send(mut self: Pin<&mut Self>, item: Message) -> Result<(), Self::Error> {
-        self.inner
-            .start_send_unpin(item.into_tungstenite())
+        Pin::new(&mut self.inner)
+            .poll_ready(cx)
             .map_err(Error::websocket)
     }
 
-    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        self.inner.poll_flush_unpin(cx).map_err(Error::websocket)
+    #[inline]
+    fn start_send(mut self: Pin<&mut Self>, item: Message) -> Result<(), Self::Error> {
+        Pin::new(&mut self.inner)
+            .start_send(item.into_tungstenite())
+            .map_err(Error::websocket)
     }
 
+    #[inline]
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        Pin::new(&mut self.inner)
+            .poll_flush(cx)
+            .map_err(Error::websocket)
+    }
+
+    #[inline]
     fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        self.inner.poll_close_unpin(cx).map_err(Error::websocket)
+        Pin::new(&mut self.inner)
+            .poll_close(cx)
+            .map_err(Error::websocket)
     }
 }

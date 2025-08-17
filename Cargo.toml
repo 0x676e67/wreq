@@ -55,7 +55,7 @@ stream = ["tokio/fs", "dep:tokio-util", "dep:sync_wrapper"]
 socks = ["dep:tokio-socks"]
 
 # Enable WebSocket support.
-ws = ["dep:async-tungstenite", "futures-util/std", "futures-util/io"]
+ws = ["dep:tokio-tungstenite"]
 
 # Enable webpki-roots for TLS certificate validation.
 webpki-roots = ["dep:webpki-root-certs"]
@@ -92,20 +92,17 @@ socket2 = { version = "0.6.0", features = ["all"] }
 ipnet = "2.11.0"
 schnellru = { version = "0.2.4", default-features = false }
 ahash = { version = "0.8.12", default-features = false }
-
-## runtime
+boring2 = { version = "5.0.0-alpha.4", features = ["pq-experimental"] }
+tokio-boring2 = { version = "5.0.0-alpha.4", features = ["pq-experimental"] }
+brotli = "8.0.1"
+flate2 = "1.1.2"
+zstd = "0.13.3"
 tokio = { version = "1.47.1", default-features = false, features = [
     "net",
     "time",
     "rt",
 ] }
 
-## tls
-boring2 = { version = "5.0.0-alpha.4", features = ["pq-experimental"] }
-tokio-boring2 = { version = "5.0.0-alpha.4", features = ["pq-experimental"] }
-brotli = "8.0.1"
-flate2 = "1.1.2"
-zstd = "0.13.3"
 
 # Optional deps...
 
@@ -139,7 +136,9 @@ tokio-util = { version = "0.7.16", default-features = false, optional = true }
 tokio-socks = { version = "0.5.2", optional = true }
 
 ## websocket
-async-tungstenite = { version = "0.31.0", optional = true }
+tokio-tungstenite = { version = "0.27.0", default-features = false, features = [
+    "handshake",
+], optional = true }
 
 ## hickory-dns
 hickory-resolver = { version = "0.25.2", optional = true }
