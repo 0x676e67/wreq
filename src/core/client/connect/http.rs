@@ -917,6 +917,7 @@ fn connect(
             target_os = "watchos",
         ))]
         {
+            #[allow(unsafe_code)]
             let idx = unsafe { libc::if_nametoindex(interface.as_ptr()) };
             let idx = std::num::NonZeroU32::new(idx).ok_or_else(|| {
                 // If the index is 0, check errno and return an I/O error.

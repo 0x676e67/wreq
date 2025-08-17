@@ -251,6 +251,7 @@ impl Inner {
             // If the session cache is enabled, we try to retrieve the session
             // associated with the key. If it exists, we set it in the SSL configuration.
             if let Some(session) = cache.lock().get(&key) {
+                #[allow(unsafe_code)]
                 unsafe { cfg.set_session(&session) }?;
 
                 if self.config.no_ticket {

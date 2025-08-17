@@ -293,7 +293,7 @@ where
         cx: &mut Context<'_>,
         buf: ReadBufCursor<'_>,
     ) -> Poll<std::io::Result<()>> {
-        pin_as_deref_mut(self).poll_read(cx, buf)
+        self.as_deref_mut().poll_read(cx, buf)
     }
 }
 
@@ -350,7 +350,7 @@ where
         cx: &mut Context<'_>,
         buf: &[u8],
     ) -> Poll<std::io::Result<usize>> {
-        pin_as_deref_mut(self).poll_write(cx, buf)
+        self.as_deref_mut().poll_write(cx, buf)
     }
 
     fn poll_write_vectored(
@@ -358,7 +358,7 @@ where
         cx: &mut Context<'_>,
         bufs: &[std::io::IoSlice<'_>],
     ) -> Poll<std::io::Result<usize>> {
-        pin_as_deref_mut(self).poll_write_vectored(cx, bufs)
+        self.as_deref_mut().poll_write_vectored(cx, bufs)
     }
 
     fn is_write_vectored(&self) -> bool {
@@ -366,20 +366,12 @@ where
     }
 
     fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
-        pin_as_deref_mut(self).poll_flush(cx)
+        self.as_deref_mut().poll_flush(cx)
     }
 
     fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
-        pin_as_deref_mut(self).poll_shutdown(cx)
+        self.as_deref_mut().poll_shutdown(cx)
     }
-}
-
-/// Polyfill for Pin::as_deref_mut()
-/// TODO: use Pin::as_deref_mut() instead once stabilized
-fn pin_as_deref_mut<P: DerefMut>(pin: Pin<&mut Pin<P>>) -> Pin<&mut P::Target> {
-    // SAFETY: we go directly from Pin<&mut Pin<P>> to Pin<&mut P::Target>, without moving or
-    // giving out the &mut Pin<P> in the process. See Pin::as_deref_mut() for more detail.
-    unsafe { pin.get_unchecked_mut() }.as_mut()
 }
 
 pub(crate) async fn read<T>(io: &mut T, buf: &mut [u8]) -> Result<usize, std::io::Error>
