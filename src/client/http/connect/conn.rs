@@ -63,47 +63,48 @@ impl Connection for Conn {
 }
 
 impl AsyncRead for Conn {
+    #[inline]
     fn poll_read(
         self: Pin<&mut Self>,
         cx: &mut Context,
         buf: &mut ReadBuf<'_>,
     ) -> Poll<io::Result<()>> {
-        let this = self.project();
-        AsyncRead::poll_read(this.inner, cx, buf)
+        AsyncRead::poll_read(self.project().inner, cx, buf)
     }
 }
 
 impl AsyncWrite for Conn {
+    #[inline]
     fn poll_write(
         self: Pin<&mut Self>,
         cx: &mut Context,
         buf: &[u8],
     ) -> Poll<Result<usize, io::Error>> {
-        let this = self.project();
-        AsyncWrite::poll_write(this.inner, cx, buf)
+        AsyncWrite::poll_write(self.project().inner, cx, buf)
     }
 
+    #[inline]
     fn poll_write_vectored(
         self: Pin<&mut Self>,
         cx: &mut Context<'_>,
         bufs: &[IoSlice<'_>],
     ) -> Poll<Result<usize, io::Error>> {
-        let this = self.project();
-        AsyncWrite::poll_write_vectored(this.inner, cx, bufs)
+        AsyncWrite::poll_write_vectored(self.project().inner, cx, bufs)
     }
 
+    #[inline]
     fn is_write_vectored(&self) -> bool {
         self.inner.is_write_vectored()
     }
 
+    #[inline]
     fn poll_flush(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), io::Error>> {
-        let this = self.project();
-        AsyncWrite::poll_flush(this.inner, cx)
+        AsyncWrite::poll_flush(self.project().inner, cx)
     }
 
+    #[inline]
     fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), io::Error>> {
-        let this = self.project();
-        AsyncWrite::poll_shutdown(this.inner, cx)
+        AsyncWrite::poll_shutdown(self.project().inner, cx)
     }
 }
 
@@ -171,47 +172,48 @@ impl Connection for TlsConn<MaybeHttpsStream<UnixStream>> {
 }
 
 impl<T: AsyncRead + AsyncWrite + Unpin> AsyncRead for TlsConn<T> {
+    #[inline]
     fn poll_read(
         self: Pin<&mut Self>,
         cx: &mut Context,
         buf: &mut ReadBuf<'_>,
     ) -> Poll<tokio::io::Result<()>> {
-        let this = self.project();
-        AsyncRead::poll_read(this.inner, cx, buf)
+        AsyncRead::poll_read(self.project().inner, cx, buf)
     }
 }
 
 impl<T: AsyncRead + AsyncWrite + Unpin> AsyncWrite for TlsConn<T> {
+    #[inline]
     fn poll_write(
         self: Pin<&mut Self>,
         cx: &mut Context,
         buf: &[u8],
     ) -> Poll<Result<usize, tokio::io::Error>> {
-        let this = self.project();
-        AsyncWrite::poll_write(this.inner, cx, buf)
+        AsyncWrite::poll_write(self.project().inner, cx, buf)
     }
 
+    #[inline]
     fn poll_write_vectored(
         self: Pin<&mut Self>,
         cx: &mut Context<'_>,
         bufs: &[IoSlice<'_>],
     ) -> Poll<Result<usize, io::Error>> {
-        let this = self.project();
-        AsyncWrite::poll_write_vectored(this.inner, cx, bufs)
+        AsyncWrite::poll_write_vectored(self.project().inner, cx, bufs)
     }
 
+    #[inline]
     fn is_write_vectored(&self) -> bool {
         self.inner.is_write_vectored()
     }
 
+    #[inline]
     fn poll_flush(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), tokio::io::Error>> {
-        let this = self.project();
-        AsyncWrite::poll_flush(this.inner, cx)
+        AsyncWrite::poll_flush(self.project().inner, cx)
     }
 
+    #[inline]
     fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), tokio::io::Error>> {
-        let this = self.project();
-        AsyncWrite::poll_shutdown(this.inner, cx)
+        AsyncWrite::poll_shutdown(self.project().inner, cx)
     }
 }
 

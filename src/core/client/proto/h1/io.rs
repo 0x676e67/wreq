@@ -207,12 +207,14 @@ where
 
         // SAFETY: ReadBuf and poll_read promise not to set any uninitialized
         // bytes onto `dst`.
+        #[allow(unsafe_code)]
         let dst = unsafe { self.read_buf.chunk_mut().as_uninit_slice_mut() };
         let mut buf = ReadBuf::uninit(dst);
         match Pin::new(&mut self.io).poll_read(cx, &mut buf) {
             Poll::Ready(Ok(_)) => {
                 let n = buf.filled().len();
                 trace!("received {} bytes", n);
+                #[allow(unsafe_code)]
                 unsafe {
                     // Safety: we just read that many bytes into the
                     // uninitialized part of the buffer, so this is okay.

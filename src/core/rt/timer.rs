@@ -50,6 +50,7 @@ impl dyn Sleep {
         T: Sleep + 'static,
     {
         if self.is::<T>() {
+            #[allow(unsafe_code)]
             unsafe {
                 let inner = Pin::into_inner_unchecked(self);
                 Some(Pin::new_unchecked(

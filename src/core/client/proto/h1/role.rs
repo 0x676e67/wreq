@@ -43,7 +43,14 @@ macro_rules! header_name {
 }
 
 macro_rules! header_value {
-    ($bytes:expr) => {{ { unsafe { HeaderValue::from_maybe_shared_unchecked($bytes) } } }};
+    ($bytes:expr) => {{
+        {
+            #[allow(unsafe_code)]
+            unsafe {
+                HeaderValue::from_maybe_shared_unchecked($bytes)
+            }
+        }
+    }};
 }
 
 macro_rules! maybe_panic {
@@ -187,6 +194,7 @@ impl Http1Transaction for Client {
             {
                 for header in &mut headers_indices[..headers_len] {
                     // SAFETY: array is valid up to `headers_len`
+                    #[allow(unsafe_code)]
                     let header = unsafe { header.assume_init_mut() };
                     Client::obs_fold_line(&mut slice, header);
                 }
@@ -207,6 +215,7 @@ impl Http1Transaction for Client {
             headers.reserve(headers_len);
             for header in &headers_indices[..headers_len] {
                 // SAFETY: array is valid up to `headers_len`
+                #[allow(unsafe_code)]
                 let header = unsafe { header.assume_init_ref() };
                 let name = header_name!(&slice[header.name.0..header.name.1]);
                 let value = header_value!(slice.slice(header.value.0..header.value.1));
