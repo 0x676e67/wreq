@@ -3,10 +3,7 @@ use tokio::net::TcpStream;
 use tokio::net::UnixStream;
 use tokio_boring2::SslStream;
 
-use crate::{
-    core::rt::TokioIo,
-    tls::{MaybeHttpsStream, TlsInfo},
-};
+use crate::tls::{MaybeHttpsStream, TlsInfo};
 
 /// A trait for extracting TLS information from a connection.
 ///
@@ -14,12 +11,6 @@ use crate::{
 /// For non-TLS connections, this typically returns `None`.
 pub trait TlsInfoFactory {
     fn tls_info(&self) -> Option<TlsInfo>;
-}
-
-impl<T: TlsInfoFactory> TlsInfoFactory for TokioIo<T> {
-    fn tls_info(&self) -> Option<TlsInfo> {
-        self.inner().tls_info()
-    }
 }
 
 // ===== impl TcpStream =====
@@ -47,7 +38,7 @@ impl TlsInfoFactory for MaybeHttpsStream<TcpStream> {
     }
 }
 
-impl TlsInfoFactory for SslStream<TokioIo<MaybeHttpsStream<TcpStream>>> {
+impl TlsInfoFactory for SslStream<MaybeHttpsStream<TcpStream>> {
     fn tls_info(&self) -> Option<TlsInfo> {
         self.ssl().peer_certificate().map(|c| TlsInfo {
             peer_certificate: c.to_der().ok(),
@@ -84,7 +75,7 @@ impl TlsInfoFactory for MaybeHttpsStream<UnixStream> {
 }
 
 #[cfg(unix)]
-impl TlsInfoFactory for SslStream<TokioIo<MaybeHttpsStream<UnixStream>>> {
+impl TlsInfoFactory for SslStream<MaybeHttpsStream<UnixStream>> {
     fn tls_info(&self) -> Option<TlsInfo> {
         self.ssl().peer_certificate().map(|c| TlsInfo {
             peer_certificate: c.to_der().ok(),

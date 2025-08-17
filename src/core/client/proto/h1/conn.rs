@@ -12,6 +12,7 @@ use http::{
 };
 use http_body::Frame;
 use httparse::ParserConfig;
+use tokio::io::{AsyncRead, AsyncWrite};
 
 use super::{
     Decoder, Encode, EncodedBuf, Encoder, Http1Transaction, ParseContext, Wants, io::Buffered,
@@ -23,13 +24,12 @@ use crate::core::{
         proto::{BodyLength, MessageHead, headers},
         upgrade,
     },
-    rt::{Read, Write},
 };
 
 const H2_PREFACE: &[u8] = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
 
 /// This handles a connection, which will have been established over an
-/// `Read + Write` (like a socket), and will likely include multiple
+/// `AsyncRead + AsyncWrite` (like a socket), and will likely include multiple
 /// `Transaction`s over HTTP.
 ///
 /// The connection will determine when a message begins and ends as well as
@@ -43,7 +43,7 @@ pub(crate) struct Conn<I, B, T> {
 
 impl<I, B, T> Conn<I, B, T>
 where
-    I: Read + Write + Unpin,
+    I: AsyncRead + AsyncWrite + Unpin,
     B: Buf,
     T: Http1Transaction,
 {

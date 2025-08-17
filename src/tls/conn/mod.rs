@@ -23,18 +23,15 @@ use boring2::{
 };
 use cache::{SessionCache, SessionKey};
 use http::Uri;
-use tokio::io::{AsyncRead, AsyncWrite};
+use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio_boring2::SslStream;
 use tower::Service;
 
 use crate::{
     Error,
-    core::{
-        client::{
-            ConnectRequest, Identifier,
-            connect::{Connected, Connection},
-        },
-        rt::{Read, ReadBufCursor, TokioIo, Write},
+    core::client::{
+        ConnectRequest, Identifier,
+        connect::{Connected, Connection},
     },
     error::BoxError,
     sync::Mutex,
@@ -184,7 +181,7 @@ where
     S: Service<Uri, Response = T> + Send,
     S::Error: Into<BoxError>,
     S::Future: Unpin + Send + 'static,
-    T: Read + Write + Connection + Unpin + Debug + Sync + Send + 'static,
+    T: AsyncRead + AsyncWrite + Connection + Unpin + Debug + Sync + Send + 'static,
 {
     /// Creates a new `HttpsConnector` with a given `HttpConnector`
     pub fn with_connector(http: S, connector: TlsConnector) -> HttpsConnector<S> {
@@ -561,7 +558,7 @@ pub enum MaybeHttpsStream<T> {
 /// A connection that has been established with a TLS handshake.
 pub struct EstablishedConn<IO> {
     req: ConnectRequest,
-    inner: TokioIo<IO>,
+    inner: IO,
 }
 
 // ===== impl MaybeHttpsStream =====
@@ -595,23 +592,23 @@ where
     }
 }
 
-impl<T> Read for MaybeHttpsStream<T>
+impl<T> AsyncRead for MaybeHttpsStream<T>
 where
     T: AsyncRead + AsyncWrite + Unpin,
 {
     fn poll_read(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
-        buf: ReadBufCursor<'_>,
+        buf: &mut ReadBuf<'_>,
     ) -> Poll<Result<(), std::io::Error>> {
-        match &mut *self {
-            MaybeHttpsStream::Http(inner) => Pin::new(&mut TokioIo::new(inner)).poll_read(cx, buf),
-            MaybeHttpsStream::Https(inner) => Pin::new(&mut TokioIo::new(inner)).poll_read(cx, buf),
+        match self.as_mut().get_mut() {
+            MaybeHttpsStream::Http(inner) => Pin::new(inner).poll_read(cx, buf),
+            MaybeHttpsStream::Https(inner) => Pin::new(inner).poll_read(cx, buf),
         }
     }
 }
 
-impl<T> Write for MaybeHttpsStream<T>
+impl<T> AsyncWrite for MaybeHttpsStream<T>
 where
     T: AsyncRead + AsyncWrite + Unpin,
 {
@@ -620,27 +617,23 @@ where
         ctx: &mut Context<'_>,
         buf: &[u8],
     ) -> Poll<io::Result<usize>> {
-        match &mut *self {
-            MaybeHttpsStream::Http(inner) => {
-                Pin::new(&mut TokioIo::new(inner)).poll_write(ctx, buf)
-            }
-            MaybeHttpsStream::Https(inner) => {
-                Pin::new(&mut TokioIo::new(inner)).poll_write(ctx, buf)
-            }
+        match self.as_mut().get_mut() {
+            MaybeHttpsStream::Http(inner) => Pin::new(inner).poll_write(ctx, buf),
+            MaybeHttpsStream::Https(inner) => Pin::new(inner).poll_write(ctx, buf),
         }
     }
 
     fn poll_flush(mut self: Pin<&mut Self>, ctx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        match &mut *self {
-            MaybeHttpsStream::Http(inner) => Pin::new(&mut TokioIo::new(inner)).poll_flush(ctx),
-            MaybeHttpsStream::Https(inner) => Pin::new(&mut TokioIo::new(inner)).poll_flush(ctx),
+        match self.as_mut().get_mut() {
+            MaybeHttpsStream::Http(inner) => Pin::new(inner).poll_flush(ctx),
+            MaybeHttpsStream::Https(inner) => Pin::new(inner).poll_flush(ctx),
         }
     }
 
     fn poll_shutdown(mut self: Pin<&mut Self>, ctx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        match &mut *self {
-            MaybeHttpsStream::Http(inner) => Pin::new(&mut TokioIo::new(inner)).poll_shutdown(ctx),
-            MaybeHttpsStream::Https(inner) => Pin::new(&mut TokioIo::new(inner)).poll_shutdown(ctx),
+        match self.as_mut().get_mut() {
+            MaybeHttpsStream::Http(inner) => Pin::new(inner).poll_shutdown(ctx),
+            MaybeHttpsStream::Https(inner) => Pin::new(inner).poll_shutdown(ctx),
         }
     }
 }
@@ -649,7 +642,7 @@ where
 
 impl<IO> EstablishedConn<IO> {
     #[inline]
-    pub fn new(req: ConnectRequest, inner: TokioIo<IO>) -> Self {
+    pub fn new(req: ConnectRequest, inner: IO) -> Self {
         Self { req, inner }
     }
 }

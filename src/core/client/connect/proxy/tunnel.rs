@@ -2,17 +2,15 @@ use std::{
     future::Future,
     marker::{PhantomData, Unpin},
     pin::Pin,
-    task::{self, Poll},
+    task::{self, Poll, ready},
 };
 
 use http::{HeaderMap, HeaderValue, Uri};
 use pin_project_lite::pin_project;
+use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tower::Service;
 
-use crate::core::{
-    error::BoxError,
-    rt::{Read, Write},
-};
+use crate::core::error::BoxError;
 
 /// Tunnel Proxy via HTTP CONNECT
 ///
@@ -123,7 +121,7 @@ impl<C> Service<Uri> for TunnelConnector<C>
 where
     C: Service<Uri>,
     C::Future: Send + 'static,
-    C::Response: Read + Write + Unpin + Send + 'static,
+    C::Response: AsyncRead + AsyncWrite + Unpin + Send + 'static,
     C::Error: Into<BoxError>,
 {
     type Response = C::Response;
@@ -172,7 +170,7 @@ where
 
 async fn tunnel<T>(mut conn: T, host: &str, port: u16, headers: &Headers) -> Result<T, TunnelError>
 where
-    T: Read + Write + Unpin,
+    T: AsyncRead + AsyncWrite + Unpin,
 {
     let mut buf = format!(
         "\
@@ -202,15 +200,13 @@ where
     // headers end
     buf.extend_from_slice(b"\r\n");
 
-    crate::core::rt::write_all(&mut conn, &buf)
-        .await
-        .map_err(TunnelError::Io)?;
+    write_all(&mut conn, &buf).await.map_err(TunnelError::Io)?;
 
     let mut buf = [0; 8192];
     let mut pos = 0;
 
     loop {
-        let n = crate::core::rt::read(&mut conn, &mut buf[pos..])
+        let n = read(&mut conn, &mut buf[pos..])
             .await
             .map_err(TunnelError::Io)?;
 
@@ -234,6 +230,32 @@ where
             return Err(TunnelError::TunnelUnsuccessful);
         }
     }
+}
+
+async fn read<T>(io: &mut T, buf: &mut [u8]) -> Result<usize, std::io::Error>
+where
+    T: AsyncRead + Unpin,
+{
+    std::future::poll_fn(move |cx| {
+        let mut buf = ReadBuf::new(buf);
+        ready!(Pin::new(&mut *io).poll_read(cx, &mut buf))?;
+        Poll::Ready(Ok(buf.filled().len()))
+    })
+    .await
+}
+
+async fn write_all<T>(io: &mut T, buf: &[u8]) -> Result<(), std::io::Error>
+where
+    T: AsyncWrite + Unpin,
+{
+    let mut n = 0;
+    std::future::poll_fn(move |cx| {
+        while n < buf.len() {
+            n += ready!(Pin::new(&mut *io).poll_write(cx, &buf[n..])?);
+        }
+        Poll::Ready(Ok(()))
+    })
+    .await
 }
 
 impl std::fmt::Display for TunnelError {

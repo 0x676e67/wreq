@@ -3,11 +3,10 @@ mod connector;
 mod tls_info;
 mod verbose;
 
+use tokio::io::{AsyncRead, AsyncWrite};
+
 pub(super) use self::{conn::Conn, connector::Connector, tls_info::TlsInfoFactory};
-use crate::core::{
-    client::{ConnectRequest, connect::Connection},
-    rt::{Read, Write},
-};
+use crate::core::client::{ConnectRequest, connect::Connection};
 
 /// A wrapper type for [`ConnectRequest`] used to erase its concrete type.
 ///
@@ -22,7 +21,7 @@ pub struct Unnameable(pub(super) ConnectRequest);
 /// - [`Read`] + [`Write`]: For I/O operations
 /// - [`Connection`]: For connection metadata
 /// - [`Send`] + [`Sync`] + [`Unpin`] + `'static`: For async/await compatibility
-trait AsyncConn: Read + Write + Connection + Send + Sync + Unpin + 'static {}
+trait AsyncConn: AsyncRead + AsyncWrite + Connection + Send + Sync + Unpin + 'static {}
 
 /// An async connection that can also provide TLS information.
 ///
@@ -30,6 +29,6 @@ trait AsyncConn: Read + Write + Connection + Send + Sync + Unpin + 'static {}
 /// when available. Useful for connections that may be either plain TCP or TLS-encrypted.
 trait AsyncConnWithInfo: AsyncConn + TlsInfoFactory {}
 
-impl<T> AsyncConn for T where T: Read + Write + Connection + Send + Sync + Unpin + 'static {}
+impl<T> AsyncConn for T where T: AsyncRead + AsyncWrite + Connection + Send + Sync + Unpin + 'static {}
 
 impl<T> AsyncConnWithInfo for T where T: AsyncConn + TlsInfoFactory {}

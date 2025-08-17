@@ -7,16 +7,14 @@ use std::{
 use bytes::Bytes;
 use http::Uri;
 use pin_project_lite::pin_project;
+use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_socks::{
     TargetAddr,
     tcp::{Socks4Stream, Socks5Stream},
 };
 use tower::Service;
 
-use crate::core::{
-    client::connect::dns::{GaiResolver, InternalResolve, Name},
-    rt::{Read, TokioIo, Write},
-};
+use crate::core::client::connect::dns::{GaiResolver, InternalResolve, Name};
 
 #[derive(Debug)]
 pub enum SocksError<C> {
@@ -160,7 +158,7 @@ impl<C, R> Service<Uri> for SocksConnector<C, R>
 where
     C: Service<Uri>,
     C::Future: Send + 'static,
-    C::Response: Read + Write + Unpin + Send + 'static,
+    C::Response: AsyncRead + AsyncWrite + Unpin + Send + 'static,
     C::Error: Send + Sync + 'static,
     R: InternalResolve + Clone + Send + 'static,
     <R as InternalResolve>::Future: Send + 'static,
@@ -187,10 +185,7 @@ where
 
             // Attempt to tcp connect to the proxy server.
             // This will return a `tokio::net::TcpStream` if successful.
-            let socket = connecting
-                .await
-                .map(TokioIo::new)
-                .map_err(SocksError::Inner)?;
+            let socket = connecting.await.map_err(SocksError::Inner)?;
 
             // Resolve the target address using the provided resolver.
             let target_addr = match dns_resolve {
@@ -211,7 +206,7 @@ where
                 Version::V4 => {
                     // For SOCKS4, we connect directly to the target address.
                     let stream = Socks4Stream::connect_with_socket(socket, target_addr).await?;
-                    Ok(stream.into_inner().into_inner())
+                    Ok(stream.into_inner())
                 }
                 Version::V5 => {
                     // For SOCKS5, we need to handle authentication if provided.
@@ -230,7 +225,7 @@ where
                         }
                         None => Socks5Stream::connect_with_socket(socket, target_addr).await?,
                     };
-                    Ok(stream.into_inner().into_inner())
+                    Ok(stream.into_inner())
                 }
             }
         };

@@ -9,6 +9,7 @@ use std::{
 };
 
 use http::{Uri, uri::Scheme};
+use tokio::io::{AsyncRead, AsyncWrite};
 use tower::{
     Service, ServiceBuilder, ServiceExt,
     timeout::TimeoutLayer,
@@ -24,12 +25,9 @@ use super::{
 #[cfg(unix)]
 use crate::core::client::connect::UnixConnector;
 use crate::{
-    core::{
-        client::{
-            ConnectExtra, ConnectRequest,
-            connect::{Connection, proxy},
-        },
-        rt::{Read, TokioIo, Write},
+    core::client::{
+        ConnectExtra, ConnectRequest,
+        connect::{Connection, proxy},
     },
     dns::DynResolver,
     error::{BoxError, TimedOut, map_timeout_to_connector_error},
@@ -411,8 +409,6 @@ impl ConnectorService {
                     // The tunnel connector will first establish a CONNECT tunnel,
                     // then perform the TLS handshake over the tunneled stream.
                     let tunneled = tunnel.call(uri).await?;
-                    let tunneled = TokioIo::new(tunneled);
-                    let tunneled = TokioIo::new(tunneled);
 
                     // Wrap the established tunneled stream with TLS.
                     let established_conn = EstablishedConn::new(req, tunneled);
@@ -448,8 +444,6 @@ impl ConnectorService {
                     // The tunnel connector will first establish a CONNECT tunnel,
                     // then perform the TLS handshake over the tunneled stream.
                     let tunneled = tunnel.call(uri).await?;
-                    let tunneled = TokioIo::new(tunneled);
-                    let tunneled = TokioIo::new(tunneled);
 
                     // Wrap the established tunneled stream with TLS.
                     let established_conn = EstablishedConn::new(req, tunneled);
@@ -521,7 +515,7 @@ impl ConnectorService {
         S: Service<Uri, Response = T> + Send,
         S::Error: Into<BoxError>,
         S::Future: Unpin + Send + 'static,
-        T: Read + Write + Connection + Unpin + std::fmt::Debug + Sync + Send + 'static,
+        T: AsyncRead + AsyncWrite + Connection + Unpin + std::fmt::Debug + Sync + Send + 'static,
     {
         // Prefer TLS options from metadata, fallback to default
         let tls = extra

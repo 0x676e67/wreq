@@ -16,6 +16,7 @@ use std::{
 use futures_util::future::{Either, FutureExt, TryFutureExt};
 use http::{HeaderValue, Method, Request, Response, Uri, Version, header::HOST};
 use http_body::Body;
+use tokio::io::{AsyncRead, AsyncWrite};
 use tower::util::Oneshot;
 
 use self::{
@@ -35,7 +36,7 @@ use crate::{
         common::{Exec, Lazy, lazy, timer},
         error::BoxError,
         ext::{RequestConfig, RequestLevelOptions},
-        rt::{Executor, Read, Timer, Write},
+        rt::{Executor, Timer},
     },
     hash::{HASHER, HashMemo},
     tls::AlpnProtocol,
@@ -130,7 +131,7 @@ impl HttpClient<(), ()> {
 impl<C, B> HttpClient<C, B>
 where
     C: tower::Service<ConnectRequest> + Clone + Send + Sync + 'static,
-    C::Response: Read + Write + Connection + Unpin + Send + 'static,
+    C::Response: AsyncRead + AsyncWrite + Connection + Unpin + Send + 'static,
     C::Error: Into<BoxError>,
     C::Future: Unpin + Send + 'static,
     B: Body + Send + 'static + Unpin,
@@ -603,7 +604,7 @@ where
 impl<C, B> tower::Service<Request<B>> for HttpClient<C, B>
 where
     C: tower::Service<ConnectRequest> + Clone + Send + Sync + 'static,
-    C::Response: Read + Write + Connection + Unpin + Send + 'static,
+    C::Response: AsyncRead + AsyncWrite + Connection + Unpin + Send + 'static,
     C::Error: Into<BoxError>,
     C::Future: Unpin + Send + 'static,
     B: Body + Send + 'static + Unpin,
@@ -626,7 +627,7 @@ where
 impl<C, B> tower::Service<Request<B>> for &'_ HttpClient<C, B>
 where
     C: tower::Service<ConnectRequest> + Clone + Send + Sync + 'static,
-    C::Response: Read + Write + Connection + Unpin + Send + 'static,
+    C::Response: AsyncRead + AsyncWrite + Connection + Unpin + Send + 'static,
     C::Error: Into<BoxError>,
     C::Future: Unpin + Send + 'static,
     B: Body + Send + 'static + Unpin,
@@ -962,7 +963,7 @@ impl Builder {
     pub fn build<C, B>(self, connector: C) -> HttpClient<C, B>
     where
         C: tower::Service<ConnectRequest> + Clone + Send + Sync + 'static,
-        C::Response: Read + Write + Connection + Unpin + Send + 'static,
+        C::Response: AsyncRead + AsyncWrite + Connection + Unpin + Send + 'static,
         C::Error: Into<BoxError>,
         C::Future: Unpin + Send + 'static,
         B: Body + Send,

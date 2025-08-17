@@ -16,14 +16,10 @@ use http::{
 use http_body::Body;
 use http2::{Reason, RecvStream, SendStream};
 use pin_project_lite::pin_project;
+use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 
 pub(crate) use self::client::ClientTask;
-use crate::core::{
-    Error,
-    client::proto::h2::ping::Recorder,
-    error::BoxError,
-    rt::{Read, ReadBufCursor, Write},
-};
+use crate::core::{Error, client::proto::h2::ping::Recorder, error::BoxError};
 
 /// Default initial stream window size defined in HTTP2 spec.
 pub(crate) const SPEC_WINDOW_SIZE: u32 = 65_535;
@@ -267,14 +263,14 @@ where
     buf: Bytes,
 }
 
-impl<B> Read for H2Upgraded<B>
+impl<B> AsyncRead for H2Upgraded<B>
 where
     B: Buf,
 {
     fn poll_read(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
-        mut read_buf: ReadBufCursor<'_>,
+        read_buf: &mut ReadBuf<'_>,
     ) -> Poll<Result<(), std::io::Error>> {
         if self.buf.is_empty() {
             self.buf = loop {
@@ -307,7 +303,7 @@ where
     }
 }
 
-impl<B> Write for H2Upgraded<B>
+impl<B> AsyncWrite for H2Upgraded<B>
 where
     B: Buf,
 {

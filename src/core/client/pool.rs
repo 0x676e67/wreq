@@ -822,7 +822,7 @@ mod tests {
     use crate::{
         core::{
             common::timer,
-            rt::{TokioExecutor, tokio::TokioTimer},
+            rt::{TokioExecutor, TokioTimer},
         },
         sync::MutexGuard,
     };

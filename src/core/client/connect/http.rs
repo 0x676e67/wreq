@@ -24,7 +24,7 @@ use super::{
     Connected, Connection,
     dns::{self, GaiResolver, InternalResolve, resolve},
 };
-use crate::core::{error::BoxError, rt::TokioIo};
+use crate::core::error::BoxError;
 
 /// A connector for the `http` scheme.
 ///
@@ -512,7 +512,7 @@ where
     R: InternalResolve + Clone + Send + Sync + 'static,
     R::Future: Send,
 {
-    type Response = TokioIo<TcpStream>;
+    type Response = TcpStream;
     type Error = ConnectError;
     type Future = HttpConnecting<R>;
 
@@ -581,7 +581,7 @@ impl<R> HttpConnector<R>
 where
     R: InternalResolve,
 {
-    async fn call_async(&mut self, dst: Uri) -> Result<TokioIo<TcpStream>, ConnectError> {
+    async fn call_async(&mut self, dst: Uri) -> Result<TcpStream, ConnectError> {
         let config = &self.config;
 
         let (host, port) = get_host_port(config, &dst)?;
@@ -612,7 +612,7 @@ where
             warn!("tcp set_nodelay error: {_e}");
         }
 
-        Ok(TokioIo::new(sock))
+        Ok(sock)
     }
 }
 
@@ -627,17 +627,6 @@ impl Connection for TcpStream {
         } else {
             connected
         }
-    }
-}
-
-// Implement `Connection` for generic `TokioIo<T>` so that external crates can
-// implement their own `HttpConnector` with `TokioIo<CustomTcpStream>`.
-impl<T> Connection for TokioIo<T>
-where
-    T: Connection,
-{
-    fn connected(&self) -> Connected {
-        self.inner().connected()
     }
 }
 
@@ -667,7 +656,7 @@ pin_project! {
     }
 }
 
-type ConnectResult = Result<TokioIo<TcpStream>, ConnectError>;
+type ConnectResult = Result<TcpStream, ConnectError>;
 type BoxConnecting = Pin<Box<dyn Future<Output = ConnectResult> + Send>>;
 
 impl<R: InternalResolve> Future for HttpConnecting<R> {

@@ -8,11 +8,9 @@ pub use self::h2_client::Http2ClientConnExec;
 mod h2_client {
     use std::future::Future;
 
-    use crate::core::{
-        client::proto::h2::client::H2ClientFuture,
-        error::BoxError,
-        rt::{Executor, Read, Write},
-    };
+    use tokio::io::{AsyncRead, AsyncWrite};
+
+    use crate::core::{client::proto::h2::client::H2ClientFuture, error::BoxError, rt::Executor};
 
     /// An executor to spawn http2 futures for the client.
     ///
@@ -24,7 +22,7 @@ mod h2_client {
     where
         B: http_body::Body,
         B::Error: Into<BoxError>,
-        T: Read + Write + Unpin,
+        T: AsyncRead + AsyncWrite + Unpin,
     {
         #[doc(hidden)]
         fn execute_h2_future(&mut self, future: H2ClientFuture<B, T>);
@@ -36,7 +34,7 @@ mod h2_client {
         B: http_body::Body + 'static,
         B::Error: Into<BoxError>,
         H2ClientFuture<B, T>: Future<Output = ()>,
-        T: Read + Write + Unpin,
+        T: AsyncRead + AsyncWrite + Unpin,
     {
         fn execute_h2_future(&mut self, future: H2ClientFuture<B, T>) {
             self.execute(future)
@@ -49,7 +47,7 @@ mod h2_client {
         B: http_body::Body + 'static,
         B::Error: Into<BoxError>,
         H2ClientFuture<B, T>: Future<Output = ()>,
-        T: Read + Write + Unpin,
+        T: AsyncRead + AsyncWrite + Unpin,
     {
     }
 

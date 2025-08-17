@@ -12,10 +12,7 @@ use tower::Service;
 
 use super::{EstablishedConn, HttpsConnector, MaybeHttpsStream};
 use crate::{
-    core::{
-        client::{ConnectRequest, connect::Connection},
-        rt::TokioIo,
-    },
+    core::client::{ConnectRequest, connect::Connection},
     error::BoxError,
 };
 
@@ -23,7 +20,7 @@ type BoxFuture<T, E> = Pin<Box<dyn Future<Output = Result<T, E>> + Send>>;
 
 impl<T, S> Service<Uri> for HttpsConnector<S>
 where
-    S: Service<Uri, Response = TokioIo<T>> + Send,
+    S: Service<Uri, Response = T> + Send,
     S::Error: Into<BoxError>,
     S::Future: Unpin + Send + 'static,
     T: AsyncRead + AsyncWrite + Connection + Unpin + Debug + Sync + Send + 'static,
@@ -42,7 +39,7 @@ where
         let inner = self.inner.clone();
 
         let f = async move {
-            let conn = connect.await.map_err(Into::into)?.into_inner();
+            let conn = connect.await.map_err(Into::into)?;
 
             // Early return if it is not a tls scheme
             if uri.scheme() != Some(&Scheme::HTTPS) {
@@ -64,7 +61,7 @@ where
 
 impl<T, S> Service<ConnectRequest> for HttpsConnector<S>
 where
-    S: Service<Uri, Response = TokioIo<T>> + Send,
+    S: Service<Uri, Response = T> + Send,
     S::Error: Into<BoxError>,
     S::Future: Unpin + Send + 'static,
     T: AsyncRead + AsyncWrite + Connection + Unpin + Debug + Sync + Send + 'static,
@@ -84,7 +81,7 @@ where
         let inner = self.inner.clone();
 
         let f = async move {
-            let conn = connect.await.map_err(Into::into)?.into_inner();
+            let conn = connect.await.map_err(Into::into)?;
 
             // Early return if it is not a tls scheme
             if uri.scheme() != Some(&Scheme::HTTPS) {
@@ -106,7 +103,7 @@ where
 
 impl<T, S, IO> Service<EstablishedConn<IO>> for HttpsConnector<S>
 where
-    S: Service<Uri, Response = TokioIo<T>> + Send + Clone + 'static,
+    S: Service<Uri, Response = T> + Send + Clone + 'static,
     S::Error: Into<BoxError>,
     S::Future: Unpin + Send + 'static,
     T: AsyncRead + AsyncWrite + Connection + Unpin + Debug + Sync + Send + 'static,
@@ -125,9 +122,7 @@ where
         let inner = self.inner.clone();
         let fut = async move {
             let ssl = inner.setup_ssl2(conn.req)?;
-            let stream = SslStreamBuilder::new(ssl, conn.inner.into_inner())
-                .connect()
-                .await?;
+            let stream = SslStreamBuilder::new(ssl, conn.inner).connect().await?;
 
             Ok(stream)
         };

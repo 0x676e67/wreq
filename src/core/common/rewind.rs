@@ -5,8 +5,7 @@ use std::{
 };
 
 use bytes::{Buf, Bytes};
-
-use crate::core::rt::{Read, ReadBufCursor, Write};
+use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 
 /// Combine a buffer with an IO, rewinding reads to use the buffer.
 #[derive(Debug)]
@@ -38,14 +37,14 @@ impl<T> Rewind<T> {
     }
 }
 
-impl<T> Read for Rewind<T>
+impl<T> AsyncRead for Rewind<T>
 where
-    T: Read + Unpin,
+    T: AsyncRead + Unpin,
 {
     fn poll_read(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
-        mut buf: ReadBufCursor<'_>,
+        buf: &mut ReadBuf<'_>,
     ) -> Poll<io::Result<()>> {
         if let Some(mut prefix) = self.pre.take() {
             // If there are no remaining bytes, let the bytes get dropped.
@@ -66,9 +65,9 @@ where
     }
 }
 
-impl<T> Write for Rewind<T>
+impl<T> AsyncWrite for Rewind<T>
 where
-    T: Write + Unpin,
+    T: AsyncWrite + Unpin,
 {
     fn poll_write(
         mut self: Pin<&mut Self>,
@@ -104,7 +103,7 @@ mod tests {
     use bytes::Bytes;
     use tokio::io::AsyncReadExt;
 
-    use super::{super::Compat, Rewind};
+    use super::Rewind;
 
     #[tokio::test]
     async fn partial_rewind() {
@@ -112,14 +111,14 @@ mod tests {
 
         let mock = tokio_test::io::Builder::new().read(&underlying).build();
 
-        let mut stream = Compat::new(Rewind::new(Compat::new(mock)));
+        let mut stream = Rewind::new(mock);
 
         // Read off some bytes, ensure we filled o1
         let mut buf = [0; 2];
         stream.read_exact(&mut buf).await.expect("read1");
 
         // Rewind the stream so that it is as if we never read in the first place.
-        stream.inner_mut().rewind(Bytes::copy_from_slice(&buf[..]));
+        stream.rewind(Bytes::copy_from_slice(&buf[..]));
 
         let mut buf = [0; 5];
         stream.read_exact(&mut buf).await.expect("read1");
@@ -134,13 +133,13 @@ mod tests {
 
         let mock = tokio_test::io::Builder::new().read(&underlying).build();
 
-        let mut stream = Compat::new(Rewind::new(Compat::new(mock)));
+        let mut stream = Rewind::new(mock);
 
         let mut buf = [0; 5];
         stream.read_exact(&mut buf).await.expect("read1");
 
         // Rewind the stream so that it is as if we never read in the first place.
-        stream.inner_mut().rewind(Bytes::copy_from_slice(&buf[..]));
+        stream.rewind(Bytes::copy_from_slice(&buf[..]));
 
         let mut buf = [0; 5];
         stream.read_exact(&mut buf).await.expect("read1");

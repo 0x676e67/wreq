@@ -60,7 +60,7 @@ use crate::{
     },
     core::{
         client::{HttpClient, connect::TcpConnectOptions, options::TransportOptions},
-        rt::{TokioExecutor, tokio::TokioTimer},
+        rt::{TokioExecutor, TokioTimer},
     },
     dns::{DnsResolverWithOverrides, DynResolver, GaiResolver, IntoResolve, Resolve},
     error::{self, BoxError, Error},

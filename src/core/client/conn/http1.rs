@@ -11,6 +11,7 @@ use bytes::Bytes;
 use http::{Request, Response};
 use http_body::Body;
 use httparse::ParserConfig;
+use tokio::io::{AsyncRead, AsyncWrite};
 
 use crate::core::{
     Error, Result,
@@ -21,7 +22,6 @@ use crate::core::{
         proto,
     },
     error::BoxError,
-    rt::{Read, Write},
 };
 
 type Dispatcher<T, B> =
@@ -61,7 +61,7 @@ pub struct Parts<T> {
 #[must_use = "futures do nothing unless polled"]
 pub struct Connection<T, B>
 where
-    T: Read + Write,
+    T: AsyncRead + AsyncWrite,
     B: Body + 'static,
 {
     inner: Dispatcher<T, B>,
@@ -69,7 +69,7 @@ where
 
 impl<T, B> Connection<T, B>
 where
-    T: Read + Write + Unpin,
+    T: AsyncRead + AsyncWrite + Unpin,
     B: Body + 'static,
     B::Error: Into<BoxError>,
 {
@@ -171,7 +171,7 @@ impl<B> fmt::Debug for SendRequest<B> {
 
 impl<T, B> Connection<T, B>
 where
-    T: Read + Write + Unpin + Send,
+    T: AsyncRead + AsyncWrite + Unpin + Send,
     B: Body + 'static,
     B::Error: Into<BoxError>,
 {
@@ -185,7 +185,7 @@ where
 
 impl<T, B> fmt::Debug for Connection<T, B>
 where
-    T: Read + Write + fmt::Debug,
+    T: AsyncRead + AsyncWrite + fmt::Debug,
     B: Body + 'static,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -195,7 +195,7 @@ where
 
 impl<T, B> Future for Connection<T, B>
 where
-    T: Read + Write + Unpin,
+    T: AsyncRead + AsyncWrite + Unpin,
     B: Body + 'static,
     B::Data: Send,
     B::Error: Into<BoxError>,
@@ -247,7 +247,7 @@ impl Builder {
     /// do nothing.
     pub async fn handshake<T, B>(self, io: T) -> Result<(SendRequest<B>, Connection<T, B>)>
     where
-        T: Read + Write + Unpin,
+        T: AsyncRead + AsyncWrite + Unpin,
         B: Body + 'static,
         B::Data: Send,
         B::Error: Into<BoxError>,
@@ -323,7 +323,7 @@ mod upgrades {
     #[must_use = "futures do nothing unless polled"]
     pub struct UpgradeableConnection<T, B>
     where
-        T: Read + Write + Unpin + Send + 'static,
+        T: AsyncRead + AsyncWrite + Unpin + Send + 'static,
         B: Body + 'static,
         B::Error: Into<BoxError>,
     {
@@ -332,7 +332,7 @@ mod upgrades {
 
     impl<I, B> Future for UpgradeableConnection<I, B>
     where
-        I: Read + Write + Unpin + Send + 'static,
+        I: AsyncRead + AsyncWrite + Unpin + Send + 'static,
         B: Body + 'static,
         B::Data: Send,
         B::Error: Into<BoxError>,

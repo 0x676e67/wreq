@@ -1,5 +1,5 @@
 pub(crate) mod buf;
-pub(crate) mod io;
+pub(crate) mod rewind;
 pub(crate) mod time;
 pub(crate) mod watch;
 
