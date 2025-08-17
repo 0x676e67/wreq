@@ -23,7 +23,7 @@ async fn cookie_response_accessor() {
     });
 
     let url = format!("http://{}/", server.addr());
-    let res = client.get(&url).send().await.unwrap();
+    let res = wreq::get(&url).send().await.unwrap();
 
     let cookies = res.cookies().collect::<Vec<_>>();
 
