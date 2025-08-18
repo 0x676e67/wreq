@@ -8,7 +8,7 @@ use std::{
 
 use pin_project_lite::pin_project;
 
-use crate::core::rt::{Executor, Sleep, Timer};
+use super::{Executor, Sleep, Timer};
 
 /// Future executor that utilises `tokio` threads.
 #[non_exhaustive]
