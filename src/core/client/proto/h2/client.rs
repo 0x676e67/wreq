@@ -30,7 +30,7 @@ use super::{
     ping::{Ponger, Recorder},
 };
 use crate::core::{
-    Error,
+    self, Error,
     client::{
         body::{self, Incoming as IncomingBody},
         bounds::Http2ClientConnExec,
@@ -60,7 +60,7 @@ pub(crate) async fn handshake<T, B, E>(
     ping_config: ping::Config,
     mut exec: E,
     timer: Time,
-) -> crate::core::Result<ClientTask<B, E, T>>
+) -> core::Result<ClientTask<B, E, T>>
 where
     T: AsyncRead + AsyncWrite + Unpin,
     B: Body + 'static,
@@ -525,7 +525,7 @@ where
     E: Http2ClientConnExec<B, T> + Unpin,
     T: AsyncRead + AsyncWrite + Unpin,
 {
-    type Output = crate::core::Result<Dispatched>;
+    type Output = core::Result<Dispatched>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         loop {

@@ -9,7 +9,7 @@ use bytes::{Buf, BufMut, Bytes, BytesMut};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 
 use super::{Http1Transaction, ParseContext, ParsedMessage};
-use crate::core::{Error, common::buf::BufList};
+use crate::core::{self, Error, common::buf::BufList};
 
 /// The initial buffer size allocated before trying to read from IO.
 pub(crate) const INIT_BUFFER_SIZE: usize = 8192;
@@ -153,7 +153,7 @@ where
         &mut self,
         cx: &mut Context<'_>,
         parse_ctx: ParseContext<'_>,
-    ) -> Poll<crate::core::Result<ParsedMessage<S::Incoming>>>
+    ) -> Poll<core::Result<ParsedMessage<S::Incoming>>>
     where
         S: Http1Transaction,
     {

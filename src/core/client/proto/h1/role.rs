@@ -12,7 +12,7 @@ use smallvec::{SmallVec, smallvec, smallvec_inline};
 
 use crate::{
     core::{
-        Error,
+        self, Error,
         client::{
             body::DecodedLength,
             proto::{
@@ -112,7 +112,7 @@ fn is_complete_fast(bytes: &[u8], prev_len: usize) -> bool {
 pub(super) fn encode_headers<T>(
     enc: Encode<'_, T::Outgoing>,
     dst: &mut Vec<u8>,
-) -> crate::core::Result<Encoder>
+) -> core::Result<Encoder>
 where
     T: Http1Transaction,
 {
@@ -279,7 +279,7 @@ impl Http1Transaction for Client {
         }
     }
 
-    fn encode(msg: Encode<'_, Self::Outgoing>, dst: &mut Vec<u8>) -> crate::core::Result<Encoder> {
+    fn encode(msg: Encode<'_, Self::Outgoing>, dst: &mut Vec<u8>) -> core::Result<Encoder> {
         trace!(
             "Client::encode method={:?}, body={:?}",
             msg.head.subject.0, msg.body

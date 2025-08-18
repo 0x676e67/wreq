@@ -10,7 +10,7 @@ use pin_project_lite::pin_project;
 use tokio::sync::{mpsc, oneshot};
 
 use super::{body::Incoming, proto::h2::client::ResponseFutMap};
-use crate::core::Error;
+use crate::core::{self, Error};
 
 pub(crate) type RetryPromise<T, U> = oneshot::Receiver<Result<U, TrySendError<T>>>;
 
@@ -67,7 +67,7 @@ pub(crate) struct UnboundedSender<T, U> {
 }
 
 impl<T, U> Sender<T, U> {
-    pub(crate) fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<crate::core::Result<()>> {
+    pub(crate) fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<core::Result<()>> {
         self.giver.poll_want(cx).map_err(|_| Error::new_closed())
     }
 

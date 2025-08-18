@@ -27,7 +27,7 @@ use std::{
 
 use http2::{Ping, PingPong};
 
-use crate::core::{Error, common::time::Time, rt::Sleep};
+use crate::core::{self, Error, common::time::Time, rt::Sleep};
 
 type WindowSize = u32;
 
@@ -259,7 +259,7 @@ impl Recorder {
         }
     }
 
-    pub(super) fn ensure_not_timed_out(&self) -> crate::core::Result<()> {
+    pub(super) fn ensure_not_timed_out(&self) -> core::Result<()> {
         if let Some(ref shared) = self.shared {
             let locked = shared.lock().unwrap();
             if locked.is_keep_alive_timed_out {
