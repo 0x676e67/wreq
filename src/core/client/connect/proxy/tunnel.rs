@@ -11,7 +11,7 @@ use pin_project_lite::pin_project;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tower::Service;
 
-use crate::core::error::BoxError;
+use crate::core::BoxError;
 
 /// Tunnel Proxy via HTTP CONNECT
 ///

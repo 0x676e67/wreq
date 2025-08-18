@@ -10,7 +10,7 @@ use std::{
 
 use tower::Service;
 
-use crate::core::error::BoxError;
+use crate::core::BoxError;
 
 /// A domain name to resolve into IP addresses.
 #[derive(Clone, Hash, Eq, PartialEq)]

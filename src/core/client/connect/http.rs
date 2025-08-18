@@ -24,7 +24,7 @@ use super::{
     Connected, Connection,
     dns::{self, GaiResolver, InternalResolve, resolve},
 };
-use crate::core::error::BoxError;
+use crate::core::BoxError;
 
 /// A connector for the `http` scheme.
 ///
