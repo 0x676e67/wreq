@@ -5,11 +5,7 @@ use std::{convert::TryInto, fmt, sync::Arc, time::SystemTime};
 use bytes::BufMut;
 use cookie_crate::{Cookie as RawCookie, Expiration, SameSite};
 
-use crate::{
-    error::Error,
-    header::{HeaderValue, SET_COOKIE},
-    sync::RwLock,
-};
+use crate::{error::Error, header::HeaderValue, sync::RwLock};
 
 /// Actions for a persistent cookie store providing session support.
 pub trait CookieStore: Send + Sync {
@@ -78,14 +74,6 @@ where
 // ===== impl Cookie =====
 
 impl<'a> Cookie<'a> {
-    fn parse(value: &'a HeaderValue) -> crate::Result<Cookie<'a>> {
-        std::str::from_utf8(value.as_bytes())
-            .map_err(cookie_crate::ParseError::from)
-            .and_then(cookie_crate::Cookie::parse)
-            .map_err(Error::decode)
-            .map(Cookie)
-    }
-
     /// The name of the cookie.
     #[inline]
     pub fn name(&self) -> &str {
@@ -163,10 +151,16 @@ impl fmt::Display for Cookie<'_> {
     }
 }
 
-pub(crate) fn extract_response_cookies(
-    headers: &http::HeaderMap,
-) -> impl Iterator<Item = crate::Result<Cookie<'_>>> {
-    headers.get_all(SET_COOKIE).iter().map(Cookie::parse)
+impl<'a> TryFrom<&'a HeaderValue> for Cookie<'a> {
+    type Error = crate::Error;
+
+    fn try_from(value: &'a HeaderValue) -> Result<Self, Self::Error> {
+        std::str::from_utf8(value.as_bytes())
+            .map_err(cookie_crate::ParseError::from)
+            .and_then(cookie_crate::Cookie::parse)
+            .map_err(Error::decode)
+            .map(Cookie)
+    }
 }
 
 // ===== impl Jar =====
@@ -201,8 +195,10 @@ impl Jar {
 
 impl CookieStore for Jar {
     fn set_cookies(&self, cookie_headers: &mut dyn Iterator<Item = &HeaderValue>, url: &url::Url) {
-        let iter =
-            cookie_headers.filter_map(|val| Cookie::parse(val).map(|c| c.0.into_owned()).ok());
+        let iter = cookie_headers
+            .map(Cookie::try_from)
+            .filter_map(Result::ok)
+            .map(|cookie| cookie.0.into_owned());
 
         self.0.write().store_response_cookies(iter, url);
     }

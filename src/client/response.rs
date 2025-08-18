@@ -88,7 +88,12 @@ impl Response {
     #[inline]
     #[cfg(feature = "cookies")]
     pub fn cookies(&self) -> impl Iterator<Item = cookie::Cookie<'_>> {
-        cookie::extract_response_cookies(self.res.headers()).filter_map(Result::ok)
+        self.res
+            .headers()
+            .get_all(crate::header::SET_COOKIE)
+            .iter()
+            .map(cookie::Cookie::try_from)
+            .filter_map(Result::ok)
     }
 
     /// Get the final `Url` of this `Response`.
