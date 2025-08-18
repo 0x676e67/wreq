@@ -1,5 +1,6 @@
 use std::{
     future::Future,
+    io,
     marker::{PhantomData, Unpin},
     pin::Pin,
     task::{self, Poll, ready},
@@ -244,7 +245,7 @@ where
     .await
 }
 
-async fn write_all<T>(io: &mut T, buf: &[u8]) -> Result<(), std::io::Error>
+async fn write_all<T>(io: &mut T, buf: &[u8]) -> io::Result<()>
 where
     T: AsyncWrite + Unpin,
 {

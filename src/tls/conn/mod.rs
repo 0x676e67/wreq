@@ -600,7 +600,7 @@ where
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
         buf: &mut ReadBuf<'_>,
-    ) -> Poll<Result<(), std::io::Error>> {
+    ) -> Poll<io::Result<()>> {
         match self.as_mut().get_mut() {
             MaybeHttpsStream::Http(inner) => Pin::new(inner).poll_read(cx, buf),
             MaybeHttpsStream::Https(inner) => Pin::new(inner).poll_read(cx, buf),

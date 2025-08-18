@@ -29,6 +29,7 @@ impl Utf8Bytes {
     /// The bytes passed in must be valid UTF-8.
     #[inline]
     pub fn from_bytes_unchecked(bytes: Bytes) -> Self {
+        #[allow(unsafe_code)]
         Self(unsafe { ts::Utf8Bytes::from_bytes_unchecked(bytes) })
     }
 

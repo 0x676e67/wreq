@@ -22,6 +22,7 @@ pub(super) fn with_system(builder: &mut super::matcher::Builder) {
     };
 
     if builder.http.is_empty() {
+        #[allow(unsafe_code)]
         let http_proxy_config = parse_setting_from_dynamic_store(
             &proxies_map,
             unsafe { kSCPropNetProxiesHTTPEnable },
@@ -34,6 +35,7 @@ pub(super) fn with_system(builder: &mut super::matcher::Builder) {
     }
 
     if builder.https.is_empty() {
+        #[allow(unsafe_code)]
         let https_proxy_config = parse_setting_from_dynamic_store(
             &proxies_map,
             unsafe { kSCPropNetProxiesHTTPSEnable },
