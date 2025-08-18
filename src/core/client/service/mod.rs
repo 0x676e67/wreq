@@ -33,10 +33,10 @@ use crate::{
             options::{RequestOptions, http1::Http1Options, http2::Http2Options},
             pool,
         },
-        common::{Exec, Lazy, lazy, timer},
+        common::{Exec, Lazy, lazy},
         error::BoxError,
         ext::{RequestConfig, RequestLevelOptions},
-        rt::{Executor, Timer},
+        rt::{ArcTimer, Executor, Timer},
     },
     hash::{HASHER, HashMemo},
     tls::AlpnProtocol,
@@ -801,7 +801,7 @@ pub struct Builder {
     h1_builder: conn::http1::Builder,
     h2_builder: conn::http2::Builder<Exec>,
     pool_config: pool::Config,
-    pool_timer: Option<timer::Timer>,
+    pool_timer: Option<ArcTimer>,
 }
 
 // ===== impl Builder =====
@@ -926,7 +926,7 @@ impl Builder {
     where
         M: Timer + Clone + Send + Sync + 'static,
     {
-        self.pool_timer = Some(timer::Timer::new(timer.clone()));
+        self.pool_timer = Some(ArcTimer::new(timer));
         self
     }
 

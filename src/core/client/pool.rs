@@ -18,11 +18,8 @@ use tokio::sync::oneshot;
 
 use crate::{
     core::{
-        common::{
-            exec::{self, Exec},
-            timer::Timer,
-        },
-        rt::Timer as _,
+        common::exec::{self, Exec},
+        rt::{ArcTimer, Executor, Timer},
     },
     hash::{HASHER, HashMap, HashSet, LruMap},
     sync::Mutex,
@@ -100,7 +97,7 @@ struct PoolInner<T, K: Eq + Hash> {
     // the Pool completely drops. That way, the interval can cancel immediately.
     idle_interval_ref: Option<oneshot::Sender<Infallible>>,
     exec: Exec,
-    timer: Option<Timer>,
+    timer: Option<ArcTimer>,
     timeout: Option<Duration>,
 }
 
@@ -124,8 +121,8 @@ impl Config {
 impl<T, K: Key> Pool<T, K> {
     pub fn new<E, M>(config: Config, executor: E, timer: Option<M>) -> Pool<T, K>
     where
-        E: crate::core::rt::Executor<exec::BoxSendFuture> + Send + Sync + Clone + 'static,
-        M: crate::core::rt::Timer + Send + Sync + Clone + 'static,
+        E: Executor<exec::BoxSendFuture> + Send + Sync + Clone + 'static,
+        M: Timer + Send + Sync + Clone + 'static,
     {
         let inner = if config.is_enabled() {
             Some(Arc::new(Mutex::new(PoolInner {
@@ -138,7 +135,7 @@ impl<T, K: Key> Pool<T, K> {
                 max_idle_per_host: config.max_idle_per_host,
                 waiters: HashMap::with_hasher(HASHER),
                 exec: Exec::new(executor),
-                timer: timer.map(Timer::new),
+                timer: timer.map(ArcTimer::new),
                 timeout: config.idle_timeout,
             })))
         } else {
@@ -753,7 +750,7 @@ impl Expiration {
 }
 
 struct IdleTask<T, K: Key> {
-    timer: Timer,
+    timer: ArcTimer,
     duration: Duration,
     pool: WeakOpt<Mutex<PoolInner<T, K>>>,
     // This allows the IdleTask to be notified as soon as the entire
@@ -820,10 +817,7 @@ mod tests {
 
     use super::{Connecting, Key, Pool, Poolable, Reservation, WeakOpt};
     use crate::{
-        core::{
-            common::timer,
-            rt::{TokioExecutor, TokioTimer},
-        },
+        core::rt::{ArcTimer, TokioExecutor, TokioTimer},
         sync::MutexGuard,
     };
 
@@ -871,7 +865,7 @@ mod tests {
                 max_pool_size: None,
             },
             TokioExecutor::new(),
-            Option::<timer::Timer>::None,
+            Option::<ArcTimer>::None,
         )
     }
 
@@ -1096,7 +1090,7 @@ mod tests {
                 max_pool_size: Some(NonZero::new(2).expect("max pool size")),
             },
             TokioExecutor::new(),
-            Option::<timer::Timer>::None,
+            Option::<ArcTimer>::None,
         );
         let key1 = host_key("foo");
         let key2 = host_key("bar");

@@ -4,6 +4,7 @@ use std::{
     any::TypeId,
     future::Future,
     pin::Pin,
+    sync::Arc,
     time::{Duration, Instant},
 };
 
@@ -32,6 +33,19 @@ pub trait Sleep: Send + Sync + Future<Output = ()> {
         TypeId::of::<Self>()
     }
 }
+
+/// A handle to a shared timer instance.
+///
+/// `TimerHandle` provides a reference-counted, thread-safe handle to any type implementing the
+/// [`Timer`] trait. It allows cloning and sharing a timer implementation across multiple components
+/// or tasks.
+///
+/// This is typically used to abstract over different timer backends and to provide a unified
+/// interface for spawning sleep futures or scheduling timeouts.
+#[derive(Clone)]
+pub struct ArcTimer(Arc<dyn Timer + Send + Sync>);
+
+// =====impl Sleep =====
 
 impl dyn Sleep {
     //! This is a re-implementation of downcast methods from std::any::Any
@@ -63,7 +77,27 @@ impl dyn Sleep {
     }
 }
 
+// =====impl TimerHandle =====
+
+impl ArcTimer {
+    pub(crate) fn new<T>(inner: T) -> Self
+    where
+        T: Timer + Send + Sync + 'static,
+    {
+        Self(Arc::new(inner))
+    }
+}
+
+impl Timer for ArcTimer {
+    fn sleep(&self, duration: Duration) -> Pin<Box<dyn Sleep>> {
+        self.0.sleep(duration)
+    }
+
+    fn sleep_until(&self, deadline: Instant) -> Pin<Box<dyn Sleep>> {
+        self.0.sleep_until(deadline)
+    }
+}
+
 mod private {
-    #![allow(missing_debug_implementations)]
     pub struct Sealed {}
 }

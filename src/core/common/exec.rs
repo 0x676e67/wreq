@@ -39,7 +39,7 @@ impl fmt::Debug for Exec {
     }
 }
 
-impl<F> crate::core::rt::Executor<F> for Exec
+impl<F> Executor<F> for Exec
 where
     F: Future<Output = ()> + Send + 'static,
 {
