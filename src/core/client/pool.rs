@@ -18,7 +18,7 @@ use tokio::sync::oneshot;
 
 use crate::{
     core::{
-        common::exec::{self, Exec},
+        client::common::exec::{self, Exec},
         rt::{ArcTimer, Executor, Timer},
     },
     hash::{HASHER, HashMap, HashSet, LruMap},

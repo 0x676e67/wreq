@@ -28,12 +28,12 @@ use crate::{
     core::{
         client::{
             body::Incoming,
+            common::{Exec, Lazy, lazy},
             conn::{self, TrySendError as ConnTrySendError},
             connect::{Alpn, Connected, Connection},
             options::{RequestOptions, http1::Http1Options, http2::Http2Options},
             pool,
         },
-        common::{Exec, Lazy, lazy},
         error::BoxError,
         ext::{RequestConfig, RequestLevelOptions},
         rt::{ArcTimer, Executor, Timer},

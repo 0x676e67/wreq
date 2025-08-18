@@ -1,6 +1,7 @@
 //! HTTP Client implementation and lower-level connection management.
 
 mod bounds;
+mod common;
 mod dispatch;
 mod pool;
 mod proto;

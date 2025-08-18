@@ -38,7 +38,8 @@ use tokio::{
     sync::oneshot,
 };
 
-use crate::core::{Error, Result, common::rewind::Rewind};
+use super::common::rewind::Rewind;
+use crate::core::{Error, Result};
 
 /// An upgraded HTTP connection.
 ///

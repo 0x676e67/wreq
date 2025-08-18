@@ -1,6 +1,5 @@
 //! http client protocol implementation and low level utilities.
 
-mod common;
 mod error;
 
 pub mod client;
