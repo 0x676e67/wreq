@@ -20,18 +20,7 @@ type TrailersSender = oneshot::Sender<HeaderMap>;
 /// A stream of `Bytes`, used when receiving bodies from the network.
 ///
 /// Note that Users should not instantiate this struct directly. When working with the crate::core:
-/// client, `Incoming` is returned to you in responses. Similarly, when operating with the
-/// crate::core: server, it is provided within requests.
-///
-/// # Examples
-///
-/// ```rust,ignore
-/// async fn echo(
-///    req: Request<Incoming>,
-/// ) -> Result<Response<BoxBody<Bytes, crate::core::Error>>, crate::core::Error> {
-///    //Here, you can process `Incoming`
-/// }
-/// ```
+/// client, `Incoming` is returned to you in responses.
 #[must_use = "streams do nothing unless polled"]
 pub struct Incoming {
     kind: Kind,
