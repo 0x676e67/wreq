@@ -3,6 +3,7 @@ use std::{error::Error as StdError, fmt};
 use http::Request;
 
 use crate::core::{
+    self,
     client::{connect::Connected, pool},
     error::BoxError,
 };
@@ -92,11 +93,11 @@ impl Error {
         matches!(self.kind, ErrorKind::Canceled)
     }
 
-    pub(super) fn tx(src: crate::core::Error) -> Self {
+    pub(super) fn tx(src: core::Error) -> Self {
         e!(SendRequest, src)
     }
 
-    pub(super) fn closed(src: crate::core::Error) -> Self {
+    pub(super) fn closed(src: core::Error) -> Self {
         e!(ChannelClosed, src)
     }
 }
