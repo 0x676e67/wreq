@@ -712,7 +712,7 @@ mod tests {
             let mut v = vec![0; len];
             let mut buf = ReadBuf::new(&mut v);
             ready!(Pin::new(self).poll_read(cx, &mut buf)?);
-            Poll::Ready(Ok(Bytes::copy_from_slice(&buf.filled())))
+            Poll::Ready(Ok(Bytes::copy_from_slice(buf.filled())))
         }
     }
 
