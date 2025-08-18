@@ -45,6 +45,13 @@ pub trait Sleep: Send + Sync + Future<Output = ()> {
 #[derive(Clone)]
 pub struct ArcTimer(Arc<dyn Timer + Send + Sync>);
 
+/// A user-provided timer to time background tasks.
+#[derive(Clone)]
+pub enum Time {
+    Timer(ArcTimer),
+    Empty,
+}
+
 // =====impl Sleep =====
 
 impl dyn Sleep {
@@ -77,7 +84,7 @@ impl dyn Sleep {
     }
 }
 
-// =====impl TimerHandle =====
+// =====impl ArcTimer =====
 
 impl ArcTimer {
     pub(crate) fn new<T>(inner: T) -> Self
@@ -95,6 +102,28 @@ impl Timer for ArcTimer {
 
     fn sleep_until(&self, deadline: Instant) -> Pin<Box<dyn Sleep>> {
         self.0.sleep_until(deadline)
+    }
+}
+
+// =====impl Time =====
+
+impl Time {
+    pub(crate) fn sleep(&self, duration: Duration) -> Pin<Box<dyn Sleep>> {
+        match *self {
+            Time::Empty => {
+                panic!("You must supply a timer.")
+            }
+            Time::Timer(ref t) => t.sleep(duration),
+        }
+    }
+
+    pub(crate) fn reset(&self, sleep: &mut Pin<Box<dyn Sleep>>, new_deadline: Instant) {
+        match *self {
+            Time::Empty => {
+                panic!("You must supply a timer.")
+            }
+            Time::Timer(ref t) => t.reset(sleep, new_deadline),
+        }
     }
 }
 

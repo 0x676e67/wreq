@@ -5,7 +5,6 @@ use std::{
     future::Future,
     marker::PhantomData,
     pin::Pin,
-    sync::Arc,
     task::{Context, Poll, ready},
 };
 
@@ -22,9 +21,8 @@ use crate::{
             dispatch::{self, TrySendError},
             proto::{self, h2::ping},
         },
-        common::time::Time,
         error::{BoxError, Error},
-        rt::Timer,
+        rt::{ArcTimer, Time, Timer},
     },
     http2::Http2Options,
 };
@@ -65,7 +63,7 @@ where
 ///
 /// **Note**: The default values of options are *not considered stable*. They
 /// are subject to change at any time.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct Builder<Ex> {
     exec: Ex,
     timer: Time,
@@ -210,7 +208,7 @@ where
     where
         M: Timer + Send + Sync + 'static,
     {
-        self.timer = Time::Timer(Arc::new(timer));
+        self.timer = Time::Timer(ArcTimer::new(timer));
     }
 
     /// Provide a options configuration for the HTTP/2 connection.

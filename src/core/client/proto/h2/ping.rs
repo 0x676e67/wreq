@@ -27,7 +27,10 @@ use std::{
 
 use http2::{Ping, PingPong};
 
-use crate::core::{self, Error, common::time::Time, rt::Sleep};
+use crate::core::{
+    self, Error,
+    rt::{Sleep, Time},
+};
 
 type WindowSize = u32;
 

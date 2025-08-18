@@ -38,9 +38,9 @@ use crate::core::{
         proto::{Dispatched, headers},
         upgrade::{self, Upgraded},
     },
-    common::time::Time,
     error::BoxError,
     ext::{RequestConfig, RequestOrigHeaderMap},
+    rt::Time,
 };
 
 type ClientRx<B> = dispatch::Receiver<Request<B>, Response<IncomingBody>>;
