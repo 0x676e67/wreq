@@ -2,7 +2,6 @@ mod emulation;
 mod http;
 mod request;
 mod response;
-mod upgrade;
 
 pub(crate) mod layer;
 
@@ -18,5 +17,9 @@ pub use self::{
     http::{Client, ClientBuilder},
     request::{Request, RequestBuilder},
     response::Response,
+};
+pub use crate::core::client::{
+    connect::dns,
+    options::{http1, http2},
     upgrade::Upgraded,
 };

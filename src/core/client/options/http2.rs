@@ -2,10 +2,9 @@
 
 use std::time::Duration;
 
-use http2::frame::ExperimentalSettings;
 pub use http2::frame::{
-    Priorities, PrioritiesBuilder, Priority, PseudoId, PseudoOrder, Setting, SettingId,
-    SettingsOrder, SettingsOrderBuilder, StreamDependency, StreamId,
+    ExperimentalSettings, Priorities, PrioritiesBuilder, Priority, PseudoId, PseudoOrder, Setting,
+    SettingId, SettingsOrder, SettingsOrderBuilder, StreamDependency, StreamId,
 };
 
 use super::super::proto;
