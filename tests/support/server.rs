@@ -1,5 +1,5 @@
 use std::{
-    convert::Infallible, future::Future, net, sync::mpsc as std_mpsc, thread, time::Duration,
+    convert::Infallible, future::Future, io, net, sync::mpsc as std_mpsc, thread, time::Duration,
 };
 
 use tokio::{io::AsyncReadExt, net::TcpStream, runtime, sync::oneshot};
@@ -205,9 +205,7 @@ where
 }
 
 #[allow(unused)]
-async fn low_level_read_http_request(
-    client_socket: &mut TcpStream,
-) -> core::result::Result<Vec<u8>, std::io::Error> {
+async fn low_level_read_http_request(client_socket: &mut TcpStream) -> io::Result<Vec<u8>> {
     let mut buf = Vec::new();
 
     // Read until the delimiter "\r\n\r\n" is found

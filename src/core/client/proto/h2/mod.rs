@@ -287,7 +287,7 @@ where
                         return Poll::Ready(match e.reason() {
                             Some(Reason::NO_ERROR) | Some(Reason::CANCEL) => Ok(()),
                             Some(Reason::STREAM_CLOSED) => {
-                                Err(std::io::Error::new(io::ErrorKind::BrokenPipe, e))
+                                Err(io::Error::new(io::ErrorKind::BrokenPipe, e))
                             }
                             _ => Err(h2_to_io_error(e)),
                         });
@@ -311,7 +311,7 @@ where
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
         buf: &[u8],
-    ) -> Poll<Result<usize, std::io::Error>> {
+    ) -> Poll<io::Result<usize>> {
         if buf.is_empty() {
             return Poll::Ready(Ok(0));
         }

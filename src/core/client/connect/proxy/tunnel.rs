@@ -233,7 +233,7 @@ where
     }
 }
 
-async fn read<T>(io: &mut T, buf: &mut [u8]) -> Result<usize, std::io::Error>
+async fn read<T>(io: &mut T, buf: &mut [u8]) -> io::Result<usize>
 where
     T: AsyncRead + Unpin,
 {

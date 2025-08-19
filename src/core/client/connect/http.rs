@@ -811,7 +811,7 @@ impl ConnectingTcpRemote {
             Some(e) => Err(e),
             None => Err(ConnectError::new(
                 "tcp connect error",
-                std::io::Error::new(io::ErrorKind::NotConnected, "Network unreachable"),
+                io::Error::new(io::ErrorKind::NotConnected, "Network unreachable"),
             )),
         }
     }

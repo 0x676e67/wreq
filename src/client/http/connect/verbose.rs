@@ -85,7 +85,7 @@ mod sealed {
             mut self: Pin<&mut Self>,
             cx: &mut Context,
             buf: &[u8],
-        ) -> Poll<Result<usize, std::io::Error>> {
+        ) -> Poll<io::Result<usize>> {
             match Pin::new(&mut self.inner).poll_write(cx, buf) {
                 Poll::Ready(Ok(n)) => {
                     trace!("{:08x} write: {:?}", self.id, Escape::new(&buf[..n]));
@@ -100,7 +100,7 @@ mod sealed {
             mut self: Pin<&mut Self>,
             cx: &mut Context<'_>,
             bufs: &[IoSlice<'_>],
-        ) -> Poll<Result<usize, io::Error>> {
+        ) -> Poll<io::Result<usize>> {
             match Pin::new(&mut self.inner).poll_write_vectored(cx, bufs) {
                 Poll::Ready(Ok(nwritten)) => {
                     trace!(
