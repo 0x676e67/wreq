@@ -1,25 +1,27 @@
-use std::fmt;
+use std::{fmt, fmt::Write};
 
 use crate::header::{Entry, HeaderMap, HeaderValue, OccupiedEntry};
 
-pub fn basic_auth<U, P>(username: U, password: Option<P>) -> HeaderValue
+pub(crate) fn basic_auth<U, P>(username: U, password: Option<P>) -> HeaderValue
 where
     U: fmt::Display,
     P: fmt::Display,
 {
-    use std::io::Write;
-
-    use base64::{prelude::BASE64_STANDARD, write::EncoderWriter};
-
-    let mut buf = b"Basic ".to_vec();
-    {
-        let mut encoder = EncoderWriter::new(&mut buf, &BASE64_STANDARD);
-        let _ = write!(encoder, "{username}:");
+    let encoded = {
+        let mut buf = b"Basic ".to_vec();
+        let mut buf_str = String::with_capacity(32);
+        let _ = write!(buf_str, "{username}:");
         if let Some(password) = password {
-            let _ = write!(encoder, "{password}");
+            let _ = write!(buf_str, "{password}");
         }
-    }
-    let mut header = HeaderValue::from_bytes(&buf).expect("base64 is always valid HeaderValue");
+
+        let encoded = boring2::base64::encode_block(buf_str.as_bytes());
+        buf.extend(encoded.into_bytes());
+        buf
+    };
+
+    let mut header =
+        HeaderValue::from_maybe_shared(encoded).expect("base64 is always valid HeaderValue");
     header.set_sensitive(true);
     header
 }
