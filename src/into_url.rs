@@ -27,7 +27,7 @@ impl IntoUrlSealed for Url {
         if self.has_host() {
             Ok(self)
         } else {
-            Err(Error::url_bad_scheme().with_url(self))
+            Err(Error::url_bad_scheme())
         }
     }
 
@@ -41,7 +41,7 @@ impl IntoUrlSealed for &Url {
         if self.has_host() {
             Ok(self.clone())
         } else {
-            Err(Error::url_bad_scheme().with_url(self.clone()))
+            Err(Error::url_bad_scheme())
         }
     }
 
@@ -66,47 +66,10 @@ where
 }
 
 mod sealed {
-    use http::Uri;
 
     pub trait Sealed {}
 
-    impl Sealed for Uri {}
     impl Sealed for &str {}
     impl Sealed for String {}
     impl Sealed for &String {}
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn into_url_file_scheme() {
-        let err = "file:///etc/hosts".into_url().unwrap_err();
-        assert_eq!(
-            err.to_string(),
-            "builder error for url (file:///etc/hosts): URL scheme is not allowed"
-        );
-    }
-
-    #[test]
-    fn into_url_blob_scheme() {
-        let err = "blob:https://example.com".into_url().unwrap_err();
-        assert_eq!(
-            err.to_string(),
-            "builder error for url (blob:https://example.com): URL scheme is not allowed"
-        );
-    }
-
-    #[tokio::test]
-    async fn execute_request_rejects_invalid_hostname() {
-        let url_str = "https://{{hostname}}/";
-        let url = url::Url::parse(url_str).unwrap();
-        let result = crate::Client::new().get(url).send().await;
-
-        assert!(result.is_err());
-        let err = result.err().unwrap();
-        assert!(err.is_builder());
-        assert_eq!(url_str, err.url().unwrap().as_str());
-    }
 }

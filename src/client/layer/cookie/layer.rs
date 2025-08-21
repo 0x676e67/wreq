@@ -7,7 +7,7 @@ use http::{Request, Response, header::COOKIE};
 use tower::{Layer, Service};
 
 use super::future::ResponseFuture;
-use crate::cookie::CookieStore;
+use crate::{cookie::CookieStore, ext::RequestUrl};
 
 /// Layer to apply [`CookieService`] middleware.
 #[derive(Clone)]
@@ -48,7 +48,7 @@ impl<S> CookieService<S> {
         cookie_store: &Arc<dyn CookieStore>,
     ) -> Option<url::Url> {
         // Parse URL first - we need it for both injection and response processing
-        let url = url::Url::parse(&req.uri().to_string()).ok()?;
+        let url = req.extensions_mut().remove::<RequestUrl>()?.0;
 
         // // Skip if request already has cookies
         if req.headers().get(COOKIE).is_some() {

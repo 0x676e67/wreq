@@ -1515,7 +1515,7 @@ impl Client {
     ///
     /// This method fails whenever the supplied `Url` cannot be parsed.
     pub fn request<U: IntoUrl>(&self, method: Method, url: U) -> RequestBuilder {
-        let req = url.into_url().map(move |url| Request::new(method, url));
+        let req = url.into_url().map(move |uri| Request::new(method, uri));
         RequestBuilder::new(self.clone(), req)
     }
 
@@ -1543,12 +1543,13 @@ impl Client {
     /// This method fails if there was an error while sending request,
     /// redirect loop was detected or redirect limit was exhausted.
     pub fn execute(&self, request: Request) -> Pending {
-        match request.try_into() {
-            Ok((url, req)) => {
+        match http::Request::<Body>::try_from(request) {
+            Ok(req) => {
                 // Prepare the future request by ensuring we use the exact same Service instance
                 // for both poll_ready and call.
+                let uri = req.uri().clone();
                 let fut = self.inner.as_ref().clone().oneshot(req);
-                Pending::request(fut, url)
+                Pending::request(fut, uri)
             }
             Err(err) => Pending::error(err),
         }

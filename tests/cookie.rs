@@ -197,8 +197,6 @@ async fn cookie_store_stores_response_cookie_with_manual_cookie() {
             assert_eq!(req.headers()["cookie"], "key=val");
         }
 
-        dbg!(req);
-
         http::Response::builder()
             .header("Set-Cookie", "key=val; HttpOnly")
             .body(Default::default())

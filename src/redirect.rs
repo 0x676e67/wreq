@@ -6,18 +6,17 @@
 
 use std::{error::Error as StdError, fmt, sync::Arc};
 
-use http::{Extensions, HeaderMap, HeaderValue, StatusCode, uri::Scheme};
+use http::{Extensions, HeaderMap, HeaderValue, StatusCode, Uri};
 
 use crate::{
-    Url,
     client::{
         Body,
         layer::{config::RequestRedirectPolicy, redirect::policy},
     },
     core::ext::RequestConfig,
     error::{BoxError, Error},
+    ext::UriExt,
     header::{AUTHORIZATION, COOKIE, PROXY_AUTHORIZATION, REFERER, WWW_AUTHENTICATE},
-    into_url::IntoUrlSealed,
 };
 
 /// A type that controls the policy on how to handle the following of redirects.
@@ -39,8 +38,8 @@ pub struct Policy {
 #[derive(Debug)]
 pub struct Attempt<'a> {
     status: StatusCode,
-    next: &'a Url,
-    previous: &'a [Url],
+    next: &'a Uri,
+    previous: &'a [Uri],
 }
 
 /// An action to perform when a redirect status code is found.
@@ -147,7 +146,7 @@ impl Policy {
         }
     }
 
-    pub(crate) fn check(&self, status: StatusCode, next: &Url, previous: &[Url]) -> ActionKind {
+    pub(crate) fn check(&self, status: StatusCode, next: &Uri, previous: &[Uri]) -> ActionKind {
         self.redirect(Attempt {
             status,
             next,
@@ -171,12 +170,12 @@ impl<'a> Attempt<'a> {
     }
 
     /// Get the next URL to redirect to.
-    pub fn url(&self) -> &Url {
+    pub fn url(&self) -> &Uri {
         self.next
     }
 
     /// Get the list of previous URLs that have already been requested in this chain.
-    pub fn previous(&self) -> &[Url] {
+    pub fn previous(&self) -> &[Uri] {
         self.previous
     }
 
@@ -236,10 +235,11 @@ pub(crate) enum ActionKind {
     Error(BoxError),
 }
 
-fn remove_sensitive_headers(headers: &mut HeaderMap, next: &Url, previous: &[Url]) {
+fn remove_sensitive_headers(headers: &mut HeaderMap, next: &Uri, previous: &[Uri]) {
     if let Some(previous) = previous.last() {
-        let cross_host = next.host_str() != previous.host_str()
-            || next.port_or_known_default() != previous.port_or_known_default();
+        let cross_host = next.host() != previous.host()
+            || next.port() != previous.port()
+            || next.scheme() != previous.scheme();
         if cross_host {
             headers.remove(AUTHORIZATION);
             headers.remove(COOKIE);
@@ -265,7 +265,7 @@ impl StdError for TooManyRedirects {}
 pub(crate) struct FollowRedirectPolicy {
     policy: RequestConfig<RequestRedirectPolicy>,
     referer: bool,
-    urls: Vec<Url>,
+    urls: Vec<Uri>,
     https_only: bool,
 }
 
@@ -290,23 +290,31 @@ impl FollowRedirectPolicy {
     }
 }
 
-fn make_referer(next: &Url, previous: &Url) -> Option<HeaderValue> {
-    if Scheme::HTTP.eq(next.scheme()) && Scheme::HTTPS.eq(previous.scheme()) {
+fn make_referer(next: &Uri, previous: &Uri) -> Option<HeaderValue> {
+    if next.is_http() && previous.is_https() {
         return None;
     }
 
-    let mut referer = previous.clone();
-    let _ = referer.set_username("");
-    let _ = referer.set_password(None);
-    referer.set_fragment(None);
-    referer.as_str().parse().ok()
+    let mut parts = previous.clone().into_parts();
+    if let Some(authority) = &mut parts.authority {
+        let host_port = authority.host();
+        let port = authority.port();
+        let new_authority = match port {
+            Some(port) => format!("{}:{}", host_port, port),
+            None => host_port.to_string(),
+        };
+        parts.authority = Some(new_authority.parse().ok()?);
+    }
+
+    let referer = Uri::from_parts(parts).ok()?;
+    referer.to_string().parse().ok()
 }
 
 impl policy::Policy<Body, BoxError> for FollowRedirectPolicy {
     fn redirect(&mut self, attempt: &policy::Attempt<'_>) -> Result<policy::Action, BoxError> {
         // Parse the next URL from the attempt.
-        let previous_url = IntoUrlSealed::into_url(attempt.previous().to_string())?;
-        let next_url = IntoUrlSealed::into_url(attempt.location().to_string())?;
+        let previous_url = attempt.previous();
+        let next_url = attempt.location();
 
         // Push the previous URL to the list of URLs.
         self.urls.push(previous_url.clone());
@@ -321,36 +329,37 @@ impl policy::Policy<Body, BoxError> for FollowRedirectPolicy {
         match policy.check(attempt.status(), &next_url, &self.urls) {
             ActionKind::Follow => {
                 // Validate the next URL's scheme.
-                if Scheme::HTTP.ne(next_url.scheme()) && Scheme::HTTPS.ne(next_url.scheme()) {
-                    return Err(BoxError::from(Error::url_bad_scheme().with_url(next_url)));
+                if !next_url.is_http() && !next_url.is_https() {
+                    return Err(BoxError::from(
+                        Error::url_bad_scheme().with_uri(next_url.clone()),
+                    ));
                 }
 
                 // Validate HTTPS-only policy.
-                if self.https_only && Scheme::HTTPS.ne(next_url.scheme()) {
+                if self.https_only && !next_url.is_https() {
                     return Err(BoxError::from(Error::redirect(
-                        Error::url_bad_scheme().with_url(next_url.clone()),
-                        next_url,
+                        Error::url_bad_scheme().with_uri(next_url.clone()),
+                        next_url.clone(),
                     )));
                 }
                 Ok(policy::Action::Follow)
             }
             ActionKind::Stop => Ok(policy::Action::Stop),
-            ActionKind::Error(e) => Err(BoxError::from(Error::redirect(e, previous_url))),
+            ActionKind::Error(e) => Err(BoxError::from(Error::redirect(e, previous_url.clone()))),
         }
     }
 
     #[inline(always)]
     fn on_request(&mut self, req: &mut http::Request<Body>) {
-        if let Ok(next_url) = Url::parse(&req.uri().to_string()) {
-            remove_sensitive_headers(req.headers_mut(), &next_url, &self.urls);
-            if self.referer {
-                if let Some(previous_url) = self.urls.last() {
-                    if let Some(v) = make_referer(&next_url, previous_url) {
-                        req.headers_mut().insert(REFERER, v);
-                    }
+        let next_url = req.uri().clone();
+        remove_sensitive_headers(req.headers_mut(), &next_url, &self.urls);
+        if self.referer {
+            if let Some(previous_url) = self.urls.last() {
+                if let Some(v) = make_referer(&next_url, previous_url) {
+                    req.headers_mut().insert(REFERER, v);
                 }
             }
-        };
+        }
     }
 
     #[inline(always)]
@@ -378,9 +387,9 @@ mod tests {
     #[test]
     fn test_redirect_policy_limit() {
         let policy = Policy::default();
-        let next = Url::parse("http://x.y/z").unwrap();
+        let next = Uri::try_from("http://x.y/z").unwrap();
         let mut previous = (0..=9)
-            .map(|i| Url::parse(&format!("http://a.b/c/{i}")).unwrap())
+            .map(|i| Uri::try_from(&format!("http://a.b/c/{i}")).unwrap())
             .collect::<Vec<_>>();
 
         match policy.check(StatusCode::FOUND, &next, &previous) {
@@ -388,7 +397,7 @@ mod tests {
             other => panic!("unexpected {other:?}"),
         }
 
-        previous.push(Url::parse("http://a.b.d/e/33").unwrap());
+        previous.push(Uri::try_from("http://a.b.d/e/33").unwrap());
 
         match policy.check(StatusCode::FOUND, &next, &previous) {
             ActionKind::Error(err) if err.is::<TooManyRedirects>() => (),
@@ -399,8 +408,8 @@ mod tests {
     #[test]
     fn test_redirect_policy_limit_to_0() {
         let policy = Policy::limited(0);
-        let next = Url::parse("http://x.y/z").unwrap();
-        let previous = vec![Url::parse("http://a.b/c").unwrap()];
+        let next = Uri::try_from("http://x.y/z").unwrap();
+        let previous = vec![Uri::try_from("http://a.b/c").unwrap()];
 
         match policy.check(StatusCode::FOUND, &next, &previous) {
             ActionKind::Error(err) if err.is::<TooManyRedirects>() => (),
@@ -411,20 +420,20 @@ mod tests {
     #[test]
     fn test_redirect_policy_custom() {
         let policy = Policy::custom(|attempt| {
-            if attempt.url().host_str() == Some("foo") {
+            if attempt.url().host() == Some("foo") {
                 attempt.stop()
             } else {
                 attempt.follow()
             }
         });
 
-        let next = Url::parse("http://bar/baz").unwrap();
+        let next = Uri::try_from("http://bar/baz").unwrap();
         match policy.check(StatusCode::FOUND, &next, &[]) {
             ActionKind::Follow => (),
             other => panic!("unexpected {other:?}"),
         }
 
-        let next = Url::parse("http://foo/baz").unwrap();
+        let next = Uri::try_from("http://foo/baz").unwrap();
         match policy.check(StatusCode::FOUND, &next, &[]) {
             ActionKind::Stop => (),
             other => panic!("unexpected {other:?}"),
@@ -440,14 +449,14 @@ mod tests {
         headers.insert(AUTHORIZATION, HeaderValue::from_static("let me in"));
         headers.insert(COOKIE, HeaderValue::from_static("foo=bar"));
 
-        let next = Url::parse("http://initial-domain.com/path").unwrap();
-        let mut prev = vec![Url::parse("http://initial-domain.com/new_path").unwrap()];
+        let next = Uri::try_from("http://initial-domain.com/path").unwrap();
+        let mut prev = vec![Uri::try_from("http://initial-domain.com/new_path").unwrap()];
         let mut filtered_headers = headers.clone();
 
         remove_sensitive_headers(&mut headers, &next, &prev);
         assert_eq!(headers, filtered_headers);
 
-        prev.push(Url::parse("http://new-domain.com/path").unwrap());
+        prev.push(Uri::try_from("http://new-domain.com/path").unwrap());
         filtered_headers.remove(AUTHORIZATION);
         filtered_headers.remove(COOKIE);
 

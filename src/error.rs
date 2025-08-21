@@ -1,6 +1,8 @@
 use std::{error::Error as StdError, fmt, io};
 
-use crate::{StatusCode, Url, core::ext::ReasonPhrase, util::Escape};
+use http::Uri;
+
+use crate::{StatusCode, core::ext::ReasonPhrase, util::Escape};
 
 /// A `Result` alias where the `Err` case is `wreq::Error`.
 pub type Result<T> = std::result::Result<T, Error>;
@@ -12,7 +14,7 @@ pub type BoxError = Box<dyn StdError + Send + Sync>;
 ///
 /// Note: Errors may include the full URL used to make the `Request`. If the URL
 /// contains sensitive information (e.g. an API key as a query parameter), be
-/// sure to remove it ([`without_url`](Error::without_url))
+/// sure to remove it ([`without_uri`](Error::without_uri))
 pub struct Error {
     inner: Box<Inner>,
 }
@@ -20,7 +22,7 @@ pub struct Error {
 struct Inner {
     kind: Kind,
     source: Option<BoxError>,
-    url: Option<Url>,
+    uri: Option<Uri>,
 }
 
 impl Error {
@@ -32,7 +34,7 @@ impl Error {
             inner: Box::new(Inner {
                 kind,
                 source: source.map(Into::into),
-                url: None,
+                uri: None,
             }),
         }
     }
@@ -57,8 +59,8 @@ impl Error {
         Error::new(Kind::Request, Some(e))
     }
 
-    pub(crate) fn redirect<E: Into<BoxError>>(e: E, url: Url) -> Error {
-        Error::new(Kind::Redirect, Some(e)).with_url(url)
+    pub(crate) fn redirect<E: Into<BoxError>>(e: E, uri: Uri) -> Error {
+        Error::new(Kind::Redirect, Some(e)).with_uri(uri)
     }
 
     pub(crate) fn upgrade<E: Into<BoxError>>(e: E) -> Error {
@@ -70,8 +72,8 @@ impl Error {
         Error::new(Kind::WebSocket, Some(e))
     }
 
-    pub(crate) fn status_code(url: Url, status: StatusCode, reason: Option<ReasonPhrase>) -> Error {
-        Error::new(Kind::Status(status, reason), None::<Error>).with_url(url)
+    pub(crate) fn status_code(uri: Uri, status: StatusCode, reason: Option<ReasonPhrase>) -> Error {
+        Error::new(Kind::Status(status, reason), None::<Error>).with_uri(uri)
     }
 
     pub(crate) fn url_bad_scheme() -> Error {
@@ -80,49 +82,48 @@ impl Error {
 }
 
 impl Error {
-    /// Returns a possible URL related to this error.
+    /// Returns a possible URI related to this error.
     ///
     /// # Examples
     ///
     /// ```
     /// # async fn run() {
     /// // displays last stop of a redirect loop
-    /// let response = wreq::Client::new()
-    ///     .get("http://site.with.redirect.loop")
+    /// let response = wreq::get("http://site.with.redirect.loop")
     ///     .send()
     ///     .await;
     /// if let Err(e) = response {
     ///     if e.is_redirect() {
-    ///         if let Some(final_stop) = e.url() {
+    ///         if let Some(final_stop) = e.uri() {
     ///             println!("redirect loop at {}", final_stop);
     ///         }
     ///     }
     /// }
     /// # }
     /// ```
-    pub fn url(&self) -> Option<&Url> {
-        self.inner.url.as_ref()
+    pub fn uri(&self) -> Option<&Uri> {
+        self.inner.uri.as_ref()
     }
 
-    /// Returns a mutable reference to the URL related to this error
+    /// Returns a mutable reference to the URI related to this error
     ///
-    /// This is useful if you need to remove sensitive information from the URL
-    /// (e.g. an API key in the query), but do not want to remove the URL
+    /// This is useful if you need to remove sensitive information from the URI
+    /// (e.g. an API key in the query), but do not want to remove the URI
     /// entirely.
-    pub fn url_mut(&mut self) -> Option<&mut Url> {
-        self.inner.url.as_mut()
+    pub fn uri_mut(&mut self) -> Option<&mut Uri> {
+        self.inner.uri.as_mut()
     }
 
-    /// Add a url related to this error (overwriting any existing)
-    pub fn with_url(mut self, url: Url) -> Self {
-        self.inner.url = Some(url);
+    /// Add a uri related to this error (overwriting any existing)
+    pub fn with_uri(mut self, url: Uri) -> Self {
+        self.inner.uri = Some(url);
         self
     }
 
-    /// Strip the related url from this error (if, for example, it contains
+    /// Strip the related uri from this error (if, for example, it contains
     /// sensitive information)
-    pub fn without_url(mut self) -> Self {
-        self.inner.url = None;
+    pub fn without_uri(mut self) -> Self {
+        self.inner.uri = None;
         self
     }
 
@@ -271,8 +272,8 @@ impl fmt::Debug for Error {
 
         builder.field("kind", &self.inner.kind);
 
-        if let Some(ref url) = self.inner.url {
-            builder.field("url", &url.as_str());
+        if let Some(ref uri) = self.inner.uri {
+            builder.field("uri", uri);
         }
         if let Some(ref source) = self.inner.source {
             builder.field("source", source);
@@ -314,8 +315,8 @@ impl fmt::Display for Error {
             }
         };
 
-        if let Some(url) = &self.inner.url {
-            write!(f, " for url ({})", url.as_str())?;
+        if let Some(uri) = &self.inner.uri {
+            write!(f, " for url ({})", uri)?;
         }
 
         if let Some(e) = &self.inner.source {

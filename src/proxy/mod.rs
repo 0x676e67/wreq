@@ -13,10 +13,81 @@ use std::{path::Path, sync::Arc};
 use http::{HeaderMap, Uri, header::HeaderValue, uri::Scheme};
 
 use crate::{
-    Url,
     error::{BadScheme, Error},
-    into_url::{IntoUrl, IntoUrlSealed},
+    ext::UriExt,
+    proxy::sealed::Sealed,
 };
+
+/// Trait used for converting into a proxy scheme. This trait supports
+/// parsing from a URL-like type, whilst also supporting proxy schemes
+/// built directly using the factory methods.
+pub trait IntoProxy: sealed::Sealed {
+    fn into_proxy(self) -> crate::Result<Uri>;
+}
+
+impl<S: sealed::Sealed> IntoProxy for S {
+    fn into_proxy(self) -> crate::Result<Uri> {
+        match self.as_str().into_uri() {
+            Ok(uri) => Ok(uri),
+            Err(e) => {
+                let mut presumed_to_have_scheme = true;
+                let mut source = e.source();
+                while let Some(err) = source {
+                    if let Some(parse_error) = err.downcast_ref::<url::ParseError>() {
+                        if *parse_error == url::ParseError::RelativeUrlWithoutBase {
+                            presumed_to_have_scheme = false;
+                            break;
+                        }
+                    } else if err.downcast_ref::<BadScheme>().is_some() {
+                        presumed_to_have_scheme = false;
+                        break;
+                    }
+                    source = err.source();
+                }
+                if presumed_to_have_scheme {
+                    return Err(Error::builder(e));
+                }
+                // the issue could have been caused by a missing scheme, so we try adding http://
+                let try_this = format!("http://{}", self.as_str());
+                try_this.into_uri().map_err(|_| {
+                    // return the original error
+                    Error::builder(e)
+                })
+            }
+        }
+    }
+}
+
+mod sealed {
+    use super::IntoProxy;
+    use crate::Error;
+    use http::Uri;
+
+    pub trait Sealed {
+        // Besides parsing as a valid `Uri`.
+        fn into_uri(self) -> crate::Result<Uri>;
+
+        fn as_str(&self) -> &str;
+    }
+
+    impl<T> Sealed for T
+    where
+        T: AsRef<str>,
+    {
+        fn into_uri(self) -> crate::Result<Uri> {
+            let uri = Uri::try_from(self.as_ref()).map_err(Error::builder)?;
+            if uri.host().is_none() {
+                Err(Error::url_bad_scheme().with_uri(uri))
+            } else {
+                Ok(uri)
+            }
+        }
+
+        fn as_str(&self) -> &str {
+            self.as_ref()
+        }
+    }
+}
 
 // # Internals
 //
@@ -105,9 +176,9 @@ impl std::hash::Hash for Extra {
 
 #[derive(Clone, Debug)]
 enum Intercept {
-    All(Url),
-    Http(Url),
-    Https(Url),
+    All(Uri),
+    Http(Uri),
+    Https(Uri),
     #[cfg(unix)]
     Unix(Arc<Path>),
 }
@@ -125,57 +196,6 @@ pub(crate) struct Matcher {
     inner: Box<matcher::Matcher>,
     maybe_has_http_auth: bool,
     maybe_has_http_custom_headers: bool,
-}
-
-/// Trait used for converting into a proxy scheme. This trait supports
-/// parsing from a URL-like type, whilst also supporting proxy schemes
-/// built directly using the factory methods.
-pub trait IntoProxy {
-    fn into_proxy(self) -> crate::Result<Url>;
-}
-
-impl<S: IntoUrl> IntoProxy for S {
-    fn into_proxy(self) -> crate::Result<Url> {
-        match self.as_str().into_url() {
-            Ok(url) => Ok(url),
-            Err(e) => {
-                let mut presumed_to_have_scheme = true;
-                let mut source = e.source();
-                while let Some(err) = source {
-                    if let Some(parse_error) = err.downcast_ref::<url::ParseError>() {
-                        if *parse_error == url::ParseError::RelativeUrlWithoutBase {
-                            presumed_to_have_scheme = false;
-                            break;
-                        }
-                    } else if err.downcast_ref::<BadScheme>().is_some() {
-                        presumed_to_have_scheme = false;
-                        break;
-                    }
-                    source = err.source();
-                }
-                if presumed_to_have_scheme {
-                    return Err(Error::builder(e));
-                }
-                // the issue could have been caused by a missing scheme, so we try adding http://
-                let try_this = format!("http://{}", self.as_str());
-                try_this.into_url().map_err(|_| {
-                    // return the original error
-                    Error::builder(e)
-                })
-            }
-        }
-    }
-}
-
-// These bounds are accidentally leaked by the blanket impl of IntoProxy
-// for all types that implement IntoUrl. So, this function exists to detect
-// if we were to break those bounds for a user.
-fn _implied_bounds() {
-    fn prox<T: IntoProxy>(_t: T) {}
-
-    fn url<T: IntoUrl>(t: T) {
-        prox(t);
-    }
 }
 
 // ===== impl Proxy =====
@@ -383,42 +403,41 @@ impl Proxy {
             no_proxy,
         } = self;
 
-        let cache_maybe_has_http_auth = |url: &Url, extra: &Option<HeaderValue>| {
-            url.scheme() == Scheme::HTTP.as_str() && (url.password().is_some() || extra.is_some())
+        let cache_maybe_has_http_auth = |uri: &Uri, extra: &Option<HeaderValue>| {
+            uri.is_http() && (uri.password().is_some() || extra.is_some())
         };
 
-        let cache_maybe_has_http_custom_headers = |url: &Url, extra: &Option<HeaderMap>| {
-            url.scheme() == Scheme::HTTP.as_str() && extra.is_some()
-        };
+        let cache_maybe_has_http_custom_headers =
+            |uri: &Uri, extra: &Option<HeaderMap>| uri.is_http() && extra.is_some();
 
         let maybe_has_http_auth;
         let maybe_has_http_custom_headers;
 
         let inner = match intercept {
-            Intercept::All(url) => {
-                maybe_has_http_auth = cache_maybe_has_http_auth(&url, &extra.auth);
+            Intercept::All(uri) => {
+                maybe_has_http_auth = cache_maybe_has_http_auth(&uri, &extra.auth);
                 maybe_has_http_custom_headers =
-                    cache_maybe_has_http_custom_headers(&url, &extra.misc);
+                    cache_maybe_has_http_custom_headers(&uri, &extra.misc);
                 matcher::Matcher::builder()
-                    .all(String::from(url))
+                    .all(uri.to_string())
                     .no(no_proxy.as_ref().map(|n| n.inner.as_ref()).unwrap_or(""))
                     .build(extra)
             }
-            Intercept::Http(url) => {
-                maybe_has_http_auth = cache_maybe_has_http_auth(&url, &extra.auth);
+            Intercept::Http(uri) => {
+                maybe_has_http_auth = cache_maybe_has_http_auth(&uri, &extra.auth);
                 maybe_has_http_custom_headers =
-                    cache_maybe_has_http_custom_headers(&url, &extra.misc);
+                    cache_maybe_has_http_custom_headers(&uri, &extra.misc);
                 matcher::Matcher::builder()
-                    .http(String::from(url))
+                    .http(uri.to_string())
                     .no(no_proxy.as_ref().map(|n| n.inner.as_ref()).unwrap_or(""))
                     .build(extra)
             }
-            Intercept::Https(url) => {
-                maybe_has_http_auth = cache_maybe_has_http_auth(&url, &extra.auth);
+            Intercept::Https(uri) => {
+                maybe_has_http_auth = cache_maybe_has_http_auth(&uri, &extra.auth);
                 maybe_has_http_custom_headers =
-                    cache_maybe_has_http_custom_headers(&url, &extra.misc);
+                    cache_maybe_has_http_custom_headers(&uri, &extra.misc);
                 matcher::Matcher::builder()
-                    .https(String::from(url))
+                    .https(uri.to_string())
                     .no(no_proxy.as_ref().map(|n| n.inner.as_ref()).unwrap_or(""))
                     .build(extra)
             }
@@ -523,7 +542,7 @@ impl Matcher {
 
     pub(crate) fn http_non_tunnel_basic_auth(&self, dst: &Uri) -> Option<HeaderValue> {
         if let Some(Intercepted::Proxy(proxy)) = self.intercept(dst) {
-            if proxy.uri().scheme() == Some(&Scheme::HTTP) {
+            if proxy.uri().is_http() {
                 return proxy.basic_auth().cloned();
             }
         }
@@ -532,7 +551,7 @@ impl Matcher {
 
     pub(crate) fn http_non_tunnel_custom_headers(&self, dst: &Uri) -> Option<HeaderMap> {
         if let Some(Intercepted::Proxy(proxy)) = self.intercept(dst) {
-            if proxy.uri().scheme() == Some(&Scheme::HTTP) {
+            if proxy.uri().is_http() {
                 return proxy.custom_headers().cloned();
             }
         }

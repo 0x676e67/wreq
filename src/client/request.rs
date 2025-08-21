@@ -6,7 +6,7 @@ use std::{
     time::Duration,
 };
 
-use http::{Extensions, Request as HttpRequest, Uri, Version, request::Parts};
+use http::{Extensions, Request as HttpRequest, Version, request::Parts};
 use serde::Serialize;
 
 #[cfg(any(
@@ -30,6 +30,7 @@ use crate::{
         client::options::RequestOptions,
         ext::{RequestConfig, RequestConfigValue, RequestLevelOptions, RequestOrigHeaderMap},
     },
+    ext::RequestUrl,
     header::{CONTENT_TYPE, HeaderMap, HeaderName, HeaderValue, OrigHeaderMap},
     into_url::IntoUrlSealed,
     redirect,
@@ -37,11 +38,20 @@ use crate::{
 
 /// A request which can be executed with `Client::execute()`.
 pub struct Request {
+    /// The request's method
     method: Method,
+
+    /// The request's URL
     url: Url,
-    headers: HeaderMap,
-    body: Option<Body>,
+
+    /// The request's headers
+    headers: HeaderMap<HeaderValue>,
+
+    /// The request's extensions
     extensions: Extensions,
+
+    /// The request's body
+    body: Option<Body>,
 }
 
 /// A builder to construct the properties of a `Request`.
@@ -817,7 +827,7 @@ fn fmt_request_fields<'a, 'b>(
 
 /// Check the request URL for a "username:password" type authority, and if
 /// found, remove it from the URL and return it.
-pub(crate) fn extract_authority(url: &mut Url) -> Option<(String, Option<String>)> {
+fn extract_authority(url: &mut Url) -> Option<(String, Option<String>)> {
     use percent_encoding::percent_decode;
 
     if url.has_authority() {
@@ -871,15 +881,6 @@ where
 impl TryFrom<Request> for HttpRequest<Body> {
     type Error = crate::Error;
 
-    #[inline]
-    fn try_from(req: Request) -> crate::Result<Self> {
-        req.try_into().map(|(_, http_req)| http_req)
-    }
-}
-
-impl TryFrom<Request> for (Url, HttpRequest<Body>) {
-    type Error = crate::Error;
-
     fn try_from(req: Request) -> crate::Result<Self> {
         let Request {
             method,
@@ -890,19 +891,16 @@ impl TryFrom<Request> for (Url, HttpRequest<Body>) {
             ..
         } = req;
 
-        match Uri::try_from(url.as_str()) {
-            Ok(uri) => {
-                let mut req = HttpRequest::builder()
-                    .method(method)
-                    .uri(uri)
-                    .body(body.unwrap_or_else(Body::empty))
-                    .map_err(Error::builder)?;
+        let mut req = HttpRequest::builder()
+            .method(method)
+            .uri(url.as_str())
+            .body(body.unwrap_or_else(Body::empty))
+            .map_err(Error::builder)?;
 
-                *req.headers_mut() = headers;
-                *req.extensions_mut() = extensions;
-                Ok((url, req))
-            }
-            Err(err) => Err(Error::builder(err).with_url(url)),
-        }
+        *req.headers_mut() = headers;
+        *req.extensions_mut() = extensions;
+        req.extensions_mut().insert(RequestUrl(url));
+
+        Ok(req)
     }
 }

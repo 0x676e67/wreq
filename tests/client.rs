@@ -70,7 +70,7 @@ async fn auto_headers() {
         .await
         .unwrap();
 
-    assert_eq!(res.url().as_str(), &url);
+    assert_eq!(res.uri().to_string(), url);
     assert_eq!(res.status(), wreq::StatusCode::OK);
     assert_eq!(res.remote_addr(), Some(server.addr()));
 }
@@ -682,7 +682,11 @@ async fn http1_reason_phrase() {
 async fn error_has_url() {
     let u = "http://does.not.exist.local/ever";
     let err = wreq::get(u).send().await.unwrap_err();
-    assert_eq!(err.url().map(AsRef::as_ref), Some(u), "{err:?}");
+    assert_eq!(
+        err.uri().map(ToString::to_string).as_deref(),
+        Some(u),
+        "{err:?}"
+    );
 }
 
 #[tokio::test]
@@ -841,7 +845,7 @@ async fn tunnel_includes_proxy_auth_with_multiple_proxies() {
 
     let res = client.get(url).send().await.unwrap();
 
-    assert_eq!(res.url().as_str(), url);
+    assert_eq!(res.uri().to_string(), url);
     assert_eq!(res.status(), wreq::StatusCode::OK);
 
     let client = wreq::Client::builder()
@@ -864,7 +868,7 @@ async fn tunnel_includes_proxy_auth_with_multiple_proxies() {
 
     let res = client.get(url).send().await.unwrap();
 
-    assert_eq!(res.url().as_str(), url);
+    assert_eq!(res.uri().to_string(), url);
     assert_eq!(res.status(), wreq::StatusCode::OK);
 }
 
@@ -911,7 +915,7 @@ async fn skip_default_headers() {
         .send()
         .await
         .unwrap();
-    assert_eq!(res.url().as_str(), &url);
+    assert_eq!(&res.uri().to_string(), &url);
     assert_eq!(res.status(), wreq::StatusCode::OK);
 
     let url = format!("http://{}/no_skip", server.addr());
@@ -927,7 +931,7 @@ async fn skip_default_headers() {
         .unwrap();
 
     let res = client.get(&url).send().await.unwrap();
-    assert_eq!(res.url().as_str(), &url);
+    assert_eq!(res.uri().to_string(), url);
     assert_eq!(res.status(), wreq::StatusCode::OK);
 }
 

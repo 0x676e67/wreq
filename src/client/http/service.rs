@@ -7,7 +7,6 @@ use futures_util::future::{self, Either, MapErr, Ready, TryFutureExt};
 use http::{
     HeaderMap, Request, Response,
     header::{Entry, PROXY_AUTHORIZATION},
-    uri::Scheme,
 };
 use tower::Service;
 
@@ -19,6 +18,7 @@ use crate::{
         ext::{RequestConfig, RequestOrigHeaderMap},
     },
     error::BoxError,
+    ext::UriExt,
     header::OrigHeaderMap,
     proxy::Matcher as ProxyMatcher,
 };
@@ -74,7 +74,7 @@ impl ClientService {
     fn ensure_proxy_headers(&self, req: &mut Request<Body>) {
         // Skip if the destination is not plain HTTP.
         // For HTTPS, the proxy headers should be part of the CONNECT tunnel instead.
-        if req.uri().scheme() != Some(&Scheme::HTTP) {
+        if !req.uri().is_http() {
             return;
         }
 
@@ -134,12 +134,10 @@ impl Service<Request<Body>> for ClientService {
     }
 
     fn call(&mut self, mut req: Request<Body>) -> Self::Future {
-        let scheme = req.uri().scheme();
+        let uri = req.uri();
 
         // check if the request URI scheme is valid.
-        if (scheme != Some(&Scheme::HTTP) && scheme != Some(&Scheme::HTTPS))
-            || (self.config.https_only && scheme != Some(&Scheme::HTTPS))
-        {
+        if (!uri.is_http() && !uri.is_https()) || (self.config.https_only && !uri.is_https()) {
             return Either::Right(future::err(BoxError::from(crate::Error::url_bad_scheme())));
         }
 

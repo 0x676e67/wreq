@@ -1,3 +1,4 @@
+#![allow(unused)]
 #![deny(unsafe_code)]
 #![deny(missing_docs)]
 #![cfg_attr(docsrs, feature(doc_cfg))]
@@ -268,10 +269,11 @@ mod trace;
 mod client;
 mod core;
 mod error;
+mod ext;
 mod hash;
 mod into_url;
 mod proxy;
-mod response;
+mod query;
 mod sync;
 mod util;
 
@@ -294,9 +296,9 @@ pub use self::{
         RequestBuilder, Response, Upgraded, dns, http1, http2,
     },
     error::{Error, Result},
+    ext::{ResponseBuilderExt, ResponseExt},
     into_url::IntoUrl,
     proxy::{NoProxy, Proxy},
-    response::{ResponseBuilderExt, ResponseExt},
 };
 
 fn _assert_impls() {

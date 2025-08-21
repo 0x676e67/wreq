@@ -69,6 +69,7 @@ tracing = ["http2/tracing", "dep:tracing"]
 [dependencies]
 base64 = "0.22"
 url = "2.5.4"
+iri-string = "0.7.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_urlencoded = "0.7.1"
 percent-encoding = "2.3.1"

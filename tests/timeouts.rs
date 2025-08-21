@@ -29,7 +29,7 @@ async fn client_timeout() {
     let err = res.unwrap_err();
 
     assert!(err.is_timeout());
-    assert_eq!(err.url().map(|u| u.as_str()), Some(url.as_str()));
+    assert_eq!(err.uri().map(|u| u.to_string()), Some(url));
 }
 
 #[tokio::test]
@@ -61,7 +61,7 @@ async fn request_timeout() {
     } else {
         assert!(err.is_timeout());
     }
-    assert_eq!(err.url().map(|u| u.as_str()), Some(url.as_str()));
+    assert_eq!(err.uri().map(|u| u.to_string()), Some(url));
 }
 
 #[tokio::test]
@@ -201,7 +201,7 @@ async fn read_timeout_applies_to_headers() {
     let err = res.unwrap_err();
 
     assert!(err.is_timeout());
-    assert_eq!(err.url().map(|u| u.as_str()), Some(url.as_str()));
+    assert_eq!(err.uri().map(|u| u.to_string()), Some(url));
 }
 
 #[cfg(feature = "stream")]

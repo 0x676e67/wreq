@@ -3,12 +3,11 @@ use std::{fmt, net::SocketAddr};
 use bytes::Bytes;
 #[cfg(feature = "charset")]
 use encoding_rs::{Encoding, UTF_8};
-use http::{HeaderMap, StatusCode, Version};
+use http::{HeaderMap, StatusCode, Uri, Version};
 #[cfg(feature = "charset")]
 use mime::Mime;
 #[cfg(feature = "json")]
 use serde::de::DeserializeOwned;
-use url::Url;
 
 use super::body::{Body, ResponseBody};
 #[cfg(feature = "cookies")]
@@ -16,26 +15,20 @@ use crate::cookie;
 use crate::{
     Error, Upgraded,
     core::{client::connect::HttpInfo, ext::ReasonPhrase},
-    response::ResponseUrl,
+    ext::ResponseUri,
 };
 
 /// A Response to a submitted `Request`.
 pub struct Response {
     res: http::Response<Body>,
-    // Boxed to save space (11 words to 1 word), and it's not accessed
-    // frequently internally.
-    url: Box<Url>,
+    uri: Uri,
 }
 
 impl Response {
-    pub(super) fn new(res: http::Response<ResponseBody>, url: Url) -> Response {
+    pub(super) fn new(res: http::Response<ResponseBody>, uri: Uri) -> Response {
         let (parts, body) = res.into_parts();
         let res = http::Response::from_parts(parts, Body::wrap(body));
-
-        Response {
-            res,
-            url: Box::new(url),
-        }
+        Response { res, uri }
     }
 
     /// Get the `StatusCode` of this `Response`.
@@ -96,10 +89,10 @@ impl Response {
             .filter_map(Result::ok)
     }
 
-    /// Get the final `Url` of this `Response`.
+    /// Get the final `Uri` of this `Response`.
     #[inline]
-    pub fn url(&self) -> &Url {
-        &self.url
+    pub fn uri(&self) -> &Uri {
+        &self.uri
     }
 
     /// Get the local address used to get this `Response`.
@@ -391,7 +384,7 @@ impl Response {
         let status = self.status();
         let reason = self.extensions().get::<ReasonPhrase>().cloned();
         if status.is_client_error() || status.is_server_error() {
-            Err(Error::status_code(*self.url, status, reason))
+            Err(Error::status_code(self.uri, status, reason))
         } else {
             Ok(self)
         }
@@ -419,7 +412,7 @@ impl Response {
         let status = self.status();
         let reason = self.extensions().get::<ReasonPhrase>().cloned();
         if status.is_client_error() || status.is_server_error() {
-            Err(Error::status_code(*self.url.clone(), status, reason))
+            Err(Error::status_code(self.uri.clone(), status, reason))
         } else {
             Ok(self)
         }
@@ -436,7 +429,7 @@ impl Response {
 impl fmt::Debug for Response {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         f.debug_struct("Response")
-            .field("url", &self.url().as_str())
+            .field("url", self.uri())
             .field("status", &self.status())
             .field("headers", self.headers())
             .finish()
@@ -449,15 +442,13 @@ impl<T: Into<Body>> From<http::Response<T>> for Response {
     fn from(r: http::Response<T>) -> Response {
         let (mut parts, body) = r.into_parts();
         let body: super::body::Body = body.into();
-        let url = parts
+        let uri = parts
             .extensions
-            .remove::<ResponseUrl>()
-            .unwrap_or_else(|| ResponseUrl(Url::parse("http://no.url.provided.local").unwrap()));
-        let url = url.0;
-        let res = http::Response::from_parts(parts, body);
+            .remove::<ResponseUri>()
+            .unwrap_or_else(|| ResponseUri(Uri::try_from("http://no.url.provided.local").unwrap()));
         Response {
-            res,
-            url: Box::new(url),
+            res: http::Response::from_parts(parts, body),
+            uri: uri.0,
         }
     }
 }
@@ -469,7 +460,7 @@ impl From<Response> for http::Response<Body> {
         let (parts, body) = r.res.into_parts();
         let body = Body::wrap(body);
         let mut response = http::Response::from_parts(parts, body);
-        response.extensions_mut().insert(ResponseUrl(*r.url));
+        response.extensions_mut().insert(ResponseUri(r.uri));
         response
     }
 }
@@ -483,38 +474,37 @@ impl From<Response> for Body {
 
 #[cfg(test)]
 mod tests {
-    use http::response::Builder;
-    use url::Url;
+    use http::{Uri, response::Builder};
 
     use super::Response;
-    use crate::{ResponseBuilderExt, response::ResponseExt};
+    use crate::{ResponseBuilderExt, ext::ResponseExt};
 
     #[test]
     fn test_from_http_response() {
-        let url = Url::parse("http://example.com").unwrap();
+        let url = Uri::try_from("http://example.com").unwrap();
         let response = Builder::new()
             .status(200)
-            .url(url.clone())
+            .uri(url.clone())
             .body("foo")
             .unwrap();
         let response = Response::from(response);
 
         assert_eq!(response.status(), 200);
-        assert_eq!(*response.url(), url);
+        assert_eq!(*response.uri(), url);
     }
 
     #[test]
     fn test_from_http_response_with_url() {
-        let url = Url::parse("http://example.com").unwrap();
+        let url = Uri::try_from("http://example.com").unwrap();
         let response = Builder::new()
             .status(200)
-            .url(url.clone())
+            .uri(url.clone())
             .body("foo")
             .unwrap();
         let response = Response::from(response);
 
         assert_eq!(response.status(), 200);
-        assert_eq!(*response.url(), url);
+        assert_eq!(*response.uri(), url);
 
         let http_response = http::Response::from(response);
         let resp_url = http_response.url();
