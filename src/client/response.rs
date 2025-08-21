@@ -429,7 +429,6 @@ impl Response {
     pub async fn upgrade(self) -> crate::Result<Upgraded> {
         crate::core::client::upgrade::on(self.res)
             .await
-            .map(Upgraded::from)
             .map_err(Error::upgrade)
     }
 }
