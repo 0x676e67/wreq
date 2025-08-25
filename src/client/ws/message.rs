@@ -4,45 +4,30 @@
 //! tungstenite message implementation, offering a more ergonomic API
 //! for working with WebSocket communications.
 
-use bytes::Bytes;
-use tokio_tungstenite::tungstenite as ts;
+use std::fmt;
 
+use bytes::Bytes;
+
+use super::tungstenite;
 use crate::Error;
 
 /// UTF-8 wrapper for [Bytes].
 ///
 /// An [Utf8Bytes] is always guaranteed to contain valid UTF-8.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct Utf8Bytes(ts::Utf8Bytes);
+pub struct Utf8Bytes(pub(crate) tungstenite::Utf8Bytes);
 
 impl Utf8Bytes {
     /// Creates from a static str.
     #[inline]
     pub const fn from_static(str: &'static str) -> Self {
-        Self(ts::Utf8Bytes::from_static(str))
-    }
-
-    /// Creates from a [`Bytes`] object without checking the encoding.
-    ///
-    /// # Safety
-    ///
-    /// The bytes passed in must be valid UTF-8.
-    #[inline]
-    pub fn from_bytes_unchecked(bytes: Bytes) -> Self {
-        #[allow(unsafe_code)]
-        Self(unsafe { ts::Utf8Bytes::from_bytes_unchecked(bytes) })
+        Self(tungstenite::Utf8Bytes::from_static(str))
     }
 
     /// Returns as a string slice.
     #[inline]
     pub fn as_str(&self) -> &str {
         self.0.as_str()
-    }
-
-    /// Returns as a byte slice.
-    #[inline(always)]
-    pub(super) fn into_tungstenite(self) -> ts::Utf8Bytes {
-        self.0
     }
 }
 
@@ -67,9 +52,9 @@ impl std::ops::Deref for Utf8Bytes {
     }
 }
 
-impl std::fmt::Display for Utf8Bytes {
+impl fmt::Display for Utf8Bytes {
     #[inline]
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.as_str())
     }
 }
@@ -302,17 +287,19 @@ impl Message {
     /// # Returns
     ///
     /// A `tungstenite::Message` instance that represents the current `Message`.
-    pub(super) fn into_tungstenite(self) -> ts::Message {
+    pub(super) fn into_tungstenite(self) -> tungstenite::Message {
         match self {
-            Self::Text(text) => ts::Message::Text(text.into_tungstenite()),
-            Self::Binary(binary) => ts::Message::Binary(binary),
-            Self::Ping(ping) => ts::Message::Ping(ping),
-            Self::Pong(pong) => ts::Message::Pong(pong),
-            Self::Close(Some(close)) => ts::Message::Close(Some(ts::protocol::CloseFrame {
-                code: ts::protocol::frame::coding::CloseCode::from(close.code.0),
-                reason: close.reason.into_tungstenite(),
-            })),
-            Self::Close(None) => ts::Message::Close(None),
+            Self::Text(text) => tungstenite::Message::Text(text.0),
+            Self::Binary(binary) => tungstenite::Message::Binary(binary),
+            Self::Ping(ping) => tungstenite::Message::Ping(ping),
+            Self::Pong(pong) => tungstenite::Message::Pong(pong),
+            Self::Close(Some(close)) => {
+                tungstenite::Message::Close(Some(tungstenite::protocol::CloseFrame {
+                    code: tungstenite::protocol::frame::coding::CloseCode::from(close.code.0),
+                    reason: close.reason.0,
+                }))
+            }
+            Self::Close(None) => tungstenite::Message::Close(None),
         }
     }
 
@@ -332,20 +319,20 @@ impl Message {
     /// An `Option<Message>` instance that represents the given `tungstenite::Message`.
     /// Returns `None` if the message is a `Frame` frame, as recommended by the
     /// `tungstenite` maintainers.
-    pub(super) fn from_tungstenite(message: ts::Message) -> Option<Self> {
+    pub(super) fn from_tungstenite(message: tungstenite::Message) -> Option<Self> {
         match message {
-            ts::Message::Text(text) => Some(Self::Text(Utf8Bytes(text))),
-            ts::Message::Binary(binary) => Some(Self::Binary(binary)),
-            ts::Message::Ping(ping) => Some(Self::Ping(ping)),
-            ts::Message::Pong(pong) => Some(Self::Pong(pong)),
-            ts::Message::Close(Some(close)) => Some(Self::Close(Some(CloseFrame {
+            tungstenite::Message::Text(text) => Some(Self::Text(Utf8Bytes(text))),
+            tungstenite::Message::Binary(binary) => Some(Self::Binary(binary)),
+            tungstenite::Message::Ping(ping) => Some(Self::Ping(ping)),
+            tungstenite::Message::Pong(pong) => Some(Self::Pong(pong)),
+            tungstenite::Message::Close(Some(close)) => Some(Self::Close(Some(CloseFrame {
                 code: CloseCode(close.code.into()),
                 reason: Utf8Bytes(close.reason),
             }))),
-            ts::Message::Close(None) => Some(Self::Close(None)),
+            tungstenite::Message::Close(None) => Some(Self::Close(None)),
             // we can ignore `Frame` frames as recommended by the tungstenite maintainers
             // https://github.com/snapview/tungstenite-rs/issues/268
-            ts::Message::Frame(_) => None,
+            tungstenite::Message::Frame(_) => None,
         }
     }
 
