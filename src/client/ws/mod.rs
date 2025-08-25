@@ -16,9 +16,12 @@ use std::{
 use futures_util::{Sink, SinkExt, Stream, StreamExt};
 use http::{HeaderMap, HeaderName, HeaderValue, Method, StatusCode, Version, header, uri::Scheme};
 use http2::ext::Protocol;
+use pin_project_lite::pin_project;
 use serde::Serialize;
-use tokio_tungstenite::tungstenite::{self, protocol};
-use tungstenite::protocol::WebSocketConfig;
+use tokio_tungstenite::tungstenite::{
+    self,
+    protocol::{self, WebSocketConfig},
+};
 
 use self::message::{CloseCode, Message, Utf8Bytes};
 use crate::{
@@ -428,6 +431,7 @@ impl WebSocketResponse {
             let headers = self.inner.headers();
 
             match self.inner.version() {
+                // HTTP/1.0 and HTTP/1.1 use the traditional upgrade mechanism
                 Version::HTTP_10 | Version::HTTP_11 => {
                     if status != StatusCode::SWITCHING_PROTOCOLS {
                         return Err(Error::upgrade(format!("unexpected status code: {status}")));
@@ -459,6 +463,8 @@ impl WebSocketResponse {
                         }
                     }
                 }
+                // HTTP/2 uses the Extended CONNECT Protocol (RFC 8441)
+                // See: https://datatracker.ietf.org/doc/html/rfc8441
                 Version::HTTP_2 => {
                     if status != StatusCode::OK {
                         return Err(Error::upgrade(format!("unexpected status code: {status}")));
@@ -473,36 +479,30 @@ impl WebSocketResponse {
             }
 
             let protocol = headers.get(header::SEC_WEBSOCKET_PROTOCOL).cloned();
+            let requested = self.protocols.as_ref().filter(|p| !p.is_empty());
+            let replied = protocol.as_ref().and_then(|v| v.to_str().ok());
 
-            match (
-                self.protocols.as_ref().is_none_or(|p| p.is_empty()),
-                &protocol,
-            ) {
-                (true, None) => {
-                    // we didn't request any protocols, so we don't expect one
-                    // in return
-                }
-                (false, None) => {
-                    // server didn't reply with a protocol
-                    return Err(Error::upgrade("missing protocol"));
-                }
-                (false, Some(protocol)) => {
-                    if let Some((protocols, protocol)) = self.protocols.zip(protocol.to_str().ok())
-                    {
-                        if !protocols.contains(&Cow::Borrowed(protocol)) {
-                            // the responded protocol is none which we requested
-                            return Err(Error::upgrade(format!("invalid protocol: {protocol}")));
-                        }
-                    } else {
-                        // we didn't request any protocols but got one anyway
-                        return Err(Error::upgrade("invalid protocol"));
+            match (requested, replied) {
+                // okay, we requested protocols and got one back
+                (Some(req), Some(rep)) => {
+                    if !req.contains(&Cow::Borrowed(rep)) {
+                        return Err(Error::upgrade(format!("invalid protocol: {rep}")));
                     }
                 }
-                (true, Some(_)) => {
-                    // we didn't request any protocols but got one anyway
-                    return Err(Error::upgrade("invalid protocol"));
+                // server didn't reply with a protocol
+                (Some(_), None) => {
+                    return Err(Error::upgrade(format!(
+                        "missing protocol: {:?}",
+                        self.protocols
+                    )));
                 }
-            }
+                // we didn't request any protocols, but got one anyway
+                (None, Some(_)) => {
+                    return Err(Error::upgrade(format!("invalid protocol: {protocol:?}")));
+                }
+                // we didn't request any protocols, so we don't expect one
+                (None, None) => {}
+            };
 
             let upgraded = self.inner.upgrade().await?;
             let inner = WebSocketStream::from_raw_socket(
@@ -543,18 +543,21 @@ fn header_contains(headers: &HeaderMap, key: HeaderName, value: &'static str) ->
     }
 }
 
-/// A websocket connection
-#[derive(Debug)]
-pub struct WebSocket {
-    inner: WebSocketStream,
-    protocol: Option<HeaderValue>,
+pin_project! {
+    /// A websocket connection
+    #[derive(Debug)]
+    pub struct WebSocket {
+        #[pin]
+        inner: WebSocketStream,
+        protocol: Option<HeaderValue>,
+    }
 }
 
 impl WebSocket {
     /// Return the selected WebSocket subprotocol, if one has been chosen.
     #[inline]
-    pub fn protocol(&self) -> Option<&HeaderValue> {
-        self.protocol.as_ref()
+    pub fn protocol(&self) -> Option<HeaderValue> {
+        self.protocol.clone()
     }
 
     /// Receive another message.
@@ -579,14 +582,48 @@ impl WebSocket {
     where
         R: Into<Option<Utf8Bytes>>,
     {
-        let code = code.0.into();
-        let reason = reason
-            .into()
-            .unwrap_or(Utf8Bytes::from_static("Goodbye"))
-            .into_tungstenite();
         self.inner
-            .close(Some(tungstenite::protocol::CloseFrame { code, reason }))
+            .close(Some(tungstenite::protocol::CloseFrame {
+                code: code.0.into(),
+                reason: reason.into().unwrap_or(Utf8Bytes::from_static("Goodbye")).0,
+            }))
             .await
+            .map_err(Error::websocket)
+    }
+}
+
+impl Sink<Message> for WebSocket {
+    type Error = Error;
+
+    #[inline]
+    fn poll_ready(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        self.project()
+            .inner
+            .poll_ready(cx)
+            .map_err(Error::websocket)
+    }
+
+    #[inline]
+    fn start_send(self: Pin<&mut Self>, item: Message) -> Result<(), Self::Error> {
+        self.project()
+            .inner
+            .start_send(item.into_tungstenite())
+            .map_err(Error::websocket)
+    }
+
+    #[inline]
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        self.project()
+            .inner
+            .poll_flush(cx)
+            .map_err(Error::websocket)
+    }
+
+    #[inline]
+    fn poll_close(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        self.project()
+            .inner
+            .poll_close(cx)
             .map_err(Error::websocket)
     }
 }
@@ -606,37 +643,5 @@ impl Stream for WebSocket {
                 None => return Poll::Ready(None),
             }
         }
-    }
-}
-
-impl Sink<Message> for WebSocket {
-    type Error = Error;
-
-    #[inline]
-    fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        Pin::new(&mut self.inner)
-            .poll_ready(cx)
-            .map_err(Error::websocket)
-    }
-
-    #[inline]
-    fn start_send(mut self: Pin<&mut Self>, item: Message) -> Result<(), Self::Error> {
-        Pin::new(&mut self.inner)
-            .start_send(item.into_tungstenite())
-            .map_err(Error::websocket)
-    }
-
-    #[inline]
-    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        Pin::new(&mut self.inner)
-            .poll_flush(cx)
-            .map_err(Error::websocket)
-    }
-
-    #[inline]
-    fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        Pin::new(&mut self.inner)
-            .poll_close(cx)
-            .map_err(Error::websocket)
     }
 }
