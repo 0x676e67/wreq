@@ -292,7 +292,7 @@ pub use self::client::ws;
 pub use self::{
     client::{
         Body, Client, ClientBuilder, Emulation, EmulationBuilder, EmulationFactory, Request,
-        RequestBuilder, Response, Upgraded, dns, http1, http2,
+        RequestBuilder, Response, Upgraded, http1, http2,
     },
     error::{Error, Result},
     into_url::IntoUrl,

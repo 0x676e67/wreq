@@ -19,7 +19,6 @@ pub use self::{
     response::Response,
 };
 pub use crate::core::client::{
-    connect::dns,
     options::{http1, http2},
     upgrade::Upgraded,
 };
