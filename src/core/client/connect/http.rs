@@ -20,11 +20,11 @@ use tokio::{
     time::Sleep,
 };
 
-use super::{
-    Connected, Connection,
+use super::{Connected, Connection};
+use crate::{
+    core::BoxError,
     dns::{self, GaiResolver, InternalResolve, resolve},
 };
-use crate::core::BoxError;
 
 /// A connector for the `http` scheme.
 ///
