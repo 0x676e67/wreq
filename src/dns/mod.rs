@@ -5,11 +5,11 @@ pub(crate) mod gai;
 pub(crate) mod hickory;
 pub(crate) mod resolve;
 
-pub use resolve::{Addrs, Name, Resolve, Resolving};
+pub use resolve::{Addrs, IntoResolve, Name, Resolve, Resolving};
 
 pub(crate) use self::{
     gai::{GaiResolver, SocketAddrs},
-    resolve::{DnsResolverWithOverrides, DynResolver, IntoResolve},
+    resolve::{DnsResolverWithOverrides, DynResolver},
     sealed::{InternalResolve, resolve},
 };
 

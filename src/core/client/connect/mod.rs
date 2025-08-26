@@ -4,7 +4,6 @@ mod http;
 #[cfg(unix)]
 mod uds;
 
-pub mod dns;
 pub mod proxy;
 
 use std::{
