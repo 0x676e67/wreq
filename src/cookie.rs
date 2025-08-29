@@ -1,6 +1,11 @@
 //! HTTP Cookies
 
-use std::{convert::TryInto, fmt, sync::Arc, time::SystemTime};
+use std::{
+    convert::TryInto,
+    fmt,
+    sync::Arc,
+    time::{Duration, SystemTime},
+};
 
 use bytes::{BufMut, Bytes};
 use cookie_crate::{Cookie as RawCookie, Expiration, SameSite};
@@ -196,91 +201,88 @@ impl Jar {
     /// ```
     pub fn add_cookie_str(&self, cookie: &str, uri: &Uri) {
         if let Ok(raw) = RawCookie::parse(cookie) {
-            let cookie = raw.into_owned();
+            self.add_cookie(raw.into_owned(), uri);
+        }
+    }
 
-            let domain = cookie
-                .domain()
-                .map(|d| d.to_ascii_lowercase())
-                .or_else(|| uri.host().map(|h| h.to_ascii_lowercase()))
-                .unwrap_or_default();
+    fn add_cookie(&self, cookie: RawCookie<'static>, uri: &Uri) {
+        let domain = cookie.domain().or_else(|| uri.host()).unwrap_or_default();
+        let path = cookie.path().unwrap_or_else(|| default_path(uri));
+        let name = cookie.name();
 
-            let path = cookie
-                .path()
-                .map(|p| p.to_string())
-                .unwrap_or_else(|| default_path(uri));
+        let mut inner = self.0.write();
+        let name_map = inner
+            .entry(domain.to_owned())
+            .or_insert_with(|| HashMap::with_hasher(HASHER))
+            .entry(path.to_owned())
+            .or_insert_with(|| HashMap::with_hasher(HASHER));
 
-            let name = cookie.name().to_string();
+        // RFC 6265: If Max-Age=0 or Expires in the past, remove the cookie
+        let expired = match cookie.expires() {
+            Some(Expiration::DateTime(dt)) => SystemTime::from(dt) <= SystemTime::now(),
+            _ => false,
+        } || cookie
+            .max_age()
+            .is_some_and(|age| age == Duration::from_secs(0));
 
-            let mut map = self.0.write();
-
-            let path_map = map
-                .entry(domain)
-                .or_insert_with(|| HashMap::with_hasher(HASHER));
-
-            let name_map = path_map
-                .entry(path.clone())
-                .or_insert_with(|| HashMap::with_hasher(HASHER));
-
-            // RFC 6265: If Max-Age=0 or Expires in the past, remove the cookie
-            let expired = match cookie.expires() {
-                Some(Expiration::DateTime(dt)) => SystemTime::from(dt) <= SystemTime::now(),
-                _ => false,
-            } || cookie
-                .max_age()
-                .map_or(false, |age| age == std::time::Duration::from_secs(0));
-
-            if expired {
-                name_map.remove(&name);
-            } else {
-                name_map.insert(name, cookie);
-            }
+        if expired {
+            name_map.remove(name);
+        } else {
+            name_map.insert(name.to_owned(), cookie);
         }
     }
 }
 
 impl CookieStore for Jar {
     fn set_cookies(&self, cookie_headers: &mut dyn Iterator<Item = &HeaderValue>, uri: &Uri) {
-        for header in cookie_headers {
-            if let Ok(s) = std::str::from_utf8(header.as_bytes()) {
-                self.add_cookie_str(s, uri);
-            }
+        let cookies = cookie_headers
+            .map(Cookie::try_from)
+            .filter_map(Result::ok)
+            .map(|cookie| cookie.0.into_owned());
+
+        for cookie in cookies {
+            self.add_cookie(cookie, uri);
         }
     }
 
     fn cookies(&self, uri: &Uri) -> Vec<HeaderValue> {
-        let host = match uri.host() {
-            Some(h) => h.to_ascii_lowercase(),
-            None => return Vec::new(),
-        };
-        let req_path = uri.path();
-
-        let map = self.0.read();
         let mut cookies = Vec::new();
 
+        let host = match uri.host() {
+            Some(h) => h,
+            None => return cookies,
+        };
+
+        let inner = self.0.read();
+        let mut expires = Vec::new();
+
         // Iterate all possible matching domains (host and parent domains)
-        for (domain, path_map) in map.iter() {
-            if domain_match(&host, domain) {
+        for (domain, path_map) in inner.iter() {
+            if domain_match(host, domain) {
                 // Path matching: RFC 6265 5.1.4
                 for (path, name_map) in path_map.iter() {
-                    if path_match(req_path, path) {
+                    if path_match(uri.path(), path) {
+                        // Collect valid cookies
                         for cookie in name_map.values() {
                             // Check expiry
                             if let Some(Expiration::DateTime(dt)) = cookie.expires() {
                                 if SystemTime::from(dt) <= SystemTime::now() {
+                                    expires.push(cookie.name().to_owned());
                                     continue;
                                 }
                             }
 
                             let name = cookie.name().as_bytes();
                             let value = cookie.value().as_bytes();
-                            let mut cookie =
+                            let mut cookie_bytes =
                                 bytes::BytesMut::with_capacity(name.len() + 1 + value.len());
 
-                            cookie.put(name);
-                            cookie.put(&b"="[..]);
-                            cookie.put(value);
+                            cookie_bytes.put(name);
+                            cookie_bytes.put(&b"="[..]);
+                            cookie_bytes.put(value);
 
-                            if let Ok(cookie) = HeaderValue::from_maybe_shared(Bytes::from(cookie))
+                            if let Ok(cookie) =
+                                HeaderValue::from_maybe_shared(Bytes::from(cookie_bytes))
                             {
                                 cookies.push(cookie);
                             }
@@ -289,6 +291,19 @@ impl CookieStore for Jar {
                 }
             }
         }
+
+        if !expires.is_empty() {
+            // Remove expired cookies
+            let mut inner = self.0.write();
+            for path_map in inner.values_mut() {
+                for name_map in path_map.values_mut() {
+                    for name in expires.iter() {
+                        name_map.remove(name);
+                    }
+                }
+            }
+        }
+
         cookies
     }
 }
@@ -312,18 +327,23 @@ fn path_match(req_path: &str, cookie_path: &str) -> bool {
 }
 
 // RFC 6265 default-path
-fn default_path(uri: &Uri) -> String {
+fn default_path(uri: &Uri) -> &str {
+    const DEFAULT_PATH: &str = "/";
+
     let path = uri.path();
-    if !path.starts_with('/') {
-        return "/".to_string();
+
+    if !path.starts_with(DEFAULT_PATH) {
+        return DEFAULT_PATH;
     }
-    if let Some(pos) = path.rfind('/') {
+
+    if let Some(pos) = path.rfind(DEFAULT_PATH) {
         if pos == 0 {
-            return "/".to_string();
+            return DEFAULT_PATH;
         }
-        return path[..pos].to_string();
+        return &path[..pos];
     }
-    "/".to_string()
+
+    DEFAULT_PATH
 }
 
 impl Default for Jar {
