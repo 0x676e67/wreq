@@ -53,7 +53,7 @@ use super::{
 #[cfg(feature = "hickory-dns")]
 use crate::dns::hickory::HickoryDnsResolver;
 use crate::{
-    IntoUrl, Method, Proxy,
+    IntoUri, Method, Proxy,
     client::{
         http::connect::{Conn, Connector, Unnameable},
         layer::timeout::TimeoutOptions,
@@ -1256,7 +1256,7 @@ impl ClientBuilder {
     /// Warning
     ///
     /// Since the DNS protocol has no notion of ports, if you wish to send
-    /// traffic to a particular port you must include this port in the URL
+    /// traffic to a particular port you must include this port in the URI
     /// itself, any port in the overridden addr will be ignored and traffic sent
     /// to the conventional port for the given scheme (e.g. 80 for http).
     #[inline]
@@ -1269,7 +1269,7 @@ impl ClientBuilder {
     /// Warning
     ///
     /// Since the DNS protocol has no notion of ports, if you wish to send
-    /// traffic to a particular port you must include this port in the URL
+    /// traffic to a particular port you must include this port in the URI
     /// itself, any port in the overridden addresses will be ignored and traffic sent
     /// to the conventional port for the given scheme (e.g. 80 for http).
     #[inline]
@@ -1436,86 +1436,86 @@ impl Client {
         ClientBuilder::new()
     }
 
-    /// Convenience method to make a `GET` request to a URL.
+    /// Convenience method to make a `GET` request to a URI.
     ///
     /// # Errors
     ///
-    /// This method fails whenever the supplied `Url` cannot be parsed.
+    /// This method fails whenever the supplied `Uri` cannot be parsed.
     #[inline]
-    pub fn get<U: IntoUrl>(&self, url: U) -> RequestBuilder {
-        self.request(Method::GET, url)
+    pub fn get<U: IntoUri>(&self, uri: U) -> RequestBuilder {
+        self.request(Method::GET, uri)
     }
 
-    /// Convenience method to make a `POST` request to a URL.
+    /// Convenience method to make a `POST` request to a URI.
     ///
     /// # Errors
     ///
-    /// This method fails whenever the supplied `Url` cannot be parsed.
+    /// This method fails whenever the supplied `Uri` cannot be parsed.
     #[inline]
-    pub fn post<U: IntoUrl>(&self, url: U) -> RequestBuilder {
-        self.request(Method::POST, url)
+    pub fn post<U: IntoUri>(&self, uri: U) -> RequestBuilder {
+        self.request(Method::POST, uri)
     }
 
-    /// Convenience method to make a `PUT` request to a URL.
+    /// Convenience method to make a `PUT` request to a URI.
     ///
     /// # Errors
     ///
-    /// This method fails whenever the supplied `Url` cannot be parsed.
+    /// This method fails whenever the supplied `Uri` cannot be parsed.
     #[inline]
-    pub fn put<U: IntoUrl>(&self, url: U) -> RequestBuilder {
-        self.request(Method::PUT, url)
+    pub fn put<U: IntoUri>(&self, uri: U) -> RequestBuilder {
+        self.request(Method::PUT, uri)
     }
 
-    /// Convenience method to make a `PATCH` request to a URL.
+    /// Convenience method to make a `PATCH` request to a URI.
     ///
     /// # Errors
     ///
-    /// This method fails whenever the supplied `Url` cannot be parsed.
+    /// This method fails whenever the supplied `Uri` cannot be parsed.
     #[inline]
-    pub fn patch<U: IntoUrl>(&self, url: U) -> RequestBuilder {
-        self.request(Method::PATCH, url)
+    pub fn patch<U: IntoUri>(&self, uri: U) -> RequestBuilder {
+        self.request(Method::PATCH, uri)
     }
 
-    /// Convenience method to make a `DELETE` request to a URL.
+    /// Convenience method to make a `DELETE` request to a URI.
     ///
     /// # Errors
     ///
-    /// This method fails whenever the supplied `Url` cannot be parsed.
+    /// This method fails whenever the supplied `Uri` cannot be parsed.
     #[inline]
-    pub fn delete<U: IntoUrl>(&self, url: U) -> RequestBuilder {
-        self.request(Method::DELETE, url)
+    pub fn delete<U: IntoUri>(&self, uri: U) -> RequestBuilder {
+        self.request(Method::DELETE, uri)
     }
 
-    /// Convenience method to make a `HEAD` request to a URL.
+    /// Convenience method to make a `HEAD` request to a URI.
     ///
     /// # Errors
     ///
-    /// This method fails whenever the supplied `Url` cannot be parsed.
+    /// This method fails whenever the supplied `Uri` cannot be parsed.
     #[inline]
-    pub fn head<U: IntoUrl>(&self, url: U) -> RequestBuilder {
-        self.request(Method::HEAD, url)
+    pub fn head<U: IntoUri>(&self, uri: U) -> RequestBuilder {
+        self.request(Method::HEAD, uri)
     }
 
-    /// Convenience method to make a `OPTIONS` request to a URL.
+    /// Convenience method to make a `OPTIONS` request to a URI.
     ///
     /// # Errors
     ///
-    /// This method fails whenever the supplied `Url` cannot be parsed.
+    /// This method fails whenever the supplied `Uri` cannot be parsed.
     #[inline]
-    pub fn options<U: IntoUrl>(&self, url: U) -> RequestBuilder {
-        self.request(Method::OPTIONS, url)
+    pub fn options<U: IntoUri>(&self, uri: U) -> RequestBuilder {
+        self.request(Method::OPTIONS, uri)
     }
 
-    /// Start building a `Request` with the `Method` and `Url`.
+    /// Start building a `Request` with the `Method` and `Uri`.
     ///
     /// Returns a `RequestBuilder`, which will allow setting headers and
     /// the request body before sending.
     ///
     /// # Errors
     ///
-    /// This method fails whenever the supplied `Url` cannot be parsed.
-    pub fn request<U: IntoUrl>(&self, method: Method, url: U) -> RequestBuilder {
-        let req = url.into_url().map(move |uri| Request::new(method, uri));
+    /// This method fails whenever the supplied `Uri` cannot be parsed.
+    pub fn request<U: IntoUri>(&self, method: Method, uri: U) -> RequestBuilder {
+        let req = uri.into_uri().map(move |uri| Request::new(method, uri));
         RequestBuilder::new(self.clone(), req)
     }
 
@@ -1526,8 +1526,8 @@ impl Client {
     #[inline]
     #[cfg(feature = "ws")]
     #[cfg_attr(docsrs, doc(cfg(feature = "ws")))]
-    pub fn websocket<U: IntoUrl>(&self, url: U) -> WebSocketRequestBuilder {
-        WebSocketRequestBuilder::new(self.request(Method::GET, url))
+    pub fn websocket<U: IntoUri>(&self, uri: U) -> WebSocketRequestBuilder {
+        WebSocketRequestBuilder::new(self.request(Method::GET, uri))
     }
 
     /// Executes a `Request`.
@@ -1543,16 +1543,12 @@ impl Client {
     /// This method fails if there was an error while sending request,
     /// redirect loop was detected or redirect limit was exhausted.
     pub fn execute(&self, request: Request) -> Pending {
-        match http::Request::<Body>::try_from(request) {
-            Ok(req) => {
-                // Prepare the future request by ensuring we use the exact same Service instance
-                // for both poll_ready and call.
-                let uri = req.uri().clone();
-                let fut = self.inner.as_ref().clone().oneshot(req);
-                Pending::request(fut, uri)
-            }
-            Err(err) => Pending::error(err),
-        }
+        let req = http::Request::<Body>::from(request);
+        // Prepare the future request by ensuring we use the exact same Service instance
+        // for both poll_ready and call.
+        let uri = req.uri().clone();
+        let fut = self.inner.as_ref().clone().oneshot(req);
+        Pending::request(fut, uri)
     }
 }
 

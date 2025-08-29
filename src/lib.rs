@@ -271,9 +271,8 @@ mod core;
 mod error;
 mod ext;
 mod hash;
-mod into_url;
+mod into_uri;
 mod proxy;
-mod query;
 mod sync;
 mod util;
 
@@ -284,8 +283,7 @@ pub mod header;
 pub mod redirect;
 pub mod tls;
 
-pub use http::{Method, StatusCode, Version};
-pub use url::Url;
+pub use http::{Method, StatusCode, Uri, Version};
 
 #[cfg(feature = "multipart")]
 pub use self::client::multipart;
@@ -298,7 +296,7 @@ pub use self::{
     },
     error::{Error, Result},
     ext::{ResponseBuilderExt, ResponseExt},
-    into_url::IntoUrl,
+    into_uri::IntoUri,
     proxy::{NoProxy, Proxy},
 };
 
@@ -348,8 +346,8 @@ fn _assert_impls() {
 /// # }
 /// ```
 #[inline]
-pub fn get<T: IntoUrl>(url: T) -> RequestBuilder {
-    Client::new().get(url)
+pub fn get<T: IntoUri>(uri: T) -> RequestBuilder {
+    Client::new().get(uri)
 }
 
 /// Shortcut method to quickly make a `POST` request.
@@ -373,8 +371,8 @@ pub fn get<T: IntoUrl>(url: T) -> RequestBuilder {
 /// # }
 /// ```
 #[inline]
-pub fn post<T: IntoUrl>(url: T) -> RequestBuilder {
-    Client::new().post(url)
+pub fn post<T: IntoUri>(uri: T) -> RequestBuilder {
+    Client::new().post(uri)
 }
 
 /// Shortcut method to quickly make a `PUT` request.
@@ -398,8 +396,8 @@ pub fn post<T: IntoUrl>(url: T) -> RequestBuilder {
 /// # }
 /// ```
 #[inline]
-pub fn put<T: IntoUrl>(url: T) -> RequestBuilder {
-    Client::new().put(url)
+pub fn put<T: IntoUri>(uri: T) -> RequestBuilder {
+    Client::new().put(uri)
 }
 
 /// Shortcut method to quickly make a `DELETE` request.
@@ -422,8 +420,8 @@ pub fn put<T: IntoUrl>(url: T) -> RequestBuilder {
 /// # }
 /// ```
 #[inline]
-pub fn delete<T: IntoUrl>(url: T) -> RequestBuilder {
-    Client::new().delete(url)
+pub fn delete<T: IntoUri>(uri: T) -> RequestBuilder {
+    Client::new().delete(uri)
 }
 
 /// Shortcut method to quickly make a `HEAD` request.
@@ -446,8 +444,8 @@ pub fn delete<T: IntoUrl>(url: T) -> RequestBuilder {
 /// # }
 /// ```
 #[inline]
-pub fn head<T: IntoUrl>(url: T) -> RequestBuilder {
-    Client::new().head(url)
+pub fn head<T: IntoUri>(uri: T) -> RequestBuilder {
+    Client::new().head(uri)
 }
 
 /// Shortcut method to quickly make a `PATCH` request.
@@ -471,8 +469,8 @@ pub fn head<T: IntoUrl>(url: T) -> RequestBuilder {
 /// # }
 /// ```
 #[inline]
-pub fn patch<T: IntoUrl>(url: T) -> RequestBuilder {
-    Client::new().patch(url)
+pub fn patch<T: IntoUri>(uri: T) -> RequestBuilder {
+    Client::new().patch(uri)
 }
 
 /// Shortcut method to quickly make an `OPTIONS` request.
@@ -495,8 +493,8 @@ pub fn patch<T: IntoUrl>(url: T) -> RequestBuilder {
 /// # }
 /// ```
 #[inline]
-pub fn options<T: IntoUrl>(url: T) -> RequestBuilder {
-    Client::new().options(url)
+pub fn options<T: IntoUri>(uri: T) -> RequestBuilder {
+    Client::new().options(uri)
 }
 
 /// Shortcut method to quickly make a WebSocket request.
@@ -549,6 +547,6 @@ pub fn options<T: IntoUrl>(url: T) -> RequestBuilder {
 #[inline]
 #[cfg(feature = "ws")]
 #[cfg_attr(docsrs, doc(cfg(feature = "ws")))]
-pub fn websocket<T: IntoUrl>(url: T) -> ws::WebSocketRequestBuilder {
-    Client::new().websocket(url)
+pub fn websocket<T: IntoUri>(uri: T) -> ws::WebSocketRequestBuilder {
+    Client::new().websocket(uri)
 }

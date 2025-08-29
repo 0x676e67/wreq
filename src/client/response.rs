@@ -15,7 +15,7 @@ use crate::cookie;
 use crate::{
     Error, Upgraded,
     core::{client::connect::HttpInfo, ext::ReasonPhrase},
-    ext::ResponseUri,
+    ext::RequestUri,
 };
 
 /// A Response to a submitted `Request`.
@@ -441,11 +441,11 @@ impl fmt::Debug for Response {
 impl<T: Into<Body>> From<http::Response<T>> for Response {
     fn from(r: http::Response<T>) -> Response {
         let (mut parts, body) = r.into_parts();
-        let body: super::body::Body = body.into();
+        let body: Body = body.into();
         let uri = parts
             .extensions
-            .remove::<ResponseUri>()
-            .unwrap_or_else(|| ResponseUri(Uri::try_from("http://no.url.provided.local").unwrap()));
+            .remove::<RequestUri>()
+            .unwrap_or_else(|| RequestUri(Uri::try_from("http://no.url.provided.local").unwrap()));
         Response {
             res: http::Response::from_parts(parts, body),
             uri: uri.0,
@@ -460,7 +460,7 @@ impl From<Response> for http::Response<Body> {
         let (parts, body) = r.res.into_parts();
         let body = Body::wrap(body);
         let mut response = http::Response::from_parts(parts, body);
-        response.extensions_mut().insert(ResponseUri(r.uri));
+        response.extensions_mut().insert(RequestUri(r.uri));
         response
     }
 }
@@ -495,20 +495,20 @@ mod tests {
 
     #[test]
     fn test_from_http_response_with_url() {
-        let url = Uri::try_from("http://example.com").unwrap();
+        let uri = Uri::try_from("http://example.com").unwrap();
         let response = Builder::new()
             .status(200)
-            .uri(url.clone())
+            .uri(uri.clone())
             .body("foo")
             .unwrap();
         let response = Response::from(response);
 
         assert_eq!(response.status(), 200);
-        assert_eq!(*response.uri(), url);
+        assert_eq!(*response.uri(), uri);
 
         let http_response = http::Response::from(response);
-        let resp_url = http_response.url();
+        let resp_url = http_response.uri();
         assert_eq!(http_response.status(), 200);
-        assert_eq!(resp_url, Some(&url));
+        assert_eq!(resp_url, Some(&uri));
     }
 }

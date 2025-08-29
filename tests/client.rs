@@ -672,7 +672,7 @@ async fn http1_reason_phrase() {
     assert_eq!(
         res.error_for_status().unwrap_err().to_string(),
         format!(
-            "HTTP status client error (418 I'm not a teapot) for url (http://{}/)",
+            "HTTP status client error (418 I'm not a teapot) for uri (http://{}/)",
             server.addr()
         )
     );

@@ -3,20 +3,21 @@ use std::{
     task::{Context, Poll, ready},
 };
 
+use http::{Request, Uri};
+use pin_project_lite::pin_project;
+use tower::util::Oneshot;
+
 use super::{Body, Response, types::ClientRef};
 use crate::{
     Error,
     client::{body, layer::redirect::RequestUri},
 };
-use http::{Request, Uri};
-use pin_project_lite::pin_project;
-use tower::util::Oneshot;
 
 type ResponseFuture = Oneshot<ClientRef, Request<Body>>;
 
 pin_project! {
     /// [`Pending`] is a future representing the state of an HTTP request, which may be either
-    /// an in-flight request (with its associated future and URL) or an error state.
+    /// an in-flight request (with its associated future and URI) or an error state.
     /// Used to drive the HTTP request to completion or report an error.
     #[project = PendingProj]
     pub enum Pending {

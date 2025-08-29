@@ -25,8 +25,8 @@ use tokio_tungstenite::tungstenite::{
 
 use self::message::{CloseCode, Message, Utf8Bytes};
 use crate::{
-    EmulationFactory, Error, RequestBuilder, Response, Upgraded, header::OrigHeaderMap,
-    proxy::Proxy,
+    EmulationFactory, Error, RequestBuilder, Response, Upgraded, ext::UriExt,
+    header::OrigHeaderMap, proxy::Proxy,
 };
 
 /// A WebSocket stream.
@@ -230,7 +230,7 @@ impl WebSocketRequestBuilder {
         self
     }
 
-    /// Modify the query string of the URL.
+    /// Modify the query string of the URI.
     #[inline]
     pub fn query<T: Serialize + ?Sized>(mut self, query: &T) -> Self {
         self.inner = self.inner.query(query);
@@ -308,18 +308,14 @@ impl WebSocketRequestBuilder {
         let mut request = request?;
 
         // Ensure the scheme is http or https
-        let url = request.url_mut();
-        let new_scheme = match url.scheme() {
-            "ws" => Scheme::HTTP,
-            "wss" => Scheme::HTTPS,
+        let uri = request.uri_mut();
+        let scheme = match uri.scheme_str() {
+            Some("ws") => uri.set_scheme(Scheme::HTTP),
+            Some("wss") => uri.set_scheme(Scheme::HTTPS),
             _ => {
-                return Err(Error::url_bad_scheme().with_url(url.clone()));
+                return Err(Error::url_bad_scheme().with_uri(uri.clone()));
             }
         };
-
-        // Update the scheme
-        url.set_scheme(new_scheme.as_str())
-            .map_err(|_| Error::url_bad_scheme().with_url(url.clone()))?;
 
         // Get the version of the request
         // This is used to determine if we should use HTTP/1.1 or HTTP/2

@@ -88,7 +88,7 @@ impl Policy {
     /// let custom = redirect::Policy::custom(|attempt| {
     ///     if attempt.previous().len() > 5 {
     ///         attempt.error("too many redirects")
-    ///     } else if attempt.url().host_str() == Some("example.domain") {
+    ///     } else if attempt.uri().host_str() == Some("example.domain") {
     ///         // prevent redirects to 'example.domain'
     ///         attempt.stop()
     ///     } else {
@@ -124,7 +124,7 @@ impl Policy {
     /// #
     /// # fn run() -> Result<(), Error> {
     /// let custom = redirect::Policy::custom(|attempt| {
-    ///     eprintln!("{}, Location: {:?}", attempt.status(), attempt.url());
+    ///     eprintln!("{}, Location: {:?}", attempt.status(), attempt.uri());
     ///     redirect::Policy::default().redirect(attempt)
     /// });
     /// # Ok(())
@@ -134,7 +134,7 @@ impl Policy {
         match self.inner {
             PolicyKind::Custom(ref custom) => custom(attempt),
             PolicyKind::Limit(max) => {
-                // The first URL in the previous is the initial URL and not a redirection. It needs
+                // The first URI in the previous is the initial URI and not a redirection. It needs
                 // to be excluded.
                 if attempt.previous.len() > max {
                     attempt.error(TooManyRedirects)
@@ -169,24 +169,24 @@ impl<'a> Attempt<'a> {
         self.status
     }
 
-    /// Get the next URL to redirect to.
-    pub fn url(&self) -> &Uri {
+    /// Get the next URI to redirect to.
+    pub fn uri(&self) -> &Uri {
         self.next
     }
 
-    /// Get the list of previous URLs that have already been requested in this chain.
+    /// Get the list of previous URIs that have already been requested in this chain.
     pub fn previous(&self) -> &[Uri] {
         self.previous
     }
 
-    /// Returns an action meaning wreq should follow the next URL.
+    /// Returns an action meaning wreq should follow the next URI.
     pub fn follow(self) -> Action {
         Action {
             inner: ActionKind::Follow,
         }
     }
 
-    /// Returns an action meaning wreq should not follow the next URL.
+    /// Returns an action meaning wreq should not follow the next URI.
     ///
     /// The 30x response will be returned as the `Ok` result.
     pub fn stop(self) -> Action {
@@ -265,7 +265,7 @@ impl StdError for TooManyRedirects {}
 pub(crate) struct FollowRedirectPolicy {
     policy: RequestConfig<RequestRedirectPolicy>,
     referer: bool,
-    urls: Vec<Uri>,
+    uris: Vec<Uri>,
     https_only: bool,
 }
 
@@ -274,7 +274,7 @@ impl FollowRedirectPolicy {
         Self {
             policy: RequestConfig::new(Some(policy)),
             referer: false,
-            urls: Vec::new(),
+            uris: Vec::new(),
             https_only: false,
         }
     }
@@ -312,12 +312,12 @@ fn make_referer(next: &Uri, previous: &Uri) -> Option<HeaderValue> {
 
 impl policy::Policy<Body, BoxError> for FollowRedirectPolicy {
     fn redirect(&mut self, attempt: &policy::Attempt<'_>) -> Result<policy::Action, BoxError> {
-        // Parse the next URL from the attempt.
-        let previous_url = attempt.previous();
-        let next_url = attempt.location();
+        // Parse the next URI from the attempt.
+        let previous_uri = attempt.previous();
+        let next_uri = attempt.location();
 
-        // Push the previous URL to the list of URLs.
-        self.urls.push(previous_url.clone());
+        // Push the previous URI to the list of URLs.
+        self.uris.push(previous_uri.clone());
 
         // Get policy from config
         let policy = self
@@ -325,36 +325,36 @@ impl policy::Policy<Body, BoxError> for FollowRedirectPolicy {
             .as_ref()
             .expect("FollowRedirectPolicy should always have a policy set");
 
-        // Check if the next URL is already in the list of URLs.
-        match policy.check(attempt.status(), &next_url, &self.urls) {
+        // Check if the next URI is already in the list of URLs.
+        match policy.check(attempt.status(), next_uri, &self.uris) {
             ActionKind::Follow => {
-                // Validate the next URL's scheme.
-                if !next_url.is_http() && !next_url.is_https() {
+                // Validate the next URI's scheme.
+                if !next_uri.is_http() && !next_uri.is_https() {
                     return Err(BoxError::from(
-                        Error::url_bad_scheme().with_uri(next_url.clone()),
+                        Error::url_bad_scheme().with_uri(next_uri.clone()),
                     ));
                 }
 
                 // Validate HTTPS-only policy.
-                if self.https_only && !next_url.is_https() {
+                if self.https_only && !next_uri.is_https() {
                     return Err(BoxError::from(Error::redirect(
-                        Error::url_bad_scheme().with_uri(next_url.clone()),
-                        next_url.clone(),
+                        Error::url_bad_scheme().with_uri(next_uri.clone()),
+                        next_uri.clone(),
                     )));
                 }
                 Ok(policy::Action::Follow)
             }
             ActionKind::Stop => Ok(policy::Action::Stop),
-            ActionKind::Error(e) => Err(BoxError::from(Error::redirect(e, previous_url.clone()))),
+            ActionKind::Error(e) => Err(BoxError::from(Error::redirect(e, previous_uri.clone()))),
         }
     }
 
     #[inline(always)]
     fn on_request(&mut self, req: &mut http::Request<Body>) {
         let next_url = req.uri().clone();
-        remove_sensitive_headers(req.headers_mut(), &next_url, &self.urls);
+        remove_sensitive_headers(req.headers_mut(), &next_url, &self.uris);
         if self.referer {
-            if let Some(previous_url) = self.urls.last() {
+            if let Some(previous_url) = self.uris.last() {
                 if let Some(v) = make_referer(&next_url, previous_url) {
                     req.headers_mut().insert(REFERER, v);
                 }
@@ -420,7 +420,7 @@ mod tests {
     #[test]
     fn test_redirect_policy_custom() {
         let policy = Policy::custom(|attempt| {
-            if attempt.url().host() == Some("foo") {
+            if attempt.uri().host() == Some("foo") {
                 attempt.stop()
             } else {
                 attempt.follow()

@@ -1,5 +1,7 @@
 use std::{fmt, fmt::Write};
 
+use bytes::Bytes;
+
 use crate::header::{Entry, HeaderMap, HeaderValue, OccupiedEntry};
 
 pub(crate) fn basic_auth<U, P>(username: U, password: Option<P>) -> HeaderValue
@@ -20,8 +22,8 @@ where
         buf
     };
 
-    let mut header =
-        HeaderValue::from_maybe_shared(encoded).expect("base64 is always valid HeaderValue");
+    let mut header = HeaderValue::from_maybe_shared(Bytes::from(encoded))
+        .expect("base64 is always valid HeaderValue");
     header.set_sensitive(true);
     header
 }

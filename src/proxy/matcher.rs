@@ -27,6 +27,7 @@ use percent_encoding::percent_decode_str;
 
 use self::builder::IntoValue;
 use super::{Extra, Intercepted};
+use crate::ext::UriExt;
 
 /// A proxy matcher, usually built from environment variables.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -63,7 +64,7 @@ pub struct Builder {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-enum Auth {
+pub enum Auth {
     Empty,
     Basic(HeaderValue),
     Raw(Bytes, Bytes),
@@ -127,12 +128,11 @@ impl Matcher {
         if self.no.contains(dst.host()?) {
             return None;
         }
-
-        if dst.scheme() == Some(&Scheme::HTTP) {
+        if dst.is_http() {
             return self.http.clone().map(Intercepted::Proxy);
         }
 
-        if dst.scheme() == Some(&Scheme::HTTPS) {
+        if dst.is_https() {
             return self.https.clone().map(Intercepted::Proxy);
         }
 
@@ -252,7 +252,7 @@ impl Builder {
     /// * `http://www.google.com/`
     /// * `http://192.168.1.42/`
     ///
-    /// The URL `http://notgoogle.com/` would not match.
+    /// The URI `http://notgoogle.com/` would not match.
     pub fn no<S>(mut self, val: S) -> Self
     where
         S: IntoValue,
@@ -328,7 +328,7 @@ fn parse_env_uri(val: &str) -> Option<Intercept> {
 
     builder = builder.scheme(match uri.scheme() {
         Some(s) => {
-            if s == &http::uri::Scheme::HTTP || s == &http::uri::Scheme::HTTPS {
+            if s == &Scheme::HTTP || s == &Scheme::HTTPS {
                 is_httpish = true;
                 s.clone()
             } else if matches!(s.as_str(), "socks4" | "socks4a" | "socks5" | "socks5h") {
@@ -342,20 +342,22 @@ fn parse_env_uri(val: &str) -> Option<Intercept> {
         // if no scheme provided, assume they meant 'http'
         None => {
             is_httpish = true;
-            http::uri::Scheme::HTTP
+            Scheme::HTTP
         }
     });
 
-    // If the scheme is a SOCKS protocol and no port is specified, set the default port to 1080.
-    let authority = uri.authority()?;
-    let authority = if is_socks && authority.port().is_none() {
-        format!("{authority}:1080").parse::<Authority>().ok()?
-    } else {
-        authority.clone()
+    let authority = {
+        let authority = uri.authority()?;
+        // default SOCKS port to 1080 if missing
+        if is_socks && authority.port().is_none() {
+            Authority::from_maybe_shared(Bytes::from(format!("{authority}:1080"))).ok()?
+        } else {
+            authority.clone()
+        }
     };
 
-    if let Some((userinfo, host_port)) = authority.as_str().split_once('@') {
-        let (user, pass) = userinfo.split_once(':')?;
+    if let Some((userinfo, host_port)) = authority.as_str().rsplit_once('@') {
+        let (user, pass) = userinfo.rsplit_once(':')?;
         let user = percent_decode_str(user).decode_utf8_lossy();
         let pass = percent_decode_str(pass).decode_utf8_lossy();
         if is_httpish {
@@ -410,7 +412,7 @@ impl NoProxy {
     /// * `http://www.google.com/`
     /// * `http://192.168.1.42/`
     ///
-    /// The URL `http://notgoogle.com/` would not match.
+    /// The URI `http://notgoogle.com/` would not match.
     pub fn from_string(no_proxy_list: &str) -> Self {
         let mut ips = Vec::new();
         let mut domains = Vec::new();
@@ -569,7 +571,7 @@ mod tests {
             NoProxy::from_string(".foo.bar, bar.baz,10.42.1.1/24,::1,10.124.7.8,2001::/17");
 
         let should_not_match = [
-            // random url, not in no_proxy
+            // random uri, not in no_proxy
             "hyper.rs",
             // make sure that random non-subdomain string prefixes don't match
             "notfoo.bar",
@@ -706,13 +708,13 @@ mod tests {
         assert!(m.intercept(&"http://rick.roll".parse().unwrap()).is_none());
     }
 
-    fn test_parse_socks(url: &str) {
+    fn test_parse_socks(uri: &str) {
         let p = p! {
-            all = url,
+            all = uri,
         };
 
         let proxy = intercept(&p, "https://example.local");
-        assert_eq!(proxy.uri(), url);
+        assert_eq!(proxy.uri(), uri);
     }
 
     #[test]

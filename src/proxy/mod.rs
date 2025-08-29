@@ -6,88 +6,21 @@ mod uds;
 #[cfg(all(windows, feature = "system-proxy"))]
 mod win;
 
-use std::error::Error as StdError;
+use std::{
+    error::Error as StdError,
+    hash::{Hash, Hasher},
+};
 #[cfg(unix)]
 use std::{path::Path, sync::Arc};
 
 use http::{HeaderMap, Uri, header::HeaderValue, uri::Scheme};
 
 use crate::{
+    IntoUri,
     error::{BadScheme, Error},
     ext::UriExt,
-    proxy::sealed::Sealed,
+    into_uri::IntoUriSealed,
 };
-
-/// Trait used for converting into a proxy scheme. This trait supports
-/// parsing from a URL-like type, whilst also supporting proxy schemes
-/// built directly using the factory methods.
-pub trait IntoProxy: sealed::Sealed {
-    fn into_proxy(self) -> crate::Result<Uri>;
-}
-
-impl<S: sealed::Sealed> IntoProxy for S {
-    fn into_proxy(self) -> crate::Result<Uri> {
-        match self.as_str().into_uri() {
-            Ok(uri) => Ok(uri),
-            Err(e) => {
-                let mut presumed_to_have_scheme = true;
-                let mut source = e.source();
-                while let Some(err) = source {
-                    if let Some(parse_error) = err.downcast_ref::<url::ParseError>() {
-                        if *parse_error == url::ParseError::RelativeUrlWithoutBase {
-                            presumed_to_have_scheme = false;
-                            break;
-                        }
-                    } else if err.downcast_ref::<BadScheme>().is_some() {
-                        presumed_to_have_scheme = false;
-                        break;
-                    }
-                    source = err.source();
-                }
-                if presumed_to_have_scheme {
-                    return Err(Error::builder(e));
-                }
-                // the issue could have been caused by a missing scheme, so we try adding http://
-                let try_this = format!("http://{}", self.as_str());
-                try_this.into_uri().map_err(|_| {
-                    // return the original error
-                    Error::builder(e)
-                })
-            }
-        }
-    }
-}
-
-mod sealed {
-    use super::IntoProxy;
-    use crate::Error;
-    use http::Uri;
-
-    pub trait Sealed {
-        // Besides parsing as a valid `Uri`.
-        fn into_uri(self) -> crate::Result<Uri>;
-
-        fn as_str(&self) -> &str;
-    }
-
-    impl<T> Sealed for T
-    where
-        T: AsRef<str>,
-    {
-        fn into_uri(self) -> crate::Result<Uri> {
-            let uri = Uri::try_from(self.as_ref()).map_err(Error::builder)?;
-            if uri.host().is_none() {
-                Err(Error::url_bad_scheme().with_uri(uri))
-            } else {
-                Ok(uri)
-            }
-        }
-
-        fn as_str(&self) -> &str {
-            self.as_ref()
-        }
-    }
-}
 
 // # Internals
 //
@@ -104,7 +37,7 @@ mod sealed {
 ///
 /// A `Proxy` has a couple pieces to it:
 ///
-/// - a URL of how to talk to the proxy
+/// - a URI of how to talk to the proxy
 /// - rules on what `Client` requests should be directed to the proxy
 ///
 /// For instance, let's look at `Proxy::http`:
@@ -145,43 +78,7 @@ pub struct NoProxy {
     inner: String,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-struct Extra {
-    auth: Option<HeaderValue>,
-    misc: Option<HeaderMap>,
-}
-
-impl std::hash::Hash for Extra {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        // Hash the optional Proxy-Authorization header value, if present.
-        self.auth.hash(state);
-
-        // Hash the misc headers by name and value bytes, in insertion order.
-        // HeaderMap preserves insertion order, so no need to sort for determinism.
-        if let Some(ref misc) = self.misc {
-            for (k, v) in misc.iter() {
-                // Hash the header name as bytes.
-                k.as_str().hash(state);
-                // Hash the header value as bytes.
-                v.as_bytes().hash(state);
-            }
-        } else {
-            // Distinguish between None and Some(empty) for misc.
-            0u8.hash(state);
-        }
-    }
-}
-
 // ===== Internal =====
-
-#[derive(Clone, Debug)]
-enum Intercept {
-    All(Uri),
-    Http(Uri),
-    Https(Uri),
-    #[cfg(unix)]
-    Unix(Arc<Path>),
-}
 
 #[allow(clippy::large_enum_variant)]
 #[derive(Clone, PartialEq, Eq)]
@@ -198,10 +95,40 @@ pub(crate) struct Matcher {
     maybe_has_http_custom_headers: bool,
 }
 
+#[derive(Clone, Debug)]
+enum Intercept {
+    All(Uri),
+    Http(Uri),
+    Https(Uri),
+    #[cfg(unix)]
+    Unix(Arc<Path>),
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct Extra {
+    auth: Option<HeaderValue>,
+    misc: Option<HeaderMap>,
+}
+
+/// Trait used for converting into a proxy scheme. This trait supports
+/// parsing from a URI-like type, whilst also supporting proxy schemes
+/// built directly using the factory methods.
+pub trait IntoProxy {
+    fn into_proxy(self) -> crate::Result<Uri>;
+}
+
+// ===== impl IntoProxy =====
+
+impl<S: IntoUri> IntoProxy for S {
+    fn into_proxy(self) -> crate::Result<Uri> {
+        self.into_uri()
+    }
+}
+
 // ===== impl Proxy =====
 
 impl Proxy {
-    /// Proxy all HTTP traffic to the passed URL.
+    /// Proxy all HTTP traffic to the passed URI.
     ///
     /// # Example
     ///
@@ -222,7 +149,7 @@ impl Proxy {
             .map(Proxy::new)
     }
 
-    /// Proxy all HTTPS traffic to the passed URL.
+    /// Proxy all HTTPS traffic to the passed URI.
     ///
     /// # Example
     ///
@@ -243,9 +170,9 @@ impl Proxy {
             .map(Proxy::new)
     }
 
-    /// Proxy **all** traffic to the passed URL.
+    /// Proxy **all** traffic to the passed URI.
     ///
-    /// "All" refers to `https` and `http` URLs. Other schemes are not
+    /// "All" refers to `https` and `http` URIs. Other schemes are not
     /// recognized by wreq.
     ///
     /// # Example
@@ -311,12 +238,11 @@ impl Proxy {
     /// ```
     pub fn basic_auth(mut self, username: &str, password: &str) -> Proxy {
         match self.intercept {
-            Intercept::All(ref mut s)
-            | Intercept::Http(ref mut s)
-            | Intercept::Https(ref mut s) => {
-                s.set_username(username).expect("is a base");
-                s.set_password(Some(password)).expect("is a base");
+            Intercept::All(ref mut uri)
+            | Intercept::Http(ref mut uri)
+            | Intercept::Https(ref mut uri) => {
                 let header = crate::util::basic_auth(username, Some(password));
+                uri.set_userinfo(username, Some(password));
                 self.extra.auth = Some(header);
             }
             #[cfg(unix)]
@@ -403,15 +329,22 @@ impl Proxy {
             no_proxy,
         } = self;
 
+        // check if the proxy has HTTP auth header
         let cache_maybe_has_http_auth = |uri: &Uri, extra: &Option<HeaderValue>| {
-            uri.is_http() && (uri.password().is_some() || extra.is_some())
+            if !uri.is_http() {
+                return false;
+            }
+            let (_, passowrd) = uri.userinfo();
+            passowrd.is_some() || extra.is_some()
         };
 
+        // check if the proxy has custom headers
         let cache_maybe_has_http_custom_headers =
             |uri: &Uri, extra: &Option<HeaderMap>| uri.is_http() && extra.is_some();
 
-        let maybe_has_http_auth;
-        let maybe_has_http_custom_headers;
+        let no_proxy = no_proxy.as_ref().map_or("", |n| n.inner.as_ref());
+        let mut maybe_has_http_auth = false;
+        let mut maybe_has_http_custom_headers = false;
 
         let inner = match intercept {
             Intercept::All(uri) => {
@@ -420,7 +353,7 @@ impl Proxy {
                     cache_maybe_has_http_custom_headers(&uri, &extra.misc);
                 matcher::Matcher::builder()
                     .all(uri.to_string())
-                    .no(no_proxy.as_ref().map(|n| n.inner.as_ref()).unwrap_or(""))
+                    .no(no_proxy)
                     .build(extra)
             }
             Intercept::Http(uri) => {
@@ -429,7 +362,7 @@ impl Proxy {
                     cache_maybe_has_http_custom_headers(&uri, &extra.misc);
                 matcher::Matcher::builder()
                     .http(uri.to_string())
-                    .no(no_proxy.as_ref().map(|n| n.inner.as_ref()).unwrap_or(""))
+                    .no(no_proxy)
                     .build(extra)
             }
             Intercept::Https(uri) => {
@@ -438,20 +371,14 @@ impl Proxy {
                     cache_maybe_has_http_custom_headers(&uri, &extra.misc);
                 matcher::Matcher::builder()
                     .https(uri.to_string())
-                    .no(no_proxy.as_ref().map(|n| n.inner.as_ref()).unwrap_or(""))
+                    .no(no_proxy)
                     .build(extra)
             }
             #[cfg(unix)]
-            Intercept::Unix(unix) => {
-                // Unix sockets don't use HTTP auth
-                maybe_has_http_auth = false;
-                // Unix sockets don't use custom headers
-                maybe_has_http_custom_headers = false;
-                matcher::Matcher::builder()
-                    .unix(unix)
-                    .no(no_proxy.as_ref().map(|n| n.inner.as_ref()).unwrap_or(""))
-                    .build(extra)
-            }
+            Intercept::Unix(unix) => matcher::Matcher::builder()
+                .unix(unix)
+                .no(no_proxy)
+                .build(extra),
         };
 
         Matcher {
@@ -497,7 +424,7 @@ impl NoProxy {
     /// * `http://www.google.com/`
     /// * `http://192.168.1.42/`
     ///
-    /// The URL `http://notgoogle.com/` would not match.
+    /// The URI `http://notgoogle.com/` would not match.
     pub fn from_string(no_proxy_list: &str) -> Option<Self> {
         Some(NoProxy {
             inner: no_proxy_list.into(),
@@ -556,6 +483,22 @@ impl Matcher {
             }
         }
         None
+    }
+}
+
+// ===== impl Extra =====
+
+impl Hash for Extra {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.auth.hash(state);
+        if let Some(ref misc) = self.misc {
+            for (k, v) in misc.iter() {
+                k.as_str().hash(state);
+                v.as_bytes().hash(state);
+            }
+        } else {
+            1u8.hash(state);
+        }
     }
 }
 
@@ -648,8 +591,8 @@ mod tests {
         assert!(m.maybe_has_http_auth(), "http forwards");
     }
 
-    fn test_socks_proxy_default_port(url: &str, url2: &str, port: u16) {
-        let m = Proxy::all(url).unwrap().into_matcher();
+    fn test_socks_proxy_default_port(uri: &str, url2: &str, port: u16) {
+        let m = Proxy::all(uri).unwrap().into_matcher();
 
         let http = "http://hyper.rs";
         let https = "https://hyper.rs";

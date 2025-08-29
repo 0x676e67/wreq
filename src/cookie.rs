@@ -2,7 +2,7 @@
 
 use std::{convert::TryInto, fmt, sync::Arc, time::SystemTime};
 
-use bytes::BufMut;
+use bytes::{BufMut, Bytes};
 use cookie_crate::{Cookie as RawCookie, Expiration, SameSite};
 
 use crate::{error::Error, header::HeaderValue, sync::RwLock};
@@ -218,7 +218,7 @@ impl CookieStore for Jar {
                 cookie.put(COOKIE_SEPARATOR);
                 cookie.put(value);
 
-                HeaderValue::from_maybe_shared(cookie).ok()
+                HeaderValue::from_maybe_shared(Bytes::from(cookie)).ok()
             })
             .collect()
     }

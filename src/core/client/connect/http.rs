@@ -496,9 +496,9 @@ impl<R> HttpConnector<R> {
     }
 }
 
-static INVALID_NOT_HTTP: &str = "invalid URL, scheme is not http";
-static INVALID_MISSING_SCHEME: &str = "invalid URL, scheme is missing";
-static INVALID_MISSING_HOST: &str = "invalid URL, host is missing";
+static INVALID_NOT_HTTP: &str = "invalid URI, scheme is not http";
+static INVALID_MISSING_SCHEME: &str = "invalid URI, scheme is missing";
+static INVALID_MISSING_HOST: &str = "invalid URI, host is missing";
 
 // R: Debug required for now to allow adding it to debug output later...
 impl<R: fmt::Debug> fmt::Debug for HttpConnector<R> {

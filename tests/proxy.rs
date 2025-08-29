@@ -250,7 +250,7 @@ async fn http_proxy_custom_headers() {
         async { http::Response::default() }
     });
 
-    let proxy = format!("http://Aladdin:open sesame@{}", server.addr());
+    let proxy = format!("http://Aladdin:open%20sesame@{}", server.addr());
 
     let proxy = wreq::Proxy::http(&proxy).unwrap().custom_http_headers({
         let mut headers = http::HeaderMap::new();

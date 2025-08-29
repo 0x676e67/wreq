@@ -1,12 +1,32 @@
-//! Extension utilities for `Uri`.
+//! Extension utilities.
 
+use bytes::Bytes;
 use http::{
     Uri,
-    uri::{Authority, Scheme},
+    uri::{Authority, PathAndQuery, Scheme},
 };
-use url::Url;
+use percent_encoding::{AsciiSet, CONTROLS};
 
 use crate::Body;
+
+/// https://url.spec.whatwg.org/#fragment-percent-encode-set
+const FRAGMENT: &AsciiSet = &CONTROLS.add(b' ').add(b'"').add(b'<').add(b'>').add(b'`');
+
+/// https://url.spec.whatwg.org/#path-percent-encode-set
+const PATH: &AsciiSet = &FRAGMENT.add(b'#').add(b'?').add(b'{').add(b'}');
+
+/// https://url.spec.whatwg.org/#userinfo-percent-encode-set
+const USERINFO: &AsciiSet = &PATH
+    .add(b'/')
+    .add(b':')
+    .add(b';')
+    .add(b'=')
+    .add(b'@')
+    .add(b'[')
+    .add(b'\\')
+    .add(b']')
+    .add(b'^')
+    .add(b'|');
 
 /// Extension trait for `Uri` helpers.
 pub(crate) trait UriExt {
@@ -16,16 +36,14 @@ pub(crate) trait UriExt {
     #[doc(hidden)]
     fn is_http(&self) -> bool;
 
-    fn userinfo(&self) -> Option<&str>;
-    fn username(&self) -> Option<&str>;
-    fn password(&self) -> Option<&str>;
-}
+    #[doc(hidden)]
+    fn set_scheme(&mut self, scheme: Scheme);
 
-/// Extension trait for `Authority` helpers.
-pub(crate) trait AuthorityExt {
-    fn userinfo(&self) -> Option<&str>;
-    fn username(&self) -> Option<&str>;
-    fn password(&self) -> Option<&str>;
+    #[doc(hidden)]
+    fn userinfo(&self) -> (Option<&str>, Option<&str>);
+
+    #[doc(hidden)]
+    fn set_userinfo(&mut self, username: &str, password: Option<&str>);
 }
 
 /// Extension trait for http::response::Builder objects
@@ -39,17 +57,14 @@ pub trait ResponseBuilderExt {
 
 /// Extension trait for http::Response objects
 ///
-/// Provides methods to extract URL information from HTTP responses
+/// Provides methods to extract URI information from HTTP responses
 pub trait ResponseExt {
     /// Returns a reference to the `Uri` associated with this response, if available.
-    fn url(&self) -> Option<&Uri>;
+    fn uri(&self) -> Option<&Uri>;
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct RequestUrl(pub Url);
-
-#[derive(Debug, Clone, PartialEq)]
-pub(crate) struct ResponseUri(pub Uri);
+pub(crate) struct RequestUri(pub Uri);
 
 impl UriExt for Uri {
     #[inline]
@@ -62,60 +77,105 @@ impl UriExt for Uri {
         self.scheme() == Some(&Scheme::HTTP)
     }
 
-    #[inline]
-    fn userinfo(&self) -> Option<&str> {
-        if let Some(authority) = self.authority() {
-            let s = authority.as_str();
-            s.rfind('@').map(|i| &s[..i])
-        } else {
-            None
+    fn set_scheme(&mut self, scheme: Scheme) {
+        let authority = match self.authority() {
+            Some(authority) => authority.clone(),
+            None => return,
+        };
+
+        let path_and_query = self
+            .path_and_query()
+            .cloned()
+            .unwrap_or_else(|| PathAndQuery::from_static("/"));
+
+        if let Ok(uri) = Uri::builder()
+            .scheme(scheme)
+            .authority(authority)
+            .path_and_query(path_and_query)
+            .build()
+        {
+            *self = uri;
         }
     }
 
-    #[inline]
-    fn username(&self) -> Option<&str> {
-        self.userinfo()
-            .map(|a| a.rfind(':').map(|i| &a[..i]).unwrap_or(a))
+    fn userinfo(&self) -> (Option<&str>, Option<&str>) {
+        self.authority()
+            .and_then(|auth| auth.as_str().rsplit_once('@'))
+            .map_or((None, None), |(userinfo, _)| {
+                match userinfo.split_once(':') {
+                    Some((u, p)) => ((!u.is_empty()).then_some(u), (!p.is_empty()).then_some(p)),
+                    None => (Some(userinfo), None),
+                }
+            })
     }
 
-    #[inline]
-    fn password(&self) -> Option<&str> {
-        self.userinfo()
-            .and_then(|a| a.rfind(':').map(|i| &a[i + 1..]))
-    }
-}
+    fn set_userinfo(&mut self, username: &str, password: Option<&str>) {
+        let scheme = match self.scheme() {
+            Some(s) => s.clone(),
+            None => return,
+        };
 
-// NB: Treating &str with direct indexes is OK, since Uri parsed the Authority,
-// and ensured it's all ASCII (or %-encoded).
-impl AuthorityExt for Authority {
-    #[inline]
-    fn userinfo(&self) -> Option<&str> {
-        let s = self.as_str();
-        s.rfind('@').map(|i| &s[..i])
-    }
+        let authority = match self.authority() {
+            Some(authority) => authority,
+            None => return,
+        };
 
-    #[inline]
-    fn username(&self) -> Option<&str> {
-        self.userinfo()
-            .map(|a| a.rfind(':').map(|i| &a[..i]).unwrap_or(a))
-    }
+        let host_port = authority
+            .as_str()
+            .rsplit_once('@')
+            .map(|(_, host)| host)
+            .unwrap_or_else(|| authority.as_str());
 
-    #[inline]
-    fn password(&self) -> Option<&str> {
-        self.userinfo()
-            .and_then(|a| a.rfind(':').map(|i| &a[i + 1..]))
+        let authority = match (username.is_empty(), password) {
+            (true, None) => Authority::from_maybe_shared(Bytes::from(host_port.to_owned())),
+            (true, Some(pass)) => {
+                let pass = percent_encoding::utf8_percent_encode(pass, USERINFO);
+                Authority::from_maybe_shared(Bytes::from(format!(":{pass}@{host_port}")))
+            }
+            (false, Some(pass)) => {
+                let username = percent_encoding::utf8_percent_encode(username, USERINFO);
+                let pass = percent_encoding::utf8_percent_encode(pass, USERINFO);
+                Authority::from_maybe_shared(Bytes::from(format!("{username}:{pass}@{host_port}")))
+            }
+            (false, None) => {
+                let username = percent_encoding::utf8_percent_encode(username, USERINFO);
+                Authority::from_maybe_shared(Bytes::from(format!("{username}@{host_port}")))
+            }
+        };
+
+        let authority = match authority {
+            Ok(a) => a,
+            Err(err) => {
+                debug!("Failed to set userinfo in URI: {err}");
+                return;
+            }
+        };
+
+        let path_and_query = self
+            .path_and_query()
+            .cloned()
+            .unwrap_or_else(|| PathAndQuery::from_static("/"));
+
+        if let Ok(uri) = Uri::builder()
+            .scheme(scheme)
+            .authority(authority)
+            .path_and_query(path_and_query)
+            .build()
+        {
+            *self = uri;
+        }
     }
 }
 
 impl ResponseBuilderExt for http::response::Builder {
     fn uri(self, uri: Uri) -> Self {
-        self.extension(ResponseUri(uri))
+        self.extension(RequestUri(uri))
     }
 }
 
 impl ResponseExt for http::Response<Body> {
-    fn url(&self) -> Option<&Uri> {
-        self.extensions().get::<ResponseUri>().map(|r| &r.0)
+    fn uri(&self) -> Option<&Uri> {
+        self.extensions().get::<RequestUri>().map(|r| &r.0)
     }
 }
 
@@ -123,33 +183,184 @@ impl ResponseExt for http::Response<Body> {
 mod tests {
     use http::{Uri, response::Builder};
 
-    use super::{ResponseBuilderExt, ResponseExt, ResponseUri};
+    use super::{RequestUri, ResponseBuilderExt, ResponseExt, UriExt};
     use crate::Body;
 
     #[test]
-    fn test_response_builder_ext() {
-        let url = Uri::try_from("http://example.com").unwrap();
-        let response = Builder::new()
-            .status(200)
-            .uri(url.clone())
-            .body(())
-            .unwrap();
+    fn test_uri_ext_is_https() {
+        let https_uri: Uri = "https://example.com".parse().unwrap();
+        let http_uri: Uri = "http://example.com".parse().unwrap();
+
+        assert!(https_uri.is_https());
+        assert!(!http_uri.is_https());
+        assert!(http_uri.is_http());
+        assert!(!https_uri.is_http());
+    }
+
+    #[test]
+    fn test_userinfo_with_username_and_password() {
+        let uri: Uri = "http://user:pass@example.com".parse().unwrap();
+        let (username, password) = uri.userinfo();
+
+        assert_eq!(username, Some("user"));
+        assert_eq!(password, Some("pass"));
+    }
+
+    #[test]
+    fn test_userinfo_with_empty_username() {
+        let uri: Uri = "http://:pass@example.com".parse().unwrap();
+        let (username, password) = uri.userinfo();
+
+        assert_eq!(username, None);
+        assert_eq!(password, Some("pass"));
+    }
+
+    #[test]
+    fn test_userinfo_with_empty_password() {
+        let uri: Uri = "http://user:@example.com".parse().unwrap();
+        let (username, password) = uri.userinfo();
+
+        assert_eq!(username, Some("user"));
+        assert_eq!(password, None);
+
+        let uri: Uri = "http://user@example.com".parse().unwrap();
+        let (username, password) = uri.userinfo();
+
+        assert_eq!(username, Some("user"));
+        assert_eq!(password, None);
+    }
+
+    #[test]
+    fn test_userinfo_without_colon() {
+        let uri: Uri = "http://something@example.com".parse().unwrap();
+        let (username, password) = uri.userinfo();
+
+        assert_eq!(username, Some("something"));
+        assert_eq!(password, None);
+    }
+
+    #[test]
+    fn test_userinfo_without_at() {
+        let uri: Uri = "http://example.com".parse().unwrap();
+        let (username, password) = uri.userinfo();
+
+        assert_eq!(username, None);
+        assert_eq!(password, None);
+    }
+
+    #[test]
+    fn test_set_userinfo_both() {
+        let mut uri: Uri = "http://example.com/path".parse().unwrap();
+        uri.set_userinfo("user", Some("pass"));
+
+        let (username, password) = uri.userinfo();
+        assert_eq!(username, Some("user"));
+        assert_eq!(password, Some("pass"));
+        assert_eq!(uri.to_string(), "http://user:pass@example.com/path");
+    }
+
+    #[test]
+    fn test_set_userinfo_empty_username() {
+        let mut uri: Uri = "http://user:pass@example.com/path".parse().unwrap();
+        uri.set_userinfo("", Some("pass"));
+
+        let (username, password) = uri.userinfo();
+        assert_eq!(username, None);
+        assert_eq!(password, Some("pass"));
+        assert_eq!(uri.to_string(), "http://:pass@example.com/path");
+    }
+
+    #[test]
+    fn test_set_userinfo_none_password() {
+        let mut uri: Uri = "http://user:pass@example.com/path".parse().unwrap();
+        uri.set_userinfo("user", None);
+
+        let (username, password) = uri.userinfo();
+        assert_eq!(username, Some("user"));
+        assert_eq!(password, None);
+        assert_eq!(uri.to_string(), "http://user@example.com/path");
+    }
+
+    #[test]
+    fn test_set_userinfo_empty_username_and_password() {
+        let mut uri: Uri = "http://user:pass@example.com/path".parse().unwrap();
+        uri.set_userinfo("", None);
+
+        let (username, password) = uri.userinfo();
+        assert_eq!(username, None);
+        assert_eq!(password, None);
+        assert_eq!(uri.to_string(), "http://example.com/path");
+    }
+
+    #[test]
+    fn test_set_userinfo_with_encoding() {
+        use crate::ext::UriExt;
+        use http::Uri;
+
+        let mut uri: Uri = "http://example.com/path".parse().unwrap();
+        uri.set_userinfo("us er", Some("p@ss:word!"));
+
+        let (username, password) = uri.userinfo();
+        assert_eq!(username, Some("us%20er"));
+        assert_eq!(password, Some("p%40ss%3Aword!"));
 
         assert_eq!(
-            response.extensions().get::<ResponseUri>(),
-            Some(&ResponseUri(url))
+            uri.to_string(),
+            "http://us%20er:p%40ss%3Aword!@example.com/path"
         );
     }
 
     #[test]
-    fn test_response_ext() {
-        let url = Uri::try_from("http://example.com").unwrap();
-        let response = http::Response::builder()
+    fn test_set_userinfo_only_username_with_encoding() {
+        use crate::ext::UriExt;
+        use http::Uri;
+
+        let mut uri: Uri = "http://example.com/".parse().unwrap();
+        uri.set_userinfo("user name", None);
+
+        let (username, password) = uri.userinfo();
+        assert_eq!(username, Some("user%20name"));
+        assert_eq!(password, None);
+
+        assert_eq!(uri.to_string(), "http://user%20name@example.com/");
+    }
+
+    #[test]
+    fn test_set_userinfo_only_password_with_encoding() {
+        use crate::ext::UriExt;
+        use http::Uri;
+
+        let mut uri: Uri = "http://example.com/".parse().unwrap();
+        uri.set_userinfo("", Some("p@ss word"));
+
+        let (username, password) = uri.userinfo();
+        assert_eq!(username, None);
+        assert_eq!(password, Some("p%40ss%20word"));
+
+        assert_eq!(uri.to_string(), "http://:p%40ss%20word@example.com/");
+    }
+
+    #[test]
+    fn test_response_builder_ext() {
+        let uri = Uri::try_from("http://example.com").unwrap();
+        let response = Builder::new()
             .status(200)
-            .extension(ResponseUri(url.clone()))
+            .uri(uri.clone())
             .body(Body::empty())
             .unwrap();
 
-        assert_eq!(response.url(), Some(&url));
+        assert_eq!(response.uri(), Some(&uri));
+    }
+
+    #[test]
+    fn test_response_ext() {
+        let uri = Uri::try_from("http://example.com").unwrap();
+        let response = http::Response::builder()
+            .status(200)
+            .extension(RequestUri(uri.clone()))
+            .body(Body::empty())
+            .unwrap();
+
+        assert_eq!(response.uri(), Some(&uri));
     }
 }

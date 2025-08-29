@@ -7,7 +7,7 @@ use std::{
     task::{Context, Poll, ready},
 };
 
-use http::Response;
+use http::{Response, Uri};
 use pin_project_lite::pin_project;
 use url::Url;
 
@@ -50,7 +50,7 @@ where
                     .iter()
                     .peekable();
                 if cookies.peek().is_some() {
-                    cookie_store.set_cookies(&mut cookies, &*url);
+                    cookie_store.set_cookies(&mut cookies, url);
                 }
 
                 Poll::Ready(Ok(res))

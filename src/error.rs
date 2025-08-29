@@ -12,7 +12,7 @@ pub type BoxError = Box<dyn StdError + Send + Sync>;
 
 /// The Errors that may occur when processing a `Request`.
 ///
-/// Note: Errors may include the full URL used to make the `Request`. If the URL
+/// Note: Errors may include the full URI used to make the `Request`. If the URI
 /// contains sensitive information (e.g. an API key as a query parameter), be
 /// sure to remove it ([`without_uri`](Error::without_uri))
 pub struct Error {
@@ -115,8 +115,8 @@ impl Error {
     }
 
     /// Add a uri related to this error (overwriting any existing)
-    pub fn with_uri(mut self, url: Uri) -> Self {
-        self.inner.uri = Some(url);
+    pub fn with_uri(mut self, uri: Uri) -> Self {
+        self.inner.uri = Some(uri);
         self
     }
 
@@ -316,7 +316,7 @@ impl fmt::Display for Error {
         };
 
         if let Some(uri) = &self.inner.uri {
-            write!(f, " for url ({})", uri)?;
+            write!(f, " for uri ({})", uri)?;
         }
 
         if let Some(e) = &self.inner.source {
@@ -363,7 +363,7 @@ pub(crate) struct BadScheme;
 
 impl fmt::Display for BadScheme {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        f.write_str("URL scheme is not allowed")
+        f.write_str("URI scheme is not allowed")
     }
 }
 

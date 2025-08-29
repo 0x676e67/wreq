@@ -25,7 +25,7 @@ default = ["webpki-roots"]
 charset = ["dep:encoding_rs", "dep:mime"]
 
 # Enable cookies store support.
-cookies = ["dep:cookie_crate", "dep:cookie_store"]
+cookies = ["dep:cookie_crate", "dep:cookie_store", "dep:url"]
 
 # Enable gzip compression support.
 gzip = ["tower-http/decompression-gzip"]
@@ -67,11 +67,10 @@ system-proxy = ["dep:system-configuration", "dep:windows-registry"]
 tracing = ["http2/tracing", "dep:tracing"]
 
 [dependencies]
-url = "2.5.4"
 iri-string = "0.7.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_urlencoded = "0.7.1"
-percent-encoding = "2.3.1"
+percent-encoding = "2.3.2"
 tower = { version = "0.5.2", default-features = false, features = [
     "timeout",
     "util",
@@ -94,7 +93,7 @@ schnellru = { version = "0.2.4", default-features = false }
 ahash = { version = "0.8.12", default-features = false }
 boring2 = { version = "5.0.0-alpha.4", features = ["pq-experimental"] }
 tokio-boring2 = { version = "5.0.0-alpha.4", features = ["pq-experimental"] }
-brotli = "8.0.1"
+brotli = "8.0.2"
 flate2 = "1.1.2"
 zstd = "0.13.3"
 tokio = { version = "1.47.1", default-features = false, features = [
@@ -125,6 +124,7 @@ webpki-root-certs = { version = "1.0.2", optional = true }
 ## cookies
 cookie_crate = { version = "0.18", package = "cookie", optional = true }
 cookie_store = { version = "0.22", optional = true }
+url = { version = "2.5.7", optional = true }
 
 ## tower http
 tower-http = { version = "0.6.6", default-features = false, optional = true }
@@ -184,6 +184,7 @@ tokio-test = "0.4"
 tracing = "0.1"
 tracing-subscriber = "0.3.19"
 pretty_env_logger = "0.5"
+url = "2.5.7"
 
 [target.'cfg(target_os = "linux")'.dev-dependencies]
 libc = "0.2.173"

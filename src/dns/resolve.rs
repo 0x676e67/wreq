@@ -67,7 +67,7 @@ pub trait Resolve: Send + Sync {
     ///  * Since trait objects cannot make use of associated types, it requires wrapping the
     ///    returned `Future` and its contained `Iterator` with `Box`.
     ///
-    /// Explicitly specified port in the URL will override any port in the resolved `SocketAddr`s.
+    /// Explicitly specified port in the URI will override any port in the resolved `SocketAddr`s.
     /// Otherwise, port `0` will be replaced by the conventional port for the given scheme (e.g. 80
     /// for http).
     fn resolve(&self, name: Name) -> Resolving;

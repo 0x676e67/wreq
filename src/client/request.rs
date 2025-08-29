@@ -6,7 +6,7 @@ use std::{
     time::Duration,
 };
 
-use http::{Extensions, Request as HttpRequest, Version, request::Parts};
+use http::{Extensions, Request as HttpRequest, Uri, Version, request::Parts};
 use serde::Serialize;
 
 #[cfg(any(
@@ -25,14 +25,14 @@ use super::{
     response::Response,
 };
 use crate::{
-    EmulationFactory, Error, Method, Proxy, Url,
+    EmulationFactory, Error, Method, Proxy,
     core::{
         client::options::RequestOptions,
         ext::{RequestConfig, RequestConfigValue, RequestLevelOptions, RequestOrigHeaderMap},
     },
-    ext::RequestUrl,
+    ext::{RequestUri, UriExt},
     header::{CONTENT_TYPE, HeaderMap, HeaderName, HeaderValue, OrigHeaderMap},
-    into_url::IntoUrlSealed,
+    into_uri::IntoUriSealed,
     redirect,
 };
 
@@ -41,8 +41,8 @@ pub struct Request {
     /// The request's method
     method: Method,
 
-    /// The request's URL
-    url: Url,
+    /// The request's URI
+    uri: Uri,
 
     /// The request's headers
     headers: HeaderMap<HeaderValue>,
@@ -66,13 +66,13 @@ pub struct RequestBuilder {
 impl Request {
     /// Constructs a new request.
     #[inline]
-    pub fn new(method: Method, url: Url) -> Self {
+    pub fn new(method: Method, uri: Uri) -> Self {
         Request {
             method,
-            url,
+            uri,
             headers: HeaderMap::new(),
-            body: None,
             extensions: Extensions::new(),
+            body: None,
         }
     }
 
@@ -88,16 +88,16 @@ impl Request {
         &mut self.method
     }
 
-    /// Get the url.
+    /// Get the uri.
     #[inline]
-    pub fn url(&self) -> &Url {
-        &self.url
+    pub fn uri(&self) -> &Uri {
+        &self.uri
     }
 
-    /// Get a mutable reference to the url.
+    /// Get a mutable reference to the uri.
     #[inline]
-    pub fn url_mut(&mut self) -> &mut Url {
-        &mut self.url
+    pub fn uri_mut(&mut self) -> &mut Uri {
+        &mut self.uri
     }
 
     /// Get the headers.
@@ -146,7 +146,7 @@ impl Request {
             Some(body) => Some(body.try_clone()?),
             None => None,
         };
-        let mut req = Request::new(self.method().clone(), self.url().clone());
+        let mut req = Request::new(self.method().clone(), self.uri().clone());
         *req.headers_mut() = self.headers().clone();
         *req.version_mut() = self.version();
         *req.extensions_mut() = self.extensions().clone();
@@ -194,7 +194,7 @@ impl RequestBuilder {
             .request
             .as_mut()
             .ok()
-            .and_then(|req| extract_authority(&mut req.url));
+            .and_then(|req| extract_authority(&mut req.uri));
 
         if let Some((username, password)) = auth {
             builder.basic_auth(username, password)
@@ -417,7 +417,7 @@ impl RequestBuilder {
     ///     .text("key3", "value3")
     ///     .text("key4", "value4");
     ///
-    /// let response = client.post("your url").multipart(form).send().await?;
+    /// let response = client.post("your uri").multipart(form).send().await?;
     /// # Ok(())
     /// # }
     /// ```
@@ -443,9 +443,9 @@ impl RequestBuilder {
         builder
     }
 
-    /// Modify the query string of the URL.
+    /// Modify the query string of the URI.
     ///
-    /// Modifies the URL of this request, adding the parameters provided.
+    /// Modifies the URI of this request, adding the parameters provided.
     /// This method appends and does not overwrite. This means that it can
     /// be called multiple times and that existing query parameters are not
     /// overwritten if the same key is used. The key will simply show up
@@ -464,19 +464,19 @@ impl RequestBuilder {
     pub fn query<T: Serialize + ?Sized>(mut self, query: &T) -> RequestBuilder {
         let mut error = None;
         if let Ok(ref mut req) = self.request {
-            let url = req.url_mut();
-            let mut pairs = url.query_pairs_mut();
-            let serializer = serde_urlencoded::Serializer::new(&mut pairs);
+            // let uri = req.url_mut();
+            // let mut pairs = uri.query_pairs_mut();
+            // let serializer = serde_urlencoded::Serializer::new(&mut pairs);
 
-            if let Err(err) = query.serialize(serializer) {
-                error = Some(Error::builder(err));
-            }
+            // if let Err(err) = query.serialize(serializer) {
+            //     error = Some(Error::builder(err));
+            // }
         }
-        if let Ok(ref mut req) = self.request {
-            if let Some("") = req.url().query() {
-                req.url_mut().set_query(None);
-            }
-        }
+        // if let Ok(ref mut req) = self.request {
+        //     if let Some("") = req.uri().query() {
+        //         req.url_mut().set_query(None);
+        //     }
+        // }
         if let Some(err) = error {
             self.request = Err(err);
         }
@@ -488,6 +488,79 @@ impl RequestBuilder {
         if let Ok(ref mut req) = self.request {
             *req.version_mut() = Some(version);
         }
+        self
+    }
+
+    /// Send a form body.
+    ///
+    /// Sets the body to the uri encoded serialization of the passed value,
+    /// and also sets the `Content-Type: application/x-www-form-urlencoded`
+    /// header.
+    ///
+    /// ```rust
+    /// # use wreq::Error;
+    /// # use std::collections::HashMap;
+    /// #
+    /// # async fn run() -> Result<(), Error> {
+    /// let mut params = HashMap::new();
+    /// params.insert("lang", "rust");
+    ///
+    /// let client = wreq::Client::new();
+    /// let res = client
+    ///     .post("http://httpbin.org")
+    ///     .form(&params)
+    ///     .send()
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// This method fails if the passed value cannot be serialized into
+    /// uri encoded format
+    pub fn form<T: Serialize + ?Sized>(mut self, form: &T) -> RequestBuilder {
+        if let Ok(ref mut req) = self.request {
+            match serde_urlencoded::to_string(form) {
+                Ok(body) => {
+                    req.headers_mut()
+                        .entry(CONTENT_TYPE)
+                        .or_insert(HeaderValue::from_static(
+                            "application/x-www-form-urlencoded",
+                        ));
+                    *req.body_mut() = Some(body.into());
+                }
+                Err(err) => self.request = Err(Error::builder(err)),
+            }
+        }
+        self
+    }
+
+    /// Send a JSON body.
+    ///
+    /// # Optional
+    ///
+    /// This requires the optional `json` feature enabled.
+    ///
+    /// # Errors
+    ///
+    /// Serialization can fail if `T`'s implementation of `Serialize` decides to
+    /// fail, or if `T` contains a map with non-string keys.
+    #[cfg(feature = "json")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "json")))]
+    pub fn json<T: Serialize + ?Sized>(mut self, json: &T) -> RequestBuilder {
+        if let Ok(ref mut req) = self.request {
+            match serde_json::to_vec(json) {
+                Ok(body) => {
+                    req.headers_mut()
+                        .entry(CONTENT_TYPE)
+                        .or_insert(HeaderValue::from_static("application/json"));
+                    *req.body_mut() = Some(body.into());
+                }
+                Err(err) => self.request = Err(Error::builder(err)),
+            }
+        }
+
         self
     }
 
@@ -550,7 +623,7 @@ impl RequestBuilder {
     /// };
     ///
     /// let client = Client::new();
-    /// let proxy = Proxy::all("http://hyper.rs/prox")?.basic_auth("Aladdin", "open sesame");
+    /// let proxy = Proxy::all("http://hyper.rs/prox")?.basic_auth("Aladdin", "opensesame");
     ///
     /// let resp = client
     ///     .get("https://tls.peet.ws/api/all")
@@ -657,79 +730,6 @@ impl RequestBuilder {
         self
     }
 
-    /// Send a form body.
-    ///
-    /// Sets the body to the url encoded serialization of the passed value,
-    /// and also sets the `Content-Type: application/x-www-form-urlencoded`
-    /// header.
-    ///
-    /// ```rust
-    /// # use wreq::Error;
-    /// # use std::collections::HashMap;
-    /// #
-    /// # async fn run() -> Result<(), Error> {
-    /// let mut params = HashMap::new();
-    /// params.insert("lang", "rust");
-    ///
-    /// let client = wreq::Client::new();
-    /// let res = client
-    ///     .post("http://httpbin.org")
-    ///     .form(&params)
-    ///     .send()
-    ///     .await?;
-    /// # Ok(())
-    /// # }
-    /// ```
-    ///
-    /// # Errors
-    ///
-    /// This method fails if the passed value cannot be serialized into
-    /// url encoded format
-    pub fn form<T: Serialize + ?Sized>(mut self, form: &T) -> RequestBuilder {
-        if let Ok(ref mut req) = self.request {
-            match serde_urlencoded::to_string(form) {
-                Ok(body) => {
-                    req.headers_mut()
-                        .entry(CONTENT_TYPE)
-                        .or_insert(HeaderValue::from_static(
-                            "application/x-www-form-urlencoded",
-                        ));
-                    *req.body_mut() = Some(body.into());
-                }
-                Err(err) => self.request = Err(Error::builder(err)),
-            }
-        }
-        self
-    }
-
-    /// Send a JSON body.
-    ///
-    /// # Optional
-    ///
-    /// This requires the optional `json` feature enabled.
-    ///
-    /// # Errors
-    ///
-    /// Serialization can fail if `T`'s implementation of `Serialize` decides to
-    /// fail, or if `T` contains a map with non-string keys.
-    #[cfg(feature = "json")]
-    #[cfg_attr(docsrs, doc(cfg(feature = "json")))]
-    pub fn json<T: Serialize + ?Sized>(mut self, json: &T) -> RequestBuilder {
-        if let Ok(ref mut req) = self.request {
-            match serde_json::to_vec(json) {
-                Ok(body) => {
-                    req.headers_mut()
-                        .entry(CONTENT_TYPE)
-                        .or_insert(HeaderValue::from_static("application/json"));
-                    *req.body_mut() = Some(body.into());
-                }
-                Err(err) => self.request = Err(Error::builder(err)),
-            }
-        }
-
-        self
-    }
-
     /// Build a `Request`, which can be inspected, modified and executed with
     /// `Client::execute()`.
     pub fn build(self) -> crate::Result<Request> {
@@ -745,7 +745,7 @@ impl RequestBuilder {
         (self.client, self.request)
     }
 
-    /// Constructs the Request and sends it to the target URL, returning a
+    /// Constructs the Request and sends it to the target URI, returning a
     /// future Response.
     ///
     /// # Errors
@@ -821,45 +821,41 @@ fn fmt_request_fields<'a, 'b>(
     req: &Request,
 ) -> &'a mut fmt::DebugStruct<'a, 'b> {
     f.field("method", &req.method)
-        .field("url", &req.url)
+        .field("uri", &req.uri)
         .field("headers", &req.headers)
 }
 
-/// Check the request URL for a "username:password" type authority, and if
-/// found, remove it from the URL and return it.
-fn extract_authority(url: &mut Url) -> Option<(String, Option<String>)> {
+/// Check the request URI for a "username:password" type authority, and if
+/// found, remove it from the URI and return it.
+fn extract_authority(uri: &mut Uri) -> Option<(String, Option<String>)> {
     use percent_encoding::percent_decode;
 
-    if url.has_authority() {
-        let username: String = percent_decode(url.username().as_bytes())
+    let (username, password) = uri.userinfo();
+
+    let username: String = percent_decode(username?.as_bytes())
+        .decode_utf8()
+        .ok()?
+        .into();
+    let password = password.and_then(|pass| {
+        percent_decode(pass.as_bytes())
             .decode_utf8()
-            .ok()?
-            .into();
-        let password = url.password().and_then(|pass| {
-            percent_decode(pass.as_bytes())
-                .decode_utf8()
-                .ok()
-                .map(String::from)
-        });
-        if !username.is_empty() || password.is_some() {
-            url.set_username("")
-                .expect("has_authority means set_username shouldn't fail");
-            url.set_password(None)
-                .expect("has_authority means set_password shouldn't fail");
-            return Some((username, password));
-        }
+            .ok()
+            .map(String::from)
+    });
+
+    if !username.is_empty() || password.is_some() {
+        uri.set_userinfo("", None);
+        return Some((username, password));
     }
 
     None
 }
 
-impl<T> TryFrom<HttpRequest<T>> for Request
+impl<T> From<HttpRequest<T>> for Request
 where
     T: Into<Body>,
 {
-    type Error = crate::Error;
-
-    fn try_from(req: HttpRequest<T>) -> crate::Result<Self> {
+    fn from(req: HttpRequest<T>) -> Request {
         let (parts, body) = req.into_parts();
         let Parts {
             method,
@@ -867,24 +863,21 @@ where
             headers,
             ..
         } = parts;
-        let url = IntoUrlSealed::into_url(uri.to_string())?;
-        Ok(Request {
+        Request {
             method,
-            url,
+            uri,
             headers,
             body: Some(body.into()),
             extensions: Extensions::new(),
-        })
+        }
     }
 }
 
-impl TryFrom<Request> for HttpRequest<Body> {
-    type Error = crate::Error;
-
-    fn try_from(req: Request) -> crate::Result<Self> {
+impl From<Request> for HttpRequest<Body> {
+    fn from(req: Request) -> HttpRequest<Body> {
         let Request {
             method,
-            url,
+            uri,
             headers,
             extensions,
             body,
@@ -893,14 +886,11 @@ impl TryFrom<Request> for HttpRequest<Body> {
 
         let mut req = HttpRequest::builder()
             .method(method)
-            .uri(url.as_str())
+            .uri(uri)
             .body(body.unwrap_or_else(Body::empty))
-            .map_err(Error::builder)?;
-
+            .expect("valid request parts");
         *req.headers_mut() = headers;
         *req.extensions_mut() = extensions;
-        req.extensions_mut().insert(RequestUrl(url));
-
-        Ok(req)
+        req
     }
 }
