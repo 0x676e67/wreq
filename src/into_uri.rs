@@ -1,14 +1,15 @@
-use std::{borrow::Cow, error::Error as _};
+use std::{borrow::Cow, error::Error as StdError};
 
+use bytes::Bytes;
 use http::Uri;
 use percent_encoding::{AsciiSet, CONTROLS, NON_ALPHANUMERIC, percent_encode};
 
 use crate::{Error, error::BadScheme};
 
-/// A trait to try to convert some type into a `Uri`.
+/// Converts a value into a [`Uri`] with error handling.
 ///
-/// This trait is "sealed", such that only types within wreq can
-/// implement it.
+/// This trait is implemented for common types such as [`Uri`], [`String`], [`&str`], and byte slices,
+/// as well as any type that can be fallibly converted into a [`Uri`] via [`TryFrom`].
 pub trait IntoUri: IntoUriSealed {}
 
 pub trait IntoUriSealed {
@@ -23,42 +24,22 @@ impl IntoUri for &Uri {}
 impl IntoUri for String {}
 impl IntoUri for &str {}
 impl IntoUri for &String {}
+impl IntoUri for Vec<u8> {}
+impl IntoUri for &[u8] {}
 
 // ===== impl IntoUriSealed =====
 
-impl IntoUriSealed for Uri {
-    fn into_uri(self) -> crate::Result<Uri> {
-        if self.host().is_some() {
-            Ok(self)
-        } else {
-            Err(Error::url_bad_scheme().with_uri(self))
-        }
-    }
-}
-
-impl IntoUriSealed for &Uri {
-    fn into_uri(self) -> crate::Result<Uri> {
-        self.clone().into_uri()
-    }
-}
-
 impl<T> IntoUriSealed for T
 where
-    T: AsRef<str> + sealed::Sealed,
+    Uri: TryFrom<T>,
+    <Uri as TryFrom<T>>::Error: StdError + Send + Sync + 'static,
 {
     fn into_uri(self) -> crate::Result<Uri> {
-        Uri::try_from(self.as_ref())
-            .map_err(Error::builder)?
-            .into_uri()
+        let uri = Uri::try_from(self).map_err(Error::builder)?;
+        if uri.host().is_some() {
+            Ok(uri)
+        } else {
+            Err(Error::url_bad_scheme().with_uri(uri))
+        }
     }
-}
-
-mod sealed {
-    use http::Uri;
-
-    pub trait Sealed {}
-
-    impl Sealed for &str {}
-    impl Sealed for &String {}
-    impl Sealed for String {}
 }

@@ -294,8 +294,9 @@ mod tests {
 
     #[test]
     fn test_set_userinfo_with_encoding() {
-        use crate::ext::UriExt;
         use http::Uri;
+
+        use crate::ext::UriExt;
 
         let mut uri: Uri = "http://example.com/path".parse().unwrap();
         uri.set_userinfo("us er", Some("p@ss:word!"));
@@ -312,8 +313,9 @@ mod tests {
 
     #[test]
     fn test_set_userinfo_only_username_with_encoding() {
-        use crate::ext::UriExt;
         use http::Uri;
+
+        use crate::ext::UriExt;
 
         let mut uri: Uri = "http://example.com/".parse().unwrap();
         uri.set_userinfo("user name", None);
@@ -327,8 +329,9 @@ mod tests {
 
     #[test]
     fn test_set_userinfo_only_password_with_encoding() {
-        use crate::ext::UriExt;
         use http::Uri;
+
+        use crate::ext::UriExt;
 
         let mut uri: Uri = "http://example.com/".parse().unwrap();
         uri.set_userinfo("", Some("p@ss word"));

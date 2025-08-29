@@ -82,7 +82,7 @@ async fn http_proxy_basic_auth_parsed() {
         async { http::Response::default() }
     });
 
-    let proxy = format!("http://Aladdin:open sesame@{}", server.addr());
+    let proxy = format!("http://Aladdin:open%20sesame@{}", server.addr());
 
     let res = wreq::Client::builder()
         .proxy(wreq::Proxy::http(&proxy).unwrap())
