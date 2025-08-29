@@ -36,6 +36,7 @@ use crate::{
 };
 
 /// A request which can be executed with `Client::execute()`.
+#[derive(Debug)]
 pub struct Request {
     /// The request's method
     method: Method,
@@ -792,31 +793,6 @@ impl RequestBuilder {
                 request: Ok(req),
             })
     }
-}
-
-impl fmt::Debug for Request {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        fmt_request_fields(&mut f.debug_struct("Request"), self).finish()
-    }
-}
-
-impl fmt::Debug for RequestBuilder {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let mut builder = f.debug_struct("RequestBuilder");
-        match self.request {
-            Ok(ref req) => fmt_request_fields(&mut builder, req).finish(),
-            Err(ref err) => builder.field("error", err).finish(),
-        }
-    }
-}
-
-fn fmt_request_fields<'a, 'b>(
-    f: &'a mut fmt::DebugStruct<'a, 'b>,
-    req: &Request,
-) -> &'a mut fmt::DebugStruct<'a, 'b> {
-    f.field("method", &req.method)
-        .field("uri", &req.uri)
-        .field("headers", &req.headers)
 }
 
 /// Check the request URI for a "username:password" type authority, and if
