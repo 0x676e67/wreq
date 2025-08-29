@@ -34,7 +34,6 @@ type WebSocketStream = tokio_tungstenite::WebSocketStream<Upgraded>;
 
 /// Wrapper for [`RequestBuilder`] that performs the
 /// websocket handshake when sent.
-#[derive(Debug)]
 pub struct WebSocketRequestBuilder {
     inner: RequestBuilder,
     accept_key: Option<Cow<'static, str>>,
