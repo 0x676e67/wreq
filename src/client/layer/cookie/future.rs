@@ -7,9 +7,10 @@ use std::{
     task::{Context, Poll, ready},
 };
 
-use crate::cookie::CookieStore;
 use http::{Response, Uri};
 use pin_project_lite::pin_project;
+
+use crate::cookie::CookieStore;
 
 pin_project! {
     /// Response future for [`CookieService`].
