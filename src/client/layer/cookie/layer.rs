@@ -8,7 +8,7 @@ use tower::{Layer, Service};
 use url::Url;
 
 use super::future::ResponseFuture;
-use crate::{cookie::CookieStore, ext::RequestUri};
+use crate::cookie::CookieStore;
 
 /// Layer to apply [`CookieService`] middleware.
 #[derive(Clone)]

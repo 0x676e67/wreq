@@ -47,7 +47,7 @@ async fn text_part() {
 
     let res = wreq::post(&url).multipart(form).send().await.unwrap();
 
-    assert_eq!(res.url().as_str(), &url);
+    assert_eq!(res.uri().to_string(), url);
     assert_eq!(res.status(), wreq::StatusCode::OK);
 }
 
@@ -107,7 +107,7 @@ async fn stream_part() {
         .send()
         .await
         .expect("Failed to post multipart");
-    assert_eq!(res.url().as_str(), &url);
+    assert_eq!(res.uri().to_string(), url);
     assert_eq!(res.status(), wreq::StatusCode::OK);
 }
 
@@ -160,6 +160,6 @@ async fn async_impl_file_part() {
 
     let res = wreq::post(&url).multipart(form).send().await.unwrap();
 
-    assert_eq!(res.url().as_str(), &url);
+    assert_eq!(res.uri().to_string(), url);
     assert_eq!(res.status(), wreq::StatusCode::OK);
 }

@@ -7,7 +7,7 @@ use std::{
     task::{Context, Poll, ready},
 };
 
-use http::{Response, Uri};
+use http::Response;
 use pin_project_lite::pin_project;
 use url::Url;
 

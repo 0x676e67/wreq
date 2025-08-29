@@ -309,7 +309,7 @@ impl WebSocketRequestBuilder {
 
         // Ensure the scheme is http or https
         let uri = request.uri_mut();
-        let scheme = match uri.scheme_str() {
+        match uri.scheme_str() {
             Some("ws") => uri.set_scheme(Scheme::HTTP),
             Some("wss") => uri.set_scheme(Scheme::HTTPS),
             _ => {
@@ -318,8 +318,6 @@ impl WebSocketRequestBuilder {
         };
 
         // Get the version of the request
-        // This is used to determine if we should use HTTP/1.1 or HTTP/2
-        // for the websocket handshake.
         let version = request.version();
 
         // Set the headers for the websocket handshake
