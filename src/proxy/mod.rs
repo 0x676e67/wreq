@@ -6,21 +6,13 @@ mod uds;
 #[cfg(all(windows, feature = "system-proxy"))]
 mod win;
 
-use std::{
-    error::Error as StdError,
-    hash::{Hash, Hasher},
-};
+use std::hash::{Hash, Hasher};
 #[cfg(unix)]
 use std::{path::Path, sync::Arc};
 
-use http::{HeaderMap, Uri, header::HeaderValue, uri::Scheme};
+use http::{HeaderMap, Uri, header::HeaderValue};
 
-use crate::{
-    IntoUri,
-    error::{BadScheme, Error},
-    ext::UriExt,
-    into_uri::IntoUriSealed,
-};
+use crate::{IntoUri, ext::UriExt};
 
 // # Internals
 //

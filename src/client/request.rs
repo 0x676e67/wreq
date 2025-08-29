@@ -30,9 +30,8 @@ use crate::{
         client::options::RequestOptions,
         ext::{RequestConfig, RequestConfigValue, RequestLevelOptions, RequestOrigHeaderMap},
     },
-    ext::{RequestUri, UriExt},
+    ext::UriExt,
     header::{CONTENT_TYPE, HeaderMap, HeaderName, HeaderValue, OrigHeaderMap},
-    into_uri::IntoUriSealed,
     redirect,
 };
 
@@ -464,19 +463,14 @@ impl RequestBuilder {
     pub fn query<T: Serialize + ?Sized>(mut self, query: &T) -> RequestBuilder {
         let mut error = None;
         if let Ok(ref mut req) = self.request {
-            // let uri = req.url_mut();
-            // let mut pairs = uri.query_pairs_mut();
-            // let serializer = serde_urlencoded::Serializer::new(&mut pairs);
-
-            // if let Err(err) = query.serialize(serializer) {
-            //     error = Some(Error::builder(err));
-            // }
+            match serde_urlencoded::to_string(query) {
+                Ok(serializer) => {
+                    let uri = req.uri_mut();
+                    uri.set_query(serializer);
+                }
+                Err(err) => error = Some(Error::builder(err)),
+            }
         }
-        // if let Ok(ref mut req) = self.request {
-        //     if let Some("") = req.uri().query() {
-        //         req.url_mut().set_query(None);
-        //     }
-        // }
         if let Some(err) = error {
             self.request = Err(err);
         }

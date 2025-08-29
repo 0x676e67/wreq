@@ -30,19 +30,25 @@ const USERINFO: &AsciiSet = &PATH
 
 /// Extension trait for `Uri` helpers.
 pub(crate) trait UriExt {
-    #[doc(hidden)]
+    /// Returns true if the URI scheme is HTTPS.
     fn is_https(&self) -> bool;
 
-    #[doc(hidden)]
+    /// Returns true if the URI scheme is HTTP.
     fn is_http(&self) -> bool;
 
-    #[doc(hidden)]
+    #[cfg(feature = "ws")]
+    /// Sets the scheme of the URI.
     fn set_scheme(&mut self, scheme: Scheme);
 
-    #[doc(hidden)]
+    /// Sets the query component of the URI, replacing any existing query.
+    fn set_query(&mut self, query: String);
+
+    /// Returns the username and password from the URI's userinfo, if present.
+    /// Returns (None, None) if no userinfo is present.
     fn userinfo(&self) -> (Option<&str>, Option<&str>);
 
-    #[doc(hidden)]
+    /// Sets the username and password in the URI's userinfo component.
+    /// If both are empty, removes userinfo.
     fn set_userinfo(&mut self, username: &str, password: Option<&str>);
 }
 
@@ -77,23 +83,26 @@ impl UriExt for Uri {
         self.scheme() == Some(&Scheme::HTTP)
     }
 
+    #[cfg(feature = "ws")]
+    #[doc(hidden)]
     fn set_scheme(&mut self, scheme: Scheme) {
-        let authority = match self.authority() {
-            Some(authority) => authority.clone(),
-            None => return,
-        };
+        let mut parts = self.clone().into_parts();
+        parts.scheme = Some(scheme);
+        if let Ok(uri) = Uri::from_parts(parts) {
+            *self = uri;
+        }
+    }
 
-        let path_and_query = self
-            .path_and_query()
-            .cloned()
-            .unwrap_or_else(|| PathAndQuery::from_static("/"));
+    fn set_query(&mut self, query: String) {
+        if query.is_empty() {
+            return;
+        }
 
-        if let Ok(uri) = Uri::builder()
-            .scheme(scheme)
-            .authority(authority)
-            .path_and_query(path_and_query)
-            .build()
-        {
+        let path = self.path();
+        let mut parts = self.clone().into_parts();
+        parts.path_and_query = PathAndQuery::try_from(format!("{path}?{query}")).ok();
+
+        if let Ok(uri) = Uri::from_parts(parts) {
             *self = uri;
         }
     }
@@ -110,58 +119,47 @@ impl UriExt for Uri {
     }
 
     fn set_userinfo(&mut self, username: &str, password: Option<&str>) {
-        let scheme = match self.scheme() {
-            Some(s) => s.clone(),
-            None => return,
-        };
+        let mut parts = self.clone().into_parts();
 
         let authority = match self.authority() {
             Some(authority) => authority,
             None => return,
         };
 
-        let host_port = authority
+        let host_and_port = authority
             .as_str()
             .rsplit_once('@')
             .map(|(_, host)| host)
             .unwrap_or_else(|| authority.as_str());
 
         let authority = match (username.is_empty(), password) {
-            (true, None) => Authority::from_maybe_shared(Bytes::from(host_port.to_owned())),
+            (true, None) => Authority::from_maybe_shared(Bytes::from(host_and_port.to_owned())),
             (true, Some(pass)) => {
                 let pass = percent_encoding::utf8_percent_encode(pass, USERINFO);
-                Authority::from_maybe_shared(Bytes::from(format!(":{pass}@{host_port}")))
+                Authority::from_maybe_shared(Bytes::from(format!(":{pass}@{host_and_port}")))
             }
             (false, Some(pass)) => {
                 let username = percent_encoding::utf8_percent_encode(username, USERINFO);
                 let pass = percent_encoding::utf8_percent_encode(pass, USERINFO);
-                Authority::from_maybe_shared(Bytes::from(format!("{username}:{pass}@{host_port}")))
+                Authority::from_maybe_shared(Bytes::from(format!(
+                    "{username}:{pass}@{host_and_port}"
+                )))
             }
             (false, None) => {
                 let username = percent_encoding::utf8_percent_encode(username, USERINFO);
-                Authority::from_maybe_shared(Bytes::from(format!("{username}@{host_port}")))
+                Authority::from_maybe_shared(Bytes::from(format!("{username}@{host_and_port}")))
             }
         };
 
-        let authority = match authority {
-            Ok(a) => a,
-            Err(err) => {
-                debug!("Failed to set userinfo in URI: {err}");
+        parts.authority = match authority {
+            Ok(authority) => Some(authority),
+            Err(_err) => {
+                debug!("Failed to set userinfo in URI: {_err}");
                 return;
             }
         };
 
-        let path_and_query = self
-            .path_and_query()
-            .cloned()
-            .unwrap_or_else(|| PathAndQuery::from_static("/"));
-
-        if let Ok(uri) = Uri::builder()
-            .scheme(scheme)
-            .authority(authority)
-            .path_and_query(path_and_query)
-            .build()
-        {
+        if let Ok(uri) = Uri::from_parts(parts) {
             *self = uri;
         }
     }
@@ -341,6 +339,24 @@ mod tests {
         assert_eq!(password, Some("p%40ss%20word"));
 
         assert_eq!(uri.to_string(), "http://:p%40ss%20word@example.com/");
+    }
+
+    #[test]
+    fn test_set_query() {
+        let mut uri: Uri = "http://example.com/path".parse().unwrap();
+        uri.set_query("key=value&foo=bar".to_string());
+
+        assert_eq!(uri.to_string(), "http://example.com/path?key=value&foo=bar");
+
+        let mut uri: Uri = "http://example.com/path?existing=param".parse().unwrap();
+        uri.set_query("newkey=newvalue".to_string());
+
+        assert_eq!(uri.to_string(), "http://example.com/path?newkey=newvalue");
+
+        let mut uri: Uri = "http://example.com/path".parse().unwrap();
+        uri.set_query("".to_string());
+
+        assert_eq!(uri.to_string(), "http://example.com/path");
     }
 
     #[test]

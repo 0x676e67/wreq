@@ -1,15 +1,13 @@
-use std::{borrow::Cow, error::Error as StdError};
+use std::error::Error as StdError;
 
-use bytes::Bytes;
 use http::Uri;
-use percent_encoding::{AsciiSet, CONTROLS, NON_ALPHANUMERIC, percent_encode};
 
-use crate::{Error, error::BadScheme};
+use crate::Error;
 
 /// Converts a value into a [`Uri`] with error handling.
 ///
-/// This trait is implemented for common types such as [`Uri`], [`String`], [`&str`], and byte slices,
-/// as well as any type that can be fallibly converted into a [`Uri`] via [`TryFrom`].
+/// This trait is implemented for common types such as [`Uri`], [`String`], [`&str`], and byte
+/// slices, as well as any type that can be fallibly converted into a [`Uri`] via [`TryFrom`].
 pub trait IntoUri: IntoUriSealed {}
 
 pub trait IntoUriSealed {
