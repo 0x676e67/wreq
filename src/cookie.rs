@@ -4,16 +4,17 @@ use std::{convert::TryInto, fmt, sync::Arc, time::SystemTime};
 
 use bytes::{BufMut, Bytes};
 use cookie_crate::{Cookie as RawCookie, Expiration, SameSite};
+use http::Uri;
 
 use crate::{error::Error, header::HeaderValue, sync::RwLock};
 
 /// Actions for a persistent cookie store providing session support.
 pub trait CookieStore: Send + Sync {
-    /// Store a set of Set-Cookie header values received from `url`
-    fn set_cookies(&self, cookie_headers: &mut dyn Iterator<Item = &HeaderValue>, url: &url::Url);
+    /// Store a set of Set-Cookie header values received from `uri`
+    fn set_cookies(&self, cookie_headers: &mut dyn Iterator<Item = &HeaderValue>, uri: &Uri);
 
-    /// Get any Cookie values in the store for `url`
-    fn cookies(&self, url: &url::Url) -> Vec<HeaderValue>;
+    /// Get any Cookie values in the store for `uri`
+    fn cookies(&self, uri: &Uri) -> Vec<HeaderValue>;
 }
 
 /// Trait for converting types into a shared cookie store ([`Arc<dyn CookieStore>`]).
@@ -194,33 +195,40 @@ impl Jar {
 }
 
 impl CookieStore for Jar {
-    fn set_cookies(&self, cookie_headers: &mut dyn Iterator<Item = &HeaderValue>, url: &url::Url) {
+    fn set_cookies(&self, cookie_headers: &mut dyn Iterator<Item = &HeaderValue>, uri: &Uri) {
         let iter = cookie_headers
             .map(Cookie::try_from)
             .filter_map(Result::ok)
             .map(|cookie| cookie.0.into_owned());
 
-        self.0.write().store_response_cookies(iter, url);
+        if let Ok(url) = url::Url::parse(&uri.to_string()) {
+            self.0.write().store_response_cookies(iter, &url);
+        }
     }
 
-    fn cookies(&self, url: &url::Url) -> Vec<HeaderValue> {
+    fn cookies(&self, uri: &Uri) -> Vec<HeaderValue> {
         const COOKIE_SEPARATOR: &[u8] = b"=";
 
-        self.0
-            .read()
-            .get_request_values(url)
-            .filter_map(|(name, value)| {
-                let name = name.as_bytes();
-                let value = value.as_bytes();
-                let mut cookie = bytes::BytesMut::with_capacity(name.len() + 1 + value.len());
+        if let Ok(url) = url::Url::parse(&uri.to_string()) {
+            return self
+                .0
+                .read()
+                .get_request_values(&url)
+                .filter_map(|(name, value)| {
+                    let name = name.as_bytes();
+                    let value = value.as_bytes();
+                    let mut cookie = bytes::BytesMut::with_capacity(name.len() + 1 + value.len());
 
-                cookie.put(name);
-                cookie.put(COOKIE_SEPARATOR);
-                cookie.put(value);
+                    cookie.put(name);
+                    cookie.put(COOKIE_SEPARATOR);
+                    cookie.put(value);
 
-                HeaderValue::from_maybe_shared(Bytes::from(cookie)).ok()
-            })
-            .collect()
+                    HeaderValue::from_maybe_shared(Bytes::from(cookie)).ok()
+                })
+                .collect();
+        }
+
+        Vec::new()
     }
 }
 

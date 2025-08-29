@@ -7,11 +7,9 @@ use std::{
     task::{Context, Poll, ready},
 };
 
-use http::Response;
-use pin_project_lite::pin_project;
-use url::Url;
-
 use crate::cookie::CookieStore;
+use http::{Response, Uri};
+use pin_project_lite::pin_project;
 
 pin_project! {
     /// Response future for [`CookieService`].
@@ -21,7 +19,7 @@ pin_project! {
             #[pin]
             future: F,
             cookie_store: Arc<dyn CookieStore>,
-            url: Url,
+            uri: Uri,
         },
         Direct {
             #[pin]
@@ -41,7 +39,7 @@ where
             ResponseFutureProj::Managed {
                 future,
                 cookie_store,
-                url,
+                uri,
             } => {
                 let res = ready!(future.poll(cx)?);
                 let mut cookies = res
@@ -50,7 +48,7 @@ where
                     .iter()
                     .peekable();
                 if cookies.peek().is_some() {
-                    cookie_store.set_cookies(&mut cookies, url);
+                    cookie_store.set_cookies(&mut cookies, uri);
                 }
 
                 Poll::Ready(Ok(res))
