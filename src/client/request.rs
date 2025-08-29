@@ -623,7 +623,7 @@ impl RequestBuilder {
     /// };
     ///
     /// let client = Client::new();
-    /// let proxy = Proxy::all("http://hyper.rs/prox")?.basic_auth("Aladdin", "opensesame");
+    /// let proxy = Proxy::all("http://hyper.rs/prox")?.basic_auth("Aladdin", "open sesame");
     ///
     /// let resp = client
     ///     .get("https://tls.peet.ws/api/all")
