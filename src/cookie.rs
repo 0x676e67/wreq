@@ -333,9 +333,11 @@ impl Jar {
     /// jar.add_cookie_str("foo=bar; Domain=example.com", "http://example.com/foo");
     /// assert!(jar.get("foo", "http://example.com/foo").is_some());
     /// jar.remove("foo", "http://example.com/foo");
+    /// assert!(jar.get("foo", "http://example.com/foo").is_none());
     /// ```
-    pub fn remove<U>(&self, name: &str, uri: U)
+    pub fn remove<'a, C, U>(&self, cookie: C, uri: U)
     where
+        C: Into<RawCookie<'static>>,
         Uri: TryFrom<U>,
     {
         let uri = into_uri!(uri);
@@ -343,7 +345,7 @@ impl Jar {
             let mut inner = self.0.write();
             if let Some(path_map) = inner.get_mut(host) {
                 if let Some(name_map) = path_map.get_mut(normalize_path(&uri)) {
-                    name_map.remove(name.to_owned());
+                    name_map.remove(cookie.into());
                 }
             }
         }
@@ -380,35 +382,36 @@ impl CookieStore for Jar {
     }
 
     fn cookies(&self, uri: &Uri) -> Vec<HeaderValue> {
-        let mut cookies = Vec::new();
-
         let host = match uri.host() {
             Some(h) => h,
-            None => return cookies,
+            None => return Vec::new(),
         };
 
         let is_https = uri.is_https();
-        let inner = self.0.read();
 
-        // Iterate all possible matching domains (host and parent domains)
-        for (domain, path_map) in inner.iter() {
-            if domain_match(host, domain) {
-                // Path matching: RFC 6265 5.1.4
-                for (path, name_map) in path_map.iter() {
-                    if path_match(uri.path(), path) {
-                        for cookie in name_map.iter() {
+        self.0
+            .read()
+            .iter()
+            .filter(|(domain, _)| domain_match(host, domain))
+            .flat_map(|(_, path_map)| {
+                path_map
+                    .iter()
+                    .filter(|(path, _)| path_match(uri.path(), path))
+                    .flat_map(|(_, name_map)| {
+                        name_map.iter().filter_map(|cookie| {
                             // If the cookie is Secure, only send it over HTTPS
                             if cookie.secure() == Some(true) && !is_https {
-                                continue;
+                                return None;
                             }
 
-                            // Skip expired cookies
+                            // Skip expired cookie
                             if let Some(Expiration::DateTime(dt)) = cookie.expires() {
                                 if SystemTime::from(dt) <= SystemTime::now() {
-                                    continue;
+                                    return None;
                                 }
                             }
 
+                            // Build cookie header value
                             let name = cookie.name().as_bytes();
                             let value = cookie.value().as_bytes();
                             let mut cookie_bytes =
@@ -418,18 +421,11 @@ impl CookieStore for Jar {
                             cookie_bytes.put(&b"="[..]);
                             cookie_bytes.put(value);
 
-                            if let Ok(cookie) =
-                                HeaderValue::from_maybe_shared(Bytes::from(cookie_bytes))
-                            {
-                                cookies.push(cookie);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        cookies
+                            HeaderValue::from_maybe_shared(Bytes::from(cookie_bytes)).ok()
+                        })
+                    })
+            })
+            .collect()
     }
 }
 
