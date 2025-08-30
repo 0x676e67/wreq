@@ -53,7 +53,7 @@ mod sealed {
 
 #[cfg(test)]
 mod tests {
-    use crate::into_uri::sealed::IntoUriSealed;
+    use super::sealed::IntoUriSealed;
 
     #[test]
     fn into_uri_bad_scheme() {
