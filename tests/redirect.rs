@@ -498,10 +498,19 @@ async fn test_redirect_history() {
         &"test-dst"
     );
 
-    let history = res.history().collect::<Vec<_>>();
-    assert_eq!(history.len(), 2);
-    assert_eq!(history[0].status(), 302);
-    assert_eq!(history[0].uri().path(), "/second");
-    assert_eq!(history[1].status(), 302);
-    assert_eq!(history[1].uri().path(), "/dst");
+    let mut history = res.history();
+
+    let next1 = history.next().unwrap();
+    assert_eq!(next1.status(), 302);
+    assert_eq!(next1.previous().path(), "/first");
+    assert_eq!(next1.location().path(), "/second");
+    assert_eq!(next1.headers()["location"], "/second");
+
+    let next2 = history.next().unwrap();
+    assert_eq!(next2.status(), 302);
+    assert_eq!(next2.previous().path(), "/second");
+    assert_eq!(next2.location().path(), "/dst");
+    assert_eq!(next2.headers()["location"], "/dst");
+
+    assert!(history.next().is_none());
 }

@@ -54,7 +54,8 @@ pub struct Action {
 #[derive(Clone, Debug)]
 pub struct History {
     status: StatusCode,
-    uri: Uri,
+    location: Uri,
+    previous: Uri,
     headers: HeaderMap,
 }
 
@@ -238,19 +239,28 @@ impl<'a> Attempt<'a> {
 // ===== impl History =====
 
 impl History {
-    /// Get the status code of the redirect response.
+    /// Returns the redirection response.
+    #[inline(always)]
     pub fn status(&self) -> StatusCode {
         self.status
     }
 
-    /// Get the URI of the redirect response.
-    pub fn uri(&self) -> &Uri {
-        &self.uri
-    }
-
-    /// Get the headers of the redirect response.
+    /// Returns the headers of the redirection response.
+    #[inline(always)]
     pub fn headers(&self) -> &HeaderMap {
         &self.headers
+    }
+
+    /// Returns the destination URI of the redirection.
+    #[inline(always)]
+    pub fn location(&self) -> &Uri {
+        &self.location
+    }
+
+    /// Returns the URI of the original request.
+    #[inline(always)]
+    pub fn previous(&self) -> &Uri {
+        &self.previous
     }
 }
 
@@ -385,7 +395,8 @@ impl policy::Policy<Body, BoxError> for FollowRedirectPolicy {
                         .get_or_insert_with(Vec::new)
                         .push(History {
                             status: attempt.status(),
-                            uri: attempt.location().clone(),
+                            location: attempt.location().clone(),
+                            previous: attempt.previous().clone(),
                             headers: attempt.headers().clone(),
                         });
                 }
