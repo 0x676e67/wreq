@@ -15,8 +15,10 @@ use iri_string::types::{UriAbsoluteString, UriReferenceStr};
 use pin_project_lite::pin_project;
 use tower::{Service, util::Oneshot};
 
+use crate::ext::RequestUri;
+
 use super::{
-    BodyRepr, RequestUri,
+    BodyRepr,
     policy::{Action, Attempt, Policy},
 };
 
@@ -100,7 +102,11 @@ where
                         drop_payload_headers(headers);
                     }
                     StatusCode::TEMPORARY_REDIRECT | StatusCode::PERMANENT_REDIRECT => {}
-                    _ => return Poll::Ready(Ok(res)),
+                    _ => {
+                        // Not a redirect status code, return the response as is.
+                        policy.on_response(&mut res);
+                        return Poll::Ready(Ok(res));
+                    }
                 };
 
                 let take_body = if let Some(body) = body.take() {
@@ -129,7 +135,7 @@ where
                 match policy.redirect(&attempt)? {
                     Action::Follow => {
                         *uri = location;
-                        body.try_clone_from(&take_body, &policy);
+                        body.try_clone_from(&take_body, policy);
 
                         let mut req = Request::new(take_body);
                         *req.uri_mut() = uri.clone();

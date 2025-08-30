@@ -50,6 +50,20 @@ pub struct Action {
     inner: ActionKind,
 }
 
+/// An entry in the redirect history.
+#[derive(Clone, Debug)]
+pub struct History {
+    status: StatusCode,
+    uri: Uri,
+    headers: HeaderMap,
+}
+
+/// A list of redirect history entries.
+#[derive(Clone, Debug)]
+pub(crate) struct RedirectHistory(pub Vec<History>);
+
+// ===== impl Policy =====
+
 impl Policy {
     /// Create a `Policy` with a maximum number of redirects.
     ///
@@ -172,6 +186,8 @@ impl Default for Policy {
     }
 }
 
+// ===== impl Attempt =====
+
 impl<'a> Attempt<'a> {
     /// Get the type of redirect.
     pub fn status(&self) -> StatusCode {
@@ -219,12 +235,33 @@ impl<'a> Attempt<'a> {
     }
 }
 
+// ===== impl History =====
+
+impl History {
+    /// Get the status code of the redirect response.
+    pub fn status(&self) -> StatusCode {
+        self.status
+    }
+
+    /// Get the URI of the redirect response.
+    pub fn uri(&self) -> &Uri {
+        &self.uri
+    }
+
+    /// Get the headers of the redirect response.
+    pub fn headers(&self) -> &HeaderMap {
+        &self.headers
+    }
+}
+
 #[derive(Clone)]
 enum PolicyKind {
     Custom(Arc<dyn Fn(Attempt) -> Action + Send + Sync + 'static>),
     Limit(usize),
     None,
 }
+
+// ===== impl PolicyKind =====
 
 impl fmt::Debug for PolicyKind {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -246,6 +283,8 @@ pub(crate) enum ActionKind {
 #[derive(Debug)]
 struct TooManyRedirects;
 
+// ===== impl TooManyRedirects =====
+
 impl fmt::Display for TooManyRedirects {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str("too many redirects")
@@ -254,31 +293,56 @@ impl fmt::Display for TooManyRedirects {
 
 impl StdError for TooManyRedirects {}
 
+/// A redirect policy handler for HTTP clients.
+///
+/// `FollowRedirectPolicy` manages how HTTP redirects are handled by the client,
+/// including the maximum number of redirects, whether to set the `Referer` header,
+/// HTTPS-only enforcement, and redirect history tracking.
+///
+/// This type is used internally by the client to implement redirect logic according to
+/// the configured [`Policy`]. It ensures that only allowed redirects are followed,
+/// sensitive headers are removed when crossing hosts, and the `Referer` header is set
+/// when appropriate.
 #[derive(Clone)]
 pub(crate) struct FollowRedirectPolicy {
     policy: RequestConfig<RequestRedirectPolicy>,
     referer: bool,
     uris: Vec<Uri>,
     https_only: bool,
+    history: bool,
+    history_entries: Option<Vec<History>>,
 }
 
+// ===== impl FollowRedirectPolicy =====
+
 impl FollowRedirectPolicy {
+    /// Creates a new redirect policy handler with the given [`Policy`].
     pub(crate) const fn new(policy: Policy) -> Self {
         Self {
             policy: RequestConfig::new(Some(policy)),
             referer: false,
             uris: Vec::new(),
             https_only: false,
+            history: false,
+            history_entries: None,
         }
     }
 
+    /// Enables or disables automatic Referer header management.
     pub(crate) const fn with_referer(mut self, referer: bool) -> Self {
         self.referer = referer;
         self
     }
 
+    /// Enables or disables HTTPS-only redirect enforcement.
     pub(crate) const fn with_https_only(mut self, https_only: bool) -> Self {
         self.https_only = https_only;
+        self
+    }
+
+    /// Enables or disables redirect history tracking.
+    pub(crate) const fn with_history(mut self, history: bool) -> Self {
+        self.history = history;
         self
     }
 }
@@ -313,6 +377,16 @@ impl policy::Policy<Body, BoxError> for FollowRedirectPolicy {
                         next_uri.clone(),
                     )));
                 }
+
+                // Record redirect history if enabled.
+                if self.history {
+                    self.history_entries.get_or_insert_default().push(History {
+                        status: attempt.status(),
+                        uri: previous_uri.clone(),
+                        headers: attempt.headers().clone(),
+                    });
+                }
+
                 Ok(policy::Action::Follow)
             }
             ActionKind::Stop => Ok(policy::Action::Stop),
@@ -320,7 +394,6 @@ impl policy::Policy<Body, BoxError> for FollowRedirectPolicy {
         }
     }
 
-    #[inline(always)]
     fn on_request(&mut self, req: &mut http::Request<Body>) {
         let next_url = req.uri().clone();
         remove_sensitive_headers(req.headers_mut(), &next_url, &self.uris);
@@ -329,6 +402,16 @@ impl policy::Policy<Body, BoxError> for FollowRedirectPolicy {
                 if let Some(v) = make_referer(&next_url, previous_url) {
                     req.headers_mut().insert(REFERER, v);
                 }
+            }
+        }
+    }
+
+    fn on_response<Body>(&mut self, response: &mut http::Response<Body>) {
+        if self.history {
+            if let Some(history_entries) = self.history_entries.take() {
+                response
+                    .extensions_mut()
+                    .insert(RedirectHistory(history_entries));
             }
         }
     }

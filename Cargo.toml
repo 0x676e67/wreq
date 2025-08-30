@@ -235,6 +235,10 @@ name = "form"
 path = "examples/form.rs"
 
 [[example]]
+name = "redirect_history"
+path = "examples/redirect_history.rs"
+
+[[example]]
 name = "connect_via_lower_priority_tokio_runtime"
 path = "examples/connect_via_lower_priority_tokio_runtime.rs"
 required-features = ["tracing"]
@@ -257,7 +261,6 @@ required-features = ["webpki-roots", "tracing"]
 [[example]]
 name = "request_with_redirect"
 path = "examples/request_with_redirect.rs"
-required-features = ["tracing"]
 
 [[example]]
 name = "request_with_version"

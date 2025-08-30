@@ -137,6 +137,7 @@ struct Config {
     proxies: Vec<ProxyMatcher>,
     auto_sys_proxy: bool,
     redirect_policy: RedirectPolicy,
+    redirect_history: bool,
     referer: bool,
     timeout_options: TimeoutOptions,
     #[cfg(feature = "cookies")]
@@ -204,6 +205,7 @@ impl ClientBuilder {
                 proxies: Vec::new(),
                 auto_sys_proxy: true,
                 redirect_policy: RedirectPolicy::none(),
+                redirect_history: false,
                 referer: true,
                 timeout_options: TimeoutOptions::default(),
                 #[cfg(feature = "hickory-dns")]
@@ -369,7 +371,8 @@ impl ClientBuilder {
             let service = {
                 let policy = FollowRedirectPolicy::new(config.redirect_policy)
                     .with_referer(config.referer)
-                    .with_https_only(config.https_only);
+                    .with_https_only(config.https_only)
+                    .with_history(config.redirect_history);
 
                 ServiceBuilder::new()
                     .layer(FollowRedirectLayer::with_policy(policy))
@@ -717,6 +720,15 @@ impl ClientBuilder {
     #[inline]
     pub fn redirect(mut self, policy: redirect::Policy) -> ClientBuilder {
         self.config.redirect_policy = policy;
+        self
+    }
+
+    /// Enable or disable redirect history tracking.
+    ///
+    /// Default is `false`.
+    #[inline]
+    pub fn history(mut self, enable: bool) -> ClientBuilder {
+        self.config.redirect_history = enable;
         self
     }
 

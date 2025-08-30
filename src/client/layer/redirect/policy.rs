@@ -19,6 +19,15 @@ pub trait Policy<B, E> {
     /// The default implementation does nothing.
     fn on_request(&mut self, _request: &mut Request<B>) {}
 
+    /// Invoked right after the service received a response, regardless of whether it is redirected
+    /// or not.
+    ///
+    /// This can for example be used to inspect the response before any redirection is handled.
+    /// The default implementation does nothing.
+    ///
+    /// The default implementation does nothing.
+    fn on_response<Body>(&mut self, _response: &mut http::Response<Body>) {}
+
     /// Loads redirect policy configuration from the request's [`Extensions`].
     ///
     /// This method is called once at the beginning of request processing to extract
@@ -48,36 +57,6 @@ pub trait Policy<B, E> {
     /// The default implementation returns `None`.
     fn clone_body(&self, _body: &B) -> Option<B> {
         None
-    }
-}
-
-impl<B, E, P> Policy<B, E> for &mut P
-where
-    P: Policy<B, E> + ?Sized,
-{
-    #[inline(always)]
-    fn redirect(&mut self, attempt: &Attempt<'_>) -> Result<Action, E> {
-        (**self).redirect(attempt)
-    }
-
-    #[inline(always)]
-    fn on_request(&mut self, request: &mut Request<B>) {
-        (**self).on_request(request)
-    }
-
-    #[inline(always)]
-    fn on_extensions(&mut self, extensions: &Extensions) {
-        (**self).on_extensions(extensions)
-    }
-
-    #[inline(always)]
-    fn allowed(&self) -> bool {
-        (**self).allowed()
-    }
-
-    #[inline(always)]
-    fn clone_body(&self, body: &B) -> Option<B> {
-        (**self).clone_body(body)
     }
 }
 
