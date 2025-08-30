@@ -330,15 +330,13 @@ impl policy::Policy<Body, BoxError> for FollowRedirectPolicy {
             ActionKind::Follow => {
                 // Validate the next URI's scheme.
                 if !next_uri.is_http() && !next_uri.is_https() {
-                    return Err(BoxError::from(
-                        Error::uri_bad_scheme().with_uri(next_uri.clone()),
-                    ));
+                    return Err(BoxError::from(Error::uri_bad_scheme(next_uri.clone())));
                 }
 
                 // Validate HTTPS-only policy.
                 if self.https_only && !next_uri.is_https() {
                     return Err(BoxError::from(Error::redirect(
-                        Error::uri_bad_scheme().with_uri(next_uri.clone()),
+                        Error::uri_bad_scheme(next_uri.clone()),
                         next_uri.clone(),
                     )));
                 }

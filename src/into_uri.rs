@@ -44,7 +44,7 @@ mod sealed {
             Uri::try_from(self).map_err(Error::builder).and_then(|uri| {
                 match (uri.scheme(), uri.authority()) {
                     (Some(_), Some(_)) => Ok(uri),
-                    _ => Err(Error::uri_bad_scheme().with_uri(uri)),
+                    _ => Err(Error::uri_bad_scheme(uri)),
                 }
             })
         }

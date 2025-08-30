@@ -76,8 +76,8 @@ impl Error {
         Error::new(Kind::Status(status, reason), None::<Error>).with_uri(uri)
     }
 
-    pub(crate) fn uri_bad_scheme() -> Error {
-        Error::new(Kind::Builder, Some(BadScheme))
+    pub(crate) fn uri_bad_scheme(uri: Uri) -> Error {
+        Error::new(Kind::Builder, Some(BadScheme)).with_uri(uri)
     }
 }
 

@@ -138,7 +138,8 @@ impl Service<Request<Body>> for ClientService {
 
         // check if the request URI scheme is valid.
         if (!uri.is_http() && !uri.is_https()) || (self.config.https_only && !uri.is_https()) {
-            return Either::Right(future::err(BoxError::from(crate::Error::uri_bad_scheme())));
+            let err = BoxError::from(crate::Error::uri_bad_scheme(uri.clone()));
+            return Either::Right(future::err(err));
         }
 
         // check if the request ignores the default headers.
