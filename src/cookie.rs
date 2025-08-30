@@ -13,6 +13,7 @@ use http::Uri;
 
 use crate::{
     error::Error,
+    ext::UriExt,
     hash::{HASHER, HashMap},
     header::HeaderValue,
     sync::RwLock,
@@ -386,6 +387,7 @@ impl CookieStore for Jar {
             None => return cookies,
         };
 
+        let is_https = uri.is_https();
         let inner = self.0.read();
 
         // Iterate all possible matching domains (host and parent domains)
@@ -394,9 +396,13 @@ impl CookieStore for Jar {
                 // Path matching: RFC 6265 5.1.4
                 for (path, name_map) in path_map.iter() {
                     if path_match(uri.path(), path) {
-                        // Collect valid cookies
                         for cookie in name_map.iter() {
-                            // Check expiry
+                            // If the cookie is Secure, only send it over HTTPS
+                            if cookie.secure() == Some(true) && !is_https {
+                                continue;
+                            }
+
+                            // Skip expired cookies
                             if let Some(Expiration::DateTime(dt)) = cookie.expires() {
                                 if SystemTime::from(dt) <= SystemTime::now() {
                                     continue;
