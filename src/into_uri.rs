@@ -2,7 +2,8 @@
 //!
 //! This module provides the [`IntoUri`] trait, allowing various types
 //! (such as `&str`, `String`, `Vec<u8>`, etc.) to be fallibly converted into an [`http::Uri`].
-//! The conversion is based on `TryFrom<T> for Uri` and ensures the resulting URI is valid and contains a host.
+//! The conversion is based on `TryFrom<T> for Uri` and ensures the resulting URI is valid and
+//! contains a host.
 //!
 //! Internally, the trait is sealed to prevent
 
