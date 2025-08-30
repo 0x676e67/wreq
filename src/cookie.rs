@@ -8,7 +8,7 @@ use std::{
 };
 
 use bytes::{BufMut, Bytes};
-use cookie_crate::{Cookie as RawCookie, Expiration, SameSite};
+use cookie_crate::{Cookie as RawCookie, CookieJar, Expiration, SameSite};
 use http::Uri;
 
 use crate::{
@@ -45,17 +45,13 @@ pub trait IntoCookieStore {
 #[derive(Debug, Clone)]
 pub struct Cookie<'a>(RawCookie<'a>);
 
-type NameMap = HashMap<String, RawCookie<'static>>;
-type PathMap = HashMap<String, NameMap>;
-type DomainMap = HashMap<String, PathMap>;
-
 /// A good default `CookieStore` implementation.
 ///
 /// This is the implementation used when simply calling `cookie_store(true)`.
 /// This type is exposed to allow creating one and filling it with some
 /// existing cookies more easily, before creating a `Client`.
 #[derive(Debug)]
-pub struct Jar(RwLock<DomainMap>);
+pub struct Jar(RwLock<HashMap<String, HashMap<String, CookieJar>>>);
 
 // ===== impl IntoCookieStore =====
 
@@ -208,14 +204,13 @@ impl Jar {
     fn add_cookie(&self, cookie: RawCookie<'static>, uri: &Uri) {
         let domain = cookie.domain().or_else(|| uri.host()).unwrap_or_default();
         let path = cookie.path().unwrap_or_else(|| default_path(uri));
-        let name = cookie.name();
 
         let mut inner = self.0.write();
         let name_map = inner
             .entry(domain.to_owned())
             .or_insert_with(|| HashMap::with_hasher(HASHER))
             .entry(path.to_owned())
-            .or_insert_with(|| HashMap::with_hasher(HASHER));
+            .or_default();
 
         // RFC 6265: If Max-Age=0 or Expires in the past, remove the cookie
         let expired = match cookie.expires() {
@@ -226,9 +221,9 @@ impl Jar {
             .is_some_and(|age| age == Duration::from_secs(0));
 
         if expired {
-            name_map.remove(name);
+            name_map.remove(cookie);
         } else {
-            name_map.insert(name.to_owned(), cookie);
+            name_map.add(cookie);
         }
     }
 }
@@ -254,7 +249,6 @@ impl CookieStore for Jar {
         };
 
         let inner = self.0.read();
-        let mut expires = Vec::new();
 
         // Iterate all possible matching domains (host and parent domains)
         for (domain, path_map) in inner.iter() {
@@ -263,11 +257,10 @@ impl CookieStore for Jar {
                 for (path, name_map) in path_map.iter() {
                     if path_match(uri.path(), path) {
                         // Collect valid cookies
-                        for cookie in name_map.values() {
+                        for cookie in name_map.iter() {
                             // Check expiry
                             if let Some(Expiration::DateTime(dt)) = cookie.expires() {
                                 if SystemTime::from(dt) <= SystemTime::now() {
-                                    expires.push(cookie.name().to_owned());
                                     continue;
                                 }
                             }
@@ -287,18 +280,6 @@ impl CookieStore for Jar {
                                 cookies.push(cookie);
                             }
                         }
-                    }
-                }
-            }
-        }
-
-        if !expires.is_empty() {
-            // Remove expired cookies
-            let mut inner = self.0.write();
-            for path_map in inner.values_mut() {
-                for name_map in path_map.values_mut() {
-                    for name in expires.iter() {
-                        name_map.remove(name);
                     }
                 }
             }
