@@ -203,8 +203,8 @@ impl Jar {
     /// ```
     /// use wreq::cookie::Jar;
     /// let jar = Jar::default();
-    /// jar.add_cookie_str("foo=bar; Domain=example.com", "http://example.com");
-    /// let cookie = jar.get("foo", "http://example.com").unwrap();
+    /// jar.add_cookie_str("foo=bar; Domain=example.com", "http://example.com/foo");
+    /// let cookie = jar.get("foo", "http://example.com/foo").unwrap();
     /// assert_eq!(cookie.value(), "bar");
     /// ```
     pub fn get<U>(&self, name: &str, uri: U) -> Option<Cookie<'static>>
@@ -216,7 +216,7 @@ impl Jar {
             .0
             .read()
             .get(uri.host()?)?
-            .get(default_path(&uri))?
+            .get(normalize_path(&uri))?
             .get(name)?
             .clone()
             .into_owned();
@@ -296,7 +296,7 @@ impl Jar {
         let cookie: RawCookie<'static> = cookie.into();
         let uri = into_uri!(uri);
         let domain = cookie.domain().or_else(|| uri.host()).unwrap_or_default();
-        let path = cookie.path().unwrap_or_else(|| default_path(&uri));
+        let path = cookie.path().unwrap_or_else(|| normalize_path(&uri));
 
         let mut inner = self.0.write();
         let name_map = inner
@@ -329,8 +329,9 @@ impl Jar {
     /// ```
     /// use wreq::cookie::Jar;
     /// let jar = Jar::default();
-    /// jar.add_cookie_str("foo=bar; Domain=example.com", "http://example.com");
-    /// jar.remove("foo", "http://example.com");
+    /// jar.add_cookie_str("foo=bar; Domain=example.com", "http://example.com/foo");
+    /// assert!(jar.get("foo", "http://example.com/foo").is_some());
+    /// jar.remove("foo", "http://example.com/foo");
     /// ```
     pub fn remove<U>(&self, name: &str, uri: U)
     where
@@ -338,12 +339,9 @@ impl Jar {
     {
         let uri = into_uri!(uri);
         if let Some(host) = uri.host() {
-            let domain = host.to_ascii_lowercase();
-            let path = default_path(&uri);
-
             let mut inner = self.0.write();
-            if let Some(path_map) = inner.get_mut(&domain) {
-                if let Some(name_map) = path_map.get_mut(path) {
+            if let Some(path_map) = inner.get_mut(host) {
+                if let Some(name_map) = path_map.get_mut(normalize_path(&uri)) {
                     name_map.remove(name.to_owned());
                 }
             }
@@ -359,12 +357,12 @@ impl Jar {
     /// use wreq::cookie::Jar;
     /// let jar = Jar::default();
     /// jar.add_cookie_str("foo=bar; Domain=example.com", "http://example.com");
+    /// assert_eq!(jar.get_all().count(), 1);
     /// jar.clear();
-    /// assert_eq!(jar.iter().count(), 0);
+    /// assert_eq!(jar.get_all().count(), 0);
     /// ```
     pub fn clear(&self) {
-        let mut inner = self.0.write();
-        inner.clear();
+        self.0.write().clear();
     }
 }
 
@@ -435,8 +433,15 @@ impl Default for Jar {
     }
 }
 
-// RFC 6265 domain-match
-fn domain_match(host: &str, domain: &str) -> bool {
+const DEFAULT_PATH: &str = "/";
+
+/// Determines if the given `host` matches the cookie `domain` according to
+/// [RFC 6265 section 5.1.3](https://datatracker.ietf.org/doc/html/rfc6265#section-5.1.3).
+///
+/// - Returns true if the host and domain are identical.
+/// - Returns true if the host is a subdomain of the domain (host ends with ".domain").
+/// - Returns false otherwise.
+pub fn domain_match(host: &str, domain: &str) -> bool {
     if domain.is_empty() {
         return false;
     }
@@ -448,16 +453,27 @@ fn domain_match(host: &str, domain: &str) -> bool {
         && host.ends_with(domain)
 }
 
-// RFC 6265 path-match
-fn path_match(req_path: &str, cookie_path: &str) -> bool {
+/// Determines if the request path matches the cookie path according to
+/// [RFC 6265 section 5.1.4](https://datatracker.ietf.org/doc/html/rfc6265#section-5.1.4).
+///
+/// - Returns true if the request path and cookie path are identical.
+/// - Returns true if the request path starts with the cookie path, and
+///   - the cookie path ends with '/', or
+///   - the next character in the request path after the cookie path is '/'.
+/// - Returns false otherwise.
+pub fn path_match(req_path: &str, cookie_path: &str) -> bool {
     req_path == cookie_path
         || req_path.starts_with(cookie_path)
-            && (cookie_path.ends_with('/') || req_path[cookie_path.len()..].starts_with('/'))
+            && (cookie_path.ends_with(DEFAULT_PATH)
+                || req_path[cookie_path.len()..].starts_with(DEFAULT_PATH))
 }
 
-// RFC 6265 default-path
-fn default_path(uri: &Uri) -> &str {
-    const DEFAULT_PATH: &str = "/";
+/// Computes the normalized default path for a cookie as specified in
+/// [RFC 6265 section 5.1.4](https://datatracker.ietf.org/doc/html/rfc6265#section-5.1.4).
+///
+/// This function normalizes the path for a cookie, ensuring it matches
+/// browser and server expectations for default cookie scope.
+pub fn normalize_path(uri: &Uri) -> &str {
     let path = uri.path();
     if !path.starts_with(DEFAULT_PATH) {
         return DEFAULT_PATH;
