@@ -367,30 +367,33 @@ impl policy::Policy<Body, BoxError> for FollowRedirectPolicy {
             ActionKind::Follow => {
                 // Validate the next URI's scheme.
                 if !next_uri.is_http() && !next_uri.is_https() {
-                    return Err(BoxError::from(Error::uri_bad_scheme(next_uri.clone())));
+                    return Err(Error::uri_bad_scheme(next_uri.clone()).into());
                 }
 
                 // Validate HTTPS-only policy.
                 if self.https_only && !next_uri.is_https() {
-                    return Err(BoxError::from(Error::redirect(
+                    return Err(Error::redirect(
                         Error::uri_bad_scheme(next_uri.clone()),
                         next_uri.clone(),
-                    )));
+                    )
+                    .into());
                 }
 
-                // Record redirect history if enabled.
+                // Record redirect history.
                 if self.history {
-                    self.history_entries.get_or_insert_default().push(History {
-                        status: attempt.status(),
-                        uri: previous_uri.clone(),
-                        headers: attempt.headers().clone(),
-                    });
+                    self.history_entries
+                        .get_or_insert_with(Vec::new)
+                        .push(History {
+                            status: attempt.status(),
+                            uri: previous_uri.clone(),
+                            headers: attempt.headers().clone(),
+                        });
                 }
 
                 Ok(policy::Action::Follow)
             }
             ActionKind::Stop => Ok(policy::Action::Stop),
-            ActionKind::Error(e) => Err(BoxError::from(Error::redirect(e, previous_uri.clone()))),
+            ActionKind::Error(err) => Err(Error::redirect(err, previous_uri.clone()).into()),
         }
     }
 
