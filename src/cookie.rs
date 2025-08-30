@@ -335,7 +335,7 @@ impl Jar {
     /// jar.remove("foo", "http://example.com/foo");
     /// assert!(jar.get("foo", "http://example.com/foo").is_none());
     /// ```
-    pub fn remove<'a, C, U>(&self, cookie: C, uri: U)
+    pub fn remove<C, U>(&self, cookie: C, uri: U)
     where
         C: Into<RawCookie<'static>>,
         Uri: TryFrom<U>,
