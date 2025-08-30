@@ -356,21 +356,20 @@ fn make_referer(next: &Uri, previous: &Uri) -> Option<HeaderValue> {
         return None;
     }
 
-    let mut parts = previous.clone().into_parts();
-    if let Some(authority) = &mut parts.authority {
-        let host = authority.host();
-        match authority.port() {
-            Some(port) => {
-                parts.authority =
+    let referer = {
+        let mut parts = previous.clone().into_parts();
+        if let Some(authority) = &mut parts.authority {
+            let host = authority.host();
+            parts.authority = match authority.port() {
+                Some(port) => {
                     Authority::from_maybe_shared(Bytes::from(format!("{host}:{port}"))).ok()
-            }
-            None => {
-                parts.authority = Some(host.parse().ok()?);
-            }
-        };
-    }
+                }
+                None => host.parse().ok(),
+            };
+        }
+        Uri::from_parts(parts).ok()?
+    };
 
-    let referer = Uri::from_parts(parts).ok()?;
     HeaderValue::from_maybe_shared(Bytes::from(referer.to_string())).ok()
 }
 
