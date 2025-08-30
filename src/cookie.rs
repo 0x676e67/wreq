@@ -8,7 +8,7 @@ use std::{
 };
 
 use bytes::{BufMut, Bytes};
-use cookie_crate::{Cookie as RawCookie, CookieJar, Expiration, SameSite};
+use cookie::{Cookie as RawCookie, CookieJar, Expiration, SameSite};
 use http::Uri;
 
 use crate::{
@@ -162,13 +162,19 @@ impl fmt::Display for Cookie<'_> {
     }
 }
 
-impl<'a> TryFrom<&'a HeaderValue> for Cookie<'a> {
+impl<'c> From<RawCookie<'c>> for Cookie<'c> {
+    fn from(cookie: RawCookie<'c>) -> Cookie<'c> {
+        Cookie(cookie)
+    }
+}
+
+impl<'c> TryFrom<&'c HeaderValue> for Cookie<'c> {
     type Error = crate::Error;
 
-    fn try_from(value: &'a HeaderValue) -> Result<Self, Self::Error> {
+    fn try_from(value: &'c HeaderValue) -> Result<Self, Self::Error> {
         std::str::from_utf8(value.as_bytes())
-            .map_err(cookie_crate::ParseError::from)
-            .and_then(cookie_crate::Cookie::parse)
+            .map_err(cookie::ParseError::from)
+            .and_then(cookie::Cookie::parse)
             .map_err(Error::decode)
             .map(Cookie)
     }
@@ -176,34 +182,61 @@ impl<'a> TryFrom<&'a HeaderValue> for Cookie<'a> {
 
 // ===== impl Jar =====
 
+macro_rules! into_uri {
+    ($expr:expr) => {
+        match Uri::try_from($expr) {
+            Ok(u) => u,
+            Err(_) => return,
+        }
+    };
+}
+
 impl Jar {
     /// Add a cookie str to this jar.
     ///
     /// # Example
     ///
     /// ```
-    /// use wreq::{
-    ///     Url,
-    ///     cookie::Jar,
-    /// };
+    /// use wreq::cookie::Jar;
     ///
     /// let cookie = "foo=bar; Domain=yolo.local";
-    /// let url = "https://yolo.local".parse::<Url>().unwrap();
-    ///
     /// let jar = Jar::default();
-    /// jar.add_cookie_str(cookie, &url);
-    ///
-    /// // and now add to a `ClientBuilder`?
+    /// jar.add_cookie_str(cookie, "https://yolo.local");
     /// ```
-    pub fn add_cookie_str(&self, cookie: &str, uri: &Uri) {
+    pub fn add_cookie_str<U>(&self, cookie: &str, uri: U)
+    where
+        Uri: TryFrom<U>,
+    {
         if let Ok(raw) = RawCookie::parse(cookie) {
             self.add_cookie(raw.into_owned(), uri);
         }
     }
 
-    fn add_cookie(&self, cookie: RawCookie<'static>, uri: &Uri) {
+    /// Add a cookie to this jar.
+    ///
+    /// The cookie's domain and path attributes are used if present, otherwise
+    /// the domain and path are derived from the provided Uri.
+    ///
+    /// # Example
+    /// ```
+    /// use wreq::cookie::Jar;
+    /// use cookie::CookieBuilder;
+    /// let jar = Jar::default();
+    /// let cookie = CookieBuilder::new("foo", "bar")
+    ///     .domain("example.com")
+    ///     .path("/")
+    ///     .build();
+    /// jar.add_cookie(cookie, "http://example.com");
+    /// ```
+    pub fn add_cookie<C, U>(&self, cookie: C, uri: U)
+    where
+        C: Into<RawCookie<'static>>,
+        Uri: TryFrom<U>,
+    {
+        let cookie: RawCookie<'static> = cookie.into();
+        let uri = into_uri!(uri);
         let domain = cookie.domain().or_else(|| uri.host()).unwrap_or_default();
-        let path = cookie.path().unwrap_or_else(|| default_path(uri));
+        let path = cookie.path().unwrap_or_else(|| default_path(&uri));
 
         let mut inner = self.0.write();
         let name_map = inner
@@ -225,6 +258,82 @@ impl Jar {
         } else {
             name_map.add(cookie);
         }
+    }
+
+    /// Iterate all cookies in this jar.
+    ///
+    /// Returns an iterator over all cookies currently stored in the jar,
+    /// regardless of domain or path.
+    ///
+    /// # Example
+    /// ```
+    /// use wreq::cookie::Jar;
+    /// let jar = Jar::default();
+    /// jar.add_cookie_str("foo=bar; Domain=example.com", "http://example.com");
+    /// for cookie in jar.iter() {
+    ///     println!("{}={}", cookie.name(), cookie.value());
+    /// }
+    /// ```
+    pub fn iter(&self) -> impl Iterator<Item = Cookie<'static>> {
+        self.0
+            .read()
+            .iter()
+            .flat_map(|(_, path_map)| {
+                path_map.iter().flat_map(|(_, name_map)| {
+                    name_map
+                        .iter()
+                        .map(|cookie| Cookie(cookie.clone().into_owned()))
+                })
+            })
+            .collect::<Vec<_>>()
+            .into_iter()
+    }
+
+    /// Remove a cookie by name for a given Uri.
+    ///
+    /// Removes the cookie with the specified name for the domain and path
+    /// derived from the given Uri, if it exists.
+    ///
+    /// # Example
+    /// ```
+    /// use wreq::cookie::Jar;
+    /// let jar = Jar::default();
+    /// jar.add_cookie_str("foo=bar; Domain=example.com", "http://example.com");
+    /// jar.remove("foo", "http://example.com");
+    /// ```
+    pub fn remove<U>(&self, name: &str, uri: U)
+    where
+        Uri: TryFrom<U>,
+    {
+        let uri = into_uri!(uri);
+        if let Some(host) = uri.host() {
+            let domain = host.to_ascii_lowercase();
+            let path = default_path(&uri);
+
+            let mut inner = self.0.write();
+            if let Some(path_map) = inner.get_mut(&domain) {
+                if let Some(name_map) = path_map.get_mut(path) {
+                    name_map.remove(name.to_owned());
+                }
+            }
+        }
+    }
+
+    /// Clear all cookies from this jar.
+    ///
+    /// Removes all cookies from the jar, leaving it empty.
+    ///
+    /// # Example
+    /// ```
+    /// use wreq::cookie::Jar;
+    /// let jar = Jar::default();
+    /// jar.add_cookie_str("foo=bar; Domain=example.com", "http://example.com");
+    /// jar.clear();
+    /// assert_eq!(jar.iter().count(), 0);
+    /// ```
+    pub fn clear(&self) {
+        let mut inner = self.0.write();
+        inner.clear();
     }
 }
 
@@ -289,6 +398,12 @@ impl CookieStore for Jar {
     }
 }
 
+impl Default for Jar {
+    fn default() -> Self {
+        Self(RwLock::new(HashMap::with_hasher(HASHER)))
+    }
+}
+
 // RFC 6265 domain-match
 fn domain_match(host: &str, domain: &str) -> bool {
     if domain.is_empty() {
@@ -297,7 +412,9 @@ fn domain_match(host: &str, domain: &str) -> bool {
     if host == domain {
         return true;
     }
-    host.ends_with(&format!(".{}", domain))
+    host.len() > domain.len()
+        && host.as_bytes()[host.len() - domain.len() - 1] == b'.'
+        && host.ends_with(domain)
 }
 
 // RFC 6265 path-match
@@ -310,25 +427,15 @@ fn path_match(req_path: &str, cookie_path: &str) -> bool {
 // RFC 6265 default-path
 fn default_path(uri: &Uri) -> &str {
     const DEFAULT_PATH: &str = "/";
-
     let path = uri.path();
-
     if !path.starts_with(DEFAULT_PATH) {
         return DEFAULT_PATH;
     }
-
     if let Some(pos) = path.rfind(DEFAULT_PATH) {
         if pos == 0 {
             return DEFAULT_PATH;
         }
         return &path[..pos];
     }
-
     DEFAULT_PATH
-}
-
-impl Default for Jar {
-    fn default() -> Self {
-        Self(RwLock::new(HashMap::with_hasher(HASHER)))
-    }
 }

@@ -25,7 +25,7 @@ default = ["webpki-roots"]
 charset = ["dep:encoding_rs", "dep:mime"]
 
 # Enable cookies store support.
-cookies = ["dep:cookie_crate"]
+cookies = ["dep:cookie"]
 
 # Enable gzip compression support.
 gzip = ["tower-http/decompression-gzip"]
@@ -122,7 +122,7 @@ sync_wrapper = { version = "1.0.2", features = ["futures"], optional = true }
 webpki-root-certs = { version = "1.0.2", optional = true }
 
 ## cookies
-cookie_crate = { version = "0.18", package = "cookie", optional = true }
+cookie = { version = "0.18", optional = true }
 
 ## tower http
 tower-http = { version = "0.6.6", default-features = false, optional = true }
