@@ -85,7 +85,7 @@ impl Response {
             .headers()
             .get_all(crate::header::SET_COOKIE)
             .iter()
-            .map(cookie::Cookie::try_from)
+            .map(cookie::Cookie::parse)
             .filter_map(Result::ok)
     }
 
@@ -96,6 +96,7 @@ impl Response {
     }
 
     /// Get the local address used to get this `Response`.
+    #[inline]
     pub fn local_addr(&self) -> Option<SocketAddr> {
         self.res
             .extensions()
@@ -104,6 +105,7 @@ impl Response {
     }
 
     /// Get the remote address used to get this `Response`.
+    #[inline]
     pub fn remote_addr(&self) -> Option<SocketAddr> {
         self.res
             .extensions()

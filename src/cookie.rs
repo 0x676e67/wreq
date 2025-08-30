@@ -85,6 +85,14 @@ where
 // ===== impl Cookie =====
 
 impl<'a> Cookie<'a> {
+    pub(crate) fn parse(value: &'a HeaderValue) -> crate::Result<Cookie<'a>> {
+        std::str::from_utf8(value.as_bytes())
+            .map_err(cookie::ParseError::from)
+            .and_then(cookie::Cookie::parse)
+            .map_err(Error::decode)
+            .map(Cookie)
+    }
+
     /// The name of the cookie.
     #[inline]
     pub fn name(&self) -> &str {
@@ -168,15 +176,9 @@ impl<'c> From<RawCookie<'c>> for Cookie<'c> {
     }
 }
 
-impl<'c> TryFrom<&'c HeaderValue> for Cookie<'c> {
-    type Error = crate::Error;
-
-    fn try_from(value: &'c HeaderValue) -> Result<Self, Self::Error> {
-        std::str::from_utf8(value.as_bytes())
-            .map_err(cookie::ParseError::from)
-            .and_then(cookie::Cookie::parse)
-            .map_err(Error::decode)
-            .map(Cookie)
+impl<'c> From<Cookie<'c>> for RawCookie<'c> {
+    fn from(cookie: Cookie<'c>) -> RawCookie<'c> {
+        cookie.0
     }
 }
 
@@ -340,7 +342,7 @@ impl Jar {
 impl CookieStore for Jar {
     fn set_cookies(&self, cookie_headers: &mut dyn Iterator<Item = &HeaderValue>, uri: &Uri) {
         let cookies = cookie_headers
-            .map(Cookie::try_from)
+            .map(Cookie::parse)
             .filter_map(Result::ok)
             .map(|cookie| cookie.0.into_owned());
 
