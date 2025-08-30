@@ -312,7 +312,7 @@ impl WebSocketRequestBuilder {
             Some("ws") => uri.set_scheme(Scheme::HTTP),
             Some("wss") => uri.set_scheme(Scheme::HTTPS),
             _ => {
-                return Err(Error::url_bad_scheme().with_uri(uri.clone()));
+                return Err(Error::uri_bad_scheme().with_uri(uri.clone()));
             }
         };
 

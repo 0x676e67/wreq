@@ -28,11 +28,11 @@ mod sealed {
 
     use http::Uri;
 
-    use crate::Error;
+    use crate::{Error, Result};
 
     pub trait IntoUriSealed {
         // Besides parsing as a valid `Uri`.
-        fn into_uri(self) -> crate::Result<Uri>;
+        fn into_uri(self) -> Result<Uri>;
     }
 
     impl<T> IntoUriSealed for T
@@ -40,14 +40,13 @@ mod sealed {
         Uri: TryFrom<T>,
         <Uri as TryFrom<T>>::Error: StdError + Send + Sync + 'static,
     {
-        fn into_uri(self) -> crate::Result<Uri> {
-            let uri = Uri::try_from(self).map_err(Error::builder)?;
-            match (uri.scheme(), uri.host()) {
-                (None, Some(_)) | (Some(_), None) | (None, None) => {
-                    Err(Error::uri_bad_scheme().with_uri(uri))
+        fn into_uri(self) -> Result<Uri> {
+            Uri::try_from(self).map_err(Error::builder).and_then(|uri| {
+                match (uri.scheme(), uri.authority()) {
+                    (Some(_), Some(_)) => Ok(uri),
+                    _ => Err(Error::uri_bad_scheme().with_uri(uri)),
                 }
-                _ => Ok(uri),
-            }
+            })
         }
     }
 }
