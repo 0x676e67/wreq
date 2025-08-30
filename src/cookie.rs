@@ -194,6 +194,60 @@ macro_rules! into_uri {
 }
 
 impl Jar {
+    /// Get a cookie by name for a given Uri.
+    ///
+    /// Returns the cookie with the specified name for the domain and path
+    /// derived from the given Uri, if it exists.
+    ///
+    /// # Example
+    /// ```
+    /// use wreq::cookie::Jar;
+    /// let jar = Jar::default();
+    /// jar.add_cookie_str("foo=bar; Domain=example.com", "http://example.com");
+    /// let cookie = jar.get("foo", "http://example.com").unwrap();
+    /// assert_eq!(cookie.value(), "bar");
+    /// ```
+    pub fn get<U>(&self, name: &str, uri: U) -> Option<Cookie<'static>>
+    where
+        Uri: TryFrom<U>,
+    {
+        let uri = Uri::try_from(uri).ok()?;
+        let host = uri.host()?;
+        let path = default_path(&uri);
+        let inner = self.0.read();
+        let cookie = inner.get(host)?.get(path)?.get(name)?.clone().into_owned();
+        Some(Cookie(cookie))
+    }
+
+    /// Get all cookies in this jar.
+    ///
+    /// Returns an iterator over all cookies currently stored in the jar,
+    /// regardless of domain or path.
+    ///
+    /// # Example
+    /// ```
+    /// use wreq::cookie::Jar;
+    /// let jar = Jar::default();
+    /// jar.add_cookie_str("foo=bar; Domain=example.com", "http://example.com");
+    /// for cookie in jar.get_all() {
+    ///     println!("{}={}", cookie.name(), cookie.value());
+    /// }
+    /// ```
+    pub fn get_all(&self) -> impl Iterator<Item = Cookie<'static>> {
+        self.0
+            .read()
+            .iter()
+            .flat_map(|(_, path_map)| {
+                path_map.iter().flat_map(|(_, name_map)| {
+                    name_map
+                        .iter()
+                        .map(|cookie| Cookie(cookie.clone().into_owned()))
+                })
+            })
+            .collect::<Vec<_>>()
+            .into_iter()
+    }
+
     /// Add a cookie str to this jar.
     ///
     /// # Example
@@ -260,35 +314,6 @@ impl Jar {
         } else {
             name_map.add(cookie);
         }
-    }
-
-    /// Iterate all cookies in this jar.
-    ///
-    /// Returns an iterator over all cookies currently stored in the jar,
-    /// regardless of domain or path.
-    ///
-    /// # Example
-    /// ```
-    /// use wreq::cookie::Jar;
-    /// let jar = Jar::default();
-    /// jar.add_cookie_str("foo=bar; Domain=example.com", "http://example.com");
-    /// for cookie in jar.iter() {
-    ///     println!("{}={}", cookie.name(), cookie.value());
-    /// }
-    /// ```
-    pub fn iter(&self) -> impl Iterator<Item = Cookie<'static>> {
-        self.0
-            .read()
-            .iter()
-            .flat_map(|(_, path_map)| {
-                path_map.iter().flat_map(|(_, name_map)| {
-                    name_map
-                        .iter()
-                        .map(|cookie| Cookie(cookie.clone().into_owned()))
-                })
-            })
-            .collect::<Vec<_>>()
-            .into_iter()
     }
 
     /// Remove a cookie by name for a given Uri.
