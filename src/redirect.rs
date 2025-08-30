@@ -54,7 +54,7 @@ pub struct Action {
 #[derive(Clone, Debug)]
 pub struct History {
     status: StatusCode,
-    location: Uri,
+    uri: Uri,
     previous: Uri,
     headers: HeaderMap,
 }
@@ -239,28 +239,39 @@ impl<'a> Attempt<'a> {
 // ===== impl History =====
 
 impl History {
-    /// Returns the redirection response.
+    /// Get the status code of the redirect response.
     #[inline(always)]
     pub fn status(&self) -> StatusCode {
         self.status
     }
 
-    /// Returns the headers of the redirection response.
+    /// Get the URI of the redirect response.
+    #[inline(always)]
+    pub fn uri(&self) -> &Uri {
+        &self.uri
+    }
+
+    /// Get the previous URI before the redirect response.
+    #[inline(always)]
+    pub fn previous(&self) -> &Uri {
+        &self.previous
+    }
+
+    /// Get the headers of the redirect response.
     #[inline(always)]
     pub fn headers(&self) -> &HeaderMap {
         &self.headers
     }
+}
 
-    /// Returns the destination URI of the redirection.
-    #[inline(always)]
-    pub fn location(&self) -> &Uri {
-        &self.location
-    }
-
-    /// Returns the URI of the original request.
-    #[inline(always)]
-    pub fn previous(&self) -> &Uri {
-        &self.previous
+impl From<&policy::Attempt<'_>> for History {
+    fn from(attempt: &policy::Attempt<'_>) -> Self {
+        Self {
+            status: attempt.status(),
+            uri: attempt.location().clone(),
+            previous: attempt.previous().clone(),
+            headers: attempt.headers().clone(),
+        }
     }
 }
 
@@ -393,12 +404,7 @@ impl policy::Policy<Body, BoxError> for FollowRedirectPolicy {
                 if self.history {
                     self.history_entries
                         .get_or_insert_with(Vec::new)
-                        .push(History {
-                            status: attempt.status(),
-                            location: attempt.location().clone(),
-                            previous: attempt.previous().clone(),
-                            headers: attempt.headers().clone(),
-                        });
+                        .push(History::from(attempt));
                 }
 
                 Ok(policy::Action::Follow)
