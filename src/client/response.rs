@@ -116,20 +116,12 @@ impl Response {
 
     /// Get the redirect history of this `Response`.
     #[inline]
-    pub fn history(&self) -> Option<&Vec<History>> {
+    pub fn history(&self) -> impl Iterator<Item = &History> {
         self.res
             .extensions()
             .get::<redirect::RedirectHistory>()
-            .map(|h| &h.0)
-    }
-
-    /// Get the mutable redirect history of this `Response`.
-    #[inline]
-    pub fn history_mut(&mut self) -> Option<&mut Vec<History>> {
-        self.res
-            .extensions_mut()
-            .get_mut::<redirect::RedirectHistory>()
-            .map(|h| &mut h.0)
+            .map(|h| h.0.iter())
+            .unwrap_or_else(|| [].iter())
     }
 
     /// Returns a reference to the associated extensions.

@@ -12,16 +12,14 @@ async fn main() -> wreq::Result<()> {
     let resp = client.get("https://google.com/").send().await?;
 
     // We can inspect the redirect history
-    if let Some(history) = resp.history() {
-        for (i, resp) in history.iter().enumerate() {
-            println!(
-                "Response #{}: status: {}, uri: {}, headers: {:#?}",
-                i + 1,
-                resp.status(),
-                resp.uri(),
-                resp.headers()
-            );
-        }
+    for (i, resp) in resp.history().enumerate() {
+        println!(
+            "Response #{}: status: {}, uri: {}, headers: {:#?}",
+            i + 1,
+            resp.status(),
+            resp.uri(),
+            resp.headers()
+        );
     }
     Ok(())
 }

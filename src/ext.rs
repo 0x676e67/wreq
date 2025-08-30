@@ -69,7 +69,8 @@ pub trait ResponseExt {
     fn uri(&self) -> Option<&Uri>;
 }
 
-#[derive(Debug, Clone, PartialEq)]
+/// Extension type to store the request URI in a response's extensions.
+#[derive(Clone)]
 pub(crate) struct RequestUri(pub Uri);
 
 impl UriExt for Uri {
