@@ -1,6 +1,6 @@
 //! Tools for customizing the behavior of a [`FollowRedirect`][super::FollowRedirect] middleware.
 
-use http::{Extensions, Request, StatusCode, Uri};
+use http::{Extensions, HeaderMap, Request, StatusCode, Uri};
 
 /// Trait for the policy on handling redirection responses.
 pub trait Policy<B, E> {
@@ -83,9 +83,10 @@ where
 
 /// A type that holds information on a redirection attempt.
 pub struct Attempt<'a> {
-    pub(crate) status: StatusCode,
-    pub(crate) location: &'a Uri,
-    pub(crate) previous: &'a Uri,
+    pub(super) status: StatusCode,
+    pub(super) headers: &'a HeaderMap,
+    pub(super) location: &'a Uri,
+    pub(super) previous: &'a Uri,
 }
 
 impl<'a> Attempt<'a> {
@@ -93,6 +94,12 @@ impl<'a> Attempt<'a> {
     #[inline(always)]
     pub fn status(&self) -> StatusCode {
         self.status
+    }
+
+    /// Returns the headers of the redirection response.
+    #[inline(always)]
+    pub fn headers(&self) -> &'a HeaderMap {
+        self.headers
     }
 
     /// Returns the destination URI of the redirection.

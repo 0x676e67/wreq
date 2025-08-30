@@ -121,9 +121,11 @@ where
 
                 let attempt = Attempt {
                     status: res.status(),
+                    headers: res.headers(),
                     location: &location,
                     previous: uri,
                 };
+
                 match policy.redirect(&attempt)? {
                     Action::Follow => {
                         *uri = location;

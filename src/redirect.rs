@@ -6,7 +6,8 @@
 
 use std::{error::Error as StdError, fmt, sync::Arc};
 
-use http::{Extensions, HeaderMap, HeaderValue, StatusCode, Uri};
+use bytes::Bytes;
+use http::{Extensions, HeaderMap, HeaderValue, StatusCode, Uri, uri::Authority};
 
 use crate::{
     client::{
@@ -28,7 +29,7 @@ use crate::{
 ///   redirect hops in a chain.
 /// - `none` can be used to disable all redirect behavior.
 /// - `custom` can be used to create a customized policy.
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct Policy {
     inner: PolicyKind,
 }
@@ -38,6 +39,7 @@ pub struct Policy {
 #[derive(Debug)]
 pub struct Attempt<'a> {
     status: StatusCode,
+    headers: &'a HeaderMap,
     next: &'a Uri,
     previous: &'a [Uri],
 }
@@ -146,9 +148,16 @@ impl Policy {
         }
     }
 
-    pub(crate) fn check(&self, status: StatusCode, next: &Uri, previous: &[Uri]) -> ActionKind {
+    fn check(
+        &self,
+        status: StatusCode,
+        headers: &HeaderMap,
+        next: &Uri,
+        previous: &[Uri],
+    ) -> ActionKind {
         self.redirect(Attempt {
             status,
+            headers,
             next,
             previous,
         })
@@ -167,6 +176,11 @@ impl<'a> Attempt<'a> {
     /// Get the type of redirect.
     pub fn status(&self) -> StatusCode {
         self.status
+    }
+
+    /// Get the headers of redirect.
+    pub fn headers(&self) -> &HeaderMap {
+        self.headers
     }
 
     /// Get the next URI to redirect to.
@@ -212,12 +226,6 @@ enum PolicyKind {
     None,
 }
 
-impl fmt::Debug for Policy {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        f.debug_tuple("Policy").field(&self.inner).finish()
-    }
-}
-
 impl fmt::Debug for PolicyKind {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
@@ -233,21 +241,6 @@ pub(crate) enum ActionKind {
     Follow,
     Stop,
     Error(BoxError),
-}
-
-fn remove_sensitive_headers(headers: &mut HeaderMap, next: &Uri, previous: &[Uri]) {
-    if let Some(previous) = previous.last() {
-        let cross_host = next.host() != previous.host()
-            || next.port() != previous.port()
-            || next.scheme() != previous.scheme();
-        if cross_host {
-            headers.remove(AUTHORIZATION);
-            headers.remove(COOKIE);
-            headers.remove("cookie2");
-            headers.remove(PROXY_AUTHORIZATION);
-            headers.remove(WWW_AUTHENTICATE);
-        }
-    }
 }
 
 #[derive(Debug)]
@@ -279,35 +272,15 @@ impl FollowRedirectPolicy {
         }
     }
 
-    pub(crate) fn with_referer(mut self, referer: bool) -> Self {
+    pub(crate) const fn with_referer(mut self, referer: bool) -> Self {
         self.referer = referer;
         self
     }
 
-    pub(crate) fn with_https_only(mut self, https_only: bool) -> Self {
+    pub(crate) const fn with_https_only(mut self, https_only: bool) -> Self {
         self.https_only = https_only;
         self
     }
-}
-
-fn make_referer(next: &Uri, previous: &Uri) -> Option<HeaderValue> {
-    if next.is_http() && previous.is_https() {
-        return None;
-    }
-
-    let mut parts = previous.clone().into_parts();
-    if let Some(authority) = &mut parts.authority {
-        let host_port = authority.host();
-        let port = authority.port();
-        let new_authority = match port {
-            Some(port) => format!("{}:{}", host_port, port),
-            None => host_port.to_string(),
-        };
-        parts.authority = Some(new_authority.parse().ok()?);
-    }
-
-    let referer = Uri::from_parts(parts).ok()?;
-    referer.to_string().parse().ok()
 }
 
 impl policy::Policy<Body, BoxError> for FollowRedirectPolicy {
@@ -326,7 +299,7 @@ impl policy::Policy<Body, BoxError> for FollowRedirectPolicy {
             .expect("FollowRedirectPolicy should always have a policy set");
 
         // Check if the next URI is already in the list of URLs.
-        match policy.check(attempt.status(), next_uri, &self.uris) {
+        match policy.check(attempt.status(), attempt.headers(), next_uri, &self.uris) {
             ActionKind::Follow => {
                 // Validate the next URI's scheme.
                 if !next_uri.is_http() && !next_uri.is_https() {
@@ -378,6 +351,44 @@ impl policy::Policy<Body, BoxError> for FollowRedirectPolicy {
     }
 }
 
+fn make_referer(next: &Uri, previous: &Uri) -> Option<HeaderValue> {
+    if next.is_http() && previous.is_https() {
+        return None;
+    }
+
+    let mut parts = previous.clone().into_parts();
+    if let Some(authority) = &mut parts.authority {
+        let host = authority.host();
+        match authority.port() {
+            Some(port) => {
+                parts.authority =
+                    Authority::from_maybe_shared(Bytes::from(format!("{host}:{port}"))).ok()
+            }
+            None => {
+                parts.authority = Some(host.parse().ok()?);
+            }
+        };
+    }
+
+    let referer = Uri::from_parts(parts).ok()?;
+    HeaderValue::from_maybe_shared(Bytes::from(referer.to_string())).ok()
+}
+
+fn remove_sensitive_headers(headers: &mut HeaderMap, next: &Uri, previous: &[Uri]) {
+    if let Some(previous) = previous.last() {
+        let cross_host = next.host() != previous.host()
+            || next.port() != previous.port()
+            || next.scheme() != previous.scheme();
+        if cross_host {
+            headers.remove(AUTHORIZATION);
+            headers.remove(COOKIE);
+            headers.remove("cookie2");
+            headers.remove(PROXY_AUTHORIZATION);
+            headers.remove(WWW_AUTHENTICATE);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -390,14 +401,14 @@ mod tests {
             .map(|i| Uri::try_from(&format!("http://a.b/c/{i}")).unwrap())
             .collect::<Vec<_>>();
 
-        match policy.check(StatusCode::FOUND, &next, &previous) {
+        match policy.check(StatusCode::FOUND, &HeaderMap::new(), &next, &previous) {
             ActionKind::Follow => (),
             other => panic!("unexpected {other:?}"),
         }
 
         previous.push(Uri::try_from("http://a.b.d/e/33").unwrap());
 
-        match policy.check(StatusCode::FOUND, &next, &previous) {
+        match policy.check(StatusCode::FOUND, &HeaderMap::new(), &next, &previous) {
             ActionKind::Error(err) if err.is::<TooManyRedirects>() => (),
             other => panic!("unexpected {other:?}"),
         }
@@ -409,7 +420,7 @@ mod tests {
         let next = Uri::try_from("http://x.y/z").unwrap();
         let previous = vec![Uri::try_from("http://a.b/c").unwrap()];
 
-        match policy.check(StatusCode::FOUND, &next, &previous) {
+        match policy.check(StatusCode::FOUND, &HeaderMap::new(), &next, &previous) {
             ActionKind::Error(err) if err.is::<TooManyRedirects>() => (),
             other => panic!("unexpected {other:?}"),
         }
@@ -426,13 +437,13 @@ mod tests {
         });
 
         let next = Uri::try_from("http://bar/baz").unwrap();
-        match policy.check(StatusCode::FOUND, &next, &[]) {
+        match policy.check(StatusCode::FOUND, &HeaderMap::new(), &next, &[]) {
             ActionKind::Follow => (),
             other => panic!("unexpected {other:?}"),
         }
 
         let next = Uri::try_from("http://foo/baz").unwrap();
-        match policy.check(StatusCode::FOUND, &next, &[]) {
+        match policy.check(StatusCode::FOUND, &HeaderMap::new(), &next, &[]) {
             ActionKind::Stop => (),
             other => panic!("unexpected {other:?}"),
         }
