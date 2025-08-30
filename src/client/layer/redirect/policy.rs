@@ -25,7 +25,6 @@ pub trait Policy<B, E> {
     /// This can for example be used to inspect the response before any redirection is handled.
     /// The default implementation does nothing.
     ///
-    /// The default implementation does nothing.
     fn on_response<Body>(&mut self, _response: &mut http::Response<Body>) {}
 
     /// Loads redirect policy configuration from the request's [`Extensions`].
