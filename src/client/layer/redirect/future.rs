@@ -15,12 +15,11 @@ use iri_string::types::{UriAbsoluteString, UriReferenceStr};
 use pin_project_lite::pin_project;
 use tower::{Service, util::Oneshot};
 
-use crate::ext::RequestUri;
-
 use super::{
     BodyRepr,
     policy::{Action, Attempt, Policy},
 };
+use crate::ext::RequestUri;
 
 pin_project! {
     /// Response future for [`FollowRedirectLayer`].

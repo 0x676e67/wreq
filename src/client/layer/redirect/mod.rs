@@ -79,7 +79,7 @@ where
         let service = self.inner.clone();
         let mut service = mem::replace(&mut self.inner, service);
         let mut policy = self.policy.clone();
-        policy.on_extensions(req.extensions_mut());
+        policy.on_extensions(req.extensions());
 
         if policy.allowed() {
             let mut body = BodyRepr::None;
