@@ -212,10 +212,13 @@ impl Jar {
         Uri: TryFrom<U>,
     {
         let uri = Uri::try_from(uri).ok()?;
-        let host = uri.host()?;
-        let path = default_path(&uri);
         let inner = self.0.read();
-        let cookie = inner.get(host)?.get(path)?.get(name)?.clone().into_owned();
+        let cookie = inner
+            .get(uri.host()?)?
+            .get(default_path(&uri))?
+            .get(name)?
+            .clone()
+            .into_owned();
         Some(Cookie(cookie))
     }
 
