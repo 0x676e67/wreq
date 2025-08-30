@@ -42,11 +42,32 @@ mod sealed {
     {
         fn into_uri(self) -> crate::Result<Uri> {
             let uri = Uri::try_from(self).map_err(Error::builder)?;
-            if uri.host().is_some() {
-                Ok(uri)
-            } else {
-                Err(Error::url_bad_scheme().with_uri(uri))
+            match (uri.scheme(), uri.host()) {
+                (None, Some(_)) | (Some(_), None) | (None, None) => {
+                    Err(Error::uri_bad_scheme().with_uri(uri))
+                }
+                _ => Ok(uri),
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::into_uri::sealed::IntoUriSealed;
+
+    #[test]
+    fn into_uri_bad_scheme() {
+        let err = "/hello/world".into_uri().unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "builder error for uri (/hello/world): URI scheme is not allowed"
+        );
+
+        let err = "127.0.0.1".into_uri().unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "builder error for uri (127.0.0.1): URI scheme is not allowed"
+        );
     }
 }
