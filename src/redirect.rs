@@ -385,7 +385,7 @@ impl policy::Policy<Body, BoxError> for FollowRedirectPolicy {
                         .get_or_insert_with(Vec::new)
                         .push(History {
                             status: attempt.status(),
-                            uri: previous_uri.clone(),
+                            uri: attempt.location().clone(),
                             headers: attempt.headers().clone(),
                         });
                 }
