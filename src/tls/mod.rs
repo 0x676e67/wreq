@@ -10,15 +10,15 @@ mod options;
 mod types;
 mod x509;
 
+pub use boring2::ssl::{CertificateCompressionAlgorithm, ExtensionType};
+
 pub(crate) use self::conn::{
     EstablishedConn, HttpsConnector, MaybeHttpsStream, TlsConnector, TlsConnectorBuilder,
 };
 pub use self::{
     keylog::KeyLogPolicy,
     options::{TlsOptions, TlsOptionsBuilder},
-    types::{
-        AlpnProtocol, AlpsProtocol, CertificateCompressionAlgorithm, ExtensionType, TlsVersion,
-    },
+    types::{AlpnProtocol, AlpsProtocol, TlsVersion},
     x509::{CertStore, CertStoreBuilder, Certificate, Identity},
 };
 
