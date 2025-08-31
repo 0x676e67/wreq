@@ -335,8 +335,8 @@ impl Proxy {
             |uri: &Uri, extra: &Option<HeaderMap>| uri.is_http() && extra.is_some();
 
         let no_proxy = no_proxy.as_ref().map_or("", |n| n.inner.as_ref());
-        let mut maybe_has_http_auth = false;
-        let mut maybe_has_http_custom_headers = false;
+        let maybe_has_http_auth;
+        let mut maybe_has_http_custom_headers;
 
         let inner = match intercept {
             Intercept::All(uri) => {
@@ -367,10 +367,14 @@ impl Proxy {
                     .build(extra)
             }
             #[cfg(unix)]
-            Intercept::Unix(unix) => matcher::Matcher::builder()
-                .unix(unix)
-                .no(no_proxy)
-                .build(extra),
+            Intercept::Unix(unix) => {
+                maybe_has_http_auth = false;
+                maybe_has_http_custom_headers = false;
+                matcher::Matcher::builder()
+                    .unix(unix)
+                    .no(no_proxy)
+                    .build(extra)
+            }
         };
 
         Matcher {
