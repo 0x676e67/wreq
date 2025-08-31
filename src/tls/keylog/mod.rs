@@ -1,3 +1,14 @@
+//! TLS Key Log Management
+//!
+//! This module provides utilities for managing TLS key logging, allowing session keys to be
+//! written to a file for debugging or analysis (e.g., with Wireshark).
+//!
+//! The [`KeyLogPolicy`] enum lets you control key log behavior, either by respecting the
+//! `SSLKEYLOGFILE` environment variable or by specifying a custom file path. Handles are cached
+//! globally to avoid duplicate file access.
+//!
+//! Use [`KeyLogPolicy::open_handle`] to obtain a [`KeyLogHandle`] for writing keys.
+
 mod handle;
 
 use std::{
@@ -8,14 +19,11 @@ use std::{
     sync::OnceLock,
 };
 
-pub use handle::KeyLogHandle;
+use handle::KeyLogHandle;
 
 use crate::sync::RwLock;
 
-static GLOBAL_KEYLOG_FILE_MAPPING: OnceLock<RwLock<HashMap<PathBuf, KeyLogHandle>>> =
-    OnceLock::new();
-
-/// Specifies the intent for a (TLS) keylogger to be used in a client or server configuration.
+/// Specifies the intent for a (TLS) keylogger.
 #[derive(Debug, Clone)]
 pub enum KeyLogPolicy {
     /// Uses the default behavior, respecting the `SSLKEYLOGFILE` environment variable.
@@ -34,7 +42,10 @@ pub enum KeyLogPolicy {
 
 impl KeyLogPolicy {
     /// Creates a new key log file handle based on the policy.
-    pub fn open_handle(self) -> Result<KeyLogHandle> {
+    pub(crate) fn open_handle(self) -> Result<KeyLogHandle> {
+        static GLOBAL_KEYLOG_FILE_MAPPING: OnceLock<RwLock<HashMap<PathBuf, KeyLogHandle>>> =
+            OnceLock::new();
+
         let path = match self {
             KeyLogPolicy::Environment => std::env::var("SSLKEYLOGFILE")
                 .map(PathBuf::from)
@@ -65,7 +76,7 @@ impl KeyLogPolicy {
     }
 }
 
-pub fn normalize_path<'a, P>(path: P) -> PathBuf
+fn normalize_path<'a, P>(path: P) -> PathBuf
 where
     P: Into<Cow<'a, Path>>,
 {
