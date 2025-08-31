@@ -204,7 +204,7 @@ impl Jar {
     /// ```
     /// use wreq::cookie::Jar;
     /// let jar = Jar::default();
-    /// jar.add_cookie_str("foo=bar; Domain=example.com", "http://example.com/foo");
+    /// jar.add_cookie_str("foo=bar; Path=/foo; Domain=example.com", "http://example.com/foo");
     /// let cookie = jar.get("foo", "http://example.com/foo").unwrap();
     /// assert_eq!(cookie.value(), "bar");
     /// ```
@@ -217,7 +217,7 @@ impl Jar {
             .0
             .read()
             .get(uri.host()?)?
-            .get(normalize_path(&uri))?
+            .get(uri.path())?
             .get(name)?
             .clone()
             .into_owned();
@@ -330,7 +330,7 @@ impl Jar {
     /// ```
     /// use wreq::cookie::Jar;
     /// let jar = Jar::default();
-    /// jar.add_cookie_str("foo=bar; Domain=example.com", "http://example.com/foo");
+    /// jar.add_cookie_str("foo=bar; Path=/foo; Domain=example.com", "http://example.com/foo");
     /// assert!(jar.get("foo", "http://example.com/foo").is_some());
     /// jar.remove("foo", "http://example.com/foo");
     /// assert!(jar.get("foo", "http://example.com/foo").is_none());
@@ -344,7 +344,7 @@ impl Jar {
         if let Some(host) = uri.host() {
             let mut inner = self.0.write();
             if let Some(path_map) = inner.get_mut(host) {
-                if let Some(name_map) = path_map.get_mut(normalize_path(&uri)) {
+                if let Some(name_map) = path_map.get_mut(uri.path()) {
                     name_map.remove(cookie.into());
                 }
             }
