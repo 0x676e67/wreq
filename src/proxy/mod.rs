@@ -336,7 +336,7 @@ impl Proxy {
 
         let no_proxy = no_proxy.as_ref().map_or("", |n| n.inner.as_ref());
         let maybe_has_http_auth;
-        let mut maybe_has_http_custom_headers;
+        let maybe_has_http_custom_headers;
 
         let inner = match intercept {
             Intercept::All(uri) => {
