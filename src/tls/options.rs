@@ -168,8 +168,8 @@ pub struct TlsOptions {
     /// Preference for ChaCha20 over AES in TLS 1.3.
     ///
     /// When set, the order of preference is:
-    /// - `AES_128_GCM`  
-    /// - `CHACHA20_POLY1305`  
+    /// - `AES_128_GCM`
+    /// - `CHACHA20_POLY1305`
     /// - `AES_256_GCM`
     ///
     /// **Default:** `None` (implementation default)
