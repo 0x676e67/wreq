@@ -32,7 +32,7 @@ impl SslConnectorBuilderExt for SslConnectorBuilder {
         if let Some(store) = store {
             store.add_to_tls(&mut self);
         } else {
-            self.set_default_verify_paths().map_err(Error::tls)?;
+            self.set_default_verify_paths()?;
         }
 
         Ok(self)

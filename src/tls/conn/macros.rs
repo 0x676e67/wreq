@@ -22,23 +22,21 @@ macro_rules! set_option {
 macro_rules! set_option_ref_try {
     ($field:ident, $conn:expr, $setter:ident) => {
         if let Some(val) = $field.as_ref() {
-            $conn.$setter(val).map_err(Error::tls)?;
+            $conn.$setter(val)?;
         }
     };
     ($cfg:expr, $field:ident, $conn:expr, $setter:ident) => {
         if let Some(val) = $cfg.$field.as_ref() {
-            $conn.$setter(val).map_err(Error::tls)?;
+            $conn.$setter(val)?;
         }
     };
 }
 
 macro_rules! set_option_inner_try {
     ($field:ident, $conn:expr, $setter:ident) => {
-        $conn.$setter($field.map(|v| v.0)).map_err(Error::tls)?;
+        $conn.$setter($field.map(|v| v.0))?;
     };
     ($cfg:expr, $field:ident, $conn:expr, $setter:ident) => {
-        $conn
-            .$setter($cfg.$field.map(|v| v.0))
-            .map_err(Error::tls)?;
+        $conn.$setter($cfg.$field.map(|v| v.0))?;
     };
 }

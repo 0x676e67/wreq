@@ -333,6 +333,12 @@ impl StdError for Error {
     }
 }
 
+impl From<boring2::error::ErrorStack> for Error {
+    fn from(e: boring2::error::ErrorStack) -> Self {
+        Error::tls(e)
+    }
+}
+
 #[derive(Debug)]
 pub(crate) enum Kind {
     Builder,

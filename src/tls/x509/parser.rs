@@ -11,7 +11,7 @@ where
     I: IntoIterator,
     I::Item: Into<CertificateInput<'c>>,
 {
-    let mut store = X509StoreBuilder::new().map_err(Error::tls)?;
+    let mut store = X509StoreBuilder::new()?;
     let certs = filter_map_certs(certs, parser);
     process_certs(certs.into_iter(), &mut store)?;
     Ok(store.build())
@@ -22,7 +22,7 @@ where
     C: AsRef<[u8]>,
     F: Fn(C) -> Result<Vec<Certificate>>,
 {
-    let mut store = X509StoreBuilder::new().map_err(Error::tls)?;
+    let mut store = X509StoreBuilder::new()?;
     let certs = parse(certs)?;
     process_certs(certs.into_iter(), &mut store)?;
     Ok(store.build())

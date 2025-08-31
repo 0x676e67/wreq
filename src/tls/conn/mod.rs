@@ -372,8 +372,7 @@ impl TlsConnectorBuilder {
         });
 
         // Create the SslConnector with the provided options
-        let mut connector = SslConnector::no_default_verify_builder(SslMethod::tls_client())
-            .map_err(Error::tls)?
+        let mut connector = SslConnector::no_default_verify_builder(SslMethod::tls_client())?
             .set_cert_store(self.cert_store.as_ref())?
             .set_cert_verification(self.cert_verification)?
             .add_certificate_compression_algorithms(
@@ -469,9 +468,7 @@ impl TlsConnectorBuilder {
 
         // Set TLS extension permutation
         if let Some(ref extension_permutation) = opts.extension_permutation {
-            connector
-                .set_extension_permutation(extension_permutation)
-                .map_err(Error::tls)?;
+            connector.set_extension_permutation(extension_permutation)?;
         }
 
         // Set TLS keylog policy if provided.

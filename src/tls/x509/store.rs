@@ -110,7 +110,7 @@ impl CertStoreBuilder {
             let input = cert.into();
             let result = input
                 .with_parser(parser)
-                .and_then(|cert| builder.add_cert(cert.0).map_err(Error::tls));
+                .and_then(|cert| Ok(builder.add_cert(cert.0)?));
 
             if let Err(err) = result {
                 self.builder = Err(err);
