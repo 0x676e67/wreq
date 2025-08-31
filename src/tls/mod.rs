@@ -66,7 +66,7 @@ impl AlpnProtocol {
     /// Prefer HTTP/3
     pub const HTTP3: AlpnProtocol = AlpnProtocol(b"h3");
 
-    /// Create a new [`AlpsProtocol`] from a static byte slice.
+    /// Create a new [`AlpnProtocol`] from a static byte slice.
     #[inline]
     pub const fn new(value: &'static [u8]) -> Self {
         AlpnProtocol(value)
@@ -103,12 +103,6 @@ impl AlpsProtocol {
 
     /// Prefer HTTP/3
     pub const HTTP3: AlpsProtocol = AlpsProtocol(b"h3");
-
-    /// Create a new [`AlpsProtocol`] from a static byte slice.
-    #[inline]
-    pub const fn new(value: &'static [u8]) -> Self {
-        AlpsProtocol(value)
-    }
 }
 
 #[cfg(test)]
