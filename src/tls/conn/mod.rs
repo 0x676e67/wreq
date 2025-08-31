@@ -224,7 +224,7 @@ impl Inner {
         // Set ALPS protos
         if let Some(ref alps_values) = self.config.alps_protocols {
             for alps in alps_values.iter() {
-                cfg.add_application_settings(alps.value())?;
+                cfg.add_application_settings(alps.0)?;
             }
 
             // By default, the old endpoint is used.

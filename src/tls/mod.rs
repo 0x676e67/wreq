@@ -36,7 +36,7 @@ use bytes::{BufMut, Bytes, BytesMut};
 
 /// A TLS protocol version.
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
-pub struct TlsVersion(pub(super) ssl::SslVersion);
+pub struct TlsVersion(ssl::SslVersion);
 
 impl TlsVersion {
     /// Version 1.0 of the TLS protocol.
@@ -66,13 +66,18 @@ impl AlpnProtocol {
     /// Prefer HTTP/3
     pub const HTTP3: AlpnProtocol = AlpnProtocol(b"h3");
 
+    /// Create a new [`AlpsProtocol`] from a static byte slice.
     #[inline]
-    pub(crate) fn encode(self) -> Bytes {
-        Self::encode_sequence(std::iter::once(&self))
+    pub const fn new(value: &'static [u8]) -> Self {
+        AlpnProtocol(value)
     }
 
     #[inline]
-    pub(crate) fn encode_sequence<'a, I>(items: I) -> Bytes
+    fn encode(self) -> Bytes {
+        Self::encode_sequence(std::iter::once(&self))
+    }
+
+    fn encode_sequence<'a, I>(items: I) -> Bytes
     where
         I: IntoIterator<Item = &'a AlpnProtocol>,
     {
@@ -99,9 +104,10 @@ impl AlpsProtocol {
     /// Prefer HTTP/3
     pub const HTTP3: AlpsProtocol = AlpsProtocol(b"h3");
 
+    /// Create a new [`AlpsProtocol`] from a static byte slice.
     #[inline]
-    pub(crate) const fn value(self) -> &'static [u8] {
-        self.0
+    pub const fn new(value: &'static [u8]) -> Self {
+        AlpsProtocol(value)
     }
 }
 
