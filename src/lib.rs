@@ -498,6 +498,31 @@ pub fn options<T: IntoUri>(uri: T) -> RequestBuilder {
     Client::new().options(uri)
 }
 
+/// Shortcut method to quickly make a request with a custom HTTP method.
+///
+/// See also the methods on the [`wreq::RequestBuilder`](./struct.RequestBuilder.html)
+/// type.
+///
+/// **NOTE**: This function creates a new internal `Client` on each call,
+/// and so should not be used if making many requests. Create a
+/// [`Client`](./struct.Client.html) instead.
+///
+/// # Examples
+///
+/// ```rust
+/// # async fn run() -> wreq::Result<()> {
+/// use http::Method;
+/// let res = wreq::request(Method::TRACE, "https://httpbin.org/trace")
+///     .send()
+///     .await?;
+/// # Ok(())
+/// # }
+/// ```
+#[inline]
+pub fn request<T: IntoUri>(method: Method, uri: T) -> RequestBuilder {
+    Client::new().request(method, uri)
+}
+
 /// Shortcut method to quickly make a WebSocket request.
 ///
 /// See also the methods on the

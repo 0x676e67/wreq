@@ -608,24 +608,6 @@ impl RequestBuilder {
     }
 
     /// Set the proxy for this request.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use wreq::{
-    ///     Client,
-    ///     Proxy,
-    /// };
-    ///
-    /// let client = Client::new();
-    /// let proxy = Proxy::all("http://hyper.rs/prox")?.basic_auth("Aladdin", "open sesame");
-    ///
-    /// let resp = client
-    ///     .get("https://tls.peet.ws/api/all")
-    ///     .proxy(proxy)
-    ///     .send()
-    ///     .await?;
-    /// ```
     pub fn proxy(mut self, proxy: Proxy) -> RequestBuilder {
         if let Ok(ref mut req) = self.request {
             *req.config_mut::<RequestLevelOptions>().proxy_matcher_mut() =
