@@ -296,7 +296,11 @@ impl Jar {
     {
         let cookie: RawCookie<'static> = cookie.into();
         let uri = into_uri!(uri);
-        let domain = cookie.domain().or_else(|| uri.host()).unwrap_or_default();
+        let domain = cookie
+            .domain()
+            .map(normalize_domain)
+            .or_else(|| uri.host())
+            .unwrap_or_default();
         let path = cookie.path().unwrap_or_else(|| normalize_path(&uri));
 
         let mut inner = self.0.write();
@@ -470,12 +474,21 @@ pub fn path_match(req_path: &str, cookie_path: &str) -> bool {
                 || req_path[cookie_path.len()..].starts_with(DEFAULT_PATH))
 }
 
+/// Normalizes a domain by stripping any port information.
+///
+/// According to [RFC 6265 section 5.2.3](https://datatracker.ietf.org/doc/html/rfc6265#section-5.2.3),
+/// the domain attribute of a cookie must not include a port. If a port is present (non-standard),
+/// it will be ignored for domain matching purposes.
+pub fn normalize_domain(domain: &str) -> &str {
+    domain.split(':').next().unwrap_or(domain)
+}
+
 /// Computes the normalized default path for a cookie as specified in
 /// [RFC 6265 section 5.1.4](https://datatracker.ietf.org/doc/html/rfc6265#section-5.1.4).
 ///
 /// This function normalizes the path for a cookie, ensuring it matches
 /// browser and server expectations for default cookie scope.
-pub fn normalize_path(uri: &Uri) -> &str {
+fn normalize_path(uri: &Uri) -> &str {
     let path = uri.path();
     if !path.starts_with(DEFAULT_PATH) {
         return DEFAULT_PATH;
