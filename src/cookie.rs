@@ -447,7 +447,7 @@ const DEFAULT_PATH: &str = "/";
 /// - Returns true if the host and domain are identical.
 /// - Returns true if the host is a subdomain of the domain (host ends with ".domain").
 /// - Returns false otherwise.
-pub fn domain_match(host: &str, domain: &str) -> bool {
+fn domain_match(host: &str, domain: &str) -> bool {
     if domain.is_empty() {
         return false;
     }
@@ -467,7 +467,7 @@ pub fn domain_match(host: &str, domain: &str) -> bool {
 ///   - the cookie path ends with '/', or
 ///   - the next character in the request path after the cookie path is '/'.
 /// - Returns false otherwise.
-pub fn path_match(req_path: &str, cookie_path: &str) -> bool {
+fn path_match(req_path: &str, cookie_path: &str) -> bool {
     req_path == cookie_path
         || req_path.starts_with(cookie_path)
             && (cookie_path.ends_with(DEFAULT_PATH)
@@ -479,7 +479,7 @@ pub fn path_match(req_path: &str, cookie_path: &str) -> bool {
 /// According to [RFC 6265 section 5.2.3](https://datatracker.ietf.org/doc/html/rfc6265#section-5.2.3),
 /// the domain attribute of a cookie must not include a port. If a port is present (non-standard),
 /// it will be ignored for domain matching purposes.
-pub fn normalize_domain(domain: &str) -> &str {
+fn normalize_domain(domain: &str) -> &str {
     domain.split(':').next().unwrap_or(domain)
 }
 
