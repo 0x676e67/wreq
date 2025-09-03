@@ -18,7 +18,6 @@ use http::{
     Request as HttpRequest, Response as HttpResponse,
     header::{HeaderMap, HeaderValue, USER_AGENT},
 };
-use service::ClientService;
 use tower::{
     Layer, Service, ServiceBuilder, ServiceExt,
     retry::RetryLayer,
@@ -322,7 +321,7 @@ impl ClientBuilder {
         };
 
         // create client with the configured connector
-        let client = {
+        let service = {
             let http2_only = matches!(config.http_version_pref, HttpVersionPref::Http2);
             let mut builder = HttpClient::builder(TokioExecutor::new());
             builder
@@ -334,14 +333,11 @@ impl ClientBuilder {
                 .pool_idle_timeout(config.pool_idle_timeout)
                 .pool_max_idle_per_host(config.pool_max_idle_per_host)
                 .pool_max_size(config.pool_max_size);
-            builder.build(connector)
+            builder.build(connector).map_err(BoxError::from as _)
         };
 
         // create the client with the configured service layers
         let client = {
-            // configured client service
-            let service = ClientService::new(client, config.https_only);
-
             // configured cookie service layer if cookies are enabled.
             #[cfg(feature = "cookies")]
             let service = ServiceBuilder::new()
@@ -362,6 +358,7 @@ impl ClientBuilder {
             // configured default config layer.
             let service = ServiceBuilder::new()
                 .layer(ConfigServiceLayer::new(
+                    config.https_only,
                     config.headers,
                     config.orig_headers,
                     proxies,

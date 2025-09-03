@@ -7,15 +7,17 @@ use tower::{
 use super::{
     Body,
     connect::{Conn, Unnameable},
-    service::ClientService,
 };
 use crate::{
-    client::layer::{
-        redirect::FollowRedirect,
-        retry::Http2RetryPolicy,
-        timeout::{ResponseBodyTimeout, Timeout, TimeoutBody},
+    client::{
+        http::{Connector, service::ConfigService},
+        layer::{
+            redirect::FollowRedirect,
+            retry::Http2RetryPolicy,
+            timeout::{ResponseBodyTimeout, Timeout, TimeoutBody},
+        },
     },
-    core::client::{body::Incoming, connect},
+    core::client::{Error, HttpClient, body::Incoming, connect},
     dns::DynResolver,
     error::BoxError,
     redirect::FollowRedirectPolicy,
@@ -68,7 +70,11 @@ pub type GenericClientService = MapErr<
             Http2RetryPolicy,
             FollowRedirect<
                 ResponseBodyTimeout<
-                    super::service::ConfigService<Decompression<CookieLayer<ClientService>>>,
+                    ConfigService<
+                        Decompression<
+                            CookieLayer<MapErr<HttpClient<Connector, Body>, fn(Error) -> BoxError>>,
+                        >,
+                    >,
                 >,
                 FollowRedirectPolicy,
             >,

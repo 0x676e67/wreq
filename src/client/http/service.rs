@@ -3,21 +3,16 @@ use std::{
     task::{Context, Poll},
 };
 
-use futures_util::future::{self, Either, MapErr, Ready, TryFutureExt};
+use futures_util::future::{self, Either, Ready};
 use http::{
     HeaderMap, Request, Response,
     header::{Entry, PROXY_AUTHORIZATION},
 };
 use tower::{Layer, Service};
 
-use super::{Body, connect::Connector};
 use crate::{
     client::layer::config::RequestDefaultHeaders,
-    core::{
-        client::{Error, HttpClient, ResponseFuture, body::Incoming},
-        ext::{RequestConfig, RequestOrigHeaderMap},
-    },
-    error::BoxError,
+    core::ext::{RequestConfig, RequestOrigHeaderMap},
     ext::UriExt,
     header::OrigHeaderMap,
     proxy::Matcher as ProxyMatcher,
@@ -25,6 +20,7 @@ use crate::{
 
 /// Configuration for the [`ConfigService`].
 struct Config {
+    https_only: bool,
     headers: HeaderMap,
     orig_headers: RequestConfig<RequestOrigHeaderMap>,
     default_headers: RequestConfig<RequestDefaultHeaders>,
@@ -45,30 +41,25 @@ pub struct ConfigService<S> {
     config: Arc<Config>,
 }
 
-/// Middleware service to use [`ClientService`].
-#[derive(Clone)]
-pub struct ClientService {
-    client: HttpClient<Connector, Body>,
-    https_only: bool,
-}
-
 /// ===== impl ConfigServiceLayer =====
 
 impl ConfigServiceLayer {
     /// Creates a new [`ConfigServiceLayer`].
     pub(super) fn new(
+        https_only: bool,
         headers: HeaderMap,
         orig_headers: OrigHeaderMap,
         proxies: Arc<Vec<ProxyMatcher>>,
     ) -> Self {
+        let org_headers = (!orig_headers.is_empty()).then_some(orig_headers);
         let proxies_maybe_http_auth = proxies.iter().any(ProxyMatcher::maybe_has_http_auth);
         let proxies_maybe_http_custom_headers = proxies
             .iter()
             .any(ProxyMatcher::maybe_has_http_custom_headers);
-        let org_headers = (!orig_headers.is_empty()).then_some(orig_headers);
 
         ConfigServiceLayer {
             config: Arc::new(Config {
+                https_only,
                 headers,
                 orig_headers: RequestConfig::new(org_headers),
                 default_headers: RequestConfig::new(Some(true)),
@@ -96,10 +87,11 @@ impl<S> Layer<S> for ConfigServiceLayer {
 impl<ReqBody, ResBody, S> Service<Request<ReqBody>> for ConfigService<S>
 where
     S: Service<Request<ReqBody>, Response = Response<ResBody>>,
+    S::Error: From<crate::Error>,
 {
     type Response = S::Response;
     type Error = S::Error;
-    type Future = S::Future;
+    type Future = Either<S::Future, Ready<Result<Self::Response, Self::Error>>>;
 
     #[inline(always)]
     fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
@@ -107,6 +99,15 @@ where
     }
 
     fn call(&mut self, mut req: Request<ReqBody>) -> Self::Future {
+        let uri = req.uri().clone();
+
+        // check if the request URI scheme is valid.
+        if (!uri.is_http() && !uri.is_https()) || (self.config.https_only && !uri.is_https()) {
+            return Either::Right(future::err(
+                crate::Error::uri_bad_scheme(uri.clone()).into(),
+            ));
+        }
+
         // check if the request ignores the default headers.
         if self
             .config
@@ -137,8 +138,8 @@ where
 
         // Skip if the destination is not plain HTTP.
         // For HTTPS, the proxy headers should be part of the CONNECT tunnel instead.
-        if !req.uri().is_http() {
-            return self.inner.call(req);
+        if !uri.is_http() {
+            return Either::Left(self.inner.call(req));
         }
 
         // Determine whether we need to apply proxy auth and/or custom headers.
@@ -148,9 +149,10 @@ where
 
         // If no headers need to be applied, return early.
         if !need_auth && !need_custom_headers {
-            return self.inner.call(req);
+            return Either::Left(self.inner.call(req));
         }
 
+        // flag to track if we've inserted the headers we need.
         let mut inserted_auth = false;
         let mut inserted_custom = false;
 
@@ -179,41 +181,6 @@ where
             }
         }
 
-        self.inner.call(req)
-    }
-}
-
-impl ClientService {
-    /// Creates a new [`ClientService`].
-    pub(super) fn new(client: HttpClient<Connector, Body>, https_only: bool) -> Self {
-        ClientService { client, https_only }
-    }
-}
-
-impl Service<Request<Body>> for ClientService {
-    type Error = BoxError;
-
-    type Response = Response<Incoming>;
-
-    type Future = Either<
-        MapErr<ResponseFuture, fn(Error) -> Self::Error>,
-        Ready<Result<Self::Response, Self::Error>>,
-    >;
-
-    #[inline(always)]
-    fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        self.client.poll_ready(cx).map_err(From::from)
-    }
-
-    fn call(&mut self, req: Request<Body>) -> Self::Future {
-        let uri = req.uri();
-
-        // check if the request URI scheme is valid.
-        if (!uri.is_http() && !uri.is_https()) || (self.https_only && !uri.is_https()) {
-            let err = BoxError::from(crate::Error::uri_bad_scheme(uri.clone()));
-            return Either::Right(future::err(err));
-        }
-
-        Either::Left(self.client.call(req).map_err(From::from))
+        Either::Left(self.inner.call(req))
     }
 }

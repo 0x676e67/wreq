@@ -202,7 +202,10 @@ impl ConnectorBuilder {
 
 impl Connector {
     /// Creates a new [`Connector`] with the provided configuration and optional layers.
-    pub fn builder(proxies: Arc<Vec<ProxyMatcher>>, resolver: DynResolver) -> ConnectorBuilder {
+    pub(crate) fn builder(
+        proxies: Arc<Vec<ProxyMatcher>>,
+        resolver: DynResolver,
+    ) -> ConnectorBuilder {
         ConnectorBuilder {
             config: Config {
                 proxies,
