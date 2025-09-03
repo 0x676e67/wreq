@@ -1,4 +1,4 @@
-pub(crate) mod connect;
+mod connect;
 mod future;
 mod service;
 mod types;
@@ -55,7 +55,10 @@ use crate::dns::hickory::HickoryDnsResolver;
 use crate::{
     IntoUri, Method, Proxy,
     client::{
-        http::connect::{Conn, Connector, Unnameable},
+        http::{
+            connect::{Conn, Connector, Unnameable},
+            service::ConfigServiceLayer,
+        },
         layer::timeout::TimeoutOptions,
     },
     core::{
@@ -336,14 +339,8 @@ impl ClientBuilder {
 
         // create the client with the configured service layers
         let client = {
-            // configured client service layer
-            let service = ClientService::new(
-                client,
-                config.headers,
-                config.orig_headers,
-                config.https_only,
-                proxies,
-            );
+            // configured client service
+            let service = ClientService::new(client, config.https_only);
 
             // configured cookie service layer if cookies are enabled.
             #[cfg(feature = "cookies")]
@@ -351,7 +348,7 @@ impl ClientBuilder {
                 .layer(CookieServiceLayer::new(config.cookie_store))
                 .service(service);
 
-            // configured response decompression support (gzip, zstd, brotli, deflate) if enabled.
+            // configured response decompression layer.
             #[cfg(any(
                 feature = "gzip",
                 feature = "zstd",
@@ -362,12 +359,21 @@ impl ClientBuilder {
                 .layer(DecompressionLayer::new(config.accept_encoding))
                 .service(service);
 
-            // configured timeout layer for the response body.
+            // configured default config layer.
+            let service = ServiceBuilder::new()
+                .layer(ConfigServiceLayer::new(
+                    config.headers,
+                    config.orig_headers,
+                    proxies,
+                ))
+                .service(service);
+
+            // configured timeout layer.
             let service = ServiceBuilder::new()
                 .layer(ResponseBodyTimeoutLayer::new(config.timeout_options))
                 .service(service);
 
-            // configured redirect following logic with the configured policy.
+            // configured redirect layer.
             let service = {
                 let policy = FollowRedirectPolicy::new(config.redirect_policy)
                     .with_referer(config.referer)
@@ -379,7 +385,7 @@ impl ClientBuilder {
                     .service(service)
             };
 
-            // configured HTTP/2 retry logic.
+            // configured HTTP/2 safety retry layer.
             let service = ServiceBuilder::new()
                 .layer(RetryLayer::new(Http2RetryPolicy::new(
                     config.http2_max_retry,

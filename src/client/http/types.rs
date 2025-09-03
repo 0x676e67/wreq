@@ -67,7 +67,9 @@ pub type GenericClientService = MapErr<
         Retry<
             Http2RetryPolicy,
             FollowRedirect<
-                ResponseBodyTimeout<Decompression<CookieLayer<ClientService>>>,
+                ResponseBodyTimeout<
+                    super::service::ConfigService<Decompression<CookieLayer<ClientService>>>,
+                >,
                 FollowRedirectPolicy,
             >,
         >,

@@ -16,7 +16,7 @@ use tower::{Layer, Service};
 use self::{future::ResponseFuture, policy::Policy};
 
 /// [`Layer`] for retrying requests with a [`Service`] to follow redirection responses.
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Default)]
 pub struct FollowRedirectLayer<P> {
     policy: P,
 }
@@ -43,7 +43,7 @@ where
 }
 
 /// Middleware that retries requests with a [`Service`] to follow redirection responses.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy)]
 pub struct FollowRedirect<S, P> {
     inner: S,
     policy: P,
