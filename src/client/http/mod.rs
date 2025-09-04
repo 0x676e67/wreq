@@ -393,8 +393,7 @@ impl ClientBuilder {
             if config.layers.is_empty() {
                 let service = ServiceBuilder::new()
                     .layer(TimeoutLayer::new(config.timeout_options))
-                    .service(service)
-                    .map_err(error::map_timeout_to_request_error as _);
+                    .service(service);
 
                 ClientRef::Left(service)
             } else {

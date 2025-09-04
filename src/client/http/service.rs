@@ -42,7 +42,7 @@ pub struct ConfigService<S> {
     config: Arc<Config>,
 }
 
-/// ===== impl ConfigServiceLayer =====
+// ===== impl ConfigServiceLayer =====
 
 impl ConfigServiceLayer {
     /// Creates a new [`ConfigServiceLayer`].
@@ -83,7 +83,7 @@ impl<S> Layer<S> for ConfigServiceLayer {
     }
 }
 
-/// ===== impl ConfigService =====
+// ===== impl ConfigService =====
 
 impl<ReqBody, ResBody, S> Service<Request<ReqBody>> for ConfigService<S>
 where

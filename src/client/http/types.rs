@@ -64,23 +64,20 @@ pub type ResponseBody = TimeoutBody<tower_http::decompression::DecompressionBody
 pub type ResponseBody = TimeoutBody<Incoming>;
 
 /// HTTP client service with retry, timeout, redirect, and error mapping for HTTP/2.
-pub type GenericClientService = MapErr<
-    Timeout<
-        Retry<
-            Http2RetryPolicy,
-            FollowRedirect<
-                ResponseBodyTimeout<
-                    ConfigService<
-                        Decompression<
-                            CookieLayer<MapErr<HttpClient<Connector, Body>, fn(Error) -> BoxError>>,
-                        >,
+pub type GenericClientService = Timeout<
+    Retry<
+        Http2RetryPolicy,
+        FollowRedirect<
+            ResponseBodyTimeout<
+                ConfigService<
+                    Decompression<
+                        CookieLayer<MapErr<HttpClient<Connector, Body>, fn(Error) -> BoxError>>,
                     >,
                 >,
-                FollowRedirectPolicy,
             >,
+            FollowRedirectPolicy,
         >,
     >,
-    fn(BoxError) -> BoxError,
 >;
 
 /// Boxed HTTP client service object-safe type for requests and responses.
