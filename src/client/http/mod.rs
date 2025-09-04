@@ -336,12 +336,6 @@ impl ClientBuilder {
 
         // configured client service with layers
         let client = {
-            // configured cookie service layer if cookies are enabled.
-            #[cfg(feature = "cookies")]
-            let service = ServiceBuilder::new()
-                .layer(CookieServiceLayer::new(config.cookie_store))
-                .service(service);
-
             // configured response decompression layer.
             #[cfg(any(
                 feature = "gzip",
@@ -351,16 +345,6 @@ impl ClientBuilder {
             ))]
             let service = ServiceBuilder::new()
                 .layer(DecompressionLayer::new(config.accept_encoding))
-                .service(service);
-
-            // configured default config layer.
-            let service = ServiceBuilder::new()
-                .layer(ConfigServiceLayer::new(
-                    config.https_only,
-                    config.headers,
-                    config.orig_headers,
-                    proxies,
-                ))
                 .service(service);
 
             // configured timeout layer.
@@ -380,11 +364,27 @@ impl ClientBuilder {
                     .service(service)
             };
 
+            // configured cookie service layer if cookies are enabled.
+            #[cfg(feature = "cookies")]
+            let service = ServiceBuilder::new()
+                .layer(CookieServiceLayer::new(config.cookie_store))
+                .service(service);
+
             // configured HTTP/2 safety retry layer.
             let service = ServiceBuilder::new()
                 .layer(RetryLayer::new(Http2RetryPolicy::new(
                     config.http2_max_retry,
                 )))
+                .service(service);
+
+            // configured default config layer.
+            let service = ServiceBuilder::new()
+                .layer(ConfigServiceLayer::new(
+                    config.https_only,
+                    config.headers,
+                    config.orig_headers,
+                    proxies,
+                ))
                 .service(service);
 
             // configured layers to the service.
