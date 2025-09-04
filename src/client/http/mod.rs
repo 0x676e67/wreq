@@ -347,6 +347,12 @@ impl ClientBuilder {
                 .layer(DecompressionLayer::new(config.accept_encoding))
                 .service(service);
 
+            // configured cookie service layer.
+            #[cfg(feature = "cookies")]
+            let service = ServiceBuilder::new()
+                .layer(CookieServiceLayer::new(config.cookie_store))
+                .service(service);
+
             // configured timeout layer.
             let service = ServiceBuilder::new()
                 .layer(ResponseBodyTimeoutLayer::new(config.timeout_options))
@@ -369,12 +375,6 @@ impl ClientBuilder {
                 .layer(RetryLayer::new(Http2RetryPolicy::new(
                     config.http2_max_retry,
                 )))
-                .service(service);
-
-            // configured cookie service layer.
-            #[cfg(feature = "cookies")]
-            let service = ServiceBuilder::new()
-                .layer(CookieServiceLayer::new(config.cookie_store))
                 .service(service);
 
             // configured config layer.

@@ -66,15 +66,15 @@ pub type ResponseBody = TimeoutBody<Incoming>;
 /// HTTP client service with retry, timeout, redirect, and error mapping for HTTP/2.
 pub type GenericClientService = Timeout<
     ConfigService<
-        CookieLayer<
-            Retry<
-                Http2RetryPolicy,
-                FollowRedirect<
-                    ResponseBodyTimeout<
+        Retry<
+            Http2RetryPolicy,
+            FollowRedirect<
+                ResponseBodyTimeout<
+                    CookieLayer<
                         Decompression<MapErr<HttpClient<Connector, Body>, fn(Error) -> BoxError>>,
                     >,
-                    FollowRedirectPolicy,
                 >,
+                FollowRedirectPolicy,
             >,
         >,
     >,
