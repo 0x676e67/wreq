@@ -69,8 +69,8 @@ pub type GenericClientService = Timeout<
         Retry<
             Http2RetryPolicy,
             FollowRedirect<
-                ResponseBodyTimeout<
-                    CookieLayer<
+                CookieLayer<
+                    ResponseBodyTimeout<
                         Decompression<MapErr<HttpClient<Connector, Body>, fn(Error) -> BoxError>>,
                     >,
                 >,

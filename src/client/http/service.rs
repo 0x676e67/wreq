@@ -75,6 +75,7 @@ impl ConfigServiceLayer {
 impl<S> Layer<S> for ConfigServiceLayer {
     type Service = ConfigService<S>;
 
+    #[inline(always)]
     fn layer(&self, inner: S) -> Self::Service {
         ConfigService {
             inner,

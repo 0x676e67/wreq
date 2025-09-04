@@ -26,6 +26,7 @@ impl CookieServiceLayer {
 impl<S> Layer<S> for CookieServiceLayer {
     type Service = CookieService<S>;
 
+    #[inline(always)]
     fn layer(&self, inner: S) -> Self::Service {
         CookieService {
             inner,

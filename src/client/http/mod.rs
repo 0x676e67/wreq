@@ -347,15 +347,15 @@ impl ClientBuilder {
                 .layer(DecompressionLayer::new(config.accept_encoding))
                 .service(service);
 
+            // configured timeout layer.
+            let service = ServiceBuilder::new()
+                .layer(ResponseBodyTimeoutLayer::new(config.timeout_options))
+                .service(service);
+
             // configured cookie service layer.
             #[cfg(feature = "cookies")]
             let service = ServiceBuilder::new()
                 .layer(CookieServiceLayer::new(config.cookie_store))
-                .service(service);
-
-            // configured timeout layer.
-            let service = ServiceBuilder::new()
-                .layer(ResponseBodyTimeoutLayer::new(config.timeout_options))
                 .service(service);
 
             // configured redirect layer.
