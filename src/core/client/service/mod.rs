@@ -13,6 +13,7 @@ use std::{
     time::Duration,
 };
 
+use bytes::Bytes;
 use futures_util::future::{Either, FutureExt, TryFutureExt};
 use http::{HeaderValue, Method, Request, Response, Uri, Version, header::HOST};
 use http_body::Body;
@@ -244,7 +245,7 @@ where
                     let hostname = uri.host().expect("authority implies host");
                     if let Some(port) = util::get_non_default_port(&uri) {
                         let s = format!("{hostname}:{port}");
-                        HeaderValue::from_str(&s)
+                        HeaderValue::from_maybe_shared(Bytes::from(s))
                     } else {
                         HeaderValue::from_str(hostname)
                     }
