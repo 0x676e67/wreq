@@ -11,6 +11,7 @@ use http::{
 use tower::{Layer, Service};
 
 use crate::{
+    Error,
     client::layer::config::RequestDefaultHeaders,
     core::ext::{RequestConfig, RequestOrigHeaderMap},
     ext::UriExt,
@@ -29,7 +30,7 @@ struct Config {
     proxies_maybe_http_custom_headers: bool,
 }
 
-/// Middleware layer to use [`Config`].
+/// Middleware layer to use [`ConfigService`].
 pub struct ConfigServiceLayer {
     config: Arc<Config>,
 }
@@ -87,7 +88,7 @@ impl<S> Layer<S> for ConfigServiceLayer {
 impl<ReqBody, ResBody, S> Service<Request<ReqBody>> for ConfigService<S>
 where
     S: Service<Request<ReqBody>, Response = Response<ResBody>>,
-    S::Error: From<crate::Error>,
+    S::Error: From<Error>,
 {
     type Response = S::Response;
     type Error = S::Error;
@@ -103,9 +104,7 @@ where
 
         // check if the request URI scheme is valid.
         if (!uri.is_http() && !uri.is_https()) || (self.config.https_only && !uri.is_https()) {
-            return Either::Right(future::err(
-                crate::Error::uri_bad_scheme(uri.clone()).into(),
-            ));
+            return Either::Right(future::err(Error::uri_bad_scheme(uri.clone()).into()));
         }
 
         // check if the request ignores the default headers.

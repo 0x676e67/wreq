@@ -14,7 +14,7 @@ pub mod options;
 pub mod upgrade;
 
 pub(crate) use self::service::{
-    ConnectRequest, HttpClient, ResponseFuture,
+    ConnectRequest, HttpClient,
     error::Error,
     extra::{ConnectExtra, Identifier},
 };
