@@ -336,6 +336,12 @@ impl ClientBuilder {
 
         // configured client service with layers
         let client = {
+            // configured cookie service layer.
+            #[cfg(feature = "cookies")]
+            let service = ServiceBuilder::new()
+                .layer(CookieServiceLayer::new(config.cookie_store))
+                .service(service);
+
             // configured decompression layer.
             #[cfg(any(
                 feature = "gzip",
@@ -347,36 +353,6 @@ impl ClientBuilder {
                 .layer(DecompressionLayer::new(config.accept_encoding))
                 .service(service);
 
-            // configured timeout layer.
-            let service = ServiceBuilder::new()
-                .layer(ResponseBodyTimeoutLayer::new(config.timeout_options))
-                .service(service);
-
-            // configured cookie service layer.
-            #[cfg(feature = "cookies")]
-            let service = ServiceBuilder::new()
-                .layer(CookieServiceLayer::new(config.cookie_store))
-                .service(service);
-
-            // configured redirect layer.
-            let service = {
-                let policy = FollowRedirectPolicy::new(config.redirect_policy)
-                    .with_referer(config.referer)
-                    .with_https_only(config.https_only)
-                    .with_history(config.redirect_history);
-
-                ServiceBuilder::new()
-                    .layer(FollowRedirectLayer::with_policy(policy))
-                    .service(service)
-            };
-
-            // configured HTTP/2 safety retry layer.
-            let service = ServiceBuilder::new()
-                .layer(RetryLayer::new(Http2RetryPolicy::new(
-                    config.http2_max_retry,
-                )))
-                .service(service);
-
             // configured config layer.
             let service = ServiceBuilder::new()
                 .layer(ConfigServiceLayer::new(
@@ -385,6 +361,20 @@ impl ClientBuilder {
                     config.orig_headers,
                     proxies,
                 ))
+                // configured HTTP/2 safety retry layer.
+                .layer(RetryLayer::new(Http2RetryPolicy::new(
+                    config.http2_max_retry,
+                )))
+                // configured redirect layer.
+                .layer({
+                    let policy = FollowRedirectPolicy::new(config.redirect_policy)
+                        .with_referer(config.referer)
+                        .with_https_only(config.https_only)
+                        .with_history(config.redirect_history);
+                    FollowRedirectLayer::with_policy(policy)
+                })
+                // configured timeout layer.
+                .layer(ResponseBodyTimeoutLayer::new(config.timeout_options))
                 .service(service);
 
             // configured layers to the service.
