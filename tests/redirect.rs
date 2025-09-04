@@ -484,7 +484,7 @@ async fn test_redirect_history() {
     let url = format!("http://{}/first", redirect.addr());
     let dst = format!("http://{}/{}", redirect.addr(), "dst");
 
-    let client = wreq::ClientBuilder::new()
+    let client = wreq::Client::builder()
         .redirect(Policy::default())
         .history(true)
         .build()
