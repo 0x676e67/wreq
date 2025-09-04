@@ -29,7 +29,7 @@ pin_project! {
 }
 
 impl Pending {
-    /// Creates a new [`Pending`] representing an in-flight HTTP request with the given URI and
+    /// Creates a new [`Pending`] with a request future and its associated URI.
     #[inline]
     pub(crate) fn request(fut: ResponseFuture, uri: Uri) -> Self {
         Pending::Request {
@@ -94,10 +94,6 @@ mod test {
     async fn error_has_url() {
         let u = "http://does.not.exist.local/ever";
         let err = crate::Client::new().get(u).send().await.unwrap_err();
-        assert_eq!(
-            err.uri().map(ToString::to_string).as_deref(),
-            Some(u),
-            "{err:?}"
-        );
+        assert_eq!(err.uri().unwrap(), u, "{err:?}");
     }
 }

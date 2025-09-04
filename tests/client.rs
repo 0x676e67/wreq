@@ -70,7 +70,7 @@ async fn auto_headers() {
         .await
         .unwrap();
 
-    assert_eq!(res.uri().to_string(), url);
+    assert_eq!(res.uri(), url.as_str());
     assert_eq!(res.status(), wreq::StatusCode::OK);
     assert_eq!(res.remote_addr(), Some(server.addr()));
 }
@@ -845,7 +845,7 @@ async fn tunnel_includes_proxy_auth_with_multiple_proxies() {
 
     let res = client.get(url).send().await.unwrap();
 
-    assert_eq!(res.uri().to_string(), url);
+    assert_eq!(res.uri(), url);
     assert_eq!(res.status(), wreq::StatusCode::OK);
 
     let client = wreq::Client::builder()
@@ -868,7 +868,7 @@ async fn tunnel_includes_proxy_auth_with_multiple_proxies() {
 
     let res = client.get(url).send().await.unwrap();
 
-    assert_eq!(res.uri().to_string(), url);
+    assert_eq!(res.uri(), url);
     assert_eq!(res.status(), wreq::StatusCode::OK);
 }
 
@@ -915,7 +915,7 @@ async fn skip_default_headers() {
         .send()
         .await
         .unwrap();
-    assert_eq!(&res.uri().to_string(), &url);
+    assert_eq!(res.uri(), url.as_str());
     assert_eq!(res.status(), wreq::StatusCode::OK);
 
     let url = format!("http://{}/no_skip", server.addr());
@@ -931,7 +931,7 @@ async fn skip_default_headers() {
         .unwrap();
 
     let res = client.get(&url).send().await.unwrap();
-    assert_eq!(res.uri().to_string(), url);
+    assert_eq!(res.uri(), url.as_str());
     assert_eq!(res.status(), wreq::StatusCode::OK);
 }
 

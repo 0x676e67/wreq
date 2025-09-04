@@ -34,7 +34,7 @@ async fn test_redirect_301_and_302_and_303_changes_post_to_get() {
             .send()
             .await
             .unwrap();
-        assert_eq!(res.uri().to_string(), dst);
+        assert_eq!(res.uri(), dst.as_str());
         assert_eq!(res.status(), wreq::StatusCode::OK);
         assert_eq!(
             res.headers().get(wreq::header::SERVER).unwrap(),
@@ -73,7 +73,7 @@ async fn test_redirect_307_and_308_tries_to_get_again() {
             .send()
             .await
             .unwrap();
-        assert_eq!(res.uri().to_string(), dst);
+        assert_eq!(res.uri(), dst.as_str());
         assert_eq!(res.status(), wreq::StatusCode::OK);
         assert_eq!(
             res.headers().get(wreq::header::SERVER).unwrap(),
@@ -127,7 +127,7 @@ async fn test_redirect_307_and_308_tries_to_post_again() {
             .send()
             .await
             .unwrap();
-        assert_eq!(res.uri().to_string(), dst);
+        assert_eq!(res.uri(), dst.as_str());
         assert_eq!(res.status(), wreq::StatusCode::OK);
         assert_eq!(
             res.headers().get(wreq::header::SERVER).unwrap(),
@@ -226,7 +226,7 @@ async fn test_redirect_policy_can_stop_redirects_without_an_error() {
         .await
         .unwrap();
 
-    assert_eq!(res.uri().to_string(), url);
+    assert_eq!(res.uri(), url.as_str());
     assert_eq!(res.status(), wreq::StatusCode::FOUND);
 }
 
@@ -271,7 +271,7 @@ async fn test_invalid_location_stops_redirect_gh484() {
 
     let res = wreq::get(&url).send().await.unwrap();
 
-    assert_eq!(res.uri().to_string(), url);
+    assert_eq!(res.uri(), url.as_str());
     assert_eq!(res.status(), wreq::StatusCode::FOUND);
 }
 
@@ -325,7 +325,7 @@ async fn test_redirect_302_with_set_cookies() {
         .unwrap();
     let res = client.get(&url).send().await.unwrap();
 
-    assert_eq!(res.uri().to_string(), dst);
+    assert_eq!(res.uri(), dst.as_str());
     assert_eq!(res.status(), wreq::StatusCode::OK);
 }
 
@@ -447,7 +447,7 @@ async fn test_redirect_301_302_303_empty_payload_headers() {
             .send()
             .await
             .unwrap();
-        assert_eq!(res.uri().to_string(), dst);
+        assert_eq!(res.uri(), dst.as_str());
         assert_eq!(res.status(), 200);
         assert_eq!(
             res.headers().get(wreq::header::SERVER).unwrap(),
@@ -491,7 +491,7 @@ async fn test_redirect_history() {
         .unwrap();
 
     let res = client.get(&url).send().await.unwrap();
-    assert_eq!(res.uri().to_string(), dst);
+    assert_eq!(res.uri(), dst.as_str());
     assert_eq!(res.status(), wreq::StatusCode::OK);
     assert_eq!(
         res.headers().get(wreq::header::SERVER).unwrap(),

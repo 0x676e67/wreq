@@ -29,7 +29,7 @@ async fn http_proxy() {
         .await
         .unwrap();
 
-    assert_eq!(res.uri().to_string(), url);
+    assert_eq!(res.uri(), url);
     assert_eq!(res.status(), wreq::StatusCode::OK);
 }
 
@@ -63,7 +63,7 @@ async fn http_proxy_basic_auth() {
         .await
         .unwrap();
 
-    assert_eq!(res.uri().to_string(), url);
+    assert_eq!(res.uri(), url);
     assert_eq!(res.status(), wreq::StatusCode::OK);
 }
 
@@ -93,7 +93,7 @@ async fn http_proxy_basic_auth_parsed() {
         .await
         .unwrap();
 
-    assert_eq!(res.uri().to_string(), url);
+    assert_eq!(res.uri(), url);
     assert_eq!(res.status(), wreq::StatusCode::OK);
 }
 
@@ -134,7 +134,7 @@ async fn system_http_proxy_basic_auth_parsed() {
         .await
         .unwrap();
 
-    assert_eq!(res.uri().to_string(), url);
+    assert_eq!(res.uri(), url);
     assert_eq!(res.status(), wreq::StatusCode::OK);
 
     // reset user setting.
@@ -168,7 +168,7 @@ async fn test_no_proxy() {
         .await
         .unwrap();
 
-    assert_eq!(res.uri().to_string(), url);
+    assert_eq!(res.uri(), url.as_str());
     assert_eq!(res.status(), wreq::StatusCode::OK);
 }
 
@@ -195,7 +195,7 @@ async fn test_using_system_proxy() {
     // system proxy is used by default
     let res = wreq::get(url).send().await.unwrap();
 
-    assert_eq!(res.uri().to_string(), url);
+    assert_eq!(res.uri(), url);
     assert_eq!(res.status(), wreq::StatusCode::OK);
 
     // reset user setting.
@@ -230,7 +230,7 @@ async fn http_over_http() {
         .await
         .unwrap();
 
-    assert_eq!(res.uri().to_string(), url);
+    assert_eq!(res.uri(), url);
     assert_eq!(res.status(), wreq::StatusCode::OK);
 }
 
@@ -266,7 +266,7 @@ async fn http_proxy_custom_headers() {
         .await
         .unwrap();
 
-    assert_eq!(res.uri().to_string(), url);
+    assert_eq!(res.uri(), url);
     assert_eq!(res.status(), wreq::StatusCode::OK);
 }
 

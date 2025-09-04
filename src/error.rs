@@ -144,6 +144,8 @@ impl Error {
 
     /// Returns true if the error is related to a timeout.
     pub fn is_timeout(&self) -> bool {
+        use crate::core::Error;
+
         let mut source = self.source();
 
         while let Some(err) = source {
@@ -151,7 +153,7 @@ impl Error {
                 return true;
             }
 
-            if let Some(core_err) = err.downcast_ref::<crate::core::Error>() {
+            if let Some(core_err) = err.downcast_ref::<Error>() {
                 if core_err.is_timeout() {
                     return true;
                 }
@@ -176,11 +178,14 @@ impl Error {
 
     /// Returns true if the error is related to connect
     pub fn is_connect(&self) -> bool {
+        use crate::core::client::Error;
+
         let mut source = self.source();
 
         while let Some(err) = source {
-            if let Some(hyper_err) = err.downcast_ref::<crate::core::client::Error>() {
-                if hyper_err.is_connect() {
+            if let Some(err) = err.downcast_ref::<Error>() {
+                if err.is_connect() {
+                    dbg!(err);
                     return true;
                 }
             }
@@ -275,6 +280,7 @@ impl fmt::Debug for Error {
         if let Some(ref uri) = self.inner.uri {
             builder.field("uri", uri);
         }
+
         if let Some(ref source) = self.inner.source {
             builder.field("source", source);
         }
