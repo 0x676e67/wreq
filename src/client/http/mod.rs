@@ -336,7 +336,7 @@ impl ClientBuilder {
 
         // configured client service with layers
         let client = {
-            // configured response decompression layer.
+            // configured decompression layer.
             #[cfg(any(
                 feature = "gzip",
                 feature = "zstd",
@@ -364,12 +364,6 @@ impl ClientBuilder {
                     .service(service)
             };
 
-            // configured cookie service layer if cookies are enabled.
-            #[cfg(feature = "cookies")]
-            let service = ServiceBuilder::new()
-                .layer(CookieServiceLayer::new(config.cookie_store))
-                .service(service);
-
             // configured HTTP/2 safety retry layer.
             let service = ServiceBuilder::new()
                 .layer(RetryLayer::new(Http2RetryPolicy::new(
@@ -377,7 +371,13 @@ impl ClientBuilder {
                 )))
                 .service(service);
 
-            // configured default config layer.
+            // configured cookie service layer.
+            #[cfg(feature = "cookies")]
+            let service = ServiceBuilder::new()
+                .layer(CookieServiceLayer::new(config.cookie_store))
+                .service(service);
+
+            // configured config layer.
             let service = ServiceBuilder::new()
                 .layer(ConfigServiceLayer::new(
                     config.https_only,
