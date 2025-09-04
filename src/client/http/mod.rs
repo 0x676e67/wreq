@@ -254,10 +254,10 @@ impl ClientBuilder {
         }
         let proxies = Arc::new(proxies);
 
-        let (tls_options, http1_options, http2_options) = config.transport_options.into_parts();
+        // Create base client service
+        let service = {
+            let (tls_options, http1_options, http2_options) = config.transport_options.into_parts();
 
-        // create the TLS connector with the provided options.
-        let connector = {
             let resolver = {
                 let mut resolver: Arc<dyn Resolve> = match config.dns_resolver {
                     Some(dns_resolver) => dns_resolver,
@@ -310,33 +310,31 @@ impl ClientBuilder {
                     .keylog(config.keylog_policy)
             };
 
-            Connector::builder(proxies.clone(), resolver)
+            // build connector
+            let connector = Connector::builder(proxies.clone(), resolver)
                 .timeout(config.connect_timeout)
                 .tls_info(config.tls_info)
                 .tls_options(tls_options)
                 .verbose(config.connection_verbose)
                 .with_tls(tls)
                 .with_http(http)
-                .build(config.connector_layers)?
-        };
+                .build(config.connector_layers)?;
 
-        // create client with the configured connector
-        let service = {
-            let http2_only = matches!(config.http_version_pref, HttpVersionPref::Http2);
-            let mut builder = HttpClient::builder(TokioExecutor::new());
-            builder
+            // build client
+            HttpClient::builder(TokioExecutor::new())
                 .http1_options(http1_options)
                 .http2_options(http2_options)
-                .http2_only(http2_only)
+                .http2_only(matches!(config.http_version_pref, HttpVersionPref::Http2))
                 .http2_timer(TokioTimer::new())
                 .pool_timer(TokioTimer::new())
                 .pool_idle_timeout(config.pool_idle_timeout)
                 .pool_max_idle_per_host(config.pool_max_idle_per_host)
-                .pool_max_size(config.pool_max_size);
-            builder.build(connector).map_err(BoxError::from as _)
+                .pool_max_size(config.pool_max_size)
+                .build(connector)
+                .map_err(BoxError::from as _)
         };
 
-        // create the client with the configured service layers
+        // configured client service with layers
         let client = {
             // configured cookie service layer if cookies are enabled.
             #[cfg(feature = "cookies")]
