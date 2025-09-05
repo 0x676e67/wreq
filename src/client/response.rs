@@ -216,7 +216,10 @@ impl Response {
     /// ```
     #[cfg(feature = "charset")]
     #[cfg_attr(docsrs, doc(cfg(feature = "charset")))]
-    pub async fn text_with_charset(self, default_encoding: &str) -> crate::Result<String> {
+    pub async fn text_with_charset(
+        self,
+        default_encoding: impl AsRef<str>,
+    ) -> crate::Result<String> {
         let content_type = self
             .headers()
             .get(crate::header::CONTENT_TYPE)
@@ -225,7 +228,7 @@ impl Response {
         let encoding_name = content_type
             .as_ref()
             .and_then(|mime| mime.get_param("charset").map(|charset| charset.as_str()))
-            .unwrap_or(default_encoding);
+            .unwrap_or(default_encoding.as_ref());
         let encoding = Encoding::for_label(encoding_name.as_bytes()).unwrap_or(UTF_8);
 
         let full = self.bytes().await?;
