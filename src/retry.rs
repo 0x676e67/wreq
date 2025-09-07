@@ -79,8 +79,6 @@ impl Policy {
     /// // Only retry requests to rust-lang.org
     /// let policy = Policy::for_host("rust-lang.org");
     /// ```
-    ///
-    /// For more complex scoping logic beyond hostname matching, use [`Policy::scoped()`].
     pub fn for_host<S>(host: S) -> Policy
     where
         S: for<'a> PartialEq<&'a str> + Send + Sync + 'static,
