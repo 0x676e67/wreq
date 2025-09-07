@@ -2,6 +2,7 @@
 
 mod classify;
 mod scope;
+
 use std::sync::Arc;
 
 use http::{Request, Response};
@@ -19,7 +20,7 @@ use tower_http::decompression::DecompressionBody;
 
 pub(crate) use self::{
     classify::{Action, Classifier, Classify, ClassifyFn, ReqRep},
-    scope::{Scope, ScopeFn, Scoped},
+    scope::{ScopeFn, Scoped},
 };
 use super::timeout::TimeoutBody;
 use crate::{Body, core::client::body::Incoming, error::BoxError, retry};

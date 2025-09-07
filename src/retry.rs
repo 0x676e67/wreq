@@ -43,9 +43,7 @@ use tower::retry::budget::TpsBudget;
 
 use crate::{
     Body,
-    client::layer::retry::{
-        Action, Classifier, Classify, ClassifyFn, ReqRep, Scope, ScopeFn, Scoped,
-    },
+    client::layer::retry::{Action, Classifier, Classify, ClassifyFn, ReqRep, ScopeFn, Scoped},
 };
 
 /// A retry policy.
@@ -56,42 +54,56 @@ pub struct Policy {
     scope: Scoped,
 }
 
-fn scoped<F>(func: F) -> Policy
-where
-    F: Fn(&Request<Body>) -> bool + Send + Sync + 'static,
-{
-    Policy::scoped(ScopeFn(func))
-}
-
 impl Policy {
     /// Create a retry policy that will never retry any request.
     ///
     /// This is useful for disabling the `Client`s default behavior of retrying
     /// protocol nacks.
     pub fn never() -> Policy {
-        scoped(|_| false).no_budget()
+        Self::scoped(|_| false).no_budget()
     }
 
-    /// Create a retry policy with a request scope.
+    /// Create a retry policy scoped to requests for a specific host.
     ///
-    /// To provide a scope that isn't a closure, use the more general
-    /// [`Policy::scoped()`].
+    /// This is a convenience method that creates a retry policy which only applies
+    /// to requests targeting the specified host. Requests to other hosts will not
+    /// be retried under this policy.
+    ///
+    /// # Arguments
+    /// * `host` - The hostname to match against request URIs (e.g., "api.example.com")
+    ///
+    /// # Example
+    /// ```rust
+    /// use wreq::retry::Policy;
+    ///
+    /// // Only retry requests to rust-lang.org
+    /// let policy = Policy::for_host("rust-lang.org");
+    /// ```
+    ///
+    /// For more complex scoping logic beyond hostname matching, use [`Policy::scoped()`].
     pub fn for_host<S>(host: S) -> Policy
     where
         S: for<'a> PartialEq<&'a str> + Send + Sync + 'static,
     {
-        scoped(move |req| host == req.uri().host().unwrap_or(""))
+        Self::scoped(move |req| {
+            req.uri()
+                .host()
+                .is_some_and(|request_host| host == request_host)
+        })
     }
 
     /// Create a scoped retry policy.
     ///
     /// For a more convenient constructor, see [`Policy::for_host()`].
-    pub fn scoped(scope: impl Scope) -> Self {
+    fn scoped<F>(func: F) -> Policy
+    where
+        F: Fn(&Request<Body>) -> bool + Send + Sync + 'static,
+    {
         Self {
             budget: Some(0.2),
             classifier: Classifier::Never,
             max_retries_per_request: 2,
-            scope: Scoped::Dyn(Arc::new(scope)),
+            scope: Scoped::Dyn(Arc::new(ScopeFn(func))),
         }
     }
 
