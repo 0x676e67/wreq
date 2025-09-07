@@ -68,11 +68,7 @@ async fn http2_upgrade() {
                 upgraded.write_all(b"bar=foo").await.unwrap();
             });
 
-            async {
-                http::Response::builder()
-                    .body(wreq::Body::default())
-                    .unwrap()
-            }
+            async { Ok::<_, std::convert::Infallible>(http::Response::default()) }
         },
         |builder| {
             let mut http2 = builder.http2();

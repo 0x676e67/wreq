@@ -3,6 +3,7 @@ use std::{
 };
 
 use tokio::{io::AsyncReadExt, net::TcpStream, runtime, sync::oneshot};
+use wreq::Body;
 
 pub struct Server {
     addr: net::SocketAddr,
@@ -45,20 +46,26 @@ impl Drop for Server {
     }
 }
 
+#[allow(unused)]
 pub fn http<F, Fut>(func: F) -> Server
 where
     F: Fn(http::Request<hyper::body::Incoming>) -> Fut + Clone + Send + 'static,
-    Fut: Future<Output = http::Response<wreq::Body>> + Send + 'static,
+    Fut: Future<Output = http::Response<Body>> + Send + 'static,
 {
-    http_with_config(func, |_builder| {})
+    let infall = move |req| {
+        let fut = func(req);
+        async move { Ok::<_, Infallible>(fut.await) }
+    };
+    http_with_config(infall, |_builder| {})
 }
 
 type Builder = hyper_util::server::conn::auto::Builder<hyper_util::rt::TokioExecutor>;
 
-pub fn http_with_config<F1, Fut, F2, Bu>(func: F1, apply_config: F2) -> Server
+pub fn http_with_config<F1, Fut, E, F2, Bu>(func: F1, apply_config: F2) -> Server
 where
     F1: Fn(http::Request<hyper::body::Incoming>) -> Fut + Clone + Send + 'static,
-    Fut: Future<Output = http::Response<wreq::Body>> + Send + 'static,
+    Fut: Future<Output = Result<http::Response<Body>, E>> + Send + 'static,
+    E: Into<Box<dyn std::error::Error + Send + Sync>>,
     F2: FnOnce(&mut Builder) -> Bu + Send + 'static,
 {
     // Spawn new runtime in thread to prevent reactor execution context conflict
@@ -97,10 +104,7 @@ where
                             accepted = listener.accept() => {
                                 let (io, _) = accepted.expect("accepted");
                                 let func = func.clone();
-                                let svc = hyper::service::service_fn(move |req| {
-                                    let fut = func(req);
-                                    async move { Ok::<_, Infallible>(fut.await) }
-                                });
+                                let svc = hyper::service::service_fn(func);
                                 let builder = builder.clone();
                                 let events_tx = events_tx.clone();
                                 tokio::spawn(async move {

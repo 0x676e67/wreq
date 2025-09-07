@@ -1,0 +1,200 @@
+//! Retry requests
+//!
+//! A `Client` has the ability to retry requests, by sending additional copies
+//! to the server if a response is considered retryable.
+//!
+//! The [`Policy`] makes it easier to configure what requests to retry, along
+//! with including best practices by default, such as a retry budget.
+//!
+//! # Defaults
+//!
+//! The default retry behavior of a `Client` is to only retry requests where an
+//! error or low-level protocol NACK is encountered that is known to be safe to
+//! retry. Note however that providing a specific retry policy will override
+//! the default, and you will need to explicitly include that behavior.
+//!
+//! All policies default to including a retry budget that permits 20% extra
+//! requests to be sent.
+//!
+//! # Scoped
+//!
+//! A client's retry policy is scoped. That means that the policy doesn't
+//! apply to all requests, but only those within a user-defined scope.
+//!
+//! Since all policies include a budget by default, it doesn't make sense to
+//! apply it on _all_ requests. Rather, the retry history applied by a budget
+//! should likely only be applied to the same host.
+//!
+//! # Classifiers
+//!
+//! A retry policy needs to be configured with a classifier that determines
+//! if a request should be retried. Knowledge of the destination server's
+//! behavior is required to make a safe classifier. **Requests should not be
+//! retried** if the server cannot safely handle the same request twice, or if
+//! it causes side effects.
+//!
+//! Some common properties to check include if the request method is
+//! idempotent, or if the response status code indicates a transient error.
+
+use std::{sync::Arc, time::Duration};
+
+use http::Request;
+use tower::retry::budget::TpsBudget;
+
+use crate::{
+    Body,
+    client::layer::retry::{
+        Action, Classifier, Classify, ClassifyFn, ReqRep, Scope, ScopeFn, Scoped,
+    },
+};
+
+/// A retry policy.
+pub struct Policy {
+    budget: Option<f32>,
+    classifier: Classifier,
+    max_retries_per_request: u32,
+    scope: Scoped,
+}
+
+fn scoped<F>(func: F) -> Policy
+where
+    F: Fn(&Request<Body>) -> bool + Send + Sync + 'static,
+{
+    Policy::scoped(ScopeFn(func))
+}
+
+impl Policy {
+    /// Create a retry policy that will never retry any request.
+    ///
+    /// This is useful for disabling the `Client`s default behavior of retrying
+    /// protocol nacks.
+    pub fn never() -> Policy {
+        scoped(|_| false).no_budget()
+    }
+
+    /// Create a retry policy with a request scope.
+    ///
+    /// To provide a scope that isn't a closure, use the more general
+    /// [`Policy::scoped()`].
+    pub fn for_host<S>(host: S) -> Policy
+    where
+        S: for<'a> PartialEq<&'a str> + Send + Sync + 'static,
+    {
+        scoped(move |req| host == req.uri().host().unwrap_or(""))
+    }
+
+    /// Create a scoped retry policy.
+    ///
+    /// For a more convenient constructor, see [`Policy::for_host()`].
+    pub fn scoped(scope: impl Scope) -> Self {
+        Self {
+            budget: Some(0.2),
+            classifier: Classifier::Never,
+            max_retries_per_request: 2,
+            scope: Scoped::Dyn(Arc::new(scope)),
+        }
+    }
+
+    /// Set no retry budget.
+    ///
+    /// Sets that no budget will be enforced. This could also be considered
+    /// to be an infinite budget.
+    ///
+    /// This is NOT recommended. Disabling the budget can make your system more
+    /// susceptible to retry storms.
+    pub fn no_budget(mut self) -> Self {
+        self.budget = None;
+        self
+    }
+
+    /// Sets the max extra load the budget will allow.
+    ///
+    /// Think of the amount of requests your client generates, and how much
+    /// load that puts on the server. This option configures as a percentage
+    /// how much extra load is allowed via retries.
+    ///
+    /// For example, if you send 1,000 requests per second, setting a maximum
+    /// extra load value of `0.3` would allow 300 more requests per second
+    /// in retries. A value of `2.5` would allow 2,500 more requests.
+    ///
+    /// # Panics
+    ///
+    /// The `extra_percent` value must be within reasonable values for a
+    /// percentage. This method will panic if it is less than `0.0`, or greater
+    /// than `1000.0`.
+    pub fn max_extra_load(mut self, extra_percent: f32) -> Self {
+        assert!(extra_percent >= 0.0);
+        assert!(extra_percent <= 1000.0);
+        self.budget = Some(extra_percent);
+        self
+    }
+
+    /// Set the max retries allowed per request.
+    ///
+    /// For each logical (initial) request, only retry up to `max` times.
+    ///
+    /// This value is used in combination with a token budget that is applied
+    /// to all requests. Even if the budget would allow more requests, this
+    /// limit will prevent. Likewise, the budget may prevent retying up to
+    /// `max` times. This setting prevents a single request from consuming
+    /// the entire budget.
+    ///
+    /// Default is currently 2 retries.
+    pub fn max_retries_per_request(mut self, max: u32) -> Self {
+        self.max_retries_per_request = max;
+        self
+    }
+
+    /// Provide a classifier to determine if a request should be retried.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// # fn with_policy(policy: wreq::retry::Policy) -> wreq::retry::Policy {
+    /// policy.classify_fn(|req_rep| {
+    ///     match (req_rep.method(), req_rep.status()) {
+    ///         (&http::Method::GET, Some(http::StatusCode::SERVICE_UNAVAILABLE)) => {
+    ///             req_rep.retryable()
+    ///         },
+    ///         _ => req_rep.success()
+    ///     }
+    /// })
+    /// # }
+    /// ```
+    pub fn classify_fn<F>(self, func: F) -> Self
+    where
+        F: Fn(ReqRep<'_>) -> Action + Send + Sync + 'static,
+    {
+        self.classify(ClassifyFn(func))
+    }
+
+    /// Provide a classifier to determine if a request should be retried.
+    pub fn classify(mut self, classifier: impl Classify) -> Self {
+        self.classifier = Classifier::Dyn(Arc::new(classifier));
+        self
+    }
+
+    pub(crate) fn into_parts(self) -> (Option<Arc<TpsBudget>>, Classifier, u32, u32, Scoped) {
+        let budget = self
+            .budget
+            .map(|p| Arc::new(TpsBudget::new(Duration::from_secs(10), 10, p)));
+        (
+            budget,
+            self.classifier,
+            self.max_retries_per_request,
+            0,
+            self.scope,
+        )
+    }
+}
+
+impl Default for Policy {
+    fn default() -> Self {
+        Self {
+            budget: None,
+            classifier: Classifier::ProtocolNacks,
+            max_retries_per_request: 2,
+            scope: Scoped::Unscoped,
+        }
+    }
+}

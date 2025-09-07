@@ -43,7 +43,6 @@ use super::{
     Body, EmulationFactory,
     layer::{
         redirect::FollowRedirectLayer,
-        retry::Http2RetryPolicy,
         timeout::{ResponseBodyTimeoutLayer, TimeoutLayer},
     },
     request::{Request, RequestBuilder},
@@ -58,7 +57,7 @@ use crate::{
             connect::{Conn, Connector, Unnameable},
             service::ConfigServiceLayer,
         },
-        layer::timeout::TimeoutOptions,
+        layer::{retry::RetryPolicy, timeout::TimeoutOptions},
     },
     core::{
         client::{HttpClient, connect::TcpConnectOptions, options::TransportOptions},
@@ -70,7 +69,8 @@ use crate::{
     http1::Http1Options,
     http2::Http2Options,
     proxy::Matcher as ProxyMatcher,
-    redirect::{self, FollowRedirectPolicy, Policy as RedirectPolicy},
+    redirect::{self, FollowRedirectPolicy},
+    retry,
     tls::{
         AlpnProtocol, CertStore, Identity, KeyLogPolicy, TlsOptions, TlsVersion,
         conn::TlsConnectorBuilder,
@@ -138,7 +138,8 @@ struct Config {
     tcp_connect_options: TcpConnectOptions,
     proxies: Vec<ProxyMatcher>,
     auto_sys_proxy: bool,
-    redirect_policy: RedirectPolicy,
+    retry_policy: retry::Policy,
+    redirect_policy: redirect::Policy,
     redirect_history: bool,
     referer: bool,
     timeout_options: TimeoutOptions,
@@ -150,7 +151,6 @@ struct Config {
     dns_resolver: Option<Arc<dyn Resolve>>,
     http_version_pref: HttpVersionPref,
     https_only: bool,
-    http2_max_retry: usize,
     layers: Vec<BoxedClientLayer>,
     connector_layers: Vec<BoxedConnectorLayer>,
     keylog_policy: Option<KeyLogPolicy>,
@@ -224,7 +224,8 @@ impl Client {
                 tcp_happy_eyeballs_timeout: Some(Duration::from_millis(300)),
                 proxies: Vec::new(),
                 auto_sys_proxy: true,
-                redirect_policy: RedirectPolicy::none(),
+                retry_policy: retry::Policy::default(),
+                redirect_policy: redirect::Policy::none(),
                 redirect_history: false,
                 referer: true,
                 timeout_options: TimeoutOptions::default(),
@@ -236,7 +237,6 @@ impl Client {
                 dns_resolver: None,
                 http_version_pref: HttpVersionPref::All,
                 https_only: false,
-                http2_max_retry: 2,
                 layers: Vec::new(),
                 connector_layers: Vec::new(),
                 keylog_policy: None,
@@ -505,13 +505,11 @@ impl ClientBuilder {
 
         // configured client service with layers
         let client = {
-            // configured cookie service layer.
             #[cfg(feature = "cookies")]
             let service = ServiceBuilder::new()
                 .layer(CookieServiceLayer::new(config.cookie_store))
                 .service(service);
 
-            // configured decompression layer.
             #[cfg(any(
                 feature = "gzip",
                 feature = "zstd",
@@ -522,7 +520,6 @@ impl ClientBuilder {
                 .layer(DecompressionLayer::new(config.accept_encoding))
                 .service(service);
 
-            // configured config layer.
             let service = ServiceBuilder::new()
                 .layer(ConfigServiceLayer::new(
                     config.https_only,
@@ -530,11 +527,7 @@ impl ClientBuilder {
                     config.orig_headers,
                     proxies,
                 ))
-                // configured HTTP/2 safety retry layer.
-                .layer(RetryLayer::new(Http2RetryPolicy::new(
-                    config.http2_max_retry,
-                )))
-                // configured redirect layer.
+                .layer(RetryLayer::new(RetryPolicy::new(config.retry_policy)))
                 .layer({
                     let policy = FollowRedirectPolicy::new(config.redirect_policy)
                         .with_referer(config.referer)
@@ -542,7 +535,6 @@ impl ClientBuilder {
                         .with_history(config.redirect_history);
                     FollowRedirectLayer::with_policy(policy)
                 })
-                // configured timeout layer.
                 .layer(ResponseBodyTimeoutLayer::new(config.timeout_options))
                 .service(service);
 
@@ -900,6 +892,14 @@ impl ClientBuilder {
         self
     }
 
+    // Retry options
+
+    /// Set a request retry policy.
+    pub fn retry(mut self, policy: retry::Policy) -> ClientBuilder {
+        self.config.retry_policy = policy;
+        self
+    }
+
     // Proxy options
 
     /// Add a `Proxy` to the list of proxies the `Client` will use.
@@ -1049,15 +1049,6 @@ impl ClientBuilder {
     #[inline]
     pub fn http2_options(mut self, options: Http2Options) -> ClientBuilder {
         *self.config.transport_options.http2_options_mut() = Some(options);
-        self
-    }
-
-    /// Sets the maximum number of safe retries for HTTP/2 connections.
-    ///
-    /// Default is 2.
-    #[inline]
-    pub fn http2_max_retry(mut self, max: usize) -> ClientBuilder {
-        self.config.http2_max_retry = max;
         self
     }
 

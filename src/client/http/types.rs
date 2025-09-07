@@ -13,7 +13,7 @@ use crate::{
         http::{Connector, service::ConfigService},
         layer::{
             redirect::FollowRedirect,
-            retry::Http2RetryPolicy,
+            retry::RetryPolicy,
             timeout::{ResponseBodyTimeout, Timeout, TimeoutBody},
         },
     },
@@ -67,7 +67,7 @@ pub type ResponseBody = TimeoutBody<Incoming>;
 pub type GenericClientService = Timeout<
     ConfigService<
         Retry<
-            Http2RetryPolicy,
+            RetryPolicy,
             FollowRedirect<
                 ResponseBodyTimeout<
                     Decompression<

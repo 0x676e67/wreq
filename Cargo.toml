@@ -215,6 +215,10 @@ name = "multipart"
 path = "tests/multipart.rs"
 required-features = ["multipart", "stream"]
 
+[[test]]
+name = "retry"
+path = "tests/retry.rs"
+
 [[example]]
 name = "json_dynamic"
 path = "examples/json_dynamic.rs"
