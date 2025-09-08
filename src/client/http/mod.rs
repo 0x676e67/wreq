@@ -444,7 +444,7 @@ impl ClientBuilder {
                 DynResolver::new(resolver)
             };
 
-            // configured http connector options
+            // Configured http connector options
             let http = |http: &mut HttpConnector| {
                 http.enforce_http(false);
                 http.set_keepalive(config.tcp_keepalive);
@@ -461,7 +461,7 @@ impl ClientBuilder {
                 http.set_tcp_user_timeout(config.tcp_user_timeout);
             };
 
-            // configured tls connector options
+            // Configured tls connector options
             let tls = |tls: TlsConnectorBuilder| {
                 let alpn_protocol = match config.http_version_pref {
                     HttpVersionPref::Http1 => Some(AlpnProtocol::HTTP1),
@@ -479,7 +479,7 @@ impl ClientBuilder {
                     .keylog(config.keylog_policy)
             };
 
-            // build connector
+            // Build connector
             let connector = Connector::builder(proxies.clone(), resolver)
                 .timeout(config.connect_timeout)
                 .tls_info(config.tls_info)
@@ -489,7 +489,7 @@ impl ClientBuilder {
                 .with_http(http)
                 .build(config.connector_layers)?;
 
-            // build client
+            // Build client
             HttpClient::builder(TokioExecutor::new())
                 .http1_options(http1_options)
                 .http2_options(http2_options)
@@ -503,7 +503,7 @@ impl ClientBuilder {
                 .map_err(BoxError::from as _)
         };
 
-        // configured client service with layers
+        // Configured client service with layers
         let client = {
             #[cfg(feature = "cookies")]
             let service = ServiceBuilder::new()
@@ -538,7 +538,6 @@ impl ClientBuilder {
                 .layer(ResponseBodyTimeoutLayer::new(config.timeout_options))
                 .service(service);
 
-            // configured layers to the service.
             if config.layers.is_empty() {
                 let service = ServiceBuilder::new()
                     .layer(TimeoutLayer::new(config.timeout_options))

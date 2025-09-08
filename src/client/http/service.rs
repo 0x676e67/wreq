@@ -136,13 +136,13 @@ where
         // store the original headers in request extensions
         self.config.orig_headers.store(req.extensions_mut());
 
-        // Skip if the destination is not plain HTTP.
-        // For HTTPS, the proxy headers should be part of the CONNECT tunnel instead.
+        // skip if the destination is not plain HTTP.
+        // for HTTPS, the proxy headers should be part of the CONNECT tunnel instead.
         if !uri.is_http() {
             return Either::Left(self.inner.call(req));
         }
 
-        // Determine whether we need to apply proxy auth and/or custom headers.
+        // determine whether we need to apply proxy auth and/or custom headers.
         let need_auth = self.config.proxies_maybe_http_auth
             && !req.headers_mut().contains_key(PROXY_AUTHORIZATION);
         let need_custom_headers = self.config.proxies_maybe_http_custom_headers;
@@ -157,7 +157,7 @@ where
         let mut inserted_custom = false;
 
         for proxy in self.config.proxies.iter() {
-            // Insert basic auth header from the first applicable proxy.
+            // insert basic auth header from the first applicable proxy.
             if need_auth && !inserted_auth {
                 if let Some(auth_header) = proxy.http_non_tunnel_basic_auth(req.uri()) {
                     req.headers_mut().insert(PROXY_AUTHORIZATION, auth_header);
@@ -165,7 +165,7 @@ where
                 }
             }
 
-            // Insert custom headers from the first applicable proxy.
+            // insert custom headers from the first applicable proxy.
             if need_custom_headers && !inserted_custom {
                 if let Some(custom_headers) = proxy.http_non_tunnel_custom_headers(req.uri()) {
                     for (key, value) in custom_headers.iter() {
@@ -175,7 +175,7 @@ where
                 }
             }
 
-            // Stop iterating if both kinds of headers have been inserted.
+            // stop iterating if both kinds of headers have been inserted.
             if inserted_auth && inserted_custom {
                 break;
             }
