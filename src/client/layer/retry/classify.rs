@@ -90,10 +90,8 @@ impl Classifier {
             Classifier::Never => Action::Success,
             Classifier::ProtocolNacks => {
                 let is_protocol_nack = req_rep
-                    .1
-                    .as_ref()
-                    .err()
-                    .map(|&e| super::is_retryable_error(&**e))
+                    .error()
+                    .map(|e| super::is_retryable_error(e))
                     .unwrap_or(false);
                 if is_protocol_nack {
                     Action::Retryable
