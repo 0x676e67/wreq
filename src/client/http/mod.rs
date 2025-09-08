@@ -1,7 +1,6 @@
 mod connect;
 mod future;
 mod service;
-mod types;
 
 use std::{
     collections::HashMap,
@@ -13,19 +12,16 @@ use std::{
     time::Duration,
 };
 
-pub use future::Pending;
-use http::{
-    Request as HttpRequest, Response as HttpResponse,
-    header::{HeaderMap, HeaderValue, USER_AGENT},
+use connect::{
+    BoxedConnectorLayer, BoxedConnectorService, Conn, Connector, HttpConnector, Unnameable,
 };
+pub use future::Pending;
+use http::header::{HeaderMap, HeaderValue, USER_AGENT};
+use service::{ConfigService, ConfigServiceLayer};
 use tower::{
     Layer, Service, ServiceBuilder, ServiceExt,
-    retry::RetryLayer,
-    util::{BoxCloneSyncService, BoxCloneSyncServiceLayer},
-};
-use types::{
-    BoxedClientLayer, BoxedClientService, BoxedConnectorLayer, BoxedConnectorService, ClientRef,
-    HttpConnector, ResponseBody,
+    retry::{Retry, RetryLayer},
+    util::{BoxCloneSyncService, BoxCloneSyncServiceLayer, Either, MapErr, Oneshot},
 };
 #[cfg(feature = "cookies")]
 use {super::layer::cookie::CookieServiceLayer, crate::cookie};
@@ -42,8 +38,12 @@ use super::ws::WebSocketRequestBuilder;
 use super::{
     Body, EmulationFactory,
     layer::{
-        redirect::FollowRedirectLayer,
-        timeout::{ResponseBodyTimeoutLayer, TimeoutLayer},
+        redirect::{FollowRedirect, FollowRedirectLayer},
+        retry::RetryPolicy,
+        timeout::{
+            ResponseBodyTimeout, ResponseBodyTimeoutLayer, Timeout, TimeoutBody, TimeoutLayer,
+            TimeoutOptions,
+        },
     },
     request::{Request, RequestBuilder},
     response::Response,
@@ -52,15 +52,10 @@ use super::{
 use crate::dns::hickory::HickoryDnsResolver;
 use crate::{
     IntoUri, Method, Proxy,
-    client::{
-        http::{
-            connect::{Conn, Connector, Unnameable},
-            service::ConfigServiceLayer,
-        },
-        layer::{retry::RetryPolicy, timeout::TimeoutOptions},
-    },
     core::{
-        client::{HttpClient, connect::TcpConnectOptions, options::TransportOptions},
+        client::{
+            HttpClient, body::Incoming, connect::TcpConnectOptions, options::TransportOptions,
+        },
         rt::{TokioExecutor, TokioTimer},
     },
     dns::{DnsResolverWithOverrides, DynResolver, GaiResolver, IntoResolve, Resolve},
@@ -76,6 +71,87 @@ use crate::{
         conn::TlsConnectorBuilder,
     },
 };
+
+/// Service type for cookie handling. Identity type when cookies feature is disabled.
+#[cfg(not(feature = "cookies"))]
+type CookieService<T> = T;
+
+/// Service wrapper that handles cookie storage and injection.
+#[cfg(feature = "cookies")]
+type CookieService<T> = super::layer::cookie::CookieService<T>;
+
+/// Decompression service type. Identity type when compression features are disabled.
+#[cfg(not(any(
+    feature = "gzip",
+    feature = "zstd",
+    feature = "brotli",
+    feature = "deflate"
+)))]
+type Decompression<T> = T;
+
+/// Service wrapper that handles response body decompression.
+#[cfg(any(
+    feature = "gzip",
+    feature = "zstd",
+    feature = "brotli",
+    feature = "deflate"
+))]
+type Decompression<T> = super::layer::decoder::Decompression<T>;
+
+/// Response body type with timeout and optional decompression.
+#[cfg(any(
+    feature = "gzip",
+    feature = "zstd",
+    feature = "brotli",
+    feature = "deflate"
+))]
+type ResponseBody = TimeoutBody<tower_http::decompression::DecompressionBody<Incoming>>;
+
+/// Response body type with timeout only (no compression features).
+#[cfg(not(any(
+    feature = "gzip",
+    feature = "zstd",
+    feature = "brotli",
+    feature = "deflate"
+)))]
+type ResponseBody = TimeoutBody<Incoming>;
+
+/// The complete HTTP client service stack with all middleware layers.
+type GenericClientService = Timeout<
+    ConfigService<
+        Retry<
+            RetryPolicy,
+            FollowRedirect<
+                ResponseBodyTimeout<
+                    Decompression<
+                        CookieService<
+                            MapErr<
+                                HttpClient<Connector, Body>,
+                                fn(crate::core::client::Error) -> BoxError,
+                            >,
+                        >,
+                    >,
+                >,
+                FollowRedirectPolicy,
+            >,
+        >,
+    >,
+>;
+
+/// Type-erased client service for dynamic middleware composition.
+type BoxedClientService =
+    BoxCloneSyncService<http::Request<Body>, http::Response<ResponseBody>, BoxError>;
+
+/// Layer type for wrapping boxed client services with additional middleware.
+type BoxedClientLayer = BoxCloneSyncServiceLayer<
+    BoxedClientService,
+    http::Request<Body>,
+    http::Response<ResponseBody>,
+    BoxError,
+>;
+
+/// Client reference type that can be either the generic service or a boxed service.
+type ClientRef = Either<GenericClientService, BoxedClientService>;
 
 /// An [`Client`] to make Requests with.
 ///
@@ -364,7 +440,7 @@ impl Client {
         // Prepare the future request by ensuring we use the exact same Service instance
         // for both poll_ready and call.
         let uri = req.uri().clone();
-        let fut = self.inner.as_ref().clone().oneshot(req);
+        let fut = Oneshot::new(self.inner.as_ref().clone(), req);
         Pending::request(fut, uri)
     }
 }
@@ -500,7 +576,7 @@ impl ClientBuilder {
                 .pool_max_idle_per_host(config.pool_max_idle_per_host)
                 .pool_max_size(config.pool_max_size)
                 .build(connector)
-                .map_err(BoxError::from as _)
+                .map_err(Into::into as _)
         };
 
         // Configured client service with layers
@@ -1479,12 +1555,12 @@ impl ClientBuilder {
     pub fn layer<L>(mut self, layer: L) -> ClientBuilder
     where
         L: Layer<BoxedClientService> + Clone + Send + Sync + 'static,
-        L::Service: Service<HttpRequest<Body>, Response = HttpResponse<ResponseBody>, Error = BoxError>
+        L::Service: Service<http::Request<Body>, Response = http::Response<ResponseBody>, Error = BoxError>
             + Clone
             + Send
             + Sync
             + 'static,
-        <L::Service as Service<HttpRequest<Body>>>::Future: Send + 'static,
+        <L::Service as Service<http::Request<Body>>>::Future: Send + 'static,
     {
         let layer = BoxCloneSyncServiceLayer::new(layer);
         self.config.layers.push(layer);

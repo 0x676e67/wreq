@@ -7,7 +7,7 @@ use http::{Request, Uri};
 use pin_project_lite::pin_project;
 use tower::util::Oneshot;
 
-use super::{Body, Response, types::ClientRef};
+use super::{Body, ClientRef, Response};
 use crate::{Error, client::body, ext::RequestUri};
 
 type ResponseFuture = Oneshot<ClientRef, Request<Body>>;

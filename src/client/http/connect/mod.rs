@@ -4,9 +4,26 @@ mod tls_info;
 mod verbose;
 
 use tokio::io::{AsyncRead, AsyncWrite};
+use tower::{
+    BoxError,
+    util::{BoxCloneSyncService, BoxCloneSyncServiceLayer},
+};
 
 pub(super) use self::{conn::Conn, connector::Connector, tls_info::TlsInfoFactory};
-use crate::core::client::{ConnectRequest, connect::Connection};
+use crate::{
+    core::client::{ConnectRequest, connect::Connection},
+    dns::DynResolver,
+};
+
+/// HTTP connector with dynamic DNS resolver.
+pub type HttpConnector = crate::core::client::connect::HttpConnector<DynResolver>;
+
+/// Boxed connector service for establishing connections.
+pub type BoxedConnectorService = BoxCloneSyncService<Unnameable, Conn, BoxError>;
+
+/// Boxed layer for building a boxed connector service.
+pub type BoxedConnectorLayer =
+    BoxCloneSyncServiceLayer<BoxedConnectorService, Unnameable, Conn, BoxError>;
 
 /// A wrapper type for [`ConnectRequest`] used to erase its concrete type.
 ///
