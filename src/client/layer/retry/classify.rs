@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{error::Error as StdError, sync::Arc};
 
 use http::{Method, StatusCode, Uri};
 
@@ -47,8 +47,8 @@ impl ReqRep<'_> {
     }
 
     /// Returns the error if the request failed.
-    pub fn error(&self) -> Option<&(dyn std::error::Error + Send + Sync + 'static)> {
-        self.1.as_ref().err().map(|e| e.as_ref())
+    pub fn error(&self) -> Option<&(dyn StdError + 'static)> {
+        self.1.as_ref().err().map(|&e| &**e as _)
     }
 
     /// Returns a retryable action.
@@ -91,7 +91,7 @@ impl Classifier {
             Classifier::ProtocolNacks => {
                 let is_protocol_nack = req_rep
                     .error()
-                    .map(|e| super::is_retryable_error(e))
+                    .map(super::is_retryable_error)
                     .unwrap_or(false);
                 if is_protocol_nack {
                     Action::Retryable

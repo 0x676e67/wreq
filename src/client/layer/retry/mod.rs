@@ -3,7 +3,7 @@
 mod classify;
 mod scope;
 
-use std::sync::Arc;
+use std::{error::Error as StdError, sync::Arc};
 
 use http::{Request, Response};
 use tower::retry::{
@@ -126,17 +126,15 @@ impl Policy<Req, Res, BoxError> for RetryPolicy {
             return None;
         }
 
-        let mut new_req = Request::builder()
-            .method(req.method())
-            .uri(req.uri())
-            .version(req.version())
-            .body(req.body().try_clone()?)
-            .ok()?;
+        let body = req.body().try_clone()?;
+        let mut new = http::Request::new(body);
+        *new.method_mut() = req.method().clone();
+        *new.uri_mut() = req.uri().clone();
+        *new.version_mut() = req.version();
+        *new.headers_mut() = req.headers().clone();
+        *new.extensions_mut() = req.extensions().clone();
 
-        *new_req.headers_mut() = req.headers().clone();
-        *new_req.extensions_mut() = req.extensions().clone();
-
-        Some(new_req)
+        Some(new)
     }
 }
 
@@ -144,7 +142,7 @@ impl Policy<Req, Res, BoxError> for RetryPolicy {
 ///
 /// Returns `true` if the error type or content indicates that the request can be retried,
 /// otherwise returns `false`.
-fn is_retryable_error(err: &(dyn std::error::Error + 'static)) -> bool {
+fn is_retryable_error(err: &(dyn StdError + 'static)) -> bool {
     let err = if let Some(err) = err.source() {
         err
     } else {
