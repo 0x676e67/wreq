@@ -244,13 +244,8 @@ path = "examples/connect_via_lower_priority_tokio_runtime.rs"
 required-features = ["tracing"]
 
 [[example]]
-name = "emulation_firefox"
-path = "examples/emulation_firefox.rs"
-required-features = ["gzip", "brotli", "zstd", "deflate", "tracing"]
-
-[[example]]
-name = "emulation_twitter"
-path = "examples/emulation_twitter.rs"
+name = "emulation"
+path = "examples/emulation.rs"
 required-features = ["gzip", "brotli", "zstd", "deflate", "tracing"]
 
 [[example]]

@@ -4,7 +4,7 @@ mod support;
 use std::collections::HashMap;
 
 use http::{
-    HeaderMap, Version,
+    HeaderMap, HeaderValue, Version,
     header::{
         self, AUTHORIZATION, CACHE_CONTROL, CONTENT_LENGTH, CONTENT_TYPE, REFERER,
         TRANSFER_ENCODING,
@@ -865,9 +865,6 @@ async fn skip_default_headers() {
 
 #[tokio::test]
 async fn test_client_same_header_values_append() {
-    use http::HeaderValue;
-    use wreq::{Client, header::HeaderMap};
-
     let server = server::http(move |req| async move {
         let cookie_values: Vec<_> = req.headers().get_all(header::COOKIE).iter().collect();
         assert_eq!(cookie_values.len(), 4);
@@ -905,4 +902,49 @@ async fn test_client_same_header_values_append() {
         .unwrap();
 
     assert_eq!(res.status(), wreq::StatusCode::OK);
+}
+
+#[cfg(all(
+    feature = "gzip",
+    feature = "brotli",
+    feature = "deflate",
+    feature = "zstd"
+))]
+#[tokio::test]
+async fn test_client_default_accept_encoding() {
+    let server = server::http(move |req| async move {
+        let accept_encoding = req.headers().get(header::ACCEPT_ENCODING).unwrap();
+        if req.uri() == "/default" {
+            assert_eq!(accept_encoding, "zstd");
+        }
+
+        if req.uri() == "/custom" {
+            assert_eq!(accept_encoding, "gzip");
+        }
+
+        http::Response::default()
+    });
+
+    let client = Client::builder()
+        .default_headers({
+            let mut headers = HeaderMap::new();
+            headers.insert(header::ACCEPT_ENCODING, HeaderValue::from_static("zstd"));
+            headers
+        })
+        .no_proxy()
+        .build()
+        .unwrap();
+
+    let _ = client
+        .get(format!("http://{}/default", server.addr()))
+        .send()
+        .await
+        .unwrap();
+
+    let _ = client
+        .get(format!("http://{}/custom", server.addr()))
+        .header(header::ACCEPT_ENCODING, "gzip")
+        .send()
+        .await
+        .unwrap();
 }

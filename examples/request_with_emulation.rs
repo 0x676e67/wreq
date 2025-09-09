@@ -104,6 +104,12 @@ async fn main() -> wreq::Result<()> {
         .orig_headers(orig_headers)
         .build();
 
+    // Build a client with emulation config
+    let client = Client::builder()
+        .emulation(emulation)
+        .cert_verification(false)
+        .build()?;
+
     // Use the API you're already familiar with
     let resp = wreq::post("https://tls.peet.ws/api/all")
         .emulation(emulation)
