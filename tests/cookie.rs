@@ -82,7 +82,7 @@ async fn cookie_store_simple() {
             .unwrap()
     });
 
-    let client = wreq::Client::builder().cookie_store(true).build().unwrap();
+    let client = Client::builder().cookie_store(true).build().unwrap();
 
     let url = format!("http://{}/", server.addr());
     client.get(&url).send().await.unwrap();
@@ -112,7 +112,7 @@ async fn cookie_store_overwrite_existing() {
         }
     });
 
-    let client = wreq::Client::builder().cookie_store(true).build().unwrap();
+    let client = Client::builder().cookie_store(true).build().unwrap();
 
     let url = format!("http://{}/", server.addr());
     client.get(&url).send().await.unwrap();
@@ -134,7 +134,7 @@ async fn cookie_store_max_age() {
             .unwrap()
     });
 
-    let client = wreq::Client::builder().cookie_store(true).build().unwrap();
+    let client = Client::builder().cookie_store(true).build().unwrap();
     let url = format!("http://{}/", server.addr());
     client.get(&url).send().await.unwrap();
     client.get(&url).send().await.unwrap();
@@ -153,7 +153,7 @@ async fn cookie_store_expires() {
             .unwrap()
     });
 
-    let client = wreq::Client::builder().cookie_store(true).build().unwrap();
+    let client = Client::builder().cookie_store(true).build().unwrap();
 
     let url = format!("http://{}/", server.addr());
     client.get(&url).send().await.unwrap();
@@ -176,7 +176,7 @@ async fn cookie_store_path() {
         }
     });
 
-    let client = wreq::Client::builder().cookie_store(true).build().unwrap();
+    let client = Client::builder().cookie_store(true).build().unwrap();
 
     let url = format!("http://{}/", server.addr());
     client.get(&url).send().await.unwrap();

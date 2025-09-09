@@ -13,7 +13,7 @@ macro_rules! join {
 
 #[tokio::test]
 async fn test_badssl_modern() {
-    let text = wreq::Client::builder()
+    let text = Client::builder()
         .no_proxy()
         .connect_timeout(Duration::from_secs(360))
         .build()
@@ -31,7 +31,7 @@ async fn test_badssl_modern() {
 
 #[tokio::test]
 async fn test_badssl_self_signed() {
-    let text = wreq::Client::builder()
+    let text = Client::builder()
         .cert_verification(false)
         .connect_timeout(Duration::from_secs(360))
         .no_proxy()
@@ -130,7 +130,7 @@ async fn test_alps_new_endpoint() -> wreq::Result<()> {
         .alps_use_new_codepoint(true)
         .build();
 
-    let client = wreq::Client::builder()
+    let client = Client::builder()
         .emulation(tls_options)
         .connect_timeout(Duration::from_secs(360))
         .build()?;
@@ -173,7 +173,7 @@ async fn test_aes_hw_override() -> wreq::Result<()> {
         .build();
 
     // Create a client with the TLS options
-    let client = wreq::Client::builder()
+    let client = Client::builder()
         .emulation(tls_options)
         .connect_timeout(Duration::from_secs(360))
         .build()?;
@@ -187,7 +187,7 @@ async fn test_aes_hw_override() -> wreq::Result<()> {
 
 #[tokio::test]
 async fn test_tls_self_signed_cert() {
-    let client = wreq::Client::builder()
+    let client = Client::builder()
         .cert_verification(false)
         .connect_timeout(Duration::from_secs(360))
         .tls_info(true)
@@ -211,7 +211,7 @@ async fn test_tls_self_signed_cert() {
         .build()
         .unwrap();
 
-    let client = wreq::Client::builder()
+    let client = Client::builder()
         .cert_store(self_signed_cert_store)
         .build()
         .unwrap();

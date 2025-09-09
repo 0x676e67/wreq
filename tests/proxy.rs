@@ -3,6 +3,7 @@ use std::{env, sync::LazyLock};
 
 use support::server;
 use tokio::sync::Mutex;
+use wreq::Client;
 
 // serialize tests that read from / write to environment variables
 static HTTP_PROXY_ENV_MUTEX: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
@@ -20,7 +21,7 @@ async fn http_proxy() {
 
     let proxy = format!("http://{}", server.addr());
 
-    let res = wreq::Client::builder()
+    let res = Client::builder()
         .proxy(wreq::Proxy::http(&proxy).unwrap())
         .build()
         .unwrap()
@@ -50,7 +51,7 @@ async fn http_proxy_basic_auth() {
 
     let proxy = format!("http://{}", server.addr());
 
-    let res = wreq::Client::builder()
+    let res = Client::builder()
         .proxy(
             wreq::Proxy::http(&proxy)
                 .unwrap()
@@ -84,7 +85,7 @@ async fn http_proxy_basic_auth_parsed() {
 
     let proxy = format!("http://Aladdin:open%20sesame@{}", server.addr());
 
-    let res = wreq::Client::builder()
+    let res = Client::builder()
         .proxy(wreq::Proxy::http(&proxy).unwrap())
         .build()
         .unwrap()
@@ -126,7 +127,7 @@ async fn system_http_proxy_basic_auth_parsed() {
         )
     }
 
-    let res = wreq::Client::builder()
+    let res = Client::builder()
         .build()
         .unwrap()
         .get(url)
@@ -158,7 +159,7 @@ async fn test_no_proxy() {
     let url = format!("http://{}/4", server.addr());
 
     // set up proxy and use no_proxy to clear up client builder proxies.
-    let res = wreq::Client::builder()
+    let res = Client::builder()
         .proxy(wreq::Proxy::http(&proxy).unwrap())
         .no_proxy()
         .build()
@@ -221,7 +222,7 @@ async fn http_over_http() {
 
     let proxy = format!("http://{}", server.addr());
 
-    let res = wreq::Client::builder()
+    let res = Client::builder()
         .proxy(wreq::Proxy::http(&proxy).unwrap())
         .build()
         .unwrap()
@@ -257,7 +258,7 @@ async fn http_proxy_custom_headers() {
         headers.insert("x-custom-header", "value".parse().unwrap());
         headers
     });
-    let res = wreq::Client::builder()
+    let res = Client::builder()
         .proxy(proxy)
         .build()
         .unwrap()
@@ -291,7 +292,7 @@ async fn tunnel_detects_auth_required() {
 
     let proxy = format!("http://{}", server.addr());
 
-    let err = wreq::Client::builder()
+    let err = Client::builder()
         .proxy(wreq::Proxy::https(&proxy).unwrap())
         .build()
         .unwrap()
@@ -329,7 +330,7 @@ async fn tunnel_includes_proxy_auth() {
 
     let proxy = format!("http://Aladdin:open%20sesame@{}", server.addr());
 
-    let err = wreq::Client::builder()
+    let err = Client::builder()
         .proxy(wreq::Proxy::https(&proxy).unwrap())
         .build()
         .unwrap()
@@ -364,7 +365,7 @@ async fn tunnel_includes_user_agent() {
 
     let proxy = format!("http://{}", server.addr());
 
-    let err = wreq::Client::builder()
+    let err = Client::builder()
         .proxy(wreq::Proxy::https(&proxy).unwrap().custom_http_headers({
             let mut headers = http::HeaderMap::new();
             headers.insert("user-agent", "wreq-test".parse().unwrap());

@@ -60,7 +60,7 @@ async fn auto_headers() {
     });
 
     let url = format!("http://{}/1", server.addr());
-    let res = wreq::Client::builder()
+    let res = Client::builder()
         .no_proxy()
         .build()
         .unwrap()
@@ -246,7 +246,7 @@ async fn donot_set_content_length_0_if_have_no_body() {
     });
 
     let url = format!("http://{}/content-length", server.addr());
-    let res = wreq::Client::builder()
+    let res = Client::builder()
         .no_proxy()
         .build()
         .expect("client builder")
@@ -266,7 +266,7 @@ async fn user_agent() {
     });
 
     let url = format!("http://{}/ua", server.addr());
-    let res = wreq::Client::builder()
+    let res = Client::builder()
         .user_agent("wreq-test-agent")
         .build()
         .expect("client builder")
@@ -390,7 +390,7 @@ async fn overridden_dns_resolution_with_gai() {
         "http://{overridden_domain}:{}/domain_override",
         server.addr().port()
     );
-    let client = wreq::Client::builder()
+    let client = Client::builder()
         .no_proxy()
         .resolve(overridden_domain, server.addr())
         .build()
@@ -415,7 +415,7 @@ async fn overridden_dns_resolution_with_gai_multiple() {
     );
     // the server runs on IPv4 localhost, so provide both IPv4 and IPv6 and let the happy eyeballs
     // algorithm decide which address to use.
-    let client = wreq::Client::builder()
+    let client = Client::builder()
         .no_proxy()
         .resolve_to_addrs(
             overridden_domain,
@@ -448,7 +448,7 @@ async fn overridden_dns_resolution_with_hickory_dns() {
         "http://{overridden_domain}:{}/domain_override",
         server.addr().port()
     );
-    let client = wreq::Client::builder()
+    let client = Client::builder()
         .no_proxy()
         .resolve(overridden_domain, server.addr())
         .build()
@@ -474,7 +474,7 @@ async fn overridden_dns_resolution_with_hickory_dns_multiple() {
     );
     // the server runs on IPv4 localhost, so provide both IPv4 and IPv6 and let the happy eyeballs
     // algorithm decide which address to use.
-    let client = wreq::Client::builder()
+    let client = Client::builder()
         .no_proxy()
         .resolve_to_addrs(
             overridden_domain,
@@ -528,7 +528,7 @@ fn update_json_content_type_if_set_manually() {
 
 #[tokio::test]
 async fn test_tls_info() {
-    let resp = wreq::Client::builder()
+    let resp = Client::builder()
         .tls_info(true)
         .build()
         .expect("client builder")
@@ -544,7 +544,7 @@ async fn test_tls_info() {
     let der = peer_certificate.unwrap();
     assert_eq!(der[0], 0x30); // ASN.1 SEQUENCE
 
-    let resp = wreq::Client::builder()
+    let resp = Client::builder()
         .build()
         .expect("client builder")
         .get("https://google.com")
@@ -559,7 +559,7 @@ async fn test_tls_info() {
 async fn close_connection_after_idle_timeout() {
     let mut server = server::http(move |_| async move { http::Response::default() });
 
-    let client = wreq::Client::builder()
+    let client = Client::builder()
         .pool_idle_timeout(std::time::Duration::from_secs(1))
         .build()
         .unwrap();
@@ -621,7 +621,7 @@ async fn error_has_url() {
 async fn http1_only() {
     let server = server::http(move |_| async move { http::Response::default() });
 
-    let resp = wreq::Client::builder()
+    let resp = Client::builder()
         .http1_only()
         .build()
         .unwrap()
@@ -632,7 +632,7 @@ async fn http1_only() {
 
     assert_eq!(resp.version(), wreq::Version::HTTP_11);
 
-    let resp = wreq::Client::builder()
+    let resp = Client::builder()
         .build()
         .unwrap()
         .get(format!("http://{}", server.addr()))
@@ -648,7 +648,7 @@ async fn http1_only() {
 async fn http2_only() {
     let server = server::http(move |_| async move { http::Response::default() });
 
-    let resp = wreq::Client::builder()
+    let resp = Client::builder()
         .http2_only()
         .build()
         .unwrap()
@@ -659,7 +659,7 @@ async fn http2_only() {
 
     assert_eq!(resp.version(), wreq::Version::HTTP_2);
 
-    let resp = wreq::Client::builder()
+    let resp = Client::builder()
         .build()
         .unwrap()
         .get(format!("http://{}", server.addr()))
@@ -673,7 +673,7 @@ async fn http2_only() {
 
 #[tokio::test]
 async fn connection_pool_cache() {
-    let client = wreq::Client::default();
+    let client = Client::default();
     let url = "https://hyper.rs";
 
     let resp = client
@@ -753,7 +753,7 @@ async fn tunnel_includes_proxy_auth_with_multiple_proxies() {
     let mut headers2 = wreq::header::HeaderMap::new();
     headers2.insert("proxy-header", "proxy2".parse().unwrap());
 
-    let client = wreq::Client::builder()
+    let client = Client::builder()
         // When processing proxy headers, the first one is iterated,
         // and if the current URL does not match, the proxy is skipped
         .proxy(
@@ -776,7 +776,7 @@ async fn tunnel_includes_proxy_auth_with_multiple_proxies() {
     assert_eq!(res.uri(), url);
     assert_eq!(res.status(), wreq::StatusCode::OK);
 
-    let client = wreq::Client::builder()
+    let client = Client::builder()
         // When processing proxy headers, the first one is iterated,
         // and for the current URL matching, the proxy will be used
         .proxy(
@@ -826,7 +826,7 @@ async fn skip_default_headers() {
     });
 
     let url = format!("http://{}/skip", server.addr());
-    let client = wreq::Client::builder()
+    let client = Client::builder()
         .default_headers({
             let mut headers = wreq::header::HeaderMap::new();
             headers.insert("user-agent", "test-agent".parse().unwrap());
@@ -847,7 +847,7 @@ async fn skip_default_headers() {
     assert_eq!(res.status(), wreq::StatusCode::OK);
 
     let url = format!("http://{}/no_skip", server.addr());
-    let client = wreq::Client::builder()
+    let client = Client::builder()
         .default_headers({
             let mut headers = wreq::header::HeaderMap::new();
             headers.insert("user-agent", "test-agent".parse().unwrap());

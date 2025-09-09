@@ -338,7 +338,7 @@ async fn test_chunked_fragmented_response_with_extra_bytes() {
     });
 
     let start = tokio::time::Instant::now();
-    let res = wreq::Client::new()
+    let res = Client::new()
         .get(format!("http://{}/", server.addr()))
         .send()
         .await

@@ -514,7 +514,7 @@ async fn test_connection_reuse_with_chunked_fragmented_multiple_frames_in_one_ch
         })
     });
 
-    let client = wreq::Client::builder()
+    let client = Client::builder()
         .pool_idle_timeout(std::time::Duration::from_secs(30))
         .pool_max_idle_per_host(1)
         .build()

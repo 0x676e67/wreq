@@ -1,7 +1,7 @@
 mod support;
 use http_body_util::BodyExt;
 use support::server;
-use wreq::{Body, redirect::Policy};
+use wreq::{Body, Client, redirect::Policy};
 
 #[tokio::test]
 async fn test_redirect_301_and_302_and_303_changes_post_to_get() {
@@ -170,7 +170,7 @@ async fn test_redirect_removes_sensitive_headers() {
 
     tx.send(Some(mid_server.addr())).unwrap();
 
-    wreq::Client::builder()
+    Client::builder()
         .redirect(Policy::default())
         .build()
         .unwrap()
@@ -217,7 +217,7 @@ async fn test_redirect_policy_can_stop_redirects_without_an_error() {
 
     let url = format!("http://{}/no-redirect", server.addr());
 
-    let res = wreq::Client::builder()
+    let res = Client::builder()
         .redirect(Policy::none())
         .build()
         .unwrap()
@@ -247,7 +247,7 @@ async fn test_referer_is_not_set_if_disabled() {
         }
     });
 
-    wreq::Client::builder()
+    Client::builder()
         .referer(false)
         .build()
         .unwrap()
@@ -318,7 +318,7 @@ async fn test_redirect_302_with_set_cookies() {
     let url = format!("http://{}/{}", server.addr(), code);
     let dst = format!("http://{}/{}", server.addr(), "dst");
 
-    let client = wreq::Client::builder()
+    let client = Client::builder()
         .cookie_store(true)
         .redirect(Policy::default())
         .build()
@@ -350,7 +350,7 @@ async fn test_redirect_limit_to_1() {
     // The number at the end of the uri indicates the total number of redirections
     let url = format!("http://{}/redirect/0", server.addr());
 
-    let client = wreq::Client::builder()
+    let client = Client::builder()
         .redirect(Policy::limited(1))
         .build()
         .unwrap();
@@ -374,7 +374,7 @@ async fn test_scheme_only_check_after_policy_return_follow() {
     });
 
     let url = format!("http://{}/yikes", server.addr());
-    let res = wreq::Client::builder()
+    let res = Client::builder()
         .redirect(Policy::custom(|attempt| attempt.stop()))
         .build()
         .unwrap()
@@ -385,7 +385,7 @@ async fn test_scheme_only_check_after_policy_return_follow() {
     assert!(res.is_ok());
     assert_eq!(res.unwrap().status(), wreq::StatusCode::FOUND);
 
-    let res = wreq::Client::builder()
+    let res = Client::builder()
         .redirect(Policy::custom(|attempt| attempt.follow()))
         .build()
         .unwrap()
@@ -484,7 +484,7 @@ async fn test_redirect_history() {
     let url = format!("http://{}/first", redirect.addr());
     let dst = format!("http://{}/{}", redirect.addr(), "dst");
 
-    let client = wreq::Client::builder()
+    let client = Client::builder()
         .redirect(Policy::default())
         .history(true)
         .build()

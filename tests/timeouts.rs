@@ -3,6 +3,7 @@ use std::time::Duration;
 
 use pretty_env_logger::env_logger;
 use support::server;
+use wreq::Client;
 
 #[tokio::test]
 async fn client_timeout() {
@@ -16,7 +17,7 @@ async fn client_timeout() {
         }
     });
 
-    let client = wreq::Client::builder()
+    let client = Client::builder()
         .timeout(Duration::from_millis(100))
         .no_proxy()
         .build()
@@ -41,7 +42,7 @@ async fn request_timeout() {
         }
     });
 
-    let client = wreq::Client::builder().no_proxy().build().unwrap();
+    let client = Client::builder().no_proxy().build().unwrap();
 
     let url = format!("http://{}/slow", server.addr());
 
@@ -60,7 +61,7 @@ async fn request_timeout() {
 async fn connect_timeout() {
     let _ = env_logger::try_init();
 
-    let client = wreq::Client::builder()
+    let client = Client::builder()
         .connect_timeout(Duration::from_millis(100))
         .no_proxy()
         .build()
@@ -85,7 +86,7 @@ async fn connect_many_timeout_succeeds() {
     let server = server::http(move |_req| async { http::Response::default() });
     let port = server.addr().port();
 
-    let client = wreq::Client::builder()
+    let client = Client::builder()
         .resolve_to_addrs(
             "many_addrs",
             &["127.0.0.1:81".parse().unwrap(), server.addr()],
@@ -109,7 +110,7 @@ async fn connect_many_timeout_succeeds() {
 async fn connect_many_timeout() {
     let _ = env_logger::try_init();
 
-    let client = wreq::Client::builder()
+    let client = Client::builder()
         .resolve_to_addrs(
             "many_addrs",
             &[
@@ -151,7 +152,7 @@ async fn response_timeout() {
         }
     });
 
-    let client = wreq::Client::builder()
+    let client = Client::builder()
         .timeout(Duration::from_millis(500))
         .no_proxy()
         .build()
@@ -176,7 +177,7 @@ async fn read_timeout_applies_to_headers() {
         }
     });
 
-    let client = wreq::Client::builder()
+    let client = Client::builder()
         .read_timeout(Duration::from_millis(100))
         .no_proxy()
         .build()
@@ -207,7 +208,7 @@ async fn read_timeout_applies_to_body() {
         }
     });
 
-    let client = wreq::Client::builder()
+    let client = Client::builder()
         .read_timeout(Duration::from_millis(100))
         .no_proxy()
         .build()
@@ -245,7 +246,7 @@ async fn read_timeout_allows_slow_response_body() {
         }
     });
 
-    let client = wreq::Client::builder()
+    let client = Client::builder()
         .read_timeout(Duration::from_millis(200))
         //.timeout(Duration::from_millis(200))
         .no_proxy()
@@ -265,7 +266,7 @@ async fn response_body_timeout_forwards_size_hint() {
 
     let server = server::http(move |_req| async { http::Response::new(b"hello".to_vec().into()) });
 
-    let client = wreq::Client::builder().no_proxy().build().unwrap();
+    let client = Client::builder().no_proxy().build().unwrap();
 
     let url = format!("http://{}/slow", server.addr());
 

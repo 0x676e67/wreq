@@ -6,6 +6,7 @@ use std::sync::{
 };
 
 use support::server;
+use wreq::Client;
 
 #[tokio::test]
 async fn retries_apply_in_scope() {
@@ -37,7 +38,7 @@ async fn retries_apply_in_scope() {
     });
 
     let url = format!("http://{}", server.addr());
-    let resp = wreq::Client::builder()
+    let resp = Client::builder()
         .retry(policy)
         .build()
         .unwrap()
@@ -62,7 +63,7 @@ async fn default_retries_have_a_limit() {
         |_| {},
     );
 
-    let client = wreq::Client::builder().http2_only().build().unwrap();
+    let client = Client::builder().http2_only().build().unwrap();
 
     let url = format!("http://{}", server.addr());
 
@@ -75,11 +76,7 @@ async fn default_retries_have_a_limit() {
 // done.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn highly_concurrent_requests_to_http2_server_with_low_max_concurrent_streams() {
-    let client = wreq::Client::builder()
-        .http2_only()
-        .no_proxy()
-        .build()
-        .unwrap();
+    let client = Client::builder().http2_only().no_proxy().build().unwrap();
 
     let server = server::http_with_config(
         move |req| async move {
@@ -108,11 +105,7 @@ async fn highly_concurrent_requests_to_http2_server_with_low_max_concurrent_stre
 async fn highly_concurrent_requests_to_slow_http2_server_with_low_max_concurrent_streams() {
     use support::delay_server;
 
-    let client = wreq::Client::builder()
-        .http2_only()
-        .no_proxy()
-        .build()
-        .unwrap();
+    let client = Client::builder().http2_only().no_proxy().build().unwrap();
 
     let server = delay_server::Server::new(
         move |req| async move {

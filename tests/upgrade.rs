@@ -2,6 +2,7 @@ mod support;
 use http::Method;
 use support::server;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use wreq::Client;
 
 #[tokio::test]
 async fn http_upgrade() {
@@ -30,7 +31,7 @@ async fn http_upgrade() {
         }
     });
 
-    let res = wreq::Client::builder()
+    let res = Client::builder()
         .build()
         .unwrap()
         .get(format!("http://{}", server.addr()))
@@ -76,7 +77,7 @@ async fn http2_upgrade() {
         },
     );
 
-    let res = wreq::Client::builder()
+    let res = Client::builder()
         .http2_only()
         .build()
         .unwrap()
