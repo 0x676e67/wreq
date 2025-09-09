@@ -3,6 +3,7 @@ use std::io::Read;
 
 use support::server;
 use tokio::io::AsyncWriteExt;
+use wreq::Client;
 
 #[tokio::test]
 async fn brotli_response() {
