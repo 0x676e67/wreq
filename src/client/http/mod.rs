@@ -67,7 +67,7 @@ use crate::{
     redirect::{self, FollowRedirectPolicy},
     retry,
     tls::{
-        AlpnProtocol, CertStore, Identity, KeyLogPolicy, TlsOptions, TlsVersion,
+        AlpnProtocol, CertStore, Identity, Keylog, TlsOptions, TlsVersion,
         conn::TlsConnectorBuilder,
     },
 };
@@ -229,7 +229,7 @@ struct Config {
     https_only: bool,
     layers: Vec<BoxedClientLayer>,
     connector_layers: Vec<BoxedConnectorLayer>,
-    keylog_policy: Option<KeyLogPolicy>,
+    keylog_policy: Option<Keylog>,
     tls_info: bool,
     tls_sni: bool,
     verify_hostname: bool,
@@ -1432,7 +1432,7 @@ impl ClientBuilder {
 
     /// Configures TLS key logging policy for the client.
     #[inline]
-    pub fn keylog(mut self, policy: KeyLogPolicy) -> ClientBuilder {
+    pub fn keylog(mut self, policy: Keylog) -> ClientBuilder {
         self.config.keylog_policy = Some(policy);
         self
     }

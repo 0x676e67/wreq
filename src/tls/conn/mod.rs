@@ -36,7 +36,7 @@ use crate::{
     error::BoxError,
     sync::Mutex,
     tls::{
-        AlpnProtocol, AlpsProtocol, CertStore, Identity, KeyLogPolicy, TlsOptions, TlsVersion,
+        AlpnProtocol, AlpsProtocol, CertStore, Identity, Keylog, TlsOptions, TlsVersion,
         conn::ext::SslConnectorBuilderExt,
     },
 };
@@ -165,7 +165,7 @@ pub struct TlsConnectorBuilder {
     identity: Option<Identity>,
     cert_store: Option<CertStore>,
     cert_verification: bool,
-    keylog: Option<KeyLogPolicy>,
+    keylog: Option<Keylog>,
 }
 
 /// A layer which wraps services in an `SslConnector`.
@@ -297,7 +297,7 @@ impl TlsConnectorBuilder {
 
     /// Sets the TLS keylog policy.
     #[inline(always)]
-    pub fn keylog(mut self, policy: Option<KeyLogPolicy>) -> Self {
+    pub fn keylog(mut self, policy: Option<Keylog>) -> Self {
         self.keylog = policy;
         self
     }
@@ -474,15 +474,15 @@ impl TlsConnectorBuilder {
                 .map_err(Error::tls)?;
         }
 
-        // Set TLS keylog policy if provided.
+        // Set TLS keylog handler.
         if let Some(ref policy) = self.keylog {
-            let handle = policy.clone().open_handle().map_err(Error::tls)?;
+            let handle = policy.clone().handle().map_err(Error::tls)?;
             connector.set_keylog_callback(move |_, line| {
-                handle.write_log_line(line);
+                handle.write(line);
             });
         }
 
-        // Create the `HandshakeConfig` with the default session cache capacity.
+        // Create the handshake config with the default session cache capacity.
         let config = HandshakeConfig::builder()
             .no_ticket(opts.psk_skip_session_ticket)
             .alps_protocols(opts.alps_protocols.clone())

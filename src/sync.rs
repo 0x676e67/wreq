@@ -7,7 +7,6 @@
 //! or poisoning is not meaningful in context.
 
 use std::{
-    fmt,
     ops::{Deref, DerefMut},
     sync,
 };
@@ -28,6 +27,16 @@ impl<T: ?Sized> Mutex<T> {
     #[inline]
     pub fn lock(&self) -> MutexGuard<'_, T> {
         MutexGuard(self.0.lock().unwrap_or_else(|e| e.into_inner()))
+    }
+}
+
+impl<T> Default for Mutex<T>
+where
+    T: Default,
+{
+    #[inline]
+    fn default() -> Self {
+        Mutex::new(T::default())
     }
 }
 
@@ -54,12 +63,6 @@ impl<T: ?Sized> DerefMut for MutexGuard<'_, T> {
 /// A [`RwLock`] that never poisons and has the same interface as [`std::sync::RwLock`].
 pub struct RwLock<T: ?Sized>(sync::RwLock<T>);
 
-impl<T: ?Sized + fmt::Debug> fmt::Debug for RwLock<T> {
-    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-        fmt::Debug::fmt(&self.0, fmt)
-    }
-}
-
 impl<T> RwLock<T> {
     /// Like [`std::sync::RwLock::new`].
     #[inline]
@@ -79,6 +82,16 @@ impl<T: ?Sized> RwLock<T> {
     #[inline]
     pub fn write(&self) -> RwLockWriteGuard<'_, T> {
         RwLockWriteGuard(self.0.write().unwrap_or_else(|e| e.into_inner()))
+    }
+}
+
+impl<T> Default for RwLock<T>
+where
+    T: Default,
+{
+    #[inline]
+    fn default() -> Self {
+        RwLock::new(T::default())
     }
 }
 

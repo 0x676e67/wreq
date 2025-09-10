@@ -1,15 +1,15 @@
-use wreq::tls::KeyLogPolicy;
+use wreq::tls::Keylog;
 
 #[tokio::main]
 async fn main() -> wreq::Result<()> {
     // Build a client
     let client = wreq::Client::builder()
-        .keylog(KeyLogPolicy::File("keylog.txt".into()))
+        .keylog(Keylog::file("keylog.txt"))
         .cert_verification(false)
         .build()?;
 
     // Use the API you're already familiar with
-    let resp = client.get("https://api.ip.sb/ip").send().await?;
+    let resp = client.get("https://www.google.com").send().await?;
     println!("{}", resp.text().await?);
 
     Ok(())

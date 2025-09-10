@@ -3,11 +3,11 @@
 //! This module provides utilities for managing TLS key logging, allowing session keys to be
 //! written to a file for debugging or analysis (e.g., with Wireshark).
 //!
-//! The [`KeyLogPolicy`] enum lets you control key log behavior, either by respecting the
+//! The [`KeyLog`] enum lets you control key log behavior, either by respecting the
 //! `SSLKEYLOGFILE` environment variable or by specifying a custom file path. Handles are cached
 //! globally to avoid duplicate file access.
 //!
-//! Use [`KeyLogPolicy::open_handle`] to obtain a [`KeyLogHandle`] for writing keys.
+//! Use [`KeyLog::open_handle`] to obtain a [`KeyLogHandle`] for writing keys.
 
 mod handle;
 
@@ -16,59 +16,50 @@ use std::{
     collections::{HashMap, hash_map::Entry},
     io::{Error, ErrorKind, Result},
     path::{Component, Path, PathBuf},
-    sync::OnceLock,
+    sync::{Arc, OnceLock},
 };
 
-use handle::KeyLogHandle;
+use handle::Handle;
 
 use crate::sync::RwLock;
 
 /// Specifies the intent for a (TLS) keylogger.
 #[derive(Debug, Clone)]
-pub enum KeyLogPolicy {
-    /// Uses the default behavior, respecting the `SSLKEYLOGFILE` environment variable.
-    ///
-    /// If the environment variable is defined, keys will be logged to the specified path.
-    /// Otherwise, no key logging will occur.
-    Environment,
+pub struct Keylog(Option<Arc<Path>>);
 
-    /// Logs keys to the specified file path.
-    ///
-    /// The path is represented by a `PathBuf`, which is an owned, mutable path that can be
-    /// manipulated and queried. This is useful for operations that require reading from or
-    /// writing to the file system.
-    File(PathBuf),
-}
+impl Keylog {
+    /// Creates a [`KeyLog`] based on the `SSLKEYLOGFILE` environment variable.
+    pub fn environment() -> Keylog {
+        match std::env::var("SSLKEYLOGFILE") {
+            Ok(ref s) if !s.trim().is_empty() => {
+                Keylog(Some(Arc::from(normalize_path(Path::new(s)))))
+            }
+            _ => Keylog(None),
+        }
+    }
 
-impl KeyLogPolicy {
+    /// Creates a [`KeyLog`] that writes to the specified file path.
+    pub fn file<P: AsRef<Path>>(path: P) -> Keylog {
+        Keylog(Some(Arc::from(normalize_path(path.as_ref()))))
+    }
+
     /// Creates a new key log file handle based on the policy.
-    pub(crate) fn open_handle(self) -> Result<KeyLogHandle> {
-        static GLOBAL_KEYLOG_FILE_MAPPING: OnceLock<RwLock<HashMap<PathBuf, KeyLogHandle>>> =
-            OnceLock::new();
+    pub(crate) fn handle(self) -> Result<Handle> {
+        static GLOBAL_KEYLOG_CACHE: OnceLock<RwLock<HashMap<Arc<Path>, Handle>>> = OnceLock::new();
 
-        let path = match self {
-            KeyLogPolicy::Environment => std::env::var("SSLKEYLOGFILE")
-                .map(PathBuf::from)
-                .map(normalize_path)
-                .map_err(|err| {
-                    Error::new(
-                        ErrorKind::NotFound,
-                        format!("KeyLogPolicy: SSLKEYLOGFILE environment is invalid: {err}"),
-                    )
-                })?,
-            KeyLogPolicy::File(keylog_filename) => normalize_path(keylog_filename),
-        };
+        let path = self
+            .0
+            .ok_or_else(|| Error::new(ErrorKind::NotFound, "KeyLog: file path is not specified"))?;
 
-        let mapping = GLOBAL_KEYLOG_FILE_MAPPING.get_or_init(|| RwLock::new(HashMap::new()));
-        if let Some(handle) = mapping.read().get(&path).cloned() {
+        let cache = GLOBAL_KEYLOG_CACHE.get_or_init(Default::default);
+        if let Some(handle) = cache.read().get(path.as_ref()).cloned() {
             return Ok(handle);
         }
 
-        let mut mut_mapping = mapping.write();
-        match mut_mapping.entry(path.clone()) {
+        match cache.write().entry(path.clone()) {
             Entry::Occupied(entry) => Ok(entry.get().clone()),
             Entry::Vacant(entry) => {
-                let handle = KeyLogHandle::new(path)?;
+                let handle = Handle::new(path)?;
                 entry.insert(handle.clone());
                 Ok(handle)
             }

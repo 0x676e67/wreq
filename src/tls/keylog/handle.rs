@@ -1,21 +1,24 @@
 use std::{
     fs::OpenOptions,
     io::{Error, Result, Write},
-    path::PathBuf,
-    sync::mpsc::Sender,
+    path::Path,
+    sync::{
+        Arc,
+        mpsc::{self, Sender},
+    },
 };
 
 /// Handle for writing to a key log file.
 #[derive(Debug, Clone)]
-pub struct KeyLogHandle {
+pub struct Handle {
     #[allow(unused)]
-    filepath: PathBuf,
+    filepath: Arc<Path>,
     sender: Sender<String>,
 }
 
-impl KeyLogHandle {
+impl Handle {
     /// Create a new `KeyLogHandle` with the specified path and sender.
-    pub fn new(filepath: PathBuf) -> Result<Self> {
+    pub fn new(filepath: Arc<Path>) -> Result<Self> {
         if let Some(parent) = filepath.parent() {
             std::fs::create_dir_all(parent).map_err(|err| {
                 Error::other(format!(
@@ -29,7 +32,7 @@ impl KeyLogHandle {
             .append(true)
             .open(&filepath)?;
 
-        let (tx, rx) = std::sync::mpsc::channel::<String>();
+        let (tx, rx) = mpsc::channel::<String>();
 
         let _path_name = filepath.clone();
         std::thread::spawn(move || {
@@ -48,14 +51,14 @@ impl KeyLogHandle {
             }
         });
 
-        Ok(KeyLogHandle {
+        Ok(Handle {
             filepath,
             sender: tx,
         })
     }
 
     /// Write a line to the keylogger.
-    pub fn write_log_line(&self, line: &str) {
+    pub fn write(&self, line: &str) {
         let line = format!("{line}\n");
         if let Err(_err) = self.sender.send(line) {
             error!(
