@@ -7,7 +7,7 @@
 //! `SSLKEYLOGFILE` environment variable or by specifying a custom file path. Handles are cached
 //! globally to avoid duplicate file access.
 //!
-//! Use [`KeyLog::open_handle`] to obtain a [`KeyLogHandle`] for writing keys.
+//! Use [`KeyLog::handle`] to obtain a [`Handle`] for writing keys.
 
 mod handle;
 

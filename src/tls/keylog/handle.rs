@@ -17,12 +17,12 @@ pub struct Handle {
 }
 
 impl Handle {
-    /// Create a new `KeyLogHandle` with the specified path and sender.
+    /// Create a new `Handle` with the specified path and sender.
     pub fn new(filepath: Arc<Path>) -> Result<Self> {
         if let Some(parent) = filepath.parent() {
             std::fs::create_dir_all(parent).map_err(|err| {
                 Error::other(format!(
-                    "KeyLogHandle: Failed to create keylog parent path directory: {err}"
+                    "Handle: Failed to create keylog parent path directory: {err}"
                 ))
             })?;
         }
@@ -38,14 +38,14 @@ impl Handle {
         std::thread::spawn(move || {
             trace!(
                 file = ?_path_name,
-                "KeyLogHandle: receiver task up and running",
+                "Handle: receiver task up and running",
             );
             while let Ok(line) = rx.recv() {
                 if let Err(_err) = file.write_all(line.as_bytes()) {
                     error!(
                         file = ?_path_name,
                         error = %_err,
-                        "KeyLogHandle: failed to write file",
+                        "Handle: failed to write file",
                     );
                 }
             }
@@ -64,7 +64,7 @@ impl Handle {
             error!(
                 file = ?self.filepath,
                 error = %_err,
-                "KeyLogHandle: failed to send log line for writing",
+                "Handle: failed to send log line for writing",
             );
         }
     }
