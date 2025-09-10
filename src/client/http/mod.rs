@@ -229,7 +229,7 @@ struct Config {
     https_only: bool,
     layers: Vec<BoxedClientLayer>,
     connector_layers: Vec<BoxedConnectorLayer>,
-    keylog_policy: Option<Keylog>,
+    keylog: Option<Keylog>,
     tls_info: bool,
     tls_sni: bool,
     verify_hostname: bool,
@@ -315,7 +315,7 @@ impl Client {
                 https_only: false,
                 layers: Vec::new(),
                 connector_layers: Vec::new(),
-                keylog_policy: None,
+                keylog: None,
                 tls_info: false,
                 tls_sni: true,
                 verify_hostname: true,
@@ -552,7 +552,7 @@ impl ClientBuilder {
                     .cert_verification(config.cert_verification)
                     .cert_store(config.cert_store)
                     .identity(config.identity)
-                    .keylog(config.keylog_policy)
+                    .keylog(config.keylog)
             };
 
             // Build connector
@@ -1430,10 +1430,10 @@ impl ClientBuilder {
         self
     }
 
-    /// Configures TLS key logging policy for the client.
+    /// Configures TLS key logging for the client.
     #[inline]
-    pub fn keylog(mut self, policy: Keylog) -> ClientBuilder {
-        self.config.keylog_policy = Some(policy);
+    pub fn keylog(mut self, keylog: Keylog) -> ClientBuilder {
+        self.config.keylog = Some(keylog);
         self
     }
 
