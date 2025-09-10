@@ -257,17 +257,14 @@ impl Client {
     /// This method panics if a TLS backend cannot be initialized, or the resolver
     /// cannot load the system configuration.
     ///
-    /// Use [`Client::builder()`] if you wish to handle the failure as an `Error`
+    /// Use [`Client::builder()`] if you wish to handle the failure as an [`Error`]
     /// instead of panicking.
     #[inline]
     pub fn new() -> Client {
         Client::builder().build().expect("Client::new()")
     }
 
-    /// Create a [`ClientBuilder`] specifically configured for WebSocket connections.
-    ///
-    /// This method configures the [`ClientBuilder`] to use HTTP/1.0 only, which is required for
-    /// certain WebSocket connections.
+    /// Creates a [`ClientBuilder`] to configure a [`Client`].
     #[inline]
     pub fn builder() -> ClientBuilder {
         ClientBuilder {
