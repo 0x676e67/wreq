@@ -36,7 +36,7 @@ use crate::{
     error::BoxError,
     sync::Mutex,
     tls::{
-        AlpnProtocol, AlpsProtocol, CertStore, Identity, Keylog, TlsOptions, TlsVersion,
+        AlpnProtocol, AlpsProtocol, CertStore, Identity, KeyLog, TlsOptions, TlsVersion,
         conn::ext::SslConnectorBuilderExt,
     },
 };
@@ -165,7 +165,7 @@ pub struct TlsConnectorBuilder {
     identity: Option<Identity>,
     cert_store: Option<CertStore>,
     cert_verification: bool,
-    keylog: Option<Keylog>,
+    keylog: Option<KeyLog>,
 }
 
 /// A layer which wraps services in an `SslConnector`.
@@ -297,7 +297,7 @@ impl TlsConnectorBuilder {
 
     /// Sets the TLS keylog policy.
     #[inline(always)]
-    pub fn keylog(mut self, keylog: Option<Keylog>) -> Self {
+    pub fn keylog(mut self, keylog: Option<KeyLog>) -> Self {
         self.keylog = keylog;
         self
     }

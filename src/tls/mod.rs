@@ -12,7 +12,7 @@ mod x509;
 pub use boring2::ssl::{CertificateCompressionAlgorithm, ExtensionType};
 
 pub use self::{
-    keylog::Keylog,
+    keylog::KeyLog,
     options::{TlsOptions, TlsOptionsBuilder},
     x509::{CertStore, CertStoreBuilder, Certificate, Identity},
 };

@@ -25,22 +25,22 @@ use crate::sync::RwLock;
 
 /// Specifies the intent for a (TLS) keylogger.
 #[derive(Debug, Clone)]
-pub struct Keylog(Option<Arc<Path>>);
+pub struct KeyLog(Option<Arc<Path>>);
 
-impl Keylog {
+impl KeyLog {
     /// Creates a [`KeyLog`] based on the `SSLKEYLOGFILE` environment variable.
-    pub fn environment() -> Keylog {
+    pub fn environment() -> KeyLog {
         match std::env::var("SSLKEYLOGFILE") {
             Ok(ref s) if !s.trim().is_empty() => {
-                Keylog(Some(Arc::from(normalize_path(Path::new(s)))))
+                KeyLog(Some(Arc::from(normalize_path(Path::new(s)))))
             }
-            _ => Keylog(None),
+            _ => KeyLog(None),
         }
     }
 
     /// Creates a [`KeyLog`] that writes to the specified file path.
-    pub fn file<P: AsRef<Path>>(path: P) -> Keylog {
-        Keylog(Some(Arc::from(normalize_path(path.as_ref()))))
+    pub fn file<P: AsRef<Path>>(path: P) -> KeyLog {
+        KeyLog(Some(Arc::from(normalize_path(path.as_ref()))))
     }
 
     /// Creates a new key log file handle based on the policy.
