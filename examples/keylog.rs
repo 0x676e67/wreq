@@ -4,7 +4,7 @@ use wreq::tls::KeyLog;
 async fn main() -> wreq::Result<()> {
     // Build a client
     let client = wreq::Client::builder()
-        .keylog(KeyLog::file("keylog.txt"))
+        .keylog(KeyLog::from_file("keylog.txt"))
         .cert_verification(false)
         .build()?;
 

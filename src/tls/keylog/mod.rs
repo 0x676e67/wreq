@@ -29,7 +29,7 @@ pub struct KeyLog(Option<Arc<Path>>);
 
 impl KeyLog {
     /// Creates a [`KeyLog`] based on the `SSLKEYLOGFILE` environment variable.
-    pub fn environment() -> KeyLog {
+    pub fn from_env() -> KeyLog {
         match std::env::var("SSLKEYLOGFILE") {
             Ok(ref s) if !s.trim().is_empty() => {
                 KeyLog(Some(Arc::from(normalize_path(Path::new(s)))))
@@ -39,11 +39,11 @@ impl KeyLog {
     }
 
     /// Creates a [`KeyLog`] that writes to the specified file path.
-    pub fn file<P: AsRef<Path>>(path: P) -> KeyLog {
+    pub fn from_file<P: AsRef<Path>>(path: P) -> KeyLog {
         KeyLog(Some(Arc::from(normalize_path(path.as_ref()))))
     }
 
-    /// Creates a new key log file handle based on the policy.
+    /// Creates a new key log file [`Handle`] based on the policy.
     pub(crate) fn handle(self) -> Result<Handle> {
         static GLOBAL_KEYLOG_CACHE: OnceLock<RwLock<HashMap<Arc<Path>, Handle>>> = OnceLock::new();
 
