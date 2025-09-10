@@ -1,6 +1,6 @@
 use std::{
     fs::OpenOptions,
-    io::{Error, Result, Write},
+    io::{Result, Write},
     path::Path,
     sync::{
         Arc,
@@ -17,14 +17,10 @@ pub struct Handle {
 }
 
 impl Handle {
-    /// Create a new `Handle` with the specified path and sender.
+    /// Create a new [`Handle`] with the specified path and sender.
     pub fn new(filepath: Arc<Path>) -> Result<Self> {
         if let Some(parent) = filepath.parent() {
-            std::fs::create_dir_all(parent).map_err(|err| {
-                Error::other(format!(
-                    "Handle: Failed to create keylog parent path directory: {err}"
-                ))
-            })?;
+            std::fs::create_dir_all(parent)?;
         }
 
         let mut file = OpenOptions::new()
@@ -32,7 +28,7 @@ impl Handle {
             .append(true)
             .open(&filepath)?;
 
-        let (tx, rx) = mpsc::channel::<String>();
+        let (sender, receiver) = mpsc::channel::<String>();
 
         let _path_name = filepath.clone();
         std::thread::spawn(move || {
@@ -40,7 +36,7 @@ impl Handle {
                 file = ?_path_name,
                 "Handle: receiver task up and running",
             );
-            while let Ok(line) = rx.recv() {
+            while let Ok(line) = receiver.recv() {
                 if let Err(_err) = file.write_all(line.as_bytes()) {
                     error!(
                         file = ?_path_name,
@@ -51,10 +47,7 @@ impl Handle {
             }
         });
 
-        Ok(Handle {
-            filepath,
-            sender: tx,
-        })
+        Ok(Handle { filepath, sender })
     }
 
     /// Write a line to the keylogger.
