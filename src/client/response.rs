@@ -446,8 +446,8 @@ impl Response {
                 .res
                 .extensions()
                 .get::<Extension<ReasonPhrase>>()
-                .cloned()
-                .map(|Extension(reason)| reason);
+                .map(|Extension(reason)| reason)
+                .cloned();
             Err(Error::status_code(self.uri.clone(), status, reason))
         } else {
             Ok(self)
