@@ -1,11 +1,7 @@
 //! Extension utilities.
 
 use bytes::Bytes;
-use http::{
-    Extensions, Uri,
-    response::Parts,
-    uri::{Authority, PathAndQuery, Scheme},
-};
+use http::uri::{Authority, PathAndQuery, Scheme, Uri};
 use percent_encoding::{AsciiSet, CONTROLS};
 
 use crate::Body;
@@ -58,23 +54,6 @@ pub trait ResponseBuilderExt {
 /// Extension type to store the request URI in a response's extensions.
 #[derive(Clone)]
 pub(crate) struct RequestUri(pub Uri);
-
-// ===== impl Extension =====
-
-impl<T> Extension<T>
-where
-    T: Clone + Send + Sync + 'static,
-{
-    /// Attempts to extract the extension of type `T` from the provided [`http::Extensions`].
-    pub fn from_extensions(extensions: &Extensions) -> Option<Self> {
-        extensions.get::<Extension<T>>().cloned()
-    }
-
-    /// Attempts to extract the extension of type `T` from the provided [`http::response::Parts`].
-    pub fn from_parts(parts: &Parts) -> Option<Self> {
-        Self::from_extensions(&parts.extensions)
-    }
-}
 
 // ===== impl UriExt =====
 
