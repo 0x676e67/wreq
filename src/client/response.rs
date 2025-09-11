@@ -414,7 +414,7 @@ impl Response {
                 .res
                 .extensions_mut()
                 .remove::<Extension<ReasonPhrase>>()
-                .map(|Extension(r)| r);
+                .map(|Extension(reason)| reason);
             Err(Error::status_code(self.uri, status, reason))
         } else {
             Ok(self)
@@ -447,7 +447,7 @@ impl Response {
                 .extensions()
                 .get::<Extension<ReasonPhrase>>()
                 .cloned()
-                .map(|Extension(r)| r);
+                .map(|Extension(reason)| reason);
             Err(Error::status_code(self.uri.clone(), status, reason))
         } else {
             Ok(self)
