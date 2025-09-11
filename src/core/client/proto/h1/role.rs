@@ -11,6 +11,7 @@ use http::{
 use smallvec::{SmallVec, smallvec, smallvec_inline};
 
 use crate::{
+    Extension,
     core::{
         self, Error,
         client::{
@@ -22,7 +23,7 @@ use crate::{
             },
         },
         error::Parse,
-        ext::{RequestConfig, RequestOrigHeaderMap},
+        ext::{ReasonPhrase, RequestConfig, RequestOrigHeaderMap},
     },
     header::{OrigHeaderMap, OrigHeaderName},
 };
@@ -243,14 +244,14 @@ impl Http1Transaction for Client {
             let mut extensions = http::Extensions::default();
 
             if let Some(header_case_map) = header_case_map {
-                extensions.insert(header_case_map);
+                extensions.insert(Extension(header_case_map));
             }
 
             if let Some(reason) = reason {
                 // Safety: httparse ensures that only valid reason phrase bytes are present in this
                 // field.
-                let reason = crate::core::ext::ReasonPhrase::from_bytes_unchecked(reason);
-                extensions.insert(reason);
+                let reason = ReasonPhrase::from_bytes_unchecked(reason);
+                extensions.insert(Extension(reason));
             }
 
             let head = MessageHead {

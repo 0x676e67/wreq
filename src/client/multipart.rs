@@ -1,8 +1,5 @@
 //! multipart/form-data
-#[cfg(feature = "stream")]
-use std::io;
-#[cfg(feature = "stream")]
-use std::path::Path;
+
 use std::{borrow::Cow, fmt, pin::Pin};
 
 use bytes::Bytes;
@@ -10,7 +7,7 @@ use futures_util::{Stream, StreamExt, future, stream};
 use mime_guess::Mime;
 use percent_encoding::{self, AsciiSet, NON_ALPHANUMERIC};
 #[cfg(feature = "stream")]
-use tokio::fs::File;
+use {std::io, std::path::Path, tokio::fs::File};
 
 use super::Body;
 use crate::header::HeaderMap;

@@ -297,7 +297,7 @@ pub use self::{
         RequestBuilder, Response, Upgraded, http1, http2,
     },
     error::{Error, Result},
-    ext::{ResponseBuilderExt, ResponseExt},
+    ext::{Extension, ResponseBuilderExt, ResponseExt},
     into_uri::IntoUri,
     proxy::{NoProxy, Proxy},
 };

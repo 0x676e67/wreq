@@ -15,6 +15,7 @@ use tokio_boring2::SslStream;
 
 use super::{AsyncConnWithInfo, TlsInfoFactory};
 use crate::{
+    Extension,
     core::client::connect::{Connected, Connection},
     tls::{TlsInfo, conn::MaybeHttpsStream},
 };
@@ -52,7 +53,7 @@ impl Connection for Conn {
 
         if self.tls_info {
             if let Some(tls_info) = self.inner.tls_info() {
-                connected.extra(tls_info)
+                connected.extra(Extension(tls_info))
             } else {
                 connected
             }

@@ -1,7 +1,10 @@
 mod support;
 use http_body_util::BodyExt;
 use support::server;
-use wreq::{Body, Client, redirect::Policy};
+use wreq::{
+    Body, Client, Extension,
+    redirect::{History, Policy},
+};
 
 #[tokio::test]
 async fn test_redirect_301_and_302_and_303_changes_post_to_get() {
@@ -498,7 +501,8 @@ async fn test_redirect_history() {
         &"test-dst"
     );
 
-    let mut history = res.history();
+    let Extension(history) = res.extension::<Vec<History>>().unwrap();
+    let mut history = history.iter();
 
     let next1 = history.next().unwrap();
     assert_eq!(next1.status(), 302);

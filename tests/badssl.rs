@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use wreq::{
-    Client,
+    Client, Extension,
     tls::{AlpsProtocol, CertStore, TlsInfo, TlsOptions, TlsVersion},
 };
 
@@ -201,9 +201,8 @@ async fn test_tls_self_signed_cert() {
         .unwrap();
 
     let peer_cert_der = resp
-        .extensions()
-        .get::<TlsInfo>()
-        .and_then(|info| info.peer_certificate())
+        .extension::<TlsInfo>()
+        .and_then(|Extension(info)| info.peer_certificate())
         .unwrap();
 
     let self_signed_cert_store = CertStore::builder()

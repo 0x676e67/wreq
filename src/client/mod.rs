@@ -1,12 +1,10 @@
 mod emulation;
 mod http;
-
 mod request;
 mod response;
 
-pub(crate) mod layer;
-
 pub mod body;
+pub mod layer;
 #[cfg(feature = "multipart")]
 pub mod multipart;
 #[cfg(feature = "ws")]

@@ -16,7 +16,7 @@ use crate::{
     },
     core::ext::RequestConfig,
     error::{BoxError, Error},
-    ext::UriExt,
+    ext::{Extension, UriExt},
     header::{AUTHORIZATION, COOKIE, PROXY_AUTHORIZATION, REFERER, WWW_AUTHENTICATE},
 };
 
@@ -58,10 +58,6 @@ pub struct History {
     previous: Uri,
     headers: HeaderMap,
 }
-
-/// A list of redirect history entries.
-#[derive(Clone, Debug)]
-pub(crate) struct RedirectEntries(pub Vec<History>);
 
 // ===== impl Policy =====
 
@@ -425,9 +421,7 @@ impl policy::Policy<Body, BoxError> for FollowRedirectPolicy {
     fn on_response<Body>(&mut self, response: &mut http::Response<Body>) {
         if self.history {
             if let Some(history_entries) = self.history_entries.take() {
-                response
-                    .extensions_mut()
-                    .insert(RedirectEntries(history_entries));
+                response.extensions_mut().insert(Extension(history_entries));
             }
         }
     }
