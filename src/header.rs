@@ -123,15 +123,6 @@ impl OrigHeaderMap {
 }
 
 impl OrigHeaderMap {
-    /// Appends a header name to the end of the collection.
-    #[inline]
-    pub(crate) fn append<N>(&mut self, name: N, orig: OrigHeaderName)
-    where
-        N: IntoHeaderName,
-    {
-        self.0.append(name, orig);
-    }
-
     /// Sorts headers by this map, preserving original casing.
     /// Headers in the map come first, others follow.
     pub(crate) fn sort_headers(&self, headers: &mut HeaderMap) {
