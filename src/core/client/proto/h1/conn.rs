@@ -58,7 +58,6 @@ where
                 method: None,
                 h1_parser_config: ParserConfig::default(),
                 h1_max_headers: None,
-                preserve_header_case: false,
                 h09_responses: false,
                 notify_read: false,
                 reading: Reading::Init,
@@ -91,10 +90,6 @@ where
 
     pub(crate) fn set_h1_parser_config(&mut self, parser_config: ParserConfig) {
         self.state.h1_parser_config = parser_config;
-    }
-
-    pub(crate) fn set_preserve_header_case(&mut self) {
-        self.state.preserve_header_case = true;
     }
 
     pub(crate) fn set_h09_responses(&mut self) {
@@ -165,7 +160,6 @@ where
                 req_method: &mut self.state.method,
                 h1_parser_config: self.state.h1_parser_config.clone(),
                 h1_max_headers: self.state.h1_max_headers,
-                preserve_header_case: self.state.preserve_header_case,
                 h09_responses: self.state.h09_responses,
             },
         ) {
@@ -795,7 +789,6 @@ struct State {
     method: Option<Method>,
     h1_parser_config: ParserConfig,
     h1_max_headers: Option<usize>,
-    preserve_header_case: bool,
     h09_responses: bool,
     /// Set to true when the Dispatcher should poll read operations
     /// again. See the `maybe_notify` method for more.

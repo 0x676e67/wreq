@@ -20,9 +20,6 @@ pub struct Http1Options {
     /// Whether to use vectored writes for HTTP/1 connections.
     pub h1_writev: Option<bool>,
 
-    /// Whether to preserve the original case of headers in HTTP/1 responses.
-    pub h1_preserve_header_case: bool,
-
     /// Maximum number of headers allowed in HTTP/1 responses.
     pub h1_max_headers: Option<usize>,
 
@@ -65,19 +62,6 @@ impl Http1OptionsBuilder {
     #[inline]
     pub fn writev(mut self, writev: Option<bool>) -> Self {
         self.opts.h1_writev = writev;
-        self
-    }
-
-    /// Set whether to support preserving original header cases.
-    ///
-    /// Currently, this will record the original cases received, and store them
-    /// in a http extension on the `Response`. It will also look for and use
-    /// such an extension in any provided `Request`.
-    ///
-    /// Default is false.
-    #[inline]
-    pub fn preserve_header_case(mut self, preserve_header_case: bool) -> Self {
-        self.opts.h1_preserve_header_case = preserve_header_case;
         self
     }
 

@@ -281,11 +281,6 @@ impl Builder {
             }
         }
 
-        // Set the maximum size of the request line
-        if self.opts.h1_preserve_header_case {
-            conn.set_preserve_header_case();
-        }
-
         // Set the maximum size of the request headers
         if let Some(max_headers) = self.opts.h1_max_headers {
             conn.set_http1_max_headers(max_headers);

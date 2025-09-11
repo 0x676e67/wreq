@@ -139,6 +139,7 @@ impl Http1Transaction for Client {
                     Some(cap) => smallvec![MaybeUninit::uninit(); cap],
                     None => smallvec_inline![MaybeUninit::uninit(); DEFAULT_MAX_HEADERS],
                 };
+
             let (len, status, reason, version, headers_len) = {
                 let mut headers: SmallVec<
                     [MaybeUninit<httparse::Header<'_>>; DEFAULT_MAX_HEADERS],
@@ -146,7 +147,9 @@ impl Http1Transaction for Client {
                     Some(cap) => smallvec![MaybeUninit::uninit(); cap],
                     None => smallvec_inline![MaybeUninit::uninit(); DEFAULT_MAX_HEADERS],
                 };
+
                 trace!(bytes = buf.len(), "Response.parse");
+
                 let mut res = httparse::Response::new(&mut []);
                 let bytes = buf.as_ref();
                 match ctx.h1_parser_config.parse_response_with_uninit_headers(
@@ -207,12 +210,6 @@ impl Http1Transaction for Client {
 
             let mut keep_alive = version == Version::HTTP_11;
 
-            let mut header_case_map = if ctx.preserve_header_case {
-                Some(OrigHeaderMap::default())
-            } else {
-                None
-            };
-
             headers.reserve(headers_len);
             for header in &headers_indices[..headers_len] {
                 // SAFETY: array is valid up to `headers_len`
@@ -232,20 +229,10 @@ impl Http1Transaction for Client {
                     }
                 }
 
-                if let Some(ref mut header_case_map) = header_case_map {
-                    let orig_name =
-                        OrigHeaderName::Cased(slice.slice(header.name.0..header.name.1));
-                    header_case_map.append(&name, orig_name);
-                }
-
                 headers.append(name, value);
             }
 
             let mut extensions = http::Extensions::default();
-
-            if let Some(header_case_map) = header_case_map {
-                extensions.insert(Extension(header_case_map));
-            }
 
             if let Some(reason) = reason {
                 // Safety: httparse ensures that only valid reason phrase bytes are present in this
