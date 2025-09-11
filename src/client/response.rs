@@ -31,6 +31,12 @@ impl Response {
         Response { res, uri }
     }
 
+    /// Get the final `Uri` of this `Response`.
+    #[inline]
+    pub fn uri(&self) -> &Uri {
+        &self.uri
+    }
+
     /// Get the `StatusCode` of this `Response`.
     #[inline]
     pub fn status(&self) -> StatusCode {
@@ -87,12 +93,6 @@ impl Response {
             .iter()
             .map(cookie::Cookie::parse)
             .filter_map(Result::ok)
-    }
-
-    /// Get the final `Uri` of this `Response`.
-    #[inline]
-    pub fn uri(&self) -> &Uri {
-        &self.uri
     }
 
     /// Get the local address used to get this `Response`.
@@ -353,7 +353,6 @@ impl Response {
         super::body::DataStream(self.res.into_body())
     }
 
-    // extension methods
     /// Get a reference to the associated extension of type `T`.
     ///
     /// # Example
@@ -386,8 +385,6 @@ impl Response {
     {
         self.res.extensions().get::<Extension<T>>()
     }
-
-    // util methods
 
     /// Turn a response into an error if the server returned an error.
     ///
