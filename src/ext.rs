@@ -18,8 +18,8 @@ pub(crate) trait UriExt {
     /// Returns true if the URI scheme is HTTP.
     fn is_http(&self) -> bool;
 
-    #[cfg(feature = "ws")]
     /// Sets the scheme of the URI.
+    #[cfg(feature = "ws")]
     fn set_scheme(&mut self, scheme: Scheme);
 
     /// Sets the query component of the URI, replacing any existing query.
@@ -69,7 +69,6 @@ impl UriExt for Uri {
     }
 
     #[cfg(feature = "ws")]
-    #[doc(hidden)]
     fn set_scheme(&mut self, scheme: Scheme) {
         let mut parts = self.clone().into_parts();
         parts.scheme = Some(scheme);

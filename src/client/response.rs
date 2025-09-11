@@ -113,39 +113,6 @@ impl Response {
             .map(HttpInfo::remote_addr)
     }
 
-    /// Get a reference to the associated extension of type `T`.
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// # use wreq::{Client, Extension};
-    /// # use wreq::tls::TlsInfo;
-    /// # async fn run() -> wreq::Result<()> {
-    /// // Build a client that records TLS information.
-    /// let client = Client::builder()
-    ///     .tls_info(true)
-    ///     .build()?;
-    ///
-    /// // Make a request.
-    /// let resp = client.get("https://www.google.com").send().await?;
-    ///
-    /// // Take the TlsInfo extension to inspect it.
-    /// if let Some(Extension(tls_info)) = resp.extension::<TlsInfo>() {
-    ///     // Now you own the TlsInfo and can process it.
-    ///     println!("Peer certificate: {:?}", tls_info.peer_certificate());
-    /// }
-    ///
-    /// # Ok(())
-    /// # }
-    /// ```
-    #[inline]
-    pub fn extension<T>(&self) -> Option<&Extension<T>>
-    where
-        T: Clone + Send + Sync + 'static,
-    {
-        self.res.extensions().get::<Extension<T>>()
-    }
-
     // body methods
 
     /// Get the full response text.
@@ -384,6 +351,40 @@ impl Response {
     #[cfg_attr(docsrs, doc(cfg(feature = "stream")))]
     pub fn bytes_stream(self) -> impl futures_util::Stream<Item = crate::Result<Bytes>> {
         super::body::DataStream(self.res.into_body())
+    }
+
+    // extension methods
+    /// Get a reference to the associated extension of type `T`.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// # use wreq::{Client, Extension};
+    /// # use wreq::tls::TlsInfo;
+    /// # async fn run() -> wreq::Result<()> {
+    /// // Build a client that records TLS information.
+    /// let client = Client::builder()
+    ///     .tls_info(true)
+    ///     .build()?;
+    ///
+    /// // Make a request.
+    /// let resp = client.get("https://www.google.com").send().await?;
+    ///
+    /// // Take the TlsInfo extension to inspect it.
+    /// if let Some(Extension(tls_info)) = resp.extension::<TlsInfo>() {
+    ///     // Now you own the TlsInfo and can process it.
+    ///     println!("Peer certificate: {:?}", tls_info.peer_certificate());
+    /// }
+    ///
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[inline]
+    pub fn extension<T>(&self) -> Option<&Extension<T>>
+    where
+        T: Send + Sync + 'static,
+    {
+        self.res.extensions().get::<Extension<T>>()
     }
 
     // util methods
