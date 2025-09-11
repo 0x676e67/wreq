@@ -443,7 +443,9 @@ impl Response {
         let status = self.status();
         if status.is_client_error() || status.is_server_error() {
             let reason = self
-                .extension::<ReasonPhrase>()
+                .res
+                .extensions()
+                .get::<Extension<ReasonPhrase>>()
                 .cloned()
                 .map(|Extension(r)| r);
             Err(Error::status_code(self.uri.clone(), status, reason))
