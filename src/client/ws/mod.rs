@@ -13,7 +13,7 @@ use std::{
     task::{Context, Poll, ready},
 };
 
-use futures_util::{Sink, SinkExt, Stream, StreamExt};
+use futures_util::{Sink, SinkExt, Stream, StreamExt, stream::FusedStream};
 use http::{HeaderMap, HeaderName, HeaderValue, Method, StatusCode, Version, header, uri::Scheme};
 use http2::ext::Protocol;
 use pin_project_lite::pin_project;
@@ -549,8 +549,8 @@ pin_project! {
 impl WebSocket {
     /// Return the selected WebSocket subprotocol, if one has been chosen.
     #[inline]
-    pub fn protocol(&self) -> Option<HeaderValue> {
-        self.protocol.clone()
+    pub fn protocol(&self) -> Option<&HeaderValue> {
+        self.protocol.as_ref()
     }
 
     /// Receive another message.
@@ -621,6 +621,12 @@ impl Sink<Message> for WebSocket {
             .inner
             .poll_close(cx)
             .map_err(Error::websocket)
+    }
+}
+
+impl FusedStream for WebSocket {
+    fn is_terminated(&self) -> bool {
+        self.inner.is_terminated()
     }
 }
 
