@@ -68,7 +68,6 @@ async fn with_connect_timeout_layer_never_returning() {
 
     let err = res.unwrap_err();
 
-    dbg!(&err);
     assert!(err.is_timeout());
 }
 
@@ -91,7 +90,6 @@ async fn with_connect_timeout_layer_slow() {
 
     let err = res.unwrap_err();
 
-    dbg!(&err);
     assert!(err.is_timeout());
 }
 
@@ -140,7 +138,6 @@ async fn multiple_timeout_layers_over_threshold() {
 
     let err = res.unwrap_err();
 
-    dbg!(&err);
     assert!(err.is_timeout());
 }
 
@@ -204,12 +201,9 @@ async fn with_concurrency_limit_layer_timeout() {
 
     let all_res = join_all(futures).await;
 
-    let timed_out = all_res.into_iter().any(|res| {
-        res.is_err_and(|err| {
-            dbg!(&err);
-            err.is_timeout()
-        })
-    });
+    let timed_out = all_res
+        .into_iter()
+        .any(|res| res.is_err_and(|err| err.is_timeout()));
 
     assert!(timed_out, "at least one request should have timed out");
 }

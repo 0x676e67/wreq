@@ -337,7 +337,6 @@ async fn test_chunked_fragmented_response_with_extra_bytes() {
         .expect("response");
 
     let err = res.text().await.expect_err("there must be an error");
-    dbg!(&err);
     assert!(err.is_decode());
     assert!(start.elapsed() >= DELAY_BETWEEN_RESPONSE_PARTS - DELAY_MARGIN);
 }

@@ -241,7 +241,6 @@ async fn donot_set_content_length_0_if_have_no_body() {
         assert_eq!(headers.get(CONTENT_LENGTH), None);
         assert!(headers.get(CONTENT_TYPE).is_none());
         assert!(headers.get(TRANSFER_ENCODING).is_none());
-        dbg!(&headers);
         http::Response::default()
     });
 

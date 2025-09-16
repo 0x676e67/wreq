@@ -185,7 +185,6 @@ impl Error {
         while let Some(err) = source {
             if let Some(err) = err.downcast_ref::<Error>() {
                 if err.is_connect() {
-                    dbg!(err);
                     return true;
                 }
             }

@@ -295,7 +295,6 @@ async fn test_invalid_scheme_is_rejected() {
         .send()
         .await
         .unwrap_err();
-    dbg!(&err);
     assert!(err.is_builder());
 }
 
