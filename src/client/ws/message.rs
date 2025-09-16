@@ -15,7 +15,7 @@ use crate::Error;
 ///
 /// An [Utf8Bytes] is always guaranteed to contain valid UTF-8.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct Utf8Bytes(pub(crate) tungstenite::Utf8Bytes);
+pub struct Utf8Bytes(tungstenite::Utf8Bytes);
 
 impl Utf8Bytes {
     /// Creates from a static str.
@@ -28,6 +28,12 @@ impl Utf8Bytes {
     #[inline]
     pub fn as_str(&self) -> &str {
         self.0.as_str()
+    }
+
+    /// Consumes self and returns the inner [tungstenite::Utf8Bytes].
+    #[inline]
+    pub(super) fn into_inner(self) -> tungstenite::Utf8Bytes {
+        self.0
     }
 }
 

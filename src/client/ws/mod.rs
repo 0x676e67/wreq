@@ -20,7 +20,7 @@ use pin_project_lite::pin_project;
 use serde::Serialize;
 use tokio_tungstenite::tungstenite::{
     self,
-    protocol::{self, WebSocketConfig},
+    protocol::{self, CloseFrame, WebSocketConfig},
 };
 
 use self::message::{CloseCode, Message, Utf8Bytes};
@@ -571,14 +571,18 @@ impl WebSocket {
     }
 
     /// Closes the connection with a given code and (optional) reason.
-    pub async fn close<R>(mut self, code: CloseCode, reason: R) -> Result<(), Error>
+    pub async fn close<C, R>(mut self, code: C, reason: R) -> Result<(), Error>
     where
+        C: Into<CloseCode>,
         R: Into<Option<Utf8Bytes>>,
     {
         self.inner
-            .close(Some(tungstenite::protocol::CloseFrame {
-                code: code.0.into(),
-                reason: reason.into().unwrap_or(Utf8Bytes::from_static("Goodbye")).0,
+            .close(Some(CloseFrame {
+                code: code.into(),
+                reason: reason
+                    .into()
+                    .unwrap_or(Utf8Bytes::from_static("Goodbye"))
+                    .into_inner(),
             }))
             .await
             .map_err(Error::websocket)
