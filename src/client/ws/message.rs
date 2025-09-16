@@ -4,7 +4,7 @@
 //! tungstenite message implementation, offering a more ergonomic API
 //! for working with WebSocket communications.
 
-use std::fmt;
+use std::{fmt, ops::Deref};
 
 use bytes::Bytes;
 
@@ -37,7 +37,7 @@ impl Utf8Bytes {
     }
 }
 
-impl std::ops::Deref for Utf8Bytes {
+impl Deref for Utf8Bytes {
     type Target = str;
 
     /// ```
