@@ -625,6 +625,7 @@ impl Sink<Message> for WebSocket {
 }
 
 impl FusedStream for WebSocket {
+    #[inline]
     fn is_terminated(&self) -> bool {
         self.inner.is_terminated()
     }
