@@ -581,7 +581,7 @@ impl WebSocket {
             reason: reason
                 .into()
                 .unwrap_or_else(|| Utf8Bytes::from_static("Goodbye"))
-                .into_inner(),
+                .0,
         };
 
         self.inner

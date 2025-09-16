@@ -15,7 +15,7 @@ use crate::Error;
 ///
 /// An [Utf8Bytes] is always guaranteed to contain valid UTF-8.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct Utf8Bytes(tungstenite::Utf8Bytes);
+pub struct Utf8Bytes(pub(super) tungstenite::Utf8Bytes);
 
 impl Utf8Bytes {
     /// Creates from a static str.
@@ -28,12 +28,6 @@ impl Utf8Bytes {
     #[inline]
     pub fn as_str(&self) -> &str {
         self.0.as_str()
-    }
-
-    /// Consumes self and returns the inner [tungstenite::Utf8Bytes].
-    #[inline]
-    pub(super) fn into_inner(self) -> tungstenite::Utf8Bytes {
-        self.0
     }
 }
 
@@ -130,7 +124,7 @@ where
 
 /// Status code used to indicate why an endpoint is closing the WebSocket connection.
 #[derive(Debug, Clone, Eq, PartialEq)]
-pub struct CloseCode(pub u16);
+pub struct CloseCode(pub(super) u16);
 
 impl CloseCode {
     //! Constants for [`CloseCode`]s.
@@ -203,8 +197,16 @@ impl CloseCode {
 }
 
 impl From<CloseCode> for u16 {
+    #[inline]
     fn from(code: CloseCode) -> u16 {
         code.0
+    }
+}
+
+impl From<u16> for CloseCode {
+    #[inline]
+    fn from(code: u16) -> CloseCode {
+        CloseCode(code)
     }
 }
 
