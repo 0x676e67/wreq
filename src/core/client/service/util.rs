@@ -26,12 +26,6 @@ pub(super) fn absolute_form(uri: &mut Uri) {
         uri.authority().is_some(),
         "absolute_form needs an authority"
     );
-    // If the URI is to HTTPS, and the connector claimed to be a proxy,
-    // then it *should* have tunneled, and so we don't want to send
-    // absolute-form in that case.
-    if uri.scheme() == Some(&Scheme::HTTPS) {
-        origin_form(uri);
-    }
 }
 
 pub(super) fn authority_form(uri: &mut Uri) {

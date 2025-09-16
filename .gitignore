@@ -10,3 +10,4 @@ curl
 **/*.rs.bk
 /.DS_Store
 keylog.txt
+*.json
