@@ -573,15 +573,12 @@ impl WebSocket {
     /// Closes the connection with a given code and (optional) reason.
     pub async fn close<C, R>(mut self, code: C, reason: R) -> Result<(), Error>
     where
-        CloseCode: From<C>,
-        R: Into<Option<Utf8Bytes>>,
+        C: Into<CloseCode>,
+        R: Into<Utf8Bytes>,
     {
         let close_frame = CloseFrame {
-            code: CloseCode::from(code).0.into(),
-            reason: reason
-                .into()
-                .unwrap_or_else(|| Utf8Bytes::from_static("Goodbye"))
-                .0,
+            code: code.into().0.into(),
+            reason: reason.into().0,
         };
 
         self.inner
