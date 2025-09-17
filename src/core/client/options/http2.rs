@@ -258,7 +258,7 @@ impl Http2OptionsBuilder {
     ///
     /// Default is currently disabled.
     #[inline]
-    pub fn keep_alive_interval(&mut self, interval: impl Into<Option<Duration>>) -> &mut Self {
+    pub fn keep_alive_interval(mut self, interval: impl Into<Option<Duration>>) -> Self {
         self.opts.keep_alive_interval = interval.into();
         self
     }
@@ -270,7 +270,7 @@ impl Http2OptionsBuilder {
     ///
     /// Default is 20 seconds.
     #[inline]
-    pub fn keep_alive_timeout(&mut self, timeout: Duration) -> &mut Self {
+    pub fn keep_alive_timeout(mut self, timeout: Duration) -> Self {
         self.opts.keep_alive_timeout = timeout;
         self
     }
@@ -284,7 +284,7 @@ impl Http2OptionsBuilder {
     ///
     /// Default is `false`.
     #[inline]
-    pub fn keep_alive_while_idle(&mut self, enabled: bool) -> &mut Self {
+    pub fn keep_alive_while_idle(mut self, enabled: bool) -> Self {
         self.opts.keep_alive_while_idle = enabled;
         self
     }
