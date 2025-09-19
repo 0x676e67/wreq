@@ -90,9 +90,9 @@ async fn main() -> wreq::Result<()> {
         let mut orig_headers = OrigHeaderMap::new();
         orig_headers.insert("cookie");
         orig_headers.insert("content-length");
-        orig_headers.insert("USER-AGENT");
-        orig_headers.insert("ACCEPT-LANGUAGE");
-        orig_headers.insert("ACCEPT-ENCODING");
+        orig_headers.insert("User-Agent");
+        orig_headers.insert("Accept-Language");
+        orig_headers.insert("Accept-Encoding");
         orig_headers
     };
 
@@ -111,7 +111,7 @@ async fn main() -> wreq::Result<()> {
         .build()?;
 
     // Use the API you're already familiar with
-    let resp = client.post("https://tls.peet.ws/api/all").send().await?;
+    let resp = client.get("https://tls.peet.ws/api/all").send().await?;
     println!("{}", resp.text().await?);
 
     Ok(())

@@ -169,7 +169,7 @@ async fn test_aes_hw_override() -> wreq::Result<()> {
         .max_tls_version(TlsVersion::TLS_1_3)
         .enable_ech_grease(true)
         .aes_hw_override(false)
-        .prefer_chacha20(true)
+        .preserve_tls13_cipher_list(true)
         .build();
 
     // Create a client with the TLS options

@@ -91,8 +91,8 @@ socket2 = { version = "0.6.0", features = ["all"] }
 ipnet = "2.11.0"
 schnellru = { version = "0.2.4", default-features = false }
 ahash = { version = "0.8.12", default-features = false }
-boring2 = { version = "5.0.0-alpha.4", features = ["pq-experimental"] }
-tokio-boring2 = { version = "5.0.0-alpha.4", features = ["pq-experimental"] }
+boring2 = { version = "5.0.0-alpha.10", features = ["pq-experimental"] }
+tokio-boring2 = { version = "5.0.0-alpha.10", features = ["pq-experimental"] }
 brotli = "8.0.2"
 flate2 = "1.1.2"
 zstd = "0.13.3"

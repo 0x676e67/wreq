@@ -165,15 +165,10 @@ pub struct TlsOptions {
     /// **Default:** `None`
     pub aes_hw_override: Option<bool>,
 
-    /// Preference for ChaCha20 over AES in TLS 1.3.
+    /// Sets whether to preserve the TLS 1.3 cipher list as configured by [`Self::cipher_list`].
     ///
-    /// When set, the order of preference is:
-    /// - `AES_128_GCM`
-    /// - `CHACHA20_POLY1305`
-    /// - `AES_256_GCM`
-    ///
-    /// **Default:** `None` (implementation default)
-    pub prefer_chacha20: Option<bool>,
+    /// **Default:** `None`
+    pub preserve_tls13_cipher_list: Option<bool>,
 
     /// Overrides the random AES hardware acceleration.
     ///
@@ -398,17 +393,23 @@ impl TlsOptionsBuilder {
         self
     }
 
-    /// Sets the preference for ChaCha20 cipher.
+    /// Sets whether to preserve the TLS 1.3 cipher list as configured by [`Self::cipher_list`].
     ///
-    /// Controls the priority of TLS 1.3 cipher suites. When set to `true`, the client prefers:
-    /// AES_128_GCM, CHACHA20_POLY1305, then AES_256_GCM. Useful in environments with specific
-    /// encryption requirements.
+    /// By default, BoringSSL does not preserve the TLS 1.3 cipher list. When this option is disabled
+    /// (the default), BoringSSL uses its internal default TLS 1.3 cipher suites in its default order,
+    /// regardless of what is set via [`Self::cipher_list`].
+    ///
+    /// When enabled, this option ensures that the TLS 1.3 cipher suites explicitly set via
+    /// [`Self::cipher_list`] are retained in their original order, without being reordered or
+    /// modified by BoringSSL's internal logic. This is useful for maintaining specific cipher suite
+    /// priorities for TLS 1.3. Note that if [`Self::cipher_list`] does not include any TLS 1.3
+    /// cipher suites, BoringSSL will still fall back to its default TLS 1.3 cipher suites and order.
     #[inline]
-    pub fn prefer_chacha20<T>(mut self, enabled: T) -> Self
+    pub fn preserve_tls13_cipher_list<T>(mut self, enabled: T) -> Self
     where
         T: Into<Option<bool>>,
     {
-        self.config.prefer_chacha20 = enabled.into();
+        self.config.preserve_tls13_cipher_list = enabled.into();
         self
     }
 
@@ -455,7 +456,7 @@ impl Default for TlsOptions {
             certificate_compression_algorithms: None,
             extension_permutation: None,
             aes_hw_override: None,
-            prefer_chacha20: None,
+            preserve_tls13_cipher_list: None,
             random_aes_hw_override: false,
         }
     }

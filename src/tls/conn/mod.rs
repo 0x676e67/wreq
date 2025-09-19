@@ -444,6 +444,14 @@ impl TlsConnectorBuilder {
         // Set TLS signature algorithms list
         set_option_ref_try!(opts, sigalgs_list, connector, set_sigalgs_list);
 
+        // Set TLS prreserve TLS 1.3 cipher list order
+        set_option!(
+            opts,
+            preserve_tls13_cipher_list,
+            connector,
+            set_preserve_tls13_cipher_list
+        );
+
         // Set TLS cipher list
         set_option_ref_try!(opts, cipher_list, connector, set_cipher_list);
 
@@ -463,9 +471,6 @@ impl TlsConnectorBuilder {
 
         // Set TLS aes hardware override
         set_option!(opts, aes_hw_override, connector, set_aes_hw_override);
-
-        // Set TLS prefer chacha20 (Encryption order between AES-256-GCM/AES-128-GCM)
-        set_option!(opts, prefer_chacha20, connector, set_prefer_chacha20);
 
         // Set TLS extension permutation
         if let Some(ref extension_permutation) = opts.extension_permutation {
