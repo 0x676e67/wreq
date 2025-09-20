@@ -90,7 +90,7 @@ impl AlpnProtocol {
     }
 }
 
-/// Application-layer protocol settings for HTTP/1.1 and HTTP/2.
+/// A TLS ALPS protocol.
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
 pub struct AlpsProtocol(&'static [u8]);
 

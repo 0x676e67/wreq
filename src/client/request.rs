@@ -369,14 +369,6 @@ impl RequestBuilder {
         )
     }
 
-    /// Set the request body.
-    pub fn body<T: Into<Body>>(mut self, body: T) -> RequestBuilder {
-        if let Ok(ref mut req) = self.request {
-            *req.body_mut() = Some(body.into());
-        }
-        self
-    }
-
     /// Enables a request timeout.
     ///
     /// The timeout is applied from when the request starts connecting until the
@@ -399,6 +391,14 @@ impl RequestBuilder {
         if let Ok(ref mut req) = self.request {
             req.config_mut::<RequestTimeoutOptions>()
                 .read_timeout(timeout);
+        }
+        self
+    }
+
+    /// Set the request body.
+    pub fn body<T: Into<Body>>(mut self, body: T) -> RequestBuilder {
+        if let Ok(ref mut req) = self.request {
+            *req.body_mut() = Some(body.into());
         }
         self
     }
@@ -475,14 +475,6 @@ impl RequestBuilder {
         self
     }
 
-    /// Set HTTP version
-    pub fn version(mut self, version: Version) -> RequestBuilder {
-        if let Ok(ref mut req) = self.request {
-            *req.version_mut() = Some(version);
-        }
-        self
-    }
-
     /// Send a form body.
     ///
     /// Sets the body to the uri encoded serialization of the passed value,
@@ -553,6 +545,14 @@ impl RequestBuilder {
             }
         }
 
+        self
+    }
+
+    /// Set HTTP version
+    pub fn version(mut self, version: Version) -> RequestBuilder {
+        if let Ok(ref mut req) = self.request {
+            *req.version_mut() = Some(version);
+        }
         self
     }
 
@@ -680,12 +680,7 @@ impl RequestBuilder {
         self
     }
 
-    /// Configures the request builder to emulation the specified HTTP context.
-    ///
-    /// This method sets the necessary headers, HTTP/1 and HTTP/2 options configurations, and  TLS
-    /// options config to use the specified HTTP context. It allows the client to mimic the
-    /// behavior of different versions or setups, which can be useful for testing or ensuring
-    /// compatibility with various environments.
+    /// Set the emulation for this request.
     pub fn emulation<P>(mut self, factory: P) -> RequestBuilder
     where
         P: EmulationFactory,

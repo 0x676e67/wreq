@@ -395,15 +395,16 @@ impl TlsOptionsBuilder {
 
     /// Sets whether to preserve the TLS 1.3 cipher list as configured by [`Self::cipher_list`].
     ///
-    /// By default, BoringSSL does not preserve the TLS 1.3 cipher list. When this option is disabled
-    /// (the default), BoringSSL uses its internal default TLS 1.3 cipher suites in its default order,
-    /// regardless of what is set via [`Self::cipher_list`].
+    /// By default, BoringSSL does not preserve the TLS 1.3 cipher list. When this option is
+    /// disabled (the default), BoringSSL uses its internal default TLS 1.3 cipher suites in its
+    /// default order, regardless of what is set via [`Self::cipher_list`].
     ///
     /// When enabled, this option ensures that the TLS 1.3 cipher suites explicitly set via
     /// [`Self::cipher_list`] are retained in their original order, without being reordered or
     /// modified by BoringSSL's internal logic. This is useful for maintaining specific cipher suite
     /// priorities for TLS 1.3. Note that if [`Self::cipher_list`] does not include any TLS 1.3
-    /// cipher suites, BoringSSL will still fall back to its default TLS 1.3 cipher suites and order.
+    /// cipher suites, BoringSSL will still fall back to its default TLS 1.3 cipher suites and
+    /// order.
     #[inline]
     pub fn preserve_tls13_cipher_list<T>(mut self, enabled: T) -> Self
     where
