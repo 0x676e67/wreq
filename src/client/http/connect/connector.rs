@@ -311,6 +311,7 @@ impl ConnectorService {
                 is_proxy,
             }),
             MaybeHttpsStream::Https(stream) => {
+                // Re-enable Nagle's algorithm if it was disabled earlier
                 if !self.config.tcp_nodelay {
                     stream.get_ref().set_nodelay(false)?;
                 }
@@ -369,9 +370,14 @@ impl ConnectorService {
                     let conn = if is_https {
                         // If the target is HTTPS, wrap the SOCKS stream with TLS.
                         let mut connector =
-                            self.build_tls_http_connector(self.http.clone(), req.extra())?;
+                            self.build_https_connector(self.http.clone(), req.extra())?;
                         let established_conn = EstablishedConn::new(req, conn);
                         let io = connector.call(established_conn).await?;
+
+                        // Re-enable Nagle's algorithm if it was disabled earlier
+                        if !self.config.tcp_nodelay {
+                            io.get_ref().set_nodelay(false)?;
+                        }
 
                         Conn {
                             inner: self.config.verbose.wrap(TlsConn::new(io)),
@@ -418,6 +424,12 @@ impl ConnectorService {
                     // Wrap the established tunneled stream with TLS.
                     let established_conn = EstablishedConn::new(req, tunneled);
                     let io = connector.call(established_conn).await?;
+
+                    // Re-enable Nagle's algorithm if it was disabled earlier
+                    if !self.config.tcp_nodelay {
+                        io.get_ref().get_ref().set_nodelay(false)?;
+                    }
+
                     return Ok(Conn {
                         inner: self.config.verbose.wrap(TlsConn::new(io)),
                         tls_info: self.config.tls_info,
@@ -453,6 +465,7 @@ impl ConnectorService {
                     // Wrap the established tunneled stream with TLS.
                     let established_conn = EstablishedConn::new(req, tunneled);
                     let io = connector.call(established_conn).await?;
+
                     return Ok(Conn {
                         inner: self.config.verbose.wrap(TlsConn::new(io)),
                         tls_info: self.config.tls_info,

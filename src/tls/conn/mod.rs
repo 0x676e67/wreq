@@ -564,6 +564,17 @@ pub struct EstablishedConn<IO> {
 
 // ===== impl MaybeHttpsStream =====
 
+impl<T> MaybeHttpsStream<T> {
+    /// Returns a reference to the underlying stream.
+    #[inline]
+    pub fn get_ref(&self) -> &T {
+        match self {
+            MaybeHttpsStream::Http(s) => s,
+            MaybeHttpsStream::Https(s) => s.get_ref(),
+        }
+    }
+}
+
 impl<T> fmt::Debug for MaybeHttpsStream<T> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
