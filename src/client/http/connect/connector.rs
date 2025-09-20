@@ -300,7 +300,7 @@ impl ConnectorService {
             http.set_nodelay(true);
         }
 
-        let mut connector = self.build_tls_http_connector(http, req.extra())?;
+        let mut connector = self.build_https_connector(http, req.extra())?;
 
         // If the connection is HTTPS, wrap the TLS stream in a TlsConn for unified handling.
         // For plain HTTP, use the stream directly without additional wrapping.
@@ -397,7 +397,7 @@ impl ConnectorService {
                     // Create a tunnel connector that establishes a CONNECT tunnel through the HTTP
                     // proxy, then upgrades the tunneled stream to TLS.
                     let mut connector =
-                        self.build_tls_http_connector(self.http.clone(), req.extra())?;
+                        self.build_https_connector(self.http.clone(), req.extra())?;
                     let mut tunnel =
                         proxy::tunnel::TunnelConnector::new(proxy_uri, connector.clone());
 
@@ -433,7 +433,7 @@ impl ConnectorService {
                 trace!("connecting via Unix socket: {:?}", unix_socket);
 
                 // Create a Unix connector with the specified socket path.
-                let mut connector = self.build_tls_unix_connector(unix_socket, req.extra())?;
+                let mut connector = self.build_unix_connector(unix_socket, req.extra())?;
                 let is_proxy = false;
 
                 // If the target URI is HTTPS, establish a CONNECT tunnel over the Unix socket,
@@ -485,11 +485,18 @@ impl ConnectorService {
 
     /// Builds an [`HttpsConnector<HttpConnector>`] from a basic [`HttpConnector`],
     /// applying TCP and TLS configuration from the provided [`ConnectExtra`].
-    fn build_tls_http_connector(
+    fn build_https_connector(
         &self,
         mut http: HttpConnector,
         extra: &ConnectExtra,
     ) -> Result<HttpsConnector<HttpConnector>, BoxError> {
+        // Disable Nagle's algorithm for TLS handshake
+        //
+        // https://www.openssl.org/docs/man1.1.1/man3/SSL_connect.html#NOTES
+        if !self.config.tcp_nodelay {
+            http.set_nodelay(true);
+        }
+
         // Apply TCP options if provided in metadata
         if let Some(opts) = extra.tcp_options() {
             http.set_connect_options(opts.clone());
@@ -501,7 +508,7 @@ impl ConnectorService {
     /// Builds an [`HttpsConnector<UnixConnector>`] for secure communication over a Unix domain
     /// socket.
     #[cfg(unix)]
-    fn build_tls_unix_connector(
+    fn build_unix_connector(
         &self,
         unix_socket: Arc<Path>,
         extra: &ConnectExtra,
