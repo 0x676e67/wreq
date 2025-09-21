@@ -290,17 +290,7 @@ impl ConnectorService {
     async fn connect_direct(self, req: ConnectRequest, is_proxy: bool) -> Result<Conn, BoxError> {
         trace!("connect with maybe proxy: {:?}", is_proxy);
 
-        let uri = req.uri().clone();
-        let mut http = self.http.clone();
-
-        // Disable Nagle's algorithm for TLS handshake
-        //
-        // https://www.openssl.org/docs/man1.1.1/man3/SSL_connect.html#NOTES
-        if !self.config.tcp_nodelay && uri.is_https() {
-            http.set_nodelay(true);
-        }
-
-        let mut connector = self.build_https_connector(http, req.extra())?;
+        let mut connector = self.build_https_connector(req.extra())?;
 
         // If the connection is HTTPS, wrap the TLS stream in a TlsConn for unified handling.
         // For plain HTTP, use the stream directly without additional wrapping.
@@ -369,8 +359,7 @@ impl ConnectorService {
 
                     let conn = if is_https {
                         // If the target is HTTPS, wrap the SOCKS stream with TLS.
-                        let mut connector =
-                            self.build_https_connector(self.http.clone(), req.extra())?;
+                        let mut connector = self.build_https_connector(req.extra())?;
                         let established_conn = EstablishedConn::new(req, conn);
                         let io = connector.call(established_conn).await?;
 
@@ -402,8 +391,7 @@ impl ConnectorService {
 
                     // Create a tunnel connector that establishes a CONNECT tunnel through the HTTP
                     // proxy, then upgrades the tunneled stream to TLS.
-                    let mut connector =
-                        self.build_https_connector(self.http.clone(), req.extra())?;
+                    let mut connector = self.build_https_connector(req.extra())?;
                     let mut tunnel =
                         proxy::tunnel::TunnelConnector::new(proxy_uri, connector.clone());
 
@@ -500,9 +488,10 @@ impl ConnectorService {
     /// applying TCP and TLS configuration from the provided [`ConnectExtra`].
     fn build_https_connector(
         &self,
-        mut http: HttpConnector,
         extra: &ConnectExtra,
     ) -> Result<HttpsConnector<HttpConnector>, BoxError> {
+        let mut http = self.http.clone();
+
         // Disable Nagle's algorithm for TLS handshake
         //
         // https://www.openssl.org/docs/man1.1.1/man3/SSL_connect.html#NOTES
