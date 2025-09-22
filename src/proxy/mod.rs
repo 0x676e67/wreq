@@ -1,10 +1,6 @@
-#[cfg(all(target_os = "macos", feature = "system-proxy"))]
-mod mac;
 mod matcher;
 #[cfg(unix)]
 mod uds;
-#[cfg(all(windows, feature = "system-proxy"))]
-mod win;
 
 use std::hash::{Hash, Hasher};
 #[cfg(unix)]
@@ -494,6 +490,131 @@ impl Hash for Extra {
             }
         } else {
             1u8.hash(state);
+        }
+    }
+}
+
+#[cfg(all(target_os = "macos", feature = "system-proxy"))]
+mod mac {
+    use system_configuration::{
+        core_foundation::{
+            base::CFType,
+            dictionary::CFDictionary,
+            number::CFNumber,
+            string::{CFString, CFStringRef},
+        },
+        dynamic_store::SCDynamicStoreBuilder,
+        sys::schema_definitions::{
+            kSCPropNetProxiesHTTPEnable, kSCPropNetProxiesHTTPPort, kSCPropNetProxiesHTTPProxy,
+            kSCPropNetProxiesHTTPSEnable, kSCPropNetProxiesHTTPSPort, kSCPropNetProxiesHTTPSProxy,
+        },
+    };
+
+    pub(super) fn with_system(builder: &mut super::matcher::Builder) {
+        let store = SCDynamicStoreBuilder::new("").build();
+
+        let proxies_map = if let Some(proxies_map) = store.get_proxies() {
+            proxies_map
+        } else {
+            return;
+        };
+
+        if builder.http.is_empty() {
+            #[allow(unsafe_code)]
+            let http_proxy_config = parse_setting_from_dynamic_store(
+                &proxies_map,
+                unsafe { kSCPropNetProxiesHTTPEnable },
+                unsafe { kSCPropNetProxiesHTTPProxy },
+                unsafe { kSCPropNetProxiesHTTPPort },
+            );
+            if let Some(http) = http_proxy_config {
+                builder.http = http;
+            }
+        }
+
+        if builder.https.is_empty() {
+            #[allow(unsafe_code)]
+            let https_proxy_config = parse_setting_from_dynamic_store(
+                &proxies_map,
+                unsafe { kSCPropNetProxiesHTTPSEnable },
+                unsafe { kSCPropNetProxiesHTTPSProxy },
+                unsafe { kSCPropNetProxiesHTTPSPort },
+            );
+
+            if let Some(https) = https_proxy_config {
+                builder.https = https;
+            }
+        }
+    }
+
+    fn parse_setting_from_dynamic_store(
+        proxies_map: &CFDictionary<CFString, CFType>,
+        enabled_key: CFStringRef,
+        host_key: CFStringRef,
+        port_key: CFStringRef,
+    ) -> Option<String> {
+        let proxy_enabled = proxies_map
+            .find(enabled_key)
+            .and_then(|flag| flag.downcast::<CFNumber>())
+            .and_then(|flag| flag.to_i32())
+            .unwrap_or(0)
+            == 1;
+
+        if proxy_enabled {
+            let proxy_host = proxies_map
+                .find(host_key)
+                .and_then(|host| host.downcast::<CFString>())
+                .map(|host| host.to_string());
+            let proxy_port = proxies_map
+                .find(port_key)
+                .and_then(|port| port.downcast::<CFNumber>())
+                .and_then(|port| port.to_i32());
+
+            return match (proxy_host, proxy_port) {
+                (Some(proxy_host), Some(proxy_port)) => Some(format!("{proxy_host}:{proxy_port}")),
+                (Some(proxy_host), None) => Some(proxy_host),
+                (None, Some(_)) => None,
+                (None, None) => None,
+            };
+        }
+
+        None
+    }
+}
+
+#[cfg(all(windows, feature = "system-proxy"))]
+mod win {
+    pub(super) fn with_system(builder: &mut super::matcher::Builder) {
+        let settings = if let Ok(settings) = windows_registry::CURRENT_USER
+            .open("Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings")
+        {
+            settings
+        } else {
+            return;
+        };
+
+        if settings.get_u32("ProxyEnable").unwrap_or(0) == 0 {
+            return;
+        }
+
+        if let Ok(val) = settings.get_string("ProxyServer") {
+            if builder.http.is_empty() {
+                builder.http = val.clone();
+            }
+            if builder.https.is_empty() {
+                builder.https = val;
+            }
+        }
+
+        if builder.no.is_empty() {
+            if let Ok(val) = settings.get_string("ProxyOverride") {
+                builder.no = val
+                    .split(';')
+                    .map(|s| s.trim())
+                    .collect::<Vec<&str>>()
+                    .join(",")
+                    .replace("*.", "");
+            }
         }
     }
 }
