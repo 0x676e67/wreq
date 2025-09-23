@@ -144,7 +144,7 @@ impl Policy {
     ///
     /// This value is used in combination with a token budget that is applied
     /// to all requests. Even if the budget would allow more requests, this
-    /// limit will prevent. Likewise, the budget may prevent retying up to
+    /// limit will prevent. Likewise, the budget may prevent retrying up to
     /// `max` times. This setting prevents a single request from consuming
     /// the entire budget.
     ///
