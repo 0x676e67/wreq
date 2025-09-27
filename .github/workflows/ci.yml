@@ -29,6 +29,7 @@ jobs:
         with:
           toolchain: stable
           override: true
+          components: rustfmt, clippy
       - name: Style check
         run: cargo fmt --all -- --check
       - name: Clippy check
