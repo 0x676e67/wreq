@@ -161,23 +161,26 @@ fn emulation_template() -> Emulation {
 
 #[tokio::test]
 async fn test_emulation() -> wreq::Result<()> {
-    // Build a client with emulation config
     let client = Client::builder()
         .emulation(emulation_template())
         .connect_timeout(Duration::from_secs(10))
         .cert_verification(false)
         .build()?;
 
-    // Use the API you're already familiar with
-    let resp = client.post("https://tls.browserleaks.com/").send().await?;
-    let text = resp.text().await?;
+    let text = client
+        .get("https://tls.browserleaks.com/")
+        .send()
+        .await?
+        .text()
+        .await?;
+
     assert!(
         text.contains("t13d1717h2_5b57614c22b0_3cbfd9057e0d"),
-        "Response ja4_hash fingerprint not found"
+        "Response ja4_hash fingerprint not found: {text}"
     );
     assert!(
         text.contains("6ea73faa8fc5aac76bded7bd238f6433"),
-        "Response akamai_hash fingerprint not found"
+        "Response akamai_hash fingerprint not found: {text}"
     );
 
     Ok(())
@@ -185,26 +188,26 @@ async fn test_emulation() -> wreq::Result<()> {
 
 #[tokio::test]
 async fn test_request_with_emulation() -> wreq::Result<()> {
-    // Build a client with emulation config
     let client = Client::builder()
         .connect_timeout(Duration::from_secs(10))
         .cert_verification(false)
         .build()?;
 
-    // Use the API you're already familiar with
-    let resp = client
-        .post("https://tls.browserleaks.com/")
+    let text = client
+        .get("https://tls.browserleaks.com/")
         .emulation(emulation_template())
         .send()
+        .await?
+        .text()
         .await?;
-    let text = resp.text().await?;
+
     assert!(
         text.contains("t13d1717h2_5b57614c22b0_3cbfd9057e0d"),
-        "Response ja4_hash fingerprint not found"
+        "Response ja4_hash fingerprint not found: {text}"
     );
     assert!(
         text.contains("6ea73faa8fc5aac76bded7bd238f6433"),
-        "Response akamai_hash fingerprint not found"
+        "Response akamai_hash fingerprint not found: {text}"
     );
 
     Ok(())
@@ -212,22 +215,22 @@ async fn test_request_with_emulation() -> wreq::Result<()> {
 
 #[tokio::test]
 async fn test_request_with_emulation_tls() -> wreq::Result<()> {
-    // Build a client with emulation config
     let client = Client::builder()
         .connect_timeout(Duration::from_secs(10))
         .cert_verification(false)
         .build()?;
 
-    // Use the API you're already familiar with
-    let resp = client
+    let text = client
         .get("https://tls.browserleaks.com/")
         .emulation(tls_options_template())
         .send()
+        .await?
+        .text()
         .await?;
-    let text = resp.text().await?;
+
     assert!(
         text.contains("t13d1717h2_5b57614c22b0_3cbfd9057e0d"),
-        "Response ja4_hash fingerprint not found"
+        "Response ja4_hash fingerprint not found: {text}"
     );
 
     Ok(())
@@ -235,22 +238,22 @@ async fn test_request_with_emulation_tls() -> wreq::Result<()> {
 
 #[tokio::test]
 async fn test_request_with_emulation_http2() -> wreq::Result<()> {
-    // Build a client with emulation config
     let client = Client::builder()
         .connect_timeout(Duration::from_secs(10))
         .cert_verification(false)
         .build()?;
 
-    // Use the API you're already familiar with
-    let resp = client
+    let text = client
         .get("https://tls.browserleaks.com/")
         .emulation(http2_options_template())
         .send()
+        .await?
+        .text()
         .await?;
-    let text = resp.text().await?;
+
     assert!(
         text.contains("6ea73faa8fc5aac76bded7bd238f6433"),
-        "Response akamai_hash fingerprint not found"
+        "Response akamai_hash fingerprint not found: {text}"
     );
 
     Ok(())
