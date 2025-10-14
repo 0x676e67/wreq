@@ -517,3 +517,42 @@ async fn test_redirect_history() {
 
     assert!(history.next().is_none());
 }
+
+#[cfg(feature = "cookies")]
+#[tokio::test]
+async fn test_redirect_applies_set_cookie_from_redirect() {
+    let server = server::http(move |req| async move {
+        match req.uri().path() {
+            "/start" => http::Response::builder()
+                .status(302)
+                .header("location", "/dst")
+                .header("set-cookie", "session=abc; Path=/")
+                .body(Body::default())
+                .unwrap(),
+            "/dst" => {
+                assert_eq!(req.headers()["cookie"], "session=abc");
+                http::Response::builder()
+                    .status(200)
+                    .body(Body::default())
+                    .unwrap()
+            }
+            _ => http::Response::builder()
+                .status(404)
+                .body(Body::default())
+                .unwrap(),
+        }
+    });
+
+    let start = format!("http://{}/start", server.addr());
+    let dst = format!("http://{}/dst", server.addr());
+
+    let client = Client::builder()
+        .cookie_store(true)
+        .redirect(Policy::default())
+        .build()
+        .unwrap();
+
+    let res = client.get(&start).send().await.unwrap();
+    assert_eq!(res.uri(), dst.as_str());
+    assert_eq!(res.status(), wreq::StatusCode::OK);
+}
