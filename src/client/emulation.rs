@@ -1,9 +1,10 @@
 use http::HeaderMap;
 
-use crate::{
-    core::client::options::TransportOptions, header::OrigHeaderMap, http1::Http1Options,
-    http2::Http2Options, tls::TlsOptions,
+use super::{
+    core::options::{TransportOptions, http2::Http2Options},
+    http1::Http1Options,
 };
+use crate::{header::OrigHeaderMap, tls::TlsOptions};
 
 /// Factory trait for creating emulation configurations.
 ///

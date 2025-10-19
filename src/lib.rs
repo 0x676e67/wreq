@@ -267,7 +267,6 @@
 #[macro_use]
 mod trace;
 mod client;
-mod core;
 mod error;
 mod ext;
 mod hash;

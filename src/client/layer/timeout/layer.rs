@@ -8,11 +8,13 @@ use tower::{Layer, Service};
 
 use super::future::{ResponseBodyTimeoutFuture, ResponseFuture};
 use crate::{
-    client::layer::{
-        config::RequestTimeoutOptions,
-        timeout::{TimeoutBody, TimeoutOptions},
+    client::{
+        core::ext::RequestConfig,
+        layer::{
+            config::RequestTimeoutOptions,
+            timeout::{TimeoutBody, TimeoutOptions},
+        },
     },
-    core::ext::RequestConfig,
     error::BoxError,
 };
 

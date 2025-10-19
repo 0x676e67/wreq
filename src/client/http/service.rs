@@ -12,8 +12,10 @@ use tower::{Layer, Service};
 
 use crate::{
     Error,
-    client::layer::config::RequestDefaultHeaders,
-    core::ext::{RequestConfig, RequestOrigHeaderMap},
+    client::{
+        core::ext::{RequestConfig, RequestOrigHeaderMap},
+        layer::config::RequestDefaultHeaders,
+    },
     ext::UriExt,
     header::OrigHeaderMap,
     proxy::Matcher as ProxyMatcher,

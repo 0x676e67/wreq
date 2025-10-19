@@ -1,4 +1,4 @@
-use crate::{core::ext::RequestConfigValue, redirect::Policy};
+use crate::{client::core::ext::RequestConfigValue, redirect::Policy};
 
 // ================================
 //

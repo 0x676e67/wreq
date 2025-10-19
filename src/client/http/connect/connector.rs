@@ -23,9 +23,9 @@ use super::{
     verbose::Verbose,
 };
 #[cfg(unix)]
-use crate::core::client::connect::UnixConnector;
+use crate::client::core::connect::UnixConnector;
 use crate::{
-    core::client::{
+    client::core::{
         ConnectExtra, ConnectRequest,
         connect::{Connection, proxy},
     },

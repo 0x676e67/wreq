@@ -9,14 +9,13 @@ use mime::Mime;
 #[cfg(feature = "json")]
 use serde::de::DeserializeOwned;
 
-use super::body::{Body, ResponseBody};
+use super::{
+    body::{Body, ResponseBody},
+    core::{connect::HttpInfo, ext::ReasonPhrase},
+};
 #[cfg(feature = "cookies")]
 use crate::cookie;
-use crate::{
-    Error, Extension, Upgraded,
-    core::{client::connect::HttpInfo, ext::ReasonPhrase},
-    ext::RequestUri,
-};
+use crate::{Error, Extension, Upgraded, ext::RequestUri};
 
 /// A Response to a submitted `Request`.
 pub struct Response {
@@ -469,7 +468,7 @@ impl Response {
 
     /// Consumes the response and returns a future for a possible HTTP upgrade.
     pub async fn upgrade(self) -> crate::Result<Upgraded> {
-        crate::core::client::upgrade::on(self.res)
+        super::core::upgrade::on(self.res)
             .await
             .map_err(Error::upgrade)
     }

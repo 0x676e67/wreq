@@ -20,15 +20,15 @@ use super::layer::config::RequestAcceptEncoding;
 use super::multipart;
 use super::{
     Body, EmulationFactory, Response,
+    core::{
+        ext::{RequestConfig, RequestConfigValue, RequestLevelOptions, RequestOrigHeaderMap},
+        options::RequestOptions,
+    },
     http::{Client, Pending},
     layer::config::{RequestDefaultHeaders, RequestRedirectPolicy, RequestTimeoutOptions},
 };
 use crate::{
     Error, Method, Proxy,
-    core::{
-        client::options::RequestOptions,
-        ext::{RequestConfig, RequestConfigValue, RequestLevelOptions, RequestOrigHeaderMap},
-    },
     ext::UriExt,
     header::{CONTENT_TYPE, HeaderMap, HeaderName, HeaderValue, OrigHeaderMap},
     redirect,
