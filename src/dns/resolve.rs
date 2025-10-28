@@ -1,4 +1,5 @@
 use std::{
+    borrow::Cow,
     collections::HashMap,
     fmt,
     future::Future,
@@ -150,14 +151,14 @@ impl Service<Name> for DynResolver {
 /// bypassing DNS for specific domains.
 pub(crate) struct DnsResolverWithOverrides {
     dns_resolver: Arc<dyn Resolve>,
-    overrides: Arc<HashMap<String, Vec<SocketAddr>>>,
+    overrides: Arc<HashMap<Cow<'static, str>, Vec<SocketAddr>>>,
 }
 
 impl DnsResolverWithOverrides {
     /// Creates a new [`DnsResolverWithOverrides`] with the provided DNS resolver and overrides.
     pub(crate) fn new(
         dns_resolver: Arc<dyn Resolve>,
-        overrides: HashMap<String, Vec<SocketAddr>>,
+        overrides: HashMap<Cow<'static, str>, Vec<SocketAddr>>,
     ) -> Self {
         DnsResolverWithOverrides {
             dns_resolver,

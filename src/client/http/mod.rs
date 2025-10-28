@@ -224,7 +224,7 @@ struct Config {
     cookie_store: Option<Arc<dyn cookie::CookieStore>>,
     #[cfg(feature = "hickory-dns")]
     hickory_dns: bool,
-    dns_overrides: HashMap<String, Vec<SocketAddr>>,
+    dns_overrides: HashMap<Cow<'static, str>, Vec<SocketAddr>>,
     dns_resolver: Option<Arc<dyn Resolve>>,
     http_version_pref: HttpVersionPref,
     https_only: bool,
@@ -1520,7 +1520,7 @@ impl ClientBuilder {
     {
         self.config
             .dns_overrides
-            .insert(domain.into().into_owned(), addrs.into_iter().collect());
+            .insert(domain.into(), addrs.into_iter().collect());
         self
     }
 
