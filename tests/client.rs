@@ -418,7 +418,7 @@ async fn overridden_dns_resolution_with_gai_multiple() {
         .no_proxy()
         .resolve_to_addrs(
             overridden_domain,
-            &[
+            [
                 std::net::SocketAddr::new(
                     std::net::IpAddr::V6(std::net::Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 1)),
                     server.addr().port(),
@@ -477,7 +477,7 @@ async fn overridden_dns_resolution_with_hickory_dns_multiple() {
         .no_proxy()
         .resolve_to_addrs(
             overridden_domain,
-            &[
+            [
                 std::net::SocketAddr::new(
                     std::net::IpAddr::V6(std::net::Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 1)),
                     server.addr().port(),

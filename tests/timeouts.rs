@@ -89,7 +89,7 @@ async fn connect_many_timeout_succeeds() {
     let client = Client::builder()
         .resolve_to_addrs(
             "many_addrs",
-            &["127.0.0.1:81".parse().unwrap(), server.addr()],
+            ["127.0.0.1:81".parse().unwrap(), server.addr()],
         )
         .connect_timeout(Duration::from_millis(100))
         .no_proxy()
@@ -113,7 +113,7 @@ async fn connect_many_timeout() {
     let client = Client::builder()
         .resolve_to_addrs(
             "many_addrs",
-            &[
+            [
                 "192.0.2.1:81".parse().unwrap(),
                 "192.0.2.2:81".parse().unwrap(),
             ],
