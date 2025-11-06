@@ -7,7 +7,7 @@ use percent_encoding::{AsciiSet, CONTROLS};
 use crate::Body;
 
 /// Extractor and response for extensions.
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy)]
 pub struct Extension<T>(pub T);
 
 /// Extension trait for `Uri` helpers.

@@ -1,10 +1,10 @@
 #[macro_use]
 pub mod error;
 pub mod extra;
+mod pool;
 mod util;
 
 use std::{
-    fmt,
     future::Future,
     num::NonZeroU32,
     pin::Pin,
@@ -24,22 +24,21 @@ use self::{
     error::{ClientConnectError, Error, ErrorKind, TrySendError},
     extra::{ConnectExtra, Identifier},
 };
-use super::pool::Ver;
 use crate::{
     client::core::{
+        BoxError,
         body::Incoming,
         common::{Exec, Lazy, lazy},
         conn::{self, TrySendError as ConnTrySendError},
         connect::{Alpn, Connected, Connection},
-        error::BoxError,
         ext::{RequestConfig, RequestLevelOptions},
         options::{RequestOptions, http1::Http1Options, http2::Http2Options},
-        pool,
         rt::{ArcTimer, Executor, Timer},
     },
     hash::{HASHER, HashMemo},
     tls::AlpnProtocol,
 };
+use pool::Ver;
 
 type BoxSendFuture = Pin<Box<dyn Future<Output = ()> + Send>>;
 
@@ -283,9 +282,7 @@ where
         };
 
         // If the Connector included 'extra' info, add to Response...
-        if let Some(extra) = &pooled.conn_info.extra {
-            extra.set(res.extensions_mut());
-        }
+        pooled.conn_info.set_extras(res.extensions_mut());
 
         // If pooled is HTTP/2, we can toss this reference immediately.
         //
@@ -651,18 +648,11 @@ impl<C: Clone, B> Clone for HttpClient<C, B> {
         HttpClient {
             config: self.config,
             exec: self.exec.clone(),
-
             h1_builder: self.h1_builder.clone(),
             h2_builder: self.h2_builder.clone(),
             connector: self.connector.clone(),
             pool: self.pool.clone(),
         }
-    }
-}
-
-impl<C, B> fmt::Debug for HttpClient<C, B> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("HttpClient").finish()
     }
 }
 
@@ -794,7 +784,7 @@ impl Future for ResponseFuture {
 /// A builder to configure a new [`HttpClient`].
 #[derive(Clone)]
 pub struct Builder {
-    client_config: Config,
+    config: Config,
     exec: Exec,
 
     h1_builder: conn::http1::Builder,
@@ -813,7 +803,7 @@ impl Builder {
     {
         let exec = Exec::new(executor);
         Self {
-            client_config: Config {
+            config: Config {
                 retry_canceled_requests: true,
                 set_host: true,
                 ver: Ver::Auto,
@@ -875,7 +865,7 @@ impl Builder {
     /// Default is false.
     #[inline]
     pub fn http2_only(mut self, val: bool) -> Self {
-        self.client_config.ver = if val { Ver::Http2 } else { Ver::Auto };
+        self.config.ver = if val { Ver::Http2 } else { Ver::Auto };
         self
     }
 
@@ -942,7 +932,7 @@ impl Builder {
     /// Default is `true`.
     #[inline]
     pub fn retry_canceled_requests(mut self, val: bool) -> Self {
-        self.client_config.retry_canceled_requests = val;
+        self.config.retry_canceled_requests = val;
         self
     }
 
@@ -954,7 +944,7 @@ impl Builder {
     /// Default is `true`.
     #[inline]
     pub fn set_host(mut self, val: bool) -> Self {
-        self.client_config.set_host = val;
+        self.config.set_host = val;
         self
     }
 
@@ -971,7 +961,7 @@ impl Builder {
         let exec = self.exec.clone();
         let timer = self.pool_timer.clone();
         HttpClient {
-            config: self.client_config,
+            config: self.config,
             exec: exec.clone(),
 
             h1_builder: self.h1_builder,

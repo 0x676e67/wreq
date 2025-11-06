@@ -11,7 +11,7 @@ use tower::{
 
 pub(super) use self::{conn::Conn, connector::Connector, tls_info::TlsInfoFactory};
 use crate::{
-    client::core::{ConnectRequest, connect::Connection},
+    client::{core::connect::Connection, http::ConnectRequest},
     dns::DynResolver,
 };
 

@@ -6,8 +6,12 @@ mod uds;
 
 pub mod proxy;
 
+pub use self::http::{HttpConnector, HttpInfo, TcpConnectOptions};
+#[cfg(unix)]
+pub use self::uds::UnixConnector;
+
 use std::{
-    fmt::{self, Formatter},
+    fmt::{self, Debug, Formatter},
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -15,10 +19,6 @@ use std::{
 };
 
 use ::http::Extensions;
-
-pub use self::http::{HttpConnector, HttpInfo, TcpConnectOptions};
-#[cfg(unix)]
-pub use self::uds::UnixConnector;
 
 /// Describes a type returned by a connector.
 pub trait Connection {
@@ -32,12 +32,13 @@ pub trait Connection {
 /// was used, or if connected to an HTTP proxy.
 #[derive(Debug)]
 pub struct Connected {
-    pub(super) alpn: Alpn,
-    pub(super) is_proxied: bool,
-    pub(super) extra: Option<Extra>,
-    pub(super) poisoned: PoisonPill,
+    pub(crate) alpn: Alpn,
+    pub(crate) is_proxied: bool,
+    pub(crate) extra: Option<Extra>,
+    pub(crate) poisoned: PoisonPill,
 }
 
+/// A pill that can be poisoned to indicate that a connection should not be reused.
 #[derive(Clone)]
 pub(crate) struct PoisonPill {
     poisoned: Arc<AtomicBool>,
@@ -56,24 +57,31 @@ impl fmt::Debug for PoisonPill {
 }
 
 impl PoisonPill {
+    /// Create a healthy (not poisoned) pill.
     pub(crate) fn healthy() -> Self {
         Self {
             poisoned: Arc::new(AtomicBool::new(false)),
         }
     }
+
+    /// Poison this pill.
     pub(crate) fn poison(&self) {
         self.poisoned.store(true, Ordering::Relaxed)
     }
 
+    /// Check if this pill is poisoned.
     pub(crate) fn poisoned(&self) -> bool {
         self.poisoned.load(Ordering::Relaxed)
     }
 }
 
-pub(super) struct Extra(Box<dyn ExtraInner>);
+/// A boxed asynchronous connection with associated information.
+#[derive(Debug)]
+pub(crate) struct Extra(Box<dyn ExtraInner>);
 
+/// Indicates the negotiated ALPN protocol.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub(super) enum Alpn {
+pub(crate) enum Alpn {
     H2,
     None,
 }
@@ -124,7 +132,7 @@ impl Connected {
     }
 
     /// Set extra connection information to be set in the extensions of every `Response`.
-    pub fn extra<T: Clone + Send + Sync + 'static>(mut self, extra: T) -> Connected {
+    pub fn extra<T: Clone + Send + Sync + Debug + 'static>(mut self, extra: T) -> Connected {
         if let Some(prev) = self.extra {
             self.extra = Some(Extra(Box::new(ExtraChain(prev.0, extra))));
         } else {
@@ -134,7 +142,7 @@ impl Connected {
     }
 
     /// Copies the extra connection information into an `Extensions` map.
-    pub fn get_extras(&self, extensions: &mut Extensions) {
+    pub fn set_extras(&self, extensions: &mut Extensions) {
         if let Some(extra) = &self.extra {
             extra.set(extensions);
         }
@@ -163,7 +171,7 @@ impl Connected {
 
     // Don't public expose that `Connected` is `Clone`, unsure if we want to
     // keep that contract...
-    pub(super) fn clone(&self) -> Connected {
+    pub(crate) fn clone(&self) -> Connected {
         Connected {
             alpn: self.alpn,
             is_proxied: self.is_proxied,
@@ -173,10 +181,9 @@ impl Connected {
     }
 }
 
-// ===== impl Extra =====
-
 impl Extra {
-    pub(super) fn set(&self, res: &mut Extensions) {
+    #[inline]
+    fn set(&self, res: &mut Extensions) {
         self.0.set(res);
     }
 }
@@ -187,26 +194,21 @@ impl Clone for Extra {
     }
 }
 
-impl fmt::Debug for Extra {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Extra").finish()
-    }
-}
-
-trait ExtraInner: Send + Sync {
+trait ExtraInner: Send + Sync + Debug {
     fn clone_box(&self) -> Box<dyn ExtraInner>;
+
     fn set(&self, res: &mut Extensions);
 }
 
 // This indirection allows the `Connected` to have a type-erased "extra" value,
 // while that type still knows its inner extra type. This allows the correct
 // TypeId to be used when inserting into `res.extensions_mut()`.
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 struct ExtraEnvelope<T>(T);
 
 impl<T> ExtraInner for ExtraEnvelope<T>
 where
-    T: Clone + Send + Sync + 'static,
+    T: Clone + Send + Sync + Debug + 'static,
 {
     fn clone_box(&self) -> Box<dyn ExtraInner> {
         Box::new(self.clone())
@@ -217,6 +219,9 @@ where
     }
 }
 
+/// Chains two `ExtraInner` implementations together, inserting both into
+/// the extensions.
+#[derive(Debug)]
 struct ExtraChain<T>(Box<dyn ExtraInner>, T);
 
 impl<T: Clone> Clone for ExtraChain<T> {
@@ -227,7 +232,7 @@ impl<T: Clone> Clone for ExtraChain<T> {
 
 impl<T> ExtraInner for ExtraChain<T>
 where
-    T: Clone + Send + Sync + 'static,
+    T: Clone + Send + Sync + Debug + 'static,
 {
     fn clone_box(&self) -> Box<dyn ExtraInner> {
         Box::new(self.clone())

@@ -178,7 +178,7 @@ impl Error {
 
     /// Returns true if the error is related to connect
     pub fn is_connect(&self) -> bool {
-        use crate::client::core::client::error::Error;
+        use crate::client::http::client::error::Error;
 
         let mut source = self.source();
 

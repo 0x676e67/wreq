@@ -1,10 +1,7 @@
 pub mod client;
 mod connect;
 mod future;
-mod pool;
 mod service;
-
-pub(crate) use self::client::{ConnectRequest, HttpClient, extra::ConnectExtra, extra::Identifier};
 
 use std::{
     borrow::Cow,
@@ -31,6 +28,10 @@ use tower::{
 #[cfg(feature = "cookies")]
 use {super::layer::cookie::CookieServiceLayer, crate::cookie};
 
+pub(crate) use self::client::{
+    ConnectRequest, HttpClient,
+    extra::{ConnectExtra, Identifier},
+};
 #[cfg(any(
     feature = "gzip",
     feature = "zstd",
@@ -43,7 +44,6 @@ use super::ws::WebSocketRequestBuilder;
 use super::{
     Body, EmulationFactory,
     core::{
-        HttpClient,
         body::Incoming,
         connect::TcpConnectOptions,
         options::TransportOptions,
@@ -133,7 +133,7 @@ type GenericClientService = Timeout<
                         CookieService<
                             MapErr<
                                 HttpClient<Connector, Body>,
-                                fn(super::core::client::error::Error) -> BoxError,
+                                fn(client::error::Error) -> BoxError,
                             >,
                         >,
                     >,

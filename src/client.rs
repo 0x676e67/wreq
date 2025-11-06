@@ -1,10 +1,10 @@
 mod emulation;
-mod http;
 mod request;
 mod response;
 
 pub mod body;
 pub mod core;
+pub mod http;
 pub mod layer;
 #[cfg(feature = "multipart")]
 pub mod multipart;

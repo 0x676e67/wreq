@@ -2,7 +2,8 @@ use std::{error::Error as StdError, fmt};
 
 use http::Request;
 
-use crate::client::core::{self, connect::Connected, error::BoxError, pool};
+use super::pool;
+use crate::client::core::{self, BoxError, connect::Connected};
 
 macro_rules! e {
     ($kind:ident) => {

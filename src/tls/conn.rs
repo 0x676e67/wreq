@@ -29,9 +29,9 @@ use tower::Service;
 
 use crate::{
     Error,
-    client::core::{
-        ConnectRequest, Identifier,
-        connect::{Connected, Connection},
+    client::{
+        core::connect::{Connected, Connection},
+        http::{ConnectRequest, Identifier},
     },
     error::BoxError,
     sync::Mutex,
