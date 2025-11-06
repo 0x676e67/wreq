@@ -357,15 +357,19 @@ fn parse_env_uri(val: &str) -> Option<Intercept> {
     };
 
     if let Some((userinfo, host_port)) = authority.as_str().rsplit_once('@') {
-        let (user, pass) = userinfo.rsplit_once(':')?;
+        let (user, pass) = match userinfo.split_once(':') {
+            Some((user, pass)) => (user, Some(pass)),
+            None => (userinfo, None),
+        };
+
         let user = percent_decode_str(user).decode_utf8_lossy();
-        let pass = percent_decode_str(pass).decode_utf8_lossy();
+        let pass = pass.map(|pass| percent_decode_str(pass).decode_utf8_lossy());
         if is_httpish {
-            auth = Auth::Basic(crate::util::basic_auth(&user, Some(&pass)));
+            auth = Auth::Basic(crate::util::basic_auth(&user, pass.as_deref()));
         } else {
             auth = Auth::Raw(
                 Bytes::from(user.into_owned()),
-                Bytes::from(pass.into_owned()),
+                Bytes::from(pass.map_or_else(String::new, std::borrow::Cow::into_owned)),
             );
         }
         builder = builder.authority(host_port);
@@ -681,6 +685,19 @@ mod tests {
         assert_eq!(
             proxy.basic_auth().expect("basic_auth"),
             "Basic QWxhZGRpbjpvcGVuc2VzYW1l"
+        );
+    }
+
+    #[test]
+    fn test_parse_http_auth_without_password() {
+        let p = p! {
+            all = "http://Aladdin@y.ep",
+        };
+        let proxy = intercept(&p, "https://example.local");
+        assert_eq!(proxy.uri(), "http://y.ep");
+        assert_eq!(
+            proxy.basic_auth().expect("basic_auth"),
+            "Basic QWxhZGRpbjo="
         );
     }
 

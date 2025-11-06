@@ -86,7 +86,7 @@ async fn test_headers_order_with_client() {
     let server = server::http(move |req| async move {
         assert_eq!(req.method(), "POST");
 
-        let expected_headers = vec![
+        let expected_headers = [
             ("cookie", "cookie1=cookie1-value"),
             ("cookie", "cookie2=cookie2-value"),
             ("user-agent", "my-test-client"),
@@ -167,7 +167,7 @@ async fn test_headers_order_with_request() {
     let server = server::http(move |req| async move {
         assert_eq!(req.method(), "POST");
 
-        let expected_headers = vec![
+        let expected_headers = [
             ("user-agent", "my-test-client"),
             ("accept", "*/*"),
             ("content-type", "application/json"),
