@@ -10,30 +10,6 @@ use crate::Body;
 #[derive(Debug, Clone, Copy)]
 pub struct Extension<T>(pub T);
 
-/// Extension trait for `Uri` helpers.
-pub(crate) trait UriExt {
-    /// Returns true if the URI scheme is HTTPS.
-    fn is_https(&self) -> bool;
-
-    /// Returns true if the URI scheme is HTTP.
-    fn is_http(&self) -> bool;
-
-    /// Sets the scheme of the URI.
-    #[cfg(feature = "ws")]
-    fn set_scheme(&mut self, scheme: Scheme);
-
-    /// Sets the query component of the URI, replacing any existing query.
-    fn set_query(&mut self, query: String);
-
-    /// Returns the username and password from the URI's userinfo, if present.
-    /// Returns (None, None) if no userinfo is present.
-    fn userinfo(&self) -> (Option<&str>, Option<&str>);
-
-    /// Sets the username and password in the URI's userinfo component.
-    /// If both are empty, removes userinfo.
-    fn set_userinfo(&mut self, username: &str, password: Option<&str>);
-}
-
 /// Extension trait for http::Response objects
 ///
 /// Provides methods to extract URI information from HTTP responses
@@ -55,26 +31,73 @@ pub trait ResponseBuilderExt {
 #[derive(Clone)]
 pub(crate) struct RequestUri(pub Uri);
 
+/// Extension trait for `Uri` helpers.
+pub(crate) trait UriExt {
+    /// Returns true if the URI scheme is HTTP.
+    fn is_http(&self) -> bool;
+
+    /// Returns true if the URI scheme is HTTPS.
+    fn is_https(&self) -> bool;
+
+    /// Sets the query component of the URI, replacing any existing query.
+    fn set_query(&mut self, query: String);
+
+    /// Returns the username and password from the URI's userinfo, if present.
+    fn userinfo(&self) -> (Option<&str>, Option<&str>);
+
+    /// Sets the username and password in the URI's userinfo component.
+    fn set_userinfo(&mut self, username: &str, password: Option<&str>);
+}
+
+/// https://url.spec.whatwg.org/#fragment-percent-encode-set
+pub(crate) const FRAGMENT: &AsciiSet = &CONTROLS.add(b' ').add(b'"').add(b'<').add(b'>').add(b'`');
+
+/// https://url.spec.whatwg.org/#path-percent-encode-set
+pub(crate) const PATH: &AsciiSet = &FRAGMENT.add(b'#').add(b'?').add(b'{').add(b'}');
+
+// https://url.spec.whatwg.org/#query-state
+pub(crate) const QUERY: &AsciiSet = &CONTROLS.add(b' ').add(b'"').add(b'#').add(b'<').add(b'>');
+
+/// https://url.spec.whatwg.org/#userinfo-percent-encode-set
+pub(crate) const USERINFO: &AsciiSet = &PATH
+    .add(b'/')
+    .add(b':')
+    .add(b';')
+    .add(b'=')
+    .add(b'@')
+    .add(b'[')
+    .add(b'\\')
+    .add(b']')
+    .add(b'^')
+    .add(b'|');
+
+// ===== impl ResponseExt =====
+
+impl ResponseExt for http::Response<Body> {
+    fn uri(&self) -> Option<&Uri> {
+        self.extensions().get::<RequestUri>().map(|r| &r.0)
+    }
+}
+
+// ===== impl ResponseBuilderExt =====
+
+impl ResponseBuilderExt for http::response::Builder {
+    fn uri(self, uri: Uri) -> Self {
+        self.extension(RequestUri(uri))
+    }
+}
+
 // ===== impl UriExt =====
 
 impl UriExt for Uri {
-    #[inline]
-    fn is_https(&self) -> bool {
-        self.scheme() == Some(&Scheme::HTTPS)
-    }
-
     #[inline]
     fn is_http(&self) -> bool {
         self.scheme() == Some(&Scheme::HTTP)
     }
 
-    #[cfg(feature = "ws")]
-    fn set_scheme(&mut self, scheme: Scheme) {
-        let mut parts = self.clone().into_parts();
-        parts.scheme = Some(scheme);
-        if let Ok(uri) = Uri::from_parts(parts) {
-            *self = uri;
-        }
+    #[inline]
+    fn is_https(&self) -> bool {
+        self.scheme() == Some(&Scheme::HTTPS)
     }
 
     fn set_query(&mut self, query: String) {
@@ -103,25 +126,6 @@ impl UriExt for Uri {
     }
 
     fn set_userinfo(&mut self, username: &str, password: Option<&str>) {
-        /// https://url.spec.whatwg.org/#fragment-percent-encode-set
-        const FRAGMENT: &AsciiSet = &CONTROLS.add(b' ').add(b'"').add(b'<').add(b'>').add(b'`');
-
-        /// https://url.spec.whatwg.org/#path-percent-encode-set
-        const PATH: &AsciiSet = &FRAGMENT.add(b'#').add(b'?').add(b'{').add(b'}');
-
-        /// https://url.spec.whatwg.org/#userinfo-percent-encode-set
-        const USERINFO: &AsciiSet = &PATH
-            .add(b'/')
-            .add(b':')
-            .add(b';')
-            .add(b'=')
-            .add(b'@')
-            .add(b'[')
-            .add(b'\\')
-            .add(b']')
-            .add(b'^')
-            .add(b'|');
-
         let mut parts = self.clone().into_parts();
 
         let authority = match self.authority() {
@@ -136,25 +140,23 @@ impl UriExt for Uri {
             .unwrap_or_else(|| authority.as_str());
 
         let authority = match (username.is_empty(), password) {
-            (true, None) => Authority::from_maybe_shared(Bytes::from(host_and_port.to_owned())),
-            (true, Some(pass)) => {
-                let pass = percent_encoding::utf8_percent_encode(pass, USERINFO);
-                Authority::from_maybe_shared(Bytes::from(format!(":{pass}@{host_and_port}")))
+            (true, None) => Bytes::from(host_and_port.to_owned()),
+            (true, Some(password)) => {
+                let pass = percent_encoding::utf8_percent_encode(password, USERINFO);
+                Bytes::from(format!(":{pass}@{host_and_port}"))
             }
-            (false, Some(pass)) => {
+            (false, Some(password)) => {
                 let username = percent_encoding::utf8_percent_encode(username, USERINFO);
-                let pass = percent_encoding::utf8_percent_encode(pass, USERINFO);
-                Authority::from_maybe_shared(Bytes::from(format!(
-                    "{username}:{pass}@{host_and_port}"
-                )))
+                let password = percent_encoding::utf8_percent_encode(password, USERINFO);
+                Bytes::from(format!("{username}:{password}@{host_and_port}"))
             }
             (false, None) => {
                 let username = percent_encoding::utf8_percent_encode(username, USERINFO);
-                Authority::from_maybe_shared(Bytes::from(format!("{username}@{host_and_port}")))
+                Bytes::from(format!("{username}@{host_and_port}"))
             }
         };
 
-        parts.authority = match authority {
+        parts.authority = match Authority::from_maybe_shared(authority) {
             Ok(authority) => Some(authority),
             Err(_err) => {
                 debug!("Failed to set userinfo in URI: {_err}");
@@ -165,22 +167,6 @@ impl UriExt for Uri {
         if let Ok(uri) = Uri::from_parts(parts) {
             *self = uri;
         }
-    }
-}
-
-// ===== impl ResponseExt =====
-
-impl ResponseExt for http::Response<Body> {
-    fn uri(&self) -> Option<&Uri> {
-        self.extensions().get::<RequestUri>().map(|r| &r.0)
-    }
-}
-
-// ===== impl ResponseBuilderExt =====
-
-impl ResponseBuilderExt for http::response::Builder {
-    fn uri(self, uri: Uri) -> Self {
-        self.extension(RequestUri(uri))
     }
 }
 
