@@ -47,11 +47,9 @@ pub(crate) trait UriExt {
     fn set_query(&mut self, query: String);
 
     /// Returns the username and password from the URI's userinfo, if present.
-    /// Returns (None, None) if no userinfo is present.
     fn userinfo(&self) -> (Option<&str>, Option<&str>);
 
     /// Sets the username and password in the URI's userinfo component.
-    /// If both are empty, removes userinfo.
     fn set_userinfo(&mut self, username: &str, password: Option<&str>);
 }
 
