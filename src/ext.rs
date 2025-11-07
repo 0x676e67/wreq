@@ -140,25 +140,23 @@ impl UriExt for Uri {
             .unwrap_or_else(|| authority.as_str());
 
         let authority = match (username.is_empty(), password) {
-            (true, None) => Authority::from_maybe_shared(Bytes::from(host_and_port.to_owned())),
+            (true, None) => Bytes::from(host_and_port.to_owned()),
             (true, Some(pass)) => {
                 let pass = percent_encoding::utf8_percent_encode(pass, USERINFO);
-                Authority::from_maybe_shared(Bytes::from(format!(":{pass}@{host_and_port}")))
+                Bytes::from(format!(":{pass}@{host_and_port}"))
             }
             (false, Some(pass)) => {
                 let username = percent_encoding::utf8_percent_encode(username, USERINFO);
                 let pass = percent_encoding::utf8_percent_encode(pass, USERINFO);
-                Authority::from_maybe_shared(Bytes::from(format!(
-                    "{username}:{pass}@{host_and_port}"
-                )))
+                Bytes::from(format!("{username}:{pass}@{host_and_port}"))
             }
             (false, None) => {
                 let username = percent_encoding::utf8_percent_encode(username, USERINFO);
-                Authority::from_maybe_shared(Bytes::from(format!("{username}@{host_and_port}")))
+                Bytes::from(format!("{username}@{host_and_port}"))
             }
         };
 
-        parts.authority = match authority {
+        parts.authority = match Authority::from_maybe_shared(authority) {
             Ok(authority) => Some(authority),
             Err(_err) => {
                 debug!("Failed to set userinfo in URI: {_err}");
