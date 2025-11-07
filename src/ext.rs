@@ -39,10 +39,6 @@ pub(crate) trait UriExt {
     /// Returns true if the URI scheme is HTTPS.
     fn is_https(&self) -> bool;
 
-    /// Sets the scheme of the URI.
-    #[cfg(feature = "ws")]
-    fn set_scheme(&mut self, scheme: Scheme);
-
     /// Sets the query component of the URI, replacing any existing query.
     fn set_query(&mut self, query: String);
 
@@ -102,15 +98,6 @@ impl UriExt for Uri {
     #[inline]
     fn is_https(&self) -> bool {
         self.scheme() == Some(&Scheme::HTTPS)
-    }
-
-    #[cfg(feature = "ws")]
-    fn set_scheme(&mut self, scheme: Scheme) {
-        let mut parts = self.clone().into_parts();
-        parts.scheme = Some(scheme);
-        if let Ok(uri) = Uri::from_parts(parts) {
-            *self = uri;
-        }
     }
 
     fn set_query(&mut self, query: String) {

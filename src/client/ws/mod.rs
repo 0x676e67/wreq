@@ -14,7 +14,9 @@ use std::{
 };
 
 use futures_util::{Sink, SinkExt, Stream, StreamExt, stream::FusedStream};
-use http::{HeaderMap, HeaderName, HeaderValue, Method, StatusCode, Version, header, uri::Scheme};
+use http::{
+    HeaderMap, HeaderName, HeaderValue, Method, StatusCode, Uri, Version, header, uri::Scheme,
+};
 use http2::ext::Protocol;
 use pin_project_lite::pin_project;
 use serde::Serialize;
@@ -25,8 +27,8 @@ use tokio_tungstenite::tungstenite::{
 
 use self::message::{CloseCode, Message, Utf8Bytes};
 use crate::{
-    EmulationFactory, Error, RequestBuilder, Response, Upgraded, ext::UriExt,
-    header::OrigHeaderMap, proxy::Proxy,
+    EmulationFactory, Error, RequestBuilder, Response, Upgraded, header::OrigHeaderMap,
+    proxy::Proxy,
 };
 
 /// A WebSocket stream.
@@ -308,13 +310,16 @@ impl WebSocketRequestBuilder {
 
         // Ensure the scheme is http or https
         let uri = request.uri_mut();
-        match uri.scheme_str() {
-            Some("ws") => uri.set_scheme(Scheme::HTTP),
-            Some("wss") => uri.set_scheme(Scheme::HTTPS),
-            _ => {
-                return Err(Error::uri_bad_scheme(uri.clone()));
-            }
+        let scheme = match uri.scheme_str() {
+            Some("ws") => Some(Scheme::HTTP),
+            Some("wss") => Some(Scheme::HTTPS),
+            _ => None,
         };
+        if scheme.is_some() {
+            let mut parts = uri.clone().into_parts();
+            parts.scheme = scheme;
+            *uri = Uri::from_parts(parts).map_err(Error::builder)?;
+        }
 
         // Get the version of the request
         let version = request.version();
