@@ -44,13 +44,8 @@ mod sealed {
     impl IntoUriSealed for &[u8] {
         fn into_uri(self) -> Result<Uri> {
             // 1. try to parse directly
-            match Uri::try_from(self) {
-                Ok(uri) => {
-                    return match (uri.scheme(), uri.authority()) {
-                        (Some(_), Some(_)) => Ok(uri),
-                        _ => Err(Error::uri_bad_scheme(uri)),
-                    };
-                }
+            let uri = match Uri::try_from(self) {
+                Ok(uri) => uri,
                 Err(err) => {
                     let mut parts = Parts::default();
 
@@ -97,18 +92,18 @@ mod sealed {
                                         path
                                     }
                                     (path, Cow::Owned(mut query)) => {
-                                        let path_len = path.as_bytes().len();
+                                        let path_len = path.len();
                                         query.reserve(path_len + 1);
-                                        query.insert_str(0, "?");
+                                        query.insert(0, '?');
                                         query.insert_str(0, &path);
                                         query
                                     }
                                     (Cow::Borrowed(path), Cow::Borrowed(query)) => {
                                         let total_len = path.len() + query.len() + 1;
                                         let mut path_and_query = String::with_capacity(total_len);
-                                        path_and_query.extend(path.chars());
+                                        path_and_query.push_str(path);
                                         path_and_query.push('?');
-                                        path_and_query.extend(query.chars());
+                                        path_and_query.push_str(query);
                                         path_and_query
                                     }
                                 };
@@ -131,12 +126,13 @@ mod sealed {
                     }
 
                     // 7. Reconstruct Uri
-                    let uri = Uri::from_parts(parts).map_err(Error::builder)?;
-                    match (uri.scheme(), uri.authority()) {
-                        (Some(_), Some(_)) => Ok(uri),
-                        _ => Err(Error::uri_bad_scheme(uri)),
-                    }
+                    Uri::from_parts(parts).map_err(Error::builder)?
                 }
+            };
+
+            match (uri.scheme(), uri.authority()) {
+                (Some(_), Some(_)) => Ok(uri),
+                _ => Err(Error::uri_bad_scheme(uri)),
             }
         }
     }
