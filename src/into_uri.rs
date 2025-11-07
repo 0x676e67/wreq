@@ -147,7 +147,7 @@ mod sealed {
     impl IntoUriSealed for &str {
         #[inline]
         fn into_uri(self) -> Result<Uri> {
-            self.as_bytes().into_uri()
+            IntoUriSealed::into_uri(self.as_bytes())
         }
     }
 
