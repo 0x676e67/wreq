@@ -141,14 +141,14 @@ impl UriExt for Uri {
 
         let authority = match (username.is_empty(), password) {
             (true, None) => Bytes::from(host_and_port.to_owned()),
-            (true, Some(pass)) => {
-                let pass = percent_encoding::utf8_percent_encode(pass, USERINFO);
+            (true, Some(password)) => {
+                let pass = percent_encoding::utf8_percent_encode(password, USERINFO);
                 Bytes::from(format!(":{pass}@{host_and_port}"))
             }
-            (false, Some(pass)) => {
+            (false, Some(password)) => {
                 let username = percent_encoding::utf8_percent_encode(username, USERINFO);
-                let pass = percent_encoding::utf8_percent_encode(pass, USERINFO);
-                Bytes::from(format!("{username}:{pass}@{host_and_port}"))
+                let password = percent_encoding::utf8_percent_encode(password, USERINFO);
+                Bytes::from(format!("{username}:{password}@{host_and_port}"))
             }
             (false, None) => {
                 let username = percent_encoding::utf8_percent_encode(username, USERINFO);
