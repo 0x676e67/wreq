@@ -92,15 +92,14 @@ mod sealed {
                                         path
                                     }
                                     (path, Cow::Owned(mut query)) => {
-                                        let path_len = path.len();
-                                        query.reserve(path_len + 1);
+                                        query.reserve(path.len() + 1);
                                         query.insert(0, '?');
                                         query.insert_str(0, &path);
                                         query
                                     }
                                     (Cow::Borrowed(path), Cow::Borrowed(query)) => {
-                                        let total_len = path.len() + query.len() + 1;
-                                        let mut path_and_query = String::with_capacity(total_len);
+                                        let mut path_and_query =
+                                            String::with_capacity(path.len() + query.len() + 1);
                                         path_and_query.push_str(path);
                                         path_and_query.push('?');
                                         path_and_query.push_str(query);
