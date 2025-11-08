@@ -1,6 +1,6 @@
 [package]
 name = "wreq"
-version = "6.0.0-rc.20"
+version = "6.0.0-rc.21"
 description = "An ergonomic Rust HTTP Client with TLS fingerprint"
 keywords = ["http", "client", "websocket", "ja3", "ja4"]
 categories = ["web-programming::http-client"]
@@ -70,7 +70,7 @@ tracing = ["http2/tracing", "dep:tracing"]
 serde = { version = "1.0", features = ["derive"] }
 serde_urlencoded = "0.7.1"
 percent-encoding = "2.3.2"
-iri-string = "0.7.0"
+iri-string = "0.7.9"
 tower = { version = "0.5.2", default-features = false, features = [
     "timeout",
     "util",
@@ -87,7 +87,7 @@ futures-util = { version = "0.3.31", default-features = false }
 pin-project-lite = "0.2.16"
 smallvec = { version = "1.15.1", features = ["const_generics", "const_new"] }
 want = "0.3.1"
-socket2 = { version = "0.6.0", features = ["all"] }
+socket2 = { version = "0.6.1", features = ["all"] }
 ipnet = "2.11.0"
 schnellru = { version = "0.2.4", default-features = false }
 ahash = { version = "0.8.12", default-features = false }
@@ -96,7 +96,7 @@ tokio-boring2 = { version = "5.0.0-alpha.10", features = ["pq-experimental"] }
 brotli = "8.0.2"
 flate2 = "1.1.2"
 zstd = "0.13.3"
-tokio = { version = "1.47.1", default-features = false, features = [
+tokio = { version = "1.48.0", default-features = false, features = [
     "net",
     "time",
     "rt",
@@ -127,7 +127,7 @@ cookie = { version = "0.18", optional = true }
 tower-http = { version = "0.6.6", default-features = false, optional = true }
 
 ## tokio util
-tokio-util = { version = "0.7.16", default-features = false, optional = true }
+tokio-util = { version = "0.7.17", default-features = false, optional = true }
 
 ## socks
 tokio-socks = { version = "0.5.2", optional = true }
