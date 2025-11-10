@@ -136,7 +136,13 @@ where
         for _ in 0..16 {
             let _ = self.poll_read(cx)?;
             let _ = self.poll_write(cx)?;
-            let _ = self.poll_flush(cx)?;
+            let conn_ready = self.poll_flush(cx)?.is_ready();
+
+            // If we can write more body and the connection is ready, we should
+            // write again. If we return `Ready(Ok(())` here, we will yield
+            // without a guaranteed wakeup from the write side of the connection.
+            // This would lead to a deadlock if we also don't expect reads.
+            let wants_write_again = self.body_rx.is_some() && conn_ready;
 
             // This could happen if reading paused before blocking on IO,
             // such as getting to the end of a framed message, but then
@@ -146,7 +152,11 @@ where
             //
             // Using this instead of task::current() and notify() inside
             // the Conn is noticeably faster in pipelined benchmarks.
-            if !self.conn.wants_read_again() {
+            let wants_read_again = self.conn.wants_read_again();
+
+            // If we cannot write or read again, we yield and rely on the
+            // wakeup from the connection futures.
+            if !(wants_write_again || wants_read_again) {
                 //break;
                 return Poll::Ready(Ok(()));
             }
