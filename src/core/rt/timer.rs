@@ -16,6 +16,13 @@ pub trait Timer {
     /// Return a future that resolves at `deadline`.
     fn sleep_until(&self, deadline: Instant) -> Pin<Box<dyn Sleep>>;
 
+    /// Return an `Instant` representing the current time.
+    ///
+    /// The default implementation returns [`Instant::now()`].
+    fn now(&self) -> Instant {
+        Instant::now()
+    }
+
     /// Reset a future to resolve at `new_deadline` instead.
     fn reset(&self, sleep: &mut Pin<Box<dyn Sleep>>, new_deadline: Instant) {
         *sleep = self.sleep_until(new_deadline);
@@ -100,6 +107,10 @@ impl Timer for ArcTimer {
         self.0.sleep(duration)
     }
 
+    fn now(&self) -> Instant {
+        tokio::time::Instant::now().into()
+    }
+
     fn sleep_until(&self, deadline: Instant) -> Pin<Box<dyn Sleep>> {
         self.0.sleep_until(deadline)
     }
@@ -114,6 +125,13 @@ impl Time {
                 panic!("You must supply a timer.")
             }
             Time::Timer(ref t) => t.sleep(duration),
+        }
+    }
+
+    pub(crate) fn now(&self) -> Instant {
+        match *self {
+            Time::Empty => Instant::now(),
+            Time::Timer(ref t) => t.now(),
         }
     }
 
