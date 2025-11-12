@@ -20,16 +20,19 @@ use std::{
     fmt,
     future::Future,
     pin::Pin,
-    sync::{Arc, Mutex},
+    sync::Arc,
     task::{self, Poll},
     time::{Duration, Instant},
 };
 
 use http2::{Ping, PingPong};
 
-use crate::client::core::{
-    self, Error,
-    rt::{Sleep, Time},
+use crate::{
+    client::core::{
+        self, Error,
+        rt::{Sleep, Time},
+    },
+    sync::Mutex,
 };
 
 type WindowSize = u32;
@@ -217,7 +220,7 @@ impl Recorder {
             return;
         };
 
-        let mut locked = shared.lock().unwrap();
+        let mut locked = shared.lock();
 
         locked.update_last_read_at();
 
@@ -251,7 +254,7 @@ impl Recorder {
             return;
         };
 
-        let mut locked = shared.lock().unwrap();
+        let mut locked = shared.lock();
 
         locked.update_last_read_at();
     }
@@ -268,7 +271,7 @@ impl Recorder {
 
     pub(super) fn ensure_not_timed_out(&self) -> core::Result<()> {
         if let Some(ref shared) = self.shared {
-            let locked = shared.lock().unwrap();
+            let locked = shared.lock();
             if locked.is_keep_alive_timed_out {
                 return Err(KeepAliveTimedOut.crate_error());
             }
@@ -283,7 +286,7 @@ impl Recorder {
 
 impl Ponger {
     pub(super) fn poll(&mut self, cx: &mut task::Context<'_>) -> Poll<Ponged> {
-        let mut locked = self.shared.lock().unwrap();
+        let mut locked = self.shared.lock();
         // hoping this is fine to move within the lock
         let now = locked.timer.now();
 

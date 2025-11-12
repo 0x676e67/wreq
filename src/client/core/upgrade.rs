@@ -28,7 +28,7 @@ use std::{
     future::Future,
     io,
     pin::Pin,
-    sync::{Arc, Mutex},
+    sync::Arc,
     task::{Context, Poll},
 };
 
@@ -39,6 +39,7 @@ use tokio::{
 };
 
 use super::{Error, Result, common::rewind::Rewind};
+use crate::sync::Mutex;
 
 /// An upgraded HTTP connection.
 ///
@@ -162,13 +163,11 @@ impl Future for OnUpgrade {
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         match self.rx {
-            Some(ref rx) => Pin::new(&mut *rx.lock().unwrap())
-                .poll(cx)
-                .map(|res| match res {
-                    Ok(Ok(upgraded)) => Ok(upgraded),
-                    Ok(Err(err)) => Err(err),
-                    Err(_oneshot_canceled) => Err(Error::new_canceled().with(UpgradeExpected)),
-                }),
+            Some(ref rx) => Pin::new(&mut *rx.lock()).poll(cx).map(|res| match res {
+                Ok(Ok(upgraded)) => Ok(upgraded),
+                Ok(Err(err)) => Err(err),
+                Err(_oneshot_canceled) => Err(Error::new_canceled().with(UpgradeExpected)),
+            }),
             None => Poll::Ready(Err(Error::new_user_no_upgrade())),
         }
     }
