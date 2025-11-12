@@ -1,5 +1,15 @@
 //! Middleware for decoding
 
+use std::task::{Context, Poll};
+
+use http::{Request, Response};
+use http_body::Body;
+use tower::{Layer, Service};
+use tower_http::decompression::{self, DecompressionBody, ResponseFuture};
+
+use super::AcceptEncoding;
+use crate::{client::layer::config::RequestAcceptEncoding, core::ext::RequestConfig};
+
 /// Configuration for supported content-encoding algorithms.
 ///
 /// `AcceptEncoding` controls which compression formats are enabled for decoding
@@ -64,16 +74,6 @@ impl Default for AcceptEncoding {
         }
     }
 }
-
-use std::task::{Context, Poll};
-
-use http::{Request, Response};
-use http_body::Body;
-use tower::{Layer, Service};
-use tower_http::decompression::{self, DecompressionBody, ResponseFuture};
-
-use super::AcceptEncoding;
-use crate::{client::layer::config::RequestAcceptEncoding, core::ext::RequestConfig};
 
 /// Decompresses response bodies of the underlying service.
 ///
