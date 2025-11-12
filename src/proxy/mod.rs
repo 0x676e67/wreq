@@ -465,7 +465,7 @@ impl Matcher {
     /// If it's not sure, this should return true.
     ///
     /// This is meant as a hint to allow skipping a more expensive check
-    /// (calling `intercept()`) if it will never need custom headers when Forwarding
+    /// (calling `intercept()`) if it will never need custom headers when Forwarding.
     #[inline]
     pub(crate) fn maybe_has_http_custom_headers(&self) -> bool {
         self.maybe_has_http_custom_headers
