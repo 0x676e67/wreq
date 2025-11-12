@@ -17,11 +17,13 @@
 //!
 //! [`http-body-util`]: https://docs.rs/http-body-util
 
-pub use self::incoming::Incoming;
-pub(crate) use self::{incoming::Sender, length::DecodedLength};
-
 mod incoming;
 mod length;
+
+pub(crate) use self::{
+    incoming::{Incoming, Sender},
+    length::DecodedLength,
+};
 
 fn _assert_send_sync() {
     fn _assert_send<T: Send>() {}
