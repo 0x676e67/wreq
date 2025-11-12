@@ -13,12 +13,11 @@ use tower::{Layer, Service};
 use crate::{
     Error,
     client::{
-        core::ext::{RequestConfig, RequestOrigHeaderMap},
+        core::{
+            ext::{RequestConfig, RequestLayerOptions, RequestOrigHeaderMap},
+            options::RequestOptions,
+        },
         layer::config::RequestDefaultHeaders,
-    client::layer::config::RequestDefaultHeaders,
-    core::{
-        client::options::RequestOptions,
-        ext::{RequestConfig, RequestLayerOptions, RequestOrigHeaderMap},
     },
     ext::UriExt,
     header::OrigHeaderMap,

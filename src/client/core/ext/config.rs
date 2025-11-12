@@ -132,7 +132,7 @@ where
 pub(crate) struct RequestLayerOptions;
 
 impl RequestConfigValue for RequestLayerOptions {
-    type Value = crate::core::client::options::RequestOptions;
+    type Value = crate::client::core::options::RequestOptions;
 }
 
 #[derive(Clone, Copy)]

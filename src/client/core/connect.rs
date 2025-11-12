@@ -6,10 +6,6 @@ mod uds;
 
 pub mod proxy;
 
-pub use self::http::{HttpConnector, HttpInfo, TcpConnectOptions};
-#[cfg(unix)]
-pub use self::uds::UnixConnector;
-
 use std::{
     fmt::{self, Debug, Formatter},
     sync::{
@@ -19,6 +15,10 @@ use std::{
 };
 
 use ::http::Extensions;
+
+pub use self::http::{HttpConnector, HttpInfo, TcpConnectOptions};
+#[cfg(unix)]
+pub use self::uds::UnixConnector;
 
 /// Describes a type returned by a connector.
 pub trait Connection {

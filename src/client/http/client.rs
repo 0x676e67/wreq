@@ -17,6 +17,7 @@ use bytes::Bytes;
 use futures_util::future::{Either, FutureExt, TryFutureExt};
 use http::{HeaderValue, Method, Request, Response, Uri, Version, header::HOST};
 use http_body::Body;
+use pool::Ver;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tower::util::Oneshot;
 
@@ -31,25 +32,13 @@ use crate::{
         common::{Exec, Lazy, lazy},
         conn::{self, TrySendError as ConnTrySendError},
         connect::{Alpn, Connected, Connection},
-        ext::{RequestConfig, RequestLevelOptions},
-        options::{RequestOptions, http1::Http1Options, http2::Http2Options},
-    core::{
-        client::{
-            body::Incoming,
-            common::{Exec, Lazy, lazy},
-            conn::{self, TrySendError as ConnTrySendError},
-            connect::{Alpn, Connected, Connection},
-            options::{RequestOptions, http1::Http1Options, http2::Http2Options},
-            pool,
-        },
-        error::BoxError,
         ext::{RequestConfig, RequestLayerOptions},
+        options::{RequestOptions, http1::Http1Options, http2::Http2Options},
         rt::{ArcTimer, Executor, Timer},
     },
     hash::{HASHER, HashMemo},
     tls::AlpnProtocol,
 };
-use pool::Ver;
 
 type BoxSendFuture = Pin<Box<dyn Future<Output = ()> + Send>>;
 

@@ -21,7 +21,7 @@ use super::multipart;
 use super::{
     Body, EmulationFactory, Response,
     core::{
-        ext::{RequestConfig, RequestConfigValue, RequestLevelOptions, RequestOrigHeaderMap},
+        ext::{RequestConfig, RequestConfigValue, RequestLayerOptions, RequestOrigHeaderMap},
         options::RequestOptions,
     },
     http::{Client, Pending},
@@ -29,10 +29,6 @@ use super::{
 };
 use crate::{
     Error, Method, Proxy,
-    core::{
-        client::options::RequestOptions,
-        ext::{RequestConfig, RequestConfigValue, RequestLayerOptions, RequestOrigHeaderMap},
-    },
     ext::UriExt,
     header::{CONTENT_TYPE, HeaderMap, HeaderName, HeaderValue, OrigHeaderMap},
     redirect,
