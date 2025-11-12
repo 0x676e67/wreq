@@ -506,7 +506,7 @@ impl ClientBuilder {
 
         // Create base client service
         let service = {
-            let (tls_options, http1_options, http2_options) = config.transport_options.into_parts();
+            let (tls_options, http1_options, http2_options) = config.transport_options.into();
 
             let resolver = {
                 let mut resolver: Arc<dyn Resolve> = match config.dns_resolver {

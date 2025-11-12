@@ -8,6 +8,17 @@ use http2::Http2Options;
 use super::connect::TcpConnectOptions;
 use crate::{proxy::Matcher, tls::TlsOptions};
 
+/// Per-request configuration for proxy, protocol, and transport options.
+/// Overrides client defaults for a single request.
+#[derive(Debug, Default, Clone, Hash, PartialEq, Eq)]
+#[non_exhaustive]
+pub(crate) struct RequestOptions {
+    proxy_matcher: Option<Matcher>,
+    enforced_version: Option<Version>,
+    tcp_connect_opts: TcpConnectOptions,
+    transport_opts: TransportOptions,
+}
+
 /// Transport options for HTTP/1, HTTP/2, and TLS layers.
 ///
 /// This struct allows you to customize protocol-specific and TLS settings
@@ -19,6 +30,8 @@ pub(crate) struct TransportOptions {
     http1_options: Option<Http1Options>,
     http2_options: Option<Http2Options>,
 }
+
+// ===== impl TransportOptions =====
 
 impl TransportOptions {
     /// Get the reference to the TLS options.
@@ -57,18 +70,6 @@ impl TransportOptions {
         &mut self.http2_options
     }
 
-    /// Consumes the transport options and returns the individual parts.
-    #[inline]
-    pub(crate) fn into_parts(
-        self,
-    ) -> (
-        Option<TlsOptions>,
-        Option<Http1Options>,
-        Option<Http2Options>,
-    ) {
-        (self.tls_options, self.http1_options, self.http2_options)
-    }
-
     /// Apply the transport options for HTTP/1, HTTP/2, and TLS.
     pub(crate) fn apply_transport_options(&mut self, opts: TransportOptions) -> &mut Self {
         if let Some(tls) = opts.tls_options {
@@ -84,16 +85,20 @@ impl TransportOptions {
     }
 }
 
-/// Per-request configuration for proxy, protocol, and transport options.
-/// Overrides client defaults for a single request.
-#[derive(Debug, Default, Clone, Hash, PartialEq, Eq)]
-#[non_exhaustive]
-pub(crate) struct RequestOptions {
-    proxy_matcher: Option<Matcher>,
-    enforced_version: Option<Version>,
-    tcp_connect_opts: TcpConnectOptions,
-    transport_opts: TransportOptions,
+impl From<TransportOptions>
+    for (
+        Option<TlsOptions>,
+        Option<Http1Options>,
+        Option<Http2Options>,
+    )
+{
+    #[inline]
+    fn from(value: TransportOptions) -> Self {
+        (value.tls_options, value.http1_options, value.http2_options)
+    }
 }
+
+// ===== impl RequestOptions =====
 
 impl RequestOptions {
     /// Get a reference to the proxy matcher.
