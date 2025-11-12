@@ -27,7 +27,7 @@ use crate::{
     Error, Method, Proxy,
     core::{
         client::options::RequestOptions,
-        ext::{RequestConfig, RequestConfigValue, RequestLevelOptions, RequestOrigHeaderMap},
+        ext::{RequestConfig, RequestConfigValue, RequestLayerOptions, RequestOrigHeaderMap},
     },
     ext::UriExt,
     header::{CONTENT_TYPE, HeaderMap, HeaderName, HeaderValue, OrigHeaderMap},
@@ -126,14 +126,14 @@ impl Request {
     /// Get the http version.
     #[inline]
     pub fn version(&self) -> Option<Version> {
-        self.config::<RequestLevelOptions>()
+        self.config::<RequestLayerOptions>()
             .and_then(RequestOptions::enforced_version)
     }
 
     /// Get a mutable reference to the http version.
     #[inline]
     pub fn version_mut(&mut self) -> &mut Option<Version> {
-        self.config_mut::<RequestLevelOptions>()
+        self.config_mut::<RequestLayerOptions>()
             .enforced_version_mut()
     }
 
@@ -607,7 +607,7 @@ impl RequestBuilder {
     /// Set the proxy for this request.
     pub fn proxy(mut self, proxy: Proxy) -> RequestBuilder {
         if let Ok(ref mut req) = self.request {
-            *req.config_mut::<RequestLevelOptions>().proxy_matcher_mut() =
+            *req.config_mut::<RequestLayerOptions>().proxy_matcher_mut() =
                 Some(proxy.into_matcher());
         }
         self
@@ -619,7 +619,7 @@ impl RequestBuilder {
         V: Into<Option<IpAddr>>,
     {
         if let Ok(ref mut req) = self.request {
-            req.config_mut::<RequestLevelOptions>()
+            req.config_mut::<RequestLayerOptions>()
                 .tcp_connect_opts_mut()
                 .set_local_address(local_address.into());
         }
@@ -633,7 +633,7 @@ impl RequestBuilder {
         V6: Into<Option<Ipv6Addr>>,
     {
         if let Ok(ref mut req) = self.request {
-            req.config_mut::<RequestLevelOptions>()
+            req.config_mut::<RequestLayerOptions>()
                 .tcp_connect_opts_mut()
                 .set_local_addresses(ipv4, ipv6);
         }
@@ -673,7 +673,7 @@ impl RequestBuilder {
         I: Into<std::borrow::Cow<'static, str>>,
     {
         if let Ok(ref mut req) = self.request {
-            req.config_mut::<RequestLevelOptions>()
+            req.config_mut::<RequestLayerOptions>()
                 .tcp_connect_opts_mut()
                 .set_interface(interface);
         }
@@ -689,7 +689,7 @@ impl RequestBuilder {
             let emulation = factory.emulation();
             let (transport_opts, default_headers, orig_headers) = emulation.into_parts();
 
-            req.config_mut::<RequestLevelOptions>()
+            req.config_mut::<RequestLayerOptions>()
                 .transport_opts_mut()
                 .apply_transport_options(transport_opts);
 

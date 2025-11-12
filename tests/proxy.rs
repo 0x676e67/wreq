@@ -96,6 +96,15 @@ async fn http_proxy_basic_auth_parsed() {
 
     assert_eq!(res.uri(), url);
     assert_eq!(res.status(), wreq::StatusCode::OK);
+
+    let res = wreq::get(url)
+        .proxy(wreq::Proxy::http(&proxy).unwrap())
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(res.uri(), url);
+    assert_eq!(res.status(), wreq::StatusCode::OK);
 }
 
 #[tokio::test]
@@ -258,14 +267,20 @@ async fn http_proxy_custom_headers() {
         headers.insert("x-custom-header", "value".parse().unwrap());
         headers
     });
+
     let res = Client::builder()
-        .proxy(proxy)
+        .proxy(proxy.clone())
         .build()
         .unwrap()
         .get(url)
         .send()
         .await
         .unwrap();
+
+    assert_eq!(res.uri(), url);
+    assert_eq!(res.status(), wreq::StatusCode::OK);
+
+    let res = wreq::get(url).proxy(proxy).send().await.unwrap();
 
     assert_eq!(res.uri(), url);
     assert_eq!(res.status(), wreq::StatusCode::OK);

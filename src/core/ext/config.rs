@@ -129,9 +129,9 @@ where
 }
 
 #[derive(Clone, Copy)]
-pub(crate) struct RequestLevelOptions;
+pub(crate) struct RequestLayerOptions;
 
-impl RequestConfigValue for RequestLevelOptions {
+impl RequestConfigValue for RequestLayerOptions {
     type Value = crate::core::client::options::RequestOptions;
 }
 
