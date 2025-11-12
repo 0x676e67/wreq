@@ -69,6 +69,7 @@ pub struct OnUpgrade {
 /// - `http::Response<B>`
 /// - `&mut http::Request<B>`
 /// - `&mut http::Response<B>`
+#[inline]
 pub fn on<T: sealed::CanUpgrade>(msg: T) -> OnUpgrade {
     msg.on_upgrade()
 }
@@ -90,6 +91,7 @@ pub(super) fn pending() -> (Pending, OnUpgrade) {
 // ===== impl Upgraded =====
 
 impl Upgraded {
+    #[inline]
     pub(super) fn new<T>(io: T, read_buf: Bytes) -> Self
     where
         T: AsyncRead + AsyncWrite + Unpin + Send + 'static,
@@ -101,6 +103,7 @@ impl Upgraded {
 }
 
 impl AsyncRead for Upgraded {
+    #[inline]
     fn poll_read(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
@@ -111,6 +114,7 @@ impl AsyncRead for Upgraded {
 }
 
 impl AsyncWrite for Upgraded {
+    #[inline]
     fn poll_write(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
@@ -119,6 +123,7 @@ impl AsyncWrite for Upgraded {
         Pin::new(&mut self.io).poll_write(cx, buf)
     }
 
+    #[inline]
     fn poll_write_vectored(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
@@ -127,14 +132,17 @@ impl AsyncWrite for Upgraded {
         Pin::new(&mut self.io).poll_write_vectored(cx, bufs)
     }
 
+    #[inline]
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
         Pin::new(&mut self.io).poll_flush(cx)
     }
 
+    #[inline]
     fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
         Pin::new(&mut self.io).poll_shutdown(cx)
     }
 
+    #[inline]
     fn is_write_vectored(&self) -> bool {
         self.io.is_write_vectored()
     }
@@ -149,10 +157,12 @@ impl fmt::Debug for Upgraded {
 // ===== impl OnUpgrade =====
 
 impl OnUpgrade {
+    #[inline]
     pub(super) fn none() -> Self {
         OnUpgrade { rx: None }
     }
 
+    #[inline]
     pub(super) fn is_none(&self) -> bool {
         self.rx.is_none()
     }
@@ -173,15 +183,10 @@ impl Future for OnUpgrade {
     }
 }
 
-impl fmt::Debug for OnUpgrade {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("OnUpgrade").finish()
-    }
-}
-
 // ===== impl Pending =====
 
 impl Pending {
+    #[inline]
     pub(super) fn fulfill(self, upgraded: Upgraded) {
         trace!("pending upgrade fulfill");
         let _ = self.tx.send(Ok(upgraded));
@@ -189,6 +194,7 @@ impl Pending {
 
     /// Don't fulfill the pending Upgrade, but instead signal that
     /// upgrades are handled manually.
+    #[inline]
     pub(super) fn manual(self) {
         trace!("pending upgrade handled manually");
         let _ = self.tx.send(Err(Error::new_user_manual_upgrade()));
