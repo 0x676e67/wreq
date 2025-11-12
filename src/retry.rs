@@ -58,6 +58,7 @@ impl Policy {
     ///
     /// This is useful for disabling the `Client`s default behavior of retrying
     /// protocol nacks.
+    #[inline]
     pub fn never() -> Policy {
         Self::scoped(|_| false).no_budget()
     }
@@ -78,6 +79,7 @@ impl Policy {
     /// // Only retry requests to rust-lang.org
     /// let policy = Policy::for_host("rust-lang.org");
     /// ```
+    #[inline]
     pub fn for_host<S>(host: S) -> Policy
     where
         S: for<'a> PartialEq<&'a str> + Send + Sync + 'static,
@@ -92,6 +94,7 @@ impl Policy {
     /// Create a scoped retry policy.
     ///
     /// For a more convenient constructor, see [`Policy::for_host()`].
+    #[inline]
     fn scoped<F>(func: F) -> Policy
     where
         F: Fn(&Request<Body>) -> bool + Send + Sync + 'static,
@@ -111,6 +114,7 @@ impl Policy {
     ///
     /// This is NOT recommended. Disabling the budget can make your system more
     /// susceptible to retry storms.
+    #[inline]
     pub fn no_budget(mut self) -> Self {
         self.budget = None;
         self
@@ -131,6 +135,7 @@ impl Policy {
     /// The `extra_percent` value must be within reasonable values for a
     /// percentage. This method will panic if it is less than `0.0`, or greater
     /// than `1000.0`.
+    #[inline]
     pub fn max_extra_load(mut self, extra_percent: f32) -> Self {
         assert!(extra_percent >= 0.0);
         assert!(extra_percent <= 1000.0);
@@ -149,6 +154,7 @@ impl Policy {
     /// the entire budget.
     ///
     /// Default is currently 2 retries.
+    #[inline]
     pub fn max_retries_per_request(mut self, max: u32) -> Self {
         self.max_retries_per_request = max;
         self
@@ -170,6 +176,7 @@ impl Policy {
     /// })
     /// # }
     /// ```
+    #[inline]
     pub fn classify_fn<F>(mut self, func: F) -> Self
     where
         F: Fn(ReqRep<'_>) -> Action + Send + Sync + 'static,

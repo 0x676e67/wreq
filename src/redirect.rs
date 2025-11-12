@@ -65,6 +65,7 @@ impl Policy {
     /// Create a `Policy` with a maximum number of redirects.
     ///
     /// An `Error` will be returned if the max is reached.
+    #[inline]
     pub fn limited(max: usize) -> Self {
         Self {
             inner: PolicyKind::Limit(max),
@@ -72,6 +73,7 @@ impl Policy {
     }
 
     /// Create a `Policy` that does not follow any redirect.
+    #[inline]
     pub fn none() -> Self {
         Self {
             inner: PolicyKind::None,
@@ -114,6 +116,7 @@ impl Policy {
     /// ```
     ///
     /// [`Attempt`]: struct.Attempt.html
+    #[inline]
     pub fn custom<T>(policy: T) -> Self
     where
         T: Fn(Attempt) -> Action + Send + Sync + 'static,
@@ -159,6 +162,7 @@ impl Policy {
         }
     }
 
+    #[inline]
     fn check(
         &self,
         status: StatusCode,
@@ -177,6 +181,7 @@ impl Policy {
 }
 
 impl Default for Policy {
+    #[inline]
     fn default() -> Policy {
         // Keep `is_default` in sync
         Policy::limited(10)
@@ -187,26 +192,31 @@ impl Default for Policy {
 
 impl<'a> Attempt<'a> {
     /// Get the type of redirect.
+    #[inline]
     pub fn status(&self) -> StatusCode {
         self.status
     }
 
     /// Get the headers of redirect.
+    #[inline]
     pub fn headers(&self) -> &HeaderMap {
         self.headers
     }
 
     /// Get the next URI to redirect to.
+    #[inline]
     pub fn uri(&self) -> &Uri {
         self.next
     }
 
     /// Get the list of previous URIs that have already been requested in this chain.
+    #[inline]
     pub fn previous(&self) -> &[Uri] {
         self.previous
     }
 
     /// Returns an action meaning wreq should follow the next URI.
+    #[inline]
     pub fn follow(self) -> Action {
         Action {
             inner: ActionKind::Follow,
@@ -216,6 +226,7 @@ impl<'a> Attempt<'a> {
     /// Returns an action meaning wreq should not follow the next URI.
     ///
     /// The 30x response will be returned as the `Ok` result.
+    #[inline]
     pub fn stop(self) -> Action {
         Action {
             inner: ActionKind::Stop,
@@ -225,6 +236,7 @@ impl<'a> Attempt<'a> {
     /// Returns an action failing the redirect with an error.
     ///
     /// The `Error` will be returned for the result of the sent request.
+    #[inline]
     pub fn error<E: Into<BoxError>>(self, error: E) -> Action {
         Action {
             inner: ActionKind::Error(error.into()),
@@ -236,21 +248,25 @@ impl<'a> Attempt<'a> {
 
 impl History {
     /// Get the status code of the redirect response.
+    #[inline]
     pub fn status(&self) -> StatusCode {
         self.status
     }
 
     /// Get the URI of the redirect response.
+    #[inline]
     pub fn uri(&self) -> &Uri {
         &self.uri
     }
 
     /// Get the previous URI before the redirect response.
+    #[inline]
     pub fn previous(&self) -> &Uri {
         &self.previous
     }
 
     /// Get the headers of the redirect response.
+    #[inline]
     pub fn headers(&self) -> &HeaderMap {
         &self.headers
     }
@@ -342,18 +358,21 @@ impl FollowRedirectPolicy {
     }
 
     /// Enables or disables automatic Referer header management.
+    #[inline]
     pub(crate) const fn with_referer(mut self, referer: bool) -> Self {
         self.referer = referer;
         self
     }
 
     /// Enables or disables HTTPS-only redirect enforcement.
+    #[inline]
     pub(crate) const fn with_https_only(mut self, https_only: bool) -> Self {
         self.https_only = https_only;
         self
     }
 
     /// Enables or disables redirect history tracking.
+    #[inline]
     pub(crate) const fn with_history(mut self, history: bool) -> Self {
         self.history = history;
         self
@@ -426,19 +445,19 @@ impl policy::Policy<Body, BoxError> for FollowRedirectPolicy {
         }
     }
 
-    #[inline(always)]
+    #[inline]
     fn on_extensions(&mut self, extensions: &Extensions) {
         self.policy.load(extensions);
     }
 
-    #[inline(always)]
+    #[inline]
     fn allowed(&self) -> bool {
         self.policy
             .as_ref()
             .is_some_and(|policy| !matches!(policy.inner, PolicyKind::None))
     }
 
-    #[inline(always)]
+    #[inline]
     fn clone_body(&self, body: &Body) -> Option<Body> {
         body.try_clone()
     }
