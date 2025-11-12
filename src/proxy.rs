@@ -436,6 +436,9 @@ impl Matcher {
         }
     }
 
+    /// Intercept the given destination URI, returning the intercepted
+    /// proxy configuration if there is a match.
+    #[inline]
     pub(crate) fn intercept(&self, dst: &Uri) -> Option<Intercepted> {
         self.inner.intercept(dst)
     }
@@ -454,6 +457,15 @@ impl Matcher {
         self.maybe_has_http_auth
     }
 
+    /// Return whether this matcher might provide custom HTTP (not s) headers.
+    ///
+    /// This is very specific. If this proxy needs custom headers to be part of a Forward
+    /// request (instead of a tunnel), this should return true.
+    ///
+    /// If it's not sure, this should return true.
+    ///
+    /// This is meant as a hint to allow skipping a more expensive check
+    /// (calling `intercept()`) if it will never need custom headers when Forwarding.
     #[inline]
     pub(crate) fn maybe_has_http_custom_headers(&self) -> bool {
         self.maybe_has_http_custom_headers

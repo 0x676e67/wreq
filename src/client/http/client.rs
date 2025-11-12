@@ -33,6 +33,17 @@ use crate::{
         connect::{Alpn, Connected, Connection},
         ext::{RequestConfig, RequestLevelOptions},
         options::{RequestOptions, http1::Http1Options, http2::Http2Options},
+    core::{
+        client::{
+            body::Incoming,
+            common::{Exec, Lazy, lazy},
+            conn::{self, TrySendError as ConnTrySendError},
+            connect::{Alpn, Connected, Connection},
+            options::{RequestOptions, http1::Http1Options, http2::Http2Options},
+            pool,
+        },
+        error::BoxError,
+        ext::{RequestConfig, RequestLayerOptions},
         rt::{ArcTimer, Executor, Timer},
     },
     hash::{HASHER, HashMemo},
@@ -166,7 +177,7 @@ where
         // Extract per-request options from the request extensions and apply them to the client
         // builder. This allows each request to override HTTP/1 and HTTP/2 options as
         // needed.
-        let options = RequestConfig::<RequestLevelOptions>::remove(req.extensions_mut());
+        let options = RequestConfig::<RequestLayerOptions>::remove(req.extensions_mut());
 
         // Apply HTTP/1 and HTTP/2 options if provided
         if let Some(opts) = options.as_ref().map(RequestOptions::transport_opts) {
