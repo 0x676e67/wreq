@@ -171,11 +171,6 @@ where
                     (None, None)
                 });
 
-        // skip if no proxy auth or custom headers to add
-        if http_auth_header.is_none() && http_custom_headers.is_none() {
-            return Either::Left(self.inner.call(req));
-        }
-
         // insert proxy auth header if not already present
         if !req.headers().contains_key(PROXY_AUTHORIZATION) {
             if let Some(header) = http_auth_header {
