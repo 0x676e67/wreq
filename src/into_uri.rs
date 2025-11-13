@@ -75,7 +75,7 @@ mod sealed {
                             .map_err(Error::builder)?
                     };
 
-                    // 6. parse and percent-encode path_and_query
+                    // parse and percent-encode path_and_query
                     if !path_and_query.is_empty() {
                         const PQ_SPLIT: char = '?';
 
