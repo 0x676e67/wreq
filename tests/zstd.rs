@@ -13,7 +13,6 @@ async fn zstd_single_byte_chunks() {
     zstd_case(10, 1).await;
 }
 
-#[ignore = "from https://github.com/Nullus157/async-compression/issues/420"]
 #[tokio::test]
 async fn test_zstd_empty_body() {
     let server = server::http(move |req| async move {
