@@ -31,9 +31,9 @@ async fn test_gzip_empty_body() {
         .await
         .unwrap();
 
-    let err = res.text().await;
-    let err = err.unwrap_err();
-    assert!(err.is_decode())
+    let body = res.text().await.unwrap();
+
+    assert_eq!(body, "");
 }
 
 #[tokio::test]
