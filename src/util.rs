@@ -37,7 +37,7 @@ pub(crate) fn fast_random() -> u64 {
 
     thread_local! {
         static KEY: RandomState = RandomState::new();
-        static COUNTER: Cell<u64> = Cell::new(0);
+        static COUNTER: Cell<u64> = const { Cell::new(0) };
     }
 
     KEY.with(|key| {
