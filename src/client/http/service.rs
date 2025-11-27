@@ -128,6 +128,7 @@ where
             // that this value should be appended to the last seen header name.
             let mut prev_name = None;
 
+            // iterate through the configured default headers
             for (name, value) in self.config.headers.clone() {
                 match (name, &prev_name) {
                     // Case 1: This is the first occurrence of this header name.
@@ -154,7 +155,7 @@ where
                     (Some(name), Some(_)) => {
                         // If the header exists, append this additional value.
                         if let Entry::Occupied(mut entry) = headers.entry(&name) {
-                            entry.append(value.clone());
+                            entry.append(value);
                         }
 
                         // Update the most recent header name.
@@ -166,7 +167,7 @@ where
                     (None, Some(prev_name)) => {
                         // Append value to the header identified by `prev_name`.
                         if let Entry::Occupied(mut entry) = headers.entry(prev_name) {
-                            entry.append(value.clone());
+                            entry.append(value);
                         }
                     }
                     (None, None) => {}
