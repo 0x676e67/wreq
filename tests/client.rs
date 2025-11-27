@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use http::{
     HeaderMap, HeaderValue, Version,
     header::{
-        self, AUTHORIZATION, CACHE_CONTROL, CONTENT_LENGTH, CONTENT_TYPE, COOKIE, REFERER,
+        self, ACCEPT, AUTHORIZATION, CACHE_CONTROL, CONTENT_LENGTH, CONTENT_TYPE, COOKIE, REFERER,
         TRANSFER_ENCODING, USER_AGENT,
     },
 };
@@ -253,6 +253,13 @@ async fn test_overwrite_headers() {
                 assert_eq!(cookies.next().unwrap(), "e=f");
                 assert_eq!(cookies.next().unwrap(), "g=h");
             }
+            "/3" => {
+                assert_eq!(req.method(), "GET");
+                assert_eq!(req.headers()[USER_AGENT], "default-agent");
+                let mut cookies = req.headers().get_all(COOKIE).iter();
+                assert_eq!(cookies.next().unwrap(), "a=b");
+                assert_eq!(cookies.next().unwrap(), "c=d");
+            }
             _ => {
                 unreachable!("Unexpected request path: {}", path);
             }
@@ -276,7 +283,6 @@ async fn test_overwrite_headers() {
         .unwrap();
 
     let url = format!("http://{}/1", server.addr());
-
     let res = client
         .get(&url)
         .header(USER_AGENT, "my-custom-agent")
@@ -288,7 +294,6 @@ async fn test_overwrite_headers() {
     assert_eq!(res.status(), wreq::StatusCode::OK);
 
     let url = format!("http://{}/2", server.addr());
-
     let res = client
         .get(&url)
         .header(USER_AGENT, "my-custom-agent")
@@ -297,6 +302,12 @@ async fn test_overwrite_headers() {
         .send()
         .await
         .unwrap();
+
+    assert_eq!(res.uri(), url.as_str());
+    assert_eq!(res.status(), wreq::StatusCode::OK);
+
+    let url = format!("http://{}/3", server.addr());
+    let res = client.get(&url).send().await.unwrap();
 
     assert_eq!(res.uri(), url.as_str());
     assert_eq!(res.status(), wreq::StatusCode::OK);
@@ -868,40 +879,36 @@ async fn tunnel_includes_proxy_auth_with_multiple_proxies() {
 #[tokio::test]
 async fn skip_default_headers() {
     let server = server::http(move |req| async move {
-        if req.uri() != "/skip" && req.uri() != "/no_skip" {
-            panic!("Unexpected request URI: {}", req.uri());
-        }
-
-        if req.uri() == "/skip" {
-            assert_eq!(req.method(), "GET");
-            assert_eq!(req.headers().get("user-agent"), None);
-            assert_eq!(req.headers().get("accept"), None);
-        }
-
-        if req.uri() == "/no_skip" {
-            assert_eq!(req.method(), "GET");
-            assert_eq!(
-                req.headers().get("user-agent"),
-                Some(&"test-agent".parse().unwrap())
-            );
-            assert_eq!(req.headers().get("accept"), Some(&"*/*".parse().unwrap()));
+        let path = req.uri().path();
+        match path {
+            "/skip" => {
+                assert_eq!(req.method(), "GET");
+                assert_eq!(req.headers().get(USER_AGENT), None);
+                assert_eq!(req.headers().get(ACCEPT), None);
+            }
+            "/no_skip" => {
+                assert_eq!(req.method(), "GET");
+                assert_eq!(req.headers()[USER_AGENT], "test-agent");
+                assert_eq!(req.headers()[ACCEPT], "*/*");
+            }
+            _ => unreachable!("Unexpected request path: {path}"),
         }
 
         http::Response::default()
     });
 
-    let url = format!("http://{}/skip", server.addr());
     let client = Client::builder()
         .default_headers({
             let mut headers = wreq::header::HeaderMap::new();
-            headers.insert("user-agent", "test-agent".parse().unwrap());
-            headers.insert("accept", "*/*".parse().unwrap());
+            headers.insert(USER_AGENT, "test-agent".parse().unwrap());
+            headers.insert(ACCEPT, "*/*".parse().unwrap());
             headers
         })
         .no_proxy()
         .build()
         .unwrap();
 
+    let url = format!("http://{}/skip", server.addr());
     let res = client
         .get(&url)
         .default_headers(false)
@@ -912,17 +919,6 @@ async fn skip_default_headers() {
     assert_eq!(res.status(), wreq::StatusCode::OK);
 
     let url = format!("http://{}/no_skip", server.addr());
-    let client = Client::builder()
-        .default_headers({
-            let mut headers = wreq::header::HeaderMap::new();
-            headers.insert("user-agent", "test-agent".parse().unwrap());
-            headers.insert("accept", "*/*".parse().unwrap());
-            headers
-        })
-        .no_proxy()
-        .build()
-        .unwrap();
-
     let res = client.get(&url).send().await.unwrap();
     assert_eq!(res.uri(), url.as_str());
     assert_eq!(res.status(), wreq::StatusCode::OK);

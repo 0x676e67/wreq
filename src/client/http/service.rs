@@ -123,9 +123,7 @@ where
             // without overwriting already appended headers.
             let headers = req.headers_mut();
             // tracks the previous header name encountered while iterating through
-            // `self.config.headers`. This is necessary because `HeaderMap::into_iter()`
-            // yields `(Option<HeaderName>, HeaderValue)` pairs, where `None` indicates
-            // that this value should be appended to the last seen header name.
+            // default headers to handle appending values correctly.
             let mut prev_name = None;
 
             // iterate through the configured default headers
@@ -153,9 +151,15 @@ where
                     // We already processed a header before (prev_name = Some),
                     // and now `name` is Some, meaning we append to the same name again.
                     (Some(name), Some(_)) => {
-                        // If the header exists, append this additional value.
-                        if let Entry::Occupied(mut entry) = headers.entry(&name) {
-                            entry.append(value);
+                        match headers.entry(&name) {
+                            // If the header exists, append this additional value.
+                            Entry::Occupied(mut entry) => {
+                                entry.append(value);
+                            }
+                            // If the header does not exist, insert it.
+                            Entry::Vacant(entry) => {
+                                entry.insert(value);
+                            }
                         }
 
                         // Update the most recent header name.
