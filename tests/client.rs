@@ -927,18 +927,25 @@ async fn skip_default_headers() {
 #[tokio::test]
 async fn test_client_same_header_values_append() {
     let server = server::http(move |req| async move {
-        let cookie_values: Vec<_> = req.headers().get_all(header::COOKIE).iter().collect();
-        assert_eq!(cookie_values.len(), 4);
-
-        assert_eq!(cookie_values[0], "duplicate=same_value");
-        assert_eq!(cookie_values[1], "duplicate=same_value");
-        assert_eq!(cookie_values[2], "unique1=value1");
-        assert_eq!(cookie_values[3], "unique2=value2");
+        let path = req.uri().path();
+        match path {
+            "/duplicate-cookies" => {
+                let cookie_values: Vec<_> = req.headers().get_all(header::COOKIE).iter().collect();
+                assert_eq!(cookie_values.len(), 1);
+                assert_eq!(cookie_values[0], "duplicate=same_value");
+            }
+            "/no-duplicate-cookies" => {
+                let cookie_values: Vec<_> = req.headers().get_all(header::COOKIE).iter().collect();
+                assert_eq!(cookie_values.len(), 3);
+                assert_eq!(cookie_values[0], "duplicate=same_value");
+                assert_eq!(cookie_values[1], "unique1=value1");
+                assert_eq!(cookie_values[2], "unique2=value2");
+            }
+            _ => unreachable!("Unexpected request path: {}", path),
+        }
 
         http::Response::default()
     });
-
-    let url = format!("http://{}/duplicate-cookies", server.addr());
 
     let client = Client::builder()
         .no_proxy()
@@ -956,12 +963,18 @@ async fn test_client_same_header_values_append() {
         .unwrap();
 
     let res = client
-        .get(&url)
+        .get(format!("http://{}/duplicate-cookies", server.addr()))
         .header(header::COOKIE, "duplicate=same_value")
         .send()
         .await
         .unwrap();
+    assert_eq!(res.status(), wreq::StatusCode::OK);
 
+    let res = client
+        .get(format!("http://{}/no-duplicate-cookies", server.addr()))
+        .send()
+        .await
+        .unwrap();
     assert_eq!(res.status(), wreq::StatusCode::OK);
 }
 

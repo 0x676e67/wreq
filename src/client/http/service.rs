@@ -132,7 +132,6 @@ where
                     // Case 1: This is the first occurrence of this header name.
                     // `prev_name` is None, meaning we haven't processed any header yet.
                     (Some(name), None) => {
-                        // Insert only if the header is not already present in the request.
                         match headers.entry(&name) {
                             Entry::Occupied(_) => {
                                 // Don't overwrite an existing header; skip it.
@@ -143,7 +142,6 @@ where
                             }
                         }
 
-                        // Record this header name as the most recent one.
                         prev_name = Some(name);
                     }
 
@@ -162,7 +160,6 @@ where
                             }
                         }
 
-                        // Update the most recent header name.
                         prev_name = Some(name);
                     }
 
