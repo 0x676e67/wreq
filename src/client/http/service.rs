@@ -122,16 +122,54 @@ where
             // insert default headers in the request headers
             // without overwriting already appended headers.
             let headers = req.headers_mut();
-            for (name, value) in &self.config.headers {
-                match headers.entry(name) {
-                    // If the header already exists, append the new value to it.
-                    Entry::Occupied(mut entry) => {
-                        entry.append(value.clone());
+            // tracks the previous header name encountered while iterating through
+            // `self.config.headers`. This is necessary because `HeaderMap::into_iter()`
+            // yields `(Option<HeaderName>, HeaderValue)` pairs, where `None` indicates
+            // that this value should be appended to the last seen header name.
+            let mut prev_name = None;
+
+            for (name, value) in self.config.headers.clone() {
+                match (name, &prev_name) {
+                    // Case 1: This is the first occurrence of this header name.
+                    // `prev_name` is None, meaning we haven't processed any header yet.
+                    (Some(name), None) => {
+                        // Insert only if the header is not already present in the request.
+                        match headers.entry(&name) {
+                            Entry::Occupied(_) => {
+                                // Don't overwrite an existing header; skip it.
+                                continue;
+                            }
+                            Entry::Vacant(entry) => {
+                                entry.insert(value);
+                            }
+                        }
+
+                        // Record this header name as the most recent one.
+                        prev_name = Some(name);
                     }
-                    // If the header does not exist, insert it.
-                    Entry::Vacant(entry) => {
-                        entry.insert(value.clone());
+
+                    // Case 2: A subsequent occurrence of a header name.
+                    // We already processed a header before (prev_name = Some),
+                    // and now `name` is Some, meaning we append to the same name again.
+                    (Some(name), Some(_)) => {
+                        // If the header exists, append this additional value.
+                        if let Entry::Occupied(mut entry) = headers.entry(&name) {
+                            entry.append(value.clone());
+                        }
+
+                        // Update the most recent header name.
+                        prev_name = Some(name);
                     }
+
+                    // Case 3: A subsequent value without a header name (name = None).
+                    // This means the iterator is indicating "append to previous header".
+                    (None, Some(prev_name)) => {
+                        // Append value to the header identified by `prev_name`.
+                        if let Entry::Occupied(mut entry) = headers.entry(prev_name) {
+                            entry.append(value.clone());
+                        }
+                    }
+                    (None, None) => {}
                 }
             }
         }

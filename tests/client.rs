@@ -6,8 +6,8 @@ use std::collections::HashMap;
 use http::{
     HeaderMap, HeaderValue, Version,
     header::{
-        self, AUTHORIZATION, CACHE_CONTROL, CONTENT_LENGTH, CONTENT_TYPE, REFERER,
-        TRANSFER_ENCODING,
+        self, AUTHORIZATION, CACHE_CONTROL, CONTENT_LENGTH, CONTENT_TYPE, COOKIE, REFERER,
+        TRANSFER_ENCODING, USER_AGENT,
     },
 };
 use http_body_util::BodyExt;
@@ -231,6 +231,74 @@ async fn test_headers_order_with_request() {
         .await
         .unwrap();
 
+    assert_eq!(res.status(), wreq::StatusCode::OK);
+}
+
+#[tokio::test]
+async fn test_overwrite_headers() {
+    let server = server::http(move |req| async move {
+        let path = req.uri().path();
+        match path {
+            "/1" => {
+                assert_eq!(req.method(), "GET");
+                assert_eq!(req.headers()[USER_AGENT], "my-custom-agent");
+                let mut cookies = req.headers().get_all(COOKIE).iter();
+                assert_eq!(cookies.next().unwrap(), "a=b");
+                assert_eq!(cookies.next().unwrap(), "c=d");
+            }
+            "/2" => {
+                assert_eq!(req.method(), "GET");
+                assert_eq!(req.headers()[USER_AGENT], "my-custom-agent");
+                let mut cookies = req.headers().get_all(COOKIE).iter();
+                assert_eq!(cookies.next().unwrap(), "e=f");
+                assert_eq!(cookies.next().unwrap(), "g=h");
+            }
+            _ => {
+                unreachable!("Unexpected request path: {}", path);
+            }
+        }
+
+        http::Response::default()
+    });
+
+    let mut default_headers = header::HeaderMap::new();
+    default_headers.insert(
+        USER_AGENT,
+        header::HeaderValue::from_static("default-agent"),
+    );
+    default_headers.insert(COOKIE, header::HeaderValue::from_static("a=b"));
+    default_headers.append(COOKIE, header::HeaderValue::from_static("c=d"));
+
+    let client = Client::builder()
+        .no_proxy()
+        .default_headers(default_headers)
+        .build()
+        .unwrap();
+
+    let url = format!("http://{}/1", server.addr());
+
+    let res = client
+        .get(&url)
+        .header(USER_AGENT, "my-custom-agent")
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(res.uri(), url.as_str());
+    assert_eq!(res.status(), wreq::StatusCode::OK);
+
+    let url = format!("http://{}/2", server.addr());
+
+    let res = client
+        .get(&url)
+        .header(USER_AGENT, "my-custom-agent")
+        .header(COOKIE, "e=f")
+        .header_append(COOKIE, "g=h")
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(res.uri(), url.as_str());
     assert_eq!(res.status(), wreq::StatusCode::OK);
 }
 
