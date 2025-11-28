@@ -4,10 +4,7 @@ use std::{
 };
 
 use futures_util::future::{self, Either, Ready};
-use http::{
-    HeaderMap, HeaderValue, Request, Response,
-    header::{Entry, PROXY_AUTHORIZATION},
-};
+use http::{HeaderMap, HeaderValue, Request, Response, header::PROXY_AUTHORIZATION};
 use tower::{Layer, Service};
 
 use crate::{
@@ -121,59 +118,9 @@ where
         {
             // insert default headers in the request headers
             // without overwriting already appended headers.
-            let headers = req.headers_mut();
-            // tracks the previous header name encountered while iterating through
-            // default headers to handle appending values correctly.
-            let mut prev_name = None;
-
-            // iterate through the configured default headers
-            for (name, value) in self.config.headers.clone() {
-                match (name, &prev_name) {
-                    // Case 1: This is the first occurrence of this header name.
-                    // `prev_name` is None, meaning we haven't processed any header yet.
-                    (Some(name), None) => {
-                        match headers.entry(&name) {
-                            Entry::Occupied(_) => {
-                                // Don't overwrite an existing header; skip it.
-                                continue;
-                            }
-                            Entry::Vacant(entry) => {
-                                entry.insert(value);
-                            }
-                        }
-
-                        prev_name = Some(name);
-                    }
-
-                    // Case 2: A subsequent occurrence of a header name.
-                    // We already processed a header before (prev_name = Some),
-                    // and now `name` is Some, meaning we append to the same name again.
-                    (Some(name), Some(_)) => {
-                        match headers.entry(&name) {
-                            // If the header exists, append this additional value.
-                            Entry::Occupied(mut entry) => {
-                                entry.append(value);
-                            }
-                            // If the header does not exist, insert it.
-                            Entry::Vacant(entry) => {
-                                entry.insert(value);
-                            }
-                        }
-
-                        prev_name = Some(name);
-                    }
-
-                    // Case 3: A subsequent value without a header name (name = None).
-                    // This means the iterator is indicating "append to previous header".
-                    (None, Some(prev_name)) => {
-                        // Append value to the header identified by `prev_name`.
-                        if let Entry::Occupied(mut entry) = headers.entry(prev_name) {
-                            entry.append(value);
-                        }
-                    }
-                    (None, None) => {}
-                }
-            }
+            let mut src = self.config.headers.clone();
+            crate::util::replace_headers(&mut src, req.headers().clone());
+            *req.headers_mut() = src;
         }
 
         // store the original headers in request extensions

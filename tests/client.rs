@@ -245,6 +245,7 @@ async fn test_overwrite_headers() {
                 let mut cookies = req.headers().get_all(COOKIE).iter();
                 assert_eq!(cookies.next().unwrap(), "a=b");
                 assert_eq!(cookies.next().unwrap(), "c=d");
+                assert_eq!(cookies.next(), None);
             }
             "/2" => {
                 assert_eq!(req.method(), "GET");
@@ -252,6 +253,7 @@ async fn test_overwrite_headers() {
                 let mut cookies = req.headers().get_all(COOKIE).iter();
                 assert_eq!(cookies.next().unwrap(), "e=f");
                 assert_eq!(cookies.next().unwrap(), "g=h");
+                assert_eq!(cookies.next(), None);
             }
             "/3" => {
                 assert_eq!(req.method(), "GET");
@@ -259,6 +261,15 @@ async fn test_overwrite_headers() {
                 let mut cookies = req.headers().get_all(COOKIE).iter();
                 assert_eq!(cookies.next().unwrap(), "a=b");
                 assert_eq!(cookies.next().unwrap(), "c=d");
+                assert_eq!(cookies.next(), None);
+            }
+            "/4" => {
+                assert_eq!(req.method(), "GET");
+                assert_eq!(req.headers()[USER_AGENT], "default-agent");
+                let mut cookies = req.headers().get_all(COOKIE).iter();
+                assert_eq!(cookies.next().unwrap(), "e=f");
+                assert_eq!(cookies.next().unwrap(), "g=h");
+                assert_eq!(cookies.next(), None);
             }
             _ => {
                 unreachable!("Unexpected request path: {}", path);
@@ -289,7 +300,6 @@ async fn test_overwrite_headers() {
         .send()
         .await
         .unwrap();
-
     assert_eq!(res.uri(), url.as_str());
     assert_eq!(res.status(), wreq::StatusCode::OK);
 
@@ -302,13 +312,22 @@ async fn test_overwrite_headers() {
         .send()
         .await
         .unwrap();
-
     assert_eq!(res.uri(), url.as_str());
     assert_eq!(res.status(), wreq::StatusCode::OK);
 
     let url = format!("http://{}/3", server.addr());
     let res = client.get(&url).send().await.unwrap();
+    assert_eq!(res.uri(), url.as_str());
+    assert_eq!(res.status(), wreq::StatusCode::OK);
 
+    let url = format!("http://{}/4", server.addr());
+    let res = client
+        .get(&url)
+        .header(COOKIE, "e=f")
+        .header_append(COOKIE, "g=h")
+        .send()
+        .await
+        .unwrap();
     assert_eq!(res.uri(), url.as_str());
     assert_eq!(res.status(), wreq::StatusCode::OK);
 }
