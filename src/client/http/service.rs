@@ -120,7 +120,7 @@ where
             // without overwriting already appended headers.
             let mut dest = self.config.headers.clone();
             crate::util::replace_headers(&mut dest, std::mem::take(req.headers_mut()));
-            *req.headers_mut() = dest;
+            std::mem::swap(req.headers_mut(), &mut dest);
         }
 
         // store the original headers in request extensions
