@@ -118,9 +118,9 @@ where
         {
             // insert default headers in the request headers
             // without overwriting already appended headers.
-            let mut src = self.config.headers.clone();
-            crate::util::replace_headers(&mut src, req.headers().clone());
-            *req.headers_mut() = src;
+            let mut dest = self.config.headers.clone();
+            crate::util::replace_headers(&mut dest, std::mem::take(req.headers_mut()));
+            *req.headers_mut() = dest;
         }
 
         // store the original headers in request extensions
