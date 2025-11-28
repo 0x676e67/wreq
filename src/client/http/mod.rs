@@ -34,6 +34,7 @@ use {super::layer::cookie::CookieServiceLayer, crate::cookie};
     feature = "deflate",
 ))]
 use super::layer::decoder::{AcceptEncoding, DecompressionLayer};
+use super::layer::wire_size::WireSizeLayer;
 #[cfg(feature = "ws")]
 use super::ws::WebSocketRequestBuilder;
 use super::{
@@ -106,7 +107,11 @@ type Decompression<T> = super::layer::decoder::Decompression<T>;
     feature = "brotli",
     feature = "deflate"
 ))]
-type ResponseBody = TimeoutBody<tower_http::decompression::DecompressionBody<Incoming>>;
+type ResponseBody = TimeoutBody<
+    tower_http::decompression::DecompressionBody<
+        super::layer::wire_size::CountingBody<Incoming>,
+    >,
+>;
 
 /// Response body type with timeout only (no compression features).
 #[cfg(not(any(
@@ -115,7 +120,10 @@ type ResponseBody = TimeoutBody<tower_http::decompression::DecompressionBody<Inc
     feature = "brotli",
     feature = "deflate"
 )))]
-type ResponseBody = TimeoutBody<Incoming>;
+type ResponseBody = TimeoutBody<super::layer::wire_size::CountingBody<Incoming>>;
+
+/// Service wrapper that tracks wire size before decompression.
+type WireSize<T> = super::layer::wire_size::WireSize<T>;
 
 /// The complete HTTP client service stack with all middleware layers.
 type GenericClientService = Timeout<
@@ -125,10 +133,12 @@ type GenericClientService = Timeout<
             FollowRedirect<
                 ResponseBodyTimeout<
                     Decompression<
-                        CookieService<
-                            MapErr<
-                                HttpClient<Connector, Body>,
-                                fn(crate::core::client::Error) -> BoxError,
+                        WireSize<
+                            CookieService<
+                                MapErr<
+                                    HttpClient<Connector, Body>,
+                                    fn(crate::core::client::Error) -> BoxError,
+                                >,
                             >,
                         >,
                     >,
@@ -584,6 +594,11 @@ impl ClientBuilder {
             #[cfg(feature = "cookies")]
             let service = ServiceBuilder::new()
                 .layer(CookieServiceLayer::new(config.cookie_store))
+                .service(service);
+
+            // Track wire size before decompression
+            let service = ServiceBuilder::new()
+                .layer(WireSizeLayer::new())
                 .service(service);
 
             #[cfg(any(
