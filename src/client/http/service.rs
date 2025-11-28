@@ -4,10 +4,7 @@ use std::{
 };
 
 use futures_util::future::{self, Either, Ready};
-use http::{
-    HeaderMap, HeaderValue, Request, Response,
-    header::{Entry, PROXY_AUTHORIZATION},
-};
+use http::{HeaderMap, HeaderValue, Request, Response, header::PROXY_AUTHORIZATION};
 use tower::{Layer, Service};
 
 use crate::{
@@ -123,19 +120,9 @@ where
         {
             // insert default headers in the request headers
             // without overwriting already appended headers.
-            let headers = req.headers_mut();
-            for (name, value) in &self.config.headers {
-                match headers.entry(name) {
-                    // If the header already exists, append the new value to it.
-                    Entry::Occupied(mut entry) => {
-                        entry.append(value.clone());
-                    }
-                    // If the header does not exist, insert it.
-                    Entry::Vacant(entry) => {
-                        entry.insert(value.clone());
-                    }
-                }
-            }
+            let mut src = self.config.headers.clone();
+            crate::util::replace_headers(&mut src, req.headers().clone());
+            *req.headers_mut() = src;
         }
 
         // store the original headers in request extensions
