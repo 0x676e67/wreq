@@ -371,9 +371,9 @@ impl ConnectorService {
 
         let mut connector = self.build_https_connector(req.extra())?;
 
-        // If connecting via a proxy and the target is HTTPS, disable ALPN protocols
+        // When using a proxy for HTTPS targets, disable ALPN to avoid protocol negotiation issues
         if is_proxy && req.uri().is_https() {
-            connector.alpn_protocols(None);
+            connector.no_alpn();
         }
 
         let io = connector.call(req).await?;

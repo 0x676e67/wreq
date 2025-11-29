@@ -203,10 +203,10 @@ where
         }
     }
 
-    /// Sets the ALPN protocols to be used.
+    /// Disables ALPN negotiation.
     #[inline]
-    pub fn alpn_protocols(&mut self, protocols: Option<Cow<'static, [AlpnProtocol]>>) -> &mut Self {
-        self.inner.config.alpn_protocols = protocols;
+    pub fn no_alpn(&mut self) -> &mut Self {
+        self.inner.config.alpn_protocols = None;
         self
     }
 }
