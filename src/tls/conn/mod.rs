@@ -194,12 +194,20 @@ where
     S::Future: Unpin + Send + 'static,
     T: AsyncRead + AsyncWrite + Connection + Unpin + Debug + Sync + Send + 'static,
 {
-    /// Creates a new `HttpsConnector` with a given `HttpConnector`
+    /// Creates a new [`HttpsConnector`] with a given [`TlsConnector`].
+    #[inline]
     pub fn with_connector(http: S, connector: TlsConnector) -> HttpsConnector<S> {
         HttpsConnector {
             http,
             inner: connector.inner,
         }
+    }
+
+    /// Sets the ALPN protocols to be used.
+    #[inline]
+    pub fn alpn_protocols(&mut self, protocols: Option<Cow<'static, [AlpnProtocol]>>) -> &mut Self {
+        self.inner.config.alpn_protocols = protocols;
+        self
     }
 }
 
