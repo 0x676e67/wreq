@@ -104,7 +104,7 @@ where
         let uri = req.uri().clone();
 
         // check if the request URI scheme is valid.
-        if (!uri.is_http() && !uri.is_https()) || (self.config.https_only && !uri.is_https()) {
+        if !(uri.is_http() || uri.is_https()) || (self.config.https_only && !uri.is_https()) {
             return Either::Right(future::err(Error::uri_bad_scheme(uri.clone()).into()));
         }
 
