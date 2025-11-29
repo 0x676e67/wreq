@@ -470,8 +470,7 @@ impl Matcher {
     /// If no authentication is needed, returns `None`.
     pub(crate) fn http_non_tunnel_basic_auth(&self, dst: &Uri) -> Option<HeaderValue> {
         if let Some(Intercepted::Proxy(proxy)) = self.intercept(dst) {
-            let uri = proxy.uri();
-            if uri.is_http() || uri.is_https() {
+            if proxy.uri().is_http() {
                 return proxy.basic_auth().cloned();
             }
         }
@@ -486,8 +485,7 @@ impl Matcher {
     /// headers are needed, returns `None`.
     pub(crate) fn http_non_tunnel_custom_headers(&self, dst: &Uri) -> Option<HeaderMap> {
         if let Some(Intercepted::Proxy(proxy)) = self.intercept(dst) {
-            let uri = proxy.uri();
-            if uri.is_http() || uri.is_https() {
+            if proxy.uri().is_http() {
                 return proxy.custom_headers().cloned();
             }
         }
