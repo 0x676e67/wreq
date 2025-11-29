@@ -104,7 +104,7 @@ where
         let uri = req.uri().clone();
 
         // check if the request URI scheme is valid.
-        if (!uri.is_http() && !uri.is_https()) || (self.config.https_only && !uri.is_https()) {
+        if !(uri.is_http() || uri.is_https()) || (self.config.https_only && !uri.is_https()) {
             return Either::Right(future::err(Error::uri_bad_scheme(uri.clone()).into()));
         }
 
@@ -157,10 +157,10 @@ where
                 });
 
         // insert proxy auth header if not already present
-        if !req.headers().contains_key(PROXY_AUTHORIZATION) {
-            if let Some(header) = http_auth_header {
-                req.headers_mut().insert(PROXY_AUTHORIZATION, header);
-            }
+        if let Some(header) = http_auth_header {
+            req.headers_mut()
+                .entry(PROXY_AUTHORIZATION)
+                .or_insert(header);
         }
 
         // insert proxy custom headers
