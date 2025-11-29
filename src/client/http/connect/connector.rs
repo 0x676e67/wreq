@@ -433,7 +433,7 @@ impl ConnectorService {
                     let conn = socks.call(uri).await?;
 
                     // Wrap the established SOCKS connection with TLS if needed.
-                    let io = connector.call(EstablishedConn::new(req, conn)).await?;
+                    let io = connector.call(EstablishedConn::new(conn, req)).await?;
 
                     // Re-enable Nagle's algorithm if it was disabled earlier
                     if !self.config.tcp_nodelay {
@@ -472,7 +472,7 @@ impl ConnectorService {
                     let tunneled = tunnel.call(uri).await?;
 
                     // Wrap the established tunneled stream with TLS.
-                    let io = connector.call(EstablishedConn::new(req, tunneled)).await?;
+                    let io = connector.call(EstablishedConn::new(tunneled, req)).await?;
 
                     // Re-enable Nagle's algorithm if it was disabled earlier
                     if !self.config.tcp_nodelay {
@@ -508,7 +508,7 @@ impl ConnectorService {
                     let tunneled = tunnel.call(uri).await?;
 
                     // Wrap the established tunneled stream with TLS.
-                    let established_conn = EstablishedConn::new(req, tunneled);
+                    let established_conn = EstablishedConn::new(tunneled, req);
                     let io = connector.call(established_conn).await?;
 
                     return self.conn_from_nested_stream(io, is_proxy);

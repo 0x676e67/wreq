@@ -573,8 +573,8 @@ pub enum MaybeHttpsStream<T> {
 
 /// A connection that has been established with a TLS handshake.
 pub struct EstablishedConn<IO> {
-    req: ConnectRequest,
     io: IO,
+    req: ConnectRequest,
 }
 
 // ===== impl MaybeHttpsStream =====
@@ -670,7 +670,7 @@ where
 impl<IO> EstablishedConn<IO> {
     /// Creates a new [`EstablishedConn`].
     #[inline]
-    pub fn new(req: ConnectRequest, io: IO) -> Self {
-        Self { req, io }
+    pub fn new(io: IO, req: ConnectRequest) -> EstablishedConn<IO> {
+        EstablishedConn { io, req }
     }
 }
