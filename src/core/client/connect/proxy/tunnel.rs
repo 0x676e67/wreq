@@ -11,7 +11,7 @@ use pin_project_lite::pin_project;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tower::Service;
 
-use crate::core::BoxError;
+use crate::{core::BoxError, ext::UriExt};
 
 /// Tunnel Proxy via HTTP CONNECT
 ///
@@ -145,10 +145,14 @@ where
                 let conn = connecting
                     .await
                     .map_err(|e| TunnelError::ConnectFailed(e.into()))?;
+                let port = dst
+                    .port()
+                    .map(|p| p.as_u16())
+                    .unwrap_or_else(|| if dst.is_http() { 80 } else { 443 });
                 tunnel(
                     conn,
                     dst.host().ok_or(TunnelError::MissingHost)?,
-                    dst.port().map(|p| p.as_u16()).unwrap_or(443),
+                    port,
                     &headers,
                 )
                 .await

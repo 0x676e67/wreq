@@ -354,75 +354,83 @@ impl ConnectorService {
                         socks
                     };
 
-                    let is_https = uri.is_https();
                     let conn = socks.call(uri).await?;
 
-                    let conn = if is_https {
-                        // If the target is HTTPS, wrap the SOCKS stream with TLS.
-                        let mut connector = self.build_https_connector(req.extra())?;
-                        let established_conn = EstablishedConn::new(req, conn);
-                        let io = connector.call(established_conn).await?;
+                    // If the target is HTTPS, wrap the SOCKS stream with TLS.
+                    let mut connector = self.build_https_connector(req.extra())?;
+                    let established_conn = EstablishedConn::new(req, conn);
+                    let io = connector.call(established_conn).await?;
 
-                        // Re-enable Nagle's algorithm if it was disabled earlier
-                        if !self.config.tcp_nodelay {
-                            io.get_ref().set_nodelay(false)?;
-                        }
+                    // Re-enable Nagle's algorithm if it was disabled earlier
+                    if !self.config.tcp_nodelay {
+                        io.get_ref().set_nodelay(false)?;
+                    }
 
-                        Conn {
+                    return match io {
+                        MaybeHttpsStream::Http(io) => Ok(Conn {
+                            inner: self.config.verbose.wrap(io),
+                            tls_info: false,
+                            is_proxy: true,
+                        }),
+                        MaybeHttpsStream::Https(io) => Ok(Conn {
                             inner: self.config.verbose.wrap(TlsConn::new(io)),
                             tls_info: self.config.tls_info,
-                            is_proxy: true,
-                        }
-                    } else {
-                        // For HTTP, return the SOCKS connection directly.
-                        Conn {
-                            inner: self.config.verbose.wrap(conn),
-                            tls_info: false,
                             is_proxy: false,
-                        }
+                        }),
                     };
-
-                    return Ok(conn);
                 }
 
                 // Handle HTTPS proxy tunneling connection
-                if uri.is_https() {
+                if uri.is_https() || (proxy_uri.is_https() && uri.is_http()) {
                     trace!("tunneling HTTPS over HTTP proxy: {:?}", proxy_uri);
 
                     // Create a tunnel connector that establishes a CONNECT tunnel through the HTTP
                     // proxy, then upgrades the tunneled stream to TLS.
                     let mut connector = self.build_https_connector(req.extra())?;
-                    let mut tunnel =
-                        proxy::tunnel::TunnelConnector::new(proxy_uri, connector.clone());
+                    let mut tunnel = {
+                        let mut tunnel =
+                            proxy::tunnel::TunnelConnector::new(proxy_uri, connector.clone());
 
-                    // If the proxy requires basic authentication, add it to the tunnel.
-                    if let Some(auth) = proxy.basic_auth() {
-                        tunnel = tunnel.with_auth(auth.clone());
-                    }
+                        // If the proxy requires basic authentication, add it to the tunnel.
+                        if let Some(auth) = proxy.basic_auth() {
+                            tunnel = tunnel.with_auth(auth.clone());
+                        }
 
-                    // If the proxy has custom headers, add them to the tunnel.
-                    if let Some(headers) = proxy.custom_headers() {
-                        tunnel = tunnel.with_headers(headers.clone());
-                    }
+                        // If the proxy has custom headers, add them to the tunnel.
+                        if let Some(headers) = proxy.custom_headers() {
+                            tunnel = tunnel.with_headers(headers.clone());
+                        }
+
+                        tunnel
+                    };
 
                     // The tunnel connector will first establish a CONNECT tunnel,
                     // then perform the TLS handshake over the tunneled stream.
                     let tunneled = tunnel.call(uri).await?;
 
                     // Wrap the established tunneled stream with TLS.
-                    let established_conn = EstablishedConn::new(req, tunneled);
-                    let io = connector.call(established_conn).await?;
+                    let io = {
+                        let established_conn = EstablishedConn::new(req, tunneled);
+                        connector.call(established_conn).await?
+                    };
 
                     // Re-enable Nagle's algorithm if it was disabled earlier
                     if !self.config.tcp_nodelay {
                         io.get_ref().get_ref().set_nodelay(false)?;
                     }
 
-                    return Ok(Conn {
-                        inner: self.config.verbose.wrap(TlsConn::new(io)),
-                        tls_info: self.config.tls_info,
-                        is_proxy: false,
-                    });
+                    return match io {
+                        MaybeHttpsStream::Http(io) => Ok(Conn {
+                            inner: self.config.verbose.wrap(io),
+                            tls_info: false,
+                            is_proxy: true,
+                        }),
+                        MaybeHttpsStream::Https(io) => Ok(Conn {
+                            inner: self.config.verbose.wrap(TlsConn::new(io)),
+                            tls_info: self.config.tls_info,
+                            is_proxy: false,
+                        }),
+                    };
                 }
 
                 *req.uri_mut() = proxy_uri;
@@ -454,11 +462,18 @@ impl ConnectorService {
                     let established_conn = EstablishedConn::new(req, tunneled);
                     let io = connector.call(established_conn).await?;
 
-                    return Ok(Conn {
-                        inner: self.config.verbose.wrap(TlsConn::new(io)),
-                        tls_info: self.config.tls_info,
-                        is_proxy,
-                    });
+                    return match io {
+                        MaybeHttpsStream::Http(io) => Ok(Conn {
+                            inner: self.config.verbose.wrap(io),
+                            tls_info: false,
+                            is_proxy: true,
+                        }),
+                        MaybeHttpsStream::Https(io) => Ok(Conn {
+                            inner: self.config.verbose.wrap(TlsConn::new(io)),
+                            tls_info: self.config.tls_info,
+                            is_proxy: false,
+                        }),
+                    };
                 }
 
                 // For plain HTTP, use the Unix connector directly.

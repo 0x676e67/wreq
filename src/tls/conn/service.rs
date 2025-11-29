@@ -7,13 +7,14 @@ use std::{
 
 use http::{Uri, uri::Scheme};
 use tokio::io::{AsyncRead, AsyncWrite};
-use tokio_boring2::{SslStream, SslStreamBuilder};
+use tokio_boring2::SslStreamBuilder;
 use tower::Service;
 
 use super::{EstablishedConn, HttpsConnector, MaybeHttpsStream};
 use crate::{
     core::client::{ConnectRequest, connect::Connection},
     error::BoxError,
+    ext::UriExt,
 };
 
 type BoxFuture<T, E> = Pin<Box<dyn Future<Output = Result<T, E>> + Send>>;
@@ -84,7 +85,7 @@ where
             let conn = connect.await.map_err(Into::into)?;
 
             // Early return if it is not a tls scheme
-            if uri.scheme() != Some(&Scheme::HTTPS) {
+            if uri.is_http() {
                 return Ok(MaybeHttpsStream::Http(conn));
             }
 
@@ -109,7 +110,7 @@ where
     T: AsyncRead + AsyncWrite + Connection + Unpin + Debug + Sync + Send + 'static,
     IO: AsyncRead + AsyncWrite + Unpin + Send + Sync + Debug + 'static,
 {
-    type Response = SslStream<IO>;
+    type Response = MaybeHttpsStream<IO>;
     type Error = BoxError;
     type Future = BoxFuture<Self::Response, Self::Error>;
 
@@ -121,10 +122,17 @@ where
     fn call(&mut self, conn: EstablishedConn<IO>) -> Self::Future {
         let inner = self.inner.clone();
         let fut = async move {
-            let ssl = inner.setup_ssl2(conn.req)?;
-            let stream = SslStreamBuilder::new(ssl, conn.inner).connect().await?;
+            // Early return if it is not a tls scheme
+            if conn.req.uri().is_http() {
+                return Ok(MaybeHttpsStream::Http(conn.inner));
+            }
 
-            Ok(stream)
+            let ssl = inner.setup_ssl2(conn.req)?;
+            SslStreamBuilder::new(ssl, conn.inner)
+                .connect()
+                .await
+                .map(MaybeHttpsStream::Https)
+                .map_err(Into::into)
         };
 
         Box::pin(fut)
