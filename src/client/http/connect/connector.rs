@@ -19,7 +19,7 @@ use tower::{
 
 use super::{
     super::{BoxedConnectorLayer, BoxedConnectorService, HttpConnector},
-    TlsInfoFactory, Unnameable,
+    AsyncConnWithInfo, TlsInfoFactory, Unnameable,
     conn::{Conn, TlsConn},
     verbose::Verbose,
 };
@@ -258,7 +258,7 @@ impl ConnectorService {
         is_proxy2: bool,
     ) -> Result<Conn, BoxError>
     where
-        IO: AsyncRead + AsyncWrite + Connection + TlsInfoFactory + Unpin + Sync + Send + 'static,
+        IO: AsyncConnWithInfo,
         TlsConn<IO>: Connection,
         SslStream<IO>: TlsInfoFactory,
     {
@@ -285,7 +285,7 @@ impl ConnectorService {
         is_proxy: bool,
     ) -> Result<Conn, BoxError>
     where
-        IO: AsyncRead + AsyncWrite + Connection + TlsInfoFactory + Unpin + Sync + Send + 'static,
+        IO: AsyncConnWithInfo,
         MaybeHttpsStream<IO>: TlsInfoFactory,
         TlsConn<MaybeHttpsStream<IO>>: Connection,
         SslStream<MaybeHttpsStream<IO>>: TlsInfoFactory,
