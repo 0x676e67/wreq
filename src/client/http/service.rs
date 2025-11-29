@@ -75,7 +75,7 @@ impl ConfigServiceLayer {
 impl<S> Layer<S> for ConfigServiceLayer {
     type Service = ConfigService<S>;
 
-    #[inline(always)]
+    #[inline]
     fn layer(&self, inner: S) -> Self::Service {
         ConfigService {
             inner,
@@ -95,7 +95,7 @@ where
     type Error = S::Error;
     type Future = Either<S::Future, Ready<Result<Self::Response, Self::Error>>>;
 
-    #[inline(always)]
+    #[inline]
     fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         self.inner.poll_ready(cx)
     }
