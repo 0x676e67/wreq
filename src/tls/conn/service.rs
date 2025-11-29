@@ -124,11 +124,11 @@ where
         let fut = async move {
             // Early return if it is not a tls scheme
             if conn.req.uri().is_http() {
-                return Ok(MaybeHttpsStream::Http(conn.inner));
+                return Ok(MaybeHttpsStream::Http(conn.io));
             }
 
             let ssl = inner.setup_ssl2(conn.req)?;
-            SslStreamBuilder::new(ssl, conn.inner)
+            SslStreamBuilder::new(ssl, conn.io)
                 .connect()
                 .await
                 .map(MaybeHttpsStream::Https)
