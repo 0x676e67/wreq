@@ -145,10 +145,7 @@ where
                 let conn = connecting
                     .await
                     .map_err(|e| TunnelError::ConnectFailed(e.into()))?;
-                let port = dst
-                    .port()
-                    .map(|p| p.as_u16())
-                    .unwrap_or_else(|| if dst.is_http() { 80 } else { 443 });
+                let port = dst.port_or_default();
                 tunnel(
                     conn,
                     dst.host().ok_or(TunnelError::MissingHost)?,

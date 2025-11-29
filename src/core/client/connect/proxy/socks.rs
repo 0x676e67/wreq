@@ -183,11 +183,8 @@ where
         let mut resolver = self.resolver.clone();
 
         let fut = async move {
-            let port = dst
-                .port()
-                .map(|p| p.as_u16())
-                .unwrap_or_else(|| if dst.is_http() { 80 } else { 443 });
             let host = dst.host().ok_or(SocksError::MissingHost)?;
+            let port = dst.port_or_default();
 
             // Attempt to tcp connect to the proxy server.
             // This will return a `tokio::net::TcpStream` if successful.

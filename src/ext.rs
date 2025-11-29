@@ -39,6 +39,9 @@ pub(crate) trait UriExt {
     /// Returns true if the URI scheme is HTTPS.
     fn is_https(&self) -> bool;
 
+    /// Returns the port of the URI, or the default port for the scheme if none is specified.
+    fn port_or_default(&self) -> u16;
+
     /// Sets the query component of the URI, replacing any existing query.
     fn set_query(&mut self, query: String);
 
@@ -98,6 +101,14 @@ impl UriExt for Uri {
     #[inline]
     fn is_https(&self) -> bool {
         self.scheme() == Some(&Scheme::HTTPS)
+    }
+
+    fn port_or_default(&self) -> u16 {
+        match Uri::port(self) {
+            Some(p) => p.as_u16(),
+            None if self.is_https() => 443u16,
+            _ => 80u16,
+        }
     }
 
     fn set_query(&mut self, query: String) {
