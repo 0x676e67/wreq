@@ -491,10 +491,33 @@ impl ConnectorService {
 
                 // Create a Unix connector with the specified socket path.
                 let mut connector = self.build_unix_connector(unix_socket, req.extra())?;
+                let is_proxy = false;
 
-                // Establish the connection over the Unix domain socket.
+                // If the target URI is HTTPS, establish a CONNECT tunnel over the Unix socket,
+                // then upgrade the tunneled stream to TLS.
+                if uri.is_https() {
+                    // Use a dummy HTTP URI so the HTTPS connector works over the Unix socket.
+                    let proxy_uri = Uri::from_static("http://localhost");
+
+                    // Create a tunnel connector using the Unix socket and the HTTPS connector.
+                    let mut tunnel =
+                        proxy::tunnel::TunnelConnector::new(proxy_uri, connector.clone());
+
+                    // The tunnel connector will first establish a CONNECT tunnel,
+                    // then perform the TLS handshake over the tunneled stream.
+                    let tunneled = tunnel.call(uri).await?;
+
+                    // Wrap the established tunneled stream with TLS.
+                    let established_conn = EstablishedConn::new(req, tunneled);
+                    let io = connector.call(established_conn).await?;
+
+                    return self.conn_from_nested_stream(io, is_proxy);
+                }
+
+                // For plain HTTP, use the Unix connector directly.
                 let io = connector.call(req).await?;
-                self.conn_from_stream(io, false, false)
+
+                self.conn_from_stream(io, is_proxy, is_proxy)
             }
         }
     }
