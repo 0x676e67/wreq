@@ -20,11 +20,6 @@ macro_rules! set_option {
 }
 
 macro_rules! set_option_ref_try {
-    ($field:ident, $conn:expr, $setter:ident) => {
-        if let Some(val) = $field.as_ref() {
-            $conn.$setter(val).map_err(Error::tls)?;
-        }
-    };
     ($cfg:expr, $field:ident, $conn:expr, $setter:ident) => {
         if let Some(val) = $cfg.$field.as_ref() {
             $conn.$setter(val).map_err(Error::tls)?;

@@ -59,6 +59,7 @@ pub struct HandshakeConfig {
     enable_ech_grease: bool,
     verify_hostname: bool,
     tls_sni: bool,
+    alpn_protocols: Option<Cow<'static, [AlpnProtocol]>>,
     alps_protocols: Option<Cow<'static, [AlpsProtocol]>>,
     alps_use_new_codepoint: bool,
     random_aes_hw_override: bool,
@@ -86,6 +87,15 @@ impl HandshakeConfigBuilder {
     /// Sets TLS SNI.
     pub fn tls_sni(mut self, sni: bool) -> Self {
         self.settings.tls_sni = sni;
+        self
+    }
+
+    /// Sets ALPN protocols.
+    pub fn alpn_protocols<P>(mut self, alpn_protocols: P) -> Self
+    where
+        P: Into<Option<Cow<'static, [AlpnProtocol]>>>,
+    {
+        self.settings.alpn_protocols = alpn_protocols.into();
         self
     }
 
@@ -132,6 +142,7 @@ impl Default for HandshakeConfig {
             enable_ech_grease: false,
             verify_hostname: true,
             tls_sni: true,
+            alpn_protocols: None,
             alps_protocols: None,
             alps_use_new_codepoint: false,
             random_aes_hw_override: false,
@@ -235,7 +246,14 @@ impl Inner {
 
         // Set ALPN protocols
         if let Some(alpn) = req.extra().alpn_protocol() {
+            // If ALPN is set in the request, it takes precedence over the connector configuration.
             cfg.set_alpn_protos(&alpn.encode())?;
+        } else {
+            // Default use the connector configuration.
+            if let Some(ref alpn_values) = self.config.alpn_protocols {
+                let encoded = AlpnProtocol::encode_sequence(alpn_values.as_ref());
+                cfg.set_alpn_protos(&encoded)?;
+            }
         }
 
         let uri = req.uri().clone();
@@ -365,11 +383,10 @@ impl TlsConnectorBuilder {
         // Replace the default configuration with the provided one
         let max_tls_version = opts.max_tls_version.or(self.max_version);
         let min_tls_version = opts.min_tls_version.or(self.min_version);
-        let alpn_protocols = self.alpn_protocol.map(AlpnProtocol::encode).or_else(|| {
-            opts.alpn_protocols
-                .as_ref()
-                .map(|x| AlpnProtocol::encode_sequence(x.as_ref()))
-        });
+        let alpn_protocols = self
+            .alpn_protocol
+            .map(|proto| Cow::Owned(vec![proto]))
+            .or_else(|| opts.alpn_protocols.clone());
 
         // Create the SslConnector with the provided options
         let mut connector = SslConnector::no_default_verify_builder(SslMethod::tls_client())
@@ -435,9 +452,6 @@ impl TlsConnectorBuilder {
         // Set TLS permute extensions options
         set_option!(opts, permute_extensions, connector, set_permute_extensions);
 
-        // Set TLS ALPN protocols
-        set_option_ref_try!(alpn_protocols, connector, set_alpn_protos);
-
         // Set TLS curves list
         set_option_ref_try!(opts, curves_list, connector, set_curves_list);
 
@@ -490,6 +504,7 @@ impl TlsConnectorBuilder {
         // Create the handshake config with the default session cache capacity.
         let config = HandshakeConfig::builder()
             .no_ticket(opts.psk_skip_session_ticket)
+            .alpn_protocols(alpn_protocols)
             .alps_protocols(opts.alps_protocols.clone())
             .alps_use_new_codepoint(opts.alps_use_new_codepoint)
             .enable_ech_grease(opts.enable_ech_grease)
@@ -558,8 +573,8 @@ pub enum MaybeHttpsStream<T> {
 
 /// A connection that has been established with a TLS handshake.
 pub struct EstablishedConn<IO> {
+    io: IO,
     req: ConnectRequest,
-    inner: IO,
 }
 
 // ===== impl MaybeHttpsStream =====
@@ -655,7 +670,7 @@ where
 impl<IO> EstablishedConn<IO> {
     /// Creates a new [`EstablishedConn`].
     #[inline]
-    pub fn new(req: ConnectRequest, inner: IO) -> Self {
-        Self { req, inner }
+    pub fn new(io: IO, req: ConnectRequest) -> EstablishedConn<IO> {
+        EstablishedConn { io, req }
     }
 }
