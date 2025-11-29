@@ -259,9 +259,6 @@ impl ConnectorService {
     ) -> Result<Conn, BoxError>
     where
         IO: AsyncRead + AsyncWrite + Connection + TlsInfoFactory + Unpin + Sync + Send + 'static,
-        MaybeHttpsStream<IO>: TlsInfoFactory,
-        TlsConn<MaybeHttpsStream<IO>>: Connection,
-        SslStream<MaybeHttpsStream<IO>>: TlsInfoFactory,
         TlsConn<IO>: Connection,
         SslStream<IO>: TlsInfoFactory,
     {
@@ -292,8 +289,6 @@ impl ConnectorService {
         MaybeHttpsStream<IO>: TlsInfoFactory,
         TlsConn<MaybeHttpsStream<IO>>: Connection,
         SslStream<MaybeHttpsStream<IO>>: TlsInfoFactory,
-        TlsConn<IO>: Connection,
-        SslStream<IO>: TlsInfoFactory,
     {
         let conn = match io {
             MaybeHttpsStream::Http(inner) => Conn {

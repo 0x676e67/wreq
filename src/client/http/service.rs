@@ -77,7 +77,7 @@ impl ConfigServiceLayer {
 impl<S> Layer<S> for ConfigServiceLayer {
     type Service = ConfigService<S>;
 
-    #[inline(always)]
+    #[inline]
     fn layer(&self, inner: S) -> Self::Service {
         ConfigService {
             inner,
@@ -97,7 +97,7 @@ where
     type Error = S::Error;
     type Future = Either<S::Future, Ready<Result<Self::Response, Self::Error>>>;
 
-    #[inline(always)]
+    #[inline]
     fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         self.inner.poll_ready(cx)
     }
@@ -106,7 +106,7 @@ where
         let uri = req.uri().clone();
 
         // check if the request URI scheme is valid.
-        if (!uri.is_http() && !uri.is_https()) || (self.config.https_only && !uri.is_https()) {
+        if !(uri.is_http() || uri.is_https()) || (self.config.https_only && !uri.is_https()) {
             return Either::Right(future::err(Error::uri_bad_scheme(uri.clone()).into()));
         }
 
@@ -159,10 +159,10 @@ where
                 });
 
         // insert proxy auth header if not already present
-        if !req.headers().contains_key(PROXY_AUTHORIZATION) {
-            if let Some(header) = http_auth_header {
-                req.headers_mut().insert(PROXY_AUTHORIZATION, header);
-            }
+        if let Some(header) = http_auth_header {
+            req.headers_mut()
+                .entry(PROXY_AUTHORIZATION)
+                .or_insert(header);
         }
 
         // insert proxy custom headers
