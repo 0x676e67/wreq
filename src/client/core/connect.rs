@@ -4,6 +4,7 @@ mod http;
 #[cfg(unix)]
 mod uds;
 
+pub mod capture;
 pub mod proxy;
 
 use std::{
