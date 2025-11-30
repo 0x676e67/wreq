@@ -6,8 +6,6 @@ use tokio::sync::watch;
 use super::Connected;
 
 /// [`CaptureConnection`] allows callers to capture [`Connected`] information
-///
-/// To capture a connection for a request, use [`capture_connection`].
 #[derive(Debug, Clone)]
 pub struct CaptureConnection {
     rx: watch::Receiver<Option<Connected>>,
