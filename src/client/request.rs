@@ -24,7 +24,7 @@ use super::{
         ext::{RequestConfig, RequestConfigValue, RequestLayerOptions, RequestOrigHeaderMap},
         options::RequestOptions,
     },
-    http::{Client, Pending},
+    http::{Client, future::Pending},
     layer::config::{RequestDefaultHeaders, RequestRedirectPolicy, RequestTimeoutOptions},
 };
 use crate::{

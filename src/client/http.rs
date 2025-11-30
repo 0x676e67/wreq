@@ -1,7 +1,6 @@
 pub mod client;
-mod connect;
-mod future;
-mod service;
+pub mod connect;
+pub mod future;
 
 use std::{
     borrow::Cow,
@@ -14,12 +13,7 @@ use std::{
     time::Duration,
 };
 
-use connect::{
-    BoxedConnectorLayer, BoxedConnectorService, Conn, Connector, HttpConnector, Unnameable,
-};
-pub use future::Pending;
 use http::header::{HeaderMap, HeaderValue, USER_AGENT};
-use service::{ConfigService, ConfigServiceLayer};
 use tower::{
     Layer, Service, ServiceBuilder, ServiceExt,
     retry::{Retry, RetryLayer},
@@ -31,6 +25,12 @@ use {super::layer::cookie::CookieServiceLayer, crate::cookie};
 pub(crate) use self::client::{
     ConnectRequest, HttpClient,
     extra::{ConnectExtra, Identifier},
+};
+use self::{
+    connect::{
+        BoxedConnectorLayer, BoxedConnectorService, Conn, Connector, HttpConnector, Unnameable,
+    },
+    future::Pending,
 };
 #[cfg(any(
     feature = "gzip",
@@ -50,6 +50,7 @@ use super::{
         rt::{TokioExecutor, TokioTimer},
     },
     layer::{
+        config::{ConfigService, ConfigServiceLayer},
         redirect::{FollowRedirect, FollowRedirectLayer},
         retry::RetryPolicy,
         timeout::{
@@ -72,10 +73,7 @@ use crate::{
     proxy::Matcher as ProxyMatcher,
     redirect::{self, FollowRedirectPolicy},
     retry,
-    tls::{
-        AlpnProtocol, CertStore, Identity, KeyLog, TlsOptions, TlsVersion,
-        conn::TlsConnectorBuilder,
-    },
+    tls::{AlpnProtocol, CertStore, Identity, KeyLog, TlsOptions, TlsVersion},
 };
 
 /// Service type for cookie handling. Identity type when cookies feature is disabled.
@@ -271,7 +269,6 @@ impl Client {
     }
 
     /// Creates a [`ClientBuilder`] to configure a [`Client`].
-    #[inline]
     pub fn builder() -> ClientBuilder {
         ClientBuilder {
             config: Config {
@@ -525,49 +522,43 @@ impl ClientBuilder {
                 DynResolver::new(resolver)
             };
 
-            // Configured http connector options
-            let http = |http: &mut HttpConnector| {
-                http.enforce_http(false);
-                http.set_keepalive(config.tcp_keepalive);
-                http.set_keepalive_interval(config.tcp_keepalive_interval);
-                http.set_keepalive_retries(config.tcp_keepalive_retries);
-                http.set_reuse_address(config.tcp_reuse_address);
-                http.set_connect_options(config.tcp_connect_options);
-                http.set_connect_timeout(config.connect_timeout);
-                http.set_nodelay(config.tcp_nodelay);
-                http.set_send_buffer_size(config.tcp_send_buffer_size);
-                http.set_recv_buffer_size(config.tcp_recv_buffer_size);
-                http.set_happy_eyeballs_timeout(config.tcp_happy_eyeballs_timeout);
-                #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
-                http.set_tcp_user_timeout(config.tcp_user_timeout);
-            };
-
-            // Configured tls connector options
-            let tls = |tls: TlsConnectorBuilder| {
-                let alpn_protocol = match config.http_version_pref {
-                    HttpVersionPref::Http1 => Some(AlpnProtocol::HTTP1),
-                    HttpVersionPref::Http2 => Some(AlpnProtocol::HTTP2),
-                    _ => None,
-                };
-                tls.alpn_protocol(alpn_protocol)
-                    .max_version(config.max_tls_version)
-                    .min_version(config.min_tls_version)
-                    .tls_sni(config.tls_sni)
-                    .verify_hostname(config.verify_hostname)
-                    .cert_verification(config.cert_verification)
-                    .cert_store(config.cert_store)
-                    .identity(config.identity)
-                    .keylog(config.keylog)
-            };
-
             // Build connector
             let connector = Connector::builder(proxies.clone(), resolver)
                 .timeout(config.connect_timeout)
                 .tls_info(config.tls_info)
                 .tls_options(tls_options)
                 .verbose(config.connection_verbose)
-                .with_tls(tls)
-                .with_http(http)
+                .with_tls(|tls| {
+                    let alpn_protocol = match config.http_version_pref {
+                        HttpVersionPref::Http1 => Some(AlpnProtocol::HTTP1),
+                        HttpVersionPref::Http2 => Some(AlpnProtocol::HTTP2),
+                        _ => None,
+                    };
+                    tls.alpn_protocol(alpn_protocol)
+                        .max_version(config.max_tls_version)
+                        .min_version(config.min_tls_version)
+                        .tls_sni(config.tls_sni)
+                        .verify_hostname(config.verify_hostname)
+                        .cert_verification(config.cert_verification)
+                        .cert_store(config.cert_store)
+                        .identity(config.identity)
+                        .keylog(config.keylog)
+                })
+                .with_http(|http| {
+                    http.enforce_http(false);
+                    http.set_keepalive(config.tcp_keepalive);
+                    http.set_keepalive_interval(config.tcp_keepalive_interval);
+                    http.set_keepalive_retries(config.tcp_keepalive_retries);
+                    http.set_reuse_address(config.tcp_reuse_address);
+                    http.set_connect_options(config.tcp_connect_options);
+                    http.set_connect_timeout(config.connect_timeout);
+                    http.set_nodelay(config.tcp_nodelay);
+                    http.set_send_buffer_size(config.tcp_send_buffer_size);
+                    http.set_recv_buffer_size(config.tcp_recv_buffer_size);
+                    http.set_happy_eyeballs_timeout(config.tcp_happy_eyeballs_timeout);
+                    #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
+                    http.set_tcp_user_timeout(config.tcp_user_timeout);
+                })
                 .build(config.connector_layers)?;
 
             // Build client

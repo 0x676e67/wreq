@@ -48,7 +48,7 @@ pub struct ConfigService<S> {
 
 impl ConfigServiceLayer {
     /// Creates a new [`ConfigServiceLayer`].
-    pub(super) fn new(
+    pub fn new(
         https_only: bool,
         headers: HeaderMap,
         orig_headers: OrigHeaderMap,
