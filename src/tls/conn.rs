@@ -30,8 +30,8 @@ use tower::Service;
 use crate::{
     Error,
     client::{
-        core::connect::{Connected, Connection},
-        http::{ConnectRequest, Identifier},
+        ConnectRequest, Identifier,
+        connect::{Connected, Connection},
     },
     error::BoxError,
     sync::Mutex,

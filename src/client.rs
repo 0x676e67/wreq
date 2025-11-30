@@ -1,10 +1,10 @@
+mod body;
+mod core;
 mod emulation;
+mod http;
 mod request;
 mod response;
 
-pub mod body;
-pub mod core;
-pub mod http;
 pub mod layer;
 #[cfg(feature = "multipart")]
 pub mod multipart;
@@ -21,4 +21,8 @@ pub use self::{
     http::{Client, ClientBuilder},
     request::{Request, RequestBuilder},
     response::Response,
+};
+pub(crate) use self::{
+    core::{Error as CoreError, connect, ext},
+    http::{ConnectRequest, Identifier, client::error::Error},
 };

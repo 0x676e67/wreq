@@ -2,7 +2,7 @@ use std::{error::Error as StdError, fmt, io};
 
 use http::Uri;
 
-use crate::{StatusCode, client::core::ext::ReasonPhrase, util::Escape};
+use crate::{StatusCode, client::ext::ReasonPhrase, util::Escape};
 
 /// A `Result` alias where the `Err` case is `wreq::Error`.
 pub type Result<T> = std::result::Result<T, Error>;
@@ -144,8 +144,6 @@ impl Error {
 
     /// Returns true if the error is related to a timeout.
     pub fn is_timeout(&self) -> bool {
-        use crate::client::core::Error;
-
         let mut source = self.source();
 
         while let Some(err) = source {
@@ -153,7 +151,7 @@ impl Error {
                 return true;
             }
 
-            if let Some(core_err) = err.downcast_ref::<Error>() {
+            if let Some(core_err) = err.downcast_ref::<crate::client::CoreError>() {
                 if core_err.is_timeout() {
                     return true;
                 }
@@ -178,7 +176,7 @@ impl Error {
 
     /// Returns true if the error is related to connect
     pub fn is_connect(&self) -> bool {
-        use crate::client::http::client::error::Error;
+        use crate::client::Error;
 
         let mut source = self.source();
 
