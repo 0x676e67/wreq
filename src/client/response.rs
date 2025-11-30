@@ -15,19 +15,30 @@ use super::{
 };
 #[cfg(feature = "cookies")]
 use crate::cookie;
-use crate::{Error, Extension, Upgraded, ext::RequestUri};
+use crate::{
+    Error, Extension, Upgraded, client::connect::capture::CaptureConnection, ext::RequestUri,
+};
 
 /// A Response to a submitted `Request`.
 pub struct Response {
-    res: http::Response<Body>,
     uri: Uri,
+    res: http::Response<Body>,
+    captured: Option<CaptureConnection>,
 }
 
 impl Response {
-    pub(super) fn new(res: http::Response<ResponseBody>, uri: Uri) -> Response {
+    pub(super) fn new(
+        uri: Uri,
+        captured: CaptureConnection,
+        res: http::Response<ResponseBody>,
+    ) -> Response {
         let (parts, body) = res.into_parts();
         let res = http::Response::from_parts(parts, Body::wrap(body));
-        Response { res, uri }
+        Response {
+            uri,
+            res,
+            captured: Some(captured),
+        }
     }
 
     /// Get the final `Uri` of this `Response`.
@@ -380,10 +391,7 @@ impl Response {
     /// # }
     /// ```
     #[inline]
-    pub fn extension<T>(&self) -> Option<&Extension<T>>
-    where
-        T: Send + Sync + 'static,
-    {
+    pub fn extension<T: Send + Sync + 'static>(&self) -> Option<&Extension<T>> {
         self.res.extensions().get::<Extension<T>>()
     }
 
@@ -466,6 +474,36 @@ impl Response {
         }
     }
 
+    /// Poison this connection
+    ///
+    /// A poisoned connection will not be reused for subsequent requests by the pool
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// # use wreq::Client;
+    /// # async fn run() -> wreq::Result<()> {
+    /// // Build a client that records TLS information.
+    /// let client = Client::new();
+    ///
+    /// // Make a request.
+    /// let resp = client.get("https://www.google.com").send().await?;
+    ///
+    /// // Poison the connection.
+    /// resp.poison();
+    ///
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn poison(&self) {
+        if let Some(ref captured) = self.captured {
+            if let Some(connectd) = captured.connection_metadata().as_ref() {
+                connectd.poison();
+                debug!("Connection to {} poisoned", self.uri());
+            }
+        }
+    }
+
     /// Consumes the response and returns a future for a possible HTTP upgrade.
     pub async fn upgrade(self) -> crate::Result<Upgraded> {
         super::core::upgrade::on(self.res)
@@ -495,8 +533,9 @@ impl<T: Into<Body>> From<http::Response<T>> for Response {
             .remove::<RequestUri>()
             .unwrap_or_else(|| RequestUri(Uri::from_static("http://no.url.provided.local")));
         Response {
-            res: http::Response::from_parts(parts, body),
             uri: uri.0,
+            res: http::Response::from_parts(parts, body),
+            captured: None,
         }
     }
 }
