@@ -294,8 +294,8 @@ pub use self::client::multipart;
 pub use self::client::ws;
 pub use self::{
     client::{
-        Body, Client, ClientBuilder, Emulation, EmulationBuilder, EmulationFactory, Request,
-        RequestBuilder, Response, Upgraded, http1, http2,
+        Body, Client, ClientBuilder, CompressedSize, Emulation, EmulationBuilder,
+        EmulationFactory, Request, RequestBuilder, Response, Upgraded, http1, http2,
     },
     error::{Error, Result},
     ext::{Extension, ResponseBuilderExt, ResponseExt},

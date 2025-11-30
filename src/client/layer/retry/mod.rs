@@ -22,7 +22,7 @@ pub(crate) use self::{
     classify::{Action, Classifier, ClassifyFn, ReqRep},
     scope::{ScopeFn, Scoped},
 };
-use super::timeout::TimeoutBody;
+use super::{timeout::TimeoutBody, wire_size::CountingBody};
 use crate::{Body, core::client::body::Incoming, error::BoxError, retry};
 
 /// A retry policy for HTTP requests.
@@ -59,7 +59,7 @@ type Req = Request<Body>;
     feature = "brotli",
     feature = "deflate",
 )))]
-type Res = Response<TimeoutBody<Incoming>>;
+type Res = Response<TimeoutBody<CountingBody<Incoming>>>;
 
 #[cfg(any(
     feature = "gzip",
@@ -67,7 +67,7 @@ type Res = Response<TimeoutBody<Incoming>>;
     feature = "brotli",
     feature = "deflate",
 ))]
-type Res = Response<TimeoutBody<DecompressionBody<Incoming>>>;
+type Res = Response<TimeoutBody<DecompressionBody<CountingBody<Incoming>>>>;
 
 impl Policy<Req, Res, BoxError> for RetryPolicy {
     type Future = std::future::Ready<()>;

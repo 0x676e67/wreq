@@ -13,3 +13,4 @@ pub mod decoder;
 pub mod redirect;
 pub mod retry;
 pub mod timeout;
+pub mod wire_size;

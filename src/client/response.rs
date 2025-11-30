@@ -10,6 +10,7 @@ use mime::Mime;
 use serde::de::DeserializeOwned;
 
 use super::body::{Body, ResponseBody};
+use super::layer::wire_size::CompressedSize;
 #[cfg(feature = "cookies")]
 use crate::cookie;
 use crate::{
@@ -111,6 +112,38 @@ impl Response {
             .extensions()
             .get::<HttpInfo>()
             .map(HttpInfo::remote_addr)
+    }
+
+    /// Get the compressed (wire) size tracker for this `Response`.
+    ///
+    /// This returns a `CompressedSize` that tracks the number of bytes received
+    /// over the wire before decompression. The value is accumulated as the body
+    /// is read, so the final size is only available after the entire body has
+    /// been consumed.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// # async fn run() -> wreq::Result<()> {
+    /// let resp = wreq::get("https://httpbin.org/gzip").send().await?;
+    /// let compressed_size = resp.compressed_size();
+    ///
+    /// // Read the body
+    /// let body = resp.bytes().await?;
+    ///
+    /// // Now check the compressed size
+    /// println!("Decompressed size: {} bytes", body.len());
+    /// println!("Compressed size: {} bytes", compressed_size.get());
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[inline]
+    pub fn compressed_size(&self) -> CompressedSize {
+        self.res
+            .extensions()
+            .get::<CompressedSize>()
+            .cloned()
+            .unwrap_or_default()
     }
 
     // body methods

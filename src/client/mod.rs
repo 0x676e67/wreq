@@ -14,6 +14,7 @@ pub use self::{
     body::Body,
     emulation::{Emulation, EmulationBuilder, EmulationFactory},
     http::{Client, ClientBuilder},
+    layer::wire_size::CompressedSize,
     request::{Request, RequestBuilder},
     response::Response,
 };
