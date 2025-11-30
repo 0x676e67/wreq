@@ -19,7 +19,7 @@ use tower::{
 
 use super::{
     super::{BoxedConnectorLayer, BoxedConnectorService, HttpConnector},
-    Connection, TlsInfoFactory, Unnameable,
+    AsyncConnWithInfo, Connection, TlsInfoFactory, Unnameable,
     conn::{Conn, TlsConn},
     verbose::Verbose,
 };
@@ -258,7 +258,7 @@ impl ConnectorService {
         is_proxy2: bool,
     ) -> Result<Conn, BoxError>
     where
-        IO: AsyncRead + AsyncWrite + Connection + TlsInfoFactory + Unpin + Sync + Send + 'static,
+        IO: AsyncConnWithInfo,
         TlsConn<IO>: Connection,
         SslStream<IO>: TlsInfoFactory,
     {
@@ -285,7 +285,7 @@ impl ConnectorService {
         is_proxy: bool,
     ) -> Result<Conn, BoxError>
     where
-        IO: AsyncRead + AsyncWrite + Connection + TlsInfoFactory + Unpin + Sync + Send + 'static,
+        IO: AsyncConnWithInfo,
         MaybeHttpsStream<IO>: TlsInfoFactory,
         TlsConn<MaybeHttpsStream<IO>>: Connection,
         SslStream<MaybeHttpsStream<IO>>: TlsInfoFactory,
@@ -370,6 +370,12 @@ impl ConnectorService {
         trace!("connect with maybe proxy: {:?}", is_proxy);
 
         let mut connector = self.build_https_connector(req.extra())?;
+
+        // When using a proxy for HTTPS targets, disable ALPN to avoid protocol negotiation issues
+        if is_proxy && req.uri().is_https() {
+            connector.no_alpn();
+        }
+
         let io = connector.call(req).await?;
 
         // Re-enable Nagle's algorithm if it was disabled earlier
@@ -439,7 +445,7 @@ impl ConnectorService {
                 }
 
                 // Handle HTTPS proxy tunneling connection
-                if uri.is_https() || (proxy_uri.is_https() && uri.is_http()) {
+                if uri.is_https() {
                     trace!("tunneling over HTTP(s) proxy: {:?}", proxy_uri);
 
                     // Build an HTTPS connector for the underlying connection to the proxy.

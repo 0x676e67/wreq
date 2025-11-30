@@ -194,12 +194,20 @@ where
     S::Future: Unpin + Send + 'static,
     T: AsyncRead + AsyncWrite + Connection + Unpin + Debug + Sync + Send + 'static,
 {
-    /// Creates a new `HttpsConnector` with a given `HttpConnector`
+    /// Creates a new [`HttpsConnector`] with a given [`TlsConnector`].
+    #[inline]
     pub fn with_connector(http: S, connector: TlsConnector) -> HttpsConnector<S> {
         HttpsConnector {
             http,
             inner: connector.inner,
         }
+    }
+
+    /// Disables ALPN negotiation.
+    #[inline]
+    pub fn no_alpn(&mut self) -> &mut Self {
+        self.inner.config.alpn_protocols = None;
+        self
     }
 }
 

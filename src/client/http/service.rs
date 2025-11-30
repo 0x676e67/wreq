@@ -128,35 +128,28 @@ where
         // store the original headers in request extensions
         self.config.orig_headers.store(req.extensions_mut());
 
-        // skip if the destination is not plain HTTP.
-        // for HTTPS, the proxy headers should be part of the CONNECT tunnel instead.
-        if uri.is_https() {
-            return Either::Left(self.inner.call(req));
-        }
-
         // determine the proxy matcher to use
         let (http_auth_header, http_custom_headers) =
             RequestConfig::<RequestLayerOptions>::get(req.extensions())
                 .and_then(RequestOptions::proxy_matcher)
                 .map(|proxy| http_non_tunnel(&uri, proxy))
-                .unwrap_or_else(|| {
+                .or_else(|| {
                     // skip if no proxy could possibly have HTTP auth or custom headers
-                    if !self.config.proxies_maybe_http_auth
-                        && !self.config.proxies_maybe_http_custom_headers
+                    if !(self.config.proxies_maybe_http_auth
+                        || self.config.proxies_maybe_http_custom_headers)
                     {
-                        return (None, None);
+                        return None;
                     }
 
                     // check all proxies for HTTP auth or custom headers
-                    for proxy in self.config.proxies.iter() {
-                        let (auth, custom_headers) = http_non_tunnel(&uri, proxy);
-                        if auth.is_some() || custom_headers.is_some() {
-                            return (auth, custom_headers);
+                    self.config.proxies.iter().find_map(|proxy| {
+                        match http_non_tunnel(&uri, proxy) {
+                            (None, None) => None,
+                            result => Some(result),
                         }
-                    }
-
-                    (None, None)
-                });
+                    })
+                })
+                .unwrap_or_default();
 
         // insert proxy auth header if not already present
         if let Some(header) = http_auth_header {

@@ -310,7 +310,7 @@ impl Proxy {
 
         // check if the proxy has HTTP auth header
         let cache_maybe_has_http_auth = |uri: &Uri, extra: &Option<HeaderValue>| {
-            if !uri.is_http() {
+            if !(uri.is_http() || uri.is_https()) {
                 return false;
             }
             let (_, passowrd) = uri.userinfo();
@@ -468,9 +468,17 @@ impl Matcher {
     /// CONNECT tunnel. If proxy authentication is configured and required for the given URI,
     /// this function returns the appropriate header value to be set as `Proxy-Authorization`.
     /// If no authentication is needed, returns `None`.
+    /// This method applies to both HTTP and HTTPS proxies when sending HTTP requests directly
+    /// (without establishing a CONNECT tunnel). For HTTPS proxies, the HTTP request is sent
+    /// over a TLS connection to the proxy, but still uses origin-form or absolute-form as required
+    /// by the proxy protocol.
+    ///
+    /// If the request is upgraded to a tunnel (CONNECT), authentication should be handled by tunnel
+    /// logic instead.
     pub(crate) fn http_non_tunnel_basic_auth(&self, dst: &Uri) -> Option<HeaderValue> {
         if let Some(Intercepted::Proxy(proxy)) = self.intercept(dst) {
-            if proxy.uri().is_http() {
+            let uri = proxy.uri();
+            if uri.is_http() || uri.is_https() {
                 return proxy.basic_auth().cloned();
             }
         }
@@ -483,9 +491,17 @@ impl Matcher {
     /// HTTP proxy without using the CONNECT tunnel. These headers can be used for custom proxy
     /// authentication schemes, tracking, or other proxy-specific requirements. If no custom
     /// headers are needed, returns `None`.
+    /// This method applies to both HTTP and HTTPS proxies when sending HTTP requests directly
+    /// (without establishing a CONNECT tunnel). For HTTPS proxies, the HTTP request is sent
+    /// over a TLS connection to the proxy, but still uses origin-form or absolute-form as required
+    /// by the proxy protocol.
+    ///
+    /// If the request is upgraded to a tunnel (CONNECT), custom headers should be handled by tunnel
+    /// logic instead.
     pub(crate) fn http_non_tunnel_custom_headers(&self, dst: &Uri) -> Option<HeaderMap> {
         if let Some(Intercepted::Proxy(proxy)) = self.intercept(dst) {
-            if proxy.uri().is_http() {
+            let uri = proxy.uri();
+            if uri.is_http() || uri.is_https() {
                 return proxy.custom_headers().cloned();
             }
         }
@@ -715,7 +731,7 @@ mod tests {
         let m = Proxy::all("https://letme:in@yo.local")
             .unwrap()
             .into_matcher();
-        assert!(!m.maybe_has_http_auth(), "https always tunnels");
+        assert!(m.maybe_has_http_auth(), "https forwards");
 
         let m = Proxy::all("http://letme:in@yo.local")
             .unwrap()
