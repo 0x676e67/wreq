@@ -40,7 +40,7 @@ mod sealed {
 
     use super::super::TlsInfoFactory;
     use crate::{
-        core::client::connect::{Connected, Connection},
+        client::core::connect::{Connected, Connection},
         tls::TlsInfo,
         util::Escape,
     };

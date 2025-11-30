@@ -7,8 +7,7 @@ use http_body::Body;
 use tower::{Layer, Service};
 use tower_http::decompression::{self, DecompressionBody, ResponseFuture};
 
-use super::AcceptEncoding;
-use crate::{client::layer::config::RequestAcceptEncoding, core::ext::RequestConfig};
+use crate::client::{core::ext::RequestConfig, layer::config::RequestAcceptEncoding};
 
 /// Configuration for supported content-encoding algorithms.
 ///
