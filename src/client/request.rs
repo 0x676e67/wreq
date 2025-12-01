@@ -698,6 +698,8 @@ impl RequestBuilder {
     ///     .poison()
     ///     .send()
     ///     .await?;
+    /// // This connection will not be reused by the pool
+    /// drop(resp);
     /// # Ok(())
     /// # }
     /// ```
