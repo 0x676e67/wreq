@@ -709,7 +709,7 @@ impl RequestBuilder {
     }
 
     /// Set the emulation for this request.
-    pub fn emulation<P: EmulationFactory>(mut self, factory: P) -> RequestBuilder {
+    pub fn emulation<T: EmulationFactory>(mut self, factory: T) -> RequestBuilder {
         if let Ok(ref mut req) = self.request {
             let emulation = factory.emulation();
             let (transport_opts, default_headers, orig_headers) = emulation.into_parts();

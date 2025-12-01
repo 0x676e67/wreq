@@ -1632,10 +1632,7 @@ impl ClientBuilder {
     ///     .unwrap();
     /// ```
     #[inline]
-    pub fn emulation<P>(mut self, factory: P) -> ClientBuilder
-    where
-        P: EmulationFactory,
-    {
+    pub fn emulation<T: EmulationFactory>(mut self, factory: T) -> ClientBuilder {
         let emulation = factory.emulation();
         let (transport_opts, headers, orig_headers) = emulation.into_parts();
 
