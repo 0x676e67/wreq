@@ -24,8 +24,8 @@ pin_project! {
     pub enum Pending {
         Request {
             uri: Uri,
-            captured: CaptureConnection,
             fut: Pin<Box<ResponseFuture>>,
+            capture_connection: Option<CaptureConnection>,
         },
         Error {
             error: Option<Error>,
@@ -36,11 +36,15 @@ pin_project! {
 impl Pending {
     /// Creates a new [`Pending`] with a request future and its associated URI.
     #[inline]
-    pub(crate) fn request(uri: Uri, captured: CaptureConnection, fut: ResponseFuture) -> Self {
+    pub(crate) fn request(
+        uri: Uri,
+        fut: ResponseFuture,
+        capture_connection: Option<CaptureConnection>,
+    ) -> Self {
         Pending::Request {
             uri,
-            captured,
             fut: Box::pin(fut),
+            capture_connection,
         }
     }
 
@@ -56,7 +60,11 @@ impl Future for Pending {
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let (uri, captured, res) = match self.project() {
-            PendingProj::Request { uri, captured, fut } => (uri, captured, fut.as_mut().poll(cx)),
+            PendingProj::Request {
+                uri,
+                fut,
+                capture_connection,
+            } => (uri, capture_connection, fut.as_mut().poll(cx)),
             PendingProj::Error { error } => {
                 return error
                     .take()
@@ -73,7 +81,7 @@ impl Future for Pending {
                 }
                 Ok(Response::new(
                     uri.clone(),
-                    captured.clone(),
+                    captured.take(),
                     res.map(body::boxed),
                 ))
             }

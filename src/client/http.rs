@@ -437,10 +437,11 @@ impl Client {
     /// This method fails if there was an error while sending request,
     /// redirect loop was detected or redirect limit was exhausted.
     pub fn execute(&self, request: Request) -> Pending {
-        let mut request = http::Request::<Body>::from(request);
+        let (capture_connection, request) =
+            <(Option<CaptureConnection>, http::Request<Body>)>::from(request);
         let uri = request.uri().clone();
-        let captured = CaptureConnection::new(&mut request);
-        Pending::request(uri, captured, Oneshot::new((*self.inner).clone(), request))
+        let fut = Oneshot::new((*self.inner).clone(), request);
+        Pending::request(uri, fut, capture_connection)
     }
 }
 

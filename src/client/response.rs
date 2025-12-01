@@ -23,22 +23,22 @@ use crate::{
 pub struct Response {
     uri: Uri,
     res: http::Response<Body>,
-    captured: Option<CaptureConnection>,
 }
 
 impl Response {
     pub(super) fn new(
         uri: Uri,
-        captured: CaptureConnection,
+        captured: Option<CaptureConnection>,
         res: http::Response<ResponseBody>,
     ) -> Response {
         let (parts, body) = res.into_parts();
         let res = http::Response::from_parts(parts, Body::wrap(body));
-        Response {
-            uri,
-            res,
-            captured: Some(captured),
+        if let Some(captured) = captured {
+            if let Some(conn) = captured.connection_metadata().as_ref() {
+                conn.poison();
+            }
         }
+        Response { uri, res }
     }
 
     /// Get the final `Uri` of this `Response`.
@@ -474,36 +474,6 @@ impl Response {
         }
     }
 
-    /// Poison this connection
-    ///
-    /// A poisoned connection will not be reused for subsequent requests by the pool
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// # use wreq::Client;
-    /// # async fn run() -> wreq::Result<()> {
-    /// // Build a client that records TLS information.
-    /// let client = Client::new();
-    ///
-    /// // Make a request.
-    /// let resp = client.get("https://www.google.com").send().await?;
-    ///
-    /// // Poison the connection.
-    /// resp.poison();
-    ///
-    /// # Ok(())
-    /// # }
-    /// ```
-    pub fn poison(&self) {
-        if let Some(ref captured) = self.captured {
-            if let Some(connectd) = captured.connection_metadata().as_ref() {
-                connectd.poison();
-                debug!("Connection to {} poisoned", self.uri());
-            }
-        }
-    }
-
     /// Consumes the response and returns a future for a possible HTTP upgrade.
     pub async fn upgrade(self) -> crate::Result<Upgraded> {
         super::core::upgrade::on(self.res)
@@ -535,7 +505,6 @@ impl<T: Into<Body>> From<http::Response<T>> for Response {
         Response {
             uri: uri.0,
             res: http::Response::from_parts(parts, body),
-            captured: None,
         }
     }
 }
