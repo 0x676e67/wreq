@@ -10,7 +10,7 @@ use tower::util::Oneshot;
 use super::{Body, ClientRef, Response};
 use crate::{
     Error,
-    client::{body, connect::capture::CaptureConnection},
+    client::{ResponsePoisonGuard, body, connect::capture::CaptureConnection},
     ext::RequestUri,
 };
 
@@ -81,8 +81,8 @@ impl Future for Pending {
                 }
                 Ok(Response::new(
                     uri.clone(),
-                    captured.take(),
                     res.map(body::boxed),
+                    captured.take().map(ResponsePoisonGuard::new),
                 ))
             }
             Err(err) => {

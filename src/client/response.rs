@@ -19,26 +19,30 @@ use crate::{
     Error, Extension, Upgraded, client::connect::capture::CaptureConnection, ext::RequestUri,
 };
 
+/// A wrapper that poisons the captured connection when dropped.
+pub struct ResponsePoisonGuard(CaptureConnection);
+
 /// A Response to a submitted `Request`.
 pub struct Response {
     uri: Uri,
     res: http::Response<Body>,
+    _poison: Option<ResponsePoisonGuard>,
 }
 
+// ====== impl Response ======
+
 impl Response {
+    /// Create a new [`Response`].
     pub(super) fn new(
         uri: Uri,
-        captured: Option<CaptureConnection>,
         res: http::Response<ResponseBody>,
+        poison: Option<ResponsePoisonGuard>,
     ) -> Response {
-        let (parts, body) = res.into_parts();
-        let res = http::Response::from_parts(parts, Body::wrap(body));
-        if let Some(captured) = captured {
-            if let Some(conn) = captured.connection_metadata().as_ref() {
-                conn.poison();
-            }
+        Response {
+            uri,
+            res: res.map(Body::wrap),
+            _poison: poison,
         }
-        Response { uri, res }
     }
 
     /// Get the final `Uri` of this `Response`.
@@ -482,16 +486,6 @@ impl Response {
     }
 }
 
-impl fmt::Debug for Response {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        f.debug_struct("Response")
-            .field("url", self.uri())
-            .field("status", &self.status())
-            .field("headers", self.headers())
-            .finish()
-    }
-}
-
 // I'm not sure this conversion is that useful... People should be encouraged
 // to use `http::Response`, not `wreq::Response`.
 impl<T: Into<Body>> From<http::Response<T>> for Response {
@@ -505,6 +499,7 @@ impl<T: Into<Body>> From<http::Response<T>> for Response {
         Response {
             uri: uri.0,
             res: http::Response::from_parts(parts, body),
+            _poison: None,
         }
     }
 }
@@ -525,6 +520,35 @@ impl From<Response> for http::Response<Body> {
 impl From<Response> for Body {
     fn from(r: Response) -> Body {
         Body::wrap(r.res.into_body())
+    }
+}
+
+impl fmt::Debug for Response {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.debug_struct("Response")
+            .field("url", self.uri())
+            .field("status", &self.status())
+            .field("headers", self.headers())
+            .finish()
+    }
+}
+
+// ====== impl ResponsePoisonGuard ======
+
+impl ResponsePoisonGuard {
+    /// Create a new [`ResponsePoisonGuard`].
+    #[inline]
+    pub fn new(capture: CaptureConnection) -> Self {
+        ResponsePoisonGuard(capture)
+    }
+}
+
+impl Drop for ResponsePoisonGuard {
+    #[inline]
+    fn drop(&mut self) {
+        if let Some(connected) = self.0.connection_metadata().as_ref() {
+            connected.poison();
+        }
     }
 }
 

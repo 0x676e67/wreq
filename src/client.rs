@@ -20,7 +20,7 @@ pub use self::{
     emulation::{Emulation, EmulationBuilder, EmulationFactory},
     http::{Client, ClientBuilder},
     request::{Request, RequestBuilder},
-    response::Response,
+    response::{Response, ResponsePoisonGuard},
 };
 pub(crate) use self::{
     core::{Error as CoreError, connect, ext},
