@@ -208,45 +208,8 @@ impl RequestBuilder {
         }
     }
 
-    /// Add a `Header` to this Request.
-    ///
-    /// If the header is already present, the value will be replaced.
-    pub fn header<K, V>(self, key: K, value: V) -> RequestBuilder
-    where
-        HeaderName: TryFrom<K>,
-        <HeaderName as TryFrom<K>>::Error: Into<http::Error>,
-        HeaderValue: TryFrom<V>,
-        <HeaderValue as TryFrom<V>>::Error: Into<http::Error>,
-    {
-        self.header_operation(key, value, false, true, false)
-    }
-
-    /// Add a `Header` to append to the request.
-    ///
-    /// The new header is always appended to the request, even if the header already exists.
-    pub fn header_append<K, V>(self, key: K, value: V) -> RequestBuilder
-    where
-        HeaderName: TryFrom<K>,
-        <HeaderName as TryFrom<K>>::Error: Into<http::Error>,
-        HeaderValue: TryFrom<V>,
-        <HeaderValue as TryFrom<V>>::Error: Into<http::Error>,
-    {
-        self.header_operation(key, value, false, false, false)
-    }
-
-    /// Add a `Header` to this Request.
-    ///
-    /// `sensitive` - if true, the header value is set to sensitive
-    /// `overwrite` - if true, the header value is overwritten if it already exists
-    /// `or_insert` - if true, the header value is inserted if it does not already exist
-    fn header_operation<K, V>(
-        mut self,
-        key: K,
-        value: V,
-        sensitive: bool,
-        overwrite: bool,
-        or_insert: bool,
-    ) -> RequestBuilder
+    /// Add a `Header` to this Request with ability to define if `header_value` is sensitive.
+    fn header_sensitive<K, V>(mut self, key: K, value: V, sensitive: bool) -> RequestBuilder
     where
         HeaderName: TryFrom<K>,
         <HeaderName as TryFrom<K>>::Error: Into<http::Error>,
@@ -258,22 +221,13 @@ impl RequestBuilder {
             match <HeaderName as TryFrom<K>>::try_from(key) {
                 Ok(key) => match <HeaderValue as TryFrom<V>>::try_from(value) {
                     Ok(mut value) => {
-                        // We want to potentially make an unsensitive header
+                        // We want to potentially make an non-sensitive header
                         // to be sensitive, not the reverse. So, don't turn off
                         // a previously sensitive header.
                         if sensitive {
                             value.set_sensitive(true);
                         }
-
-                        // If or_insert is true, we want to skip the insertion if the header already
-                        // exists
-                        if or_insert {
-                            req.headers_mut().entry(key).or_insert(value);
-                        } else if overwrite {
-                            req.headers_mut().insert(key, value);
-                        } else {
-                            req.headers_mut().append(key, value);
-                        }
+                        req.headers_mut().append(key, value);
                     }
                     Err(e) => error = Some(Error::builder(e.into())),
                 },
@@ -284,6 +238,20 @@ impl RequestBuilder {
             self.request = Err(err);
         }
         self
+    }
+
+    /// Add a `Header` to this Request.
+    ///
+    /// If the header is already present, the value will be replaced.
+    #[inline]
+    pub fn header<K, V>(self, key: K, value: V) -> RequestBuilder
+    where
+        HeaderName: TryFrom<K>,
+        <HeaderName as TryFrom<K>>::Error: Into<http::Error>,
+        HeaderValue: TryFrom<V>,
+        <HeaderValue as TryFrom<V>>::Error: Into<http::Error>,
+    {
+        self.header_sensitive(key, value, false)
     }
 
     /// Add a set of Headers to the existing ones on this Request.
@@ -315,13 +283,27 @@ impl RequestBuilder {
     }
 
     /// Enable HTTP authentication.
+    ///
+    /// ```rust
+    /// # use wreq::Error;
+    /// #
+    /// # async fn run() -> Result<(), Error> {
+    /// let client = wreq::Client::new();
+    /// let resp = client
+    ///     .get("http://httpbin.org/get")
+    ///     .auth("your_token_here")
+    ///     .send()
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
     #[inline]
-    pub fn auth<V>(self, value: V) -> RequestBuilder
+    pub fn auth<V>(self, token: V) -> RequestBuilder
     where
         HeaderValue: TryFrom<V>,
         <HeaderValue as TryFrom<V>>::Error: Into<http::Error>,
     {
-        self.header_operation(crate::header::AUTHORIZATION, value, true, true, false)
+        self.header_sensitive(crate::header::AUTHORIZATION, token, true)
     }
 
     /// Enable HTTP basic authentication.
@@ -345,28 +327,30 @@ impl RequestBuilder {
         P: fmt::Display,
     {
         let header_value = crate::util::basic_auth(username, password);
-        self.header_operation(
-            crate::header::AUTHORIZATION,
-            header_value,
-            true,
-            true,
-            false,
-        )
+        self.header_sensitive(crate::header::AUTHORIZATION, header_value, true)
     }
 
     /// Enable HTTP bearer authentication.
+    ///
+    /// ```rust
+    /// # use wreq::Error;
+    /// #
+    /// # async fn run() -> Result<(), Error> {
+    /// let client = wreq::Client::new();
+    /// let resp = client
+    ///     .get("http://httpbin.org/get")
+    ///     .bearer_auth("your_token_here")
+    ///     .send()
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn bearer_auth<T>(self, token: T) -> RequestBuilder
     where
         T: fmt::Display,
     {
         let header_value = format!("Bearer {token}");
-        self.header_operation(
-            crate::header::AUTHORIZATION,
-            header_value,
-            true,
-            true,
-            false,
-        )
+        self.header_sensitive(crate::header::AUTHORIZATION, header_value, true)
     }
 
     /// Enables a request timeout.

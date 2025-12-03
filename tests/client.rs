@@ -308,7 +308,7 @@ async fn test_overwrite_headers() {
         .get(&url)
         .header(USER_AGENT, "my-custom-agent")
         .header(COOKIE, "e=f")
-        .header_append(COOKIE, "g=h")
+        .header(COOKIE, "g=h")
         .send()
         .await
         .unwrap();
@@ -324,7 +324,7 @@ async fn test_overwrite_headers() {
     let res = client
         .get(&url)
         .header(COOKIE, "e=f")
-        .header_append(COOKIE, "g=h")
+        .header(COOKIE, "g=h")
         .send()
         .await
         .unwrap();
