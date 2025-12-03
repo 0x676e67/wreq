@@ -30,7 +30,7 @@ use super::{
 use crate::{
     Error, Method, Proxy,
     ext::UriExt,
-    header::{CONTENT_TYPE, HeaderMap, HeaderName, HeaderValue, OrigHeaderMap},
+    header::{AUTHORIZATION, CONTENT_TYPE, HeaderMap, HeaderName, HeaderValue, OrigHeaderMap},
     redirect,
 };
 
@@ -303,7 +303,7 @@ impl RequestBuilder {
         HeaderValue: TryFrom<V>,
         <HeaderValue as TryFrom<V>>::Error: Into<http::Error>,
     {
-        self.header_sensitive(crate::header::AUTHORIZATION, token, true)
+        self.header_sensitive(AUTHORIZATION, token, true)
     }
 
     /// Enable HTTP basic authentication.
@@ -327,7 +327,7 @@ impl RequestBuilder {
         P: fmt::Display,
     {
         let header_value = crate::util::basic_auth(username, password);
-        self.header_sensitive(crate::header::AUTHORIZATION, header_value, true)
+        self.header_sensitive(AUTHORIZATION, header_value, true)
     }
 
     /// Enable HTTP bearer authentication.
@@ -350,7 +350,7 @@ impl RequestBuilder {
         T: fmt::Display,
     {
         let header_value = format!("Bearer {token}");
-        self.header_sensitive(crate::header::AUTHORIZATION, header_value, true)
+        self.header_sensitive(AUTHORIZATION, header_value, true)
     }
 
     /// Enables a request timeout.
