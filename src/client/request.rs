@@ -404,24 +404,35 @@ impl RequestBuilder {
     /// ```
     #[cfg(feature = "multipart")]
     #[cfg_attr(docsrs, doc(cfg(feature = "multipart")))]
-    pub fn multipart(self, mut multipart: multipart::Form) -> RequestBuilder {
-        let mut builder = self.header_operation(
-            CONTENT_TYPE,
-            format!("multipart/form-data; boundary={}", multipart.boundary()),
-            false,
-            false,
-            true,
-        );
+    pub fn multipart(mut self, mut multipart: multipart::Form) -> RequestBuilder {
+        if let Ok(ref mut req) = self.request {
+            use bytes::Bytes;
+            use http::header::CONTENT_LENGTH;
 
-        builder = match multipart.compute_length() {
-            Some(length) => builder.header(http::header::CONTENT_LENGTH, length),
-            None => builder,
-        };
+            match HeaderValue::from_maybe_shared(Bytes::from(format!(
+                "multipart/form-data; boundary={}",
+                multipart.boundary()
+            ))) {
+                Ok(content_type) => {
+                    req.headers_mut()
+                        .entry(CONTENT_TYPE)
+                        .or_insert(content_type);
 
-        if let Ok(ref mut req) = builder.request {
-            *req.body_mut() = Some(multipart.stream())
+                    if let Some(length) = multipart.compute_length() {
+                        req.headers_mut()
+                            .entry(CONTENT_LENGTH)
+                            .or_insert(HeaderValue::from(length));
+                    }
+
+                    *req.body_mut() = Some(multipart.stream())
+                }
+                Err(err) => {
+                    self.request = Err(Error::builder(err));
+                }
+            };
         }
-        builder
+
+        self
     }
 
     /// Modify the query string of the URI.

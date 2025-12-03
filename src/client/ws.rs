@@ -162,19 +162,6 @@ impl WebSocketRequestBuilder {
         self
     }
 
-    /// Add a `Header` to append to the request.
-    #[inline]
-    pub fn header_append<K, V>(mut self, key: K, value: V) -> Self
-    where
-        HeaderName: TryFrom<K>,
-        <HeaderName as TryFrom<K>>::Error: Into<http::Error>,
-        HeaderValue: TryFrom<V>,
-        <HeaderValue as TryFrom<V>>::Error: Into<http::Error>,
-    {
-        self.inner = self.inner.header_append(key, value);
-        self
-    }
-
     /// Add a set of Headers to the existing ones on this Request.
     ///
     /// The headers will be merged in to any already set.
