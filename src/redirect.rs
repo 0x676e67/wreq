@@ -226,7 +226,7 @@ impl Default for Policy {
 
 // ===== impl Attempt =====
 
-impl<'a, const PENDING: bool> Attempt<'a, PENDING> {
+impl<const PENDING: bool> Attempt<'_, PENDING> {
     /// Get the type of redirect.
     #[inline]
     pub fn status(&self) -> StatusCode {
@@ -280,7 +280,7 @@ impl<'a, const PENDING: bool> Attempt<'a, PENDING> {
     }
 }
 
-impl<'a> Attempt<'a, true> {
+impl Attempt<'_, true> {
     /// Returns an action meaning wreq should perform the redirect asynchronously.
     ///
     /// The provided async closure receives an owned [`Attempt<'static>`] and should
