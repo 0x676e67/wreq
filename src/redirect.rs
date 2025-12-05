@@ -26,10 +26,10 @@ use crate::{
 /// The default value will catch redirect loops, and has a maximum of 10
 /// redirects it will follow in a chain before returning an error.
 ///
-/// - `limited` can be used have the same as the default behavior, but adjust the allowed maximum
+/// - [`Policy::limited`] can be used have the same as the default behavior, but adjust the allowed maximum
 ///   redirect hops in a chain.
-/// - `none` can be used to disable all redirect behavior.
-/// - `custom` can be used to create a customized policy.
+/// - [`Policy::none`] can be used to disable all redirect behavior.
+/// - [`Policy::custom`] can be used to create a customized policy.
 #[derive(Debug, Clone)]
 pub struct Policy {
     inner: PolicyKind,
