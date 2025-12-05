@@ -14,6 +14,7 @@ use http_body::Body;
 use tower::{Layer, Service};
 
 use self::{future::ResponseFuture, policy::Policy};
+use crate::error::BoxError;
 
 /// [`Layer`] for retrying requests with a [`Service`] to follow redirection responses.
 #[derive(Clone, Copy, Default)]
@@ -63,8 +64,9 @@ where
 impl<ReqBody, ResBody, S, P> Service<Request<ReqBody>> for FollowRedirect<S, P>
 where
     S: Service<Request<ReqBody>, Response = Response<ResBody>> + Clone,
-    ReqBody: Body + Default,
+    S::Error: From<BoxError>,
     P: Policy<ReqBody, S::Error> + Clone,
+    ReqBody: Body + Default,
 {
     type Response = Response<ResBody>;
     type Error = S::Error;
@@ -82,19 +84,18 @@ where
         policy.on_extensions(req.extensions());
 
         if policy.allowed() {
-            let mut body = BodyRepr::None;
-            body.try_clone_from(req.body(), &policy);
+            let mut clone_body = BodyRepr::None;
+            clone_body.try_clone_from(req.body(), &policy);
             policy.on_request(&mut req);
+
+            let (parts, body) = req.into_parts();
             ResponseFuture::Redirect {
-                method: req.method().clone(),
-                uri: req.uri().clone(),
-                version: req.version(),
-                headers: req.headers().clone(),
-                extensions: req.extensions().clone(),
-                body,
-                future: Either::Left(service.call(req)),
+                future: Either::Left(service.call(Request::from_parts(parts.clone(), body))),
+                pending_future: None,
                 service,
                 policy,
+                parts,
+                body: clone_body,
             }
         } else {
             ResponseFuture::Direct {

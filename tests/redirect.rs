@@ -556,3 +556,49 @@ async fn test_redirect_applies_set_cookie_from_redirect() {
     assert_eq!(res.uri(), dst.as_str());
     assert_eq!(res.status(), wreq::StatusCode::OK);
 }
+
+#[tokio::test]
+async fn test_redirect_async_pending_follow() {
+    let server = server::http(move |req| async move {
+        if req.uri() == "/async-redirect" {
+            http::Response::builder()
+                .status(302)
+                .header("location", "/dst")
+                .body(Body::default())
+                .unwrap()
+        } else {
+            assert_eq!(req.uri(), "/dst");
+            http::Response::builder()
+                .header("server", "test-dst")
+                .body(Body::default())
+                .unwrap()
+        }
+    });
+
+    let url = format!("http://{}/async-redirect", server.addr());
+    let dst = format!("http://{}/dst", server.addr());
+
+    let client = Client::builder()
+        .redirect(Policy::custom(|attempt| {
+            attempt.pending(|attempt| async move {
+                // Simulate async decision-making
+                dbg!("Waiting to follow redirect...");
+                tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+                dbg!("Following redirect now.");
+
+                // will compile error if nested pending
+                // attempt.pending(|attempt| async { attempt.follow() })
+                attempt.follow()
+            })
+        }))
+        .build()
+        .unwrap();
+
+    let res = client.get(&url).send().await.unwrap();
+    assert_eq!(res.uri(), dst.as_str());
+    assert_eq!(res.status(), wreq::StatusCode::OK);
+    assert_eq!(
+        res.headers().get(wreq::header::SERVER).unwrap(),
+        &"test-dst"
+    );
+}

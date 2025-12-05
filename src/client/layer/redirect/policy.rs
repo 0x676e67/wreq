@@ -1,6 +1,11 @@
 //! Tools for customizing the behavior of a [`FollowRedirect`][super::FollowRedirect] middleware.
 
+use std::fmt;
+
 use http::{Extensions, HeaderMap, Request, StatusCode, Uri};
+
+use super::future::PendingFuture;
+use crate::error::BoxError;
 
 /// Trait for the policy on handling redirection responses.
 pub trait Policy<B, E> {
@@ -8,7 +13,7 @@ pub trait Policy<B, E> {
     ///
     /// This method returns an [`Action`] which indicates whether the service should follow
     /// the redirection.
-    fn redirect(&mut self, attempt: &Attempt<'_>) -> Result<Action, E>;
+    fn redirect(&mut self, attempt: Attempt<'_>) -> Result<Action, E>;
 
     /// Invoked right before the service makes a request, regardless of whether it is redirected
     /// or not.
@@ -63,44 +68,32 @@ pub trait Policy<B, E> {
 
 /// A type that holds information on a redirection attempt.
 pub struct Attempt<'a> {
-    pub(super) status: StatusCode,
-    pub(super) headers: &'a HeaderMap,
-    pub(super) location: &'a Uri,
-    pub(super) previous: &'a Uri,
-}
-
-impl<'a> Attempt<'a> {
-    /// Returns the redirection response.
-    #[inline(always)]
-    pub fn status(&self) -> StatusCode {
-        self.status
-    }
-
-    /// Returns the headers of the redirection response.
-    #[inline(always)]
-    pub fn headers(&self) -> &'a HeaderMap {
-        self.headers
-    }
-
-    /// Returns the destination URI of the redirection.
-    #[inline(always)]
-    pub fn location(&self) -> &'a Uri {
-        self.location
-    }
-
-    /// Returns the URI of the original request.
-    #[inline(always)]
-    pub fn previous(&self) -> &'a Uri {
-        self.previous
-    }
+    pub(crate) status: StatusCode,
+    pub(crate) headers: &'a HeaderMap,
+    pub(crate) location: &'a Uri,
+    pub(crate) previous: &'a Uri,
 }
 
 /// A value returned by [`Policy::redirect`] which indicates the action
 /// [`FollowRedirect`][super::FollowRedirect] should take for a redirection response.
-#[derive(Clone, Copy, Debug)]
 pub enum Action {
     /// Follow the redirection.
     Follow,
     /// Do not follow the redirection, and return the redirection response as-is.
     Stop,
+    /// Pending async decision. The async task will be awaited to determine the final action.
+    Pending(PendingFuture),
+    /// An error occurred while determining the redirection action.
+    Error(BoxError),
+}
+
+impl fmt::Debug for Action {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Action::Follow => f.debug_tuple("Follow").finish(),
+            Action::Stop => f.debug_tuple("Stop").finish(),
+            Action::Pending(_) => f.debug_tuple("Pending").finish(),
+            Action::Error(_) => f.debug_tuple("Error").finish(),
+        }
+    }
 }
