@@ -53,11 +53,19 @@ pub struct Action {
 
 /// An entry in the redirect history.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct History {
-    status: StatusCode,
-    uri: Uri,
-    previous: Uri,
-    headers: HeaderMap,
+    /// The status code of the redirect response.
+    pub status: StatusCode,
+
+    /// The URI of the redirect response.
+    pub uri: Uri,
+
+    /// The previous URI before the redirect response.
+    pub previous: Uri,
+
+    /// The headers of the redirect response.
+    pub headers: HeaderMap,
 }
 
 #[derive(Clone)]
@@ -309,34 +317,6 @@ impl<'a> Attempt<'a, true> {
         Action {
             inner: policy::Action::Pending(pending),
         }
-    }
-}
-
-// ===== impl History =====
-
-impl History {
-    /// Get the status code of the redirect response.
-    #[inline]
-    pub fn status(&self) -> StatusCode {
-        self.status
-    }
-
-    /// Get the URI of the redirect response.
-    #[inline]
-    pub fn uri(&self) -> &Uri {
-        &self.uri
-    }
-
-    /// Get the previous URI before the redirect response.
-    #[inline]
-    pub fn previous(&self) -> &Uri {
-        &self.previous
-    }
-
-    /// Get the headers of the redirect response.
-    #[inline]
-    pub fn headers(&self) -> &HeaderMap {
-        &self.headers
     }
 }
 
