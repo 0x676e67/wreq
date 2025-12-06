@@ -26,15 +26,18 @@ use self::{
     extra::{ConnectExtra, Identifier},
 };
 use crate::{
-    client::core::{
-        BoxError,
-        body::Incoming,
-        common::{Exec, Lazy, lazy},
-        conn::{self, TrySendError as ConnTrySendError},
-        connect::{Connected, Connection},
-        ext::{RequestConfig, RequestLayerOptions},
-        options::{RequestOptions, http1::Http1Options, http2::Http2Options},
-        rt::{ArcTimer, Executor, Timer},
+    client::{
+        connect::capture::CaptureConnectionExtension,
+        core::{
+            BoxError,
+            body::Incoming,
+            common::{Exec, Lazy, lazy},
+            conn::{self, TrySendError as ConnTrySendError},
+            connect::{Connected, Connection},
+            ext::{RequestConfig, RequestLayerOptions},
+            options::{RequestOptions, http1::Http1Options, http2::Http2Options},
+            rt::{ArcTimer, Executor, Timer},
+        },
     },
     hash::{HASHER, HashMemo},
     tls::AlpnProtocol,
@@ -227,6 +230,10 @@ where
             // `connection_for` already retries checkout errors, so if
             // it returns an error, there's not much else to retry
             .map_err(TrySendError::Nope)?;
+
+        if let Some(conn) = req.extensions_mut().get_mut::<CaptureConnectionExtension>() {
+            conn.set(&pooled.conn_info);
+        }
 
         if pooled.is_http1() {
             if req.version() == Version::HTTP_2 {

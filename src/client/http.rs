@@ -65,6 +65,7 @@ use super::{
 use crate::dns::hickory::HickoryDnsResolver;
 use crate::{
     IntoUri, Method, Proxy,
+    client::connect::capture::CaptureConnection,
     dns::{DnsResolverWithOverrides, DynResolver, GaiResolver, IntoResolve, Resolve},
     error::{self, BoxError, Error},
     header::OrigHeaderMap,
@@ -436,12 +437,11 @@ impl Client {
     /// This method fails if there was an error while sending request,
     /// redirect loop was detected or redirect limit was exhausted.
     pub fn execute(&self, request: Request) -> Pending {
-        let req = http::Request::<Body>::from(request);
-        // Prepare the future request by ensuring we use the exact same Service instance
-        // for both poll_ready and call.
-        let uri = req.uri().clone();
-        let fut = Oneshot::new(self.inner.as_ref().clone(), req);
-        Pending::request(uri, fut)
+        let (capture_connection, request) =
+            <(Option<CaptureConnection>, http::Request<Body>)>::from(request);
+        let uri = request.uri().clone();
+        let fut = Oneshot::new((*self.inner).clone(), request);
+        Pending::request(uri, fut, capture_connection)
     }
 }
 
@@ -1632,10 +1632,7 @@ impl ClientBuilder {
     ///     .unwrap();
     /// ```
     #[inline]
-    pub fn emulation<P>(mut self, factory: P) -> ClientBuilder
-    where
-        P: EmulationFactory,
-    {
+    pub fn emulation<T: EmulationFactory>(mut self, factory: T) -> ClientBuilder {
         let emulation = factory.emulation();
         let (transport_opts, headers, orig_headers) = emulation.into_parts();
 

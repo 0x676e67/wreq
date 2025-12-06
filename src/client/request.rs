@@ -29,6 +29,7 @@ use super::{
 };
 use crate::{
     Error, Method, Proxy,
+    client::connect::capture::CaptureConnection,
     ext::UriExt,
     header::{AUTHORIZATION, CONTENT_TYPE, HeaderMap, HeaderName, HeaderValue, OrigHeaderMap},
     redirect,
@@ -51,6 +52,9 @@ pub struct Request {
 
     /// The request's body
     body: Option<Body>,
+
+    /// The request is considered  "poisoned".
+    poison: bool,
 }
 
 /// A builder to construct the properties of a `Request`.
@@ -72,6 +76,7 @@ impl Request {
             headers: HeaderMap::new(),
             extensions: Extensions::new(),
             body: None,
+            poison: false,
         }
     }
 
@@ -671,11 +676,33 @@ impl RequestBuilder {
         self
     }
 
+    /// Poison this request pool connection
+    ///
+    /// A poisoned connection will not be reused for subsequent requests by the pool
+    ///
+    /// # Example
+    /// ```rust
+    /// use wreq::Client;
+    /// # async fn run() -> wreq::Result<()> {
+    /// let client = Client::new();
+    /// let resp = client.get("https://www.google.com")
+    ///     .poison()
+    ///     .send()
+    ///     .await?;
+    /// // This connection will not be reused by the pool
+    /// drop(resp);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn poison(mut self) -> RequestBuilder {
+        if let Ok(ref mut req) = self.request {
+            req.poison = true;
+        }
+        self
+    }
+
     /// Set the emulation for this request.
-    pub fn emulation<P>(mut self, factory: P) -> RequestBuilder
-    where
-        P: EmulationFactory,
-    {
+    pub fn emulation<T: EmulationFactory>(mut self, factory: T) -> RequestBuilder {
         if let Ok(ref mut req) = self.request {
             let emulation = factory.emulation();
             let (transport_opts, default_headers, orig_headers) = emulation.into_parts();
@@ -767,10 +794,11 @@ fn extract_authority(uri: &mut Uri) -> Option<(String, Option<String>)> {
 
     let (username, password) = uri.userinfo();
 
-    let username: String = percent_decode(username?.as_bytes())
+    let username = percent_decode(username?.as_bytes())
         .decode_utf8()
         .ok()?
-        .into();
+        .into_owned();
+
     let password = password.and_then(|pass| {
         percent_decode(pass.as_bytes())
             .decode_utf8()
@@ -804,18 +832,29 @@ where
             headers,
             body: Some(body.into()),
             extensions: Extensions::new(),
+            poison: false,
         }
     }
 }
 
 impl From<Request> for HttpRequest<Body> {
-    fn from(req: Request) -> HttpRequest<Body> {
+    #[inline]
+    fn from(mut req: Request) -> Self {
+        // We don't want to poison the HttpRequest created from this conversion
+        req.poison = false;
+        <(Option<CaptureConnection>, HttpRequest<Body>)>::from(req).1
+    }
+}
+
+impl From<Request> for (Option<CaptureConnection>, HttpRequest<Body>) {
+    fn from(req: Request) -> Self {
         let Request {
             method,
             uri,
             headers,
             extensions,
             body,
+            poison,
             ..
         } = req;
 
@@ -826,6 +865,13 @@ impl From<Request> for HttpRequest<Body> {
             .expect("valid request parts");
         *req.headers_mut() = headers;
         *req.extensions_mut() = extensions;
-        req
+
+        // If the request is poisoned, capture the connection
+        if poison {
+            let captured = CaptureConnection::new(&mut req);
+            return (Some(captured), req);
+        }
+
+        (None, req)
     }
 }

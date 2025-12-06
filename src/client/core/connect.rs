@@ -4,6 +4,7 @@ mod http;
 #[cfg(unix)]
 mod uds;
 
+pub mod capture;
 pub mod proxy;
 
 use std::{
@@ -40,9 +41,7 @@ pub struct Connected {
 
 /// A pill that can be poisoned to indicate that a connection should not be reused.
 #[derive(Clone)]
-pub(crate) struct PoisonPill {
-    poisoned: Arc<AtomicBool>,
-}
+pub(crate) struct PoisonPill(Arc<AtomicBool>);
 
 impl fmt::Debug for PoisonPill {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
@@ -50,28 +49,29 @@ impl fmt::Debug for PoisonPill {
         write!(
             f,
             "PoisonPill@{:p} {{ poisoned: {} }}",
-            self.poisoned,
-            self.poisoned.load(Ordering::Relaxed)
+            self.0,
+            self.0.load(Ordering::Relaxed)
         )
     }
 }
 
 impl PoisonPill {
     /// Create a healthy (not poisoned) pill.
+    #[inline]
     pub(crate) fn healthy() -> Self {
-        Self {
-            poisoned: Arc::new(AtomicBool::new(false)),
-        }
+        Self(Arc::new(AtomicBool::new(false)))
     }
 
     /// Poison this pill.
+    #[inline]
     pub(crate) fn poison(&self) {
-        self.poisoned.store(true, Ordering::Relaxed)
+        self.0.store(true, Ordering::Relaxed)
     }
 
     /// Check if this pill is poisoned.
+    #[inline]
     pub(crate) fn poisoned(&self) -> bool {
-        self.poisoned.load(Ordering::Relaxed)
+        self.0.load(Ordering::Relaxed)
     }
 }
 

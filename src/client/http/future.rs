@@ -8,7 +8,11 @@ use pin_project_lite::pin_project;
 use tower::util::Oneshot;
 
 use super::{Body, ClientRef, Response};
-use crate::{Error, client::body, ext::RequestUri};
+use crate::{
+    Error,
+    client::{ResponsePoisonGuard, body, connect::capture::CaptureConnection},
+    ext::RequestUri,
+};
 
 type ResponseFuture = Oneshot<ClientRef, Request<Body>>;
 
@@ -21,6 +25,7 @@ pin_project! {
         Request {
             uri: Uri,
             fut: Pin<Box<ResponseFuture>>,
+            capture_connection: Option<CaptureConnection>,
         },
         Error {
             error: Option<Error>,
@@ -31,10 +36,15 @@ pin_project! {
 impl Pending {
     /// Creates a new [`Pending`] with a request future and its associated URI.
     #[inline]
-    pub(crate) fn request(uri: Uri, fut: ResponseFuture) -> Self {
+    pub(crate) fn request(
+        uri: Uri,
+        fut: ResponseFuture,
+        capture_connection: Option<CaptureConnection>,
+    ) -> Self {
         Pending::Request {
             uri,
             fut: Box::pin(fut),
+            capture_connection,
         }
     }
 
@@ -49,13 +59,18 @@ impl Future for Pending {
     type Output = Result<Response, Error>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let (uri, res) = match self.project() {
-            PendingProj::Request { uri, fut } => (uri, fut.as_mut().poll(cx)),
+        let (uri, captured, res) = match self.project() {
+            PendingProj::Request {
+                uri,
+                fut,
+                capture_connection,
+            } => (uri, capture_connection, fut.as_mut().poll(cx)),
             PendingProj::Error { error } => {
-                let err = error
+                return error
                     .take()
+                    .map(Err)
+                    .map(Poll::Ready)
                     .expect("Pending::Error polled after completion");
-                return Poll::Ready(Err(err));
             }
         };
 
@@ -64,7 +79,11 @@ impl Future for Pending {
                 if let Some(redirect_uri) = res.extensions_mut().remove::<RequestUri>() {
                     *uri = redirect_uri.0;
                 }
-                Ok(Response::new(res.map(body::boxed), uri.clone()))
+                Ok(Response::new(
+                    uri.clone(),
+                    res.map(body::boxed),
+                    captured.take().map(ResponsePoisonGuard::new),
+                ))
             }
             Err(err) => {
                 let mut err = err

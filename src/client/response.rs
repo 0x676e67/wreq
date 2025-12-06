@@ -15,19 +15,34 @@ use super::{
 };
 #[cfg(feature = "cookies")]
 use crate::cookie;
-use crate::{Error, Extension, Upgraded, ext::RequestUri};
+use crate::{
+    Error, Extension, Upgraded, client::connect::capture::CaptureConnection, ext::RequestUri,
+};
+
+/// A wrapper that poisons the captured connection when dropped.
+pub struct ResponsePoisonGuard(CaptureConnection);
 
 /// A Response to a submitted `Request`.
 pub struct Response {
-    res: http::Response<Body>,
     uri: Uri,
+    res: http::Response<Body>,
+    _poison: Option<ResponsePoisonGuard>,
 }
 
+// ====== impl Response ======
+
 impl Response {
-    pub(super) fn new(res: http::Response<ResponseBody>, uri: Uri) -> Response {
-        let (parts, body) = res.into_parts();
-        let res = http::Response::from_parts(parts, Body::wrap(body));
-        Response { res, uri }
+    /// Create a new [`Response`].
+    pub(super) fn new(
+        uri: Uri,
+        res: http::Response<ResponseBody>,
+        poison: Option<ResponsePoisonGuard>,
+    ) -> Response {
+        Response {
+            uri,
+            res: res.map(Body::wrap),
+            _poison: poison,
+        }
     }
 
     /// Get the final `Uri` of this `Response`.
@@ -380,10 +395,7 @@ impl Response {
     /// # }
     /// ```
     #[inline]
-    pub fn extension<T>(&self) -> Option<&Extension<T>>
-    where
-        T: Send + Sync + 'static,
-    {
+    pub fn extension<T: Send + Sync + 'static>(&self) -> Option<&Extension<T>> {
         self.res.extensions().get::<Extension<T>>()
     }
 
@@ -474,16 +486,6 @@ impl Response {
     }
 }
 
-impl fmt::Debug for Response {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        f.debug_struct("Response")
-            .field("url", self.uri())
-            .field("status", &self.status())
-            .field("headers", self.headers())
-            .finish()
-    }
-}
-
 // I'm not sure this conversion is that useful... People should be encouraged
 // to use `http::Response`, not `wreq::Response`.
 impl<T: Into<Body>> From<http::Response<T>> for Response {
@@ -495,8 +497,9 @@ impl<T: Into<Body>> From<http::Response<T>> for Response {
             .remove::<RequestUri>()
             .unwrap_or_else(|| RequestUri(Uri::from_static("http://no.url.provided.local")));
         Response {
-            res: http::Response::from_parts(parts, body),
             uri: uri.0,
+            res: http::Response::from_parts(parts, body),
+            _poison: None,
         }
     }
 }
@@ -517,6 +520,35 @@ impl From<Response> for http::Response<Body> {
 impl From<Response> for Body {
     fn from(r: Response) -> Body {
         Body::wrap(r.res.into_body())
+    }
+}
+
+impl fmt::Debug for Response {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.debug_struct("Response")
+            .field("url", self.uri())
+            .field("status", &self.status())
+            .field("headers", self.headers())
+            .finish()
+    }
+}
+
+// ====== impl ResponsePoisonGuard ======
+
+impl ResponsePoisonGuard {
+    /// Create a new [`ResponsePoisonGuard`].
+    #[inline]
+    pub fn new(capture: CaptureConnection) -> Self {
+        ResponsePoisonGuard(capture)
+    }
+}
+
+impl Drop for ResponsePoisonGuard {
+    #[inline]
+    fn drop(&mut self) {
+        if let Some(connected) = self.0.connection_metadata().as_ref() {
+            connected.poison();
+        }
     }
 }
 
