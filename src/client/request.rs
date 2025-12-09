@@ -796,14 +796,16 @@ where
             method,
             uri,
             headers,
+            extensions,
             ..
         } = parts;
+
         Request {
             method,
             uri,
             headers,
             body: Some(body.into()),
-            extensions: Extensions::new(),
+            extensions,
         }
     }
 }
@@ -819,11 +821,9 @@ impl From<Request> for HttpRequest<Body> {
             ..
         } = req;
 
-        let mut req = HttpRequest::builder()
-            .method(method)
-            .uri(uri)
-            .body(body.unwrap_or_else(Body::empty))
-            .expect("valid request parts");
+        let mut req = HttpRequest::new(body.unwrap_or_else(Body::empty));
+        *req.method_mut() = method;
+        *req.uri_mut() = uri;
         *req.headers_mut() = headers;
         *req.extensions_mut() = extensions;
         req
