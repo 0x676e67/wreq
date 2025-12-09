@@ -294,7 +294,6 @@ async fn test_chunked_fragmented_response_2() {
     assert!(start.elapsed() >= DELAY_BETWEEN_RESPONSE_PARTS - DELAY_MARGIN);
 }
 
-#[ignore = "tower-http decompression does not support this feature test"]
 #[tokio::test]
 async fn test_chunked_fragmented_response_with_extra_bytes() {
     const DELAY_BETWEEN_RESPONSE_PARTS: tokio::time::Duration =
