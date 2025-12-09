@@ -11,7 +11,6 @@ use http::{
 use smallvec::{SmallVec, smallvec, smallvec_inline};
 
 use crate::{
-    Extension,
     client::core::{
         self, Error,
         body::DecodedLength,
@@ -236,7 +235,7 @@ impl Http1Transaction for Client {
                 // Safety: httparse ensures that only valid reason phrase bytes are present in this
                 // field.
                 let reason = ReasonPhrase::from_bytes_unchecked(reason);
-                extensions.insert(Extension(reason));
+                extensions.insert(reason);
             }
 
             let head = MessageHead {

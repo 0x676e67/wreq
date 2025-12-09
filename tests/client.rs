@@ -14,7 +14,7 @@ use http_body_util::BodyExt;
 use pretty_env_logger::env_logger;
 use support::server;
 use tokio::io::AsyncWriteExt;
-use wreq::{Client, Extension, header::OrigHeaderMap, tls::TlsInfo};
+use wreq::{Client, header::OrigHeaderMap, tls::TlsInfo};
 
 #[tokio::test]
 async fn auto_headers() {
@@ -633,7 +633,7 @@ async fn test_tls_info() {
         .send()
         .await
         .expect("response");
-    let Extension(tls_info) = resp.extension::<TlsInfo>().unwrap();
+    let tls_info = resp.extensions().get::<TlsInfo>().unwrap();
     let peer_certificate = tls_info.peer_certificate();
     assert!(peer_certificate.is_some());
     let der = peer_certificate.unwrap();
@@ -646,7 +646,7 @@ async fn test_tls_info() {
         .send()
         .await
         .expect("response");
-    let tls_info = resp.extension::<TlsInfo>();
+    let tls_info = resp.extensions().get::<TlsInfo>();
     assert!(tls_info.is_none());
 }
 

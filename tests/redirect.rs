@@ -2,7 +2,7 @@ mod support;
 use http_body_util::BodyExt;
 use support::server;
 use wreq::{
-    Body, Client, Extension,
+    Body, Client,
     redirect::{History, Policy},
 };
 
@@ -500,7 +500,7 @@ async fn test_redirect_history() {
         &"test-dst"
     );
 
-    let Extension(history) = res.extension::<Vec<History>>().unwrap();
+    let history = res.extensions().get::<Vec<History>>().unwrap();
     let mut history = history.iter();
 
     let next1 = history.next().unwrap();

@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use wreq::{
-    Client, Extension,
+    Client,
     tls::{CertStore, TlsInfo},
 };
 
@@ -56,7 +56,7 @@ async fn main() -> wreq::Result<()> {
 
     // Use the API you're already familiar with
     let resp = client.get("https://self-signed.badssl.com/").send().await?;
-    if let Some(Extension(tls_info)) = resp.extension::<TlsInfo>() {
+    if let Some(tls_info) = resp.extensions().get::<TlsInfo>() {
         if let Some(peer_cert_der) = tls_info.peer_certificate() {
             // Create self-signed certificate Store
             let self_signed_store = CertStore::from_der_certs(&[peer_cert_der])?;

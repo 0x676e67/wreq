@@ -17,7 +17,7 @@ use crate::{
         layer::{config::RequestRedirectPolicy, redirect::policy},
     },
     error::{BoxError, Error},
-    ext::{Extension, UriExt},
+    ext::UriExt,
     header::{AUTHORIZATION, COOKIE, PROXY_AUTHORIZATION, REFERER, WWW_AUTHENTICATE},
 };
 
@@ -468,7 +468,7 @@ impl policy::Policy<Body, BoxError> for FollowRedirectPolicy {
 
     fn on_response<Body>(&mut self, response: &mut http::Response<Body>) {
         if let Some(history) = self.history.take() {
-            response.extensions_mut().insert(Extension(history));
+            response.extensions_mut().insert(history);
         }
     }
 

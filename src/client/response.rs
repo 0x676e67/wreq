@@ -15,7 +15,7 @@ use super::{
 };
 #[cfg(feature = "cookies")]
 use crate::cookie;
-use crate::{Error, Extension, Upgraded, ext::RequestUri};
+use crate::{Error, Upgraded, ext::RequestUri};
 
 /// A Response to a submitted `Request`.
 pub struct Response {
@@ -354,13 +354,12 @@ impl Response {
 
     // extension methods
 
-    /// Get a reference to the associated extension of type `T`.
+    /// Returns a reference to the associated extensions.
     ///
     /// # Example
     ///
     /// ```
-    /// # use wreq::{Client, Extension};
-    /// # use wreq::tls::TlsInfo;
+    /// # use wreq::{Client, tls::TlsInfo};
     /// # async fn run() -> wreq::Result<()> {
     /// // Build a client that records TLS information.
     /// let client = Client::builder()
@@ -371,7 +370,7 @@ impl Response {
     /// let resp = client.get("https://www.google.com").send().await?;
     ///
     /// // Take the TlsInfo extension to inspect it.
-    /// if let Some(Extension(tls_info)) = resp.extension::<TlsInfo>() {
+    /// if let Some(tls_info) = resp.extensions().get::<TlsInfo>() {
     ///     // Now you own the TlsInfo and can process it.
     ///     println!("Peer certificate: {:?}", tls_info.peer_certificate());
     /// }
@@ -380,20 +379,34 @@ impl Response {
     /// # }
     /// ```
     #[inline]
-    pub fn extension<T>(&self) -> Option<&Extension<T>>
-    where
-        T: Send + Sync + 'static,
-    {
-        self.res.extensions().get::<Extension<T>>()
-    }
-
-    /// Returns a reference to the associated extensions.
-    #[inline]
     pub fn extensions(&self) -> &http::Extensions {
         self.res.extensions()
     }
 
     /// Returns a mutable reference to the associated extensions.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// # use wreq::{Client, tls::TlsInfo};
+    /// # async fn run() -> wreq::Result<()> {
+    /// // Build a client that records TLS information.
+    /// let client = Client::builder()
+    ///     .tls_info(true)
+    ///     .build()?;
+    ///
+    /// // Make a request.
+    /// let mut resp = client.get("https://www.google.com").send().await?;
+    ///
+    /// // Take the TlsInfo extension to inspect it.
+    /// if let Some(tls_info) = resp.extensions_mut().remove::<TlsInfo>() {
+    ///     // Now you own the TlsInfo and can process it.
+    ///     println!("Peer certificate: {:?}", tls_info.peer_certificate());
+    /// }
+    ///
+    /// # Ok(())
+    /// # }
+    /// ```
     #[inline]
     pub fn extensions_mut(&mut self) -> &mut http::Extensions {
         self.res.extensions_mut()
@@ -422,11 +435,7 @@ impl Response {
     pub fn error_for_status(mut self) -> crate::Result<Self> {
         let status = self.status();
         if status.is_client_error() || status.is_server_error() {
-            let reason = self
-                .res
-                .extensions_mut()
-                .remove::<Extension<ReasonPhrase>>()
-                .map(|Extension(reason)| reason);
+            let reason = self.res.extensions_mut().remove::<ReasonPhrase>();
             Err(Error::status_code(self.uri, status, reason))
         } else {
             Ok(self)
@@ -454,12 +463,7 @@ impl Response {
     pub fn error_for_status_ref(&self) -> crate::Result<&Self> {
         let status = self.status();
         if status.is_client_error() || status.is_server_error() {
-            let reason = self
-                .res
-                .extensions()
-                .get::<Extension<ReasonPhrase>>()
-                .map(|Extension(reason)| reason)
-                .cloned();
+            let reason = self.res.extensions().get::<ReasonPhrase>().cloned();
             Err(Error::status_code(self.uri.clone(), status, reason))
         } else {
             Ok(self)

@@ -6,10 +6,6 @@ use percent_encoding::{AsciiSet, CONTROLS};
 
 use crate::Body;
 
-/// Extractor and response for extensions.
-#[derive(Debug, Clone, Copy)]
-pub struct Extension<T>(pub T);
-
 /// Extension trait for http::Response objects
 ///
 /// Provides methods to extract URI information from HTTP responses
