@@ -220,7 +220,6 @@ struct Config {
     auto_sys_proxy: bool,
     retry_policy: retry::Policy,
     redirect_policy: redirect::Policy,
-    redirect_history: bool,
     referer: bool,
     timeout_options: TimeoutOptions,
     #[cfg(feature = "cookies")]
@@ -302,7 +301,6 @@ impl Client {
                 auto_sys_proxy: true,
                 retry_policy: retry::Policy::default(),
                 redirect_policy: redirect::Policy::none(),
-                redirect_history: false,
                 referer: true,
                 timeout_options: TimeoutOptions::default(),
                 #[cfg(feature = "hickory-dns")]
@@ -603,8 +601,7 @@ impl ClientBuilder {
                 .layer({
                     let policy = FollowRedirectPolicy::new(config.redirect_policy)
                         .with_referer(config.referer)
-                        .with_https_only(config.https_only)
-                        .with_history(config.redirect_history);
+                        .with_https_only(config.https_only);
                     FollowRedirectLayer::with_policy(policy)
                 })
                 .layer(ResponseBodyTimeoutLayer::new(config.timeout_options))
@@ -942,15 +939,6 @@ impl ClientBuilder {
     #[inline]
     pub fn redirect(mut self, policy: redirect::Policy) -> ClientBuilder {
         self.config.redirect_policy = policy;
-        self
-    }
-
-    /// Enable or disable redirect history tracking.
-    ///
-    /// Default is `false`.
-    #[inline]
-    pub fn history(mut self, enable: bool) -> ClientBuilder {
-        self.config.redirect_history = enable;
         self
     }
 

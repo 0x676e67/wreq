@@ -8,13 +8,13 @@ use std::{borrow::Cow, error::Error as StdError, fmt, sync::Arc};
 
 use bytes::Bytes;
 use futures_util::FutureExt;
-use http::{Extensions, HeaderMap, HeaderValue, StatusCode, Uri, uri::Authority};
+use http::{Extensions, HeaderMap, HeaderValue, StatusCode, Uri};
 
 use crate::{
     client::{
         Body,
         ext::RequestConfig,
-        layer::{config::RequestRedirectPolicy, redirect::policy},
+        layer::{config::RequestRedirectPolicy, redirect},
     },
     error::{BoxError, Error},
     ext::UriExt,
@@ -38,6 +38,7 @@ pub struct Policy {
 /// A type that holds information on the next request and previous requests
 /// in redirect chain.
 #[derive(Debug)]
+#[non_exhaustive]
 pub struct Attempt<'a, const PENDING: bool = true> {
     status: StatusCode,
     headers: Cow<'a, HeaderMap>,
@@ -48,16 +49,25 @@ pub struct Attempt<'a, const PENDING: bool = true> {
 /// An action to perform when a redirect status code is found.
 #[derive(Debug)]
 pub struct Action {
-    inner: policy::Action,
+    inner: redirect::Action,
 }
+
+/// Redirect history information for a response.
+#[derive(Debug, Clone)]
+pub struct History(Vec<HistoryEntry>);
 
 /// An entry in the redirect history.
 #[derive(Debug, Clone)]
-pub struct History {
-    status: StatusCode,
-    uri: Uri,
-    previous: Uri,
-    headers: HeaderMap,
+#[non_exhaustive]
+pub struct HistoryEntry {
+    /// The status code of the redirect response.
+    pub status: StatusCode,
+    /// The URI of the redirect response.
+    pub uri: Uri,
+    /// The previous URI before the redirect response.
+    pub previous: Uri,
+    /// The headers of the redirect response.
+    pub headers: HeaderMap,
 }
 
 #[derive(Clone)]
@@ -86,7 +96,7 @@ pub(crate) struct FollowRedirectPolicy {
     referer: bool,
     uris: Vec<Uri>,
     https_only: bool,
-    history: Option<Vec<History>>,
+    history: Option<Vec<HistoryEntry>>,
 }
 
 // ===== impl Policy =====
@@ -131,7 +141,7 @@ impl Policy {
     /// #
     /// # fn run() -> Result<(), Error> {
     /// let custom = redirect::Policy::custom(|attempt| {
-    ///     if attempt.previous().len() > 5 {
+    ///     if attempt.previous.len() > 5 {
     ///         attempt.error("too many redirects")
     ///     } else if attempt.uri() == "example.domain" {
     ///         // prevent redirects to 'example.domain'
@@ -197,7 +207,7 @@ impl Policy {
         headers: &HeaderMap,
         next: &Uri,
         previous: &[Uri],
-    ) -> policy::Action {
+    ) -> redirect::Action {
         self.redirect(Attempt {
             status,
             headers: Cow::Borrowed(headers),
@@ -247,7 +257,7 @@ impl<'a, const PENDING: bool> Attempt<'a, PENDING> {
     #[inline]
     pub fn follow(self) -> Action {
         Action {
-            inner: policy::Action::Follow,
+            inner: redirect::Action::Follow,
         }
     }
 
@@ -257,7 +267,7 @@ impl<'a, const PENDING: bool> Attempt<'a, PENDING> {
     #[inline]
     pub fn stop(self) -> Action {
         Action {
-            inner: policy::Action::Stop,
+            inner: redirect::Action::Stop,
         }
     }
 
@@ -267,7 +277,7 @@ impl<'a, const PENDING: bool> Attempt<'a, PENDING> {
     #[inline]
     pub fn error<E: Into<BoxError>>(self, error: E) -> Action {
         Action {
-            inner: policy::Action::Error(error.into()),
+            inner: redirect::Action::Error(error.into()),
         }
     }
 }
@@ -301,53 +311,36 @@ impl<'a> Attempt<'a, true> {
     {
         let attempt = Attempt {
             status: self.status,
-            headers: Cow::Owned(self.headers().clone()),
-            next: Cow::Owned(self.uri().clone()),
-            previous: Cow::Owned(self.previous().to_vec()),
+            headers: Cow::Owned(self.headers.into_owned()),
+            next: Cow::Owned(self.next.into_owned()),
+            previous: Cow::Owned(self.previous.into_owned()),
         };
         let pending = Box::pin(task(attempt).map(|action| action.inner));
         Action {
-            inner: policy::Action::Pending(pending),
+            inner: redirect::Action::Pending(pending),
         }
     }
 }
 
 // ===== impl History =====
 
-impl History {
-    /// Get the status code of the redirect response.
-    #[inline]
-    pub fn status(&self) -> StatusCode {
-        self.status
-    }
+impl IntoIterator for History {
+    type Item = HistoryEntry;
+    type IntoIter = std::vec::IntoIter<HistoryEntry>;
 
-    /// Get the URI of the redirect response.
     #[inline]
-    pub fn uri(&self) -> &Uri {
-        &self.uri
-    }
-
-    /// Get the previous URI before the redirect response.
-    #[inline]
-    pub fn previous(&self) -> &Uri {
-        &self.previous
-    }
-
-    /// Get the headers of the redirect response.
-    #[inline]
-    pub fn headers(&self) -> &HeaderMap {
-        &self.headers
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.into_iter()
     }
 }
 
-impl From<policy::Attempt<'_>> for History {
-    fn from(attempt: policy::Attempt<'_>) -> Self {
-        Self {
-            status: attempt.status,
-            uri: attempt.location.clone(),
-            previous: attempt.previous.clone(),
-            headers: attempt.headers.clone(),
-        }
+impl<'a> IntoIterator for &'a History {
+    type Item = &'a HistoryEntry;
+    type IntoIter = std::slice::Iter<'a, HistoryEntry>;
+
+    #[inline]
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.iter()
     }
 }
 
@@ -400,17 +393,10 @@ impl FollowRedirectPolicy {
         self.https_only = https_only;
         self
     }
-
-    /// Enables or disables redirect history tracking.
-    #[inline]
-    pub fn with_history(mut self, history: bool) -> Self {
-        self.history = history.then_some(Vec::new());
-        self
-    }
 }
 
-impl policy::Policy<Body, BoxError> for FollowRedirectPolicy {
-    fn redirect(&mut self, attempt: policy::Attempt<'_>) -> Result<policy::Action, BoxError> {
+impl redirect::Policy<Body, BoxError> for FollowRedirectPolicy {
+    fn redirect(&mut self, attempt: redirect::Attempt<'_>) -> Result<redirect::Action, BoxError> {
         // Parse the next URI from the attempt.
         let previous_uri = attempt.previous;
         let next_uri = attempt.location;
@@ -426,7 +412,7 @@ impl policy::Policy<Body, BoxError> for FollowRedirectPolicy {
 
         // Check if the next URI is already in the list of URLs.
         match policy.check(attempt.status, attempt.headers, next_uri, &self.uris) {
-            policy::Action::Follow => {
+            redirect::Action::Follow => {
                 // Validate the redirect URI scheme
                 if !(next_uri.is_http() || next_uri.is_https()) {
                     return Err(Error::uri_bad_scheme(next_uri.clone()).into());
@@ -441,16 +427,21 @@ impl policy::Policy<Body, BoxError> for FollowRedirectPolicy {
                     .into());
                 }
 
-                // Record history if enabled
-                if let Some(history) = self.history.as_mut() {
-                    history.push(History::from(attempt));
+                // Record redirect history
+                if !matches!(policy.inner, PolicyKind::None) {
+                    self.history.get_or_insert_default().push(HistoryEntry {
+                        status: attempt.status,
+                        uri: attempt.location.clone(),
+                        previous: attempt.previous.clone(),
+                        headers: attempt.headers.clone(),
+                    });
                 }
 
-                Ok(policy::Action::Follow)
+                Ok(redirect::Action::Follow)
             }
-            policy::Action::Stop => Ok(policy::Action::Stop),
-            policy::Action::Pending(task) => Ok(policy::Action::Pending(task)),
-            policy::Action::Error(err) => Err(Error::redirect(err, previous_uri.clone()).into()),
+            redirect::Action::Stop => Ok(redirect::Action::Stop),
+            redirect::Action::Pending(task) => Ok(redirect::Action::Pending(task)),
+            redirect::Action::Error(err) => Err(Error::redirect(err, previous_uri.clone()).into()),
         }
     }
 
@@ -459,7 +450,7 @@ impl policy::Policy<Body, BoxError> for FollowRedirectPolicy {
         remove_sensitive_headers(req.headers_mut(), &next_url, &self.uris);
         if self.referer {
             if let Some(previous_url) = self.uris.last() {
-                if let Some(v) = make_referer(&next_url, previous_url) {
+                if let Some(v) = make_referer(next_url, previous_url) {
                     req.headers_mut().insert(REFERER, v);
                 }
             }
@@ -468,17 +459,12 @@ impl policy::Policy<Body, BoxError> for FollowRedirectPolicy {
 
     fn on_response<Body>(&mut self, response: &mut http::Response<Body>) {
         if let Some(history) = self.history.take() {
-            response.extensions_mut().insert(history);
+            response.extensions_mut().insert(History(history));
         }
     }
 
-    #[inline]
-    fn on_extensions(&mut self, extensions: &Extensions) {
+    fn follow_redirects(&mut self, extensions: &Extensions) -> bool {
         self.policy.load(extensions);
-    }
-
-    #[inline]
-    fn allowed(&self) -> bool {
         self.policy
             .as_ref()
             .is_some_and(|policy| !matches!(policy.inner, PolicyKind::None))
@@ -490,25 +476,13 @@ impl policy::Policy<Body, BoxError> for FollowRedirectPolicy {
     }
 }
 
-fn make_referer(next: &Uri, previous: &Uri) -> Option<HeaderValue> {
+fn make_referer(next: Uri, previous: &Uri) -> Option<HeaderValue> {
     if next.is_http() && previous.is_https() {
         return None;
     }
 
-    let referer = {
-        let mut parts = previous.clone().into_parts();
-        if let Some(authority) = &mut parts.authority {
-            let host = authority.host();
-            parts.authority = match authority.port() {
-                Some(port) => {
-                    Authority::from_maybe_shared(Bytes::from(format!("{host}:{port}"))).ok()
-                }
-                None => host.parse().ok(),
-            };
-        }
-        Uri::from_parts(parts).ok()?
-    };
-
+    let mut referer = previous.clone();
+    referer.set_userinfo("", None);
     HeaderValue::from_maybe_shared(Bytes::from(referer.to_string())).ok()
 }
 
@@ -540,14 +514,14 @@ mod tests {
             .collect::<Vec<_>>();
 
         match policy.check(StatusCode::FOUND, &HeaderMap::new(), &next, &previous) {
-            policy::Action::Follow => (),
+            redirect::Action::Follow => (),
             other => panic!("unexpected {other:?}"),
         }
 
         previous.push(Uri::try_from("http://a.b.d/e/33").unwrap());
 
         match policy.check(StatusCode::FOUND, &HeaderMap::new(), &next, &previous) {
-            policy::Action::Error(err) if err.is::<TooManyRedirects>() => (),
+            redirect::Action::Error(err) if err.is::<TooManyRedirects>() => (),
             other => panic!("unexpected {other:?}"),
         }
     }
@@ -559,7 +533,7 @@ mod tests {
         let previous = vec![Uri::try_from("http://a.b/c").unwrap()];
 
         match policy.check(StatusCode::FOUND, &HeaderMap::new(), &next, &previous) {
-            policy::Action::Error(err) if err.is::<TooManyRedirects>() => (),
+            redirect::Action::Error(err) if err.is::<TooManyRedirects>() => (),
             other => panic!("unexpected {other:?}"),
         }
     }
@@ -576,13 +550,13 @@ mod tests {
 
         let next = Uri::try_from("http://bar/baz").unwrap();
         match policy.check(StatusCode::FOUND, &HeaderMap::new(), &next, &[]) {
-            policy::Action::Follow => (),
+            redirect::Action::Follow => (),
             other => panic!("unexpected {other:?}"),
         }
 
         let next = Uri::try_from("http://foo/baz").unwrap();
         match policy.check(StatusCode::FOUND, &HeaderMap::new(), &next, &[]) {
-            policy::Action::Stop => (),
+            redirect::Action::Stop => (),
             other => panic!("unexpected {other:?}"),
         }
     }

@@ -488,7 +488,6 @@ async fn test_redirect_history() {
 
     let client = Client::builder()
         .redirect(Policy::default())
-        .history(true)
         .build()
         .unwrap();
 
@@ -500,20 +499,19 @@ async fn test_redirect_history() {
         &"test-dst"
     );
 
-    let history = res.extensions().get::<Vec<History>>().unwrap();
-    let mut history = history.iter();
+    let mut history = res.extensions().get::<History>().unwrap().into_iter();
 
     let next1 = history.next().unwrap();
-    assert_eq!(next1.status(), 302);
-    assert_eq!(next1.previous().path(), "/first");
-    assert_eq!(next1.uri().path(), "/second");
-    assert_eq!(next1.headers()["location"], "/second");
+    assert_eq!(next1.status, 302);
+    assert_eq!(next1.previous.path(), "/first");
+    assert_eq!(next1.uri.path(), "/second");
+    assert_eq!(next1.headers["location"], "/second");
 
     let next2 = history.next().unwrap();
-    assert_eq!(next2.status(), 302);
-    assert_eq!(next2.previous().path(), "/second");
-    assert_eq!(next2.uri().path(), "/dst");
-    assert_eq!(next2.headers()["location"], "/dst");
+    assert_eq!(next2.status, 302);
+    assert_eq!(next2.previous.path(), "/second");
+    assert_eq!(next2.uri.path(), "/dst");
+    assert_eq!(next2.headers["location"], "/dst");
 
     assert!(history.next().is_none());
 }

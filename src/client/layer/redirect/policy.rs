@@ -1,10 +1,9 @@
 //! Tools for customizing the behavior of a [`FollowRedirect`][super::FollowRedirect] middleware.
 
-use std::fmt;
+use std::{fmt, pin::Pin};
 
 use http::{Extensions, HeaderMap, Request, StatusCode, Uri};
 
-use super::future::PendingFuture;
 use crate::error::BoxError;
 
 /// Trait for the policy on handling redirection responses.
@@ -32,26 +31,12 @@ pub trait Policy<B, E> {
     /// The default implementation does nothing.
     fn on_response<Body>(&mut self, _response: &mut http::Response<Body>) {}
 
-    /// Loads redirect policy configuration from the request's [`Extensions`].
-    ///
-    /// This method is called once at the beginning of request processing to extract
-    /// request-specific redirect settings that may override the policy's default behavior.
-    /// Examples include per-request maximum redirect limits, allowed/blocked domains,
-    /// or security policies.
-    ///
-    /// The default implementation does nothing, meaning the policy uses its default
-    /// configuration for all requests.
-    ///
-    /// The default implementation does nothing.
-    fn on_extensions(&mut self, _extensions: &Extensions) {}
-
     /// Returns whether redirection is currently permitted by this policy.
     ///
-    /// This check typically occurs after [`load()`] has initialized the internal state
-    /// and determines whether any redirect should proceed at all.
-    ///
-    /// If redirection is not allowed, the client will return the original `3xx` response as-is.
-    fn allowed(&self) -> bool;
+    /// This method is called to determine whether the client should follow redirects at all.
+    /// It allows policies to enable or disable redirection behavior based on the request
+    /// extensions.
+    fn follow_redirects(&mut self, _extensions: &Extensions) -> bool;
 
     /// Try to clone a request body before the service makes a redirected request.
     ///
@@ -82,7 +67,7 @@ pub enum Action {
     /// Do not follow the redirection, and return the redirection response as-is.
     Stop,
     /// Pending async decision. The async task will be awaited to determine the final action.
-    Pending(PendingFuture),
+    Pending(Pin<Box<dyn Future<Output = Action> + Send>>),
     /// An error occurred while determining the redirection action.
     Error(BoxError),
 }

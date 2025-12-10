@@ -16,16 +16,8 @@ use iri_string::types::{UriAbsoluteString, UriReferenceStr};
 use pin_project_lite::pin_project;
 use tower::{Service, util::Oneshot};
 
-use super::{
-    BodyRepr,
-    policy::{Action, Attempt, Policy},
-};
+use super::{Action, Attempt, BodyRepr, Policy};
 use crate::{Error, error::BoxError, ext::RequestUri};
-
-pub type RedirectFuturePin<'a, S, ReqBody> =
-    Pin<&'a mut Either<<S as Service<Request<ReqBody>>>::Future, Oneshot<S, Request<ReqBody>>>>;
-
-pub type PendingFuture = Pin<Box<dyn Future<Output = Action> + Send>>;
 
 macro_rules! ready_ok {
     ($expr:expr, $ret:expr) => {
@@ -36,11 +28,11 @@ macro_rules! ready_ok {
     };
 }
 
-/// Pending state for a redirect decision
-pub struct PendingState<ReqBody, Response> {
-    future: PendingFuture,
+/// Pending future state for handling redirects.
+pub struct Pending<ReqBody, Response> {
+    future: Pin<Box<dyn Future<Output = Action> + Send>>,
     location: Uri,
-    req_body: ReqBody,
+    body: ReqBody,
     res: Response,
 }
 
@@ -54,11 +46,11 @@ pin_project! {
         Redirect {
             #[pin]
             future: Either<S::Future, Oneshot<S, Request<B>>>,
-            pending_future: Option<PendingState<B, S::Response>>,
+            pending_future: Option<Pending<B, S::Response>>,
             service: S,
             policy: P,
             parts: Parts,
-            body: BodyRepr<B>,
+            body_repr: BodyRepr<B>,
         },
 
         Direct {
@@ -86,7 +78,7 @@ where
                 service,
                 policy,
                 parts,
-                body,
+                body_repr,
             } => {
                 // Check if we have a pending action to resolve
                 if let Some(mut state) = pending_future.take() {
@@ -98,18 +90,19 @@ where
                         }
                     };
 
-                    // Process the resolved action
                     return handle_action(
-                        action,
-                        &mut future,
-                        service,
-                        policy,
                         cx,
-                        parts,
-                        state.req_body,
-                        body,
-                        state.res,
-                        state.location,
+                        RedirectAction {
+                            action,
+                            future: &mut future,
+                            service,
+                            policy,
+                            parts,
+                            body_repr,
+                            body: state.body,
+                            res: state.res,
+                            location: state.location,
+                        },
                     );
                 }
 
@@ -127,7 +120,7 @@ where
                         // (RFC 7231 section 6.4.2. and 6.4.3.).
                         if parts.method == Method::POST {
                             parts.method = Method::GET;
-                            *body = BodyRepr::Empty;
+                            *body_repr = BodyRepr::Empty;
                             drop_payload_headers(&mut parts.headers);
                         }
                     }
@@ -136,7 +129,7 @@ where
                         if parts.method != Method::HEAD {
                             parts.method = Method::GET;
                         }
-                        *body = BodyRepr::Empty;
+                        *body_repr = BodyRepr::Empty;
                         drop_payload_headers(&mut parts.headers);
                     }
                     StatusCode::TEMPORARY_REDIRECT | StatusCode::PERMANENT_REDIRECT => {}
@@ -148,7 +141,7 @@ where
                 };
 
                 // Extract the request body for potential reuse
-                let req_body = ready_ok!(body.take(), res);
+                let req_body = ready_ok!(body_repr.take(), res);
 
                 // Get and resolve the Location header
                 let location = {
@@ -172,10 +165,10 @@ where
                 let action = match policy.redirect(attempt)? {
                     Action::Pending(future) => {
                         // Save the task and necessary state for next poll
-                        *pending_future = Some(PendingState {
+                        *pending_future = Some(Pending {
                             future,
                             location,
-                            req_body,
+                            body: req_body,
                             res,
                         });
                         cx.waker().wake_by_ref();
@@ -185,16 +178,18 @@ where
                 };
 
                 handle_action(
-                    action,
-                    &mut future,
-                    service,
-                    policy,
                     cx,
-                    parts,
-                    req_body,
-                    body,
-                    res,
-                    location,
+                    RedirectAction {
+                        action,
+                        future: &mut future,
+                        service,
+                        policy,
+                        parts,
+                        body: req_body,
+                        body_repr,
+                        res,
+                        location,
+                    },
                 )
             }
         }
@@ -221,19 +216,28 @@ fn drop_payload_headers(headers: &mut HeaderMap) {
     }
 }
 
-/// Handle the redirect action and return the appropriate poll result.
-#[allow(clippy::too_many_arguments)]
-fn handle_action<S, ReqBody, ResBody, P>(
+type RedirectFuturePin<'a, S, ReqBody> =
+    Pin<&'a mut Either<<S as Service<Request<ReqBody>>>::Future, Oneshot<S, Request<ReqBody>>>>;
+
+struct RedirectAction<'a, S, ReqBody, ResBody, P>
+where
+    S: Service<Request<ReqBody>, Response = Response<ResBody>> + Clone,
+    P: Policy<ReqBody, S::Error>,
+{
     action: Action,
-    future: &mut RedirectFuturePin<'_, S, ReqBody>,
-    service: &S,
-    policy: &mut P,
-    cx: &mut Context<'_>,
-    parts: &mut Parts,
-    req_body: ReqBody,
-    body: &mut BodyRepr<ReqBody>,
+    future: &'a mut RedirectFuturePin<'a, S, ReqBody>,
+    service: &'a S,
+    policy: &'a mut P,
+    parts: &'a mut Parts,
+    body: ReqBody,
+    body_repr: &'a mut BodyRepr<ReqBody>,
     res: Response<ResBody>,
     location: Uri,
+}
+
+fn handle_action<S, ReqBody, ResBody, P>(
+    cx: &mut Context<'_>,
+    redirect: RedirectAction<'_, S, ReqBody, ResBody, P>,
 ) -> Poll<Result<Response<ResBody>, S::Error>>
 where
     S: Service<Request<ReqBody>, Response = Response<ResBody>> + Clone,
@@ -241,29 +245,30 @@ where
     P: Policy<ReqBody, S::Error>,
     ReqBody: Body + Default,
 {
-    match action {
+    match redirect.action {
         Action::Follow => {
-            parts.uri = location;
-            body.try_clone_from(&req_body, policy);
+            redirect.parts.uri = redirect.location;
+            redirect
+                .body_repr
+                .try_clone_from(&redirect.body, redirect.policy);
 
-            let mut req = Request::from_parts(parts.clone(), req_body);
-            policy.on_request(&mut req);
-            future.set(Either::Right(Oneshot::new(service.clone(), req)));
+            let mut req = Request::from_parts(redirect.parts.clone(), redirect.body);
+            redirect.policy.on_request(&mut req);
+            redirect
+                .future
+                .set(Either::Right(Oneshot::new(redirect.service.clone(), req)));
 
             cx.waker().wake_by_ref();
             Poll::Pending
         }
-        Action::Stop => Poll::Ready(Ok(res)),
-        Action::Pending(_) => {
-            // Nested pending is not supported.
-            Poll::Ready(Err(S::Error::from(
-                Error::redirect(
-                    "Nested pending Action is not supported in redirect policy",
-                    parts.uri.clone(),
-                )
-                .into(),
-            )))
-        }
+        Action::Stop => Poll::Ready(Ok(redirect.res)),
+        Action::Pending(_) => Poll::Ready(Err(S::Error::from(
+            Error::redirect(
+                "Nested pending Action is not supported in redirect policy",
+                redirect.parts.uri.clone(),
+            )
+            .into(),
+        ))),
         Action::Error(err) => Poll::Ready(Err(err.into())),
     }
 }

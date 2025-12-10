@@ -804,8 +804,8 @@ where
             method,
             uri,
             headers,
-            body: Some(body.into()),
             extensions,
+            body: Some(body.into()),
         }
     }
 }
