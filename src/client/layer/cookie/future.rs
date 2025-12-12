@@ -19,7 +19,7 @@ pin_project! {
         Managed {
             #[pin]
             future: F,
-            cookie_store: Arc<dyn CookieStore>,
+            store: Arc<dyn CookieStore>,
             uri: Uri,
         },
         Direct {
@@ -37,11 +37,7 @@ where
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         match self.project() {
-            ResponseFutureProj::Managed {
-                future,
-                cookie_store,
-                uri,
-            } => {
+            ResponseFutureProj::Managed { future, store, uri } => {
                 let res = ready!(future.poll(cx)?);
                 let mut cookies = res
                     .headers()
@@ -49,7 +45,7 @@ where
                     .iter()
                     .peekable();
                 if cookies.peek().is_some() {
-                    cookie_store.set_cookies(&mut cookies, uri);
+                    store.set_cookies(&mut cookies, uri);
                 }
 
                 Poll::Ready(Ok(res))

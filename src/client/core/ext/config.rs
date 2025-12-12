@@ -40,6 +40,7 @@ pub(crate) trait RequestConfigValue: Copy + Clone + 'static {
 pub(crate) struct RequestConfig<T: RequestConfigValue>(Option<T::Value>);
 
 impl<T: RequestConfigValue> Default for RequestConfig<T> {
+    #[inline]
     fn default() -> Self {
         RequestConfig(None)
     }

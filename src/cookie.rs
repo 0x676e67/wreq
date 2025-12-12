@@ -7,11 +7,12 @@ use std::{
     time::{Duration, SystemTime},
 };
 
-use bytes::{BufMut, Bytes};
+use bytes::Bytes;
 use cookie::{Cookie as RawCookie, CookieJar, Expiration, SameSite};
 use http::Uri;
 
 use crate::{
+    IntoUri,
     error::Error,
     ext::UriExt,
     hash::{HASHER, HashMap},
@@ -19,13 +20,27 @@ use crate::{
     sync::RwLock,
 };
 
+/// Cookie header values in two forms.
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub enum Cookies {
+    /// All cookies combined into one header (compressed).
+    Compressed(HeaderValue),
+
+    /// Each cookie sent as its own header (uncompressed).
+    Uncompressed(Vec<HeaderValue>),
+
+    /// No cookies.
+    Empty,
+}
+
 /// Actions for a persistent cookie store providing session support.
 pub trait CookieStore: Send + Sync {
     /// Store a set of Set-Cookie header values received from `uri`
     fn set_cookies(&self, cookie_headers: &mut dyn Iterator<Item = &HeaderValue>, uri: &Uri);
 
-    /// Get any Cookie values in the store for `uri`
-    fn cookies(&self, uri: &Uri) -> Vec<HeaderValue>;
+    /// Get any [`Cookies`] in the store for `uri`
+    fn cookies(&self, uri: &Uri) -> Cookies;
 }
 
 /// Trait for converting types into a shared cookie store ([`Arc<dyn CookieStore>`]).
@@ -50,8 +65,11 @@ pub struct Cookie<'a>(RawCookie<'a>);
 ///
 /// This is the implementation used when simply calling `cookie_store(true)`.
 /// This type is exposed to allow creating one and filling it with some
-/// existing cookies more easily, before creating a `Client`.
-pub struct Jar(RwLock<HashMap<String, HashMap<String, CookieJar>>>);
+/// existing cookies more easily, before creating a [`Client`].
+pub struct Jar {
+    compression: bool,
+    store: Arc<RwLock<HashMap<String, HashMap<String, CookieJar>>>>,
+}
 
 // ===== impl IntoCookieStore =====
 
@@ -186,7 +204,7 @@ impl<'c> From<Cookie<'c>> for RawCookie<'c> {
 
 macro_rules! into_uri {
     ($expr:expr) => {
-        match Uri::try_from($expr) {
+        match $expr.into_uri() {
             Ok(u) => u,
             Err(_) => return,
         }
@@ -194,6 +212,30 @@ macro_rules! into_uri {
 }
 
 impl Jar {
+    /// Creates a new [`Jar`] with the specified compression setting.
+    pub fn new(compression: bool) -> Self {
+        Self {
+            compression,
+            store: Arc::new(RwLock::new(HashMap::with_hasher(HASHER))),
+        }
+    }
+
+    /// Clone this [`Jar`], sharing storage but enabling compression.
+    pub fn compressed(self: &Arc<Self>) -> Arc<Self> {
+        Arc::new(Jar {
+            compression: true,
+            store: self.store.clone(),
+        })
+    }
+
+    /// Clone this [`Jar`], sharing storage but disabling compression.
+    pub fn uncompressed(self: &Arc<Self>) -> Arc<Self> {
+        Arc::new(Jar {
+            compression: false,
+            store: self.store.clone(),
+        })
+    }
+
     /// Get a cookie by name for a given Uri.
     ///
     /// Returns the cookie with the specified name for the domain and path
@@ -207,13 +249,10 @@ impl Jar {
     /// let cookie = jar.get("foo", "http://example.com/foo").unwrap();
     /// assert_eq!(cookie.value(), "bar");
     /// ```
-    pub fn get<U>(&self, name: &str, uri: U) -> Option<Cookie<'static>>
-    where
-        Uri: TryFrom<U>,
-    {
-        let uri = Uri::try_from(uri).ok()?;
+    pub fn get<U: IntoUri>(&self, name: &str, uri: U) -> Option<Cookie<'static>> {
+        let uri = uri.into_uri().ok()?;
         let cookie = self
-            .0
+            .store
             .read()
             .get(uri.host()?)?
             .get(uri.path())?
@@ -238,7 +277,7 @@ impl Jar {
     /// }
     /// ```
     pub fn get_all(&self) -> impl Iterator<Item = Cookie<'static>> {
-        self.0
+        self.store
             .read()
             .iter()
             .flat_map(|(_, path_map)| {
@@ -263,10 +302,7 @@ impl Jar {
     /// let jar = Jar::default();
     /// jar.add_cookie_str(cookie, "https://yolo.local");
     /// ```
-    pub fn add_cookie_str<U>(&self, cookie: &str, uri: U)
-    where
-        Uri: TryFrom<U>,
-    {
+    pub fn add_cookie_str<U: IntoUri>(&self, cookie: &str, uri: U) {
         if let Ok(raw) = RawCookie::parse(cookie) {
             self.add_cookie(raw.into_owned(), uri);
         }
@@ -291,7 +327,7 @@ impl Jar {
     pub fn add_cookie<C, U>(&self, cookie: C, uri: U)
     where
         C: Into<RawCookie<'static>>,
-        Uri: TryFrom<U>,
+        U: IntoUri,
     {
         let cookie: RawCookie<'static> = cookie.into();
         let uri = into_uri!(uri);
@@ -302,7 +338,7 @@ impl Jar {
             .unwrap_or_default();
         let path = cookie.path().unwrap_or_else(|| normalize_path(&uri));
 
-        let mut inner = self.0.write();
+        let mut inner = self.store.write();
         let name_map = inner
             .entry(domain.to_owned())
             .or_insert_with(|| HashMap::with_hasher(HASHER))
@@ -341,11 +377,11 @@ impl Jar {
     pub fn remove<C, U>(&self, cookie: C, uri: U)
     where
         C: Into<RawCookie<'static>>,
-        Uri: TryFrom<U>,
+        U: IntoUri,
     {
         let uri = into_uri!(uri);
         if let Some(host) = uri.host() {
-            let mut inner = self.0.write();
+            let mut inner = self.store.write();
             if let Some(path_map) = inner.get_mut(host) {
                 if let Some(name_map) = path_map.get_mut(uri.path()) {
                     name_map.remove(cookie.into());
@@ -368,7 +404,7 @@ impl Jar {
     /// assert_eq!(jar.get_all().count(), 0);
     /// ```
     pub fn clear(&self) {
-        self.0.write().clear();
+        self.store.write().clear();
     }
 }
 
@@ -384,16 +420,14 @@ impl CookieStore for Jar {
         }
     }
 
-    fn cookies(&self, uri: &Uri) -> Vec<HeaderValue> {
+    fn cookies(&self, uri: &Uri) -> Cookies {
         let host = match uri.host() {
             Some(h) => h,
-            None => return Vec::new(),
+            None => return Cookies::Empty,
         };
 
-        let is_https = uri.is_https();
-
-        self.0
-            .read()
+        let store = self.store.read();
+        let iter = store
             .iter()
             .filter(|(domain, _)| domain_match(host, domain))
             .flat_map(|(_, path_map)| {
@@ -401,40 +435,64 @@ impl CookieStore for Jar {
                     .iter()
                     .filter(|(path, _)| path_match(uri.path(), path))
                     .flat_map(|(_, name_map)| {
-                        name_map.iter().filter_map(|cookie| {
-                            // If the cookie is Secure, only send it over HTTPS
-                            if cookie.secure() == Some(true) && !is_https {
-                                return None;
+                        name_map.iter().filter(|cookie| {
+                            if cookie.secure() == Some(true) && uri.is_http() {
+                                return false;
                             }
 
-                            // Skip expired cookie
                             if let Some(Expiration::DateTime(dt)) = cookie.expires() {
                                 if SystemTime::from(dt) <= SystemTime::now() {
-                                    return None;
+                                    return false;
                                 }
                             }
 
-                            // Build cookie header value
-                            let name = cookie.name().as_bytes();
-                            let value = cookie.value().as_bytes();
-                            let mut cookie_bytes =
-                                bytes::BytesMut::with_capacity(name.len() + 1 + value.len());
-
-                            cookie_bytes.put(name);
-                            cookie_bytes.put(&b"="[..]);
-                            cookie_bytes.put(value);
-
-                            HeaderValue::from_maybe_shared(Bytes::from(cookie_bytes)).ok()
+                            true
                         })
                     })
-            })
-            .collect()
+            });
+
+        if self.compression {
+            let cookies = iter.fold(String::new(), |mut cookies, cookie| {
+                if !cookies.is_empty() {
+                    cookies.push_str("; ");
+                }
+                cookies.push_str(cookie.name());
+                cookies.push('=');
+                cookies.push_str(cookie.value());
+                cookies
+            });
+
+            if cookies.is_empty() {
+                return Cookies::Empty;
+            }
+
+            HeaderValue::from_maybe_shared(Bytes::from(cookies))
+                .map(Cookies::Compressed)
+                .unwrap_or(Cookies::Empty)
+        } else {
+            let cookies = iter
+                .map(|cookie| {
+                    let name = cookie.name();
+                    let value = cookie.value();
+
+                    let mut cookie_str = String::with_capacity(name.len() + 1 + value.len());
+                    cookie_str.push_str(name);
+                    cookie_str.push('=');
+                    cookie_str.push_str(value);
+
+                    HeaderValue::from_maybe_shared(Bytes::from(cookie_str))
+                })
+                .filter_map(Result::ok)
+                .collect();
+
+            Cookies::Uncompressed(cookies)
+        }
     }
 }
 
 impl Default for Jar {
     fn default() -> Self {
-        Self(RwLock::new(HashMap::with_hasher(HASHER)))
+        Self::new(true)
     }
 }
 

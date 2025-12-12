@@ -24,6 +24,7 @@ impl RequestConfigValue for RequestTimeoutOptions {
 
 #[derive(Clone, Copy)]
 pub(crate) struct RequestRedirectPolicy;
+
 impl RequestConfigValue for RequestRedirectPolicy {
     type Value = Policy;
 }
@@ -49,6 +50,16 @@ impl RequestConfigValue for RequestAcceptEncoding {
 
 #[derive(Clone, Copy)]
 pub(crate) struct RequestDefaultHeaders;
+
 impl RequestConfigValue for RequestDefaultHeaders {
     type Value = bool;
+}
+
+#[cfg(feature = "cookies")]
+#[derive(Clone, Copy)]
+pub(crate) struct RequestCookieStore;
+
+#[cfg(feature = "cookies")]
+impl RequestConfigValue for RequestCookieStore {
+    type Value = std::sync::Arc<dyn crate::cookie::CookieStore>;
 }

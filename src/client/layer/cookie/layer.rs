@@ -7,19 +7,24 @@ use http::{Request, Response, Uri, header::COOKIE};
 use tower::{Layer, Service};
 
 use super::future::ResponseFuture;
-use crate::cookie::CookieStore;
+use crate::{
+    client::{ext::RequestConfig, layer::config::RequestCookieStore},
+    cookie::{CookieStore, Cookies},
+};
 
 /// Layer to apply [`CookieService`] middleware.
 #[derive(Clone)]
 pub struct CookieServiceLayer {
-    cookie_store: Option<Arc<dyn CookieStore>>,
+    store: RequestConfig<RequestCookieStore>,
 }
 
 impl CookieServiceLayer {
     /// Create a new [`CookieServiceLayer`].
     #[inline(always)]
-    pub const fn new(cookie_store: Option<Arc<dyn CookieStore + 'static>>) -> Self {
-        Self { cookie_store }
+    pub const fn new(store: Option<Arc<dyn CookieStore + 'static>>) -> Self {
+        Self {
+            store: RequestConfig::new(store),
+        }
     }
 }
 
@@ -30,7 +35,7 @@ impl<S> Layer<S> for CookieServiceLayer {
     fn layer(&self, inner: S) -> Self::Service {
         CookieService {
             inner,
-            cookie_store: self.cookie_store.clone(),
+            store: self.store.clone(),
         }
     }
 }
@@ -39,30 +44,34 @@ impl<S> Layer<S> for CookieServiceLayer {
 #[derive(Clone)]
 pub struct CookieService<S> {
     inner: S,
-    cookie_store: Option<Arc<dyn CookieStore>>,
+    store: RequestConfig<RequestCookieStore>,
 }
 
 impl<S> CookieService<S> {
-    fn inject_cookies_if_needed<B>(
+    fn inject_cookies<B>(
         &self,
         req: &mut Request<B>,
-        cookie_store: &Arc<dyn CookieStore>,
-    ) -> Option<Uri> {
+        store: Arc<dyn CookieStore>,
+    ) -> (Arc<dyn CookieStore>, Uri) {
         let uri = req.uri().clone();
         let headers = req.headers_mut();
 
-        // Skip if request already has cookies
-        if headers.contains_key(COOKIE) {
-            return Some(uri);
-        }
-
         // Only inject cookies if request doesn't already have them
-        let headers = req.headers_mut();
-        for header in cookie_store.cookies(&uri) {
-            headers.append(COOKIE, header);
+        if !headers.contains_key(COOKIE) {
+            match store.cookies(&uri) {
+                Cookies::Compressed(value) => {
+                    headers.insert(COOKIE, value);
+                }
+                Cookies::Uncompressed(values) => {
+                    for value in values {
+                        headers.append(COOKIE, value);
+                    }
+                }
+                Cookies::Empty => (),
+            }
         }
 
-        Some(uri)
+        (store, uri)
     }
 }
 
@@ -80,18 +89,15 @@ where
     }
 
     fn call(&mut self, mut req: Request<ReqBody>) -> Self::Future {
-        // Check if cookie store is configured
-        let Some(cookie_store) = &self.cookie_store else {
-            return ResponseFuture::Direct {
+        match self
+            .store
+            .fetch(req.extensions())
+            .cloned()
+            .map(|store| self.inject_cookies(&mut req, store))
+        {
+            Some((store, uri)) => ResponseFuture::Managed {
                 future: self.inner.call(req),
-            };
-        };
-
-        // Try to inject cookies and get URI for response processing
-        match self.inject_cookies_if_needed(&mut req, cookie_store) {
-            Some(uri) => ResponseFuture::Managed {
-                future: self.inner.call(req),
-                cookie_store: cookie_store.clone(),
+                store,
                 uri,
             },
             None => ResponseFuture::Direct {
