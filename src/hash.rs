@@ -73,7 +73,7 @@ where
 
         let computed_hash = NonZeroU64::new(self.hasher.hash_one(&self.value))
             .map(NonZeroU64::get)
-            .unwrap_or(u64::MIN | 1);
+            .unwrap_or(1);
 
         let _ = self.hash.compare_exchange(
             u64::MIN,

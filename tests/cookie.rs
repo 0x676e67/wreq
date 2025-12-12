@@ -1,6 +1,9 @@
 mod support;
+use std::sync::Arc;
+
+use http::header::COOKIE;
 use support::server;
-use wreq::Client;
+use wreq::{Client, cookie::Jar};
 
 #[tokio::test]
 async fn cookie_response_accessor() {
@@ -215,4 +218,89 @@ async fn cookie_store_stores_response_cookie_with_manual_cookie() {
 
     let check_url = format!("http://{}/2", server.addr());
     let _ = client.get(&check_url).send().await.unwrap();
+}
+
+#[tokio::test]
+async fn cookie_request_level_compression() {
+    let server = server::http(|req| async move {
+        match req.uri().path() {
+            "/set" => http::Response::builder()
+                .header("Set-Cookie", "cookie1=value1")
+                .header("Set-Cookie", "cookie2=value2")
+                .header("Set-Cookie", "cookie3=value3")
+                .body(Default::default())
+                .unwrap(),
+            "/default" | "/compressed" => {
+                let cookies = req
+                    .headers()
+                    .get(COOKIE)
+                    .and_then(|v| v.to_str().ok())
+                    .unwrap();
+                assert!(
+                    cookies.contains("cookie1=value1")
+                        && cookies.contains("cookie2=value2")
+                        && cookies.contains("cookie3=value3")
+                );
+                assert!(cookies.contains("; "));
+                http::Response::default()
+            }
+            "/uncompressed" => {
+                let cookies: Vec<_> = req
+                    .headers()
+                    .get_all(COOKIE)
+                    .iter()
+                    .map(|v| v.to_str().unwrap())
+                    .collect();
+
+                assert_eq!(cookies.len(), 3);
+
+                assert!(cookies.contains(&"cookie1=value1"));
+                assert!(cookies.contains(&"cookie2=value2"));
+                assert!(cookies.contains(&"cookie3=value3"));
+                http::Response::default()
+            }
+            _ => unreachable!(),
+        }
+    });
+
+    let base_url = format!("http://{}", server.addr());
+
+    // Create a jar with compression enabled (default)
+    let jar = Arc::new(Jar::default());
+
+    // Create a client with this jar
+    let client = Client::builder()
+        .cookie_provider(jar.clone())
+        .build()
+        .unwrap();
+
+    // Set cookies
+    client
+        .get(format!("{}/set", base_url))
+        .send()
+        .await
+        .unwrap();
+
+    // Request with default behavior (compressed)
+    client
+        .get(format!("{}/default", base_url))
+        .send()
+        .await
+        .unwrap();
+
+    // Request with compressed cookies
+    client
+        .get(format!("{}/compressed", base_url))
+        .cookie_provider(jar.compressed())
+        .send()
+        .await
+        .unwrap();
+
+    // Request with uncompressed cookies
+    client
+        .get(format!("{}/uncompressed", base_url))
+        .cookie_provider(jar.uncompressed())
+        .send()
+        .await
+        .unwrap();
 }
