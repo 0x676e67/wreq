@@ -65,7 +65,7 @@ pub struct Cookie<'a>(RawCookie<'a>);
 ///
 /// This is the implementation used when simply calling `cookie_store(true)`.
 /// This type is exposed to allow creating one and filling it with some
-/// existing cookies more easily, before creating a [`Client`].
+/// existing cookies more easily, before creating a [`crate::Client`].
 pub struct Jar {
     compression: bool,
     store: Arc<RwLock<HashMap<String, HashMap<String, CookieJar>>>>,

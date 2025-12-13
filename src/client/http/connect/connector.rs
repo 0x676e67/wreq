@@ -250,7 +250,7 @@ impl Service<ConnectRequest> for Connector {
 // ===== impl ConnectorService =====
 
 impl ConnectorService {
-    /// Converts a [`MaybeHttpsStream<IO>] into a Conn.
+    /// Converts a [`MaybeHttpsStream<IO>`] into a Conn.
     fn conn_from_stream<IO>(
         &self,
         io: MaybeHttpsStream<IO>,

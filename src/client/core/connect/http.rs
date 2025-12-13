@@ -334,10 +334,7 @@ impl HttpConnector {
 }
 
 impl<R> HttpConnector<R> {
-    /// Construct a new HttpConnector.
-    ///
-    /// Takes a [`Resolver`](crate::core::client::connect::dns#resolvers-are-services) to handle DNS
-    /// lookups.
+    /// Construct a new [`HttpConnector`].
     pub fn new_with_resolver(resolver: R) -> HttpConnector<R> {
         HttpConnector {
             config: Arc::new(Config {

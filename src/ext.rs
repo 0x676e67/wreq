@@ -48,16 +48,16 @@ pub(crate) trait UriExt {
     fn set_userinfo(&mut self, username: &str, password: Option<&str>);
 }
 
-/// https://url.spec.whatwg.org/#fragment-percent-encode-set
+/// See: <https://url.spec.whatwg.org/#fragment-percent-encode-set>
 pub(crate) const FRAGMENT: &AsciiSet = &CONTROLS.add(b' ').add(b'"').add(b'<').add(b'>').add(b'`');
 
-/// https://url.spec.whatwg.org/#path-percent-encode-set
+/// See: <https://url.spec.whatwg.org/#path-percent-encode-set>
 pub(crate) const PATH: &AsciiSet = &FRAGMENT.add(b'#').add(b'?').add(b'{').add(b'}');
 
-// https://url.spec.whatwg.org/#query-state
+// See: <https://url.spec.whatwg.org/#query-state>
 pub(crate) const QUERY: &AsciiSet = &CONTROLS.add(b' ').add(b'"').add(b'#').add(b'<').add(b'>');
 
-/// https://url.spec.whatwg.org/#userinfo-percent-encode-set
+/// See: <https://url.spec.whatwg.org/#userinfo-percent-encode-set>
 pub(crate) const USERINFO: &AsciiSet = &PATH
     .add(b'/')
     .add(b':')

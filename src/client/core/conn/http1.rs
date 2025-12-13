@@ -54,8 +54,6 @@ pub struct Parts<T> {
 ///
 /// In most cases, this should just be spawned into an executor, so that it
 /// can process incoming and outgoing messages, notice hangups, and the like.
-///
-/// Instances of this type are typically created via the [\`handshake\`] function
 #[must_use = "futures do nothing unless polled"]
 pub struct Connection<T, B>
 where
@@ -174,8 +172,6 @@ where
     B::Error: Into<BoxError>,
 {
     /// Enable this connection to support higher-level HTTP upgrades.
-    ///
-    /// See [the `upgrade` module](crate::core::upgrade) for more.
     pub fn with_upgrades(self) -> upgrades::UpgradeableConnection<T, B> {
         upgrades::UpgradeableConnection { inner: Some(self) }
     }
@@ -239,7 +235,6 @@ impl Builder {
     }
 
     /// Constructs a connection with the configured options and IO.
-    /// See [`client::conn`](crate::core::client::conn) for more.
     ///
     /// Note, if [`Connection`] is not `await`-ed, [`SendRequest`] will
     /// do nothing.

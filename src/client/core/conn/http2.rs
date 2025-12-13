@@ -42,8 +42,6 @@ impl<B> Clone for SendRequest<B> {
 ///
 /// In most cases, this should just be spawned into an executor, so that it
 /// can process incoming and outgoing messages, notice hangups, and the like.
-///
-/// Instances of this type are typically created via the [\`handshake\`] function
 #[must_use = "futures do nothing unless polled"]
 pub struct Connection<T, B, E>
 where
@@ -216,7 +214,6 @@ where
     }
 
     /// Constructs a connection with the configured options and IO.
-    /// See [`client::conn`](crate::core::client::conn) for more.
     ///
     /// Note, if [`Connection`] is not `await`-ed, [`SendRequest`] will
     /// do nothing.
