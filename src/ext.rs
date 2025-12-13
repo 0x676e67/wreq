@@ -113,8 +113,17 @@ impl UriExt for Uri {
         }
 
         let path = self.path();
-        let mut parts = self.clone().into_parts();
-        parts.path_and_query = PathAndQuery::try_from(format!("{path}?{query}")).ok();
+        let parts = match PathAndQuery::from_maybe_shared(Bytes::from(format!("{path}?{query}"))) {
+            Ok(path_and_query) => {
+                let mut parts = self.clone().into_parts();
+                parts.path_and_query.replace(path_and_query);
+                parts
+            }
+            Err(_err) => {
+                debug!("Failed to set query in URI: {_err}");
+                return;
+            }
+        };
 
         if let Ok(uri) = Uri::from_parts(parts) {
             *self = uri;
@@ -163,8 +172,10 @@ impl UriExt for Uri {
             }
         };
 
-        parts.authority = match Authority::from_maybe_shared(authority) {
-            Ok(authority) => Some(authority),
+        match Authority::from_maybe_shared(authority) {
+            Ok(authority) => {
+                parts.authority.replace(authority);
+            }
             Err(_err) => {
                 debug!("Failed to set userinfo in URI: {_err}");
                 return;

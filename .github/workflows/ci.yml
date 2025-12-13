@@ -111,6 +111,7 @@ jobs:
           choco install nasm -y
       - name: Build
         run: |
+          cargo update --package cmake --precise 0.1.54
           cargo build --all-features
 
   macos:
