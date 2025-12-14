@@ -8,14 +8,14 @@ use tower::{Layer, Service};
 
 use super::future::ResponseFuture;
 use crate::{
-    client::{ext::RequestConfig, layer::config::RequestCookieStore},
+    config::RequestConfig,
     cookie::{CookieStore, Cookies},
 };
 
 /// Layer to apply [`CookieService`] middleware.
 #[derive(Clone)]
 pub struct CookieServiceLayer {
-    store: RequestConfig<RequestCookieStore>,
+    store: RequestConfig<Arc<dyn CookieStore>>,
 }
 
 impl CookieServiceLayer {
@@ -44,7 +44,7 @@ impl<S> Layer<S> for CookieServiceLayer {
 #[derive(Clone)]
 pub struct CookieService<S> {
     inner: S,
-    store: RequestConfig<RequestCookieStore>,
+    store: RequestConfig<Arc<dyn CookieStore>>,
 }
 
 impl<S> CookieService<S> {

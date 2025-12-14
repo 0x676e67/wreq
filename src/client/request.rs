@@ -8,10 +8,13 @@ use std::{
 
 use http::{Extensions, Request as HttpRequest, Uri, Version, request::Parts};
 use serde::Serialize;
-#[cfg(feature = "cookies")]
-use {super::layer::config::RequestCookieStore, crate::cookie::IntoCookieStore};
 #[cfg(feature = "multipart")]
 use {super::multipart, bytes::Bytes, http::header::CONTENT_LENGTH};
+#[cfg(feature = "cookies")]
+use {
+    crate::cookie::{CookieStore, IntoCookieStore},
+    std::sync::Arc,
+};
 
 #[cfg(any(
     feature = "gzip",
@@ -19,18 +22,16 @@ use {super::multipart, bytes::Bytes, http::header::CONTENT_LENGTH};
     feature = "brotli",
     feature = "deflate",
 ))]
-use super::layer::config::RequestAcceptEncoding;
+use super::layer::decoder::AcceptEncoding;
 use super::{
     Body, EmulationFactory, Response,
-    core::{
-        ext::{RequestConfig, RequestConfigValue, RequestLayerOptions, RequestOrigHeaderMap},
-        options::RequestOptions,
-    },
+    core::options::RequestOptions,
     http::{Client, future::Pending},
-    layer::config::{RequestDefaultHeaders, RequestRedirectPolicy, RequestTimeoutOptions},
+    layer::{config::DefaultHeaders, timeout::TimeoutOptions},
 };
 use crate::{
     Error, Method, Proxy,
+    config::{RequestConfig, RequestConfigValue},
     ext::UriExt,
     header::{AUTHORIZATION, CONTENT_TYPE, HeaderMap, HeaderName, HeaderValue, OrigHeaderMap},
     redirect,
@@ -128,14 +129,14 @@ impl Request {
     /// Get the http version.
     #[inline]
     pub fn version(&self) -> Option<Version> {
-        self.config::<RequestLayerOptions>()
+        self.config::<RequestOptions>()
             .and_then(RequestOptions::enforced_version)
     }
 
     /// Get a mutable reference to the http version.
     #[inline]
     pub fn version_mut(&mut self) -> &mut Option<Version> {
-        self.config_mut::<RequestLayerOptions>()
+        self.config_mut::<RequestOptions>()
             .get_or_insert_default()
             .enforced_version_mut()
     }
@@ -269,8 +270,7 @@ impl RequestBuilder {
     /// Set the original headers for this request.
     pub fn orig_headers(mut self, orig_headers: OrigHeaderMap) -> RequestBuilder {
         if let Ok(ref mut req) = self.request {
-            req.config_mut::<RequestOrigHeaderMap>()
-                .replace(orig_headers);
+            req.config_mut::<OrigHeaderMap>().replace(orig_headers);
         }
         self
     }
@@ -280,7 +280,7 @@ impl RequestBuilder {
     /// By default, client default headers are included. Set to `false` to skip them.
     pub fn default_headers(mut self, enable: bool) -> RequestBuilder {
         if let Ok(ref mut req) = self.request {
-            req.config_mut::<RequestDefaultHeaders>().replace(enable);
+            req.config_mut::<DefaultHeaders>().replace(enable);
         }
         self
     }
@@ -362,7 +362,7 @@ impl RequestBuilder {
     /// the timeout configured using `ClientBuilder::timeout()`.
     pub fn timeout(mut self, timeout: Duration) -> RequestBuilder {
         if let Ok(ref mut req) = self.request {
-            req.config_mut::<RequestTimeoutOptions>()
+            req.config_mut::<TimeoutOptions>()
                 .get_or_insert_default()
                 .total_timeout(timeout);
         }
@@ -376,7 +376,7 @@ impl RequestBuilder {
     /// overrides the read timeout configured using `ClientBuilder::read_timeout()`.
     pub fn read_timeout(mut self, timeout: Duration) -> RequestBuilder {
         if let Ok(ref mut req) = self.request {
-            req.config_mut::<RequestTimeoutOptions>()
+            req.config_mut::<TimeoutOptions>()
                 .get_or_insert_default()
                 .read_timeout(timeout);
         }
@@ -555,7 +555,7 @@ impl RequestBuilder {
     /// Set the redirect policy for this request.
     pub fn redirect(mut self, policy: redirect::Policy) -> RequestBuilder {
         if let Ok(ref mut req) = self.request {
-            req.config_mut::<RequestRedirectPolicy>().replace(policy);
+            req.config_mut::<redirect::Policy>().replace(policy);
         }
         self
     }
@@ -568,7 +568,7 @@ impl RequestBuilder {
         C: IntoCookieStore,
     {
         if let Ok(ref mut req) = self.request {
-            req.config_mut::<RequestCookieStore>()
+            req.config_mut::<Arc<dyn CookieStore>>()
                 .replace(cookie_store.into_cookie_store());
         }
         self
@@ -579,7 +579,7 @@ impl RequestBuilder {
     #[cfg_attr(docsrs, doc(cfg(feature = "gzip")))]
     pub fn gzip(mut self, gzip: bool) -> RequestBuilder {
         if let Ok(ref mut req) = self.request {
-            req.config_mut::<RequestAcceptEncoding>()
+            req.config_mut::<AcceptEncoding>()
                 .get_or_insert_default()
                 .gzip(gzip);
         }
@@ -591,7 +591,7 @@ impl RequestBuilder {
     #[cfg_attr(docsrs, doc(cfg(feature = "brotli")))]
     pub fn brotli(mut self, brotli: bool) -> RequestBuilder {
         if let Ok(ref mut req) = self.request {
-            req.config_mut::<RequestAcceptEncoding>()
+            req.config_mut::<AcceptEncoding>()
                 .get_or_insert_default()
                 .brotli(brotli);
         }
@@ -603,7 +603,7 @@ impl RequestBuilder {
     #[cfg_attr(docsrs, doc(cfg(feature = "deflate")))]
     pub fn deflate(mut self, deflate: bool) -> RequestBuilder {
         if let Ok(ref mut req) = self.request {
-            req.config_mut::<RequestAcceptEncoding>()
+            req.config_mut::<AcceptEncoding>()
                 .get_or_insert_default()
                 .deflate(deflate);
         }
@@ -615,7 +615,7 @@ impl RequestBuilder {
     #[cfg_attr(docsrs, doc(cfg(feature = "zstd")))]
     pub fn zstd(mut self, zstd: bool) -> RequestBuilder {
         if let Ok(ref mut req) = self.request {
-            req.config_mut::<RequestAcceptEncoding>()
+            req.config_mut::<AcceptEncoding>()
                 .get_or_insert_default()
                 .zstd(zstd);
         }
@@ -625,7 +625,7 @@ impl RequestBuilder {
     /// Set the proxy for this request.
     pub fn proxy(mut self, proxy: Proxy) -> RequestBuilder {
         if let Ok(ref mut req) = self.request {
-            req.config_mut::<RequestLayerOptions>()
+            req.config_mut::<RequestOptions>()
                 .get_or_insert_default()
                 .proxy_matcher_mut()
                 .replace(proxy.into_matcher());
@@ -639,7 +639,7 @@ impl RequestBuilder {
         V: Into<Option<IpAddr>>,
     {
         if let Ok(ref mut req) = self.request {
-            req.config_mut::<RequestLayerOptions>()
+            req.config_mut::<RequestOptions>()
                 .get_or_insert_default()
                 .tcp_connect_opts_mut()
                 .set_local_address(local_address.into());
@@ -654,7 +654,7 @@ impl RequestBuilder {
         V6: Into<Option<Ipv6Addr>>,
     {
         if let Ok(ref mut req) = self.request {
-            req.config_mut::<RequestLayerOptions>()
+            req.config_mut::<RequestOptions>()
                 .get_or_insert_default()
                 .tcp_connect_opts_mut()
                 .set_local_addresses(ipv4, ipv6);
@@ -695,7 +695,7 @@ impl RequestBuilder {
         I: Into<std::borrow::Cow<'static, str>>,
     {
         if let Ok(ref mut req) = self.request {
-            req.config_mut::<RequestLayerOptions>()
+            req.config_mut::<RequestOptions>()
                 .get_or_insert_default()
                 .tcp_connect_opts_mut()
                 .set_interface(interface);
@@ -712,7 +712,7 @@ impl RequestBuilder {
             let emulation = factory.emulation();
             let (transport_opts, default_headers, orig_headers) = emulation.into_parts();
 
-            req.config_mut::<RequestLayerOptions>()
+            req.config_mut::<RequestOptions>()
                 .get_or_insert_default()
                 .transport_opts_mut()
                 .apply_transport_options(transport_opts);

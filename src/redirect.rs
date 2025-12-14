@@ -11,11 +11,8 @@ use futures_util::FutureExt;
 use http::{Extensions, HeaderMap, HeaderValue, StatusCode, Uri};
 
 use crate::{
-    client::{
-        Body,
-        ext::RequestConfig,
-        layer::{config::RequestRedirectPolicy, redirect},
-    },
+    client::{Body, layer::redirect},
+    config::{RequestConfig, RequestConfigValue},
     error::{BoxError, Error},
     ext::UriExt,
     header::{AUTHORIZATION, COOKIE, PROXY_AUTHORIZATION, REFERER, WWW_AUTHENTICATE},
@@ -92,7 +89,7 @@ struct TooManyRedirects;
 /// when appropriate.
 #[derive(Clone)]
 pub(crate) struct FollowRedirectPolicy {
-    policy: RequestConfig<RequestRedirectPolicy>,
+    policy: RequestConfig<Policy>,
     referer: bool,
     uris: Vec<Uri>,
     https_only: bool,
@@ -225,6 +222,8 @@ impl Default for Policy {
         Policy::limited(10)
     }
 }
+
+impl_request_config_value!(Policy);
 
 // ===== impl Attempt =====
 

@@ -9,13 +9,8 @@ use tower::{Layer, Service};
 
 use crate::{
     Error,
-    client::{
-        core::{
-            ext::{RequestConfig, RequestLayerOptions, RequestOrigHeaderMap},
-            options::RequestOptions,
-        },
-        layer::config::RequestDefaultHeaders,
-    },
+    client::{core::options::RequestOptions, layer::config::DefaultHeaders},
+    config::RequestConfig,
     ext::UriExt,
     header::OrigHeaderMap,
     proxy::Matcher as ProxyMatcher,
@@ -25,8 +20,8 @@ use crate::{
 struct Config {
     https_only: bool,
     headers: HeaderMap,
-    orig_headers: RequestConfig<RequestOrigHeaderMap>,
-    default_headers: RequestConfig<RequestDefaultHeaders>,
+    orig_headers: RequestConfig<OrigHeaderMap>,
+    default_headers: RequestConfig<DefaultHeaders>,
     proxies: Arc<Vec<ProxyMatcher>>,
     proxies_maybe_http_auth: bool,
     proxies_maybe_http_custom_headers: bool,
@@ -129,7 +124,7 @@ where
         self.config.orig_headers.store(req.extensions_mut());
 
         // determine the proxy matcher to use
-        match RequestConfig::<RequestLayerOptions>::get(req.extensions())
+        match RequestConfig::<RequestOptions>::get(req.extensions())
             .and_then(RequestOptions::proxy_matcher)
             .map(|proxy| http_non_tunnel(&uri, proxy))
         {

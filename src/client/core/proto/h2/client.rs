@@ -29,16 +29,19 @@ use super::{
     H2Upgraded, PipeToSendStream, SendBuf, ping,
     ping::{Ponger, Recorder},
 };
-use crate::client::core::{
-    self, Error,
-    body::{self, Incoming as IncomingBody},
-    bounds::Http2ClientConnExec,
-    dispatch::{self, Callback, SendWhen, TrySendError},
-    error::BoxError,
-    ext::{RequestConfig, RequestOrigHeaderMap},
-    proto::{Dispatched, headers},
-    rt::Time,
-    upgrade::{self, Upgraded},
+use crate::{
+    client::core::{
+        self, Error,
+        body::{self, Incoming as IncomingBody},
+        bounds::Http2ClientConnExec,
+        dispatch::{self, Callback, SendWhen, TrySendError},
+        error::BoxError,
+        proto::{Dispatched, headers},
+        rt::Time,
+        upgrade::{self, Upgraded},
+    },
+    config::RequestConfig,
+    header::OrigHeaderMap,
 };
 
 type ClientRx<B> = dispatch::Receiver<Request<B>, Response<IncomingBody>>;
@@ -565,7 +568,7 @@ where
 
                     // Sort headers if we have the original headers
                     if let Some(orig_headers) =
-                        RequestConfig::<RequestOrigHeaderMap>::remove(req.extensions_mut())
+                        RequestConfig::<OrigHeaderMap>::remove(req.extensions_mut())
                     {
                         orig_headers.sort_headers(req.headers_mut());
                     }

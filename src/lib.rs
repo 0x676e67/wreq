@@ -266,6 +266,8 @@
 
 #[macro_use]
 mod trace;
+#[macro_use]
+mod config;
 mod client;
 mod error;
 mod ext;

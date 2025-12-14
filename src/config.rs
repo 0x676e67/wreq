@@ -30,7 +30,7 @@ use http::Extensions;
 
 /// Associate a marker key type with its associated value type stored in [`http::Extensions`].
 /// Implement this trait for unit/marker types to declare the concrete `Value` used for that key.
-pub(crate) trait RequestConfigValue: Copy + Clone + 'static {
+pub(crate) trait RequestConfigValue: Clone + 'static {
     type Value: Clone + Send + Sync + 'static;
 }
 
@@ -129,16 +129,16 @@ where
     }
 }
 
-#[derive(Clone, Copy)]
-pub(crate) struct RequestLayerOptions;
-
-impl RequestConfigValue for RequestLayerOptions {
-    type Value = crate::client::core::options::RequestOptions;
-}
-
-#[derive(Clone, Copy)]
-pub(crate) struct RequestOrigHeaderMap;
-
-impl RequestConfigValue for RequestOrigHeaderMap {
-    type Value = crate::header::OrigHeaderMap;
+/// Implements [`RequestConfigValue`] for a given type.
+macro_rules! impl_request_config_value {
+    ($type:ty) => {
+        impl RequestConfigValue for $type {
+            type Value = Self;
+        }
+    };
+    ($type:ty, $value:ty) => {
+        impl RequestConfigValue for $type {
+            type Value = $value;
+        }
+    };
 }

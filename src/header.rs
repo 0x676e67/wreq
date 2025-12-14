@@ -8,6 +8,8 @@ pub use http::header::*;
 pub use name::OrigHeaderName;
 use sealed::Sealed;
 
+use crate::config::RequestConfigValue;
+
 /// Trait for types that can be converted into an [`OrigHeaderName`] (case-preserved header).
 ///
 /// This trait is sealed, so only known types can implement it.
@@ -32,6 +34,8 @@ pub trait IntoOrigHeaderName: Sealed {
 /// serialization, proxying, or reproducing requests/responses exactly as received.
 #[derive(Debug, Clone, Default)]
 pub struct OrigHeaderMap(HeaderMap<OrigHeaderName>);
+
+// ===== impl OrigHeaderMap =====
 
 impl OrigHeaderMap {
     /// Creates a new, empty [`OrigHeaderMap`].
@@ -188,6 +192,8 @@ impl IntoIterator for OrigHeaderMap {
         self.0.into_iter()
     }
 }
+
+impl_request_config_value!(OrigHeaderMap);
 
 mod name {
     use bytes::Bytes;

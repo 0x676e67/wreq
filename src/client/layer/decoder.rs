@@ -7,7 +7,7 @@ use http_body::Body;
 use tower::{Layer, Service};
 use tower_http::decompression::{self, DecompressionBody, ResponseFuture};
 
-use crate::client::{ext::RequestConfig, layer::config::RequestAcceptEncoding};
+use crate::config::{RequestConfig, RequestConfigValue};
 
 /// Configuration for supported content-encoding algorithms.
 ///
@@ -28,6 +28,47 @@ pub(crate) struct AcceptEncoding {
     #[cfg(feature = "deflate")]
     deflate: bool,
 }
+
+/// Decompresses response bodies of the underlying service.
+///
+/// This adds the `Accept-Encoding` header to requests and transparently decompresses response
+/// bodies based on the `Content-Encoding` header.
+#[derive(Clone)]
+pub struct DecompressionLayer {
+    accept: AcceptEncoding,
+}
+
+impl DecompressionLayer {
+    /// Creates a new `DecompressionLayer` with the specified `AcceptEncoding`.
+    #[inline(always)]
+    pub const fn new(accept: AcceptEncoding) -> Self {
+        Self { accept }
+    }
+}
+
+impl<S> Layer<S> for DecompressionLayer {
+    type Service = Decompression<S>;
+
+    #[inline(always)]
+    fn layer(&self, service: S) -> Self::Service {
+        let decoder = decompression::Decompression::new(service);
+        let decoder = Decompression::<S>::accept_in_place(decoder, &self.accept);
+        Decompression {
+            decoder: Some(decoder),
+        }
+    }
+}
+
+/// Decompresses response bodies of the underlying service.
+///
+/// This adds the `Accept-Encoding` header to requests and transparently decompresses response
+/// bodies based on the `Content-Encoding` header.
+#[derive(Clone)]
+pub struct Decompression<S> {
+    decoder: Option<decompression::Decompression<S>>,
+}
+
+// ===== AcceptEncoding =====
 
 impl AcceptEncoding {
     /// Enable or disable gzip decoding.
@@ -74,44 +115,9 @@ impl Default for AcceptEncoding {
     }
 }
 
-/// Decompresses response bodies of the underlying service.
-///
-/// This adds the `Accept-Encoding` header to requests and transparently decompresses response
-/// bodies based on the `Content-Encoding` header.
-#[derive(Clone)]
-pub struct DecompressionLayer {
-    accept: AcceptEncoding,
-}
+impl_request_config_value!(AcceptEncoding);
 
-impl DecompressionLayer {
-    /// Creates a new `DecompressionLayer` with the specified `AcceptEncoding`.
-    #[inline(always)]
-    pub const fn new(accept: AcceptEncoding) -> Self {
-        Self { accept }
-    }
-}
-
-impl<S> Layer<S> for DecompressionLayer {
-    type Service = Decompression<S>;
-
-    #[inline(always)]
-    fn layer(&self, service: S) -> Self::Service {
-        let decoder = decompression::Decompression::new(service);
-        let decoder = Decompression::<S>::accept_in_place(decoder, &self.accept);
-        Decompression {
-            decoder: Some(decoder),
-        }
-    }
-}
-
-/// Decompresses response bodies of the underlying service.
-///
-/// This adds the `Accept-Encoding` header to requests and transparently decompresses response
-/// bodies based on the `Content-Encoding` header.
-#[derive(Clone)]
-pub struct Decompression<S> {
-    decoder: Option<decompression::Decompression<S>>,
-}
+// ===== impl Decompression =====
 
 impl<S> Decompression<S> {
     // replaces the current decoder with a new one based on the `AcceptEncoding`.
@@ -164,7 +170,7 @@ where
     fn call(&mut self, req: Request<ReqBody>) -> Self::Future {
         // If the accept encoding is set, we need to update the decoder
         // to handle the specified encodings.
-        if let Some(accept) = RequestConfig::<RequestAcceptEncoding>::get(req.extensions()) {
+        if let Some(accept) = RequestConfig::<AcceptEncoding>::get(req.extensions()) {
             if let Some(mut decoder) = self.decoder.take() {
                 decoder = Decompression::accept_in_place(decoder, accept);
                 self.decoder = Some(decoder);

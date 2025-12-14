@@ -8,13 +8,8 @@ use tower::{Layer, Service};
 
 use super::future::{ResponseBodyTimeoutFuture, ResponseFuture};
 use crate::{
-    client::{
-        core::ext::RequestConfig,
-        layer::{
-            config::RequestTimeoutOptions,
-            timeout::{TimeoutBody, TimeoutOptions},
-        },
-    },
+    client::layer::timeout::{TimeoutBody, TimeoutOptions},
+    config::RequestConfig,
     error::BoxError,
 };
 
@@ -22,7 +17,7 @@ use crate::{
 // This layer allows you to set a total timeout and a read timeout for requests.
 #[derive(Clone)]
 pub struct TimeoutLayer {
-    timeout: RequestConfig<RequestTimeoutOptions>,
+    timeout: RequestConfig<TimeoutOptions>,
 }
 
 impl TimeoutLayer {
@@ -52,7 +47,7 @@ impl<S> Layer<S> for TimeoutLayer {
 #[derive(Clone)]
 pub struct Timeout<T> {
     inner: T,
-    timeout: RequestConfig<RequestTimeoutOptions>,
+    timeout: RequestConfig<TimeoutOptions>,
 }
 
 impl<ReqBody, ResBody, S> Service<Request<ReqBody>> for Timeout<S>
@@ -83,7 +78,7 @@ where
 // This layer allows you to set a total timeout and a read timeout for the response body.
 #[derive(Clone)]
 pub struct ResponseBodyTimeoutLayer {
-    timeout: RequestConfig<RequestTimeoutOptions>,
+    timeout: RequestConfig<TimeoutOptions>,
 }
 
 impl ResponseBodyTimeoutLayer {
@@ -113,7 +108,7 @@ impl<S> Layer<S> for ResponseBodyTimeoutLayer {
 #[derive(Clone)]
 pub struct ResponseBodyTimeout<S> {
     inner: S,
-    timeout: RequestConfig<RequestTimeoutOptions>,
+    timeout: RequestConfig<TimeoutOptions>,
 }
 
 impl<S, ReqBody, ResBody> Service<Request<ReqBody>> for ResponseBodyTimeout<S>
@@ -142,7 +137,7 @@ where
 
 #[inline]
 fn resolve_timeout_config(
-    layer_opts: &RequestConfig<RequestTimeoutOptions>,
+    layer_opts: &RequestConfig<TimeoutOptions>,
     extensions: &http::Extensions,
 ) -> (Option<Duration>, Option<Duration>) {
     let request_opts = layer_opts.fetch(extensions);

@@ -15,13 +15,14 @@ use crate::{
         self, Error,
         body::DecodedLength,
         error::Parse,
-        ext::{ReasonPhrase, RequestConfig, RequestOrigHeaderMap},
+        ext::ReasonPhrase,
         proto::{
             BodyLength, MessageHead, RequestHead, RequestLine,
             h1::{Encode, Encoder, Http1Transaction, ParseContext, ParseResult, ParsedMessage},
             headers,
         },
     },
+    config::RequestConfig,
     header::{OrigHeaderMap, OrigHeaderName},
 };
 
@@ -293,8 +294,7 @@ impl Http1Transaction for Client {
         }
         extend(dst, b"\r\n");
 
-        if let Some(orig_headers) = RequestConfig::<RequestOrigHeaderMap>::get(&msg.head.extensions)
-        {
+        if let Some(orig_headers) = RequestConfig::<OrigHeaderMap>::get(&msg.head.extensions) {
             write_headers_original_case(&mut msg.head.headers, orig_headers, dst);
         } else {
             write_headers(&msg.head.headers, dst);

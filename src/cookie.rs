@@ -13,6 +13,7 @@ use http::Uri;
 
 use crate::{
     IntoUri,
+    config::RequestConfigValue,
     error::Error,
     ext::UriExt,
     hash::{HASHER, HashMap},
@@ -70,6 +71,10 @@ pub struct Jar {
     compression: bool,
     store: Arc<RwLock<HashMap<String, HashMap<String, CookieJar>>>>,
 }
+
+// ===== impl CookieStore =====
+
+impl_request_config_value!(Arc<dyn CookieStore>);
 
 // ===== impl IntoCookieStore =====
 
