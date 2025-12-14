@@ -96,43 +96,64 @@ jobs:
       - name: Run tests (${{ matrix.feature-set }})
         run: cargo nextest run --workspace ${{ matrix.feature-set }}
 
-  windows:
-    name: Windows
-    runs-on: windows-latest
-    environment: Windows
+  build:
+    name: Build (${{ matrix.env }})
+    runs-on: ${{ matrix.os }}
+    environment: ${{ matrix.env }}
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            env: Linux
+          - os: windows-latest
+            env: Windows
+          - os: macos-latest
+            env: macOS
     steps:
       - uses: actions/checkout@v6
       - uses: actions-rs/toolchain@v1
         with:
           toolchain: stable
           override: true
-      - name: Install NASM
-        run: |
-          choco install nasm -y
+      - name: Install NASM (Windows)
+        if: matrix.os == 'windows-latest'
+        run: choco install nasm -y
+      - name: Pin cmake (Windows)
+        if: matrix.os == 'windows-latest'
+        run: cargo update --package cmake --precise 0.1.54
       - name: Build
-        run: |
-          cargo update --package cmake --precise 0.1.54
-          cargo build --all-features
+        run: cargo build --all-features
 
-  macos:
-    name: macOS
-    runs-on: macos-latest
-    environment: macOS
-    steps:
-      - uses: actions/checkout@v6
-      - uses: actions-rs/toolchain@v1
-        with:
-          toolchain: stable
-          override: true
-      - name: Build
-        run: |
-          cargo build --all-features
-
-  linux:
-    name: Linux
-    needs: [style, tests, docs, windows, macos, hack]
+  android-ndk:
+    name: Android NDK
     runs-on: ubuntu-latest
-    environment: Linux
+    environment: Android
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          override: true
+      - name: Add Android targets
+        run: rustup target add aarch64-linux-android x86_64-linux-android
+      - uses: nttld/setup-ndk@v1.5.0
+        id: setup-ndk
+        with:
+          ndk-version: r27c
+          add-to-path: true
+      - name: Build with cargo-ndk
+        env:
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+          ANDROID_NDK_ROOT: ${{ steps.setup-ndk.outputs.ndk-path }}
+        run: |
+          cargo install cargo-ndk
+          cargo ndk -t arm64-v8a -t x86_64 build --all-features
+
+  release:
+    name: Release
+    needs: [style, tests, docs, hack, build, android-ndk]
+    runs-on: ubuntu-latest
+    environment: Release
     if: startsWith(github.ref, 'refs/tags/')
     steps:
       - uses: actions/checkout@v6
