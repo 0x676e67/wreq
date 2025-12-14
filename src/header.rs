@@ -8,8 +8,6 @@ pub use http::header::*;
 pub use name::OrigHeaderName;
 use sealed::Sealed;
 
-use crate::config::RequestConfigValue;
-
 /// Trait for types that can be converted into an [`OrigHeaderName`] (case-preserved header).
 ///
 /// This trait is sealed, so only known types can implement it.

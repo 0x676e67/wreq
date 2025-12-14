@@ -1,7 +1,6 @@
 mod layer;
 
 pub use self::layer::{ConfigService, ConfigServiceLayer};
-use crate::config::RequestConfigValue;
 
 /// A marker type for the default headers configuration value.
 #[derive(Clone, Copy)]

@@ -13,7 +13,6 @@ use http::Uri;
 
 use crate::{
     IntoUri,
-    config::RequestConfigValue,
     error::Error,
     ext::UriExt,
     hash::{HASHER, HashMap},

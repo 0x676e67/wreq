@@ -6,7 +6,7 @@ use http1::Http1Options;
 use http2::Http2Options;
 
 use super::connect::TcpConnectOptions;
-use crate::{config::RequestConfigValue, proxy::Matcher, tls::TlsOptions};
+use crate::{proxy::Matcher, tls::TlsOptions};
 
 /// Per-request configuration for proxy, protocol, and transport options.
 /// Overrides client defaults for a single request.

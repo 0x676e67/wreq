@@ -12,7 +12,7 @@ use http::{Extensions, HeaderMap, HeaderValue, StatusCode, Uri};
 
 use crate::{
     client::{Body, layer::redirect},
-    config::{RequestConfig, RequestConfigValue},
+    config::RequestConfig,
     error::{BoxError, Error},
     ext::UriExt,
     header::{AUTHORIZATION, COOKIE, PROXY_AUTHORIZATION, REFERER, WWW_AUTHENTICATE},

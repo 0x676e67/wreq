@@ -132,12 +132,12 @@ where
 /// Implements [`RequestConfigValue`] for a given type.
 macro_rules! impl_request_config_value {
     ($type:ty) => {
-        impl RequestConfigValue for $type {
+        impl crate::config::RequestConfigValue for $type {
             type Value = Self;
         }
     };
     ($type:ty, $value:ty) => {
-        impl RequestConfigValue for $type {
+        impl crate::config::RequestConfigValue for $type {
             type Value = $value;
         }
     };

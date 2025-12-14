@@ -10,7 +10,6 @@ pub use self::{
     body::TimeoutBody,
     layer::{ResponseBodyTimeout, ResponseBodyTimeoutLayer, Timeout, TimeoutLayer},
 };
-use crate::config::RequestConfigValue;
 
 #[derive(Clone, Copy, Default)]
 pub struct TimeoutOptions {
