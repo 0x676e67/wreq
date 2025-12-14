@@ -438,7 +438,7 @@ impl Matcher {
         self.inner.intercept(dst)
     }
 
-    /// Return whether this matcher might provide HTTP (not s) auth.
+    /// Return whether this matcher might provide HTTP(s) auth.
     ///
     /// This is very specific. If this proxy needs auth to be part of a Forward
     /// request (instead of a tunnel), this should return true.
@@ -452,7 +452,7 @@ impl Matcher {
         self.maybe_has_http_auth
     }
 
-    /// Return whether this matcher might provide custom HTTP (not s) headers.
+    /// Return whether this matcher might provide custom HTTP(s) headers.
     ///
     /// This is very specific. If this proxy needs custom headers to be part of a Forward
     /// request (instead of a tunnel), this should return true.
@@ -472,13 +472,6 @@ impl Matcher {
     /// CONNECT tunnel. If proxy authentication is configured and required for the given URI,
     /// this function returns the appropriate header value to be set as `Proxy-Authorization`.
     /// If no authentication is needed, returns `None`.
-    /// This method applies to both HTTP and HTTPS proxies when sending HTTP requests directly
-    /// (without establishing a CONNECT tunnel). For HTTPS proxies, the HTTP request is sent
-    /// over a TLS connection to the proxy, but still uses origin-form or absolute-form as required
-    /// by the proxy protocol.
-    ///
-    /// If the request is upgraded to a tunnel (CONNECT), authentication should be handled by tunnel
-    /// logic instead.
     pub(crate) fn http_non_tunnel_basic_auth(&self, dst: &Uri) -> Option<HeaderValue> {
         if let Some(Intercepted::Proxy(proxy)) = self.intercept(dst) {
             let uri = proxy.uri();
@@ -495,13 +488,6 @@ impl Matcher {
     /// HTTP proxy without using the CONNECT tunnel. These headers can be used for custom proxy
     /// authentication schemes, tracking, or other proxy-specific requirements. If no custom
     /// headers are needed, returns `None`.
-    /// This method applies to both HTTP and HTTPS proxies when sending HTTP requests directly
-    /// (without establishing a CONNECT tunnel). For HTTPS proxies, the HTTP request is sent
-    /// over a TLS connection to the proxy, but still uses origin-form or absolute-form as required
-    /// by the proxy protocol.
-    ///
-    /// If the request is upgraded to a tunnel (CONNECT), custom headers should be handled by tunnel
-    /// logic instead.
     pub(crate) fn http_non_tunnel_custom_headers(&self, dst: &Uri) -> Option<HeaderMap> {
         if let Some(Intercepted::Proxy(proxy)) = self.intercept(dst) {
             let uri = proxy.uri();
