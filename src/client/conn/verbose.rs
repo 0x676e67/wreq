@@ -38,12 +38,8 @@ mod sealed {
 
     use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 
-    use super::super::TlsInfoFactory;
-    use crate::{
-        client::core::connect::{Connected, Connection},
-        tls::TlsInfo,
-        util::Escape,
-    };
+    use super::super::{Connected, Connection, TlsInfoFactory};
+    use crate::{tls::TlsInfo, util::Escape};
 
     pub(super) struct Wrapper<T> {
         pub(super) id: u64,

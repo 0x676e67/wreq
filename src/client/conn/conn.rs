@@ -13,11 +13,8 @@ use tokio::{
 };
 use tokio_boring2::SslStream;
 
-use super::{AsyncConnWithInfo, TlsInfoFactory};
-use crate::{
-    client::core::connect::{Connected, Connection},
-    tls::{TlsInfo, conn::MaybeHttpsStream},
-};
+use super::{AsyncConnWithInfo, Connected, Connection, TlsInfoFactory};
+use crate::tls::{TlsInfo, conn::MaybeHttpsStream};
 
 pin_project! {
     /// Note: the `is_proxy` member means *is plain text HTTP proxy*.

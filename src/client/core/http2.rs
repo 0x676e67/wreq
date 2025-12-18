@@ -7,7 +7,7 @@ pub use http2::frame::{
     SettingId, SettingsOrder, SettingsOrderBuilder, StreamDependency, StreamId,
 };
 
-use super::super::proto;
+use super::proto;
 
 // Our defaults are chosen for the "majority" case, which usually are not
 // resource constrained, and so the spec default of 64kb can be too limiting

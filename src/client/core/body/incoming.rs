@@ -11,10 +11,8 @@ use futures_util::{Stream, stream::FusedStream};
 use http::HeaderMap;
 use http_body::{Body, Frame, SizeHint};
 
-use super::{
-    super::{Error, common::watch, proto::h2::ping},
-    DecodedLength,
-};
+use super::DecodedLength;
+use crate::client::core::{self, Error, common::watch, proto::h2::ping};
 
 type BodySender = mpsc::Sender<Result<Bytes, Error>>;
 type TrailersSender = oneshot::Sender<HeaderMap>;
@@ -249,13 +247,13 @@ impl fmt::Debug for Incoming {
 
 impl Sender {
     /// Check to see if this `Sender` can send more data.
-    pub(crate) fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<super::super::Result<()>> {
+    pub(crate) fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<core::Result<()>> {
         // Check if the receiver end has tried polling for the body yet
         ready!(self.poll_want(cx)?);
         self.data_tx.poll_ready(cx).map_err(|_| Error::new_closed())
     }
 
-    fn poll_want(&mut self, cx: &mut Context<'_>) -> Poll<super::super::Result<()>> {
+    fn poll_want(&mut self, cx: &mut Context<'_>) -> Poll<core::Result<()>> {
         match self.want_rx.load(cx) {
             WANT_READY => Poll::Ready(Ok(())),
             WANT_PENDING => Poll::Pending,
@@ -265,7 +263,7 @@ impl Sender {
     }
 
     #[cfg(test)]
-    async fn ready(&mut self) -> super::super::Result<()> {
+    async fn ready(&mut self) -> core::Result<()> {
         std::future::poll_fn(|cx| self.poll_ready(cx)).await
     }
 

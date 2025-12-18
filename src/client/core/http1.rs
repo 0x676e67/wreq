@@ -109,7 +109,7 @@ impl Http1OptionsBuilder {
     #[inline]
     pub fn max_buf_size(mut self, max: usize) -> Self {
         assert!(
-            max >= super::super::proto::h1::MINIMUM_MAX_BUFFER_SIZE,
+            max >= super::proto::h1::MINIMUM_MAX_BUFFER_SIZE,
             "the max_buf_size cannot be smaller than the minimum that h1 specifies."
         );
 

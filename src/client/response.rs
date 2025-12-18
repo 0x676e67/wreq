@@ -11,7 +11,8 @@ use serde::de::DeserializeOwned;
 
 use super::{
     body::{Body, ResponseBody},
-    core::{connect::HttpInfo, ext::ReasonPhrase},
+    conn::HttpInfo,
+    core::ext::ReasonPhrase,
 };
 #[cfg(feature = "cookies")]
 use crate::cookie;

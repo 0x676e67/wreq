@@ -1,18 +1,19 @@
-pub mod http1;
-pub mod http2;
-
 use http::Version;
-use http1::Http1Options;
-use http2::Http2Options;
 
-use super::connect::TcpConnectOptions;
-use crate::{proxy::Matcher, tls::TlsOptions};
+use crate::{
+    client::{
+        conn::TcpConnectOptions,
+        core::{http1::Http1Options, http2::Http2Options},
+    },
+    proxy::Matcher,
+    tls::TlsOptions,
+};
 
 /// Per-request configuration for proxy, protocol, and transport options.
 /// Overrides client defaults for a single request.
 #[derive(Debug, Default, Clone, Hash, PartialEq, Eq)]
 #[non_exhaustive]
-pub(crate) struct RequestOptions {
+pub struct RequestOptions {
     proxy_matcher: Option<Matcher>,
     enforced_version: Option<Version>,
     tcp_connect_opts: TcpConnectOptions,
@@ -25,7 +26,7 @@ pub(crate) struct RequestOptions {
 /// for network connections made by the client.
 #[derive(Debug, Default, Clone, Hash, PartialEq, Eq)]
 #[non_exhaustive]
-pub(crate) struct TransportOptions {
+pub struct TransportOptions {
     tls_options: Option<TlsOptions>,
     http1_options: Option<Http1Options>,
     http2_options: Option<Http2Options>,

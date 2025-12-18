@@ -12,7 +12,7 @@ use tower::Service;
 
 use super::{EstablishedConn, HttpsConnector, MaybeHttpsStream};
 use crate::{
-    client::{ConnectRequest, connect::Connection},
+    client::{ConnectRequest, Connection},
     error::BoxError,
     ext::UriExt,
 };

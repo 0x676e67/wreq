@@ -13,12 +13,12 @@ use http_body::Body;
 use httparse::ParserConfig;
 use tokio::io::{AsyncRead, AsyncWrite};
 
-use super::super::{
+use crate::client::core::{
     Error, Result,
     body::Incoming as IncomingBody,
     dispatch::{self, TrySendError},
     error::BoxError,
-    options::http1::Http1Options,
+    http1::Http1Options,
     proto,
 };
 

@@ -33,11 +33,10 @@ use crate::{
     client::core::{
         self, Error,
         body::{self, Incoming as IncomingBody},
-        bounds::Http2ClientConnExec,
         dispatch::{self, Callback, SendWhen, TrySendError},
         error::BoxError,
         proto::{Dispatched, headers},
-        rt::Time,
+        rt::{Time, bounds::Http2ClientConnExec},
         upgrade::{self, Upgraded},
     },
     config::RequestConfig,

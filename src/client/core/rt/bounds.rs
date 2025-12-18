@@ -10,7 +10,7 @@ mod h2_client {
 
     use tokio::io::{AsyncRead, AsyncWrite};
 
-    use super::super::{error::BoxError, proto::h2::client::H2ClientFuture, rt::Executor};
+    use crate::client::core::{error::BoxError, proto::h2::client::H2ClientFuture, rt::Executor};
 
     /// An executor to spawn http2 futures for the client.
     ///

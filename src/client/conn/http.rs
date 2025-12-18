@@ -22,8 +22,8 @@ use tokio::{
 
 use super::{Connected, Connection};
 use crate::{
-    client::core::BoxError,
     dns::{self, GaiResolver, InternalResolve, resolve},
+    error::BoxError,
 };
 
 /// A connector for the `http` scheme.
@@ -513,6 +513,7 @@ where
     type Error = ConnectError;
     type Future = HttpConnecting<R>;
 
+    #[inline]
     fn poll_ready(&mut self, cx: &mut task::Context<'_>) -> Poll<Result<(), Self::Error>> {
         self.resolver.poll_ready(cx).map_err(ConnectError::dns)
     }

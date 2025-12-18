@@ -1,5 +1,4 @@
 pub mod client;
-pub mod connect;
 pub mod future;
 
 use std::{
@@ -24,14 +23,9 @@ use {super::layer::cookie::CookieServiceLayer, crate::cookie};
 
 pub(crate) use self::client::{
     ConnectRequest, HttpClient,
-    extra::{ConnectExtra, Identifier},
+    extra::{ConnectExtra, ConnectIdentifier},
 };
-use self::{
-    connect::{
-        BoxedConnectorLayer, BoxedConnectorService, Conn, Connector, HttpConnector, Unnameable,
-    },
-    future::Pending,
-};
+use self::future::Pending;
 #[cfg(any(
     feature = "gzip",
     feature = "zstd",
@@ -43,14 +37,15 @@ use super::layer::decoder::{AcceptEncoding, DecompressionLayer};
 use super::ws::WebSocketRequestBuilder;
 use super::{
     Body, EmulationFactory,
+    conn::{
+        BoxedConnectorLayer, BoxedConnectorService, Conn, Connector, TcpConnectOptions, Unnameable,
+    },
     core::{
         body::Incoming,
-        connect::TcpConnectOptions,
-        options::TransportOptions,
         rt::{TokioExecutor, TokioTimer},
     },
     layer::{
-        config::{ConfigService, ConfigServiceLayer},
+        config::{ConfigService, ConfigServiceLayer, TransportOptions},
         redirect::{FollowRedirect, FollowRedirectLayer},
         retry::RetryPolicy,
         timeout::{

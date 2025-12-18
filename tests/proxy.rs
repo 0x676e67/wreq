@@ -400,3 +400,39 @@ async fn tunnel_includes_user_agent() {
         "tunnel unsuccessful expected, got: {err:?}"
     );
 }
+
+#[tokio::test]
+async fn proxy_tunnel_connect_error() {
+    let client = Client::builder()
+        .cert_verification(false)
+        .no_proxy()
+        .build()
+        .unwrap();
+
+    let invalid_proxies = vec![
+        "http://invalid.proxy:8080",
+        "https://invalid.proxy:8080",
+        "socks4://invalid.proxy:8080",
+        "socks4a://invalid.proxy:8080",
+        "socks5://invalid.proxy:8080",
+        "socks5h://invalid.proxy:8080",
+    ];
+
+    let target_urls = ["https://example.com", "http://example.com"];
+
+    for proxy in invalid_proxies {
+        for url in target_urls {
+            let err = client
+                .get(url)
+                .proxy(wreq::Proxy::all(proxy).unwrap())
+                .send()
+                .await
+                .unwrap_err();
+
+            assert!(
+                err.is_proxy_connect(),
+                "proxy connect error expected, got: {err:?}"
+            );
+        }
+    }
+}

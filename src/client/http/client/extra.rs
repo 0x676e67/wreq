@@ -3,9 +3,9 @@ use std::sync::Arc;
 use http::{Uri, Version};
 
 use crate::{
-    client::core::{
-        connect::TcpConnectOptions,
-        options::{RequestOptions, TransportOptions},
+    client::{
+        conn::TcpConnectOptions,
+        layer::config::{RequestOptions, TransportOptions},
     },
     hash::HashMemo,
     proxy::Matcher as ProxyMacher,
@@ -17,7 +17,7 @@ use crate::{
 /// [`Identifier`] serves as the unique key for a connection, representing all parameters
 /// that define its identity (URI, protocol, proxy, TCP/TLS options). It is used for pooling,
 /// caching, and tracking connections throughout their entire lifecycle.
-pub(crate) type Identifier = Arc<HashMemo<ConnectExtra>>;
+pub(crate) type ConnectIdentifier = Arc<HashMemo<ConnectExtra>>;
 
 /// Metadata describing a reusable network connection.
 ///
@@ -26,25 +26,27 @@ pub(crate) type Identifier = Arc<HashMemo<ConnectExtra>>;
 #[must_use]
 #[derive(Debug, Clone, Hash, Eq, PartialEq)]
 pub(crate) struct ConnectExtra {
-    /// Target URI.
     uri: Uri,
-    /// Request options.
-    options: Option<RequestOptions>,
+    extra: Option<RequestOptions>,
 }
 
-// ===== impl ConnectExtra =====
-
 impl ConnectExtra {
-    /// Create a new [`ConnectExtra`] with the given URI and options.
+    /// Create a new [`ConnectExtra`] with the given URI and extra.
     #[inline]
-    pub fn new(uri: Uri, options: Option<RequestOptions>) -> Self {
-        Self { uri, options }
+    pub(super) fn new<T>(uri: Uri, extra: T) -> Self
+    where
+        T: Into<Option<RequestOptions>>,
+    {
+        Self {
+            uri,
+            extra: extra.into(),
+        }
     }
 
     /// Return the negotiated [`AlpnProtocol`].
     pub fn alpn_protocol(&self) -> Option<AlpnProtocol> {
         match self
-            .options
+            .extra
             .as_ref()
             .and_then(RequestOptions::enforced_version)
         {
@@ -59,15 +61,13 @@ impl ConnectExtra {
     /// Return a reference to the [`ProxyMacher`].
     #[inline]
     pub fn proxy_matcher(&self) -> Option<&ProxyMacher> {
-        self.options
-            .as_ref()
-            .and_then(RequestOptions::proxy_matcher)
+        self.extra.as_ref().and_then(RequestOptions::proxy_matcher)
     }
 
     /// Return a reference to the [`TlsOptions`].
     #[inline]
     pub fn tls_options(&self) -> Option<&TlsOptions> {
-        self.options
+        self.extra
             .as_ref()
             .map(RequestOptions::transport_opts)
             .and_then(TransportOptions::tls_options)
@@ -76,6 +76,6 @@ impl ConnectExtra {
     /// Return a reference to the [`TcpConnectOptions`].
     #[inline]
     pub fn tcp_options(&self) -> Option<&TcpConnectOptions> {
-        self.options.as_ref().map(RequestOptions::tcp_connect_opts)
+        self.extra.as_ref().map(RequestOptions::tcp_connect_opts)
     }
 }

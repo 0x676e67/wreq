@@ -25,9 +25,11 @@ use {
 use super::layer::decoder::AcceptEncoding;
 use super::{
     Body, EmulationFactory, Response,
-    core::options::RequestOptions,
     http::{Client, future::Pending},
-    layer::{config::DefaultHeaders, timeout::TimeoutOptions},
+    layer::{
+        config::{DefaultHeaders, RequestOptions},
+        timeout::TimeoutOptions,
+    },
 };
 use crate::{
     Error, Method, Proxy,

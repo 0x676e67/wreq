@@ -1,12 +1,10 @@
 use std::{
     borrow::Cow,
-    pin::Pin,
     task::{Context, Poll},
 };
 
 use bytes::Bytes;
 use http::Uri;
-use pin_project_lite::pin_project;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_socks::{
     TargetAddr,
@@ -14,14 +12,17 @@ use tokio_socks::{
 };
 use tower::Service;
 
+use super::Tunneling;
 use crate::{
     dns::{GaiResolver, InternalResolve, Name},
+    error::BoxError,
     ext::UriExt,
 };
 
 #[derive(Debug)]
-pub enum SocksError<C> {
-    Inner(C),
+pub enum SocksError {
+    ConnectFailed(BoxError),
+    DnsResolveFailure(BoxError),
     Socks(tokio_socks::Error),
     Io(std::io::Error),
     Utf8(std::str::Utf8Error),
@@ -29,38 +30,43 @@ pub enum SocksError<C> {
     MissingHost,
 }
 
-impl<C> std::fmt::Display for SocksError<C> {
+impl std::fmt::Display for SocksError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("SOCKS error: ")?;
 
         match self {
-            Self::Inner(_) => f.write_str("failed to create underlying connection"),
+            Self::ConnectFailed(e) => {
+                f.write_fmt(format_args!("failed to create underlying connection: {e}"))
+            }
             Self::Socks(e) => f.write_fmt(format_args!("error during SOCKS handshake: {e}")),
             Self::Io(e) => f.write_fmt(format_args!("io error during SOCKS handshake: {e}")),
             Self::Utf8(e) => f.write_fmt(format_args!(
                 "invalid UTF-8 during SOCKS authentication: {e}"
             )),
+            Self::DnsResolveFailure(e) => {
+                f.write_fmt(format_args!("failed to resolve DNS for SOCKS target: {e}"))
+            }
             Self::DnsFailure => f.write_str("could not resolve to acceptable address type"),
             Self::MissingHost => f.write_str("missing destination host"),
         }
     }
 }
 
-impl<C: std::fmt::Debug + std::fmt::Display> std::error::Error for SocksError<C> {}
+impl std::error::Error for SocksError {}
 
-impl<C> From<std::io::Error> for SocksError<C> {
+impl From<std::io::Error> for SocksError {
     fn from(err: std::io::Error) -> Self {
         Self::Io(err)
     }
 }
 
-impl<C> From<std::str::Utf8Error> for SocksError<C> {
+impl From<std::str::Utf8Error> for SocksError {
     fn from(err: std::str::Utf8Error) -> Self {
         Self::Utf8(err)
     }
 }
 
-impl<C> From<tokio_socks::Error> for SocksError<C> {
+impl From<tokio_socks::Error> for SocksError {
     fn from(err: tokio_socks::Error) -> Self {
         Self::Socks(err)
     }
@@ -82,33 +88,7 @@ pub enum DnsResolve {
     Remote,
 }
 
-pin_project! {
-    // Not publicly exported (so missing_docs doesn't trigger).
-    //
-    // We return this `Future` instead of the `Pin<Box<dyn Future>>` directly
-    // so that users don't rely on it fitting in a `Pin<Box<dyn Future>>` slot
-    // (and thus we can change the type in the future).
-    #[must_use = "futures do nothing unless polled"]
-    pub struct Handshaking<F, T, E> {
-        #[pin]
-        fut: BoxHandshaking<T, E>,
-        _marker: std::marker::PhantomData<F>
-    }
-}
-
-type BoxHandshaking<T, E> = Pin<Box<dyn Future<Output = Result<T, SocksError<E>>> + Send>>;
-
-impl<F, T, E> Future for Handshaking<F, T, E>
-where
-    F: Future<Output = Result<T, E>>,
-{
-    type Output = Result<T, SocksError<E>>;
-
-    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        self.project().fut.poll(cx)
-    }
-}
-
+/// A connector that establishes connections through a SOCKS proxy.
 pub struct SocksConnector<C, R = GaiResolver> {
     inner: C,
     resolver: R,
@@ -142,16 +122,19 @@ where
     }
 
     /// Sets the authentication credentials for the SOCKS proxy connection.
+    #[inline]
     pub fn set_auth(&mut self, auth: Option<(Bytes, Bytes)>) {
         self.auth = auth;
     }
 
     /// Sets whether to use the SOCKS5 protocol for the proxy connection.
+    #[inline]
     pub fn set_version(&mut self, version: Version) {
         self.version = version;
     }
 
     /// Sets whether to resolve DNS locally or let the proxy handle DNS resolution.
+    #[inline]
     pub fn set_dns_mode(&mut self, dns_resolve: DnsResolve) {
         self.dns_resolve = dns_resolve;
     }
@@ -162,16 +145,20 @@ where
     C: Service<Uri>,
     C::Future: Send + 'static,
     C::Response: AsyncRead + AsyncWrite + Unpin + Send + 'static,
-    C::Error: Send + Sync + 'static,
+    C::Error: Into<BoxError>,
     R: InternalResolve + Clone + Send + 'static,
     <R as InternalResolve>::Future: Send + 'static,
 {
     type Response = C::Response;
-    type Error = SocksError<C::Error>;
-    type Future = Handshaking<C::Future, C::Response, C::Error>;
+    type Error = SocksError;
+    type Future = Tunneling<C::Future, C::Response, Self::Error>;
 
+    #[inline]
     fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        self.inner.poll_ready(cx).map_err(SocksError::Inner)
+        self.inner
+            .poll_ready(cx)
+            .map_err(Into::into)
+            .map_err(SocksError::ConnectFailed)
     }
 
     fn call(&mut self, dst: Uri) -> Self::Future {
@@ -188,7 +175,10 @@ where
 
             // Attempt to tcp connect to the proxy server.
             // This will return a `tokio::net::TcpStream` if successful.
-            let socket = connecting.await.map_err(SocksError::Inner)?;
+            let socket = connecting
+                .await
+                .map_err(Into::into)
+                .map_err(SocksError::ConnectFailed)?;
 
             // Resolve the target address using the provided resolver.
             let target_addr = match dns_resolve {
@@ -196,9 +186,11 @@ where
                     let mut socket_addr = resolver
                         .resolve(Name::new(host.into()))
                         .await
-                        .map_err(|_| SocksError::DnsFailure)?
-                        .next()
-                        .ok_or(SocksError::DnsFailure)?;
+                        .map(|mut s| s.next())
+                        .transpose()
+                        .ok_or(SocksError::DnsFailure)?
+                        .map_err(Into::into)
+                        .map_err(SocksError::DnsResolveFailure)?;
                     socket_addr.set_port(port);
                     TargetAddr::Ip(socket_addr)
                 }
@@ -233,7 +225,7 @@ where
             }
         };
 
-        Handshaking {
+        Tunneling {
             fut: Box::pin(fut),
             _marker: Default::default(),
         }

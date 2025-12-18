@@ -72,7 +72,7 @@ pub(super) fn normalize_uri<B>(req: &mut Request<B>, is_http_connect: bool) -> R
         }
         _ => {
             debug!("Client requires absolute-form URIs, received: {:?}", uri);
-            Err(e!(UserAbsoluteUriRequired))
+            Err(Error::new_kind(ErrorKind::UserAbsoluteUriRequired))
         }
     }
 }

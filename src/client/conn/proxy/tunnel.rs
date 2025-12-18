@@ -1,5 +1,4 @@
 use std::{
-    future::Future,
     io,
     marker::{PhantomData, Unpin},
     pin::Pin,
@@ -7,11 +6,11 @@ use std::{
 };
 
 use http::{HeaderMap, HeaderValue, Uri};
-use pin_project_lite::pin_project;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tower::Service;
 
-use crate::{client::core::BoxError, ext::UriExt};
+use super::Tunneling;
+use crate::{error::BoxError, ext::UriExt};
 
 /// Tunnel Proxy via HTTP CONNECT
 ///
@@ -42,22 +41,6 @@ pub enum TunnelError {
     TunnelUnexpectedEof,
     TunnelUnsuccessful,
 }
-
-pin_project! {
-    // Not publicly exported (so missing_docs doesn't trigger).
-    //
-    // We return this `Future` instead of the `Pin<Box<dyn Future>>` directly
-    // so that users don't rely on it fitting in a `Pin<Box<dyn Future>>` slot
-    // (and thus we can change the type in the future).
-    #[must_use = "futures do nothing unless polled"]
-    pub struct Tunneling<F, T> {
-        #[pin]
-        fut: BoxTunneling<T>,
-        _marker: PhantomData<F>,
-    }
-}
-
-type BoxTunneling<T> = Pin<Box<dyn Future<Output = Result<T, TunnelError>> + Send>>;
 
 impl<C> TunnelConnector<C> {
     /// Create a new tunnel connector.
@@ -127,8 +110,9 @@ where
 {
     type Response = C::Response;
     type Error = TunnelError;
-    type Future = Tunneling<C::Future, C::Response>;
+    type Future = Tunneling<C::Future, C::Response, Self::Error>;
 
+    #[inline]
     fn poll_ready(&mut self, cx: &mut task::Context<'_>) -> Poll<Result<(), Self::Error>> {
         self.inner
             .poll_ready(cx)
@@ -144,29 +128,18 @@ where
             fut: Box::pin(async move {
                 let conn = connecting
                     .await
-                    .map_err(|e| TunnelError::ConnectFailed(e.into()))?;
-                let port = dst.port_or_default();
+                    .map_err(Into::into)
+                    .map_err(TunnelError::ConnectFailed)?;
                 tunnel(
                     conn,
                     dst.host().ok_or(TunnelError::MissingHost)?,
-                    port,
+                    dst.port_or_default(),
                     &headers,
                 )
                 .await
             }),
             _marker: PhantomData,
         }
-    }
-}
-
-impl<F, T, E> Future for Tunneling<F, T>
-where
-    F: Future<Output = Result<T, E>>,
-{
-    type Output = Result<T, TunnelError>;
-
-    fn poll(self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<Self::Output> {
-        self.project().fut.poll(cx)
     }
 }
 
@@ -283,48 +256,5 @@ impl std::error::Error for TunnelError {
             TunnelError::ConnectFailed(e) => Some(&**e),
             _ => None,
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use tokio::{
-        io::{AsyncReadExt, AsyncWriteExt},
-        net::TcpListener,
-    };
-    use tower::Service;
-
-    use super::TunnelConnector;
-    use crate::client::core::connect::HttpConnector;
-
-    #[tokio::test]
-    async fn test_tunnel_works() {
-        let tcp = TcpListener::bind("127.0.0.1:0").await.expect("bind");
-        let addr = tcp.local_addr().expect("local_addr");
-
-        let proxy_dst = format!("http://{addr}").parse().expect("uri");
-        let mut connector = TunnelConnector::new(proxy_dst, HttpConnector::new());
-        let t1 = tokio::spawn(async move {
-            let _conn = connector
-                .call("https://hyper.rs".parse().unwrap())
-                .await
-                .expect("tunnel");
-        });
-
-        let t2 = tokio::spawn(async move {
-            let (mut io, _) = tcp.accept().await.expect("accept");
-            let mut buf = [0u8; 64];
-            let n = io.read(&mut buf).await.expect("read 1");
-            assert_eq!(
-                &buf[..n],
-                b"CONNECT hyper.rs:443 HTTP/1.1\r\nHost: hyper.rs:443\r\n\r\n"
-            );
-            io.write_all(b"HTTP/1.1 200 OK\r\n\r\n")
-                .await
-                .expect("write 1");
-        });
-
-        t1.await.expect("task 1");
-        t2.await.expect("task 2");
     }
 }

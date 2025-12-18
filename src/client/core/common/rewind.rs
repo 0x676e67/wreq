@@ -15,14 +15,6 @@ pub(crate) struct Rewind<T> {
 }
 
 impl<T> Rewind<T> {
-    #[cfg(test)]
-    pub(crate) fn new(io: T) -> Self {
-        Rewind {
-            pre: None,
-            inner: io,
-        }
-    }
-
     pub(crate) fn new_buffered(io: T, buf: Bytes) -> Self {
         Rewind {
             pre: Some(buf),
@@ -111,7 +103,7 @@ mod tests {
 
         let mock = tokio_test::io::Builder::new().read(&underlying).build();
 
-        let mut stream = Rewind::new(mock);
+        let mut stream = Rewind::new_buffered(mock, Bytes::new());
 
         // Read off some bytes, ensure we filled o1
         let mut buf = [0; 2];
@@ -133,7 +125,7 @@ mod tests {
 
         let mock = tokio_test::io::Builder::new().read(&underlying).build();
 
-        let mut stream = Rewind::new(mock);
+        let mut stream = Rewind::new_buffered(mock, Bytes::new());
 
         let mut buf = [0; 5];
         stream.read_exact(&mut buf).await.expect("read1");

@@ -1,8 +1,8 @@
 use http::HeaderMap;
 
 use super::{
-    core::options::{TransportOptions, http2::Http2Options},
-    http1::Http1Options,
+    core::{http1::Http1Options, http2::Http2Options},
+    layer::config::TransportOptions,
 };
 use crate::{header::OrigHeaderMap, tls::TlsOptions};
 

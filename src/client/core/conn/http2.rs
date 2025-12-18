@@ -16,11 +16,10 @@ use crate::{
     client::core::{
         Result,
         body::Incoming as IncomingBody,
-        bounds::Http2ClientConnExec,
         dispatch::{self, TrySendError},
         error::{BoxError, Error},
         proto::{self, h2::ping},
-        rt::{ArcTimer, Time, Timer},
+        rt::{ArcTimer, Time, Timer, bounds::Http2ClientConnExec},
     },
     http2::Http2Options,
 };

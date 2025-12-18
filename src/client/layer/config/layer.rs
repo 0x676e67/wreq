@@ -9,7 +9,7 @@ use tower::{Layer, Service};
 
 use crate::{
     Error,
-    client::{core::options::RequestOptions, layer::config::DefaultHeaders},
+    client::layer::config::{DefaultHeaders, RequestOptions},
     config::RequestConfig,
     ext::UriExt,
     header::OrigHeaderMap,

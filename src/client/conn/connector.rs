@@ -17,21 +17,19 @@ use tower::{
     util::{BoxCloneSyncService, MapRequestLayer},
 };
 
+#[cfg(unix)]
+use super::uds::UnixConnector;
 use super::{
-    super::{BoxedConnectorLayer, BoxedConnectorService, HttpConnector},
-    AsyncConnWithInfo, Connection, TlsInfoFactory, Unnameable,
+    AsyncConnWithInfo, BoxedConnectorLayer, BoxedConnectorService, Connection, HttpConnector,
+    TlsInfoFactory, Unnameable,
     conn::{Conn, TlsConn},
+    proxy,
     verbose::Verbose,
 };
-#[cfg(unix)]
-use crate::client::core::connect::UnixConnector;
 use crate::{
-    client::{
-        core::connect::proxy,
-        http::{ConnectExtra, ConnectRequest},
-    },
+    client::http::{ConnectExtra, ConnectRequest},
     dns::DynResolver,
-    error::{BoxError, TimedOut, map_timeout_to_connector_error},
+    error::{BoxError, ProxyConnect, TimedOut, map_timeout_to_connector_error},
     ext::UriExt,
     proxy::{Intercepted, Matcher as ProxyMatcher},
     tls::{
@@ -413,9 +411,9 @@ impl ConnectorService {
                 } {
                     trace!("connecting via SOCKS proxy: {:?}", proxy_uri);
 
-                    // Build a SOCKS connector, configuring authentication, version, and DNS
-                    // resolution mode.
-                    let mut socks = {
+                    // Connect to the proxy and establish the SOCKS connection.
+                    let conn = {
+                        // Build a SOCKS connector.
                         let mut socks = SocksConnector::new_with_resolver(
                             proxy_uri,
                             self.http.clone(),
@@ -424,14 +422,11 @@ impl ConnectorService {
                         socks.set_auth(proxy.raw_auth());
                         socks.set_version(version);
                         socks.set_dns_mode(dns_resolve);
-                        socks
+                        socks.call(uri).await?
                     };
 
-                    // Build an HTTPS connector for TLS if needed.
+                    // Build an HTTPS connector.
                     let mut connector = self.build_https_connector(req.extra())?;
-
-                    // Connect to the proxy and establish the SOCKS connection.
-                    let conn = socks.call(uri).await?;
 
                     // Wrap the established SOCKS connection with TLS if needed.
                     let io = connector.call(EstablishedConn::new(conn, req)).await?;
@@ -448,11 +443,11 @@ impl ConnectorService {
                 if uri.is_https() {
                     trace!("tunneling over HTTP(s) proxy: {:?}", proxy_uri);
 
-                    // Build an HTTPS connector for the underlying connection to the proxy.
+                    // Build an HTTPS connector.
                     let mut connector = self.build_https_connector(req.extra())?;
 
                     // Build a tunnel connector to establish the CONNECT tunnel.
-                    let mut tunnel = {
+                    let tunneled = {
                         let mut tunnel =
                             proxy::tunnel::TunnelConnector::new(proxy_uri, connector.clone());
 
@@ -466,11 +461,9 @@ impl ConnectorService {
                             tunnel = tunnel.with_headers(headers.clone());
                         }
 
-                        tunnel
+                        // Connect to the proxy and establish the tunnel.
+                        tunnel.call(uri).await?
                     };
-
-                    // Connect to the proxy and establish the tunnel.
-                    let tunneled = tunnel.call(uri).await?;
 
                     // Wrap the established tunneled stream with TLS.
                     let io = connector.call(EstablishedConn::new(tunneled, req)).await?;
@@ -484,7 +477,10 @@ impl ConnectorService {
                 }
 
                 *req.uri_mut() = proxy_uri;
-                self.connect_direct(req, true).await
+                self.connect_direct(req, true)
+                    .await
+                    .map_err(ProxyConnect)
+                    .map_err(Into::into)
             }
             #[cfg(unix)]
             Intercepted::Unix(unix_socket) => {
@@ -500,17 +496,18 @@ impl ConnectorService {
                     // Use a dummy HTTP URI so the HTTPS connector works over the Unix socket.
                     let proxy_uri = Uri::from_static("http://localhost");
 
-                    // Create a tunnel connector using the Unix socket and the HTTPS connector.
-                    let mut tunnel =
-                        proxy::tunnel::TunnelConnector::new(proxy_uri, connector.clone());
-
                     // The tunnel connector will first establish a CONNECT tunnel,
                     // then perform the TLS handshake over the tunneled stream.
-                    let tunneled = tunnel.call(uri).await?;
+                    let tunneled = {
+                        // Create a tunnel connector using the Unix socket and the HTTPS connector.
+                        let mut tunnel =
+                            proxy::tunnel::TunnelConnector::new(proxy_uri, connector.clone());
+
+                        tunnel.call(uri).await?
+                    };
 
                     // Wrap the established tunneled stream with TLS.
-                    let established_conn = EstablishedConn::new(tunneled, req);
-                    let io = connector.call(established_conn).await?;
+                    let io = connector.call(EstablishedConn::new(tunneled, req)).await?;
 
                     return self.conn_from_nested_stream(io, is_proxy);
                 }
@@ -552,9 +549,7 @@ impl ConnectorService {
 
         // Apply timeout if configured.
         if let Some(to) = timeout {
-            tokio::time::timeout(to, fut)
-                .await
-                .map_err(|_| BoxError::from(TimedOut))?
+            tokio::time::timeout(to, fut).await.map_err(|_| TimedOut)?
         } else {
             fut.await
         }

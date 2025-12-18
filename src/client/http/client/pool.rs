@@ -16,11 +16,9 @@ use std::{
 use schnellru::ByLength;
 use tokio::sync::oneshot;
 
+use super::exec::{self, Exec};
 use crate::{
-    client::core::{
-        common::exec::{self, Exec},
-        rt::{ArcTimer, Executor, Timer},
-    },
+    client::core::rt::{ArcTimer, Executor, Timer},
     hash::{HASHER, HashMap, HashSet, LruMap},
     sync::Mutex,
 };

@@ -193,6 +193,25 @@ impl Error {
         false
     }
 
+    /// Returns true if the error is related to proxy connect
+    pub fn is_proxy_connect(&self) -> bool {
+        use crate::client::Error;
+
+        let mut source = self.source();
+
+        while let Some(err) = source {
+            if let Some(err) = err.downcast_ref::<Error>() {
+                if err.is_proxy_connect() {
+                    return true;
+                }
+            }
+
+            source = err.source();
+        }
+
+        false
+    }
+
     /// Returns true if the error is related to a connection reset.
     pub fn is_connection_reset(&self) -> bool {
         let mut source = self.source();
@@ -250,7 +269,7 @@ impl Error {
 #[inline]
 pub(crate) fn map_timeout_to_connector_error(error: BoxError) -> BoxError {
     if error.is::<tower::timeout::error::Elapsed>() {
-        Box::new(TimedOut) as BoxError
+        Box::new(TimedOut)
     } else {
         error
     }
@@ -262,7 +281,7 @@ pub(crate) fn map_timeout_to_connector_error(error: BoxError) -> BoxError {
 #[inline]
 pub(crate) fn map_timeout_to_request_error(error: BoxError) -> BoxError {
     if error.is::<tower::timeout::error::Elapsed>() {
-        Box::new(Error::request(TimedOut)) as BoxError
+        Box::new(Error::request(TimedOut))
     } else {
         error
     }
@@ -353,6 +372,14 @@ pub(crate) enum Kind {
 #[derive(Debug)]
 pub(crate) struct TimedOut;
 
+#[derive(Debug)]
+pub(crate) struct BadScheme;
+
+#[derive(Debug)]
+pub(crate) struct ProxyConnect(pub(crate) BoxError);
+
+// ==== impl TimedOut ====
+
 impl fmt::Display for TimedOut {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         f.write_str("operation timed out")
@@ -361,8 +388,7 @@ impl fmt::Display for TimedOut {
 
 impl StdError for TimedOut {}
 
-#[derive(Debug)]
-pub(crate) struct BadScheme;
+// ==== impl BadScheme ====
 
 impl fmt::Display for BadScheme {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -371,6 +397,20 @@ impl fmt::Display for BadScheme {
 }
 
 impl StdError for BadScheme {}
+
+// ==== impl ProxyConnect ====
+
+impl fmt::Display for ProxyConnect {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "proxy connect error: {}", self.0)
+    }
+}
+
+impl StdError for ProxyConnect {
+    fn source(&self) -> Option<&(dyn StdError + 'static)> {
+        Some(&*self.0)
+    }
+}
 
 #[cfg(test)]
 mod tests {

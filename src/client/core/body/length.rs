@@ -1,6 +1,6 @@
 use std::fmt;
 
-use super::super::error::Parse;
+use crate::client::core::error::Parse;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) struct DecodedLength(u64);

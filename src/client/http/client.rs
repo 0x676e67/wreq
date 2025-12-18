@@ -1,6 +1,8 @@
 #[macro_use]
 pub mod error;
+mod exec;
 pub mod extra;
+mod lazy;
 mod pool;
 mod util;
 
@@ -23,19 +25,24 @@ use tower::util::Oneshot;
 
 use self::{
     error::{ClientConnectError, Error, ErrorKind, TrySendError},
-    extra::{ConnectExtra, Identifier},
+    exec::Exec,
+    extra::{ConnectExtra, ConnectIdentifier},
+    lazy::{Started as Lazy, lazy},
 };
 use crate::{
-    client::core::{
-        BoxError,
-        body::Incoming,
-        common::{Exec, Lazy, lazy},
-        conn::{self, TrySendError as ConnTrySendError},
-        connect::{Connected, Connection},
-        options::{RequestOptions, http1::Http1Options, http2::Http2Options},
-        rt::{ArcTimer, Executor, Timer},
+    client::{
+        conn::{Connected, Connection},
+        core::{
+            body::Incoming,
+            conn::{self, TrySendError as ConnTrySendError},
+            http1::Http1Options,
+            http2::Http2Options,
+            rt::{ArcTimer, Executor, Timer},
+        },
+        layer::config::RequestOptions,
     },
     config::RequestConfig,
+    error::BoxError,
     hash::{HASHER, HashMemo},
     tls::AlpnProtocol,
 };
@@ -51,20 +58,24 @@ type BoxSendFuture = Pin<Box<dyn Future<Output = ()> + Send>>;
 #[derive(Clone)]
 pub struct ConnectRequest {
     uri: Uri,
-    extra: Arc<HashMemo<ConnectExtra>>,
+    identifier: ConnectIdentifier,
 }
 
 // ===== impl ConnectRequest =====
 
 impl ConnectRequest {
-    /// Create a new [`ConnectRequest`] with the given URI and options.
+    /// Create a new [`ConnectRequest`] with the given URI and identifier.
     #[inline]
-    fn new(uri: Uri, options: Option<RequestOptions>) -> ConnectRequest {
-        let extra = ConnectExtra::new(uri.clone(), options);
-        let extra = HashMemo::with_hasher(extra, HASHER);
+    fn new<T>(uri: Uri, identifier: T) -> ConnectRequest
+    where
+        T: Into<Option<RequestOptions>>,
+    {
         ConnectRequest {
-            uri,
-            extra: Arc::new(extra),
+            uri: uri.clone(),
+            identifier: Arc::new(HashMemo::with_hasher(
+                ConnectExtra::new(uri, identifier),
+                HASHER,
+            )),
         }
     }
 
@@ -80,16 +91,16 @@ impl ConnectRequest {
         &mut self.uri
     }
 
-    /// Returns a unique [`Identifier`].
+    /// Returns a unique [`ConnectIdentifier`].
     #[inline]
-    pub(crate) fn identify(&self) -> Identifier {
-        self.extra.clone()
+    pub(crate) fn identify(&self) -> ConnectIdentifier {
+        self.identifier.clone()
     }
 
     /// Returns the [`ConnectExtra`] connection extra.
     #[inline]
     pub(crate) fn extra(&self) -> &ConnectExtra {
-        self.extra.as_ref().as_ref()
+        self.identifier.as_ref().as_ref()
     }
 }
 
@@ -104,7 +115,7 @@ pub struct HttpClient<C, B> {
     exec: Exec,
     h1_builder: conn::http1::Builder,
     h2_builder: conn::http2::Builder<Exec>,
-    pool: pool::Pool<PoolClient<B>, Identifier>,
+    pool: pool::Pool<PoolClient<B>, ConnectIdentifier>,
 }
 
 #[derive(Clone, Copy)]
@@ -143,15 +154,17 @@ where
         match req.version() {
             Version::HTTP_10 if is_http_connect => {
                 warn!("CONNECT is not allowed for HTTP/1.0");
-                return ResponseFuture::new(futures_util::future::err(e!(
-                    UserUnsupportedRequestMethod
+                return ResponseFuture::new(futures_util::future::err(Error::new_kind(
+                    ErrorKind::UserUnsupportedRequestMethod,
                 )));
             }
             Version::HTTP_10 | Version::HTTP_11 | Version::HTTP_2 => {}
             // completely unsupported HTTP version (like HTTP/0.9)!
             _unsupported => {
                 warn!("Request has unsupported version: {:?}", _unsupported);
-                return ResponseFuture::new(futures_util::future::err(e!(UserUnsupportedVersion)));
+                return ResponseFuture::new(futures_util::future::err(Error::new_kind(
+                    ErrorKind::UserUnsupportedVersion,
+                )));
             }
         };
 
@@ -232,7 +245,8 @@ where
             if req.version() == Version::HTTP_2 {
                 warn!("Connection is HTTP/1, but request requires HTTP/2");
                 return Err(TrySendError::Nope(
-                    e!(UserUnsupportedVersion).with_connect_info(pooled.conn_info.clone()),
+                    Error::new_kind(ErrorKind::UserUnsupportedVersion)
+                        .with_connect_info(pooled.conn_info.clone()),
                 ));
             }
 
@@ -253,7 +267,7 @@ where
             // CONNECT always sends authority-form, so check it first...
             if req.method() == Method::CONNECT {
                 util::authority_form(req.uri_mut());
-            } else if pooled.conn_info.is_proxied {
+            } else if pooled.conn_info.is_proxied() {
                 util::absolute_form(req.uri_mut());
             } else {
                 util::origin_form(req.uri_mut());
@@ -268,13 +282,13 @@ where
                 return if let Some(req) = err.take_message() {
                     Err(TrySendError::Retryable {
                         connection_reused: pooled.is_reused(),
-                        error: e!(Canceled, err.into_error())
+                        error: Error::new(ErrorKind::Canceled, err.into_error())
                             .with_connect_info(pooled.conn_info.clone()),
                         req,
                     })
                 } else {
                     Err(TrySendError::Nope(
-                        e!(SendRequest, err.into_error())
+                        Error::new(ErrorKind::SendRequest, err.into_error())
                             .with_connect_info(pooled.conn_info.clone()),
                     ))
                 };
@@ -307,14 +321,14 @@ where
     async fn connection_for(
         &self,
         req: ConnectRequest,
-    ) -> Result<pool::Pooled<PoolClient<B>, Identifier>, Error> {
+    ) -> Result<pool::Pooled<PoolClient<B>, ConnectIdentifier>, Error> {
         loop {
             match self.one_connection_for(req.clone()).await {
                 Ok(pooled) => return Ok(pooled),
                 Err(ClientConnectError::Normal(err)) => return Err(err),
                 Err(ClientConnectError::CheckoutIsClosed(reason)) => {
                     if !self.config.retry_canceled_requests {
-                        return Err(e!(Connect, reason));
+                        return Err(Error::new(ErrorKind::Connect, reason));
                     }
 
                     trace!(
@@ -330,7 +344,7 @@ where
     async fn one_connection_for(
         &self,
         req: ConnectRequest,
-    ) -> Result<pool::Pooled<PoolClient<B>, Identifier>, ClientConnectError> {
+    ) -> Result<pool::Pooled<PoolClient<B>, ConnectIdentifier>, ClientConnectError> {
         // Return a single connection if pooling is not enabled
         if !self.pool.is_enabled() {
             return self
@@ -396,7 +410,10 @@ where
                 if err.is_canceled() {
                     connecting.await.map_err(ClientConnectError::Normal)
                 } else {
-                    Err(ClientConnectError::Normal(e!(Connect, err)))
+                    Err(ClientConnectError::Normal(Error::new(
+                        ErrorKind::Connect,
+                        err,
+                    )))
                 }
             }
             Either::Right((Err(err), checkout)) => {
@@ -405,7 +422,7 @@ where
                         if is_ver_h2 && err.is_canceled() {
                             ClientConnectError::CheckoutIsClosed(err)
                         } else {
-                            ClientConnectError::Normal(e!(Connect, err))
+                            ClientConnectError::Normal(Error::new(ErrorKind::Connect, err))
                         }
                     })
                 } else {
@@ -418,7 +435,7 @@ where
     fn connect_to(
         &self,
         req: ConnectRequest,
-    ) -> impl Lazy<Output = Result<pool::Pooled<PoolClient<B>, Identifier>, Error>>
+    ) -> impl Lazy<Output = Result<pool::Pooled<PoolClient<B>, ConnectIdentifier>, Error>>
     + Send
     + Unpin
     + 'static {
@@ -442,14 +459,14 @@ where
             let connecting = match pool.connecting(req.identify(), ver) {
                 Some(lock) => lock,
                 None => {
-                    let canceled = e!(Canceled);
+                    let canceled = Error::new_kind(ErrorKind::Canceled);
                     // HTTP/2 connection in progress.
                     return Either::Right(futures_util::future::err(canceled));
                 }
             };
             Either::Left(
                 Oneshot::new(connector, req)
-                    .map_err(|src| e!(Connect, src))
+                    .map_err(|src| Error::new(ErrorKind::Connect, src))
                     .and_then(move |io| {
                         let connected = io.connected();
                         // If ALPN is h2 and we aren't http2_only already,
@@ -464,7 +481,7 @@ where
                                 None => {
                                     // Another connection has already upgraded,
                                     // the pool checkout should finish up for us.
-                                    let canceled = e!(Canceled, "ALPN upgraded to HTTP/2");
+                                    let canceled =Error::new(ErrorKind::Canceled, "ALPN upgraded to HTTP/2");
                                     return Either::Right(futures_util::future::err(canceled));
                                 }
                             }
@@ -691,7 +708,7 @@ impl<B> PoolClient<B> {
     }
 
     fn is_poisoned(&self) -> bool {
-        self.conn_info.poisoned.poisoned()
+        self.conn_info.poisoned()
     }
 
     fn is_ready(&self) -> bool {
