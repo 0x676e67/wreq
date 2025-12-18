@@ -5,8 +5,8 @@ use std::{
 };
 
 use bytes::Bytes;
-use http_body::Body as HttpBody;
-use http_body_util::{Either, combinators::BoxBody};
+use http_body::{Body as HttpBody, SizeHint};
+use http_body_util::{BodyExt, Either, combinators::BoxBody};
 use pin_project_lite::pin_project;
 #[cfg(feature = "stream")]
 use {tokio::fs::File, tokio_util::io::ReaderStream};
@@ -14,8 +14,15 @@ use {tokio::fs::File, tokio_util::io::ReaderStream};
 use crate::error::{BoxError, Error};
 
 /// An request body.
-pub struct Body {
-    inner: Either<Bytes, BoxBody<Bytes, BoxError>>,
+pub struct Body(Either<Bytes, BoxBody<Bytes, BoxError>>);
+
+pin_project! {
+    /// We can't use `map_frame()` because that loses the hint data (for good reason).
+    /// But we aren't transforming the data.
+    struct IntoBytesBody<B> {
+        #[pin]
+        inner: B,
+    }
 }
 
 // ===== impl Body =====
@@ -25,7 +32,7 @@ impl Body {
     ///
     /// `None` is returned, if the underlying data is a stream.
     pub fn as_bytes(&self) -> Option<&[u8]> {
-        match &self.inner {
+        match &self.0 {
             Either::Left(bytes) => Some(bytes.as_ref()),
             Either::Right(..) => None,
         }
@@ -70,7 +77,7 @@ impl Body {
     {
         use futures_util::TryStreamExt;
         use http_body::Frame;
-        use http_body_util::{BodyExt, StreamBody};
+        use http_body_util::StreamBody;
         use sync_wrapper::SyncStream;
 
         let body = StreamBody::new(SyncStream::new(
@@ -79,9 +86,7 @@ impl Body {
                 .map_ok(Frame::data)
                 .map_err(Into::into),
         ));
-        Body {
-            inner: Either::Right(body.boxed()),
-        }
+        Body(Either::Right(body.boxed()))
     }
 
     /// Wrap a [`HttpBody`] in a box inside `Body`.
@@ -103,13 +108,9 @@ impl Body {
         B::Data: Into<Bytes>,
         B::Error: Into<BoxError>,
     {
-        use http_body_util::BodyExt;
-
-        let boxed = IntoBytesBody { inner }.map_err(Into::into).boxed();
-
-        Body {
-            inner: Either::Right(boxed),
-        }
+        Body(Either::Right(
+            IntoBytesBody { inner }.map_err(Into::into).boxed(),
+        ))
     }
 
     #[inline]
@@ -119,23 +120,21 @@ impl Body {
 
     #[inline]
     pub(crate) fn reusable(chunk: Bytes) -> Body {
-        Body {
-            inner: Either::Left(chunk),
-        }
-    }
-
-    pub(crate) fn try_clone(&self) -> Option<Body> {
-        match self.inner {
-            Either::Left(ref chunk) => Some(Body::reusable(chunk.clone())),
-            Either::Right { .. } => None,
-        }
+        Body(Either::Left(chunk))
     }
 
     #[cfg(feature = "multipart")]
     pub(crate) fn content_length(&self) -> Option<u64> {
-        match self.inner {
+        match self.0 {
             Either::Left(ref bytes) => Some(bytes.len() as u64),
             Either::Right(ref body) => body.size_hint().exact(),
+        }
+    }
+
+    pub(crate) fn try_clone(&self) -> Option<Body> {
+        match self.0 {
+            Either::Left(ref chunk) => Some(Body::reusable(chunk.clone())),
+            Either::Right { .. } => None,
         }
     }
 }
@@ -150,9 +149,7 @@ impl Default for Body {
 impl From<BoxBody<Bytes, BoxError>> for Body {
     #[inline]
     fn from(body: BoxBody<Bytes, BoxError>) -> Self {
-        Self {
-            inner: Either::Right(body),
-        }
+        Self(Either::Right(body))
     }
 }
 
@@ -214,7 +211,7 @@ impl HttpBody for Body {
         mut self: Pin<&mut Self>,
         cx: &mut Context,
     ) -> Poll<Option<Result<http_body::Frame<Self::Data>, Self::Error>>> {
-        match self.inner {
+        match self.0 {
             Either::Left(ref mut bytes) => {
                 let out = bytes.split_off(0);
                 if out.is_empty() {
@@ -234,15 +231,17 @@ impl HttpBody for Body {
         }
     }
 
-    fn size_hint(&self) -> http_body::SizeHint {
-        match self.inner {
-            Either::Left(ref bytes) => http_body::SizeHint::with_exact(bytes.len() as u64),
+    #[inline]
+    fn size_hint(&self) -> SizeHint {
+        match self.0 {
+            Either::Left(ref bytes) => SizeHint::with_exact(bytes.len() as u64),
             Either::Right(ref body) => body.size_hint(),
         }
     }
 
+    #[inline]
     fn is_end_stream(&self) -> bool {
-        match self.inner {
+        match self.0 {
             Either::Left(ref bytes) => bytes.is_empty(),
             Either::Right(ref body) => body.is_end_stream(),
         }
@@ -251,14 +250,6 @@ impl HttpBody for Body {
 
 // ===== impl IntoBytesBody =====
 
-pin_project! {
-    struct IntoBytesBody<B> {
-        #[pin]
-        inner: B,
-    }
-}
-// We can't use `map_frame()` because that loses the hint data (for good reason).
-// But we aren't transforming the data.
 impl<B> HttpBody for IntoBytesBody<B>
 where
     B: HttpBody,
@@ -266,6 +257,7 @@ where
 {
     type Data = Bytes;
     type Error = B::Error;
+
     fn poll_frame(
         self: Pin<&mut Self>,
         cx: &mut Context,
@@ -276,10 +268,12 @@ where
             None => Poll::Ready(None),
         }
     }
+
     #[inline]
-    fn size_hint(&self) -> http_body::SizeHint {
+    fn size_hint(&self) -> SizeHint {
         self.inner.size_hint()
     }
+
     #[inline]
     fn is_end_stream(&self) -> bool {
         self.inner.is_end_stream()
