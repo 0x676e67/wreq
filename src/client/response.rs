@@ -4,31 +4,34 @@ use bytes::Bytes;
 #[cfg(feature = "charset")]
 use encoding_rs::{Encoding, UTF_8};
 use http::{HeaderMap, StatusCode, Uri, Version};
+use http_body::Body as HttpBody;
 #[cfg(feature = "charset")]
 use mime::Mime;
 #[cfg(feature = "json")]
 use serde::de::DeserializeOwned;
 
-use super::{
-    body::{Body, ResponseBody},
-    conn::HttpInfo,
-    core::ext::ReasonPhrase,
-};
+use super::{conn::HttpInfo, core::ext::ReasonPhrase};
 #[cfg(feature = "cookies")]
 use crate::cookie;
-use crate::{Error, Upgraded, ext::RequestUri};
+use crate::{Body, Error, Upgraded, error::BoxError, ext::RequestUri};
 
 /// A Response to a submitted `Request`.
 pub struct Response {
-    res: http::Response<Body>,
     uri: Uri,
+    res: http::Response<Body>,
 }
 
 impl Response {
-    pub(super) fn new(res: http::Response<ResponseBody>, uri: Uri) -> Response {
-        let (parts, body) = res.into_parts();
-        let res = http::Response::from_parts(parts, Body::wrap(body));
-        Response { res, uri }
+    pub(super) fn new<B>(res: http::Response<B>, uri: Uri) -> Response
+    where
+        B: HttpBody + Send + Sync + 'static,
+        B::Data: Into<Bytes>,
+        B::Error: Into<BoxError>,
+    {
+        Response {
+            uri,
+            res: res.map(Body::wrap),
+        }
     }
 
     /// Get the final `Uri` of this `Response`.
@@ -493,16 +496,12 @@ impl fmt::Debug for Response {
 // to use `http::Response`, not `wreq::Response`.
 impl<T: Into<Body>> From<http::Response<T>> for Response {
     fn from(r: http::Response<T>) -> Response {
-        let (mut parts, body) = r.into_parts();
-        let body: Body = body.into();
-        let uri = parts
-            .extensions
+        let mut res = r.map(Into::into);
+        let uri = res
+            .extensions_mut()
             .remove::<RequestUri>()
             .unwrap_or_else(|| RequestUri(Uri::from_static("http://no.url.provided.local")));
-        Response {
-            res: http::Response::from_parts(parts, body),
-            uri: uri.0,
-        }
+        Response { res, uri: uri.0 }
     }
 }
 
@@ -510,11 +509,9 @@ impl<T: Into<Body>> From<http::Response<T>> for Response {
 // It's supposed to be the inverse of the conversion above.
 impl From<Response> for http::Response<Body> {
     fn from(r: Response) -> http::Response<Body> {
-        let (parts, body) = r.res.into_parts();
-        let body = Body::wrap(body);
-        let mut response = http::Response::from_parts(parts, body);
-        response.extensions_mut().insert(RequestUri(r.uri));
-        response
+        let mut res = r.res.map(Body::wrap);
+        res.extensions_mut().insert(RequestUri(r.uri));
+        res
     }
 }
 

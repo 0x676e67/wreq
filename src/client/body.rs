@@ -6,7 +6,7 @@ use std::{
 
 use bytes::Bytes;
 use http_body::Body as HttpBody;
-use http_body_util::combinators::BoxBody;
+use http_body_util::{Either, combinators::BoxBody};
 use pin_project_lite::pin_project;
 #[cfg(feature = "stream")]
 use {tokio::fs::File, tokio_util::io::ReaderStream};
@@ -15,12 +15,7 @@ use crate::error::{BoxError, Error};
 
 /// An request body.
 pub struct Body {
-    inner: Inner,
-}
-
-enum Inner {
-    Reusable(Bytes),
-    Streaming(BoxBody<Bytes, BoxError>),
+    inner: Either<Bytes, BoxBody<Bytes, BoxError>>,
 }
 
 // ===== impl Body =====
@@ -31,8 +26,8 @@ impl Body {
     /// `None` is returned, if the underlying data is a stream.
     pub fn as_bytes(&self) -> Option<&[u8]> {
         match &self.inner {
-            Inner::Reusable(bytes) => Some(bytes.as_ref()),
-            Inner::Streaming(..) => None,
+            Either::Left(bytes) => Some(bytes.as_ref()),
+            Either::Right(..) => None,
         }
     }
 
@@ -75,25 +70,17 @@ impl Body {
     {
         use futures_util::TryStreamExt;
         use http_body::Frame;
-        use http_body_util::StreamBody;
+        use http_body_util::{BodyExt, StreamBody};
+        use sync_wrapper::SyncStream;
 
-        let body = http_body_util::BodyExt::boxed(StreamBody::new(sync_wrapper::SyncStream::new(
+        let body = StreamBody::new(SyncStream::new(
             stream
-                .map_ok(|d| Frame::data(Bytes::from(d)))
+                .map_ok(Bytes::from)
+                .map_ok(Frame::data)
                 .map_err(Into::into),
-        )));
+        ));
         Body {
-            inner: Inner::Streaming(body),
-        }
-    }
-
-    pub(crate) fn empty() -> Body {
-        Body::reusable(Bytes::new())
-    }
-
-    pub(crate) fn reusable(chunk: Bytes) -> Body {
-        Body {
-            inner: Inner::Reusable(chunk),
+            inner: Either::Right(body.boxed()),
         }
     }
 
@@ -121,22 +108,34 @@ impl Body {
         let boxed = IntoBytesBody { inner }.map_err(Into::into).boxed();
 
         Body {
-            inner: Inner::Streaming(boxed),
+            inner: Either::Right(boxed),
+        }
+    }
+
+    #[inline]
+    pub(crate) fn empty() -> Body {
+        Body::reusable(Bytes::new())
+    }
+
+    #[inline]
+    pub(crate) fn reusable(chunk: Bytes) -> Body {
+        Body {
+            inner: Either::Left(chunk),
         }
     }
 
     pub(crate) fn try_clone(&self) -> Option<Body> {
         match self.inner {
-            Inner::Reusable(ref chunk) => Some(Body::reusable(chunk.clone())),
-            Inner::Streaming { .. } => None,
+            Either::Left(ref chunk) => Some(Body::reusable(chunk.clone())),
+            Either::Right { .. } => None,
         }
     }
 
     #[cfg(feature = "multipart")]
     pub(crate) fn content_length(&self) -> Option<u64> {
         match self.inner {
-            Inner::Reusable(ref bytes) => Some(bytes.len() as u64),
-            Inner::Streaming(ref body) => body.size_hint().exact(),
+            Either::Left(ref bytes) => Some(bytes.len() as u64),
+            Either::Right(ref body) => body.size_hint().exact(),
         }
     }
 }
@@ -152,7 +151,7 @@ impl From<BoxBody<Bytes, BoxError>> for Body {
     #[inline]
     fn from(body: BoxBody<Bytes, BoxError>) -> Self {
         Self {
-            inner: Inner::Streaming(body),
+            inner: Either::Right(body),
         }
     }
 }
@@ -216,7 +215,7 @@ impl HttpBody for Body {
         cx: &mut Context,
     ) -> Poll<Option<Result<http_body::Frame<Self::Data>, Self::Error>>> {
         match self.inner {
-            Inner::Reusable(ref mut bytes) => {
+            Either::Left(ref mut bytes) => {
                 let out = bytes.split_off(0);
                 if out.is_empty() {
                     Poll::Ready(None)
@@ -224,7 +223,7 @@ impl HttpBody for Body {
                     Poll::Ready(Some(Ok(http_body::Frame::data(out))))
                 }
             }
-            Inner::Streaming(ref mut body) => {
+            Either::Right(ref mut body) => {
                 Poll::Ready(ready!(Pin::new(body).poll_frame(cx)).map(|opt_chunk| {
                     opt_chunk.map_err(|err| match err.downcast::<Error>() {
                         Ok(err) => *err,
@@ -237,29 +236,17 @@ impl HttpBody for Body {
 
     fn size_hint(&self) -> http_body::SizeHint {
         match self.inner {
-            Inner::Reusable(ref bytes) => http_body::SizeHint::with_exact(bytes.len() as u64),
-            Inner::Streaming(ref body) => body.size_hint(),
+            Either::Left(ref bytes) => http_body::SizeHint::with_exact(bytes.len() as u64),
+            Either::Right(ref body) => body.size_hint(),
         }
     }
 
     fn is_end_stream(&self) -> bool {
         match self.inner {
-            Inner::Reusable(ref bytes) => bytes.is_empty(),
-            Inner::Streaming(ref body) => body.is_end_stream(),
+            Either::Left(ref bytes) => bytes.is_empty(),
+            Either::Right(ref body) => body.is_end_stream(),
         }
     }
-}
-
-pub(crate) type ResponseBody = http_body_util::combinators::BoxBody<Bytes, BoxError>;
-
-pub(crate) fn boxed<B>(body: B) -> ResponseBody
-where
-    B: HttpBody<Data = Bytes> + Send + Sync + 'static,
-    B::Error: Into<BoxError>,
-{
-    use http_body_util::BodyExt;
-
-    body.map_err(Into::into).boxed()
 }
 
 // ===== impl IntoBytesBody =====

@@ -8,7 +8,7 @@ use pin_project_lite::pin_project;
 use tower::util::Oneshot;
 
 use super::{Body, ClientRef, Response};
-use crate::{Error, client::body, ext::RequestUri};
+use crate::{Error, ext::RequestUri};
 
 type ResponseFuture = Oneshot<ClientRef, Request<Body>>;
 
@@ -64,7 +64,7 @@ impl Future for Pending {
                 if let Some(redirect_uri) = res.extensions_mut().remove::<RequestUri>() {
                     *uri = redirect_uri.0;
                 }
-                Ok(Response::new(res.map(body::boxed), uri.clone()))
+                Ok(Response::new(res, uri.clone()))
             }
             Err(err) => {
                 let mut err = err
