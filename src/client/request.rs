@@ -6,7 +6,7 @@ use std::{
     time::Duration,
 };
 
-use http::{Extensions, Request as HttpRequest, Uri, Version, request::Parts};
+use http::{Extensions, Request as HttpRequest, Uri, Version};
 use serde::Serialize;
 #[cfg(feature = "multipart")]
 use {super::multipart, bytes::Bytes, http::header::CONTENT_LENGTH};
@@ -41,22 +41,7 @@ use crate::{
 
 /// A request which can be executed with `Client::execute()`.
 #[derive(Debug)]
-pub struct Request {
-    /// The request's method
-    method: Method,
-
-    /// The request's URI
-    uri: Uri,
-
-    /// The request's headers
-    headers: HeaderMap<HeaderValue>,
-
-    /// The request's extensions
-    extensions: Extensions,
-
-    /// The request's body
-    body: Option<Body>,
-}
+pub struct Request(http::Request<Option<Body>>);
 
 /// A builder to construct the properties of a `Request`.
 ///
@@ -71,61 +56,58 @@ impl Request {
     /// Constructs a new request.
     #[inline]
     pub fn new(method: Method, uri: Uri) -> Self {
-        Request {
-            method,
-            uri,
-            headers: HeaderMap::new(),
-            extensions: Extensions::new(),
-            body: None,
-        }
+        let mut request = http::Request::new(None);
+        *request.method_mut() = method;
+        *request.uri_mut() = uri;
+        Request(request)
     }
 
     /// Get the method.
     #[inline]
     pub fn method(&self) -> &Method {
-        &self.method
+        self.0.method()
     }
 
     /// Get a mutable reference to the method.
     #[inline]
     pub fn method_mut(&mut self) -> &mut Method {
-        &mut self.method
+        self.0.method_mut()
     }
 
     /// Get the uri.
     #[inline]
     pub fn uri(&self) -> &Uri {
-        &self.uri
+        self.0.uri()
     }
 
     /// Get a mutable reference to the uri.
     #[inline]
     pub fn uri_mut(&mut self) -> &mut Uri {
-        &mut self.uri
+        self.0.uri_mut()
     }
 
     /// Get the headers.
     #[inline]
     pub fn headers(&self) -> &HeaderMap {
-        &self.headers
+        self.0.headers()
     }
 
     /// Get a mutable reference to the headers.
     #[inline]
     pub fn headers_mut(&mut self) -> &mut HeaderMap {
-        &mut self.headers
+        self.0.headers_mut()
     }
 
     /// Get the body.
     #[inline]
     pub fn body(&self) -> Option<&Body> {
-        self.body.as_ref()
+        self.0.body().as_ref()
     }
 
     /// Get a mutable reference to the body.
     #[inline]
     pub fn body_mut(&mut self) -> &mut Option<Body> {
-        &mut self.body
+        self.0.body_mut()
     }
 
     /// Get the http version.
@@ -162,13 +144,13 @@ impl Request {
     /// Get the extensions.
     #[inline]
     pub(crate) fn extensions(&self) -> &Extensions {
-        &self.extensions
+        self.0.extensions()
     }
 
     /// Get a mutable reference to the extensions.
     #[inline]
     pub(crate) fn extensions_mut(&mut self) -> &mut Extensions {
-        &mut self.extensions
+        self.0.extensions_mut()
     }
 
     #[inline]
@@ -176,7 +158,7 @@ impl Request {
     where
         T: RequestConfigValue,
     {
-        RequestConfig::<T>::get(&self.extensions)
+        RequestConfig::<T>::get(self.extensions())
     }
 
     #[inline]
@@ -184,7 +166,7 @@ impl Request {
     where
         T: RequestConfigValue,
     {
-        RequestConfig::<T>::get_mut(&mut self.extensions)
+        RequestConfig::<T>::get_mut(self.extensions_mut())
     }
 }
 
@@ -196,7 +178,7 @@ impl RequestBuilder {
             .request
             .as_mut()
             .ok()
-            .and_then(|req| extract_authority(&mut req.uri));
+            .and_then(|req| extract_authority(req.uri_mut()));
 
         if let Some((username, password)) = auth {
             builder.basic_auth(username, password)
@@ -825,42 +807,15 @@ impl<T> From<HttpRequest<T>> for Request
 where
     T: Into<Body>,
 {
+    #[inline]
     fn from(req: HttpRequest<T>) -> Request {
-        let (parts, body) = req.into_parts();
-        let Parts {
-            method,
-            uri,
-            headers,
-            extensions,
-            ..
-        } = parts;
-
-        Request {
-            method,
-            uri,
-            headers,
-            extensions,
-            body: Some(body.into()),
-        }
+        Request(req.map(Into::into).map(Some))
     }
 }
 
 impl From<Request> for HttpRequest<Body> {
+    #[inline]
     fn from(req: Request) -> HttpRequest<Body> {
-        let Request {
-            method,
-            uri,
-            headers,
-            extensions,
-            body,
-            ..
-        } = req;
-
-        let mut req = HttpRequest::new(body.unwrap_or_else(Body::empty));
-        *req.method_mut() = method;
-        *req.uri_mut() = uri;
-        *req.headers_mut() = headers;
-        *req.extensions_mut() = extensions;
-        req
+        req.0.map(|body| body.unwrap_or_else(Body::empty))
     }
 }
