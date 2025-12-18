@@ -17,7 +17,7 @@ use pin_project_lite::pin_project;
 use tower::{Service, util::Oneshot};
 
 use super::{Action, Attempt, BodyRepr, Policy};
-use crate::{Error, error::BoxError, ext::RequestUri};
+use crate::{Error, error::BoxError, ext::RequestUri, into_uri::IntoUriSealed};
 
 macro_rules! ready_ok {
     ($expr:expr, $ret:expr) => {
@@ -201,7 +201,7 @@ fn resolve_uri(relative: &str, base: &Uri) -> Option<Uri> {
     let relative = UriReferenceStr::new(relative).ok()?;
     let base = UriAbsoluteString::try_from(base.to_string()).ok()?;
     let uri = relative.resolve_against(&base).to_string();
-    Uri::try_from(uri).ok()
+    uri.into_uri().ok()
 }
 
 /// Handle the response based on its status code
