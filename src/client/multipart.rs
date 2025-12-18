@@ -4,6 +4,7 @@ use std::{borrow::Cow, fmt, pin::Pin};
 
 use bytes::Bytes;
 use futures_util::{Stream, StreamExt, future, stream};
+use http_body_util::BodyExt;
 use mime_guess::Mime;
 use percent_encoding::{self, AsciiSet, NON_ALPHANUMERIC};
 #[cfg(feature = "stream")]
@@ -194,7 +195,7 @@ impl Form {
         // then append form data followed by terminating CRLF
         boundary
             .chain(header)
-            .chain(part.value.into_stream())
+            .chain(part.value.into_data_stream())
             .chain(stream::once(future::ready(Ok("\r\n".into()))))
     }
 
@@ -608,7 +609,7 @@ mod tests {
             .enable_all()
             .build()
             .expect("new rt");
-        let body = form.stream().into_stream();
+        let body = form.stream().into_data_stream();
         let s = body.map_ok(|try_c| try_c.to_vec()).try_concat();
 
         let out = rt.block_on(s);
@@ -661,7 +662,7 @@ mod tests {
             .enable_all()
             .build()
             .expect("new rt");
-        let body = form.stream().into_stream();
+        let body = form.stream().into_data_stream();
         let s = body.map(|try_c| try_c.map(|r| r.to_vec())).try_concat();
 
         let out = rt.block_on(s).unwrap();
@@ -693,7 +694,7 @@ mod tests {
             .enable_all()
             .build()
             .expect("new rt");
-        let body = form.stream().into_stream();
+        let body = form.stream().into_data_stream();
         let s = body.map(|try_c| try_c.map(|r| r.to_vec())).try_concat();
 
         let out = rt.block_on(s).unwrap();

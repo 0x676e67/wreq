@@ -23,10 +23,6 @@ enum Inner {
     Streaming(BoxBody<Bytes, BoxError>),
 }
 
-/// Converts any `impl Body` into a `impl Stream` of just its DATA frames.
-#[cfg(any(feature = "stream", feature = "multipart"))]
-pub(crate) struct DataStream<B>(pub(crate) B);
-
 // ===== impl Body =====
 
 impl Body {
@@ -134,11 +130,6 @@ impl Body {
             Inner::Reusable(ref chunk) => Some(Body::reusable(chunk.clone())),
             Inner::Streaming { .. } => None,
         }
-    }
-
-    #[cfg(feature = "multipart")]
-    pub(crate) fn into_stream(self) -> DataStream<Body> {
-        DataStream(self)
     }
 
     #[cfg(feature = "multipart")]
@@ -269,33 +260,6 @@ where
     use http_body_util::BodyExt;
 
     body.map_err(Into::into).boxed()
-}
-
-// ===== impl DataStream =====
-
-#[cfg(any(feature = "stream", feature = "multipart",))]
-impl<B> futures_util::Stream for DataStream<B>
-where
-    B: HttpBody<Data = Bytes> + Unpin,
-{
-    type Item = Result<Bytes, B::Error>;
-
-    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
-        loop {
-            return match ready!(Pin::new(&mut self.0).poll_frame(cx)) {
-                Some(Ok(frame)) => {
-                    // skip non-data frames
-                    if let Ok(buf) = frame.into_data() {
-                        Poll::Ready(Some(Ok(buf)))
-                    } else {
-                        continue;
-                    }
-                }
-                Some(Err(err)) => Poll::Ready(Some(Err(err))),
-                None => Poll::Ready(None),
-            };
-        }
-    }
 }
 
 // ===== impl IntoBytesBody =====
