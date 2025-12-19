@@ -53,8 +53,7 @@ pub struct RequestBuilder {
 }
 
 impl Request {
-    /// Constructs a new request.
-    #[inline]
+    /// Constructs a new [`Request`].
     pub fn new(method: Method, uri: Uri) -> Self {
         let mut request = http::Request::new(None);
         *request.method_mut() = method;
@@ -141,13 +140,11 @@ impl Request {
         Some(req)
     }
 
-    /// Get the extensions.
     #[inline]
     pub(crate) fn extensions(&self) -> &Extensions {
         self.0.extensions()
     }
 
-    /// Get a mutable reference to the extensions.
     #[inline]
     pub(crate) fn extensions_mut(&mut self) -> &mut Extensions {
         self.0.extensions_mut()
@@ -695,12 +692,10 @@ impl RequestBuilder {
         if let Ok(ref mut req) = self.request {
             let emulation = factory.emulation();
             let (transport_opts, default_headers, orig_headers) = emulation.into_parts();
-
             req.config_mut::<RequestOptions>()
                 .get_or_insert_default()
                 .transport_opts_mut()
                 .apply_transport_options(transport_opts);
-
             self = self.headers(default_headers).orig_headers(orig_headers);
         }
 
@@ -803,10 +798,7 @@ fn extract_authority(uri: &mut Uri) -> Option<(String, Option<String>)> {
     None
 }
 
-impl<T> From<HttpRequest<T>> for Request
-where
-    T: Into<Body>,
-{
+impl<T: Into<Body>> From<HttpRequest<T>> for Request {
     #[inline]
     fn from(req: HttpRequest<T>) -> Request {
         Request(req.map(Into::into).map(Some))

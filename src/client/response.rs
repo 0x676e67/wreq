@@ -3,8 +3,11 @@ use std::{fmt, net::SocketAddr};
 use bytes::Bytes;
 #[cfg(feature = "charset")]
 use encoding_rs::{Encoding, UTF_8};
+#[cfg(feature = "stream")]
+use futures_util::Stream;
 use http::{HeaderMap, StatusCode, Uri, Version};
 use http_body::Body as HttpBody;
+use http_body_util::{BodyExt, Collected};
 #[cfg(feature = "charset")]
 use mime::Mime;
 #[cfg(feature = "json")]
@@ -15,7 +18,7 @@ use super::{conn::HttpInfo, core::ext::ReasonPhrase};
 use crate::cookie;
 use crate::{Body, Error, Upgraded, error::BoxError, ext::RequestUri};
 
-/// A Response to a submitted `Request`.
+/// A Response to a submitted [`crate::Request`].
 pub struct Response {
     uri: Uri,
     res: http::Response<Body>,
@@ -34,37 +37,37 @@ impl Response {
         }
     }
 
-    /// Get the final `Uri` of this `Response`.
+    /// Get the final [`Uri`] of this [`Response`].
     #[inline]
     pub fn uri(&self) -> &Uri {
         &self.uri
     }
 
-    /// Get the `StatusCode` of this `Response`.
+    /// Get the [`StatusCode`] of this [`Response`].
     #[inline]
     pub fn status(&self) -> StatusCode {
         self.res.status()
     }
 
-    /// Get the HTTP `Version` of this `Response`.
+    /// Get the HTTP [`Version`] of this [`Response`].
     #[inline]
     pub fn version(&self) -> Version {
         self.res.version()
     }
 
-    /// Get the `Headers` of this `Response`.
+    /// Get the [`HeaderMap`] of this [`Response`].
     #[inline]
     pub fn headers(&self) -> &HeaderMap {
         self.res.headers()
     }
 
-    /// Get a mutable reference to the `Headers` of this `Response`.
+    /// Get a mutable reference to the [`HeaderMap`] of this [`Response`].
     #[inline]
     pub fn headers_mut(&mut self) -> &mut HeaderMap {
         self.res.headers_mut()
     }
 
-    /// Get the content length of the response, if it is known.
+    /// Get the content length of the [`Response`], if it is known.
     ///
     /// This value does not directly represents the value of the `Content-Length`
     /// header, but rather the size of the response's body. To read the header's
@@ -77,17 +80,16 @@ impl Response {
     ///   length).
     #[inline]
     pub fn content_length(&self) -> Option<u64> {
-        http_body::Body::size_hint(self.res.body()).exact()
+        HttpBody::size_hint(self.res.body()).exact()
     }
 
-    /// Retrieve the cookies contained in the response.
+    /// Retrieve the cookies contained in the [`Response`].
     ///
     /// Note that invalid 'Set-Cookie' headers will be ignored.
     ///
     /// # Optional
     ///
     /// This requires the optional `cookies` feature to be enabled.
-    #[inline]
     #[cfg(feature = "cookies")]
     pub fn cookies(&self) -> impl Iterator<Item = cookie::Cookie<'_>> {
         self.res
@@ -98,8 +100,7 @@ impl Response {
             .filter_map(Result::ok)
     }
 
-    /// Get the local address used to get this `Response`.
-    #[inline]
+    /// Get the local address used to get this [`Response`].
     pub fn local_addr(&self) -> Option<SocketAddr> {
         self.res
             .extensions()
@@ -107,8 +108,7 @@ impl Response {
             .map(HttpInfo::local_addr)
     }
 
-    /// Get the remote address used to get this `Response`.
-    #[inline]
+    /// Get the remote address used to get this [`Response`].
     pub fn remote_addr(&self) -> Option<SocketAddr> {
         self.res
             .extensions()
@@ -147,7 +147,6 @@ impl Response {
     /// # Ok(())
     /// # }
     /// ```
-    #[inline]
     pub async fn text(self) -> crate::Result<String> {
         #[cfg(feature = "charset")]
         {
@@ -212,7 +211,6 @@ impl Response {
         let encoding = Encoding::for_label(encoding_name.as_bytes()).unwrap_or(UTF_8);
 
         let full = self.bytes().await?;
-
         let (text, _, _) = encoding.decode(&full);
         Ok(text.into_owned())
     }
@@ -264,11 +262,10 @@ impl Response {
     #[cfg_attr(docsrs, doc(cfg(feature = "json")))]
     pub async fn json<T: DeserializeOwned>(self) -> crate::Result<T> {
         let full = self.bytes().await?;
-
         serde_json::from_slice(&full).map_err(Error::decode)
     }
 
-    /// Get the full response body as `Bytes`.
+    /// Get the full response body as [`Bytes`].
     ///
     /// # Example
     ///
@@ -286,11 +283,9 @@ impl Response {
     /// # }
     /// ```
     pub async fn bytes(self) -> crate::Result<Bytes> {
-        use http_body_util::BodyExt;
-
         BodyExt::collect(self.res.into_body())
             .await
-            .map(|buf| buf.to_bytes())
+            .map(Collected::<Bytes>::to_bytes)
     }
 
     /// Stream a chunk of the response body.
@@ -310,8 +305,6 @@ impl Response {
     /// # }
     /// ```
     pub async fn chunk(&mut self) -> crate::Result<Option<Bytes>> {
-        use http_body_util::BodyExt;
-
         // loop to ignore unrecognized frames
         loop {
             if let Some(res) = self.res.body_mut().frame().await {
@@ -319,14 +312,13 @@ impl Response {
                 if let Ok(buf) = frame.into_data() {
                     return Ok(Some(buf));
                 }
-                // else continue
             } else {
                 return Ok(None);
             }
         }
     }
 
-    /// Convert the response into a `Stream` of `Bytes` from the body.
+    /// Convert the response into a [`Stream`] of [`Bytes`] from the body.
     ///
     /// # Example
     ///
@@ -352,7 +344,7 @@ impl Response {
     /// This requires the optional `stream` feature to be enabled.
     #[cfg(feature = "stream")]
     #[cfg_attr(docsrs, doc(cfg(feature = "stream")))]
-    pub fn bytes_stream(self) -> impl futures_util::Stream<Item = crate::Result<Bytes>> {
+    pub fn bytes_stream(self) -> impl Stream<Item = crate::Result<Bytes>> {
         http_body_util::BodyDataStream::new(self.res.into_body())
     }
 
