@@ -10,19 +10,12 @@ use tower::retry::{
     Policy,
     budget::{Budget, TpsBudget},
 };
-#[cfg(any(
-    feature = "gzip",
-    feature = "zstd",
-    feature = "brotli",
-    feature = "deflate",
-))]
-use tower_http::decompression::DecompressionBody;
 
 pub(crate) use self::{
     classify::{Action, Classifier, ClassifyFn, ReqRep},
     scope::{ScopeFn, Scoped},
 };
-use super::{super::core::body::Incoming, timeout::TimeoutBody};
+use super::super::core::body::Incoming;
 use crate::{Body, error::BoxError, retry};
 
 /// A retry policy for HTTP requests.
@@ -53,21 +46,7 @@ impl RetryPolicy {
 
 type Req = Request<Body>;
 
-#[cfg(not(any(
-    feature = "gzip",
-    feature = "zstd",
-    feature = "brotli",
-    feature = "deflate",
-)))]
-type Res = Response<TimeoutBody<Incoming>>;
-
-#[cfg(any(
-    feature = "gzip",
-    feature = "zstd",
-    feature = "brotli",
-    feature = "deflate",
-))]
-type Res = Response<TimeoutBody<DecompressionBody<Incoming>>>;
+type Res = Response<Incoming>;
 
 impl Policy<Req, Res, BoxError> for RetryPolicy {
     type Future = std::future::Ready<()>;
