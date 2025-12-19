@@ -118,20 +118,20 @@ type ResponseBody = TimeoutBody<Incoming>;
 /// The complete HTTP client service stack with all middleware layers.
 type GenericClientService = Timeout<
     ConfigService<
-        Retry<
-            RetryPolicy,
-            FollowRedirect<
-                ResponseBodyTimeout<
-                    Decompression<
+        ResponseBodyTimeout<
+            Decompression<
+                Retry<
+                    RetryPolicy,
+                    FollowRedirect<
                         CookieService<
                             MapErr<
                                 HttpClient<Connector, Body>,
                                 fn(client::error::Error) -> BoxError,
                             >,
                         >,
+                        FollowRedirectPolicy,
                     >,
                 >,
-                FollowRedirectPolicy,
             >,
         >,
     >,
@@ -575,6 +575,16 @@ impl ClientBuilder {
                 .layer(CookieServiceLayer::new(config.cookie_store))
                 .service(service);
 
+            let service = ServiceBuilder::new()
+                .layer(RetryLayer::new(RetryPolicy::new(config.retry_policy)))
+                .layer({
+                    let policy = FollowRedirectPolicy::new(config.redirect_policy)
+                        .with_referer(config.referer)
+                        .with_https_only(config.https_only);
+                    FollowRedirectLayer::with_policy(policy)
+                })
+                .service(service);
+
             #[cfg(any(
                 feature = "gzip",
                 feature = "zstd",
@@ -592,13 +602,6 @@ impl ClientBuilder {
                     config.orig_headers,
                     proxies,
                 ))
-                .layer(RetryLayer::new(RetryPolicy::new(config.retry_policy)))
-                .layer({
-                    let policy = FollowRedirectPolicy::new(config.redirect_policy)
-                        .with_referer(config.referer)
-                        .with_https_only(config.https_only);
-                    FollowRedirectLayer::with_policy(policy)
-                })
                 .layer(ResponseBodyTimeoutLayer::new(config.timeout_options))
                 .service(service);
 
@@ -609,12 +612,12 @@ impl ClientBuilder {
 
                 ClientRef::Left(service)
             } else {
-                let service = config.layers.into_iter().fold(
-                    BoxCloneSyncService::new(service),
-                    |client_service, layer| {
-                        ServiceBuilder::new().layer(layer).service(client_service)
-                    },
-                );
+                let service = config
+                    .layers
+                    .into_iter()
+                    .fold(BoxCloneSyncService::new(service), |service, layer| {
+                        ServiceBuilder::new().layer(layer).service(service)
+                    });
 
                 let service = ServiceBuilder::new()
                     .layer(TimeoutLayer::new(config.timeout_options))
@@ -778,7 +781,7 @@ impl ClientBuilder {
     #[cfg(feature = "gzip")]
     #[cfg_attr(docsrs, doc(cfg(feature = "gzip")))]
     pub fn gzip(mut self, enable: bool) -> ClientBuilder {
-        self.config.accept_encoding.gzip(enable);
+        self.config.accept_encoding.gzip = enable;
         self
     }
 
@@ -802,7 +805,7 @@ impl ClientBuilder {
     #[cfg(feature = "brotli")]
     #[cfg_attr(docsrs, doc(cfg(feature = "brotli")))]
     pub fn brotli(mut self, enable: bool) -> ClientBuilder {
-        self.config.accept_encoding.brotli(enable);
+        self.config.accept_encoding.brotli = enable;
         self
     }
 
@@ -826,7 +829,7 @@ impl ClientBuilder {
     #[cfg(feature = "zstd")]
     #[cfg_attr(docsrs, doc(cfg(feature = "zstd")))]
     pub fn zstd(mut self, enable: bool) -> ClientBuilder {
-        self.config.accept_encoding.zstd(enable);
+        self.config.accept_encoding.zstd = enable;
         self
     }
 
@@ -850,7 +853,7 @@ impl ClientBuilder {
     #[cfg(feature = "deflate")]
     #[cfg_attr(docsrs, doc(cfg(feature = "deflate")))]
     pub fn deflate(mut self, enable: bool) -> ClientBuilder {
-        self.config.accept_encoding.deflate(enable);
+        self.config.accept_encoding.deflate = enable;
         self
     }
 

@@ -562,7 +562,7 @@ impl RequestBuilder {
         if let Ok(ref mut req) = self.request {
             req.config_mut::<AcceptEncoding>()
                 .get_or_insert_default()
-                .gzip(gzip);
+                .gzip = gzip;
         }
         self
     }
@@ -574,7 +574,7 @@ impl RequestBuilder {
         if let Ok(ref mut req) = self.request {
             req.config_mut::<AcceptEncoding>()
                 .get_or_insert_default()
-                .brotli(brotli);
+                .brotli = brotli;
         }
         self
     }
@@ -586,7 +586,7 @@ impl RequestBuilder {
         if let Ok(ref mut req) = self.request {
             req.config_mut::<AcceptEncoding>()
                 .get_or_insert_default()
-                .deflate(deflate);
+                .deflate = deflate;
         }
         self
     }
@@ -598,7 +598,7 @@ impl RequestBuilder {
         if let Ok(ref mut req) = self.request {
             req.config_mut::<AcceptEncoding>()
                 .get_or_insert_default()
-                .zstd(zstd);
+                .zstd = zstd;
         }
         self
     }
