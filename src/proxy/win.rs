@@ -1,9 +1,7 @@
 pub(super) fn with_system(builder: &mut super::matcher::Builder) {
-    let settings = if let Ok(settings) = windows_registry::CURRENT_USER
+    let Ok(settings) = windows_registry::CURRENT_USER
         .open("Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings")
-    {
-        settings
-    } else {
+    else {
         return;
     };
 
