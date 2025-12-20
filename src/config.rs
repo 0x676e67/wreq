@@ -86,9 +86,9 @@ where
 
     /// Loads the internal value from the provided [`http::Extensions`], if present.
     ///
-    /// This method attempts to retrieve a value of type [`RequestConfig<T>`] from the provided
-    /// [`http::Extensions`]. If such a value exists, the current internal value is replaced with a
-    /// clone of that value. If not, the internal value remains unchanged.
+    /// This method attempts to remove a value of type [`RequestConfig<T>`] from the provided
+    /// [`http::Extensions`]. If such a value exists, the current internal value is replaced with
+    /// the removed value. If not, the internal value remains unchanged.
     #[inline]
     pub(crate) fn load(&mut self, ext: &mut Extensions) -> Option<&T::Value> {
         if let Some(value) = RequestConfig::<T>::remove(ext) {
