@@ -3,7 +3,7 @@
 mod classify;
 mod scope;
 
-use std::{error::Error as StdError, sync::Arc, time::Duration};
+use std::{error::Error as StdError, future::Ready, sync::Arc, time::Duration};
 
 use http::{Request, Response};
 use tower::retry::{
@@ -49,7 +49,7 @@ type Req = Request<Body>;
 type Res = Response<Incoming>;
 
 impl Policy<Req, Res, BoxError> for RetryPolicy {
-    type Future = std::future::Ready<()>;
+    type Future = Ready<()>;
 
     fn retry(&mut self, req: &mut Req, result: &mut Result<Res, BoxError>) -> Option<Self::Future> {
         match self.classifier.classify(req, result) {
