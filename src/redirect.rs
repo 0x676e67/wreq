@@ -8,7 +8,7 @@ use std::{borrow::Cow, error::Error as StdError, fmt, sync::Arc};
 
 use bytes::Bytes;
 use futures_util::FutureExt;
-use http::{Extensions, HeaderMap, HeaderValue, StatusCode, Uri};
+use http::{HeaderMap, HeaderValue, StatusCode, Uri};
 
 use crate::{
     client::{Body, layer::redirect},
@@ -444,6 +444,12 @@ impl redirect::Policy<Body, BoxError> for FollowRedirectPolicy {
         }
     }
 
+    fn follow_redirects(&mut self, request: &mut http::Request<Body>) -> bool {
+        self.policy
+            .load(request.extensions_mut())
+            .is_some_and(|policy| !matches!(policy.inner, PolicyKind::None))
+    }
+
     fn on_request(&mut self, req: &mut http::Request<Body>) {
         let next_url = req.uri().clone();
         remove_sensitive_headers(req.headers_mut(), &next_url, &self.uris);
@@ -460,13 +466,6 @@ impl redirect::Policy<Body, BoxError> for FollowRedirectPolicy {
         if let Some(history) = self.history.take() {
             response.extensions_mut().insert(History(history));
         }
-    }
-
-    fn follow_redirects(&mut self, extensions: &Extensions) -> bool {
-        self.policy.load(extensions);
-        self.policy
-            .as_ref()
-            .is_some_and(|policy| !matches!(policy.inner, PolicyKind::None))
     }
 
     #[inline]

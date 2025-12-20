@@ -2,7 +2,7 @@
 
 use std::{fmt, pin::Pin};
 
-use http::{Extensions, HeaderMap, Request, StatusCode, Uri};
+use http::{HeaderMap, Request, Response, StatusCode, Uri};
 
 use crate::error::BoxError;
 
@@ -14,29 +14,17 @@ pub trait Policy<B, E> {
     /// the redirection.
     fn redirect(&mut self, attempt: Attempt<'_>) -> Result<Action, E>;
 
-    /// Invoked right before the service makes a request, regardless of whether it is redirected
-    /// or not.
-    ///
-    /// This can for example be used to remove sensitive headers from the request
-    /// or prepare the request in other ways.
-    ///
-    /// The default implementation does nothing.
-    fn on_request(&mut self, _request: &mut Request<B>) {}
-
-    /// Invoked right after the service received a response, regardless of whether it is redirected
-    /// or not.
-    ///
-    /// This can for example be used to inspect the response before any redirection is handled.
-    ///
-    /// The default implementation does nothing.
-    fn on_response<Body>(&mut self, _response: &mut http::Response<Body>) {}
-
     /// Returns whether redirection is currently permitted by this policy.
     ///
     /// This method is called to determine whether the client should follow redirects at all.
-    /// It allows policies to enable or disable redirection behavior based on the request
-    /// extensions.
-    fn follow_redirects(&mut self, _extensions: &Extensions) -> bool;
+    /// It allows policies to enable or disable redirection behavior based on the [`Request`].
+    fn follow_redirects(&mut self, _request: &mut Request<B>) -> bool;
+
+    /// Invoked right before the service makes a [`Request`].
+    fn on_request(&mut self, _request: &mut Request<B>);
+
+    /// Invoked right after the service received a [`Response`].
+    fn on_response<Body>(&mut self, _response: &mut Response<Body>);
 
     /// Try to clone a request body before the service makes a redirected request.
     ///

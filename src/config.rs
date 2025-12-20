@@ -69,20 +69,8 @@ where
     #[inline]
     pub(crate) fn fetch<'a>(&'a self, ext: &'a Extensions) -> Option<&'a T::Value> {
         ext.get::<RequestConfig<T>>()
-            .and_then(|v| v.0.as_ref())
-            .or(self.0.as_ref())
-    }
-
-    /// Loads the internal value from the provided [`http::Extensions`], if present.
-    ///
-    /// This method attempts to retrieve a value of type [`RequestConfig<T>`] from the provided
-    /// [`http::Extensions`]. If such a value exists, the current internal value is replaced with a
-    /// clone of that value. If not, the internal value remains unchanged.
-    #[inline]
-    pub(crate) fn load(&mut self, ext: &Extensions) {
-        if let Some(value) = RequestConfig::<T>::get(ext) {
-            self.0 = Some(value.clone());
-        }
+            .and_then(Self::as_ref)
+            .or(self.as_ref())
     }
 
     /// Stores this value into the given [`http::Extensions`], if a value of the same type is not
@@ -92,11 +80,21 @@ where
     /// [`RequestConfig<T>`]. If not, it clones the current value and inserts it into the
     /// extensions. If a value already exists, the method does nothing.
     #[inline]
-    pub(crate) fn store(&self, ext: &mut Extensions) {
-        let option_value = ext.get_mut::<RequestConfig<T>>();
-        if option_value.is_none() {
-            ext.insert(self.clone());
+    pub(crate) fn store<'a>(&'a self, ext: &'a mut Extensions) -> &'a mut Option<T::Value> {
+        &mut ext.get_or_insert_with(|| self.clone()).0
+    }
+
+    /// Loads the internal value from the provided [`http::Extensions`], if present.
+    ///
+    /// This method attempts to retrieve a value of type [`RequestConfig<T>`] from the provided
+    /// [`http::Extensions`]. If such a value exists, the current internal value is replaced with a
+    /// clone of that value. If not, the internal value remains unchanged.
+    #[inline]
+    pub(crate) fn load(&mut self, ext: &mut Extensions) -> Option<&T::Value> {
+        if let Some(value) = RequestConfig::<T>::remove(ext) {
+            self.0.replace(value);
         }
+        self.as_ref()
     }
 
     /// Returns an immutable reference to the stored value from the given [`http::Extensions`], if
@@ -115,9 +113,7 @@ where
     /// `Option<T::Value>`.
     #[inline]
     pub(crate) fn get_mut(ext: &mut Extensions) -> &mut Option<T::Value> {
-        &mut ext
-            .get_or_insert_with::<RequestConfig<T>, _>(Default::default)
-            .0
+        &mut ext.get_or_insert_default::<RequestConfig<T>>().0
     }
 
     /// Removes and returns the stored value from the given [`http::Extensions`], if present.

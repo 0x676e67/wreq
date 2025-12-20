@@ -117,11 +117,11 @@ where
     }
 
     fn call(&mut self, mut req: Request<ReqBody>) -> Self::Future {
-        let service = self.inner.clone();
-        let mut service = mem::replace(&mut self.inner, service);
-        let mut policy = self.policy.clone();
+        if self.policy.follow_redirects(&mut req) {
+            let service = self.inner.clone();
+            let mut service = mem::replace(&mut self.inner, service);
+            let mut policy = self.policy.clone();
 
-        if policy.follow_redirects(req.extensions()) {
             let mut body_repr = BodyRepr::None;
             body_repr.try_clone_from(req.body(), &policy);
             policy.on_request(&mut req);
@@ -138,7 +138,7 @@ where
             }
         } else {
             ResponseFuture::Direct {
-                future: service.call(req),
+                future: self.inner.call(req),
             }
         }
     }

@@ -98,8 +98,8 @@ where
                             service,
                             policy,
                             parts,
-                            body_repr,
                             body: state.body,
+                            body_repr,
                             res: state.res,
                             location: state.location,
                         },
@@ -141,7 +141,7 @@ where
                 };
 
                 // Extract the request body for potential reuse
-                let req_body = ready_ok!(body_repr.take(), res);
+                let body = ready_ok!(body_repr.take(), res);
 
                 // Get and resolve the Location header
                 let location = {
@@ -168,7 +168,7 @@ where
                         *pending_future = Some(Pending {
                             future,
                             location,
-                            body: req_body,
+                            body,
                             res,
                         });
                         cx.waker().wake_by_ref();
@@ -185,7 +185,7 @@ where
                         service,
                         policy,
                         parts,
-                        body: req_body,
+                        body,
                         body_repr,
                         res,
                         location,
