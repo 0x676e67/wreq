@@ -14,6 +14,7 @@ An ergonomic and modular Rust HTTP client for advanced and low-level emulation, 
 
 - Plain bodies, JSON, urlencoded, multipart
 - Cookie Store
+- HTTP Trailers
 - Redirect Policy
 - Original Header
 - Rotating Proxies

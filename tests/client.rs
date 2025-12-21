@@ -3,14 +3,15 @@ mod support;
 #[cfg(feature = "json")]
 use std::collections::HashMap;
 
+use bytes::Bytes;
 use http::{
-    HeaderMap, HeaderValue, Version,
+    HeaderMap, HeaderValue, StatusCode, Version,
     header::{
         self, ACCEPT, AUTHORIZATION, CACHE_CONTROL, CONTENT_LENGTH, CONTENT_TYPE, COOKIE, REFERER,
         TRANSFER_ENCODING, USER_AGENT,
     },
 };
-use http_body_util::BodyExt;
+use http_body_util::{BodyExt, Full};
 use pretty_env_logger::env_logger;
 use support::server;
 use tokio::io::AsyncWriteExt;
@@ -431,7 +432,6 @@ async fn response_json() {
 
 #[tokio::test]
 async fn body_pipe_response() {
-    use http_body_util::BodyExt;
     let _ = env_logger::try_init();
 
     let server = server::http(move |req| async move {
@@ -1039,4 +1039,60 @@ async fn test_client_default_accept_encoding() {
         .send()
         .await
         .unwrap();
+}
+
+#[tokio::test]
+async fn response_trailers() {
+    let server = server::http(move |req| async move {
+        assert_eq!(req.uri().path(), "/trailers");
+
+        let body = Full::new(Bytes::from("HelloWorld!")).with_trailers(async move {
+            let mut trailers = http::HeaderMap::new();
+            trailers.insert("chunky-trailer1", HeaderValue::from_static("value1"));
+            trailers.insert("chunky-trailer2", HeaderValue::from_static("value2"));
+            Some(Ok(trailers))
+        });
+        let mut resp = http::Response::new(wreq::Body::wrap(body));
+        resp.headers_mut().insert(
+            header::TRAILER,
+            header::HeaderValue::from_static("chunky-trailer1, chunky-trailer2"),
+        );
+        resp.headers_mut().insert(
+            header::TRANSFER_ENCODING,
+            header::HeaderValue::from_static("chunked"),
+        );
+
+        resp
+    });
+
+    let mut res = wreq::get(format!("http://{}/trailers", server.addr()))
+        .header(header::TE, "trailers")
+        .send()
+        .await
+        .expect("Failed to get response");
+
+    assert_eq!(res.status(), StatusCode::OK);
+
+    let mut body_content = Vec::new();
+    let mut trailers = HeaderMap::default();
+    while let Some(chunk) = res.frame().await {
+        match chunk
+            .unwrap()
+            .into_data()
+            .map_err(|frame| frame.into_trailers())
+        {
+            Ok(res) => {
+                body_content.extend_from_slice(&res);
+            }
+            Err(Ok(res)) => {
+                trailers.extend(res);
+            }
+            _ => (),
+        }
+    }
+
+    let body = String::from_utf8(body_content).expect("Invalid UTF-8");
+    assert_eq!(body, "HelloWorld!");
+    assert_eq!(trailers["chunky-trailer1"], "value1");
+    assert_eq!(trailers["chunky-trailer2"], "value2");
 }

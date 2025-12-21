@@ -1,4 +1,8 @@
-use std::net::SocketAddr;
+use std::{
+    net::SocketAddr,
+    pin::Pin,
+    task::{Context, Poll},
+};
 
 use bytes::Bytes;
 #[cfg(feature = "charset")]
@@ -6,7 +10,7 @@ use encoding_rs::{Encoding, UTF_8};
 #[cfg(feature = "stream")]
 use futures_util::Stream;
 use http::{HeaderMap, StatusCode, Uri, Version};
-use http_body::Body as HttpBody;
+use http_body::{Body as HttpBody, Frame};
 use http_body_util::{BodyExt, Collected};
 #[cfg(feature = "charset")]
 use mime::Mime;
@@ -306,11 +310,9 @@ impl Response {
     /// # }
     /// ```
     pub async fn chunk(&mut self) -> crate::Result<Option<Bytes>> {
-        // loop to ignore unrecognized frames
         loop {
             if let Some(res) = self.res.body_mut().frame().await {
-                let frame = res?;
-                if let Ok(buf) = frame.into_data() {
+                if let Ok(buf) = res?.into_data() {
                     return Ok(Some(buf));
                 }
             } else {
@@ -467,7 +469,7 @@ impl Response {
         }
     }
 
-    /// Consumes the response and returns a future for a possible HTTP upgrade.
+    /// Consumes the [`Response`] and returns a future for a possible HTTP upgrade.
     pub async fn upgrade(self) -> crate::Result<Upgraded> {
         super::core::upgrade::on(self.res)
             .await
@@ -475,8 +477,8 @@ impl Response {
     }
 }
 
-// I'm not sure this conversion is that useful... People should be encouraged
-// to use `http::Response`, not `wreq::Response`.
+/// I'm not sure this conversion is that useful... People should be encouraged
+/// to use [`http::Response`], not `wreq::Response`.
 impl<T: Into<Body>> From<http::Response<T>> for Response {
     fn from(r: http::Response<T>) -> Response {
         let mut res = r.map(Into::into);
@@ -488,7 +490,7 @@ impl<T: Into<Body>> From<http::Response<T>> for Response {
     }
 }
 
-/// A `Response` can be converted into a `http::Response`.
+/// A [`Response`] can be converted into a [`http::Response`].
 // It's supposed to be the inverse of the conversion above.
 impl From<Response> for http::Response<Body> {
     fn from(r: Response) -> http::Response<Body> {
@@ -498,10 +500,35 @@ impl From<Response> for http::Response<Body> {
     }
 }
 
-/// A `Response` can be piped as the `Body` of another request.
+/// A [`Response`] can be piped as the [`Body`] of another request.
 impl From<Response> for Body {
     fn from(r: Response) -> Body {
         Body::wrap(r.res.into_body())
+    }
+}
+
+/// A [`Response`] implements [`HttpBody`] to allow streaming the body.
+impl HttpBody for Response {
+    type Data = Bytes;
+
+    type Error = Error;
+
+    #[inline]
+    fn poll_frame(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Option<Result<Frame<Self::Data>, Self::Error>>> {
+        Pin::new(&mut self.res.body_mut().frame()).poll(cx)
+    }
+
+    #[inline]
+    fn is_end_stream(&self) -> bool {
+        self.res.body().is_end_stream()
+    }
+
+    #[inline]
+    fn size_hint(&self) -> http_body::SizeHint {
+        self.res.body().size_hint()
     }
 }
 
