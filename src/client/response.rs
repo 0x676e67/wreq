@@ -518,7 +518,7 @@ impl HttpBody for Response {
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
     ) -> Poll<Option<Result<Frame<Self::Data>, Self::Error>>> {
-        Pin::new(self.get_mut().res.body_mut()).poll_frame(cx)
+        Pin::new(self.res.body_mut()).poll_frame(cx)
     }
 
     #[inline]
