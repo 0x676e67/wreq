@@ -57,19 +57,9 @@ impl Body {
     /// # Optional
     ///
     /// This requires the `stream` feature to be enabled.
-    #[cfg(feature = "stream")]
-    #[cfg_attr(docsrs, doc(cfg(feature = "stream")))]
-    pub fn wrap_stream<S>(stream: S) -> Body
-    where
-        S: futures_util::stream::TryStream + Send + 'static,
-        S::Error: Into<BoxError>,
-        Bytes: From<S::Ok>,
-    {
-        Body::stream(stream)
-    }
-
     #[cfg(any(feature = "stream", feature = "multipart"))]
-    pub(crate) fn stream<S>(stream: S) -> Body
+    #[cfg_attr(docsrs, doc(cfg(any(feature = "stream", feature = "multipart"))))]
+    pub fn wrap_stream<S>(stream: S) -> Body
     where
         S: futures_util::stream::TryStream + Send + 'static,
         S::Error: Into<BoxError>,

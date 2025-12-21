@@ -139,7 +139,7 @@ impl Form {
             return Body::empty();
         }
 
-        Body::stream(self.into_stream())
+        Body::wrap_stream(self.into_stream())
     }
 
     /// Produce a stream of the bytes in this `Form`, consuming it.
@@ -621,10 +621,10 @@ mod tests {
         let mut form = Form::new()
             .part(
                 "reader1",
-                Part::stream(Body::stream(stream::once(future::ready::<
+                Part::stream(Body::wrap_stream(stream::once(future::ready::<
                     Result<String, crate::Error>,
                 >(Ok(
-                    "part1".to_owned()
+                    "part1".to_owned(),
                 ))))),
             )
             .part("key1", Part::text("value1"))
@@ -634,10 +634,10 @@ mod tests {
             )
             .part(
                 "reader2",
-                Part::stream(Body::stream(stream::once(future::ready::<
+                Part::stream(Body::wrap_stream(stream::once(future::ready::<
                     Result<String, crate::Error>,
                 >(Ok(
-                    "part2".to_owned()
+                    "part2".to_owned(),
                 ))))),
             )
             .part("key3", Part::text("value3").file_name("filename"));
@@ -720,7 +720,8 @@ mod tests {
         let bytes_data = b"some bytes data".to_vec();
         let bytes_len = bytes_data.len();
 
-        let stream_part = Part::stream_with_length(Body::stream(the_stream), stream_len as u64);
+        let stream_part =
+            Part::stream_with_length(Body::wrap_stream(the_stream), stream_len as u64);
         let body_part = Part::bytes(bytes_data);
 
         // A simple check to make sure we get the configured body length

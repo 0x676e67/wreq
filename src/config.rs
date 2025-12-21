@@ -50,7 +50,7 @@ impl<T> RequestConfig<T>
 where
     T: RequestConfigValue,
 {
-    /// Creates a new `RequestConfig` with the provided value.
+    /// Creates a new [`RequestConfig`] with the provided value.
     #[inline]
     pub(crate) const fn new(v: Option<T::Value>) -> Self {
         RequestConfig(v)
