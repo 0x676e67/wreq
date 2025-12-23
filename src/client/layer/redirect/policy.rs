@@ -27,16 +27,7 @@ pub trait Policy<B, E> {
     fn on_response<Body>(&mut self, _response: &mut Response<Body>);
 
     /// Try to clone a request body before the service makes a redirected request.
-    ///
-    /// If the request body cannot be cloned, return `None`.
-    ///
-    /// This is not invoked when [`B::size_hint`][http_body::Body::size_hint] returns zero,
-    /// in which case `B::default()` will be used to create a new request body.
-    ///
-    /// The default implementation returns `None`.
-    fn clone_body(&self, _body: &B) -> Option<B> {
-        None
-    }
+    fn clone_body(&self, _body: &B) -> Option<B>;
 }
 
 /// A type that holds information on a redirection attempt.

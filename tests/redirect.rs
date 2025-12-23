@@ -1,4 +1,5 @@
 mod support;
+use http::StatusCode;
 use http_body_util::BodyExt;
 use support::server;
 use wreq::{
@@ -580,12 +581,7 @@ async fn test_redirect_async_pending_follow() {
         .redirect(Policy::custom(|attempt| {
             attempt.pending(|attempt| async move {
                 // Simulate async decision-making
-                dbg!("Waiting to follow redirect...");
                 tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
-                dbg!("Following redirect now.");
-
-                // will compile error if nested pending
-                // attempt.pending(|attempt| async { attempt.follow() })
                 attempt.follow()
             })
         }))
@@ -599,4 +595,35 @@ async fn test_redirect_async_pending_follow() {
         res.headers().get(wreq::header::SERVER).unwrap(),
         &"test-dst"
     );
+}
+
+#[tokio::test]
+async fn test_redirect_location_is_encoded() {
+    let server = server::http(move |req| async move {
+        if req.uri() == "/start" {
+            http::Response::builder()
+                .status(302)
+                .header("location", "/dst path")
+                .body(wreq::Body::default())
+                .unwrap()
+        } else {
+            assert_eq!(req.uri().path(), "/dst%20path");
+            http::Response::builder()
+                .status(StatusCode::OK)
+                .body(wreq::Body::default())
+                .unwrap()
+        }
+    });
+
+    let url = format!("http://{}/start", server.addr());
+    let dst = format!("http://{}/dst%20path", server.addr());
+
+    let client = Client::builder()
+        .redirect(Policy::default())
+        .build()
+        .unwrap();
+
+    let res = client.get(&url).send().await.unwrap();
+    assert_eq!(res.uri(), dst.as_str());
+    assert_eq!(res.status(), StatusCode::OK);
 }

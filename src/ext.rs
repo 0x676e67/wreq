@@ -6,6 +6,25 @@ use percent_encoding::{AsciiSet, CONTROLS};
 
 use crate::Body;
 
+/// See: <https://url.spec.whatwg.org/#fragment-percent-encode-set>
+const FRAGMENT: &AsciiSet = &CONTROLS.add(b' ').add(b'"').add(b'<').add(b'>').add(b'`');
+
+/// See: <https://url.spec.whatwg.org/#path-percent-encode-set>
+const PATH: &AsciiSet = &FRAGMENT.add(b'#').add(b'?').add(b'{').add(b'}');
+
+/// See: <https://url.spec.whatwg.org/#userinfo-percent-encode-set>
+const USERINFO: &AsciiSet = &PATH
+    .add(b'/')
+    .add(b':')
+    .add(b';')
+    .add(b'=')
+    .add(b'@')
+    .add(b'[')
+    .add(b'\\')
+    .add(b']')
+    .add(b'^')
+    .add(b'|');
+
 /// Extension trait for http::Response objects
 ///
 /// Provides methods to extract URI information from HTTP responses
@@ -47,28 +66,6 @@ pub(crate) trait UriExt {
     /// Sets the username and password in the URI's userinfo component.
     fn set_userinfo(&mut self, username: &str, password: Option<&str>);
 }
-
-/// See: <https://url.spec.whatwg.org/#fragment-percent-encode-set>
-pub(crate) const FRAGMENT: &AsciiSet = &CONTROLS.add(b' ').add(b'"').add(b'<').add(b'>').add(b'`');
-
-/// See: <https://url.spec.whatwg.org/#path-percent-encode-set>
-pub(crate) const PATH: &AsciiSet = &FRAGMENT.add(b'#').add(b'?').add(b'{').add(b'}');
-
-// See: <https://url.spec.whatwg.org/#query-state>
-pub(crate) const QUERY: &AsciiSet = &CONTROLS.add(b' ').add(b'"').add(b'#').add(b'<').add(b'>');
-
-/// See: <https://url.spec.whatwg.org/#userinfo-percent-encode-set>
-pub(crate) const USERINFO: &AsciiSet = &PATH
-    .add(b'/')
-    .add(b':')
-    .add(b';')
-    .add(b'=')
-    .add(b'@')
-    .add(b'[')
-    .add(b'\\')
-    .add(b']')
-    .add(b'^')
-    .add(b'|');
 
 // ===== impl ResponseExt =====
 

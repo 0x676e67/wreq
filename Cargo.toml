@@ -70,7 +70,7 @@ tracing = ["http2/tracing", "dep:tracing"]
 serde = { version = "1.0", features = ["derive"] }
 serde_urlencoded = "0.7.1"
 percent-encoding = "2.3.2"
-iri-string = "0.7.9"
+url = "2.5.7"
 tower = { version = "0.5.2", default-features = false, features = [
     "timeout",
     "util",

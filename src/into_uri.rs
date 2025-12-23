@@ -7,18 +7,10 @@
 //!
 //! Internally, the trait is sealed to prevent
 
-use std::borrow::Cow;
+use http::Uri;
+use url::Url;
 
-use bytes::Bytes;
-use http::{
-    Uri,
-    uri::{Authority, Parts, PathAndQuery, Scheme},
-};
-
-use crate::{
-    Error, Result,
-    ext::{PATH, QUERY, USERINFO},
-};
+use crate::{Error, Result};
 
 /// Converts a value into a [`Uri`] with error handling.
 ///
@@ -41,98 +33,14 @@ pub trait IntoUriSealed {
 
 impl IntoUriSealed for &[u8] {
     fn into_uri(self) -> Result<Uri> {
-        // try to parse directly
-        let uri = match Uri::try_from(self) {
-            Ok(uri) => uri,
-            Err(err) => {
-                let mut parts = Parts::default();
+        let uri = Uri::try_from(self).or_else(|_| {
+            std::str::from_utf8(self)
+                .map_err(Error::decode)
+                .and_then(|s| Url::parse(s).map_err(Error::builder))
+                .and_then(|url| Uri::try_from(url.as_str()).map_err(Error::builder))
+        })?;
 
-                // parse scheme and rest directly with "://"
-                let pos = self
-                    .windows(3)
-                    .position(|window| window == b"://")
-                    .ok_or_else(|| Error::builder(err))?;
-                let (scheme, rest) = self.split_at(pos);
-                let rest = &rest[3..];
-
-                // parse scheme
-                parts.scheme = Scheme::try_from(scheme).map(Some).map_err(Error::builder)?;
-
-                // split authority and path_and_query
-                let (authority, path_and_query) = match rest.iter().position(|&b| b == b'/') {
-                    Some(pos) => rest.split_at(pos),
-                    None => (rest, b"" as &[u8]),
-                };
-
-                // parse authority
-                parts.authority = {
-                    let authority = percent_encoding::percent_encode(authority, USERINFO);
-                    Authority::from_maybe_shared(Bytes::from(Cow::from(authority).into_owned()))
-                        .map(Some)
-                        .map_err(Error::builder)?
-                };
-
-                // parse and percent-encode path_and_query
-                if !path_and_query.is_empty() {
-                    const PQ_SPLIT: char = '?';
-
-                    parts.path_and_query =
-                        match path_and_query.iter().position(|&b| b == (PQ_SPLIT as u8)) {
-                            Some(pos) => {
-                                let (path, query) = path_and_query.split_at(pos);
-                                let encoded_path =
-                                    Cow::from(percent_encoding::percent_encode(path, PATH));
-                                let encoded_query =
-                                    Cow::from(percent_encoding::percent_encode(&query[1..], QUERY));
-
-                                let path_and_query = match (encoded_path, encoded_query) {
-                                    (Cow::Owned(mut path), query) => {
-                                        path.push(PQ_SPLIT);
-                                        path.extend(query.chars());
-                                        path
-                                    }
-                                    (path, Cow::Owned(mut query)) => {
-                                        query.reserve(path.len() + 1);
-                                        query.insert(0, PQ_SPLIT);
-                                        query.insert_str(0, &path);
-                                        query
-                                    }
-                                    (Cow::Borrowed(path), Cow::Borrowed(query)) => {
-                                        let mut path_and_query =
-                                            String::with_capacity(path.len() + query.len() + 1);
-                                        path_and_query.push_str(path);
-                                        path_and_query.push(PQ_SPLIT);
-                                        path_and_query.push_str(query);
-                                        path_and_query
-                                    }
-                                };
-
-                                PathAndQuery::from_maybe_shared(Bytes::from(path_and_query))
-                                    .map(Some)
-                                    .map_err(Error::builder)?
-                            }
-                            None => {
-                                let encoded_path =
-                                    percent_encoding::percent_encode(path_and_query, PATH);
-
-                                PathAndQuery::from_maybe_shared(Bytes::from(
-                                    Cow::from(encoded_path).into_owned(),
-                                ))
-                                .map(Some)
-                                .map_err(Error::builder)?
-                            }
-                        };
-                }
-
-                // Reconstruct Uri
-                Uri::from_parts(parts).map_err(Error::builder)?
-            }
-        };
-
-        match (uri.scheme(), uri.authority()) {
-            (Some(_), Some(_)) => Ok(uri),
-            _ => Err(Error::uri_bad_scheme(uri)),
-        }
+        IntoUriSealed::into_uri(uri)
     }
 }
 
@@ -144,9 +52,14 @@ impl IntoUriSealed for Vec<u8> {
 }
 
 impl IntoUriSealed for &str {
-    #[inline]
     fn into_uri(self) -> Result<Uri> {
-        IntoUriSealed::into_uri(self.as_bytes())
+        let uri = Uri::try_from(self).or_else(|_| {
+            Url::parse(self)
+                .map_err(Error::builder)
+                .and_then(|url| Uri::try_from(url.as_str()).map_err(Error::builder))
+        })?;
+
+        IntoUriSealed::into_uri(uri)
     }
 }
 
@@ -165,11 +78,9 @@ impl IntoUriSealed for &String {
 }
 
 impl IntoUriSealed for Uri {
+    #[inline]
     fn into_uri(self) -> Result<Uri> {
-        match (self.scheme(), self.authority()) {
-            (Some(_), Some(_)) => Ok(self),
-            _ => Err(Error::uri_bad_scheme(self)),
-        }
+        IntoUriSealed::into_uri(&self)
     }
 }
 
@@ -253,12 +164,5 @@ mod tests {
         let bytes = b"http://example.com";
         let uri = bytes.as_slice().into_uri().unwrap();
         assert_eq!(uri, "http://example.com");
-    }
-
-    #[test]
-    fn test_bytes_invalid_utf8() {
-        let bytes = b"http://example.com/\xFF\xFF";
-        let uri = bytes.as_slice().into_uri().unwrap();
-        assert_eq!(uri, "http://example.com/%FF%FF");
     }
 }

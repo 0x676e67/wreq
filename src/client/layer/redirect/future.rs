@@ -12,9 +12,9 @@ use http::{
     request::Parts,
 };
 use http_body::Body;
-use iri_string::types::{UriAbsoluteString, UriReferenceStr};
 use pin_project_lite::pin_project;
 use tower::{Service, util::Oneshot};
+use url::Url;
 
 use super::{Action, Attempt, BodyRepr, Policy};
 use crate::{Error, error::BoxError, ext::RequestUri, into_uri::IntoUriSealed};
@@ -198,10 +198,13 @@ where
 
 /// Try to resolve a URI reference `relative` against a base URI `base`.
 fn resolve_uri(relative: &str, base: &Uri) -> Option<Uri> {
-    let relative = UriReferenceStr::new(relative).ok()?;
-    let base = UriAbsoluteString::try_from(base.to_string()).ok()?;
-    let uri = relative.resolve_against(&base).to_string();
-    uri.into_uri().ok()
+    Url::parse(&base.to_string())
+        .ok()?
+        .join(relative)
+        .ok()?
+        .as_str()
+        .into_uri()
+        .ok()
 }
 
 /// Handle the response based on its status code
