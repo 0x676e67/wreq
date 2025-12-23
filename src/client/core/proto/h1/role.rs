@@ -23,7 +23,7 @@ use crate::{
         },
     },
     config::RequestConfig,
-    header::{OrigHeaderMap, OrigHeaderName},
+    header::OrigHeaderMap,
 };
 
 /// totally scientific
@@ -652,14 +652,7 @@ fn write_headers_original_case(
     dst: &mut Vec<u8>,
 ) {
     orig_headers.sort_headers_for_each(headers, |orig_name, value| {
-        match orig_name {
-            OrigHeaderName::Cased(orig_name) => {
-                extend(dst, orig_name);
-            }
-            OrigHeaderName::Standard(name) => {
-                extend(dst, name.as_ref());
-            }
-        }
+        extend(dst, orig_name);
 
         // Wanted for curl test cases that send `X-Custom-Header:\r\n`
         if value.is_empty() {

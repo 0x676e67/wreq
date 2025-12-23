@@ -6,7 +6,6 @@
 
 pub use http::header::*;
 pub use name::OrigHeaderName;
-use sealed::Sealed;
 
 /// Trait for types that can be converted into an [`OrigHeaderName`] (case-preserved header).
 ///
@@ -19,7 +18,7 @@ use sealed::Sealed;
 /// - `&HeaderName`
 /// - `OrigHeaderName`
 /// - `&OrigHeaderName`
-pub trait IntoOrigHeaderName: Sealed {
+pub trait IntoOrigHeaderName: sealed::Sealed {
     /// Converts the type into an [`OrigHeaderName`].
     fn into_orig_header_name(self) -> OrigHeaderName;
 }
@@ -63,11 +62,11 @@ impl OrigHeaderMap {
         N: IntoOrigHeaderName,
     {
         let orig_header_name = orig.into_orig_header_name();
-        match &orig_header_name {
-            OrigHeaderName::Cased(bytes) => HeaderName::from_bytes(bytes)
+        match &orig_header_name.kind {
+            name::Kind::Cased(bytes) => HeaderName::from_bytes(bytes)
                 .map(|name| self.0.append(name, orig_header_name))
                 .unwrap_or(false),
-            OrigHeaderName::Standard(header_name) => {
+            name::Kind::Standard(header_name) => {
                 self.0.append(header_name.clone(), orig_header_name)
             }
         }
@@ -126,7 +125,7 @@ impl OrigHeaderMap {
         for (name, value) in headers.drain() {
             match (name, &prev_name) {
                 (Some(name), _) => {
-                    prev_name = Some(name.clone());
+                    prev_name.replace(name.clone());
                     sorted_headers.insert(name, value);
                 }
                 (None, Some(prev_name)) => {
@@ -143,12 +142,12 @@ impl OrigHeaderMap {
     /// Headers in the map are processed first, others follow.
     pub(crate) fn sort_headers_for_each<F>(&self, headers: &mut HeaderMap, mut dst: F)
     where
-        F: FnMut(&OrigHeaderName, &HeaderValue),
+        F: FnMut(&[u8], &HeaderValue),
     {
         // First, sort headers according to the order defined in this map
         for (name, orig_name) in self.iter() {
             for value in headers.get_all(name) {
-                dst(orig_name, value);
+                dst(orig_name.as_ref(), value);
             }
 
             headers.remove(name);
@@ -157,15 +156,15 @@ impl OrigHeaderMap {
         // After processing all ordered headers, append any remaining headers
         let mut prev_name: Option<OrigHeaderName> = None;
         for (name, value) in headers.drain() {
-            match (name.map(OrigHeaderName::Standard), &prev_name) {
+            match (name, &prev_name) {
                 (Some(name), _) => {
-                    dst(&name, &value);
-                    prev_name = Some(name);
+                    dst(name.as_ref(), &value);
+                    prev_name.replace(name.into_orig_header_name());
                 }
                 (None, Some(prev_name)) => {
-                    dst(prev_name, &value);
+                    dst(prev_name.as_ref(), &value);
                 }
-                _ => {}
+                _ => (),
             };
         }
     }
@@ -206,7 +205,12 @@ mod name {
     /// useful for preserving header order and formatting in proxies,
     /// debugging, or exact HTTP message reproduction.
     #[derive(Debug, Clone, PartialEq, Eq)]
-    pub enum OrigHeaderName {
+    pub struct OrigHeaderName {
+        pub(super) kind: Kind,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub(super) enum Kind {
         /// The original casing of the header name as received.
         Cased(Bytes),
         /// The canonical (normalized, lowercased) header name.
@@ -216,14 +220,15 @@ mod name {
     impl AsRef<[u8]> for OrigHeaderName {
         #[inline]
         fn as_ref(&self) -> &[u8] {
-            match self {
-                OrigHeaderName::Standard(name) => name.as_ref(),
-                OrigHeaderName::Cased(orig) => orig.as_ref(),
+            match &self.kind {
+                Kind::Standard(name) => name.as_ref(),
+                Kind::Cased(orig) => orig.as_ref(),
             }
         }
     }
 
     impl IntoOrigHeaderName for &'static str {
+        #[inline]
         fn into_orig_header_name(self) -> OrigHeaderName {
             Bytes::from_static(self.as_bytes()).into_orig_header_name()
         }
@@ -239,21 +244,27 @@ mod name {
     impl IntoOrigHeaderName for Bytes {
         #[inline]
         fn into_orig_header_name(self) -> OrigHeaderName {
-            OrigHeaderName::Cased(self)
+            OrigHeaderName {
+                kind: Kind::Cased(self),
+            }
         }
     }
 
     impl IntoOrigHeaderName for &HeaderName {
         #[inline]
         fn into_orig_header_name(self) -> OrigHeaderName {
-            OrigHeaderName::Standard(self.clone())
+            OrigHeaderName {
+                kind: Kind::Standard(self.clone()),
+            }
         }
     }
 
     impl IntoOrigHeaderName for HeaderName {
         #[inline]
         fn into_orig_header_name(self) -> OrigHeaderName {
-            OrigHeaderName::Standard(self)
+            OrigHeaderName {
+                kind: Kind::Standard(self),
+            }
         }
     }
 
