@@ -1,7 +1,7 @@
 //! Extension utilities.
 
 use bytes::Bytes;
-use http::uri::{Authority, PathAndQuery, Scheme, Uri};
+use http::uri::{Authority, Scheme, Uri};
 use percent_encoding::{AsciiSet, CONTROLS};
 
 use crate::Body;
@@ -58,6 +58,7 @@ pub(crate) trait UriExt {
     fn port_or_default(&self) -> u16;
 
     /// Sets the query component of the URI, replacing any existing query.
+    #[cfg(feature = "query")]
     fn set_query(&mut self, query: String);
 
     /// Returns the username and password from the URI's userinfo, if present.
@@ -104,7 +105,10 @@ impl UriExt for Uri {
         }
     }
 
+    #[cfg(feature = "query")]
     fn set_query(&mut self, query: String) {
+        use http::uri::PathAndQuery;
+
         if query.is_empty() {
             return;
         }
@@ -349,6 +353,7 @@ mod tests {
         assert_eq!(uri.to_string(), "http://:p%40ss%20word@example.com/");
     }
 
+    #[cfg(feature = "query")]
     #[test]
     fn test_set_query() {
         let mut uri: Uri = "http://example.com/path".parse().unwrap();

@@ -39,8 +39,14 @@ zstd = ["tower-http/decompression-zstd"]
 # Enable deflate compression support.
 deflate = ["tower-http/decompression-deflate"]
 
+# Enable URL query string serialization support.
+query = ["dep:serde", "dep:serde_urlencoded"]
+
+# Enable x-www-form-urlencoded form support.
+form = ["dep:serde", "dep:serde_urlencoded"]
+
 # Enable JSON support.
-json = ["dep:serde_json"]
+json = ["dep:serde", "dep:serde_json"]
 
 # Enable multipart/form-data support.
 multipart = ["dep:mime_guess", "dep:sync_wrapper"]
@@ -67,8 +73,6 @@ system-proxy = ["dep:system-configuration", "dep:windows-registry"]
 tracing = ["http2/tracing", "dep:tracing"]
 
 [dependencies]
-serde = { version = "1.0", features = ["derive"] }
-serde_urlencoded = "0.7.1"
 percent-encoding = "2.3.2"
 url = "2.5.7"
 tower = { version = "0.5.2", default-features = false, features = [
@@ -104,8 +108,10 @@ tokio = { version = "1.48.0", default-features = false, features = [
 
 # Optional deps...
 
-## json
+## serde
+serde = { version = "1.0", optional = true }
 serde_json = { version = "1.0", optional = true }
+serde_urlencoded = { version = "0.7.1", optional = true }
 
 ## multipart
 mime_guess = { version = "2.0", default-features = false, optional = true }
@@ -234,6 +240,7 @@ required-features = ["socks"]
 [[example]]
 name = "form"
 path = "examples/form.rs"
+required-features = ["form"]
 
 [[example]]
 name = "connect_via_lower_priority_tokio_runtime"

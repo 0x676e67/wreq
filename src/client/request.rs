@@ -7,6 +7,7 @@ use std::{
 };
 
 use http::{Extensions, Request as HttpRequest, Uri, Version};
+#[cfg(any(feature = "query", feature = "form", feature = "json"))]
 use serde::Serialize;
 #[cfg(feature = "multipart")]
 use {super::multipart, bytes::Bytes, http::header::CONTENT_LENGTH};
@@ -31,11 +32,13 @@ use super::{
         timeout::TimeoutOptions,
     },
 };
+#[cfg(any(feature = "multipart", feature = "form", feature = "json"))]
+use crate::header::CONTENT_TYPE;
 use crate::{
     Error, Method, Proxy,
     config::{RequestConfig, RequestConfigValue},
     ext::UriExt,
-    header::{AUTHORIZATION, CONTENT_TYPE, HeaderMap, HeaderName, HeaderValue, OrigHeaderMap},
+    header::{AUTHORIZATION, HeaderMap, HeaderName, HeaderValue, OrigHeaderMap},
     redirect,
 };
 
@@ -435,6 +438,8 @@ impl RequestBuilder {
     /// # Errors
     /// This method will fail if the object you provide cannot be serialized
     /// into a query string.
+    #[cfg(feature = "query")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "query")))]
     pub fn query<T: Serialize + ?Sized>(mut self, query: &T) -> RequestBuilder {
         let mut error = None;
         if let Ok(ref mut req) = self.request {
@@ -480,6 +485,8 @@ impl RequestBuilder {
     ///
     /// This method fails if the passed value cannot be serialized into
     /// uri encoded format
+    #[cfg(feature = "form")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "form")))]
     pub fn form<T: Serialize + ?Sized>(mut self, form: &T) -> RequestBuilder {
         if let Ok(ref mut req) = self.request {
             match serde_urlencoded::to_string(form) {

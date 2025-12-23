@@ -19,7 +19,6 @@ use http::{
 };
 use http2::ext::Protocol;
 use pin_project_lite::pin_project;
-use serde::Serialize;
 use tokio_tungstenite::tungstenite::{
     self,
     protocol::{self, CloseFrame, WebSocketConfig},
@@ -150,6 +149,8 @@ impl WebSocketRequestBuilder {
     }
 
     /// Add a `Header` to this Request.
+    ///
+    /// If the header is already present, the value will be replaced.
     #[inline]
     pub fn header<K, V>(mut self, key: K, value: V) -> Self
     where
@@ -187,6 +188,20 @@ impl WebSocketRequestBuilder {
     }
 
     /// Enable HTTP authentication.
+    ///
+    /// ```rust
+    /// # use wreq::Error;
+    /// #
+    /// # async fn run() -> Result<(), Error> {
+    /// let client = wreq::Client::new();
+    /// let resp = client
+    ///     .websocket("http://httpbin.org/get")
+    ///     .auth("your_token_here")
+    ///     .send()
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
     #[inline]
     pub fn auth<V>(mut self, value: V) -> Self
     where
@@ -198,6 +213,20 @@ impl WebSocketRequestBuilder {
     }
 
     /// Enable HTTP basic authentication.
+    ///
+    /// ```rust
+    /// # use wreq::Error;
+    ///
+    /// # async fn run() -> Result<(), Error> {
+    /// let client = wreq::Client::new();
+    /// let resp = client
+    ///     .websocket("http://httpbin.org/delete")
+    ///     .basic_auth("admin", Some("good password"))
+    ///     .send()
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
     #[inline]
     pub fn basic_auth<U, P>(mut self, username: U, password: Option<P>) -> Self
     where
@@ -209,6 +238,20 @@ impl WebSocketRequestBuilder {
     }
 
     /// Enable HTTP bearer authentication.
+    ///
+    /// ```rust
+    /// # use wreq::Error;
+    /// #
+    /// # async fn run() -> Result<(), Error> {
+    /// let client = wreq::Client::new();
+    /// let resp = client
+    ///     .websocket("http://httpbin.org/get")
+    ///     .bearer_auth("your_token_here")
+    ///     .send()
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
     #[inline]
     pub fn bearer_auth<T>(mut self, token: T) -> Self
     where
@@ -219,8 +262,27 @@ impl WebSocketRequestBuilder {
     }
 
     /// Modify the query string of the URI.
+    ///
+    /// Modifies the URI of this request, adding the parameters provided.
+    /// This method appends and does not overwrite. This means that it can
+    /// be called multiple times and that existing query parameters are not
+    /// overwritten if the same key is used. The key will simply show up
+    /// twice in the query string.
+    /// Calling `.query(&[("foo", "a"), ("foo", "b")])` gives `"foo=a&foo=b"`.
+    ///
+    /// # Note
+    /// This method does not support serializing a single key-value
+    /// pair. Instead of using `.query(("key", "val"))`, use a sequence, such
+    /// as `.query(&[("key", "val")])`. It's also possible to serialize structs
+    /// and maps into a key-value pair.
+    ///
+    /// # Errors
+    /// This method will fail if the object you provide cannot be serialized
+    /// into a query string.
     #[inline]
-    pub fn query<T: Serialize + ?Sized>(mut self, query: &T) -> Self {
+    #[cfg(feature = "query")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "query")))]
+    pub fn query<T: serde::Serialize + ?Sized>(mut self, query: &T) -> Self {
         self.inner = self.inner.query(query);
         self
     }
@@ -254,6 +316,7 @@ impl WebSocketRequestBuilder {
     }
 
     /// Set the interface for this request.
+    #[inline]
     #[cfg(any(
         target_os = "android",
         target_os = "fuchsia",
@@ -266,7 +329,21 @@ impl WebSocketRequestBuilder {
         target_os = "visionos",
         target_os = "watchos",
     ))]
-    #[inline]
+    #[cfg_attr(
+        docsrs,
+        doc(cfg(any(
+            target_os = "android",
+            target_os = "fuchsia",
+            target_os = "illumos",
+            target_os = "ios",
+            target_os = "linux",
+            target_os = "macos",
+            target_os = "solaris",
+            target_os = "tvos",
+            target_os = "visionos",
+            target_os = "watchos",
+        )))
+    )]
     pub fn interface<I>(mut self, interface: I) -> Self
     where
         I: Into<std::borrow::Cow<'static, str>>,
@@ -275,19 +352,14 @@ impl WebSocketRequestBuilder {
         self
     }
 
-    /// Configures the request builder to emulation the specified WebSocket context.
-    ///
-    /// This method sets the necessary headers, HTTP/1 and HTTP/2 options configurations, and  TLS
-    /// options config to use the specified HTTP context. It allows the client to mimic the
-    /// behavior of different versions or setups, which can be useful for testing or ensuring
-    /// compatibility with various environments.
+    /// Set the emulation for this request.
     #[inline]
-    pub fn emulation<P>(mut self, factory: P) -> RequestBuilder
+    pub fn emulation<P>(mut self, factory: P) -> Self
     where
         P: EmulationFactory,
     {
         self.inner = self.inner.emulation(factory);
-        self.inner
+        self
     }
 
     /// Sends the request and returns and [`WebSocketResponse`].

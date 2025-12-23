@@ -104,6 +104,8 @@ jobs:
           - "--all-features"
           - "--no-default-features"
           - "--no-default-features --features webpki-roots"
+          - "--no-default-features --features form"
+          - "--no-default-features --features query"
           - "--features cookies"
           - "--features gzip,stream"
           - "--features brotli,stream"
