@@ -116,9 +116,9 @@ type ResponseBody = TimeoutBody<tower_http::decompression::DecompressionBody<Inc
 type ResponseBody = TimeoutBody<Incoming>;
 
 /// The complete HTTP client service stack with all middleware layers.
-type GenericClientService = Timeout<
-    ConfigService<
-        ResponseBodyTimeout<
+type ClientService = Timeout<
+    ResponseBodyTimeout<
+        ConfigService<
             Decompression<
                 Retry<
                     RetryPolicy,
@@ -150,7 +150,7 @@ type BoxedClientLayer = BoxCloneSyncServiceLayer<
 >;
 
 /// Client reference type that can be either the generic service or a boxed service.
-type ClientRef = Either<GenericClientService, BoxedClientService>;
+type ClientRef = Either<ClientService, BoxedClientService>;
 
 /// An [`Client`] to make Requests with.
 ///
@@ -596,13 +596,13 @@ impl ClientBuilder {
                 .service(service);
 
             let service = ServiceBuilder::new()
+                .layer(ResponseBodyTimeoutLayer::new(config.timeout_options))
                 .layer(ConfigServiceLayer::new(
                     config.https_only,
                     config.headers,
                     config.orig_headers,
                     proxies,
                 ))
-                .layer(ResponseBodyTimeoutLayer::new(config.timeout_options))
                 .service(service);
 
             if config.layers.is_empty() {
