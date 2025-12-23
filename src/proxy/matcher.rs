@@ -487,15 +487,25 @@ impl DomainMatcher {
     fn contains(&self, domain: &str) -> bool {
         let domain_len = domain.len();
         for d in &self.0 {
-            if d == domain || d.strip_prefix('.') == Some(domain) {
+            if d.eq_ignore_ascii_case(domain)
+                || d.strip_prefix('.')
+                    .is_some_and(|s| s.eq_ignore_ascii_case(domain))
+            {
                 return true;
-            } else if domain.ends_with(d) {
+            } else if domain
+                .get(domain_len.saturating_sub(d.len())..)
+                .is_some_and(|s| s.eq_ignore_ascii_case(d))
+            {
                 if d.starts_with('.') {
                     // If the first character of d is a dot, that means the first character of
                     // domain must also be a dot, so we are looking at a
                     // subdomain of d and that matches
                     return true;
-                } else if domain.as_bytes().get(domain_len - d.len() - 1) == Some(&b'.') {
+                } else if domain
+                    .as_bytes()
+                    .get(domain_len.saturating_sub(d.len() + 1))
+                    == Some(&b'.')
+                {
                     // Given that d is a prefix of domain, if the prior character in domain is a dot
                     // then that means we must be matching a subdomain of d, and that matches
                     return true;
@@ -550,13 +560,17 @@ mod tests {
 
         // domains match with leading `.`
         assert!(matcher.contains("foo.bar"));
+        assert!(matcher.contains("FOO.BAR"));
         // subdomains match with leading `.`
         assert!(matcher.contains("www.foo.bar"));
+        assert!(matcher.contains("WWW.FOO.BAR"));
 
         // domains match with no leading `.`
         assert!(matcher.contains("bar.foo"));
+        assert!(matcher.contains("Bar.foo"));
         // subdomains match with no leading `.`
         assert!(matcher.contains("www.bar.foo"));
+        assert!(matcher.contains("WWW.BAR.FOO"));
 
         // non-subdomain string prefixes don't match
         assert!(!matcher.contains("notfoo.bar"));
@@ -744,5 +758,55 @@ mod tests {
     fn test_parse_socks5() {
         test_parse_socks("socks5://localhost:8887");
         test_parse_socks("socks5h://localhost:8887");
+    }
+
+    #[test]
+    fn test_domain_matcher_case_insensitive() {
+        let domains = vec![".foo.bar".into()];
+        let matcher = DomainMatcher(domains);
+
+        assert!(matcher.contains("foo.bar"));
+        assert!(matcher.contains("FOO.BAR"));
+        assert!(matcher.contains("Foo.Bar"));
+
+        assert!(matcher.contains("www.foo.bar"));
+        assert!(matcher.contains("WWW.FOO.BAR"));
+        assert!(matcher.contains("Www.Foo.Bar"));
+    }
+
+    #[test]
+    fn test_no_proxy_case_insensitive() {
+        let p = p! {
+            all = "http://proxy.local",
+            no = ".example.com",
+        };
+
+        // should bypass proxy (case insensitive match)
+        assert!(
+            p.intercept(&"http://example.com".parse().unwrap())
+                .is_none()
+        );
+        assert!(
+            p.intercept(&"http://EXAMPLE.COM".parse().unwrap())
+                .is_none()
+        );
+        assert!(
+            p.intercept(&"http://Example.com".parse().unwrap())
+                .is_none()
+        );
+
+        // subdomain should bypass proxy (case insensitive match)
+        assert!(
+            p.intercept(&"http://www.example.com".parse().unwrap())
+                .is_none()
+        );
+        assert!(
+            p.intercept(&"http://WWW.EXAMPLE.COM".parse().unwrap())
+                .is_none()
+        );
+        assert!(
+            p.intercept(&"http://Www.Example.Com".parse().unwrap())
+                .is_none()
+        );
     }
 }
