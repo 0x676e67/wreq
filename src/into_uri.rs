@@ -7,8 +7,8 @@
 //!
 //! Internally, the trait is sealed to prevent
 
+use bytes::Bytes;
 use http::Uri;
-use url::Url;
 
 use crate::{Error, Result};
 
@@ -33,40 +33,33 @@ pub trait IntoUriSealed {
 
 impl IntoUriSealed for &[u8] {
     fn into_uri(self) -> Result<Uri> {
-        let uri = Uri::try_from(self).or_else(|_| {
-            std::str::from_utf8(self)
-                .map_err(Error::decode)
-                .and_then(|s| Url::parse(s).map_err(Error::builder))
-                .and_then(|url| Uri::try_from(url.as_str()).map_err(Error::builder))
-        })?;
-
-        IntoUriSealed::into_uri(uri)
+        Uri::try_from(self)
+            .or_else(|_| internal::parse(internal::Kind::Bytes(self)))
+            .and_then(IntoUriSealed::into_uri)
     }
 }
 
 impl IntoUriSealed for Vec<u8> {
-    #[inline]
     fn into_uri(self) -> Result<Uri> {
-        IntoUriSealed::into_uri(self.as_slice())
+        let bytes = Bytes::from(self);
+        Uri::from_maybe_shared(bytes.clone())
+            .or_else(|_| internal::parse(internal::Kind::Bytes(&bytes)))
+            .and_then(IntoUriSealed::into_uri)
     }
 }
 
 impl IntoUriSealed for &str {
     fn into_uri(self) -> Result<Uri> {
-        let uri = Uri::try_from(self).or_else(|_| {
-            Url::parse(self)
-                .map_err(Error::builder)
-                .and_then(|url| Uri::try_from(url.as_str()).map_err(Error::builder))
-        })?;
-
-        IntoUriSealed::into_uri(uri)
+        Uri::try_from(self)
+            .or_else(|_| internal::parse(internal::Kind::Str(self)))
+            .and_then(IntoUriSealed::into_uri)
     }
 }
 
 impl IntoUriSealed for String {
     #[inline]
     fn into_uri(self) -> Result<Uri> {
-        IntoUriSealed::into_uri(self.as_str())
+        self.into_bytes().into_uri()
     }
 }
 
@@ -78,9 +71,11 @@ impl IntoUriSealed for &String {
 }
 
 impl IntoUriSealed for Uri {
-    #[inline]
     fn into_uri(self) -> Result<Uri> {
-        IntoUriSealed::into_uri(&self)
+        match (self.scheme(), self.authority()) {
+            (Some(_), Some(_)) => Ok(self),
+            _ => Err(Error::uri_bad_scheme(self)),
+        }
     }
 }
 
@@ -90,6 +85,30 @@ impl IntoUriSealed for &Uri {
             (Some(_), Some(_)) => Ok(self.clone()),
             _ => Err(Error::uri_bad_scheme(self.clone())),
         }
+    }
+}
+
+mod internal {
+    use http::Uri;
+    use url::Url;
+
+    use crate::{Error, Result};
+
+    pub(super) enum Kind<'a> {
+        Bytes(&'a [u8]),
+        Str(&'a str),
+    }
+
+    pub(super) fn parse(s: Kind) -> Result<Uri> {
+        let s = match s {
+            Kind::Bytes(bytes) => std::str::from_utf8(bytes).map_err(Error::decode),
+            Kind::Str(s) => Ok(s),
+        }?;
+
+        Url::parse(s)
+            .map(String::from)
+            .map_err(Error::builder)
+            .and_then(|s| Uri::try_from(s).map_err(Error::builder))
     }
 }
 
