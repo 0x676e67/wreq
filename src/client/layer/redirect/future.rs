@@ -201,8 +201,8 @@ fn resolve_uri(relative: &str, base: &Uri) -> Option<Uri> {
     Url::parse(&base.to_string())
         .ok()?
         .join(relative)
+        .map(String::from)
         .ok()?
-        .as_str()
         .into_uri()
         .ok()
 }
