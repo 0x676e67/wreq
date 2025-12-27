@@ -130,6 +130,12 @@ where
         // store the original headers in request extensions
         self.config.orig_headers.store(req.extensions_mut());
 
+        // skip proxy headers for HTTPS destinations.
+        // for HTTPS, the proxy headers are part of the CONNECT tunnel instead.
+        if uri.is_https() {
+            return Either::Left(self.inner.call(req));
+        }
+
         // determine the proxy matcher to use
         match RequestConfig::<RequestOptions>::get(req.extensions())
             .and_then(RequestOptions::proxy_matcher)
