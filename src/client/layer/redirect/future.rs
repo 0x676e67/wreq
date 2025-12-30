@@ -19,15 +19,6 @@ use url::Url;
 use super::{Action, Attempt, BodyRepr, Policy};
 use crate::{Error, error::BoxError, ext::RequestUri, into_uri::IntoUriSealed};
 
-macro_rules! ready_ok {
-    ($expr:expr, $ret:expr) => {
-        match $expr {
-            Some(v) => v,
-            None => return Poll::Ready(Ok($ret)),
-        }
-    };
-}
-
 /// Pending future state for handling redirects.
 pub struct Pending<ReqBody, Response> {
     future: Pin<Box<dyn Future<Output = Action> + Send>>,
@@ -141,16 +132,18 @@ where
                 };
 
                 // Extract the request body for potential reuse
-                let body = ready_ok!(body_repr.take(), res);
+                let Some(body) = body_repr.take() else {
+                    return Poll::Ready(Ok(res));
+                };
 
                 // Get and resolve the Location header
-                let location = {
-                    let location = res
-                        .headers()
-                        .get(LOCATION)
-                        .and_then(|loc| loc.to_str().ok())
-                        .and_then(|loc| resolve_uri(loc, &parts.uri));
-                    ready_ok!(location, res)
+                let Some(location) = res
+                    .headers()
+                    .get(LOCATION)
+                    .and_then(|loc| loc.to_str().ok())
+                    .and_then(|loc| resolve_uri(loc, &parts.uri))
+                else {
+                    return Poll::Ready(Ok(res));
                 };
 
                 // Prepare the attempt for the policy decision
