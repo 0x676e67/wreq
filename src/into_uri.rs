@@ -160,28 +160,28 @@ mod tests {
     #[test]
     fn into_uri_bytes_with_encoding() {
         let bytes = b"http://example.com/hello world";
-        let uri = bytes.as_slice().into_uri().unwrap();
+        let uri = bytes.into_uri().unwrap();
         assert_eq!(uri, "http://example.com/hello%20world");
     }
 
     #[test]
     fn test_bytes_with_query() {
         let bytes = b"http://example.com/path?key=hello%20world";
-        let uri = bytes.as_slice().into_uri().unwrap();
+        let uri = bytes.into_uri().unwrap();
         assert_eq!(uri.to_string(), "http://example.com/path?key=hello%20world");
     }
 
     #[test]
     fn test_bytes_with_unicode() {
         let bytes = b"http://example.com/\xE6\xB5\x8B\xE8\xAF\x95";
-        let uri = bytes.as_slice().into_uri().unwrap();
+        let uri = bytes.into_uri().unwrap();
         assert_eq!(uri, "http://example.com/测试");
     }
 
     #[test]
     fn test_bytes_minimal() {
         let bytes = b"http://example.com";
-        let uri = bytes.as_slice().into_uri().unwrap();
+        let uri = bytes.into_uri().unwrap();
         assert_eq!(uri, "http://example.com");
     }
 }

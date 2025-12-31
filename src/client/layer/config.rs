@@ -6,14 +6,11 @@ use std::{
 };
 
 use futures_util::future::{self, Either, Ready};
-use http::{HeaderMap, HeaderValue, Request, Response, header::PROXY_AUTHORIZATION};
+use http::{HeaderMap, Request, Response};
 use tower::{Layer, Service};
 
 pub use self::options::{RequestOptions, TransportOptions};
-use crate::{
-    Error, config::RequestConfig, ext::UriExt, header::OrigHeaderMap,
-    proxy::Matcher as ProxyMatcher,
-};
+use crate::{Error, config::RequestConfig, ext::UriExt, header::OrigHeaderMap};
 
 /// A marker type for the default headers configuration value.
 #[derive(Clone, Copy)]
@@ -25,9 +22,6 @@ struct Config {
     headers: HeaderMap,
     orig_headers: RequestConfig<OrigHeaderMap>,
     default_headers: RequestConfig<DefaultHeaders>,
-    proxies: Arc<Vec<ProxyMatcher>>,
-    proxies_maybe_http_auth: bool,
-    proxies_maybe_http_custom_headers: bool,
 }
 
 /// Middleware layer to use [`ConfigService`].
@@ -50,27 +44,14 @@ impl_request_config_value!(DefaultHeaders, bool);
 
 impl ConfigServiceLayer {
     /// Creates a new [`ConfigServiceLayer`].
-    pub fn new(
-        https_only: bool,
-        headers: HeaderMap,
-        orig_headers: OrigHeaderMap,
-        proxies: Arc<Vec<ProxyMatcher>>,
-    ) -> Self {
+    pub fn new(https_only: bool, headers: HeaderMap, orig_headers: OrigHeaderMap) -> Self {
         let org_headers = (!orig_headers.is_empty()).then_some(orig_headers);
-        let proxies_maybe_http_auth = proxies.iter().any(ProxyMatcher::maybe_has_http_auth);
-        let proxies_maybe_http_custom_headers = proxies
-            .iter()
-            .any(ProxyMatcher::maybe_has_http_custom_headers);
-
         ConfigServiceLayer {
             config: Arc::new(Config {
                 https_only,
                 headers,
                 orig_headers: RequestConfig::new(org_headers),
                 default_headers: RequestConfig::new(Some(true)),
-                proxies,
-                proxies_maybe_http_auth,
-                proxies_maybe_http_custom_headers,
             }),
         }
     }
@@ -130,69 +111,6 @@ where
         // store the original headers in request extensions
         self.config.orig_headers.store(req.extensions_mut());
 
-        // skip proxy headers for HTTPS destinations.
-        // for HTTPS, the proxy headers are part of the CONNECT tunnel instead.
-        if uri.is_https() {
-            return Either::Left(self.inner.call(req));
-        }
-
-        // determine the proxy matcher to use
-        match RequestConfig::<RequestOptions>::get(req.extensions())
-            .and_then(RequestOptions::proxy_matcher)
-            .map(|proxy| http_non_tunnel(&uri, proxy))
-        {
-            Some((auth_header, custom_headers)) => {
-                insert_proxy_headers(&mut req, auth_header, custom_headers);
-                Either::Left(self.inner.call(req))
-            }
-            None => {
-                // no proxies require HTTP auth or custom headers; skip searching
-                if !(self.config.proxies_maybe_http_auth
-                    || self.config.proxies_maybe_http_custom_headers)
-                {
-                    return Either::Left(self.inner.call(req));
-                }
-
-                // find the first proxy with HTTP auth or custom headers
-                for proxy in self.config.proxies.iter() {
-                    match http_non_tunnel(&uri, proxy) {
-                        (None, None) => continue,
-                        result => {
-                            insert_proxy_headers(&mut req, result.0, result.1);
-                            break;
-                        }
-                    }
-                }
-
-                Either::Left(self.inner.call(req))
-            }
-        }
-    }
-}
-
-fn http_non_tunnel(
-    uri: &http::Uri,
-    proxy: &ProxyMatcher,
-) -> (Option<HeaderValue>, Option<HeaderMap>) {
-    let auth_header = proxy.http_non_tunnel_basic_auth(uri);
-    let custom_headers = proxy.http_non_tunnel_custom_headers(uri);
-    (auth_header, custom_headers)
-}
-
-fn insert_proxy_headers<B>(
-    req: &mut Request<B>,
-    auth_header: Option<http::HeaderValue>,
-    custom_headers: Option<http::HeaderMap>,
-) {
-    // insert proxy auth header if not already present
-    if let Some(header) = auth_header {
-        req.headers_mut()
-            .entry(PROXY_AUTHORIZATION)
-            .or_insert(header);
-    }
-
-    // insert proxy custom headers
-    if let Some(headers) = custom_headers {
-        crate::util::replace_headers(req.headers_mut(), headers);
+        Either::Left(self.inner.call(req))
     }
 }

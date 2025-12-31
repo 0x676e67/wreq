@@ -31,7 +31,7 @@ use crate::{
     dns::DynResolver,
     error::{BoxError, ProxyConnect, TimedOut, map_timeout_to_connector_error},
     ext::UriExt,
-    proxy::{Intercepted, Matcher as ProxyMatcher},
+    proxy::{Intercepted, Matcher as ProxyMatcher, matcher::Intercept},
     tls::{
         TlsOptions,
         conn::{
@@ -202,13 +202,10 @@ impl ConnectorBuilder {
 
 impl Connector {
     /// Creates a new [`Connector`] with the provided configuration and optional layers.
-    pub(crate) fn builder(
-        proxies: Arc<Vec<ProxyMatcher>>,
-        resolver: DynResolver,
-    ) -> ConnectorBuilder {
+    pub(crate) fn builder(proxies: Vec<ProxyMatcher>, resolver: DynResolver) -> ConnectorBuilder {
         ConnectorBuilder {
             config: Config {
-                proxies,
+                proxies: Arc::new(proxies),
                 verbose: Verbose::OFF,
                 tcp_nodelay: false,
                 tls_info: false,
@@ -248,13 +245,7 @@ impl Service<ConnectRequest> for Connector {
 // ===== impl ConnectorService =====
 
 impl ConnectorService {
-    /// Converts a [`MaybeHttpsStream<IO>`] into a Conn.
-    fn conn_from_stream<IO>(
-        &self,
-        io: MaybeHttpsStream<IO>,
-        is_proxy1: bool,
-        is_proxy2: bool,
-    ) -> Result<Conn, BoxError>
+    fn tunnel_conn_from_stream<IO>(&self, io: MaybeHttpsStream<IO>) -> Result<Conn, BoxError>
     where
         IO: AsyncConnWithInfo,
         TlsConn<IO>: Connection,
@@ -264,48 +255,37 @@ impl ConnectorService {
             MaybeHttpsStream::Http(inner) => Conn {
                 inner: self.config.verbose.wrap(inner),
                 tls_info: false,
-                is_proxy: is_proxy1,
+                proxy: None,
             },
             MaybeHttpsStream::Https(inner) => Conn {
                 inner: self.config.verbose.wrap(TlsConn::new(inner)),
                 tls_info: self.config.tls_info,
-                is_proxy: is_proxy2,
+                proxy: None,
             },
         };
 
         Ok(conn)
     }
 
-    /// Converts a [`MaybeHttpsStream<MaybeHttpsStream<IO>>`] into a Conn.
-    fn conn_from_nested_stream<IO>(
-        &self,
-        io: MaybeHttpsStream<MaybeHttpsStream<IO>>,
-        is_proxy: bool,
-    ) -> Result<Conn, BoxError>
+    fn conn_from_stream<IO, P>(&self, io: MaybeHttpsStream<IO>, proxy: P) -> Result<Conn, BoxError>
     where
         IO: AsyncConnWithInfo,
-        MaybeHttpsStream<IO>: TlsInfoFactory,
-        TlsConn<MaybeHttpsStream<IO>>: Connection,
-        SslStream<MaybeHttpsStream<IO>>: TlsInfoFactory,
+        TlsConn<IO>: Connection,
+        SslStream<IO>: TlsInfoFactory,
+        P: Into<Option<Intercept>>,
     {
         let conn = match io {
-            MaybeHttpsStream::Http(inner) => Conn {
-                inner: self.config.verbose.wrap(inner),
-                tls_info: false,
-                is_proxy,
-            },
-            MaybeHttpsStream::Https(inner) => Conn {
-                inner: self.config.verbose.wrap(TlsConn::new(inner)),
-                tls_info: self.config.tls_info,
-                is_proxy: false,
-            },
+            MaybeHttpsStream::Http(inner) => self.config.verbose.wrap(inner),
+            MaybeHttpsStream::Https(inner) => self.config.verbose.wrap(TlsConn::new(inner)),
         };
 
-        Ok(conn)
+        Ok(Conn {
+            inner: conn,
+            tls_info: self.config.tls_info,
+            proxy: proxy.into(),
+        })
     }
 
-    /// Builds an [`HttpsConnector<HttpConnector>`] from a basic [`HttpConnector`],
-    /// applying TCP and TLS configuration from the provided [`ConnectExtra`].
     fn build_https_connector(
         &self,
         extra: &ConnectExtra,
@@ -327,8 +307,6 @@ impl ConnectorService {
         self.build_tls_connector_generic(http, extra)
     }
 
-    /// Builds an [`HttpsConnector<UnixConnector>`] for secure communication over a Unix domain
-    /// socket.
     #[cfg(unix)]
     fn build_unix_connector(
         &self,
@@ -339,7 +317,6 @@ impl ConnectorService {
         self.build_tls_connector_generic(UnixConnector(unix_socket), extra)
     }
 
-    /// Creates an [`HttpsConnector`] from a given connector and TLS configuration.
     fn build_tls_connector_generic<S, T>(
         &self,
         connector: S,
@@ -363,14 +340,17 @@ impl ConnectorService {
 }
 
 impl ConnectorService {
-    /// Establishes a direct connection to the target URI without using a proxy.
-    async fn connect_direct(self, req: ConnectRequest, is_proxy: bool) -> Result<Conn, BoxError> {
-        trace!("connect with maybe proxy: {:?}", is_proxy);
+    async fn connect_auto_proxy<P>(self, req: ConnectRequest, proxy: P) -> Result<Conn, BoxError>
+    where
+        P: Into<Option<Intercept>>,
+    {
+        let proxy = proxy.into();
+        trace!("connect with maybe proxy: {:?}", proxy);
 
         let mut connector = self.build_https_connector(req.extra())?;
 
         // When using a proxy for HTTPS targets, disable ALPN to avoid protocol negotiation issues
-        if is_proxy && req.uri().is_https() {
+        if proxy.is_some() && req.uri().is_https() {
             connector.no_alpn();
         }
 
@@ -381,12 +361,9 @@ impl ConnectorService {
             io.get_ref().set_nodelay(false)?;
         }
 
-        // If the connection is HTTPS, wrap the TLS stream in a TlsConn for unified handling.
-        // For plain HTTP, use the stream directly without additional wrapping.
-        self.conn_from_stream(io, is_proxy, is_proxy)
+        self.conn_from_stream(io, proxy)
     }
 
-    /// Establishes a connection through a specified proxy.
     async fn connect_via_proxy(
         self,
         mut req: ConnectRequest,
@@ -399,44 +376,45 @@ impl ConnectorService {
                 let proxy_uri = proxy.uri().clone();
 
                 #[cfg(feature = "socks")]
-                use proxy::socks::{DnsResolve, SocksConnector, Version};
+                {
+                    use proxy::socks::{DnsResolve, SocksConnector, Version};
 
-                #[cfg(feature = "socks")]
-                if let Some((version, dns_resolve)) = match proxy.uri().scheme_str() {
-                    Some("socks4") => Some((Version::V4, DnsResolve::Local)),
-                    Some("socks4a") => Some((Version::V4, DnsResolve::Remote)),
-                    Some("socks5") => Some((Version::V5, DnsResolve::Local)),
-                    Some("socks5h") => Some((Version::V5, DnsResolve::Remote)),
-                    _ => None,
-                } {
-                    trace!("connecting via SOCKS proxy: {:?}", proxy_uri);
+                    if let Some((version, dns_resolve)) = match proxy.uri().scheme_str() {
+                        Some("socks4") => Some((Version::V4, DnsResolve::Local)),
+                        Some("socks4a") => Some((Version::V4, DnsResolve::Remote)),
+                        Some("socks5") => Some((Version::V5, DnsResolve::Local)),
+                        Some("socks5h") => Some((Version::V5, DnsResolve::Remote)),
+                        _ => None,
+                    } {
+                        trace!("connecting via SOCKS proxy: {:?}", proxy_uri);
 
-                    // Connect to the proxy and establish the SOCKS connection.
-                    let conn = {
-                        // Build a SOCKS connector.
-                        let mut socks = SocksConnector::new_with_resolver(
-                            proxy_uri,
-                            self.http.clone(),
-                            self.resolver.clone(),
-                        );
-                        socks.set_auth(proxy.raw_auth());
-                        socks.set_version(version);
-                        socks.set_dns_mode(dns_resolve);
-                        socks.call(uri).await?
-                    };
+                        // Connect to the proxy and establish the SOCKS connection.
+                        let conn = {
+                            // Build a SOCKS connector.
+                            let mut socks = SocksConnector::new_with_resolver(
+                                proxy_uri,
+                                self.http.clone(),
+                                self.resolver.clone(),
+                            );
+                            socks.set_auth(proxy.raw_auth());
+                            socks.set_version(version);
+                            socks.set_dns_mode(dns_resolve);
+                            socks.call(uri).await?
+                        };
 
-                    // Build an HTTPS connector.
-                    let mut connector = self.build_https_connector(req.extra())?;
+                        // Build an HTTPS connector.
+                        let mut connector = self.build_https_connector(req.extra())?;
 
-                    // Wrap the established SOCKS connection with TLS if needed.
-                    let io = connector.call(EstablishedConn::new(conn, req)).await?;
+                        // Wrap the established SOCKS connection with TLS if needed.
+                        let io = connector.call(EstablishedConn::new(conn, req)).await?;
 
-                    // Re-enable Nagle's algorithm if it was disabled earlier
-                    if !self.config.tcp_nodelay {
-                        io.get_ref().set_nodelay(false)?;
+                        // Re-enable Nagle's algorithm if it was disabled earlier
+                        if !self.config.tcp_nodelay {
+                            io.get_ref().set_nodelay(false)?;
+                        }
+
+                        return self.tunnel_conn_from_stream(io);
                     }
-
-                    return self.conn_from_stream(io, false, false);
                 }
 
                 // Handle HTTPS proxy tunneling connection
@@ -473,11 +451,11 @@ impl ConnectorService {
                         io.get_ref().get_ref().set_nodelay(false)?;
                     }
 
-                    return self.conn_from_nested_stream(io, true);
+                    return self.tunnel_conn_from_stream(io);
                 }
 
                 *req.uri_mut() = proxy_uri;
-                self.connect_direct(req, true)
+                self.connect_auto_proxy(req, proxy)
                     .await
                     .map_err(ProxyConnect)
                     .map_err(Into::into)
@@ -488,7 +466,6 @@ impl ConnectorService {
 
                 // Create a Unix connector with the specified socket path.
                 let mut connector = self.build_unix_connector(unix_socket, req.extra())?;
-                let is_proxy = false;
 
                 // If the target URI is HTTPS, establish a CONNECT tunnel over the Unix socket,
                 // then upgrade the tunneled stream to TLS.
@@ -509,18 +486,17 @@ impl ConnectorService {
                     // Wrap the established tunneled stream with TLS.
                     let io = connector.call(EstablishedConn::new(tunneled, req)).await?;
 
-                    return self.conn_from_nested_stream(io, is_proxy);
+                    return self.tunnel_conn_from_stream(io);
                 }
 
                 // For plain HTTP, use the Unix connector directly.
                 let io = connector.call(req).await?;
 
-                self.conn_from_stream(io, is_proxy, is_proxy)
+                self.conn_from_stream(io, None)
             }
         }
     }
 
-    /// Automatically selects direct or proxy connection.
     async fn connect_auto(self, req: ConnectRequest) -> Result<Conn, BoxError> {
         debug!("starting new connection: {:?}", req.uri());
 
@@ -543,7 +519,7 @@ impl ConnectorService {
             if let Some(intercepted) = intercepted {
                 self.connect_via_proxy(req, intercepted).await
             } else {
-                self.connect_direct(req, false).await
+                self.connect_auto_proxy(req, None).await
             }
         };
 

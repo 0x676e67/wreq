@@ -17,7 +17,10 @@ use std::{
 
 use bytes::Bytes;
 use futures_util::future::{Either, FutureExt, TryFutureExt};
-use http::{HeaderValue, Method, Request, Response, Uri, Version, header::HOST};
+use http::{
+    HeaderValue, Method, Request, Response, Uri, Version,
+    header::{HOST, PROXY_AUTHORIZATION},
+};
 use http_body::Body;
 use pool::Ver;
 use tokio::io::{AsyncRead, AsyncWrite};
@@ -26,7 +29,7 @@ use tower::util::Oneshot;
 use self::{
     error::{ClientConnectError, Error, ErrorKind, TrySendError},
     exec::Exec,
-    extra::{ConnectExtra, ConnectIdentifier},
+    extra::{ConnectExtra, ConnectIdentity},
     lazy::{Started as Lazy, lazy},
 };
 use crate::{
@@ -58,7 +61,7 @@ type BoxSendFuture = Pin<Box<dyn Future<Output = ()> + Send>>;
 #[derive(Clone)]
 pub struct ConnectRequest {
     uri: Uri,
-    identifier: ConnectIdentifier,
+    identifier: ConnectIdentity,
 }
 
 // ===== impl ConnectRequest =====
@@ -91,9 +94,9 @@ impl ConnectRequest {
         &mut self.uri
     }
 
-    /// Returns a unique [`ConnectIdentifier`].
+    /// Returns a unique [`ConnectIdentity`].
     #[inline]
-    pub(crate) fn identify(&self) -> ConnectIdentifier {
+    pub(crate) fn identify(&self) -> ConnectIdentity {
         self.identifier.clone()
     }
 
@@ -115,7 +118,7 @@ pub struct HttpClient<C, B> {
     exec: Exec,
     h1_builder: conn::http1::Builder,
     h2_builder: conn::http2::Builder<Exec>,
-    pool: pool::Pool<PoolClient<B>, ConnectIdentifier>,
+    pool: pool::Pool<PoolClient<B>, ConnectIdentity>,
 }
 
 #[derive(Clone, Copy)]
@@ -268,6 +271,16 @@ where
             if req.method() == Method::CONNECT {
                 util::authority_form(req.uri_mut());
             } else if pooled.conn_info.is_proxied() {
+                if let Some(auth) = pooled.conn_info.proxy_auth() {
+                    req.headers_mut()
+                        .entry(PROXY_AUTHORIZATION)
+                        .or_insert_with(|| auth.clone());
+                }
+
+                if let Some(headers) = pooled.conn_info.proxy_headers() {
+                    crate::util::replace_headers(req.headers_mut(), headers.clone());
+                }
+
                 util::absolute_form(req.uri_mut());
             } else {
                 util::origin_form(req.uri_mut());
@@ -321,7 +334,7 @@ where
     async fn connection_for(
         &self,
         req: ConnectRequest,
-    ) -> Result<pool::Pooled<PoolClient<B>, ConnectIdentifier>, Error> {
+    ) -> Result<pool::Pooled<PoolClient<B>, ConnectIdentity>, Error> {
         loop {
             match self.one_connection_for(req.clone()).await {
                 Ok(pooled) => return Ok(pooled),
@@ -344,7 +357,7 @@ where
     async fn one_connection_for(
         &self,
         req: ConnectRequest,
-    ) -> Result<pool::Pooled<PoolClient<B>, ConnectIdentifier>, ClientConnectError> {
+    ) -> Result<pool::Pooled<PoolClient<B>, ConnectIdentity>, ClientConnectError> {
         // Return a single connection if pooling is not enabled
         if !self.pool.is_enabled() {
             return self
@@ -435,7 +448,7 @@ where
     fn connect_to(
         &self,
         req: ConnectRequest,
-    ) -> impl Lazy<Output = Result<pool::Pooled<PoolClient<B>, ConnectIdentifier>, Error>>
+    ) -> impl Lazy<Output = Result<pool::Pooled<PoolClient<B>, ConnectIdentity>, Error>>
     + Send
     + Unpin
     + 'static {

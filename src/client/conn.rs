@@ -16,7 +16,7 @@ use std::{
     },
 };
 
-use ::http::Extensions;
+use ::http::{Extensions, HeaderMap, HeaderValue};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tower::{
     BoxError,
@@ -32,7 +32,7 @@ pub(super) use self::{
     proxy::tunnel,
     tls_info::TlsInfoFactory,
 };
-use crate::{client::ConnectRequest, dns::DynResolver};
+use crate::{client::ConnectRequest, dns::DynResolver, proxy::matcher::Intercept};
 
 /// HTTP connector with dynamic DNS resolver.
 pub type HttpConnector = self::http::HttpConnector<DynResolver>;
@@ -109,6 +109,14 @@ struct ExtraEnvelope<T>(T);
 #[derive(Debug)]
 struct ExtraChain<T>(Box<dyn ExtraInner>, T);
 
+/// Information about an HTTP proxy identity.
+#[derive(Debug, Default, Clone)]
+struct ProxyIdentity {
+    is_proxied: bool,
+    auth: Option<HeaderValue>,
+    headers: Option<HeaderMap>,
+}
+
 /// Extra information about the connected transport.
 ///
 /// This can be used to inform recipients about things like if ALPN
@@ -116,7 +124,7 @@ struct ExtraChain<T>(Box<dyn ExtraInner>, T);
 #[derive(Debug)]
 pub struct Connected {
     alpn: Alpn,
-    is_proxied: bool,
+    proxy: Box<ProxyIdentity>,
     extra: Option<Extra>,
     poisoned: PoisonPill,
 }
@@ -164,7 +172,7 @@ impl Connected {
     pub fn new() -> Connected {
         Connected {
             alpn: Alpn::None,
-            is_proxied: false,
+            proxy: Box::new(ProxyIdentity::default()),
             extra: None,
             poisoned: PoisonPill::healthy(),
         }
@@ -187,34 +195,37 @@ impl Connected {
         }
     }
 
-    /// Set whether the connected transport is to an HTTP proxy.
-    ///
-    /// This setting will affect if HTTP/1 requests written on the transport
-    /// will have the request-target in absolute-form or origin-form:
-    ///
-    /// - When `proxy(false)`:
-    ///
-    /// ```http
-    /// GET /guide HTTP/1.1
-    /// ```
-    ///
-    /// - When `proxy(true)`:
-    ///
-    /// ```http
-    /// GET http://hyper.rs/guide HTTP/1.1
-    /// ```
-    ///
-    /// Default is `false`.
-    #[inline]
-    pub fn proxy(mut self, is_proxied: bool) -> Connected {
-        self.is_proxied = is_proxied;
+    /// Set that the proxy was used for this connected transport.
+    pub fn proxy(mut self, proxy: Intercept) -> Connected {
+        self.proxy.is_proxied = true;
+
+        if let Some(auth) = proxy.basic_auth() {
+            self.proxy.auth.replace(auth.clone());
+        }
+
+        if let Some(headers) = proxy.custom_headers() {
+            self.proxy.headers.replace(headers.clone());
+        }
+
         self
     }
 
     /// Determines if the connected transport is to an HTTP proxy.
     #[inline]
     pub fn is_proxied(&self) -> bool {
-        self.is_proxied
+        self.proxy.is_proxied
+    }
+
+    /// Get the proxy identity information for the connected transport.
+    #[inline]
+    pub fn proxy_auth(&self) -> Option<&HeaderValue> {
+        self.proxy.auth.as_ref()
+    }
+
+    /// Get the custom proxy headers for the connected transport.
+    #[inline]
+    pub fn proxy_headers(&self) -> Option<&HeaderMap> {
+        self.proxy.headers.as_ref()
     }
 
     /// Set that the connected transport negotiated HTTP/2 as its next protocol.
@@ -252,7 +263,7 @@ impl Connected {
     pub(crate) fn clone(&self) -> Connected {
         Connected {
             alpn: self.alpn,
-            is_proxied: self.is_proxied,
+            proxy: self.proxy.clone(),
             extra: self.extra.clone(),
             poisoned: self.poisoned.clone(),
         }

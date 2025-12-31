@@ -23,7 +23,7 @@ use {super::layer::cookie::CookieServiceLayer, crate::cookie};
 
 pub(crate) use self::client::{
     ConnectRequest, HttpClient,
-    extra::{ConnectExtra, ConnectIdentifier},
+    extra::{ConnectExtra, ConnectIdentity},
 };
 use self::future::Pending;
 #[cfg(any(
@@ -487,12 +487,9 @@ impl ClientBuilder {
         }
 
         // Prepare proxies
-        let proxies = {
-            if config.auto_sys_proxy {
-                config.proxies.push(ProxyMatcher::system());
-            }
-            Arc::new(config.proxies)
-        };
+        if config.auto_sys_proxy {
+            config.proxies.push(ProxyMatcher::system());
+        }
 
         // Create base client service
         let service = {
@@ -516,7 +513,7 @@ impl ClientBuilder {
             };
 
             // Build connector
-            let connector = Connector::builder(proxies.clone(), resolver)
+            let connector = Connector::builder(config.proxies, resolver)
                 .timeout(config.connect_timeout)
                 .tls_info(config.tls_info)
                 .tls_options(tls_options)
@@ -601,7 +598,6 @@ impl ClientBuilder {
                     config.https_only,
                     config.headers,
                     config.orig_headers,
-                    proxies,
                 ))
                 .service(service);
 

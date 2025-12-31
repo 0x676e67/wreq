@@ -14,7 +14,10 @@ use tokio::{
 use tokio_boring2::SslStream;
 
 use super::{AsyncConnWithInfo, Connected, Connection, TlsInfoFactory};
-use crate::tls::{TlsInfo, conn::MaybeHttpsStream};
+use crate::{
+    proxy::matcher::Intercept,
+    tls::{TlsInfo, conn::MaybeHttpsStream},
+};
 
 pin_project! {
     /// Note: the `is_proxy` member means *is plain text HTTP proxy*.
@@ -23,9 +26,9 @@ pin_project! {
     /// * absolute-form (`GET http://foo.bar/and/a/path HTTP/1.1`), otherwise.
     pub struct Conn {
         #[pin]
-        pub inner: Box<dyn AsyncConnWithInfo>,
-        pub tls_info: bool,
-        pub is_proxy: bool,
+        pub(super) inner: Box<dyn AsyncConnWithInfo>,
+        pub(super) tls_info: bool,
+        pub(super) proxy: Option<Intercept>,
     }
 }
 
@@ -45,7 +48,11 @@ pin_project! {
 
 impl Connection for Conn {
     fn connected(&self) -> Connected {
-        let connected = self.inner.connected().proxy(self.is_proxy);
+        let mut connected = self.inner.connected();
+
+        if let Some(proxy) = &self.proxy {
+            connected = connected.proxy(proxy.clone());
+        }
 
         if self.tls_info {
             if let Some(tls_info) = self.inner.tls_info() {
