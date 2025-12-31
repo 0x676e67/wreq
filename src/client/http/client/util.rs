@@ -9,7 +9,7 @@ pub(super) fn origin_form(uri: &mut Uri) {
     let path = match uri.path_and_query() {
         Some(path) if path.as_str() != "/" => {
             let mut parts = ::http::uri::Parts::default();
-            parts.path_and_query = Some(path.clone());
+            parts.path_and_query.replace(path.clone());
             Uri::from_parts(parts).expect("path is valid uri")
         }
         _none_or_just_slash => {

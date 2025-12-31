@@ -29,7 +29,7 @@ use tower::Service;
 
 use crate::{
     Error,
-    client::{ConnectIdentifier, ConnectRequest, Connected, Connection},
+    client::{ConnectIdentity, ConnectRequest, Connected, Connection},
     error::BoxError,
     sync::Mutex,
     tls::{
@@ -38,8 +38,8 @@ use crate::{
     },
 };
 
-fn key_index() -> Result<Index<Ssl, SessionKey<ConnectIdentifier>>, ErrorStack> {
-    static IDX: LazyLock<Result<Index<Ssl, SessionKey<ConnectIdentifier>>, ErrorStack>> =
+fn key_index() -> Result<Index<Ssl, SessionKey<ConnectIdentity>>, ErrorStack> {
+    static IDX: LazyLock<Result<Index<Ssl, SessionKey<ConnectIdentity>>, ErrorStack>> =
         LazyLock::new(Ssl::new_ex_index);
     IDX.clone()
 }
@@ -157,14 +157,14 @@ pub struct HttpsConnector<T> {
 #[derive(Clone)]
 struct Inner {
     ssl: SslConnector,
-    cache: Option<Arc<Mutex<SessionCache<ConnectIdentifier>>>>,
+    cache: Option<Arc<Mutex<SessionCache<ConnectIdentity>>>>,
     config: HandshakeConfig,
 }
 
 /// A builder for creating a `TlsConnector`.
 #[derive(Clone)]
 pub struct TlsConnectorBuilder {
-    session_cache: Arc<Mutex<SessionCache<ConnectIdentifier>>>,
+    session_cache: Arc<Mutex<SessionCache<ConnectIdentity>>>,
     alpn_protocol: Option<AlpnProtocol>,
     max_version: Option<TlsVersion>,
     min_version: Option<TlsVersion>,

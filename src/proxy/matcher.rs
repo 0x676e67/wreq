@@ -148,7 +148,6 @@ impl Intercept {
         &self.uri
     }
 
-    #[inline]
     pub(crate) fn basic_auth(&self) -> Option<&HeaderValue> {
         if let Some(ref val) = self.extra.auth {
             return Some(val);
@@ -163,13 +162,9 @@ impl Intercept {
 
     #[inline]
     pub(crate) fn custom_headers(&self) -> Option<&HeaderMap> {
-        if let Some(ref val) = self.extra.misc {
-            return Some(val);
-        }
-        None
+        self.extra.misc.as_ref()
     }
 
-    #[inline]
     #[cfg(feature = "socks")]
     pub(crate) fn raw_auth(&self) -> Option<(Bytes, Bytes)> {
         if let Auth::Raw(ref u, ref p) = self.auth {
@@ -380,12 +375,10 @@ fn parse_env_uri(val: &str) -> Option<Intercept> {
     // removing any path, but we MUST specify one or the builder errors
     builder = builder.path_and_query("/");
 
-    let uri = builder.build().ok()?;
-
     Some(Intercept {
-        uri,
         auth,
         extra: Extra::default(),
+        uri: builder.build().ok()?,
     })
 }
 

@@ -12,12 +12,8 @@ use crate::{
     tls::{AlpnProtocol, TlsOptions},
 };
 
-/// Uniquely identifies a connection configuration and its lifecycle.
-///
-/// [`Identifier`] serves as the unique key for a connection, representing all parameters
-/// that define its identity (URI, protocol, proxy, TCP/TLS options). It is used for pooling,
-/// caching, and tracking connections throughout their entire lifecycle.
-pub(crate) type ConnectIdentifier = Arc<HashMemo<ConnectExtra>>;
+/// Unique identity for a reusable connection.
+pub(crate) type ConnectIdentity = Arc<HashMemo<ConnectExtra>>;
 
 /// Metadata describing a reusable network connection.
 ///

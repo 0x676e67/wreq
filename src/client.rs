@@ -23,5 +23,5 @@ pub use self::{
 pub(crate) use self::{
     conn::{Connected, Connection},
     core::{Error as CoreError, ext},
-    http::{ConnectIdentifier, ConnectRequest, client::error::Error},
+    http::{ConnectIdentity, ConnectRequest, client::error::Error},
 };
