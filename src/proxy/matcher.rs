@@ -637,6 +637,7 @@ mod tests {
     fn intercept(p: &Matcher, u: &str) -> Intercept {
         match p.intercept(&u.parse().unwrap()).unwrap() {
             Intercepted::Proxy(intercept) => intercept,
+            #[cfg(unix)]
             Intercepted::Unix(path) => {
                 unreachable!("should not intercept unix socket: {path:?}")
             }

@@ -84,7 +84,7 @@ fn tls_options_template() -> TlsOptions {
         .max_tls_version(TlsVersion::TLS_1_3)
         .key_shares_limit(3)
         .preserve_tls13_cipher_list(true)
-        .aes_hw_override(false)
+        .aes_hw_override(true)
         .random_aes_hw_override(true)
         .extension_permutation(&[
             ExtensionType::SERVER_NAME,
