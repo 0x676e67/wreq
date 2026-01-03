@@ -94,8 +94,8 @@ jobs:
       - name: Check
         run: cargo check
 
-  tests:
-    name: Tests
+  test:
+    name: Test
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -141,6 +141,8 @@ jobs:
             env: Windows
           - os: macos-latest
             env: macOS
+          - os: ubuntu-latest
+            env: Android
     steps:
       - uses: actions/checkout@v6
       - uses: actions-rs/toolchain@v1
@@ -151,26 +153,19 @@ jobs:
         if: matrix.os == 'windows-latest'
         run: choco install nasm -y
       - name: Build
+        if: matrix.env != 'Android'
         run: cargo build --all-features
-
-  android-ndk:
-    name: Android NDK
-    runs-on: ubuntu-latest
-    environment: Android
-    steps:
-      - uses: actions/checkout@v6
-      - uses: actions-rs/toolchain@v1
-        with:
-          toolchain: stable
-          override: true
       - name: Add Android targets
+        if: matrix.env == 'Android'
         run: rustup target add aarch64-linux-android x86_64-linux-android
       - uses: nttld/setup-ndk@v1.5.0
+        if: matrix.env == 'Android'
         id: setup-ndk
         with:
           ndk-version: r27c
           add-to-path: true
       - name: Build with cargo-ndk
+        if: matrix.env == 'Android'
         env:
           ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
           ANDROID_NDK_ROOT: ${{ steps.setup-ndk.outputs.ndk-path }}
@@ -180,7 +175,7 @@ jobs:
 
   release:
     name: Release
-    needs: [style, tests, docs, hack, msrv, build, android-ndk]
+    needs: [style, test, docs, hack, msrv, build]
     runs-on: ubuntu-latest
     environment: Release
     if: startsWith(github.ref, 'refs/tags/')
