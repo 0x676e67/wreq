@@ -347,7 +347,7 @@ impl Jar {
         // RFC 6265: If Max-Age=0 or Expires in the past, remove the cookie
         let expired = cookie
             .expires_datetime()
-            .is_some_and(|dt| SystemTime::from(dt) <= SystemTime::now())
+            .is_some_and(|dt| dt <= SystemTime::now())
             || cookie.max_age().is_some_and(|age| age.is_zero());
 
         if expired {
@@ -437,10 +437,11 @@ impl CookieStore for Jar {
                                 return false;
                             }
 
-                            if let Some(Expiration::DateTime(dt)) = cookie.expires() {
-                                if SystemTime::from(dt) <= SystemTime::now() {
-                                    return false;
-                                }
+                            if cookie
+                                .expires_datetime()
+                                .is_some_and(|dt| dt <= SystemTime::now())
+                            {
+                                return false;
                             }
 
                             true
