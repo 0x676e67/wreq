@@ -18,11 +18,11 @@ An ergonomic and modular Rust HTTP client for advanced and low-level emulation, 
 - Redirect Policy
 - Original Header
 - Rotating Proxies
-- Certificate Store
 - Tower Middleware
 - WebSocket Upgrade
 - HTTPS via BoringSSL
 - HTTP/2 over TLS Emulation
+- Certificate Store (CAs & mTLS)
 
 ## Example
 
