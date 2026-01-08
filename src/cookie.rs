@@ -1,11 +1,6 @@
 //! HTTP Cookies
 
-use std::{
-    convert::TryInto,
-    fmt,
-    sync::Arc,
-    time::{Duration, SystemTime},
-};
+use std::{convert::TryInto, fmt, sync::Arc, time::SystemTime};
 
 use bytes::Bytes;
 use cookie::{Cookie as RawCookie, CookieJar, Expiration, SameSite};
@@ -350,12 +345,10 @@ impl Jar {
             .or_default();
 
         // RFC 6265: If Max-Age=0 or Expires in the past, remove the cookie
-        let expired = match cookie.expires() {
-            Some(Expiration::DateTime(dt)) => SystemTime::from(dt) <= SystemTime::now(),
-            _ => false,
-        } || cookie
-            .max_age()
-            .is_some_and(|age| age == Duration::from_secs(0));
+        let expired = cookie
+            .expires_datetime()
+            .is_some_and(|dt| SystemTime::from(dt) <= SystemTime::now())
+            || cookie.max_age().is_some_and(|age| age.is_zero());
 
         if expired {
             name_map.remove(cookie);
