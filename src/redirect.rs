@@ -289,7 +289,7 @@ impl Attempt<'_, true> {
     ///     })
     /// });
     /// ```
-    pub fn pending<F, Fut>(self, pending: F) -> Action
+    pub fn pending<F, Fut>(self, fut: F) -> Action
     where
         F: FnOnce(Attempt<'static, false>) -> Fut + Send + 'static,
         Fut: Future<Output = Action> + Send + 'static,
@@ -300,7 +300,7 @@ impl Attempt<'_, true> {
             uri: Cow::Owned(self.uri.into_owned()),
             previous: Cow::Owned(self.previous.into_owned()),
         };
-        let pending = Box::pin(pending(attempt).map(|action| action.inner));
+        let pending = Box::pin(fut(attempt).map(|action| action.inner));
         Action {
             inner: redirect::Action::Pending(pending),
         }
