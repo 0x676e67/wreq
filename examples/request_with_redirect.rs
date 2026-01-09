@@ -8,9 +8,7 @@ async fn main() -> wreq::Result<()> {
             // we can inspect the redirect attempt
             println!(
                 "Redirecting (status: {}) to {:?} and headers: {:#?}",
-                attempt.status(),
-                attempt.uri(),
-                attempt.headers()
+                attempt.status, attempt.uri, attempt.headers
             );
 
             // we can follow redirects as normal
