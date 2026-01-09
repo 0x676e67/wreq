@@ -37,16 +37,16 @@ pub struct Policy {
 #[derive(Debug)]
 #[non_exhaustive]
 pub struct Attempt<'a, const PENDING: bool = true> {
-    /// Get the type of redirect.
+    /// The status code of the redirect response.
     pub status: StatusCode,
 
-    /// Get the headers of redirect.
+    /// The headers of the redirect response.
     pub headers: Cow<'a, HeaderMap>,
 
-    /// Get the next URI to redirect to.
+    /// The URI to redirect to.
     pub uri: Cow<'a, Uri>,
 
-    /// Get the list of previous URIs that have already been requested in this chain.
+    /// The list of previous URIs that have already been requested in this chain.
     pub previous: Cow<'a, [Uri]>,
 }
 
