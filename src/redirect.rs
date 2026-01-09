@@ -8,7 +8,7 @@ use std::{borrow::Cow, error::Error as StdError, fmt, sync::Arc};
 
 use bytes::Bytes;
 use futures_util::FutureExt;
-use http::{HeaderMap, HeaderValue, StatusCode, Uri};
+use http::{HeaderMap, HeaderName, HeaderValue, StatusCode, Uri};
 
 use crate::{
     client::{Body, layer::redirect},
@@ -289,7 +289,7 @@ impl Attempt<'_, true> {
     ///     })
     /// });
     /// ```
-    pub fn pending<F, Fut>(self, fut: F) -> Action
+    pub fn pending<F, Fut>(self, func: F) -> Action
     where
         F: FnOnce(Attempt<'static, false>) -> Fut + Send + 'static,
         Fut: Future<Output = Action> + Send + 'static,
@@ -300,7 +300,7 @@ impl Attempt<'_, true> {
             uri: Cow::Owned(self.uri.into_owned()),
             previous: Cow::Owned(self.previous.into_owned()),
         };
-        let pending = Box::pin(fut(attempt).map(|action| action.inner));
+        let pending = Box::pin(func(attempt).map(|action| action.inner));
         Action {
             inner: redirect::Action::Pending(pending),
         }
@@ -476,9 +476,13 @@ fn remove_sensitive_headers(headers: &mut HeaderMap, next: &Uri, previous: &[Uri
             || next.port() != previous.port()
             || next.scheme() != previous.scheme();
         if cross_host {
+            /// Avoid dynamic allocation of `HeaderName` by using `from_static`.
+            /// https://github.com/hyperium/http/blob/e9de46c9269f0a476b34a02a401212e20f639df2/src/header/map.rs#L3794
+            const COOKIE2: HeaderName = HeaderName::from_static("cookie2");
+
             headers.remove(AUTHORIZATION);
             headers.remove(COOKIE);
-            headers.remove("cookie2");
+            headers.remove(COOKIE2);
             headers.remove(PROXY_AUTHORIZATION);
             headers.remove(WWW_AUTHENTICATE);
         }
