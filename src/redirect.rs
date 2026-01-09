@@ -37,10 +37,17 @@ pub struct Policy {
 #[derive(Debug)]
 #[non_exhaustive]
 pub struct Attempt<'a, const PENDING: bool = true> {
-    status: StatusCode,
-    headers: Cow<'a, HeaderMap>,
-    next: Cow<'a, Uri>,
-    previous: Cow<'a, [Uri]>,
+    /// The status code of the redirect response.
+    pub status: StatusCode,
+
+    /// The headers of the redirect response.
+    pub headers: Cow<'a, HeaderMap>,
+
+    /// The URI to redirect to.
+    pub uri: Cow<'a, Uri>,
+
+    /// The list of previous URIs that have already been requested in this chain.
+    pub previous: Cow<'a, [Uri]>,
 }
 
 /// An action to perform when a redirect status code is found.
@@ -59,10 +66,13 @@ pub struct History(Vec<HistoryEntry>);
 pub struct HistoryEntry {
     /// The status code of the redirect response.
     pub status: StatusCode,
+
     /// The URI of the redirect response.
     pub uri: Uri,
+
     /// The previous URI before the redirect response.
     pub previous: Uri,
+
     /// The headers of the redirect response.
     pub headers: HeaderMap,
 }
@@ -208,7 +218,7 @@ impl Policy {
         self.redirect(Attempt {
             status,
             headers: Cow::Borrowed(headers),
-            next: Cow::Borrowed(next),
+            uri: Cow::Borrowed(next),
             previous: Cow::Borrowed(previous),
         })
         .inner
@@ -227,31 +237,7 @@ impl_request_config_value!(Policy);
 
 // ===== impl Attempt =====
 
-impl<'a, const PENDING: bool> Attempt<'a, PENDING> {
-    /// Get the type of redirect.
-    #[inline]
-    pub fn status(&self) -> StatusCode {
-        self.status
-    }
-
-    /// Get the headers of redirect.
-    #[inline]
-    pub fn headers(&self) -> &HeaderMap {
-        self.headers.as_ref()
-    }
-
-    /// Get the next URI to redirect to.
-    #[inline]
-    pub fn uri(&self) -> &Uri {
-        self.next.as_ref()
-    }
-
-    /// Get the list of previous URIs that have already been requested in this chain.
-    #[inline]
-    pub fn previous(&self) -> &[Uri] {
-        self.previous.as_ref()
-    }
-
+impl<const PENDING: bool> Attempt<'_, PENDING> {
     /// Returns an action meaning wreq should follow the next URI.
     #[inline]
     pub fn follow(self) -> Action {
@@ -281,7 +267,7 @@ impl<'a, const PENDING: bool> Attempt<'a, PENDING> {
     }
 }
 
-impl<'a> Attempt<'a, true> {
+impl Attempt<'_, true> {
     /// Returns an action meaning wreq should perform the redirect asynchronously.
     ///
     /// The provided async closure receives an owned [`Attempt<'static>`] and should
@@ -303,7 +289,7 @@ impl<'a> Attempt<'a, true> {
     ///     })
     /// });
     /// ```
-    pub fn pending<F, Fut>(self, task: F) -> Action
+    pub fn pending<F, Fut>(self, fut: F) -> Action
     where
         F: FnOnce(Attempt<'static, false>) -> Fut + Send + 'static,
         Fut: Future<Output = Action> + Send + 'static,
@@ -311,10 +297,10 @@ impl<'a> Attempt<'a, true> {
         let attempt = Attempt {
             status: self.status,
             headers: Cow::Owned(self.headers.into_owned()),
-            next: Cow::Owned(self.next.into_owned()),
+            uri: Cow::Owned(self.uri.into_owned()),
             previous: Cow::Owned(self.previous.into_owned()),
         };
-        let pending = Box::pin(task(attempt).map(|action| action.inner));
+        let pending = Box::pin(fut(attempt).map(|action| action.inner));
         Action {
             inner: redirect::Action::Pending(pending),
         }
@@ -539,7 +525,7 @@ mod tests {
     #[test]
     fn test_redirect_policy_custom() {
         let policy = Policy::custom(|attempt| {
-            if attempt.uri().host() == Some("foo") {
+            if attempt.uri.host() == Some("foo") {
                 attempt.stop()
             } else {
                 attempt.follow()
