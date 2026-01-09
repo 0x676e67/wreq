@@ -16,7 +16,7 @@ pub trait TlsInfoFactory {
 /// Extract TLS metadata from an SSL connection.
 fn extract_tls_info<S>(ssl_stream: &SslStream<S>) -> Option<TlsInfo> {
     let ssl = ssl_stream.ssl();
-    
+
     // Return None if no leaf certificate (maintains backward compatibility)
     let leaf_cert = ssl.peer_certificate()?;
     let peer_certificate = leaf_cert.to_der().ok();
@@ -24,22 +24,18 @@ fn extract_tls_info<S>(ssl_stream: &SslStream<S>) -> Option<TlsInfo> {
     // Build full chain: leaf first, then intermediates
     let peer_certificate_chain = {
         let mut chain = Vec::new();
-        
+
         // Add leaf certificate first
         if let Some(leaf_der) = &peer_certificate {
             chain.push(leaf_der.clone());
         }
-        
+
         // Add intermediate certificates
         if let Some(intermediates) = ssl.peer_cert_chain() {
             chain.extend(intermediates.iter().filter_map(|c| c.to_der().ok()));
         }
-        
-        if chain.is_empty() {
-            None
-        } else {
-            Some(chain)
-        }
+
+        if chain.is_empty() { None } else { Some(chain) }
     };
 
     Some(TlsInfo {
