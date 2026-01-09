@@ -476,7 +476,7 @@ fn remove_sensitive_headers(headers: &mut HeaderMap, next: &Uri, previous: &[Uri
             || next.port() != previous.port()
             || next.scheme() != previous.scheme();
         if cross_host {
-            /// Aovid dynamic allocation of `HeaderName` by using `from_static`.
+            /// Avoid dynamic allocation of `HeaderName` by using `from_static`.
             /// https://github.com/hyperium/http/blob/e9de46c9269f0a476b34a02a401212e20f639df2/src/header/map.rs#L3794
             const COOKIE2: HeaderName = HeaderName::from_static("cookie2");
 
