@@ -37,7 +37,7 @@ impl TlsInfo {
     ///
     /// This includes the leaf certificate on the client side.
     /// Returns an iterator of DER-encoded certificates as `&[u8]`.
-    pub fn peer_certificate_chain(&self) -> Option<impl Iterator<Item = &[u8]> + '_> {
+    pub fn peer_certificate_chain(&self) -> Option<impl Iterator<Item = &[u8]>> {
         self.peer_certificate_chain
             .as_ref()
             .map(|v| v.iter().map(|b| b.as_ref()))
