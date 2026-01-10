@@ -22,7 +22,7 @@ pub use self::{
 #[derive(Debug, Clone)]
 pub struct TlsInfo {
     pub(crate) peer_certificate: Option<Vec<u8>>,
-    pub(crate) peer_certificate_chain: Option<Vec<Vec<u8>>>,
+    pub(crate) peer_certificate_chain: Option<Vec<Bytes>>,
 }
 
 impl TlsInfo {
@@ -31,9 +31,10 @@ impl TlsInfo {
         self.peer_certificate.as_deref()
     }
 
-    /// Get the full certificate chain (leaf first, then intermediates).
-    /// Each certificate is DER-encoded bytes.
-    pub fn peer_certificate_chain(&self) -> Option<&[Vec<u8>]> {
+    /// Get the DER encoded certificate chain of the peer.
+    ///
+    /// This includes the leaf certificate on the client side.
+    pub fn peer_certificate_chain(&self) -> Option<&[Bytes]> {
         self.peer_certificate_chain.as_deref()
     }
 }
