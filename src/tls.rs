@@ -9,7 +9,9 @@ mod keylog;
 mod options;
 mod x509;
 
+use boring2::ssl;
 pub use boring2::ssl::{CertificateCompressionAlgorithm, ExtensionType};
+use bytes::{BufMut, Bytes, BytesMut};
 
 pub use self::{
     keylog::KeyLog,
@@ -22,6 +24,7 @@ pub use self::{
 #[derive(Debug, Clone)]
 pub struct TlsInfo {
     pub(crate) peer_certificate: Option<Vec<u8>>,
+    pub(crate) peer_certificate_chain: Option<Vec<Bytes>>,
 }
 
 impl TlsInfo {
@@ -29,10 +32,17 @@ impl TlsInfo {
     pub fn peer_certificate(&self) -> Option<&[u8]> {
         self.peer_certificate.as_deref()
     }
-}
 
-use boring2::ssl;
-use bytes::{BufMut, Bytes, BytesMut};
+    /// Get the DER encoded certificate chain of the peer.
+    ///
+    /// This includes the leaf certificate on the client side.
+    /// Returns an iterator of DER-encoded certificates as `&[u8]`.
+    pub fn peer_certificate_chain(&self) -> Option<impl Iterator<Item = &[u8]>> {
+        self.peer_certificate_chain
+            .as_ref()
+            .map(|v| v.iter().map(|b| b.as_ref()))
+    }
+}
 
 /// A TLS protocol version.
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
