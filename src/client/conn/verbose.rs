@@ -47,6 +47,7 @@ mod sealed {
     }
 
     impl<T: Connection + AsyncRead + AsyncWrite + Unpin> Connection for Wrapper<T> {
+        #[inline]
         fn connected(&self) -> Connected {
             self.inner.connected()
         }
@@ -58,16 +59,9 @@ mod sealed {
             cx: &mut Context,
             buf: &mut ReadBuf<'_>,
         ) -> Poll<std::io::Result<()>> {
-            // TODO: This _does_ forget the `init` len, so it could result in
-            // re-initializing twice. Needs upstream support, perhaps.
-            // SAFETY: Passing to a ReadBuf will never de-initialize any bytes.
             match Pin::new(&mut self.inner).poll_read(cx, buf) {
                 Poll::Ready(Ok(())) => {
                     trace!("{:08x} read: {:?}", self.id, Escape::new(buf.filled()));
-                    let len = buf.filled().len();
-                    // SAFETY: The two cursors were for the same buffer. What was
-                    // filled in one is safe in the other.
-                    buf.advance(len);
                     Poll::Ready(Ok(()))
                 }
                 Poll::Ready(Err(e)) => Poll::Ready(Err(e)),
@@ -111,14 +105,17 @@ mod sealed {
             }
         }
 
+        #[inline]
         fn is_write_vectored(&self) -> bool {
             self.inner.is_write_vectored()
         }
 
+        #[inline]
         fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<io::Result<()>> {
             Pin::new(&mut self.inner).poll_flush(cx)
         }
 
+        #[inline]
         fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<io::Result<()>> {
             Pin::new(&mut self.inner).poll_shutdown(cx)
         }
