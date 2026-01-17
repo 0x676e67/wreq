@@ -258,6 +258,7 @@
 //! - **webpki-roots** *(enabled by default)*: Use the webpki-roots crate for root certificates.
 //! - **system-proxy**: Enable system proxy support.
 //! - **tracing**: Enable tracing logging support.
+//! - **prefix-symbols**: Prefix BoringSSL symbols to avoid linker conflicts.
 //!
 //! [client]: ./struct.Client.html
 //! [response]: ./struct.Response.html
