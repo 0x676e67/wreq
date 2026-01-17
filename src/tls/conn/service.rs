@@ -7,7 +7,7 @@ use std::{
 
 use http::{Uri, uri::Scheme};
 use tokio::io::{AsyncRead, AsyncWrite};
-use tokio_boring2::SslStreamBuilder;
+use tokio_boring2::SslStream;
 use tower::Service;
 
 use super::{EstablishedConn, HttpsConnector, MaybeHttpsStream};
@@ -18,6 +18,18 @@ use crate::{
 };
 
 type BoxFuture<T, E> = Pin<Box<dyn Future<Output = Result<T, E>> + Send>>;
+
+async fn perform_handshake<T>(
+    ssl: boring2::ssl::Ssl,
+    conn: T,
+) -> Result<MaybeHttpsStream<T>, BoxError>
+where
+    T: AsyncRead + AsyncWrite + Unpin,
+{
+    let mut stream = SslStream::new(ssl, conn)?;
+    Pin::new(&mut stream).connect().await?;
+    Ok(MaybeHttpsStream::Https(stream))
+}
 
 impl<T, S> Service<Uri> for HttpsConnector<S>
 where
@@ -48,12 +60,7 @@ where
             }
 
             let ssl = inner.setup_ssl(uri)?;
-            let stream = SslStreamBuilder::new(ssl, conn)
-                .connect()
-                .await
-                .map(MaybeHttpsStream::Https)?;
-
-            Ok(stream)
+            perform_handshake(ssl, conn).await
         };
 
         Box::pin(f)
@@ -90,12 +97,7 @@ where
             }
 
             let ssl = inner.setup_ssl2(req)?;
-            let stream = SslStreamBuilder::new(ssl, conn)
-                .connect()
-                .await
-                .map(MaybeHttpsStream::Https)?;
-
-            Ok(stream)
+            perform_handshake(ssl, conn).await
         };
 
         Box::pin(f)
@@ -128,11 +130,7 @@ where
             }
 
             let ssl = inner.setup_ssl2(conn.req)?;
-            SslStreamBuilder::new(ssl, conn.io)
-                .connect()
-                .await
-                .map(MaybeHttpsStream::Https)
-                .map_err(Into::into)
+            perform_handshake(ssl, conn.io).await
         };
 
         Box::pin(fut)

@@ -31,8 +31,8 @@ The following example uses the [Tokio](https://tokio.rs) runtime with optional f
 ```toml
 [dependencies]
 tokio = { version = "1", features = ["full"] }
-wreq = "6.0.0-rc.21"
-wreq-util = "3.0.0-rc.7"
+wreq = "6.0.0-rc.27"
+wreq-util = "3.0.0-rc.9"
 ```
 
 And then the code:
@@ -71,7 +71,12 @@ Most browser device models share identical **TLS** and **HTTP/2** configurations
 
 ## Building
 
-Avoid compiling with packages that depend on **openssl-sys**, as it shares the same prefix symbol with **boring-sys**, potentially leading to [link failures](https://github.com/cloudflare/boring/issues/197) and other issues. Even if compilation succeeds, using both **openssl-sys** and **boring-sys** together can result in memory segmentation faults. Until the upstream Boring resolves these linking conflicts, using **rustls** is the best workaround.
+Compiling with packages that depend on **openssl-sys** causes symbol conflicts with **boring-sys**, leading to [link failures](https://github.com/cloudflare/boring/issues/197). On **Linux/Android**, enable the `prefix-symbols` feature to prefix all BoringSSL symbols:
+
+```toml
+[dependencies]
+wreq = { version = "6.0.0-rc.27", features = ["prefix-symbols"] }
+```
 
 Install the dependencies required to build [BoringSSL](https://github.com/google/boringssl/blob/master/BUILDING.md#build-prerequisites)
 

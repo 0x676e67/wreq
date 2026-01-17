@@ -72,17 +72,16 @@ system-proxy = ["dep:system-configuration", "dep:windows-registry"]
 # Enable tracing logging.
 tracing = ["http2/tracing", "dep:tracing"]
 
+# Symbol prefixing for BoringSSL's libcrypto and libssl to avoid linker conflicts
+# when other OpenSSL/BoringSSL versions are present in the same process space.
+prefix-symbols = ["boring2/prefix-symbols"]
+
 [dependencies]
 percent-encoding = "2.3.2"
 url = "2.5.8"
-tower = { version = "0.5.2", default-features = false, features = [
-    "timeout",
-    "util",
-    "retry",
-] }
 bytes = "1.10.1"
 http = "1.3.1"
-http2 = { version = "0.5.11", features = ["unstable"] }
+http2 = { version = "0.5.11", features = ["unstable", "parking_lot"] }
 httparse = "1.10.1"
 http-body = "1.0.1"
 http-body-util = "0.1.3"
@@ -95,11 +94,16 @@ socket2 = { version = "0.6.1", features = ["all"] }
 ipnet = "2.11.0"
 schnellru = { version = "0.2.4", default-features = false }
 ahash = { version = "0.8.12", default-features = false }
-boring2 = { version = "5.0.0-alpha.10", features = ["pq-experimental"] }
-tokio-boring2 = { version = "5.0.0-alpha.10", features = ["pq-experimental"] }
+boring2 = "5.0.0-alpha.12"
+tokio-boring2 = { version = "5.0.0-alpha.12", features = ["read_uninit"]}
 brotli = "8.0.2"
 flate2 = "1.1.2"
 zstd = "0.13.3"
+tower = { version = "0.5.3", default-features = false, features = [
+    "timeout",
+    "util",
+    "retry",
+] }
 tokio = { version = "1.48.0", default-features = false, features = [
     "net",
     "time",
