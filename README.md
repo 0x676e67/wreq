@@ -71,7 +71,7 @@ Most browser device models share identical **TLS** and **HTTP/2** configurations
 
 ## Building
 
-Compiling with packages that depend on **openssl-sys** causes symbol conflicts with **boring-sys**, leading to [link failures](https://github.com/cloudflare/boring/issues/197). On **Linux/Android**, enable the `prefix-symbols` feature to prefix all BoringSSL symbols:
+Compiling alongside **openssl-sys** can cause symbol conflicts with **boring-sys** that lead to [link failures](https://github.com/cloudflare/boring/issues/197), and on **Linux** and **Android** this can be avoided by enabling the **prefix-symbols** feature.
 
 ```toml
 [dependencies]
@@ -80,9 +80,8 @@ wreq = { version = "6.0.0-rc.27", features = ["prefix-symbols"] }
 
 Install the dependencies required to build [BoringSSL](https://github.com/google/boringssl/blob/master/BUILDING.md#build-prerequisites)
 
-```shell
+```bash
 sudo apt-get install build-essential cmake perl pkg-config libclang-dev musl-tools git -y
-
 cargo build --release
 ```
 
