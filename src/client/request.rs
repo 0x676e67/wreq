@@ -406,7 +406,7 @@ impl RequestBuilder {
                     if let Some(length) = multipart.compute_length() {
                         req.headers_mut()
                             .entry(CONTENT_LENGTH)
-                            .or_insert(HeaderValue::from(length));
+                            .or_insert_with(|| HeaderValue::from(length));
                     }
 
                     *req.body_mut() = Some(multipart.stream())
@@ -491,11 +491,9 @@ impl RequestBuilder {
         if let Ok(ref mut req) = self.request {
             match serde_urlencoded::to_string(form) {
                 Ok(body) => {
-                    req.headers_mut()
-                        .entry(CONTENT_TYPE)
-                        .or_insert(HeaderValue::from_static(
-                            "application/x-www-form-urlencoded",
-                        ));
+                    req.headers_mut().entry(CONTENT_TYPE).or_insert_with(|| {
+                        HeaderValue::from_static("application/x-www-form-urlencoded")
+                    });
                     *req.body_mut() = Some(body.into());
                 }
                 Err(err) => self.request = Err(Error::builder(err)),
@@ -522,7 +520,7 @@ impl RequestBuilder {
                 Ok(body) => {
                     req.headers_mut()
                         .entry(CONTENT_TYPE)
-                        .or_insert(HeaderValue::from_static("application/json"));
+                        .or_insert_with(|| HeaderValue::from_static("application/json"));
                     *req.body_mut() = Some(body.into());
                 }
                 Err(err) => self.request = Err(Error::builder(err)),
