@@ -31,8 +31,8 @@ The following example uses the [Tokio](https://tokio.rs) runtime with optional f
 ```toml
 [dependencies]
 tokio = { version = "1", features = ["full"] }
-wreq = "6.0.0-rc.27"
-wreq-util = "3.0.0-rc.9"
+wreq = "6.0.0-rc.28"
+wreq-util = "3.0.0-rc.10"
 ```
 
 And then the code:
