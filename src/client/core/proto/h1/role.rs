@@ -480,8 +480,16 @@ impl Client {
 
         let encoder = encoder.map(|enc| {
             if enc.is_chunked() {
-                let allowed_trailer_fields: Vec<HeaderValue> =
-                    headers.get_all(header::TRAILER).iter().cloned().collect();
+                // Parse Trailer header values into HeaderNames.
+                // Each Trailer header value may contain comma-separated names.
+                // HeaderName normalizes to lowercase, enabling case-insensitive matching.
+                let allowed_trailer_fields: Vec<HeaderName> = headers
+                    .get_all(header::TRAILER)
+                    .iter()
+                    .filter_map(|hv| hv.to_str().ok())
+                    .flat_map(|s| s.split(','))
+                    .filter_map(|s| HeaderName::from_bytes(s.trim().as_bytes()).ok())
+                    .collect();
 
                 if !allowed_trailer_fields.is_empty() {
                     return enc.into_chunked_with_trailing_fields(allowed_trailer_fields);
