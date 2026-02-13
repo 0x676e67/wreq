@@ -966,7 +966,6 @@ mod tests {
     }
 
     #[tokio::test]
-
     async fn test_pool_timer_removes_expired_realtime() {
         test_pool_timer_removes_expired_inner().await
     }
