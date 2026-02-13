@@ -367,59 +367,6 @@ impl RequestBuilder {
         self
     }
 
-    /// Set the request body.
-    pub fn body<T: Into<Body>>(mut self, body: T) -> RequestBuilder {
-        if let Ok(ref mut req) = self.request {
-            *req.body_mut() = Some(body.into());
-        }
-        self
-    }
-
-    /// Sends a multipart/form-data body.
-    ///
-    /// ```
-    /// # use wreq::Error;
-    ///
-    /// # async fn run() -> Result<(), Error> {
-    /// let client = wreq::Client::new();
-    /// let form = wreq::multipart::Form::new()
-    ///     .text("key3", "value3")
-    ///     .text("key4", "value4");
-    ///
-    /// let response = client.post("your uri").multipart(form).send().await?;
-    /// # Ok(())
-    /// # }
-    /// ```
-    #[cfg(feature = "multipart")]
-    #[cfg_attr(docsrs, doc(cfg(feature = "multipart")))]
-    pub fn multipart(mut self, mut multipart: multipart::Form) -> RequestBuilder {
-        if let Ok(ref mut req) = self.request {
-            match HeaderValue::from_maybe_shared(Bytes::from(format!(
-                "multipart/form-data; boundary={}",
-                multipart.boundary()
-            ))) {
-                Ok(content_type) => {
-                    req.headers_mut()
-                        .entry(CONTENT_TYPE)
-                        .or_insert(content_type);
-
-                    if let Some(length) = multipart.compute_length() {
-                        req.headers_mut()
-                            .entry(CONTENT_LENGTH)
-                            .or_insert_with(|| HeaderValue::from(length));
-                    }
-
-                    *req.body_mut() = Some(multipart.stream())
-                }
-                Err(err) => {
-                    self.request = Err(Error::builder(err));
-                }
-            };
-        }
-
-        self
-    }
-
     /// Modify the query string of the URI.
     ///
     /// Modifies the URI of this request, adding the parameters provided.
@@ -491,10 +438,13 @@ impl RequestBuilder {
         if let Ok(ref mut req) = self.request {
             match serde_urlencoded::to_string(form) {
                 Ok(body) => {
-                    req.headers_mut().entry(CONTENT_TYPE).or_insert_with(|| {
-                        HeaderValue::from_static("application/x-www-form-urlencoded")
-                    });
-                    *req.body_mut() = Some(body.into());
+                    const HEADER_VALUE: HeaderValue =
+                        HeaderValue::from_static("application/x-www-form-urlencoded");
+
+                    req.headers_mut()
+                        .entry(CONTENT_TYPE)
+                        .or_insert(HEADER_VALUE);
+                    req.body_mut().replace(body.into());
                 }
                 Err(err) => self.request = Err(Error::builder(err)),
             }
@@ -518,13 +468,68 @@ impl RequestBuilder {
         if let Ok(ref mut req) = self.request {
             match serde_json::to_vec(json) {
                 Ok(body) => {
+                    const HEADER_VALUE: HeaderValue = HeaderValue::from_static("application/json");
+
                     req.headers_mut()
                         .entry(CONTENT_TYPE)
-                        .or_insert_with(|| HeaderValue::from_static("application/json"));
-                    *req.body_mut() = Some(body.into());
+                        .or_insert(HEADER_VALUE);
+                    req.body_mut().replace(body.into());
                 }
                 Err(err) => self.request = Err(Error::builder(err)),
             }
+        }
+
+        self
+    }
+
+    /// Set the request body.
+    pub fn body<T: Into<Body>>(mut self, body: T) -> RequestBuilder {
+        if let Ok(ref mut req) = self.request {
+            *req.body_mut() = Some(body.into());
+        }
+        self
+    }
+
+    /// Sends a multipart/form-data body.
+    ///
+    /// ```
+    /// # use wreq::Error;
+    ///
+    /// # async fn run() -> Result<(), Error> {
+    /// let client = wreq::Client::new();
+    /// let form = wreq::multipart::Form::new()
+    ///     .text("key3", "value3")
+    ///     .text("key4", "value4");
+    ///
+    /// let response = client.post("your uri").multipart(form).send().await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[cfg(feature = "multipart")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "multipart")))]
+    pub fn multipart(mut self, mut multipart: multipart::Form) -> RequestBuilder {
+        if let Ok(ref mut req) = self.request {
+            match HeaderValue::from_maybe_shared(Bytes::from(format!(
+                "multipart/form-data; boundary={}",
+                multipart.boundary()
+            ))) {
+                Ok(content_type) => {
+                    req.headers_mut()
+                        .entry(CONTENT_TYPE)
+                        .or_insert(content_type);
+
+                    if let Some(length) = multipart.compute_length() {
+                        req.headers_mut()
+                            .entry(CONTENT_LENGTH)
+                            .or_insert_with(|| HeaderValue::from(length));
+                    }
+
+                    *req.body_mut() = Some(multipart.stream())
+                }
+                Err(err) => {
+                    self.request = Err(Error::builder(err));
+                }
+            };
         }
 
         self
@@ -648,7 +653,38 @@ impl RequestBuilder {
         self
     }
 
-    /// Set the interface for this request.
+    /// Bind connections only on the specified network interface.
+    ///
+    /// This option is only available on the following operating systems:
+    ///
+    /// - Android
+    /// - Fuchsia
+    /// - Linux,
+    /// - macOS and macOS-like systems (iOS, tvOS, watchOS and visionOS)
+    /// - Solaris and illumos
+    ///
+    /// On Android, Linux, and Fuchsia, this uses the
+    /// [`SO_BINDTODEVICE`][man-7-socket] socket option. On macOS and macOS-like
+    /// systems, Solaris, and illumos, this instead uses the [`IP_BOUND_IF` and
+    /// `IPV6_BOUND_IF`][man-7p-ip] socket options (as appropriate).
+    ///
+    /// Note that connections will fail if the provided interface name is not a
+    /// network interface that currently exists when a connection is established.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// # fn doc() -> Result<(), wreq::Error> {
+    /// let interface = "lo";
+    /// let client = wreq::Client::builder()
+    ///     .interface(interface)
+    ///     .build()?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// [man-7-socket]: https://man7.org/linux/man-pages/man7/socket.7.html
+    /// [man-7p-ip]: https://docs.oracle.com/cd/E86824_01/html/E54777/ip-7p.html
     #[cfg(any(
         target_os = "android",
         target_os = "fuchsia",
@@ -709,6 +745,7 @@ impl RequestBuilder {
 
     /// Build a `Request`, which can be inspected, modified and executed with
     /// [`Client::execute()`].
+    #[inline]
     pub fn build(self) -> crate::Result<Request> {
         self.request
     }
@@ -718,6 +755,7 @@ impl RequestBuilder {
     ///
     /// This is similar to [`RequestBuilder::build()`], but also returns the
     /// embedded [`Client`].
+    #[inline]
     pub fn build_split(self) -> (Client, crate::Result<Request>) {
         (self.client, self.request)
     }
