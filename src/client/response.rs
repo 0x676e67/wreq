@@ -33,6 +33,7 @@ pub struct Response {
 }
 
 impl Response {
+    #[inline]
     pub(super) fn new<B>(res: http::Response<B>, uri: Uri) -> Response
     where
         B: HttpBody + Send + Sync + 'static,
@@ -290,6 +291,7 @@ impl Response {
     /// # Ok(())
     /// # }
     /// ```
+    #[inline]
     pub async fn bytes(self) -> crate::Result<Bytes> {
         BodyExt::collect(self.res.into_body())
             .await
@@ -348,6 +350,7 @@ impl Response {
     /// # Optional
     ///
     /// This requires the optional `stream` feature to be enabled.
+    #[inline]
     #[cfg(feature = "stream")]
     #[cfg_attr(docsrs, doc(cfg(feature = "stream")))]
     pub fn bytes_stream(self) -> impl Stream<Item = crate::Result<Bytes>> {
@@ -473,6 +476,7 @@ impl Response {
     }
 
     /// Consumes the [`Response`] and returns a future for a possible HTTP upgrade.
+    #[inline]
     pub async fn upgrade(self) -> crate::Result<Upgraded> {
         upgrade::on(self.res).await.map_err(Error::upgrade)
     }
@@ -503,6 +507,7 @@ impl From<Response> for http::Response<Body> {
 
 /// A [`Response`] can be piped as the [`Body`] of another request.
 impl From<Response> for Body {
+    #[inline]
     fn from(r: Response) -> Body {
         Body::wrap(r.res.into_body())
     }
