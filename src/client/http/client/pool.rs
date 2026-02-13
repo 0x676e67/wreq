@@ -262,7 +262,7 @@ struct IdlePopper<'a, T, K> {
 }
 
 impl<'a, T: Poolable + 'a, K: Debug> IdlePopper<'a, T, K> {
-    fn pop(self, expiration: &Expiration) -> Option<Idle<T>> {
+    fn pop(self, expiration: &Expiration, now: Instant) -> Option<Idle<T>> {
         while let Some(entry) = self.list.pop() {
             // If the connection has been closed, or is older than our idle
             // timeout, simply drop it and keep looking...
@@ -276,7 +276,7 @@ impl<'a, T: Poolable + 'a, K: Debug> IdlePopper<'a, T, K> {
             //
             // In that case, we could just break out of the loop and drop the
             // whole list...
-            if expiration.expires(entry.idle_at) {
+            if expiration.expires(entry.idle_at, now) {
                 trace!("removing expired connection for {:?}", self.key);
                 continue;
             }
@@ -284,7 +284,7 @@ impl<'a, T: Poolable + 'a, K: Debug> IdlePopper<'a, T, K> {
             let value = match entry.value.reserve() {
                 Reservation::Shared(to_reinsert, to_checkout) => {
                     self.list.push(Idle {
-                        idle_at: Instant::now(),
+                        idle_at: now,
                         value: to_reinsert,
                     });
                     to_checkout
@@ -303,6 +303,12 @@ impl<'a, T: Poolable + 'a, K: Debug> IdlePopper<'a, T, K> {
 }
 
 impl<T: Poolable, K: Key> PoolInner<T, K> {
+    fn now(&self) -> Instant {
+        self.timer
+            .as_ref()
+            .map_or_else(|| Instant::now(), |t| t.now())
+    }
+
     fn put(&mut self, key: &K, value: T, __pool_ref: &Arc<Mutex<PoolInner<T, K>>>) {
         if value.can_share() && self.idle.peek(key).is_some() {
             trace!("put; existing idle HTTP/2 connection for {:?}", key);
@@ -348,6 +354,7 @@ impl<T: Poolable, K: Key> PoolInner<T, K> {
         if let Some(value) = value {
             // borrow-check scope...
             {
+                let now = self.now();
                 let idle_list = self
                     .idle
                     .get_or_insert(key.clone(), Vec::<Idle<T>>::default);
@@ -361,7 +368,7 @@ impl<T: Poolable, K: Key> PoolInner<T, K> {
                     debug!("pooling idle connection for {:?}", key);
                     idle_list.push(Idle {
                         value,
-                        idle_at: Instant::now(),
+                        idle_at: now,
                     });
                 }
             }
@@ -452,7 +459,7 @@ impl<T: Poolable, K: Key> PoolInner<T, K> {
     /// This should *only* be called by the IdleTask
     fn clear_expired(&mut self) {
         let dur = self.timeout.expect("interval assumes timeout");
-        let now = Instant::now();
+        let now = self.now();
 
         let mut keys_to_remove = Vec::new();
         for (key, values) in self.idle.iter_mut() {
@@ -628,6 +635,7 @@ impl<T: Poolable, K: Key> Checkout<T, K> {
         let entry = {
             let mut inner = self.pool.inner.as_ref()?.lock();
             let expiration = Expiration::new(inner.timeout);
+            let now = inner.now();
             let maybe_entry = inner.idle.get(&self.key).and_then(|list| {
                 trace!("take? {:?}: expiration = {:?}", self.key, expiration.0);
                 // A block to end the mutable borrow on list,
@@ -637,7 +645,7 @@ impl<T: Poolable, K: Key> Checkout<T, K> {
                         key: &self.key,
                         list,
                     };
-                    popper.pop(&expiration)
+                    popper.pop(&expiration, now)
                 }
                 .map(|e| (e, list.is_empty()))
             });
@@ -738,10 +746,10 @@ impl Expiration {
         Expiration(dur)
     }
 
-    fn expires(&self, instant: Instant) -> bool {
+    fn expires(&self, instant: Instant, now: Instant) -> bool {
         match self.0 {
             // Avoid `Instant::elapsed` to avoid issues like rust-lang/rust#86470.
-            Some(timeout) => Instant::now().saturating_duration_since(instant) > timeout,
+            Some(timeout) => now.saturating_duration_since(instant) > timeout,
             None => false,
         }
     }
@@ -761,7 +769,7 @@ impl<T: Poolable + 'static, K: Key> IdleTask<T, K> {
     async fn run(self) {
         use futures_util::future;
 
-        let mut sleep = self.timer.sleep_until(Instant::now() + self.duration);
+        let mut sleep = self.timer.sleep_until(self.timer.now() + self.duration);
         let mut on_pool_drop = self.pool_drop_notifier;
         loop {
             match future::select(&mut on_pool_drop, &mut sleep).await {
@@ -777,7 +785,7 @@ impl<T: Poolable + 'static, K: Key> IdleTask<T, K> {
                         drop(inner);
                     }
 
-                    let deadline = Instant::now() + self.duration;
+                    let deadline = self.timer.now() + self.duration;
                     self.timer.reset(&mut sleep, deadline);
                 }
             }
@@ -960,7 +968,17 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_pool_timer_removes_expired() {
+
+    async fn test_pool_timer_removes_expired_realtime() {
+        test_pool_timer_removes_expired_inner().await
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn test_pool_timer_removes_expired_faketime() {
+        test_pool_timer_removes_expired_inner().await
+    }
+
+    async fn test_pool_timer_removes_expired_inner() {
         let pool = Pool::new(
             super::Config {
                 idle_timeout: Some(Duration::from_millis(10)),
