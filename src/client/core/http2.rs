@@ -12,9 +12,11 @@ use super::proto;
 // Our defaults are chosen for the "majority" case, which usually are not
 // resource constrained, and so the spec default of 64kb can be too limiting
 // for performance.
-const DEFAULT_CONN_WINDOW_SIZE: u32 = 1024 * 1024 * 5; // 5mb
-const DEFAULT_WINDOW_SIZE: u32 = 1024 * 1024 * 2; // 2mb
+const DEFAULT_CONN_WINDOW: u32 = 1024 * 1024 * 5; // 5mb
+const DEFAULT_STREAM_WINDOW: u32 = 1024 * 1024 * 2; // 2mb
+const DEFAULT_MAX_FRAME_SIZE: u32 = 1024 * 16; // 16kb
 const DEFAULT_MAX_SEND_BUF_SIZE: usize = 1024 * 1024; // 1mb
+const DEFAULT_MAX_HEADER_LIST_SIZE: u32 = 1024 * 16; // 16kb
 
 // The maximum number of concurrent streams that the client is allowed to open
 // before it receives the initial SETTINGS frame from the server.
@@ -445,8 +447,14 @@ impl Http2OptionsBuilder {
 impl Http2Options {
     /// Creates a new `Http2OptionsBuilder` instance.
     pub fn builder() -> Http2OptionsBuilder {
+        // Reset optional frame size and header size settings to None to allow explicit customization
+        // This ensures users can configure these via builder methods without being constrained by defaults
         Http2OptionsBuilder {
-            opts: Http2Options::default(),
+            opts: Http2Options {
+                max_frame_size: None,
+                max_header_list_size: None,
+                ..Default::default()
+            },
         }
     }
 }
@@ -457,11 +465,11 @@ impl Default for Http2Options {
         Http2Options {
             adaptive_window: false,
             initial_stream_id: None,
-            initial_conn_window_size: DEFAULT_CONN_WINDOW_SIZE,
-            initial_window_size: DEFAULT_WINDOW_SIZE,
+            initial_conn_window_size: DEFAULT_CONN_WINDOW,
+            initial_window_size: DEFAULT_STREAM_WINDOW,
             initial_max_send_streams: DEFAULT_INITIAL_MAX_SEND_STREAMS,
-            max_frame_size: None,
-            max_header_list_size: None,
+            max_frame_size: Some(DEFAULT_MAX_FRAME_SIZE),
+            max_header_list_size: Some(DEFAULT_MAX_HEADER_LIST_SIZE),
             keep_alive_interval: None,
             keep_alive_timeout: Duration::from_secs(20),
             keep_alive_while_idle: false,
