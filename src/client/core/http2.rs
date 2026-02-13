@@ -447,12 +447,9 @@ impl Http2OptionsBuilder {
 impl Http2Options {
     /// Creates a new `Http2OptionsBuilder` instance.
     pub fn builder() -> Http2OptionsBuilder {
-        let mut opts = Self::default();
         // Reset optional frame size and header size settings to None to allow explicit customization
         // This ensures users can configure these via builder methods without being constrained by defaults
-        opts.max_frame_size = None;
-        opts.max_header_list_size = None;
-        Http2OptionsBuilder { opts }
+        Http2Options { max_frame_size: None, max_header_list_size: None, ..Default::default() }
     }
 }
 
