@@ -449,10 +449,12 @@ impl Http2Options {
     pub fn builder() -> Http2OptionsBuilder {
         // Reset optional frame size and header size settings to None to allow explicit customization
         // This ensures users can configure these via builder methods without being constrained by defaults
-        Http2Options {
-            max_frame_size: None,
-            max_header_list_size: None,
-            ..Default::default()
+        Http2OptionsBuilder {
+            opts: Http2Options {
+                max_frame_size: None,
+                max_header_list_size: None,
+                ..Default::default()
+            },
         }
     }
 }
