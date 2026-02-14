@@ -14,7 +14,6 @@ use std::{
 };
 
 use futures_channel::oneshot;
-use lru::LruCache;
 
 use super::exec::{self, Exec};
 use crate::{
@@ -127,7 +126,7 @@ impl<T, K: Key> Pool<T, K> {
                 connecting: HashSet::default(),
                 idle: config.max_pool_size.map_or_else(
                     || LruMap::unbounded_with_hasher(AHashlState),
-                    |max| LruCache::with_hasher(max, AHashlState),
+                    |max| LruMap::with_hasher(max, AHashlState),
                 ),
                 idle_interval_ref: None,
                 max_idle_per_host: config.max_idle_per_host,
