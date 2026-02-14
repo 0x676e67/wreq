@@ -92,7 +92,7 @@ smallvec = { version = "1.15.1", features = ["const_generics", "const_new"] }
 want = "0.3.1"
 socket2 = { version = "0.6.2", features = ["all"] }
 ipnet = "2.11.0"
-schnellru = { version = "0.2.4", default-features = false }
+lru = "0.16.3"
 ahash = { version = "0.8.12", default-features = false }
 boring2 = "5.0.0-alpha.12"
 tokio-boring2 = { version = "5.0.0-alpha.12", features = ["read_uninit"]}

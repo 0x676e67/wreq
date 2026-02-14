@@ -5,7 +5,7 @@ use std::{
     fmt::{self, Debug},
     future::Future,
     hash::Hash,
-    num::NonZero,
+    num::NonZeroUsize,
     ops::{Deref, DerefMut},
     pin::Pin,
     sync::{Arc, Weak},
@@ -14,12 +14,11 @@ use std::{
 };
 
 use futures_channel::oneshot;
-use schnellru::ByLength;
 
 use super::exec::{self, Exec};
 use crate::{
     client::core::rt::{ArcTimer, Executor, Timer},
-    hash::{HASHER, HashMap, HashSet, LruMap},
+    hash::{AHashlState, HashMap, HashSet, LruMap},
     sync::Mutex,
 };
 
@@ -107,7 +106,7 @@ struct WeakOpt<T>(Option<Weak<T>>);
 pub struct Config {
     pub idle_timeout: Option<Duration>,
     pub max_idle_per_host: usize,
-    pub max_pool_size: Option<NonZero<u32>>,
+    pub max_pool_size: Option<NonZeroUsize>,
 }
 
 impl Config {
@@ -124,14 +123,14 @@ impl<T, K: Key> Pool<T, K> {
     {
         let inner = if config.is_enabled() {
             Some(Arc::new(Mutex::new(PoolInner {
-                connecting: HashSet::with_hasher(HASHER),
-                idle: LruMap::with_hasher(
-                    ByLength::new(config.max_pool_size.map_or(u32::MAX, NonZero::get)),
-                    HASHER,
+                connecting: HashSet::default(),
+                idle: config.max_pool_size.map_or_else(
+                    || LruMap::unbounded_with_hasher(AHashlState),
+                    |max| LruMap::with_hasher(max, AHashlState),
                 ),
                 idle_interval_ref: None,
                 max_idle_per_host: config.max_idle_per_host,
-                waiters: HashMap::with_hasher(HASHER),
+                waiters: HashMap::default(),
                 exec: Exec::new(executor),
                 timer: timer.map(ArcTimer::new),
                 timeout: config.idle_timeout,
@@ -355,20 +354,18 @@ impl<T: Poolable, K: Key> PoolInner<T, K> {
                 let now = self.now();
                 let idle_list = self
                     .idle
-                    .get_or_insert(key.clone(), Vec::<Idle<T>>::default);
+                    .get_or_insert_mut(key.clone(), Vec::<Idle<T>>::default);
 
-                if let Some(idle_list) = idle_list {
-                    if self.max_idle_per_host <= idle_list.len() {
-                        trace!("max idle per host for {:?}, dropping connection", key);
-                        return;
-                    }
-
-                    debug!("pooling idle connection for {:?}", key);
-                    idle_list.push(Idle {
-                        value,
-                        idle_at: now,
-                    });
+                if self.max_idle_per_host <= idle_list.len() {
+                    trace!("max idle per host for {:?}, dropping connection", key);
+                    return;
                 }
+
+                debug!("pooling idle connection for {:?}", key);
+                idle_list.push(Idle {
+                    value,
+                    idle_at: now,
+                });
             }
 
             self.spawn_idle_interval(__pool_ref);
@@ -485,7 +482,7 @@ impl<T: Poolable, K: Key> PoolInner<T, K> {
 
         for key in keys_to_remove {
             trace!("idle interval removing empty key {:?}", key);
-            self.idle.remove(&key);
+            self.idle.pop(&key);
         }
     }
 }
@@ -634,7 +631,7 @@ impl<T: Poolable, K: Key> Checkout<T, K> {
             let mut inner = self.pool.inner.as_ref()?.lock();
             let expiration = Expiration::new(inner.timeout);
             let now = inner.now();
-            let maybe_entry = inner.idle.get(&self.key).and_then(|list| {
+            let maybe_entry = inner.idle.get_mut(&self.key).and_then(|list| {
                 trace!("take? {:?}: expiration = {:?}", self.key, expiration.0);
                 // A block to end the mutable borrow on list,
                 // so the map below can check is_empty()
@@ -656,7 +653,7 @@ impl<T: Poolable, K: Key> Checkout<T, K> {
             };
 
             if empty {
-                inner.idle.remove(&self.key);
+                inner.idle.pop(&self.key);
             }
 
             if entry.is_none() && self.waiter.is_none() {

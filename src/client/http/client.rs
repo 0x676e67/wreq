@@ -8,7 +8,7 @@ mod util;
 
 use std::{
     future::Future,
-    num::NonZeroU32,
+    num::NonZeroUsize,
     pin::Pin,
     sync::Arc,
     task::{self, Poll},
@@ -46,7 +46,7 @@ use crate::{
     },
     config::RequestConfig,
     error::BoxError,
-    hash::{HASHER, HashMemo},
+    hash::HashMemo,
     tls::AlpnProtocol,
 };
 
@@ -61,24 +61,21 @@ type BoxSendFuture = Pin<Box<dyn Future<Output = ()> + Send>>;
 #[derive(Clone)]
 pub struct ConnectRequest {
     uri: Uri,
-    identifier: ConnectIdentity,
+    identity: ConnectIdentity,
 }
 
 // ===== impl ConnectRequest =====
 
 impl ConnectRequest {
-    /// Create a new [`ConnectRequest`] with the given URI and identifier.
+    /// Create a new [`ConnectRequest`] with the given URI and identity.
     #[inline]
-    fn new<T>(uri: Uri, identifier: T) -> ConnectRequest
+    fn new<T>(uri: Uri, identity: T) -> ConnectRequest
     where
         T: Into<Option<RequestOptions>>,
     {
         ConnectRequest {
             uri: uri.clone(),
-            identifier: Arc::new(HashMemo::with_hasher(
-                ConnectExtra::new(uri, identifier),
-                HASHER,
-            )),
+            identity: Arc::new(HashMemo::new(ConnectExtra::new(uri, identity))),
         }
     }
 
@@ -96,14 +93,14 @@ impl ConnectRequest {
 
     /// Returns a unique [`ConnectIdentity`].
     #[inline]
-    pub(crate) fn identify(&self) -> ConnectIdentity {
-        self.identifier.clone()
+    pub(crate) fn identity(&self) -> ConnectIdentity {
+        self.identity.clone()
     }
 
     /// Returns the [`ConnectExtra`] connection extra.
     #[inline]
     pub(crate) fn extra(&self) -> &ConnectExtra {
-        self.identifier.as_ref().as_ref()
+        self.identity.as_ref().as_ref()
     }
 }
 
@@ -376,7 +373,7 @@ where
         // - If a new connection is started, but the Checkout wins after (an idle connection became
         //   available first), the started connection future is spawned into the runtime to
         //   complete, and then be inserted into the pool as an idle connection.
-        let checkout = self.pool.checkout(req.identify());
+        let checkout = self.pool.checkout(req.identity());
         let connect = self.connect_to(req);
         let is_ver_h2 = self.config.ver == Ver::Http2;
 
@@ -469,7 +466,7 @@ where
             // If the pool_key is for HTTP/2, and there is already a
             // connection being established, then this can't take a
             // second lock. The "connect_to" future is Canceled.
-            let connecting = match pool.connecting(req.identify(), ver) {
+            let connecting = match pool.connecting(req.identity(), ver) {
                 Some(lock) => lock,
                 None => {
                     let canceled = Error::new_kind(ErrorKind::Canceled);
@@ -878,7 +875,7 @@ impl Builder {
     ///
     /// Default is `None` (no limit).
     #[inline]
-    pub fn pool_max_size(mut self, max_size: impl Into<Option<NonZeroU32>>) -> Self {
+    pub fn pool_max_size(mut self, max_size: impl Into<Option<NonZeroUsize>>) -> Self {
         self.pool_config.max_pool_size = max_size.into();
         self
     }

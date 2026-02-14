@@ -266,7 +266,7 @@ impl Inner {
         let host = Self::normalize_host(host);
 
         if let Some(ref cache) = self.cache {
-            let key = SessionKey(req.identify());
+            let key = SessionKey(req.identity());
 
             // If the session cache is enabled, we try to retrieve the session
             // associated with the key. If it exists, we set it in the SSL configuration.
