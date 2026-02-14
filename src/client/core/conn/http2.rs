@@ -1,7 +1,6 @@
 //! HTTP/2 client connections
 
 use std::{
-    fmt,
     future::Future,
     marker::PhantomData,
     pin::Pin,
@@ -30,6 +29,7 @@ pub struct SendRequest<B> {
 }
 
 impl<B> Clone for SendRequest<B> {
+    #[inline]
     fn clone(&self) -> SendRequest<B> {
         SendRequest {
             dispatch: self.dispatch.clone(),
@@ -82,6 +82,7 @@ impl<B> SendRequest<B> {
     /// Waits until the dispatcher is ready
     ///
     /// If the associated connection is closed, this returns an Error.
+    #[inline]
     pub async fn ready(&mut self) -> Result<()> {
         std::future::poll_fn(|cx| self.poll_ready(cx)).await
     }
@@ -93,11 +94,13 @@ impl<B> SendRequest<B> {
     /// This is mostly a hint. Due to inherent latency of networks, it is
     /// possible that even after checking this is ready, sending a request
     /// may still fail because the connection was closed in the meantime.
+    #[inline]
     pub fn is_ready(&self) -> bool {
         self.dispatch.is_ready()
     }
 
     /// Checks if the connection side has been closed.
+    #[inline]
     pub fn is_closed(&self) -> bool {
         self.dispatch.is_closed()
     }
@@ -142,25 +145,7 @@ where
     }
 }
 
-impl<B> fmt::Debug for SendRequest<B> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("SendRequest").finish()
-    }
-}
-
 // ===== impl Connection
-
-impl<T, B, E> fmt::Debug for Connection<T, B, E>
-where
-    T: AsyncRead + AsyncWrite + fmt::Debug + 'static + Unpin,
-    B: Body + 'static,
-    E: Http2ClientConnExec<B, T> + Unpin,
-    B::Error: Into<BoxError>,
-{
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Connection").finish()
-    }
-}
 
 impl<T, B, E> Future for Connection<T, B, E>
 where

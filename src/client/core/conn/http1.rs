@@ -1,7 +1,6 @@
 //! HTTP/1 client connections
 
 use std::{
-    fmt,
     future::Future,
     pin::Pin,
     task::{Context, Poll, ready},
@@ -95,6 +94,7 @@ impl<B> SendRequest<B> {
     /// Polls to determine whether this sender can be used yet for a request.
     ///
     /// If the associated connection is closed, this returns an Error.
+    #[inline]
     pub fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<()>> {
         self.dispatch.poll_ready(cx)
     }
@@ -102,6 +102,7 @@ impl<B> SendRequest<B> {
     /// Waits until the dispatcher is ready
     ///
     /// If the associated connection is closed, this returns an Error.
+    #[inline]
     pub async fn ready(&mut self) -> Result<()> {
         std::future::poll_fn(|cx| self.poll_ready(cx)).await
     }
@@ -113,6 +114,7 @@ impl<B> SendRequest<B> {
     /// This is mostly a hint. Due to inherent latency of networks, it is
     /// possible that even after checking this is ready, sending a request
     /// may still fail because the connection was closed in the meantime.
+    #[inline]
     pub fn is_ready(&self) -> bool {
         self.dispatch.is_ready()
     }
@@ -157,12 +159,6 @@ where
     }
 }
 
-impl<B> fmt::Debug for SendRequest<B> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("SendRequest").finish()
-    }
-}
-
 // ===== impl Connection
 
 impl<T, B> Connection<T, B>
@@ -172,18 +168,9 @@ where
     B::Error: Into<BoxError>,
 {
     /// Enable this connection to support higher-level HTTP upgrades.
+    #[inline]
     pub fn with_upgrades(self) -> upgrades::UpgradeableConnection<T, B> {
         upgrades::UpgradeableConnection { inner: Some(self) }
-    }
-}
-
-impl<T, B> fmt::Debug for Connection<T, B>
-where
-    T: AsyncRead + AsyncWrite + fmt::Debug,
-    B: Body + 'static,
-{
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Connection").finish()
     }
 }
 

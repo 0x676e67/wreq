@@ -37,6 +37,7 @@ use crate::{
 
 type WindowSize = u32;
 
+#[inline]
 pub(super) fn disabled() -> Recorder {
     Recorder { shared: None }
 }
@@ -205,6 +206,7 @@ impl Config {
         }
     }
 
+    #[inline]
     pub(super) fn is_enabled(&self) -> bool {
         self.bdp_initial_window.is_some() || self.keep_alive_interval.is_some()
     }
@@ -284,15 +286,19 @@ impl Recorder {
 
 // ===== impl Ponger =====
 
-impl Ponger {
-    pub(super) fn poll(&mut self, cx: &mut task::Context<'_>) -> Poll<Ponged> {
-        let mut locked = self.shared.lock();
+impl Future for Ponger {
+    type Output = Ponged;
+
+    #[inline]
+    fn poll(mut self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<Self::Output> {
+        let this = self.as_mut().get_mut();
+        let mut locked = this.shared.lock();
         // hoping this is fine to move within the lock
         let now = locked.timer.now();
 
-        let is_idle = self.is_idle();
+        let is_idle = this.is_idle();
 
-        if let Some(ref mut ka) = self.keep_alive {
+        if let Some(ref mut ka) = this.keep_alive {
             ka.maybe_schedule(is_idle, &locked);
             ka.maybe_ping(cx, is_idle, &mut locked);
         }
@@ -311,13 +317,13 @@ impl Ponger {
                 let rtt = now - start;
                 trace!("recv pong");
 
-                if let Some(ref mut ka) = self.keep_alive {
+                if let Some(ref mut ka) = this.keep_alive {
                     locked.update_last_read_at();
                     ka.maybe_schedule(is_idle, &locked);
                     ka.maybe_ping(cx, is_idle, &mut locked);
                 }
 
-                if let Some(ref mut bdp) = self.bdp {
+                if let Some(ref mut bdp) = this.bdp {
                     let bytes = locked.bytes.expect("bdp enabled implies bytes");
                     locked.bytes = Some(0); // reset
                     trace!("received BDP ack; bytes = {}, rtt = {:?}", bytes, rtt);
@@ -333,9 +339,9 @@ impl Ponger {
                 debug!("pong error: {}", _e);
             }
             Poll::Pending => {
-                if let Some(ref mut ka) = self.keep_alive {
+                if let Some(ref mut ka) = this.keep_alive {
                     if let Err(KeepAliveTimedOut) = ka.maybe_timeout(cx) {
-                        self.keep_alive = None;
+                        this.keep_alive = None;
                         locked.is_keep_alive_timed_out = true;
                         return Poll::Ready(Ponged::KeepAliveTimedOut);
                     }
@@ -346,7 +352,10 @@ impl Ponger {
         // XXX: this doesn't register a waker...?
         Poll::Pending
     }
+}
 
+impl Ponger {
+    #[inline]
     fn is_idle(&self) -> bool {
         Arc::strong_count(&self.shared) <= 2
     }
@@ -367,16 +376,19 @@ impl Shared {
         }
     }
 
+    #[inline]
     fn is_ping_sent(&self) -> bool {
         self.ping_sent_at.is_some()
     }
 
+    #[inline]
     fn update_last_read_at(&mut self) {
         if self.last_read_at.is_some() {
             self.last_read_at = Some(self.timer.now());
         }
     }
 
+    #[inline]
     fn last_read_at(&self) -> Instant {
         self.last_read_at.expect("keep_alive expects last_read_at")
     }

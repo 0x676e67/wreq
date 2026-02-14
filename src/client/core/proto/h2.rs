@@ -92,6 +92,7 @@ impl<S> PipeToSendStream<S>
 where
     S: Body,
 {
+    #[inline]
     fn new(stream: S, tx: SendStream<SendBuf<S::Data>>) -> PipeToSendStream<S> {
         PipeToSendStream {
             body_tx: tx,
@@ -344,6 +345,7 @@ where
         )))
     }
 
+    #[inline]
     fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
         Poll::Ready(Ok(()))
     }

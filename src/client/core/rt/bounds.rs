@@ -36,6 +36,7 @@ mod h2_client {
         H2ClientFuture<B, T>: Future<Output = ()>,
         T: AsyncRead + AsyncWrite + Unpin,
     {
+        #[inline]
         fn execute_h2_future(&mut self, future: H2ClientFuture<B, T>) {
             self.execute(future)
         }

@@ -127,6 +127,7 @@ where
     B: Body,
     T: AsyncRead + AsyncWrite + Unpin,
 {
+    #[inline]
     fn new(ponger: Ponger, conn: Connection<T, SendBuf<<B as Body>::Data>>) -> Self {
         Conn { ponger, conn }
     }
@@ -200,6 +201,7 @@ where
     B: Body,
     T: AsyncRead + AsyncWrite + Unpin,
 {
+    #[inline]
     fn is_terminated(&self) -> bool {
         self.is_terminated
     }
@@ -227,6 +229,7 @@ where
     B: Body,
     T: AsyncRead + AsyncWrite + Unpin,
 {
+    #[inline]
     fn new(
         conn: ConnMapErr<T, B>,
         drop_rx: Receiver<Infallible>,
