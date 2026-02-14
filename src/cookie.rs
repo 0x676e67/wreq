@@ -6,14 +6,7 @@ use bytes::Bytes;
 use cookie::{Cookie as RawCookie, CookieJar, Expiration, SameSite};
 use http::Uri;
 
-use crate::{
-    IntoUri,
-    error::Error,
-    ext::UriExt,
-    hash::{HASHER, HashMap},
-    header::HeaderValue,
-    sync::RwLock,
-};
+use crate::{IntoUri, error::Error, ext::UriExt, hash::HashMap, header::HeaderValue, sync::RwLock};
 
 /// Cookie header values in two forms.
 #[derive(Debug, Clone)]
@@ -247,7 +240,7 @@ impl Jar {
     pub fn new(compression: bool) -> Self {
         Self {
             compression,
-            store: Arc::new(RwLock::new(HashMap::with_hasher(HASHER))),
+            store: Arc::new(RwLock::new(HashMap::default())),
         }
     }
 
@@ -360,7 +353,7 @@ impl Jar {
             let mut inner = self.store.write();
             let name_map = inner
                 .entry(domain.to_owned())
-                .or_insert_with(|| HashMap::with_hasher(HASHER))
+                .or_insert_with(HashMap::default)
                 .entry(path.to_owned())
                 .or_default();
 

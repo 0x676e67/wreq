@@ -6,7 +6,7 @@ use std::{
     collections::HashMap,
     convert::TryInto,
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
-    num::NonZeroU32,
+    num::NonZeroUsize,
     sync::Arc,
     task::{Context, Poll},
     time::Duration,
@@ -199,7 +199,7 @@ struct Config {
     connection_verbose: bool,
     pool_idle_timeout: Option<Duration>,
     pool_max_idle_per_host: usize,
-    pool_max_size: Option<NonZeroU32>,
+    pool_max_size: Option<NonZeroUsize>,
     tcp_nodelay: bool,
     tcp_reuse_address: bool,
     tcp_keepalive: Option<Duration>,
@@ -1063,8 +1063,8 @@ impl ClientBuilder {
 
     /// Sets the maximum number of connections in the pool.
     #[inline]
-    pub fn pool_max_size(mut self, max: u32) -> ClientBuilder {
-        self.config.pool_max_size = NonZeroU32::new(max);
+    pub fn pool_max_size(mut self, max: usize) -> ClientBuilder {
+        self.config.pool_max_size = NonZeroUsize::new(max);
         self
     }
 

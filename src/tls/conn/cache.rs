@@ -2,12 +2,11 @@ use std::{
     borrow::Borrow,
     collections::hash_map::Entry,
     hash::{Hash, Hasher},
+    num::NonZeroUsize,
 };
 
+use crate::hash::{AHashlState, HashMap, LruMap};
 use boring2::ssl::{SslSession, SslSessionRef, SslVersion};
-use schnellru::ByLength;
-
-use crate::hash::{HASHER, HashMap, LruMap};
 
 /// A typed key for indexing TLS sessions in the cache.
 ///
@@ -62,8 +61,8 @@ where
 {
     pub fn with_capacity(per_host_session_capacity: usize) -> SessionCache<T> {
         SessionCache {
-            per_host_sessions: HashMap::with_hasher(HASHER),
-            reverse: HashMap::with_hasher(HASHER),
+            per_host_sessions: HashMap::default(),
+            reverse: HashMap::default(),
             per_host_session_capacity,
         }
     }
@@ -73,26 +72,29 @@ where
             .per_host_sessions
             .entry(key.clone())
             .or_insert_with(|| {
-                LruMap::with_hasher(ByLength::new(self.per_host_session_capacity as _), HASHER)
+                NonZeroUsize::new(self.per_host_session_capacity).map_or_else(
+                    || LruMap::unbounded_with_hasher(AHashlState),
+                    |max| LruMap::with_hasher(max, AHashlState),
+                )
             });
 
         // Enforce per-key capacity limit by evicting the least recently used session
         if per_host_sessions.len() >= self.per_host_session_capacity {
-            if let Some((evicted_session, _)) = per_host_sessions.pop_oldest() {
+            if let Some((evicted_session, _)) = per_host_sessions.pop_lru() {
                 // Remove from reverse lookup to maintain consistency
                 self.reverse.remove(&evicted_session);
             }
         }
 
         let session = HashSession(session);
-        per_host_sessions.insert(session.clone(), ());
+        per_host_sessions.put(session.clone(), ());
         self.reverse.insert(session, key);
     }
 
     pub fn get(&mut self, key: &SessionKey<T>) -> Option<SslSession> {
         let session = {
             let per_host_sessions = self.per_host_sessions.get_mut(key)?;
-            per_host_sessions.peek_oldest()?.0.clone().0
+            per_host_sessions.peek_lru()?.0.clone().0
         };
 
         // https://tools.ietf.org/html/rfc8446#appendix-C.4
@@ -114,7 +116,7 @@ where
         if let Entry::Occupied(mut per_host_sessions) = self.per_host_sessions.entry(key) {
             per_host_sessions
                 .get_mut()
-                .remove(&HashSession(session.to_owned()));
+                .pop(&HashSession(session.to_owned()));
             if per_host_sessions.get().is_empty() {
                 per_host_sessions.remove();
             }

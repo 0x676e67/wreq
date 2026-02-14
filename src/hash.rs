@@ -6,33 +6,43 @@ use std::{
 };
 
 use ahash::RandomState;
-use schnellru::ByLength;
 
-/// Pre-seeded [`RandomState`] for consistent internal hashing.
-///
-/// Uses fixed seeds to ensure deterministic hashing behavior across
-/// program runs. Primarily used for connection pools and internal caches.
-///
-/// **Note**: Not cryptographically secure due to fixed seeds.
-pub const HASHER: RandomState = RandomState::with_seeds(
-    0x6b68_d618_a4b5_3c57,
-    0xadc8_c4d5_82bb_1313,
-    0x2f72_c2c1_9b04_2d4c,
-    0x94e5_8d83_a26c_3f28,
-);
+#[derive(Debug, Clone, Copy, Default)]
+pub struct AHashlState;
+
+impl BuildHasher for AHashlState {
+    type Hasher = <RandomState as BuildHasher>::Hasher;
+
+    fn build_hasher(&self) -> Self::Hasher {
+        /// Pre-seeded [`RandomState`] for consistent internal hashing.
+        ///
+        /// Uses fixed seeds to ensure deterministic hashing behavior across
+        /// program runs. Primarily used for connection pools and internal caches.
+        ///
+        /// **Note**: Not cryptographically secure due to fixed seeds.
+        const HASHER: RandomState = RandomState::with_seeds(
+            0x6b68_d618_a4b5_3c57,
+            0xadc8_c4d5_82bb_1313,
+            0x2f72_c2c1_9b04_2d4c,
+            0x94e5_8d83_a26c_3f28,
+        );
+
+        HASHER.build_hasher()
+    }
+}
 
 /// A type alias for a hash set using `ahash` with a pre-seeded `RandomState`.
-pub type HashSet<T> = std::collections::HashSet<T, RandomState>;
+pub type HashSet<T> = std::collections::HashSet<T, AHashlState>;
 
 /// A type alias for a hash map using `ahash` with a pre-seeded `RandomState`.
-pub type HashMap<K, V> = std::collections::HashMap<K, V, RandomState>;
+pub type HashMap<K, V> = std::collections::HashMap<K, V, AHashlState>;
 
 /// A specialized LRU cache using `schnellru` with a fixed capacity
-pub type LruMap<K, V> = schnellru::LruMap<K, V, ByLength, RandomState>;
+pub type LruMap<K, V> = lru::LruCache<K, V, AHashlState>;
 
 /// A wrapper that memoizes the hash value of its contained data.
 #[derive(Debug)]
-pub struct HashMemo<T, H: BuildHasher = RandomState>
+pub struct HashMemo<T, H: BuildHasher = AHashlState>
 where
     T: Eq + PartialEq + Hash,
 {
@@ -44,17 +54,17 @@ where
 impl<T, H> HashMemo<T, H>
 where
     T: Eq + Hash,
-    H: BuildHasher,
+    H: BuildHasher + Default,
 {
     /// Creates a new `HashMemo` with a custom hasher.
     ///
     /// This allows you to specify a custom `BuildHasher` implementation for
     /// controlling how hash values are computed.
-    pub const fn with_hasher(value: T, hasher: H) -> Self {
+    pub fn new(value: T) -> Self {
         Self {
             value,
             hash: AtomicU64::new(u64::MIN),
-            hasher,
+            hasher: Default::default(),
         }
     }
 }
