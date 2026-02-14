@@ -79,9 +79,9 @@ prefix-symbols = ["boring2/prefix-symbols"]
 [dependencies]
 percent-encoding = "2.3.2"
 url = "2.5.8"
-bytes = "1.10.1"
+bytes = "1.11.1"
 http = "1.3.1"
-http2 = { version = "0.5.11", features = ["unstable", "parking_lot"] }
+http2 = { version = "0.5.12", features = ["unstable", "parking_lot"] }
 httparse = "1.10.1"
 http-body = "1.0.1"
 http-body-util = "0.1.3"
@@ -90,14 +90,14 @@ futures-util = { version = "0.3.31", default-features = false }
 pin-project-lite = "0.2.16"
 smallvec = { version = "1.15.1", features = ["const_generics", "const_new"] }
 want = "0.3.1"
-socket2 = { version = "0.6.1", features = ["all"] }
+socket2 = { version = "0.6.2", features = ["all"] }
 ipnet = "2.11.0"
 schnellru = { version = "0.2.4", default-features = false }
 ahash = { version = "0.8.12", default-features = false }
 boring2 = "5.0.0-alpha.12"
 tokio-boring2 = { version = "5.0.0-alpha.12", features = ["read_uninit"]}
 brotli = "8.0.2"
-flate2 = "1.1.2"
+flate2 = "1.1.9"
 zstd = "0.13.3"
 tower = { version = "0.5.3", default-features = false, features = [
     "timeout",
@@ -128,7 +128,7 @@ mime = { version = "0.3.17", optional = true }
 sync_wrapper = { version = "1.0.2", features = ["futures"], optional = true }
 
 ## webpki root certs
-webpki-root-certs = { version = "1.0.2", optional = true }
+webpki-root-certs = { version = "1.0.6", optional = true }
 
 ## cookies
 cookie = { version = "0.18", optional = true }
@@ -137,7 +137,7 @@ cookie = { version = "0.18", optional = true }
 tower-http = { version = "0.6.8", default-features = false, optional = true }
 
 ## tokio util
-tokio-util = { version = "0.7.17", default-features = false, optional = true }
+tokio-util = { version = "0.7.18", default-features = false, optional = true }
 
 ## socks
 tokio-socks = { version = "0.5.2", optional = true }
@@ -165,7 +165,7 @@ system-configuration = { version = "0.7.0", optional = true }
 
 ## interface binding
 [target.'cfg(unix)'.dependencies]
-libc = "0.2.173"
+libc = "0.2.182"
 
 [dev-dependencies]
 hyper = { version = "1.7.0", default-features = false, features = [
@@ -173,7 +173,7 @@ hyper = { version = "1.7.0", default-features = false, features = [
     "http2",
     "server",
 ] }
-hyper-util = { version = "0.1.16", features = [
+hyper-util = { version = "0.1.20", features = [
     "http1",
     "http2",
     "server-auto",
@@ -187,10 +187,24 @@ tokio = { version = "1.0", default-features = false, features = [
 ] }
 futures = { version = "0.3.0", default-features = false, features = ["std"] }
 tower = { version = "0.5.2", default-features = false, features = ["limit"] }
-tokio-test = "0.4"
+tokio-test = "0.4.5"
 tracing = "0.1"
 tracing-subscriber = "0.3.20"
 pretty_env_logger = "0.5"
+
+# for benchmarks
+criterion = "0.8.2"
+reqwest = { version = "0.13", default-features = false, features = ["rustls", "http2"] }
+
+[[bench]]
+name = "http1"
+path = "bench/http1.rs"
+harness = false
+
+[[bench]]
+name = "http2"
+path = "bench/http2.rs"
+harness = false
 
 [[test]]
 name = "cookie"
