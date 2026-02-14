@@ -1,5 +1,3 @@
-[![animation](https://raw.githubusercontent.com/orhun/git-cliff/main/website/static/img/git-cliff-anim.gif)](https://git-cliff.org)
-
 ## [unreleased]
 
 ### 🐛 Bug Fixes

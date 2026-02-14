@@ -6,11 +6,6 @@ owner = "0x676e67"
 repo = "wreq"
 
 [changelog]
-# A Tera template to be rendered as the changelog's header.
-# See https://keats.github.io/tera/docs/#introduction
-header = """
-[![animation](https://raw.githubusercontent.com/orhun/git-cliff/main/website/static/img/git-cliff-anim.gif)](https://git-cliff.org)\n
-"""
 # A Tera template to be rendered for each release in the changelog.
 # See https://keats.github.io/tera/docs/#introduction
 body = """
