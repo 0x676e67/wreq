@@ -13,8 +13,8 @@ use std::{
     time::{Duration, Instant},
 };
 
+use futures_channel::oneshot;
 use schnellru::ByLength;
-use tokio::sync::oneshot;
 
 use super::exec::{self, Exec};
 use crate::{
@@ -317,7 +317,7 @@ impl<T: Poolable, K: Key> PoolInner<T, K> {
         let mut value = Some(value);
         if let Some(waiters) = self.waiters.get_mut(key) {
             while let Some(tx) = waiters.pop_front() {
-                if !tx.is_closed() {
+                if !tx.is_canceled() {
                     let reserved = value.take().expect("value already sent");
                     let reserved = match reserved.reserve() {
                         Reservation::Shared(to_keep, to_send) => {
@@ -444,7 +444,7 @@ impl<T, K: Eq + Hash> PoolInner<T, K> {
     fn clean_waiters(&mut self, key: &K) {
         let mut remove_waiters = false;
         if let Some(waiters) = self.waiters.get_mut(key) {
-            waiters.retain(|tx| !tx.is_closed());
+            waiters.retain(|tx| !tx.is_canceled());
             remove_waiters = waiters.is_empty();
         }
         if remove_waiters {
