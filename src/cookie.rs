@@ -353,7 +353,7 @@ impl Jar {
             let mut inner = self.store.write();
             let name_map = inner
                 .entry(domain.to_owned())
-                .or_insert_with(HashMap::default)
+                .or_default()
                 .entry(path.to_owned())
                 .or_default();
 
