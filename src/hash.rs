@@ -37,7 +37,7 @@ pub type HashSet<T> = std::collections::HashSet<T, AHashlState>;
 /// A type alias for a hash map using `ahash` with a pre-seeded `RandomState`.
 pub type HashMap<K, V> = std::collections::HashMap<K, V, AHashlState>;
 
-/// A specialized LRU cache using `schnellru` with a fixed capacity
+/// A specialized LRU cache using `lru`
 pub type LruMap<K, V> = lru::LruCache<K, V, AHashlState>;
 
 /// A wrapper that memoizes the hash value of its contained data.
