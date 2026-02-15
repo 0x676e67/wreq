@@ -73,7 +73,7 @@ system-proxy = ["dep:system-configuration", "dep:windows-registry"]
 tracing = ["http2/tracing", "dep:tracing"]
 
 # Symbol prefixing for BoringSSL's libcrypto and libssl to avoid linker conflicts
-# when other OpenSSL/BoringSSL versions are present in the same process space.
+# when OpenSSL versions are present in the same process space.
 prefix-symbols = ["boring2/prefix-symbols"]
 
 [dependencies]
