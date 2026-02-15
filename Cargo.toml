@@ -194,17 +194,19 @@ pretty_env_logger = "0.5"
 
 # for benchmarks
 criterion = "0.8.2"
-reqwest = { version = "0.13", default-features = false, features = ["rustls", "http2"] }
+reqwest = { version = "0.13", default-features = false, features = ["rustls"] }
 
 [[bench]]
 name = "http1"
 path = "bench/http1.rs"
 harness = false
+required-features = ["wreq/stream", "reqwest/stream"]
 
 [[bench]]
 name = "http2"
 path = "bench/http2.rs"
 harness = false
+required-features = ["wreq/stream", "reqwest/stream", "reqwest/http2"]
 
 [[test]]
 name = "cookie"

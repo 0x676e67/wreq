@@ -1,8 +1,6 @@
 use std::{convert::Infallible, error::Error, time::Duration};
 
-use bytes::Bytes;
 use http::{Request, Response};
-use http_body_util::{BodyExt, Full, combinators::BoxBody};
 use hyper::{body::Incoming, service::service_fn};
 use hyper_util::{
     rt::{TokioExecutor, TokioIo},
@@ -42,12 +40,14 @@ pub fn with_server<F>(
     mode: HttpMode,
     spawn: fn(&'static str, HttpMode) -> ServerHandle,
     f: F,
-) where
-    F: FnOnce(),
+) -> Result<(), Box<dyn Error>>
+where
+    F: FnOnce() -> Result<(), Box<dyn Error>>,
 {
     let server = spawn(addr, mode);
-    f();
+    f()?;
     server.shutdown();
+    Ok(())
 }
 
 fn spawn_server(addr: &'static str, multi_thread: bool, mode: HttpMode) -> ServerHandle {
@@ -110,13 +110,8 @@ async fn serve(stream: TcpStream, mode: HttpMode) -> Result<(), Box<dyn Error + 
     Ok(())
 }
 
-async fn handle_request(
-    _request: Request<Incoming>,
-) -> Result<Response<BoxBody<Bytes, Infallible>>, Infallible> {
-    let response = Response::builder()
-        .header(http::header::CONTENT_TYPE, "text/plain")
-        .body(Full::new(Bytes::from("Hello, world!")).boxed())
-        .expect("values provided to the builder should be valid");
-
-    Ok(response)
+#[inline]
+async fn handle_request(request: Request<Incoming>) -> Result<Response<Incoming>, Infallible> {
+    let body = request.into_body();
+    Ok(Response::new(body))
 }
