@@ -111,15 +111,13 @@ pub fn bench_server_multi_thread(
         )?;
 
         // multi-threaded client
-        with_server(addr, mode, spawn_multi_thread_server, || {
-            run_benches(
-                &mut group,
-                build_multi_thread_runtime,
-                addr,
-                mode,
-                MULTI_THREAD_LABEL,
-            )
-        })
+        run_benches(
+            &mut group,
+            build_multi_thread_runtime,
+            addr,
+            mode,
+            MULTI_THREAD_LABEL,
+        )
     })?;
 
     group.finish();
