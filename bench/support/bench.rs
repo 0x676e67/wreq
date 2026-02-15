@@ -85,7 +85,7 @@ pub fn bench_server_single_thread(
             mode,
             MULTI_THREAD_LABEL,
         )
-    });
+    })?;
 
     group.finish();
 

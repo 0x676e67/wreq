@@ -200,13 +200,13 @@ reqwest = { version = "0.13", default-features = false, features = ["rustls"] }
 name = "http1"
 path = "bench/http1.rs"
 harness = false
-required-features = ["wreq/stream", "reqwest/stream"]
+required-features = ["stream", "reqwest/stream"]
 
 [[bench]]
 name = "http2"
 path = "bench/http2.rs"
 harness = false
-required-features = ["wreq/stream", "reqwest/stream", "reqwest/http2"]
+required-features = ["stream", "reqwest/stream", "reqwest/http2"]
 
 [[test]]
 name = "cookie"
