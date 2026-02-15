@@ -67,19 +67,17 @@ pub fn bench_server_single_thread(
     let mut group = c.benchmark_group("server_single_thread");
     group.sampling_mode(criterion::SamplingMode::Flat);
 
-    // single-threaded client
     with_server(addr, mode, spawn_single_thread_server, || {
+        // single-threaded client
         run_benches(
             &mut group,
             build_current_thread_runtime,
             addr,
             mode,
             CURRENT_THREAD_LABEL,
-        )
-    })?;
+        )?;
 
-    // multi-threaded client
-    with_server(addr, mode, spawn_single_thread_server, || {
+        // multi-threaded client
         run_benches(
             &mut group,
             build_multi_thread_runtime,
@@ -87,7 +85,8 @@ pub fn bench_server_single_thread(
             mode,
             MULTI_THREAD_LABEL,
         )
-    })?;
+    });
+
     group.finish();
 
     Ok(())
@@ -101,26 +100,26 @@ pub fn bench_server_multi_thread(
     let mut group = c.benchmark_group("server_multi_thread");
     group.sampling_mode(criterion::SamplingMode::Flat);
 
-    // single-threaded client
     with_server(addr, mode, spawn_multi_thread_server, || {
+        // single-threaded client
         run_benches(
             &mut group,
             build_current_thread_runtime,
             addr,
             mode,
             CURRENT_THREAD_LABEL,
-        )
-    })?;
+        )?;
 
-    // multi-threaded client
-    with_server(addr, mode, spawn_multi_thread_server, || {
-        run_benches(
-            &mut group,
-            build_multi_thread_runtime,
-            addr,
-            mode,
-            MULTI_THREAD_LABEL,
-        )
+        // multi-threaded client
+        with_server(addr, mode, spawn_multi_thread_server, || {
+            run_benches(
+                &mut group,
+                build_multi_thread_runtime,
+                addr,
+                mode,
+                MULTI_THREAD_LABEL,
+            )
+        })
     })?;
 
     group.finish();

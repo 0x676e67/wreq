@@ -183,7 +183,6 @@ async fn reqwest_requests_concurrent(
         let url = url.to_owned();
         let client = client.clone();
         let semaphore = semaphore.clone();
-        let body = body;
         let task = tokio::spawn(async move {
             let _permit = semaphore.acquire().await.map_err(box_err)?;
             let response = client
