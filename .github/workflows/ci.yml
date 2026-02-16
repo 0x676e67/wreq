@@ -158,7 +158,7 @@ jobs:
       - name: Add Android targets
         if: matrix.env == 'Android'
         run: rustup target add aarch64-linux-android x86_64-linux-android
-      - uses: nttld/setup-ndk@v1.5.0
+      - uses: nttld/setup-ndk@v1.6.0
         if: matrix.env == 'Android'
         id: setup-ndk
         with:
