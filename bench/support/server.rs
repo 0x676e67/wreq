@@ -9,7 +9,7 @@ use bytes::Bytes;
 use http_body_util::{BodyExt, Collected, Full};
 use hyper::{body::Incoming, service::service_fn};
 use hyper_util::{
-    rt::{TokioExecutor, TokioIo},
+    rt::{TokioExecutor, TokioIo, TokioTimer},
     server::conn::auto::Builder,
 };
 use tokio::{
@@ -37,7 +37,10 @@ impl Server {
 
         let mut builder = Builder::new(TokioExecutor::new());
         builder.http1().keep_alive(true);
-        builder.http2().keep_alive_interval(Duration::from_secs(30));
+        builder
+            .http2()
+            .timer(TokioTimer::new())
+            .keep_alive_interval(Duration::from_secs(30));
 
         Ok(Server {
             addr,
