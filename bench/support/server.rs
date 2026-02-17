@@ -97,6 +97,9 @@ impl Server {
             }
         }
 
+        // Tokio internally accepts TCP connections while the TCPListener is active;
+        // drop the listener to immediately refuse connections rather than letting
+        // them hang.
         ::std::mem::drop(listener);
         Ok(())
     }
