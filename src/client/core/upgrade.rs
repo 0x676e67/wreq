@@ -74,11 +74,11 @@ pub fn on<T: sealed::CanUpgrade>(msg: T) -> OnUpgrade {
     msg.on_upgrade()
 }
 
-pub(super) struct Pending {
+pub(crate) struct Pending {
     tx: oneshot::Sender<Result<Upgraded>>,
 }
 
-pub(super) fn pending() -> (Pending, OnUpgrade) {
+pub(crate) fn pending() -> (Pending, OnUpgrade) {
     let (tx, rx) = oneshot::channel();
     (
         Pending { tx },
@@ -92,7 +92,7 @@ pub(super) fn pending() -> (Pending, OnUpgrade) {
 
 impl Upgraded {
     #[inline]
-    pub(super) fn new<T>(io: T, read_buf: Bytes) -> Self
+    pub(crate) fn new<T>(io: T, read_buf: Bytes) -> Self
     where
         T: AsyncRead + AsyncWrite + Unpin + Send + 'static,
     {

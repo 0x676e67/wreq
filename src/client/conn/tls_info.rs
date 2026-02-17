@@ -4,7 +4,7 @@ use tokio::net::TcpStream;
 use tokio::net::UnixStream;
 use tokio_boring2::SslStream;
 
-use crate::tls::{TlsInfo, conn::MaybeHttpsStream};
+use crate::tls::{MaybeHttpsStream, TlsInfo};
 
 /// A trait for extracting TLS information from a connection.
 ///

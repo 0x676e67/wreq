@@ -84,7 +84,7 @@ where
         let pp = conn.ping_pong().expect("conn.ping_pong");
         let (recorder, ponger) = ping::channel(pp, ping_config, timer);
 
-        let conn: Conn<_, B> = Conn::new(ponger, conn);
+        let conn: Conn<_, B> = Conn { ponger, conn };
         (Either::Left(conn), recorder)
     } else {
         (Either::Right(conn), ping::disabled())
@@ -119,17 +119,6 @@ pin_project! {
         ponger: Ponger,
         #[pin]
         conn: Connection<T, SendBuf<<B as Body>::Data>>,
-    }
-}
-
-impl<T, B> Conn<T, B>
-where
-    B: Body,
-    T: AsyncRead + AsyncWrite + Unpin,
-{
-    #[inline]
-    fn new(ponger: Ponger, conn: Connection<T, SendBuf<<B as Body>::Data>>) -> Self {
-        Conn { ponger, conn }
     }
 }
 
@@ -397,7 +386,11 @@ where
 
         let send_stream = if !f.is_connect {
             if !f.eos {
-                let mut pipe = PipeToSendStream::new(f.body, f.body_tx);
+                let mut pipe = PipeToSendStream {
+                    body: f.body,
+                    body_tx: f.body_tx,
+                    data_done: false,
+                };
 
                 // eagerly see if the body pipe is ready and
                 // can thus skip allocating in the executor

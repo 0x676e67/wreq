@@ -29,7 +29,8 @@ use http2::{Ping, PingPong};
 
 use crate::{
     client::core::{
-        self, Error,
+        self,
+        error::{Error, Kind},
         rt::{Sleep, Time},
     },
     sync::Mutex,
@@ -534,7 +535,7 @@ impl KeepAlive {
 
 impl KeepAliveTimedOut {
     pub(super) fn crate_error(self) -> Error {
-        Error::new(crate::client::core::error::Kind::Http2).with(self)
+        Error::new(Kind::Http2).with(self)
     }
 }
 

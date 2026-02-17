@@ -93,16 +93,22 @@ struct StepArgs<'a> {
 // ===== impl Decoder =====
 
 impl Decoder {
-    pub(crate) fn length(x: u64) -> Decoder {
+    #[inline]
+    fn length(x: u64) -> Decoder {
         Decoder {
             kind: Kind::Length(x),
         }
     }
 
-    pub(crate) fn chunked(
-        h1_max_headers: Option<usize>,
-        h1_max_header_size: Option<usize>,
-    ) -> Decoder {
+    #[inline]
+    fn eof() -> Decoder {
+        Decoder {
+            kind: Kind::Eof(false),
+        }
+    }
+
+    #[inline]
+    fn chunked(h1_max_headers: Option<usize>, h1_max_header_size: Option<usize>) -> Decoder {
         Decoder {
             kind: Kind::Chunked {
                 state: ChunkedState::new(),
@@ -113,12 +119,6 @@ impl Decoder {
                 h1_max_headers,
                 h1_max_header_size,
             },
-        }
-    }
-
-    pub(crate) fn eof() -> Decoder {
-        Decoder {
-            kind: Kind::Eof(false),
         }
     }
 

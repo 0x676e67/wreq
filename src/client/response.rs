@@ -19,7 +19,7 @@ use serde::de::DeserializeOwned;
 
 use super::{
     conn::HttpInfo,
-    core::{ext::ReasonPhrase, upgrade},
+    core::{http1::ext::ReasonPhrase, upgrade},
 };
 #[cfg(feature = "cookies")]
 use crate::cookie;

@@ -5,8 +5,9 @@ use std::{
     num::NonZeroUsize,
 };
 
-use crate::hash::{AHashlState, HashMap, LruMap};
 use boring2::ssl::{SslSession, SslSessionRef, SslVersion};
+
+use crate::hash::{AHashlState, HashMap, LruMap};
 
 /// A typed key for indexing TLS sessions in the cache.
 ///

@@ -16,7 +16,7 @@ use tokio_boring2::SslStream;
 use super::{AsyncConnWithInfo, Connected, Connection, TlsInfoFactory};
 use crate::{
     proxy::matcher::Intercept,
-    tls::{TlsInfo, conn::MaybeHttpsStream},
+    tls::{MaybeHttpsStream, TlsInfo},
 };
 
 pin_project! {

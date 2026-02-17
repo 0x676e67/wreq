@@ -15,6 +15,7 @@ pub(crate) struct Rewind<T> {
 }
 
 impl<T> Rewind<T> {
+    #[inline]
     pub(crate) fn new_buffered(io: T, buf: Bytes) -> Self {
         Rewind {
             pre: Some(buf),
@@ -61,6 +62,7 @@ impl<T> AsyncWrite for Rewind<T>
 where
     T: AsyncWrite + Unpin,
 {
+    #[inline]
     fn poll_write(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
@@ -69,6 +71,7 @@ where
         Pin::new(&mut self.inner).poll_write(cx, buf)
     }
 
+    #[inline]
     fn poll_write_vectored(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
@@ -77,14 +80,17 @@ where
         Pin::new(&mut self.inner).poll_write_vectored(cx, bufs)
     }
 
+    #[inline]
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
         Pin::new(&mut self.inner).poll_flush(cx)
     }
 
+    #[inline]
     fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
         Pin::new(&mut self.inner).poll_shutdown(cx)
     }
 
+    #[inline]
     fn is_write_vectored(&self) -> bool {
         self.inner.is_write_vectored()
     }

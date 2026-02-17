@@ -11,16 +11,16 @@ use http::{Request, Response};
 use http_body::Body;
 use tokio::io::{AsyncRead, AsyncWrite};
 
-use crate::{
-    client::core::{
-        Result,
-        body::Incoming as IncomingBody,
-        dispatch::{self, TrySendError},
-        error::{BoxError, Error},
-        proto::{self, h2::ping},
-        rt::{ArcTimer, Time, Timer, bounds::Http2ClientConnExec},
+use crate::client::core::{
+    Result,
+    body::Incoming as IncomingBody,
+    dispatch::{self, TrySendError},
+    error::{BoxError, Error},
+    proto::{
+        self,
+        http2::{Http2Options, ping},
     },
-    http2::Http2Options,
+    rt::{ArcTimer, Time, Timer, bounds::Http2ClientConnExec},
 };
 
 /// The sender side of an established connection.
@@ -49,7 +49,7 @@ where
     E: Http2ClientConnExec<B, T> + Unpin,
     B::Error: Into<BoxError>,
 {
-    inner: (PhantomData<T>, proto::h2::ClientTask<B, E, T>),
+    inner: (PhantomData<T>, proto::http2::client::ClientTask<B, E, T>),
 }
 
 /// A builder to configure an HTTP connection.
@@ -71,6 +71,7 @@ impl<B> SendRequest<B> {
     /// Polls to determine whether this sender can be used yet for a request.
     ///
     /// If the associated connection is closed, this returns an Error.
+    #[inline]
     pub fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<Result<()>> {
         if self.is_closed() {
             Poll::Ready(Err(Error::new_closed()))
@@ -278,8 +279,9 @@ where
         );
 
         let (tx, rx) = dispatch::channel();
-        let h2 = proto::h2::client::handshake(io, rx, builder, ping_config, self.exec, self.timer)
-            .await?;
+        let h2 =
+            proto::http2::client::handshake(io, rx, builder, ping_config, self.exec, self.timer)
+                .await?;
         Ok((
             SendRequest {
                 dispatch: tx.unbound(),

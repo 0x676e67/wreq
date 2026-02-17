@@ -4,10 +4,12 @@ use http::{
     header::{CONTENT_LENGTH, HeaderValue, ValueIter},
 };
 
+#[inline]
 pub(super) fn connection_keep_alive(value: &HeaderValue) -> bool {
     connection_has(value, "keep-alive")
 }
 
+#[inline]
 pub(super) fn connection_close(value: &HeaderValue) -> bool {
     connection_has(value, "close")
 }
@@ -23,6 +25,7 @@ fn connection_has(value: &HeaderValue, needle: &str) -> bool {
     false
 }
 
+#[inline]
 pub(super) fn content_length_parse_all(headers: &HeaderMap) -> Option<u64> {
     content_length_parse_all_values(headers.get_all(CONTENT_LENGTH).into_iter())
 }
@@ -81,6 +84,7 @@ fn from_digits(bytes: &[u8]) -> Option<u64> {
     Some(result)
 }
 
+#[inline]
 pub(super) fn method_has_defined_payload_semantics(method: &Method) -> bool {
     !matches!(
         *method,
@@ -88,12 +92,14 @@ pub(super) fn method_has_defined_payload_semantics(method: &Method) -> bool {
     )
 }
 
+#[inline]
 pub(super) fn set_content_length_if_missing(headers: &mut HeaderMap, len: u64) {
     headers
         .entry(CONTENT_LENGTH)
         .or_insert_with(|| HeaderValue::from(len));
 }
 
+#[inline]
 pub(super) fn transfer_encoding_is_chunked(headers: &HeaderMap) -> bool {
     is_chunked(headers.get_all(http::header::TRANSFER_ENCODING).into_iter())
 }
@@ -101,17 +107,11 @@ pub(super) fn transfer_encoding_is_chunked(headers: &HeaderMap) -> bool {
 pub(super) fn is_chunked(mut encodings: ValueIter<'_, HeaderValue>) -> bool {
     // chunked must always be the last encoding, according to spec
     if let Some(line) = encodings.next_back() {
-        return is_chunked_(line);
-    }
-
-    false
-}
-
-pub(super) fn is_chunked_(value: &HeaderValue) -> bool {
-    // chunked must always be the last encoding, according to spec
-    if let Ok(s) = value.to_str() {
-        if let Some(encoding) = s.rsplit(',').next() {
-            return encoding.trim().eq_ignore_ascii_case("chunked");
+        // chunked must always be the last encoding, according to spec
+        if let Ok(s) = line.to_str() {
+            if let Some(encoding) = s.rsplit(',').next() {
+                return encoding.trim().eq_ignore_ascii_case("chunked");
+            }
         }
     }
 

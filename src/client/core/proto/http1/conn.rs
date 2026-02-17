@@ -70,72 +70,81 @@ where
         }
     }
 
+    #[inline]
     pub(crate) fn set_write_strategy_queue(&mut self) {
         self.io.set_write_strategy_queue();
     }
 
+    #[inline]
     pub(crate) fn set_max_buf_size(&mut self, max: usize) {
         self.io.set_max_buf_size(max);
     }
 
+    #[inline]
     pub(crate) fn set_read_buf_exact_size(&mut self, sz: usize) {
         self.io.set_read_buf_exact_size(sz);
     }
 
+    #[inline]
     pub(crate) fn set_write_strategy_flatten(&mut self) {
         self.io.set_write_strategy_flatten();
     }
 
+    #[inline]
     pub(crate) fn set_h1_parser_config(&mut self, parser_config: ParserConfig) {
         self.state.h1_parser_config = parser_config;
     }
 
+    #[inline]
     pub(crate) fn set_h09_responses(&mut self) {
         self.state.h09_responses = true;
     }
 
+    #[inline]
     pub(crate) fn set_http1_max_headers(&mut self, val: usize) {
         self.state.h1_max_headers = Some(val);
     }
 
-    pub(crate) fn into_inner(self) -> (I, Bytes) {
+    #[inline]
+    pub(super) fn into_inner(self) -> (I, Bytes) {
         self.io.into_inner()
     }
 
-    pub(crate) fn pending_upgrade(&mut self) -> Option<upgrade::Pending> {
+    #[inline]
+    pub(super) fn pending_upgrade(&mut self) -> Option<upgrade::Pending> {
         self.state.upgrade.take()
     }
 
-    pub(crate) fn is_read_closed(&self) -> bool {
+    #[inline]
+    pub(super) fn is_read_closed(&self) -> bool {
         self.state.is_read_closed()
     }
 
-    pub(crate) fn is_write_closed(&self) -> bool {
+    #[inline]
+    pub(super) fn is_write_closed(&self) -> bool {
         self.state.is_write_closed()
     }
 
-    pub(crate) fn can_read_head(&self) -> bool {
+    pub(super) fn can_read_head(&self) -> bool {
         if !matches!(self.state.reading, Reading::Init) {
             return false;
-        }
-
-        if T::should_read_first() {
-            return true;
         }
 
         !matches!(self.state.writing, Writing::Init)
     }
 
-    pub(crate) fn can_read_body(&self) -> bool {
+    #[inline]
+    pub(super) fn can_read_body(&self) -> bool {
         matches!(
             self.state.reading,
             Reading::Body(..) | Reading::Continue(..)
         )
     }
 
+    #[inline]
     fn should_error_on_eof(&self) -> bool {
         // If we're idle, it's probably just the connection closing gracefully.
-        T::should_error_on_parse_eof() && !self.state.is_idle()
+        !self.state.is_idle()
     }
 
     fn has_h2_prefix(&self) -> bool {
@@ -191,9 +200,7 @@ where
                 debug!("ignoring expect-continue since body is empty");
             }
             self.state.reading = Reading::KeepAlive;
-            if !T::should_read_first() {
-                self.try_keep_alive(cx);
-            }
+            self.try_keep_alive(cx);
         } else if msg.expect_continue && msg.head.version.gt(&Version::HTTP_10) {
             let h1_max_header_size = None; // TODO: remove this when we land h1_max_header_size support
             self.state.reading = Reading::Continue(Decoder::new(
@@ -246,7 +253,7 @@ where
         }
     }
 
-    pub(crate) fn poll_read_body(
+    pub(super) fn poll_read_body(
         &mut self,
         cx: &mut Context<'_>,
     ) -> Poll<Option<io::Result<Frame<Bytes>>>> {
@@ -311,13 +318,13 @@ where
         ret
     }
 
-    pub(crate) fn wants_read_again(&mut self) -> bool {
+    pub(super) fn wants_read_again(&mut self) -> bool {
         let ret = self.state.notify_read;
         self.state.notify_read = false;
         ret
     }
 
-    pub(crate) fn poll_read_keep_alive(&mut self, cx: &mut Context<'_>) -> Poll<Result<()>> {
+    pub(super) fn poll_read_keep_alive(&mut self, cx: &mut Context<'_>) -> Poll<Result<()>> {
         debug_assert!(!self.can_read_head() && !self.can_read_body());
 
         if self.is_read_closed() {
@@ -329,6 +336,7 @@ where
         }
     }
 
+    #[inline]
     fn is_mid_message(&self) -> bool {
         !matches!(
             (&self.state.reading, &self.state.writing),
@@ -343,7 +351,6 @@ where
     fn require_empty_read(&mut self, cx: &mut Context<'_>) -> Poll<Result<()>> {
         debug_assert!(!self.can_read_head() && !self.can_read_body() && !self.is_read_closed());
         debug_assert!(!self.is_mid_message());
-        debug_assert!(T::is_client());
 
         if !self.io.read_buf().is_empty() {
             debug!("received an unexpected {} bytes", self.io.read_buf().len());
@@ -451,13 +458,14 @@ where
         }
     }
 
+    #[inline]
     fn try_keep_alive(&mut self, cx: &mut Context<'_>) {
         self.state.try_keep_alive::<T>();
         self.maybe_notify(cx);
     }
 
-    pub(crate) fn can_write_head(&self) -> bool {
-        if !T::should_read_first() && matches!(self.state.reading, Reading::Closed) {
+    pub(super) fn can_write_head(&self) -> bool {
+        if matches!(self.state.reading, Reading::Closed) {
             return false;
         }
 
@@ -467,18 +475,19 @@ where
         }
     }
 
-    pub(crate) fn can_write_body(&self) -> bool {
+    pub(super) fn can_write_body(&self) -> bool {
         match self.state.writing {
             Writing::Body(..) => true,
             Writing::Init | Writing::KeepAlive | Writing::Closed => false,
         }
     }
 
-    pub(crate) fn can_buffer_body(&self) -> bool {
+    #[inline]
+    pub(super) fn can_buffer_body(&self) -> bool {
         self.io.can_buffer()
     }
 
-    pub(crate) fn write_head(&mut self, head: MessageHead<T::Outgoing>, body: Option<BodyLength>) {
+    pub(super) fn write_head(&mut self, head: MessageHead<T::Outgoing>, body: Option<BodyLength>) {
         if let Some(encoder) = self.encode_head(head, body) {
             self.state.writing = if !encoder.is_eof() {
                 Writing::Body(encoder)
@@ -497,14 +506,14 @@ where
     ) -> Option<Encoder> {
         debug_assert!(self.can_write_head());
 
-        if !T::should_read_first() {
-            self.state.busy();
-        }
+        self.state.busy();
 
         self.enforce_version(&mut head);
-
         let buf = self.io.headers_buf();
-        match super::role::encode_headers::<T>(
+
+        trace_span!("encode_headers");
+
+        match T::encode(
             Encode {
                 head: &mut head,
                 body,
@@ -576,7 +585,7 @@ where
         // the user's headers be.
     }
 
-    pub(crate) fn write_body(&mut self, chunk: B) {
+    pub(super) fn write_body(&mut self, chunk: B) {
         debug_assert!(self.can_write_body() && self.can_buffer_body());
         // empty chunks should be discarded at Dispatcher level
         debug_assert!(chunk.remaining() != 0);
@@ -601,11 +610,7 @@ where
         self.state.writing = state;
     }
 
-    pub(crate) fn write_trailers(&mut self, trailers: HeaderMap) {
-        if T::is_server() && !self.state.allow_trailer_fields {
-            debug!("trailers not allowed to be sent");
-            return;
-        }
+    pub(super) fn write_trailers(&mut self, trailers: HeaderMap) {
         debug_assert!(self.can_write_body() && self.can_buffer_body());
 
         match self.state.writing {
@@ -624,7 +629,7 @@ where
         }
     }
 
-    pub(crate) fn write_body_and_end(&mut self, chunk: B) {
+    pub(super) fn write_body_and_end(&mut self, chunk: B) {
         debug_assert!(self.can_write_body() && self.can_buffer_body());
         // empty chunks should be discarded at Dispatcher level
         debug_assert!(chunk.remaining() != 0);
@@ -644,7 +649,7 @@ where
         self.state.writing = state;
     }
 
-    pub(crate) fn end_body(&mut self) -> Result<()> {
+    pub(super) fn end_body(&mut self) -> Result<()> {
         debug_assert!(self.can_write_body());
 
         let encoder = match self.state.writing {
@@ -698,14 +703,14 @@ where
         Err(err)
     }
 
-    pub(crate) fn poll_flush(&mut self, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+    pub(super) fn poll_flush(&mut self, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
         ready!(Pin::new(&mut self.io).poll_flush(cx))?;
         self.try_keep_alive(cx);
         trace!("flushed({}): {:?}", T::LOG, self.state);
         Poll::Ready(Ok(()))
     }
 
-    pub(crate) fn poll_shutdown(&mut self, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+    pub(super) fn poll_shutdown(&mut self, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
         match ready!(Pin::new(self.io.io_mut()).poll_shutdown(cx)) {
             Ok(()) => {
                 trace!("shut down IO complete");
@@ -737,15 +742,17 @@ where
         }
     }
 
-    pub(crate) fn close_read(&mut self) {
+    #[inline]
+    pub(super) fn close_read(&mut self) {
         self.state.close_read();
     }
 
-    pub(crate) fn close_write(&mut self) {
+    #[inline]
+    pub(super) fn close_write(&mut self) {
         self.state.close_write();
     }
 
-    pub(crate) fn take_error(&mut self) -> Result<()> {
+    pub(super) fn take_error(&mut self) -> Result<()> {
         if let Some(err) = self.state.error.take() {
             Err(err)
         } else {
@@ -871,18 +878,22 @@ enum KA {
 }
 
 impl KA {
+    #[inline]
     fn idle(&mut self) {
         *self = KA::Idle;
     }
 
+    #[inline]
     fn busy(&mut self) {
         *self = KA::Busy;
     }
 
+    #[inline]
     fn disable(&mut self) {
         *self = KA::Disabled;
     }
 
+    #[inline]
     fn status(&self) -> KA {
         *self
     }
@@ -908,6 +919,7 @@ impl State {
         self.keep_alive.disable();
     }
 
+    #[inline]
     fn wants_keep_alive(&self) -> bool {
         !matches!(self.keep_alive.status(), KA::Disabled)
     }
@@ -933,6 +945,7 @@ impl State {
         }
     }
 
+    #[inline]
     fn disable_keep_alive(&mut self) {
         self.keep_alive.disable()
     }
@@ -958,24 +971,23 @@ impl State {
         self.reading = Reading::Init;
         self.writing = Writing::Init;
 
-        // !T::should_read_first() means Client.
-        //
         // If Client connection has just gone idle, the Dispatcher
         // should try the poll loop one more time, so as to poll the
         // pending requests stream.
-        if !T::should_read_first() {
-            self.notify_read = true;
-        }
+        self.notify_read = true;
     }
 
+    #[inline]
     fn is_idle(&self) -> bool {
         matches!(self.keep_alive.status(), KA::Idle)
     }
 
+    #[inline]
     fn is_read_closed(&self) -> bool {
         matches!(self.reading, Reading::Closed)
     }
 
+    #[inline]
     fn is_write_closed(&self) -> bool {
         matches!(self.writing, Writing::Closed)
     }

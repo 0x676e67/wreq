@@ -1,16 +1,16 @@
 //! HTTP Client protocol implementation and low level utilities.
 
 mod common;
-mod dispatch;
 mod error;
 mod proto;
 
 pub mod body;
 pub mod conn;
-pub mod ext;
-pub mod http1;
-pub mod http2;
+pub mod dispatch;
 pub mod rt;
 pub mod upgrade;
 
-pub use self::error::{Error, Result};
+pub use self::{
+    error::{Error, Result},
+    proto::{http1, http2},
+};

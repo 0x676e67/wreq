@@ -12,7 +12,7 @@ use http::HeaderMap;
 use http_body::{Body, Frame, SizeHint};
 
 use super::DecodedLength;
-use crate::client::core::{self, Error, common::watch, proto::h2::ping};
+use crate::client::core::{self, Error, common::watch, proto::http2::ping};
 
 type BodySender = mpsc::Sender<Result<Bytes, Error>>;
 type TrailersSender = oneshot::Sender<HeaderMap>;
@@ -66,13 +66,9 @@ const WANT_PENDING: usize = 1;
 const WANT_READY: usize = 2;
 
 impl Incoming {
-    /// Create a `Body` stream with an associated sender half.
-    ///
-    /// Useful when wanting to stream chunks from another thread.
     #[inline]
-    #[cfg(test)]
-    pub(crate) fn channel() -> (Sender, Incoming) {
-        Self::new_channel(DecodedLength::CHUNKED, /* wanter = */ false)
+    pub(crate) fn empty() -> Incoming {
+        Incoming { kind: Kind::Empty }
     }
 
     pub(crate) fn new_channel(content_length: DecodedLength, wanter: bool) -> (Sender, Incoming) {
@@ -90,22 +86,16 @@ impl Incoming {
             data_tx,
             trailers_tx: Some(trailers_tx),
         };
-        let rx = Incoming::new(Kind::Chan {
-            content_length,
-            want_tx,
-            data_rx,
-            trailers_rx,
-        });
+        let rx = Incoming {
+            kind: Kind::Chan {
+                content_length,
+                want_tx,
+                data_rx,
+                trailers_rx,
+            },
+        };
 
         (tx, rx)
-    }
-
-    fn new(kind: Kind) -> Incoming {
-        Incoming { kind }
-    }
-
-    pub(crate) fn empty() -> Incoming {
-        Incoming::new(Kind::Empty)
     }
 
     pub(crate) fn h2(
@@ -119,12 +109,14 @@ impl Incoming {
             content_length = DecodedLength::ZERO;
         }
 
-        Incoming::new(Kind::H2 {
-            data_done: false,
-            ping,
-            content_length,
-            recv,
-        })
+        Incoming {
+            kind: Kind::H2 {
+                data_done: false,
+                ping,
+                content_length,
+                recv,
+            },
+        }
     }
 }
 
@@ -262,11 +254,6 @@ impl Sender {
         }
     }
 
-    #[cfg(test)]
-    async fn ready(&mut self) -> core::Result<()> {
-        std::future::poll_fn(|cx| self.poll_ready(cx)).await
-    }
-
     /// Try to send data on this channel.
     ///
     /// # Errors
@@ -279,6 +266,7 @@ impl Sender {
     /// This is mostly useful for when trying to send from some other thread
     /// that doesn't have an async context. If in an async context, prefer
     /// `send_data()` instead.
+    #[inline]
     pub(crate) fn try_send_data(&mut self, chunk: Bytes) -> Result<(), Bytes> {
         self.data_tx
             .try_send(Ok(chunk))
@@ -297,11 +285,7 @@ impl Sender {
         tx.send(trailers).map_err(Some)
     }
 
-    #[cfg(test)]
-    pub(crate) fn abort(mut self) {
-        self.send_error(Error::new_body_write_aborted());
-    }
-
+    #[inline]
     pub(crate) fn send_error(&mut self, err: Error) {
         let _ = self
             .data_tx
@@ -315,6 +299,7 @@ impl fmt::Debug for Sender {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         #[derive(Debug)]
         struct Open;
+
         #[derive(Debug)]
         struct Closed;
 
@@ -334,7 +319,28 @@ mod tests {
 
     use http_body_util::BodyExt;
 
-    use super::{Body, DecodedLength, Incoming, Sender, SizeHint};
+    use super::{Body, DecodedLength, Error, Incoming, Sender, SizeHint, core};
+
+    impl Incoming {
+        /// Create a `Body` stream with an associated sender half.
+        ///
+        /// Useful when wanting to stream chunks from another thread.
+        pub(crate) fn channel() -> (Sender, Incoming) {
+            Self::new_channel(DecodedLength::CHUNKED, /* wanter = */ false)
+        }
+    }
+
+    impl Sender {
+        #[cfg(test)]
+        async fn ready(&mut self) -> core::Result<()> {
+            std::future::poll_fn(|cx| self.poll_ready(cx)).await
+        }
+
+        #[cfg(test)]
+        pub(crate) fn abort(mut self) {
+            self.send_error(Error::new_body_write_aborted());
+        }
+    }
 
     #[test]
     fn test_size_of() {

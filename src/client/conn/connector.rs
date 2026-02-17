@@ -33,10 +33,8 @@ use crate::{
     ext::UriExt,
     proxy::{Intercepted, Matcher as ProxyMatcher, matcher::Intercept},
     tls::{
+        EstablishedConn, HttpsConnector, MaybeHttpsStream, TlsConnector, TlsConnectorBuilder,
         TlsOptions,
-        conn::{
-            EstablishedConn, HttpsConnector, MaybeHttpsStream, TlsConnector, TlsConnectorBuilder,
-        },
     },
 };
 

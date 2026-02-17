@@ -37,7 +37,8 @@ use crate::{
         conn::{Connected, Connection},
         core::{
             body::Incoming,
-            conn::{self, TrySendError as ConnTrySendError},
+            conn,
+            dispatch::TrySendError as ConnTrySendError,
             http1::Http1Options,
             http2::Http2Options,
             rt::{ArcTimer, Executor, Timer},
@@ -537,7 +538,7 @@ where
                                     // Create a oneshot channel to communicate errors from the connection task.
                                     // err_tx sends errors from the connection task, and err_rx receives them
                                     // to correlate connection failures with request readiness errors.
-                                    let (err_tx, err_rx) = futures_channel::oneshot::channel();
+                                    let (err_tx, err_rx) = tokio::sync::oneshot::channel();
                                     // Spawn the connection task in the background using the executor.
                                     // The task manages the HTTP/1.1 connection, including upgrades (e.g., WebSocket).
                                     // Errors are sent via err_tx to ensure they can be checked if the sender (tx) fails.

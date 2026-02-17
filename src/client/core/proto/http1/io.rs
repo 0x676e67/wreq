@@ -1,5 +1,6 @@
 use std::{
-    cmp, fmt,
+    cmp,
+    fmt::{self, Debug},
     io::{self, IoSlice},
     pin::Pin,
     task::{Context, Poll, ready},
@@ -74,6 +75,7 @@ where
         }
     }
 
+    #[inline]
     pub(crate) fn set_max_buf_size(&mut self, max: usize) {
         assert!(
             max >= MINIMUM_MAX_BUFFER_SIZE,
@@ -83,10 +85,12 @@ where
         self.write_buf.max_buf_size = max;
     }
 
+    #[inline]
     pub(crate) fn set_read_buf_exact_size(&mut self, sz: usize) {
         self.read_buf_strategy = ReadStrategy::Exact(sz);
     }
 
+    #[inline]
     pub(crate) fn set_write_strategy_flatten(&mut self) {
         // this should always be called only at construction time,
         // so this assert is here to catch myself
@@ -94,6 +98,7 @@ where
         self.write_buf.set_strategy(WriteStrategy::Flatten);
     }
 
+    #[inline]
     pub(crate) fn set_write_strategy_queue(&mut self) {
         // this should always be called only at construction time,
         // so this assert is here to catch myself
@@ -101,12 +106,14 @@ where
         self.write_buf.set_strategy(WriteStrategy::Queue);
     }
 
+    #[inline]
     pub(crate) fn read_buf(&self) -> &[u8] {
         self.read_buf.as_ref()
     }
 
     /// Return the "allocated" available space, not the potential space
     /// that could be allocated in the future.
+    #[inline]
     fn read_buf_remaining_mut(&self) -> usize {
         self.read_buf.capacity() - self.read_buf.len()
     }
@@ -115,23 +122,28 @@ where
     ///
     /// Reasons we can't:
     /// - The write buf is in queue mode, and some of the past body is still needing to be flushed.
+    #[inline]
     pub(crate) fn can_headers_buf(&self) -> bool {
         !self.write_buf.queue.has_remaining()
     }
 
+    #[inline]
     pub(crate) fn headers_buf(&mut self) -> &mut Vec<u8> {
         let buf = self.write_buf.headers_mut();
         &mut buf.bytes
     }
 
+    #[inline]
     pub(super) fn write_buf(&mut self) -> &mut WriteBuf<B> {
         &mut self.write_buf
     }
 
+    #[inline]
     pub(crate) fn buffer<BB: Buf + Into<B>>(&mut self, buf: BB) {
         self.write_buf.buffer(buf)
     }
 
+    #[inline]
     pub(crate) fn can_buffer(&self) -> bool {
         self.flush_pipeline || self.write_buf.can_buffer()
     }
@@ -231,14 +243,17 @@ where
         }
     }
 
+    #[inline]
     pub(crate) fn into_inner(self) -> (T, Bytes) {
         (self.io, self.read_buf.freeze())
     }
 
+    #[inline]
     pub(crate) fn io_mut(&mut self) -> &mut T {
         &mut self.io
     }
 
+    #[inline]
     pub(crate) fn is_read_blocked(&self) -> bool {
         self.read_blocked
     }
@@ -625,7 +640,7 @@ mod tests {
 
     #[tokio::test]
     async fn parse_reads_until_blocked() {
-        use crate::client::core::proto::h1::ClientTransaction;
+        use crate::client::core::proto::http1::ClientTransaction;
 
         let _ = pretty_env_logger::try_init();
         let mock = Mock::new()

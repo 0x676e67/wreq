@@ -2,18 +2,19 @@ use std::error::Error;
 
 use criterion::{BenchmarkGroup, Criterion, measurement::WallTime};
 
-use crate::support::client::bench_both_clients;
-use crate::support::server::with_server;
-use crate::support::{HttpMode, Tls, build_current_thread_runtime, build_multi_thread_runtime};
+use crate::support::{
+    HttpMode, Tls, build_current_thread_runtime, build_multi_thread_runtime,
+    client::bench_both_clients, server::with_server,
+};
 
 pub const CONCURRENT_LIMIT: usize = 100;
 pub const CURRENT_THREAD_LABEL: &str = "current_thread";
 pub const MULTI_THREAD_LABEL: &str = "multi_thread";
-pub const BODY_CASES: &[&'static [u8]] = &[
+pub const BODY_CASES: &[&[u8]] = &[
     &[b'a'; 10 * 1024],        // 10 KB
     &[b'a'; 100 * 1024],       // 100 KB
     &[b'a'; 256 * 1024],       // 256 KB
-    &[b'a'; 1 * 1024 * 1024],  // 1024 KB
+    &[b'a'; 1024 * 1024],      // 1024 KB
     &[b'a'; 2 * 1024 * 1024],  // 2048 KBa
     &[b'a'; 4 * 1024 * 1024],  // 4096 KB
     &[b'a'; 8 * 1024 * 1024],  // 8192 KB

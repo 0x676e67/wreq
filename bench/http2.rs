@@ -3,9 +3,9 @@
 mod support;
 
 use std::time::Duration;
-use support::{HttpMode, Tls, bench};
 
 use criterion::{Criterion, criterion_group, criterion_main};
+use support::{HttpMode, Tls, bench};
 
 const HTTP_MODE: HttpMode = HttpMode::Http2;
 const ADDR: &str = "127.0.0.1:6928";

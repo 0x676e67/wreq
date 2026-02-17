@@ -4,7 +4,7 @@
 //!
 //! - Various parts of TLS can also be configured or even disabled on the `ClientBuilder`.
 
-pub(crate) mod conn;
+mod conn;
 mod keylog;
 mod options;
 mod x509;
@@ -13,6 +13,9 @@ use boring2::ssl;
 pub use boring2::ssl::{CertificateCompressionAlgorithm, ExtensionType};
 use bytes::{BufMut, Bytes, BytesMut};
 
+pub(crate) use self::conn::{
+    EstablishedConn, HttpsConnector, MaybeHttpsStream, TlsConnector, TlsConnectorBuilder,
+};
 pub use self::{
     keylog::KeyLog,
     options::{TlsOptions, TlsOptionsBuilder},

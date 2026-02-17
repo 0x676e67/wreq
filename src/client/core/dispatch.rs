@@ -9,21 +9,9 @@ use http_body::Body;
 use pin_project_lite::pin_project;
 use tokio::sync::{mpsc, oneshot};
 
-use super::{Error, body::Incoming, proto::h2::client::ResponseFutMap};
+use super::{Error, body::Incoming, proto::http2::client::ResponseFutMap};
 
-pub(crate) type RetryPromise<T, U> = oneshot::Receiver<Result<U, TrySendError<T>>>;
-
-/// An error when calling `try_send_request`.
-///
-/// There is a possibility of an error occurring on a connection in-between the
-/// time that a request is queued and when it is actually written to the IO
-/// transport. If that happens, it is safe to return the request back to the
-/// caller, as it was never fully sent.
-#[derive(Debug)]
-pub struct TrySendError<T> {
-    pub(crate) error: Error,
-    pub(crate) message: Option<T>,
-}
+type RetryPromise<T, U> = oneshot::Receiver<Result<U, TrySendError<T>>>;
 
 pub(crate) fn channel<T, U>() -> (Sender<T, U>, Receiver<T, U>) {
     let (tx, rx) = mpsc::unbounded_channel();
@@ -35,6 +23,18 @@ pub(crate) fn channel<T, U>() -> (Sender<T, U>, Receiver<T, U>) {
     };
     let rx = Receiver { inner: rx, taker };
     (tx, rx)
+}
+
+/// An error when calling `try_send_request`.
+///
+/// There is a possibility of an error occurring on a connection in-between the
+/// time that a request is queued and when it is actually written to the IO
+/// transport. If that happens, it is safe to return the request back to the
+/// caller, as it was never fully sent.
+#[derive(Debug)]
+pub struct TrySendError<T> {
+    pub(crate) error: Error,
+    pub(crate) message: Option<T>,
 }
 
 /// A bounded sender of requests and callbacks for when responses are ready.
@@ -66,31 +66,27 @@ pub(crate) struct UnboundedSender<T, U> {
 }
 
 impl<T, U> Sender<T, U> {
+    #[inline]
     pub(crate) fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<super::Result<()>> {
         self.giver.poll_want(cx).map_err(|_| Error::new_closed())
     }
 
+    #[inline]
     pub(crate) fn is_ready(&self) -> bool {
         self.giver.is_wanting()
     }
 
-    fn can_send(&mut self) -> bool {
+    pub(crate) fn try_send(&mut self, val: T) -> Result<RetryPromise<T, U>, T> {
         if self.giver.give() || !self.buffered_once {
             // If the receiver is ready *now*, then of course we can send.
             //
             // If the receiver isn't ready yet, but we don't have anything
             // in the channel yet, then allow one message.
             self.buffered_once = true;
-            true
         } else {
-            false
-        }
-    }
-
-    pub(crate) fn try_send(&mut self, val: T) -> Result<RetryPromise<T, U>, T> {
-        if !self.can_send() {
             return Err(val);
-        }
+        };
+
         let (tx, rx) = oneshot::channel();
         self.inner
             .send(Envelope(Some((val, Callback(Some(tx))))))
@@ -98,6 +94,7 @@ impl<T, U> Sender<T, U> {
             .map_err(|mut e| (e.0).0.take().expect("envelope not dropped").0)
     }
 
+    #[inline]
     pub(crate) fn unbound(self) -> UnboundedSender<T, U> {
         UnboundedSender {
             giver: self.giver.shared(),
@@ -107,10 +104,12 @@ impl<T, U> Sender<T, U> {
 }
 
 impl<T, U> UnboundedSender<T, U> {
+    #[inline]
     pub(crate) fn is_ready(&self) -> bool {
         !self.giver.is_canceled()
     }
 
+    #[inline]
     pub(crate) fn is_closed(&self) -> bool {
         self.giver.is_canceled()
     }
@@ -125,6 +124,7 @@ impl<T, U> UnboundedSender<T, U> {
 }
 
 impl<T, U> Clone for UnboundedSender<T, U> {
+    #[inline]
     fn clone(&self) -> Self {
         UnboundedSender {
             giver: self.giver.clone(),
@@ -151,6 +151,7 @@ impl<T, U> Receiver<T, U> {
         }
     }
 
+    #[inline]
     pub(crate) fn close(&mut self) {
         self.taker.cancel();
         self.inner.close();
@@ -166,6 +167,7 @@ impl<T, U> Receiver<T, U> {
 }
 
 impl<T, U> Drop for Receiver<T, U> {
+    #[inline]
     fn drop(&mut self) {
         // Notify the giver about the closure first, before dropping
         // the mpsc::Receiver.
@@ -210,24 +212,21 @@ fn dispatch_gone() -> Error {
 }
 
 impl<T, U> Callback<T, U> {
+    const MISSING_SENDER: &'static str = "callback sender missing";
+
+    #[inline]
     pub(crate) fn is_canceled(&self) -> bool {
-        if let Some(ref tx) = self.0 {
-            return tx.is_closed();
-        }
-
-        unreachable!()
+        self.0.as_ref().expect(Self::MISSING_SENDER).is_closed()
     }
 
+    #[inline]
     pub(crate) fn poll_canceled(&mut self, cx: &mut Context<'_>) -> Poll<()> {
-        if let Some(ref mut tx) = self.0 {
-            return tx.poll_closed(cx);
-        }
-
-        unreachable!()
+        self.0.as_mut().expect(Self::MISSING_SENDER).poll_closed(cx)
     }
 
+    #[inline]
     pub(crate) fn send(mut self, val: Result<U, TrySendError<T>>) {
-        let _ = self.0.take().unwrap().send(val);
+        let _ = self.0.take().expect(Self::MISSING_SENDER).send(val);
     }
 }
 
@@ -237,11 +236,13 @@ impl<T> TrySendError<T> {
     /// The message will not always have been recovered. If an error occurs
     /// after the message has been serialized onto the connection, it will not
     /// be available here.
+    #[inline]
     pub fn take_message(&mut self) -> Option<T> {
         self.message.take()
     }
 
     /// Consumes this to return the inner error.
+    #[inline]
     pub fn into_error(self) -> Error {
         self.error
     }

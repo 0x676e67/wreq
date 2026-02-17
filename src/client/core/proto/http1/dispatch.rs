@@ -405,7 +405,7 @@ where
 
         let read_done = self.conn.is_read_closed();
 
-        if !T::should_read_first() && read_done {
+        if read_done {
             // a client that cannot read may was well be done.
             true
         } else {
@@ -585,7 +585,7 @@ where
 mod tests {
     use std::time::Duration;
 
-    use super::{proto::h1::ClientTransaction, *};
+    use super::{proto::http1::ClientTransaction, *};
 
     #[test]
     fn client_read_bytes_before_writing_request() {

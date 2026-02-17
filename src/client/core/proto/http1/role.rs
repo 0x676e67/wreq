@@ -15,11 +15,12 @@ use crate::{
         self, Error,
         body::DecodedLength,
         error::Parse,
-        ext::ReasonPhrase,
         proto::{
-            BodyLength, MessageHead, RequestHead, RequestLine,
-            h1::{Encode, Encoder, Http1Transaction, ParseContext, ParseResult, ParsedMessage},
-            headers,
+            BodyLength, MessageHead, RequestHead, RequestLine, headers,
+            http1::{
+                Encode, Encoder, Http1Transaction, ParseContext, ParseResult, ParsedMessage,
+                ext::ReasonPhrase,
+            },
         },
     },
     config::RequestConfig,
@@ -108,22 +109,13 @@ fn is_complete_fast(bytes: &[u8], prev_len: usize) -> bool {
     false
 }
 
-pub(super) fn encode_headers<T>(
-    enc: Encode<'_, T::Outgoing>,
-    dst: &mut Vec<u8>,
-) -> core::Result<Encoder>
-where
-    T: Http1Transaction,
-{
-    trace_span!("encode_headers");
-    T::encode(enc, dst)
-}
-
 pub(crate) enum Client {}
 
 impl Http1Transaction for Client {
     type Incoming = StatusCode;
+
     type Outgoing = RequestLine;
+
     #[cfg(feature = "tracing")]
     const LOG: &'static str = "{role=client}";
 
@@ -309,10 +301,6 @@ impl Http1Transaction for Client {
     fn on_error(_err: &Error) -> Option<MessageHead<Self::Outgoing>> {
         // we can't tell the server about any errors it creates
         None
-    }
-
-    fn is_client() -> bool {
-        true
     }
 }
 

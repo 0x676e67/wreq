@@ -1,9 +1,10 @@
 use std::{convert::Infallible, error::Error, sync::Arc};
 
-use super::{HttpMode, Tls};
 use bytes::Bytes;
 use criterion::{BenchmarkGroup, measurement::WallTime};
 use tokio::{runtime::Runtime, sync::Semaphore};
+
+use super::{HttpMode, Tls};
 
 const STREAM_CHUNK_SIZE: usize = 256 * 1024;
 

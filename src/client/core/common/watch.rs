@@ -37,6 +37,11 @@ pub(crate) fn channel(initial: Value) -> (Sender, Receiver) {
     )
 }
 
+struct Shared {
+    value: AtomicUsize,
+    waker: AtomicWaker,
+}
+
 pub(crate) struct Sender {
     shared: Arc<Shared>,
 }
@@ -45,12 +50,10 @@ pub(crate) struct Receiver {
     shared: Arc<Shared>,
 }
 
-struct Shared {
-    value: AtomicUsize,
-    waker: AtomicWaker,
-}
+// ===== impl Sender =====
 
 impl Sender {
+    #[inline]
     pub(crate) fn send(&mut self, value: Value) {
         if self.shared.value.swap(value, Ordering::SeqCst) != value {
             self.shared.waker.wake();
@@ -59,17 +62,22 @@ impl Sender {
 }
 
 impl Drop for Sender {
+    #[inline]
     fn drop(&mut self) {
         self.send(CLOSED);
     }
 }
 
+// ===== impl Receiver =====
+
 impl Receiver {
+    #[inline]
     pub(crate) fn load(&mut self, cx: &mut task::Context<'_>) -> Value {
         self.shared.waker.register(cx.waker());
         self.shared.value.load(Ordering::SeqCst)
     }
 
+    #[inline]
     pub(crate) fn peek(&self) -> Value {
         self.shared.value.load(Ordering::Relaxed)
     }

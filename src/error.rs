@@ -2,7 +2,7 @@ use std::{error::Error as StdError, fmt, io};
 
 use http::Uri;
 
-use crate::{StatusCode, client::ext::ReasonPhrase, util::Escape};
+use crate::{StatusCode, http1::ext::ReasonPhrase, util::Escape};
 
 /// A `Result` alias where the `Err` case is `wreq::Error`.
 pub type Result<T> = std::result::Result<T, Error>;
@@ -366,7 +366,7 @@ impl fmt::Display for Error {
                         f,
                         "{prefix} ({} {})",
                         code.as_str(),
-                        Escape::new(reason.as_bytes())
+                        Escape::new(reason.as_ref())
                     )?;
                 } else {
                     write!(f, "{prefix} ({code})")?;

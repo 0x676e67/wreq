@@ -1,7 +1,10 @@
 use std::{convert::Infallible, error::Error, pin::Pin, sync::Arc, time::Duration};
 
-use boring2::ssl::{Ssl, SslAcceptor, SslMethod};
-use boring2::{pkey::PKey, x509::X509};
+use boring2::{
+    pkey::PKey,
+    ssl::{Ssl, SslAcceptor, SslMethod},
+    x509::X509,
+};
 use bytes::Bytes;
 use http_body_util::{BodyExt, Collected, Full};
 use hyper::{body::Incoming, service::service_fn};

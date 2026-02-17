@@ -2,33 +2,33 @@
 
 mod headers;
 
-pub(crate) mod h1;
-pub(crate) mod h2;
+pub mod http1;
+pub mod http2;
 
-pub(crate) use self::h1::{Conn, dispatch};
+pub(crate) use self::http1::{Conn, dispatch};
 use crate::client::core::upgrade;
 
 /// An Incoming Message head. Includes request/status line, and headers.
 #[derive(Debug, Default)]
 pub(crate) struct MessageHead<S> {
     /// HTTP version of the message.
-    pub(crate) version: http::Version,
+    version: http::Version,
     /// Subject (request line or status line) of Incoming message.
-    pub(crate) subject: S,
+    subject: S,
     /// Headers of the Incoming message.
-    pub(crate) headers: http::HeaderMap,
+    headers: http::HeaderMap,
     /// Extensions.
     extensions: http::Extensions,
 }
 
 /// An incoming request message.
-pub(crate) type RequestHead = MessageHead<RequestLine>;
-
-#[derive(Debug, Default, PartialEq)]
-pub(crate) struct RequestLine(pub(crate) http::Method, pub(crate) http::Uri);
+type RequestHead = MessageHead<RequestLine>;
 
 /// An incoming response message.
-pub(crate) type ResponseHead = MessageHead<http::StatusCode>;
+type ResponseHead = MessageHead<http::StatusCode>;
+
+#[derive(Debug, Default, PartialEq)]
+pub(crate) struct RequestLine(http::Method, http::Uri);
 
 #[derive(Debug)]
 pub(crate) enum BodyLength {

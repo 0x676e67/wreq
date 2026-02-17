@@ -22,7 +22,7 @@ use crate::client::core::{
 };
 
 type Dispatcher<T, B> =
-    proto::dispatch::Dispatcher<proto::dispatch::Client<B>, B, T, proto::h1::ClientTransaction>;
+    proto::dispatch::Dispatcher<proto::dispatch::Client<B>, B, T, proto::http1::ClientTransaction>;
 
 /// The sender side of an established connection.
 pub struct SendRequest<B> {
@@ -71,6 +71,7 @@ where
     /// Return the inner IO object, and additional information.
     ///
     /// Only works for HTTP/1 connections. HTTP/2 connections will panic.
+    #[inline]
     pub fn into_parts(self) -> Parts<T> {
         let (io, read_buf, _) = self.inner.into_inner();
         Parts { io, read_buf }
@@ -200,12 +201,6 @@ where
 
 // ===== impl Builder
 
-impl Default for Builder {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl Builder {
     /// Creates a new connection builder.
     #[inline]
@@ -281,8 +276,8 @@ impl Builder {
             conn.set_max_buf_size(max);
         }
 
-        let cd = proto::h1::dispatch::Client::new(rx);
-        let proto = proto::h1::Dispatcher::new(cd, conn);
+        let cd = proto::http1::dispatch::Client::new(rx);
+        let proto = proto::http1::Dispatcher::new(cd, conn);
 
         Ok((SendRequest { dispatch: tx }, Connection { inner: proto }))
     }

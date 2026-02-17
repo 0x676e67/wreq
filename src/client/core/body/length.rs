@@ -70,6 +70,7 @@ impl DecodedLength {
     /// This includes 0, which of course is an exact known length.
     ///
     /// It would return false if "chunked" or otherwise size-unknown.
+    #[inline]
     pub(crate) fn is_exact(&self) -> bool {
         self.0 <= MAX_LEN
     }
