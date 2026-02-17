@@ -22,12 +22,92 @@ use tokio_boring2::SslStream;
 
 use super::{Tls, build_current_thread_runtime, build_multi_thread_runtime};
 
-pub struct ServerHandle {
+pub struct Server {
+    addr: &'static str,
+    tls_acceptor: Option<Arc<SslAcceptor>>,
+    builder: Builder<TokioExecutor>,
+}
+
+impl Server {
+    pub fn new(addr: &'static str, tls: Tls) -> Result<Self, Box<dyn Error + Send + Sync>> {
+        let tls_acceptor = match tls {
+            Tls::Enabled => Some(build_tls_acceptor()?),
+            Tls::Disabled => None,
+        };
+
+        let mut builder = Builder::new(TokioExecutor::new());
+        builder.http1().keep_alive(true);
+        builder.http2().keep_alive_interval(Duration::from_secs(30));
+
+        Ok(Server {
+            addr,
+            tls_acceptor,
+            builder,
+        })
+    }
+
+    async fn serve<S>(&self, stream: S)
+    where
+        S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+    {
+        let _ = self
+            .builder
+            .serve_connection(
+                TokioIo::new(stream),
+                service_fn(|req: http::Request<Incoming>| async {
+                    let bytes = req
+                        .into_body()
+                        .collect()
+                        .await
+                        .map(Collected::<Bytes>::to_bytes);
+                    let bytes = bytes.unwrap_or_else(|_| Bytes::new());
+                    Ok::<_, Infallible>(http::Response::new(Full::new(bytes)))
+                }),
+            )
+            .await;
+    }
+
+    async fn run(
+        self: Arc<Self>,
+        mut shutdown: oneshot::Receiver<()>,
+    ) -> Result<(), Box<dyn Error + Send + Sync>> {
+        let listener = TcpListener::bind(self.addr).await?;
+        let mut join_set = JoinSet::new();
+
+        loop {
+            tokio::select! {
+                _ = &mut shutdown => {
+                    break;
+                }
+                accept = listener.accept() => {
+                    if let Ok((socket, _peer_addr)) = accept {
+                        let tls_acceptor = self.tls_acceptor.clone();
+                        let server = self.clone();
+                        join_set.spawn(async move {
+                            handle_connection(socket, tls_acceptor, server).await;
+                        });
+                    }
+                }
+            }
+        }
+
+        while let Some(result) = join_set.join_next().await {
+            if let Err(e) = result {
+                eprintln!("connection task failed: {e}");
+            }
+        }
+
+        ::std::mem::drop(listener);
+        Ok(())
+    }
+}
+
+pub struct Handle {
     shutdown: oneshot::Sender<()>,
     join: std::thread::JoinHandle<()>,
 }
 
-impl ServerHandle {
+impl Handle {
     pub fn shutdown(self) {
         let _ = self.shutdown.send(());
         let _ = self.join.join();
@@ -43,28 +123,27 @@ pub fn with_server<F>(
 where
     F: FnOnce() -> Result<(), Box<dyn Error>>,
 {
-    let server = spawn_server(addr, multi_thread, tls);
-    f()?;
-    server.shutdown();
-    Ok(())
-}
-
-pub fn spawn_server(addr: &'static str, multi_thread: bool, tls: Tls) -> ServerHandle {
     let (shutdown_tx, shutdown_rx) = oneshot::channel();
     let join = std::thread::spawn(move || {
+        let server = Arc::new(Server::new(addr, tls).expect("Failed to create server"));
         let rt = if multi_thread {
             build_multi_thread_runtime()
         } else {
             build_current_thread_runtime()
         };
-        rt.block_on(server_with_shutdown(addr, shutdown_rx, tls))
+        rt.block_on(server.clone().run(shutdown_rx))
             .expect("Failed to run server with shutdown");
     });
+
     std::thread::sleep(Duration::from_millis(100));
-    ServerHandle {
+    let server = Handle {
         shutdown: shutdown_tx,
         join,
-    }
+    };
+
+    f()?;
+    server.shutdown();
+    Ok(())
 }
 
 fn build_tls_acceptor() -> Result<Arc<SslAcceptor>, Box<dyn Error + Send + Sync>> {
@@ -84,31 +163,11 @@ fn build_tls_acceptor() -> Result<Arc<SslAcceptor>, Box<dyn Error + Send + Sync>
     Ok(Arc::new(ctx.build()))
 }
 
-async fn serve<S>(stream: S)
-where
-    S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
-{
-    let result = Builder::new(TokioExecutor::new())
-        .serve_connection(
-            TokioIo::new(stream),
-            service_fn(|req: http::Request<Incoming>| async {
-                let bytes = req
-                    .into_body()
-                    .collect()
-                    .await
-                    .map(Collected::<Bytes>::to_bytes);
-                let bytes = bytes.unwrap_or_else(|_| Bytes::new());
-                Ok::<_, Infallible>(http::Response::new(Full::new(bytes)))
-            }),
-        )
-        .await;
-
-    if let Err(e) = result {
-        eprintln!("error serving: {e}");
-    }
-}
-
-async fn handle_connection(socket: TcpStream, tls_acceptor: Option<Arc<SslAcceptor>>) {
+async fn handle_connection(
+    socket: TcpStream,
+    tls_acceptor: Option<Arc<SslAcceptor>>,
+    server: Arc<Server>,
+) {
     if let Some(acceptor) = tls_acceptor {
         let ssl = Ssl::new(acceptor.context()).expect("failed to create Ssl");
         let mut stream = SslStream::new(ssl, socket).expect("failed to create SslStream");
@@ -116,45 +175,8 @@ async fn handle_connection(socket: TcpStream, tls_acceptor: Option<Arc<SslAccept
             .accept()
             .await
             .expect("TLS accept failed");
-        serve(stream).await;
+        server.serve(stream).await;
     } else {
-        serve(socket).await;
+        server.serve(socket).await;
     }
-}
-
-async fn server_with_shutdown(
-    addr: &str,
-    mut shutdown: oneshot::Receiver<()>,
-    tls: Tls,
-) -> Result<(), Box<dyn Error + Send + Sync>> {
-    let listener = TcpListener::bind(addr).await?;
-    let mut join_set = JoinSet::new();
-
-    let tls_acceptor = match tls {
-        Tls::Enabled => Some(build_tls_acceptor()?),
-        Tls::Disabled => None,
-    };
-
-    loop {
-        tokio::select! {
-            _ = &mut shutdown => {
-                break;
-            }
-            accept = listener.accept() => {
-                if let Ok((socket, _peer_addr)) = accept {
-                    let tls_acceptor = tls_acceptor.clone();
-                    join_set.spawn(async move {
-                        handle_connection(socket, tls_acceptor).await;
-                    });
-                }
-            }
-        }
-    }
-
-    while let Some(result) = join_set.join_next().await {
-        if let Err(e) = result {
-            eprintln!("connection task failed: {e}");
-        }
-    }
-    Ok(())
 }

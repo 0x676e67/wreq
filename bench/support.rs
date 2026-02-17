@@ -31,8 +31,8 @@ pub enum Tls {
 impl fmt::Display for Tls {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let value = match self {
-            Tls::Enabled => "tls",
-            Tls::Disabled => "no_tls",
+            Tls::Enabled => "https",
+            Tls::Disabled => "http",
         };
         f.write_str(value)
     }

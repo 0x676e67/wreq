@@ -202,16 +202,12 @@ pub fn bench_both_clients(
     concurrent_limit: usize,
     body: &'static [u8],
 ) -> Result<(), Box<dyn Error>> {
-    let scheme = match tls {
-        Tls::Enabled => "https",
-        Tls::Disabled => "http",
-    };
-    let url = format!("{scheme}://{addr}");
+    let url = format!("{tls}://{addr}");
     let body_kb = body.len() / 1024;
 
     let make_benchmark_label = |client: &str, stream: bool| {
         let body_type = if stream { "stream" } else { "full" };
-        format!("{client}_{tls}_{mode}_{label_prefix}_{body_type}_body_{body_kb}KB")
+        format!("{tls}_{mode}_{client}_{label_prefix}_{body_type}_{body_kb}KB")
     };
 
     for stream in [false, true] {
