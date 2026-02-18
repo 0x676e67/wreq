@@ -20,7 +20,7 @@ use tokio::{
 };
 use tokio_boring2::SslStream;
 
-use super::{Tls, build_multi_thread_runtime};
+use super::{Tls, multi_thread_runtime};
 
 pub struct Server {
     addr: &'static str,
@@ -31,7 +31,20 @@ pub struct Server {
 impl Server {
     pub fn new(addr: &'static str, tls: Tls) -> Result<Self, Box<dyn Error + Send + Sync>> {
         let tls_acceptor = match tls {
-            Tls::Enabled => Some(build_tls_acceptor()?),
+            Tls::Enabled => {
+                let mut builder = SslAcceptor::mozilla_intermediate_v5(SslMethod::tls_server())?;
+
+                let cert_bytes = include_bytes!("../../tests/support/server.cert");
+                let key_bytes = include_bytes!("../../tests/support/server.key");
+                let cert = X509::from_der(cert_bytes)?;
+                let key = PKey::private_key_from_der(key_bytes)?;
+
+                builder.set_certificate(&cert)?;
+                builder.set_private_key(&key)?;
+                builder.check_private_key()?;
+
+                Some(Arc::new(builder.build()))
+            }
             Tls::Disabled => None,
         };
 
@@ -127,7 +140,7 @@ where
     let (shutdown_tx, shutdown_rx) = oneshot::channel();
     let join = std::thread::spawn(move || {
         let server = Arc::new(Server::new(addr, tls).expect("Failed to create server"));
-        let rt = build_multi_thread_runtime();
+        let rt = multi_thread_runtime();
         rt.block_on(server.clone().run(shutdown_rx))
             .expect("Failed to run server with shutdown");
     });
@@ -143,23 +156,6 @@ where
     Ok(())
 }
 
-fn build_tls_acceptor() -> Result<Arc<SslAcceptor>, Box<dyn Error + Send + Sync>> {
-    let mut ctx = SslAcceptor::mozilla_intermediate_v5(SslMethod::tls_server())?;
-
-    let cert_bytes = include_bytes!("../../tests/support/server.cert");
-    let key_bytes = include_bytes!("../../tests/support/server.key");
-
-    let cert = X509::from_der(cert_bytes).or_else(|_| X509::from_pem(cert_bytes))?;
-    let key =
-        PKey::private_key_from_der(key_bytes).or_else(|_| PKey::private_key_from_pem(key_bytes))?;
-
-    ctx.set_certificate(&cert)?;
-    ctx.set_private_key(&key)?;
-    ctx.check_private_key()?;
-
-    Ok(Arc::new(ctx.build()))
-}
-
 async fn handle_connection(
     socket: TcpStream,
     tls_acceptor: Option<Arc<SslAcceptor>>,
@@ -168,10 +164,15 @@ async fn handle_connection(
     if let Some(acceptor) = tls_acceptor {
         let ssl = Ssl::new(acceptor.context()).expect("failed to create Ssl");
         let mut stream = SslStream::new(ssl, socket).expect("failed to create SslStream");
-        Pin::new(&mut stream)
-            .accept()
-            .await
-            .expect("TLS accept failed");
+
+        // The client (or its connection pool) may proactively close the connection,
+        // especially during benchmarks or when cleaning up idle connections.
+        // This can cause TLS handshake failures (e.g., ConnectionReset, ConnectionAborted).
+        // Such errors are expected and should be handled gracefully to avoid panicking
+        // and to ensure the server remains robust under load.
+        if Pin::new(&mut stream).accept().await.is_err() {
+            return;
+        }
         server.serve(stream).await;
     } else {
         server.serve(socket).await;

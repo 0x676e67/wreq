@@ -8,11 +8,6 @@ use super::{HttpMode, Tls};
 
 const STREAM_CHUNK_SIZE: usize = 256 * 1024;
 
-#[inline]
-fn box_err<E: Error + Send + 'static>(e: E) -> Box<dyn Error + Send> {
-    Box::new(e)
-}
-
 fn create_wreq_client(mode: HttpMode, tls: Tls) -> Result<wreq::Client, Box<dyn Error>> {
     let builder = wreq::Client::builder()
         .no_proxy()
@@ -105,6 +100,11 @@ fn reqwest_body(stream: bool, body: &'static [u8]) -> reqwest::Body {
     }
 }
 
+#[inline]
+fn box_err<E: Error + Send + 'static>(e: E) -> Box<dyn Error + Send> {
+    Box::new(e)
+}
+
 async fn wreq_requests_concurrent(
     client: &wreq::Client,
     url: &str,
@@ -193,7 +193,7 @@ fn crate_name<T: ?Sized>() -> &'static str {
 #[allow(clippy::too_many_arguments)]
 pub fn bench_clients(
     group: &mut BenchmarkGroup<'_, WallTime>,
-    rt: &Runtime,
+    rt: fn() -> Runtime,
     addr: &str,
     mode: HttpMode,
     tls: Tls,
@@ -202,54 +202,42 @@ pub fn bench_clients(
     body: &'static [u8],
 ) -> Result<(), Box<dyn Error>> {
     let url = format!("{tls}://{addr}");
-    let body_kb = body.len() / 1024;
 
-    fn make_benchmark_label<T: ?Sized>(
-        stream: bool,
-        tls: Tls,
-        mode: HttpMode,
-        body_kb: usize,
-    ) -> String {
+    fn make_benchmark_label<T: ?Sized>(stream: bool, mode: HttpMode) -> String {
         let client = crate_name::<T>();
         let body_type = if stream { "stream" } else { "full" };
-        format!("{tls}_{mode}_{client}_{body_type}_{body_kb}KB")
+        format!("{mode}_{client}_{body_type}")
     }
 
     for stream in [false, true] {
         let client = create_wreq_client(mode, tls)?;
-        group.bench_function(
-            make_benchmark_label::<wreq::Client>(stream, tls, mode, body_kb),
-            |b| {
-                b.to_async(rt).iter(|| {
-                    wreq_requests_concurrent(
-                        &client,
-                        &url,
-                        num_requests,
-                        concurrent_limit,
-                        body,
-                        stream,
-                    )
-                })
-            },
-        );
+        group.bench_function(make_benchmark_label::<wreq::Client>(stream, mode), |b| {
+            b.to_async(rt()).iter(|| {
+                wreq_requests_concurrent(
+                    &client,
+                    &url,
+                    num_requests,
+                    concurrent_limit,
+                    body,
+                    stream,
+                )
+            })
+        });
         ::std::mem::drop(client);
 
         let client = create_reqwest_client(mode, tls)?;
-        group.bench_function(
-            make_benchmark_label::<reqwest::Client>(stream, tls, mode, body_kb),
-            |b| {
-                b.to_async(rt).iter(|| {
-                    reqwest_requests_concurrent(
-                        &client,
-                        &url,
-                        num_requests,
-                        concurrent_limit,
-                        body,
-                        stream,
-                    )
-                })
-            },
-        );
+        group.bench_function(make_benchmark_label::<reqwest::Client>(stream, mode), |b| {
+            b.to_async(rt()).iter(|| {
+                reqwest_requests_concurrent(
+                    &client,
+                    &url,
+                    num_requests,
+                    concurrent_limit,
+                    body,
+                    stream,
+                )
+            })
+        });
         ::std::mem::drop(client);
     }
 
