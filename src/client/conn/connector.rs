@@ -367,6 +367,7 @@ impl ConnectorService {
 
         match proxy {
             Intercepted::Proxy(proxy) => {
+                let is_https = uri.is_https();
                 let proxy_uri = proxy.uri().clone();
 
                 #[cfg(feature = "socks")]
@@ -397,8 +398,7 @@ impl ConnectorService {
                         };
 
                         // Build an HTTPS connector.
-                        let mut connector =
-                            self.build_https_connector(uri.is_https(), req.extra())?;
+                        let mut connector = self.build_https_connector(is_https, req.extra())?;
 
                         // Wrap the established SOCKS connection with TLS if needed.
                         let io = connector.call(EstablishedConn::new(conn, req)).await?;
@@ -406,12 +406,11 @@ impl ConnectorService {
                     }
                 }
 
-                // Handle HTTPS proxy tunneling connection
-                if uri.is_https() {
+                if is_https {
                     trace!("tunneling over HTTP(s) proxy: {:?}", proxy_uri);
 
                     // Build an HTTPS connector.
-                    let mut connector = self.build_https_connector(uri.is_https(), req.extra())?;
+                    let mut connector = self.build_https_connector(is_https, req.extra())?;
 
                     // Build a tunnel connector to establish the CONNECT tunnel.
                     let tunneled = {
