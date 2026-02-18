@@ -286,6 +286,7 @@ impl ConnectorService {
 
     fn build_https_connector(
         &self,
+        tls: bool,
         extra: &ConnectExtra,
     ) -> Result<HttpsConnector<HttpConnector>, BoxError> {
         let mut http = self.http.clone();
@@ -293,7 +294,7 @@ impl ConnectorService {
         // Disable Nagle's algorithm for TLS handshake
         //
         // https://www.openssl.org/docs/man1.1.1/man3/SSL_connect.html#NOTES
-        if !self.config.tcp_nodelay {
+        if !self.config.tcp_nodelay && tls {
             http.set_nodelay(true);
         }
 
@@ -342,23 +343,18 @@ impl ConnectorService {
     where
         P: Into<Option<Intercept>>,
     {
+        let is_https = req.uri().is_https();
         let proxy = proxy.into();
         trace!("connect with maybe proxy: {:?}", proxy);
 
-        let mut connector = self.build_https_connector(req.extra())?;
+        let mut connector = self.build_https_connector(is_https, req.extra())?;
 
         // When using a proxy for HTTPS targets, disable ALPN to avoid protocol negotiation issues
-        if proxy.is_some() && req.uri().is_https() {
+        if proxy.is_some() && is_https {
             connector.no_alpn();
         }
 
         let io = connector.call(req).await?;
-
-        // Re-enable Nagle's algorithm if it was disabled earlier
-        if !self.config.tcp_nodelay {
-            io.get_ref().set_nodelay(false)?;
-        }
-
         self.conn_from_stream(io, proxy)
     }
 
@@ -405,12 +401,6 @@ impl ConnectorService {
 
                         // Wrap the established SOCKS connection with TLS if needed.
                         let io = connector.call(EstablishedConn::new(conn, req)).await?;
-
-                        // Re-enable Nagle's algorithm if it was disabled earlier
-                        if !self.config.tcp_nodelay {
-                            io.get_ref().set_nodelay(false)?;
-                        }
-
                         return self.tunnel_conn_from_stream(io);
                     }
                 }
@@ -420,7 +410,7 @@ impl ConnectorService {
                     trace!("tunneling over HTTP(s) proxy: {:?}", proxy_uri);
 
                     // Build an HTTPS connector.
-                    let mut connector = self.build_https_connector(req.extra())?;
+                    let mut connector = self.build_https_connector(uri.is_https(), req.extra())?;
 
                     // Build a tunnel connector to establish the CONNECT tunnel.
                     let tunneled = {
@@ -443,12 +433,6 @@ impl ConnectorService {
 
                     // Wrap the established tunneled stream with TLS.
                     let io = connector.call(EstablishedConn::new(tunneled, req)).await?;
-
-                    // Re-enable Nagle's algorithm if it was disabled earlier
-                    if !self.config.tcp_nodelay {
-                        io.get_ref().get_ref().set_nodelay(false)?;
-                    }
-
                     return self.tunnel_conn_from_stream(io);
                 }
 
