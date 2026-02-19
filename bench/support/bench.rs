@@ -29,9 +29,11 @@ pub fn bench(
     const OS: &str = std::env::consts::OS;
     const ARCH: &str = std::env::consts::ARCH;
 
-    let cpuid = raw_cpuid::CpuId::new();
-    let cpu_brand = cpuid.get_processor_brand_string();
-    let cpu_model = cpu_brand.as_ref().map_or("n/a", |pbs| pbs.as_str());
+    let system = sysinfo::System::new();
+    let cpu_model = system
+        .cpus()
+        .first()
+        .map_or("n/a", |cpu| cpu.brand().trim_start().trim_end());
 
     for &concurrent_limit in CONCURRENT_CASES {
         for body in BODY_CASES {

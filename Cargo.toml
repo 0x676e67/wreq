@@ -193,7 +193,7 @@ tracing-subscriber = "0.3.20"
 pretty_env_logger = "0.5"
 
 # for benchmarks
-raw-cpuid = "11.6.0"
+sysinfo = { version = "0.38.2", default-features = false, features = ["system"] }
 criterion = { version = "0.8.2", features = ["async_tokio"] }
 reqwest = { version = "0.13", default-features = false, features = ["rustls", "stream", "http2"] }
 
