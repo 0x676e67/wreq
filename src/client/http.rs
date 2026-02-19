@@ -149,9 +149,6 @@ type BoxedClientLayer = BoxCloneSyncServiceLayer<
     BoxError,
 >;
 
-/// Client reference type that can be either the generic service or a boxed service.
-type ClientRef = Either<ClientService, BoxedClientService>;
-
 /// An [`Client`] to make Requests with.
 ///
 /// The Client has various configuration values to tweak, but the defaults
@@ -167,7 +164,7 @@ type ClientRef = Either<ClientService, BoxedClientService>;
 /// [`Rc`]: std::rc::Rc
 #[derive(Clone)]
 #[repr(transparent)]
-pub struct Client(Arc<ClientRef>);
+pub struct Client(Arc<Either<ClientService, BoxedClientService>>);
 
 /// A [`ClientBuilder`] can be used to create a [`Client`] with custom configuration.
 #[must_use]
@@ -604,7 +601,7 @@ impl ClientBuilder {
                     .layer(TimeoutLayer::new(config.timeout_options))
                     .service(service);
 
-                ClientRef::Left(service)
+                Either::Left(service)
             } else {
                 let service = config
                     .layers
@@ -618,7 +615,7 @@ impl ClientBuilder {
                     .service(service)
                     .map_err(error::map_timeout_to_request_error);
 
-                ClientRef::Right(BoxCloneSyncService::new(service))
+                Either::Right(BoxCloneSyncService::new(service))
             }
         };
 
