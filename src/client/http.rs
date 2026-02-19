@@ -166,9 +166,7 @@ type ClientRef = Either<ClientService, BoxedClientService>;
 ///
 /// [`Rc`]: std::rc::Rc
 #[derive(Clone)]
-#[repr(transparent)]
 pub struct Client(Arc<ClientRef>);
-
 /// A [`ClientBuilder`] can be used to create a [`Client`] with custom configuration.
 #[must_use]
 pub struct ClientBuilder {
