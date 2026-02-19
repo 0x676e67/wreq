@@ -14,6 +14,7 @@ use crate::hash::{AHashlState, HashMap, LruMap};
 /// This wrapper provides type safety and allows different key types
 /// (e.g., hostname, connection parameters) to be used for session lookup.
 #[derive(Hash, PartialEq, Eq, Clone)]
+#[repr(transparent)]
 pub struct SessionKey<T>(pub T);
 
 /// A hashable wrapper around `SslSession` for use in hash-based collections.

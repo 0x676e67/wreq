@@ -15,6 +15,7 @@ pub trait Classify: Send + Sync + 'static {
 //
 // An alternative is to make things like `ClassifyFn`. Slightly more
 // annoying, but also more forwards-compatible. :shrug:
+#[repr(transparent)]
 pub struct ClassifyFn<F>(pub(crate) F);
 
 impl<F> Classify for ClassifyFn<F>

@@ -17,7 +17,7 @@ pub trait Scope: Send + Sync + 'static {
 //
 // An alternative is to make things like `ScopeFn`. Slightly more annoying,
 // but also more forwards-compatible. :shrug:
-
+#[repr(transparent)]
 pub struct ScopeFn<F>(pub(crate) F);
 
 impl<F> Scope for ScopeFn<F>

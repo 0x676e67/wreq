@@ -44,6 +44,7 @@ pub struct Delay<S> {
     inner: S,
     delay: Duration,
 }
+
 impl<S> Delay<S> {
     pub fn new(inner: S, delay: Duration) -> Self {
         Delay { inner, delay }

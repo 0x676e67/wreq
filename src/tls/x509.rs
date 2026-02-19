@@ -44,6 +44,7 @@ impl<'c, T: AsRef<[u8]> + ?Sized + 'c> From<&'c T> for CertificateInput<'c> {
 
 /// A certificate.
 #[derive(Clone)]
+#[repr(transparent)]
 pub struct Certificate(X509);
 
 impl Certificate {

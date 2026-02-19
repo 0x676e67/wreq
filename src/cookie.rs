@@ -53,6 +53,7 @@ pub trait IntoCookie {
 
 /// A single HTTP cookie.
 #[derive(Debug, Clone)]
+#[repr(transparent)]
 pub struct Cookie<'a>(RawCookie<'a>);
 
 /// A good default `CookieStore` implementation.

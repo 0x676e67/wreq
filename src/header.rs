@@ -30,6 +30,7 @@ pub trait IntoOrigHeaderName: sealed::Sealed {
 /// it suitable for use cases where the order of headers matters, such as HTTP/1.x message
 /// serialization, proxying, or reproducing requests/responses exactly as received.
 #[derive(Debug, Clone, Default)]
+#[repr(transparent)]
 pub struct OrigHeaderMap(HeaderMap<OrigHeaderName>);
 
 // ===== impl OrigHeaderMap =====

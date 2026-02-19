@@ -15,6 +15,7 @@ use crate::Error;
 ///
 /// An [Utf8Bytes] is always guaranteed to contain valid UTF-8.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[repr(transparent)]
 pub struct Utf8Bytes(pub(super) tungstenite::Utf8Bytes);
 
 impl Utf8Bytes {
@@ -124,6 +125,7 @@ where
 
 /// Status code used to indicate why an endpoint is closing the WebSocket connection.
 #[derive(Debug, Clone, Eq, PartialEq)]
+#[repr(transparent)]
 pub struct CloseCode(pub(super) u16);
 
 impl CloseCode {

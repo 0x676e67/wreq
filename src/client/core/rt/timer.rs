@@ -50,6 +50,7 @@ pub trait Sleep: Send + Sync + Future<Output = ()> {
 /// This is typically used to abstract over different timer backends and to provide a unified
 /// interface for spawning sleep futures or scheduling timeouts.
 #[derive(Clone)]
+#[repr(transparent)]
 pub struct ArcTimer(Arc<dyn Timer + Send + Sync>);
 
 /// A user-provided timer to time background tasks.

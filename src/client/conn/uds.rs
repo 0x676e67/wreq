@@ -15,6 +15,7 @@ type ConnectResult = io::Result<UnixStream>;
 type BoxConnecting = Pin<Box<dyn Future<Output = ConnectResult> + Send>>;
 
 #[derive(Clone)]
+#[repr(transparent)]
 pub struct UnixConnector(pub(crate) Arc<Path>);
 
 impl tower::Service<Uri> for UnixConnector {

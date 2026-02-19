@@ -14,6 +14,7 @@ use crate::error::{BoxError, Error};
 
 /// An request body.
 #[derive(Debug)]
+#[repr(transparent)]
 pub struct Body(Either<Full<Bytes>, BoxBody<Bytes, BoxError>>);
 
 pin_project! {

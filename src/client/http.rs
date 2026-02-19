@@ -166,9 +166,8 @@ type ClientRef = Either<ClientService, BoxedClientService>;
 ///
 /// [`Rc`]: std::rc::Rc
 #[derive(Clone)]
-pub struct Client {
-    inner: Arc<ClientRef>,
-}
+#[repr(transparent)]
+pub struct Client(Arc<ClientRef>);
 
 /// A [`ClientBuilder`] can be used to create a [`Client`] with custom configuration.
 #[must_use]
@@ -430,11 +429,10 @@ impl Client {
     /// redirect loop was detected or redirect limit was exhausted.
     pub fn execute(&self, request: Request) -> Pending {
         let req = http::Request::<Body>::from(request);
-        // Prepare the future request by ensuring we use the exact same Service instance
-        // for both poll_ready and call.
-        let uri = req.uri().clone();
-        let fut = Oneshot::new(self.inner.as_ref().clone(), req);
-        Pending::request(uri, fut)
+        Pending::request(
+            req.uri().clone(),
+            Oneshot::new(self.0.as_ref().clone(), req),
+        )
     }
 }
 
@@ -624,9 +622,7 @@ impl ClientBuilder {
             }
         };
 
-        Ok(Client {
-            inner: Arc::new(client),
-        })
+        Ok(Client(Arc::new(client)))
     }
 
     // Higher-level options

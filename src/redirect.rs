@@ -58,6 +58,7 @@ pub struct Action {
 
 /// Redirect history information for a response.
 #[derive(Debug, Clone)]
+#[repr(transparent)]
 pub struct History(Vec<HistoryEntry>);
 
 /// An entry in the redirect history.

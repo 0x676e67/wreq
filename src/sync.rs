@@ -12,6 +12,7 @@ use std::{
 };
 
 /// A [`Mutex`] that never poisons and has the same interface as [`std::sync::Mutex`].
+#[repr(transparent)]
 pub struct Mutex<T: ?Sized>(sync::Mutex<T>);
 
 impl<T> Mutex<T> {
@@ -42,6 +43,7 @@ where
 
 /// Like [`std::sync::MutexGuard`].
 #[must_use]
+#[repr(transparent)]
 pub struct MutexGuard<'a, T: ?Sized + 'a>(sync::MutexGuard<'a, T>);
 
 impl<T: ?Sized> Deref for MutexGuard<'_, T> {
@@ -61,6 +63,7 @@ impl<T: ?Sized> DerefMut for MutexGuard<'_, T> {
 }
 
 /// A [`RwLock`] that never poisons and has the same interface as [`std::sync::RwLock`].
+#[repr(transparent)]
 pub struct RwLock<T: ?Sized>(sync::RwLock<T>);
 
 impl<T> RwLock<T> {
@@ -97,6 +100,7 @@ where
 
 /// Like [`std::sync::RwLockReadGuard`].
 #[must_use]
+#[repr(transparent)]
 pub struct RwLockReadGuard<'a, T: ?Sized + 'a>(sync::RwLockReadGuard<'a, T>);
 
 impl<T: ?Sized> Deref for RwLockReadGuard<'_, T> {
@@ -110,6 +114,7 @@ impl<T: ?Sized> Deref for RwLockReadGuard<'_, T> {
 
 /// Like [`std::sync::RwLockWriteGuard`].
 #[must_use]
+#[repr(transparent)]
 pub struct RwLockWriteGuard<'a, T: ?Sized + 'a>(sync::RwLockWriteGuard<'a, T>);
 
 impl<T: ?Sized> Deref for RwLockWriteGuard<'_, T> {

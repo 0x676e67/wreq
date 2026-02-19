@@ -148,6 +148,7 @@ impl CertStoreBuilder {
 /// [`Rc`]: std::rc::Rc
 /// [`Arc`]: std::sync::Arc
 #[derive(Clone)]
+#[repr(transparent)]
 pub struct CertStore(Arc<X509Store>);
 
 // ====== impl CertStore ======

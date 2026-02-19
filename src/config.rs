@@ -37,6 +37,7 @@ pub(crate) trait RequestConfigValue: Clone + 'static {
 /// Typed wrapper that holds an optional configuration value for a given marker key `T`.
 /// Instances of [`RequestConfig<T>`] are intended to be inserted into [`http::Extensions`].
 #[derive(Clone, Copy)]
+#[repr(transparent)]
 pub(crate) struct RequestConfig<T: RequestConfigValue>(Option<T::Value>);
 
 impl<T: RequestConfigValue> Default for RequestConfig<T> {

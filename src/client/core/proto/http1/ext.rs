@@ -12,6 +12,7 @@ use bytes::Bytes;
 /// `ReasonPhrase` will be present and contain `Awesome`, but if a server returns `HTTP/1.1 200 OK`,
 /// the response will not contain a `ReasonPhrase`.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[repr(transparent)]
 pub struct ReasonPhrase(Bytes);
 
 impl ReasonPhrase {

@@ -49,6 +49,7 @@ pub type BoxedConnectorLayer =
 /// [`Unnameable`] allows passing connection requests through trait objects or
 /// type-erased interfaces where the concrete type of the request is not important.
 /// This is mainly used internally to simplify service composition and dynamic dispatch.
+#[repr(transparent)]
 pub struct Unnameable(pub(super) ConnectRequest);
 
 /// A trait alias for types that can be used as async connections.

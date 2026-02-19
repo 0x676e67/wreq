@@ -34,6 +34,7 @@ pub struct DecompressionLayer {
 
 /// Service that decompresses response bodies based on the [`AcceptEncoding`] configuration.
 #[derive(Clone)]
+#[repr(transparent)]
 pub struct Decompression<S>(Option<decompression::Decompression<S>>);
 
 // ===== AcceptEncoding =====

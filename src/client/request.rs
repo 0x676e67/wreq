@@ -44,6 +44,7 @@ use crate::{
 
 /// A request which can be executed with [`Client::execute()`].
 #[derive(Debug)]
+#[repr(transparent)]
 pub struct Request(http::Request<Option<Body>>);
 
 /// A builder to construct the properties of a [`Request`].

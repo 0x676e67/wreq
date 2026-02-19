@@ -48,6 +48,7 @@ impl TlsInfo {
 
 /// A TLS protocol version.
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
+#[repr(transparent)]
 pub struct TlsVersion(ssl::SslVersion);
 
 impl TlsVersion {
@@ -66,6 +67,7 @@ impl TlsVersion {
 
 /// A TLS ALPN protocol.
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
+#[repr(transparent)]
 pub struct AlpnProtocol(&'static [u8]);
 
 impl AlpnProtocol {
@@ -104,6 +106,7 @@ impl AlpnProtocol {
 
 /// A TLS ALPS protocol.
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
+#[repr(transparent)]
 pub struct AlpsProtocol(&'static [u8]);
 
 impl AlpsProtocol {

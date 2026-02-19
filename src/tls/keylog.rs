@@ -25,6 +25,7 @@ use crate::sync::RwLock;
 
 /// Specifies the intent for a (TLS) keylogger.
 #[derive(Debug, Clone)]
+#[repr(transparent)]
 pub struct KeyLog(Option<Arc<Path>>);
 
 impl KeyLog {
