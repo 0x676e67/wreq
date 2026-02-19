@@ -5,6 +5,7 @@ use super::AsyncConnWithInfo;
 /// When enabled (with the `tracing` feature), connections are wrapped to log I/O operations for
 /// debugging.
 #[derive(Clone, Copy)]
+#[repr(transparent)]
 pub struct Verbose(pub(super) bool);
 
 impl Verbose {
