@@ -56,10 +56,7 @@ where
     T: Eq + Hash,
     H: BuildHasher + Default,
 {
-    /// Creates a new `HashMemo` with a custom hasher.
-    ///
-    /// This allows you to specify a custom `BuildHasher` implementation for
-    /// controlling how hash values are computed.
+    /// Creates a new `HashMemo`.
     pub fn new(value: T) -> Self {
         Self {
             value,
