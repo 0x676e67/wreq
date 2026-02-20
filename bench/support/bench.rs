@@ -29,7 +29,7 @@ pub fn bench(
     const OS: &str = std::env::consts::OS;
     const ARCH: &str = std::env::consts::ARCH;
 
-    let system = sysinfo::System::new();
+    let system = sysinfo::System::new_all();
     let cpu_model = system
         .cpus()
         .first()
