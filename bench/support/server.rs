@@ -34,10 +34,9 @@ impl Server {
             Tls::Enabled => {
                 let mut builder = SslAcceptor::mozilla_intermediate_v5(SslMethod::tls_server())?;
 
-                let cert_bytes = include_bytes!("../../tests/support/server.cert");
-                let key_bytes = include_bytes!("../../tests/support/server.key");
-                let cert = X509::from_der(cert_bytes)?;
-                let key = PKey::private_key_from_der(key_bytes)?;
+                let cert = X509::from_der(include_bytes!("../../tests/support/server.cert"))?;
+                let key =
+                    PKey::private_key_from_der(include_bytes!("../../tests/support/server.key"))?;
 
                 builder.set_certificate(&cert)?;
                 builder.set_private_key(&key)?;
@@ -49,7 +48,7 @@ impl Server {
         };
 
         let mut builder = Builder::new(TokioExecutor::new());
-        builder.http1().keep_alive(true);
+        builder.http1().timer(TokioTimer::new()).keep_alive(true);
         builder
             .http2()
             .timer(TokioTimer::new())
