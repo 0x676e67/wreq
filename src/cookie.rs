@@ -3,7 +3,7 @@
 use std::{convert::TryInto, fmt, sync::Arc, time::SystemTime};
 
 use bytes::Bytes;
-use cookie::{Cookie as RawCookie, CookieJar, Expiration, SameSite};
+use cookie::{Cookie as RawCookie, CookieJar, Expiration, SameSite, time::Duration};
 use http::Uri;
 
 use crate::{IntoUri, error::Error, ext::UriExt, hash::HashMap, header::HeaderValue, sync::RwLock};
@@ -269,16 +269,17 @@ impl Jar {
     /// ```
     /// use wreq::cookie::Jar;
     /// let jar = Jar::default();
-    /// jar.add_cookie_str("foo=bar; Path=/foo; Domain=example.com", "http://example.com/foo");
+    /// jar.add("foo=bar; Path=/foo; Domain=example.com", "http://example.com/foo");
     /// let cookie = jar.get("foo", "http://example.com/foo").unwrap();
     /// assert_eq!(cookie.value(), "bar");
     /// ```
     pub fn get<U: IntoUri>(&self, name: &str, uri: U) -> Option<Cookie<'static>> {
         let uri = uri.into_uri().ok()?;
+        let host = normalize_domain(uri.host()?);
         let cookie = self
             .store
             .read()
-            .get(uri.host()?)?
+            .get(host)?
             .get(uri.path())?
             .get(name)?
             .clone()
@@ -295,7 +296,7 @@ impl Jar {
     /// ```
     /// use wreq::cookie::Jar;
     /// let jar = Jar::default();
-    /// jar.add_cookie_str("foo=bar; Domain=example.com", "http://example.com");
+    /// jar.add("foo=bar; Domain=example.com", "http://example.com");
     /// for cookie in jar.get_all() {
     ///     println!("{}={}", cookie.name(), cookie.value());
     /// }
@@ -304,11 +305,21 @@ impl Jar {
         self.store
             .read()
             .iter()
-            .flat_map(|(_, path_map)| {
-                path_map.iter().flat_map(|(_, name_map)| {
-                    name_map
-                        .iter()
-                        .map(|cookie| Cookie(cookie.clone().into_owned()))
+            .flat_map(|(domain, path_map)| {
+                path_map.iter().flat_map(|(path, name_map)| {
+                    name_map.iter().map(|cookie| {
+                        let mut cookie = cookie.clone().into_owned();
+
+                        if cookie.domain().is_none() {
+                            cookie.set_domain(domain.to_owned());
+                        }
+
+                        if cookie.path().is_none() {
+                            cookie.set_path(path.to_owned());
+                        }
+
+                        Cookie(cookie)
+                    })
                 })
             })
             .collect::<Vec<_>>()
@@ -341,14 +352,46 @@ impl Jar {
         U: IntoUri,
     {
         if let Some(cookie) = cookie.into_cookie() {
-            let cookie: RawCookie<'static> = cookie.into();
             let uri = into_uri!(uri);
-            let domain = cookie
-                .domain()
-                .map(normalize_domain)
-                .or_else(|| uri.host())
-                .unwrap_or_default();
-            let path = cookie.path().unwrap_or_else(|| normalize_path(&uri));
+            let mut cookie: RawCookie<'static> = cookie.into();
+
+            // If the request-uri contains no host component:
+            let Some(host) = uri.host() else {
+                return;
+            };
+
+            // If the canonicalized request-host does not domain-match the
+            // domain-attribute:
+            //    Ignore the cookie entirely and abort these steps.
+            //
+            // RFC 6265 §5.3 + §5.1.3:
+            // https://datatracker.ietf.org/doc/html/rfc6265#section-5.3
+            // https://datatracker.ietf.org/doc/html/rfc6265#section-5.1.3
+            let domain = if let Some(domain) = cookie.domain() {
+                let domain = normalize_domain(domain);
+                if domain.is_empty() || !domain_match(normalize_domain(host), domain) {
+                    return;
+                }
+                domain
+            } else {
+                normalize_domain(host)
+            };
+
+            // If the request-uri contains no path component or if the first character of the
+            // path component of the request-uri is not a %x2F ("/") OR if the cookie's path-
+            // attribute is missing or does not start with a %x2F ("/"):
+            //    Let cookie-path be the default-path of the request-uri.
+            // Otherwise:
+            //    Let cookie-path be the substring of the request-uri's path from the first
+            // character    up to, not including, the right-most %x2F ("/").
+            //
+            // RFC 6265 §5.2.4 + §5.1.4:
+            // https://datatracker.ietf.org/doc/html/rfc6265#section-5.2.4
+            // https://datatracker.ietf.org/doc/html/rfc6265#section-5.1.4
+            let path = cookie
+                .path()
+                .filter(|path| path.starts_with(DEFAULT_PATH))
+                .unwrap_or_else(|| normalize_path(uri.path()));
 
             let mut inner = self.store.write();
             let name_map = inner
@@ -361,11 +404,12 @@ impl Jar {
             let expired = cookie
                 .expires_datetime()
                 .is_some_and(|dt| dt <= SystemTime::now())
-                || cookie.max_age().is_some_and(|age| age.is_zero());
+                || cookie.max_age().is_some_and(Duration::is_zero);
 
             if expired {
                 name_map.remove(cookie);
             } else {
+                cookie.set_path(path.to_owned());
                 name_map.add(cookie);
             }
         }
@@ -380,7 +424,7 @@ impl Jar {
     /// ```
     /// use wreq::cookie::Jar;
     /// let jar = Jar::default();
-    /// jar.add_cookie_str("foo=bar; Path=/foo; Domain=example.com", "http://example.com/foo");
+    /// jar.add("foo=bar; Path=/foo; Domain=example.com", "http://example.com/foo");
     /// assert!(jar.get("foo", "http://example.com/foo").is_some());
     /// jar.remove("foo", "http://example.com/foo");
     /// assert!(jar.get("foo", "http://example.com/foo").is_none());
@@ -392,6 +436,7 @@ impl Jar {
     {
         let uri = into_uri!(uri);
         if let Some(host) = uri.host() {
+            let host = normalize_domain(host);
             let mut inner = self.store.write();
             if let Some(path_map) = inner.get_mut(host) {
                 if let Some(name_map) = path_map.get_mut(uri.path()) {
@@ -409,7 +454,7 @@ impl Jar {
     /// ```
     /// use wreq::cookie::Jar;
     /// let jar = Jar::default();
-    /// jar.add_cookie_str("foo=bar; Domain=example.com", "http://example.com");
+    /// jar.add("foo=bar; Domain=example.com", "http://example.com");
     /// assert_eq!(jar.get_all().count(), 1);
     /// jar.clear();
     /// assert_eq!(jar.get_all().count(), 0);
@@ -433,7 +478,7 @@ impl CookieStore for Jar {
 
     fn cookies(&self, uri: &Uri) -> Cookies {
         let host = match uri.host() {
-            Some(h) => h,
+            Some(h) => normalize_domain(h),
             None => return Cookies::Empty,
         };
 
@@ -549,7 +594,11 @@ fn path_match(req_path: &str, cookie_path: &str) -> bool {
 /// the domain attribute of a cookie must not include a port. If a port is present (non-standard),
 /// it will be ignored for domain matching purposes.
 fn normalize_domain(domain: &str) -> &str {
-    domain.split(':').next().unwrap_or(domain)
+    let host_without_port = domain.split(':').next().unwrap_or(domain);
+    let without_leading = host_without_port
+        .strip_prefix(".")
+        .unwrap_or(host_without_port);
+    without_leading.strip_suffix(".").unwrap_or(without_leading)
 }
 
 /// Computes the normalized default path for a cookie as specified in
@@ -557,8 +606,7 @@ fn normalize_domain(domain: &str) -> &str {
 ///
 /// This function normalizes the path for a cookie, ensuring it matches
 /// browser and server expectations for default cookie scope.
-fn normalize_path(uri: &Uri) -> &str {
-    let path = uri.path();
+fn normalize_path(path: &str) -> &str {
     if !path.starts_with(DEFAULT_PATH) {
         return DEFAULT_PATH;
     }
@@ -569,4 +617,115 @@ fn normalize_path(uri: &Uri) -> &str {
         return &path[..pos];
     }
     DEFAULT_PATH
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Jar;
+
+    #[test]
+    fn jar_get_all_backfills_domain_and_path() {
+        let jar = Jar::default();
+        jar.add("session=abc", "http://example.com/foo/bar");
+
+        let cookies = jar.get_all().collect::<Vec<_>>();
+        assert_eq!(cookies.len(), 1);
+
+        let cookie = &cookies[0];
+        assert_eq!(cookie.name(), "session");
+        assert_eq!(cookie.value(), "abc");
+        assert_eq!(cookie.domain(), Some("example.com"));
+        assert_eq!(cookie.path(), Some("/foo"));
+    }
+
+    #[test]
+    fn jar_get_all_keeps_existing_domain_and_path() {
+        let jar = Jar::default();
+        jar.add(
+            "session=abc; Domain=example.com; Path=/custom",
+            "http://example.com/foo/bar",
+        );
+
+        let cookies = jar.get_all().collect::<Vec<_>>();
+        assert_eq!(cookies.len(), 1);
+
+        let cookie = &cookies[0];
+        assert_eq!(cookie.name(), "session");
+        assert_eq!(cookie.value(), "abc");
+        assert_eq!(cookie.domain(), Some("example.com"));
+        assert_eq!(cookie.path(), Some("/custom"));
+    }
+
+    #[test]
+    fn jar_get_all_backfills_only_missing_field() {
+        let jar = Jar::default();
+        jar.add("a=1; Domain=example.com", "http://example.com/foo/bar");
+        jar.add("b=2; Path=/fixed", "http://example.com/foo/bar");
+
+        let mut cookies = jar.get_all().collect::<Vec<_>>();
+        cookies.sort_by(|left, right| left.name().cmp(right.name()));
+
+        let a = &cookies[0];
+        assert_eq!(a.name(), "a");
+        assert_eq!(a.domain(), Some("example.com"));
+        assert_eq!(a.path(), Some("/foo"));
+
+        let b = &cookies[1];
+        assert_eq!(b.name(), "b");
+        assert_eq!(b.domain(), Some("example.com"));
+        assert_eq!(b.path(), Some("/fixed"));
+    }
+
+    #[test]
+    fn jar_add_rejects_mismatched_domain() {
+        let jar = Jar::default();
+        jar.add("session=abc; Domain=other.com", "http://example.com/foo");
+
+        assert_eq!(jar.get_all().count(), 0);
+    }
+
+    #[test]
+    fn jar_add_accepts_matching_parent_domain() {
+        let jar = Jar::default();
+        jar.add(
+            "session=abc; Domain=example.com",
+            "http://api.example.com/foo",
+        );
+
+        let cookies = jar.get_all().collect::<Vec<_>>();
+        assert_eq!(cookies.len(), 1);
+        assert_eq!(cookies[0].domain(), Some("example.com"));
+    }
+
+    #[test]
+    fn jar_get_all_export_import_keeps_effective_path() {
+        let source = Jar::default();
+        source.add("session=abc", "http://example.com/foo/bar");
+
+        let exported = source.get_all().collect::<Vec<_>>();
+        assert_eq!(exported.len(), 1);
+        assert_eq!(exported[0].path(), Some("/foo"));
+
+        let target = Jar::default();
+        for cookie in exported {
+            target.add(cookie, "http://example.com/another/deeper");
+        }
+
+        let imported = target.get_all().collect::<Vec<_>>();
+        assert_eq!(imported.len(), 1);
+        assert_eq!(imported[0].path(), Some("/foo"));
+    }
+
+    #[test]
+    fn cookie_store_invalid_explicit_path_falls_back_to_default_path() {
+        let jar = Jar::default();
+        jar.add("key=val; Path=noslash", "http://example.com/foo/bar");
+
+        assert!(jar.get("key", "http://example.com/foo").is_some());
+        assert!(jar.get("key", "http://example.com/noslash").is_none());
+
+        let cookies = jar.get_all().collect::<Vec<_>>();
+        assert_eq!(cookies.len(), 1);
+        assert_eq!(cookies[0].path(), Some("/foo"));
+    }
 }
