@@ -1,4 +1,4 @@
-use boring2::{
+use btls::{
     pkcs12::Pkcs12,
     pkey::{PKey, Private},
     x509::X509,
@@ -90,7 +90,7 @@ impl Identity {
 
     pub(crate) fn add_to_tls(
         &self,
-        connector: &mut boring2::ssl::SslConnectorBuilder,
+        connector: &mut btls::ssl::SslConnectorBuilder,
     ) -> crate::Result<()> {
         connector.set_certificate(&self.cert).map_err(Error::tls)?;
         connector.set_private_key(&self.pkey).map_err(Error::tls)?;

@@ -1,7 +1,7 @@
 use std::io::{self, Read, Result, Write};
 
-use boring2::ssl::{CertificateCompressionAlgorithm, CertificateCompressor};
 use brotli::{CompressorWriter, Decompressor};
+use btls::ssl::{CertificateCompressionAlgorithm, CertificateCompressor};
 use flate2::{Compression, read::ZlibDecoder, write::ZlibEncoder};
 use zstd::stream::{Decoder as ZstdDecoder, Encoder as ZstdEncoder};
 

@@ -1,5 +1,3 @@
-#[cfg(unix)]
-use std::path::Path;
 use std::{
     future::Future,
     pin::Pin,
@@ -10,7 +8,7 @@ use std::{
 
 use http::Uri;
 use tokio::io::{AsyncRead, AsyncWrite};
-use tokio_boring2::SslStream;
+use tokio_btls::SslStream;
 use tower::{
     Service, ServiceBuilder, ServiceExt,
     timeout::TimeoutLayer,
@@ -138,6 +136,13 @@ impl ConnectorBuilder {
         self
     }
 
+    /// Sets the TCP_NODELAY option for connections.
+    #[inline]
+    pub fn tcp_nodelay(mut self, enabled: bool) -> ConnectorBuilder {
+        self.config.tcp_nodelay = enabled;
+        self
+    }
+
     /// Build a [`Connector`] with the provided layers.
     pub fn build(self, layers: Vec<BoxedConnectorLayer>) -> crate::Result<Connector> {
         let mut service = ConnectorService {
@@ -205,7 +210,7 @@ impl Connector {
             config: Config {
                 proxies: Arc::new(proxies),
                 verbose: Verbose::OFF,
-                tcp_nodelay: false,
+                tcp_nodelay: true,
                 tls_info: false,
                 timeout: None,
             },
@@ -243,6 +248,49 @@ impl Service<ConnectRequest> for Connector {
 // ===== impl ConnectorService =====
 
 impl ConnectorService {
+    fn build_https_connector(
+        &self,
+        https: bool,
+        extra: &ConnectExtra,
+    ) -> Result<HttpsConnector<HttpConnector>, BoxError> {
+        let mut http = self.http.clone();
+
+        // Disable Nagle's algorithm for TLS handshake
+        //
+        // https://www.openssl.org/docs/man1.1.1/man3/SSL_connect.html#NOTES
+        if https && !self.config.tcp_nodelay {
+            http.set_nodelay(true);
+        }
+
+        // Apply TCP options if provided in metadata
+        if let Some(opts) = extra.tcp_options() {
+            http.set_connect_options(opts.clone());
+        }
+
+        self.build_tls_connector_generic(http, extra)
+    }
+
+    fn build_tls_connector_generic<S, T>(
+        &self,
+        connector: S,
+        extra: &ConnectExtra,
+    ) -> Result<HttpsConnector<S>, BoxError>
+    where
+        S: Service<Uri, Response = T> + Send,
+        S::Error: Into<BoxError>,
+        S::Future: Unpin + Send + 'static,
+        T: AsyncRead + AsyncWrite + Connection + Unpin + std::fmt::Debug + Sync + Send + 'static,
+    {
+        // Prefer TLS options from metadata, fallback to default
+        let tls = extra
+            .tls_options()
+            .map(|opts| self.tls_builder.build(opts))
+            .transpose()?
+            .unwrap_or_else(|| self.tls.clone());
+
+        Ok(HttpsConnector::with_connector(connector, tls))
+    }
+
     fn tunnel_conn_from_stream<IO>(&self, io: MaybeHttpsStream<IO>) -> Result<Conn, BoxError>
     where
         IO: AsyncConnWithInfo,
@@ -283,68 +331,17 @@ impl ConnectorService {
             proxy: proxy.into(),
         })
     }
-
-    fn build_https_connector(
-        &self,
-        tls: bool,
-        extra: &ConnectExtra,
-    ) -> Result<HttpsConnector<HttpConnector>, BoxError> {
-        let mut http = self.http.clone();
-
-        // Disable Nagle's algorithm for TLS handshake
-        //
-        // https://www.openssl.org/docs/man1.1.1/man3/SSL_connect.html#NOTES
-        if !self.config.tcp_nodelay && tls {
-            http.set_nodelay(true);
-        }
-
-        // Apply TCP options if provided in metadata
-        if let Some(opts) = extra.tcp_options() {
-            http.set_connect_options(opts.clone());
-        }
-
-        self.build_tls_connector_generic(http, extra)
-    }
-
-    #[cfg(unix)]
-    fn build_unix_connector(
-        &self,
-        unix_socket: Arc<Path>,
-        extra: &ConnectExtra,
-    ) -> Result<HttpsConnector<UnixConnector>, BoxError> {
-        // Create a Unix connector with the specified socket path
-        self.build_tls_connector_generic(UnixConnector(unix_socket), extra)
-    }
-
-    fn build_tls_connector_generic<S, T>(
-        &self,
-        connector: S,
-        extra: &ConnectExtra,
-    ) -> Result<HttpsConnector<S>, BoxError>
-    where
-        S: Service<Uri, Response = T> + Send,
-        S::Error: Into<BoxError>,
-        S::Future: Unpin + Send + 'static,
-        T: AsyncRead + AsyncWrite + Connection + Unpin + std::fmt::Debug + Sync + Send + 'static,
-    {
-        // Prefer TLS options from metadata, fallback to default
-        let tls = extra
-            .tls_options()
-            .map(|opts| self.tls_builder.build(opts))
-            .transpose()?
-            .unwrap_or_else(|| self.tls.clone());
-
-        Ok(HttpsConnector::with_connector(connector, tls))
-    }
 }
 
 impl ConnectorService {
-    async fn connect_auto_proxy<P>(self, req: ConnectRequest, proxy: P) -> Result<Conn, BoxError>
-    where
-        P: Into<Option<Intercept>>,
-    {
+    async fn connect_auto_proxy<P: Into<Option<Intercept>>>(
+        self,
+        req: ConnectRequest,
+        proxy: P,
+    ) -> Result<Conn, BoxError> {
         let is_https = req.uri().is_https();
         let proxy = proxy.into();
+
         trace!("connect with maybe proxy: {:?}", proxy);
 
         let mut connector = self.build_https_connector(is_https, req.extra())?;
@@ -355,6 +352,12 @@ impl ConnectorService {
         }
 
         let io = connector.call(req).await?;
+
+        // Re-enable Nagle's algorithm if it was disabled earlier
+        if is_https && !self.config.tcp_nodelay {
+            io.as_ref().set_nodelay(false)?;
+        }
+
         self.conn_from_stream(io, proxy)
     }
 
@@ -374,7 +377,7 @@ impl ConnectorService {
                 {
                     use proxy::socks::{DnsResolve, SocksConnector, Version};
 
-                    if let Some((version, dns_resolve)) = match proxy.uri().scheme_str() {
+                    if let Some((version, dns_resolve)) = match proxy_uri.scheme_str() {
                         Some("socks4") => Some((Version::V4, DnsResolve::Local)),
                         Some("socks4a") => Some((Version::V4, DnsResolve::Remote)),
                         Some("socks5") => Some((Version::V5, DnsResolve::Local)),
@@ -402,6 +405,12 @@ impl ConnectorService {
 
                         // Wrap the established SOCKS connection with TLS if needed.
                         let io = connector.call(EstablishedConn::new(conn, req)).await?;
+
+                        // Re-enable Nagle's algorithm if it was disabled earlier
+                        if is_https && !self.config.tcp_nodelay {
+                            io.as_ref().set_nodelay(false)?;
+                        }
+
                         return self.tunnel_conn_from_stream(io);
                     }
                 }
@@ -433,6 +442,12 @@ impl ConnectorService {
 
                     // Wrap the established tunneled stream with TLS.
                     let io = connector.call(EstablishedConn::new(tunneled, req)).await?;
+
+                    // Re-enable Nagle's algorithm if it was disabled earlier
+                    if !self.config.tcp_nodelay {
+                        io.as_ref().as_ref().set_nodelay(false)?;
+                    }
+
                     return self.tunnel_conn_from_stream(io);
                 }
 
@@ -447,7 +462,8 @@ impl ConnectorService {
                 trace!("connecting via Unix socket: {:?}", unix_socket);
 
                 // Create a Unix connector with the specified socket path.
-                let mut connector = self.build_unix_connector(unix_socket, req.extra())?;
+                let mut connector =
+                    self.build_tls_connector_generic(UnixConnector(unix_socket), req.extra())?;
 
                 // If the target URI is HTTPS, establish a CONNECT tunnel over the Unix socket,
                 // then upgrade the tunneled stream to TLS.

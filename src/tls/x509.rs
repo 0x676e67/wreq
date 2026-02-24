@@ -2,7 +2,7 @@ mod identity;
 mod parser;
 mod store;
 
-use boring2::x509::X509;
+use btls::x509::X509;
 
 pub use self::{
     identity::Identity,

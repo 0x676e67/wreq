@@ -9,8 +9,7 @@ mod keylog;
 mod options;
 mod x509;
 
-use boring2::ssl;
-pub use boring2::ssl::{CertificateCompressionAlgorithm, ExtensionType};
+pub use btls::ssl::{CertificateCompressionAlgorithm, ExtensionType, KeyShare};
 use bytes::{BufMut, Bytes, BytesMut};
 
 pub(crate) use self::conn::{
@@ -48,20 +47,20 @@ impl TlsInfo {
 
 /// A TLS protocol version.
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
-pub struct TlsVersion(ssl::SslVersion);
+pub struct TlsVersion(btls::ssl::SslVersion);
 
 impl TlsVersion {
     /// Version 1.0 of the TLS protocol.
-    pub const TLS_1_0: TlsVersion = TlsVersion(ssl::SslVersion::TLS1);
+    pub const TLS_1_0: TlsVersion = TlsVersion(btls::ssl::SslVersion::TLS1);
 
     /// Version 1.1 of the TLS protocol.
-    pub const TLS_1_1: TlsVersion = TlsVersion(ssl::SslVersion::TLS1_1);
+    pub const TLS_1_1: TlsVersion = TlsVersion(btls::ssl::SslVersion::TLS1_1);
 
     /// Version 1.2 of the TLS protocol.
-    pub const TLS_1_2: TlsVersion = TlsVersion(ssl::SslVersion::TLS1_2);
+    pub const TLS_1_2: TlsVersion = TlsVersion(btls::ssl::SslVersion::TLS1_2);
 
     /// Version 1.3 of the TLS protocol.
-    pub const TLS_1_3: TlsVersion = TlsVersion(ssl::SslVersion::TLS1_3);
+    pub const TLS_1_3: TlsVersion = TlsVersion(btls::ssl::SslVersion::TLS1_3);
 }
 
 /// A TLS ALPN protocol.

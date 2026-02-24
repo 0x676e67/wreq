@@ -6,7 +6,10 @@ use wreq::{
     http2::{
         Http2Options, PseudoId, PseudoOrder, SettingId, SettingsOrder, StreamDependency, StreamId,
     },
-    tls::{AlpnProtocol, CertificateCompressionAlgorithm, ExtensionType, TlsOptions, TlsVersion},
+    tls::{
+        AlpnProtocol, CertificateCompressionAlgorithm, ExtensionType, KeyShare, TlsOptions,
+        TlsVersion,
+    },
 };
 
 macro_rules! join {
@@ -82,7 +85,11 @@ fn tls_options_template() -> TlsOptions {
         .enable_signed_cert_timestamps(true)
         .min_tls_version(TlsVersion::TLS_1_2)
         .max_tls_version(TlsVersion::TLS_1_3)
-        .key_shares_limit(3)
+        .key_shares(vec![
+            KeyShare::X25519_MLKEM768,
+            KeyShare::X25519,
+            KeyShare::P256,
+        ])
         .preserve_tls13_cipher_list(true)
         .aes_hw_override(true)
         .random_aes_hw_override(true)
@@ -173,6 +180,8 @@ async fn test_emulation() -> wreq::Result<()> {
         .await?
         .text()
         .await?;
+
+    println!("{text}");
 
     assert!(
         text.contains("t13d1717h2_5b57614c22b0_3cbfd9057e0d"),

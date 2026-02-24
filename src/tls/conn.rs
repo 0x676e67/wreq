@@ -16,7 +16,7 @@ use std::{
     task::{Context, Poll},
 };
 
-use boring2::{
+use btls::{
     error::ErrorStack,
     ex_data::Index,
     ssl::{Ssl, SslConnector, SslMethod, SslOptions, SslSessionCacheMode},
@@ -24,7 +24,7 @@ use boring2::{
 use cache::{SessionCache, SessionKey};
 use http::Uri;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
-use tokio_boring2::SslStream;
+use tokio_btls::SslStream;
 use tower::Service;
 
 use crate::{
@@ -33,7 +33,7 @@ use crate::{
     error::BoxError,
     sync::Mutex,
     tls::{
-        AlpnProtocol, AlpsProtocol, CertStore, Identity, KeyLog, TlsOptions, TlsVersion,
+        AlpnProtocol, AlpsProtocol, CertStore, Identity, KeyLog, KeyShare, TlsOptions, TlsVersion,
         conn::ext::SslConnectorBuilderExt,
     },
 };
@@ -59,6 +59,7 @@ pub struct HandshakeConfig {
     alpn_protocols: Option<Cow<'static, [AlpnProtocol]>>,
     alps_protocols: Option<Cow<'static, [AlpsProtocol]>>,
     alps_use_new_codepoint: bool,
+    key_shares: Option<Cow<'static, [KeyShare]>>,
     random_aes_hw_override: bool,
 }
 
@@ -111,6 +112,12 @@ impl HandshakeConfigBuilder {
         self
     }
 
+    /// Sets TLS key shares.
+    pub fn set_client_key_shares(mut self, key_shares: Option<Cow<'static, [KeyShare]>>) -> Self {
+        self.settings.key_shares = key_shares;
+        self
+    }
+
     /// Sets random AES hardware override.
     pub fn random_aes_hw_override(mut self, override_: bool) -> Self {
         self.settings.random_aes_hw_override = override_;
@@ -142,6 +149,7 @@ impl Default for HandshakeConfig {
             alpn_protocols: None,
             alps_protocols: None,
             alps_use_new_codepoint: false,
+            key_shares: None,
             random_aes_hw_override: false,
         }
     }
@@ -237,18 +245,6 @@ impl Inner {
             cfg.set_aes_hw_override(random);
         }
 
-        // Set ALPS protos
-        if let Some(ref alps_values) = self.config.alps_protocols {
-            for alps in alps_values.iter() {
-                cfg.add_application_settings(alps.0)?;
-            }
-
-            // By default, the old endpoint is used.
-            if !alps_values.is_empty() && self.config.alps_use_new_codepoint {
-                cfg.set_alps_use_new_codepoint(true);
-            }
-        }
-
         // Set ALPN protocols
         if let Some(alpn) = req.extra().alpn_protocol() {
             // If ALPN is set in the request, it takes precedence over the connector configuration.
@@ -259,6 +255,23 @@ impl Inner {
                 let encoded = AlpnProtocol::encode_sequence(alpn_values.as_ref());
                 cfg.set_alpn_protos(&encoded)?;
             }
+        }
+
+        // Set ALPS protos
+        if let Some(ref alps_values) = self.config.alps_protocols {
+            for alps in alps_values.iter() {
+                cfg.add_application_settings(alps.0)?;
+            }
+
+            // By default, the new endpoint is used.
+            if !alps_values.is_empty() {
+                cfg.set_alps_use_new_codepoint(self.config.alps_use_new_codepoint);
+            }
+        }
+
+        // Set TLS key shares
+        if let Some(ref key_shares) = self.config.key_shares {
+            cfg.set_client_key_shares(key_shares.as_ref())?;
         }
 
         let uri = req.uri().clone();
@@ -394,7 +407,7 @@ impl TlsConnectorBuilder {
             .or_else(|| opts.alpn_protocols.clone());
 
         // Create the SslConnector with the provided options
-        let mut connector = SslConnector::no_default_verify_builder(SslMethod::tls_client())
+        let mut connector = SslConnector::bare_builder(SslMethod::tls())
             .map_err(Error::tls)?
             .set_cert_store(self.cert_store.as_ref())?
             .set_cert_verification(self.cert_verification)?
@@ -485,9 +498,6 @@ impl TlsConnectorBuilder {
         // Set TLS record size limit
         set_option!(opts, record_size_limit, connector, set_record_size_limit);
 
-        // Set TLS key shares limit
-        set_option!(opts, key_shares_limit, connector, set_key_shares_limit);
-
         // Set TLS aes hardware override
         set_option!(opts, aes_hw_override, connector, set_aes_hw_override);
 
@@ -508,13 +518,14 @@ impl TlsConnectorBuilder {
 
         // Create the handshake config with the default session cache capacity.
         let config = HandshakeConfig::builder()
+            .tls_sni(self.tls_sni)
+            .verify_hostname(self.verify_hostname)
             .no_ticket(opts.psk_skip_session_ticket)
             .alpn_protocols(alpn_protocols)
             .alps_protocols(opts.alps_protocols.clone())
             .alps_use_new_codepoint(opts.alps_use_new_codepoint)
             .enable_ech_grease(opts.enable_ech_grease)
-            .tls_sni(self.tls_sni)
-            .verify_hostname(self.verify_hostname)
+            .set_client_key_shares(opts.key_shares.clone())
             .random_aes_hw_override(opts.random_aes_hw_override)
             .build();
 
@@ -584,6 +595,16 @@ pub struct EstablishedConn<IO> {
 
 // ===== impl MaybeHttpsStream =====
 
+impl<T> AsRef<T> for MaybeHttpsStream<T> {
+    #[inline]
+    fn as_ref(&self) -> &T {
+        match self {
+            MaybeHttpsStream::Http(s) => s,
+            MaybeHttpsStream::Https(s) => s.get_ref(),
+        }
+    }
+}
+
 impl<T> fmt::Debug for MaybeHttpsStream<T> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
@@ -617,6 +638,7 @@ impl<T> AsyncRead for MaybeHttpsStream<T>
 where
     T: AsyncRead + AsyncWrite + Unpin,
 {
+    #[inline]
     fn poll_read(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
@@ -633,6 +655,7 @@ impl<T> AsyncWrite for MaybeHttpsStream<T>
 where
     T: AsyncRead + AsyncWrite + Unpin,
 {
+    #[inline]
     fn poll_write(
         mut self: Pin<&mut Self>,
         ctx: &mut Context<'_>,
@@ -644,6 +667,7 @@ where
         }
     }
 
+    #[inline]
     fn poll_flush(mut self: Pin<&mut Self>, ctx: &mut Context<'_>) -> Poll<io::Result<()>> {
         match self.as_mut().get_mut() {
             MaybeHttpsStream::Http(inner) => Pin::new(inner).poll_flush(ctx),
@@ -651,6 +675,7 @@ where
         }
     }
 
+    #[inline]
     fn poll_shutdown(mut self: Pin<&mut Self>, ctx: &mut Context<'_>) -> Poll<io::Result<()>> {
         match self.as_mut().get_mut() {
             MaybeHttpsStream::Http(inner) => Pin::new(inner).poll_shutdown(ctx),

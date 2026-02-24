@@ -7,7 +7,7 @@ use std::{
 
 use http::{Uri, uri::Scheme};
 use tokio::io::{AsyncRead, AsyncWrite};
-use tokio_boring2::SslStream;
+use tokio_btls::SslStream;
 use tower::Service;
 
 use super::{EstablishedConn, HttpsConnector, MaybeHttpsStream};
@@ -19,10 +19,7 @@ use crate::{
 
 type BoxFuture<T, E> = Pin<Box<dyn Future<Output = Result<T, E>> + Send>>;
 
-async fn perform_handshake<T>(
-    ssl: boring2::ssl::Ssl,
-    conn: T,
-) -> Result<MaybeHttpsStream<T>, BoxError>
+async fn perform_handshake<T>(ssl: btls::ssl::Ssl, conn: T) -> Result<MaybeHttpsStream<T>, BoxError>
 where
     T: AsyncRead + AsyncWrite + Unpin,
 {

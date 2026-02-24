@@ -1,4 +1,4 @@
-use boring2::x509::store::{X509Store, X509StoreBuilder};
+use btls::x509::store::{X509Store, X509StoreBuilder};
 
 use super::{Certificate, CertificateInput};
 use crate::{Error, Result};

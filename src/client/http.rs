@@ -512,6 +512,7 @@ impl ClientBuilder {
                 .timeout(config.connect_timeout)
                 .tls_info(config.tls_info)
                 .tls_options(tls_options)
+                .tcp_nodelay(config.tcp_nodelay)
                 .verbose(config.connection_verbose)
                 .with_tls(|tls| {
                     let alpn_protocol = match config.http_version_pref {

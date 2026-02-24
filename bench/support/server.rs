@@ -1,6 +1,6 @@
 use std::{convert::Infallible, error::Error, pin::Pin, sync::Arc, time::Duration};
 
-use boring2::{
+use btls::{
     pkey::PKey,
     ssl::{Ssl, SslAcceptor, SslMethod},
     x509::X509,
@@ -18,7 +18,7 @@ use tokio::{
     sync::oneshot,
     task::JoinSet,
 };
-use tokio_boring2::SslStream;
+use tokio_btls::SslStream;
 
 use super::{Tls, multi_thread_runtime};
 
@@ -32,7 +32,7 @@ impl Server {
     pub fn new(addr: &'static str, tls: Tls) -> Result<Self, Box<dyn Error + Send + Sync>> {
         let tls_acceptor = match tls {
             Tls::Enabled => {
-                let mut builder = SslAcceptor::mozilla_intermediate_v5(SslMethod::tls_server())?;
+                let mut builder = SslAcceptor::mozilla_intermediate_v5(SslMethod::tls())?;
 
                 let cert = X509::from_der(include_bytes!("../../tests/support/server.cert"))?;
                 let key =

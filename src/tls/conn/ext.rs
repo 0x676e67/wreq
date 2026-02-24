@@ -1,4 +1,4 @@
-use boring2::ssl::{SslConnectorBuilder, SslVerifyMode};
+use btls::ssl::{SslConnectorBuilder, SslVerifyMode};
 
 use crate::{
     Error,

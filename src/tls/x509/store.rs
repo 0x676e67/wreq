@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use boring2::{
+use btls::{
     ssl::SslConnectorBuilder,
     x509::store::{X509Store, X509StoreBuilder},
 };

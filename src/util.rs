@@ -17,7 +17,7 @@ where
             let _ = write!(buf_str, "{password}");
         }
 
-        let encoded = boring2::base64::encode_block(buf_str.as_bytes());
+        let encoded = btls::base64::encode_block(buf_str.as_bytes());
         buf.extend(encoded.into_bytes());
         buf
     };

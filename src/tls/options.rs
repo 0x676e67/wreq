@@ -1,7 +1,8 @@
 use std::borrow::Cow;
 
 use super::{
-    AlpnProtocol, AlpsProtocol, CertificateCompressionAlgorithm, ExtensionType, TlsVersion,
+    AlpnProtocol, AlpsProtocol, CertificateCompressionAlgorithm, ExtensionType, KeyShare,
+    TlsVersion,
 };
 
 /// Builder for `[`TlsOptions`]`.
@@ -110,10 +111,10 @@ pub struct TlsOptions {
     /// **Default:** `false`
     pub psk_skip_session_ticket: bool,
 
-    /// Maximum number of key shares to include in ClientHello.
+    /// Whether to set specific key shares for TLS 1.3 handshakes.
     ///
     /// **Default:** `None`
-    pub key_shares_limit: Option<u8>,
+    pub key_shares: Option<Cow<'static, [KeyShare]>>,
 
     /// Enables PSK with (EC)DHE key establishment (`psk_dhe_ke`).
     ///
@@ -292,16 +293,6 @@ impl TlsOptionsBuilder {
         self
     }
 
-    /// Sets the key shares length limit.
-    #[inline]
-    pub fn key_shares_limit<T>(mut self, limit: T) -> Self
-    where
-        T: Into<Option<u8>>,
-    {
-        self.config.key_shares_limit = limit.into();
-        self
-    }
-
     /// Sets the PSK DHE key establishment flag.
     #[inline]
     pub fn psk_dhe_ke(mut self, enabled: bool) -> Self {
@@ -323,6 +314,16 @@ impl TlsOptionsBuilder {
         T: Into<Cow<'static, str>>,
     {
         self.config.delegated_credentials = Some(creds.into());
+        self
+    }
+
+    /// Sets the client key shares to be used in the TLS 1.3 handshake.
+    #[inline]
+    pub fn key_shares<T>(mut self, key_shares: T) -> Self
+    where
+        T: Into<Cow<'static, [KeyShare]>>,
+    {
+        self.config.key_shares = Some(key_shares.into());
         self
     }
 
@@ -447,7 +448,7 @@ impl Default for TlsOptions {
             enable_signed_cert_timestamps: false,
             record_size_limit: None,
             psk_skip_session_ticket: false,
-            key_shares_limit: None,
+            key_shares: None,
             psk_dhe_ke: true,
             renegotiation: true,
             delegated_credentials: None,

@@ -11,7 +11,7 @@ use tokio::{
     io::{AsyncRead, AsyncWrite, ReadBuf},
     net::TcpStream,
 };
-use tokio_boring2::SslStream;
+use tokio_btls::SslStream;
 
 use super::{AsyncConnWithInfo, Connected, Connection, TlsInfoFactory};
 use crate::{

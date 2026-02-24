@@ -2,7 +2,7 @@ use bytes::Bytes;
 use tokio::net::TcpStream;
 #[cfg(unix)]
 use tokio::net::UnixStream;
-use tokio_boring2::SslStream;
+use tokio_btls::SslStream;
 
 use crate::tls::{MaybeHttpsStream, TlsInfo};
 

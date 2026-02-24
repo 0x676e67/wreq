@@ -5,7 +5,7 @@ use std::{
     num::NonZeroUsize,
 };
 
-use boring2::ssl::{SslSession, SslSessionRef, SslVersion};
+use btls::ssl::{SslSession, SslSessionRef, SslVersion};
 
 use crate::hash::{AHashlState, HashMap, LruMap};
 
