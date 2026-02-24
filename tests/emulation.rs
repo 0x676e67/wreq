@@ -181,8 +181,6 @@ async fn test_emulation() -> wreq::Result<()> {
         .text()
         .await?;
 
-    println!("{text}");
-
     assert!(
         text.contains("t13d1717h2_5b57614c22b0_3cbfd9057e0d"),
         "Response ja4_hash fingerprint not found: {text}"
