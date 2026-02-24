@@ -6,7 +6,11 @@ use std::{
     time::Duration,
 };
 
+#[cfg(any(feature = "form", feature = "json", feature = "multipart"))]
+use http::header::CONTENT_TYPE;
 use http::{Extensions, Request as HttpRequest, Uri, Version};
+#[cfg(any(feature = "query", feature = "form", feature = "json"))]
+use serde::Serialize;
 #[cfg(feature = "multipart")]
 use {super::multipart, bytes::Bytes, http::header::CONTENT_LENGTH};
 #[cfg(feature = "cookies")]
@@ -14,8 +18,6 @@ use {
     crate::cookie::{CookieStore, IntoCookieStore},
     std::sync::Arc,
 };
-#[cfg(any(feature = "query", feature = "form", feature = "json"))]
-use {http::header::CONTENT_TYPE, serde::Serialize};
 
 #[cfg(any(
     feature = "gzip",

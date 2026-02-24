@@ -103,6 +103,7 @@ fn tls_options_template() -> TlsOptions {
             ExtensionType::APPLICATION_LAYER_PROTOCOL_NEGOTIATION,
             ExtensionType::STATUS_REQUEST,
             ExtensionType::DELEGATED_CREDENTIAL,
+            ExtensionType::CERTIFICATE_TIMESTAMP,
             ExtensionType::KEY_SHARE,
             ExtensionType::SUPPORTED_VERSIONS,
             ExtensionType::SIGNATURE_ALGORITHMS,
@@ -110,6 +111,7 @@ fn tls_options_template() -> TlsOptions {
             ExtensionType::RECORD_SIZE_LIMIT,
             ExtensionType::CERT_COMPRESSION,
             ExtensionType::ENCRYPTED_CLIENT_HELLO,
+            ExtensionType::PADDING,
         ])
         .build()
 }
