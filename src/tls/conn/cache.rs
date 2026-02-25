@@ -1,13 +1,12 @@
 use std::{
     borrow::Borrow,
-    collections::hash_map::Entry,
+    collections::{HashMap, hash_map::Entry},
     hash::{Hash, Hasher},
     num::NonZeroUsize,
 };
 
 use btls::ssl::{SslSession, SslSessionRef, SslVersion};
-
-use crate::hash::{AHashlState, HashMap, LruMap};
+use lru::LruCache;
 
 /// A typed key for indexing TLS sessions in the cache.
 ///
@@ -52,7 +51,7 @@ impl Borrow<[u8]> for HashSession {
 /// for efficient session storage, retrieval, and cleanup operations.
 pub struct SessionCache<T> {
     reverse: HashMap<HashSession, SessionKey<T>>,
-    per_host_sessions: HashMap<SessionKey<T>, LruMap<HashSession, ()>>,
+    per_host_sessions: HashMap<SessionKey<T>, LruCache<HashSession, ()>>,
     per_host_session_capacity: usize,
 }
 
@@ -73,10 +72,8 @@ where
             .per_host_sessions
             .entry(key.clone())
             .or_insert_with(|| {
-                NonZeroUsize::new(self.per_host_session_capacity).map_or_else(
-                    || LruMap::unbounded_with_hasher(AHashlState),
-                    |max| LruMap::with_hasher(max, AHashlState),
-                )
+                NonZeroUsize::new(self.per_host_session_capacity)
+                    .map_or_else(LruCache::unbounded, LruCache::new)
             });
 
         // Enforce per-key capacity limit by evicting the least recently used session

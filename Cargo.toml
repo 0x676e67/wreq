@@ -92,7 +92,6 @@ want = "0.3.1"
 socket2 = { version = "0.6.2", features = ["all"] }
 ipnet = "2.11.0"
 lru = "0.16.3"
-ahash = { version = "0.8.12", default-features = false }
 btls = "0.5.3"
 tokio-btls = "0.5.3"
 brotli = "8.0.2"

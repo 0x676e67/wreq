@@ -1,5 +1,5 @@
 use std::{
-    collections::VecDeque,
+    collections::{HashMap, HashSet, VecDeque},
     convert::Infallible,
     error::Error as StdError,
     fmt::{self, Debug},
@@ -14,11 +14,11 @@ use std::{
 };
 
 use futures_channel::oneshot;
+use lru::LruCache;
 
 use super::exec::{self, Exec};
 use crate::{
     client::core::rt::{ArcTimer, Executor, Timer},
-    hash::{AHashlState, HashMap, HashSet, LruMap},
     sync::Mutex,
 };
 
@@ -78,7 +78,7 @@ struct PoolInner<T, K: Eq + Hash> {
     connecting: HashSet<K>,
     // These are internal Conns sitting in the event loop in the KeepAlive
     // state, waiting to receive a new Request to send on the socket.
-    idle: LruMap<K, Vec<Idle<T>>>,
+    idle: LruCache<K, Vec<Idle<T>>>,
     max_idle_per_host: usize,
     // These are outstanding Checkouts that are waiting for a socket to be
     // able to send a Request one. This is used when "racing" for a new
@@ -124,10 +124,9 @@ impl<T, K: Key> Pool<T, K> {
         let inner = if config.is_enabled() {
             Some(Arc::new(Mutex::new(PoolInner {
                 connecting: HashSet::default(),
-                idle: config.max_pool_size.map_or_else(
-                    || LruMap::unbounded_with_hasher(AHashlState),
-                    |max| LruMap::with_hasher(max, AHashlState),
-                ),
+                idle: config
+                    .max_pool_size
+                    .map_or_else(LruCache::unbounded, LruCache::new),
                 idle_interval_ref: None,
                 max_idle_per_host: config.max_idle_per_host,
                 waiters: HashMap::default(),

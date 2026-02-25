@@ -1,75 +1,40 @@
+use lru::DefaultHasher;
 use std::{
     borrow::Borrow,
     hash::{BuildHasher, Hash, Hasher},
     num::NonZeroU64,
-    sync::atomic::{AtomicU64, Ordering},
+    sync::{
+        LazyLock,
+        atomic::{AtomicU64, Ordering},
+    },
 };
-
-use ahash::RandomState;
-
-#[derive(Debug, Clone, Copy, Default)]
-pub struct AHashlState;
-
-impl BuildHasher for AHashlState {
-    type Hasher = <RandomState as BuildHasher>::Hasher;
-
-    fn build_hasher(&self) -> Self::Hasher {
-        /// Pre-seeded [`RandomState`] for consistent internal hashing.
-        ///
-        /// Uses fixed seeds to ensure deterministic hashing behavior across
-        /// program runs. Primarily used for connection pools and internal caches.
-        ///
-        /// **Note**: Not cryptographically secure due to fixed seeds.
-        const HASHER: RandomState = RandomState::with_seeds(
-            0x6b68_d618_a4b5_3c57,
-            0xadc8_c4d5_82bb_1313,
-            0x2f72_c2c1_9b04_2d4c,
-            0x94e5_8d83_a26c_3f28,
-        );
-
-        HASHER.build_hasher()
-    }
-}
-
-/// A type alias for a hash set using `ahash` with a pre-seeded `RandomState`.
-pub type HashSet<T> = std::collections::HashSet<T, AHashlState>;
-
-/// A type alias for a hash map using `ahash` with a pre-seeded `RandomState`.
-pub type HashMap<K, V> = std::collections::HashMap<K, V, AHashlState>;
-
-/// A specialized LRU cache using `lru`
-pub type LruMap<K, V> = lru::LruCache<K, V, AHashlState>;
 
 /// A wrapper that memoizes the hash value of its contained data.
 #[derive(Debug)]
-pub struct HashMemo<T, H: BuildHasher = AHashlState>
+pub struct HashMemo<T>
 where
     T: Eq + PartialEq + Hash,
 {
     value: T,
     hash: AtomicU64,
-    hasher: H,
 }
 
-impl<T, H> HashMemo<T, H>
+impl<T> HashMemo<T>
 where
     T: Eq + Hash,
-    H: BuildHasher + Default,
 {
-    /// Creates a new `HashMemo`.
+    /// Creates a new [`HashMemo`].
     pub fn new(value: T) -> Self {
         Self {
             value,
             hash: AtomicU64::new(u64::MIN),
-            hasher: Default::default(),
         }
     }
 }
 
-impl<T, H> Hash for HashMemo<T, H>
+impl<T> Hash for HashMemo<T>
 where
     T: Eq + Hash,
-    H: BuildHasher,
 {
     fn hash<H2: Hasher>(&self, state: &mut H2) {
         let hash = self.hash.load(Ordering::Relaxed);
@@ -78,7 +43,9 @@ where
             return;
         }
 
-        let computed_hash = NonZeroU64::new(self.hasher.hash_one(&self.value))
+        static HASHER: LazyLock<DefaultHasher> = LazyLock::new(DefaultHasher::default);
+
+        let computed_hash = NonZeroU64::new(HASHER.hash_one(&self.value))
             .map(NonZeroU64::get)
             .unwrap_or(1);
 
@@ -92,58 +59,53 @@ where
     }
 }
 
-impl<T, H> PartialOrd for HashMemo<T, H>
+impl<T> PartialOrd for HashMemo<T>
 where
     T: Eq + Hash + PartialOrd,
-    H: BuildHasher,
 {
+    #[inline]
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         self.value.partial_cmp(&other.value)
     }
 }
 
-impl<T, H> Ord for HashMemo<T, H>
+impl<T> Ord for HashMemo<T>
 where
     T: Eq + Hash + Ord,
-    H: BuildHasher,
 {
+    #[inline]
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         self.value.cmp(&other.value)
     }
 }
 
-impl<T, H> PartialEq for HashMemo<T, H>
+impl<T> PartialEq for HashMemo<T>
 where
     T: Eq + Hash,
-    H: BuildHasher,
 {
+    #[inline]
     fn eq(&self, other: &Self) -> bool {
         self.value == other.value
     }
 }
 
-impl<T, H> Eq for HashMemo<T, H>
-where
-    T: Eq + Hash,
-    H: BuildHasher,
-{
-}
+impl<T> Eq for HashMemo<T> where T: Eq + Hash {}
 
-impl<T, H> AsRef<T> for HashMemo<T, H>
+impl<T> AsRef<T> for HashMemo<T>
 where
     T: Eq + Hash,
-    H: BuildHasher,
 {
+    #[inline]
     fn as_ref(&self) -> &T {
         &self.value
     }
 }
 
-impl<T, H> Borrow<T> for HashMemo<T, H>
+impl<T> Borrow<T> for HashMemo<T>
 where
     T: Eq + Hash,
-    H: BuildHasher,
 {
+    #[inline]
     fn borrow(&self) -> &T {
         &self.value
     }

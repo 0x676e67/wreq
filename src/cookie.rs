@@ -1,12 +1,12 @@
 //! HTTP Cookies
 
-use std::{convert::TryInto, fmt, sync::Arc, time::SystemTime};
+use std::{collections::HashMap, convert::TryInto, fmt, sync::Arc, time::SystemTime};
 
 use bytes::Bytes;
 use cookie::{Cookie as RawCookie, CookieJar, Expiration, SameSite, time::Duration};
 use http::Uri;
 
-use crate::{IntoUri, error::Error, ext::UriExt, hash::HashMap, header::HeaderValue, sync::RwLock};
+use crate::{IntoUri, error::Error, ext::UriExt, header::HeaderValue, sync::RwLock};
 
 /// Cookie header values in two forms.
 #[derive(Debug, Clone)]
