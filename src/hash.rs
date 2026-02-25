@@ -1,4 +1,3 @@
-use lru::DefaultHasher;
 use std::{
     borrow::Borrow,
     hash::{BuildHasher, Hash, Hasher},
@@ -8,6 +7,8 @@ use std::{
         atomic::{AtomicU64, Ordering},
     },
 };
+
+use lru::DefaultHasher;
 
 /// A wrapper that memoizes the hash value of its contained data.
 #[derive(Debug)]
