@@ -30,10 +30,10 @@ cookies = ["dep:cookie"]
 # Enable gzip decompression support.
 gzip = ["tower-http/decompression-gzip"]
 
-# Enable Brotli decompression support.
+# Enable brotli decompression support.
 brotli = ["tower-http/decompression-br"]
 
-# Enable Zstd decompression support.
+# Enable zstd decompression support.
 zstd = ["tower-http/decompression-zstd"]
 
 # Enable deflate decompression support.
