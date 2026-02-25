@@ -138,6 +138,11 @@ pub struct TlsOptions {
     /// **Default:** `None`
     pub curves_list: Option<Cow<'static, str>>,
 
+    /// List of supported signature algorithms.
+    ///
+    /// **Default:** `None`
+    pub sigalgs_list: Option<Cow<'static, str>>,
+
     /// Cipher suite configuration string.
     ///
     /// Uses BoringSSL's mini-language to select, enable, and prioritize ciphers.
@@ -145,10 +150,10 @@ pub struct TlsOptions {
     /// **Default:** `None`
     pub cipher_list: Option<Cow<'static, str>>,
 
-    /// List of supported signature algorithms.
+    /// Sets whether to preserve the TLS 1.3 cipher list as configured by [`Self::cipher_list`].
     ///
     /// **Default:** `None`
-    pub sigalgs_list: Option<Cow<'static, str>>,
+    pub preserve_tls13_cipher_list: Option<bool>,
 
     /// Supported certificate compression algorithms ([RFC 8879](https://datatracker.ietf.org/doc/html/rfc8879)).
     ///
@@ -164,11 +169,6 @@ pub struct TlsOptions {
     ///
     /// **Default:** `None`
     pub aes_hw_override: Option<bool>,
-
-    /// Sets whether to preserve the TLS 1.3 cipher list as configured by [`Self::cipher_list`].
-    ///
-    /// **Default:** `None`
-    pub preserve_tls13_cipher_list: Option<bool>,
 
     /// Overrides the random AES hardware acceleration.
     ///

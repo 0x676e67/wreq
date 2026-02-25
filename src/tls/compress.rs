@@ -106,7 +106,6 @@ impl<const ALGORITHM: i32> ssl::CertificateCompressor for Compressor<ALGORITHM> 
     };
 
     const CAN_COMPRESS: bool = true;
-
     const CAN_DECOMPRESS: bool = true;
 
     #[inline]
