@@ -1,5 +1,10 @@
-use std::time::Duration;
+use std::{
+    io::{self, Read, Write},
+    time::Duration,
+};
 
+use brotli::{CompressorWriter as BrotliDecoder, Decompressor as BrotliEncoder};
+use flate2::{Compression, read::ZlibDecoder, write::ZlibEncoder};
 use wreq::{
     Client, Emulation,
     http1::Http1Options,
@@ -7,10 +12,104 @@ use wreq::{
         Http2Options, PseudoId, PseudoOrder, SettingId, SettingsOrder, StreamDependency, StreamId,
     },
     tls::{
-        AlpnProtocol, CertificateCompressionAlgorithm, ExtensionType, KeyShare, TlsOptions,
-        TlsVersion,
+        AlpnProtocol, CertificateCompressionAlgorithm, CertificateCompressor, ExtensionType,
+        KeyShare, TlsOptions, TlsVersion,
     },
 };
+use zstd::stream::{Decoder as ZstdDecoder, Encoder as ZstdEncoder};
+
+const BROTLI_CERTIFICATE_COMPRESSOR: CertificateCompressor = CertificateCompressor::new(
+    CertificateCompressionAlgorithm::BROTLI,
+    |input, output| {
+        let mut writer = BrotliDecoder::new(output, input.len(), 11, 22);
+        writer.write_all(input)?;
+        writer.flush()?;
+        Ok(())
+    },
+    |input, output| {
+        let mut reader = BrotliEncoder::new(input, 4096);
+        let mut buf = [0u8; 4096];
+        loop {
+            match reader.read(&mut buf[..]) {
+                Err(e) => {
+                    if let io::ErrorKind::Interrupted = e.kind() {
+                        continue;
+                    }
+                    return Err(e);
+                }
+                Ok(size) => {
+                    if size == 0 {
+                        break;
+                    }
+                    output.write_all(&buf[..size])?;
+                }
+            }
+        }
+        Ok(())
+    },
+);
+
+const ZLIB_CERTIFICATE_COMPRESSOR: CertificateCompressor = CertificateCompressor::new(
+    CertificateCompressionAlgorithm::ZLIB,
+    |input, output| {
+        let mut encoder = ZlibEncoder::new(output, Compression::default());
+        encoder.write_all(input)?;
+        encoder.finish()?;
+        Ok(())
+    },
+    |input, output| {
+        let mut decoder = ZlibDecoder::new(input);
+        let mut buf = [0u8; 4096];
+        loop {
+            match decoder.read(&mut buf[..]) {
+                Err(e) => {
+                    if let io::ErrorKind::Interrupted = e.kind() {
+                        continue;
+                    }
+                    return Err(e);
+                }
+                Ok(size) => {
+                    if size == 0 {
+                        break;
+                    }
+                    output.write_all(&buf[..size])?;
+                }
+            }
+        }
+        Ok(())
+    },
+);
+
+const ZSTD_CERTIFICATE_COMPRESSOR: CertificateCompressor = CertificateCompressor::new(
+    CertificateCompressionAlgorithm::ZSTD,
+    |input, output| {
+        let mut encoder = ZstdEncoder::new(output, 0)?;
+        encoder.write_all(input)?;
+        encoder.finish()?;
+        Ok(())
+    },
+    |input, output| {
+        let mut decoder = ZstdDecoder::new(input)?;
+        let mut buf = [0u8; 4096];
+        loop {
+            match decoder.read(&mut buf[..]) {
+                Err(e) => {
+                    if let io::ErrorKind::Interrupted = e.kind() {
+                        continue;
+                    }
+                    return Err(e);
+                }
+                Ok(size) => {
+                    if size == 0 {
+                        break;
+                    }
+                    output.write_all(&buf[..size])?;
+                }
+            }
+        }
+        Ok(())
+    },
+);
 
 macro_rules! join {
     ($sep:expr, $first:expr $(, $rest:expr)*) => {
@@ -72,10 +171,10 @@ fn tls_options_template() -> TlsOptions {
             "ecdsa_secp521r1_sha512",
             "ecdsa_sha1"
         ))
-        .certificate_compression_algorithms(&[
-            CertificateCompressionAlgorithm::ZLIB,
-            CertificateCompressionAlgorithm::BROTLI,
-            CertificateCompressionAlgorithm::ZSTD,
+        .certificate_compressors(&[
+            ZLIB_CERTIFICATE_COMPRESSOR,
+            BROTLI_CERTIFICATE_COMPRESSOR,
+            ZSTD_CERTIFICATE_COMPRESSOR,
         ])
         .alpn_protocols([AlpnProtocol::HTTP2, AlpnProtocol::HTTP1])
         .record_size_limit(0x4001)
@@ -160,7 +259,7 @@ fn emulation_template() -> Emulation {
         .max_headers(100)
         .build();
 
-    // This provider encapsulates TLS, HTTP/1, HTTP/2, default headers, and original headers
+    // This provider encapsulates TLS, HTTP/1, HTTP/2
     Emulation::builder()
         .tls_options(tls_options_template())
         .http1_options(http1)

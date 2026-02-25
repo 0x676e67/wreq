@@ -1,8 +1,7 @@
 use std::borrow::Cow;
 
 use super::{
-    AlpnProtocol, AlpsProtocol, CertificateCompressionAlgorithm, ExtensionType, KeyShare,
-    TlsVersion,
+    AlpnProtocol, AlpsProtocol, CertificateCompressor, ExtensionType, KeyShare, TlsVersion,
 };
 
 /// Builder for `[`TlsOptions`]`.
@@ -154,7 +153,7 @@ pub struct TlsOptions {
     /// Supported certificate compression algorithms ([RFC 8879](https://datatracker.ietf.org/doc/html/rfc8879)).
     ///
     /// **Default:** `None`
-    pub certificate_compression_algorithms: Option<Cow<'static, [CertificateCompressionAlgorithm]>>,
+    pub certificate_compressors: Option<Cow<'static, [CertificateCompressor]>>,
 
     /// Supported TLS extensions, used for extension ordering/permutation.
     ///
@@ -359,11 +358,11 @@ impl TlsOptionsBuilder {
 
     /// Sets the certificate compression algorithms.
     #[inline]
-    pub fn certificate_compression_algorithms<T>(mut self, algs: T) -> Self
+    pub fn certificate_compressors<T>(mut self, algs: T) -> Self
     where
-        T: Into<Cow<'static, [CertificateCompressionAlgorithm]>>,
+        T: Into<Cow<'static, [CertificateCompressor]>>,
     {
-        self.config.certificate_compression_algorithms = Some(algs.into());
+        self.config.certificate_compressors = Some(algs.into());
         self
     }
 
@@ -455,7 +454,7 @@ impl Default for TlsOptions {
             curves_list: None,
             cipher_list: None,
             sigalgs_list: None,
-            certificate_compression_algorithms: None,
+            certificate_compressors: None,
             extension_permutation: None,
             aes_hw_override: None,
             preserve_tls13_cipher_list: None,
