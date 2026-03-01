@@ -182,17 +182,6 @@ async fn reqwest_requests_concurrent(
         .try_for_each(|res| res.map_err(box_err)?)
 }
 
-/// Extract the crate name from a type's module path
-/// For example: wreq::Client -> "wreq", reqwest::Client -> "reqwest"
-fn crate_name<T: ?Sized>() -> &'static str {
-    let full_name = std::any::type_name::<T>();
-    // Split by "::" and take the first part (the crate name)
-    full_name
-        .split("::")
-        .next()
-        .expect("Type name should contain at least one segment")
-}
-
 #[allow(clippy::too_many_arguments)]
 pub fn bench_clients(
     group: &mut BenchmarkGroup<'_, WallTime>,
@@ -207,7 +196,11 @@ pub fn bench_clients(
     let url = format!("{tls}://{addr}");
 
     fn make_benchmark_label<T: ?Sized>(stream: bool) -> String {
-        let client = crate_name::<T>();
+        let client = std::any::type_name::<T>()
+            .split("::")
+            .next()
+            .expect("Type name should contain at least one segment");
+
         let body_type = if stream { "stream" } else { "full" };
         format!("{body_type}/{client}")
     }
