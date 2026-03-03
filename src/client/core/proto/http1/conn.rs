@@ -165,7 +165,7 @@ where
             ParseContext {
                 cached_headers: &mut self.state.cached_headers,
                 req_method: &mut self.state.method,
-                h1_parser_config: self.state.h1_parser_config.clone(),
+                h1_parser_config: &self.state.h1_parser_config,
                 h1_max_headers: self.state.h1_max_headers,
                 h09_responses: self.state.h09_responses,
             },
