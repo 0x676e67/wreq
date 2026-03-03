@@ -1,4 +1,4 @@
-//! This example runs a server that responds to any request with "Hello, world!"
+//! HTTP/1.1 benchmark
 
 mod support;
 
