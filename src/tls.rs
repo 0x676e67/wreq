@@ -4,6 +4,7 @@
 //!
 //! - Various parts of TLS can also be configured or even disabled on the `ClientBuilder`.
 
+mod compress;
 mod conn;
 mod keylog;
 mod options;
@@ -16,6 +17,7 @@ pub(crate) use self::conn::{
     EstablishedConn, HttpsConnector, MaybeHttpsStream, TlsConnector, TlsConnectorBuilder,
 };
 pub use self::{
+    compress::CertificateCompressor,
     keylog::KeyLog,
     options::{TlsOptions, TlsOptionsBuilder},
     x509::{CertStore, CertStoreBuilder, Certificate, Identity},

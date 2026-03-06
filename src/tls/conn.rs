@@ -3,7 +3,6 @@
 #[macro_use]
 mod macros;
 mod cache;
-mod cert_compression;
 mod ext;
 mod service;
 
@@ -411,9 +410,7 @@ impl TlsConnectorBuilder {
             .map_err(Error::tls)?
             .set_cert_store(self.cert_store.as_ref())?
             .set_cert_verification(self.cert_verification)?
-            .add_certificate_compression_algorithms(
-                opts.certificate_compression_algorithms.as_deref(),
-            )?;
+            .add_certificate_compressors(opts.certificate_compressors.as_deref())?;
 
         // Set Identity
         if let Some(ref identity) = self.identity {
