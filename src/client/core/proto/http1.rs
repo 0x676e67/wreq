@@ -59,7 +59,7 @@ pub(crate) struct ParsedMessage<T> {
 pub(crate) struct ParseContext<'a> {
     cached_headers: &'a mut Option<HeaderMap>,
     req_method: &'a mut Option<Method>,
-    h1_parser_config: ParserConfig,
+    h1_parser_config: &'a ParserConfig,
     h1_max_headers: Option<usize>,
     h09_responses: bool,
 }

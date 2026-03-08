@@ -43,14 +43,9 @@ fn key_index() -> Result<Index<Ssl, SessionKey<ConnectIdentity>>, ErrorStack> {
     IDX.clone()
 }
 
-/// Builds for [`HandshakeConfig`].
-pub struct HandshakeConfigBuilder {
-    settings: HandshakeConfig,
-}
-
 /// Settings for [`TlsConnector`]
 #[derive(Clone)]
-pub struct HandshakeConfig {
+pub struct HandshakeSettings {
     no_ticket: bool,
     enable_ech_grease: bool,
     verify_hostname: bool,
@@ -60,98 +55,6 @@ pub struct HandshakeConfig {
     alps_use_new_codepoint: bool,
     key_shares: Option<Cow<'static, [KeyShare]>>,
     random_aes_hw_override: bool,
-}
-
-impl HandshakeConfigBuilder {
-    /// Skips the session ticket.
-    pub fn no_ticket(mut self, skip: bool) -> Self {
-        self.settings.no_ticket = skip;
-        self
-    }
-
-    /// Enables or disables ECH grease.
-    pub fn enable_ech_grease(mut self, enable: bool) -> Self {
-        self.settings.enable_ech_grease = enable;
-        self
-    }
-
-    /// Sets hostname verification.
-    pub fn verify_hostname(mut self, verify: bool) -> Self {
-        self.settings.verify_hostname = verify;
-        self
-    }
-
-    /// Sets TLS SNI.
-    pub fn tls_sni(mut self, sni: bool) -> Self {
-        self.settings.tls_sni = sni;
-        self
-    }
-
-    /// Sets ALPN protocols.
-    pub fn alpn_protocols<P>(mut self, alpn_protocols: P) -> Self
-    where
-        P: Into<Option<Cow<'static, [AlpnProtocol]>>>,
-    {
-        self.settings.alpn_protocols = alpn_protocols.into();
-        self
-    }
-
-    /// Sets ALPS protocol.
-    pub fn alps_protocols<P>(mut self, alps_protocols: P) -> Self
-    where
-        P: Into<Option<Cow<'static, [AlpsProtocol]>>>,
-    {
-        self.settings.alps_protocols = alps_protocols.into();
-        self
-    }
-
-    /// Sets ALPS new codepoint usage.
-    pub fn alps_use_new_codepoint(mut self, use_new: bool) -> Self {
-        self.settings.alps_use_new_codepoint = use_new;
-        self
-    }
-
-    /// Sets TLS key shares.
-    pub fn set_client_key_shares(mut self, key_shares: Option<Cow<'static, [KeyShare]>>) -> Self {
-        self.settings.key_shares = key_shares;
-        self
-    }
-
-    /// Sets random AES hardware override.
-    pub fn random_aes_hw_override(mut self, override_: bool) -> Self {
-        self.settings.random_aes_hw_override = override_;
-        self
-    }
-
-    /// Builds the `HandshakeConfig`.
-    pub fn build(self) -> HandshakeConfig {
-        self.settings
-    }
-}
-
-impl HandshakeConfig {
-    /// Creates a new `HandshakeConfigBuilder`.
-    pub fn builder() -> HandshakeConfigBuilder {
-        HandshakeConfigBuilder {
-            settings: HandshakeConfig::default(),
-        }
-    }
-}
-
-impl Default for HandshakeConfig {
-    fn default() -> Self {
-        Self {
-            no_ticket: false,
-            enable_ech_grease: false,
-            verify_hostname: true,
-            tls_sni: true,
-            alpn_protocols: None,
-            alps_protocols: None,
-            alps_use_new_codepoint: false,
-            key_shares: None,
-            random_aes_hw_override: false,
-        }
-    }
 }
 
 /// A Connector using BoringSSL to support `http` and `https` schemes.
@@ -165,7 +68,7 @@ pub struct HttpsConnector<T> {
 struct Inner {
     ssl: SslConnector,
     cache: Option<Arc<Mutex<SessionCache<ConnectIdentity>>>>,
-    config: HandshakeConfig,
+    settings: HandshakeSettings,
 }
 
 /// A builder for creating a `TlsConnector`.
@@ -210,7 +113,7 @@ where
     /// Disables ALPN negotiation.
     #[inline]
     pub fn no_alpn(&mut self) -> &mut Self {
-        self.inner.config.alpn_protocols = None;
+        self.inner.settings.alpn_protocols = None;
         self
     }
 }
@@ -230,16 +133,16 @@ impl Inner {
         let mut cfg = self.ssl.configure()?;
 
         // Use server name indication
-        cfg.set_use_server_name_indication(self.config.tls_sni);
+        cfg.set_use_server_name_indication(self.settings.tls_sni);
 
         // Verify hostname
-        cfg.set_verify_hostname(self.config.verify_hostname);
+        cfg.set_verify_hostname(self.settings.verify_hostname);
 
         // Set ECH grease
-        cfg.set_enable_ech_grease(self.config.enable_ech_grease);
+        cfg.set_enable_ech_grease(self.settings.enable_ech_grease);
 
         // Set random AES hardware override
-        if self.config.random_aes_hw_override {
+        if self.settings.random_aes_hw_override {
             let random = (crate::util::fast_random() & 1) == 0;
             cfg.set_aes_hw_override(random);
         }
@@ -250,26 +153,26 @@ impl Inner {
             cfg.set_alpn_protos(&alpn.encode())?;
         } else {
             // Default use the connector configuration.
-            if let Some(ref alpn_values) = self.config.alpn_protocols {
+            if let Some(ref alpn_values) = self.settings.alpn_protocols {
                 let encoded = AlpnProtocol::encode_sequence(alpn_values.as_ref());
                 cfg.set_alpn_protos(&encoded)?;
             }
         }
 
         // Set ALPS protos
-        if let Some(ref alps_values) = self.config.alps_protocols {
+        if let Some(ref alps_values) = self.settings.alps_protocols {
             for alps in alps_values.iter() {
                 cfg.add_application_settings(alps.0)?;
             }
 
             // By default, the new endpoint is used.
             if !alps_values.is_empty() {
-                cfg.set_alps_use_new_codepoint(self.config.alps_use_new_codepoint);
+                cfg.set_alps_use_new_codepoint(self.settings.alps_use_new_codepoint);
             }
         }
 
         // Set TLS key shares
-        if let Some(ref key_shares) = self.config.key_shares {
+        if let Some(ref key_shares) = self.settings.key_shares {
             cfg.set_client_key_shares(key_shares.as_ref())?;
         }
 
@@ -286,8 +189,8 @@ impl Inner {
                 #[allow(unsafe_code)]
                 unsafe { cfg.set_session(&session) }?;
 
-                if self.config.no_ticket {
-                    cfg.set_options(SslOptions::NO_TICKET)?;
+                if self.settings.no_ticket {
+                    cfg.set_options(SslOptions::NO_TICKET);
                 }
             }
 
@@ -295,8 +198,7 @@ impl Inner {
             cfg.set_ex_data(idx, key);
         }
 
-        let ssl = cfg.into_ssl(host)?;
-        Ok(ssl)
+        Ok(cfg.into_ssl(host)?)
     }
 
     /// If `host` is an IPv6 address, we must strip away the square brackets that surround
@@ -324,28 +226,28 @@ impl Inner {
 
 impl TlsConnectorBuilder {
     /// Sets the alpn protocol to be used.
-    #[inline(always)]
+    #[inline]
     pub fn alpn_protocol(mut self, protocol: Option<AlpnProtocol>) -> Self {
         self.alpn_protocol = protocol;
         self
     }
 
     /// Sets the TLS keylog policy.
-    #[inline(always)]
+    #[inline]
     pub fn keylog(mut self, keylog: Option<KeyLog>) -> Self {
         self.keylog = keylog;
         self
     }
 
     /// Sets the identity to be used for client certificate authentication.
-    #[inline(always)]
+    #[inline]
     pub fn identity(mut self, identity: Option<Identity>) -> Self {
         self.identity = identity;
         self
     }
 
     /// Sets the certificate store used for TLS verification.
-    #[inline(always)]
+    #[inline]
     pub fn cert_store<T>(mut self, cert_store: T) -> Self
     where
         T: Into<Option<CertStore>>,
@@ -355,14 +257,14 @@ impl TlsConnectorBuilder {
     }
 
     /// Sets the certificate verification flag.
-    #[inline(always)]
+    #[inline]
     pub fn cert_verification(mut self, enabled: bool) -> Self {
         self.cert_verification = enabled;
         self
     }
 
     /// Sets the minimum TLS version to use.
-    #[inline(always)]
+    #[inline]
     pub fn min_version<T>(mut self, version: T) -> Self
     where
         T: Into<Option<TlsVersion>>,
@@ -372,7 +274,7 @@ impl TlsConnectorBuilder {
     }
 
     /// Sets the maximum TLS version to use.
-    #[inline(always)]
+    #[inline]
     pub fn max_version<T>(mut self, version: T) -> Self
     where
         T: Into<Option<TlsVersion>>,
@@ -382,14 +284,14 @@ impl TlsConnectorBuilder {
     }
 
     /// Sets the Server Name Indication (SNI) flag.
-    #[inline(always)]
+    #[inline]
     pub fn tls_sni(mut self, enabled: bool) -> Self {
         self.tls_sni = enabled;
         self
     }
 
     /// Sets the hostname verification flag.
-    #[inline(always)]
+    #[inline]
     pub fn verify_hostname(mut self, enabled: bool) -> Self {
         self.verify_hostname = enabled;
         self
@@ -513,18 +415,18 @@ impl TlsConnectorBuilder {
             });
         }
 
-        // Create the handshake config with the default session cache capacity.
-        let config = HandshakeConfig::builder()
-            .tls_sni(self.tls_sni)
-            .verify_hostname(self.verify_hostname)
-            .no_ticket(opts.psk_skip_session_ticket)
-            .alpn_protocols(alpn_protocols)
-            .alps_protocols(opts.alps_protocols.clone())
-            .alps_use_new_codepoint(opts.alps_use_new_codepoint)
-            .enable_ech_grease(opts.enable_ech_grease)
-            .set_client_key_shares(opts.key_shares.clone())
-            .random_aes_hw_override(opts.random_aes_hw_override)
-            .build();
+        // Create the handshake settings with the default session cache capacity.
+        let settings = HandshakeSettings {
+            tls_sni: self.tls_sni,
+            verify_hostname: self.verify_hostname,
+            no_ticket: opts.psk_skip_session_ticket,
+            alpn_protocols,
+            alps_protocols: opts.alps_protocols.clone(),
+            alps_use_new_codepoint: opts.alps_use_new_codepoint,
+            enable_ech_grease: opts.enable_ech_grease,
+            key_shares: opts.key_shares.clone(),
+            random_aes_hw_override: opts.random_aes_hw_override,
+        };
 
         // If the session cache is disabled, we don't need to set up any callbacks.
         let cache = opts.pre_shared_key.then(|| {
@@ -547,7 +449,7 @@ impl TlsConnectorBuilder {
             inner: Inner {
                 ssl: connector.build(),
                 cache,
-                config,
+                settings,
             },
         })
     }

@@ -1,4 +1,4 @@
-//! This example runs a server that responds to any request with "Hello, world!"
+//! HTTP/2 benchmark
 
 mod support;
 
@@ -15,7 +15,7 @@ const NUM_REQUESTS_TO_SEND: usize = 500;
 #[inline]
 fn bench(c: &mut Criterion) {
     bench::bench(c, TLS_MODE, HTTP_MODE, ADDR, NUM_REQUESTS_TO_SEND)
-        .expect("Failed to run multi-threaded HTTP/2 benchmark server")
+        .expect("Failed to run HTTP/2 benchmark server")
 }
 
 criterion_group!(

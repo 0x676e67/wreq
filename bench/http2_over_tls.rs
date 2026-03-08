@@ -15,7 +15,7 @@ const NUM_REQUESTS_TO_SEND: usize = 500;
 #[inline]
 fn bench(c: &mut Criterion) {
     bench::bench(c, TLS_MODE, HTTP_MODE, ADDR, NUM_REQUESTS_TO_SEND)
-        .expect("Failed to run multi-threaded HTTP/2 over TLS benchmark server")
+        .expect("Failed to run HTTP/2 over TLS benchmark server")
 }
 
 criterion_group!(
