@@ -93,10 +93,8 @@ socket2 = { version = "0.6.3", features = ["all"] }
 ipnet = "2.12.0"
 lru = "0.16.3"
 btls = "0.5.4"
+btls-sys = "0.5.4"
 tokio-btls = "0.5.4"
-brotli = "8.0.2"
-flate2 = "1.1.9"
-zstd = "0.13.3"
 tower = { version = "0.5.3", default-features = false, features = [
     "timeout",
     "util",
