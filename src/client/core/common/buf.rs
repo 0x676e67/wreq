@@ -108,10 +108,11 @@ mod tests {
     use super::*;
 
     fn hello_world_buf() -> BufList<Bytes> {
-        BufList {
-            bufs: vec![Bytes::from("Hello"), Bytes::from(" "), Bytes::from("World")].into(),
-            remaining: 11,
-        }
+        let mut list = BufList::new();
+        list.push(Bytes::from("Hello"));
+        list.push(Bytes::from(" "));
+        list.push(Bytes::from("World"));
+        list
     }
 
     #[test]
