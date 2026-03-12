@@ -69,6 +69,17 @@ impl Form {
         self.inner.boundary()
     }
 
+    /// Set the boundary that this form will use. By default the boundary is a
+    /// long random string to minimize the risk of the boundary appearing in
+    /// the body content.
+    ///
+    /// **Setting a custom boundary incurs significant risk of generating
+    /// corrupted bodies.** Only use this if you need it and you understand the
+    /// risk!
+    pub fn set_boundary(&mut self, boundary: impl Into<String>) {
+        self.inner.boundary = boundary.into();
+    }
+
     /// Add a data field with supplied name and value.
     ///
     /// # Examples
@@ -713,5 +724,13 @@ mod tests {
             PercentEncoding::AttrChar.encode_headers(name, &field.meta),
             &b"Content-Disposition: form-data; name*=utf-8''start%25%27%22%0D%0A%C3%9Fend"[..]
         );
+    }
+
+    #[test]
+    fn custom_boundary_is_applied() {
+        let mut form = Form::new();
+        form.set_boundary("----WebKitFormBoundary0123456789");
+
+        assert_eq!(form.boundary(), "----WebKitFormBoundary0123456789");
     }
 }
