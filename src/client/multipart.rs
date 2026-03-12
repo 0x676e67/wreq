@@ -69,15 +69,15 @@ impl Form {
         self.inner.boundary()
     }
 
-    /// Set the boundary that this form will use. By default the boundary is a
-    /// long random string to minimize the risk of the boundary appearing in
-    /// the body content.
+    /// Creates a new async Form with a custom boundary.
     ///
     /// **Setting a custom boundary incurs significant risk of generating
     /// corrupted bodies.** Only use this if you need it and you understand the
     /// risk!
-    pub fn set_boundary(&mut self, boundary: impl Into<String>) {
-        self.inner.boundary = boundary.into();
+    pub fn with_boundary(boundary: impl Into<String>) -> Form {
+        let mut inner = FormParts::new();
+        inner.boundary = boundary.into();
+        Form { inner }
     }
 
     /// Add a data field with supplied name and value.
@@ -728,8 +728,7 @@ mod tests {
 
     #[test]
     fn custom_boundary_is_applied() {
-        let mut form = Form::new();
-        form.set_boundary("----WebKitFormBoundary0123456789");
+        let form = Form::with_boundary("----WebKitFormBoundary0123456789");
 
         assert_eq!(form.boundary(), "----WebKitFormBoundary0123456789");
     }

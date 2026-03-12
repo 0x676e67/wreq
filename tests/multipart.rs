@@ -55,9 +55,8 @@ async fn text_part() {
 async fn text_part_with_custom_boundary() {
     let _ = env_logger::try_init();
 
-    let mut form = wreq::multipart::Form::new();
-    form.set_boundary("----WebKitFormBoundary0123456789");
-    let form = form.text("foo", "bar");
+    let form = wreq::multipart::Form::with_boundary("----WebKitFormBoundary0123456789")
+        .text("foo", "bar");
 
     let expected_body = "\
          ------WebKitFormBoundary0123456789\r\n\
