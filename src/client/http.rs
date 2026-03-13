@@ -60,6 +60,7 @@ use super::{
 use crate::dns::hickory::HickoryDnsResolver;
 use crate::{
     IntoUri, Method, Proxy,
+    client::conn::CaptureConnection,
     dns::{DnsResolverWithOverrides, DynResolver, GaiResolver, IntoResolve, Resolve},
     error::{self, BoxError, Error},
     header::OrigHeaderMap,
@@ -425,11 +426,13 @@ impl Client {
     /// This method fails if there was an error while sending request,
     /// redirect loop was detected or redirect limit was exhausted.
     pub fn execute(&self, request: Request) -> Pending {
-        let req = http::Request::<Body>::from(request);
-        Pending::request(
-            req.uri().clone(),
-            Oneshot::new(self.0.as_ref().clone(), req),
-        )
+        let mut req = http::Request::<Body>::from(request);
+        let captured = CaptureConnection::new(&mut req);
+        Pending::Request {
+            uri: req.uri().clone(),
+            fut: Box::pin(Oneshot::new((*self.0).clone(), req)),
+            captured,
+        }
     }
 }
 
