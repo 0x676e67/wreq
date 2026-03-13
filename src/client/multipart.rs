@@ -63,12 +63,6 @@ impl Form {
         }
     }
 
-    /// Get the boundary that this form will use.
-    #[inline]
-    pub fn boundary(&self) -> &str {
-        self.inner.boundary()
-    }
-
     /// Creates a new async Form with a custom boundary.
     ///
     /// **Setting a custom boundary incurs significant risk of generating
@@ -78,6 +72,12 @@ impl Form {
         let mut inner = FormParts::new();
         inner.boundary = boundary.into();
         Form { inner }
+    }
+
+    /// Get the boundary that this form will use.
+    #[inline]
+    pub fn boundary(&self) -> &str {
+        self.inner.boundary()
     }
 
     /// Add a data field with supplied name and value.
