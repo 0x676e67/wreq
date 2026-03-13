@@ -29,7 +29,7 @@ pub struct Part {
 
 #[derive(Debug)]
 pub(crate) struct FormParts<P> {
-    pub(crate) boundary: String,
+    pub(crate) boundary: Cow<'static, str>,
     pub(crate) computed_headers: Vec<Vec<u8>>,
     pub(crate) fields: Vec<(Cow<'static, str>, P)>,
     pub(crate) percent_encoding: PercentEncoding,
@@ -58,9 +58,7 @@ impl Default for Form {
 impl Form {
     /// Creates a new async Form without any content.
     pub fn new() -> Form {
-        Form {
-            inner: FormParts::new(),
-        }
+        Form::with_boundary(gen_boundary())
     }
 
     /// Creates a new async Form with a custom boundary.
@@ -68,10 +66,18 @@ impl Form {
     /// **Setting a custom boundary incurs significant risk of generating
     /// corrupted bodies.** Only use this if you need it and you understand the
     /// risk!
-    pub fn with_boundary(boundary: impl Into<String>) -> Form {
-        let mut inner = FormParts::new();
-        inner.boundary = boundary.into();
-        Form { inner }
+    pub fn with_boundary<S>(boundary: S) -> Form
+    where
+        S: Into<Cow<'static, str>>,
+    {
+        Form {
+            inner: FormParts {
+                boundary: boundary.into(),
+                computed_headers: Vec::new(),
+                fields: Vec::new(),
+                percent_encoding: PercentEncoding::PathSegment,
+            },
+        }
     }
 
     /// Get the boundary that this form will use.
@@ -355,15 +361,6 @@ impl PartProps for Part {
 // ===== impl FormParts =====
 
 impl<P: PartProps> FormParts<P> {
-    pub(crate) fn new() -> Self {
-        FormParts {
-            boundary: gen_boundary(),
-            computed_headers: Vec::new(),
-            fields: Vec::new(),
-            percent_encoding: PercentEncoding::PathSegment,
-        }
-    }
-
     pub(crate) fn boundary(&self) -> &str {
         &self.boundary
     }
@@ -621,7 +618,7 @@ mod tests {
                 ))))),
             )
             .part("key3", Part::text("value3").file_name("filename"));
-        form.inner.boundary = "boundary".to_string();
+        form.inner.boundary = "boundary".into();
         let expected = "--boundary\r\n\
              Content-Disposition: form-data; name=\"reader1\"\r\n\r\n\
              part1\r\n\
@@ -662,7 +659,7 @@ mod tests {
         headers.insert("Hdr3", "/a/b/c".parse().unwrap());
         part = part.headers(headers);
         let mut form = Form::new().part("key2", part);
-        form.inner.boundary = "boundary".to_string();
+        form.inner.boundary = "boundary".into();
         let expected = "--boundary\r\n\
                         Content-Disposition: form-data; name=\"key2\"\r\n\
                         Content-Type: image/bmp\r\n\
