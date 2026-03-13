@@ -51,6 +51,48 @@ async fn text_part() {
     assert_eq!(res.status(), wreq::StatusCode::OK);
 }
 
+#[tokio::test]
+async fn text_part_with_custom_boundary() {
+    let _ = env_logger::try_init();
+
+    let form =
+        wreq::multipart::Form::with_boundary("----WebKitFormBoundary0123456789").text("foo", "bar");
+
+    let expected_body = "\
+         ------WebKitFormBoundary0123456789\r\n\
+         Content-Disposition: form-data; name=\"foo\"\r\n\r\n\
+         bar\r\n\
+         ------WebKitFormBoundary0123456789--\r\n\
+         ";
+
+    let ct = "multipart/form-data; boundary=----WebKitFormBoundary0123456789";
+
+    let server = server::http(move |mut req| async move {
+        assert_eq!(req.method(), "POST");
+        assert_eq!(req.headers()["content-type"], ct);
+        assert_eq!(
+            req.headers()["content-length"],
+            expected_body.len().to_string()
+        );
+
+        let mut full: Vec<u8> = Vec::new();
+        while let Some(item) = req.body_mut().frame().await {
+            full.extend(&*item.unwrap().into_data().unwrap());
+        }
+
+        assert_eq!(full, expected_body.as_bytes());
+
+        http::Response::default()
+    });
+
+    let url = format!("http://{}/multipart/1", server.addr());
+
+    let res = wreq::post(&url).multipart(form).send().await.unwrap();
+
+    assert_eq!(res.uri(), url.as_str());
+    assert_eq!(res.status(), wreq::StatusCode::OK);
+}
+
 #[cfg(feature = "stream")]
 #[tokio::test]
 async fn stream_part() {

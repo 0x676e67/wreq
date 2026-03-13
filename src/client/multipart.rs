@@ -63,6 +63,17 @@ impl Form {
         }
     }
 
+    /// Creates a new async Form with a custom boundary.
+    ///
+    /// **Setting a custom boundary incurs significant risk of generating
+    /// corrupted bodies.** Only use this if you need it and you understand the
+    /// risk!
+    pub fn with_boundary(boundary: impl Into<String>) -> Form {
+        let mut inner = FormParts::new();
+        inner.boundary = boundary.into();
+        Form { inner }
+    }
+
     /// Get the boundary that this form will use.
     #[inline]
     pub fn boundary(&self) -> &str {
@@ -713,5 +724,12 @@ mod tests {
             PercentEncoding::AttrChar.encode_headers(name, &field.meta),
             &b"Content-Disposition: form-data; name*=utf-8''start%25%27%22%0D%0A%C3%9Fend"[..]
         );
+    }
+
+    #[test]
+    fn custom_boundary_is_applied() {
+        let form = Form::with_boundary("----WebKitFormBoundary0123456789");
+
+        assert_eq!(form.boundary(), "----WebKitFormBoundary0123456789");
     }
 }
