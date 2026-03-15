@@ -27,16 +27,16 @@ charset = ["dep:encoding_rs", "dep:mime"]
 # Enable cookies store support.
 cookies = ["dep:cookie"]
 
-# Enable gzip compression support.
+# Enable gzip decompression support.
 gzip = ["tower-http/decompression-gzip"]
 
-# Enable Brotli compression support.
+# Enable br decompression support.
 brotli = ["tower-http/decompression-br"]
 
-# Enable Zstandard compression support.
+# Enable zstd decompression support.
 zstd = ["tower-http/decompression-zstd"]
 
-# Enable deflate compression support.
+# Enable deflate decompression support.
 deflate = ["tower-http/decompression-deflate"]
 
 # Enable URL query string serialization support.
