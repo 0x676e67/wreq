@@ -18,7 +18,7 @@ use mime::Mime;
 use serde::de::DeserializeOwned;
 
 use super::{
-    conn::HttpInfo,
+    conn::{CaptureConnection, HttpInfo},
     core::{http1::ext::ReasonPhrase, upgrade},
 };
 #[cfg(feature = "cookies")]
@@ -479,6 +479,20 @@ impl Response {
     #[inline]
     pub async fn upgrade(self) -> crate::Result<Upgraded> {
         upgrade::on(self.res).await.map_err(Error::upgrade)
+    }
+
+    /// Consumes the [`Response`] and closes the connection.
+    pub fn close(self) {
+        let captured = self
+            .res
+            .extensions()
+            .get::<CaptureConnection>()
+            .map(|captured| captured.connection_metadata());
+
+        // If the connection was captured, poison it to prevent it from being reused.
+        if let Some(Some(conn)) = captured.as_deref() {
+            conn.poison();
+        }
     }
 }
 

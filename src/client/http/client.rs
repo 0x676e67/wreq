@@ -34,7 +34,7 @@ use self::{
 };
 use crate::{
     client::{
-        conn::{Connected, Connection},
+        conn::{CaptureConnectionExtension, Connected, Connection},
         core::{
             body::Incoming,
             conn,
@@ -241,6 +241,10 @@ where
             // `connection_for` already retries checkout errors, so if
             // it returns an error, there's not much else to retry
             .map_err(TrySendError::Nope)?;
+
+        if let Some(conn) = req.extensions_mut().get_mut::<CaptureConnectionExtension>() {
+            conn.set(&pooled.conn_info);
+        }
 
         if pooled.is_http1() {
             if req.version() == Version::HTTP_2 {
@@ -701,7 +705,6 @@ impl<B> PoolClient<B> {
     fn poll_ready(&mut self, cx: &mut task::Context<'_>) -> Poll<Result<(), Error>> {
         match self.tx {
             PoolTx::Http1(ref mut tx) => tx.poll_ready(cx).map_err(Error::closed),
-
             PoolTx::Http2(_) => Poll::Ready(Ok(())),
         }
     }
@@ -713,7 +716,6 @@ impl<B> PoolClient<B> {
     fn is_http2(&self) -> bool {
         match self.tx {
             PoolTx::Http1(_) => false,
-
             PoolTx::Http2(_) => true,
         }
     }
@@ -725,7 +727,6 @@ impl<B> PoolClient<B> {
     fn is_ready(&self) -> bool {
         match self.tx {
             PoolTx::Http1(ref tx) => tx.is_ready(),
-
             PoolTx::Http2(ref tx) => tx.is_ready(),
         }
     }
@@ -814,7 +815,6 @@ impl Future for ResponseFuture {
 pub struct Builder {
     config: Config,
     exec: Exec,
-
     h1_builder: conn::http1::Builder,
     h2_builder: conn::http2::Builder<Exec>,
     pool_config: pool::Config,

@@ -7,7 +7,7 @@ use http::{Request, Uri};
 use pin_project_lite::pin_project;
 use tower::util::{Either, Oneshot};
 
-use super::{Body, BoxedClientService, ClientService, Response};
+use super::{Body, BoxedClientService, CaptureConnection, ClientService, Response};
 use crate::{Error, ext::RequestUri};
 
 type ResponseFuture = Oneshot<Either<ClientService, BoxedClientService>, Request<Body>>;
@@ -20,6 +20,7 @@ pin_project! {
     pub enum Pending {
         Request {
             uri: Uri,
+            captured: CaptureConnection,
             fut: Pin<Box<ResponseFuture>>,
         },
         Error {
@@ -28,29 +29,12 @@ pin_project! {
     }
 }
 
-impl Pending {
-    /// Creates a new [`Pending`] with a request future and its associated URI.
-    #[inline]
-    pub(crate) fn request(uri: Uri, fut: ResponseFuture) -> Self {
-        Pending::Request {
-            uri,
-            fut: Box::pin(fut),
-        }
-    }
-
-    /// Creates a new [`Pending`] with an error.
-    #[inline]
-    pub(crate) fn error(error: Error) -> Self {
-        Pending::Error { error: Some(error) }
-    }
-}
-
 impl Future for Pending {
     type Output = Result<Response, Error>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let (uri, res) = match self.project() {
-            PendingProj::Request { uri, fut } => (uri, fut.as_mut().poll(cx)),
+        let (uri, captured, res) = match self.project() {
+            PendingProj::Request { uri, captured, fut } => (uri, captured, fut.as_mut().poll(cx)),
             PendingProj::Error { error } => {
                 let err = error
                     .take()
@@ -64,7 +48,10 @@ impl Future for Pending {
                 if let Some(redirect_uri) = res.extensions_mut().remove::<RequestUri>() {
                     *uri = redirect_uri.0;
                 }
-                Ok(Response::new(res, uri.clone()))
+
+                let mut res = Response::new(res, uri.clone());
+                res.extensions_mut().insert(captured.clone());
+                Ok(res)
             }
             Err(err) => {
                 let mut err = err

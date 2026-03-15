@@ -1,3 +1,4 @@
+mod capture;
 #[allow(clippy::module_inception)]
 mod conn;
 mod connector;
@@ -26,6 +27,7 @@ use tower::{
 #[cfg(feature = "socks")]
 pub(super) use self::proxy::socks;
 pub(super) use self::{
+    capture::{CaptureConnection, CaptureConnectionExtension},
     conn::Conn,
     connector::Connector,
     http::{HttpInfo, TcpConnectOptions},
