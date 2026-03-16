@@ -19,36 +19,6 @@ use std::{
 use socket2::TcpKeepalive;
 
 /// Options for configuring socket bind behavior for outbound connections.
-///
-/// `SocketBindOptions` allows fine-grained control over how sockets
-/// are bound before use. It can be used to:
-///
-/// - Bind a socket to a specific **network interface**
-/// - Bind to a **local IPv4 or IPv6 address**
-///
-/// This is especially useful for scenarios involving:
-/// - Virtual routing tables (e.g. Linux VRFs)
-/// - Multiple NICs (network interface cards)
-/// - Explicit source IP routing or firewall rules
-///
-/// Platform-specific behavior is handled internally, with the interface-binding
-/// mechanism differing across operating systems.
-///
-/// # Platform Notes
-///
-/// ## Interface binding (`set_interface`)
-///
-/// - **Linux / Android / Fuchsia**: uses the `SO_BINDTODEVICE` socket option   See [`man 7 socket`](https://man7.org/linux/man-pages/man7/socket.7.html)
-///
-/// - **macOS / iOS / tvOS / watchOS / visionOS / illumos / Solaris**: uses the `IP_BOUND_IF` socket
-///   option   See [`man 7p ip`](https://docs.oracle.com/cd/E86824_01/html/E54777/ip-7p.html)
-///
-/// Binding to an interface ensures that:
-/// - **Outgoing packets** are sent through the specified interface
-/// - **Incoming packets** are only accepted if received via that interface
-///
-/// ❗ This only applies to certain socket types (e.g. `AF_INET`), and may require
-/// elevated permissions (e.g. `CAP_NET_RAW` on Linux).
 #[derive(Debug, Clone, Hash, PartialEq, Eq, Default)]
 pub(crate) struct SocketBindOptions {
     #[cfg(any(

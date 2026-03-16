@@ -1,7 +1,6 @@
 mod config;
 mod connector;
 mod http;
-#[allow(clippy::module_inception)]
 mod io;
 mod proxy;
 mod tcp;
