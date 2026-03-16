@@ -18,7 +18,7 @@ use lru::LruCache;
 
 use super::exec::{self, Exec};
 use crate::{
-    client::core::rt::{ArcTimer, Executor, Timer},
+    client::core::rt::{Executor, Time, Timer},
     sync::Mutex,
 };
 
@@ -94,7 +94,7 @@ struct PoolInner<T, K: Eq + Hash> {
     // the Pool completely drops. That way, the interval can cancel immediately.
     idle_interval_ref: Option<oneshot::Sender<Infallible>>,
     exec: Exec,
-    timer: Option<ArcTimer>,
+    timer: Time,
     timeout: Option<Duration>,
 }
 
@@ -116,10 +116,9 @@ impl Config {
 }
 
 impl<T, K: Key> Pool<T, K> {
-    pub fn new<E, M>(config: Config, executor: E, timer: Option<M>) -> Pool<T, K>
+    pub fn new<E>(config: Config, executor: E, timer: Time) -> Pool<T, K>
     where
         E: Executor<exec::BoxSendFuture> + Send + Sync + Clone + 'static,
-        M: Timer + Send + Sync + Clone + 'static,
     {
         let inner = if config.is_enabled() {
             Some(Arc::new(Mutex::new(PoolInner {
@@ -131,7 +130,7 @@ impl<T, K: Key> Pool<T, K> {
                 max_idle_per_host: config.max_idle_per_host,
                 waiters: HashMap::default(),
                 exec: Exec::new(executor),
-                timer: timer.map(ArcTimer::new),
+                timer,
                 timeout: config.idle_timeout,
             })))
         } else {
@@ -302,7 +301,7 @@ impl<'a, T: Poolable + 'a, K: Debug> IdlePopper<'a, T, K> {
 
 impl<T: Poolable, K: Key> PoolInner<T, K> {
     fn now(&self) -> Instant {
-        self.timer.as_ref().map_or_else(Instant::now, ArcTimer::now)
+        self.timer.now()
     }
 
     fn put(&mut self, key: &K, value: T, __pool_ref: &Arc<Mutex<PoolInner<T, K>>>) {
@@ -399,11 +398,9 @@ impl<T: Poolable, K: Key> PoolInner<T, K> {
             return;
         }
 
-        let timer = if let Some(timer) = self.timer.clone() {
-            timer
-        } else {
+        if matches!(self.timer, Time::Empty) {
             return;
-        };
+        }
 
         // While someone might want a shorter duration, and it will be respected
         // at checkout time, there's no need to wake up and proactively evict
@@ -422,7 +419,7 @@ impl<T: Poolable, K: Key> PoolInner<T, K> {
         self.idle_interval_ref = Some(tx);
 
         let interval = IdleTask {
-            timer: timer.clone(),
+            timer: self.timer.clone(),
             duration: dur,
             pool: WeakOpt::downgrade(pool_ref),
             pool_drop_notifier: rx,
@@ -750,7 +747,7 @@ impl Expiration {
 }
 
 struct IdleTask<T, K: Key> {
-    timer: ArcTimer,
+    timer: Time,
     duration: Duration,
     pool: WeakOpt<Mutex<PoolInner<T, K>>>,
     // This allows the IdleTask to be notified as soon as the entire
@@ -811,13 +808,14 @@ mod tests {
         hash::Hash,
         num::NonZero,
         pin::Pin,
+        sync::Arc,
         task::{self, Poll},
         time::Duration,
     };
 
     use super::{Connecting, Key, Pool, Poolable, Reservation, WeakOpt};
     use crate::{
-        client::core::rt::{ArcTimer, TokioExecutor, TokioTimer},
+        client::core::rt::{Time, TokioExecutor, TokioTimer},
         sync::MutexGuard,
     };
 
@@ -865,7 +863,7 @@ mod tests {
                 max_pool_size: None,
             },
             TokioExecutor::new(),
-            Option::<ArcTimer>::None,
+            Time::Empty,
         )
     }
 
@@ -979,7 +977,7 @@ mod tests {
                 max_pool_size: None,
             },
             TokioExecutor::new(),
-            Some(TokioTimer::new()),
+            Time::Timer(Arc::new(TokioTimer::new())),
         );
 
         let key = host_key("foo");
@@ -1099,7 +1097,7 @@ mod tests {
                 max_pool_size: Some(NonZero::new(2).expect("max pool size")),
             },
             TokioExecutor::new(),
-            Option::<ArcTimer>::None,
+            Time::Empty,
         );
         let key1 = host_key("foo");
         let key2 = host_key("bar");

@@ -1,8 +1,10 @@
-#[allow(clippy::module_inception)]
-mod conn;
+mod config;
 mod connector;
 mod http;
+#[allow(clippy::module_inception)]
+mod io;
 mod proxy;
+mod tcp;
 mod tls_info;
 #[cfg(unix)]
 mod uds;
@@ -26,16 +28,18 @@ use tower::{
 #[cfg(feature = "socks")]
 pub(super) use self::proxy::socks;
 pub(super) use self::{
-    conn::Conn,
+    config::SocketBindOptions,
     connector::Connector,
-    http::{HttpInfo, TcpConnectOptions},
+    http::{HttpInfo, HttpTransport},
+    io::Conn,
     proxy::tunnel,
+    tcp::tokio::TokioTcpConnector,
     tls_info::TlsInfoFactory,
 };
 use crate::{client::ConnectRequest, dns::DynResolver, proxy::matcher::Intercept};
 
 /// HTTP connector with dynamic DNS resolver.
-pub type HttpConnector = self::http::HttpConnector<DynResolver>;
+pub type HttpConnector = self::http::HttpConnector<DynResolver, TokioTcpConnector>;
 
 /// Boxed connector service for establishing connections.
 pub type BoxedConnectorService = BoxCloneSyncService<Unnameable, Conn, BoxError>;

@@ -20,12 +20,16 @@ use super::uds::UnixConnector;
 use super::{
     AsyncConnWithInfo, BoxedConnectorLayer, BoxedConnectorService, Connection, HttpConnector,
     TlsInfoFactory, Unnameable,
-    conn::{Conn, TlsConn},
+    http::HttpTransport,
+    io::{Conn, TlsConn},
     proxy,
     verbose::Verbose,
 };
 use crate::{
-    client::http::{ConnectExtra, ConnectRequest},
+    client::{
+        conn::TokioTcpConnector,
+        http::{ConnectExtra, ConnectRequest},
+    },
     dns::DynResolver,
     error::{BoxError, ProxyConnect, TimedOut, map_timeout_to_connector_error},
     ext::UriExt,
@@ -216,7 +220,7 @@ impl Connector {
             },
             #[cfg(feature = "socks")]
             resolver: resolver.clone(),
-            http: HttpConnector::new_with_resolver(resolver),
+            http: HttpConnector::new(resolver, TokioTcpConnector::new()),
             tls_options: TlsOptions::default(),
             tls_builder: TlsConnector::builder(),
         }
@@ -264,7 +268,23 @@ impl ConnectorService {
 
         // Apply TCP options if provided in metadata
         if let Some(opts) = extra.tcp_options() {
-            http.set_connect_options(opts.clone());
+            #[cfg(any(
+                target_os = "android",
+                target_os = "fuchsia",
+                target_os = "illumos",
+                target_os = "ios",
+                target_os = "linux",
+                target_os = "macos",
+                target_os = "solaris",
+                target_os = "tvos",
+                target_os = "visionos",
+                target_os = "watchos",
+            ))]
+            if let Some(interface) = &opts.interface {
+                http.set_interface(interface.clone());
+            }
+
+            http.set_local_addresses(opts.local_address_ipv4, opts.local_address_ipv6);
         }
 
         self.build_tls_connector_generic(http, extra)
