@@ -35,7 +35,7 @@ pub trait TcpConnector: Clone + Send + Sync + 'static {
     type Future: Future<Output = Result<Self::Connection, Self::Error>> + Send + 'static;
 
     /// The future type returned by this builder's sleep.
-    type Sleep: Future<Output = ()> + Send + Sync + 'static;
+    type Sleep: Future<Output = ()> + Send + 'static;
 
     /// Build a connection from the given socket and connect to the address.
     fn connect(&self, socket: Self::TcpStream, addr: SocketAddr) -> Self::Future;
