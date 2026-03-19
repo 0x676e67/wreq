@@ -18,12 +18,8 @@ use tower::{
 #[cfg(unix)]
 use super::uds::UnixConnector;
 use super::{
-    AsyncConnWithInfo, BoxedConnectorLayer, BoxedConnectorService, Connection, HttpConnector,
-    TlsInfoFactory, Unnameable,
-    http::HttpTransport,
-    io::{Conn, TlsConn},
-    proxy,
-    verbose::Verbose,
+    AsyncConnWithInfo, BoxedConnectorLayer, BoxedConnectorService, Conn, Connection, HttpConnector,
+    TlsConn, TlsInfoFactory, Unnameable, http::HttpTransport, proxy, verbose::Verbose,
 };
 use crate::{
     client::{
