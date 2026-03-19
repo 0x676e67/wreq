@@ -4,6 +4,7 @@ mod body;
 mod future;
 
 use std::{
+    sync::Arc,
     task::{Context, Poll},
     time::Duration,
 };
@@ -13,7 +14,11 @@ use tower::{Layer, Service};
 
 pub use self::body::TimeoutBody;
 use self::future::{ResponseBodyTimeoutFuture, ResponseFuture};
-use crate::{config::RequestConfig, error::BoxError};
+use crate::{
+    client::core::rt::{Time, Timer},
+    config::RequestConfig,
+    error::BoxError,
+};
 
 /// Options for configuring timeouts.
 #[derive(Clone, Copy, Default)]
@@ -49,8 +54,7 @@ pub struct TimeoutLayer {
 
 impl TimeoutLayer {
     /// Create a new [`TimeoutLayer`].
-    #[inline(always)]
-    pub const fn new(options: TimeoutOptions) -> Self {
+    pub fn new(options: TimeoutOptions) -> Self {
         TimeoutLayer {
             timeout: RequestConfig::new(Some(options)),
         }
@@ -104,14 +108,18 @@ where
 // This layer allows you to set a total timeout and a read timeout for the response body.
 #[derive(Clone)]
 pub struct ResponseBodyTimeoutLayer {
+    timer: Time,
     timeout: RequestConfig<TimeoutOptions>,
 }
 
 impl ResponseBodyTimeoutLayer {
     /// Creates a new [`ResponseBodyTimeoutLayer`].
-    #[inline(always)]
-    pub const fn new(options: TimeoutOptions) -> Self {
+    pub fn new<M>(timer: M, options: TimeoutOptions) -> Self
+    where
+        M: Timer + Send + Sync + 'static,
+    {
         Self {
+            timer: Time::Timer(Arc::new(timer)),
             timeout: RequestConfig::new(Some(options)),
         }
     }
@@ -125,6 +133,7 @@ impl<S> Layer<S> for ResponseBodyTimeoutLayer {
         ResponseBodyTimeout {
             inner,
             timeout: self.timeout,
+            timer: self.timer.clone(),
         }
     }
 }
@@ -135,6 +144,7 @@ impl<S> Layer<S> for ResponseBodyTimeoutLayer {
 pub struct ResponseBodyTimeout<S> {
     inner: S,
     timeout: RequestConfig<TimeoutOptions>,
+    timer: Time,
 }
 
 impl<S, ReqBody, ResBody> Service<Request<ReqBody>> for ResponseBodyTimeout<S>
@@ -157,6 +167,7 @@ where
             inner: self.inner.call(req),
             total_timeout,
             read_timeout,
+            timer: self.timer.clone(),
         }
     }
 }

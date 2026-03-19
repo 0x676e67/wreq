@@ -10,7 +10,10 @@ use pin_project_lite::pin_project;
 use tokio::time::Sleep;
 
 use super::body::TimeoutBody;
-use crate::error::{BoxError, Error, TimedOut};
+use crate::{
+    client::core::rt::Time,
+    error::{BoxError, Error, TimedOut},
+};
 
 pin_project! {
     /// [`Timeout`] response future
@@ -71,6 +74,7 @@ pin_project! {
         pub(super) inner: Fut,
         pub(super) total_timeout: Option<Duration>,
         pub(super) read_timeout: Option<Duration>,
+        pub(super) timer: Time,
     }
 }
 
@@ -81,10 +85,11 @@ where
     type Output = Result<Response<TimeoutBody<ResBody>>, E>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let timer = self.timer.clone();
         let total_timeout = self.total_timeout;
         let read_timeout = self.read_timeout;
         let res = ready!(self.project().inner.poll(cx))?
-            .map(|body| TimeoutBody::new(total_timeout, read_timeout, body));
+            .map(|body| TimeoutBody::new(timer, total_timeout, read_timeout, body));
         Poll::Ready(Ok(res))
     }
 }
