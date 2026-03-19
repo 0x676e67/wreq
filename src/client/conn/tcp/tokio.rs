@@ -25,6 +25,7 @@ impl TcpConnector for TokioTcpConnector {
     type Future = Pin<Box<dyn Future<Output = Result<Self::Connection, Self::Error>> + Send>>;
     type Sleep = tokio::time::Sleep;
 
+    #[inline]
     fn connect(&self, socket: Self::TcpStream, addr: SocketAddr) -> Self::Future {
         let socket = TcpSocket::from_std_stream(socket);
         Box::pin(socket.connect(addr))

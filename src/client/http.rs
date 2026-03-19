@@ -42,6 +42,10 @@ use super::{
         SocketBindOptions, Unnameable,
     },
     core::body::Incoming,
+    core::{
+        body::Incoming,
+        rt::{TokioExecutor, TokioTimer},
+    },
     layer::{
         config::{ConfigService, ConfigServiceLayer, TransportOptions},
         redirect::{FollowRedirect, FollowRedirectLayer},
@@ -292,6 +296,7 @@ impl Client {
                 tcp_send_buffer_size: None,
                 tcp_recv_buffer_size: None,
                 tcp_happy_eyeballs_timeout: Some(Duration::from_millis(300)),
+                socket_bind_options: SocketBindOptions::default(),
                 proxies: Vec::new(),
                 auto_sys_proxy: true,
                 retry_policy: retry::Policy::default(),
@@ -515,24 +520,22 @@ impl ClientBuilder {
             let connector = Connector::builder(config.proxies, resolver)
                 .timeout(config.connect_timeout)
                 .tls_info(config.tls_info)
-                .tls_options(tls_options)
                 .tcp_nodelay(config.tcp_nodelay)
                 .verbose(config.connection_verbose)
                 .with_tls(|tls| {
-                    let alpn_protocol = match config.http_version_pref {
+                    tls.alpn_protocol(match config.http_version_pref {
                         HttpVersionPref::Http1 => Some(AlpnProtocol::HTTP1),
                         HttpVersionPref::Http2 => Some(AlpnProtocol::HTTP2),
                         _ => None,
-                    };
-                    tls.alpn_protocol(alpn_protocol)
-                        .max_version(config.max_tls_version)
-                        .min_version(config.min_tls_version)
-                        .tls_sni(config.tls_sni)
-                        .verify_hostname(config.verify_hostname)
-                        .cert_verification(config.cert_verification)
-                        .cert_store(config.cert_store)
-                        .identity(config.identity)
-                        .keylog(config.keylog)
+                    })
+                    .keylog(config.keylog)
+                    .cert_store(config.cert_store)
+                    .identity(config.identity)
+                    .max_version(config.max_tls_version)
+                    .min_version(config.min_tls_version)
+                    .tls_sni(config.tls_sni)
+                    .verify_hostname(config.verify_hostname)
+                    .cert_verification(config.cert_verification)
                 })
                 .with_http(|http| {
                     http.enforce_http(false);
@@ -570,7 +573,7 @@ impl ClientBuilder {
                         config.socket_bind_options.local_address_ipv6,
                     );
                 })
-                .build(config.connector_layers)?;
+                .build(tls_options, config.connector_layers)?;
 
             // Build client
             HttpClient::builder(Executor)
@@ -615,6 +618,10 @@ impl ClientBuilder {
 
             let service = ServiceBuilder::new()
                 .layer(ResponseBodyTimeoutLayer::new(Timer, config.timeout_options))
+                .layer(ResponseBodyTimeoutLayer::new(
+                    TokioTimer::new(),
+                    config.timeout_options,
+                ))
                 .layer(ConfigServiceLayer::new(
                     config.https_only,
                     config.headers,

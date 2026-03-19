@@ -10,16 +10,28 @@ mod verbose;
 
 use std::{
     fmt::{self, Debug, Formatter},
+    io,
+    io::IoSlice,
+    pin::Pin,
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
     },
+    task::{Context, Poll},
 };
 
 use ::http::{Extensions, HeaderMap, HeaderValue};
 use pin_project_lite::pin_project;
 #[cfg(unix)]
 use tokio::net::UnixStream;
+<<<<<<< HEAD
+=======
+use tokio::{
+    io::{AsyncRead, AsyncWrite, ReadBuf},
+    net::TcpStream,
+};
+use tokio_btls::SslStream;
+>>>>>>> rt
 use tower::{
     BoxError,
     util::{BoxCloneSyncService, BoxCloneSyncServiceLayer},
@@ -32,17 +44,23 @@ pub(super) use self::{
     connector::Connector,
     http::{HttpInfo, HttpTransport},
     proxy::tunnel,
+    tcp::tokio::TokioTcpConnector,
     tls_info::TlsInfoFactory,
 };
 use crate::{
+<<<<<<< HEAD
     client::{
         ConnectRequest,
         rt::{AsyncRead, AsyncWrite},
     },
+=======
+    client::ConnectRequest,
+>>>>>>> rt
     dns::DynResolver,
     proxy::matcher::Intercept,
     tls::{MaybeHttpsStream, TlsInfo},
 };
+<<<<<<< HEAD
 #[cfg(feature = "compio")]
 use {
     crate::client::conn::tcp::compio::CompioTcpConnector, compio::net::TcpStream,
@@ -65,6 +83,11 @@ pub type HttpConnector = self::http::HttpConnector<DynResolver, TokioTcpConnecto
 
 #[cfg(feature = "compio")]
 pub type HttpConnector = self::http::HttpConnector<DynResolver, CompioTcpConnector>;
+=======
+
+/// HTTP connector with dynamic DNS resolver.
+pub type HttpConnector = self::http::HttpConnector<DynResolver, TokioTcpConnector>;
+>>>>>>> rt
 
 /// Boxed connector service for establishing connections.
 pub type BoxedConnectorService = BoxCloneSyncService<Unnameable, Conn, BoxError>;
@@ -103,11 +126,19 @@ pin_project! {
     /// This tells core whether the URI should be written in
     /// * origin-form (`GET /just/a/path HTTP/1.1`), when `is_proxy == false`, or
     /// * absolute-form (`GET http://foo.bar/and/a/path HTTP/1.1`), otherwise.
+<<<<<<< HEAD
     pub struct Conn<T = MaybeHttpsStream<TcpStream>> {
         tls_info: bool,
         proxy: Option<Intercept>,
         #[pin]
         stream: T,
+=======
+    pub struct Conn {
+        tls_info: bool,
+        proxy: Option<Intercept>,
+        #[pin]
+        stream: Box<dyn AsyncConnWithInfo>,
+>>>>>>> rt
     }
 }
 
@@ -119,7 +150,11 @@ pin_project! {
     /// It is mainly used internally to abstract over different connection types.
     pub struct TlsConn<T> {
         #[pin]
+<<<<<<< HEAD
         stream: compio_btls::SslStream<T>,
+=======
+        stream: SslStream<T>,
+>>>>>>> rt
     }
 }
 
@@ -185,10 +220,14 @@ pub struct Connected {
 
 // ==== impl Conn ====
 
+<<<<<<< HEAD
 impl<T> Connection for Conn<T>
 where
     T: AsyncConnWithInfo,
 {
+=======
+impl Connection for Conn {
+>>>>>>> rt
     fn connected(&self) -> Connected {
         let mut connected = self.stream.connected();
 
@@ -208,12 +247,17 @@ where
     }
 }
 
+<<<<<<< HEAD
 #[cfg(feature = "tokio")]
 impl tokio::io::AsyncRead for Conn {
+=======
+impl AsyncRead for Conn {
+>>>>>>> rt
     #[inline]
     fn poll_read(
         self: Pin<&mut Self>,
         cx: &mut Context,
+<<<<<<< HEAD
         buf: &mut tokio::io::ReadBuf<'_>,
     ) -> Poll<io::Result<()>> {
         tokio::io::AsyncRead::poll_read(self.project().stream, cx, buf)
@@ -232,13 +276,26 @@ where
 
 #[cfg(feature = "tokio")]
 impl tokio::io::AsyncWrite for Conn {
+=======
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<io::Result<()>> {
+        AsyncRead::poll_read(self.project().stream, cx, buf)
+    }
+}
+
+impl AsyncWrite for Conn {
+>>>>>>> rt
     #[inline]
     fn poll_write(
         self: Pin<&mut Self>,
         cx: &mut Context,
         buf: &[u8],
     ) -> Poll<Result<usize, io::Error>> {
+<<<<<<< HEAD
         tokio::io::AsyncWrite::poll_write(self.project().stream, cx, buf)
+=======
+        AsyncWrite::poll_write(self.project().stream, cx, buf)
+>>>>>>> rt
     }
 
     #[inline]
@@ -247,7 +304,11 @@ impl tokio::io::AsyncWrite for Conn {
         cx: &mut Context<'_>,
         bufs: &[IoSlice<'_>],
     ) -> Poll<Result<usize, io::Error>> {
+<<<<<<< HEAD
         tokio::io::AsyncWrite::poll_write_vectored(self.project().stream, cx, bufs)
+=======
+        AsyncWrite::poll_write_vectored(self.project().stream, cx, bufs)
+>>>>>>> rt
     }
 
     #[inline]
@@ -257,11 +318,16 @@ impl tokio::io::AsyncWrite for Conn {
 
     #[inline]
     fn poll_flush(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), io::Error>> {
+<<<<<<< HEAD
         tokio::io::AsyncWrite::poll_flush(self.project().stream, cx)
+=======
+        AsyncWrite::poll_flush(self.project().stream, cx)
+>>>>>>> rt
     }
 
     #[inline]
     fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), io::Error>> {
+<<<<<<< HEAD
         tokio::io::AsyncWrite::poll_shutdown(self.project().stream, cx)
     }
 }
@@ -282,6 +348,13 @@ impl AsyncWrite for Conn {
 }
 
 // ===== impl Connection =====
+=======
+        AsyncWrite::poll_shutdown(self.project().stream, cx)
+    }
+}
+
+// ===== impl TcpStream =====
+>>>>>>> rt
 
 impl Connection for TlsConn<TcpStream> {
     fn connected(&self) -> Connected {
@@ -305,6 +378,11 @@ impl Connection for TlsConn<MaybeHttpsStream<TcpStream>> {
     }
 }
 
+<<<<<<< HEAD
+=======
+// ===== impl UnixStream =====
+
+>>>>>>> rt
 #[cfg(unix)]
 impl Connection for TlsConn<UnixStream> {
     fn connected(&self) -> Connected {
@@ -329,14 +407,19 @@ impl Connection for TlsConn<MaybeHttpsStream<UnixStream>> {
     }
 }
 
+<<<<<<< HEAD
 // ===== impl TlsConn =====
 
 #[cfg(feature = "tokio")]
 impl<T: AsyncRead + tokio::io::AsyncWrite + Unpin> tokio::io::AsyncRead for TlsConn<T> {
+=======
+impl<T: AsyncRead + AsyncWrite + Unpin> AsyncRead for TlsConn<T> {
+>>>>>>> rt
     #[inline]
     fn poll_read(
         self: Pin<&mut Self>,
         cx: &mut Context,
+<<<<<<< HEAD
         buf: &mut tokio::io::ReadBuf<'_>,
     ) -> Poll<tokio::io::Result<()>> {
         tokio::io::AsyncRead::poll_read(self.project().stream, cx, buf)
@@ -345,13 +428,26 @@ impl<T: AsyncRead + tokio::io::AsyncWrite + Unpin> tokio::io::AsyncRead for TlsC
 
 #[cfg(feature = "tokio")]
 impl<T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin> tokio::io::AsyncWrite for TlsConn<T> {
+=======
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<tokio::io::Result<()>> {
+        AsyncRead::poll_read(self.project().stream, cx, buf)
+    }
+}
+
+impl<T: AsyncRead + AsyncWrite + Unpin> AsyncWrite for TlsConn<T> {
+>>>>>>> rt
     #[inline]
     fn poll_write(
         self: Pin<&mut Self>,
         cx: &mut Context,
         buf: &[u8],
     ) -> Poll<Result<usize, tokio::io::Error>> {
+<<<<<<< HEAD
         tokio::io::AsyncWrite::poll_write(self.project().stream, cx, buf)
+=======
+        AsyncWrite::poll_write(self.project().stream, cx, buf)
+>>>>>>> rt
     }
 
     #[inline]
@@ -360,7 +456,11 @@ impl<T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin> tokio::io::AsyncWr
         cx: &mut Context<'_>,
         bufs: &[IoSlice<'_>],
     ) -> Poll<Result<usize, io::Error>> {
+<<<<<<< HEAD
         tokio::io::AsyncWrite::poll_write_vectored(self.project().stream, cx, bufs)
+=======
+        AsyncWrite::poll_write_vectored(self.project().stream, cx, bufs)
+>>>>>>> rt
     }
 
     #[inline]
@@ -370,12 +470,20 @@ impl<T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin> tokio::io::AsyncWr
 
     #[inline]
     fn poll_flush(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), tokio::io::Error>> {
+<<<<<<< HEAD
         tokio::io::AsyncWrite::poll_flush(self.project().stream, cx)
+=======
+        AsyncWrite::poll_flush(self.project().stream, cx)
+>>>>>>> rt
     }
 
     #[inline]
     fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), tokio::io::Error>> {
+<<<<<<< HEAD
         tokio::io::AsyncWrite::poll_shutdown(self.project().stream, cx)
+=======
+        AsyncWrite::poll_shutdown(self.project().stream, cx)
+>>>>>>> rt
     }
 }
 

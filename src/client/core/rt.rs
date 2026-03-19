@@ -14,10 +14,16 @@ mod timer;
 #[cfg(feature = "tokio")]
 mod tokio;
 
+<<<<<<< HEAD
 #[cfg(feature = "compio")]
 pub use {
     self::compio::{CompioExecutor, CompioIO, CompioTimer},
     ::compio::io::{AsyncRead, AsyncWrite},
+=======
+pub use self::{
+    timer::{Sleep, Time, Timer},
+    tokio::{TokioExecutor, TokioTimer},
+>>>>>>> rt
 };
 #[cfg(feature = "tokio")]
 pub use {

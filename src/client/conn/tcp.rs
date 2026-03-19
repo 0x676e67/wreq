@@ -20,7 +20,7 @@ use crate::{dns, error::BoxError};
 /// A builder for tcp connections.
 pub trait TcpConnector: Clone + Send + Sync + 'static {
     /// The underlying stream type.
-    type TcpStream: From<socket2::Socket> + Send + 'static;
+    type TcpStream: From<socket2::Socket> + Send + Sync + 'static;
 
     /// The type of connection returned by this builder.
     type Connection: ::tokio::io::AsyncRead
