@@ -1,15 +1,7 @@
-use std::{
-    future::Future,
-    io,
-    net::SocketAddr,
-    pin::Pin,
-    task::{Context, Poll},
-    time::Duration,
-};
+use std::{future::Future, io, net::SocketAddr, pin::Pin, time::Duration};
 
 use compio::net::TcpStream;
-use socket2::Socket;
-use sync_wrapper::SyncWrapper;
+use send_wrapper::SendWrapper;
 
 use super::TcpConnector;
 use crate::client::{Connected, Connection, conn::HttpInfo, core::rt::CompioIO};
@@ -50,12 +42,10 @@ impl TcpConnector for CompioTcpConnector {
     }
 }
 
-impl Connection for CompioIO<TcpStream> {
+impl Connection for TcpStream {
     fn connected(&self) -> Connected {
         let connected = Connected::new();
-        if let (Ok(remote_addr), Ok(local_addr)) =
-            (self.get_ref().peer_addr(), self.get_ref().local_addr())
-        {
+        if let (Ok(remote_addr), Ok(local_addr)) = (self.peer_addr(), self.local_addr()) {
             connected.extra(HttpInfo {
                 remote_addr,
                 local_addr,
@@ -63,5 +53,11 @@ impl Connection for CompioIO<TcpStream> {
         } else {
             connected
         }
+    }
+}
+
+impl Connection for CompioIO<TcpStream> {
+    fn connected(&self) -> Connected {
+        self.get_ref().connected()
     }
 }

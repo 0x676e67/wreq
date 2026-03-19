@@ -1,7 +1,10 @@
 use bytes::Bytes;
+#[cfg(feature = "compio")]
+use compio_btls::SslStream;
 use tokio::net::TcpStream;
 #[cfg(unix)]
 use tokio::net::UnixStream;
+#[cfg(feature = "tokio")]
 use tokio_btls::SslStream;
 
 use crate::tls::{MaybeHttpsStream, TlsInfo};

@@ -10,10 +10,7 @@ mod service;
 use std::{
     borrow::Cow,
     fmt::{self, Debug},
-    io,
-    pin::Pin,
     sync::{Arc, LazyLock},
-    task::{Context, Poll},
 };
 
 use btls::{
@@ -22,14 +19,24 @@ use btls::{
     ssl::{Ssl, SslConnector, SslMethod, SslOptions, SslSessionCacheMode},
 };
 use cache::{SessionCache, SessionKey};
+#[cfg(feature = "compio")]
+use compio_btls::SslStream;
 use http::Uri;
-use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
-use tokio_btls::SslStream;
 use tower::Service;
+#[cfg(feature = "tokio")]
+use {
+    std::io,
+    std::pin::Pin,
+    std::task::{Context, Poll},
+    tokio_btls::SslStream,
+};
 
 use crate::{
     Error,
-    client::{ConnectIdentity, ConnectRequest, Connected, Connection},
+    client::{
+        ConnectIdentity, ConnectRequest, Connected, Connection,
+        rt::{AsyncRead, AsyncWrite},
+    },
     error::BoxError,
     sync::Mutex,
     tls::{
@@ -100,7 +107,7 @@ where
     S: Service<Uri, Response = T> + Send,
     S::Error: Into<BoxError>,
     S::Future: Unpin + Send + 'static,
-    T: AsyncRead + AsyncWrite + Connection + Unpin + Debug + Sync + Send + 'static,
+    T: AsyncRead + AsyncWrite + Connection + Unpin + Debug + Send + 'static,
 {
     /// Creates a new [`HttpsConnector`] with a given [`TlsConnector`].
     #[inline]
@@ -536,6 +543,7 @@ where
     }
 }
 
+#[cfg(feature = "tokio")]
 impl<T> AsyncRead for MaybeHttpsStream<T>
 where
     T: AsyncRead + AsyncWrite + Unpin,
@@ -544,7 +552,7 @@ where
     fn poll_read(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
-        buf: &mut ReadBuf<'_>,
+        buf: &mut tokio::io::ReadBuf<'_>,
     ) -> Poll<io::Result<()>> {
         match self.as_mut().get_mut() {
             MaybeHttpsStream::Http(inner) => Pin::new(inner).poll_read(cx, buf),
@@ -553,6 +561,7 @@ where
     }
 }
 
+#[cfg(feature = "tokio")]
 impl<T> AsyncWrite for MaybeHttpsStream<T>
 where
     T: AsyncRead + AsyncWrite + Unpin,
@@ -582,6 +591,36 @@ where
         match self.as_mut().get_mut() {
             MaybeHttpsStream::Http(inner) => Pin::new(inner).poll_shutdown(ctx),
             MaybeHttpsStream::Https(inner) => Pin::new(inner).poll_shutdown(ctx),
+        }
+    }
+}
+
+#[cfg(feature = "compio")]
+impl<T> AsyncWrite for MaybeHttpsStream<T>
+where
+    T: AsyncRead + AsyncWrite + Unpin,
+{
+    #[inline]
+    async fn write<B: compio::buf::IoBuf>(&mut self, buf: B) -> compio::BufResult<usize, B> {
+        match self {
+            MaybeHttpsStream::Http(inner) => inner.write(buf).await,
+            MaybeHttpsStream::Https(inner) => inner.write(buf).await,
+        }
+    }
+
+    #[inline]
+    async fn flush(&mut self) -> std::io::Result<()> {
+        match self {
+            MaybeHttpsStream::Http(inner) => inner.flush().await,
+            MaybeHttpsStream::Https(inner) => inner.flush().await,
+        }
+    }
+
+    #[inline]
+    async fn shutdown(&mut self) -> std::io::Result<()> {
+        match self {
+            MaybeHttpsStream::Http(inner) => inner.shutdown().await,
+            MaybeHttpsStream::Https(inner) => inner.shutdown().await,
         }
     }
 }

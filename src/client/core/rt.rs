@@ -11,15 +11,21 @@ pub mod bounds;
 #[cfg(feature = "compio")]
 mod compio;
 mod timer;
+#[cfg(feature = "tokio")]
 mod tokio;
 
-pub use self::{
-    timer::{Sleep, Time, Timer},
-    tokio::{TokioExecutor, TokioTimer},
+#[cfg(feature = "compio")]
+pub use {
+    self::compio::{CompioExecutor, CompioIO, CompioTimer},
+    ::compio::io::{AsyncRead, AsyncWrite},
+};
+#[cfg(feature = "tokio")]
+pub use {
+    self::tokio::{TokioExecutor, TokioTimer},
+    ::tokio::io::{AsyncRead, AsyncWrite},
 };
 
-#[cfg(feature = "compio")]
-pub use self::compio::{CompioExecutor, CompioIO, CompioTimer};
+pub use self::timer::{Sleep, Time, Timer};
 
 /// An executor of futures.
 ///

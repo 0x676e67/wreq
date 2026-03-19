@@ -6,13 +6,14 @@ use std::{
 };
 
 use http::{Uri, uri::Scheme};
-use tokio::io::{AsyncRead, AsyncWrite};
-use tokio_btls::SslStream;
 use tower::Service;
 
 use super::{EstablishedConn, HttpsConnector, MaybeHttpsStream};
 use crate::{
-    client::{ConnectRequest, Connection},
+    client::{
+        ConnectRequest, Connection,
+        rt::{AsyncRead, AsyncWrite},
+    },
     error::BoxError,
     ext::UriExt,
 };
@@ -23,7 +24,12 @@ async fn perform_handshake<T>(ssl: btls::ssl::Ssl, conn: T) -> Result<MaybeHttps
 where
     T: AsyncRead + AsyncWrite + Unpin,
 {
-    let mut stream = SslStream::new(ssl, conn)?;
+    #[cfg(feature = "tokio")]
+    let mut stream = tokio_btls::SslStream::new(ssl, conn)?;
+
+    // #[cfg(feature = "compio")]
+    let mut stream = compio_btls::SslStream::new(ssl, conn)?;
+
     Pin::new(&mut stream).connect().await?;
     Ok(MaybeHttpsStream::Https(stream))
 }
@@ -60,6 +66,12 @@ where
             perform_handshake(ssl, conn).await
         };
 
+        #[cfg(feature = "compio")]
+        {
+            Box::pin(send_wrapper::SendWrapper::new(f))
+        }
+
+        #[cfg(feature = "tokio")]
         Box::pin(f)
     }
 }
@@ -97,6 +109,12 @@ where
             perform_handshake(ssl, conn).await
         };
 
+        #[cfg(feature = "compio")]
+        {
+            Box::pin(send_wrapper::SendWrapper::new(f))
+        }
+
+        #[cfg(feature = "tokio")]
         Box::pin(f)
     }
 }
@@ -120,7 +138,7 @@ where
 
     fn call(&mut self, conn: EstablishedConn<IO>) -> Self::Future {
         let inner = self.inner.clone();
-        let fut = async move {
+        let f = async move {
             // Early return if it is not a tls scheme
             if conn.req.uri().is_http() {
                 return Ok(MaybeHttpsStream::Http(conn.io));
@@ -130,6 +148,12 @@ where
             perform_handshake(ssl, conn.io).await
         };
 
-        Box::pin(fut)
+        #[cfg(feature = "compio")]
+        {
+            Box::pin(send_wrapper::SendWrapper::new(f))
+        }
+
+        #[cfg(feature = "tokio")]
+        Box::pin(f)
     }
 }

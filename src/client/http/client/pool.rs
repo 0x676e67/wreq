@@ -800,6 +800,7 @@ impl<T> WeakOpt<T> {
     }
 }
 
+#[cfg(feature = "tokio")]
 #[cfg(test)]
 mod tests {
     use std::{

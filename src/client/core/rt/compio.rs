@@ -53,6 +53,7 @@ impl Timer for CompioTimer {
 }
 
 /// A stream wrapper for compio.
+#[derive(Debug)]
 pub struct CompioIO<S>(SendWrapper<AsyncStream<S>>);
 
 impl<S> CompioIO<S> {

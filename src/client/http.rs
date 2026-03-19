@@ -41,10 +41,7 @@ use super::{
         BoxedConnectorLayer, BoxedConnectorService, Conn, Connector, HttpTransport,
         SocketBindOptions, Unnameable,
     },
-    core::{
-        body::Incoming,
-        rt::{TokioExecutor, TokioTimer},
-    },
+    core::body::Incoming,
     layer::{
         config::{ConfigService, ConfigServiceLayer, TransportOptions},
         redirect::{FollowRedirect, FollowRedirectLayer},
@@ -71,6 +68,12 @@ use crate::{
     retry,
     tls::{AlpnProtocol, CertStore, Identity, KeyLog, TlsOptions, TlsVersion},
 };
+
+#[cfg(feature = "tokio")]
+use super::core::rt::{TokioExecutor as Executor, TokioTimer as Timer};
+
+#[cfg(feature = "compio")]
+use super::core::rt::{CompioExecutor as Executor, CompioTimer as Timer};
 
 /// Service type for cookie handling. Identity type when cookies feature is disabled.
 #[cfg(not(feature = "cookies"))]
@@ -570,12 +573,12 @@ impl ClientBuilder {
                 .build(config.connector_layers)?;
 
             // Build client
-            HttpClient::builder(TokioExecutor::new())
+            HttpClient::builder(Executor)
                 .http1_options(http1_options)
                 .http2_options(http2_options)
                 .http2_only(matches!(config.http_version_pref, HttpVersionPref::Http2))
-                .http2_timer(TokioTimer::new())
-                .pool_timer(TokioTimer::new())
+                .http2_timer(Timer)
+                .pool_timer(Timer)
                 .pool_idle_timeout(config.pool_idle_timeout)
                 .pool_max_idle_per_host(config.pool_max_idle_per_host)
                 .pool_max_size(config.pool_max_size)
@@ -611,10 +614,7 @@ impl ClientBuilder {
                 .service(service);
 
             let service = ServiceBuilder::new()
-                .layer(ResponseBodyTimeoutLayer::new(
-                    TokioTimer::new(),
-                    config.timeout_options,
-                ))
+                .layer(ResponseBodyTimeoutLayer::new(Timer, config.timeout_options))
                 .layer(ConfigServiceLayer::new(
                     config.https_only,
                     config.headers,

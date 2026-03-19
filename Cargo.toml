@@ -19,12 +19,13 @@ rustdoc-args = ["--cfg", "docsrs"]
 targets = ["x86_64-unknown-linux-gnu"]
 
 [features]
-default = ["tokio", "webpki-roots"]
+default = ["compio", "webpki-roots"]
 
-tokio = ["tokio/net", "tokio/time", "tokio/rt"]
+# Enable support for Tokio for async I/O operations.
+tokio = ["tokio/net", "tokio/time", "tokio/rt", "dep:tokio-btls"]
 
 # Enable support for Compio for async I/O operations.
-compio = ["dep:compio", "dep:send_wrapper"]
+compio = ["dep:compio", "dep:send_wrapper", "dep:compio-btls"]
 
 # Enable support for decoding text.
 charset = ["dep:encoding_rs", "dep:mime"]
@@ -97,8 +98,6 @@ want = "0.3.1"
 socket2 = { version = "0.6.3", features = ["all"] }
 ipnet = "2.12.0"
 lru = "0.16.3"
-btls = "0.5.4"
-tokio-btls = "0.5.4"
 brotli = "8.0.2"
 flate2 = "1.1.9"
 zstd = "0.13.3"
@@ -108,10 +107,14 @@ tower = { version = "0.5.3", default-features = false, features = [
     "retry",
 ] }
 
+## TLS
+btls = "0.5.4"
+tokio-btls = { version = "0.5.4", optional = true }
+compio-btls = { version = "0.5.4", optional = true }
 
 ## Runtime
 
-tokio = { version = "1.50.0", default-features = false, optional = true}
+tokio = { version = "1.50.0", default-features = false }
 send_wrapper = { version = "0.6.0", features = ["futures"], optional = true }
 compio = { version = "0.18.0", features = ["time", "net", "io", "io-compat"], optional = true }
 

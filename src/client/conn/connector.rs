@@ -8,12 +8,15 @@ use std::{
 
 use http::Uri;
 use tokio::io::{AsyncRead, AsyncWrite};
-use tokio_btls::SslStream;
 use tower::{
     Service, ServiceBuilder, ServiceExt,
     timeout::TimeoutLayer,
     util::{BoxCloneSyncService, MapRequestLayer},
 };
+#[cfg(feature = "compio")]
+use {crate::client::conn::CompioTcpConnector as TcpConnector, compio_btls::SslStream};
+#[cfg(feature = "tokio")]
+use {crate::client::conn::TokioTcpConnector as TcpConnector, tokio_btls::SslStream};
 
 #[cfg(unix)]
 use super::uds::UnixConnector;
@@ -22,10 +25,7 @@ use super::{
     TlsConn, TlsInfoFactory, Unnameable, http::HttpTransport, proxy, verbose::Verbose,
 };
 use crate::{
-    client::{
-        conn::TokioTcpConnector,
-        http::{ConnectExtra, ConnectRequest},
-    },
+    client::http::{ConnectExtra, ConnectRequest},
     dns::DynResolver,
     error::{BoxError, ProxyConnect, TimedOut, map_timeout_to_connector_error},
     ext::UriExt,
@@ -216,7 +216,7 @@ impl Connector {
             },
             #[cfg(feature = "socks")]
             resolver: resolver.clone(),
-            http: HttpConnector::new(resolver, TokioTcpConnector::new()),
+            http: HttpConnector::new(resolver, TcpConnector::new()),
             tls_options: TlsOptions::default(),
             tls_builder: TlsConnector::builder(),
         }

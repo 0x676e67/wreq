@@ -42,13 +42,6 @@ where
     }
 }
 
-impl TokioExecutor {
-    /// Create new executor that relies on [`tokio::spawn`] to execute futures.
-    pub fn new() -> Self {
-        Self {}
-    }
-}
-
 // ==== impl TokioTimer =====
 
 impl Timer for TokioTimer {
@@ -72,13 +65,6 @@ impl Timer for TokioTimer {
         if let Some(sleep) = sleep.as_mut().downcast_mut_pin::<TokioSleep>() {
             sleep.reset(new_deadline)
         }
-    }
-}
-
-impl TokioTimer {
-    /// Create a new TokioTimer
-    pub fn new() -> Self {
-        Self {}
     }
 }
 
