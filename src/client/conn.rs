@@ -92,10 +92,10 @@ pin_project! {
     /// * origin-form (`GET /just/a/path HTTP/1.1`), when `is_proxy == false`, or
     /// * absolute-form (`GET http://foo.bar/and/a/path HTTP/1.1`), otherwise.
     pub struct Conn {
+        tls_info: bool,
+        proxy: Option<Intercept>,
         #[pin]
-        pub(super) inner: Box<dyn AsyncConnWithInfo>,
-        pub(super) tls_info: bool,
-        pub(super) proxy: Option<Intercept>,
+        stream: Box<dyn AsyncConnWithInfo>,
     }
 }
 
@@ -107,7 +107,7 @@ pin_project! {
     /// It is mainly used internally to abstract over different connection types.
     pub struct TlsConn<T> {
         #[pin]
-        inner: SslStream<T>,
+        stream: SslStream<T>,
     }
 }
 
@@ -175,14 +175,14 @@ pub struct Connected {
 
 impl Connection for Conn {
     fn connected(&self) -> Connected {
-        let mut connected = self.inner.connected();
+        let mut connected = self.stream.connected();
 
         if let Some(proxy) = &self.proxy {
             connected = connected.proxy(proxy.clone());
         }
 
         if self.tls_info {
-            if let Some(tls_info) = self.inner.tls_info() {
+            if let Some(tls_info) = self.stream.tls_info() {
                 connected.extra(tls_info)
             } else {
                 connected
@@ -200,7 +200,7 @@ impl AsyncRead for Conn {
         cx: &mut Context,
         buf: &mut ReadBuf<'_>,
     ) -> Poll<io::Result<()>> {
-        AsyncRead::poll_read(self.project().inner, cx, buf)
+        AsyncRead::poll_read(self.project().stream, cx, buf)
     }
 }
 
@@ -211,7 +211,7 @@ impl AsyncWrite for Conn {
         cx: &mut Context,
         buf: &[u8],
     ) -> Poll<Result<usize, io::Error>> {
-        AsyncWrite::poll_write(self.project().inner, cx, buf)
+        AsyncWrite::poll_write(self.project().stream, cx, buf)
     }
 
     #[inline]
@@ -220,35 +220,22 @@ impl AsyncWrite for Conn {
         cx: &mut Context<'_>,
         bufs: &[IoSlice<'_>],
     ) -> Poll<Result<usize, io::Error>> {
-        AsyncWrite::poll_write_vectored(self.project().inner, cx, bufs)
+        AsyncWrite::poll_write_vectored(self.project().stream, cx, bufs)
     }
 
     #[inline]
     fn is_write_vectored(&self) -> bool {
-        self.inner.is_write_vectored()
+        self.stream.is_write_vectored()
     }
 
     #[inline]
     fn poll_flush(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), io::Error>> {
-        AsyncWrite::poll_flush(self.project().inner, cx)
+        AsyncWrite::poll_flush(self.project().stream, cx)
     }
 
     #[inline]
     fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), io::Error>> {
-        AsyncWrite::poll_shutdown(self.project().inner, cx)
-    }
-}
-
-// ==== impl TlsConn ====
-
-impl<T> TlsConn<T>
-where
-    T: AsyncRead + AsyncWrite + Unpin,
-{
-    /// Creates a new `TlsConn` wrapping the provided `SslStream`.
-    #[inline(always)]
-    pub fn new(inner: SslStream<T>) -> Self {
-        Self { inner }
+        AsyncWrite::poll_shutdown(self.project().stream, cx)
     }
 }
 
@@ -256,8 +243,8 @@ where
 
 impl Connection for TlsConn<TcpStream> {
     fn connected(&self) -> Connected {
-        let connected = self.inner.get_ref().connected();
-        if self.inner.ssl().selected_alpn_protocol() == Some(b"h2") {
+        let connected = self.stream.get_ref().connected();
+        if self.stream.ssl().selected_alpn_protocol() == Some(b"h2") {
             connected.negotiated_h2()
         } else {
             connected
@@ -267,8 +254,8 @@ impl Connection for TlsConn<TcpStream> {
 
 impl Connection for TlsConn<MaybeHttpsStream<TcpStream>> {
     fn connected(&self) -> Connected {
-        let connected = self.inner.get_ref().connected();
-        if self.inner.ssl().selected_alpn_protocol() == Some(b"h2") {
+        let connected = self.stream.get_ref().connected();
+        if self.stream.ssl().selected_alpn_protocol() == Some(b"h2") {
             connected.negotiated_h2()
         } else {
             connected
@@ -281,8 +268,8 @@ impl Connection for TlsConn<MaybeHttpsStream<TcpStream>> {
 #[cfg(unix)]
 impl Connection for TlsConn<UnixStream> {
     fn connected(&self) -> Connected {
-        let connected = self.inner.get_ref().connected();
-        if self.inner.ssl().selected_alpn_protocol() == Some(b"h2") {
+        let connected = self.stream.get_ref().connected();
+        if self.stream.ssl().selected_alpn_protocol() == Some(b"h2") {
             connected.negotiated_h2()
         } else {
             connected
@@ -293,8 +280,8 @@ impl Connection for TlsConn<UnixStream> {
 #[cfg(unix)]
 impl Connection for TlsConn<MaybeHttpsStream<UnixStream>> {
     fn connected(&self) -> Connected {
-        let connected = self.inner.get_ref().connected();
-        if self.inner.ssl().selected_alpn_protocol() == Some(b"h2") {
+        let connected = self.stream.get_ref().connected();
+        if self.stream.ssl().selected_alpn_protocol() == Some(b"h2") {
             connected.negotiated_h2()
         } else {
             connected
@@ -309,7 +296,7 @@ impl<T: AsyncRead + AsyncWrite + Unpin> AsyncRead for TlsConn<T> {
         cx: &mut Context,
         buf: &mut ReadBuf<'_>,
     ) -> Poll<tokio::io::Result<()>> {
-        AsyncRead::poll_read(self.project().inner, cx, buf)
+        AsyncRead::poll_read(self.project().stream, cx, buf)
     }
 }
 
@@ -320,7 +307,7 @@ impl<T: AsyncRead + AsyncWrite + Unpin> AsyncWrite for TlsConn<T> {
         cx: &mut Context,
         buf: &[u8],
     ) -> Poll<Result<usize, tokio::io::Error>> {
-        AsyncWrite::poll_write(self.project().inner, cx, buf)
+        AsyncWrite::poll_write(self.project().stream, cx, buf)
     }
 
     #[inline]
@@ -329,22 +316,22 @@ impl<T: AsyncRead + AsyncWrite + Unpin> AsyncWrite for TlsConn<T> {
         cx: &mut Context<'_>,
         bufs: &[IoSlice<'_>],
     ) -> Poll<Result<usize, io::Error>> {
-        AsyncWrite::poll_write_vectored(self.project().inner, cx, bufs)
+        AsyncWrite::poll_write_vectored(self.project().stream, cx, bufs)
     }
 
     #[inline]
     fn is_write_vectored(&self) -> bool {
-        self.inner.is_write_vectored()
+        self.stream.is_write_vectored()
     }
 
     #[inline]
     fn poll_flush(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), tokio::io::Error>> {
-        AsyncWrite::poll_flush(self.project().inner, cx)
+        AsyncWrite::poll_flush(self.project().stream, cx)
     }
 
     #[inline]
     fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), tokio::io::Error>> {
-        AsyncWrite::poll_shutdown(self.project().inner, cx)
+        AsyncWrite::poll_shutdown(self.project().stream, cx)
     }
 }
 
@@ -353,7 +340,7 @@ where
     SslStream<T>: TlsInfoFactory,
 {
     fn tls_info(&self) -> Option<TlsInfo> {
-        self.inner.tls_info()
+        self.stream.tls_info()
     }
 }
 

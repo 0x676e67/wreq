@@ -314,13 +314,13 @@ impl ConnectorService {
         SslStream<IO>: TlsInfoFactory,
     {
         let conn = match io {
-            MaybeHttpsStream::Http(inner) => Conn {
-                inner: self.config.verbose.wrap(inner),
+            MaybeHttpsStream::Http(stream) => Conn {
+                stream: self.config.verbose.wrap(stream),
                 tls_info: false,
                 proxy: None,
             },
-            MaybeHttpsStream::Https(inner) => Conn {
-                inner: self.config.verbose.wrap(TlsConn::new(inner)),
+            MaybeHttpsStream::Https(stream) => Conn {
+                stream: self.config.verbose.wrap(TlsConn { stream }),
                 tls_info: self.config.tls_info,
                 proxy: None,
             },
@@ -337,12 +337,12 @@ impl ConnectorService {
         P: Into<Option<Intercept>>,
     {
         let conn = match io {
-            MaybeHttpsStream::Http(inner) => self.config.verbose.wrap(inner),
-            MaybeHttpsStream::Https(inner) => self.config.verbose.wrap(TlsConn::new(inner)),
+            MaybeHttpsStream::Http(stream) => self.config.verbose.wrap(stream),
+            MaybeHttpsStream::Https(stream) => self.config.verbose.wrap(TlsConn { stream }),
         };
 
         Ok(Conn {
-            inner: conn,
+            stream: conn,
             tls_info: self.config.tls_info,
             proxy: proxy.into(),
         })
