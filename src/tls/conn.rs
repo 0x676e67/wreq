@@ -299,7 +299,12 @@ impl TlsConnectorBuilder {
     }
 
     /// Build the `TlsConnector` with the provided configuration.
-    pub fn build(&self, opts: &TlsOptions) -> crate::Result<TlsConnector> {
+    pub fn build<'a, T>(&self, opts: T) -> crate::Result<TlsConnector>
+    where
+        T: Into<Cow<'a, TlsOptions>>,
+    {
+        let opts = opts.into();
+
         // Replace the default configuration with the provided one
         let max_tls_version = opts.max_tls_version.or(self.max_version);
         let min_tls_version = opts.min_tls_version.or(self.min_version);

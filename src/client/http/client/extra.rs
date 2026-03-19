@@ -4,7 +4,7 @@ use http::{Uri, Version};
 
 use crate::{
     client::{
-        conn::TcpConnectOptions,
+        conn::SocketBindOptions,
         layer::config::{RequestOptions, TransportOptions},
     },
     hash::HashMemo,
@@ -65,13 +65,13 @@ impl ConnectExtra {
     pub fn tls_options(&self) -> Option<&TlsOptions> {
         self.extra
             .as_ref()
-            .map(RequestOptions::transport_opts)
+            .map(RequestOptions::transport_options)
             .and_then(TransportOptions::tls_options)
     }
 
-    /// Return a reference to the [`TcpConnectOptions`].
+    /// Return a reference to the [`SocketBindOptions`].
     #[inline]
-    pub fn tcp_options(&self) -> Option<&TcpConnectOptions> {
-        self.extra.as_ref().map(RequestOptions::tcp_connect_opts)
+    pub fn tcp_options(&self) -> Option<&SocketBindOptions> {
+        self.extra.as_ref().map(RequestOptions::socket_bind_options)
     }
 }

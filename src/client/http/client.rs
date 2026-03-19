@@ -41,7 +41,7 @@ use crate::{
             dispatch::TrySendError as ConnTrySendError,
             http1::Http1Options,
             http2::Http2Options,
-            rt::{ArcTimer, Executor, Timer},
+            rt::{Executor, Time, Timer},
         },
         layer::config::RequestOptions,
     },
@@ -183,7 +183,7 @@ where
         let options = RequestConfig::<RequestOptions>::remove(req.extensions_mut());
 
         // Apply HTTP/1 and HTTP/2 options if provided
-        if let Some(opts) = options.as_ref().map(RequestOptions::transport_opts) {
+        if let Some(opts) = options.as_ref().map(RequestOptions::transport_options) {
             if let Some(opts) = opts.http1_options() {
                 this.h1_builder.options(opts.clone());
             }
@@ -818,7 +818,7 @@ pub struct Builder {
     h1_builder: conn::http1::Builder,
     h2_builder: conn::http2::Builder<Exec>,
     pool_config: pool::Config,
-    pool_timer: Option<ArcTimer>,
+    pool_timer: Time,
 }
 
 // ===== impl Builder =====
@@ -845,7 +845,7 @@ impl Builder {
                 max_idle_per_host: usize::MAX,
                 max_pool_size: None,
             },
-            pool_timer: None,
+            pool_timer: Time::Empty,
         }
     }
     /// Set an optional timeout for idle sockets being kept-alive.
@@ -943,7 +943,7 @@ impl Builder {
     where
         M: Timer + Clone + Send + Sync + 'static,
     {
-        self.pool_timer = Some(ArcTimer::new(timer));
+        self.pool_timer = Time::Timer(Arc::new(timer));
         self
     }
 
