@@ -38,7 +38,8 @@ use super::ws::WebSocketRequestBuilder;
 use super::{
     Body, EmulationFactory,
     conn::{
-        BoxedConnectorLayer, BoxedConnectorService, Conn, Connector, TcpConnectOptions, Unnameable,
+        BoxedConnectorLayer, BoxedConnectorService, Conn, Connector, HttpTransport,
+        SocketBindOptions, Unnameable,
     },
     core::{
         body::Incoming,
@@ -206,7 +207,7 @@ struct Config {
     tcp_send_buffer_size: Option<usize>,
     tcp_recv_buffer_size: Option<usize>,
     tcp_happy_eyeballs_timeout: Option<Duration>,
-    tcp_connect_options: TcpConnectOptions,
+    socket_bind_options: SocketBindOptions,
     proxies: Vec<ProxyMatcher>,
     auto_sys_proxy: bool,
     retry_policy: retry::Policy,
@@ -282,7 +283,7 @@ impl Client {
                 tcp_keepalive_retries: Some(3),
                 #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
                 tcp_user_timeout: Some(Duration::from_secs(30)),
-                tcp_connect_options: TcpConnectOptions::default(),
+                socket_bind_options: SocketBindOptions::default(),
                 tcp_nodelay: true,
                 tcp_reuse_address: false,
                 tcp_send_buffer_size: None,
@@ -536,14 +537,35 @@ impl ClientBuilder {
                     http.set_keepalive_interval(config.tcp_keepalive_interval);
                     http.set_keepalive_retries(config.tcp_keepalive_retries);
                     http.set_reuse_address(config.tcp_reuse_address);
-                    http.set_connect_options(config.tcp_connect_options);
                     http.set_connect_timeout(config.connect_timeout);
                     http.set_nodelay(config.tcp_nodelay);
                     http.set_send_buffer_size(config.tcp_send_buffer_size);
                     http.set_recv_buffer_size(config.tcp_recv_buffer_size);
                     http.set_happy_eyeballs_timeout(config.tcp_happy_eyeballs_timeout);
+
                     #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
                     http.set_tcp_user_timeout(config.tcp_user_timeout);
+
+                    #[cfg(any(
+                        target_os = "android",
+                        target_os = "fuchsia",
+                        target_os = "illumos",
+                        target_os = "ios",
+                        target_os = "linux",
+                        target_os = "macos",
+                        target_os = "solaris",
+                        target_os = "tvos",
+                        target_os = "visionos",
+                        target_os = "watchos",
+                    ))]
+                    if let Some(interface) = config.socket_bind_options.interface {
+                        http.set_interface(interface);
+                    }
+
+                    http.set_local_addresses(
+                        config.socket_bind_options.local_address_ipv4,
+                        config.socket_bind_options.local_address_ipv6,
+                    );
                 })
                 .build(config.connector_layers)?;
 
@@ -589,7 +611,10 @@ impl ClientBuilder {
                 .service(service);
 
             let service = ServiceBuilder::new()
-                .layer(ResponseBodyTimeoutLayer::new(config.timeout_options))
+                .layer(ResponseBodyTimeoutLayer::new(
+                    TokioTimer::new(),
+                    config.timeout_options,
+                ))
                 .layer(ConfigServiceLayer::new(
                     config.https_only,
                     config.headers,
@@ -1244,7 +1269,7 @@ impl ClientBuilder {
         T: Into<Option<IpAddr>>,
     {
         self.config
-            .tcp_connect_options
+            .socket_bind_options
             .set_local_address(addr.into());
         self
     }
@@ -1270,7 +1295,7 @@ impl ClientBuilder {
         V6: Into<Option<Ipv6Addr>>,
     {
         self.config
-            .tcp_connect_options
+            .socket_bind_options
             .set_local_addresses(ipv4, ipv6);
         self
     }
@@ -1339,7 +1364,7 @@ impl ClientBuilder {
     where
         T: Into<std::borrow::Cow<'static, str>>,
     {
-        self.config.tcp_connect_options.set_interface(interface);
+        self.config.socket_bind_options.set_interface(interface);
         self
     }
 

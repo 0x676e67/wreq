@@ -8,13 +8,18 @@
 //! - IO transports
 
 pub mod bounds;
+#[cfg(feature = "compio")]
+mod compio;
 mod timer;
 mod tokio;
 
 pub use self::{
-    timer::{ArcTimer, Sleep, Time, Timer},
+    timer::{Sleep, Time, Timer},
     tokio::{TokioExecutor, TokioTimer},
 };
+
+#[cfg(feature = "compio")]
+pub use self::compio::{CompioExecutor, CompioIO, CompioTimer};
 
 /// An executor of futures.
 ///

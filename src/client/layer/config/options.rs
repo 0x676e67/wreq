@@ -2,7 +2,7 @@ use http::Version;
 
 use crate::{
     client::{
-        conn::TcpConnectOptions,
+        conn::SocketBindOptions,
         core::{http1::Http1Options, http2::Http2Options},
     },
     proxy::Matcher,
@@ -16,7 +16,7 @@ use crate::{
 pub struct RequestOptions {
     proxy_matcher: Option<Matcher>,
     enforced_version: Option<Version>,
-    tcp_connect_opts: TcpConnectOptions,
+    socket_bind_options: SocketBindOptions,
     transport_opts: TransportOptions,
 }
 
@@ -130,27 +130,27 @@ impl RequestOptions {
         &mut self.enforced_version
     }
 
-    /// Get a reference to the TCP connection options.
+    /// Get a reference to the socket bind options.
     #[inline]
-    pub fn tcp_connect_opts(&self) -> &TcpConnectOptions {
-        &self.tcp_connect_opts
+    pub fn socket_bind_options(&self) -> &SocketBindOptions {
+        &self.socket_bind_options
     }
 
-    /// Get a mutable reference to the TCP connection options.
+    /// Get a mutable reference to the socket bind options.
     #[inline]
-    pub fn tcp_connect_opts_mut(&mut self) -> &mut TcpConnectOptions {
-        &mut self.tcp_connect_opts
+    pub fn socket_bind_options_mut(&mut self) -> &mut SocketBindOptions {
+        &mut self.socket_bind_options
     }
 
     /// Get a reference to the transport options.
     #[inline]
-    pub fn transport_opts(&self) -> &TransportOptions {
+    pub fn transport_options(&self) -> &TransportOptions {
         &self.transport_opts
     }
 
     /// Get a mutable reference to the transport options.
     #[inline]
-    pub fn transport_opts_mut(&mut self) -> &mut TransportOptions {
+    pub fn transport_options_mut(&mut self) -> &mut TransportOptions {
         &mut self.transport_opts
     }
 }

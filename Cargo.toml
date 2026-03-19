@@ -19,7 +19,12 @@ rustdoc-args = ["--cfg", "docsrs"]
 targets = ["x86_64-unknown-linux-gnu"]
 
 [features]
-default = ["webpki-roots"]
+default = ["tokio", "webpki-roots"]
+
+tokio = ["tokio/net", "tokio/time", "tokio/rt"]
+
+# Enable support for Compio for async I/O operations.
+compio = ["dep:compio", "dep:send_wrapper"]
 
 # Enable support for decoding text.
 charset = ["dep:encoding_rs", "dep:mime"]
@@ -102,11 +107,13 @@ tower = { version = "0.5.3", default-features = false, features = [
     "util",
     "retry",
 ] }
-tokio = { version = "1.50.0", default-features = false, features = [
-    "net",
-    "time",
-    "rt",
-] }
+
+
+## Runtime
+
+tokio = { version = "1.50.0", default-features = false, optional = true}
+send_wrapper = { version = "0.6.0", features = ["futures"], optional = true }
+compio = { version = "0.18.0", features = ["time", "net", "io", "io-compat"], optional = true }
 
 # Optional deps...
 
