@@ -93,9 +93,9 @@ pin_project! {
     /// * absolute-form (`GET http://foo.bar/and/a/path HTTP/1.1`), otherwise.
     pub struct Conn {
         #[pin]
-        pub(super) inner: Box<dyn AsyncConnWithInfo>,
-        pub(super) tls_info: bool,
-        pub(super) proxy: Option<Intercept>,
+        inner: Box<dyn AsyncConnWithInfo>,
+        tls_info: bool,
+        proxy: Option<Intercept>,
     }
 }
 
@@ -107,7 +107,7 @@ pin_project! {
     /// It is mainly used internally to abstract over different connection types.
     pub struct TlsConn<T> {
         #[pin]
-        inner: SslStream<T>,
+        stream: SslStream<T>,
     }
 }
 
@@ -239,25 +239,12 @@ impl AsyncWrite for Conn {
     }
 }
 
-// ==== impl TlsConn ====
-
-impl<T> TlsConn<T>
-where
-    T: AsyncRead + AsyncWrite + Unpin,
-{
-    /// Creates a new `TlsConn` wrapping the provided `SslStream`.
-    #[inline(always)]
-    pub fn new(inner: SslStream<T>) -> Self {
-        Self { inner }
-    }
-}
-
 // ===== impl TcpStream =====
 
 impl Connection for TlsConn<TcpStream> {
     fn connected(&self) -> Connected {
-        let connected = self.inner.get_ref().connected();
-        if self.inner.ssl().selected_alpn_protocol() == Some(b"h2") {
+        let connected = self.stream.get_ref().connected();
+        if self.stream.ssl().selected_alpn_protocol() == Some(b"h2") {
             connected.negotiated_h2()
         } else {
             connected
@@ -267,8 +254,8 @@ impl Connection for TlsConn<TcpStream> {
 
 impl Connection for TlsConn<MaybeHttpsStream<TcpStream>> {
     fn connected(&self) -> Connected {
-        let connected = self.inner.get_ref().connected();
-        if self.inner.ssl().selected_alpn_protocol() == Some(b"h2") {
+        let connected = self.stream.get_ref().connected();
+        if self.stream.ssl().selected_alpn_protocol() == Some(b"h2") {
             connected.negotiated_h2()
         } else {
             connected
@@ -334,7 +321,7 @@ impl<T: AsyncRead + AsyncWrite + Unpin> AsyncWrite for TlsConn<T> {
 
     #[inline]
     fn is_write_vectored(&self) -> bool {
-        self.inner.is_write_vectored()
+        self.stream.is_write_vectored()
     }
 
     #[inline]
@@ -353,7 +340,7 @@ where
     SslStream<T>: TlsInfoFactory,
 {
     fn tls_info(&self) -> Option<TlsInfo> {
-        self.inner.tls_info()
+        self.stream.tls_info()
     }
 }
 
