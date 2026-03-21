@@ -401,7 +401,7 @@ impl ConnectorService {
                         let io = connector.call(EstablishedConn::new(conn, req)).await?;
 
                         // Re-enable Nagle's algorithm if it was disabled earlier
-                        if is_https && !self.config.tcp_nodelay {
+                        if is_https && !self.config.nodelay {
                             io.as_ref().set_nodelay(false)?;
                         }
 
