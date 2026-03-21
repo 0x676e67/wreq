@@ -46,7 +46,7 @@ where
 
     fn call(&mut self, uri: Uri) -> Self::Future {
         let connect = self.http.call(uri.clone());
-        let inner = self.inner.clone();
+        let tls = self.tls.clone();
 
         let f = async move {
             let conn = connect.await.map_err(Into::into)?;
@@ -56,7 +56,7 @@ where
                 return Ok(MaybeHttpsStream::Http(conn));
             }
 
-            let ssl = inner.setup_ssl(uri)?;
+            let ssl = tls.setup_ssl(uri)?;
             perform_handshake(ssl, conn).await
         };
 
@@ -83,7 +83,7 @@ where
     fn call(&mut self, req: ConnectRequest) -> Self::Future {
         let uri = req.uri().clone();
         let connect = self.http.call(uri.clone());
-        let inner = self.inner.clone();
+        let tls = self.tls.clone();
 
         let f = async move {
             let conn = connect.await.map_err(Into::into)?;
@@ -93,7 +93,7 @@ where
                 return Ok(MaybeHttpsStream::Http(conn));
             }
 
-            let ssl = inner.setup_ssl2(req)?;
+            let ssl = tls.setup_ssl2(req)?;
             perform_handshake(ssl, conn).await
         };
 
@@ -119,14 +119,14 @@ where
     }
 
     fn call(&mut self, conn: EstablishedConn<IO>) -> Self::Future {
-        let inner = self.inner.clone();
+        let tls = self.tls.clone();
         let fut = async move {
             // Early return if it is not a tls scheme
             if conn.req.uri().is_http() {
                 return Ok(MaybeHttpsStream::Http(conn.io));
             }
 
-            let ssl = inner.setup_ssl2(conn.req)?;
+            let ssl = tls.setup_ssl2(conn.req)?;
             perform_handshake(ssl, conn.io).await
         };
 

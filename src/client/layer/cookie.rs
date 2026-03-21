@@ -79,7 +79,7 @@ where
 impl CookieServiceLayer {
     /// Create a new [`CookieServiceLayer`].
     #[inline(always)]
-    pub const fn new(store: Option<Arc<dyn CookieStore + 'static>>) -> Self {
+    pub fn new(store: Option<Arc<dyn CookieStore + 'static>>) -> Self {
         Self {
             store: RequestConfig::new(store),
         }

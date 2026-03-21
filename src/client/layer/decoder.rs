@@ -60,7 +60,7 @@ impl_request_config_value!(AcceptEncoding);
 impl DecompressionLayer {
     /// Creates a new [`DecompressionLayer`] with the specified [`AcceptEncoding`].
     #[inline(always)]
-    pub const fn new(accept: AcceptEncoding) -> Self {
+    pub fn new(accept: AcceptEncoding) -> Self {
         Self { accept }
     }
 }
