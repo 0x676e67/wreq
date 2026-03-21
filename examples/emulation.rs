@@ -107,7 +107,7 @@ async fn main() -> wreq::Result<()> {
     // Build a client with emulation config
     let client = Client::builder()
         .emulation(emulation)
-        .cert_verification(false)
+        .tls_cert_verification(false)
         .build()?;
 
     // Use the API you're already familiar with

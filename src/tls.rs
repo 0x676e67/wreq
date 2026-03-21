@@ -4,9 +4,10 @@
 //!
 //! - Various parts of TLS can also be configured or even disabled on the `ClientBuilder`.
 
-mod conn;
+pub(crate) mod conn;
 mod keylog;
 mod options;
+mod session;
 mod x509;
 
 pub use btls::ssl::{CertificateCompressionAlgorithm, ExtensionType, KeyShare};
@@ -18,6 +19,7 @@ pub(crate) use self::conn::{
 pub use self::{
     keylog::KeyLog,
     options::{TlsOptions, TlsOptionsBuilder},
+    session::{IntoTlsSessionStore, LruSessionStore, TlsSession, TlsSessionKey, TlsSessionStore},
     x509::{CertStore, CertStoreBuilder, Certificate, Identity},
 };
 

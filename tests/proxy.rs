@@ -404,7 +404,7 @@ async fn tunnel_includes_user_agent() {
 #[tokio::test]
 async fn proxy_tunnel_connect_error() {
     let client = Client::builder()
-        .cert_verification(false)
+        .tls_cert_verification(false)
         .no_proxy()
         .build()
         .unwrap();

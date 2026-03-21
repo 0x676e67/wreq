@@ -25,6 +25,31 @@ const USERINFO: &AsciiSet = &PATH
     .add(b'^')
     .add(b'|');
 
+macro_rules! impl_into_shared {
+    ($(#[$meta:meta])* $vis:vis trait $name:ident => $target:path) => {
+        $(#[$meta])*
+        $vis trait $name {
+            #[doc = concat!("Converts this type into a shared [`", stringify!($target), "`].")]
+            fn into_shared(self) -> Arc<dyn $target>;
+        }
+
+        impl $name for Arc<dyn $target> {
+            #[inline]
+            fn into_shared(self) -> Arc<dyn $target> { self }
+        }
+
+        impl<R: $target + 'static> $name for Arc<R> {
+            #[inline]
+            fn into_shared(self) -> Arc<dyn $target> { self }
+        }
+
+        impl<R: $target + 'static> $name for R {
+            #[inline]
+            fn into_shared(self) -> Arc<dyn $target> { Arc::new(self) }
+        }
+    };
+}
+
 /// Extension trait for http::Response objects
 ///
 /// Provides methods to extract URI information from HTTP responses

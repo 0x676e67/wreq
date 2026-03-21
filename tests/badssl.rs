@@ -32,7 +32,7 @@ async fn test_badssl_modern() {
 #[tokio::test]
 async fn test_badssl_self_signed() {
     let text = Client::builder()
-        .cert_verification(false)
+        .tls_cert_verification(false)
         .connect_timeout(Duration::from_secs(360))
         .no_proxy()
         .build()
@@ -71,7 +71,7 @@ async fn test_3des_support() -> wreq::Result<()> {
     // Create a client with the TLS options
     let client = Client::builder()
         .emulation(tls_options)
-        .cert_verification(false)
+        .tls_cert_verification(false)
         .connect_timeout(Duration::from_secs(360))
         .build()?;
 
@@ -104,7 +104,7 @@ async fn test_firefox_7x_100_cipher() -> wreq::Result<()> {
     // Create a client with the TLS options
     let client = Client::builder()
         .emulation(tls_options)
-        .cert_verification(false)
+        .tls_cert_verification(false)
         .connect_timeout(Duration::from_secs(360))
         .build()?;
 
@@ -188,7 +188,7 @@ async fn test_aes_hw_override() -> wreq::Result<()> {
 #[tokio::test]
 async fn test_tls_self_signed_cert() {
     let client = Client::builder()
-        .cert_verification(false)
+        .tls_cert_verification(false)
         .connect_timeout(Duration::from_secs(360))
         .tls_info(true)
         .build()
@@ -212,7 +212,7 @@ async fn test_tls_self_signed_cert() {
         .unwrap();
 
     let client = Client::builder()
-        .cert_store(self_signed_cert_store)
+        .tls_cert_store(self_signed_cert_store)
         .build()
         .unwrap();
 

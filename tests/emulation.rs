@@ -173,7 +173,7 @@ async fn test_emulation() -> wreq::Result<()> {
     let client = Client::builder()
         .emulation(emulation_template())
         .connect_timeout(Duration::from_secs(10))
-        .cert_verification(false)
+        .tls_cert_verification(false)
         .build()?;
 
     let text = client
@@ -199,7 +199,7 @@ async fn test_emulation() -> wreq::Result<()> {
 async fn test_request_with_emulation() -> wreq::Result<()> {
     let client = Client::builder()
         .connect_timeout(Duration::from_secs(10))
-        .cert_verification(false)
+        .tls_cert_verification(false)
         .build()?;
 
     let text = client
@@ -226,7 +226,7 @@ async fn test_request_with_emulation() -> wreq::Result<()> {
 async fn test_request_with_emulation_tls() -> wreq::Result<()> {
     let client = Client::builder()
         .connect_timeout(Duration::from_secs(10))
-        .cert_verification(false)
+        .tls_cert_verification(false)
         .build()?;
 
     let text = client
@@ -249,7 +249,7 @@ async fn test_request_with_emulation_tls() -> wreq::Result<()> {
 async fn test_request_with_emulation_http2() -> wreq::Result<()> {
     let client = Client::builder()
         .connect_timeout(Duration::from_secs(10))
-        .cert_verification(false)
+        .tls_cert_verification(false)
         .build()?;
 
     let text = client

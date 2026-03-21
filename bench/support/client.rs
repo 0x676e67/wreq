@@ -14,7 +14,7 @@ fn create_wreq_client(tls: Tls, http_version: HttpVersion) -> Result<wreq::Clien
         .redirect(wreq::redirect::Policy::none());
 
     let builder = match tls {
-        Tls::Enabled => builder.cert_verification(false),
+        Tls::Enabled => builder.tls_cert_verification(false),
         Tls::Disabled => builder,
     };
 

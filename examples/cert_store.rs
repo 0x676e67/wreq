@@ -39,7 +39,7 @@ use wreq::{
 async fn main() -> wreq::Result<()> {
     // Create a client with a custom certificate store using webpki-roots
     let client = Client::builder()
-        .cert_store(CertStore::from_der_certs(
+        .tls_cert_store(CertStore::from_der_certs(
             webpki_root_certs::TLS_SERVER_ROOT_CERTS,
         )?)
         .build()?;
@@ -51,7 +51,7 @@ async fn main() -> wreq::Result<()> {
     // Skip certificate verification for self-signed certificates
     let client = Client::builder()
         .tls_info(true)
-        .cert_verification(false)
+        .tls_cert_verification(false)
         .build()?;
 
     // Use the API you're already familiar with
@@ -63,7 +63,7 @@ async fn main() -> wreq::Result<()> {
 
             // Create a client with self-signed certificate store
             let client = Client::builder()
-                .cert_store(self_signed_store)
+                .tls_cert_store(self_signed_store)
                 .connect_timeout(Duration::from_secs(10))
                 .build()?;
 
