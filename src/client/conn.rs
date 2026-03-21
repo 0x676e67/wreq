@@ -21,12 +21,7 @@ use std::{
 
 use ::http::{Extensions, HeaderMap, HeaderValue};
 use pin_project_lite::pin_project;
-#[cfg(unix)]
-use tokio::net::UnixStream;
-use tokio::{
-    io::{AsyncRead, AsyncWrite, ReadBuf},
-    net::TcpStream,
-};
+use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio_btls::SslStream;
 use tower::{
     BoxError,
@@ -42,12 +37,7 @@ pub(super) use self::{
     tcp::{SocketBindOptions, tokio::TokioTcpConnector},
     tls_info::TlsInfoFactory,
 };
-use crate::{
-    client::ConnectRequest,
-    dns::DynResolver,
-    proxy::matcher::Intercept,
-    tls::{MaybeHttpsStream, TlsInfo},
-};
+use crate::{client::ConnectRequest, dns::DynResolver, proxy::matcher::Intercept, tls::TlsInfo};
 
 /// HTTP connector with dynamic DNS resolver.
 pub type HttpConnector = self::http::HttpConnector<DynResolver, TokioTcpConnector>;
@@ -237,46 +227,12 @@ impl AsyncWrite for Conn {
     }
 }
 
-// ===== impl TcpStream =====
+// ===== impl TlsConn =====
 
-impl Connection for TlsConn<TcpStream> {
-    fn connected(&self) -> Connected {
-        let connected = self.stream.get_ref().connected();
-        if self.stream.ssl().selected_alpn_protocol() == Some(b"h2") {
-            connected.negotiated_h2()
-        } else {
-            connected
-        }
-    }
-}
-
-impl Connection for TlsConn<MaybeHttpsStream<TcpStream>> {
-    fn connected(&self) -> Connected {
-        let connected = self.stream.get_ref().connected();
-        if self.stream.ssl().selected_alpn_protocol() == Some(b"h2") {
-            connected.negotiated_h2()
-        } else {
-            connected
-        }
-    }
-}
-
-// ===== impl UnixStream =====
-
-#[cfg(unix)]
-impl Connection for TlsConn<UnixStream> {
-    fn connected(&self) -> Connected {
-        let connected = self.stream.get_ref().connected();
-        if self.stream.ssl().selected_alpn_protocol() == Some(b"h2") {
-            connected.negotiated_h2()
-        } else {
-            connected
-        }
-    }
-}
-
-#[cfg(unix)]
-impl Connection for TlsConn<MaybeHttpsStream<UnixStream>> {
+impl<T> Connection for TlsConn<T>
+where
+    T: Connection,
+{
     fn connected(&self) -> Connected {
         let connected = self.stream.get_ref().connected();
         if self.stream.ssl().selected_alpn_protocol() == Some(b"h2") {
