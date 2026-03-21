@@ -220,8 +220,8 @@ where
     }
 
     /// Sets the value of the TCP_USER_TIMEOUT option on the socket.
-    #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
     #[inline]
+    #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
     fn set_tcp_user_timeout(&mut self, time: Option<Duration>) {
         self.config_mut().tcp_user_timeout = time;
     }
