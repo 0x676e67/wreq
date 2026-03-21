@@ -62,14 +62,7 @@ pub struct HandshakeSettings {
 #[derive(Clone)]
 pub struct HttpsConnector<T> {
     http: T,
-    inner: Inner,
-}
-
-#[derive(Clone)]
-struct Inner {
-    ssl: SslConnector,
-    cache: Option<Arc<Mutex<SessionCache<ConnectIdentity>>>>,
-    settings: HandshakeSettings,
+    tls: TlsConnector,
 }
 
 /// A builder for creating a `TlsConnector`.
@@ -90,7 +83,9 @@ pub struct TlsConnectorBuilder {
 /// A layer which wraps services in an `SslConnector`.
 #[derive(Clone)]
 pub struct TlsConnector {
-    inner: Inner,
+    ssl: SslConnector,
+    cache: Option<Arc<Mutex<SessionCache<ConnectIdentity>>>>,
+    settings: HandshakeSettings,
 }
 
 // ===== impl HttpsConnector =====
@@ -104,24 +99,40 @@ where
 {
     /// Creates a new [`HttpsConnector`] with a given [`TlsConnector`].
     #[inline]
-    pub fn with_connector(http: S, connector: TlsConnector) -> HttpsConnector<S> {
-        HttpsConnector {
-            http,
-            inner: connector.inner,
-        }
+    pub fn new(http: S, tls: TlsConnector) -> HttpsConnector<S> {
+        HttpsConnector { http, tls }
     }
 
     /// Disables ALPN negotiation.
     #[inline]
     pub fn no_alpn(&mut self) -> &mut Self {
-        self.inner.settings.alpn_protocols = None;
+        self.tls.settings.alpn_protocols = None;
         self
     }
 }
 
-// ===== impl Inner =====
+// ===== impl TlsConnector =====
 
-impl Inner {
+impl TlsConnector {
+    /// Creates a new [`TlsConnectorBuilder`] with the given configuration.
+    pub fn builder() -> TlsConnectorBuilder {
+        const DEFAULT_SESSION_CACHE_CAPACITY: usize = 8;
+        TlsConnectorBuilder {
+            session_cache: Arc::new(Mutex::new(SessionCache::with_capacity(
+                DEFAULT_SESSION_CACHE_CAPACITY,
+            ))),
+            alpn_protocol: None,
+            min_version: None,
+            max_version: None,
+            identity: None,
+            tls_sni: true,
+            verify_hostname: true,
+            cert_store: None,
+            cert_verification: true,
+            keylog: None,
+        }
+    }
+
     fn setup_ssl(&self, uri: Uri) -> Result<Ssl, BoxError> {
         let cfg = self.ssl.configure()?;
         let host = uri.host().ok_or("URI missing host")?;
@@ -299,7 +310,12 @@ impl TlsConnectorBuilder {
     }
 
     /// Build the `TlsConnector` with the provided configuration.
-    pub fn build(&self, opts: &TlsOptions) -> crate::Result<TlsConnector> {
+    pub fn build<'a, T>(&self, opts: T) -> crate::Result<TlsConnector>
+    where
+        T: Into<Cow<'a, TlsOptions>>,
+    {
+        let opts = opts.into();
+
         // Replace the default configuration with the provided one
         let max_tls_version = opts.max_tls_version.or(self.max_version);
         let min_tls_version = opts.min_tls_version.or(self.min_version);
@@ -449,35 +465,10 @@ impl TlsConnectorBuilder {
         });
 
         Ok(TlsConnector {
-            inner: Inner {
-                ssl: connector.build(),
-                cache,
-                settings,
-            },
+            ssl: connector.build(),
+            cache,
+            settings,
         })
-    }
-}
-
-// ===== impl TlsConnector =====
-
-impl TlsConnector {
-    /// Creates a new `TlsConnectorBuilder` with the given configuration.
-    pub fn builder() -> TlsConnectorBuilder {
-        const DEFAULT_SESSION_CACHE_CAPACITY: usize = 8;
-        TlsConnectorBuilder {
-            session_cache: Arc::new(Mutex::new(SessionCache::with_capacity(
-                DEFAULT_SESSION_CACHE_CAPACITY,
-            ))),
-            alpn_protocol: None,
-            min_version: None,
-            max_version: None,
-            identity: None,
-            cert_store: None,
-            cert_verification: true,
-            tls_sni: true,
-            verify_hostname: true,
-            keylog: None,
-        }
     }
 }
 

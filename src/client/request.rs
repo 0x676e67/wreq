@@ -632,7 +632,7 @@ impl RequestBuilder {
         if let Ok(ref mut req) = self.request {
             req.config_mut::<RequestOptions>()
                 .get_or_insert_default()
-                .tcp_connect_opts_mut()
+                .socket_bind_options_mut()
                 .set_local_address(local_address.into());
         }
         self
@@ -647,7 +647,7 @@ impl RequestBuilder {
         if let Ok(ref mut req) = self.request {
             req.config_mut::<RequestOptions>()
                 .get_or_insert_default()
-                .tcp_connect_opts_mut()
+                .socket_bind_options_mut()
                 .set_local_addresses(ipv4, ipv6);
         }
         self
@@ -719,7 +719,7 @@ impl RequestBuilder {
         if let Ok(ref mut req) = self.request {
             req.config_mut::<RequestOptions>()
                 .get_or_insert_default()
-                .tcp_connect_opts_mut()
+                .socket_bind_options_mut()
                 .set_interface(interface);
         }
         self
@@ -735,7 +735,7 @@ impl RequestBuilder {
             let (transport_opts, default_headers, orig_headers) = emulation.into_parts();
             req.config_mut::<RequestOptions>()
                 .get_or_insert_default()
-                .transport_opts_mut()
+                .transport_options_mut()
                 .apply_transport_options(transport_opts);
             self = self.headers(default_headers).orig_headers(orig_headers);
         }

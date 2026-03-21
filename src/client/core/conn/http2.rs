@@ -4,6 +4,7 @@ use std::{
     future::Future,
     marker::PhantomData,
     pin::Pin,
+    sync::Arc,
     task::{Context, Poll, ready},
 };
 
@@ -20,7 +21,7 @@ use crate::client::core::{
         self,
         http2::{Http2Options, ping},
     },
-    rt::{ArcTimer, Time, Timer, bounds::Http2ClientConnExec},
+    rt::{Time, Timer, bounds::Http2ClientConnExec},
 };
 
 /// The sender side of an established connection.
@@ -189,7 +190,7 @@ where
     where
         M: Timer + Send + Sync + 'static,
     {
-        self.timer = Time::Timer(ArcTimer::new(timer));
+        self.timer = Time::Timer(Arc::new(timer));
     }
 
     /// Provide a options configuration for the HTTP/2 connection.

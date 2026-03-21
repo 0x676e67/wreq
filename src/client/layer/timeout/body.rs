@@ -7,10 +7,10 @@ use std::{
 
 use http_body::Body;
 use pin_project_lite::pin_project;
-use tokio::time::{Sleep, sleep};
 
 use crate::{
     Error,
+    client::core::rt::{Sleep, Time, Timer},
     error::{BoxError, TimedOut},
 };
 
@@ -46,7 +46,7 @@ pin_project! {
     pub struct TotalTimeoutBody<B> {
         #[pin]
         body: B,
-        timeout: Pin<Box<Sleep>>,
+        timeout: Pin<Box<dyn Sleep>>,
     }
 }
 
@@ -58,17 +58,23 @@ pin_project! {
     pub struct ReadTimeoutBody<B> {
         timeout: Duration,
         #[pin]
-        sleep: Option<Sleep>,
+        sleep: Option<Pin<Box<dyn Sleep>>>,
         #[pin]
         body: B,
+        timer: Time,
     }
 }
 
 /// ==== impl TimeoutBody ====
 impl<B> TimeoutBody<B> {
     /// Creates a new [`TimeoutBody`] with no timeout.
-    pub fn new(deadline: Option<Duration>, read_timeout: Option<Duration>, body: B) -> Self {
-        let deadline = deadline.map(sleep).map(Box::pin);
+    pub fn new(
+        timer: Time,
+        deadline: Option<Duration>,
+        read_timeout: Option<Duration>,
+        body: B,
+    ) -> Self {
+        let deadline = deadline.map(|deadline| timer.sleep(deadline));
         match (deadline, read_timeout) {
             (Some(total_timeout), Some(read_timeout)) => TimeoutBody::CombinedTimeout {
                 body: TotalTimeoutBody {
@@ -77,6 +83,7 @@ impl<B> TimeoutBody<B> {
                         timeout: read_timeout,
                         sleep: None,
                         body,
+                        timer,
                     },
                 },
             },
@@ -88,6 +95,7 @@ impl<B> TimeoutBody<B> {
                     timeout,
                     sleep: None,
                     body,
+                    timer,
                 },
             },
             (None, None) => TimeoutBody::Plain { body },
@@ -199,7 +207,7 @@ where
 
         // Error if the timeout has expired.
         if this.sleep.is_none() {
-            this.sleep.set(Some(sleep(*this.timeout)));
+            this.sleep.set(Some(this.timer.sleep(*this.timeout)));
         }
 
         // Error if the timeout has expired.

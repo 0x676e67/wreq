@@ -15,7 +15,16 @@ type ConnectResult = io::Result<UnixStream>;
 type BoxConnecting = Pin<Box<dyn Future<Output = ConnectResult> + Send>>;
 
 #[derive(Clone)]
-pub struct UnixConnector(pub(crate) Arc<Path>);
+pub struct UnixConnector {
+    path: Arc<Path>,
+}
+
+impl UnixConnector {
+    /// Create a new [`UnixConnector`].
+    pub fn new(path: impl Into<Arc<Path>>) -> Self {
+        Self { path: path.into() }
+    }
+}
 
 impl tower::Service<Uri> for UnixConnector {
     type Response = UnixStream;
@@ -28,7 +37,7 @@ impl tower::Service<Uri> for UnixConnector {
     }
 
     fn call(&mut self, _: Uri) -> Self::Future {
-        let fut = UnixStream::connect(self.0.clone());
+        let fut = UnixStream::connect(self.path.clone());
         Box::pin(async move {
             let io = fut.await?;
             Ok::<_, io::Error>(io)

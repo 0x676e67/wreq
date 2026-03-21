@@ -12,7 +12,7 @@ mod timer;
 mod tokio;
 
 pub use self::{
-    timer::{ArcTimer, Sleep, Time, Timer},
+    timer::{Sleep, Time, Timer},
     tokio::{TokioExecutor, TokioTimer},
 };
 
