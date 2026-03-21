@@ -23,12 +23,11 @@ use btls::{
 use http::Uri;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio_btls::SslStream;
-use tower::Service;
+use tower::{BoxError, Service};
 
 use crate::{
     Error,
     client::{ConnectRequest, Connected, Connection},
-    error::BoxError,
     tls::{
         AlpnProtocol, AlpsProtocol, CertStore, Identity, KeyLog, KeyShare, TlsOptions, TlsVersion,
         conn::ext::SslConnectorBuilderExt,

@@ -6,9 +6,12 @@ mod scope;
 use std::{error::Error as StdError, future::Ready, sync::Arc, time::Duration};
 
 use http::{Request, Response};
-use tower::retry::{
-    Policy,
-    budget::{Budget, TpsBudget},
+use tower::{
+    BoxError,
+    retry::{
+        Policy,
+        budget::{Budget, TpsBudget},
+    },
 };
 
 pub(crate) use self::{
@@ -16,7 +19,7 @@ pub(crate) use self::{
     scope::{ScopeFn, Scoped},
 };
 use super::super::core::body::Incoming;
-use crate::{Body, error::BoxError, retry};
+use crate::{Body, retry};
 
 /// A retry policy for HTTP requests.
 #[derive(Clone)]

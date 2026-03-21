@@ -9,9 +9,7 @@ use std::{
     task::{Context, Poll},
 };
 
-use tower::Service;
-
-use crate::error::BoxError;
+use tower::{BoxError, Service};
 
 /// A domain name to resolve into IP addresses.
 #[derive(Clone, Hash, Eq, PartialEq)]

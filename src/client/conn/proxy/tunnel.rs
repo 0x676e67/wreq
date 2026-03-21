@@ -7,10 +7,10 @@ use std::{
 
 use http::{HeaderMap, HeaderValue, Uri};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
-use tower::Service;
+use tower::{BoxError, Service};
 
 use super::Tunneling;
-use crate::{error::BoxError, ext::UriExt};
+use crate::ext::UriExt;
 
 /// Tunnel Proxy via HTTP CONNECT
 ///

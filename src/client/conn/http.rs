@@ -1,5 +1,4 @@
 use std::{
-    error::Error as StdError,
     future::Future,
     marker::PhantomData,
     net::{Ipv4Addr, Ipv6Addr, SocketAddr},
@@ -12,7 +11,7 @@ use std::{
 use http::uri::{Scheme, Uri};
 use pin_project_lite::pin_project;
 use tokio::io::{AsyncRead, AsyncWrite};
-use tower::Service;
+use tower::{BoxError, Service};
 
 use super::{
     Connection,
@@ -38,7 +37,7 @@ type BoxConnecting<S> = Pin<Box<dyn Future<Output = ConnectResult<S>> + Send>>;
 pub trait HttpTransport: Service<Uri> + Clone + Send + Sized + 'static
 where
     Self::Response: AsyncRead + AsyncWrite + Connection + Unpin + Send + 'static,
-    Self::Error: Into<Box<dyn StdError + Send + Sync>>,
+    Self::Error: Into<BoxError>,
     Self::Future: Unpin + Send + 'static,
 {
     /// Set that all sockets have `SO_KEEPALIVE` set with the supplied duration

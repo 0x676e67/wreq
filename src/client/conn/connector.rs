@@ -9,7 +9,7 @@ use std::{
 
 use tokio_btls::SslStream;
 use tower::{
-    Service, ServiceBuilder, ServiceExt,
+    BoxError, Service, ServiceBuilder, ServiceExt,
     timeout::TimeoutLayer,
     util::{BoxCloneSyncService, MapRequestLayer},
 };
@@ -26,7 +26,7 @@ use crate::{
         http::{ConnectExtra, ConnectRequest},
     },
     dns::DynResolver,
-    error::{BoxError, ProxyConnect, TimedOut, map_timeout_to_connector_error},
+    error::{ProxyConnect, TimedOut, map_timeout_to_connector_error},
     ext::UriExt,
     proxy::{Intercepted, Matcher as ProxyMatcher, matcher::Intercept},
     tls::{
@@ -383,7 +383,7 @@ impl ConnectorService {
                         // Connect to the proxy and establish the SOCKS connection.
                         let conn = {
                             // Build a SOCKS connector.
-                            let mut socks = SocksConnector::new_with_resolver(
+                            let mut socks = SocksConnector::new(
                                 proxy_uri,
                                 self.http.clone(),
                                 self.resolver.clone(),

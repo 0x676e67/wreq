@@ -13,11 +13,14 @@ use http::{
 };
 use http_body::Body;
 use pin_project_lite::pin_project;
-use tower::{Service, util::Oneshot};
+use tower::{BoxError, Service, util::Oneshot};
 use url::Url;
 
-use super::{Action, Attempt, BodyRepr, Policy};
-use crate::{Error, error::BoxError, ext::RequestUri, into_uri::IntoUriSealed};
+use super::{
+    BodyRepr,
+    policy::{Action, Attempt, Policy},
+};
+use crate::{Error, ext::RequestUri, into_uri::IntoUriSealed};
 
 /// Pending future state for handling redirects.
 pub struct Pending<ReqBody, Response> {

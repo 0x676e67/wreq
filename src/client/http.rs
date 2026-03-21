@@ -14,7 +14,7 @@ use std::{
 
 use http::header::{HeaderMap, HeaderValue, USER_AGENT};
 use tower::{
-    Layer, Service, ServiceBuilder, ServiceExt,
+    BoxError, Layer, Service, ServiceBuilder, ServiceExt,
     retry::{Retry, RetryLayer},
     util::{BoxCloneSyncService, BoxCloneSyncServiceLayer, Either, MapErr, Oneshot},
 };
@@ -62,7 +62,7 @@ use crate::dns::hickory::HickoryDnsResolver;
 use crate::{
     IntoUri, Method, Proxy,
     dns::{DnsResolverWithOverrides, DynResolver, GaiResolver, IntoResolve, Resolve},
-    error::{self, BoxError, Error},
+    error::{self, Error},
     header::OrigHeaderMap,
     http1::Http1Options,
     http2::Http2Options,

@@ -10,14 +10,13 @@ use std::{
 };
 
 use http::{Request, Response};
-use tower::{Layer, Service};
+use tower::{BoxError, Layer, Service};
 
 pub use self::body::TimeoutBody;
 use self::future::{ResponseBodyTimeoutFuture, ResponseFuture};
 use crate::{
     client::core::rt::{Time, Timer},
     config::RequestConfig,
-    error::BoxError,
 };
 
 /// Options for configuring timeouts.

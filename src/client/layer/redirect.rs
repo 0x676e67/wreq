@@ -11,11 +11,10 @@ use std::{
 use futures_util::future::Either;
 use http::{Request, Response};
 use http_body::Body;
-use tower::{Layer, Service};
+use tower::{BoxError, Layer, Service};
 
 use self::future::ResponseFuture;
 pub use self::policy::{Action, Attempt, Policy};
-use crate::error::BoxError;
 
 enum BodyRepr<B> {
     Some(B),

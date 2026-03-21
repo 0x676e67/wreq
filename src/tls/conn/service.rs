@@ -8,12 +8,11 @@ use std::{
 use http::{Uri, uri::Scheme};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_btls::SslStream;
-use tower::Service;
+use tower::{BoxError, Service};
 
 use super::{EstablishedConn, HttpsConnector, MaybeHttpsStream};
 use crate::{
     client::{ConnectRequest, Connection},
-    error::BoxError,
     ext::UriExt,
 };
 

@@ -24,7 +24,7 @@ use http::{
 use http_body::Body;
 use pool::Ver;
 use tokio::io::{AsyncRead, AsyncWrite};
-use tower::util::Oneshot;
+use tower::{BoxError, util::Oneshot};
 
 use self::{
     error::{ClientConnectError, Error, ErrorKind, TrySendError},
@@ -46,7 +46,6 @@ use crate::{
         layer::config::RequestOptions,
     },
     config::RequestConfig,
-    error::BoxError,
     hash::HashMemo,
     tls::AlpnProtocol,
 };

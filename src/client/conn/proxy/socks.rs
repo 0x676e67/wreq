@@ -102,15 +102,8 @@ impl<C, R> SocksConnector<C, R>
 where
     R: InternalResolve + Clone,
 {
-    /// Create a new SOCKS connector with the given inner service.
-    ///
-    /// This wraps an underlying connector, and stores the address of a
-    /// SOCKS proxy server.
-    ///
-    /// A `SocksConnector` can then be called with any destination. The `proxy_dst` passed to
-    /// `call` will not be used to create the underlying connection, but will
-    /// be used in a SOCKS handshake sent to the proxy destination.
-    pub fn new_with_resolver(proxy_dst: Uri, inner: C, resolver: R) -> Self {
+    /// Create a new [`SocksConnector`].
+    pub fn new(proxy_dst: Uri, inner: C, resolver: R) -> Self {
         SocksConnector {
             inner,
             resolver,

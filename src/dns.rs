@@ -20,10 +20,9 @@ mod sealed {
         task::{self, Poll},
     };
 
-    use tower::Service;
+    use tower::{BoxError, Service};
 
     use super::Name;
-    use crate::error::BoxError;
 
     /// Internal adapter trait for DNS resolvers.
     ///
