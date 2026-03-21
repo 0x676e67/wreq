@@ -272,9 +272,10 @@
 mod trace;
 #[macro_use]
 mod config;
+#[macro_use]
+mod ext;
 mod client;
 mod error;
-mod ext;
 mod hash;
 mod into_uri;
 mod proxy;

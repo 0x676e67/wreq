@@ -560,7 +560,7 @@ impl RequestBuilder {
     {
         if let Ok(ref mut req) = self.request {
             req.config_mut::<Arc<dyn CookieStore>>()
-                .replace(cookie_store.into_cookie_store());
+                .replace(cookie_store.into_shared());
         }
         self
     }

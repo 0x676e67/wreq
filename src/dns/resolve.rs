@@ -74,45 +74,13 @@ pub trait Resolve: Send + Sync {
     fn resolve(&self, name: Name) -> Resolving;
 }
 
-/// Trait for converting types into a shared DNS resolver ([`Arc<dyn Resolve>`]).
-///
-/// Implemented for any [`Resolve`] type, [`Arc<T>`] where `T: Resolve`, and [`Arc<dyn Resolve>`].
-/// Enables ergonomic conversion to a trait object for use in APIs without manual Arc wrapping.
-pub trait IntoResolve {
-    /// Converts the implementor into an [`Arc<dyn Resolve>`].
+impl_into_shared!(
+    /// Trait for converting types into a shared DNS resolver ([`Arc<dyn Resolve>`]).
     ///
-    /// This method enables ergonomic conversion of concrete resolvers, [`Arc<T>`], or
-    /// existing [`Arc<dyn Resolve>`] into a trait object suitable for APIs that expect
-    /// a shared DNS resolver.
-    fn into_resolve(self) -> Arc<dyn Resolve>;
-}
-
-impl IntoResolve for Arc<dyn Resolve> {
-    #[inline]
-    fn into_resolve(self) -> Arc<dyn Resolve> {
-        self
-    }
-}
-
-impl<R> IntoResolve for Arc<R>
-where
-    R: Resolve + 'static,
-{
-    #[inline]
-    fn into_resolve(self) -> Arc<dyn Resolve> {
-        self
-    }
-}
-
-impl<R> IntoResolve for R
-where
-    R: Resolve + 'static,
-{
-    #[inline]
-    fn into_resolve(self) -> Arc<dyn Resolve> {
-        Arc::new(self)
-    }
-}
+    /// Implemented for any [`Resolve`] type, [`Arc<T>`] where `T: Resolve`, and [`Arc<dyn Resolve>`].
+    /// Enables ergonomic conversion to a trait object for use in APIs without manual Arc wrapping.
+    pub trait IntoResolve => Resolve
+);
 
 /// Adapter that wraps a [`Resolve`] trait object to work with Tower's `Service` trait.
 ///

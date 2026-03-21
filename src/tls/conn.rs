@@ -2,7 +2,6 @@
 
 #[macro_use]
 mod macros;
-mod cache;
 mod cert_compression;
 mod ext;
 mod service;
@@ -21,7 +20,6 @@ use btls::{
     ex_data::Index,
     ssl::{Ssl, SslConnector, SslMethod, SslOptions, SslSessionCacheMode},
 };
-use cache::{SessionCache, SessionKey};
 use http::Uri;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio_btls::SslStream;
@@ -29,17 +27,17 @@ use tower::Service;
 
 use crate::{
     Error,
-    client::{ConnectIdentity, ConnectRequest, Connected, Connection},
+    client::{ConnectRequest, Connected, Connection},
     error::BoxError,
-    sync::Mutex,
     tls::{
         AlpnProtocol, AlpsProtocol, CertStore, Identity, KeyLog, KeyShare, TlsOptions, TlsVersion,
         conn::ext::SslConnectorBuilderExt,
+        session::{LruSessionStore, TlsSession, TlsSessionKey, TlsSessionStore},
     },
 };
 
-fn key_index() -> Result<Index<Ssl, SessionKey<ConnectIdentity>>, ErrorStack> {
-    static IDX: LazyLock<Result<Index<Ssl, SessionKey<ConnectIdentity>>, ErrorStack>> =
+fn key_index() -> Result<Index<Ssl, TlsSessionKey>, ErrorStack> {
+    static IDX: LazyLock<Result<Index<Ssl, TlsSessionKey>, ErrorStack>> =
         LazyLock::new(Ssl::new_ex_index);
     IDX.clone()
 }
@@ -66,9 +64,7 @@ pub struct HttpsConnector<T> {
 }
 
 /// A builder for creating a `TlsConnector`.
-#[derive(Clone)]
 pub struct TlsConnectorBuilder {
-    session_cache: Arc<Mutex<SessionCache<ConnectIdentity>>>,
     alpn_protocol: Option<AlpnProtocol>,
     max_version: Option<TlsVersion>,
     min_version: Option<TlsVersion>,
@@ -78,13 +74,14 @@ pub struct TlsConnectorBuilder {
     cert_store: Option<CertStore>,
     cert_verification: bool,
     keylog: Option<KeyLog>,
+    session_cache: Arc<dyn TlsSessionStore>,
 }
 
 /// A layer which wraps services in an `SslConnector`.
 #[derive(Clone)]
 pub struct TlsConnector {
     ssl: SslConnector,
-    cache: Option<Arc<Mutex<SessionCache<ConnectIdentity>>>>,
+    cache: Option<Arc<dyn TlsSessionStore>>,
     settings: HandshakeSettings,
 }
 
@@ -116,11 +113,7 @@ where
 impl TlsConnector {
     /// Creates a new [`TlsConnectorBuilder`] with the given configuration.
     pub fn builder() -> TlsConnectorBuilder {
-        const DEFAULT_SESSION_CACHE_CAPACITY: usize = 8;
         TlsConnectorBuilder {
-            session_cache: Arc::new(Mutex::new(SessionCache::with_capacity(
-                DEFAULT_SESSION_CACHE_CAPACITY,
-            ))),
             alpn_protocol: None,
             min_version: None,
             max_version: None,
@@ -130,6 +123,7 @@ impl TlsConnector {
             cert_store: None,
             cert_verification: true,
             keylog: None,
+            session_cache: Arc::new(LruSessionStore::new(8)),
         }
     }
 
@@ -193,13 +187,13 @@ impl TlsConnector {
         let host = Self::normalize_host(host);
 
         if let Some(ref cache) = self.cache {
-            let key = SessionKey(req.identity());
+            let key = TlsSessionKey(req.identity());
 
             // If the session cache is enabled, we try to retrieve the session
             // associated with the key. If it exists, we set it in the SSL configuration.
-            if let Some(session) = cache.lock().get(&key) {
+            if let Some(session) = cache.get(&key) {
                 #[allow(unsafe_code)]
-                unsafe { cfg.set_session(&session) }?;
+                unsafe { cfg.set_session(&session.0) }?;
 
                 if self.settings.no_ticket {
                     cfg.set_options(SslOptions::NO_TICKET);
@@ -306,6 +300,18 @@ impl TlsConnectorBuilder {
     #[inline]
     pub fn verify_hostname(mut self, enabled: bool) -> Self {
         self.verify_hostname = enabled;
+        self
+    }
+
+    /// Sets a custom TLS session store.
+    ///
+    /// By default, a [`LruSessionStore`] is used. Use this method to provide
+    /// a custom [`TlsSessionStore`] implementation (e.g., file-based or distributed).
+    #[inline]
+    pub fn session_store(mut self, store: Option<Arc<dyn TlsSessionStore>>) -> Self {
+        if let Some(store) = store {
+            self.session_cache = store;
+        }
         self
     }
 
@@ -449,19 +455,19 @@ impl TlsConnectorBuilder {
 
         // If the session cache is disabled, we don't need to set up any callbacks.
         let cache = opts.pre_shared_key.then(|| {
-            let cache = self.session_cache.clone();
+            let session_cache = self.session_cache.clone();
 
             connector.set_session_cache_mode(SslSessionCacheMode::CLIENT);
             connector.set_new_session_callback({
-                let cache = cache.clone();
+                let cache = session_cache.clone();
                 move |ssl, session| {
                     if let Ok(Some(key)) = key_index().map(|idx| ssl.ex_data(idx)) {
-                        cache.lock().insert(key.clone(), session);
+                        cache.insert(key.clone(), TlsSession(session));
                     }
                 }
             });
 
-            cache
+            session_cache
         });
 
         Ok(TlsConnector {

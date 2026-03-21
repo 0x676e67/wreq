@@ -69,7 +69,10 @@ use crate::{
     proxy::Matcher as ProxyMatcher,
     redirect::{self, FollowRedirectPolicy},
     retry,
-    tls::{AlpnProtocol, CertStore, Identity, KeyLog, TlsOptions, TlsVersion},
+    tls::{
+        AlpnProtocol, CertStore, Identity, IntoTlsSessionStore, KeyLog, TlsOptions,
+        TlsSessionStore, TlsVersion,
+    },
 };
 
 /// Service type for cookie handling. Identity type when cookies feature is disabled.
@@ -224,15 +227,16 @@ struct Config {
     https_only: bool,
     layers: Vec<BoxedClientLayer>,
     connector_layers: Vec<BoxedConnectorLayer>,
-    keylog: Option<KeyLog>,
+    tls_keylog: Option<KeyLog>,
     tls_info: bool,
     tls_sni: bool,
-    verify_hostname: bool,
-    identity: Option<Identity>,
-    cert_store: CertStore,
-    cert_verification: bool,
-    min_tls_version: Option<TlsVersion>,
-    max_tls_version: Option<TlsVersion>,
+    tls_verify_hostname: bool,
+    tls_identity: Option<Identity>,
+    tls_cert_store: CertStore,
+    tls_cert_verification: bool,
+    tls_min_version: Option<TlsVersion>,
+    tls_max_version: Option<TlsVersion>,
+    tls_session_store: Option<Arc<dyn TlsSessionStore>>,
     transport_options: TransportOptions,
 }
 
@@ -305,15 +309,16 @@ impl Client {
                 https_only: false,
                 layers: Vec::new(),
                 connector_layers: Vec::new(),
-                keylog: None,
+                tls_keylog: None,
                 tls_info: false,
                 tls_sni: true,
-                verify_hostname: true,
-                identity: None,
-                cert_store: CertStore::default(),
-                cert_verification: true,
-                min_tls_version: None,
-                max_tls_version: None,
+                tls_verify_hostname: true,
+                tls_identity: None,
+                tls_cert_store: CertStore::default(),
+                tls_cert_verification: true,
+                tls_min_version: None,
+                tls_max_version: None,
+                tls_session_store: None,
                 transport_options: TransportOptions::default(),
             },
         }
@@ -520,14 +525,15 @@ impl ClientBuilder {
                         HttpVersionPref::Http2 => Some(AlpnProtocol::HTTP2),
                         _ => None,
                     })
-                    .keylog(config.keylog)
-                    .cert_store(config.cert_store)
-                    .identity(config.identity)
-                    .max_version(config.max_tls_version)
-                    .min_version(config.min_tls_version)
+                    .keylog(config.tls_keylog)
+                    .cert_store(config.tls_cert_store)
+                    .identity(config.tls_identity)
+                    .max_version(config.tls_max_version)
+                    .min_version(config.tls_min_version)
                     .tls_sni(config.tls_sni)
-                    .verify_hostname(config.verify_hostname)
-                    .cert_verification(config.cert_verification)
+                    .verify_hostname(config.tls_verify_hostname)
+                    .cert_verification(config.tls_cert_verification)
+                    .session_store(config.tls_session_store)
                 })
                 .with_http(|http| {
                     http.enforce_http(false);
@@ -766,11 +772,8 @@ impl ClientBuilder {
     #[inline]
     #[cfg(feature = "cookies")]
     #[cfg_attr(docsrs, doc(cfg(feature = "cookies")))]
-    pub fn cookie_provider<C>(mut self, cookie_store: C) -> ClientBuilder
-    where
-        C: cookie::IntoCookieStore,
-    {
-        self.config.cookie_store = Some(cookie_store.into_cookie_store());
+    pub fn cookie_provider<C: cookie::IntoCookieStore>(mut self, cookie_store: C) -> ClientBuilder {
+        self.config.cookie_store = Some(cookie_store.into_shared());
         self
     }
 
@@ -1370,8 +1373,8 @@ impl ClientBuilder {
 
     /// Sets the identity to be used for client certificate authentication.
     #[inline]
-    pub fn identity(mut self, identity: Identity) -> ClientBuilder {
-        self.config.identity = Some(identity);
+    pub fn tls_identity(mut self, identity: Identity) -> ClientBuilder {
+        self.config.tls_identity = Some(identity);
         self
     }
 
@@ -1380,8 +1383,8 @@ impl ClientBuilder {
     /// This method allows you to specify a custom verify certificate store to be used
     /// for TLS connections. By default, the system's verify certificate store is used.
     #[inline]
-    pub fn cert_store(mut self, store: CertStore) -> ClientBuilder {
-        self.config.cert_store = store;
+    pub fn tls_cert_store(mut self, store: CertStore) -> ClientBuilder {
+        self.config.tls_cert_store = store;
         self
     }
 
@@ -1397,8 +1400,8 @@ impl ClientBuilder {
     /// introduces significant vulnerabilities, and should only be used
     /// as a last resort.
     #[inline]
-    pub fn cert_verification(mut self, cert_verification: bool) -> ClientBuilder {
-        self.config.cert_verification = cert_verification;
+    pub fn tls_cert_verification(mut self, cert_verification: bool) -> ClientBuilder {
+        self.config.tls_cert_verification = cert_verification;
         self
     }
 
@@ -1411,8 +1414,8 @@ impl ClientBuilder {
     /// used, *any* valid certificate for *any* site will be trusted for use from any other. This
     /// introduces a significant vulnerability to man-in-the-middle attacks.
     #[inline]
-    pub fn verify_hostname(mut self, verify_hostname: bool) -> ClientBuilder {
-        self.config.verify_hostname = verify_hostname;
+    pub fn tls_verify_hostname(mut self, verify_hostname: bool) -> ClientBuilder {
+        self.config.tls_verify_hostname = verify_hostname;
         self
     }
 
@@ -1427,8 +1430,8 @@ impl ClientBuilder {
 
     /// Configures TLS key logging for the client.
     #[inline]
-    pub fn keylog(mut self, keylog: KeyLog) -> ClientBuilder {
-        self.config.keylog = Some(keylog);
+    pub fn tls_keylog(mut self, keylog: KeyLog) -> ClientBuilder {
+        self.config.tls_keylog = Some(keylog);
         self
     }
 
@@ -1436,8 +1439,8 @@ impl ClientBuilder {
     ///
     /// By default the TLS backend's own default is used.
     #[inline]
-    pub fn min_tls_version(mut self, version: TlsVersion) -> ClientBuilder {
-        self.config.min_tls_version = Some(version);
+    pub fn tls_min_version(mut self, version: TlsVersion) -> ClientBuilder {
+        self.config.tls_min_version = Some(version);
         self
     }
 
@@ -1445,8 +1448,8 @@ impl ClientBuilder {
     ///
     /// By default there's no maximum.
     #[inline]
-    pub fn max_tls_version(mut self, version: TlsVersion) -> ClientBuilder {
-        self.config.max_tls_version = Some(version);
+    pub fn tls_max_version(mut self, version: TlsVersion) -> ClientBuilder {
+        self.config.tls_max_version = Some(version);
         self
     }
 
@@ -1461,10 +1464,23 @@ impl ClientBuilder {
         self
     }
 
+    /// Sets the TLS session store.
+    ///
+    /// By default, an in-memory LRU cache is used. Use this method to provide
+    /// a custom [`TlsSessionStore`] implementation (e.g., file-based or distributed).
+    #[inline]
+    pub fn tls_session_store<S: IntoTlsSessionStore>(mut self, store: S) -> ClientBuilder {
+        self.config.tls_session_store = Some(store.into_shared());
+        self
+    }
+
     /// Sets the TLS options for the client.
     #[inline]
     pub fn tls_options(mut self, options: TlsOptions) -> ClientBuilder {
-        *self.config.transport_options.tls_options_mut() = Some(options);
+        self.config
+            .transport_options
+            .tls_options_mut()
+            .replace(options);
         self
     }
 
@@ -1529,7 +1545,7 @@ impl ClientBuilder {
     where
         R: IntoResolve,
     {
-        self.config.dns_resolver = Some(resolver.into_resolve());
+        self.config.dns_resolver = Some(resolver.into_shared());
         self
     }
 
