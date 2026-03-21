@@ -31,7 +31,7 @@ use crate::{
     client::core::{
         self,
         error::{Error, Kind},
-        rt::{Sleep, Time},
+        rt::{Sleep, Time, Timer},
     },
     sync::Mutex,
 };

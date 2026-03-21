@@ -82,9 +82,12 @@ impl TokioTimer {
     }
 }
 
+// ===== impl TokioSleep =====
+
 impl Future for TokioSleep {
     type Output = ();
 
+    #[inline]
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         self.project().inner.poll(cx)
     }
@@ -93,6 +96,7 @@ impl Future for TokioSleep {
 impl Sleep for TokioSleep {}
 
 impl TokioSleep {
+    #[inline]
     fn reset(self: Pin<&mut Self>, deadline: Instant) {
         self.project().inner.as_mut().reset(deadline.into());
     }
