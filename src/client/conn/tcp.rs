@@ -318,6 +318,10 @@ where
         }
     }
 
+    if let Err(_e) = socket.set_tcp_nodelay(config.nodelay) {
+        warn!("tcp set_tcp_nodelay error: {_e}");
+    }
+
     let connect = connector.connect(socket.into(), *addr);
     let sleep = connect_timeout.map(|dur| connector.sleep(dur));
 
