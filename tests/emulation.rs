@@ -1,5 +1,10 @@
-use std::time::Duration;
+use std::{
+    io::{self, Write},
+    time::Duration,
+};
 
+use brotli::{CompressorWriter as BrotliDecoder, Decompressor as BrotliEncoder};
+use flate2::{Compression, read::ZlibDecoder, write::ZlibEncoder};
 use wreq::{
     Client, Emulation,
     http1::Http1Options,
@@ -7,10 +12,76 @@ use wreq::{
         Http2Options, PseudoId, PseudoOrder, SettingId, SettingsOrder, StreamDependency, StreamId,
     },
     tls::{
-        AlpnProtocol, CertificateCompressionAlgorithm, ExtensionType, KeyShare, TlsOptions,
-        TlsVersion,
+        AlpnProtocol, CertificateCompressionAlgorithm, CertificateCompressor, ExtensionType,
+        KeyShare, TlsOptions, TlsVersion,
     },
 };
+use zstd::stream::{Decoder as ZstdDecoder, Encoder as ZstdEncoder};
+
+#[derive(Debug)]
+struct BrotliCompressor;
+
+#[derive(Debug)]
+struct ZlibCompressor;
+
+#[derive(Debug)]
+struct ZstdCompressor;
+
+impl CertificateCompressor for BrotliCompressor {
+    fn compress(&self, input: &[u8], output: &mut dyn std::io::Write) -> std::io::Result<()> {
+        let mut writer = BrotliDecoder::new(output, input.len(), 11, 22);
+        writer.write_all(input)?;
+        writer.flush()
+    }
+
+    fn decompress(&self, input: &[u8], output: &mut dyn std::io::Write) -> std::io::Result<()> {
+        let mut reader = BrotliEncoder::new(input, 4096);
+        io::copy(&mut reader, output)?;
+        Ok(())
+    }
+
+    fn algorithm(&self) -> CertificateCompressionAlgorithm {
+        CertificateCompressionAlgorithm::BROTLI
+    }
+}
+
+impl CertificateCompressor for ZlibCompressor {
+    fn compress(&self, input: &[u8], output: &mut dyn std::io::Write) -> std::io::Result<()> {
+        let mut encoder = ZlibEncoder::new(output, Compression::default());
+        encoder.write_all(input)?;
+        encoder.finish()?;
+        Ok(())
+    }
+
+    fn decompress(&self, input: &[u8], output: &mut dyn std::io::Write) -> std::io::Result<()> {
+        let mut reader = ZlibDecoder::new(input);
+        io::copy(&mut reader, output)?;
+        Ok(())
+    }
+
+    fn algorithm(&self) -> CertificateCompressionAlgorithm {
+        CertificateCompressionAlgorithm::ZLIB
+    }
+}
+
+impl CertificateCompressor for ZstdCompressor {
+    fn compress(&self, input: &[u8], output: &mut dyn std::io::Write) -> std::io::Result<()> {
+        let mut encoder = ZstdEncoder::new(output, 0)?;
+        encoder.write_all(input)?;
+        encoder.finish()?;
+        Ok(())
+    }
+
+    fn decompress(&self, input: &[u8], output: &mut dyn std::io::Write) -> std::io::Result<()> {
+        let mut reader = ZstdDecoder::new(input)?;
+        io::copy(&mut reader, output)?;
+        Ok(())
+    }
+
+    fn algorithm(&self) -> CertificateCompressionAlgorithm {
+        CertificateCompressionAlgorithm::ZSTD
+    }
+}
 
 macro_rules! join {
     ($sep:expr, $first:expr $(, $rest:expr)*) => {
@@ -72,10 +143,10 @@ fn tls_options_template() -> TlsOptions {
             "ecdsa_secp521r1_sha512",
             "ecdsa_sha1"
         ))
-        .certificate_compression_algorithms(&[
-            CertificateCompressionAlgorithm::ZLIB,
-            CertificateCompressionAlgorithm::BROTLI,
-            CertificateCompressionAlgorithm::ZSTD,
+        .certificate_compressors(vec![
+            &BrotliCompressor as _,
+            &ZlibCompressor as _,
+            &ZstdCompressor as _,
         ])
         .alpn_protocols([AlpnProtocol::HTTP2, AlpnProtocol::HTTP1])
         .record_size_limit(0x4001)
@@ -160,7 +231,7 @@ fn emulation_template() -> Emulation {
         .max_headers(100)
         .build();
 
-    // This provider encapsulates TLS, HTTP/1, HTTP/2, default headers, and original headers
+    // This provider encapsulates TLS, HTTP/1, HTTP/2
     Emulation::builder()
         .tls_options(tls_options_template())
         .http1_options(http1)
