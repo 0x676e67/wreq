@@ -7,7 +7,7 @@ use crate::{
         conn::cert_compression::{
             BrotliCertificateCompressor, ZlibCertificateCompressor, ZstdCertificateCompressor,
         },
-        x509::CertStore,
+        trust::CertStore,
     },
 };
 

@@ -7,7 +7,7 @@ use btls::{
 
 use super::{
     Certificate, CertificateInput,
-    parser::{filter_map_certs, parse_certs, parse_certs_with_stack, process_certs},
+    parse::{filter_map_certs, parse_certs, parse_certs_with_stack, process_certs},
 };
 use crate::{Error, Result};
 

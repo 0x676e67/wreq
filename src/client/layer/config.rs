@@ -1,20 +1,42 @@
-mod options;
-
 use std::{
     sync::Arc,
     task::{Context, Poll},
 };
 
 use futures_util::future::{self, Either, Ready};
-use http::{HeaderMap, Request, Response};
+use http::{HeaderMap, Request, Response, Version};
 use tower::{Layer, Service};
 
-pub use self::options::{RequestOptions, TransportOptions};
-use crate::{Error, config::RequestConfig, ext::UriExt, header::OrigHeaderMap};
+use crate::{
+    Error,
+    client::{
+        conn::{SocketBindOptions, group::ConnectionGroup},
+        core::{http1::Http1Options, http2::Http2Options},
+    },
+    config::RequestConfig,
+    ext::UriExt,
+    header::OrigHeaderMap,
+    proxy::Matcher,
+    tls::TlsOptions,
+};
 
 /// A marker type for the default headers configuration value.
 #[derive(Clone, Copy)]
 pub(crate) struct DefaultHeaders;
+
+/// Per-request configuration for proxy, protocol, and transport options.
+/// Overrides client defaults for a single request.
+#[derive(Debug, Default, Clone)]
+#[non_exhaustive]
+pub(crate) struct RequestOptions {
+    pub group: ConnectionGroup,
+    pub proxy: Option<Matcher>,
+    pub version: Option<Version>,
+    pub tls_options: Option<TlsOptions>,
+    pub http1_options: Option<Http1Options>,
+    pub http2_options: Option<Http2Options>,
+    pub socket_bind_options: SocketBindOptions,
+}
 
 /// Configuration for the [`ConfigService`].
 struct Config {
@@ -39,6 +61,10 @@ pub struct ConfigService<S> {
 // ===== impl DefaultHeaders =====
 
 impl_request_config_value!(DefaultHeaders, bool);
+
+// ===== impl RequestOptions =====
+
+impl_request_config_value!(RequestOptions);
 
 // ===== impl ConfigServiceLayer =====
 

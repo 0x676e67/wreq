@@ -1,5 +1,5 @@
 mod identity;
-mod parser;
+mod parse;
 mod store;
 
 use btls::x509::X509;

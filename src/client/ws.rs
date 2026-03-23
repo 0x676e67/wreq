@@ -25,9 +25,9 @@ use tokio_tungstenite::tungstenite::{
 };
 
 use self::message::{CloseCode, Message, Utf8Bytes};
+use super::conn::group::ConnectionGroup;
 use crate::{
-    EmulationFactory, Error, RequestBuilder, Response, Upgraded, header::OrigHeaderMap,
-    proxy::Proxy,
+    Error, IntoEmulation, RequestBuilder, Response, Upgraded, header::OrigHeaderMap, proxy::Proxy,
 };
 
 /// A WebSocket stream.
@@ -354,11 +354,15 @@ impl WebSocketRequestBuilder {
 
     /// Set the emulation for this request.
     #[inline]
-    pub fn emulation<P>(mut self, factory: P) -> Self
-    where
-        P: EmulationFactory,
-    {
-        self.inner = self.inner.emulation(factory);
+    pub fn emulation<T: IntoEmulation>(mut self, emulation: T) -> Self {
+        self.inner = self.inner.emulation(emulation);
+        self
+    }
+
+    /// Set the group for this request.
+    #[inline]
+    pub fn group<G: Into<ConnectionGroup>>(mut self, group: G) -> Self {
+        self.inner = self.inner.group(group);
         self
     }
 

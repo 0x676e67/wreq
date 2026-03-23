@@ -8,7 +8,7 @@ use std::{
 
 #[cfg(any(feature = "form", feature = "json", feature = "multipart"))]
 use http::header::CONTENT_TYPE;
-use http::{Extensions, Request as HttpRequest, Uri, Version};
+use http::{Extensions, Uri, Version};
 #[cfg(any(feature = "query", feature = "form", feature = "json"))]
 use serde::Serialize;
 #[cfg(feature = "multipart")]
@@ -27,8 +27,9 @@ use {
 ))]
 use super::layer::decoder::AcceptEncoding;
 use super::{
-    Body, EmulationFactory, Response,
-    http::{Client, future::Pending},
+    Body, Client, IntoEmulation, Response,
+    conn::group::ConnectionGroup,
+    future::Pending,
     layer::{
         config::{DefaultHeaders, RequestOptions},
         timeout::TimeoutOptions,
@@ -116,15 +117,16 @@ impl Request {
     #[inline]
     pub fn version(&self) -> Option<Version> {
         self.config::<RequestOptions>()
-            .and_then(RequestOptions::enforced_version)
+            .and_then(|opts| opts.version)
     }
 
     /// Get a mutable reference to the http version.
     #[inline]
     pub fn version_mut(&mut self) -> &mut Option<Version> {
-        self.config_mut::<RequestOptions>()
+        &mut self
+            .config_mut::<RequestOptions>()
             .get_or_insert_default()
-            .enforced_version_mut()
+            .version
     }
 
     /// Attempt to clone the request.
@@ -331,10 +333,7 @@ impl RequestBuilder {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn bearer_auth<T>(self, token: T) -> RequestBuilder
-    where
-        T: fmt::Display,
-    {
+    pub fn bearer_auth<T: fmt::Display>(self, token: T) -> RequestBuilder {
         let header_value = format!("Bearer {token}");
         self.header_sensitive(AUTHORIZATION, header_value, true)
     }
@@ -539,6 +538,9 @@ impl RequestBuilder {
     pub fn version(mut self, version: Version) -> RequestBuilder {
         if let Ok(ref mut req) = self.request {
             req.version_mut().replace(version);
+            req.config_mut::<RequestOptions>()
+                .get_or_insert_default()
+                .version = Some(version);
         }
         self
     }
@@ -554,10 +556,7 @@ impl RequestBuilder {
     /// Set the persistent cookie store for the request.
     #[cfg(feature = "cookies")]
     #[cfg_attr(docsrs, doc(cfg(feature = "cookies")))]
-    pub fn cookie_provider<C>(mut self, cookie_store: C) -> RequestBuilder
-    where
-        C: IntoCookieStore,
-    {
+    pub fn cookie_provider<C: IntoCookieStore>(mut self, cookie_store: C) -> RequestBuilder {
         if let Ok(ref mut req) = self.request {
             req.config_mut::<Arc<dyn CookieStore>>()
                 .replace(cookie_store.into_shared());
@@ -618,8 +617,7 @@ impl RequestBuilder {
         if let Ok(ref mut req) = self.request {
             req.config_mut::<RequestOptions>()
                 .get_or_insert_default()
-                .proxy_matcher_mut()
-                .replace(proxy.into_matcher());
+                .proxy = Some(proxy.into_matcher());
         }
         self
     }
@@ -632,7 +630,7 @@ impl RequestBuilder {
         if let Ok(ref mut req) = self.request {
             req.config_mut::<RequestOptions>()
                 .get_or_insert_default()
-                .socket_bind_options_mut()
+                .socket_bind_options
                 .set_local_address(local_address.into());
         }
         self
@@ -647,7 +645,7 @@ impl RequestBuilder {
         if let Ok(ref mut req) = self.request {
             req.config_mut::<RequestOptions>()
                 .get_or_insert_default()
-                .socket_bind_options_mut()
+                .socket_bind_options
                 .set_local_addresses(ipv4, ipv6);
         }
         self
@@ -719,27 +717,40 @@ impl RequestBuilder {
         if let Ok(ref mut req) = self.request {
             req.config_mut::<RequestOptions>()
                 .get_or_insert_default()
-                .socket_bind_options_mut()
+                .socket_bind_options
                 .set_interface(interface);
         }
         self
     }
 
     /// Set the emulation for this request.
-    pub fn emulation<P>(mut self, factory: P) -> RequestBuilder
-    where
-        P: EmulationFactory,
-    {
+    pub fn emulation<T: IntoEmulation>(mut self, emulation: T) -> RequestBuilder {
         if let Ok(ref mut req) = self.request {
-            let emulation = factory.emulation();
-            let (transport_opts, default_headers, orig_headers) = emulation.into_parts();
-            req.config_mut::<RequestOptions>()
-                .get_or_insert_default()
-                .transport_options_mut()
-                .apply_transport_options(transport_opts);
-            self = self.headers(default_headers).orig_headers(orig_headers);
+            let emulation = emulation.into_emulation();
+            let opts = req.config_mut::<RequestOptions>().get_or_insert_default();
+            opts.group.emulate(emulation.group);
+            opts.tls_options = emulation.tls_options;
+            opts.http1_options = emulation.http1_options;
+            opts.http2_options = emulation.http2_options;
+            return self
+                .headers(emulation.headers)
+                .orig_headers(emulation.orig_headers);
         }
 
+        self
+    }
+
+    /// Set the group for this request.
+    ///
+    /// The group is used for connection pool partitioning. Requests with
+    /// different groups will not share pooled connections.
+    pub fn group<G: Into<ConnectionGroup>>(mut self, group: G) -> RequestBuilder {
+        if let Ok(ref mut req) = self.request {
+            req.config_mut::<RequestOptions>()
+                .get_or_insert_default()
+                .group
+                .request(group.into());
+        }
         self
     }
 
@@ -781,7 +792,7 @@ impl RequestBuilder {
     pub fn send(self) -> impl Future<Output = crate::Result<Response>> {
         match self.request {
             Ok(req) => self.client.execute(req),
-            Err(err) => Pending::error(err),
+            Err(err) => Pending::Error { error: Some(err) },
         }
     }
 
@@ -841,16 +852,16 @@ fn extract_authority(uri: &mut Uri) -> Option<(String, Option<String>)> {
     None
 }
 
-impl<T: Into<Body>> From<HttpRequest<T>> for Request {
+impl<T: Into<Body>> From<http::Request<T>> for Request {
     #[inline]
-    fn from(req: HttpRequest<T>) -> Request {
+    fn from(req: http::Request<T>) -> Request {
         Request(req.map(Into::into).map(Some))
     }
 }
 
-impl From<Request> for HttpRequest<Body> {
+impl From<Request> for http::Request<Body> {
     #[inline]
-    fn from(req: Request) -> HttpRequest<Body> {
+    fn from(req: Request) -> http::Request<Body> {
         req.0.map(|body| body.unwrap_or_else(Body::empty))
     }
 }

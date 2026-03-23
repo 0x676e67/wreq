@@ -12,7 +12,7 @@ use tower::{BoxError, Service};
 
 use super::{EstablishedConn, HttpsConnector, MaybeHttpsStream};
 use crate::{
-    client::{ConnectRequest, Connection},
+    client::{Connection, ConnectionDescriptor},
     ext::UriExt,
 };
 
@@ -63,7 +63,7 @@ where
     }
 }
 
-impl<T, S> Service<ConnectRequest> for HttpsConnector<S>
+impl<T, S> Service<ConnectionDescriptor> for HttpsConnector<S>
 where
     S: Service<Uri, Response = T> + Send,
     S::Error: Into<BoxError>,
@@ -79,8 +79,8 @@ where
         self.http.poll_ready(cx).map_err(Into::into)
     }
 
-    fn call(&mut self, req: ConnectRequest) -> Self::Future {
-        let uri = req.uri().clone();
+    fn call(&mut self, descriptor: ConnectionDescriptor) -> Self::Future {
+        let uri = descriptor.uri().clone();
         let connect = self.http.call(uri.clone());
         let tls = self.tls.clone();
 
@@ -92,7 +92,7 @@ where
                 return Ok(MaybeHttpsStream::Http(conn));
             }
 
-            let ssl = tls.setup_ssl2(req)?;
+            let ssl = tls.setup_ssl2(descriptor)?;
             perform_handshake(ssl, conn).await
         };
 
@@ -121,11 +121,11 @@ where
         let tls = self.tls.clone();
         let fut = async move {
             // Early return if it is not a tls scheme
-            if conn.req.uri().is_http() {
+            if conn.descriptor.uri().is_http() {
                 return Ok(MaybeHttpsStream::Http(conn.io));
             }
 
-            let ssl = tls.setup_ssl2(conn.req)?;
+            let ssl = tls.setup_ssl2(conn.descriptor)?;
             perform_handshake(ssl, conn.io).await
         };
 

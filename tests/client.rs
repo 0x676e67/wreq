@@ -727,10 +727,7 @@ async fn http1_only() {
 
     assert_eq!(resp.version(), wreq::Version::HTTP_11);
 
-    let resp = Client::builder()
-        .build()
-        .unwrap()
-        .get(format!("http://{}", server.addr()))
+    let resp = wreq::get(format!("http://{}", server.addr()))
         .version(Version::HTTP_11)
         .send()
         .await
@@ -754,10 +751,7 @@ async fn http2_only() {
 
     assert_eq!(resp.version(), wreq::Version::HTTP_2);
 
-    let resp = Client::builder()
-        .build()
-        .unwrap()
-        .get(format!("http://{}", server.addr()))
+    let resp = wreq::get(format!("http://{}", server.addr()))
         .version(Version::HTTP_2)
         .send()
         .await

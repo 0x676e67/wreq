@@ -81,8 +81,8 @@ where
     pub(super) fn new(remote_addrs: dns::SocketAddrs, config: &TcpOptions, connector: S) -> Self {
         if let Some(fallback_timeout) = config.happy_eyeballs_timeout {
             let (preferred_addrs, fallback_addrs) = remote_addrs.split_by_preference(
-                config.socket_bind_options.local_address_ipv4,
-                config.socket_bind_options.local_address_ipv6,
+                config.socket_bind_options.ipv4_address,
+                config.socket_bind_options.ipv6_address,
             );
             if fallback_addrs.is_empty() {
                 return ConnectingTcp {
@@ -295,8 +295,8 @@ where
     bind_local_address(
         &socket,
         addr,
-        &config.socket_bind_options.local_address_ipv4,
-        &config.socket_bind_options.local_address_ipv6,
+        &config.socket_bind_options.ipv4_address,
+        &config.socket_bind_options.ipv6_address,
     )
     .map_err(ConnectError::m("tcp bind local error"))?;
 
@@ -461,8 +461,8 @@ pub(crate) struct SocketBindOptions {
         target_os = "linux",
     ))]
     pub interface: Option<Cow<'static, str>>,
-    pub local_address_ipv4: Option<Ipv4Addr>,
-    pub local_address_ipv6: Option<Ipv6Addr>,
+    pub ipv4_address: Option<Ipv4Addr>,
+    pub ipv6_address: Option<Ipv6Addr>,
 }
 
 impl SocketBindOptions {
@@ -513,10 +513,10 @@ impl SocketBindOptions {
     pub fn set_local_address(&mut self, local_addr: Option<IpAddr>) {
         match local_addr {
             Some(IpAddr::V4(a)) => {
-                self.local_address_ipv4 = Some(a);
+                self.ipv4_address = Some(a);
             }
             Some(IpAddr::V6(a)) => {
-                self.local_address_ipv6 = Some(a);
+                self.ipv6_address = Some(a);
             }
             _ => {}
         };
@@ -527,8 +527,8 @@ impl SocketBindOptions {
             _ => (None, None),
         };
 
-        self.local_address_ipv4 = v4;
-        self.local_address_ipv6 = v6;
+        self.ipv4_address = v4;
+        self.ipv6_address = v6;
     }
 
     /// Set that all sockets are bound to the configured IPv4 or IPv6 address (depending on host's
@@ -539,8 +539,8 @@ impl SocketBindOptions {
         V4: Into<Option<Ipv4Addr>>,
         V6: Into<Option<Ipv6Addr>>,
     {
-        self.local_address_ipv4 = local_ipv4.into();
-        self.local_address_ipv6 = local_ipv6.into();
+        self.ipv4_address = local_ipv4.into();
+        self.ipv6_address = local_ipv6.into();
     }
 }
 

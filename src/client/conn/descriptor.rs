@@ -1,0 +1,179 @@
+use std::{
+    hash::{BuildHasher, Hash, Hasher},
+    num::NonZeroU64,
+    sync::{
+        Arc, LazyLock,
+        atomic::{AtomicU64, Ordering},
+    },
+};
+
+use http::{Uri, Version};
+use lru::DefaultHasher;
+
+use crate::{
+    client::conn::{SocketBindOptions, group::ConnectionGroup},
+    proxy::Matcher as ProxyMacher,
+    tls::TlsOptions,
+};
+
+/// A key that uniquely identifies a group of interchangeable connections for pooling.
+///
+/// This ID is derived from all parameters that define a connection endpoint,
+/// such as URI, proxy, and local socket bindings. Connections with the same
+/// ID are considered equivalent and can be reused.
+#[derive(Debug)]
+pub(crate) struct ConnectionId {
+    group: Arc<ConnectionGroup>,
+    hash: AtomicU64,
+}
+
+/// A blueprint for creating a new client connection, containing all necessary parameters.
+///
+/// This descriptor bundles the target `Uri`, HTTP version, `TlsOptions`, proxy settings,
+/// and other configurations needed to establish a connection.
+#[must_use]
+#[derive(Clone)]
+pub(crate) struct ConnectionDescriptor {
+    uri: Uri,
+    version: Option<Version>,
+    proxy: Option<ProxyMacher>,
+    tls_options: Option<TlsOptions>,
+    socket_bind_options: SocketBindOptions,
+    connection_id: ConnectionId,
+}
+
+// ===== impl ConnectionId =====
+
+impl Clone for ConnectionId {
+    fn clone(&self) -> Self {
+        Self {
+            group: self.group.clone(),
+            hash: AtomicU64::new(self.hash.load(Ordering::Relaxed)),
+        }
+    }
+}
+
+impl Hash for ConnectionId {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        let hash = self.hash.load(Ordering::Relaxed);
+        if hash != 0 {
+            state.write_u64(hash);
+            return;
+        }
+
+        static HASHER: LazyLock<DefaultHasher> = LazyLock::new(DefaultHasher::default);
+        let computed_hash = NonZeroU64::new(HASHER.hash_one(&*self.group))
+            .map(NonZeroU64::get)
+            .unwrap_or(1);
+
+        let _ = self.hash.compare_exchange(
+            u64::MIN,
+            computed_hash,
+            Ordering::Relaxed,
+            Ordering::Relaxed,
+        );
+        state.write_u64(computed_hash);
+    }
+}
+
+impl PartialEq for ConnectionId {
+    #[inline]
+    fn eq(&self, other: &Self) -> bool {
+        self.group == other.group
+    }
+}
+
+impl Eq for ConnectionId {}
+
+// ===== impl ConnectionDescriptor =====
+
+impl ConnectionDescriptor {
+    /// Create a new [`ConnectionDescriptor`].
+    #[inline]
+    pub(crate) fn new(
+        uri: Uri,
+        mut group: ConnectionGroup,
+        proxy: Option<ProxyMacher>,
+        version: Option<Version>,
+        tls_options: Option<TlsOptions>,
+        socket_bind_options: SocketBindOptions,
+    ) -> ConnectionDescriptor {
+        let connection_id = {
+            group
+                .uri(uri.clone())
+                .version(version)
+                .proxy(proxy.clone())
+                .ipv4_addr(socket_bind_options.ipv4_address)
+                .ipv6_addr(socket_bind_options.ipv6_address);
+
+            #[cfg(any(
+                target_os = "illumos",
+                target_os = "ios",
+                target_os = "macos",
+                target_os = "solaris",
+                target_os = "tvos",
+                target_os = "visionos",
+                target_os = "watchos",
+                target_os = "android",
+                target_os = "fuchsia",
+                target_os = "linux",
+            ))]
+            group.interface(socket_bind_options.interface.clone());
+
+            ConnectionId {
+                group: Arc::new(group),
+                hash: AtomicU64::new(u64::MIN),
+            }
+        };
+
+        ConnectionDescriptor {
+            uri,
+            proxy,
+            version,
+            tls_options,
+            socket_bind_options,
+            connection_id,
+        }
+    }
+
+    /// Returns a [`ConnectionId`] group ID for this descriptor.
+    #[inline]
+    pub(crate) fn id(&self) -> ConnectionId {
+        self.connection_id.clone()
+    }
+
+    /// Returns a reference to the [`Uri`].
+    #[inline]
+    pub(crate) fn uri(&self) -> &Uri {
+        &self.uri
+    }
+
+    /// Returns a mutable reference to the [`Uri`].
+    #[inline]
+    pub(crate) fn uri_mut(&mut self) -> &mut Uri {
+        &mut self.uri
+    }
+
+    /// Return the negotiated HTTP version, if any.
+    pub(crate) fn version(&self) -> Option<Version> {
+        self.version
+    }
+
+    /// Return a reference to the [`TlsOptions`].
+    #[inline]
+    pub(crate) fn tls_options(&self) -> Option<&TlsOptions> {
+        self.tls_options.as_ref()
+    }
+
+    /// Return a reference to the [`ProxyMacher`].
+    #[inline]
+    pub(crate) fn proxy(&self) -> Option<&ProxyMacher> {
+        self.proxy.as_ref()
+    }
+
+    /// Return a reference to the [`SocketBindOptions`].
+    #[inline]
+    pub(crate) fn socket_bind_options(&self) -> &SocketBindOptions {
+        &self.socket_bind_options
+    }
+}

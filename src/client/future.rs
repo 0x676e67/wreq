@@ -10,8 +10,6 @@ use tower::util::{Either, Oneshot};
 use super::{Body, BoxedClientService, ClientService, Response};
 use crate::{Error, ext::RequestUri};
 
-type ResponseFuture = Oneshot<Either<ClientService, BoxedClientService>, Request<Body>>;
-
 pin_project! {
     /// [`Pending`] is a future representing the state of an HTTP request, which may be either
     /// an in-flight request (with its associated future and URI) or an error state.
@@ -20,28 +18,11 @@ pin_project! {
     pub enum Pending {
         Request {
             uri: Uri,
-            fut: Pin<Box<ResponseFuture>>,
+            fut: Pin<Box<Oneshot<Either<ClientService, BoxedClientService>, Request<Body>>>>,
         },
         Error {
             error: Option<Error>,
         },
-    }
-}
-
-impl Pending {
-    /// Creates a new [`Pending`] with a request future and its associated URI.
-    #[inline]
-    pub(crate) fn request(uri: Uri, fut: ResponseFuture) -> Self {
-        Pending::Request {
-            uri,
-            fut: Box::pin(fut),
-        }
-    }
-
-    /// Creates a new [`Pending`] with an error.
-    #[inline]
-    pub(crate) fn error(error: Error) -> Self {
-        Pending::Error { error: Some(error) }
     }
 }
 

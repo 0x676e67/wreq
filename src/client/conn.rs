@@ -7,6 +7,9 @@ mod tls_info;
 mod uds;
 mod verbose;
 
+pub mod descriptor;
+pub mod group;
+
 use std::{
     fmt::{self, Debug, Formatter},
     io,
@@ -37,7 +40,7 @@ pub(super) use self::{
     tcp::{SocketBindOptions, tokio::TokioTcpConnector},
     tls_info::TlsInfoFactory,
 };
-use crate::{client::ConnectRequest, dns::DynResolver, proxy::matcher::Intercept, tls::TlsInfo};
+use crate::{dns::DynResolver, proxy::matcher::Intercept, tls::TlsInfo};
 
 /// HTTP connector with dynamic DNS resolver.
 pub type HttpConnector = self::http::HttpConnector<DynResolver, TokioTcpConnector>;
@@ -49,12 +52,12 @@ pub type BoxedConnectorService = BoxCloneSyncService<Unnameable, Conn, BoxError>
 pub type BoxedConnectorLayer =
     BoxCloneSyncServiceLayer<BoxedConnectorService, Unnameable, Conn, BoxError>;
 
-/// A wrapper type for [`ConnectRequest`] used to erase its concrete type.
+/// A wrapper type for [`descriptor::ConnectionDescriptor`] used to erase its concrete type.
 ///
 /// [`Unnameable`] allows passing connection requests through trait objects or
 /// type-erased interfaces where the concrete type of the request is not important.
 /// This is mainly used internally to simplify service composition and dynamic dispatch.
-pub struct Unnameable(pub(super) ConnectRequest);
+pub struct Unnameable(pub(super) descriptor::ConnectionDescriptor);
 
 /// A trait alias for types that can be used as async connections.
 ///

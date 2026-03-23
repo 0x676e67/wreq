@@ -276,7 +276,6 @@ mod config;
 mod ext;
 mod client;
 mod error;
-mod hash;
 mod into_uri;
 mod proxy;
 mod sync;
@@ -300,7 +299,7 @@ pub use self::client::multipart;
 pub use self::client::ws;
 pub use self::{
     client::{
-        Body, Client, ClientBuilder, Emulation, EmulationBuilder, EmulationFactory, Request,
+        Body, Client, ClientBuilder, Emulation, EmulationBuilder, IntoEmulation, Request,
         RequestBuilder, Response, Upgraded, http1, http2,
     },
     error::{Error, Result},

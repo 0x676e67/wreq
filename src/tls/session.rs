@@ -8,11 +8,11 @@ use std::{
 
 use lru::LruCache;
 
-use crate::{client::ConnectIdentity, sync::Mutex, tls::TlsVersion};
+use crate::{client::ConnectionId, sync::Mutex, tls::TlsVersion};
 
 /// An opaque key identifying a TLS session cache entry.
 #[derive(Clone)]
-pub struct TlsSessionKey(pub(crate) ConnectIdentity);
+pub struct TlsSessionKey(pub(crate) ConnectionId);
 
 /// A TLS session that can be stored and retrieved from a session cache.
 #[derive(Clone)]
@@ -187,7 +187,7 @@ impl TlsSessionStore for LruSessionStore {
         // OpenSSL will remove the session from its cache after the handshake completes anyway, but
         // this ensures that concurrent handshakes don't end up with the same session.
         if session.protocol_version() == TlsVersion::TLS_1_3 {
-            if let Some(key) = inner.reverse.remove(session.id()) {
+            if let Some(key) = inner.reverse.remove(&session) {
                 if let Entry::Occupied(mut entry) = inner.per_host_sessions.entry(key) {
                     entry.get_mut().pop(&session);
                     if entry.get().is_empty() {
