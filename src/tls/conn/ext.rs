@@ -2,13 +2,7 @@ use btls::ssl::{SslConnectorBuilder, SslVerifyMode};
 
 use crate::{
     Error,
-    tls::{
-        CertificateCompressionAlgorithm,
-        conn::cert_compression::{
-            BrotliCertificateCompressor, ZlibCertificateCompressor, ZstdCertificateCompressor,
-        },
-        trust::CertStore,
-    },
+    tls::{CertStore, compress::CertificateCompressor},
 };
 
 /// SslConnectorBuilderExt trait for `SslConnectorBuilder`.
@@ -19,10 +13,10 @@ pub trait SslConnectorBuilderExt {
     /// Configure the certificate verification for the given `SslConnectorBuilder`.
     fn set_cert_verification(self, enable: bool) -> crate::Result<SslConnectorBuilder>;
 
-    /// Configure the certificate compression algorithm for the given `SslConnectorBuilder`.
-    fn add_certificate_compression_algorithms(
+    /// Configure the certificate compressors for the given `SslConnectorBuilder`.
+    fn set_cert_compressors(
         self,
-        algs: Option<&[CertificateCompressionAlgorithm]>,
+        algs: Option<&[&'static dyn CertificateCompressor]>,
     ) -> crate::Result<SslConnectorBuilder>;
 }
 
@@ -49,34 +43,17 @@ impl SslConnectorBuilderExt for SslConnectorBuilder {
     }
 
     #[inline]
-    fn add_certificate_compression_algorithms(
+    fn set_cert_compressors(
         mut self,
-        algs: Option<&[CertificateCompressionAlgorithm]>,
+        algs: Option<&[&'static dyn CertificateCompressor]>,
     ) -> crate::Result<SslConnectorBuilder> {
         if let Some(algs) = algs {
-            for algorithm in algs.iter() {
-                let res =
-                    match *algorithm {
-                        CertificateCompressionAlgorithm::ZLIB => self
-                            .add_certificate_compression_algorithm(
-                                ZlibCertificateCompressor::default(),
-                            ),
-                        CertificateCompressionAlgorithm::BROTLI => self
-                            .add_certificate_compression_algorithm(
-                                BrotliCertificateCompressor::default(),
-                            ),
-                        CertificateCompressionAlgorithm::ZSTD => self
-                            .add_certificate_compression_algorithm(
-                                ZstdCertificateCompressor::default(),
-                            ),
-                        _ => continue,
-                    };
-
-                if let Err(e) = res {
-                    return Err(Error::tls(e));
-                }
+            for algorithm in algs {
+                self.add_certificate_compression_algorithm(*algorithm)
+                    .map_err(Error::tls)?;
             }
         }
+
         Ok(self)
     }
 }
