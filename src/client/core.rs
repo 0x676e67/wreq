@@ -1,4 +1,7 @@
-//! HTTP Client protocol implementation and low level utilities.
+//! Core HTTP client protocol and utilities.
+//!
+//! Much of this codebase is adapted and refined from [hyper](https://github.com/hyperium/hyper),
+//! aiming to match its performance and reliability for asynchronous HTTP/1 and HTTP/2.
 
 mod common;
 mod error;

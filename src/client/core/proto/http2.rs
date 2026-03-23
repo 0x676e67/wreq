@@ -399,11 +399,12 @@ pub struct Http2OptionsBuilder {
     opts: Http2Options,
 }
 
-/// Configuration for an HTTP/2 connection.
+/// Options for tuning HTTP/2 connections.
 ///
-/// This struct defines various parameters to fine-tune the behavior of an HTTP/2 connection,
-/// including stream management, window sizes, frame limits, and header config.
-#[derive(Debug, Clone, Hash, PartialEq, Eq)]
+/// `Http2Options` lets you adjust how HTTP/2 works—stream limits, window sizes, frame and header
+/// settings, and more. Most fields are optional and have sensible defaults. See each field for
+/// details.
+#[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct Http2Options {
     /// Whether to use adaptive flow control.

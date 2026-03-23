@@ -21,17 +21,16 @@ use super::{
     TlsConn, TlsInfoFactory, Unnameable, http::HttpTransport, proxy, verbose::Verbose,
 };
 use crate::{
-    client::{
-        conn::TokioTcpConnector,
-        http::{ConnectExtra, ConnectRequest},
-    },
+    client::conn::{TokioTcpConnector, descriptor::ConnectionDescriptor},
     dns::DynResolver,
     error::{ProxyConnect, TimedOut, map_timeout_to_connector_error},
     ext::UriExt,
     proxy::{Intercepted, Matcher as ProxyMatcher, matcher::Intercept},
     tls::{
-        EstablishedConn, HttpsConnector, MaybeHttpsStream, TlsConnector, TlsConnectorBuilder,
         TlsOptions,
+        conn::{
+            EstablishedConn, HttpsConnector, MaybeHttpsStream, TlsConnector, TlsConnectorBuilder,
+        },
     },
 };
 
@@ -159,7 +158,7 @@ impl ConnectorBuilder {
 
         // otherwise we have user provided layers
         // so we need type erasure all the way through
-        // as well as mapping the unnameable type of the layers back to ConnectRequest for the
+        // as well as mapping the unnameable type of the layers back to ConnectionDescriptor for the
         // inner service
         let service = layers.into_iter().fold(
             BoxCloneSyncService::new(
@@ -217,7 +216,7 @@ impl Connector {
     }
 }
 
-impl Service<ConnectRequest> for Connector {
+impl Service<ConnectionDescriptor> for Connector {
     type Response = Conn;
     type Error = BoxError;
     type Future = Connecting;
@@ -231,10 +230,10 @@ impl Service<ConnectRequest> for Connector {
     }
 
     #[inline]
-    fn call(&mut self, req: ConnectRequest) -> Self::Future {
+    fn call(&mut self, descriptor: ConnectionDescriptor) -> Self::Future {
         match self {
-            Connector::Simple(service) => service.call(req),
-            Connector::WithLayers(service) => service.call(Unnameable(req)),
+            Connector::Simple(service) => service.call(descriptor),
+            Connector::WithLayers(service) => service.call(Unnameable(descriptor)),
         }
     }
 }
@@ -245,7 +244,7 @@ impl ConnectorService {
     fn build_https_connector(
         &self,
         https: bool,
-        extra: &ConnectExtra,
+        descriptor: &ConnectionDescriptor,
     ) -> Result<HttpsConnector<HttpConnector>, BoxError> {
         let mut http = self.http.clone();
 
@@ -257,28 +256,26 @@ impl ConnectorService {
         }
 
         // Apply TCP options if provided in metadata
-        if let Some(opts) = extra.tcp_options() {
-            #[cfg(any(
-                target_os = "android",
-                target_os = "fuchsia",
-                target_os = "illumos",
-                target_os = "ios",
-                target_os = "linux",
-                target_os = "macos",
-                target_os = "solaris",
-                target_os = "tvos",
-                target_os = "visionos",
-                target_os = "watchos",
-            ))]
-            if let Some(interface) = &opts.interface {
-                http.set_interface(interface.clone());
-            }
-
-            http.set_local_addresses(opts.local_address_ipv4, opts.local_address_ipv6);
+        let socket_opts = descriptor.socket_bind_options();
+        http.set_local_addresses(socket_opts.ipv4_address, socket_opts.ipv6_address);
+        #[cfg(any(
+            target_os = "android",
+            target_os = "fuchsia",
+            target_os = "illumos",
+            target_os = "ios",
+            target_os = "linux",
+            target_os = "macos",
+            target_os = "solaris",
+            target_os = "tvos",
+            target_os = "visionos",
+            target_os = "watchos",
+        ))]
+        if let Some(interface) = &socket_opts.interface {
+            http.set_interface(interface.clone());
         }
 
         // Prefer TLS options from metadata, fallback to default
-        let tls = extra
+        let tls = descriptor
             .tls_options()
             .map(|opts| self.builder.build(Cow::Borrowed(opts)))
             .transpose()?
@@ -330,22 +327,22 @@ impl ConnectorService {
 
     async fn connect_auto_proxy<P: Into<Option<Intercept>>>(
         self,
-        req: ConnectRequest,
+        descriptor: ConnectionDescriptor,
         proxy: P,
     ) -> Result<Conn, BoxError> {
-        let is_https = req.uri().is_https();
+        let is_https = descriptor.uri().is_https();
         let proxy = proxy.into();
 
         trace!("connect with maybe proxy: {:?}", proxy);
 
-        let mut connector = self.build_https_connector(is_https, req.extra())?;
+        let mut connector = self.build_https_connector(is_https, &descriptor)?;
 
         // When using a proxy for HTTPS targets, disable ALPN to avoid protocol negotiation issues
         if proxy.is_some() && is_https {
             connector.no_alpn();
         }
 
-        let io = connector.call(req).await?;
+        let io = connector.call(descriptor).await?;
 
         // Re-enable Nagle's algorithm if it was disabled earlier
         if is_https && !self.config.nodelay {
@@ -357,10 +354,10 @@ impl ConnectorService {
 
     async fn connect_via_proxy(
         self,
-        mut req: ConnectRequest,
+        mut descriptor: ConnectionDescriptor,
         proxy: Intercepted,
     ) -> Result<Conn, BoxError> {
-        let uri = req.uri().clone();
+        let uri = descriptor.uri().clone();
 
         match proxy {
             Intercepted::Proxy(proxy) => {
@@ -395,10 +392,12 @@ impl ConnectorService {
                         };
 
                         // Build an HTTPS connector.
-                        let mut connector = self.build_https_connector(is_https, req.extra())?;
+                        let mut connector = self.build_https_connector(is_https, &descriptor)?;
 
                         // Wrap the established SOCKS connection with TLS if needed.
-                        let io = connector.call(EstablishedConn::new(conn, req)).await?;
+                        let io = connector
+                            .call(EstablishedConn::new(conn, descriptor))
+                            .await?;
 
                         // Re-enable Nagle's algorithm if it was disabled earlier
                         if is_https && !self.config.nodelay {
@@ -413,7 +412,7 @@ impl ConnectorService {
                     trace!("tunneling over HTTP(s) proxy: {:?}", proxy_uri);
 
                     // Build an HTTPS connector.
-                    let mut connector = self.build_https_connector(is_https, req.extra())?;
+                    let mut connector = self.build_https_connector(is_https, &descriptor)?;
 
                     // Build a tunnel connector to establish the CONNECT tunnel.
                     let tunneled = {
@@ -435,7 +434,9 @@ impl ConnectorService {
                     };
 
                     // Wrap the established tunneled stream with TLS.
-                    let io = connector.call(EstablishedConn::new(tunneled, req)).await?;
+                    let io = connector
+                        .call(EstablishedConn::new(tunneled, descriptor))
+                        .await?;
 
                     // Re-enable Nagle's algorithm if it was disabled earlier
                     if !self.config.nodelay {
@@ -445,8 +446,8 @@ impl ConnectorService {
                     return self.tunnel_conn_from_stream(io);
                 }
 
-                *req.uri_mut() = proxy_uri;
-                self.connect_auto_proxy(req, proxy)
+                *descriptor.uri_mut() = proxy_uri;
+                self.connect_auto_proxy(descriptor, proxy)
                     .await
                     .map_err(ProxyConnect)
                     .map_err(Into::into)
@@ -476,20 +477,22 @@ impl ConnectorService {
                     };
 
                     // Wrap the established tunneled stream with TLS.
-                    let io = connector.call(EstablishedConn::new(tunneled, req)).await?;
+                    let io = connector
+                        .call(EstablishedConn::new(tunneled, descriptor))
+                        .await?;
 
                     return self.tunnel_conn_from_stream(io);
                 }
 
                 // For plain HTTP, use the Unix connector directly.
-                let io = connector.call(req).await?;
+                let io = connector.call(descriptor).await?;
 
                 self.conn_from_stream(io, None)
             }
         }
     }
 
-    async fn connect_auto(self, req: ConnectRequest) -> Result<Conn, BoxError> {
+    async fn connect_auto(self, req: ConnectionDescriptor) -> Result<Conn, BoxError> {
         debug!("starting new connection: {:?}", req.uri());
 
         let timeout = self.config.timeout;
@@ -497,8 +500,7 @@ impl ConnectorService {
         // Determine if a proxy should be used for this request.
         let fut = async {
             let intercepted = req
-                .extra()
-                .proxy_matcher()
+                .proxy()
                 .and_then(|prox| prox.intercept(req.uri()))
                 .or_else(|| {
                     self.config
@@ -524,7 +526,7 @@ impl ConnectorService {
     }
 }
 
-impl Service<ConnectRequest> for ConnectorService {
+impl Service<ConnectionDescriptor> for ConnectorService {
     type Response = Conn;
     type Error = BoxError;
     type Future = Connecting;
@@ -535,7 +537,7 @@ impl Service<ConnectRequest> for ConnectorService {
     }
 
     #[inline]
-    fn call(&mut self, req: ConnectRequest) -> Self::Future {
-        Box::pin(self.clone().connect_auto(req))
+    fn call(&mut self, descriptor: ConnectionDescriptor) -> Self::Future {
+        Box::pin(self.clone().connect_auto(descriptor))
     }
 }

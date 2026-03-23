@@ -11,7 +11,7 @@ pub struct Exec(Arc<dyn Executor<BoxSendFuture> + Send + Sync>);
 // ===== impl Exec =====
 
 impl Exec {
-    pub(crate) fn new<E>(inner: E) -> Self
+    pub(super) fn new<E>(inner: E) -> Self
     where
         E: Executor<BoxSendFuture> + Send + Sync + 'static,
     {

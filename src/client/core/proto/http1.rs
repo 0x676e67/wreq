@@ -99,11 +99,12 @@ pub struct Http1OptionsBuilder {
     opts: Http1Options,
 }
 
-/// HTTP/1 protocol options for customizing connection behavior.
+/// Options for tweaking HTTP/1 connection behavior.
 ///
-/// These options allow you to customize the behavior of HTTP/1 connections,
-/// such as enabling support for HTTP/0.9 responses, header case preservation, etc.
-#[derive(Debug, Default, Clone, Hash, PartialEq, Eq)]
+/// Use `Http1Options` to adjust how HTTP/1 connections work—things like allowing HTTP/0.9
+/// responses, controlling header handling, buffer sizes, and more. Most settings are optional and
+/// have reasonable defaults.
+#[derive(Debug, Default, Clone)]
 #[non_exhaustive]
 pub struct Http1Options {
     /// Enable support for HTTP/0.9 responses.

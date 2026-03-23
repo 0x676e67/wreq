@@ -1,10 +1,8 @@
 #[macro_use]
 pub mod error;
 mod exec;
-pub mod extra;
 mod lazy;
 mod pool;
-mod util;
 
 use std::{
     future::Future,
@@ -20,6 +18,7 @@ use futures_util::future::{Either, FutureExt, TryFutureExt};
 use http::{
     HeaderValue, Method, Request, Response, Uri, Version,
     header::{HOST, PROXY_AUTHORIZATION},
+    uri::{Authority, PathAndQuery, Scheme},
 };
 use http_body::Body;
 use pool::Ver;
@@ -29,12 +28,14 @@ use tower::{BoxError, util::Oneshot};
 use self::{
     error::{ClientConnectError, Error, ErrorKind, TrySendError},
     exec::Exec,
-    extra::{ConnectExtra, ConnectIdentity},
     lazy::{Started as Lazy, lazy},
 };
 use crate::{
     client::{
-        conn::{Connected, Connection},
+        conn::{
+            Connected, Connection,
+            descriptor::{ConnectionDescriptor, ConnectionId},
+        },
         core::{
             body::Incoming,
             conn,
@@ -46,76 +47,22 @@ use crate::{
         layer::config::RequestOptions,
     },
     config::RequestConfig,
-    hash::HashMemo,
-    tls::AlpnProtocol,
 };
 
 type BoxSendFuture = Pin<Box<dyn Future<Output = ()> + Send>>;
-
-/// Parameters required to initiate a new connection.
-///
-/// [`ConnectRequest`] holds the target URI and all connection-specific options
-/// (protocol, proxy, TCP/TLS settings) needed to establish a new network connection.
-/// Used by connectors to drive the connection setup process.
-#[must_use]
-#[derive(Clone)]
-pub struct ConnectRequest {
-    uri: Uri,
-    identity: ConnectIdentity,
-}
-
-// ===== impl ConnectRequest =====
-
-impl ConnectRequest {
-    /// Create a new [`ConnectRequest`] with the given URI and identity.
-    #[inline]
-    fn new<T>(uri: Uri, identity: T) -> ConnectRequest
-    where
-        T: Into<Option<RequestOptions>>,
-    {
-        ConnectRequest {
-            uri: uri.clone(),
-            identity: Arc::new(HashMemo::new(ConnectExtra::new(uri, identity))),
-        }
-    }
-
-    /// Returns a reference to the [`Uri`].
-    #[inline]
-    pub fn uri(&self) -> &Uri {
-        &self.uri
-    }
-
-    /// Returns a mutable reference to the [`Uri`].
-    #[inline]
-    pub fn uri_mut(&mut self) -> &mut Uri {
-        &mut self.uri
-    }
-
-    /// Returns a unique [`ConnectIdentity`].
-    #[inline]
-    pub(crate) fn identity(&self) -> ConnectIdentity {
-        self.identity.clone()
-    }
-
-    /// Returns the [`ConnectExtra`] connection extra.
-    #[inline]
-    pub(crate) fn extra(&self) -> &ConnectExtra {
-        self.identity.as_ref().as_ref()
-    }
-}
 
 /// A HttpClient to make outgoing HTTP requests.
 ///
 /// `HttpClient` is cheap to clone and cloning is the recommended way to share a `HttpClient`. The
 /// underlying connection pool will be reused.
 #[must_use]
-pub struct HttpClient<C, B> {
+pub(crate) struct HttpClient<C, B> {
     config: Config,
     connector: C,
     exec: Exec,
     h1_builder: conn::http1::Builder,
     h2_builder: conn::http2::Builder<Exec>,
-    pool: pool::Pool<PoolClient<B>, ConnectIdentity>,
+    pool: pool::Pool<PoolClient<B>, ConnectionId>,
 }
 
 #[derive(Clone, Copy)]
@@ -139,7 +86,7 @@ impl HttpClient<(), ()> {
 
 impl<C, B> HttpClient<C, B>
 where
-    C: tower::Service<ConnectRequest> + Clone + Send + Sync + 'static,
+    C: tower::Service<ConnectionDescriptor> + Clone + Send + Sync + 'static,
     C::Response: AsyncRead + AsyncWrite + Connection + Unpin + Send + 'static,
     C::Error: Into<BoxError>,
     C::Future: Unpin + Send + 'static,
@@ -169,42 +116,46 @@ where
         };
 
         // Extract and normalize URI
-        let uri = match util::normalize_uri(&mut req, is_http_connect) {
+        let uri = match normalize_uri(&mut req, is_http_connect) {
             Ok(uri) => uri,
             Err(err) => return ResponseFuture::new(futures_util::future::err(err)),
         };
 
         let mut this = self.clone();
 
-        // Extract per-request options from the request extensions and apply them to the client
-        // builder. This allows each request to override HTTP/1 and HTTP/2 options as
-        // needed.
-        let options = RequestConfig::<RequestOptions>::remove(req.extensions_mut());
+        // Extract per-request options from the request extensions and apply them to the client.
+        let descriptor = {
+            let RequestOptions {
+                group,
+                proxy,
+                version,
+                tls_options,
+                http1_options,
+                http2_options,
+                socket_bind_options,
+            } = RequestConfig::<RequestOptions>::remove(req.extensions_mut()).unwrap_or_default();
 
-        // Apply HTTP/1 and HTTP/2 options if provided
-        if let Some(opts) = options.as_ref().map(RequestOptions::transport_options) {
-            if let Some(opts) = opts.http1_options() {
-                this.h1_builder.options(opts.clone());
+            if let Some(opts) = http1_options {
+                this.h1_builder.options(opts);
             }
-
-            if let Some(opts) = opts.http2_options() {
-                this.h2_builder.options(opts.clone());
+            if let Some(opts) = http2_options {
+                this.h2_builder.options(opts);
             }
-        }
+            ConnectionDescriptor::new(uri, group, proxy, version, tls_options, socket_bind_options)
+        };
 
-        let connect_req = ConnectRequest::new(uri, options);
-        ResponseFuture::new(this.send_request(req, connect_req))
+        ResponseFuture::new(this.send_request(req, descriptor))
     }
 
     async fn send_request(
         self,
         mut req: Request<B>,
-        connect_req: ConnectRequest,
+        descriptor: ConnectionDescriptor,
     ) -> Result<Response<Incoming>, Error> {
         let uri = req.uri().clone();
 
         loop {
-            req = match self.try_send_request(req, connect_req.clone()).await {
+            req = match self.try_send_request(req, descriptor.clone()).await {
                 Ok(resp) => return Ok(resp),
                 Err(TrySendError::Nope(err)) => return Err(err),
                 Err(TrySendError::Retryable {
@@ -232,10 +183,10 @@ where
     async fn try_send_request(
         &self,
         mut req: Request<B>,
-        connect_req: ConnectRequest,
+        descriptor: ConnectionDescriptor,
     ) -> Result<Response<Incoming>, TrySendError<B>> {
         let mut pooled = self
-            .connection_for(connect_req)
+            .connection_for(descriptor)
             .await
             // `connection_for` already retries checkout errors, so if
             // it returns an error, there's not much else to retry
@@ -254,7 +205,7 @@ where
                 let uri = req.uri().clone();
                 req.headers_mut().entry(HOST).or_insert_with(|| {
                     let hostname = uri.host().expect("authority implies host");
-                    if let Some(port) = util::get_non_default_port(&uri) {
+                    if let Some(port) = get_non_default_port(&uri) {
                         let s = format!("{hostname}:{port}");
                         HeaderValue::from_maybe_shared(Bytes::from(s))
                     } else {
@@ -266,7 +217,7 @@ where
 
             // CONNECT always sends authority-form, so check it first...
             if req.method() == Method::CONNECT {
-                util::authority_form(req.uri_mut());
+                authority_form(req.uri_mut());
             } else if pooled.conn_info.is_proxied() {
                 if let Some(auth) = pooled.conn_info.proxy_auth() {
                     req.headers_mut()
@@ -278,12 +229,12 @@ where
                     crate::util::replace_headers(req.headers_mut(), headers.clone());
                 }
 
-                util::absolute_form(req.uri_mut());
+                absolute_form(req.uri_mut());
             } else {
-                util::origin_form(req.uri_mut());
+                origin_form(req.uri_mut());
             }
         } else if req.method() == Method::CONNECT && !pooled.is_http2() {
-            util::authority_form(req.uri_mut());
+            authority_form(req.uri_mut());
         }
 
         let mut res = match pooled.try_send_request(req).await {
@@ -330,10 +281,10 @@ where
 
     async fn connection_for(
         &self,
-        req: ConnectRequest,
-    ) -> Result<pool::Pooled<PoolClient<B>, ConnectIdentity>, Error> {
+        descriptor: ConnectionDescriptor,
+    ) -> Result<pool::Pooled<PoolClient<B>, ConnectionId>, Error> {
         loop {
-            match self.one_connection_for(req.clone()).await {
+            match self.one_connection_for(descriptor.clone()).await {
                 Ok(pooled) => return Ok(pooled),
                 Err(ClientConnectError::Normal(err)) => return Err(err),
                 Err(ClientConnectError::CheckoutIsClosed(reason)) => {
@@ -353,12 +304,12 @@ where
 
     async fn one_connection_for(
         &self,
-        req: ConnectRequest,
-    ) -> Result<pool::Pooled<PoolClient<B>, ConnectIdentity>, ClientConnectError> {
+        descriptor: ConnectionDescriptor,
+    ) -> Result<pool::Pooled<PoolClient<B>, ConnectionId>, ClientConnectError> {
         // Return a single connection if pooling is not enabled
         if !self.pool.is_enabled() {
             return self
-                .connect_to(req)
+                .connect_to(descriptor)
                 .await
                 .map_err(ClientConnectError::Normal);
         }
@@ -373,8 +324,8 @@ where
         // - If a new connection is started, but the Checkout wins after (an idle connection became
         //   available first), the started connection future is spawned into the runtime to
         //   complete, and then be inserted into the pool as an idle connection.
-        let checkout = self.pool.checkout(req.identity());
-        let connect = self.connect_to(req);
+        let checkout = self.pool.checkout(descriptor.id());
+        let connect = self.connect_to(descriptor);
         let is_ver_h2 = self.config.ver == Ver::Http2;
 
         // The order of the `select` is depended on below...
@@ -444,8 +395,8 @@ where
 
     fn connect_to(
         &self,
-        req: ConnectRequest,
-    ) -> impl Lazy<Output = Result<pool::Pooled<PoolClient<B>, ConnectIdentity>, Error>>
+        descriptor: ConnectionDescriptor,
+    ) -> impl Lazy<Output = Result<pool::Pooled<PoolClient<B>, ConnectionId>, Error>>
     + Send
     + Unpin
     + 'static {
@@ -454,8 +405,8 @@ where
 
         let h1_builder = self.h1_builder.clone();
         let h2_builder = self.h2_builder.clone();
-        let ver = match req.extra().alpn_protocol() {
-            Some(AlpnProtocol::HTTP2) => Ver::Http2,
+        let ver = match descriptor.version() {
+            Some(Version::HTTP_2) => Ver::Http2,
             _ => self.config.ver,
         };
         let is_ver_h2 = ver == Ver::Http2;
@@ -466,7 +417,7 @@ where
             // If the pool_key is for HTTP/2, and there is already a
             // connection being established, then this can't take a
             // second lock. The "connect_to" future is Canceled.
-            let connecting = match pool.connecting(req.identity(), ver) {
+            let connecting = match pool.connecting(descriptor.id(), ver) {
                 Some(lock) => lock,
                 None => {
                     let canceled = Error::new_kind(ErrorKind::Canceled);
@@ -475,7 +426,7 @@ where
                 }
             };
             Either::Left(
-                Oneshot::new(connector, req)
+                Oneshot::new(connector, descriptor)
                     .map_err(|src| Error::new(ErrorKind::Connect, src))
                     .and_then(move |io| {
                         let connected = io.connected();
@@ -626,7 +577,7 @@ where
 
 impl<C, B> tower::Service<Request<B>> for HttpClient<C, B>
 where
-    C: tower::Service<ConnectRequest> + Clone + Send + Sync + 'static,
+    C: tower::Service<ConnectionDescriptor> + Clone + Send + Sync + 'static,
     C::Response: AsyncRead + AsyncWrite + Connection + Unpin + Send + 'static,
     C::Error: Into<BoxError>,
     C::Future: Unpin + Send + 'static,
@@ -649,7 +600,7 @@ where
 
 impl<C, B> tower::Service<Request<B>> for &'_ HttpClient<C, B>
 where
-    C: tower::Service<ConnectRequest> + Clone + Send + Sync + 'static,
+    C: tower::Service<ConnectionDescriptor> + Clone + Send + Sync + 'static,
     C::Response: AsyncRead + AsyncWrite + Connection + Unpin + Send + 'static,
     C::Error: Into<BoxError>,
     C::Future: Unpin + Send + 'static,
@@ -946,39 +897,10 @@ impl Builder {
         self
     }
 
-    /// Set whether to retry requests that get disrupted before ever starting
-    /// to write.
-    ///
-    /// This means a request that is queued, and gets given an idle, reused
-    /// connection, and then encounters an error immediately as the idle
-    /// connection was found to be unusable.
-    ///
-    /// When this is set to `false`, the related `ResponseFuture` would instead
-    /// resolve to an `Error::Cancel`.
-    ///
-    /// Default is `true`.
-    #[inline]
-    pub fn retry_canceled_requests(mut self, val: bool) -> Self {
-        self.config.retry_canceled_requests = val;
-        self
-    }
-
-    /// Set whether to automatically add the `Host` header to requests.
-    ///
-    /// If true, and a request does not include a `Host` header, one will be
-    /// added automatically, derived from the authority of the `Uri`.
-    ///
-    /// Default is `true`.
-    #[inline]
-    pub fn set_host(mut self, val: bool) -> Self {
-        self.config.set_host = val;
-        self
-    }
-
     /// Combine the configuration of this builder with a connector to create a `HttpClient`.
     pub fn build<C, B>(self, connector: C) -> HttpClient<C, B>
     where
-        C: tower::Service<ConnectRequest> + Clone + Send + Sync + 'static,
+        C: tower::Service<ConnectionDescriptor> + Clone + Send + Sync + 'static,
         C::Response: AsyncRead + AsyncWrite + Connection + Unpin + Send + 'static,
         C::Error: Into<BoxError>,
         C::Future: Unpin + Send + 'static,
@@ -997,4 +919,102 @@ impl Builder {
             pool: pool::Pool::new(self.pool_config, exec, timer),
         }
     }
+}
+
+pub(super) fn origin_form(uri: &mut Uri) {
+    let path = match uri.path_and_query() {
+        Some(path) if path.as_str() != "/" => {
+            let mut parts = ::http::uri::Parts::default();
+            parts.path_and_query.replace(path.clone());
+            Uri::from_parts(parts).expect("path is valid uri")
+        }
+        _none_or_just_slash => {
+            debug_assert!(Uri::default() == "/");
+            Uri::default()
+        }
+    };
+    *uri = path
+}
+
+pub(super) fn absolute_form(uri: &mut Uri) {
+    debug_assert!(uri.scheme().is_some(), "absolute_form needs a scheme");
+    debug_assert!(
+        uri.authority().is_some(),
+        "absolute_form needs an authority"
+    );
+}
+
+pub(super) fn authority_form(uri: &mut Uri) {
+    if let Some(path) = uri.path_and_query() {
+        // `https://hyper.rs` would parse with `/` path, don't
+        // annoy people about that...
+        if path != "/" {
+            warn!("HTTP/1.1 CONNECT request stripping path: {:?}", path);
+        }
+    }
+    *uri = match uri.authority() {
+        Some(auth) => {
+            let mut parts = ::http::uri::Parts::default();
+            parts.authority = Some(auth.clone());
+            Uri::from_parts(parts).expect("authority is valid")
+        }
+        None => {
+            unreachable!("authority_form with relative uri");
+        }
+    };
+}
+
+pub(super) fn normalize_uri<B>(req: &mut Request<B>, is_http_connect: bool) -> Result<Uri, Error> {
+    let uri = req.uri().clone();
+
+    let build_base_uri = |scheme: Scheme, authority: Authority| {
+        Uri::builder()
+            .scheme(scheme)
+            .authority(authority)
+            .path_and_query(PathAndQuery::from_static("/"))
+            .build()
+            .expect("valid base URI")
+    };
+
+    match (uri.scheme(), uri.authority()) {
+        (Some(scheme), Some(auth)) => Ok(build_base_uri(scheme.clone(), auth.clone())),
+        (None, Some(auth)) if is_http_connect => {
+            let scheme = match auth.port_u16() {
+                Some(443) => Scheme::HTTPS,
+                _ => Scheme::HTTP,
+            };
+            set_scheme(req.uri_mut(), scheme.clone());
+            Ok(build_base_uri(scheme, auth.clone()))
+        }
+        _ => {
+            debug!("Client requires absolute-form URIs, received: {:?}", uri);
+            Err(Error::new_kind(ErrorKind::UserAbsoluteUriRequired))
+        }
+    }
+}
+
+pub(super) fn get_non_default_port(uri: &Uri) -> Option<http::uri::Port<&str>> {
+    match (uri.port().map(|p| p.as_u16()), is_schema_secure(uri)) {
+        (Some(443), true) => None,
+        (Some(80), false) => None,
+        _ => uri.port(),
+    }
+}
+
+fn set_scheme(uri: &mut Uri, scheme: Scheme) {
+    debug_assert!(
+        uri.scheme().is_none(),
+        "set_scheme expects no existing scheme"
+    );
+    let old = std::mem::take(uri);
+    let mut parts: ::http::uri::Parts = old.into();
+    parts.scheme = Some(scheme);
+    parts.path_and_query = Some("/".parse().expect("slash is a valid path"));
+    *uri = Uri::from_parts(parts).expect("scheme is valid");
+}
+
+fn is_schema_secure(uri: &Uri) -> bool {
+    uri.scheme_str()
+        .map(|scheme_str| matches!(scheme_str, "wss" | "https"))
+        .unwrap_or_default()
 }

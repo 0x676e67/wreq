@@ -20,14 +20,14 @@ use btls::{
     ex_data::Index,
     ssl::{Ssl, SslConnector, SslMethod, SslOptions, SslSessionCacheMode},
 };
-use http::Uri;
+use http::{Uri, Version};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio_btls::SslStream;
 use tower::{BoxError, Service};
 
 use crate::{
     Error,
-    client::{ConnectRequest, Connected, Connection},
+    client::{Connected, Connection, ConnectionDescriptor},
     tls::{
         AlpnProtocol, AlpsProtocol, CertStore, Identity, KeyLog, KeyShare, TlsOptions, TlsVersion,
         conn::ext::SslConnectorBuilderExt,
@@ -134,7 +134,7 @@ impl TlsConnector {
         Ok(ssl)
     }
 
-    fn setup_ssl2(&self, req: ConnectRequest) -> Result<Ssl, BoxError> {
+    fn setup_ssl2(&self, descriptor: ConnectionDescriptor) -> Result<Ssl, BoxError> {
         let mut cfg = self.ssl.configure()?;
 
         // Use server name indication
@@ -153,9 +153,17 @@ impl TlsConnector {
         }
 
         // Set ALPN protocols
-        if let Some(alpn) = req.extra().alpn_protocol() {
-            // If ALPN is set in the request, it takes precedence over the connector configuration.
-            cfg.set_alpn_protos(&alpn.encode())?;
+        if let Some(version) = descriptor.version() {
+            match version {
+                Version::HTTP_11 | Version::HTTP_10 | Version::HTTP_09 => {
+                    cfg.set_alpn_protos(&AlpnProtocol::HTTP1.encode())?;
+                }
+                Version::HTTP_2 => {
+                    cfg.set_alpn_protos(&AlpnProtocol::HTTP2.encode())?;
+                }
+                // No ALPN protocol for other versions
+                _ => {}
+            }
         } else {
             // Default use the connector configuration.
             if let Some(ref alpn_values) = self.settings.alpn_protocols {
@@ -181,12 +189,12 @@ impl TlsConnector {
             cfg.set_client_key_shares(key_shares.as_ref())?;
         }
 
-        let uri = req.uri().clone();
+        let uri = descriptor.uri().clone();
         let host = uri.host().ok_or("URI missing host")?;
         let host = Self::normalize_host(host);
 
         if let Some(ref cache) = self.cache {
-            let key = TlsSessionKey(req.identity());
+            let key = TlsSessionKey(descriptor.id());
 
             // If the session cache is enabled, we try to retrieve the session
             // associated with the key. If it exists, we set it in the SSL configuration.
@@ -488,7 +496,7 @@ pub enum MaybeHttpsStream<T> {
 /// A connection that has been established with a TLS handshake.
 pub struct EstablishedConn<IO> {
     io: IO,
-    req: ConnectRequest,
+    descriptor: ConnectionDescriptor,
 }
 
 // ===== impl MaybeHttpsStream =====
@@ -587,7 +595,7 @@ where
 impl<IO> EstablishedConn<IO> {
     /// Creates a new [`EstablishedConn`].
     #[inline]
-    pub fn new(io: IO, req: ConnectRequest) -> EstablishedConn<IO> {
-        EstablishedConn { io, req }
+    pub fn new(io: IO, descriptor: ConnectionDescriptor) -> EstablishedConn<IO> {
+        EstablishedConn { io, descriptor }
     }
 }
