@@ -19,8 +19,8 @@ pub trait IntoEmulation {
 }
 
 /// Builder for creating an [`Emulation`] configuration.
-#[derive(Debug)]
 #[must_use]
+#[derive(Debug)]
 pub struct EmulationBuilder {
     emulation: Emulation,
 }
@@ -28,8 +28,8 @@ pub struct EmulationBuilder {
 /// HTTP emulation settings for a client profile.
 ///
 /// Combines protocol options (HTTP/1, HTTP/2, TLS) and default headers.
-#[derive(Debug, Clone)]
 #[non_exhaustive]
+#[derive(Debug, Clone)]
 pub struct Emulation {
     pub(crate) group: ConnectionGroup,
 
