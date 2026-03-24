@@ -510,8 +510,11 @@ impl SocketBindOptions {
     ///
     /// Default is `None`.
     #[inline]
-    pub fn set_local_address(&mut self, local_addr: Option<IpAddr>) {
-        match local_addr {
+    pub fn set_local_address<V>(&mut self, local_address: V)
+    where
+        V: Into<Option<IpAddr>>,
+    {
+        match local_address.into() {
             Some(IpAddr::V4(a)) => {
                 self.ipv4_address = Some(a);
             }
@@ -520,27 +523,18 @@ impl SocketBindOptions {
             }
             _ => {}
         };
-
-        let (v4, v6) = match local_addr {
-            Some(IpAddr::V4(a)) => (Some(a), None),
-            Some(IpAddr::V6(a)) => (None, Some(a)),
-            _ => (None, None),
-        };
-
-        self.ipv4_address = v4;
-        self.ipv6_address = v6;
     }
 
     /// Set that all sockets are bound to the configured IPv4 or IPv6 address (depending on host's
     /// preferences) before connection.
     #[inline]
-    pub fn set_local_addresses<V4, V6>(&mut self, local_ipv4: V4, local_ipv6: V6)
+    pub fn set_local_addresses<V4, V6>(&mut self, ipv4_address: V4, ipv6_address: V6)
     where
         V4: Into<Option<Ipv4Addr>>,
         V6: Into<Option<Ipv6Addr>>,
     {
-        self.ipv4_address = local_ipv4.into();
-        self.ipv6_address = local_ipv6.into();
+        self.ipv4_address = ipv4_address.into();
+        self.ipv6_address = ipv6_address.into();
     }
 }
 
