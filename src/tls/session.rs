@@ -1,4 +1,4 @@
-//! TLS 1.3 session caching and resumption.
+//! TLS session caching and resumption.
 //!
 //! Handshakes are expensive. This module lets you reuse sessions to save
 //! CPU cycles and reduce latency.

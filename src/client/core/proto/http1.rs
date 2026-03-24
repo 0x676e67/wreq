@@ -104,8 +104,8 @@ pub struct Http1OptionsBuilder {
 /// Use `Http1Options` to adjust how HTTP/1 connections work—things like allowing HTTP/0.9
 /// responses, controlling header handling, buffer sizes, and more. Most settings are optional and
 /// have reasonable defaults.
-#[derive(Debug, Default, Clone)]
 #[non_exhaustive]
+#[derive(Debug, Default, Clone)]
 pub struct Http1Options {
     /// Enable support for HTTP/0.9 responses.
     pub h09_responses: bool,

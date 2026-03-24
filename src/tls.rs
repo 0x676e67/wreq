@@ -129,8 +129,8 @@ pub struct TlsOptionsBuilder {
 /// - **Performance tuning** (record size, cipher preferences, hardware overrides)
 ///
 /// All fields are optional or have defaults. See each field for details.
-#[derive(Debug, Clone)]
 #[non_exhaustive]
+#[derive(Debug, Clone)]
 pub struct TlsOptions {
     /// Application-Layer Protocol Negotiation ([RFC 7301](https://datatracker.ietf.org/doc/html/rfc7301)).
     ///

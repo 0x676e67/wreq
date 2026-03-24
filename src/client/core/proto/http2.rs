@@ -404,8 +404,8 @@ pub struct Http2OptionsBuilder {
 /// `Http2Options` lets you adjust how HTTP/2 works—stream limits, window sizes, frame and header
 /// settings, and more. Most fields are optional and have sensible defaults. See each field for
 /// details.
-#[derive(Debug, Clone)]
 #[non_exhaustive]
+#[derive(Debug, Clone)]
 pub struct Http2Options {
     /// Whether to use adaptive flow control.
     pub adaptive_window: bool,
