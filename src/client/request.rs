@@ -631,13 +631,13 @@ impl RequestBuilder {
             req.config_mut::<RequestOptions>()
                 .get_or_insert_default()
                 .socket_bind_options
-                .set_local_address(local_address.into());
+                .set_local_address(local_address);
         }
         self
     }
 
     /// Set the local addresses for this request.
-    pub fn local_addresses<V4, V6>(mut self, ipv4: V4, ipv6: V6) -> RequestBuilder
+    pub fn local_addresses<V4, V6>(mut self, ipv4_address: V4, ipv6_address: V6) -> RequestBuilder
     where
         V4: Into<Option<Ipv4Addr>>,
         V6: Into<Option<Ipv6Addr>>,
@@ -646,7 +646,7 @@ impl RequestBuilder {
             req.config_mut::<RequestOptions>()
                 .get_or_insert_default()
                 .socket_bind_options
-                .set_local_addresses(ipv4, ipv6);
+                .set_local_addresses(ipv4_address, ipv6_address);
         }
         self
     }
