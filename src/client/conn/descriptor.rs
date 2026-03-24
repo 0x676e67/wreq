@@ -21,11 +21,8 @@ use crate::{
 /// This ID is derived from all parameters that define a connection endpoint,
 /// such as URI, proxy, and local socket bindings. Connections with the same
 /// ID are considered equivalent and can be reused.
-#[derive(Debug)]
-pub(crate) struct ConnectionId {
-    group: Arc<ConnectionGroup>,
-    hash: AtomicU64,
-}
+#[derive(Debug, Clone)]
+pub(crate) struct ConnectionId(Arc<(ConnectionGroup, AtomicU64)>);
 
 /// A blueprint for creating a new client connection, containing all necessary parameters.
 ///
@@ -44,29 +41,20 @@ pub(crate) struct ConnectionDescriptor {
 
 // ===== impl ConnectionId =====
 
-impl Clone for ConnectionId {
-    fn clone(&self) -> Self {
-        Self {
-            group: self.group.clone(),
-            hash: AtomicU64::new(self.hash.load(Ordering::Relaxed)),
-        }
-    }
-}
-
 impl Hash for ConnectionId {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        let hash = self.hash.load(Ordering::Relaxed);
+        let hash = self.0.1.load(Ordering::Relaxed);
         if hash != 0 {
             state.write_u64(hash);
             return;
         }
 
         static HASHER: LazyLock<DefaultHasher> = LazyLock::new(DefaultHasher::default);
-        let computed_hash = NonZeroU64::new(HASHER.hash_one(&*self.group))
+        let computed_hash = NonZeroU64::new(HASHER.hash_one(&self.0.0))
             .map(NonZeroU64::get)
             .unwrap_or(1);
 
-        let _ = self.hash.compare_exchange(
+        let _ = self.0.1.compare_exchange(
             u64::MIN,
             computed_hash,
             Ordering::Relaxed,
@@ -79,7 +67,7 @@ impl Hash for ConnectionId {
 impl PartialEq for ConnectionId {
     #[inline]
     fn eq(&self, other: &Self) -> bool {
-        self.group == other.group
+        self.0.0.eq(&other.0.0)
     }
 }
 
@@ -89,7 +77,6 @@ impl Eq for ConnectionId {}
 
 impl ConnectionDescriptor {
     /// Create a new [`ConnectionDescriptor`].
-    #[inline]
     pub(crate) fn new(
         uri: Uri,
         mut group: ConnectionGroup,
@@ -120,10 +107,7 @@ impl ConnectionDescriptor {
             ))]
             group.interface(socket_bind_options.interface.clone());
 
-            ConnectionId {
-                group: Arc::new(group),
-                hash: AtomicU64::new(u64::MIN),
-            }
+            ConnectionId(Arc::new((group, AtomicU64::new(u64::MIN))))
         };
 
         ConnectionDescriptor {
