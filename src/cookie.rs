@@ -4,7 +4,7 @@ use std::{collections::HashMap, convert::TryInto, fmt, sync::Arc, time::SystemTi
 
 use bytes::Bytes;
 use cookie::{Cookie as RawCookie, CookieJar, Expiration, SameSite, time::Duration};
-use http::Uri;
+use http::{Uri, Version};
 
 use crate::{IntoUri, error::Error, ext::UriExt, header::HeaderValue, sync::RwLock};
 
@@ -27,8 +27,16 @@ pub trait CookieStore: Send + Sync {
     /// Store a set of Set-Cookie header values received from `uri`
     fn set_cookies(&self, cookie_headers: &mut dyn Iterator<Item = &HeaderValue>, uri: &Uri);
 
-    /// Get any [`Cookies`] in the store for `uri`
-    fn cookies(&self, uri: &Uri) -> Cookies;
+    /// Returns cookies for the given URI and HTTP version.
+    ///
+    /// Following [RFC 9112 §5.6.3], HTTP/1.1 combines all cookies into a single header.
+    /// For [HTTP/2] and above, cookies are sent as separate header fields
+    /// as per [RFC 9113 §8.1.2.5].
+    ///
+    /// [RFC 9112 §5.6.3]: https://www.rfc-editor.org/rfc/rfc9112#section-5.6.3
+    /// [RFC 9113 §8.1.2.5]: https://www.rfc-editor.org/rfc/rfc9113#section-8.1.2.5
+    /// [HTTP/2]: https://datatracker.ietf.org/doc/html/rfc9113
+    fn cookies(&self, uri: &Uri, version: Version) -> Cookies;
 }
 
 impl_into_shared!(
@@ -57,10 +65,8 @@ pub struct Cookie<'a>(RawCookie<'a>);
 /// This is the implementation used when simply calling `cookie_store(true)`.
 /// This type is exposed to allow creating one and filling it with some
 /// existing cookies more easily, before creating a [`crate::Client`].
-pub struct Jar {
-    compression: bool,
-    store: Arc<RwLock<HashMap<String, HashMap<String, CookieJar>>>>,
-}
+#[derive(Debug, Default)]
+pub struct Jar(RwLock<HashMap<String, HashMap<String, CookieJar>>>);
 
 // ===== impl IntoCookie =====
 
@@ -200,30 +206,6 @@ macro_rules! into_uri {
 }
 
 impl Jar {
-    /// Creates a new [`Jar`] with the specified compression setting.
-    pub fn new(compression: bool) -> Self {
-        Self {
-            compression,
-            store: Arc::new(RwLock::new(HashMap::default())),
-        }
-    }
-
-    /// Clone this [`Jar`], sharing storage but enabling compression.
-    pub fn compressed(self: &Arc<Self>) -> Arc<Self> {
-        Arc::new(Jar {
-            compression: true,
-            store: self.store.clone(),
-        })
-    }
-
-    /// Clone this [`Jar`], sharing storage but disabling compression.
-    pub fn uncompressed(self: &Arc<Self>) -> Arc<Self> {
-        Arc::new(Jar {
-            compression: false,
-            store: self.store.clone(),
-        })
-    }
-
     /// Get a cookie by name for a given Uri.
     ///
     /// Returns the cookie with the specified name for the domain and path
@@ -241,7 +223,7 @@ impl Jar {
         let uri = uri.into_uri().ok()?;
         let host = normalize_domain(uri.host()?);
         let cookie = self
-            .store
+            .0
             .read()
             .get(host)?
             .get(uri.path())?
@@ -266,7 +248,7 @@ impl Jar {
     /// }
     /// ```
     pub fn get_all(&self) -> impl Iterator<Item = Cookie<'static>> {
-        self.store
+        self.0
             .read()
             .iter()
             .flat_map(|(domain, path_map)| {
@@ -357,7 +339,7 @@ impl Jar {
                 .filter(|path| path.starts_with(DEFAULT_PATH))
                 .unwrap_or_else(|| normalize_path(uri.path()));
 
-            let mut inner = self.store.write();
+            let mut inner = self.0.write();
             let name_map = inner
                 .entry(domain.to_owned())
                 .or_default()
@@ -401,7 +383,7 @@ impl Jar {
         let uri = into_uri!(uri);
         if let Some(host) = uri.host() {
             let host = normalize_domain(host);
-            let mut inner = self.store.write();
+            let mut inner = self.0.write();
             if let Some(path_map) = inner.get_mut(host) {
                 if let Some(name_map) = path_map.get_mut(uri.path()) {
                     name_map.remove(cookie.into());
@@ -424,7 +406,7 @@ impl Jar {
     /// assert_eq!(jar.get_all().count(), 0);
     /// ```
     pub fn clear(&self) {
-        self.store.write().clear();
+        self.0.write().clear();
     }
 }
 
@@ -440,13 +422,13 @@ impl CookieStore for Jar {
         }
     }
 
-    fn cookies(&self, uri: &Uri) -> Cookies {
+    fn cookies(&self, uri: &Uri, version: Version) -> Cookies {
         let host = match uri.host() {
             Some(h) => normalize_domain(h),
             None => return Cookies::Empty,
         };
 
-        let store = self.store.read();
+        let store = self.0.read();
         let iter = store
             .iter()
             .filter(|(domain, _)| domain_match(host, domain))
@@ -472,7 +454,24 @@ impl CookieStore for Jar {
                     })
             });
 
-        if self.compression {
+        if matches!(version, Version::HTTP_2 | Version::HTTP_3) {
+            let cookies = iter
+                .map(|cookie| {
+                    let name = cookie.name();
+                    let value = cookie.value();
+
+                    let mut cookie_str = String::with_capacity(name.len() + 1 + value.len());
+                    cookie_str.push_str(name);
+                    cookie_str.push('=');
+                    cookie_str.push_str(value);
+
+                    HeaderValue::from_maybe_shared(Bytes::from(cookie_str))
+                })
+                .filter_map(Result::ok)
+                .collect();
+
+            Cookies::Uncompressed(cookies)
+        } else {
             let cookies = iter.fold(String::new(), |mut cookies, cookie| {
                 if !cookies.is_empty() {
                     cookies.push_str("; ");
@@ -490,30 +489,7 @@ impl CookieStore for Jar {
             HeaderValue::from_maybe_shared(Bytes::from(cookies))
                 .map(Cookies::Compressed)
                 .unwrap_or(Cookies::Empty)
-        } else {
-            let cookies = iter
-                .map(|cookie| {
-                    let name = cookie.name();
-                    let value = cookie.value();
-
-                    let mut cookie_str = String::with_capacity(name.len() + 1 + value.len());
-                    cookie_str.push_str(name);
-                    cookie_str.push('=');
-                    cookie_str.push_str(value);
-
-                    HeaderValue::from_maybe_shared(Bytes::from(cookie_str))
-                })
-                .filter_map(Result::ok)
-                .collect();
-
-            Cookies::Uncompressed(cookies)
         }
-    }
-}
-
-impl Default for Jar {
-    fn default() -> Self {
-        Self::new(true)
     }
 }
 

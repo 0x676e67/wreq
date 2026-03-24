@@ -117,9 +117,7 @@ enum Alpn {
 
 /// A pill that can be poisoned to indicate that a connection should not be reused.
 #[derive(Clone)]
-struct PoisonPill {
-    poisoned: Arc<AtomicBool>,
-}
+struct PoisonPill(Arc<AtomicBool>);
 
 /// A boxed asynchronous connection with associated information.
 #[derive(Debug)]
@@ -309,8 +307,8 @@ impl fmt::Debug for PoisonPill {
         write!(
             f,
             "PoisonPill@{:p} {{ poisoned: {} }}",
-            self.poisoned,
-            self.poisoned.load(Ordering::Relaxed)
+            self.0,
+            self.0.load(Ordering::Relaxed)
         )
     }
 }
@@ -319,21 +317,7 @@ impl PoisonPill {
     /// Create a healthy (not poisoned) pill.
     #[inline]
     fn healthy() -> Self {
-        Self {
-            poisoned: Arc::new(AtomicBool::new(false)),
-        }
-    }
-
-    /// Poison this pill.
-    #[inline]
-    fn poison(&self) {
-        self.poisoned.store(true, Ordering::Relaxed)
-    }
-
-    /// Check if this pill is poisoned.
-    #[inline]
-    fn poisoned(&self) -> bool {
-        self.poisoned.load(Ordering::Relaxed)
+        Self(Arc::new(AtomicBool::new(false)))
     }
 }
 
@@ -416,15 +400,16 @@ impl Connected {
     /// Determine if this connection is poisoned
     #[inline]
     pub fn poisoned(&self) -> bool {
-        self.poisoned.poisoned()
+        self.poisoned.0.load(Ordering::Relaxed)
     }
 
     /// Poison this connection
     ///
     /// A poisoned connection will not be reused for subsequent requests by the pool
+    #[allow(unused)]
     #[inline]
     pub fn poison(&self) {
-        self.poisoned.poison();
+        self.poisoned.0.store(true, Ordering::Relaxed);
         debug!(
             "connection was poisoned. this connection will not be reused for subsequent requests"
         );

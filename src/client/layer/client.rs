@@ -1,10 +1,10 @@
-#[macro_use]
-pub mod error;
 mod exec;
 mod lazy;
 mod pool;
 
 use std::{
+    error::Error as StdError,
+    fmt,
     future::Future,
     num::NonZeroUsize,
     pin::Pin,
@@ -14,7 +14,7 @@ use std::{
 };
 
 use bytes::Bytes;
-use futures_util::future::{Either, FutureExt, TryFutureExt};
+use futures_util::future::{self, BoxFuture, Either, FutureExt, TryFutureExt};
 use http::{
     HeaderValue, Method, Request, Response, Uri, Version,
     header::{HOST, PROXY_AUTHORIZATION},
@@ -24,19 +24,27 @@ use http_body::Body;
 use pool::Ver;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tower::{BoxError, util::Oneshot};
+#[cfg(feature = "cookies")]
+use {
+    crate::cookie::{CookieStore, Cookies},
+    http::header::COOKIE,
+};
 
 use self::{
-    error::{ClientConnectError, Error, ErrorKind, TrySendError},
     exec::Exec,
     lazy::{Started as Lazy, lazy},
 };
+#[cfg(feature = "socks")]
+use crate::client::conn::socks;
 use crate::{
     client::{
         conn::{
             Connected, Connection,
             descriptor::{ConnectionDescriptor, ConnectionId},
+            tunnel,
         },
         core::{
+            self,
             body::Incoming,
             conn,
             dispatch::TrySendError as ConnTrySendError,
@@ -47,6 +55,7 @@ use crate::{
         layer::config::RequestOptions,
     },
     config::RequestConfig,
+    error::ProxyConnect,
 };
 
 type BoxSendFuture = Pin<Box<dyn Future<Output = ()> + Send>>;
@@ -63,6 +72,8 @@ pub(crate) struct HttpClient<C, B> {
     h1_builder: conn::http1::Builder,
     h2_builder: conn::http2::Builder<Exec>,
     pool: pool::Pool<PoolClient<B>, ConnectionId>,
+    #[cfg(feature = "cookies")]
+    cookie_store: RequestConfig<Arc<dyn CookieStore>>,
 }
 
 #[derive(Clone, Copy)]
@@ -72,10 +83,62 @@ struct Config {
     ver: Ver,
 }
 
+#[derive(Debug)]
+pub struct Error {
+    kind: ErrorKind,
+    source: Option<BoxError>,
+    #[allow(unused)]
+    connect_info: Option<Connected>,
+}
+
+#[derive(Debug)]
+enum ErrorKind {
+    Canceled,
+    ChannelClosed,
+    Connect,
+    ProxyConnect,
+    UserUnsupportedRequestMethod,
+    UserUnsupportedVersion,
+    UserAbsoluteUriRequired,
+    SendRequest,
+}
+
+enum ClientConnectError {
+    Normal(Error),
+    CheckoutIsClosed(pool::Error),
+}
+
+#[allow(clippy::large_enum_variant)]
+enum TrySendError<B> {
+    Retryable {
+        error: Error,
+        req: Request<B>,
+        connection_reused: bool,
+    },
+    Nope(Error),
+}
+
+macro_rules! e {
+    ($kind:ident) => {
+        Error {
+            kind: ErrorKind::$kind,
+            source: None,
+            connect_info: None,
+        }
+    };
+    ($kind:ident, $src:expr) => {
+        Error {
+            kind: ErrorKind::$kind,
+            source: Some($src.into()),
+            connect_info: None,
+        }
+    };
+}
+
 // ===== impl HttpClient =====
 
 impl HttpClient<(), ()> {
-    /// Create a builder to configure a new `HttpClient`.
+    /// Create a builder to configure a new [`HttpClient`].
     pub fn builder<E>(executor: E) -> Builder
     where
         E: Executor<BoxSendFuture> + Send + Sync + Clone + 'static,
@@ -94,31 +157,31 @@ where
     B::Data: Send,
     B::Error: Into<BoxError>,
 {
-    /// Send a constructed `Request` using this `HttpClient`.
-    fn request(&self, mut req: Request<B>) -> ResponseFuture {
+    fn request(
+        &self,
+        mut req: Request<B>,
+    ) -> BoxFuture<'static, Result<Response<Incoming>, BoxError>> {
         let is_http_connect = req.method() == Method::CONNECT;
         // Validate HTTP version early
         match req.version() {
             Version::HTTP_10 if is_http_connect => {
                 warn!("CONNECT is not allowed for HTTP/1.0");
-                return ResponseFuture::new(futures_util::future::err(Error::new_kind(
-                    ErrorKind::UserUnsupportedRequestMethod,
-                )));
+                return Box::pin(future::err(e!(UserUnsupportedRequestMethod).into()));
             }
             Version::HTTP_10 | Version::HTTP_11 | Version::HTTP_2 => {}
             // completely unsupported HTTP version (like HTTP/0.9)!
             _unsupported => {
                 warn!("Request has unsupported version: {:?}", _unsupported);
-                return ResponseFuture::new(futures_util::future::err(Error::new_kind(
-                    ErrorKind::UserUnsupportedVersion,
-                )));
+                return Box::pin(future::err(e!(UserUnsupportedVersion).into()));
             }
         };
 
         // Extract and normalize URI
         let uri = match normalize_uri(&mut req, is_http_connect) {
             Ok(uri) => uri,
-            Err(err) => return ResponseFuture::new(futures_util::future::err(err)),
+            Err(err) => {
+                return Box::pin(future::err(e!(UserAbsoluteUriRequired, err).into()));
+            }
         };
 
         let mut this = self.clone();
@@ -144,7 +207,7 @@ where
             ConnectionDescriptor::new(uri, group, proxy, version, tls_options, socket_bind_options)
         };
 
-        ResponseFuture::new(this.send_request(req, descriptor))
+        Box::pin(this.send_request(req, descriptor).map_err(Into::into))
     }
 
     async fn send_request(
@@ -192,12 +255,14 @@ where
             // it returns an error, there's not much else to retry
             .map_err(TrySendError::Nope)?;
 
+        #[cfg(feature = "cookies")]
+        let uri = req.uri().clone();
+
         if pooled.is_http1() {
             if req.version() == Version::HTTP_2 {
                 warn!("Connection is HTTP/1, but request requires HTTP/2");
                 return Err(TrySendError::Nope(
-                    Error::new_kind(ErrorKind::UserUnsupportedVersion)
-                        .with_connect_info(pooled.conn_info.clone()),
+                    e!(UserUnsupportedVersion).with_connect_info(pooled.conn_info.clone()),
                 ));
             }
 
@@ -237,6 +302,34 @@ where
             authority_form(req.uri_mut());
         }
 
+        #[cfg(feature = "cookies")]
+        let cookie_store = self.cookie_store.fetch(req.extensions()).cloned();
+
+        #[cfg(feature = "cookies")]
+        if let Some(ref cookie_store) = cookie_store {
+            let headers = req.headers_mut();
+
+            if !headers.contains_key(COOKIE) {
+                let version = if pooled.is_http2() {
+                    Version::HTTP_2
+                } else {
+                    Version::HTTP_11
+                };
+
+                match cookie_store.cookies(&uri, version) {
+                    Cookies::Compressed(value) => {
+                        headers.insert(COOKIE, value);
+                    }
+                    Cookies::Uncompressed(values) => {
+                        for value in values {
+                            headers.append(COOKIE, value);
+                        }
+                    }
+                    Cookies::Empty => (),
+                }
+            }
+        }
+
         let mut res = match pooled.try_send_request(req).await {
             Ok(res) => res,
             Err(mut err) => {
@@ -255,6 +348,18 @@ where
                 };
             }
         };
+
+        #[cfg(feature = "cookies")]
+        if let Some(cookie_store) = cookie_store {
+            let mut cookies = res
+                .headers()
+                .get_all(http::header::SET_COOKIE)
+                .iter()
+                .peekable();
+            if cookies.peek().is_some() {
+                cookie_store.set_cookies(&mut cookies, &uri);
+            }
+        }
 
         // If the Connector included 'extra' info, add to Response...
         pooled.conn_info.set_extras(res.extensions_mut());
@@ -420,9 +525,8 @@ where
             let connecting = match pool.connecting(descriptor.id(), ver) {
                 Some(lock) => lock,
                 None => {
-                    let canceled = Error::new_kind(ErrorKind::Canceled);
                     // HTTP/2 connection in progress.
-                    return Either::Right(futures_util::future::err(canceled));
+                    return Either::Right(futures_util::future::err(e!(Canceled)));
                 }
             };
             Either::Left(
@@ -586,31 +690,8 @@ where
     B::Error: Into<BoxError>,
 {
     type Response = Response<Incoming>;
-    type Error = Error;
-    type Future = ResponseFuture;
-
-    fn poll_ready(&mut self, _: &mut task::Context<'_>) -> Poll<Result<(), Self::Error>> {
-        Poll::Ready(Ok(()))
-    }
-
-    fn call(&mut self, req: Request<B>) -> Self::Future {
-        self.request(req)
-    }
-}
-
-impl<C, B> tower::Service<Request<B>> for &'_ HttpClient<C, B>
-where
-    C: tower::Service<ConnectionDescriptor> + Clone + Send + Sync + 'static,
-    C::Response: AsyncRead + AsyncWrite + Connection + Unpin + Send + 'static,
-    C::Error: Into<BoxError>,
-    C::Future: Unpin + Send + 'static,
-    B: Body + Send + 'static + Unpin,
-    B::Data: Send,
-    B::Error: Into<BoxError>,
-{
-    type Response = Response<Incoming>;
-    type Error = Error;
-    type Future = ResponseFuture;
+    type Error = BoxError;
+    type Future = BoxFuture<'static, Result<Response<Incoming>, Self::Error>>;
 
     fn poll_ready(&mut self, _: &mut task::Context<'_>) -> Poll<Result<(), Self::Error>> {
         Poll::Ready(Ok(()))
@@ -630,6 +711,8 @@ impl<C: Clone, B> Clone for HttpClient<C, B> {
             h2_builder: self.h2_builder.clone(),
             connector: self.connector.clone(),
             pool: self.pool.clone(),
+            #[cfg(feature = "cookies")]
+            cookie_store: self.cookie_store.clone(),
         }
     }
 }
@@ -651,7 +734,6 @@ impl<B> PoolClient<B> {
     fn poll_ready(&mut self, cx: &mut task::Context<'_>) -> Poll<Result<(), Error>> {
         match self.tx {
             PoolTx::Http1(ref mut tx) => tx.poll_ready(cx).map_err(Error::closed),
-
             PoolTx::Http2(_) => Poll::Ready(Ok(())),
         }
     }
@@ -663,7 +745,6 @@ impl<B> PoolClient<B> {
     fn is_http2(&self) -> bool {
         match self.tx {
             PoolTx::Http1(_) => false,
-
             PoolTx::Http2(_) => true,
         }
     }
@@ -675,7 +756,6 @@ impl<B> PoolClient<B> {
     fn is_ready(&self) -> bool {
         match self.tx {
             PoolTx::Http1(ref tx) => tx.is_ready(),
-
             PoolTx::Http2(ref tx) => tx.is_ready(),
         }
     }
@@ -730,45 +810,17 @@ where
     }
 }
 
-/// A `Future` that will resolve to an HTTP Response.
-#[must_use = "futures do nothing unless polled"]
-pub struct ResponseFuture {
-    inner: Pin<Box<dyn Future<Output = Result<Response<Incoming>, Error>> + Send>>,
-}
-
-// ===== impl ResponseFuture =====
-
-impl ResponseFuture {
-    #[inline]
-    pub(super) fn new<F>(value: F) -> ResponseFuture
-    where
-        F: Future<Output = Result<Response<Incoming>, Error>> + Send + 'static,
-    {
-        ResponseFuture {
-            inner: Box::pin(value),
-        }
-    }
-}
-
-impl Future for ResponseFuture {
-    type Output = Result<Response<Incoming>, Error>;
-
-    #[inline]
-    fn poll(mut self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<Self::Output> {
-        self.inner.as_mut().poll(cx)
-    }
-}
-
 /// A builder to configure a new [`HttpClient`].
 #[derive(Clone)]
 pub struct Builder {
     config: Config,
     exec: Exec,
-
     h1_builder: conn::http1::Builder,
     h2_builder: conn::http2::Builder<Exec>,
     pool_config: pool::Config,
     pool_timer: Time,
+    #[cfg(feature = "cookies")]
+    cookie_store: Option<Arc<dyn CookieStore>>,
 }
 
 // ===== impl Builder =====
@@ -787,7 +839,6 @@ impl Builder {
                 ver: Ver::Auto,
             },
             exec: exec.clone(),
-
             h1_builder: conn::http1::Builder::new(),
             h2_builder: conn::http2::Builder::new(exec),
             pool_config: pool::Config {
@@ -796,6 +847,8 @@ impl Builder {
                 max_pool_size: None,
             },
             pool_timer: Time::Empty,
+            #[cfg(feature = "cookies")]
+            cookie_store: None,
         }
     }
     /// Set an optional timeout for idle sockets being kept-alive.
@@ -897,6 +950,14 @@ impl Builder {
         self
     }
 
+    /// Provide a cookie store for automatic cookie management.
+    #[inline]
+    #[cfg(feature = "cookies")]
+    pub fn cookie_store(mut self, cookie_store: Option<Arc<dyn CookieStore>>) -> Self {
+        self.cookie_store = cookie_store;
+        self
+    }
+
     /// Combine the configuration of this builder with a connector to create a `HttpClient`.
     pub fn build<C, B>(self, connector: C) -> HttpClient<C, B>
     where
@@ -912,16 +973,95 @@ impl Builder {
         HttpClient {
             config: self.config,
             exec: exec.clone(),
-
+            connector,
             h1_builder: self.h1_builder,
             h2_builder: self.h2_builder,
-            connector,
             pool: pool::Pool::new(self.pool_config, exec, timer),
+            #[cfg(feature = "cookies")]
+            cookie_store: RequestConfig::new(self.cookie_store),
         }
     }
 }
 
-pub(super) fn origin_form(uri: &mut Uri) {
+// ==== impl Error ====
+
+impl fmt::Display for Error {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "client error ({:?})", self.kind)
+    }
+}
+
+impl StdError for Error {
+    fn source(&self) -> Option<&(dyn StdError + 'static)> {
+        self.source.as_ref().map(|e| &**e as _)
+    }
+}
+
+impl Error {
+    fn new<E>(kind: ErrorKind, error: E) -> Self
+    where
+        E: Into<BoxError>,
+    {
+        let error = error.into();
+        let kind = if error.is::<tunnel::TunnelError>() || error.is::<ProxyConnect>() || {
+            #[cfg(feature = "socks")]
+            {
+                error.is::<socks::SocksError>()
+            }
+            #[cfg(not(feature = "socks"))]
+            {
+                false
+            }
+        } {
+            ErrorKind::ProxyConnect
+        } else {
+            kind
+        };
+
+        Self {
+            kind,
+            source: Some(error),
+            connect_info: None,
+        }
+    }
+
+    /// Returns true if this was an error from [`ErrorKind::Connect`].
+    #[inline]
+    pub fn is_connect(&self) -> bool {
+        matches!(self.kind, ErrorKind::Connect)
+    }
+
+    /// Returns true if this was an error from [`ErrorKind::ProxyConnect`].
+    #[inline]
+    pub fn is_proxy_connect(&self) -> bool {
+        matches!(self.kind, ErrorKind::ProxyConnect)
+    }
+
+    #[inline]
+    fn with_connect_info(self, connect_info: Connected) -> Self {
+        Self {
+            connect_info: Some(connect_info),
+            ..self
+        }
+    }
+
+    #[inline]
+    fn is_canceled(&self) -> bool {
+        matches!(self.kind, ErrorKind::Canceled)
+    }
+
+    #[inline]
+    fn tx(src: core::Error) -> Self {
+        Self::new(ErrorKind::SendRequest, src)
+    }
+
+    #[inline]
+    fn closed(src: core::Error) -> Self {
+        Self::new(ErrorKind::ChannelClosed, src)
+    }
+}
+
+fn origin_form(uri: &mut Uri) {
     let path = match uri.path_and_query() {
         Some(path) if path.as_str() != "/" => {
             let mut parts = ::http::uri::Parts::default();
@@ -936,7 +1076,7 @@ pub(super) fn origin_form(uri: &mut Uri) {
     *uri = path
 }
 
-pub(super) fn absolute_form(uri: &mut Uri) {
+fn absolute_form(uri: &mut Uri) {
     debug_assert!(uri.scheme().is_some(), "absolute_form needs a scheme");
     debug_assert!(
         uri.authority().is_some(),
@@ -944,7 +1084,7 @@ pub(super) fn absolute_form(uri: &mut Uri) {
     );
 }
 
-pub(super) fn authority_form(uri: &mut Uri) {
+fn authority_form(uri: &mut Uri) {
     if let Some(path) = uri.path_and_query() {
         // `https://hyper.rs` would parse with `/` path, don't
         // annoy people about that...
@@ -964,7 +1104,7 @@ pub(super) fn authority_form(uri: &mut Uri) {
     };
 }
 
-pub(super) fn normalize_uri<B>(req: &mut Request<B>, is_http_connect: bool) -> Result<Uri, Error> {
+fn normalize_uri<B>(req: &mut Request<B>, is_http_connect: bool) -> Result<Uri, Error> {
     let uri = req.uri().clone();
 
     let build_base_uri = |scheme: Scheme, authority: Authority| {
@@ -988,12 +1128,12 @@ pub(super) fn normalize_uri<B>(req: &mut Request<B>, is_http_connect: bool) -> R
         }
         _ => {
             debug!("Client requires absolute-form URIs, received: {:?}", uri);
-            Err(Error::new_kind(ErrorKind::UserAbsoluteUriRequired))
+            Err(e!(UserAbsoluteUriRequired))
         }
     }
 }
 
-pub(super) fn get_non_default_port(uri: &Uri) -> Option<http::uri::Port<&str>> {
+fn get_non_default_port(uri: &Uri) -> Option<http::uri::Port<&str>> {
     match (uri.port().map(|p| p.as_u16()), is_schema_secure(uri)) {
         (Some(443), true) => None,
         (Some(80), false) => None,
@@ -1009,7 +1149,7 @@ fn set_scheme(uri: &mut Uri, scheme: Scheme) {
     let old = std::mem::take(uri);
     let mut parts: ::http::uri::Parts = old.into();
     parts.scheme = Some(scheme);
-    parts.path_and_query = Some("/".parse().expect("slash is a valid path"));
+    parts.path_and_query = Some(PathAndQuery::from_static("/"));
     *uri = Uri::from_parts(parts).expect("scheme is valid");
 }
 

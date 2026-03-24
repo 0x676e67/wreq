@@ -2,8 +2,6 @@
 
 pub mod client;
 pub mod config;
-#[cfg(feature = "cookies")]
-pub mod cookie;
 #[cfg(any(
     feature = "gzip",
     feature = "zstd",
