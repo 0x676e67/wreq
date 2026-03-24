@@ -90,8 +90,10 @@ use crate::{
     redirect::{self, FollowRedirectPolicy},
     retry,
     tls::{
-        AlpnProtocol, CertStore, Identity, IntoTlsSessionStore, KeyLog, TlsOptions,
-        TlsSessionStore, TlsVersion,
+        AlpnProtocol, TlsOptions, TlsVersion,
+        keylog::KeyLog,
+        session::{IntoTlsSessionCache, TlsSessionCache},
+        trust::{CertStore, Identity},
     },
 };
 
@@ -253,7 +255,7 @@ struct Config {
     tls_cert_verification: bool,
     tls_min_version: Option<TlsVersion>,
     tls_max_version: Option<TlsVersion>,
-    tls_session_store: Option<Arc<dyn TlsSessionStore>>,
+    tls_session_cache: Option<Arc<dyn TlsSessionCache>>,
     tls_options: Option<TlsOptions>,
     http1_options: Option<Http1Options>,
     http2_options: Option<Http2Options>,
@@ -339,7 +341,7 @@ impl Client {
                 tls_cert_verification: true,
                 tls_min_version: None,
                 tls_max_version: None,
-                tls_session_store: None,
+                tls_session_cache: None,
                 tls_options: None,
             },
         }
@@ -552,7 +554,7 @@ impl ClientBuilder {
                     .tls_sni(config.tls_sni)
                     .verify_hostname(config.tls_verify_hostname)
                     .cert_verification(config.tls_cert_verification)
-                    .session_store(config.tls_session_store)
+                    .session_store(config.tls_session_cache)
                 })
                 .with_http(|http| {
                     http.enforce_http(false);
@@ -1489,13 +1491,13 @@ impl ClientBuilder {
         self
     }
 
-    /// Sets the TLS session store.
+    /// Sets the TLS session cache.
     ///
     /// By default, an in-memory LRU cache is used. Use this method to provide
-    /// a custom [`TlsSessionStore`] implementation (e.g., file-based or distributed).
+    /// a custom [`TlsSessionCache`] implementation (e.g., file-based or distributed).
     #[inline]
-    pub fn tls_session_store<S: IntoTlsSessionStore>(mut self, store: S) -> ClientBuilder {
-        self.config.tls_session_store = Some(store.into_shared());
+    pub fn tls_session_cache<S: IntoTlsSessionCache>(mut self, store: S) -> ClientBuilder {
+        self.config.tls_session_cache = Some(store.into_shared());
         self
     }
 

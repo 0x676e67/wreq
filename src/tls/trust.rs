@@ -1,3 +1,9 @@
+//! TLS Trust and Identity management.
+//!
+//! Handles server certificate verification, mTLS identity, and CA
+//! bundle management. Provides DER/PEM parsing for BoringSSL and
+//! supports both system and custom trust stores.
+
 mod identity;
 mod parse;
 mod store;

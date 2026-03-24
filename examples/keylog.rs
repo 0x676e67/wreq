@@ -1,4 +1,4 @@
-use wreq::tls::KeyLog;
+use wreq::tls::keylog::KeyLog;
 
 #[tokio::main]
 async fn main() -> wreq::Result<()> {

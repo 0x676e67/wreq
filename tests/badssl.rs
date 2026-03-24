@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use wreq::{
     Client,
-    tls::{AlpsProtocol, CertStore, TlsInfo, TlsOptions, TlsVersion},
+    tls::{AlpsProtocol, TlsInfo, TlsOptions, TlsVersion, trust::CertStore},
 };
 
 macro_rules! join {

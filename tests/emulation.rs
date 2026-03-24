@@ -12,8 +12,8 @@ use wreq::{
         Http2Options, PseudoId, PseudoOrder, SettingId, SettingsOrder, StreamDependency, StreamId,
     },
     tls::{
-        AlpnProtocol, CertificateCompressionAlgorithm, CertificateCompressor, ExtensionType,
-        KeyShare, TlsOptions, TlsVersion,
+        AlpnProtocol, ExtensionType, KeyShare, TlsOptions, TlsVersion,
+        compress::{CertificateCompressionAlgorithm, CertificateCompressor},
     },
 };
 use zstd::stream::{Decoder as ZstdDecoder, Encoder as ZstdEncoder};
@@ -28,13 +28,13 @@ struct ZlibCompressor;
 struct ZstdCompressor;
 
 impl CertificateCompressor for BrotliCompressor {
-    fn compress(&self, input: &[u8], output: &mut dyn std::io::Write) -> std::io::Result<()> {
+    fn compress(&self, input: &[u8], output: &mut dyn io::Write) -> io::Result<()> {
         let mut writer = BrotliDecoder::new(output, input.len(), 11, 22);
         writer.write_all(input)?;
         writer.flush()
     }
 
-    fn decompress(&self, input: &[u8], output: &mut dyn std::io::Write) -> std::io::Result<()> {
+    fn decompress(&self, input: &[u8], output: &mut dyn io::Write) -> io::Result<()> {
         let mut reader = BrotliEncoder::new(input, 4096);
         io::copy(&mut reader, output)?;
         Ok(())
@@ -46,14 +46,14 @@ impl CertificateCompressor for BrotliCompressor {
 }
 
 impl CertificateCompressor for ZlibCompressor {
-    fn compress(&self, input: &[u8], output: &mut dyn std::io::Write) -> std::io::Result<()> {
+    fn compress(&self, input: &[u8], output: &mut dyn io::Write) -> io::Result<()> {
         let mut encoder = ZlibEncoder::new(output, Compression::default());
         encoder.write_all(input)?;
         encoder.finish()?;
         Ok(())
     }
 
-    fn decompress(&self, input: &[u8], output: &mut dyn std::io::Write) -> std::io::Result<()> {
+    fn decompress(&self, input: &[u8], output: &mut dyn io::Write) -> io::Result<()> {
         let mut reader = ZlibDecoder::new(input);
         io::copy(&mut reader, output)?;
         Ok(())
@@ -65,14 +65,14 @@ impl CertificateCompressor for ZlibCompressor {
 }
 
 impl CertificateCompressor for ZstdCompressor {
-    fn compress(&self, input: &[u8], output: &mut dyn std::io::Write) -> std::io::Result<()> {
+    fn compress(&self, input: &[u8], output: &mut dyn io::Write) -> io::Result<()> {
         let mut encoder = ZstdEncoder::new(output, 0)?;
         encoder.write_all(input)?;
         encoder.finish()?;
         Ok(())
     }
 
-    fn decompress(&self, input: &[u8], output: &mut dyn std::io::Write) -> std::io::Result<()> {
+    fn decompress(&self, input: &[u8], output: &mut dyn io::Write) -> io::Result<()> {
         let mut reader = ZstdDecoder::new(input)?;
         io::copy(&mut reader, output)?;
         Ok(())

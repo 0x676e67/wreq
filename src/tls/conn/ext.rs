@@ -2,7 +2,7 @@ use btls::ssl::{SslConnectorBuilder, SslVerifyMode};
 
 use crate::{
     Error,
-    tls::{CertStore, compress::CertificateCompressor},
+    tls::{compress::CertificateCompressor, trust::CertStore},
 };
 
 /// SslConnectorBuilderExt trait for `SslConnectorBuilder`.

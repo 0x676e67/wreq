@@ -2,23 +2,20 @@
 //!
 //! - Various parts of TLS can also be configured or even disabled on the `ClientBuilder`.
 
-mod compress;
 pub(crate) mod conn;
-mod keylog;
-mod session;
-mod trust;
+
+pub mod compress;
+pub mod keylog;
+pub mod session;
+pub mod trust;
 
 use std::borrow::Cow;
 
-pub use btls::ssl::{CertificateCompressionAlgorithm, ExtensionType, KeyShare};
-use bytes::{BufMut, Bytes, BytesMut};
+use ::bytes::{BufMut, Bytes, BytesMut};
+/// Re-exports of TLS-related types from `btls` for public use.
+pub use btls::ssl::{ExtensionType, KeyShare};
 
-pub use self::{
-    compress::CertificateCompressor,
-    keylog::KeyLog,
-    session::{IntoTlsSessionStore, LruSessionStore, TlsSession, TlsSessionKey, TlsSessionStore},
-    trust::{CertStore, CertStoreBuilder, Certificate, Identity},
-};
+use self::compress::CertificateCompressor;
 
 /// Http extension carrying extra TLS layer information.
 /// Made available to clients on responses when `tls_info` is set.
