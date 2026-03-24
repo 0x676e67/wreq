@@ -1,7 +1,6 @@
 mod support;
-use std::sync::Arc;
 
-use http::header::COOKIE;
+use http::{Version, header::COOKIE};
 use support::server;
 use wreq::{Client, cookie::Jar};
 
@@ -231,6 +230,7 @@ async fn cookie_request_level_compression() {
                 .body(Default::default())
                 .unwrap(),
             "/default" | "/compressed" => {
+                assert_eq!(req.version(), Version::HTTP_11);
                 let cookies = req
                     .headers()
                     .get(COOKIE)
@@ -245,6 +245,7 @@ async fn cookie_request_level_compression() {
                 http::Response::default()
             }
             "/uncompressed" => {
+                assert_eq!(req.version(), Version::HTTP_2);
                 let cookies: Vec<_> = req
                     .headers()
                     .get_all(COOKIE)
@@ -265,12 +266,9 @@ async fn cookie_request_level_compression() {
 
     let base_url = format!("http://{}", server.addr());
 
-    // Create a jar with compression enabled (default)
-    let jar = Arc::new(Jar::default());
-
     // Create a client with this jar
     let client = Client::builder()
-        .cookie_provider(jar.clone())
+        .cookie_provider(Jar::default())
         .build()
         .unwrap();
 
@@ -291,7 +289,7 @@ async fn cookie_request_level_compression() {
     // Request with compressed cookies
     client
         .get(format!("{}/compressed", base_url))
-        .cookie_provider(jar.compressed())
+        .version(Version::HTTP_11)
         .send()
         .await
         .unwrap();
@@ -299,7 +297,7 @@ async fn cookie_request_level_compression() {
     // Request with uncompressed cookies
     client
         .get(format!("{}/uncompressed", base_url))
-        .cookie_provider(jar.uncompressed())
+        .version(Version::HTTP_2)
         .send()
         .await
         .unwrap();

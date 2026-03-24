@@ -27,10 +27,8 @@ use http::header::{HeaderMap, HeaderValue, USER_AGENT};
 use tower::{
     BoxError, Layer, Service, ServiceBuilder, ServiceExt,
     retry::{Retry, RetryLayer},
-    util::{BoxCloneSyncService, BoxCloneSyncServiceLayer, Either, MapErr, Oneshot},
+    util::{BoxCloneSyncService, BoxCloneSyncServiceLayer, Either, Oneshot},
 };
-#[cfg(feature = "cookies")]
-use {self::layer::cookie::CookieServiceLayer, crate::cookie};
 
 #[cfg(any(
     feature = "gzip",
@@ -75,8 +73,9 @@ pub(crate) use self::{
         descriptor::{ConnectionDescriptor, ConnectionId},
     },
     core::Error as CoreError,
-    layer::client::error::Error as ClientError,
 };
+#[cfg(feature = "cookies")]
+use crate::cookie;
 #[cfg(feature = "hickory-dns")]
 use crate::dns::hickory::HickoryDnsResolver;
 use crate::{
@@ -96,14 +95,6 @@ use crate::{
         trust::{CertStore, Identity},
     },
 };
-
-/// Service type for cookie handling. Identity type when cookies feature is disabled.
-#[cfg(not(feature = "cookies"))]
-type CookieService<T> = T;
-
-/// Service wrapper that handles cookie storage and injection.
-#[cfg(feature = "cookies")]
-type CookieService<T> = self::layer::cookie::CookieService<T>;
 
 /// Decompression service type. Identity type when compression features are disabled.
 #[cfg(not(any(
@@ -148,12 +139,7 @@ type ClientService = Timeout<
             Decompression<
                 Retry<
                     RetryPolicy,
-                    FollowRedirect<
-                        CookieService<
-                            MapErr<HttpClient<Connector, Body>, fn(ClientError) -> BoxError>,
-                        >,
-                        FollowRedirectPolicy,
-                    >,
+                    FollowRedirect<HttpClient<Connector, Body>, FollowRedirectPolicy>,
                 >,
             >,
         >,
@@ -534,7 +520,6 @@ impl ClientBuilder {
                 DynResolver::new(resolver)
             };
 
-            // Build connector
             let connector = Connector::builder(config.proxies, resolver)
                 .timeout(config.connect_timeout)
                 .tls_info(config.tls_info)
@@ -594,8 +579,15 @@ impl ClientBuilder {
                 })
                 .build(config.tls_options, config.connector_layers)?;
 
-            // Build client
-            HttpClient::builder(TokioExecutor::new())
+            #[allow(unused_mut)]
+            let mut builder = HttpClient::builder(TokioExecutor::new());
+
+            #[cfg(feature = "cookies")]
+            {
+                builder = builder.cookie_store(config.cookie_store);
+            }
+
+            builder
                 .http1_options(config.http1_options)
                 .http2_options(config.http2_options)
                 .http2_only(matches!(config.http_version_pref, HttpVersionPref::Http2))
@@ -605,16 +597,10 @@ impl ClientBuilder {
                 .pool_max_idle_per_host(config.pool_max_idle_per_host)
                 .pool_max_size(config.pool_max_size)
                 .build(connector)
-                .map_err(Into::into as _)
         };
 
         // Configured client service with layers
         let client = {
-            #[cfg(feature = "cookies")]
-            let service = ServiceBuilder::new()
-                .layer(CookieServiceLayer::new(config.cookie_store))
-                .service(service);
-
             let service = ServiceBuilder::new()
                 .layer(RetryLayer::new(RetryPolicy::new(config.retry_policy)))
                 .layer({

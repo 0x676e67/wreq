@@ -61,6 +61,7 @@ impl<T: ?Sized> DerefMut for MutexGuard<'_, T> {
 }
 
 /// A [`RwLock`] that never poisons and has the same interface as [`std::sync::RwLock`].
+#[derive(Debug)]
 pub struct RwLock<T: ?Sized>(sync::RwLock<T>);
 
 impl<T> RwLock<T> {
