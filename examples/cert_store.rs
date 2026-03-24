@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use wreq::{
     Client,
-    tls::{CertStore, TlsInfo},
+    tls::{TlsInfo, trust::CertStore},
 };
 
 /// Certificate Store Example

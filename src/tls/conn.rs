@@ -28,15 +28,16 @@ use crate::{
     Error,
     client::{Connected, Connection, ConnectionDescriptor},
     tls::{
-        AlpnProtocol, AlpsProtocol, CertStore, Identity, KeyLog, KeyShare, TlsOptions, TlsVersion,
+        AlpnProtocol, AlpsProtocol, KeyShare, TlsOptions, TlsVersion,
         conn::ext::SslConnectorBuilderExt,
-        session::{LruSessionStore, TlsSession, TlsSessionKey, TlsSessionStore},
+        keylog::KeyLog,
+        session::{Key, LruTlsSessionCache, TlsSession, TlsSessionCache},
+        trust::{CertStore, Identity},
     },
 };
 
-fn key_index() -> Result<Index<Ssl, TlsSessionKey>, ErrorStack> {
-    static IDX: LazyLock<Result<Index<Ssl, TlsSessionKey>, ErrorStack>> =
-        LazyLock::new(Ssl::new_ex_index);
+fn key_index() -> Result<Index<Ssl, Key>, ErrorStack> {
+    static IDX: LazyLock<Result<Index<Ssl, Key>, ErrorStack>> = LazyLock::new(Ssl::new_ex_index);
     IDX.clone()
 }
 
@@ -72,14 +73,14 @@ pub struct TlsConnectorBuilder {
     cert_store: Option<CertStore>,
     cert_verification: bool,
     keylog: Option<KeyLog>,
-    session_cache: Arc<dyn TlsSessionStore>,
+    session_cache: Arc<dyn TlsSessionCache>,
 }
 
 /// A layer which wraps services in an `SslConnector`.
 #[derive(Clone)]
 pub struct TlsConnector {
     ssl: SslConnector,
-    cache: Option<Arc<dyn TlsSessionStore>>,
+    cache: Option<Arc<dyn TlsSessionCache>>,
     settings: HandshakeSettings,
 }
 
@@ -121,7 +122,7 @@ impl TlsConnector {
             cert_store: None,
             cert_verification: true,
             keylog: None,
-            session_cache: Arc::new(LruSessionStore::new(8)),
+            session_cache: Arc::new(LruTlsSessionCache::new(8)),
         }
     }
 
@@ -193,11 +194,11 @@ impl TlsConnector {
         let host = Self::normalize_host(host);
 
         if let Some(ref cache) = self.cache {
-            let key = TlsSessionKey(descriptor.id());
+            let key = Key(descriptor.id());
 
             // If the session cache is enabled, we try to retrieve the session
             // associated with the key. If it exists, we set it in the SSL configuration.
-            if let Some(session) = cache.get(&key) {
+            if let Some(session) = cache.pop(&key) {
                 #[allow(unsafe_code)]
                 unsafe { cfg.set_session(&session.0) }?;
 
@@ -312,9 +313,9 @@ impl TlsConnectorBuilder {
     /// Sets a custom TLS session store.
     ///
     /// By default, a [`LruSessionStore`] is used. Use this method to provide
-    /// a custom [`TlsSessionStore`] implementation (e.g., file-based or distributed).
+    /// a custom [`TlsSessionCache`] implementation (e.g., file-based or distributed).
     #[inline]
-    pub fn session_store(mut self, store: Option<Arc<dyn TlsSessionStore>>) -> Self {
+    pub fn session_store(mut self, store: Option<Arc<dyn TlsSessionCache>>) -> Self {
         if let Some(store) = store {
             self.session_cache = store;
         }
@@ -466,7 +467,7 @@ impl TlsConnectorBuilder {
                 let cache = session_cache.clone();
                 move |ssl, session| {
                     if let Ok(Some(key)) = key_index().map(|idx| ssl.ex_data(idx)) {
-                        cache.insert(key.clone(), TlsSession(session));
+                        cache.put(key.clone(), TlsSession(session));
                     }
                 }
             });

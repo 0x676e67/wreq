@@ -1,3 +1,12 @@
+//! TLS 1.3 session caching and resumption.
+//!
+//! Handshakes are expensive. This module lets you reuse sessions to save
+//! CPU cycles and reduce latency.
+//!
+//! By default, we use an in-memory LRU cache, but you can plug in your own
+//! implementation if you're running at scale or need to share sessions
+//! across multiple instances.
+
 use std::{
     borrow::Borrow,
     collections::{HashMap, hash_map::Entry},
@@ -6,19 +15,20 @@ use std::{
     sync::Arc,
 };
 
+use btls::ssl::{SslSession, SslVersion};
 use lru::LruCache;
 
 use crate::{client::ConnectionId, sync::Mutex, tls::TlsVersion};
 
 /// An opaque key identifying a TLS session cache entry.
-#[derive(Clone)]
-pub struct TlsSessionKey(pub(crate) ConnectionId);
+#[derive(Clone, PartialEq, Eq, Hash)]
+pub struct Key(pub(super) ConnectionId);
 
 /// A TLS session that can be stored and retrieved from a session cache.
 #[derive(Clone)]
-pub struct TlsSession(pub(crate) btls::ssl::SslSession);
+pub struct TlsSession(pub(super) SslSession);
 
-/// A trait for storing and retrieving TLS sessions.
+/// A trait for cache storing and retrieving TLS sessions.
 ///
 /// # TLS 1.3 Session Handling
 ///
@@ -26,22 +36,22 @@ pub struct TlsSession(pub(crate) btls::ssl::SslSession);
 /// retrieval to comply with [RFC 8446 Appendix C.4](https://tools.ietf.org/html/rfc8446#appendix-C.4),
 /// which requires that session tickets are used at most once to prevent
 /// concurrent handshakes from reusing the same session.
-pub trait TlsSessionStore: Send + Sync {
+pub trait TlsSessionCache: Send + Sync {
     /// Store a TLS session associated with the given key.
-    fn insert(&self, key: TlsSessionKey, session: TlsSession);
+    fn put(&self, key: Key, session: TlsSession);
 
     /// Retrieve a TLS session for the given key.
     ///
     /// For TLS 1.3, the session should be removed from the cache upon retrieval
     /// to ensure single-use semantics (see [RFC 8446 Appendix C.4]).
-    fn get(&self, key: &TlsSessionKey) -> Option<TlsSession>;
+    fn pop(&self, key: &Key) -> Option<TlsSession>;
 }
 
 impl_into_shared!(
-    /// Trait for converting types into a shared [`TlsSessionStore`].
+    /// Trait for converting types into a shared [`TlsSessionCache`].
     ///
-    /// This allows accepting bare types, `Arc<T>`, or `Arc<dyn TlsSessionStore>`.
-    pub trait IntoTlsSessionStore => TlsSessionStore
+    /// This allows accepting bare types, `Arc<T>`, or `Arc<dyn TlsSessionCache>`.
+    pub trait IntoTlsSessionCache => TlsSessionCache
 );
 
 /// The default two-level LRU session cache.
@@ -49,61 +59,54 @@ impl_into_shared!(
 /// Maintains both forward (key → sessions) and reverse (session → key) lookups
 /// for efficient session storage, retrieval, and cleanup operations.
 ///
-/// This is the built-in implementation of [`TlsSessionStore`] used when no
+/// This is the built-in implementation of [`TlsSessionCache`] used when no
 /// custom session store is configured.
-pub struct LruSessionStore {
+pub struct LruTlsSessionCache {
     inner: Mutex<Inner>,
     per_host_session_capacity: usize,
 }
 
 struct Inner {
-    reverse: HashMap<TlsSession, TlsSessionKey>,
-    per_host_sessions: HashMap<TlsSessionKey, LruCache<TlsSession, ()>>,
-}
-
-// ===== impl SessionKey =====
-
-impl Eq for TlsSessionKey {}
-
-impl PartialEq for TlsSessionKey {
-    #[inline]
-    fn eq(&self, other: &Self) -> bool {
-        self.0 == other.0
-    }
-}
-
-impl Hash for TlsSessionKey {
-    #[inline]
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        self.0.hash(state);
-    }
+    reverse: HashMap<TlsSession, Key>,
+    per_host_sessions: HashMap<Key, LruCache<TlsSession, ()>>,
 }
 
 // ===== impl TlsSession =====
 
 impl TlsSession {
-    /// Returns the session ID as a byte slice.
+    /// Returns the TLS session ID.
     #[inline]
     pub fn id(&self) -> &[u8] {
         self.0.id()
     }
 
-    /// Returns the TLS protocol version negotiated for this session.
-    #[inline]
-    pub fn protocol_version(&self) -> TlsVersion {
-        TlsVersion(self.0.protocol_version())
-    }
-
-    /// Returns the session establishment time as seconds since the Unix epoch.
+    /// Returns the time at which the session was established, in seconds since the Unix epoch.
     #[inline]
     pub fn time(&self) -> u64 {
         self.0.time()
     }
 
-    /// Returns the session timeout in seconds.
+    /// Returns the sessions timeout, in seconds.
+    ///
+    /// A session older than this time should not be used for session resumption.
     #[inline]
     pub fn timeout(&self) -> u32 {
         self.0.timeout()
+    }
+
+    /// Returns the TLS protocol version negotiated for this session.
+    #[inline]
+    pub fn protocol_version(&self) -> TlsVersion {
+        let version = self.0.protocol_version();
+        if version == SslVersion::SSL3 {
+            // SSLv3 (SSL 3.0) is obsolete and insecure, and is not supported by btls.
+            // This branch should never be reached in normal operation. If it is,
+            // it indicates a bug or an unsupported/legacy OpenSSL configuration.
+            unreachable!(
+                "Encountered unsupported protocol: SSLv3 (SSL 3.0) is obsolete and not accepted by btls"
+            );
+        }
+        TlsVersion(version)
     }
 }
 
@@ -130,12 +133,12 @@ impl Borrow<[u8]> for TlsSession {
     }
 }
 
-// ===== impl LruSessionStore =====
+// ===== impl LruTlsSessionCache =====
 
-impl LruSessionStore {
-    /// Creates a new [`LruSessionStore`] with the given per-host capacity.
+impl LruTlsSessionCache {
+    /// Creates a new [`LruTlsSessionCache`] with the given per-host capacity.
     pub fn new(per_host_session_capacity: usize) -> Self {
-        LruSessionStore {
+        LruTlsSessionCache {
             inner: Mutex::new(Inner {
                 reverse: HashMap::new(),
                 per_host_sessions: HashMap::new(),
@@ -145,8 +148,8 @@ impl LruSessionStore {
     }
 }
 
-impl TlsSessionStore for LruSessionStore {
-    fn insert(&self, key: TlsSessionKey, session: TlsSession) {
+impl TlsSessionCache for LruTlsSessionCache {
+    fn put(&self, key: Key, session: TlsSession) {
         let mut inner = self.inner.lock();
 
         let evicted = {
@@ -176,7 +179,7 @@ impl TlsSessionStore for LruSessionStore {
         inner.reverse.insert(session, key);
     }
 
-    fn get(&self, key: &TlsSessionKey) -> Option<TlsSession> {
+    fn pop(&self, key: &Key) -> Option<TlsSession> {
         let mut inner = self.inner.lock();
         let session = {
             let per_host_sessions = inner.per_host_sessions.get_mut(key)?;

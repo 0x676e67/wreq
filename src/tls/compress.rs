@@ -1,21 +1,27 @@
-//! TLS certificate compression support.
+//! TLS certificate compression [RFC 8879](https://datatracker.ietf.org/doc/html/rfc8879).
+//!
+//! Reduces handshake latency by compressing certificate chains.
+//! Supports Zlib, Brotli, and Zstd algorithms to minimize bytes-on-wire
+//! and fit within the initial congestion window.
 
 use std::{fmt::Debug, io};
 
-use btls::ssl::{self, CertificateCompressionAlgorithm};
+use btls::ssl;
+// Re-export the `CertificateCompressionAlgorithm` enum for users of this module.
+pub use ssl::CertificateCompressionAlgorithm;
 
 /// Trait for TLS certificate compression implementations.
 ///
 /// Provides methods for compressing and decompressing certificate data,
 /// as well as identifying the algorithm in use.
 pub trait CertificateCompressor: Debug + Send + Sync + 'static {
-    /// Compresses the input buffer and writes the result to `output`.
+    /// Perform compression of `input` buffer and write compressed data to `output`.
     fn compress(&self, input: &[u8], output: &mut dyn io::Write) -> io::Result<()>;
 
-    /// Decompresses the input buffer and writes the result to `output`.
+    /// Perform decompression of `input` buffer and write compressed data to `output`.
     fn decompress(&self, input: &[u8], output: &mut dyn io::Write) -> io::Result<()>;
 
-    /// Returns the IANA identifier for the compression algorithm.
+    /// An IANA assigned identifier of compression algorithm
     fn algorithm(&self) -> CertificateCompressionAlgorithm;
 }
 
