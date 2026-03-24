@@ -1,63 +1,125 @@
 ## [unreleased]
 
-### 🐛 Bug Fixes
+### Features
 
+- *(cookie)* RFC 9113 compliant cookie handling ([#1106](https://github.com/0x676e67/wreq/issues/1106)) - ([81f3adb](https://github.com/0x676e67/wreq/commit/81f3adb85e0fff869439bd4eac48405e78916c9a))
+- *(cookie)* Fill missing domain/path in `get_all` from stored scope ([#1082](https://github.com/0x676e67/wreq/issues/1082)) - ([240d84e](https://github.com/0x676e67/wreq/commit/240d84eab5eb4df8548933ee2c13337d86e1afe1))
+- *(multipart)* Add Form::set_boundary for custom boundaries ([#1094](https://github.com/0x676e67/wreq/issues/1094)) - ([30adda1](https://github.com/0x676e67/wreq/commit/30adda14d21824f5b6c8b7817d0da76a4876b007))
+- *(tls)* Allow pluggable TLS session cache ([#1101](https://github.com/0x676e67/wreq/issues/1101)) - ([98c1306](https://github.com/0x676e67/wreq/commit/98c130643afca83b15811d42466011900d672bc4))
+
+### Bug Fixes
+
+- *(bench)* Fix CPU sysinfo reading in benchmark ([#1080](https://github.com/0x676e67/wreq/issues/1080)) - ([7882497](https://github.com/0x676e67/wreq/commit/78824973f82de07f86528a4e5df1cf99f313d325))
+- *(http2)* Prevent panic when calling to_str on non-UTF8 headers ([#1070](https://github.com/0x676e67/wreq/issues/1070)) - ([2aa4b16](https://github.com/0x676e67/wreq/commit/2aa4b1601ec22aea0ef5eb1b97e566a217194351))
 - *(rt)* Support fake time in legacy client and TokioTimer ([#1064](https://github.com/0x676e67/wreq/issues/1064)) - ([29acebc](https://github.com/0x676e67/wreq/commit/29acebcdc16b1cec24f0547e6d381e512322edd9))
+- *(tcp)* Restore the missing TCP nodelay setting ([#1102](https://github.com/0x676e67/wreq/issues/1102)) - ([7ea12ed](https://github.com/0x676e67/wreq/commit/7ea12ede38a6617772cf5b66342d3b6f9c2ff7cb))
+- Disable Nagle's algorithm to resolve HTTP/2 performance dip ([#1074](https://github.com/0x676e67/wreq/issues/1074)) - ([8f45ef4](https://github.com/0x676e67/wreq/commit/8f45ef41eb5738d07947e6b78917488680332213))
 
-### ⚡ Performance
+### Refactor
 
+- *(conn)* Modular connector component ([#1100](https://github.com/0x676e67/wreq/issues/1100)) - ([6cf1279](https://github.com/0x676e67/wreq/commit/6cf1279d4a0b40075942692687c967b5da4292c7))
+- *(multipart)* Streamline legacy Form implementation - ([45df222](https://github.com/0x676e67/wreq/commit/45df2228715df1ecbe8e35866f1ec3a82cd4e106))
+- *(pool)* Redesign emulation and pool ID strategy ([#1103](https://github.com/0x676e67/wreq/issues/1103)) - ([c12f3a0](https://github.com/0x676e67/wreq/commit/c12f3a0d8e6dfd4536acb46bf2d318b2cd022aac))
+- *(tls)* Decouple TLS backend logic into sub-modules ([#1105](https://github.com/0x676e67/wreq/issues/1105)) - ([c7a7e3c](https://github.com/0x676e67/wreq/commit/c7a7e3c94a40368894d4a63a959eb633c3a292f1))
+- *(tls)* Expose certificate compression APIs ([#1085](https://github.com/0x676e67/wreq/issues/1085)) - ([8429954](https://github.com/0x676e67/wreq/commit/842995411c9262b04260137c588084340e59133e))
+
+### Documentation
+
+- *(hash)* Simplify documentation for `HashMemo` creation ([#1076](https://github.com/0x676e67/wreq/issues/1076)) - ([fe85f5d](https://github.com/0x676e67/wreq/commit/fe85f5d8972322fe76fdea8317563c730cce319f))
+- Remove deprecated doc_cfg feature conditionally - ([29da566](https://github.com/0x676e67/wreq/commit/29da5662789a9ef8092943a29912dbb77cdde275))
+- Clarify symbol conflict with OpenSSL ([#1068](https://github.com/0x676e67/wreq/issues/1068)) - ([ee2f9f0](https://github.com/0x676e67/wreq/commit/ee2f9f0cf0ab1faf6f56f85ca1a582f576c5f56f))
+
+### Performance
+
+- *(bench)* Optimize benchmark server ([#1073](https://github.com/0x676e67/wreq/issues/1073)) - ([bd8cd36](https://github.com/0x676e67/wreq/commit/bd8cd36084b0367a35d949355b12d5224ea800c0))
+- *(buf)* Make `BufList::remaining` O(1) by caching length ([#1091](https://github.com/0x676e67/wreq/issues/1091)) - ([aaed745](https://github.com/0x676e67/wreq/commit/aaed745799bddacd91e62d373e64ab753ea2d8ee))
 - *(error)* Hint compiler to inline trivial error-handling functions ([#1061](https://github.com/0x676e67/wreq/issues/1061)) - ([7746f74](https://github.com/0x676e67/wreq/commit/7746f74c3749116a3e2148a59771c8219077e94b))
+- *(http1)* Eliminate `ParserConfig` clones on the HTTP/1.1 request hot path ([#1088](https://github.com/0x676e67/wreq/issues/1088)) - ([9edb950](https://github.com/0x676e67/wreq/commit/9edb95002b121b914dd6cc2f8004f55ba6f2e8bf))
 - *(http2)* Backport and apply hyper client's H2 configuration ([#1063](https://github.com/0x676e67/wreq/issues/1063)) - ([6e2f160](https://github.com/0x676e67/wreq/commit/6e2f160e6ddc9b59a8e3de64fb487f5a47f428e8))
+- *(multipart)* Improve memory layout of `multipart::Form` ([#1095](https://github.com/0x676e67/wreq/issues/1095)) - ([ff44181](https://github.com/0x676e67/wreq/commit/ff4418136e8529a5dedbe008d2dee24441ee232a))
 - *(request)* Static init for common content-type header ([#1060](https://github.com/0x676e67/wreq/issues/1060)) - ([1e45fc5](https://github.com/0x676e67/wreq/commit/1e45fc557721de2d0d483cb00ccc38fe59aeb9a0))
 - *(response)* Hint compiler to inline trivial response-handling functions ([#1062](https://github.com/0x676e67/wreq/issues/1062)) - ([be87bb8](https://github.com/0x676e67/wreq/commit/be87bb85646817cdb6c356ae8efa6eec587fac03))
 
-### ⚙️ Miscellaneous Tasks
+### Styling
 
+- *(bench)* Fmt code - ([c6e6726](https://github.com/0x676e67/wreq/commit/c6e6726f2f70c19dc898110af1a3b2131379036a))
+- *(request)* Fmt imports for request.rs file - ([2c51823](https://github.com/0x676e67/wreq/commit/2c518232f713827bf3be31c4823d76127566c63a))
+
+### Miscellaneous Tasks
+
+- *(bench)* Update mod benchmark comment - ([f987254](https://github.com/0x676e67/wreq/commit/f987254db8d3f44aa4538bc4436ac7daa8aa608d))
+- *(bench)* Format expected error annotations - ([7131366](https://github.com/0x676e67/wreq/commit/71313662072bad0fa18ed8c0a4d921c7ce706499))
+- *(client)* Fmt code - ([21f27bc](https://github.com/0x676e67/wreq/commit/21f27bc22fb1304cb77ffa52acd3d12bdc56dcfe))
+- *(conn)* Optimize `ConnectionId` cloning ([#1108](https://github.com/0x676e67/wreq/issues/1108)) - ([1a58655](https://github.com/0x676e67/wreq/commit/1a58655420f9b2c771cb433bf2e2a1d0b5158ad5))
 - *(core)* Clear code - ([9411b19](https://github.com/0x676e67/wreq/commit/9411b19d16d1dee6b66657dc681c96c89394fe6f))
+- *(tcp)* Prune redundant local address handling ([#1107](https://github.com/0x676e67/wreq/issues/1107)) - ([6a2f343](https://github.com/0x676e67/wreq/commit/6a2f343d280ecc9e40864a85d9b31d44de84ae36))
+- Fmt code - ([69c7a76](https://github.com/0x676e67/wreq/commit/69c7a76b483695ebeaf8deded1bb74a655d11602))
+- Fmt import - ([e96a759](https://github.com/0x676e67/wreq/commit/e96a7592ad957efd8e0d0cda3d2ccd6406694356))
+- Update comments for compression support dependencies - ([3f154d3](https://github.com/0x676e67/wreq/commit/3f154d323ff71e7b4ad38c44a90373e6a5aa9569))
+- Refactor `Cargo.toml` for clarity and organization - ([b272408](https://github.com/0x676e67/wreq/commit/b27240866ad81f29616186243ac5a49cf0d165b8))
+- Lint core ([#1071](https://github.com/0x676e67/wreq/issues/1071)) - ([6ed8212](https://github.com/0x676e67/wreq/commit/6ed8212248bfd7085b56f3ff4330acb929d066bf))
 - Fix clippy - ([cf29946](https://github.com/0x676e67/wreq/commit/cf2994669b1be87d3fc5555a5a5179acb54d62d5))
 
 ### Bench
 
+- Add missing `TokioTimer` to http1 server builder ([#1081](https://github.com/0x676e67/wreq/issues/1081)) - ([cacd004](https://github.com/0x676e67/wreq/commit/cacd0046acb3051e1f227678a17a972a08a841e4))
+- Format benchmark group labels - ([63f9e39](https://github.com/0x676e67/wreq/commit/63f9e3944d358b4fdcf1df73329d43c5632593e4))
+- Improve benchmark test coverage ([#1075](https://github.com/0x676e67/wreq/issues/1075)) - ([ef41eb3](https://github.com/0x676e67/wreq/commit/ef41eb3fc14df26f6e51a979a978c3c8eeb73101))
+- Simplify grouped benchmarks - ([c63ef51](https://github.com/0x676e67/wreq/commit/c63ef51583a463b44c9efce95e80719c5b803070))
+- Include TLS-encrypted scenarios for HTTP/1 and HTTP/2 - ([10dc7fd](https://github.com/0x676e67/wreq/commit/10dc7fddccf1afc1a30f978b6f976d1cf19007ad))
+- Add benchmarks for full and streaming bodies ([#1069](https://github.com/0x676e67/wreq/issues/1069)) - ([0186719](https://github.com/0x676e67/wreq/commit/01867191c4b78cb179980751508e6d1d4ebd685f))
 - Add benchmarks for HTTP/1.1 and HTTP/2 ([#1065](https://github.com/0x676e67/wreq/issues/1065)) - ([71fb97a](https://github.com/0x676e67/wreq/commit/71fb97a6a19065e6655875ee3811deaa9c3ae429))
 
+### Build
+
+- *(deps)* Bump btls from 0.5.3 to 0.5.4 ([#1090](https://github.com/0x676e67/wreq/issues/1090)) - ([7c901db](https://github.com/0x676e67/wreq/commit/7c901db6ea4cce23500af66059851fd81e9c1d54))
+- *(deps)* Replace `ahash` with `foldhash` in `lru` cache ([#1084](https://github.com/0x676e67/wreq/issues/1084)) - ([5c7b411](https://github.com/0x676e67/wreq/commit/5c7b4110a4b6678276218b7d6e43b6762b957ebe))
+- *(deps)* Migrate from `boring2` to `btls` ([#1083](https://github.com/0x676e67/wreq/issues/1083)) - ([2d45542](https://github.com/0x676e67/wreq/commit/2d45542b230397875bd92fbca65389b24e17ca2f))
+- *(deps)* Replace `raw-cpuid` with `sysinfo` implementation ([#1077](https://github.com/0x676e67/wreq/issues/1077)) - ([1ab8770](https://github.com/0x676e67/wreq/commit/1ab87707bb7939d79bd31d9460a79bece97dce8c))
+- *(deps)* Bump nttld/setup-ndk from 1.5.0 to 1.6.0 ([#1072](https://github.com/0x676e67/wreq/issues/1072)) - ([3757645](https://github.com/0x676e67/wreq/commit/3757645801a260bb0db38cdbd12f26a2cc45ea5c))
+- *(deps)* Replace `schnellru` with `lru`  implementation ([#1066](https://github.com/0x676e67/wreq/issues/1066)) - ([13c9586](https://github.com/0x676e67/wreq/commit/13c9586c0951c881312cdb6036a188a20eb5746c))
+
+## New Contributors ❤️
+
+* @sqdshguy made their first contribution in [#1094](https://github.com/0x676e67/wreq/pull/1094)
 
 ## [6.0.0-rc.28](https://github.com/0x676e67/wreq/compare/v6.0.0-rc.27..v6.0.0-rc.28) - 2026-02-11
 
-### 🐛 Bug Fixes
+### Bug Fixes
 
 - *(http1)* Use case-insensitive matching for trailer fields ([#1059](https://github.com/0x676e67/wreq/issues/1059)) - ([1b7d57b](https://github.com/0x676e67/wreq/commit/1b7d57bce1fcc7e471ba383a5b0c14fcc926d1de))
 
-### ⚡ Performance
+### Performance
 
 - *(request)* Reduce overhead by lazy-loading headers for `json`/`form` data ([#1058](https://github.com/0x676e67/wreq/issues/1058)) - ([6992b6f](https://github.com/0x676e67/wreq/commit/6992b6ffd69bf61f710d97d97b436d630e38cbe7))
 
 
 ## [6.0.0-rc.27](https://github.com/0x676e67/wreq/compare/v6.0.0-rc.26..v6.0.0-rc.27) - 2026-01-17
 
-### ⛰️  Features
+### Features
 
 - *(cookie)* Consolidate cookie methods into a unified add() ([#1043](https://github.com/0x676e67/wreq/issues/1043)) - ([59999e6](https://github.com/0x676e67/wreq/commit/59999e613305e8aa8e13150cec858525b9f4cb6f))
 - *(tls)* Add peer certificate chain to `TlsInfo` ([#1049](https://github.com/0x676e67/wreq/issues/1049)) - ([f27cb78](https://github.com/0x676e67/wreq/commit/f27cb789c8db32ca4fd0bc4e6d8e007307639ba6))
 
-### 🐛 Bug Fixes
+### Bug Fixes
 
 - *(verbose)* Correct connection verbose tracing ([#1055](https://github.com/0x676e67/wreq/issues/1055)) - ([22516ae](https://github.com/0x676e67/wreq/commit/22516ae9f1a4becf3827e1ba9889a6add59e38b6))
 
-### 🚜 Refactor
+### Refactor
 
 - *(redirect)* Expose `Attempt` fields as public API ([#1046](https://github.com/0x676e67/wreq/issues/1046)) - ([b97fa4f](https://github.com/0x676e67/wreq/commit/b97fa4fac5530fb455777db986f2f31f8719a6ad))
 
-### ⚡ Performance
+### Performance
 
 - *(redirect)* Use static `HeaderName` for `cookie2` to avoid allocation ([#1047](https://github.com/0x676e67/wreq/issues/1047)) - ([0211cad](https://github.com/0x676e67/wreq/commit/0211cad5595220095179c0045aff1c3a76690a1e))
 - *(tls)* Use `Bytes` for `peer_certificate` to enable cheap cloning ([#1050](https://github.com/0x676e67/wreq/issues/1050)) - ([27c8e74](https://github.com/0x676e67/wreq/commit/27c8e74936e6eff30761954f3e9f4133b08f611b))
 
-### 🎨 Styling
+### Styling
 
 - *(cookie)* Prefer `dt <= SystemTime::now()` in expires check ([#1045](https://github.com/0x676e67/wreq/issues/1045)) - ([5da3114](https://github.com/0x676e67/wreq/commit/5da3114e749b6a7a0aeb0f8cdd72759bc1a216d5))
 - *(cookie)* Prefer `Duration::is_zero()` in Max-Age=0 check ([#1044](https://github.com/0x676e67/wreq/issues/1044)) - ([1e607dd](https://github.com/0x676e67/wreq/commit/1e607dd0b0d9822dfc9873d7a2e0093defc6b445))
 
-### ⚙️ Miscellaneous Tasks
+### Miscellaneous Tasks
 
 - *(test)* Fix windows tests ([#1042](https://github.com/0x676e67/wreq/issues/1042)) - ([a22ca01](https://github.com/0x676e67/wreq/commit/a22ca01315ab62659a1498f3d157fb767cdeb828))
 
@@ -73,25 +135,25 @@
 
 ## [6.0.0-rc.26](https://github.com/0x676e67/wreq/compare/v6.0.0-rc.25..v6.0.0-rc.26) - 2025-12-31
 
-### ⛰️  Features
+### Features
 
 - Add `query` and `form` crate features ([#1035](https://github.com/0x676e67/wreq/issues/1035)) - ([091b9e9](https://github.com/0x676e67/wreq/commit/091b9e9e93fef8bc838910dc383a3fb6bdcb8778))
 
-### 🐛 Bug Fixes
+### Bug Fixes
 
 - *(proxy)* Skip proxy headers for HTTPS destinations ([#1039](https://github.com/0x676e67/wreq/issues/1039)) - ([972737f](https://github.com/0x676e67/wreq/commit/972737f540150819d9659cb17e8cdc097dbb078f))
 - *(redirect)* Fix redirect `location` encoding ([#1034](https://github.com/0x676e67/wreq/issues/1034)) - ([f8e2114](https://github.com/0x676e67/wreq/commit/f8e21143abe06f7ae65d26d3ffb979433fcfe394))
 
-### 🚜 Refactor
+### Refactor
 
 - *(header)* Hide internal details of `OrigHeaderName` ([#1036](https://github.com/0x676e67/wreq/issues/1036)) - ([5424935](https://github.com/0x676e67/wreq/commit/5424935235270cead6c5f2e9a7f59a5398ad001c))
 
-### ⚡ Performance
+### Performance
 
 - *(proxy)* Improve proxy credential handling for concurrent requests ([#1041](https://github.com/0x676e67/wreq/issues/1041)) - ([4016d1b](https://github.com/0x676e67/wreq/commit/4016d1bfeb7b24122ecdc0906129e65841c3700c))
 - *(uri)* Improve `String` to `Uri` conversion performance ([#1038](https://github.com/0x676e67/wreq/issues/1038)) - ([fcd5cc5](https://github.com/0x676e67/wreq/commit/fcd5cc54a7d3d0d0c2d3575af6f8c6ea1f0fdabe))
 
-### ⚙️ Miscellaneous Tasks
+### Miscellaneous Tasks
 
 - *(redirect)* Remove macros - ([c92fbaf](https://github.com/0x676e67/wreq/commit/c92fbaf87d33c11d681c7d47c09a54d47b2674fb))
 
@@ -101,7 +163,7 @@
 
 ## [6.0.0-rc.25](https://github.com/0x676e67/wreq/compare/v6.0.0-rc.23..v6.0.0-rc.25) - 2025-12-23
 
-### ⛰️  Features
+### Features
 
 - *(cookie)* Refactor `CookieStore` cookie compression strategy ([#1005](https://github.com/0x676e67/wreq/issues/1005)) - ([2dc14cd](https://github.com/0x676e67/wreq/commit/2dc14cd9207d0c1cb41583395a7f544acb40aadf))
 - *(error)* Add `is_proxy_connect` for proxy connection errors ([#1014](https://github.com/0x676e67/wreq/issues/1014)) - ([0578465](https://github.com/0x676e67/wreq/commit/0578465eb64a23b2d47fb7080ea372646c4783d6))
@@ -109,7 +171,7 @@
 - *(redirect)* Add async support to redirect policy ([#996](https://github.com/0x676e67/wreq/issues/996)) - ([bc6f113](https://github.com/0x676e67/wreq/commit/bc6f11376d884dcd614889861bb55157907cdab7))
 - *(response)* Introduce trailers support ([#1021](https://github.com/0x676e67/wreq/issues/1021)) - ([28bcc63](https://github.com/0x676e67/wreq/commit/28bcc63cb0e9083c944d55ca3895ee70a1ed636b))
 
-### 🐛 Bug Fixes
+### Bug Fixes
 
 - *(proxy)* Improve domain matching case insensitivity ([#1031](https://github.com/0x676e67/wreq/issues/1031)) - ([87f9019](https://github.com/0x676e67/wreq/commit/87f90191bbb5fe39174ab2777b4d526145f2e75c))
 - *(proxy)* Fix HTTP requests proxied through an `SOCKS5`/`HTTPS tunnel` ([#990](https://github.com/0x676e67/wreq/issues/990)) - ([7207dd5](https://github.com/0x676e67/wreq/commit/7207dd55989f9ef2d3577261928252b5dc90f206))
@@ -117,7 +179,7 @@
 - *(request)* Fix missing `http::Request` conversion extensions ([#1000](https://github.com/0x676e67/wreq/issues/1000)) - ([9df5f14](https://github.com/0x676e67/wreq/commit/9df5f14f3657692ae19691105826d30c23056996))
 - *(test)* Fix decompression test ([#998](https://github.com/0x676e67/wreq/issues/998)) - ([54f5ee6](https://github.com/0x676e67/wreq/commit/54f5ee63877e5ec3ef04167dcdb25b1025a0b2f7))
 
-### 🚜 Refactor
+### Refactor
 
 - *(config)* Simplify extension config type wrappers ([#1009](https://github.com/0x676e67/wreq/issues/1009)) - ([adf84e3](https://github.com/0x676e67/wreq/commit/adf84e38abaa921f10a3994920bbe494bafc608a))
 - *(core)* Use flat module style - ([30a8c13](https://github.com/0x676e67/wreq/commit/30a8c135c26bc4853c24f3a5209b6ad098a4f74a))
@@ -127,31 +189,31 @@
 - *(proxy)* Use flat module style - ([0925369](https://github.com/0x676e67/wreq/commit/0925369c903046ae745bba8eb7330ae2086fa4b7))
 - *(redirect)* Refactor handling of redirect history ([#1002](https://github.com/0x676e67/wreq/issues/1002)) - ([b1ce184](https://github.com/0x676e67/wreq/commit/b1ce184b901aa5f1d11eb1af4dd6b02dffedfed6))
 
-### 📚 Documentation
+### Documentation
 
 - *(proxy)* Fix docs prompt ([#1010](https://github.com/0x676e67/wreq/issues/1010)) - ([989e691](https://github.com/0x676e67/wreq/commit/989e6910014124cc579eabd372a34ea665d37c63))
 - Update documentation for `Request` and `RequestBuilder` - ([e30b393](https://github.com/0x676e67/wreq/commit/e30b3932323f23e902ae97d0178d1409ff2ef290))
 - Fix documentation build warning ([#1008](https://github.com/0x676e67/wreq/issues/1008)) - ([303c54e](https://github.com/0x676e67/wreq/commit/303c54eba89e4cd2252da3a986710ad330034da8))
 
-### ⚡ Performance
+### Performance
 
 - *(client)* Reduce one `HeaderMap` clone during header merge ([#987](https://github.com/0x676e67/wreq/issues/987)) - ([ce030b8](https://github.com/0x676e67/wreq/commit/ce030b8c3ba6bb233775fad271e1ecff49a95a61))
 - *(ext)* Update query handling to avoid copying ([#1007](https://github.com/0x676e67/wreq/issues/1007)) - ([be0366f](https://github.com/0x676e67/wreq/commit/be0366fb656cdffde5504c0354ebff36a65a34b2))
 - *(proxy)* Reduce branch matching ([#992](https://github.com/0x676e67/wreq/issues/992)) - ([ed00aec](https://github.com/0x676e67/wreq/commit/ed00aec00371097810d634901bd648dc990041f5))
 - *(redirect)* Avoid cloning inner service for non-redirect requests ([#1028](https://github.com/0x676e67/wreq/issues/1028)) - ([7933341](https://github.com/0x676e67/wreq/commit/79333414a4c6a83e35356ab68ea301b0976472f4))
 
-### 🎨 Styling
+### Styling
 
 - *(connector)* Fmt code - ([8a15bf4](https://github.com/0x676e67/wreq/commit/8a15bf418c902ada7975976d5278d20487535831))
 - *(layer)* Use flat module style ([#1027](https://github.com/0x676e67/wreq/issues/1027)) - ([519e4ca](https://github.com/0x676e67/wreq/commit/519e4ca6c3ceba8e355838fb2ba0a359ddb3feff))
 - Fmt code - ([53df061](https://github.com/0x676e67/wreq/commit/53df061e44f049c38de1d63b1ef2077070eea7fe))
 - Fmt code - ([c15fc08](https://github.com/0x676e67/wreq/commit/c15fc08abc9210bcd98460e112e3fc746b39e748))
 
-### 🧪 Testing
+### Testing
 
 - *(response)* Remove duplicate tests - ([7c1df27](https://github.com/0x676e67/wreq/commit/7c1df27efecb5f0a5abdaeec33d5f2bf9a885610))
 
-### ⚙️ Miscellaneous Tasks
+### Miscellaneous Tasks
 
 - *(body)* Remove `Debug` trait implementation for Body - ([72aea5e](https://github.com/0x676e67/wreq/commit/72aea5eb8e48fc2c561b0b4718f8a4654d0d31cf))
 - *(body)* Remove unnecessary `cfg_attr` for stream feature - ([9c698b3](https://github.com/0x676e67/wreq/commit/9c698b38088529c9d79c293f41b3697a784b5b7a))
@@ -170,7 +232,7 @@
 - Remove cmake pinning from Windows CI step - ([87fc1f6](https://github.com/0x676e67/wreq/commit/87fc1f69989101ac412e4e8e585a4d2a5dfb1073))
 - Add Android NDK tests ([#1011](https://github.com/0x676e67/wreq/issues/1011)) - ([adab15a](https://github.com/0x676e67/wreq/commit/adab15ac1c02411470f914311e299fc84ee3772f))
 
-### ◀️ Revert
+### Revert
 
 - *(request)* Restore upstream header insertion strategy ([#995](https://github.com/0x676e67/wreq/issues/995)) - ([00c1d6d](https://github.com/0x676e67/wreq/commit/00c1d6d98d760512885270fa5211769ce311fc2a))
 
@@ -183,12 +245,12 @@
 
 ## [6.0.0-rc.23](https://github.com/0x676e67/wreq/compare/v6.0.0-rc.22..v6.0.0-rc.23) - 2025-11-28
 
-### 🐛 Bug Fixes
+### Bug Fixes
 
 - *(client)* Handle multi-value default headers without overriding requests ([#986](https://github.com/0x676e67/wreq/issues/986)) - ([745fa26](https://github.com/0x676e67/wreq/commit/745fa265a99a857c394226f4d2b64f7783813d17))
 - *(test)* Fix decompression empty body test ([#979](https://github.com/0x676e67/wreq/issues/979)) - ([9e11af1](https://github.com/0x676e67/wreq/commit/9e11af143fc452e65a42cd720138b96c7433ffd4))
 
-### 🚜 Refactor
+### Refactor
 
 - *(http1)* Replace many args of `Chunked::step` with struct - ([6ffef6c](https://github.com/0x676e67/wreq/commit/6ffef6ca138f341340aa4f2086fdbca009ca301e))
 - Change fast_random from xorshift to siphash a counter ([#983](https://github.com/0x676e67/wreq/issues/983)) - ([a386091](https://github.com/0x676e67/wreq/commit/a38609107949bc88e2dd38a0978bde91f8684b38))
@@ -204,52 +266,52 @@
 
 ## [6.0.0-rc.22](https://github.com/0x676e67/wreq/compare/v6.0.0-rc.21..v6.0.0-rc.22) - 2025-11-21
 
-### ⛰️  Features
+### Features
 
 - *(rt)* Add Timer::now() method to allow overriding the instant returned ([#976](https://github.com/0x676e67/wreq/issues/976)) - ([7cf3b95](https://github.com/0x676e67/wreq/commit/7cf3b95f8f445aff46ddd6455e0afaadb72bba36))
 
-### 🐛 Bug Fixes
+### Bug Fixes
 
 - *(http1)* Fix rare missed write wakeup on connections ([#974](https://github.com/0x676e67/wreq/issues/974)) - ([d6bccef](https://github.com/0x676e67/wreq/commit/d6bccefe0e7d474e9bb1a375a3707326fa5db9a4))
 - *(proxy)* Fix 407 proxy auth failures for HTTP requests ([#975](https://github.com/0x676e67/wreq/issues/975)) - ([df67842](https://github.com/0x676e67/wreq/commit/df6784232b9f3b146c872ecb8606336ad2a06256))
 
-### ⚡ Performance
+### Performance
 
 - *(uri)* Avoid double copying during URI percent encoding ([#977](https://github.com/0x676e67/wreq/issues/977)) - ([6a1a406](https://github.com/0x676e67/wreq/commit/6a1a406d6f12eb3baf320a435330256b71bf8cf3))
 
-### ⚙️ Miscellaneous Tasks
+### Miscellaneous Tasks
 
 - *(client)* Refactor proxy auth handling logic - ([e54df35](https://github.com/0x676e67/wreq/commit/e54df351be60c6957759f82c3ca6861aca31db33))
 
 
 ## [6.0.0-rc.21](https://github.com/0x676e67/wreq/compare/v6.0.0-rc.20..v6.0.0-rc.21) - 2025-11-07
 
-### ⛰️  Features
+### Features
 
 - *(uri)* Percent-encode spaces when building request URLs ([#972](https://github.com/0x676e67/wreq/issues/972)) - ([de1c937](https://github.com/0x676e67/wreq/commit/de1c9379c101764e1dc5f32d300154edec7f89f6))
 
-### 🐛 Bug Fixes
+### Bug Fixes
 
 - *(proxy)* Support proxy auth where password is omitted ([#971](https://github.com/0x676e67/wreq/issues/971)) - ([f7ffd56](https://github.com/0x676e67/wreq/commit/f7ffd565b8129007b2ee8ccd756f0ccf248decef))
 
-### 🚜 Refactor
+### Refactor
 
 - *(dns)* Redesign DNS API for improved ergonomics and functionality ([#968](https://github.com/0x676e67/wreq/issues/968)) - ([9c3c3f5](https://github.com/0x676e67/wreq/commit/9c3c3f50fe4249be3a1a878d5ad24506bf7778f1))
 - *(proxy)* Consolidate platform-specific modules into mod.rs ([#956](https://github.com/0x676e67/wreq/issues/956)) - ([99d3ed7](https://github.com/0x676e67/wreq/commit/99d3ed74ce0c520baba77301a3a6da20701b550c))
 
-### 📚 Documentation
+### Documentation
 
 - *(retry)* Fix typo ([#957](https://github.com/0x676e67/wreq/issues/957)) - ([ed5fef2](https://github.com/0x676e67/wreq/commit/ed5fef2a18f473b770799abfa64c092529ebf74d))
 
-### ⚡ Performance
+### Performance
 
 - *(connector)* Disable Nagle's algorithm for TLS handshake ([#955](https://github.com/0x676e67/wreq/issues/955)) - ([35f4265](https://github.com/0x676e67/wreq/commit/35f426502dada4e4fb245048feccd3b6762f0ea0))
 
-### 🧪 Testing
+### Testing
 
 - *(redirect)* Improve redirect cookie tests ([#963](https://github.com/0x676e67/wreq/issues/963)) - ([852f280](https://github.com/0x676e67/wreq/commit/852f28059719f3e485e58e9b92f2591466d0f342))
 
-### ⚙️ Miscellaneous Tasks
+### Miscellaneous Tasks
 
 - *(connector)* Fmt code - ([00fa021](https://github.com/0x676e67/wreq/commit/00fa021349eec058456e2e51ed6b01ab72eedecf))
 - *(dcos)* Improve API docs ([#954](https://github.com/0x676e67/wreq/issues/954)) - ([10eabd7](https://github.com/0x676e67/wreq/commit/10eabd775aacce16a8e0a616c5919124bb5456ef))
@@ -263,28 +325,28 @@
 
 ## [6.0.0-rc.20](https://github.com/0x676e67/wreq/compare/v6.0.0-rc.16..v6.0.0-rc.20) - 2025-09-19
 
-### 🚜 Refactor
+### Refactor
 
 - *(tls)* Replace `prefer_chacha20` with `preserve_tls13_cipher_list` ([#953](https://github.com/0x676e67/wreq/issues/953)) - ([3d4f61d](https://github.com/0x676e67/wreq/commit/3d4f61d1135c066df07073899c1cfe81c1fcf961))
 
 
 ## [6.0.0-rc.16](https://github.com/0x676e67/wreq/compare/v6.0.0-rc.15..v6.0.0-rc.16) - 2025-09-17
 
-### ⛰️  Features
+### Features
 
 - *(ws)* Implement `FusedStream` trait for WebSocket ([#949](https://github.com/0x676e67/wreq/issues/949)) - ([d292ef7](https://github.com/0x676e67/wreq/commit/d292ef799a4dfac4500f5ccd785e3fdebeecbe7c))
 
-### 🐛 Bug Fixes
+### Bug Fixes
 
 - *(client)* Allow absolute-form if is_proxied is set even on HTTPS ([#945](https://github.com/0x676e67/wreq/issues/945)) - ([0df02e1](https://github.com/0x676e67/wreq/commit/0df02e1c8db43cd94e32541ce0e24b3966441804))
 - *(error)* Drop leftover debug logging ([#948](https://github.com/0x676e67/wreq/issues/948)) - ([3f73ae6](https://github.com/0x676e67/wreq/commit/3f73ae688bd7acd8a7292eb2a5a6ab7b9892de3b))
 - *(http2)* Fix chained calls ([#952](https://github.com/0x676e67/wreq/issues/952)) - ([a1765dc](https://github.com/0x676e67/wreq/commit/a1765dce6403ea037769331bf51e520f13b7f024))
 
-### 🚜 Refactor
+### Refactor
 
 - *(ws)* Improve close method API ergonomics ([#947](https://github.com/0x676e67/wreq/issues/947)) - ([de9e36b](https://github.com/0x676e67/wreq/commit/de9e36b98e1d372d658c55eeb2cc324d67177b06))
 
-### ⚙️ Miscellaneous Tasks
+### Miscellaneous Tasks
 
 - *(client)* Fmt code - ([ccc54f7](https://github.com/0x676e67/wreq/commit/ccc54f7cb0805749fac896d3e388383916cf1200))
 - *(examples)* Remove tracing logs from examples - ([dae70b4](https://github.com/0x676e67/wreq/commit/dae70b4320372c00387a2090ba34099ca1e22246))
@@ -293,21 +355,21 @@
 
 ## [6.0.0-rc.15](https://github.com/0x676e67/wreq/compare/v6.0.0-rc.14..v6.0.0-rc.15) - 2025-09-12
 
-### ⛰️  Features
+### Features
 
 - *(http1)* Remove `preserve_header_case` support ([#943](https://github.com/0x676e67/wreq/issues/943)) - ([fd59127](https://github.com/0x676e67/wreq/commit/fd59127a8afebc42adf4e7eb40faaf792377e62b))
 - *(retry)* Introduce configurable retry policy ([#935](https://github.com/0x676e67/wreq/issues/935)) - ([f4644d8](https://github.com/0x676e67/wreq/commit/f4644d8a08545de19638abd80484210190f123f2))
 
-### 🚜 Refactor
+### Refactor
 
 - *(ext)* Introduce ergonomic and functional API ([#942](https://github.com/0x676e67/wreq/issues/942)) - ([52709b3](https://github.com/0x676e67/wreq/commit/52709b3dc3b3c7a756bb370c8efc31dba86f2fc9))
 - *(keylog)* Redesign API for better ergonomics and functionality ([#941](https://github.com/0x676e67/wreq/issues/941)) - ([7845b9b](https://github.com/0x676e67/wreq/commit/7845b9b9d6c3c31cda3c52f573a1446e710710d7))
 
-### 🧪 Testing
+### Testing
 
 - *(client)* Update header tests and examples ([#939](https://github.com/0x676e67/wreq/issues/939)) - ([bfb8739](https://github.com/0x676e67/wreq/commit/bfb8739b0c0a03e06e54d9c68f7783ca1415b0a3))
 
-### ⚙️ Miscellaneous Tasks
+### Miscellaneous Tasks
 
 - *(internal)* Remove unnecessary `Debug` bounds - ([4aa1088](https://github.com/0x676e67/wreq/commit/4aa1088888ba8fe4e64a2ff7cf874b1d0174b154))
 - *(response)* Drop `Uri::try_from` in From<http::Response<T>> - ([9e16fba](https://github.com/0x676e67/wreq/commit/9e16fba5e1be1bf95b9b06ad16e0a9858c0b60c2))
@@ -317,21 +379,21 @@
 
 ## [6.0.0-rc.14](https://github.com/0x676e67/wreq/compare/v6.0.0-rc.13..v6.0.0-rc.14) - 2025-09-05
 
-### 🐛 Bug Fixes
+### Bug Fixes
 
 - *(client)* Ensure `Accept-Encoding` header is applied correctly ([#928](https://github.com/0x676e67/wreq/issues/928)) - ([f9f9331](https://github.com/0x676e67/wreq/commit/f9f9331ca28f07fd1d5ad4067d297c66dfe013c1))
 
-### 🚜 Refactor
+### Refactor
 
 - *(client)* Enforce `ClientBuilder` initialization via `Client::builder()` ([#932](https://github.com/0x676e67/wreq/issues/932)) - ([513e6f5](https://github.com/0x676e67/wreq/commit/513e6f56169ba357c8d830d77745092d1a90750c))
 - *(response)* Accept AsRef<str> for charset for better ([#934](https://github.com/0x676e67/wreq/issues/934)) - ([b95e3b5](https://github.com/0x676e67/wreq/commit/b95e3b5791b983b436c892569a1d3a678999ed26))
 
-### ⚡ Performance
+### Performance
 
 - *(client)* Prevent header duplication by reordering layers ([#930](https://github.com/0x676e67/wreq/issues/930)) - ([ca72a53](https://github.com/0x676e67/wreq/commit/ca72a5341e0ca7d0afe187d1fcd63e1ce1895596))
 - *(client)* Avoid redundant header copy ([#929](https://github.com/0x676e67/wreq/issues/929)) - ([c0d8df7](https://github.com/0x676e67/wreq/commit/c0d8df7c1b8d4dfb002dc6bf6ff417ba67f2d587))
 
-### ⚙️ Miscellaneous Tasks
+### Miscellaneous Tasks
 
 - *(client)* Speed up client initialization ([#931](https://github.com/0x676e67/wreq/issues/931)) - ([be90796](https://github.com/0x676e67/wreq/commit/be90796bda2c481c773c9c93e26420da92faa932))
 - *(test)* Fmt code - ([f5ab83c](https://github.com/0x676e67/wreq/commit/f5ab83cfb4d28518dab06e63d28c6f234bfd590f))
@@ -340,38 +402,38 @@
 
 ## [6.0.0-rc.13](https://github.com/0x676e67/wreq/compare/v6.0.0-rc.12..v6.0.0-rc.13) - 2025-09-02
 
-### 🐛 Bug Fixes
+### Bug Fixes
 
 - *(cookie)* Normalize host handling with port ([#926](https://github.com/0x676e67/wreq/issues/926)) - ([66368be](https://github.com/0x676e67/wreq/commit/66368be48fd8437c1f2c8cd3ef9e7f0f8432a245))
 
-### 🎨 Styling
+### Styling
 
 - *(redirect)* Fmt code - ([db195ef](https://github.com/0x676e67/wreq/commit/db195efaedd4232cf27c4161414de64c4898b1fe))
 
 
 ## [6.0.0-rc.12](https://github.com/0x676e67/wreq/compare/v6.0.0-rc.11..v6.0.0-rc.12) - 2025-09-02
 
-### ⛰️  Features
+### Features
 
 - *(lib)* Introduce request shortcut ([#924](https://github.com/0x676e67/wreq/issues/924)) - ([ad6b79d](https://github.com/0x676e67/wreq/commit/ad6b79d0042df52e0e1c418a66a66760308837ac))
 
 
 ## [6.0.0-rc.11](https://github.com/0x676e67/wreq/compare/v6.0.0-rc.9..v6.0.0-rc.11) - 2025-08-31
 
-### ⛰️  Features
+### Features
 
 - *(tls)* Allow custom ALPN configuration ([#921](https://github.com/0x676e67/wreq/issues/921)) - ([9edfd54](https://github.com/0x676e67/wreq/commit/9edfd54732bae3fd98510d307c4320f48bf44a6d))
 
-### 🐛 Bug Fixes
+### Bug Fixes
 
 - *(cookie)* Fix cookie deletion and lookup logic ([#923](https://github.com/0x676e67/wreq/issues/923)) - ([e6014ef](https://github.com/0x676e67/wreq/commit/e6014ef049826062e305e475e10e4c142980a3d5))
 
-### 📚 Documentation
+### Documentation
 
 - *(tls)* Refine `TlsOptions` field documentation ([#922](https://github.com/0x676e67/wreq/issues/922)) - ([2b42c9c](https://github.com/0x676e67/wreq/commit/2b42c9c3b43b3aabaed6d1c66b0f0bc21070cd48))
 - *(tls)* Update module docs ([#920](https://github.com/0x676e67/wreq/issues/920)) - ([04c1258](https://github.com/0x676e67/wreq/commit/04c12583c67f0205e5dfd049db19316acbc32cce))
 
-### ⚙️ Miscellaneous Tasks
+### Miscellaneous Tasks
 
 - *(tls)* Streamline conn module type re-exports - ([362c12a](https://github.com/0x676e67/wreq/commit/362c12a50956eb3955a5a6735ebd0bfac39b1e8b))
 - *(tls)* Remove ext & cert compression wrappers ([#918](https://github.com/0x676e67/wreq/issues/918)) - ([d9c3e84](https://github.com/0x676e67/wreq/commit/d9c3e8420075f8f6feca0f1725728f0cc25603aa))
@@ -379,7 +441,7 @@
 
 ## [6.0.0-rc.9](https://github.com/0x676e67/wreq/compare/v6.0.0-rc.8..v6.0.0-rc.9) - 2025-08-30
 
-### ⛰️  Features
+### Features
 
 - *(cookie)* Improve `cookie_provider` for better ergonomics and flexibility ([#895](https://github.com/0x676e67/wreq/issues/895)) - ([70dd6d9](https://github.com/0x676e67/wreq/commit/70dd6d9d13181b252ce8b69ba807fd5b7b9a15a4))
 - *(dns)* Export `IntoResolve` as public API ([#913](https://github.com/0x676e67/wreq/issues/913)) - ([b1b6278](https://github.com/0x676e67/wreq/commit/b1b6278830e20496e965cdbb9adca7d03974f928))
@@ -390,7 +452,7 @@
 - *(response)* Preserve URL when converting `Response` to `http::Response` ([#897](https://github.com/0x676e67/wreq/issues/897)) - ([72b24c7](https://github.com/0x676e67/wreq/commit/72b24c7284d21af2bfbfcc0bcdbac9bc20a5feac))
 - *(ws)* Remove Utf8Bytes::from_bytes_unchecked, unsafe UTF-8 ([#912](https://github.com/0x676e67/wreq/issues/912)) - ([e6b8bcf](https://github.com/0x676e67/wreq/commit/e6b8bcfd33ec6a70cf705da1665ca6d15cae520e))
 
-### 🚜 Refactor
+### Refactor
 
 - *(connect)* Safely convert `socket2::Socket` to Tokio `TcpSocket` ([#904](https://github.com/0x676e67/wreq/issues/904)) - ([2461be9](https://github.com/0x676e67/wreq/commit/2461be98fc73e2fd78c396a69c70ce9ab4f7bbf0))
 - *(core)* Replace Tokio I/O abstraction ([#909](https://github.com/0x676e67/wreq/issues/909)) - ([16976b9](https://github.com/0x676e67/wreq/commit/16976b935f01a6464d4c0ae1e3611e45429b351b))
@@ -398,26 +460,26 @@
 - *(h2)* Refactor legacy unsafe wrapper code ([#905](https://github.com/0x676e67/wreq/issues/905)) - ([172f1c5](https://github.com/0x676e67/wreq/commit/172f1c558292b4630875b0e3910ee2cb4337f071))
 - *(io)* Use Pin::as_deref_mut() from std instead of custom polyfill ([#906](https://github.com/0x676e67/wreq/issues/906)) - ([d3d80f1](https://github.com/0x676e67/wreq/commit/d3d80f16e23e8e1594f2c45041b9403ea2b6be03))
 
-### 📚 Documentation
+### Documentation
 
 - *(identity)* Update documentation - ([459afd6](https://github.com/0x676e67/wreq/commit/459afd6a90c4da254dd6598f604c3b1fd1841cec))
 - *(proxy)* Remove type export section - ([ae81ef5](https://github.com/0x676e67/wreq/commit/ae81ef533e2439d0398a22b6740521fddcb6cc0d))
 - *(request)* Update docs on request methods with cfg support - ([654e225](https://github.com/0x676e67/wreq/commit/654e2258d8472c3427af09b13c19f70949f38ca9))
 
-### ⚡ Performance
+### Performance
 
 - *(http1)* Write during header sorting ([#899](https://github.com/0x676e67/wreq/issues/899)) - ([f025e3f](https://github.com/0x676e67/wreq/commit/f025e3fcfce4d8a8d31726b46e92ad8f51dcf46f))
 - *(http2)* Significantly improve http2 multi-core performance ([#892](https://github.com/0x676e67/wreq/issues/892)) - ([2c3f873](https://github.com/0x676e67/wreq/commit/2c3f8736b21589ab4f9f2dec1f56c0a9de321dd0))
 - *(layer)* Inline layer creation for faster client build - ([78e8fc7](https://github.com/0x676e67/wreq/commit/78e8fc7b203ac382a5fb70183564513c7346cbe1))
 
-### 🎨 Styling
+### Styling
 
 - *(cookie)* Fmt code - ([315bccf](https://github.com/0x676e67/wreq/commit/315bccfc65101642b2a56f583c573b6d11148bb7))
 - *(header)* Simplify header sorting branch match - ([ee23d25](https://github.com/0x676e67/wreq/commit/ee23d25fd258f51eb33b20d72460913c38e7a517))
 - *(proto)* Fmt code - ([02e0bc0](https://github.com/0x676e67/wreq/commit/02e0bc06876a458536268863938a4906354791b9))
 - *(request)* Fmt code - ([d6e56e4](https://github.com/0x676e67/wreq/commit/d6e56e4b9e85ab73d627d72a51ed04198483cf98))
 
-### ⚙️ Miscellaneous Tasks
+### Miscellaneous Tasks
 
 - *(ci)* Speed up tests with feature matrix in GitHub Actions ([#894](https://github.com/0x676e67/wreq/issues/894)) - ([d66dc66](https://github.com/0x676e67/wreq/commit/d66dc6671fadbd427ea2c1d0e4fa07e61d62b4db))
 - *(proxy)* Debug-print HTTP headers - ([628e6b4](https://github.com/0x676e67/wreq/commit/628e6b462561a7fd5fe987dff6e14a76b02272de))
@@ -433,25 +495,25 @@
 
 ## [6.0.0-rc.8](https://github.com/0x676e67/wreq/compare/v6.0.0-rc.7..v6.0.0-rc.8) - 2025-08-12
 
-### ⛰️  Features
+### Features
 
 - *(dns)* Improve `dns_resolver` for better ergonomics and flexibility ([#891](https://github.com/0x676e67/wreq/issues/891)) - ([9e3f974](https://github.com/0x676e67/wreq/commit/9e3f97450af724abba62cc1ee586c292b16e8498))
 
-### 🐛 Bug Fixes
+### Bug Fixes
 
 - *(deps)* Upgrade url to v2.5.4 to address CVE-2024-12224 ([#887](https://github.com/0x676e67/wreq/issues/887)) - ([7038272](https://github.com/0x676e67/wreq/commit/70382725752d44682b5e684d7af3522614941f94))
 - *(pool)* Prevent failure when registering the waker with this oneshot ([#888](https://github.com/0x676e67/wreq/issues/888)) - ([f7d914d](https://github.com/0x676e67/wreq/commit/f7d914d96712bb3f20403d1dce1c30c4d03c7586))
 
-### 🚜 Refactor
+### Refactor
 
 - *(client)* Remove `no_keepalive` method ([#890](https://github.com/0x676e67/wreq/issues/890)) - ([0c15943](https://github.com/0x676e67/wreq/commit/0c159431a296163eb52cf95d0ea9f1e9fc84e3c0))
 
-### 📚 Documentation
+### Documentation
 
 - *(README)* Update example - ([b620408](https://github.com/0x676e67/wreq/commit/b6204085abbfba933e6bfb368f7a8579b4bea417))
 - *(service)* Update service docs - ([a644502](https://github.com/0x676e67/wreq/commit/a64450253447a8a4287c89e28c66cbd5f9a8c689))
 
-### 🧪 Testing
+### Testing
 
 - *(common)* Add missing assertion in full_rewind test ([#889](https://github.com/0x676e67/wreq/issues/889)) - ([c84746a](https://github.com/0x676e67/wreq/commit/c84746af284f4b0c2ec72f4d01150cb53de30ac9))
 
@@ -462,52 +524,52 @@
 
 ## [6.0.0-rc.7](https://github.com/0x676e67/wreq/compare/v6.0.0-rc.5..v6.0.0-rc.7) - 2025-08-10
 
-### ⛰️  Features
+### Features
 
 - *(ws)* Option for `default_headers` method in websocket ([#883](https://github.com/0x676e67/wreq/issues/883)) - ([fd36b7a](https://github.com/0x676e67/wreq/commit/fd36b7a817f3fb8d2b59dea73c34ff4fd3249d87))
 
-### 🐛 Bug Fixes
+### Bug Fixes
 
 - *(request)* Correct `default_headers` method semantics ([#882](https://github.com/0x676e67/wreq/issues/882)) - ([2cbd0ac](https://github.com/0x676e67/wreq/commit/2cbd0ac56813a9e4b022d1747dce512943c31993))
 
-### 🚜 Refactor
+### Refactor
 
 - *(dns)* Make hickory module internal ([#881](https://github.com/0x676e67/wreq/issues/881)) - ([e441048](https://github.com/0x676e67/wreq/commit/e441048a6b5df1af3e715cbeceba7e178bbb22eb))
 
-### ⚙️ Miscellaneous Tasks
+### Miscellaneous Tasks
 
 - *(client)* Expose additional configuration options - ([65bd959](https://github.com/0x676e67/wreq/commit/65bd95963500af6205f9f06b4cc059b67a0ed740))
 
 
 ## [6.0.0-rc.5](https://github.com/0x676e67/wreq/compare/v6.0.0-rc.4..v6.0.0-rc.5) - 2025-08-09
 
-### ⛰️  Features
+### Features
 
 - *(ws)* Expose the `message` module for external use ([#874](https://github.com/0x676e67/wreq/issues/874)) - ([abed4ac](https://github.com/0x676e67/wreq/commit/abed4ac82d8ad82c72593ad931477acea70557b0))
 
-### 🚜 Refactor
+### Refactor
 
 - *(cookie)* Refactor legacy jar cookie implementation ([#871](https://github.com/0x676e67/wreq/issues/871)) - ([ebb1504](https://github.com/0x676e67/wreq/commit/ebb1504400102c71af9d76e9084f8d2ea14c16c7))
 - *(dns)* Consolidate legacy DNS modules ([#876](https://github.com/0x676e67/wreq/issues/876)) - ([f54367c](https://github.com/0x676e67/wreq/commit/f54367cad0d5c699596f80857af234e78ba3d166))
 
-### 📚 Documentation
+### Documentation
 
 - *(module)* Improve module-level documentation ([#877](https://github.com/0x676e67/wreq/issues/877)) - ([4e2c15f](https://github.com/0x676e67/wreq/commit/4e2c15f39ba0bdf61b0aedb30d43779a4c455d58))
 - *(tls)* Update documentation for configuration fields ([#880](https://github.com/0x676e67/wreq/issues/880)) - ([94c060e](https://github.com/0x676e67/wreq/commit/94c060ed2a3fcc744223ab6a7224e67fae8c9210))
 
-### ⚡ Performance
+### Performance
 
 - *(upgrade)* Inline hot methods in async IO wrapper ([#875](https://github.com/0x676e67/wreq/issues/875)) - ([8388b52](https://github.com/0x676e67/wreq/commit/8388b5241a253bb8f550435aa9e487d9ce16b44d))
 
-### 🎨 Styling
+### Styling
 
 - *(internal)* Refactor internal code layout and naming ([#878](https://github.com/0x676e67/wreq/issues/878)) - ([fbf11fd](https://github.com/0x676e67/wreq/commit/fbf11fd588cb773471fb46302405655eb53cafe6))
 
-### 🧪 Testing
+### Testing
 
 - *(client)* Verify multiple identical headers are appended correctly ([#879](https://github.com/0x676e67/wreq/issues/879)) - ([f245f9c](https://github.com/0x676e67/wreq/commit/f245f9c47965ee4b7682050357f350e05a2ca549))
 
-### ⚙️ Miscellaneous Tasks
+### Miscellaneous Tasks
 
 - *(retry)* Remove unnecessary clone in request duplication - ([d78568c](https://github.com/0x676e67/wreq/commit/d78568cc6079aaefe3f3b02c3537e21646a1f7f0))
 
@@ -518,34 +580,34 @@
 
 ## [6.0.0-rc.4](https://github.com/0x676e67/wreq/compare/v6.0.0-rc.2..v6.0.0-rc.4) - 2025-08-07
 
-### 🐛 Bug Fixes
+### Bug Fixes
 
 - *(cookie)* Store response cookies even with manual `Cookie` header ([#868](https://github.com/0x676e67/wreq/issues/868)) - ([d2f3bf0](https://github.com/0x676e67/wreq/commit/d2f3bf0ec425ad4880dbcba03951f260f8bb1015))
 - *(header)* Preserve multi-value headers in `OrigHeaderMap` sorting ([#867](https://github.com/0x676e67/wreq/issues/867)) - ([b650956](https://github.com/0x676e67/wreq/commit/b6509561c779dde492a1208a2fe5f7c64832419d))
 
-### 🚜 Refactor
+### Refactor
 
 - *(client)* Allow `?Sized` trait objects in `dns_resolver` ([#870](https://github.com/0x676e67/wreq/issues/870)) - ([2baf195](https://github.com/0x676e67/wreq/commit/2baf1953024fdb646e205478d9dc568113ba2ec1))
 
-### ⚡ Performance
+### Performance
 
 - *(cookie)* Optimize cookie layer to skip unnecessary matching ([#866](https://github.com/0x676e67/wreq/issues/866)) - ([ce9b531](https://github.com/0x676e67/wreq/commit/ce9b531bd4d0211b73fb64211f51a8549c948cfc))
 
 
 ## [6.0.0-rc.2](https://github.com/0x676e67/wreq/compare/v6.0.0-rc.1..v6.0.0-rc.2) - 2025-08-04
 
-### 🐛 Bug Fixes
+### Bug Fixes
 
 - *(build)* Resolve build failure on Windows when `default-features` are disabled ([#864](https://github.com/0x676e67/wreq/issues/864)) - ([4418e47](https://github.com/0x676e67/wreq/commit/4418e4773a711bf15a2e86777473f16b0af3d8e3))
 
-### 📚 Documentation
+### Documentation
 
 - *(options)* Fix `Http2Options` description ([#863](https://github.com/0x676e67/wreq/issues/863)) - ([89b0957](https://github.com/0x676e67/wreq/commit/89b0957a196debafaeef6a6fa271a53b4a3f7964))
 
 
 ## [6.0.0-rc.1](https://github.com/0x676e67/wreq/compare/v5.1.0..v6.0.0-rc.1) - 2025-08-03
 
-### ⛰️  Features
+### Features
 
 - *(client)* Set default values for TCP keepalive and user_timeout ([#852](https://github.com/0x676e67/wreq/issues/852)) - ([f06fe61](https://github.com/0x676e67/wreq/commit/f06fe616b72a8d672c9a6118acfab7b96f18bbb6))
 - *(client)* Expose TCP socket Happy Eyeballs timeout API ([#844](https://github.com/0x676e67/wreq/issues/844)) - ([bcbfbf8](https://github.com/0x676e67/wreq/commit/bcbfbf802c03b6cf58eaa566d38b4a8c29037635))
@@ -581,7 +643,7 @@
 - *(websocket)* Support per-request emulation configuration ([#764](https://github.com/0x676e67/wreq/issues/764)) - ([468f86f](https://github.com/0x676e67/wreq/commit/468f86fd5811043a1d89437f1bea30c8cfbf93b8))
 - *(ws)* Add support for header order on websocket builder ([#608](https://github.com/0x676e67/wreq/issues/608)) - ([ad9e0b9](https://github.com/0x676e67/wreq/commit/ad9e0b97d5733a800b17c32851c1824da83d05c4))
 
-### 🐛 Bug Fixes
+### Bug Fixes
 
 - *(client)* Fix `HTTP/2` safe retry policy ([#715](https://github.com/0x676e67/wreq/issues/715)) - ([3a5c356](https://github.com/0x676e67/wreq/commit/3a5c35697d12dcf67d30db88abb8d1fe37b638a7))
 - *(client)* Prevent future stack overflow in request handling ([#685](https://github.com/0x676e67/wreq/issues/685)) - ([402ffe3](https://github.com/0x676e67/wreq/commit/402ffe3184362a18696791621261c744a5f413b2))
@@ -602,7 +664,7 @@
 - *(tls)* Fix encoding error when multiple ALPS extensions are present ([#861](https://github.com/0x676e67/wreq/issues/861)) - ([6ce6c73](https://github.com/0x676e67/wreq/commit/6ce6c73cd0479a169d0f7e6f90c4073cf6e3fc0a))
 - *(ws)* Improve status code message on WebSocket upgrade failure ([#824](https://github.com/0x676e67/wreq/issues/824)) - ([4f6f6da](https://github.com/0x676e67/wreq/commit/4f6f6da67bc990be1753c4bb8e546c1b7ed35889))
 
-### 🚜 Refactor
+### Refactor
 
 - *(client)* Use `Either` to unify generic and boxed `Client` service types ([#849](https://github.com/0x676e67/wreq/issues/849)) - ([9cb05e7](https://github.com/0x676e67/wreq/commit/9cb05e794a6d5f1421482e15117ece37180099a7))
 - *(client)* Move HTTP/2 safe retry logic into `tower` middleware ([#713](https://github.com/0x676e67/wreq/issues/713)) - ([136c791](https://github.com/0x676e67/wreq/commit/136c7912b54bb74cecc48618415a64f865d7830c))
@@ -669,7 +731,7 @@
 - Backport use `hyper-util` Tunnel ([#642](https://github.com/0x676e67/wreq/issues/642)) - ([446719d](https://github.com/0x676e67/wreq/commit/446719daecf7e4e2479f7c7b5f3785c6da2bddad))
 - Renamed `tls_key_log_file` to `tls_keylog_file` for consistency ([#610](https://github.com/0x676e67/wreq/issues/610)) - ([5d1a85a](https://github.com/0x676e67/wreq/commit/5d1a85a1cc04a2380091398dee43146823590545))
 
-### 📚 Documentation
+### Documentation
 
 - *(README)* Update for HTTP/3 over QUIC support - ([bba899c](https://github.com/0x676e67/wreq/commit/bba899c2b579f97a399b628c71f179ed07236a75))
 - *(client)* Update `tcp_user_timeout` docs - ([1fa4d44](https://github.com/0x676e67/wreq/commit/1fa4d44394bd3fe1efe3bbbbd127a05cfc80d20d))
@@ -689,7 +751,7 @@
 - Cleanup legacy server documentation - ([7a0b11c](https://github.com/0x676e67/wreq/commit/7a0b11cf8f013e644d63d70d07a0e21289c86bb9))
 - Update documentation build ([#609](https://github.com/0x676e67/wreq/issues/609)) - ([eb06ebc](https://github.com/0x676e67/wreq/commit/eb06ebc81ac24ae821c4756196b58585303b723a))
 
-### ⚡ Performance
+### Performance
 
 - *(client)* Avoid full `ClientRef` clone by matching and cloning service in-place ([#758](https://github.com/0x676e67/wreq/issues/758)) - ([8e547ad](https://github.com/0x676e67/wreq/commit/8e547ad17a504a230eb770a1ce3b92b6d0765186))
 - *(client)* Replace `Box<dyn Trait>` with generic type for `Box<T>` ([#755](https://github.com/0x676e67/wreq/issues/755)) - ([eb07a2a](https://github.com/0x676e67/wreq/commit/eb07a2af08afb8be084f6623625af0f13a87745a))
@@ -720,7 +782,7 @@
 - *(ws)* Inline frequently called accessor methods ([#782](https://github.com/0x676e67/wreq/issues/782)) - ([929d917](https://github.com/0x676e67/wreq/commit/929d91777539911994527ed6d15ebf31e463b689))
 - Inline hotspot `poll` method to reduce call overhead ([#714](https://github.com/0x676e67/wreq/issues/714)) - ([8c26d8b](https://github.com/0x676e67/wreq/commit/8c26d8b8f58de8a00d7e0a17dc63ccdfe1145653))
 
-### 🎨 Styling
+### Styling
 
 - *(client)* Shorten paths in type aliases ([#733](https://github.com/0x676e67/wreq/issues/733)) - ([c83b8e8](https://github.com/0x676e67/wreq/commit/c83b8e82a4b21d63c79922df09b737066e3f314d))
 - *(connector)* Simplify user-defined timeout layer setup ([#827](https://github.com/0x676e67/wreq/issues/827)) - ([d620a25](https://github.com/0x676e67/wreq/commit/d620a252eb7549b8cdd079897736d2847e1019cc))
@@ -734,7 +796,7 @@
 - Format crate imports for consistency ([#709](https://github.com/0x676e67/wreq/issues/709)) - ([777c6e5](https://github.com/0x676e67/wreq/commit/777c6e5e137024d6f09bf1b53eff7434e573cbb4))
 - Fmt code - ([7fb9b1e](https://github.com/0x676e67/wreq/commit/7fb9b1e88df9e088b3920620c84aad1ea0d2a7bb))
 
-### 🧪 Testing
+### Testing
 
 - *(badssl)* Enable test_aes_hw_override test - ([a37219a](https://github.com/0x676e67/wreq/commit/a37219a47b0903375d033cc9a5c6e3701dcb4b74))
 - *(deps)* Bump `hyper-util` to v0.1.13 ([#667](https://github.com/0x676e67/wreq/issues/667)) - ([862361c](https://github.com/0x676e67/wreq/commit/862361cac33a200bddbdd2c6b3430da36bccadda))
@@ -745,7 +807,7 @@
 - Tests affected by removal of proxy-related environment variables ([#692](https://github.com/0x676e67/wreq/issues/692)) - ([79648b5](https://github.com/0x676e67/wreq/commit/79648b531199cbe86b1c0db4d570e38cf25ff2da))
 - Switch over from libflate to flate2 in tests to reduce dependency footprint ([#593](https://github.com/0x676e67/wreq/issues/593)) - ([dc74305](https://github.com/0x676e67/wreq/commit/dc74305dc83a19ce0f0320a91d42ee1e76f13860))
 
-### ⚙️ Miscellaneous Tasks
+### Miscellaneous Tasks
 
 - *(body)* Re-expose body mod - ([99e27f2](https://github.com/0x676e67/wreq/commit/99e27f203c2dd766707494f3c76f8f5a4d69b092))
 - *(body)* Re-expose body mod - ([1d9ee72](https://github.com/0x676e67/wreq/commit/1d9ee729de0eacb68167506f456db871146ec85c))
@@ -848,7 +910,7 @@
 
 ## [5.1.0](https://github.com/0x676e67/wreq/compare/v5.0.0..v5.1.0) - 2025-03-29
 
-### ⛰️  Features
+### Features
 
 - *(cookie)* Optional enable of sending multiple cookies in `CookieStore` ([#578](https://github.com/0x676e67/wreq/issues/578)) - ([6678fbf](https://github.com/0x676e67/wreq/commit/6678fbfa22aa259a20fe1868bb41d94851765492))
 - *(cookie)* Cookies feature optionally preserves order ([#573](https://github.com/0x676e67/wreq/issues/573)) - ([803852b](https://github.com/0x676e67/wreq/commit/803852b43e127f0c89aea2a81e75ad4d04c951bd))
@@ -858,12 +920,12 @@
 - *(x509)* Auto detect and parse `DER`/`PEM` certificate formats ([#584](https://github.com/0x676e67/wreq/issues/584)) - ([3ab1681](https://github.com/0x676e67/wreq/commit/3ab168126ed4fe41c5dbe5e0bc56d2f87734d679))
 - Expose `tls` and `websocket` modules ([#587](https://github.com/0x676e67/wreq/issues/587)) - ([a771463](https://github.com/0x676e67/wreq/commit/a771463508f66314f52a725bca6bb8de042843b7))
 
-### 🐛 Bug Fixes
+### Bug Fixes
 
 - *(client)* Adapt sorting for duplicate headers such as cookies ([#576](https://github.com/0x676e67/wreq/issues/576)) - ([a786a85](https://github.com/0x676e67/wreq/commit/a786a8595079b1647c1d1a6ab571ffb199b11a5d))
 - *(request)* Fix `try_clone` missing protocol extension ([#579](https://github.com/0x676e67/wreq/issues/579)) - ([0e9872d](https://github.com/0x676e67/wreq/commit/0e9872dd370a8a70d38139b30c14113495418b86))
 
-### 📚 Documentation
+### Documentation
 
 - *(request)* Improve request header parameter docs ([#580](https://github.com/0x676e67/wreq/issues/580)) - ([f03c1c8](https://github.com/0x676e67/wreq/commit/f03c1c8d6aff7e2fba2aeb60a03e991f714e9662))
 - *(response)* Link to `char::REPLACEMENT_CHARACTER` ([#586](https://github.com/0x676e67/wreq/issues/586)) - ([b0abcb6](https://github.com/0x676e67/wreq/commit/b0abcb636b5c5b86089cfbf1f39ebdc966da1e30))
@@ -871,23 +933,23 @@
 - Improved emulation description ([#571](https://github.com/0x676e67/wreq/issues/571)) - ([5924815](https://github.com/0x676e67/wreq/commit/5924815a05b4512381815a2f4d66daf4e855f538))
 - Update examples docs ([#570](https://github.com/0x676e67/wreq/issues/570)) - ([591e4b3](https://github.com/0x676e67/wreq/commit/591e4b3e1b63bc5911b6e1f64643c32c7d3475f0))
 
-### ⚡ Performance
+### Performance
 
 - *(cookie)* Optimize the performance of cookies compression ([#574](https://github.com/0x676e67/wreq/issues/574)) - ([6c2280c](https://github.com/0x676e67/wreq/commit/6c2280c82a252f4de2289e74fc88a9d6058a6941))
 - *(request)* Improve `json`/`form` request performance ([#583](https://github.com/0x676e67/wreq/issues/583)) - ([cce1fcf](https://github.com/0x676e67/wreq/commit/cce1fcfbad9b6f7d519b0c6f629087bded222ae4))
 
-### 🎨 Styling
+### Styling
 
 - *(client)* Fmt import - ([f509c52](https://github.com/0x676e67/wreq/commit/f509c5298e4f1865f71a862e6882d420b9c06d24))
 - *(client)* Fmt code - ([ca9bc96](https://github.com/0x676e67/wreq/commit/ca9bc96d85cfdd90e6f06c1b59b952a46946d98a))
 - *(x509)* Fmt code - ([cc6fa5d](https://github.com/0x676e67/wreq/commit/cc6fa5d6bed622d569c50c5153d98e96664bac29))
 - *(x509)* Format compatible code ([#589](https://github.com/0x676e67/wreq/issues/589)) - ([a12a414](https://github.com/0x676e67/wreq/commit/a12a414105433151a583a605b9e0a0767639143c))
 
-### 🧪 Testing
+### Testing
 
 - *(badssl)* Dynamically update peer certificate SSL pinning test ([#582](https://github.com/0x676e67/wreq/issues/582)) - ([a87b95f](https://github.com/0x676e67/wreq/commit/a87b95fbe37318a5e0e3a0c3b2e90c39bde49654))
 
-### ⚙️ Miscellaneous Tasks
+### Miscellaneous Tasks
 
 - *(client)* Remove dead code - ([4de2978](https://github.com/0x676e67/wreq/commit/4de29785cd506fedb82ecfbb2355dcb966984d63))
 - *(http)* Rename `ClientInner` to `ClientRef` - ([1d01390](https://github.com/0x676e67/wreq/commit/1d01390103b0e424dfacc211fcb9b56b0c848da6))
@@ -900,7 +962,7 @@
 
 ## [5.0.0](https://github.com/0x676e67/wreq/compare/v3.0.6..v5.0.0) - 2025-03-23
 
-### ⛰️  Features
+### Features
 
 - *(client)* Add a straightforward method for SSL pinning setup ([#556](https://github.com/0x676e67/wreq/issues/556)) - ([071d5ed](https://github.com/0x676e67/wreq/commit/071d5ed8ded32e5f40b6d21d2cea39920ddbe355))
 - *(client)* Ignore the requirement to configure tls in order ([#545](https://github.com/0x676e67/wreq/issues/545)) - ([213b0ac](https://github.com/0x676e67/wreq/commit/213b0ac73b0cace1cb70dee443de2de1bcc32b16))
@@ -913,14 +975,14 @@
 - *(ws)* Impl `from_bytes_unchecked` of `Utf8Bytes` ([#550](https://github.com/0x676e67/wreq/issues/550)) - ([0663aa5](https://github.com/0x676e67/wreq/commit/0663aa5e44d389d1b34c0ee6efd1d2136c774f57))
 - Remove shortcut for quickly make requests ([#560](https://github.com/0x676e67/wreq/issues/560)) - ([cb43f23](https://github.com/0x676e67/wreq/commit/cb43f23f9885a04b595c1caa4eef6323b63845aa))
 
-### 🐛 Bug Fixes
+### Bug Fixes
 
 - *(client)* Preserve TLS settings when update client ([#552](https://github.com/0x676e67/wreq/issues/552)) - ([6a2e3e6](https://github.com/0x676e67/wreq/commit/6a2e3e60a6ac92977681c4c43308be05989c5dfe))
 - *(client)* Preserve TLS `RootCertStore` settings when update client ([#551](https://github.com/0x676e67/wreq/issues/551)) - ([ad72976](https://github.com/0x676e67/wreq/commit/ad7297660a753a97d614fd9bb657303b04c0eba5))
 - *(client)* Preserve TLS verify settings when update client ([#546](https://github.com/0x676e67/wreq/issues/546)) - ([21ad6e8](https://github.com/0x676e67/wreq/commit/21ad6e8beeeced18e928c35c6fee856047944321))
 - *(proxy)* Re-enable NO_PROXY envs on Windows ([#544](https://github.com/0x676e67/wreq/issues/544)) - ([f5eb6fe](https://github.com/0x676e67/wreq/commit/f5eb6fe28d167485ceec79afee25180e9b268314))
 
-### 🚜 Refactor
+### Refactor
 
 - *(client)* Rename max_retry_count to http2_max_retry_count - ([be29947](https://github.com/0x676e67/wreq/commit/be29947166db5c2ac7bcd3700f6cc50fcc9118dc))
 - *(client)* Delete tls fine-tuning config ([#530](https://github.com/0x676e67/wreq/issues/530)) - ([d7a75e3](https://github.com/0x676e67/wreq/commit/d7a75e393aa8d48b570d15aa66ce600a2ac8691c))
@@ -930,7 +992,7 @@
 - Unified naming of historical legacy APIs - ([c7c6a0d](https://github.com/0x676e67/wreq/commit/c7c6a0db32445dda27b285e4c7a812f4ca236b39))
 - Unified naming of historical legacy APIs ([#554](https://github.com/0x676e67/wreq/issues/554)) - ([9022641](https://github.com/0x676e67/wreq/commit/902264184d938d8b8cb138dbc28e8eca1e25891d))
 
-### 📚 Documentation
+### Documentation
 
 - *(client)* Update emulation method documentation - ([5dd33ab](https://github.com/0x676e67/wreq/commit/5dd33aba02be7d6b0136a5d6e839d9974f1303d3))
 - *(client)* Deleting outdated documents ([#532](https://github.com/0x676e67/wreq/issues/532)) - ([2cffe47](https://github.com/0x676e67/wreq/commit/2cffe471deca62c86ed18346cbd7b12caf2e0579))
@@ -940,16 +1002,16 @@
 - Update library examples - ([62d6266](https://github.com/0x676e67/wreq/commit/62d6266f425e83ad0998d1b2f290cb56d44df93f))
 - Update features description ([#540](https://github.com/0x676e67/wreq/issues/540)) - ([bd18719](https://github.com/0x676e67/wreq/commit/bd1871957df8304a0a55485cc7c2eb3e5add00bc))
 
-### ⚡ Performance
+### Performance
 
 - *(client)* Fine-tune request performance and testing ([#566](https://github.com/0x676e67/wreq/issues/566)) - ([a07c233](https://github.com/0x676e67/wreq/commit/a07c2332cc751a98d48e0a8cf3fca958e19f09e3))
 - *(http)* Inline hotspot method ([#528](https://github.com/0x676e67/wreq/issues/528)) - ([2038231](https://github.com/0x676e67/wreq/commit/20382318693de4e2aaa4b55c3943c5ad1bd2689c))
 
-### 🧪 Testing
+### Testing
 
 - *(badssl)* Update ssl pinning test ([#557](https://github.com/0x676e67/wreq/issues/557)) - ([b883d7f](https://github.com/0x676e67/wreq/commit/b883d7fb9b7b6c6f1b5b48271bd4d5c7de9666d8))
 
-### ⚙️ Miscellaneous Tasks
+### Miscellaneous Tasks
 
 - *(emulation)* Impl `default` for EmulationProvider - ([b726363](https://github.com/0x676e67/wreq/commit/b7263637f23bac976a54fe644b96f89047217647))
 - *(tls)* Simplified `IntoCertStore` macro impl ([#562](https://github.com/0x676e67/wreq/issues/562)) - ([5052342](https://github.com/0x676e67/wreq/commit/505234223f28dd749f10414e1fee9161119e1d98))
@@ -970,26 +1032,26 @@
 
 ## [3.0.6](https://github.com/0x676e67/wreq/compare/v3.0.5..v3.0.6) - 2025-03-10
 
-### ⛰️  Features
+### Features
 
 - *(ws)* Improved WebSocket message creation ([#524](https://github.com/0x676e67/wreq/issues/524)) - ([508d869](https://github.com/0x676e67/wreq/commit/508d8695216a1ca28c91fe5d9e04cce745839a67))
 
-### 🧪 Testing
+### Testing
 
 - *(zstd)* Test connection reuse with new zstd decompression ([#522](https://github.com/0x676e67/wreq/issues/522)) - ([a277f80](https://github.com/0x676e67/wreq/commit/a277f8036da135533efd55bd561941b992cfb1fa))
 
 
 ## [3.0.5](https://github.com/0x676e67/wreq/compare/v3.0.3..v3.0.5) - 2025-03-09
 
-### ⛰️  Features
+### Features
 
 - *(tls)* Allow overriding AES encryption for TLS ECH ([#515](https://github.com/0x676e67/wreq/issues/515)) - ([0045e3d](https://github.com/0x676e67/wreq/commit/0045e3d105a1c38ffb1ceb1cdc15cb2d4265e9ac))
 
-### 🐛 Bug Fixes
+### Bug Fixes
 
 - *(decoder)* Handle multi-frame zstd response body decompression ([#517](https://github.com/0x676e67/wreq/issues/517)) - ([bbc02ae](https://github.com/0x676e67/wreq/commit/bbc02ae0a837138054321bfcb8223a3fafd2e286))
 
-### ⚙️ Miscellaneous Tasks
+### Miscellaneous Tasks
 
 - *(connect)* Remove `ServiceBuilder` dead code ([#518](https://github.com/0x676e67/wreq/issues/518)) - ([8cf0dc4](https://github.com/0x676e67/wreq/commit/8cf0dc4034707e73205cc5849c473e2a6ca87201))
 - Update docs - ([d077c3d](https://github.com/0x676e67/wreq/commit/d077c3d40b43441ddebd8d3049b4d9094b23ec3b))
@@ -997,15 +1059,15 @@
 
 ## [3.0.3](https://github.com/0x676e67/wreq/compare/v3.0.1..v3.0.3) - 2025-03-07
 
-### 🐛 Bug Fixes
+### Bug Fixes
 
 - *(decoder)* Fix conditional compilation of decompress features ([#507](https://github.com/0x676e67/wreq/issues/507)) - ([8ffa73b](https://github.com/0x676e67/wreq/commit/8ffa73bdd6a8aea1651f31f2a70c6ed727cd65f3))
 
-### 🎨 Styling
+### Styling
 
 - Clippy fix example `set_root_cert_store` - ([9b3b49a](https://github.com/0x676e67/wreq/commit/9b3b49ac5172d09369b64a1b3b4cfe3550139fb8))
 
-### ⚙️ Miscellaneous Tasks
+### Miscellaneous Tasks
 
 - Remove pub(super) visibility from `method_has_defined_payload_semantics` - ([b689112](https://github.com/0x676e67/wreq/commit/b689112bdb1bd60798e264ba43b5d073009df0f1))
 
@@ -1017,46 +1079,46 @@
 
 ## [3.0.1-rc4](https://github.com/0x676e67/wreq/compare/v3.0.1-rc3..v3.0.1-rc4) - 2025-03-05
 
-### ⛰️  Features
+### Features
 
 - *(cert)* Expose `RootCertStoreBuilder` as public API ([#494](https://github.com/0x676e67/wreq/issues/494)) - ([849558f](https://github.com/0x676e67/wreq/commit/849558f2607e7b23521193c74e794cc192decf76))
 
-### 🚜 Refactor
+### Refactor
 
 - *(client)* Simplify DNS resolver initialization in ClientBuilder ([#499](https://github.com/0x676e67/wreq/issues/499)) - ([1368d07](https://github.com/0x676e67/wreq/commit/1368d075121a9cb9d2f9ca9cb674264e84c5e4e5))
 - *(client)* `pool_max_size` signature changed from `Into<Option<NonZeroUsize>>` to `usize` ([#498](https://github.com/0x676e67/wreq/issues/498)) - ([57223e2](https://github.com/0x676e67/wreq/commit/57223e2ed4996239b8cfa696c68f550104de9f65))
 
-### 📚 Documentation
+### Documentation
 
 - *(emulation)* Improve emulation documentation - ([776f2db](https://github.com/0x676e67/wreq/commit/776f2dbd18fa5fb3f635dceb2d22e92af358405d))
 - Update docs ([#496](https://github.com/0x676e67/wreq/issues/496)) - ([a4862e8](https://github.com/0x676e67/wreq/commit/a4862e870d002f71761863bae22ec81de2bc5f52))
 
-### ⚡ Performance
+### Performance
 
 - *(clinet)* Reading `user-agent` to avoid full clone ([#495](https://github.com/0x676e67/wreq/issues/495)) - ([89fd750](https://github.com/0x676e67/wreq/commit/89fd750e8f239c0bb31cf8699d7d4a54440933c0))
 - *(decoder)* Statically check compression headers ([#503](https://github.com/0x676e67/wreq/issues/503)) - ([c912d8d](https://github.com/0x676e67/wreq/commit/c912d8d428b6787f4203a06ff9d2fd7abc6fb3d2))
 
-### 🎨 Styling
+### Styling
 
 - *(network)* Fmt code - ([5941b39](https://github.com/0x676e67/wreq/commit/5941b390b46de184ecb57160cd64d08a7ab708e0))
 
-### ⚙️ Miscellaneous Tasks
+### Miscellaneous Tasks
 
 - Revert `impl_debug` export - ([3fc3f69](https://github.com/0x676e67/wreq/commit/3fc3f697982cee4fc24e28e10cfba04ceeaf1773))
 
 
 ## [3.0.1-rc3](https://github.com/0x676e67/wreq/compare/v3.0.1-rc2..v3.0.1-rc3) - 2025-03-04
 
-### ⛰️  Features
+### Features
 
 - *(cookie)* Abstract public cookie store trait ([#493](https://github.com/0x676e67/wreq/issues/493)) - ([a565884](https://github.com/0x676e67/wreq/commit/a5658847433928673964b79a7937b35dc4db6296))
 - *(proxy)* Supports `http`/`https` proxy custom headers ([#490](https://github.com/0x676e67/wreq/issues/490)) - ([02fdc5b](https://github.com/0x676e67/wreq/commit/02fdc5bcd1b40d27538163279f4424a666957eef))
 
-### 🧪 Testing
+### Testing
 
 - Update badssl test ([#487](https://github.com/0x676e67/wreq/issues/487)) - ([8831a9e](https://github.com/0x676e67/wreq/commit/8831a9e42d67dd5234955fc4594f8d3e564b04cc))
 
-### ⚙️ Miscellaneous Tasks
+### Miscellaneous Tasks
 
 - Replace `get_or_insert_with(Vec::new)` to `get_or_insert_default()` - ([2ca23a1](https://github.com/0x676e67/wreq/commit/2ca23a17068ef5c1b132029abcb25b47db029db7))
 
@@ -1067,21 +1129,21 @@
 
 ## [3.0.1-rc2](https://github.com/0x676e67/wreq/compare/v3.0.1-rc1..v3.0.1-rc2) - 2025-03-03
 
-### 🚜 Refactor
+### Refactor
 
 - *(client)* Rename `as_mut` to `update` for clarity and consistency   ([#482](https://github.com/0x676e67/wreq/issues/482)) - ([e8137ec](https://github.com/0x676e67/wreq/commit/e8137ec6448e53124b58d5c7e4bdb7eb1d923bb7))
 
-### 🎨 Styling
+### Styling
 
 - *(client)* Fmt code - ([897a373](https://github.com/0x676e67/wreq/commit/897a373b460ea3e0c8558e9d72843ef28578e61a))
 
-### 🧪 Testing
+### Testing
 
 - Add client cloned test ([#485](https://github.com/0x676e67/wreq/issues/485)) - ([4a5419b](https://github.com/0x676e67/wreq/commit/4a5419b56d57a54b1cfde121fee9f41acb6c411f))
 - Add client emulation update test ([#484](https://github.com/0x676e67/wreq/issues/484)) - ([f72648f](https://github.com/0x676e67/wreq/commit/f72648feafe1440dc1ae942b75421faf940fff76))
 - Add client headers update test ([#483](https://github.com/0x676e67/wreq/issues/483)) - ([730fdaa](https://github.com/0x676e67/wreq/commit/730fdaa3b18c7e0d2e2c732a408677ba8c483854))
 
-### ⚙️ Miscellaneous Tasks
+### Miscellaneous Tasks
 
 - *(client)* Update docs - ([bbcdd1f](https://github.com/0x676e67/wreq/commit/bbcdd1f15843c63aa8fee47ac0507620fb9468e6))
 
@@ -1092,7 +1154,7 @@
 
 ## [3.0.1-rc1](https://github.com/0x676e67/wreq/compare/v2.0.3..v3.0.1-rc1) - 2025-03-03
 
-### ⛰️  Features
+### Features
 
 - *(client)* Remove cross-origin redirect proxy support ([#477](https://github.com/0x676e67/wreq/issues/477)) - ([3a241ef](https://github.com/0x676e67/wreq/commit/3a241ef4b342b1bd46a8e4cd7ecbeb641d043b4f))
 - *(client)* Added a remove cookie function ([#475](https://github.com/0x676e67/wreq/issues/475)) - ([7142963](https://github.com/0x676e67/wreq/commit/71429634012e03a710793591727cbf4bd5d8de28))
@@ -1113,14 +1175,14 @@
 - Serializing impersonate enums uses legacy naming conventions ([#385](https://github.com/0x676e67/wreq/issues/385)) - ([0e3ddb0](https://github.com/0x676e67/wreq/commit/0e3ddb06d3690661806d6f1dc8731e8d337ad4a0))
 - Add `HTTP/2` support for `WebSocket` ([#373](https://github.com/0x676e67/wreq/issues/373)) - ([b46daa9](https://github.com/0x676e67/wreq/commit/b46daa90fd11e475b7b8238e1ab5d573b8a531b2))
 
-### 🐛 Bug Fixes
+### Bug Fixes
 
 - *(deps)* Fix alps use new endpoint negotiation ([#464](https://github.com/0x676e67/wreq/issues/464)) - ([21c6751](https://github.com/0x676e67/wreq/commit/21c675123e1f117633d604290c94e5aa333ec4ab))
 - *(proxy)* Fix `no_proxy` on Windows ([#470](https://github.com/0x676e67/wreq/issues/470)) - ([16ec933](https://github.com/0x676e67/wreq/commit/16ec933045a707a244eebc98edb17ae1314766a6))
 - Ignore Content-Length for methods without payload semantics ([#429](https://github.com/0x676e67/wreq/issues/429)) - ([bd5420c](https://github.com/0x676e67/wreq/commit/bd5420c4d526f05b4430bd7e60f5f5df27fffa11))
 - Ensure HTTP version negotiation for non-TLS requests ([#397](https://github.com/0x676e67/wreq/issues/397)) - ([dd14d49](https://github.com/0x676e67/wreq/commit/dd14d49a2d579f9d36a49f38c5d9de373901d492))
 
-### 🚜 Refactor
+### Refactor
 
 - *(client)* Simplify client reference handling by removing unnecessary operations ([#476](https://github.com/0x676e67/wreq/issues/476)) - ([529928b](https://github.com/0x676e67/wreq/commit/529928b4bae30b2ec4fadd2c91185f3417919ea8))
 - *(client)* Refactor client `HTTP1`/`HTTP2` configuration API ([#371](https://github.com/0x676e67/wreq/issues/371)) - ([fac8d2d](https://github.com/0x676e67/wreq/commit/fac8d2d9cf6df102e101c4f8d9fda72bd2382935))
@@ -1136,29 +1198,29 @@
 - Improve client API design and documentation ([#387](https://github.com/0x676e67/wreq/issues/387)) - ([7a63ba6](https://github.com/0x676e67/wreq/commit/7a63ba6e10734b233bbcce87c42a4978fccb7b25))
 - Rename method to accept_key for clarity - ([c32dadd](https://github.com/0x676e67/wreq/commit/c32daddb394d5b35009fc445c1e0f247a5c48ba0))
 
-### 📚 Documentation
+### Documentation
 
 - *(client)* Update client `cloned` method documentation ([#409](https://github.com/0x676e67/wreq/issues/409)) - ([7d10ce6](https://github.com/0x676e67/wreq/commit/7d10ce6be0b26d7b99f24a720e171f84c8b9e41c))
 - Added backport reference docs ([#382](https://github.com/0x676e67/wreq/issues/382)) - ([7f57bd5](https://github.com/0x676e67/wreq/commit/7f57bd5876020cb827c2ac3161e4ef080e96718d))
 
-### ⚡ Performance
+### Performance
 
 - *(connect)* Delay connector layer initialization to improve performance ([#408](https://github.com/0x676e67/wreq/issues/408)) - ([4903458](https://github.com/0x676e67/wreq/commit/4903458b81b161aac51ded38a562f139e08d94c9))
 - *(connector)* Optimize performance of switching TLS connector ([#406](https://github.com/0x676e67/wreq/issues/406)) - ([26f58e4](https://github.com/0x676e67/wreq/commit/26f58e4e39b1d9d0eb6525862a5ff146fff4ef5c))
 - *(socks)* Socks connection process DNS uses non-blocking query ([#420](https://github.com/0x676e67/wreq/issues/420)) - ([0d40c75](https://github.com/0x676e67/wreq/commit/0d40c75b1edc117fa81431256ca7f6510618ea43))
 - Always inline `into_tungstenite` ([#381](https://github.com/0x676e67/wreq/issues/381)) - ([b5e0b9f](https://github.com/0x676e67/wreq/commit/b5e0b9f0263248669940c702868c5afcdc01cc76))
 
-### 🎨 Styling
+### Styling
 
 - Fmt code - ([e3ac7a7](https://github.com/0x676e67/wreq/commit/e3ac7a76ccdb98a3b143607f8d3f8f7293421b4e))
 
-### 🧪 Testing
+### Testing
 
 - *(upgrade)* Add http2 upgrade test ([#384](https://github.com/0x676e67/wreq/issues/384)) - ([0724836](https://github.com/0x676e67/wreq/commit/0724836dbfae85bf118f4caf4de19ae3d878b60e))
 - Add unit test for cookie getter and setter functionality ([#451](https://github.com/0x676e67/wreq/issues/451)) - ([b71032e](https://github.com/0x676e67/wreq/commit/b71032e0229aa86b737426b643fabfaf549a854b))
 - Serialize tests that read/write the same environment variable ([#443](https://github.com/0x676e67/wreq/issues/443)) - ([b7560f9](https://github.com/0x676e67/wreq/commit/b7560f97998e4221472c32688ab7bea5df61edb6))
 
-### ⚙️ Miscellaneous Tasks
+### Miscellaneous Tasks
 
 - *(client)* Delete unnecessary clone - ([9793bcc](https://github.com/0x676e67/wreq/commit/9793bccbb2f4d6d45dfc90ec028222cdf065f29c))
 - *(client)* Rename client builder http2 timer name from `timer` to `http2_timer` ([#407](https://github.com/0x676e67/wreq/issues/407)) - ([e06d9ce](https://github.com/0x676e67/wreq/commit/e06d9ce8dd4f9f1a5f89c0ff3372869275f526b5))
@@ -1224,53 +1286,53 @@
 
 ## [2.0.3](https://github.com/0x676e67/wreq/compare/v2.0.2..v2.0.3) - 2025-01-25
 
-### 📚 Documentation
+### Documentation
 
 - Enhance documentation for `ImpersonateBuilder` methods ([#367](https://github.com/0x676e67/wreq/issues/367)) - ([d0dd33f](https://github.com/0x676e67/wreq/commit/d0dd33f22325b16138d743b03a39674daf8d89c8))
 
-### ⚙️ Miscellaneous Tasks
+### Miscellaneous Tasks
 
 - Update examples ([#368](https://github.com/0x676e67/wreq/issues/368)) - ([477e864](https://github.com/0x676e67/wreq/commit/477e864673d5e684070b54f44b48896760a05ef5))
 
 
 ## [2.0.2](https://github.com/0x676e67/wreq/compare/v2.0.1..v2.0.2) - 2025-01-25
 
-### ⛰️  Features
+### Features
 
 - Add implementations for `IntoCertCompressionAlgorithm` ([#363](https://github.com/0x676e67/wreq/issues/363)) - ([3e09a3f](https://github.com/0x676e67/wreq/commit/3e09a3f5fbea1f0a400ab3eaf9ca9832c4d595a4))
 - Expose `ClientMut` as public API ([#362](https://github.com/0x676e67/wreq/issues/362)) - ([455cf51](https://github.com/0x676e67/wreq/commit/455cf51ba37c10a57f00ad6310f87aae8d3f2af3))
 
-### 🚜 Refactor
+### Refactor
 
 - Simplify `IntoStreamDependency` implementations using macros ([#364](https://github.com/0x676e67/wreq/issues/364)) - ([9322f05](https://github.com/0x676e67/wreq/commit/9322f0594d0b1cf74bef110bdd113c7267ae1707))
 
-### ⚙️ Miscellaneous Tasks
+### Miscellaneous Tasks
 
 - Remove unnecessary type conversions - ([9d9bb4f](https://github.com/0x676e67/wreq/commit/9d9bb4fce39f3f6c7b6cbf24e06041a714ec1898))
 
 
 ## [2.0.1](https://github.com/0x676e67/wreq/compare/v2.0.0..v2.0.1) - 2025-01-24
 
-### ⛰️  Features
+### Features
 
 - Implement `IntoStreamDependency` for tuple and `StreamDependency` ([#359](https://github.com/0x676e67/wreq/issues/359)) - ([d7724f7](https://github.com/0x676e67/wreq/commit/d7724f753e4375a68603ee781be0f010bb329de9))
 
-### 📚 Documentation
+### Documentation
 
 - Update performance information - ([2cb8a46](https://github.com/0x676e67/wreq/commit/2cb8a4689422c8cddf51f09620d699f56e9d8111))
 
-### ⚙️ Miscellaneous Tasks
+### Miscellaneous Tasks
 
 - Update owner ([#358](https://github.com/0x676e67/wreq/issues/358)) - ([4ee1438](https://github.com/0x676e67/wreq/commit/4ee143824e5726a8bfaf1bcec14c2d59802ad71d))
 
 
 ## [2.0.0](https://github.com/0x676e67/wreq/compare/v2.0.0-rc.1..v2.0.0) - 2025-01-23
 
-### 🧪 Testing
+### Testing
 
 - *(badssl)* Update cipher list - ([6b01366](https://github.com/0x676e67/wreq/commit/6b0136632b5241fad5fcb9620c54eac98f237ee9))
 
-### ⚙️ Miscellaneous Tasks
+### Miscellaneous Tasks
 
 - *(tls)* Load and wrap the certificate into `RootCertStore` ([#356](https://github.com/0x676e67/wreq/issues/356)) - ([adddada](https://github.com/0x676e67/wreq/commit/adddada9037b09ccb38a6eeea67f7adac328a38c))
 - *(tls)* Move `tls/ext/cert` to `tls/cert` ([#355](https://github.com/0x676e67/wreq/issues/355)) - ([eae2d93](https://github.com/0x676e67/wreq/commit/eae2d9364063ab5585b34e137eedb90fb5da18dd))
@@ -1279,7 +1341,7 @@
 
 ## [2.0.0-rc.1](https://github.com/0x676e67/wreq/compare/v1.5.0..v2.0.0-rc.1) - 2025-01-22
 
-### ⛰️  Features
+### Features
 
 - *(mimic)* Added possibility to choose Client and OS to impersonate ([#290](https://github.com/0x676e67/wreq/issues/290)) - ([63cb5c5](https://github.com/0x676e67/wreq/commit/63cb5c53a735f172114afcab6c816762faedd934))
 - Rename `RootCertsStore` to `RootCertStore` ([#353](https://github.com/0x676e67/wreq/issues/353)) - ([152142f](https://github.com/0x676e67/wreq/commit/152142f00caf25b6d9c198155f417a84a6eead90))
@@ -1292,32 +1354,32 @@
 - Remove internal headers cache ([#318](https://github.com/0x676e67/wreq/issues/318)) - ([846ad15](https://github.com/0x676e67/wreq/commit/846ad15348c5a7767a3c3c6d971a0a6e430b24e6))
 - Send `json` to avoid repeated query of `CONTENT_TYPE` ([#311](https://github.com/0x676e67/wreq/issues/311)) - ([bd2c519](https://github.com/0x676e67/wreq/commit/bd2c519156c66482ddd34b8aa4bf50fd36d3a213))
 
-### 🐛 Bug Fixes
+### Bug Fixes
 
 - *(network)* Fix `NetworkScheme` debug format ([#332](https://github.com/0x676e67/wreq/issues/332)) - ([d0df934](https://github.com/0x676e67/wreq/commit/d0df93457dd100e75ffbf4fb8b61581cd24d79f6))
 
-### 🚜 Refactor
+### Refactor
 
 - Refactor client and impersonate configurations ([#321](https://github.com/0x676e67/wreq/issues/321)) - ([513f196](https://github.com/0x676e67/wreq/commit/513f1962503c32cdfeb748780cca26d3965be840))
 - Simplify client internal settings ([#320](https://github.com/0x676e67/wreq/issues/320)) - ([b7763cf](https://github.com/0x676e67/wreq/commit/b7763cf75e01b119cf96cd8cc02bb52888295052))
 
-### 📚 Documentation
+### Documentation
 
 - *(websocket)* Update docs - ([5028926](https://github.com/0x676e67/wreq/commit/5028926e889c38ac72c36e1c4cad79926efc07cb))
 - Update network scheme docs - ([2ae744c](https://github.com/0x676e67/wreq/commit/2ae744cb185c2fbb512b72ac1d607c4be11408b1))
 - Update `Client` docs - ([8af9f1a](https://github.com/0x676e67/wreq/commit/8af9f1ad4e07ca62f9ea1bbf2c9e54d82869da0a))
 
-### ⚡ Performance
+### Performance
 
 - Improve network scheme to avoid unnecessary clone ([#333](https://github.com/0x676e67/wreq/issues/333)) - ([a1cb889](https://github.com/0x676e67/wreq/commit/a1cb88944ea6d537349f4d5d3af50f00bb6beaa6))
 
-### 🎨 Styling
+### Styling
 
 - Destructive updates, standard naming style ([#315](https://github.com/0x676e67/wreq/issues/315)) - ([247a26f](https://github.com/0x676e67/wreq/commit/247a26f1b883f4ebe95e4df1815e44472387b317))
 - Format code style - ([bd1a837](https://github.com/0x676e67/wreq/commit/bd1a83742e35a88e83c1e7d05f8b74080e67025d))
 - Format code style ([#314](https://github.com/0x676e67/wreq/issues/314)) - ([509977f](https://github.com/0x676e67/wreq/commit/509977f22846d8f22ad0b9588dbb1f4272121143))
 
-### ⚙️ Miscellaneous Tasks
+### Miscellaneous Tasks
 
 - *(http)* Fmt code - ([d66b156](https://github.com/0x676e67/wreq/commit/d66b156a2a21d29c4d4f1c02cd04fa8f44feb72c))
 - *(rewin)* Inline hotspot code - ([23cc53b](https://github.com/0x676e67/wreq/commit/23cc53b04f1825d0a729aeedd9dc93bcaebe0561))
@@ -1348,7 +1410,7 @@
 
 ## [1.5.0](https://github.com/0x676e67/wreq/compare/v1.3.6..v1.5.0) - 2025-01-11
 
-### ⛰️  Features
+### Features
 
 - *(client)* Add chain settings of client - ([42b08a1](https://github.com/0x676e67/wreq/commit/42b08a15c669573b6e955967e9218b20ee869960))
 - *(client)* Optional cross-origin redirect proxy authentication ([#304](https://github.com/0x676e67/wreq/issues/304)) - ([fcdac5d](https://github.com/0x676e67/wreq/commit/fcdac5d643e65e53597a9d7de6a21bffddb6032c))
@@ -1357,24 +1419,24 @@
 - *(proxy)* Remove system proxy cache ([#309](https://github.com/0x676e67/wreq/issues/309)) - ([7992c93](https://github.com/0x676e67/wreq/commit/7992c9321979d2f61bc96bbb54a84248a1bb566b))
 - *(tls)* Optional disable SSL renegotiation ([#306](https://github.com/0x676e67/wreq/issues/306)) - ([c9c0dd3](https://github.com/0x676e67/wreq/commit/c9c0dd301301003e206ff9f3230532b879e2c994))
 
-### 🐛 Bug Fixes
+### Bug Fixes
 
 - Fix `Request` `try_clone` missing variables ([#301](https://github.com/0x676e67/wreq/issues/301)) - ([ca1c0fa](https://github.com/0x676e67/wreq/commit/ca1c0fa19c8d15b153e5e021f851e73c1489f23f))
 
-### 🚜 Refactor
+### Refactor
 
 - *(websocket)* Change parameters to `Cow` types for improved flexibility ([#298](https://github.com/0x676e67/wreq/issues/298)) - ([aff5af9](https://github.com/0x676e67/wreq/commit/aff5af9a6ab7e64269d7b113fe42b1c40325282f))
 - Rename mod `scheme` with `network` - ([dceb375](https://github.com/0x676e67/wreq/commit/dceb37573b65ac172d367b8a5bcd3dd891a34431))
 
-### 📚 Documentation
+### Documentation
 
 - *(tls)* Update docs - ([f7b564b](https://github.com/0x676e67/wreq/commit/f7b564b4ed115a67a3db5c260a53f93bf27bcb48))
 
-### ⚡ Performance
+### Performance
 
 - *(pool)* Reduce lock scope to decrease contention ([#308](https://github.com/0x676e67/wreq/issues/308)) - ([6b0c27c](https://github.com/0x676e67/wreq/commit/6b0c27ce0b6d6bb123dde3fc114496b37ad3536f))
 
-### ⚙️ Miscellaneous Tasks
+### Miscellaneous Tasks
 
 - *(websocket)* Simplify URL scheme matching and error handling logic ([#302](https://github.com/0x676e67/wreq/issues/302)) - ([901b397](https://github.com/0x676e67/wreq/commit/901b397c87dfffaf80e250492d6c3b73022066f4))
 - *(websocket)* Remove deprecated function ([#297](https://github.com/0x676e67/wreq/issues/297)) - ([427edf6](https://github.com/0x676e67/wreq/commit/427edf6e5dbaa0969239bf6073d4c5a4d56baf7a))
@@ -1392,31 +1454,31 @@
 
 ## [1.3.6](https://github.com/0x676e67/wreq/compare/v1.3.5..v1.3.6) - 2025-01-08
 
-### ⛰️  Features
+### Features
 
 - *(websocket)* Add `with_builder` method to modify request builder before sending ([#288](https://github.com/0x676e67/wreq/issues/288)) - ([ff9e9f2](https://github.com/0x676e67/wreq/commit/ff9e9f2cb5f1817c6b0187aaa6095a87e386a3d2))
 - Support `Apple` devices to bind device interface ([#293](https://github.com/0x676e67/wreq/issues/293)) - ([a71a460](https://github.com/0x676e67/wreq/commit/a71a46065b4f96200decc47891333ce699631b3f))
 
-### 🐛 Bug Fixes
+### Bug Fixes
 
 - *(test)* Resolve test failures due to invalid upstream certificate site - ([1897e3a](https://github.com/0x676e67/wreq/commit/1897e3aa51b38f032bf246f57e04df3e3aa5f434))
 
-### ⚡ Performance
+### Performance
 
 - *(pool)* Reduce `Dst` cloning overhead with `Arc` for `PoolKey` ([#289](https://github.com/0x676e67/wreq/issues/289)) - ([1946826](https://github.com/0x676e67/wreq/commit/194682691d448d1196cf37a34b3e89a3a4af76e9))
 
-### 🧪 Testing
+### Testing
 
 - *(connector-layer)* Sync upstream connector layers tests ([#285](https://github.com/0x676e67/wreq/issues/285)) - ([9d772f0](https://github.com/0x676e67/wreq/commit/9d772f03cac1c9679afe134fb8e5926df1db199b))
 
-### ⚙️ Miscellaneous Tasks
+### Miscellaneous Tasks
 
 - Remove unused crate path prefix - ([d0ca971](https://github.com/0x676e67/wreq/commit/d0ca971ca58b93c3d1a1f90174a7abd633404eda))
 - Sync upstream `From<http::Response<T>> for Response` - ([954a807](https://github.com/0x676e67/wreq/commit/954a80789bc4fb69fefaa74a2db19767fe2f5bce))
 - Fmt code - ([f3aeb61](https://github.com/0x676e67/wreq/commit/f3aeb61a72943abb33ce33bb1824d46545c3230b))
 - Improved type convert ([#284](https://github.com/0x676e67/wreq/issues/284)) - ([7ab1f2f](https://github.com/0x676e67/wreq/commit/7ab1f2f25734b9af78607b66e0406d644c39fb49))
 
-### ◀️ Revert
+### Revert
 
 - Remove `From<http::Response<T>> for Response` ([#282](https://github.com/0x676e67/wreq/issues/282)) - ([1e69245](https://github.com/0x676e67/wreq/commit/1e69245677517daaa8ec10ca64d347457925cb38))
 
@@ -1426,30 +1488,30 @@
 
 ## [1.3.5](https://github.com/0x676e67/wreq/compare/v1.3.3..v1.3.5) - 2025-01-06
 
-### ⛰️  Features
+### Features
 
 - *(multipart)* Sync upstream file multipart ([#278](https://github.com/0x676e67/wreq/issues/278)) - ([49a3f06](https://github.com/0x676e67/wreq/commit/49a3f06c40942c8b0a600058e769c21dc9d7200a))
 - *(request)* Insert header differentiates between append and overwrite ([#274](https://github.com/0x676e67/wreq/issues/274)) - ([c0026ca](https://github.com/0x676e67/wreq/commit/c0026caaa69ead0d42efba051308c87be21f4ab7))
 - *(request)* Add general HTTP authentication method ([#270](https://github.com/0x676e67/wreq/issues/270)) - ([5c3facb](https://github.com/0x676e67/wreq/commit/5c3facb9c575658b2171e154b8386d54921b0af6))
 
-### 🐛 Bug Fixes
+### Bug Fixes
 
 - *(redirect)* Fix redirect test - ([9f4bd3f](https://github.com/0x676e67/wreq/commit/9f4bd3fc241aaec158b4cd4e7377fb959459f9c6))
 - *(test)* Fix proxy test - ([475752e](https://github.com/0x676e67/wreq/commit/475752e49e438ab3100c9e54082ea9b18bfdb33a))
 - *(timeout)* Fix timeout test - ([0bf0422](https://github.com/0x676e67/wreq/commit/0bf0422a6b950e9c72ad642927a1781531f17e03))
 - Fix migration hyper1 missing `TokioTimer` ([#275](https://github.com/0x676e67/wreq/issues/275)) - ([a2e8b47](https://github.com/0x676e67/wreq/commit/a2e8b47a80a3272bc621a7d83fd7c8262be6a6d1))
 
-### 📚 Documentation
+### Documentation
 
 - Update `http2`/`network` docs ([#273](https://github.com/0x676e67/wreq/issues/273)) - ([5edaa93](https://github.com/0x676e67/wreq/commit/5edaa9311c255ceb1204c7bb6c90d2f716f4628b))
 
-### 🧪 Testing
+### Testing
 
 - *(timeout)* Ignore the test in Tunnel VPN environment ([#279](https://github.com/0x676e67/wreq/issues/279)) - ([156fd1b](https://github.com/0x676e67/wreq/commit/156fd1b6b4f2b8a495dc6b446bd612881bacf3a5))
 - Ignore doc test ([#276](https://github.com/0x676e67/wreq/issues/276)) - ([5275c6b](https://github.com/0x676e67/wreq/commit/5275c6b1eee50108061682758d67524c7a40547f))
 - Remove unused wasm test - ([25166c9](https://github.com/0x676e67/wreq/commit/25166c977aceb05e752d7b973af6ef3a72cbca4e))
 
-### ⚙️ Miscellaneous Tasks
+### Miscellaneous Tasks
 
 - *(cookie)* Use `RwLock` types that do not poison themselves ([#268](https://github.com/0x676e67/wreq/issues/268)) - ([dcbd79d](https://github.com/0x676e67/wreq/commit/dcbd79dd324483442ccb715ac277b7ec82be93d3))
 - Add all features tests - ([138c43a](https://github.com/0x676e67/wreq/commit/138c43aacb7d753c1ebde15effa6a457a8260dd1))
@@ -1469,12 +1531,12 @@
 
 ## [1.3.3](https://github.com/0x676e67/wreq/compare/v1.3.2..v1.3.3) - 2025-01-05
 
-### ⛰️  Features
+### Features
 
 - *(mimic)* Add Tor browser `Firefox 128` mimic ([#267](https://github.com/0x676e67/wreq/issues/267)) - ([f69f660](https://github.com/0x676e67/wreq/commit/f69f6605de49c13f44006355d31ad9abaac3e060))
 - *(mimic)* Optional mimic http2 ([#262](https://github.com/0x676e67/wreq/issues/262)) - ([6e44e17](https://github.com/0x676e67/wreq/commit/6e44e17695f91336a19b69cd0ec12843d9a8ca7a))
 
-### ⚙️ Miscellaneous Tasks
+### Miscellaneous Tasks
 
 - Simplify http2 configuration - ([34700d1](https://github.com/0x676e67/wreq/commit/34700d1ccae4977f2a0a5b34cd4e9a10b68d6ecc))
 
@@ -1485,7 +1547,7 @@
 
 ## [1.3.2](https://github.com/0x676e67/wreq/compare/v1.3.0..v1.3.2) - 2025-01-04
 
-### ⚙️ Miscellaneous Tasks
+### Miscellaneous Tasks
 
 - Fix typo - ([0a095ce](https://github.com/0x676e67/wreq/commit/0a095cef2ff9443898c11531be32aa18984a10e2))
 - Rename and update access scope - ([607da50](https://github.com/0x676e67/wreq/commit/607da5005d9e2020582d961e0f0906b90b658681))
@@ -1493,18 +1555,18 @@
 
 ## [1.3.0](https://github.com/0x676e67/wreq/compare/v1.2.6..v1.3.0) - 2025-01-04
 
-### 🚜 Refactor
+### Refactor
 
 - *(tls)* Refactor Application-layer protocol settings ([#260](https://github.com/0x676e67/wreq/issues/260)) - ([bc8b824](https://github.com/0x676e67/wreq/commit/bc8b8246779509209077506511ad2e8ccd580ba5))
 - Rename `HttpVersionPref` to `AlpnProtos` ([#258](https://github.com/0x676e67/wreq/issues/258)) - ([e99ec7a](https://github.com/0x676e67/wreq/commit/e99ec7a8aaf8047a726293099cedf8919bf622ba))
 
-### 📚 Documentation
+### Documentation
 
 - *(tls)* Update docs - ([db3ee6c](https://github.com/0x676e67/wreq/commit/db3ee6c8418afabc05659c76626f775931537369))
 - *(tls)* Update docs - ([ad389e5](https://github.com/0x676e67/wreq/commit/ad389e5c92327e41eb4a3aa239c63d17bd51ec9d))
 - *(tls)* Update docs ([#261](https://github.com/0x676e67/wreq/issues/261)) - ([309e62f](https://github.com/0x676e67/wreq/commit/309e62f47bdd68b5f89cb41bcfa8629517a00e79))
 
-### ⚙️ Miscellaneous Tasks
+### Miscellaneous Tasks
 
 - *(mimic)* Always inline settings module - ([630e28f](https://github.com/0x676e67/wreq/commit/630e28f529baa21a2d5bf780be2003c3dfac6618))
 - *(tls)* Always inline alps proto len - ([5b33bc5](https://github.com/0x676e67/wreq/commit/5b33bc560cf394ef8022a14acd2602307a7f9535))
@@ -1515,7 +1577,7 @@
 
 ## [1.2.6](https://github.com/0x676e67/wreq/compare/v1.2.5..v1.2.6) - 2025-01-03
 
-### ⚙️ Miscellaneous Tasks
+### Miscellaneous Tasks
 
 - *(tls/ext)* Clearer naming - ([a0f5e64](https://github.com/0x676e67/wreq/commit/a0f5e643dc55379b193e3d644038c79ef81c7a7b))
 - Inline suggestions - ([978198d](https://github.com/0x676e67/wreq/commit/978198d4154c80052f7d889d99fbc6de2435a07b))
@@ -1529,31 +1591,31 @@
 
 ## [1.2.5](https://github.com/0x676e67/wreq/compare/v1.2.1..v1.2.5) - 2025-01-02
 
-### ⛰️  Features
+### Features
 
 - *(client)* Improved set cookie operation ([#252](https://github.com/0x676e67/wreq/issues/252)) - ([e94d742](https://github.com/0x676e67/wreq/commit/e94d74253a3f2b603c82db95343ceca3ec8ff812))
 - *(tls)* Expose `CertCompressionAlgorithm` as public API ([#247](https://github.com/0x676e67/wreq/issues/247)) - ([0a6cbc6](https://github.com/0x676e67/wreq/commit/0a6cbc6660d3b3321d3df219bc5d807c2652c553))
 - *(tls)* Expose `TlsExtension` as public API ([#246](https://github.com/0x676e67/wreq/issues/246)) - ([98a18b3](https://github.com/0x676e67/wreq/commit/98a18b347568ff20db485e78a577ac812c9be38f))
 
-### 🐛 Bug Fixes
+### Bug Fixes
 
 - Align the cfg compilation with the socket2 ([#245](https://github.com/0x676e67/wreq/issues/245)) - ([3122a32](https://github.com/0x676e67/wreq/commit/3122a329f4bfc1acafd8b6b0ad323c6e23db29e5))
 - Fix default TLS configuration hostname not set ([#244](https://github.com/0x676e67/wreq/issues/244)) - ([44b8216](https://github.com/0x676e67/wreq/commit/44b8216858fb1386ca1104b4d56234455e934e2d))
 
-### 🚜 Refactor
+### Refactor
 
 - Rename verbose identifiers for clarity - ([f1ebb79](https://github.com/0x676e67/wreq/commit/f1ebb7906f3f81e7047ad6bbc1387c12ccfe5ef5))
 - Responsibility-based module division - ([c3129ca](https://github.com/0x676e67/wreq/commit/c3129cad6b7405b2c52d4750e337060e4c1175c3))
 
-### 📚 Documentation
+### Documentation
 
 - Update docs ([#243](https://github.com/0x676e67/wreq/issues/243)) - ([18d8934](https://github.com/0x676e67/wreq/commit/18d89342d4194ab37f5dfe00a3ba65509bc4ff7a))
 
-### ⚡ Performance
+### Performance
 
 - Improve HTTP request in HTTPS connector ([#242](https://github.com/0x676e67/wreq/issues/242)) - ([2a99fd4](https://github.com/0x676e67/wreq/commit/2a99fd4ed667a77a8f9fba9607372750202a5c70))
 
-### ⚙️ Miscellaneous Tasks
+### Miscellaneous Tasks
 
 - *(client)* Avoid explicit type declarations - ([44d22ef](https://github.com/0x676e67/wreq/commit/44d22ef2de58cbd92720505c216e7490498be36b))
 - *(tls)* Simplify certificate loading configuration ([#249](https://github.com/0x676e67/wreq/issues/249)) - ([87275fc](https://github.com/0x676e67/wreq/commit/87275fc96d0cb6f7dee38f4945377a43d95ba377))
@@ -1568,7 +1630,7 @@
 
 ## [1.2.1](https://github.com/0x676e67/wreq/compare/v1.2.0..v1.2.1) - 2024-12-31
 
-### ⚙️ Miscellaneous Tasks
+### Miscellaneous Tasks
 
 - Using normal array storage - ([3ce9040](https://github.com/0x676e67/wreq/commit/3ce9040e791ab31ea9a8992e9219c771e56863ca))
 
@@ -1579,7 +1641,7 @@
 
 ## [1.2.0](https://github.com/0x676e67/wreq/compare/v1.1.2..v1.2.0) - 2024-12-31
 
-### ⛰️  Features
+### Features
 
 - *(client)* Add HTTP2 `Priority` frame configuration ([#238](https://github.com/0x676e67/wreq/issues/238)) - ([8c75d75](https://github.com/0x676e67/wreq/commit/8c75d7507a35e6dd7ad7d045c7e5ae1e772598dd))
 - Add `Firefox 117` impersonate ([#239](https://github.com/0x676e67/wreq/issues/239)) - ([cae2f6d](https://github.com/0x676e67/wreq/commit/cae2f6df217780ecaa4fd073ef12af597913e321))
@@ -1587,28 +1649,28 @@
 
 ## [1.1.2](https://github.com/0x676e67/wreq/compare/v1.1.1..v1.1.2) - 2024-12-31
 
-### ⛰️  Features
+### Features
 
 - Add verify hostname configuration ([#237](https://github.com/0x676e67/wreq/issues/237)) - ([3478e11](https://github.com/0x676e67/wreq/commit/3478e1110bc5d4819eec4d66bf2a09369199ca29))
 
-### ⚙️ Miscellaneous Tasks
+### Miscellaneous Tasks
 
 - Update comment - ([2252652](https://github.com/0x676e67/wreq/commit/22526524f0ccf36763fd2bd90a439c5e95efafd3))
 
 
 ## [1.1.1](https://github.com/0x676e67/wreq/compare/v1.1.0..v1.1.1) - 2024-12-30
 
-### 🐛 Bug Fixes
+### Bug Fixes
 
 - *(decoder)* Fix decoding extra empty frame ([#234](https://github.com/0x676e67/wreq/issues/234)) - ([d8118bc](https://github.com/0x676e67/wreq/commit/d8118bc3d141726d2f5e7a8232c8a07f5865efa2))
 
-### ⚡ Performance
+### Performance
 
 - *(tls)* Use `Bytes` to optimize session key storage space ([#231](https://github.com/0x676e67/wreq/issues/231)) - ([1bd9db0](https://github.com/0x676e67/wreq/commit/1bd9db0d8aceb128a899ad5a0c0a651e10632b10))
 - Improve unnecessary convert when setting cookies ([#233](https://github.com/0x676e67/wreq/issues/233)) - ([2720bc4](https://github.com/0x676e67/wreq/commit/2720bc4e231530825051faf945f67b4d6fe9bb06))
 - `default_headers` will swap default headers ([#232](https://github.com/0x676e67/wreq/issues/232)) - ([3a737f0](https://github.com/0x676e67/wreq/commit/3a737f0eb5cdf40d178c72863a2148a2119b2cca))
 
-### ⚙️ Miscellaneous Tasks
+### Miscellaneous Tasks
 
 - Remove escape characters - ([0de340c](https://github.com/0x676e67/wreq/commit/0de340cbc495eacb733658e4f249797bda5f32b3))
 - Remove unused import - ([ab0ea9c](https://github.com/0x676e67/wreq/commit/ab0ea9cffccaec71080898ed6fd8ad7432ad2dc3))
@@ -1618,19 +1680,19 @@
 
 ## [1.1.0](https://github.com/0x676e67/wreq/compare/v1.0.1..v1.1.0) - 2024-12-27
 
-### ⛰️  Features
+### Features
 
 - *(request)* Insert when `json`/`form` does not have `CONTENT_TYPE` header ([#230](https://github.com/0x676e67/wreq/issues/230)) - ([80c338a](https://github.com/0x676e67/wreq/commit/80c338a835ed9b7015bc63415a44905aa64c61b2))
 - Without compression enabled, no compression header is sent ([#229](https://github.com/0x676e67/wreq/issues/229)) - ([79355d7](https://github.com/0x676e67/wreq/commit/79355d752334955eb27994f8e2c2acef9e828d66))
 
-### 🐛 Bug Fixes
+### Bug Fixes
 
 - Username in URL plus basic_auth() results in two Authorization headers ([#228](https://github.com/0x676e67/wreq/issues/228)) - ([8398835](https://github.com/0x676e67/wreq/commit/8398835855dfd07fe162a8747b703a82aef4ee84))
 
 
 ## [1.0.1](https://github.com/0x676e67/wreq/compare/v1.0.0..v1.0.1) - 2024-12-27
 
-### ⚙️ Miscellaneous Tasks
+### Miscellaneous Tasks
 
 - Cargo clippy --fix - ([389e32a](https://github.com/0x676e67/wreq/commit/389e32a05f97f6dcdbecf8235049da5ce8e37914))
 - Update alpn protocol order ([#226](https://github.com/0x676e67/wreq/issues/226)) - ([d920df3](https://github.com/0x676e67/wreq/commit/d920df3a9bbf02678664f90fab2b815f49c9c067))
@@ -1638,27 +1700,27 @@
 
 ## [1.0.0](https://github.com/0x676e67/wreq/compare/v1.0.0-rc.3..v1.0.0) - 2024-12-25
 
-### ⛰️  Features
+### Features
 
 - *(client)* Add `no-keepalive` for `Client` ([#221](https://github.com/0x676e67/wreq/issues/221)) - ([20ac5bf](https://github.com/0x676e67/wreq/commit/20ac5bfc17712dc703e479c6e88ac071ae760bdd))
 - Request specific `address`/`interface` override ([#223](https://github.com/0x676e67/wreq/issues/223)) - ([7ea06e1](https://github.com/0x676e67/wreq/commit/7ea06e1ac1b0073311596c643f1d92dbafeffa2b))
 
-### ⚙️ Miscellaneous Tasks
+### Miscellaneous Tasks
 
 - Argo clippy --fix - ([8d766f6](https://github.com/0x676e67/wreq/commit/8d766f6601503d7a2a2ad62e7d416c67ae6d46f8))
 
 
 ## [1.0.0-rc.3](https://github.com/0x676e67/wreq/compare/v1.0.0-rc.2..v1.0.0-rc.3) - 2024-12-25
 
-### ⛰️  Features
+### Features
 
 - Optional to enable impersonate customization ([#217](https://github.com/0x676e67/wreq/issues/217)) - ([f68de0b](https://github.com/0x676e67/wreq/commit/f68de0b6d5048014b83d887005a5c838f5eb1d31))
 
-### ⚡ Performance
+### Performance
 
 - Avoiding Unnecessary Copies ([#219](https://github.com/0x676e67/wreq/issues/219)) - ([6f6c660](https://github.com/0x676e67/wreq/commit/6f6c6609aaf78d508d5e7184fd92ce99d6d0f70e))
 
-### ⚙️ Miscellaneous Tasks
+### Miscellaneous Tasks
 
 - *(util/clent)* Remove extra clones - ([72697ca](https://github.com/0x676e67/wreq/commit/72697ca2455487bf856ab256433b3b7779dea433))
 - Fix clippy accidentally deleted code ([#220](https://github.com/0x676e67/wreq/issues/220)) - ([200e3f4](https://github.com/0x676e67/wreq/commit/200e3f4e487c8010a37c929c2ceefaf2dc61996d))
@@ -1668,15 +1730,15 @@
 
 ## [1.0.0-rc.2](https://github.com/0x676e67/wreq/compare/v1.0.0-rc.1..v1.0.0-rc.2) - 2024-12-24
 
-### ⛰️  Features
+### Features
 
 - Allow pluggable tower layers in connector service stack ([#214](https://github.com/0x676e67/wreq/issues/214)) - ([4b07f13](https://github.com/0x676e67/wreq/commit/4b07f139570e3f072b68c654bfd5b29a5ea47341))
 
-### 🐛 Bug Fixes
+### Bug Fixes
 
 - Propagate Body::size_hint when wrapping bodies ([#213](https://github.com/0x676e67/wreq/issues/213)) - ([e05a781](https://github.com/0x676e67/wreq/commit/e05a781a7b2be9a39cb6c9a8689c389e9a8f92ec))
 
-### ⚙️ Miscellaneous Tasks
+### Miscellaneous Tasks
 
 - Remove `clone` from `Dst` - ([9885d91](https://github.com/0x676e67/wreq/commit/9885d91c7cc199b4edfb1296581b27bda368b148))
 - Remove `new` method for `InnerRequestBuilder` ([#212](https://github.com/0x676e67/wreq/issues/212)) - ([6b64a60](https://github.com/0x676e67/wreq/commit/6b64a6010c9ae3835427aace4c25ea25eaee4588))
@@ -1685,7 +1747,7 @@
 
 ## [1.0.0-rc.1](https://github.com/0x676e67/wreq/compare/v0.33.5..v1.0.0-rc.1) - 2024-12-24
 
-### ⛰️  Features
+### Features
 
 - *(body)* Improve interop with hyper for `Body` type - ([ef73639](https://github.com/0x676e67/wreq/commit/ef7363920143efec31b5400d0ea408699f1053e7))
 - *(client)* Request specific proxy override ([#211](https://github.com/0x676e67/wreq/issues/211)) - ([a547b0e](https://github.com/0x676e67/wreq/commit/a547b0e4c11bdd9ce990af891eaaed9d1c004ab1))
@@ -1696,12 +1758,12 @@
 - Support request setting HTTP override ALPN ([#188](https://github.com/0x676e67/wreq/issues/188)) - ([f3af980](https://github.com/0x676e67/wreq/commit/f3af9801761915ac2f031314e9d46ff31538050e))
 - Hyper v1 upgrade ([#187](https://github.com/0x676e67/wreq/issues/187)) - ([3441ee7](https://github.com/0x676e67/wreq/commit/3441ee76640b3d9273e7b3617972ef683655cc3a))
 
-### 🐛 Bug Fixes
+### Bug Fixes
 
 - *(http2)* Fix http2 header frame initial `stream_id` settings ([#185](https://github.com/0x676e67/wreq/issues/185)) - ([2f773be](https://github.com/0x676e67/wreq/commit/2f773be0da6e963ca823ddbe0e2d9583a8b62aa7))
 - Fix http protocol auto-negotiation ([#189](https://github.com/0x676e67/wreq/issues/189)) - ([d144b63](https://github.com/0x676e67/wreq/commit/d144b6356a01b561d50f774243fa3555ab9d7b52))
 
-### ⚙️ Miscellaneous Tasks
+### Miscellaneous Tasks
 
 - *(pool)* Use `Mutex` types that do not poison themselves ([#192](https://github.com/0x676e67/wreq/issues/192)) - ([dec4d82](https://github.com/0x676e67/wreq/commit/dec4d8265356a065ff8a406344898ebc19895e71))
 - *(tls)* Disable custom TLS builder ([#208](https://github.com/0x676e67/wreq/issues/208)) - ([bb12473](https://github.com/0x676e67/wreq/commit/bb12473723a73139226c6b4845acc85815b543c7))
@@ -1736,7 +1798,7 @@
 
 ## [0.33.5](https://github.com/0x676e67/wreq/compare/v0.33.3..v0.33.5) - 2024-12-19
 
-### ⛰️  Features
+### Features
 
 - *(client)* Http1 sends lowercase request headers by default to improve performance ([#179](https://github.com/0x676e67/wreq/issues/179)) - ([b296e0e](https://github.com/0x676e67/wreq/commit/b296e0eab4b4213516830471cf1b42de2481049f))
 - Add `firefox 133` impersonate ([#181](https://github.com/0x676e67/wreq/issues/181)) - ([6710421](https://github.com/0x676e67/wreq/commit/6710421bc53916f6762053e27f1103e7f54cdd06))
@@ -1744,14 +1806,14 @@
 
 ## [0.33.3](https://github.com/0x676e67/wreq/compare/v0.33.1..v0.33.3) - 2024-12-16
 
-### 🐛 Bug Fixes
+### Bug Fixes
 
 - *(proxy)* Fix `ws`/`wss` upgrade support for `http`/`https` proxy ([#176](https://github.com/0x676e67/wreq/issues/176)) - ([8c3881c](https://github.com/0x676e67/wreq/commit/8c3881c87a7cbfb91701f37eb697c04b2863649d))
 
 
 ## [0.33.1](https://github.com/0x676e67/wreq/compare/v0.33.0..v0.33.1) - 2024-12-16
 
-### ⚙️ Miscellaneous Tasks
+### Miscellaneous Tasks
 
 - Avoiding setup bloat when customizing your DNS resolver ([#174](https://github.com/0x676e67/wreq/issues/174)) - ([bc870c5](https://github.com/0x676e67/wreq/commit/bc870c542710ec548c2292ba3440490357b76e33))
 - Show clear errors when TLS connector build fails ([#173](https://github.com/0x676e67/wreq/issues/173)) - ([f722ce6](https://github.com/0x676e67/wreq/commit/f722ce6578d872008a4a7c64fbbba8ddddb14db4))
@@ -1759,7 +1821,7 @@
 
 ## [0.33.0] - 2024-12-15
 
-### ⛰️  Features
+### Features
 
 - *(async/client)* Add try get user agent - ([c72eed6](https://github.com/0x676e67/wreq/commit/c72eed679d380693e39155d63b63284f51bccc7a))
 - *(client)* Request specific cookie store override ([#171](https://github.com/0x676e67/wreq/issues/171)) - ([1357a3c](https://github.com/0x676e67/wreq/commit/1357a3ccfd09b874c2937dde5c0988281a3747c9))
@@ -1906,7 +1968,7 @@
 - Add Response::text() - ([2fbc201](https://github.com/0x676e67/wreq/commit/2fbc20167d6656850069c6496c73969c78b0a8d2))
 - Set default headers - ([f4437ea](https://github.com/0x676e67/wreq/commit/f4437ea7b1c2a208fe07d17184d473b32b176ce4))
 
-### 🐛 Bug Fixes
+### Bug Fixes
 
 - *(client)* Return an error instead of panic when parsing invalid URL ([#164](https://github.com/0x676e67/wreq/issues/164)) - ([0daacd1](https://github.com/0x676e67/wreq/commit/0daacd1d7c6fcd1e44aee84dfbdbf4d384acc948))
 - *(client)* Fix retry request via connection pool extension ([#138](https://github.com/0x676e67/wreq/issues/138)) - ([2971538](https://github.com/0x676e67/wreq/commit/2971538ebaaf0005ebc4b9d336d8243e7a613b23))
@@ -1951,7 +2013,7 @@
 - Upgrade to http2 if the server reports that it supports it ([#1166](https://github.com/0x676e67/wreq/issues/1166)) - ([2940740](https://github.com/0x676e67/wreq/commit/2940740493ce55e8baee44a47fd759d9e3aa3187))
 - Tests::support::server - ([07d6bca](https://github.com/0x676e67/wreq/commit/07d6bca08f0ef8deb752eb17e87ecca1e2c441ae))
 
-### 🚜 Refactor
+### Refactor
 
 - *(client)* Removed confusing way to enable `hickory-dns` ([#34](https://github.com/0x676e67/wreq/issues/34)) - ([769d797](https://github.com/0x676e67/wreq/commit/769d7979f583ac435d808a8831c806638e009c7a))
 - *(client)* Turn off default redirect ([#4](https://github.com/0x676e67/wreq/issues/4)) - ([2b80121](https://github.com/0x676e67/wreq/commit/2b80121e69cb15f74885516429406df457eb1c56))
@@ -1993,7 +2055,7 @@
 - Migrate trust-dns to hickory-dns - ([712600a](https://github.com/0x676e67/wreq/commit/712600a2e11cf21e850183391d1e77caedc297bd))
 - Disable ssl verify - ([5680bb0](https://github.com/0x676e67/wreq/commit/5680bb0a290d6556ba2f358293dca31824c68af8))
 
-### 📚 Documentation
+### Documentation
 
 - Improve `TLS`/`HTTP2` custom configuration documentation ([#67](https://github.com/0x676e67/wreq/issues/67)) - ([8a72439](https://github.com/0x676e67/wreq/commit/8a72439a3c9aa2c8c06492d8928330bac518d6e3))
 - Update docs ([#54](https://github.com/0x676e67/wreq/issues/54)) - ([a010145](https://github.com/0x676e67/wreq/commit/a01014519b499621fec2fb03a7e9d3c333c1855d))
@@ -2012,13 +2074,13 @@
 - Build wasm32-unknown-unknown docs ([#998](https://github.com/0x676e67/wreq/issues/998)) - ([cff487f](https://github.com/0x676e67/wreq/commit/cff487ff58630cf0ac59f3e46cbf20cf50a28b3f))
 - Make encoding_rs link clickable ([#674](https://github.com/0x676e67/wreq/issues/674)) - ([a9dd94a](https://github.com/0x676e67/wreq/commit/a9dd94a99fdb30a77992ea0afa552f266efbd8a3))
 
-### 🎨 Styling
+### Styling
 
 - *(connect)* Replace all non-refutable if let patterns with let statements ([#44](https://github.com/0x676e67/wreq/issues/44)) - ([ec598d8](https://github.com/0x676e67/wreq/commit/ec598d8b9262680b570ac15fff1623a0e050edb8))
 - *(impersonate)* Remove dead code ([#51](https://github.com/0x676e67/wreq/issues/51)) - ([61c6055](https://github.com/0x676e67/wreq/commit/61c605531881215c8ab95f8eda557969c7d6d6fb))
 - *(tls)* Remove unused closure - ([a39ba21](https://github.com/0x676e67/wreq/commit/a39ba2198e5a7144b60567f9cb815c1fc7d85d2e))
 
-### 🧪 Testing
+### Testing
 
 - Fix test_badssl_no_built_in_roots - ([427ff74](https://github.com/0x676e67/wreq/commit/427ff74adf2266413413b2ab4da6c5669efadf33))
 - Add more badssl tests for rustls - ([8027a28](https://github.com/0x676e67/wreq/commit/8027a2894af496ce25c7f2a035e265cc8bf9bf59))
@@ -2028,7 +2090,7 @@
 - Fixed up issue with reading a Body and finished RequestBuilder tests - ([59ba7cf](https://github.com/0x676e67/wreq/commit/59ba7cf23b48c94c7223cf0f2047e9e7b1e0a275))
 - Added some trivial tests for the RequestBuilder - ([980488f](https://github.com/0x676e67/wreq/commit/980488f918a70f24a859f3776f4b4dd947c3758e))
 
-### ⚙️ Miscellaneous Tasks
+### Miscellaneous Tasks
 
 - *(client)* Client `set_redirect_policy` rename to `set_redirect` ([#149](https://github.com/0x676e67/wreq/issues/149)) - ([0ed4a76](https://github.com/0x676e67/wreq/commit/0ed4a76067b87568a33a110be6d742b946875ede))
 - *(client)* Accept request header is appended by default ([#125](https://github.com/0x676e67/wreq/issues/125)) - ([06ccdc7](https://github.com/0x676e67/wreq/commit/06ccdc70c685ef5a8817fcbef177566ec7be50b4))
@@ -2072,7 +2134,7 @@
 - Fix appveyor build for backtrace-sys dependency ([#526](https://github.com/0x676e67/wreq/issues/526)) - ([2a64140](https://github.com/0x676e67/wreq/commit/2a64140de82d93ca2b3a804c07f16e7a5bf66fa1))
 - Update gitignore - ([3bc907f](https://github.com/0x676e67/wreq/commit/3bc907f7deaeff0a9f9e02c7c3f9e4c4495aeafe))
 
-### ◀️ Revert
+### Revert
 
 - *(client)* Remove use of unused TLS Server Name Indication - ([a935f99](https://github.com/0x676e67/wreq/commit/a935f992194542b3dd4b6204963eeb3b53d5f8d0))
 - *(impersonate)* Revert Edge122 configure new curves ([#66](https://github.com/0x676e67/wreq/issues/66)) - ([ba5cd48](https://github.com/0x676e67/wreq/commit/ba5cd48a3982b370924c06c82bf26e93191a146b))
