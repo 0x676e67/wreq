@@ -254,9 +254,6 @@ where
             if let Some(order) = self.opts.settings_order {
                 builder.settings_order(order);
             }
-            if let Some(experimental_settings) = self.opts.experimental_settings {
-                builder.experimental_settings(experimental_settings);
-            }
             if let Some(stream_dependency) = self.opts.headers_stream_dependency {
                 builder.headers_stream_dependency(stream_dependency);
             }

@@ -467,9 +467,6 @@ pub struct Http2Options {
     /// The stream dependency for the outgoing HEADERS frame.
     pub headers_stream_dependency: Option<StreamDependency>,
 
-    /// Custom experimental HTTP/2 settings.
-    pub experimental_settings: Option<ExperimentalSettings>,
-
     /// The order of settings parameters in the initial SETTINGS frame.
     pub settings_order: Option<SettingsOrder>,
 
@@ -750,22 +747,6 @@ impl Http2OptionsBuilder {
         self
     }
 
-    /// Configures custom experimental HTTP/2 setting.
-    ///
-    /// This setting is reserved for future use or experimental purposes.
-    /// Enabling or disabling it may have no effect unless explicitly supported
-    /// by the server or client implementation.
-    #[inline]
-    pub fn experimental_settings<T>(mut self, experimental_settings: T) -> Self
-    where
-        T: Into<Option<ExperimentalSettings>>,
-    {
-        if let Some(experimental_settings) = experimental_settings.into() {
-            self.opts.experimental_settings = Some(experimental_settings);
-        }
-        self
-    }
-
     /// Sets the order of settings parameters in the initial SETTINGS frame.
     ///
     /// This determines the order in which settings are sent during the HTTP/2 handshake.
@@ -846,7 +827,6 @@ impl Default for Http2Options {
             enable_push: None,
             enable_connect_protocol: None,
             no_rfc7540_priorities: None,
-            experimental_settings: None,
             settings_order: None,
             headers_pseudo_order: None,
             headers_stream_dependency: None,
