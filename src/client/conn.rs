@@ -80,7 +80,7 @@ impl<T> AsyncConnWithInfo for T where T: AsyncConn + TlsInfoFactory {}
 pin_project! {
     /// Note: the `is_proxy` member means *is plain text HTTP proxy*.
     /// This tells core whether the URI should be written in
-    /// * origin-form (`GET /just/a/path HTTP/1.1`), when `is_proxy == false`, or
+    /// * origin-form (`GET /just/a/path HTTP/1.1`), when `proxy == None`, or
     /// * absolute-form (`GET http://foo.bar/and/a/path HTTP/1.1`), otherwise.
     pub struct Conn {
         tls_info: bool,
