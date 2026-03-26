@@ -298,34 +298,6 @@ impl Response {
             .map(Collected::<Bytes>::to_bytes)
     }
 
-    /// Stream a chunk of the response body.
-    ///
-    /// When the response body has been exhausted, this will return `None`.
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// # async fn run() -> Result<(), Box<dyn std::error::Error>> {
-    /// let mut res = wreq::get("https://hyper.rs").send().await?;
-    ///
-    /// while let Some(chunk) = res.chunk().await? {
-    ///     println!("Chunk: {chunk:?}");
-    /// }
-    /// # Ok(())
-    /// # }
-    /// ```
-    pub async fn chunk(&mut self) -> crate::Result<Option<Bytes>> {
-        loop {
-            if let Some(res) = self.res.body_mut().frame().await {
-                if let Ok(buf) = res?.into_data() {
-                    return Ok(Some(buf));
-                }
-            } else {
-                return Ok(None);
-            }
-        }
-    }
-
     /// Convert the response into a [`Stream`] of [`Bytes`] from the body.
     ///
     /// # Example
