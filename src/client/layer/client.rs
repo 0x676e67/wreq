@@ -361,6 +361,9 @@ where
             }
         }
 
+        // Insert the connection info into the response extensions, so that it can be used by
+        res.extensions_mut().insert(pooled.conn_info.clone());
+
         // If the Connector included 'extra' info, add to Response...
         pooled.conn_info.set_extras(res.extensions_mut());
 

@@ -18,7 +18,7 @@ use mime::Mime;
 use serde::de::DeserializeOwned;
 
 use super::{
-    conn::HttpInfo,
+    conn::{Connected, HttpInfo},
     core::{http1::ext::ReasonPhrase, upgrade},
 };
 #[cfg(feature = "cookies")]
@@ -34,14 +34,17 @@ pub struct Response {
 
 impl Response {
     #[inline]
-    pub(super) fn new<B>(res: http::Response<B>, uri: Uri) -> Response
+    pub(super) fn new<B>(mut res: http::Response<B>, uri: Uri) -> Response
     where
         B: HttpBody + Send + Sync + 'static,
         B::Data: Into<Bytes>,
         B::Error: Into<BoxError>,
     {
         Response {
-            uri,
+            uri: res
+                .extensions_mut()
+                .remove::<RequestUri>()
+                .map_or(uri, |request_uri| request_uri.0),
             res: res.map(Body::wrap),
         }
     }
@@ -479,6 +482,19 @@ impl Response {
     #[inline]
     pub async fn upgrade(self) -> crate::Result<Upgraded> {
         upgrade::on(self.res).await.map_err(Error::upgrade)
+    }
+
+    /// Consumes the [`Response`] and marks the connection as closed.
+    ///
+    /// Marks the connection for this response as closed, but does not close it immediately.
+    /// If the Client uses connection pooling, the actual close is handled later by the pool's
+    /// background cleanup task. The connection will not be reused.
+    #[inline]
+    pub fn close(self) {
+        self.res
+            .extensions()
+            .get::<Connected>()
+            .map(Connected::poison);
     }
 }
 

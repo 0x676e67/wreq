@@ -152,7 +152,7 @@ struct ProxyIdentity {
 ///
 /// This can be used to inform recipients about things like if ALPN
 /// was used, or if connected to an HTTP proxy.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Connected {
     alpn: Alpn,
     proxy: Box<ProxyIdentity>,
@@ -413,17 +413,6 @@ impl Connected {
         debug!(
             "connection was poisoned. this connection will not be reused for subsequent requests"
         );
-    }
-
-    // Don't public expose that `Connected` is `Clone`, unsure if we want to
-    // keep that contract...
-    pub(crate) fn clone(&self) -> Connected {
-        Connected {
-            alpn: self.alpn,
-            proxy: self.proxy.clone(),
-            extra: self.extra.clone(),
-            poisoned: self.poisoned.clone(),
-        }
     }
 }
 
