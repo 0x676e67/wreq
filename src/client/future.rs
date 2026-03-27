@@ -7,8 +7,7 @@ use http::{Request, Uri};
 use pin_project_lite::pin_project;
 use tower::util::{Either, Oneshot};
 
-use super::{Body, BoxedClientService, ClientService, Response};
-use crate::{Error, ext::RequestUri};
+use super::{Body, BoxedClientService, ClientService, Error, Response};
 
 pin_project! {
     /// [`Pending`] is a future representing the state of an HTTP request, which may be either
@@ -17,7 +16,7 @@ pin_project! {
     #[project = PendingProj]
     pub enum Pending {
         Request {
-            uri: Uri,
+            uri: Option<Uri>,
             fut: Pin<Box<Oneshot<Either<ClientService, BoxedClientService>, Request<Body>>>>,
         },
         Error {
@@ -40,19 +39,18 @@ impl Future for Pending {
             }
         };
 
-        let res = match ready!(res) {
-            Ok(mut res) => {
-                if let Some(redirect_uri) = res.extensions_mut().remove::<RequestUri>() {
-                    *uri = redirect_uri.0;
-                }
-                Ok(Response::new(res, uri.clone()))
-            }
+        let res = ready!(res);
+        let uri = uri
+            .take()
+            .expect("Pending::Request polled after completion");
+        let res = match res {
+            Ok(res) => Ok(Response::new(res, uri)),
             Err(err) => {
                 let mut err = err
                     .downcast::<Error>()
                     .map_or_else(Error::request, |err| *err);
                 if err.uri().is_none() {
-                    err = err.with_uri(uri.clone());
+                    err = err.with_uri(uri);
                 }
                 Err(err)
             }

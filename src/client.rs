@@ -442,7 +442,7 @@ impl Client {
     pub fn execute(&self, request: Request) -> Pending {
         let req = http::Request::<Body>::from(request);
         Pending::Request {
-            uri: req.uri().clone(),
+            uri: Some(req.uri().clone()),
             fut: Box::pin(Oneshot::new((*self.0).clone(), req)),
         }
     }
