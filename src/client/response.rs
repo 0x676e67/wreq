@@ -23,7 +23,7 @@ use super::{
 };
 #[cfg(feature = "cookies")]
 use crate::cookie;
-use crate::{Body, Error, Upgraded, error::BoxError, ext::RequestUri};
+use crate::{Body, Error, Upgraded, client::Connected, error::BoxError, ext::RequestUri};
 
 /// A Response to a submitted [`crate::Request`].
 #[derive(Debug)]
@@ -34,14 +34,17 @@ pub struct Response {
 
 impl Response {
     #[inline]
-    pub(super) fn new<B>(res: http::Response<B>, uri: Uri) -> Response
+    pub(super) fn new<B>(mut res: http::Response<B>, uri: Uri) -> Response
     where
         B: HttpBody + Send + Sync + 'static,
         B::Data: Into<Bytes>,
         B::Error: Into<BoxError>,
     {
         Response {
-            uri,
+            uri: res
+                .extensions_mut()
+                .remove::<RequestUri>()
+                .map_or(uri, |request_uri| request_uri.0),
             res: res.map(Body::wrap),
         }
     }
@@ -387,6 +390,23 @@ impl Response {
     #[inline]
     pub fn extensions_mut(&mut self) -> &mut http::Extensions {
         self.res.extensions_mut()
+    }
+
+    /// Forbids the [`Response`] connection from being recycled back into the pool.
+    ///
+    /// This marks the underlying connection as "poisoned." Once marked, the connection
+    /// will be discarded instead of reused after the current request-response cycle completes.
+    ///
+    /// # Note on Lifecycle
+    /// Marking the connection does not trigger an immediate shutdown. For pooled
+    /// connections, the physical closure is deferred until the `Response` body
+    /// is dropped or the pool's background cleaner reclaims the resource.
+    #[inline]
+    pub fn forbid_recycle(&self) {
+        self.res
+            .extensions()
+            .get::<Connected>()
+            .map(Connected::poison);
     }
 
     // util methods

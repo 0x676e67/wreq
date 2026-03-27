@@ -361,6 +361,9 @@ where
             }
         }
 
+        // If the Connector included connection info, add to Response...
+        res.extensions_mut().insert(pooled.conn_info.clone());
+
         // If the Connector included 'extra' info, add to Response...
         pooled.conn_info.set_extras(res.extensions_mut());
 
