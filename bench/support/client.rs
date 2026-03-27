@@ -2,6 +2,7 @@ use std::{convert::Infallible, error::Error, sync::Arc};
 
 use bytes::Bytes;
 use criterion::{BenchmarkGroup, measurement::WallTime};
+use http_body_util::BodyExt;
 use tokio::{runtime::Runtime, sync::Semaphore};
 
 use super::{HttpVersion, Tls};
@@ -49,8 +50,10 @@ fn create_reqwest_client(
 
 async fn wreq_body_assert(mut response: wreq::Response, expected_body_size: usize) {
     let mut body_size = 0;
-    while let Ok(Some(chunk)) = response.chunk().await {
-        body_size += chunk.len();
+    while let Some(Ok(chunk)) = response.frame().await {
+        if let Ok(chunk) = chunk.into_data() {
+            body_size += chunk.len();
+        }
     }
     assert!(
         body_size == expected_body_size,
