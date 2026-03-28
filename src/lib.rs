@@ -299,7 +299,7 @@ pub use self::client::multipart;
 pub use self::client::ws;
 pub use self::{
     client::{
-        Body, Client, ClientBuilder, Emulation, EmulationBuilder, IntoEmulation, Request,
+        Body, Client, ClientBuilder, Emulation, EmulationBuilder, Group, IntoEmulation, Request,
         RequestBuilder, Response, Upgraded, http1, http2,
     },
     error::{Error, Result},

@@ -102,7 +102,7 @@ async fn main() -> wreq::Result<()> {
         .http2_options(http2)
         .headers(headers)
         .orig_headers(orig_headers)
-        .build();
+        .build(Default::default());
 
     // Build a client with emulation config
     let client = Client::builder()

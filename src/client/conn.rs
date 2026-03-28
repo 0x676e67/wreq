@@ -8,7 +8,6 @@ mod uds;
 mod verbose;
 
 pub mod descriptor;
-pub mod group;
 
 use std::{
     fmt::{self, Debug, Formatter},

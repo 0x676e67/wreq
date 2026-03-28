@@ -28,8 +28,8 @@ use {
 use super::layer::decoder::AcceptEncoding;
 use super::{
     Body, Client, IntoEmulation, Response,
-    conn::group::ConnectionGroup,
     future::Pending,
+    group::Group,
     layer::{
         config::{DefaultHeaders, RequestOptions},
         timeout::TimeoutOptions,
@@ -723,7 +723,16 @@ impl RequestBuilder {
         self
     }
 
-    /// Set the emulation for this request.
+    /// Sets the request builder to emulation the specified HTTP context.
+    ///
+    /// This method sets the necessary headers, HTTP/1 and HTTP/2 options configurations, and  TLS
+    /// options config to use the specified HTTP context. It allows the client to mimic the
+    /// behavior of different versions or setups, which can be useful for testing or ensuring
+    /// compatibility with various environments.
+    ///
+    /// # Note
+    /// This will overwrite the existing configuration.
+    /// You must set emulation before you can perform subsequent HTTP1/HTTP2/TLS fine-tuning.
     pub fn emulation<T: IntoEmulation>(mut self, emulation: T) -> RequestBuilder {
         if let Ok(ref mut req) = self.request {
             let emulation = emulation.into_emulation();
@@ -740,16 +749,17 @@ impl RequestBuilder {
         self
     }
 
-    /// Set the group for this request.
+    /// Assigns a logical group to this request.
     ///
-    /// The group is used for connection pool partitioning. Requests with
-    /// different groups will not share pooled connections.
-    pub fn group<G: Into<ConnectionGroup>>(mut self, group: G) -> RequestBuilder {
+    /// Groups define the request's identity and execution context.
+    /// Requests in different groups are logically partitioned to ensure
+    /// resource isolation and prevent metadata leakage.
+    pub fn group(mut self, group: Group) -> RequestBuilder {
         if let Ok(ref mut req) = self.request {
             req.config_mut::<RequestOptions>()
                 .get_or_insert_default()
                 .group
-                .request(group.into());
+                .request(group);
         }
         self
     }

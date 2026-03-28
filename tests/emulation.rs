@@ -187,6 +187,14 @@ fn tls_options_template() -> TlsOptions {
         .build()
 }
 
+fn http1_options_template() -> Http1Options {
+    // HTTP/1 options config
+    Http1Options::builder()
+        .allow_obsolete_multiline_headers_in_responses(true)
+        .max_headers(100)
+        .build()
+}
+
 fn http2_options_template() -> Http2Options {
     // HTTP/2 headers frame pseudo-header order
     let headers_pseudo_order = PseudoOrder::builder()
@@ -225,18 +233,12 @@ fn http2_options_template() -> Http2Options {
 }
 
 fn emulation_template() -> Emulation {
-    //  HTTP/1 options config
-    let http1 = Http1Options::builder()
-        .allow_obsolete_multiline_headers_in_responses(true)
-        .max_headers(100)
-        .build();
-
     // This provider encapsulates TLS, HTTP/1, HTTP/2
     Emulation::builder()
         .tls_options(tls_options_template())
-        .http1_options(http1)
+        .http1_options(http1_options_template())
         .http2_options(http2_options_template())
-        .build()
+        .build(Default::default())
 }
 
 #[tokio::test]
@@ -300,9 +302,13 @@ async fn test_request_with_emulation_tls() -> wreq::Result<()> {
         .tls_cert_verification(false)
         .build()?;
 
+    let emulation = Emulation::builder()
+        .tls_options(tls_options_template())
+        .build(Default::default());
+
     let text = client
         .get("https://tls.browserleaks.com/")
-        .emulation(tls_options_template())
+        .emulation(emulation)
         .send()
         .await?
         .text()
@@ -323,9 +329,13 @@ async fn test_request_with_emulation_http2() -> wreq::Result<()> {
         .tls_cert_verification(false)
         .build()?;
 
+    let emulation = Emulation::builder()
+        .http2_options(http2_options_template())
+        .build(Default::default());
+
     let text = client
         .get("https://tls.browserleaks.com/")
-        .emulation(http2_options_template())
+        .emulation(emulation)
         .send()
         .await?
         .text()

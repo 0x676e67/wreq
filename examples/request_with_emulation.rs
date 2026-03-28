@@ -100,9 +100,9 @@ async fn main() -> wreq::Result<()> {
     let emulation = Emulation::builder()
         .tls_options(tls)
         .http2_options(http2)
-        .headers(headers)
         .orig_headers(orig_headers)
-        .build();
+        .headers(headers)
+        .build(Default::default());
 
     // Use the API you're already familiar with
     let resp = wreq::get("https://tls.peet.ws/api/all")
