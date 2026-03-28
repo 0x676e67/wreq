@@ -638,6 +638,12 @@ impl WebSocket {
             .map_err(Error::websocket)
     }
 
+    /// Consumes the [`WebSocket`] and returns the underlying stream.
+    #[inline]
+    pub fn into_inner(self) -> Upgraded {
+        self.inner.into_inner()
+    }
+
     /// Closes the connection with a given code and (optional) reason.
     pub async fn close<C, R>(mut self, code: C, reason: R) -> Result<(), Error>
     where
