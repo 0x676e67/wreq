@@ -25,10 +25,8 @@ use tokio_tungstenite::tungstenite::{
 };
 
 use self::message::{CloseCode, Message, Utf8Bytes};
-use super::conn::group::ConnectionGroup;
-use crate::{
-    Error, IntoEmulation, RequestBuilder, Response, Upgraded, header::OrigHeaderMap, proxy::Proxy,
-};
+use super::{emulate::IntoEmulation, group::Group, request::RequestBuilder, response::Response};
+use crate::{Error, Upgraded, header::OrigHeaderMap, proxy::Proxy};
 
 /// A WebSocket stream.
 type WebSocketStream = tokio_tungstenite::WebSocketStream<Upgraded>;
@@ -315,8 +313,38 @@ impl WebSocketRequestBuilder {
         self
     }
 
-    /// Set the interface for this request.
-    #[inline]
+    /// Bind connections only on the specified network interface.
+    ///
+    /// This option is only available on the following operating systems:
+    ///
+    /// - Android
+    /// - Fuchsia
+    /// - Linux,
+    /// - macOS and macOS-like systems (iOS, tvOS, watchOS and visionOS)
+    /// - Solaris and illumos
+    ///
+    /// On Android, Linux, and Fuchsia, this uses the
+    /// [`SO_BINDTODEVICE`][man-7-socket] socket option. On macOS and macOS-like
+    /// systems, Solaris, and illumos, this instead uses the [`IP_BOUND_IF` and
+    /// `IPV6_BOUND_IF`][man-7p-ip] socket options (as appropriate).
+    ///
+    /// Note that connections will fail if the provided interface name is not a
+    /// network interface that currently exists when a connection is established.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// # fn doc() -> Result<(), wreq::Error> {
+    /// let interface = "lo";
+    /// let client = wreq::Client::builder()
+    ///     .interface(interface)
+    ///     .build()?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// [man-7-socket]: https://man7.org/linux/man-pages/man7/socket.7.html
+    /// [man-7p-ip]: https://docs.oracle.com/cd/E86824_01/html/E54777/ip-7p.html
     #[cfg(any(
         target_os = "android",
         target_os = "fuchsia",
@@ -352,16 +380,29 @@ impl WebSocketRequestBuilder {
         self
     }
 
-    /// Set the emulation for this request.
+    /// Sets the request builder to emulation the specified HTTP context.
+    ///
+    /// This method sets the necessary headers, HTTP/1 and HTTP/2 options configurations, and  TLS
+    /// options config to use the specified HTTP context. It allows the client to mimic the
+    /// behavior of different versions or setups, which can be useful for testing or ensuring
+    /// compatibility with various environments.
+    ///
+    /// # Note
+    /// This will overwrite the existing configuration.
+    /// You must set emulation before you can perform subsequent HTTP1/HTTP2/TLS fine-tuning.
     #[inline]
     pub fn emulation<T: IntoEmulation>(mut self, emulation: T) -> Self {
         self.inner = self.inner.emulation(emulation);
         self
     }
 
-    /// Set the group for this request.
+    /// Assigns a logical group to this request.
+    ///
+    /// Groups define the request's identity and execution context.
+    /// Requests in different groups are logically partitioned to ensure
+    /// resource isolation and prevent metadata leakage.
     #[inline]
-    pub fn group<G: Into<ConnectionGroup>>(mut self, group: G) -> Self {
+    pub fn group(mut self, group: Group) -> Self {
         self.inner = self.inner.group(group);
         self
     }

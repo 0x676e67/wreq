@@ -11,7 +11,7 @@ use http::{Uri, Version};
 use lru::DefaultHasher;
 
 use crate::{
-    client::conn::{SocketBindOptions, group::ConnectionGroup},
+    client::{conn::SocketBindOptions, group::Group},
     proxy::Matcher as ProxyMacher,
     tls::TlsOptions,
 };
@@ -22,7 +22,7 @@ use crate::{
 /// such as URI, proxy, and local socket bindings. Connections with the same
 /// ID are considered equivalent and can be reused.
 #[derive(Debug, Clone)]
-pub(crate) struct ConnectionId(Arc<(ConnectionGroup, AtomicU64)>);
+pub(crate) struct ConnectionId(Arc<(Group, AtomicU64)>);
 
 /// A blueprint for creating a new client connection, containing all necessary parameters.
 ///
@@ -79,7 +79,7 @@ impl ConnectionDescriptor {
     /// Create a new [`ConnectionDescriptor`].
     pub(crate) fn new(
         uri: Uri,
-        mut group: ConnectionGroup,
+        mut group: Group,
         proxy: Option<ProxyMacher>,
         version: Option<Version>,
         tls_options: Option<TlsOptions>,

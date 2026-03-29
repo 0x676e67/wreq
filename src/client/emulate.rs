@@ -1,8 +1,8 @@
 use http::HeaderMap;
 
 use super::{
-    conn::group::ConnectionGroup,
     core::{http1::Http1Options, http2::Http2Options},
+    group::Group,
 };
 use crate::{header::OrigHeaderMap, tls::TlsOptions};
 
@@ -31,7 +31,7 @@ pub struct EmulationBuilder {
 #[non_exhaustive]
 #[derive(Debug, Clone)]
 pub struct Emulation {
-    pub(crate) group: ConnectionGroup,
+    pub(crate) group: Group,
 
     /// Default headers applied to outgoing requests.
     pub headers: HeaderMap,
@@ -52,16 +52,6 @@ pub struct Emulation {
 // ==== impl EmulationBuilder ====
 
 impl EmulationBuilder {
-    /// Sets the group for connection pool partitioning.
-    #[inline]
-    pub fn group<G>(mut self, group: G) -> Self
-    where
-        G: Into<ConnectionGroup>,
-    {
-        self.emulation.group = group.into();
-        self
-    }
-
     /// Sets the  HTTP/1 options configuration.
     #[inline]
     pub fn http1_options(mut self, opts: Http1Options) -> Self {
@@ -99,7 +89,8 @@ impl EmulationBuilder {
 
     /// Builds the [`Emulation`] instance.
     #[inline]
-    pub fn build(self) -> Emulation {
+    pub fn build(mut self, group: Group) -> Emulation {
+        self.emulation.group.emulate(group);
         self.emulation
     }
 }
@@ -112,7 +103,7 @@ impl Emulation {
     pub fn builder() -> EmulationBuilder {
         EmulationBuilder {
             emulation: Emulation {
-                group: ConnectionGroup::default(),
+                group: Group::default(),
                 headers: HeaderMap::new(),
                 orig_headers: OrigHeaderMap::new(),
                 tls_options: None,
@@ -123,30 +114,9 @@ impl Emulation {
     }
 }
 
-impl IntoEmulation for Emulation {
+impl<T: Into<Emulation>> IntoEmulation for T {
     #[inline]
     fn into_emulation(self) -> Emulation {
-        self
-    }
-}
-
-impl IntoEmulation for Http1Options {
-    #[inline]
-    fn into_emulation(self) -> Emulation {
-        Emulation::builder().http1_options(self).build()
-    }
-}
-
-impl IntoEmulation for Http2Options {
-    #[inline]
-    fn into_emulation(self) -> Emulation {
-        Emulation::builder().http2_options(self).build()
-    }
-}
-
-impl IntoEmulation for TlsOptions {
-    #[inline]
-    fn into_emulation(self) -> Emulation {
-        Emulation::builder().tls_options(self).build()
+        self.into()
     }
 }

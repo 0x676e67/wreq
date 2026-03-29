@@ -10,8 +10,9 @@ use tower::{Layer, Service};
 use crate::{
     Error,
     client::{
-        conn::{SocketBindOptions, group::ConnectionGroup},
+        conn::SocketBindOptions,
         core::{http1::Http1Options, http2::Http2Options},
+        group::Group,
     },
     config::RequestConfig,
     ext::UriExt,
@@ -29,7 +30,7 @@ pub(crate) struct DefaultHeaders;
 #[derive(Debug, Default, Clone)]
 #[non_exhaustive]
 pub(crate) struct RequestOptions {
-    pub group: ConnectionGroup,
+    pub group: Group,
     pub proxy: Option<Matcher>,
     pub version: Option<Version>,
     pub tls_options: Option<TlsOptions>,

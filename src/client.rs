@@ -2,6 +2,7 @@ mod body;
 mod conn;
 mod core;
 mod emulate;
+mod group;
 mod request;
 mod response;
 
@@ -43,6 +44,7 @@ pub use self::{
     body::Body,
     core::{http1, http2, upgrade::Upgraded},
     emulate::{Emulation, EmulationBuilder, IntoEmulation},
+    group::Group,
     request::{Request, RequestBuilder},
     response::Response,
 };
@@ -1641,21 +1643,6 @@ impl ClientBuilder {
     /// # Note
     /// This will overwrite the existing configuration.
     /// You must set emulation before you can perform subsequent HTTP1/HTTP2/TLS fine-tuning.
-    ///
-    /// # Example
-    ///
-    /// ```rust
-    /// use wreq::{
-    ///     Client,
-    ///     Emulation,
-    /// };
-    /// use wreq_util::Emulation;
-    ///
-    /// let client = Client::builder()
-    ///     .emulation(Emulation::Firefox128)
-    ///     .build()
-    ///     .unwrap();
-    /// ```
     #[inline]
     pub fn emulation<T: IntoEmulation>(self, emulation: T) -> ClientBuilder {
         let emulation = emulation.into_emulation();

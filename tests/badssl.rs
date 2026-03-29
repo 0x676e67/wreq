@@ -70,7 +70,7 @@ async fn test_3des_support() -> wreq::Result<()> {
 
     // Create a client with the TLS options
     let client = Client::builder()
-        .emulation(tls_options)
+        .tls_options(tls_options)
         .tls_cert_verification(false)
         .connect_timeout(Duration::from_secs(360))
         .build()?;
@@ -103,7 +103,7 @@ async fn test_firefox_7x_100_cipher() -> wreq::Result<()> {
 
     // Create a client with the TLS options
     let client = Client::builder()
-        .emulation(tls_options)
+        .tls_options(tls_options)
         .tls_cert_verification(false)
         .connect_timeout(Duration::from_secs(360))
         .build()?;
@@ -131,7 +131,7 @@ async fn test_alps_new_endpoint() -> wreq::Result<()> {
         .build();
 
     let client = Client::builder()
-        .emulation(tls_options)
+        .tls_options(tls_options)
         .connect_timeout(Duration::from_secs(360))
         .build()?;
 
@@ -174,7 +174,7 @@ async fn test_aes_hw_override() -> wreq::Result<()> {
 
     // Create a client with the TLS options
     let client = Client::builder()
-        .emulation(tls_options)
+        .tls_options(tls_options)
         .connect_timeout(Duration::from_secs(360))
         .build()?;
 
