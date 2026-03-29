@@ -4,7 +4,10 @@
 [![Crates.io License](https://img.shields.io/crates/l/wreq)](https://github.com/0x676e67/wreq/blob/main/LICENSE)
 [![Crates.io MSRV](https://img.shields.io/crates/msrv/wreq?logo=rust)](https://crates.io/crates/wreq)
 [![crates.io](https://img.shields.io/crates/v/wreq.svg?logo=rust)](https://crates.io/crates/wreq)
-[![docs.rs](https://img.shields.io/docsrs/wreq?logo=rust)](https://docs.rs/wreq)
+[![Discord chat][discord-badge]][discord-url]
+
+[discord-badge]: https://img.shields.io/discord/1486741856397164788.svg?logo=discord
+[discord-url]: https://discord.gg/rfbvyFkgq3
 
 > 🚀 Help me work seamlessly with open source sharing by [sponsoring me on GitHub](https://github.com/0x676e67/0x676e67/blob/main/SPONSOR.md)
 
