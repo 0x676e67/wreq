@@ -57,7 +57,7 @@ hickory-dns = ["dep:hickory-resolver"]
 # Enable streaming support.
 stream = ["tokio/fs", "dep:tokio-util", "sync_wrapper/futures"]
 
-# Enable SOCKS proxy support.
+# Enable SOCKS/4/5 proxy support.
 socks = ["dep:tokio-socks"]
 
 # Enable WebSocket support.
