@@ -496,15 +496,45 @@ impl PercentEncoding {
     }
 }
 
+/// See chromium's implementation: https://source.chromium.org/chromium/chromium/src/+/main:third_party/blink/renderer/platform/network/form_data_encoder.cc
 fn gen_boundary() -> String {
     use crate::util::fast_random as random;
 
-    let a = random();
-    let b = random();
-    let c = random();
-    let d = random();
+    const PREFIX: &[u8; 22] = b"----WebKitFormBoundary";
 
-    format!("{a:016x}-{b:016x}-{c:016x}-{d:016x}")
+    // The RFC 2046 spec says the alphanumeric characters plus the
+    // following characters are legal for boundaries:  '()+_,-./:=?
+    // However the following characters, though legal, cause some sites
+    // to fail: (),./:=+
+    // Note that our algorithm makes it twice as much likely for 'A' or 'B'
+    // to appear in the boundary string, because 0x41 and 0x42 are present in
+    // the below array twice.
+    static ALPHA_NUMERIC_ENCODING_MAP: [u8; 64] = [
+        0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47, 0x48, 0x49, 0x4A, 0x4B, 0x4C, 0x4D, 0x4E, 0x4F,
+        0x50, 0x51, 0x52, 0x53, 0x54, 0x55, 0x56, 0x57, 0x58, 0x59, 0x5A, 0x61, 0x62, 0x63, 0x64,
+        0x65, 0x66, 0x67, 0x68, 0x69, 0x6A, 0x6B, 0x6C, 0x6D, 0x6E, 0x6F, 0x70, 0x71, 0x72, 0x73,
+        0x74, 0x75, 0x76, 0x77, 0x78, 0x79, 0x7A, 0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37,
+        0x38, 0x39, 0x41, 0x42,
+    ];
+
+    // Pre-allocate a buffer for the boundary string. The final length will be 22 (prefix) + 16
+    // (random chars) = 38.
+    let mut boundary = Vec::with_capacity(38);
+    // Start with an informative prefix.
+    boundary.extend_from_slice(PREFIX);
+
+    // Append 16 random 7bit ascii AlphaNumeric characters.
+    for _ in 0..2 {
+        let mut randomness = random();
+        for _ in 0..8 {
+            let index = (randomness & 0x3F) as usize;
+            boundary.push(ALPHA_NUMERIC_ENCODING_MAP[index]);
+            randomness >>= 6;
+        }
+    }
+
+    assert_eq!(boundary.len(), 38);
+    String::from_utf8(boundary).expect("Invalid UTF-8 generated")
 }
 
 #[cfg(test)]
