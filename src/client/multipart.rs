@@ -48,7 +48,7 @@ impl Default for Form {
 impl Form {
     /// Creates a new async Form without any content.
     pub fn new() -> Form {
-        Form::with_boundary(generate_webkit_boundary())
+        Form::with_boundary(gen_boundary())
     }
 
     /// Creates a new async Form with a custom boundary.
@@ -497,7 +497,7 @@ impl PercentEncoding {
 }
 
 /// See chromium's implementation: https://source.chromium.org/chromium/chromium/src/+/main:third_party/blink/renderer/platform/network/form_data_encoder.cc
-fn generate_webkit_boundary() -> String {
+fn gen_boundary() -> String {
     use crate::util::fast_random as random;
 
     const PREFIX: &[u8; 22] = b"----WebKitFormBoundary";
