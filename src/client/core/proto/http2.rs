@@ -107,9 +107,28 @@ pin_project! {
         S: Body,
     {
         #[pin]
-        body: S,
+        stream: S,
         body_tx: SendStream<SendBuf<S::Data>>,
         data_done: bool,
+    }
+}
+
+impl<S> PipeToSendStream<S>
+where
+    S: Body,
+{
+    #[inline]
+    fn new(stream: S, body_tx: SendStream<SendBuf<S::Data>>) -> PipeToSendStream<S> {
+        PipeToSendStream {
+            stream,
+            body_tx,
+            data_done: false,
+        }
+    }
+
+    #[inline]
+    fn send_reset(self: Pin<&mut Self>, reason: http2::Reason) {
+        self.project().body_tx.send_reset(reason);
     }
 }
 
@@ -153,11 +172,11 @@ where
                 return Poll::Ready(Err(Error::new_body_write(::http2::Error::from(reason))));
             }
 
-            match ready!(me.body.as_mut().poll_frame(cx)) {
+            match ready!(me.stream.as_mut().poll_frame(cx)) {
                 Some(Ok(frame)) => {
                     if frame.is_data() {
                         let chunk = frame.into_data().unwrap_or_else(|_| unreachable!());
-                        let is_eos = me.body.is_end_stream();
+                        let is_eos = me.stream.is_end_stream();
                         trace!(
                             "send body chunk: {} bytes, eos={}",
                             chunk.remaining(),
@@ -832,5 +851,62 @@ impl Default for Http2Options {
             headers_stream_dependency: None,
             priorities: None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use bytes::Bytes;
+    use futures_channel::oneshot;
+    use http_body_util::Full;
+
+    use super::core::{conn::http2::Builder, rt::TokioExecutor};
+
+    fn setup_duplex_test_server() -> (tokio::io::DuplexStream, tokio::io::DuplexStream) {
+        let (client_io, server_io) = tokio::io::duplex(64);
+        (client_io, server_io)
+    }
+
+    // https://github.com/hyperium/hyper/issues/4040
+    #[tokio::test]
+    async fn h2_pipe_task_cancelled_on_response_future_drop() {
+        let (client_io, server_io) = setup_duplex_test_server();
+        let (rst_tx, rst_rx) = oneshot::channel::<bool>();
+
+        tokio::spawn(async move {
+            let mut builder = http2::server::Builder::new();
+            builder.initial_window_size(0);
+            let mut h2 = builder.handshake::<_, Bytes>(server_io).await.unwrap();
+            let (req, _respond) = h2.accept().await.unwrap().unwrap();
+            tokio::spawn(async move {
+                let _ = std::future::poll_fn(|cx| h2.poll_closed(cx)).await;
+            });
+
+            let mut body = req.into_body();
+            let got_rst = tokio::time::timeout(Duration::from_secs(2), body.data())
+                .await
+                .is_ok_and(|frame| matches!(frame, Some(Err(_)) | None));
+            let _ = rst_tx.send(got_rst);
+        });
+
+        let (mut client, conn) = Builder::new(TokioExecutor::new())
+            .handshake(client_io)
+            .await
+            .expect("http handshake");
+        tokio::spawn(async move {
+            let _ = conn.await;
+        });
+
+        let req = http::Request::post("http://localhost/")
+            .body(Full::new(Bytes::from(vec![b'x'; 50])))
+            .unwrap();
+        let res =
+            tokio::time::timeout(Duration::from_millis(5), client.try_send_request(req)).await;
+        assert!(res.is_err(), "should timeout waiting for response");
+
+        let got_rst = rst_rx.await.expect("server task should complete");
+        assert!(got_rst, "server should receive RST_STREAM");
     }
 }

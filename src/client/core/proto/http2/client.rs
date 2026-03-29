@@ -345,6 +345,7 @@ pin_project! {
         conn_drop_ref: Option<Sender<Infallible>>,
         #[pin]
         ping: Option<Recorder>,
+        cancel_rx: Option<oneshot::Receiver<()>>,
     }
 }
 
@@ -356,15 +357,36 @@ where
     type Output = ();
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> std::task::Poll<Self::Output> {
+        const EXPECT_TAKEN_ONCE_MSG: &str = "Future polled twice";
+
         let mut this = self.project();
+
+        // Check if the client cancelled the request (e.g. dropped the
+        // response future due to a timeout). If so, reset the h2 stream
+        // so that a RST_STREAM is sent and flow-control capacity is freed.
+        match this.cancel_rx.as_mut().map(|rx| Pin::new(rx).poll(cx)) {
+            Some(Poll::Ready(Ok(()))) => {
+                debug!("client request body send cancelled, resetting stream");
+                this.pipe.as_mut().send_reset(http2::Reason::CANCEL);
+                this.conn_drop_ref.take().expect(EXPECT_TAKEN_ONCE_MSG);
+                this.ping.take().expect(EXPECT_TAKEN_ONCE_MSG);
+                return Poll::Ready(());
+            }
+            Some(Poll::Ready(Err(_))) => {
+                // Sender dropped without cancelling (normal response or error).
+                // Stop polling the receiver.
+                *this.cancel_rx = None;
+            }
+            Some(Poll::Pending) | None => {}
+        }
 
         match Pin::new(&mut this.pipe).poll(cx) {
             Poll::Ready(result) => {
                 if let Err(_e) = result {
                     debug!("client request body error: {}", _e);
                 }
-                drop(this.conn_drop_ref.take().expect("Future polled twice"));
-                drop(this.ping.take().expect("Future polled twice"));
+                drop(this.conn_drop_ref.take().expect(EXPECT_TAKEN_ONCE_MSG));
+                drop(this.ping.take().expect(EXPECT_TAKEN_ONCE_MSG));
                 return Poll::Ready(());
             }
             Poll::Pending => (),
@@ -384,13 +406,13 @@ where
     fn poll_pipe(&mut self, f: FutCtx<B>, cx: &mut Context<'_>) {
         let ping = self.ping.clone();
 
+        // A one-shot channel so that send_task can tell pipe_task to
+        // reset the stream when the client cancels the request.
+        let (cancel_tx, cancel_rx) = oneshot::channel::<()>();
+
         let send_stream = if !f.is_connect {
             if !f.eos {
-                let mut pipe = PipeToSendStream {
-                    body: f.body,
-                    body_tx: f.body_tx,
-                    data_done: false,
-                };
+                let mut pipe = PipeToSendStream::new(f.body, f.body_tx);
 
                 // eagerly see if the body pipe is ready and
                 // can thus skip allocating in the executor
@@ -407,6 +429,7 @@ where
                             pipe,
                             conn_drop_ref: Some(conn_drop_ref),
                             ping: Some(ping),
+                            cancel_rx: Some(cancel_rx),
                         };
                         // Clear send task
                         self.executor
@@ -426,6 +449,7 @@ where
                     fut: f.fut,
                     ping: Some(ping),
                     send_stream: Some(send_stream),
+                    cancel_tx: Some(cancel_tx),
                 },
                 call_back: Some(f.cb),
             },
@@ -445,6 +469,16 @@ pin_project! {
         ping: Option<Recorder>,
         #[pin]
         send_stream: Option<Option<SendStream<SendBuf<<B as Body>::Data>>>>,
+        cancel_tx: Option<oneshot::Sender<()>>,
+    }
+}
+
+impl<B: Body + 'static> ResponseFutMap<B> {
+    /// Signal the pipe_task to reset the stream (e.g. on client cancellation).
+    pub(crate) fn cancel(self: Pin<&mut Self>) {
+        if let Some(cancel_tx) = self.project().cancel_tx.take() {
+            let _ = cancel_tx.send(());
+        }
     }
 }
 
