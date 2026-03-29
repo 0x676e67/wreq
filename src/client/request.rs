@@ -129,6 +129,39 @@ impl Request {
             .version
     }
 
+    /// Returns a reference to the associated extensions.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use wreq;
+    /// let request = wreq::get("http://httpbin.org/get")
+    ///     .build()
+    ///     .expect("failed to build request");
+    /// assert!(request.extensions().get::<i32>().is_none());
+    /// ```
+    #[inline]
+    pub fn extensions(&self) -> &Extensions {
+        self.0.extensions()
+    }
+
+    /// Returns a mutable reference to the associated extensions.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use wreq;
+    /// let mut request = wreq::get("http://httpbin.org/get")
+    ///     .build()
+    ///     .expect("failed to build request");
+    /// request.extensions_mut().insert("hello");
+    /// assert_eq!(request.extensions().get(), Some(&"hello"));
+    /// ```
+    #[inline]
+    pub fn extensions_mut(&mut self) -> &mut Extensions {
+        self.0.extensions_mut()
+    }
+
     /// Attempt to clone the request.
     ///
     /// `None` is returned if the request can not be cloned, i.e. if the body is a stream.
@@ -143,16 +176,6 @@ impl Request {
         *req.extensions_mut() = self.extensions().clone();
         *req.body_mut() = body;
         Some(req)
-    }
-
-    #[inline]
-    pub(crate) fn extensions(&self) -> &Extensions {
-        self.0.extensions()
-    }
-
-    #[inline]
-    pub(crate) fn extensions_mut(&mut self) -> &mut Extensions {
-        self.0.extensions_mut()
     }
 
     #[inline]
