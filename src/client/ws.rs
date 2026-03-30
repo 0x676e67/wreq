@@ -25,7 +25,7 @@ use tokio_tungstenite::tungstenite::{
 };
 
 use self::message::{CloseCode, Message, Utf8Bytes};
-use super::{emulate::IntoEmulation, group::Group, request::RequestBuilder, response::Response};
+use super::{emulate::IntoEmulation, request::RequestBuilder, response::Response};
 use crate::{Error, Upgraded, header::OrigHeaderMap, proxy::Proxy};
 
 /// A WebSocket stream.
@@ -393,17 +393,6 @@ impl WebSocketRequestBuilder {
     #[inline]
     pub fn emulation<T: IntoEmulation>(mut self, emulation: T) -> Self {
         self.inner = self.inner.emulation(emulation);
-        self
-    }
-
-    /// Assigns a logical group to this request.
-    ///
-    /// Groups define the request's identity and execution context.
-    /// Requests in different groups are logically partitioned to ensure
-    /// resource isolation and prevent metadata leakage.
-    #[inline]
-    pub fn group(mut self, group: Group) -> Self {
-        self.inner = self.inner.group(group);
         self
     }
 
