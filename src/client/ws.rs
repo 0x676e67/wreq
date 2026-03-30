@@ -25,7 +25,7 @@ use tokio_tungstenite::tungstenite::{
 };
 
 use self::message::{CloseCode, Message, Utf8Bytes};
-use super::{emulate::IntoEmulation, group::Group, request::RequestBuilder, response::Response};
+use super::{emulate::IntoEmulation, request::RequestBuilder, response::Response};
 use crate::{Error, Upgraded, header::OrigHeaderMap, proxy::Proxy};
 
 /// A WebSocket stream.
