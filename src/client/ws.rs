@@ -13,6 +13,7 @@ use std::{
     task::{Context, Poll, ready},
 };
 
+use bytes::Bytes;
 use futures_util::{Sink, SinkExt, Stream, StreamExt, stream::FusedStream};
 use http::{
     HeaderMap, HeaderName, HeaderValue, Method, StatusCode, Uri, Version, header, uri::Scheme,
@@ -470,7 +471,8 @@ impl WebSocketRequestBuilder {
 
                 request.headers_mut().insert(
                     header::SEC_WEBSOCKET_PROTOCOL,
-                    subprotocols.parse().map_err(Error::builder)?,
+                    HeaderValue::from_maybe_shared(Bytes::from(subprotocols))
+                        .map_err(Error::builder)?,
                 );
             }
         }
@@ -595,9 +597,8 @@ impl WebSocketResponse {
                 (None, None) => {}
             };
 
-            let upgraded = self.inner.upgrade().await?;
             let inner = WebSocketStream::from_raw_socket(
-                upgraded,
+                self.inner.upgrade().await?,
                 protocol::Role::Client,
                 Some(self.config),
             )
