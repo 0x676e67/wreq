@@ -396,17 +396,6 @@ impl WebSocketRequestBuilder {
         self
     }
 
-    /// Assigns a logical group to this request.
-    ///
-    /// Groups define the request's identity and execution context.
-    /// Requests in different groups are logically partitioned to ensure
-    /// resource isolation and prevent metadata leakage.
-    #[inline]
-    pub fn group(mut self, group: Group) -> Self {
-        self.inner = self.inner.group(group);
-        self
-    }
-
     /// Sends the request and returns and [`WebSocketResponse`].
     pub async fn send(self) -> Result<WebSocketResponse, Error> {
         let (client, request) = self.inner.build_split();
