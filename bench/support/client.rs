@@ -12,12 +12,8 @@ const STREAM_CHUNK_SIZE: usize = 256 * 1024;
 fn create_wreq_client(tls: Tls, http_version: HttpVersion) -> Result<wreq::Client, Box<dyn Error>> {
     let builder = wreq::Client::builder()
         .no_proxy()
-        .redirect(wreq::redirect::Policy::none());
-
-    let builder = match tls {
-        Tls::Enabled => builder.tls_cert_verification(false),
-        Tls::Disabled => builder,
-    };
+        .redirect(wreq::redirect::Policy::none())
+        .tls_cert_verification(!matches!(tls, Tls::Enabled));
 
     let builder = match http_version {
         HttpVersion::Http1 => builder.http1_only(),
@@ -33,12 +29,8 @@ fn create_reqwest_client(
 ) -> Result<reqwest::Client, Box<dyn Error>> {
     let builder = reqwest::Client::builder()
         .no_proxy()
-        .redirect(reqwest::redirect::Policy::none());
-
-    let builder = match tls {
-        Tls::Enabled => builder.danger_accept_invalid_certs(true),
-        Tls::Disabled => builder,
-    };
+        .redirect(reqwest::redirect::Policy::none())
+        .danger_accept_invalid_certs(matches!(tls, Tls::Enabled));
 
     let builder = match http_version {
         HttpVersion::Http1 => builder.http1_only(),
