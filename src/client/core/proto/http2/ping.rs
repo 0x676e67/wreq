@@ -30,18 +30,13 @@ use http2::{Ping, PingPong};
 use crate::{
     client::core::{
         self,
-        error::{Error, Kind},
+        error::{Error, Kind, TimedOut},
         rt::{Sleep, Time, Timer},
     },
     sync::Mutex,
 };
 
 type WindowSize = u32;
-
-#[inline]
-pub(super) fn disabled() -> Recorder {
-    Recorder { shared: None }
-}
 
 pub(super) fn channel(ping_pong: PingPong, config: Config, timer: Time) -> (Recorder, Ponger) {
     debug_assert!(
@@ -216,10 +211,13 @@ impl Config {
 // ===== impl Recorder =====
 
 impl Recorder {
+    #[inline]
+    pub(super) fn disabled() -> Recorder {
+        Recorder { shared: None }
+    }
+
     pub(crate) fn record_data(&self, len: usize) {
-        let shared = if let Some(ref shared) = self.shared {
-            shared
-        } else {
+        let Some(ref shared) = self.shared else {
             return;
         };
 
@@ -251,9 +249,7 @@ impl Recorder {
     }
 
     pub(crate) fn record_non_data(&self) {
-        let shared = if let Some(ref shared) = self.shared {
-            shared
-        } else {
+        let Some(ref shared) = self.shared else {
             return;
         };
 
@@ -266,7 +262,7 @@ impl Recorder {
     /// a disabled reporter.
     pub(super) fn for_stream(self, stream: &http2::RecvStream) -> Self {
         if stream.is_end_stream() {
-            disabled()
+            Recorder::disabled()
         } else {
             self
         }
@@ -280,7 +276,6 @@ impl Recorder {
             }
         }
 
-        // else
         Ok(())
     }
 }
@@ -457,6 +452,7 @@ impl Bdp {
     }
 }
 
+#[inline]
 fn seconds(dur: Duration) -> f64 {
     const NANOS_PER_SEC: f64 = 1_000_000_000.0;
     let secs = dur.as_secs() as f64;
@@ -547,6 +543,6 @@ impl fmt::Display for KeepAliveTimedOut {
 
 impl std::error::Error for KeepAliveTimedOut {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        Some(&crate::client::core::error::TimedOut)
+        Some(&TimedOut)
     }
 }
