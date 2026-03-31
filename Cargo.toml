@@ -28,16 +28,16 @@ charset = ["dep:encoding_rs", "dep:mime"]
 cookies = ["dep:cookie"]
 
 # Enable gzip decompression support.
-gzip = ["tower-http/decompression-gzip"]
+gzip = ["dep:tower-http", "tower-http?/decompression-gzip"]
 
 # Enable brotli decompression support.
-brotli = ["tower-http/decompression-br"]
+brotli = ["dep:tower-http", "tower-http?/decompression-br"]
 
 # Enable zstd decompression support.
-zstd = ["tower-http/decompression-zstd"]
+zstd = ["dep:tower-http", "tower-http?/decompression-zstd"]
 
 # Enable deflate decompression support.
-deflate = ["tower-http/decompression-deflate"]
+deflate = ["dep:tower-http", "tower-http?/decompression-deflate"]
 
 # Enable URL query string serialization support.
 query = ["dep:serde", "dep:serde_urlencoded"]
@@ -49,19 +49,19 @@ form = ["dep:serde", "dep:serde_urlencoded"]
 json = ["dep:serde", "dep:serde_json"]
 
 # Enable multipart/form-data support.
-multipart = ["dep:mime_guess", "sync_wrapper/futures"]
+multipart = ["dep:mime_guess", "dep:sync_wrapper", "sync_wrapper?/futures"]
 
 # Enable hickory DNS resolver.
 hickory-dns = ["dep:hickory-resolver"]
 
 # Enable streaming support.
-stream = ["tokio/fs", "dep:tokio-util", "sync_wrapper/futures"]
+stream = ["tokio/fs", "dep:tokio-util", "dep:sync_wrapper", "sync_wrapper?/futures"]
 
 # Enable SOCKS/4/5 proxy support.
 socks = ["dep:tokio-socks"]
 
 # Enable WebSocket support.
-ws = ["tokio-tungstenite/handshake"]
+ws = ["dep:tokio-tungstenite", "tokio-tungstenite?/handshake"]
 
 # Enable webpki-roots for TLS certificate validation.
 webpki-roots = ["dep:webpki-root-certs"]
@@ -70,7 +70,7 @@ webpki-roots = ["dep:webpki-root-certs"]
 system-proxy = ["dep:system-configuration", "dep:windows-registry"]
 
 # Enable tracing logging.
-tracing = ["http2/tracing", "tracing/std"]
+tracing = ["dep:tracing", "http2/tracing", "tracing?/std"]
 
 # Prefix BoringSSL symbols in libcrypto/libssl to avoid linker conflicts
 # when multiple OpenSSL versions coexist in the same process.
