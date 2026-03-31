@@ -87,7 +87,7 @@ where
         let conn: Conn<_, B> = Conn { ponger, conn };
         (Either::Left(conn), recorder)
     } else {
-        (Either::Right(conn), ping::disabled())
+        (Either::Right(conn), ping::Recorder::disabled())
     };
     let conn: ConnMapErr<T, B> = ConnMapErr {
         conn,
