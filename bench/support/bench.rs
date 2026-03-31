@@ -35,9 +35,9 @@ pub fn bench(
         .first()
         .map_or("n/a", |cpu| cpu.brand().trim_start().trim_end());
 
-    for &concurrent_limit in CONCURRENT_CASES {
-        for body in BODY_CASES {
-            with_server(addr, tls, || {
+    with_server(addr, tls, || {
+        for &concurrent_limit in CONCURRENT_CASES {
+            for body in BODY_CASES {
                 // single-threaded client
                 let mut group = c.benchmark_group(format!(
                     "{cpu_model}/{OS}_{ARCH}/{CURRENT_THREAD_LABEL}/{tls}/{http_version}/{concurrent_limit}/{}KB",
@@ -55,10 +55,7 @@ pub fn bench(
                     body,
                 )?;
                 group.finish();
-                Ok(())
-            })?;
 
-            with_server(addr, tls, || {
                 // multi-threaded client
                 let mut group = c.benchmark_group(format!(
                     "{cpu_model}/{OS}_{ARCH}/{MULTI_THREAD_LABEL}/{tls}/{http_version}/{concurrent_limit}/{}KB",
@@ -75,10 +72,11 @@ pub fn bench(
                     body,
                 )?;
                 group.finish();
-                Ok(())
-            })?;
+            }
         }
-    }
+
+        Ok(())
+    })?;
 
     Ok(())
 }
