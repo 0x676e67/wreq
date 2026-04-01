@@ -83,6 +83,8 @@ pub(crate) use self::{
 use crate::cookie;
 #[cfg(feature = "hickory-dns")]
 use crate::dns::hickory::HickoryDnsResolver;
+#[cfg(feature = "http3")]
+use self::core::http3::Http3Options;
 use crate::{
     IntoUri, Method, Proxy,
     dns::{DnsResolverWithOverrides, DynResolver, GaiResolver, IntoResolve, Resolve},
@@ -191,6 +193,8 @@ pub struct ClientBuilder {
 enum HttpVersionPref {
     Http1,
     Http2,
+    #[cfg(feature = "http3")]
+    Http3,
     All,
 }
 
@@ -250,6 +254,8 @@ struct Config {
     tls_options: Option<TlsOptions>,
     http1_options: Option<Http1Options>,
     http2_options: Option<Http2Options>,
+    #[cfg(feature = "http3")]
+    http3_options: Option<Http3Options>,
 }
 
 // ===== impl Client =====
@@ -321,6 +327,8 @@ impl Client {
                 https_only: false,
                 http1_options: None,
                 http2_options: None,
+                #[cfg(feature = "http3")]
+                http3_options: None,
                 layers: Vec::new(),
                 connector_layers: Vec::new(),
                 tls_keylog: None,
@@ -1143,6 +1151,28 @@ impl ClientBuilder {
         self
     }
 
+    /// Sets the HTTP/3 options for the client.
+    #[cfg(feature = "http3")]
+    #[inline]
+    pub fn http3_options<T>(mut self, options: T) -> ClientBuilder
+    where
+        T: Into<Option<Http3Options>>,
+    {
+        self.config.http3_options = options.into();
+        self
+    }
+
+    /// Only use HTTP/3.
+    ///
+    /// The destination must support HTTP/3 (QUIC). This will not attempt
+    /// HTTP/1 or HTTP/2 connections.
+    #[cfg(feature = "http3")]
+    #[inline]
+    pub fn http3_prior_knowledge(mut self) -> ClientBuilder {
+        self.config.http_version_pref = HttpVersionPref::Http3;
+        self
+    }
+
     // TCP options
 
     /// Set whether sockets have `TCP_NODELAY` enabled.
@@ -1649,10 +1679,17 @@ impl ClientBuilder {
     #[inline]
     pub fn emulation<T: IntoEmulation>(self, emulation: T) -> ClientBuilder {
         let emulation = emulation.into_emulation();
-        self.tls_options(emulation.tls_options)
+        #[allow(unused_mut)]
+        let mut builder = self
+            .tls_options(emulation.tls_options)
             .http1_options(emulation.http1_options)
             .http2_options(emulation.http2_options)
             .default_headers(emulation.headers)
-            .orig_headers(emulation.orig_headers)
+            .orig_headers(emulation.orig_headers);
+        #[cfg(feature = "http3")]
+        {
+            builder = builder.http3_options(emulation.http3_options);
+        }
+        builder
     }
 }

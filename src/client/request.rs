@@ -764,6 +764,10 @@ impl RequestBuilder {
             opts.tls_options = emulation.tls_options;
             opts.http1_options = emulation.http1_options;
             opts.http2_options = emulation.http2_options;
+            #[cfg(feature = "http3")]
+            {
+                opts.http3_options = emulation.http3_options;
+            }
             return self
                 .headers(emulation.headers)
                 .orig_headers(emulation.orig_headers);

@@ -4,6 +4,8 @@ use super::{
     core::{http1::Http1Options, http2::Http2Options},
     group::Group,
 };
+#[cfg(feature = "http3")]
+use super::core::http3::Http3Options;
 use crate::{header::OrigHeaderMap, tls::TlsOptions};
 
 /// Converts a value into an [`Emulation`] configuration.
@@ -47,6 +49,10 @@ pub struct Emulation {
 
     /// HTTP/2 configuration.
     pub http2_options: Option<Http2Options>,
+
+    /// HTTP/3 configuration.
+    #[cfg(feature = "http3")]
+    pub http3_options: Option<Http3Options>,
 }
 
 // ==== impl EmulationBuilder ====
@@ -63,6 +69,14 @@ impl EmulationBuilder {
     #[inline]
     pub fn http2_options(mut self, opts: Http2Options) -> Self {
         self.emulation.http2_options = Some(opts);
+        self
+    }
+
+    /// Sets the HTTP/3 options configuration.
+    #[cfg(feature = "http3")]
+    #[inline]
+    pub fn http3_options(mut self, opts: Http3Options) -> Self {
+        self.emulation.http3_options = Some(opts);
         self
     }
 
@@ -109,6 +123,8 @@ impl Emulation {
                 tls_options: None,
                 http1_options: None,
                 http2_options: None,
+                #[cfg(feature = "http3")]
+                http3_options: None,
             },
         }
     }
