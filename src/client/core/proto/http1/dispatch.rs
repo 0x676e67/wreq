@@ -250,8 +250,7 @@ where
                 let body = match body_len {
                     DecodedLength::ZERO => IncomingBody::empty(),
                     other => {
-                        let (tx, rx) =
-                            IncomingBody::new_channel(other, wants.contains(Wants::EXPECT));
+                        let (tx, rx) = IncomingBody::h1(other, wants.contains(Wants::EXPECT));
                         self.body_tx = Some(tx);
                         rx
                     }
@@ -640,7 +639,7 @@ mod tests {
         let _dispatcher = tokio::spawn(dispatcher);
 
         let body = {
-            let (mut tx, body) = IncomingBody::new_channel(DecodedLength::new(4), false);
+            let (mut tx, body) = IncomingBody::h1(DecodedLength::new(4), false);
             tx.try_send_data("reee".into()).unwrap();
             body
         };

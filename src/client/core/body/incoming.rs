@@ -14,21 +14,20 @@ use http_body::{Body, Frame, SizeHint};
 use super::DecodedLength;
 use crate::client::core::{self, Error, common::watch, proto::http2::ping};
 
-type BodySender = mpsc::Sender<Result<Bytes, Error>>;
-type TrailersSender = oneshot::Sender<HeaderMap>;
+const WANT_PENDING: usize = 1;
+const WANT_READY: usize = 2;
 
-/// A stream of `Bytes`, used when receiving bodies from the network.
+/// A stream of [`Bytes`], used when receiving bodies from the network.
 ///
-/// Note that Users should not instantiate this struct directly. When working with the crate::core:
-/// client, `Incoming` is returned to you in responses.
+/// Note that Users should not instantiate this struct directly. When working with the client,
+/// [`Incoming`] is returned to you in responses.
 #[must_use = "streams do nothing unless polled"]
 pub struct Incoming {
     kind: Kind,
 }
 
 enum Kind {
-    Empty,
-    Chan {
+    H1 {
         content_length: DecodedLength,
         want_tx: watch::Sender,
         data_rx: mpsc::Receiver<Result<Bytes, Error>>,
@@ -40,6 +39,7 @@ enum Kind {
         ping: ping::Recorder,
         recv: http2::RecvStream,
     },
+    Empty,
 }
 
 /// A sender half created through [`Body::channel()`].
@@ -58,12 +58,9 @@ enum Kind {
 #[must_use = "Sender does nothing unless sent on"]
 pub(crate) struct Sender {
     want_rx: watch::Receiver,
-    data_tx: BodySender,
-    trailers_tx: Option<TrailersSender>,
+    data_tx: mpsc::Sender<Result<Bytes, Error>>,
+    trailers_tx: Option<oneshot::Sender<HeaderMap>>,
 }
-
-const WANT_PENDING: usize = 1;
-const WANT_READY: usize = 2;
 
 impl Incoming {
     #[inline]
@@ -71,31 +68,30 @@ impl Incoming {
         Incoming { kind: Kind::Empty }
     }
 
-    pub(crate) fn new_channel(content_length: DecodedLength, wanter: bool) -> (Sender, Incoming) {
+    pub(crate) fn h1(content_length: DecodedLength, wanter: bool) -> (Sender, Incoming) {
         let (data_tx, data_rx) = mpsc::channel(0);
         let (trailers_tx, trailers_rx) = oneshot::channel();
 
         // If wanter is true, `Sender::poll_ready()` won't becoming ready
         // until the `Body` has been polled for data once.
         let want = if wanter { WANT_PENDING } else { WANT_READY };
-
         let (want_tx, want_rx) = watch::channel(want);
 
-        let tx = Sender {
-            want_rx,
-            data_tx,
-            trailers_tx: Some(trailers_tx),
-        };
-        let rx = Incoming {
-            kind: Kind::Chan {
-                content_length,
-                want_tx,
-                data_rx,
-                trailers_rx,
+        (
+            Sender {
+                want_rx,
+                data_tx,
+                trailers_tx: Some(trailers_tx),
             },
-        };
-
-        (tx, rx)
+            Incoming {
+                kind: Kind::H1 {
+                    content_length,
+                    want_tx,
+                    data_rx,
+                    trailers_rx,
+                },
+            },
+        )
     }
 
     pub(crate) fn h2(
@@ -130,7 +126,7 @@ impl Body for Incoming {
     ) -> Poll<Option<Result<Frame<Self::Data>, Self::Error>>> {
         match self.kind {
             Kind::Empty => Poll::Ready(None),
-            Kind::Chan {
+            Kind::H1 {
                 content_length: ref mut len,
                 ref mut data_rx,
                 ref mut want_tx,
@@ -195,44 +191,33 @@ impl Body for Incoming {
         }
     }
 
+    #[inline]
     fn is_end_stream(&self) -> bool {
         match self.kind {
-            Kind::Empty => true,
-            Kind::Chan { content_length, .. } => content_length == DecodedLength::ZERO,
+            Kind::H1 { content_length, .. } => content_length == DecodedLength::ZERO,
             Kind::H2 { recv: ref h2, .. } => h2.is_end_stream(),
+            Kind::Empty => true,
         }
     }
 
+    #[inline]
     fn size_hint(&self) -> SizeHint {
-        fn opt_len(decoded_length: DecodedLength) -> SizeHint {
-            if let Some(content_length) = decoded_length.into_opt() {
-                SizeHint::with_exact(content_length)
-            } else {
-                SizeHint::default()
-            }
-        }
-
         match self.kind {
+            Kind::H1 { content_length, .. } | Kind::H2 { content_length, .. } => content_length
+                .into_opt()
+                .map_or_else(SizeHint::default, SizeHint::with_exact),
             Kind::Empty => SizeHint::with_exact(0),
-            Kind::Chan { content_length, .. } => opt_len(content_length),
-            Kind::H2 { content_length, .. } => opt_len(content_length),
         }
     }
 }
 
 impl fmt::Debug for Incoming {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        #[derive(Debug)]
-        struct Streaming;
-        #[derive(Debug)]
-        struct Empty;
-
-        let mut builder = f.debug_tuple("Body");
+        let mut builder = f.debug_tuple(stringify!(Incoming));
         match self.kind {
-            Kind::Empty => builder.field(&Empty),
-            _ => builder.field(&Streaming),
+            Kind::Empty => builder.field(&stringify!(Empty)),
+            _ => builder.field(&stringify!(Streaming)),
         };
-
         builder.finish()
     }
 }
@@ -245,6 +230,8 @@ impl Sender {
         self.data_tx.poll_ready(cx).map_err(|_| Error::new_closed())
     }
 
+    /// Check if the receiver end has tried polling for the body yet.
+    #[inline]
     fn poll_want(&mut self, cx: &mut Context<'_>) -> Poll<core::Result<()>> {
         match self.want_rx.load(cx) {
             WANT_READY => Poll::Ready(Ok(())),
@@ -273,6 +260,13 @@ impl Sender {
             .map_err(|err| err.into_inner().expect("just sent Ok"))
     }
 
+    /// Try to send trailers on this channel.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err(HeaderMap)` if the channel could not (currently) accept
+    /// another `HeaderMap`.
+    #[inline]
     pub(crate) fn try_send_trailers(
         &mut self,
         trailers: HeaderMap,
@@ -285,30 +279,21 @@ impl Sender {
         tx.send(trailers).map_err(Some)
     }
 
+    /// Send an error on this channel, which will cause the body stream to end with an error.
     #[inline]
     pub(crate) fn send_error(&mut self, err: Error) {
-        let _ = self
-            .data_tx
-            // clone so the send works even if buffer is full
-            .clone()
-            .try_send(Err(err));
+        // clone so the send works even if buffer is full
+        let _ = self.data_tx.clone().try_send(Err(err));
     }
 }
 
 impl fmt::Debug for Sender {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        #[derive(Debug)]
-        struct Open;
-
-        #[derive(Debug)]
-        struct Closed;
-
-        let mut builder = f.debug_tuple("Sender");
+        let mut builder = f.debug_tuple(stringify!(Sender));
         match self.want_rx.peek() {
-            watch::CLOSED => builder.field(&Closed),
-            _ => builder.field(&Open),
+            watch::CLOSED => builder.field(&stringify!(Closed)),
+            _ => builder.field(&stringify!(Open)),
         };
-
         builder.finish()
     }
 }
@@ -326,7 +311,7 @@ mod tests {
         ///
         /// Useful when wanting to stream chunks from another thread.
         pub(crate) fn channel() -> (Sender, Incoming) {
-            Self::new_channel(DecodedLength::CHUNKED, /* wanter = */ false)
+            Self::h1(DecodedLength::CHUNKED, /* wanter = */ false)
         }
     }
 
@@ -382,7 +367,7 @@ mod tests {
         eq(Incoming::channel().1, SizeHint::new(), "channel");
 
         eq(
-            Incoming::new_channel(DecodedLength::new(4), /* wanter = */ false).1,
+            Incoming::h1(DecodedLength::new(4), /* wanter = */ false).1,
             SizeHint::with_exact(4),
             "channel with length",
         );
@@ -439,8 +424,7 @@ mod tests {
 
     #[test]
     fn channel_ready() {
-        let (mut tx, _rx) =
-            Incoming::new_channel(DecodedLength::CHUNKED, /* wanter = */ false);
+        let (mut tx, _rx) = Incoming::h1(DecodedLength::CHUNKED, /* wanter = */ false);
 
         let mut tx_ready = tokio_test::task::spawn(tx.ready());
 
@@ -449,8 +433,7 @@ mod tests {
 
     #[test]
     fn channel_wanter() {
-        let (mut tx, mut rx) =
-            Incoming::new_channel(DecodedLength::CHUNKED, /* wanter = */ true);
+        let (mut tx, mut rx) = Incoming::h1(DecodedLength::CHUNKED, /* wanter = */ true);
 
         let mut tx_ready = tokio_test::task::spawn(tx.ready());
         let mut rx_data = tokio_test::task::spawn(rx.frame());
@@ -471,7 +454,7 @@ mod tests {
 
     #[test]
     fn channel_notices_closure() {
-        let (mut tx, rx) = Incoming::new_channel(DecodedLength::CHUNKED, /* wanter = */ true);
+        let (mut tx, rx) = Incoming::h1(DecodedLength::CHUNKED, /* wanter = */ true);
 
         let mut tx_ready = tokio_test::task::spawn(tx.ready());
 
