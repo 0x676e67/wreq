@@ -88,25 +88,25 @@ http2 = { version = "0.5.15", features = ["unstable"] }
 httparse = "1.10.1"
 http-body = "1.0.1"
 http-body-util = "0.1.3"
-futures-channel = "0.3.31"
-futures-util = { version = "0.3.31", default-features = false }
-pin-project-lite = "0.2.17"
-smallvec = { version = "1.15.1", features = ["const_generics", "const_new"] }
 want = "0.3.1"
+pin-project-lite = "0.2.17"
+futures-util = { version = "0.3.32", default-features = false }
+futures-channel = { version = "0.3.32", default-features = false }
+smallvec = { version = "1.15.1", features = ["const_generics", "const_new"] }
 socket2 = { version = "0.6.3", features = ["all"] }
 ipnet = "2.12.0"
 lru = "0.16.3"
 btls = "0.5.5"
 tokio-btls = "0.5.5"
-tower = { version = "0.5.3", default-features = false, features = [
-    "timeout",
-    "util",
-    "retry",
-] }
 tokio = { version = "1.50.0", default-features = false, features = [
     "net",
     "time",
     "rt",
+] }
+tower = { version = "0.5.3", default-features = false, features = [
+    "timeout",
+    "util",
+    "retry",
 ] }
 
 # Optional deps...

@@ -5,28 +5,11 @@ use crate::client::core::error::Parse;
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) struct DecodedLength(u64);
 
-impl From<Option<u64>> for DecodedLength {
-    fn from(len: Option<u64>) -> Self {
-        len.and_then(|len| {
-            // If the length is u64::MAX, oh well, just reported chunked.
-            Self::checked_new(len).ok()
-        })
-        .unwrap_or(DecodedLength::CHUNKED)
-    }
-}
-
-const MAX_LEN: u64 = u64::MAX - 2;
-
 impl DecodedLength {
     pub(crate) const CLOSE_DELIMITED: DecodedLength = DecodedLength(u64::MAX);
     pub(crate) const CHUNKED: DecodedLength = DecodedLength(u64::MAX - 1);
     pub(crate) const ZERO: DecodedLength = DecodedLength(0);
-
-    #[cfg(test)]
-    pub(crate) fn new(len: u64) -> Self {
-        debug_assert!(len <= MAX_LEN);
-        DecodedLength(len)
-    }
+    const MAX_LEN: u64 = u64::MAX - 2;
 
     /// Takes the length as a content-length without other checks.
     ///
@@ -48,14 +31,19 @@ impl DecodedLength {
 
     /// Checks the `u64` is within the maximum allowed for content-length.
     pub(crate) fn checked_new(len: u64) -> Result<Self, Parse> {
-        if len <= MAX_LEN {
+        if len <= Self::MAX_LEN {
             Ok(DecodedLength(len))
         } else {
-            warn!("content-length bigger than maximum: {} > {}", len, MAX_LEN);
+            warn!(
+                "content-length bigger than maximum: {} > {}",
+                len,
+                Self::MAX_LEN
+            );
             Err(Parse::TooLarge)
         }
     }
 
+    /// Subtracts the given amount from the length, if it's a known length.
     pub(crate) fn sub_if(&mut self, amt: u64) {
         match *self {
             DecodedLength::CHUNKED | DecodedLength::CLOSE_DELIMITED => (),
@@ -72,7 +60,15 @@ impl DecodedLength {
     /// It would return false if "chunked" or otherwise size-unknown.
     #[inline]
     pub(crate) fn is_exact(&self) -> bool {
-        self.0 <= MAX_LEN
+        self.0 <= Self::MAX_LEN
+    }
+}
+
+impl From<Option<u64>> for DecodedLength {
+    fn from(len: Option<u64>) -> Self {
+        // If the length is u64::MAX, oh well, just reported chunked.
+        len.and_then(|len| Self::checked_new(len).ok())
+            .unwrap_or(DecodedLength::CHUNKED)
     }
 }
 
@@ -100,6 +96,13 @@ impl fmt::Display for DecodedLength {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    impl DecodedLength {
+        pub(crate) fn new(len: u64) -> Self {
+            debug_assert!(len <= Self::MAX_LEN);
+            DecodedLength(len)
+        }
+    }
 
     #[test]
     fn sub_if_known() {
