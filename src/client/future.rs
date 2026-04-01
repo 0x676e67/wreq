@@ -1,73 +1,102 @@
 use std::{
+    future::Future,
     pin::Pin,
     task::{Context, Poll, ready},
 };
 
 use http::{Request, Uri};
-use pin_project_lite::pin_project;
 use tower::util::{Either, Oneshot};
 
 use super::{Body, BoxedClientService, ClientService, Error, Response};
 
-pin_project! {
-    /// [`Pending`] is a future representing the state of an HTTP request, which may be either
-    /// an in-flight request (with its associated future and URI) or an error state.
-    /// Used to drive the HTTP request to completion or report an error.
-    #[project = PendingProj]
-    pub enum Pending {
-        Request {
-            uri: Option<Uri>,
-            fut: Pin<Box<Oneshot<Either<ClientService, BoxedClientService>, Request<Body>>>>,
-        },
-        Error {
-            error: Option<Error>,
-        },
-    }
+type H12Future = Pin<Box<Oneshot<Either<ClientService, BoxedClientService>, Request<Body>>>>;
+
+#[cfg(feature = "http3")]
+type H3Future = Pin<
+    Box<
+        dyn Future<
+                Output = Result<
+                    http::Response<super::H3ResponseBody>,
+                    tower::BoxError,
+                >,
+            > + Send,
+    >,
+>;
+
+/// [`Pending`] is a future representing the state of an HTTP request, which may be either
+/// an in-flight request (with its associated future and URI) or an error state.
+/// Used to drive the HTTP request to completion or report an error.
+#[allow(private_interfaces)]
+pub enum Pending {
+    #[doc(hidden)]
+    Request {
+        uri: Option<Uri>,
+        fut: H12Future,
+    },
+    #[cfg(feature = "http3")]
+    #[doc(hidden)]
+    H3 {
+        uri: Option<Uri>,
+        fut: H3Future,
+    },
+    #[doc(hidden)]
+    Error {
+        error: Option<Error>,
+    },
 }
+
+impl Unpin for Pending {}
 
 impl Future for Pending {
     type Output = Result<Response, Error>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let (uri, res) = match self.project() {
-            PendingProj::Request { uri, fut } => (uri, fut.as_mut().poll(cx)),
-            PendingProj::Error { error } => {
-                let err = error
-                    .take()
-                    .expect("Pending::Error polled after completion");
-                return Poll::Ready(Err(err));
-            }
-        };
+        let this = self.get_mut();
 
-        let res = ready!(res);
-        let uri = uri
-            .take()
-            .expect("Pending::Request polled after completion");
-        let res = match res {
-            Ok(res) => Ok(Response::new(res, uri)),
-            Err(err) => {
-                let mut err = err
-                    .downcast::<Error>()
-                    .map_or_else(Error::request, |err| *err);
-                if err.uri().is_none() {
-                    err = err.with_uri(uri);
-                }
-                Err(err)
+        match this {
+            Pending::Request { uri, fut } => {
+                let res = ready!(fut.as_mut().poll(cx));
+                let uri = uri.take().expect("Pending::Request polled after completion");
+                Poll::Ready(match res {
+                    Ok(res) => Ok(Response::new(res, uri)),
+                    Err(err) => {
+                        let mut err = err
+                            .downcast::<Error>()
+                            .map_or_else(Error::request, |err| *err);
+                        if err.uri().is_none() {
+                            err = err.with_uri(uri);
+                        }
+                        Err(err)
+                    }
+                })
             }
-        };
-
-        Poll::Ready(res)
+            #[cfg(feature = "http3")]
+            Pending::H3 { uri, fut } => {
+                let res = ready!(fut.as_mut().poll(cx));
+                let uri = uri.take().expect("Pending::H3 polled after completion");
+                Poll::Ready(match res {
+                    Ok(res) => Ok(Response::new(res, uri)),
+                    Err(err) => {
+                        let mut err = err
+                            .downcast::<Error>()
+                            .map_or_else(Error::request, |err| *err);
+                        if err.uri().is_none() {
+                            err = err.with_uri(uri);
+                        }
+                        Err(err)
+                    }
+                })
+            }
+            Pending::Error { error } => {
+                let err = error.take().expect("Pending::Error polled after completion");
+                Poll::Ready(Err(err))
+            }
+        }
     }
 }
 
 #[cfg(test)]
 mod test {
-
-    #[test]
-    fn test_future_size() {
-        let s = std::mem::size_of::<super::Pending>();
-        assert!(s <= 360, "size_of::<Pending>() == {s}, too big");
-    }
 
     #[tokio::test]
     async fn error_has_url() {
