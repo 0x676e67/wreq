@@ -11,11 +11,7 @@ use std::{
     time::Duration,
 };
 
-// Re-exports http2::frame.
-pub use ::http2::frame::{
-    ExperimentalSettings, Priorities, PrioritiesBuilder, Priority, PseudoId, PseudoOrder, Setting,
-    SettingId, SettingsOrder, SettingsOrderBuilder, StreamDependency, StreamId,
-};
+use ::http2::frame::{Priorities, PseudoOrder, SettingsOrder, StreamDependency};
 use bytes::{Buf, Bytes};
 use http::{
     HeaderMap,
