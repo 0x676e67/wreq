@@ -17,3 +17,5 @@ pub use self::{
     error::{Error, Result},
     proto::{http1, http2},
 };
+#[cfg(feature = "http3")]
+pub use self::proto::http3;

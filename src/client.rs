@@ -48,6 +48,9 @@ pub use self::{
     request::{Request, RequestBuilder},
     response::Response,
 };
+#[cfg(feature = "http3")]
+#[allow(unused)]
+pub use self::core::http3;
 use self::{
     conn::{
         BoxedConnectorLayer, BoxedConnectorService, Conn, Connector, HttpTransport,
