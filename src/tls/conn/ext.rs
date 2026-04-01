@@ -1,9 +1,6 @@
 use btls::ssl::{SslConnectorBuilder, SslVerifyMode};
 
-use crate::{
-    Error,
-    tls::{compress::CertificateCompressor, trust::CertStore},
-};
+use crate::{Error, tls::trust::CertStore};
 
 /// SslConnectorBuilderExt trait for `SslConnectorBuilder`.
 pub trait SslConnectorBuilderExt {
@@ -12,12 +9,6 @@ pub trait SslConnectorBuilderExt {
 
     /// Configure the certificate verification for the given `SslConnectorBuilder`.
     fn set_cert_verification(self, enable: bool) -> crate::Result<SslConnectorBuilder>;
-
-    /// Configure the certificate compressors for the given `SslConnectorBuilder`.
-    fn set_cert_compressors(
-        self,
-        algs: Option<&[&'static dyn CertificateCompressor]>,
-    ) -> crate::Result<SslConnectorBuilder>;
 }
 
 impl SslConnectorBuilderExt for SslConnectorBuilder {
@@ -39,21 +30,6 @@ impl SslConnectorBuilderExt for SslConnectorBuilder {
         } else {
             self.set_verify(SslVerifyMode::NONE);
         }
-        Ok(self)
-    }
-
-    #[inline]
-    fn set_cert_compressors(
-        mut self,
-        algs: Option<&[&'static dyn CertificateCompressor]>,
-    ) -> crate::Result<SslConnectorBuilder> {
-        if let Some(algs) = algs {
-            for algorithm in algs {
-                self.add_certificate_compression_algorithm(*algorithm)
-                    .map_err(Error::tls)?;
-            }
-        }
-
         Ok(self)
     }
 }
