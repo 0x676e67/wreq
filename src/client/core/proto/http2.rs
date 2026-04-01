@@ -11,14 +11,16 @@ use std::{
     time::Duration,
 };
 
-use ::http2::frame::{Priorities, PseudoOrder, SettingsOrder, StreamDependency};
 use bytes::{Buf, Bytes};
 use http::{
     HeaderMap,
     header::{CONNECTION, HeaderName, TE, TRANSFER_ENCODING, UPGRADE},
 };
 use http_body::Body;
-use http2::{Reason, RecvStream, SendStream};
+use http2::{
+    Reason, RecvStream, SendStream,
+    frame::{Priorities, PseudoOrder, SettingsOrder, StreamDependency},
+};
 use pin_project_lite::pin_project;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 
