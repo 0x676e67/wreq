@@ -18,7 +18,6 @@ pub(crate) use self::{
     classify::{Action, Classifier, ClassifyFn, ReqRep},
     scope::{ScopeFn, Scoped},
 };
-use super::super::core::body::Incoming;
 use crate::{Body, retry};
 
 /// A retry policy for HTTP requests.
@@ -49,12 +48,14 @@ impl RetryPolicy {
 
 type Req = Request<Body>;
 
-type Res = Response<Incoming>;
-
-impl Policy<Req, Res, BoxError> for RetryPolicy {
+impl<ResBody> Policy<Req, Response<ResBody>, BoxError> for RetryPolicy {
     type Future = Ready<()>;
 
-    fn retry(&mut self, req: &mut Req, result: &mut Result<Res, BoxError>) -> Option<Self::Future> {
+    fn retry(
+        &mut self,
+        req: &mut Req,
+        result: &mut Result<Response<ResBody>, BoxError>,
+    ) -> Option<Self::Future> {
         match self.classifier.classify(req, result) {
             Action::Success => {
                 trace!(

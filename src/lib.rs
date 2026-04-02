@@ -295,6 +295,8 @@ use libc as _;
 
 #[cfg(feature = "multipart")]
 pub use self::client::multipart;
+#[cfg(feature = "http3")]
+pub use self::client::http3;
 #[cfg(feature = "ws")]
 pub use self::client::ws;
 pub use self::{

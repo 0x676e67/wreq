@@ -202,6 +202,13 @@ impl CertStore {
     pub(crate) fn add_to_tls(&self, tls: &mut SslConnectorBuilder) {
         tls.set_cert_store_ref(&self.0);
     }
+
+    /// Apply this cert store to an `SslContextBuilder` (for QUIC TLS).
+    #[cfg(feature = "http3")]
+    #[inline]
+    pub(crate) fn add_to_ssl_ctx(&self, ctx: &mut btls::ssl::SslContextBuilder) {
+        ctx.set_cert_store_ref(&self.0);
+    }
 }
 
 impl Default for CertStore {

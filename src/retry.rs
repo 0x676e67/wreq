@@ -46,6 +46,7 @@ use crate::{
 };
 
 /// A retry policy.
+#[derive(Clone)]
 pub struct Policy {
     pub(crate) budget: Option<f32>,
     pub(crate) classifier: Classifier,

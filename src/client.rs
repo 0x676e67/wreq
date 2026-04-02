@@ -3,6 +3,9 @@ mod conn;
 mod core;
 mod emulate;
 mod group;
+#[cfg(feature = "http3")]
+#[allow(unused)]
+mod h3_client;
 mod request;
 mod response;
 
@@ -48,6 +51,9 @@ pub use self::{
     request::{Request, RequestBuilder},
     response::Response,
 };
+#[cfg(feature = "http3")]
+#[allow(unused)]
+pub use self::core::http3;
 use self::{
     conn::{
         BoxedConnectorLayer, BoxedConnectorService, Conn, Connector, HttpTransport,
@@ -80,6 +86,8 @@ pub(crate) use self::{
 use crate::cookie;
 #[cfg(feature = "hickory-dns")]
 use crate::dns::hickory::HickoryDnsResolver;
+#[cfg(feature = "http3")]
+use self::core::http3::Http3Options;
 use crate::{
     IntoUri, Method, Proxy,
     dns::{DnsResolverWithOverrides, DynResolver, GaiResolver, IntoResolve, Resolve},
@@ -148,6 +156,46 @@ type ClientService = Timeout<
     >,
 >;
 
+/// HTTP/3 response body type with timeout and optional decompression.
+#[cfg(all(
+    feature = "http3",
+    any(
+        feature = "gzip",
+        feature = "zstd",
+        feature = "brotli",
+        feature = "deflate"
+    )
+))]
+pub(crate) type H3ResponseBody =
+    TimeoutBody<tower_http::decompression::DecompressionBody<h3_client::pool::Incoming>>;
+
+/// HTTP/3 response body type with timeout only (no compression features).
+#[cfg(all(
+    feature = "http3",
+    not(any(
+        feature = "gzip",
+        feature = "zstd",
+        feature = "brotli",
+        feature = "deflate"
+    ))
+))]
+pub(crate) type H3ResponseBody = TimeoutBody<h3_client::pool::Incoming>;
+
+/// The complete HTTP/3 client service stack with all middleware layers.
+#[cfg(feature = "http3")]
+type H3Service = Timeout<
+    ResponseBodyTimeout<
+        ConfigService<
+            Decompression<
+                Retry<
+                    RetryPolicy,
+                    FollowRedirect<h3_client::H3Client, FollowRedirectPolicy>,
+                >,
+            >,
+        >,
+    >,
+>;
+
 /// Type-erased client service for dynamic middleware composition.
 type BoxedClientService =
     BoxCloneSyncService<http::Request<Body>, http::Response<ResponseBody>, BoxError>;
@@ -174,8 +222,15 @@ type BoxedClientLayer = BoxCloneSyncServiceLayer<
 ///
 /// [`Rc`]: std::rc::Rc
 #[derive(Clone)]
-#[repr(transparent)]
-pub struct Client(Arc<Either<ClientService, BoxedClientService>>);
+pub struct Client(Arc<ClientInner>);
+
+struct ClientInner {
+    service: Either<ClientService, BoxedClientService>,
+    #[cfg(feature = "http3")]
+    h3_client: Option<H3Service>,
+    #[cfg(feature = "http3")]
+    h3_only: bool,
+}
 
 /// A [`ClientBuilder`] can be used to create a [`Client`] with custom configuration.
 #[must_use]
@@ -188,6 +243,8 @@ pub struct ClientBuilder {
 enum HttpVersionPref {
     Http1,
     Http2,
+    #[cfg(feature = "http3")]
+    Http3,
     All,
 }
 
@@ -247,6 +304,8 @@ struct Config {
     tls_options: Option<TlsOptions>,
     http1_options: Option<Http1Options>,
     http2_options: Option<Http2Options>,
+    #[cfg(feature = "http3")]
+    http3_options: Option<Http3Options>,
 }
 
 // ===== impl Client =====
@@ -318,6 +377,8 @@ impl Client {
                 https_only: false,
                 http1_options: None,
                 http2_options: None,
+                #[cfg(feature = "http3")]
+                http3_options: None,
                 layers: Vec::new(),
                 connector_layers: Vec::new(),
                 tls_keylog: None,
@@ -442,10 +503,29 @@ impl Client {
     /// This method fails if there was an error while sending request,
     /// redirect loop was detected or redirect limit was exhausted.
     pub fn execute(&self, request: Request) -> Pending {
+        #[cfg(feature = "http3")]
+        {
+            // Use HTTP/3 if the request explicitly sets it, or the client is h3-only.
+            let use_h3 =
+                self.0.h3_only || request.version() == Some(http::Version::HTTP_3);
+            if use_h3 {
+                if let Some(ref h3_client) = self.0.h3_client {
+                    let req = http::Request::<Body>::from(request);
+                    let uri = req.uri().clone();
+                    let mut h3 = h3_client.clone();
+                    return Pending::H3 {
+                        uri: Some(uri),
+                        fut: Box::pin(async move {
+                            tower::Service::call(&mut h3, req).await
+                        }),
+                    };
+                }
+            }
+        }
         let req = http::Request::<Body>::from(request);
         Pending::Request {
             uri: Some(req.uri().clone()),
-            fut: Box::pin(Oneshot::new((*self.0).clone(), req)),
+            fut: Box::pin(Oneshot::new(self.0.service.clone(), req)),
         }
     }
 }
@@ -504,8 +584,7 @@ impl ClientBuilder {
         }
 
         // Create base client service
-        let service = {
-            let resolver = {
+        let resolver = {
                 let mut resolver: Arc<dyn Resolve> = match config.dns_resolver {
                     Some(dns_resolver) => dns_resolver,
                     #[cfg(feature = "hickory-dns")]
@@ -519,10 +598,21 @@ impl ClientBuilder {
                         config.dns_overrides,
                     ));
                 }
-                DynResolver::new(resolver)
-            };
+            DynResolver::new(resolver)
+        };
 
-            let connector = Connector::builder(config.proxies, resolver)
+        // Save references for H3 client before they're moved.
+        #[cfg(feature = "http3")]
+        let h3_tls_options = config.tls_options.clone();
+        #[cfg(feature = "http3")]
+        let h3_cert_store = config.tls_cert_store.clone();
+        #[cfg(feature = "http3")]
+        let h3_identity = config.tls_identity.clone();
+        #[cfg(feature = "http3")]
+        let h3_keylog = config.tls_keylog.clone();
+
+        let service = {
+            let connector = Connector::builder(config.proxies, resolver.clone())
                 .timeout(config.connect_timeout)
                 .tls_info(config.tls_info)
                 .tcp_nodelay(config.tcp_nodelay)
@@ -601,6 +691,32 @@ impl ClientBuilder {
                 .build(connector)
         };
 
+        // Clone config values needed for H3 before H1/H2 build consumes them.
+        #[cfg(feature = "http3")]
+        let h3_retry_policy = RetryPolicy::new(config.retry_policy.clone());
+        #[cfg(feature = "http3")]
+        let h3_redirect_policy = FollowRedirectPolicy::new(config.redirect_policy.clone())
+            .with_referer(config.referer)
+            .with_https_only(config.https_only);
+        #[cfg(all(
+            feature = "http3",
+            any(
+                feature = "gzip",
+                feature = "zstd",
+                feature = "brotli",
+                feature = "deflate",
+            )
+        ))]
+        let h3_accept_encoding = config.accept_encoding.clone();
+        #[cfg(feature = "http3")]
+        let h3_config_layer = ConfigServiceLayer::new(
+            config.https_only,
+            config.headers.clone(),
+            config.orig_headers.clone(),
+        );
+        #[cfg(feature = "http3")]
+        let h3_timeout_options = config.timeout_options;
+
         // Configured client service with layers
         let client = {
             let service = ServiceBuilder::new()
@@ -658,7 +774,75 @@ impl ClientBuilder {
             }
         };
 
-        Ok(Client(Arc::new(client)))
+        // Build optional H3 client
+        #[cfg(feature = "http3")]
+        let h3_client = if config.http3_options.is_some()
+            || matches!(config.http_version_pref, HttpVersionPref::Http3)
+        {
+            match h3_client::connect::H3Connector::new(
+                resolver.clone(),
+                config.socket_bind_options.ipv4_address.map(IpAddr::from),
+                h3_tls_options.as_ref(),
+                config.http3_options.as_ref(),
+                &h3_cert_store,
+                config.tls_cert_verification,
+                h3_identity.as_ref(),
+                h3_keylog.as_ref(),
+            ) {
+                Ok(connector) => {
+                    let h3_service =
+                        h3_client::H3Client::new(connector, config.pool_idle_timeout);
+
+                    // Apply the same middleware layers as H1/H2
+                    let service = ServiceBuilder::new()
+                        .layer(RetryLayer::new(h3_retry_policy))
+                        .layer(FollowRedirectLayer::with_policy(h3_redirect_policy))
+                        .service(h3_service);
+
+                    #[cfg(any(
+                        feature = "gzip",
+                        feature = "zstd",
+                        feature = "brotli",
+                        feature = "deflate",
+                    ))]
+                    let service = ServiceBuilder::new()
+                        .layer(DecompressionLayer::new(h3_accept_encoding))
+                        .service(service);
+
+                    let service = ServiceBuilder::new()
+                        .layer(ResponseBodyTimeoutLayer::new(
+                            TokioTimer::new(),
+                            h3_timeout_options,
+                        ))
+                        .layer(h3_config_layer)
+                        .service(service);
+
+                    let service = ServiceBuilder::new()
+                        .layer(TimeoutLayer::new(h3_timeout_options))
+                        .service(service);
+
+                    Some(service)
+                }
+                Err(e) => {
+                    // If HTTP/3 is required, propagate the error.
+                    if matches!(config.http_version_pref, HttpVersionPref::Http3) {
+                        return Err(error::Error::builder(e));
+                    }
+                    // Otherwise, silently fall back to HTTP/1+2.
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
+        Ok(Client(Arc::new(ClientInner {
+            service: client,
+            #[cfg(feature = "http3")]
+            h3_client,
+            #[cfg(feature = "http3")]
+            h3_only: matches!(config.http_version_pref, HttpVersionPref::Http3),
+        })))
     }
 
     // Higher-level options
@@ -1137,6 +1321,28 @@ impl ClientBuilder {
         T: Into<Option<Http2Options>>,
     {
         self.config.http2_options = options.into();
+        self
+    }
+
+    /// Sets the HTTP/3 options for the client.
+    #[cfg(feature = "http3")]
+    #[inline]
+    pub fn http3_options<T>(mut self, options: T) -> ClientBuilder
+    where
+        T: Into<Option<Http3Options>>,
+    {
+        self.config.http3_options = options.into();
+        self
+    }
+
+    /// Only use HTTP/3.
+    ///
+    /// The destination must support HTTP/3 (QUIC). This will not attempt
+    /// HTTP/1 or HTTP/2 connections.
+    #[cfg(feature = "http3")]
+    #[inline]
+    pub fn http3_prior_knowledge(mut self) -> ClientBuilder {
+        self.config.http_version_pref = HttpVersionPref::Http3;
         self
     }
 
@@ -1646,10 +1852,17 @@ impl ClientBuilder {
     #[inline]
     pub fn emulation<T: IntoEmulation>(self, emulation: T) -> ClientBuilder {
         let emulation = emulation.into_emulation();
-        self.tls_options(emulation.tls_options)
+        #[allow(unused_mut)]
+        let mut builder = self
+            .tls_options(emulation.tls_options)
             .http1_options(emulation.http1_options)
             .http2_options(emulation.http2_options)
             .default_headers(emulation.headers)
-            .orig_headers(emulation.orig_headers)
+            .orig_headers(emulation.orig_headers);
+        #[cfg(feature = "http3")]
+        {
+            builder = builder.http3_options(emulation.http3_options);
+        }
+        builder
     }
 }

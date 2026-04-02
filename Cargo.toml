@@ -72,6 +72,9 @@ system-proxy = ["dep:system-configuration", "dep:windows-registry"]
 # Enable tracing logging.
 tracing = ["dep:tracing", "http2/tracing", "tracing?/std"]
 
+# Enable HTTP/3 support via QUIC.
+http3 = ["dep:quinn", "dep:quinn-proto", "dep:h3", "dep:h3-quinn", "dep:quinn-btls", "tokio/macros"]
+
 # Prefix BoringSSL symbols in libcrypto/libssl to avoid linker conflicts
 # when multiple OpenSSL versions coexist in the same process.
 prefix-symbols = ["btls/prefix-symbols"]
@@ -86,7 +89,7 @@ http-body = "1.0.1"
 http-body-util = "0.1.3"
 want = "0.3.1"
 pin-project-lite = "0.2.17"
-futures-channel = "0.3.32"
+futures-channel = { version = "0.3.32", features = ["std"] }
 futures-util = { version = "0.3.32", default-features = false }
 smallvec = { version = "1.15.1", features = ["const_generics", "const_new"] }
 socket2 = { version = "0.6.3", features = ["all"] }
@@ -145,6 +148,13 @@ hickory-resolver = { version = "0.25.2", optional = true }
 
 ## tracing
 tracing = { version = "0.1", default-features = false,optional = true }
+
+## http3/quic
+quinn = { git = "https://github.com/0x676e67/quinn", default-features = false, features = ["runtime-tokio"], optional = true }
+quinn-proto = { git = "https://github.com/0x676e67/quinn", package = "quinn-proto", default-features = false, optional = true }
+h3 = { git = "https://github.com/0x676e67/h3", optional = true }
+h3-quinn = { git = "https://github.com/0x676e67/h3", package = "h3-quinn", optional = true }
+quinn-btls = { git = "https://github.com/0x676e67/quinn-btls", branch = "quic", optional = true }
 
 ## windows
 [target.'cfg(windows)'.dependencies]

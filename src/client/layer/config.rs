@@ -7,6 +7,8 @@ use futures_util::future::{self, Either, Ready};
 use http::{HeaderMap, Request, Response, Version};
 use tower::{Layer, Service};
 
+#[cfg(feature = "http3")]
+use crate::client::core::http3::Http3Options;
 use crate::{
     Error,
     client::{
@@ -36,6 +38,8 @@ pub(crate) struct RequestOptions {
     pub tls_options: Option<TlsOptions>,
     pub http1_options: Option<Http1Options>,
     pub http2_options: Option<Http2Options>,
+    #[cfg(feature = "http3")]
+    pub http3_options: Option<Http3Options>,
     pub socket_bind_options: SocketBindOptions,
 }
 

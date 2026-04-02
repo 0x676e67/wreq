@@ -4,6 +4,9 @@ mod headers;
 
 pub mod http1;
 pub mod http2;
+#[cfg(feature = "http3")]
+#[allow(unused)]
+pub mod http3;
 
 pub(crate) use self::http1::{Conn, dispatch};
 use crate::client::core::upgrade;

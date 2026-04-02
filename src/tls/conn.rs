@@ -1,7 +1,5 @@
 //! SSL support via BoringSSL.
 
-#[macro_use]
-mod macros;
 mod ext;
 mod service;
 
@@ -341,8 +339,7 @@ impl TlsConnectorBuilder {
         let mut connector = SslConnector::bare_builder(SslMethod::tls())
             .map_err(Error::tls)?
             .set_cert_store(self.cert_store.as_ref())?
-            .set_cert_verification(self.cert_verification)?
-            .set_cert_compressors(opts.certificate_compressors.as_deref())?;
+            .set_cert_verification(self.cert_verification)?;
 
         // Set Identity
         if let Some(ref identity) = self.identity {
@@ -355,87 +352,11 @@ impl TlsConnectorBuilder {
         // Set maximum TLS version
         set_option_inner_try!(max_tls_version, connector, set_max_proto_version);
 
-        // Set OCSP stapling
-        set_bool!(opts, enable_ocsp_stapling, connector, enable_ocsp_stapling);
-
-        // Set Signed Certificate Timestamps (SCT)
-        set_bool!(
-            opts,
-            enable_signed_cert_timestamps,
-            connector,
-            enable_signed_cert_timestamps
-        );
-
-        // Set TLS Session ticket options
-        set_bool!(
-            opts,
-            !session_ticket,
-            connector,
-            set_options,
-            SslOptions::NO_TICKET
-        );
-
-        // Set TLS PSK DHE key exchange options
-        set_bool!(
-            opts,
-            !psk_dhe_ke,
-            connector,
-            set_options,
-            SslOptions::NO_PSK_DHE_KE
-        );
-
-        // Set TLS No Renegotiation options
-        set_bool!(
-            opts,
-            !renegotiation,
-            connector,
-            set_options,
-            SslOptions::NO_RENEGOTIATION
-        );
-
-        // Set TLS grease options
-        set_option!(opts, grease_enabled, connector, set_grease_enabled);
-
-        // Set TLS permute extensions options
-        set_option!(opts, permute_extensions, connector, set_permute_extensions);
-
-        // Set TLS curves list
-        set_option_ref_try!(opts, curves_list, connector, set_curves_list);
-
-        // Set TLS signature algorithms list
-        set_option_ref_try!(opts, sigalgs_list, connector, set_sigalgs_list);
-
-        // Set TLS prreserve TLS 1.3 cipher list order
-        set_option!(
-            opts,
-            preserve_tls13_cipher_list,
-            connector,
-            set_preserve_tls13_cipher_list
-        );
-
-        // Set TLS cipher list
-        set_option_ref_try!(opts, cipher_list, connector, set_cipher_list);
-
-        // Set TLS delegated credentials
-        set_option_ref_try!(
-            opts,
-            delegated_credentials,
-            connector,
-            set_delegated_credentials
-        );
-
-        // Set TLS record size limit
-        set_option!(opts, record_size_limit, connector, set_record_size_limit);
-
-        // Set TLS aes hardware override
-        set_option!(opts, aes_hw_override, connector, set_aes_hw_override);
-
-        // Set TLS extension permutation
-        if let Some(ref extension_permutation) = opts.extension_permutation {
-            connector
-                .set_extension_permutation(extension_permutation)
-                .map_err(Error::tls)?;
-        }
+        // Apply shared TLS context options (ciphers, curves, extensions, etc.)
+        #[cfg(feature = "http3")]
+        crate::tls::ctx::apply_tls_context_options(&mut connector, &opts, None)?;
+        #[cfg(not(feature = "http3"))]
+        crate::tls::ctx::apply_tls_context_options(&mut connector, &opts)?;
 
         // Set TLS keylog handler.
         if let Some(ref policy) = self.keylog {

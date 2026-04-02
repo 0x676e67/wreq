@@ -2,7 +2,10 @@
 //!
 //! - Various parts of TLS can also be configured or even disabled on the `ClientBuilder`.
 
+#[macro_use]
+mod macros;
 pub(crate) mod conn;
+pub(crate) mod ctx;
 
 pub mod compress;
 pub mod keylog;

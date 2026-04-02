@@ -1,9 +1,4 @@
 macro_rules! set_bool {
-    ($cfg:expr, $field:ident, $conn:expr, $setter:ident) => {
-        if $cfg.$field {
-            $conn.$setter();
-        }
-    };
     ($cfg:expr, !$field:ident, $conn:expr, $setter:ident, $arg:expr) => {
         if !$cfg.$field {
             $conn.$setter($arg);

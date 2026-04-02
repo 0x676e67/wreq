@@ -195,6 +195,8 @@ where
                 tls_options,
                 http1_options,
                 http2_options,
+                #[cfg(feature = "http3")]
+                    http3_options: _,
                 socket_bind_options,
             } = RequestConfig::<RequestOptions>::remove(req.extensions_mut()).unwrap_or_default();
 
