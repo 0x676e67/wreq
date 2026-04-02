@@ -2,7 +2,9 @@ use std::{error::Error as StdError, sync::Arc};
 
 use http::{Method, StatusCode, Uri};
 
-use super::{Req, Res};
+use http::Response;
+
+use super::Req;
 use crate::error::BoxError;
 
 pub trait Classify: Send + Sync + 'static {
@@ -84,7 +86,11 @@ pub(crate) enum Classifier {
 
 impl Classifier {
     /// Classifies a request/response pair to determine the appropriate retry action.
-    pub(super) fn classify(&mut self, req: &Req, res: &Result<Res, BoxError>) -> Action {
+    pub(super) fn classify<ResBody>(
+        &mut self,
+        req: &Req,
+        res: &Result<Response<ResBody>, BoxError>,
+    ) -> Action {
         let req_rep = ReqRep(req, res.as_ref().map(|r| r.status()));
         match self {
             Classifier::Never => Action::Success,
