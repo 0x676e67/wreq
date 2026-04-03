@@ -36,7 +36,7 @@ pub(crate) struct RequestOptions {
     pub tls_options: Option<TlsOptions>,
     pub http1_options: Option<Http1Options>,
     pub http2_options: Option<Http2Options>,
-    pub socket_bind_options: SocketBindOptions,
+    pub socket_bind_options: Option<SocketBindOptions>,
 }
 
 /// Configuration for the [`ConfigService`].

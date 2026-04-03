@@ -81,8 +81,8 @@ where
     pub(super) fn new(remote_addrs: dns::SocketAddrs, config: &TcpOptions, connector: S) -> Self {
         if let Some(fallback_timeout) = config.happy_eyeballs_timeout {
             let (preferred_addrs, fallback_addrs) = remote_addrs.split_by_preference(
-                config.socket_bind_options.ipv4_address,
-                config.socket_bind_options.ipv6_address,
+                config.socket_bind.ipv4_address,
+                config.socket_bind.ipv6_address,
             );
             if fallback_addrs.is_empty() {
                 return ConnectingTcp {
@@ -224,7 +224,7 @@ where
         .set_nonblocking(true)
         .map_err(ConnectError::m("tcp set_nonblocking error"))?;
 
-    if let Some(tcp_keepalive) = &config.tcp_keepalive_config.into_tcpkeepalive() {
+    if let Some(tcp_keepalive) = &config.tcp_keepalive.into_tcpkeepalive() {
         if let Err(_e) = socket.set_tcp_keepalive(tcp_keepalive) {
             warn!("tcp set_keepalive error: {_e}");
         }
@@ -243,7 +243,7 @@ where
         target_os = "visionos",
         target_os = "watchos",
     ))]
-    if let Some(interface) = &config.socket_bind_options.interface {
+    if let Some(interface) = &config.socket_bind.interface {
         // On Linux-like systems, set the interface to bind using
         // `SO_BINDTODEVICE`.
         #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
@@ -295,8 +295,8 @@ where
     bind_local_address(
         &socket,
         addr,
-        &config.socket_bind_options.ipv4_address,
-        &config.socket_bind_options.ipv6_address,
+        &config.socket_bind.ipv4_address,
+        &config.socket_bind.ipv6_address,
     )
     .map_err(ConnectError::m("tcp bind local error"))?;
 
@@ -548,17 +548,17 @@ impl SocketBindOptions {
 
 #[derive(Clone)]
 pub(crate) struct TcpOptions {
-    pub connect_timeout: Option<Duration>,
     pub enforce_http: bool,
+    pub connect_timeout: Option<Duration>,
     pub happy_eyeballs_timeout: Option<Duration>,
-    pub tcp_keepalive_config: TcpKeepaliveOptions,
-    pub socket_bind_options: SocketBindOptions,
     pub nodelay: bool,
     pub reuse_address: bool,
     pub send_buffer_size: Option<usize>,
     pub recv_buffer_size: Option<usize>,
     #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
     pub tcp_user_timeout: Option<Duration>,
+    pub tcp_keepalive: TcpKeepaliveOptions,
+    pub socket_bind: SocketBindOptions,
 }
 
 #[derive(Default, Debug, Clone, Copy)]

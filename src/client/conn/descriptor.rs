@@ -35,7 +35,7 @@ pub(crate) struct ConnectionDescriptor {
     version: Option<Version>,
     proxy: Option<ProxyMacher>,
     tls_options: Option<TlsOptions>,
-    socket_bind_options: SocketBindOptions,
+    socket_bind: Option<SocketBindOptions>,
     connection_id: ConnectionId,
 }
 
@@ -83,30 +83,14 @@ impl ConnectionDescriptor {
         proxy: Option<ProxyMacher>,
         version: Option<Version>,
         tls_options: Option<TlsOptions>,
-        socket_bind_options: SocketBindOptions,
+        socket_bind: Option<SocketBindOptions>,
     ) -> ConnectionDescriptor {
         let connection_id = {
             group
                 .uri(uri.clone())
                 .version(version)
                 .proxy(proxy.clone())
-                .ipv4_addr(socket_bind_options.ipv4_address)
-                .ipv6_addr(socket_bind_options.ipv6_address);
-
-            #[cfg(any(
-                target_os = "illumos",
-                target_os = "ios",
-                target_os = "macos",
-                target_os = "solaris",
-                target_os = "tvos",
-                target_os = "visionos",
-                target_os = "watchos",
-                target_os = "android",
-                target_os = "fuchsia",
-                target_os = "linux",
-            ))]
-            group.interface(socket_bind_options.interface.clone());
-
+                .socket_bind(socket_bind.clone());
             ConnectionId(Arc::new((group, AtomicU64::new(u64::MIN))))
         };
 
@@ -115,7 +99,7 @@ impl ConnectionDescriptor {
             proxy,
             version,
             tls_options,
-            socket_bind_options,
+            socket_bind,
             connection_id,
         }
     }
@@ -157,7 +141,7 @@ impl ConnectionDescriptor {
 
     /// Return a reference to the [`SocketBindOptions`].
     #[inline]
-    pub(crate) fn socket_bind_options(&self) -> &SocketBindOptions {
-        &self.socket_bind_options
+    pub(crate) fn socket_bind_options(&self) -> Option<&SocketBindOptions> {
+        self.socket_bind.as_ref()
     }
 }
