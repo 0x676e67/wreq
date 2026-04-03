@@ -255,7 +255,7 @@ impl ConnectorService {
             http.set_nodelay(true);
         }
 
-        // Apply TCP options if provided in metadata
+        // Apply resolved socket bind options from the descriptor.
         let socket_opts = descriptor.socket_bind_options();
         http.set_local_addresses(socket_opts.ipv4_address, socket_opts.ipv6_address);
         #[cfg(any(

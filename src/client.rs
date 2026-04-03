@@ -522,6 +522,8 @@ impl ClientBuilder {
                 DynResolver::new(resolver)
             };
 
+            let socket_bind_defaults = config.socket_bind_options.clone();
+
             let connector = Connector::builder(config.proxies, resolver)
                 .timeout(config.connect_timeout)
                 .tls_info(config.tls_info)
@@ -543,41 +545,48 @@ impl ClientBuilder {
                     .cert_verification(config.tls_cert_verification)
                     .session_store(config.tls_session_cache)
                 })
-                .with_http(|http| {
-                    http.enforce_http(false);
-                    http.set_keepalive(config.tcp_keepalive);
-                    http.set_keepalive_interval(config.tcp_keepalive_interval);
-                    http.set_keepalive_retries(config.tcp_keepalive_retries);
-                    http.set_reuse_address(config.tcp_reuse_address);
-                    http.set_connect_timeout(config.connect_timeout);
-                    http.set_nodelay(config.tcp_nodelay);
-                    http.set_send_buffer_size(config.tcp_send_buffer_size);
-                    http.set_recv_buffer_size(config.tcp_recv_buffer_size);
-                    http.set_happy_eyeballs_timeout(config.tcp_happy_eyeballs_timeout);
+                .with_http({
+                    let socket_bind_options = config.socket_bind_options.clone();
+                    move |http| {
+                        http.enforce_http(false);
+                        http.set_keepalive(config.tcp_keepalive);
+                        http.set_keepalive_interval(config.tcp_keepalive_interval);
+                        http.set_keepalive_retries(config.tcp_keepalive_retries);
+                        http.set_reuse_address(config.tcp_reuse_address);
+                        http.set_connect_timeout(config.connect_timeout);
+                        http.set_nodelay(config.tcp_nodelay);
+                        http.set_send_buffer_size(config.tcp_send_buffer_size);
+                        http.set_recv_buffer_size(config.tcp_recv_buffer_size);
+                        http.set_happy_eyeballs_timeout(config.tcp_happy_eyeballs_timeout);
 
-                    #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
-                    http.set_tcp_user_timeout(config.tcp_user_timeout);
+                        #[cfg(any(
+                            target_os = "android",
+                            target_os = "fuchsia",
+                            target_os = "linux",
+                        ))]
+                        http.set_tcp_user_timeout(config.tcp_user_timeout);
 
-                    #[cfg(any(
-                        target_os = "android",
-                        target_os = "fuchsia",
-                        target_os = "illumos",
-                        target_os = "ios",
-                        target_os = "linux",
-                        target_os = "macos",
-                        target_os = "solaris",
-                        target_os = "tvos",
-                        target_os = "visionos",
-                        target_os = "watchos",
-                    ))]
-                    if let Some(interface) = config.socket_bind_options.interface {
-                        http.set_interface(interface);
+                        #[cfg(any(
+                            target_os = "android",
+                            target_os = "fuchsia",
+                            target_os = "illumos",
+                            target_os = "ios",
+                            target_os = "linux",
+                            target_os = "macos",
+                            target_os = "solaris",
+                            target_os = "tvos",
+                            target_os = "visionos",
+                            target_os = "watchos",
+                        ))]
+                        if let Some(interface) = socket_bind_options.interface {
+                            http.set_interface(interface);
+                        }
+
+                        http.set_local_addresses(
+                            socket_bind_options.ipv4_address,
+                            socket_bind_options.ipv6_address,
+                        );
                     }
-
-                    http.set_local_addresses(
-                        config.socket_bind_options.ipv4_address,
-                        config.socket_bind_options.ipv6_address,
-                    );
                 })
                 .build(config.tls_options, config.connector_layers)?;
 
@@ -598,6 +607,7 @@ impl ClientBuilder {
                 .pool_idle_timeout(config.pool_idle_timeout)
                 .pool_max_idle_per_host(config.pool_max_idle_per_host)
                 .pool_max_size(config.pool_max_size)
+                .socket_bind_defaults(socket_bind_defaults)
                 .build(connector)
         };
 

@@ -536,6 +536,29 @@ impl SocketBindOptions {
         self.ipv4_address = ipv4_address.into();
         self.ipv6_address = ipv6_address.into();
     }
+
+    /// Produce a new `SocketBindOptions` where any `Some` field in `overrides`
+    /// replaces the corresponding field in `self`, preserving fields that are
+    /// `None` in the override.
+    pub fn merge_over(&self, overrides: &SocketBindOptions) -> SocketBindOptions {
+        SocketBindOptions {
+            #[cfg(any(
+                target_os = "android",
+                target_os = "fuchsia",
+                target_os = "illumos",
+                target_os = "ios",
+                target_os = "linux",
+                target_os = "macos",
+                target_os = "solaris",
+                target_os = "tvos",
+                target_os = "visionos",
+                target_os = "watchos",
+            ))]
+            interface: overrides.interface.clone().or_else(|| self.interface.clone()),
+            ipv4_address: overrides.ipv4_address.or(self.ipv4_address),
+            ipv6_address: overrides.ipv6_address.or(self.ipv6_address),
+        }
+    }
 }
 
 #[derive(Clone)]

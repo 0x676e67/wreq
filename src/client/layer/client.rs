@@ -39,7 +39,7 @@ use crate::client::conn::socks;
 use crate::{
     client::{
         conn::{
-            Connected, Connection,
+            Connected, Connection, SocketBindOptions,
             descriptor::{ConnectionDescriptor, ConnectionId},
             tunnel,
         },
@@ -71,6 +71,7 @@ pub(crate) struct HttpClient<C, B> {
     exec: Exec,
     h1_builder: conn::http1::Builder,
     h2_builder: conn::http2::Builder<Exec>,
+    socket_bind_defaults: SocketBindOptions,
     pool: pool::Pool<PoolClient<B>, ConnectionId>,
     #[cfg(feature = "cookies")]
     cookie_store: RequestConfig<Arc<dyn CookieStore>>,
@@ -204,7 +205,13 @@ where
             if let Some(opts) = http2_options {
                 this.h2_builder.options(opts);
             }
-            ConnectionDescriptor::new(uri, group, proxy, version, tls_options, socket_bind_options)
+
+            let resolved_socket_bind = match socket_bind_options {
+                Some(overrides) => this.socket_bind_defaults.merge_over(&overrides),
+                None => this.socket_bind_defaults.clone(),
+            };
+
+            ConnectionDescriptor::new(uri, group, proxy, version, tls_options, resolved_socket_bind)
         };
 
         Box::pin(this.send_request(req, descriptor).map_err(Into::into))
@@ -712,6 +719,7 @@ impl<C: Clone, B> Clone for HttpClient<C, B> {
             exec: self.exec.clone(),
             h1_builder: self.h1_builder.clone(),
             h2_builder: self.h2_builder.clone(),
+            socket_bind_defaults: self.socket_bind_defaults.clone(),
             connector: self.connector.clone(),
             pool: self.pool.clone(),
             #[cfg(feature = "cookies")]
@@ -820,6 +828,7 @@ pub struct Builder {
     exec: Exec,
     h1_builder: conn::http1::Builder,
     h2_builder: conn::http2::Builder<Exec>,
+    socket_bind_defaults: SocketBindOptions,
     pool_config: pool::Config,
     pool_timer: Time,
     #[cfg(feature = "cookies")]
@@ -844,6 +853,7 @@ impl Builder {
             exec: exec.clone(),
             h1_builder: conn::http1::Builder::new(),
             h2_builder: conn::http2::Builder::new(exec),
+            socket_bind_defaults: SocketBindOptions::default(),
             pool_config: pool::Config {
                 idle_timeout: Some(Duration::from_secs(90)),
                 max_idle_per_host: usize::MAX,
@@ -961,6 +971,13 @@ impl Builder {
         self
     }
 
+    /// Set the client-level socket bind defaults.
+    #[inline]
+    pub fn socket_bind_defaults(mut self, opts: SocketBindOptions) -> Self {
+        self.socket_bind_defaults = opts;
+        self
+    }
+
     /// Combine the configuration of this builder with a connector to create a `HttpClient`.
     pub fn build<C, B>(self, connector: C) -> HttpClient<C, B>
     where
@@ -979,6 +996,7 @@ impl Builder {
             connector,
             h1_builder: self.h1_builder,
             h2_builder: self.h2_builder,
+            socket_bind_defaults: self.socket_bind_defaults,
             pool: pool::Pool::new(self.pool_config, exec, timer),
             #[cfg(feature = "cookies")]
             cookie_store: RequestConfig::new(self.cookie_store),

@@ -22,12 +22,11 @@ use std::{
     borrow::Cow,
     collections::BTreeMap,
     hash::Hash,
-    net::{Ipv4Addr, Ipv6Addr},
 };
 
 use http::{Uri, Version};
 
-use crate::proxy::Matcher;
+use crate::{client::conn::SocketBindOptions, proxy::Matcher};
 
 macro_rules! impl_group_variants {
     ($($name:ident $(($ty:ty))?,)*) => {
@@ -53,9 +52,7 @@ impl_group_variants! {
     Uri(Uri),
     Version(Version),
     Proxy(Matcher),
-    Ipv4Addr(Ipv4Addr),
-    Ipv6Addr(Ipv6Addr),
-    Interface(Cow<'static, str>),
+    SocketBind(SocketBindOptions),
     Request(Group),
     Emulate(Group),
 }
@@ -105,38 +102,10 @@ impl Group {
         self.extend(GroupId::Proxy, proxy.map(GroupPart::Proxy))
     }
 
-    /// Groups the request by the source IPv4 address.
+    /// Groups the request by its resolved socket bind options.
     #[inline]
-    pub(crate) fn ipv4_addr(&mut self, addr: Option<Ipv4Addr>) -> &mut Self {
-        self.extend(GroupId::Ipv4Addr, addr.map(GroupPart::Ipv4Addr))
-    }
-
-    /// Groups the request by the source IPv6 address.
-    #[inline]
-    pub(crate) fn ipv6_addr(&mut self, addr: Option<Ipv6Addr>) -> &mut Self {
-        self.extend(GroupId::Ipv6Addr, addr.map(GroupPart::Ipv6Addr))
-    }
-
-    /// Groups the request by a mandatory outbound network interface.
-    ///
-    /// # Platform Constraints
-    /// This dimension is only applicable on operating systems that support
-    /// explicit interface binding (e.g., Linux via `SO_BINDTODEVICE`).
-    #[inline]
-    #[cfg(any(
-        target_os = "illumos",
-        target_os = "ios",
-        target_os = "macos",
-        target_os = "solaris",
-        target_os = "tvos",
-        target_os = "visionos",
-        target_os = "watchos",
-        target_os = "android",
-        target_os = "fuchsia",
-        target_os = "linux",
-    ))]
-    pub(crate) fn interface(&mut self, interface: Option<Cow<'static, str>>) -> &mut Self {
-        self.extend(GroupId::Interface, interface.map(GroupPart::Interface))
+    pub(crate) fn socket_bind_options(&mut self, opts: &SocketBindOptions) -> &mut Self {
+        self.extend(GroupId::SocketBind, GroupPart::SocketBind(opts.clone()))
     }
 
     /// Creates a nested request group.
