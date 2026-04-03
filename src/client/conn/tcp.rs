@@ -527,14 +527,22 @@ impl SocketBindOptions {
 
     /// Set that all sockets are bound to the configured IPv4 or IPv6 address (depending on host's
     /// preferences) before connection.
+    ///
+    /// If `None`, the sockets will not be bound.
+    ///
+    /// Default is `None`.
     #[inline]
     pub fn set_local_addresses<V4, V6>(&mut self, ipv4_address: V4, ipv6_address: V6)
     where
         V4: Into<Option<Ipv4Addr>>,
         V6: Into<Option<Ipv6Addr>>,
     {
-        self.ipv4_address = ipv4_address.into();
-        self.ipv6_address = ipv6_address.into();
+        if let Some(addr) = ipv4_address.into() {
+            self.ipv4_address = Some(addr);
+        }
+        if let Some(addr) = ipv6_address.into() {
+            self.ipv6_address = Some(addr);
+        }
     }
 }
 
