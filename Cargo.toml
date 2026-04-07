@@ -286,7 +286,7 @@ required-features = ["tracing"]
 
 [[example]]
 name = "emulation"
-path = "examples/emulation.rs"
+path = "examples/emulate.rs"
 required-features = ["gzip", "brotli", "zstd", "deflate", "tracing"]
 
 [[example]]
@@ -308,8 +308,8 @@ path = "examples/request_with_proxy.rs"
 required-features = ["socks"]
 
 [[example]]
-name = "request_with_emulation"
-path = "examples/request_with_emulation.rs"
+name = "request_with_emulate"
+path = "examples/request_with_emulate.rs"
 required-features = ["gzip", "brotli", "zstd", "deflate", "tracing"]
 
 [[example]]
