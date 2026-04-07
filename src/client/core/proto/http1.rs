@@ -25,6 +25,7 @@ use crate::client::core::{
     error::{Error, Parse, Result},
     proto::{BodyLength, MessageHead},
 };
+
 pub(crate) type ClientTransaction = role::Client;
 
 pub(crate) trait Http1Transaction {

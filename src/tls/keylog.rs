@@ -6,8 +6,6 @@
 //! The [`KeyLog`] enum lets you control key log behavior, either by respecting the
 //! `SSLKEYLOGFILE` environment variable or by specifying a custom file path. Handles are cached
 //! globally to avoid duplicate file access.
-//!
-//! Use [`KeyLog::handle`] to obtain a [`Handle`] for writing keys.
 
 mod handle;
 

@@ -97,7 +97,7 @@ where
 
     /// Set that all sockets are bound to the configured IPv4 or IPv6 address (depending on host's
     /// preferences) before connection.
-    fn set_local_addresses<V4, V6>(&mut self, local_ipv4: V4, local_ipv6: V6)
+    fn set_local_addresses<V4, V6>(&mut self, ipv4_address: V4, ipv6_address: V6)
     where
         V4: Into<Option<Ipv4Addr>>,
         V6: Into<Option<Ipv6Addr>>;
@@ -151,8 +151,8 @@ impl<R, S> HttpConnector<R, S> {
     pub fn new(resolver: R, connector: S) -> HttpConnector<R, S> {
         HttpConnector {
             options: Arc::new(TcpOptions {
-                connect_timeout: None,
                 enforce_http: true,
+                connect_timeout: None,
                 happy_eyeballs_timeout: Some(Duration::from_millis(300)),
                 nodelay: false,
                 reuse_address: false,
@@ -160,8 +160,8 @@ impl<R, S> HttpConnector<R, S> {
                 recv_buffer_size: None,
                 #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
                 tcp_user_timeout: None,
-                tcp_keepalive_config: TcpKeepaliveOptions::default(),
-                socket_bind_options: SocketBindOptions::default(),
+                tcp_keepalive: TcpKeepaliveOptions::default(),
+                socket_bind: SocketBindOptions::default(),
             }),
             resolver,
             connector,
@@ -261,21 +261,21 @@ where
     /// Default is `None`.
     #[inline]
     fn set_keepalive(&mut self, time: Option<Duration>) {
-        self.config_mut().tcp_keepalive_config.time = time;
+        self.config_mut().tcp_keepalive.time = time;
     }
 
     /// Set the duration between two successive TCP keepalive retransmissions,
     /// if acknowledgement to the previous keepalive transmission is not received.
     #[inline]
     fn set_keepalive_interval(&mut self, interval: Option<Duration>) {
-        self.config_mut().tcp_keepalive_config.interval = interval;
+        self.config_mut().tcp_keepalive.interval = interval;
     }
 
     /// Set the number of retransmissions to be carried out before declaring that remote end is not
     /// available.
     #[inline]
     fn set_keepalive_retries(&mut self, retries: Option<u32>) {
-        self.config_mut().tcp_keepalive_config.retries = retries;
+        self.config_mut().tcp_keepalive.retries = retries;
     }
 
     /// Sets the name of the interface to bind sockets produced by this
@@ -315,21 +315,23 @@ where
         target_os = "watchos",
     ))]
     fn set_interface<I: Into<std::borrow::Cow<'static, str>>>(&mut self, interface: I) {
-        self.config_mut()
-            .socket_bind_options
-            .set_interface(interface);
+        self.config_mut().socket_bind.set_interface(interface);
     }
 
     /// Set that all sockets are bound to the configured IPv4 or IPv6 address (depending on host's
     /// preferences) before connection.
-    fn set_local_addresses<V4, V6>(&mut self, addr_ipv4: V4, addr_ipv6: V6)
+    ///
+    /// If `None`, the sockets will not be bound.
+    ///
+    /// Default is `None`.
+    fn set_local_addresses<V4, V6>(&mut self, ipv4_address: V4, ipv6_address: V6)
     where
         V4: Into<Option<Ipv4Addr>>,
         V6: Into<Option<Ipv6Addr>>,
     {
         self.config_mut()
-            .socket_bind_options
-            .set_local_addresses(addr_ipv4, addr_ipv6);
+            .socket_bind
+            .set_local_addresses(ipv4_address, ipv6_address);
     }
 }
 

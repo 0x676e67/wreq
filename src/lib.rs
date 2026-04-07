@@ -300,13 +300,30 @@ pub use self::client::ws;
 pub use self::{
     client::{
         Body, Client, ClientBuilder, Emulation, EmulationBuilder, Group, IntoEmulation, Request,
-        RequestBuilder, Response, Upgraded, http1, http2,
+        RequestBuilder, Response, Upgraded,
     },
     error::{Error, Result},
     ext::{ResponseBuilderExt, ResponseExt},
     into_uri::IntoUri,
     proxy::{NoProxy, Proxy},
 };
+
+pub mod http1 {
+    //! HTTP/1 protocol implementation and utilities.
+
+    pub use super::client::http1::{Http1Options, Http1OptionsBuilder};
+}
+
+pub mod http2 {
+    //! HTTP/2 protocol implementation and utilities.
+
+    pub use http2::frame::{
+        Priorities, PrioritiesBuilder, Priority, PseudoId, PseudoOrder, Setting, SettingId,
+        SettingsOrder, SettingsOrderBuilder, StreamDependency, StreamId,
+    };
+
+    pub use super::client::http2::{Http2Options, Http2OptionsBuilder};
+}
 
 fn _assert_impls() {
     fn assert_send<T: Send>() {}
