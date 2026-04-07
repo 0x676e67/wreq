@@ -654,6 +654,7 @@ impl RequestBuilder {
             req.config_mut::<RequestOptions>()
                 .get_or_insert_default()
                 .socket_bind_options
+                .get_or_insert_default()
                 .set_local_address(local_address);
         }
         self
@@ -669,6 +670,7 @@ impl RequestBuilder {
             req.config_mut::<RequestOptions>()
                 .get_or_insert_default()
                 .socket_bind_options
+                .get_or_insert_default()
                 .set_local_addresses(ipv4_address, ipv6_address);
         }
         self
@@ -741,6 +743,7 @@ impl RequestBuilder {
             req.config_mut::<RequestOptions>()
                 .get_or_insert_default()
                 .socket_bind_options
+                .get_or_insert_default()
                 .set_interface(interface);
         }
         self

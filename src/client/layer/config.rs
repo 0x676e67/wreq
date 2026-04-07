@@ -40,7 +40,7 @@ pub(crate) struct RequestOptions {
     pub http2_options: Option<Http2Options>,
     #[cfg(feature = "http3")]
     pub http3_options: Option<Http3Options>,
-    pub socket_bind_options: SocketBindOptions,
+    pub socket_bind_options: Option<SocketBindOptions>,
 }
 
 /// Configuration for the [`ConfigService`].

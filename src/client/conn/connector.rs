@@ -256,22 +256,23 @@ impl ConnectorService {
         }
 
         // Apply TCP options if provided in metadata
-        let socket_opts = descriptor.socket_bind_options();
-        http.set_local_addresses(socket_opts.ipv4_address, socket_opts.ipv6_address);
-        #[cfg(any(
-            target_os = "android",
-            target_os = "fuchsia",
-            target_os = "illumos",
-            target_os = "ios",
-            target_os = "linux",
-            target_os = "macos",
-            target_os = "solaris",
-            target_os = "tvos",
-            target_os = "visionos",
-            target_os = "watchos",
-        ))]
-        if let Some(interface) = &socket_opts.interface {
-            http.set_interface(interface.clone());
+        if let Some(socket_opts) = descriptor.socket_bind_options() {
+            http.set_local_addresses(socket_opts.ipv4_address, socket_opts.ipv6_address);
+            #[cfg(any(
+                target_os = "android",
+                target_os = "fuchsia",
+                target_os = "illumos",
+                target_os = "ios",
+                target_os = "linux",
+                target_os = "macos",
+                target_os = "solaris",
+                target_os = "tvos",
+                target_os = "visionos",
+                target_os = "watchos",
+            ))]
+            if let Some(interface) = &socket_opts.interface {
+                http.set_interface(interface.clone());
+            }
         }
 
         // Prefer TLS options from metadata, fallback to default
