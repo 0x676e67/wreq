@@ -1,3 +1,5 @@
+//! Much of this codebase is adapted and refined from [hyper](https://github.com/hyperium/hyper-util),
+
 mod exec;
 mod lazy;
 mod pool;
