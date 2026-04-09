@@ -49,7 +49,7 @@ impl KeyLog {
             .0
             .ok_or_else(|| Error::new(ErrorKind::NotFound, "KeyLog: file path is not specified"))?;
 
-        let cache = GLOBAL_KEYLOG_CACHE.get_or_init(Default::default);
+        let cache = GLOBAL_KEYLOG_CACHE.get_or_init(RwLock::default);
         if let Some(handle) = cache.read().get(path.as_ref()).cloned() {
             return Ok(handle);
         }
