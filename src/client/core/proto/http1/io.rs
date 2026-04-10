@@ -10,7 +10,7 @@ use bytes::{Buf, BufMut, Bytes, BytesMut};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 
 use super::{Http1Transaction, ParseContext, ParsedMessage};
-use crate::client::core::{self, Error, common::buf::BufList};
+use crate::client::core::{Error, Result, common::buf::BufList};
 
 /// The initial buffer size allocated before trying to read from IO.
 pub(crate) const INIT_BUFFER_SIZE: usize = 8192;
@@ -165,7 +165,7 @@ where
         &mut self,
         cx: &mut Context<'_>,
         parse_ctx: ParseContext<'_>,
-    ) -> Poll<core::Result<ParsedMessage<S::Incoming>>>
+    ) -> Poll<Result<ParsedMessage<S::Incoming>>>
     where
         S: Http1Transaction,
     {
@@ -640,7 +640,7 @@ mod tests {
 
     #[tokio::test]
     async fn parse_reads_until_blocked() {
-        use crate::client::core::proto::http1::ClientTransaction;
+        use crate::client::core::proto::http1;
 
         let _ = pretty_env_logger::try_init();
         let mock = Mock::new()
@@ -663,11 +663,7 @@ mod tests {
                 h1_max_headers: None,
                 h09_responses: false,
             };
-            assert!(
-                buffered
-                    .parse::<ClientTransaction>(cx, parse_ctx)
-                    .is_pending()
-            );
+            assert!(buffered.parse::<http1::Client>(cx, parse_ctx).is_pending());
             Poll::Ready(())
         })
         .await;

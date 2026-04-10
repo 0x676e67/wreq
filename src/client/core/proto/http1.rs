@@ -19,14 +19,13 @@ pub(crate) use self::{
     dispatch::Dispatcher,
     encode::{EncodedBuf, Encoder},
     io::MINIMUM_MAX_BUFFER_SIZE,
+    role::Client,
 };
 use crate::client::core::{
     body::DecodedLength,
     error::{Error, Parse, Result},
     proto::{BodyLength, MessageHead},
 };
-
-pub(crate) type ClientTransaction = role::Client;
 
 pub(crate) trait Http1Transaction {
     type Incoming;
@@ -36,7 +35,10 @@ pub(crate) trait Http1Transaction {
     #[cfg(feature = "tracing")]
     const LOG: &'static str;
 
-    fn parse(bytes: &mut BytesMut, ctx: ParseContext<'_>) -> ParseResult<Self::Incoming>;
+    fn parse(
+        bytes: &mut BytesMut,
+        ctx: ParseContext<'_>,
+    ) -> Result<Option<ParsedMessage<Self::Incoming>>, Parse>;
 
     fn encode(enc: Encode<'_, Self::Outgoing>, dst: &mut Vec<u8>) -> Result<Encoder>;
 
@@ -44,9 +46,6 @@ pub(crate) trait Http1Transaction {
 
     fn update_date() {}
 }
-
-/// Result newtype for Http1Transaction::parse.
-pub(crate) type ParseResult<T> = std::result::Result<Option<ParsedMessage<T>>, Parse>;
 
 #[derive(Debug)]
 pub(crate) struct ParsedMessage<T> {

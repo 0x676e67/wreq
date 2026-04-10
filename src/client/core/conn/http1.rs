@@ -14,19 +14,20 @@ use tokio::io::{AsyncRead, AsyncWrite};
 
 use crate::client::core::{
     Error, Result,
-    body::Incoming as IncomingBody,
+    body::Incoming,
     dispatch::{self, TrySendError},
     error::BoxError,
-    http1::Http1Options,
-    proto,
+    proto::{
+        self,
+        http1::{Client, Http1Options},
+    },
 };
 
-type Dispatcher<T, B> =
-    proto::dispatch::Dispatcher<proto::dispatch::Client<B>, B, T, proto::http1::ClientTransaction>;
+type Dispatcher<T, B> = proto::dispatch::Dispatcher<proto::dispatch::Client<B>, B, T, Client>;
 
 /// The sender side of an established connection.
 pub struct SendRequest<B> {
-    dispatch: dispatch::Sender<Request<B>, Response<IncomingBody>>,
+    dispatch: dispatch::Sender<Request<B>, Response<Incoming>>,
 }
 
 /// Deconstructed parts of a `Connection`.
@@ -136,8 +137,7 @@ where
     pub fn try_send_request(
         &mut self,
         req: Request<B>,
-    ) -> impl Future<Output = std::result::Result<Response<IncomingBody>, TrySendError<Request<B>>>>
-    {
+    ) -> impl Future<Output = Result<Response<Incoming>, TrySendError<Request<B>>>> {
         let sent = self.dispatch.try_send(req);
         async move {
             match sent {
