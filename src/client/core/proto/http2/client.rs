@@ -31,8 +31,8 @@ use super::{
 };
 use crate::{
     client::core::{
-        self, Error,
-        body::{self, Incoming as IncomingBody},
+        Error, Result,
+        body::{self, Incoming},
         dispatch::{self, Callback, SendWhen, TrySendError},
         error::BoxError,
         proto::{Dispatched, headers},
@@ -43,7 +43,8 @@ use crate::{
     header::OrigHeaderMap,
 };
 
-type ClientRx<B> = dispatch::Receiver<Request<B>, Response<IncomingBody>>;
+/// Receiver for HTTP/2 client requests
+type ClientRx<B> = dispatch::Receiver<Request<B>, Response<Incoming>>;
 
 ///// An mpsc channel is used to help notify the `Connection` task when *all*
 ///// other handles to it have been dropped, so that it can shutdown.
@@ -60,7 +61,7 @@ pub(crate) async fn handshake<T, B, E>(
     ping_config: ping::Config,
     mut exec: E,
     timer: Time,
-) -> core::Result<ClientTask<B, E, T>>
+) -> Result<ClientTask<B, E, T>>
 where
     T: AsyncRead + AsyncWrite + Unpin,
     B: Body + 'static,
@@ -314,7 +315,7 @@ where
     fut: ResponseFuture,
     body_tx: SendStream<SendBuf<B::Data>>,
     body: B,
-    cb: Callback<Request<B>, Response<IncomingBody>>,
+    cb: Callback<Request<B>, Response<Incoming>>,
 }
 
 impl<B: Body> Unpin for FutCtx<B> {}
@@ -514,7 +515,7 @@ where
                         )));
                     }
                     let (parts, recv_stream) = res.into_parts();
-                    let mut res = Response::from_parts(parts, IncomingBody::empty());
+                    let mut res = Response::from_parts(parts, Incoming::empty());
 
                     let (pending, on_upgrade) = upgrade::pending();
                     let io = H2Upgraded {
@@ -532,7 +533,7 @@ where
                 } else {
                     let res = res.map(|stream| {
                         let ping = ping.for_stream(&stream);
-                        IncomingBody::h2(stream, content_length.into(), ping)
+                        Incoming::h2(stream, content_length.into(), ping)
                     });
                     Poll::Ready(Ok(res))
                 }
@@ -555,7 +556,7 @@ where
     E: Http2ClientConnExec<B, T> + Unpin,
     T: AsyncRead + AsyncWrite + Unpin,
 {
-    type Output = core::Result<Dispatched>;
+    type Output = Result<Dispatched>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         loop {

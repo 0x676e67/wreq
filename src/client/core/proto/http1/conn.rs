@@ -15,7 +15,9 @@ use httparse::ParserConfig;
 use tokio::io::{AsyncRead, AsyncWrite};
 
 use super::{
-    Decoder, Encode, EncodedBuf, Encoder, Http1Transaction, ParseContext, Wants, io::Buffered,
+    Decoder, Encode, Http1Transaction, ParseContext, Wants,
+    encode::{EncodedBuf, Encoder},
+    io::Buffered,
 };
 use crate::client::core::{
     Error, Result,
@@ -23,8 +25,6 @@ use crate::client::core::{
     proto::{BodyLength, MessageHead, headers},
     upgrade,
 };
-
-const H2_PREFACE: &[u8] = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
 
 /// This handles a connection, which will have been established over an
 /// `AsyncRead + AsyncWrite` (like a socket), and will likely include multiple
@@ -147,9 +147,11 @@ where
         !self.state.is_idle()
     }
 
+    #[inline]
     fn has_h2_prefix(&self) -> bool {
+        const H2_PREFACE: &[u8] = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
         let read_buf = self.io.read_buf();
-        read_buf.len() >= 24 && read_buf[..24] == *H2_PREFACE
+        read_buf.starts_with(H2_PREFACE)
     }
 
     #[allow(clippy::type_complexity)]
@@ -319,6 +321,7 @@ where
         ret
     }
 
+    #[inline]
     pub(super) fn wants_read_again(&mut self) -> bool {
         let ret = self.state.notify_read;
         self.state.notify_read = false;
@@ -844,8 +847,7 @@ impl fmt::Debug for State {
             builder.field("allow_half_close", &true);
         }
 
-        // Purposefully leaving off other fields..
-
+        // Purposefully leaving off other fields...
         builder.finish()
     }
 }
@@ -993,6 +995,7 @@ impl State {
         matches!(self.writing, Writing::Closed)
     }
 
+    #[inline]
     fn prepare_upgrade(&mut self) -> upgrade::OnUpgrade {
         let (tx, rx) = upgrade::pending();
         self.upgrade = Some(tx);

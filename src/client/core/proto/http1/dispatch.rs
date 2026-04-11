@@ -10,13 +10,13 @@ use http::Request;
 use http_body::Body;
 use tokio::io::{AsyncRead, AsyncWrite};
 
-use super::{Http1Transaction, Wants};
+use super::{BodyLength, Conn, Http1Transaction, MessageHead, Wants};
 use crate::client::core::{
     Error, Result,
     body::{self, DecodedLength, Incoming as IncomingBody},
     dispatch::{self, TrySendError},
     error::BoxError,
-    proto::{self, BodyLength, Conn, Dispatched, MessageHead, RequestHead},
+    proto::{self, Dispatched, RequestHead},
     upgrade::OnUpgrade,
 };
 
@@ -584,7 +584,7 @@ where
 mod tests {
     use std::time::Duration;
 
-    use super::{proto::http1::ClientTransaction, *};
+    use super::{proto::http1, *};
 
     #[test]
     fn client_read_bytes_before_writing_request() {
@@ -596,7 +596,7 @@ mod tests {
             // Block at 0 for now, but we will release this response before
             // the request is ready to write later...
             let (mut tx, rx) = dispatch::channel();
-            let conn = Conn::<_, bytes::Bytes, ClientTransaction>::new(io);
+            let conn = Conn::<_, bytes::Bytes, http1::role::Client>::new(io);
             let mut dispatcher = Dispatcher::new(Client::new(rx), conn);
 
             // First poll is needed to allow tx to send...
@@ -632,7 +632,7 @@ mod tests {
             .build_with_handle();
 
         let (mut tx, rx) = dispatch::channel();
-        let mut conn = Conn::<_, bytes::Bytes, ClientTransaction>::new(io);
+        let mut conn = Conn::<_, bytes::Bytes, http1::role::Client>::new(io);
         conn.set_write_strategy_queue();
 
         let dispatcher = Dispatcher::new(Client::new(rx), conn);
@@ -662,7 +662,7 @@ mod tests {
             .build();
 
         let (mut tx, rx) = dispatch::channel();
-        let conn = Conn::<_, bytes::Bytes, ClientTransaction>::new(io);
+        let conn = Conn::<_, bytes::Bytes, http1::role::Client>::new(io);
         let mut dispatcher = tokio_test::task::spawn(Dispatcher::new(Client::new(rx), conn));
 
         // First poll is needed to allow tx to send...

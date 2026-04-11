@@ -29,7 +29,7 @@ use http2::{Ping, PingPong};
 
 use crate::{
     client::core::{
-        self,
+        Result,
         error::{Error, Kind, TimedOut},
         rt::{Sleep, Time, Timer},
     },
@@ -268,7 +268,7 @@ impl Recorder {
         }
     }
 
-    pub(super) fn ensure_not_timed_out(&self) -> core::Result<()> {
+    pub(super) fn ensure_not_timed_out(&self) -> Result<()> {
         if let Some(ref shared) = self.shared {
             let locked = shared.lock();
             if locked.is_keep_alive_timed_out {

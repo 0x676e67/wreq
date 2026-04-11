@@ -1,32 +1,24 @@
 //! HTTP/1 protocol implementation and utilities.
 
-mod conn;
 mod decode;
 mod encode;
 mod io;
-mod role;
 
+pub(crate) mod conn;
 pub(crate) mod dispatch;
 pub(crate) mod ext;
+pub(crate) mod role;
 
 use bytes::BytesMut;
 use http::{HeaderMap, Method};
 use httparse::ParserConfig;
 
-pub(crate) use self::{
-    conn::Conn,
-    decode::Decoder,
-    dispatch::Dispatcher,
-    encode::{EncodedBuf, Encoder},
-    io::MINIMUM_MAX_BUFFER_SIZE,
-};
+use self::{conn::Conn, decode::Decoder, encode::Encoder, io::MINIMUM_MAX_BUFFER_SIZE};
+use super::{BodyLength, MessageHead};
 use crate::client::core::{
     body::DecodedLength,
     error::{Error, Parse, Result},
-    proto::{BodyLength, MessageHead},
 };
-
-pub(crate) type ClientTransaction = role::Client;
 
 pub(crate) trait Http1Transaction {
     type Incoming;
@@ -36,7 +28,10 @@ pub(crate) trait Http1Transaction {
     #[cfg(feature = "tracing")]
     const LOG: &'static str;
 
-    fn parse(bytes: &mut BytesMut, ctx: ParseContext<'_>) -> ParseResult<Self::Incoming>;
+    fn parse(
+        bytes: &mut BytesMut,
+        ctx: ParseContext<'_>,
+    ) -> Result<Option<ParsedMessage<Self::Incoming>>, Parse>;
 
     fn encode(enc: Encode<'_, Self::Outgoing>, dst: &mut Vec<u8>) -> Result<Encoder>;
 
@@ -44,9 +39,6 @@ pub(crate) trait Http1Transaction {
 
     fn update_date() {}
 }
-
-/// Result newtype for Http1Transaction::parse.
-pub(crate) type ParseResult<T> = std::result::Result<Option<ParsedMessage<T>>, Parse>;
 
 #[derive(Debug)]
 pub(crate) struct ParsedMessage<T> {

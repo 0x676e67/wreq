@@ -24,7 +24,7 @@ use http2::{
 use pin_project_lite::pin_project;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 
-use crate::client::core::{self, Error, error::BoxError};
+use crate::client::core::{Error, Result, error::BoxError};
 
 /// Default initial stream window size defined in HTTP2 spec.
 const SPEC_WINDOW_SIZE: u32 = 65_535;
@@ -135,7 +135,7 @@ where
     S: Body,
     S::Error: Into<BoxError>,
 {
-    type Output = core::Result<()>;
+    type Output = Result<()>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let mut me = self.project();
@@ -217,7 +217,7 @@ trait SendStreamExt {
     fn on_user_err<E>(&mut self, err: E) -> Error
     where
         E: Into<BoxError>;
-    fn send_eos_frame(&mut self) -> core::Result<()>;
+    fn send_eos_frame(&mut self) -> Result<()>;
 }
 
 impl<B: Buf> SendStreamExt for SendStream<SendBuf<B>> {
@@ -231,7 +231,7 @@ impl<B: Buf> SendStreamExt for SendStream<SendBuf<B>> {
         err
     }
 
-    fn send_eos_frame(&mut self) -> core::Result<()> {
+    fn send_eos_frame(&mut self) -> Result<()> {
         trace!("send body eos");
         self.send_data(SendBuf::None, true)
             .map_err(Error::new_body_write)
@@ -860,7 +860,7 @@ mod tests {
     use futures_channel::oneshot;
     use http_body_util::Full;
 
-    use super::core::{conn::http2::Builder, rt::TokioExecutor};
+    use crate::client::core::{conn::http2::Builder, rt::TokioExecutor};
 
     fn setup_duplex_test_server() -> (tokio::io::DuplexStream, tokio::io::DuplexStream) {
         let (client_io, server_io) = tokio::io::duplex(64);

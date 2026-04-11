@@ -10,18 +10,13 @@ use http::{
 };
 use smallvec::{SmallVec, smallvec, smallvec_inline};
 
+use super::{Encode, Encoder, Http1Transaction, ParseContext, ParsedMessage, ext::ReasonPhrase};
 use crate::{
     client::core::{
-        self, Error,
+        Error, Result,
         body::DecodedLength,
         error::Parse,
-        proto::{
-            BodyLength, MessageHead, RequestHead, RequestLine, headers,
-            http1::{
-                Encode, Encoder, Http1Transaction, ParseContext, ParseResult, ParsedMessage,
-                ext::ReasonPhrase,
-            },
-        },
+        proto::{BodyLength, MessageHead, RequestHead, RequestLine, headers},
     },
     config::RequestConfig,
     header::OrigHeaderMap,
@@ -69,7 +64,7 @@ pub(super) fn parse_headers<T>(
     bytes: &mut BytesMut,
     prev_len: Option<usize>,
     ctx: ParseContext<'_>,
-) -> ParseResult<T::Incoming>
+) -> Result<Option<ParsedMessage<T::Incoming>>, Parse>
 where
     T: Http1Transaction,
 {
@@ -119,7 +114,10 @@ impl Http1Transaction for Client {
     #[cfg(feature = "tracing")]
     const LOG: &'static str = "{role=client}";
 
-    fn parse(buf: &mut BytesMut, ctx: ParseContext<'_>) -> ParseResult<StatusCode> {
+    fn parse(
+        buf: &mut BytesMut,
+        ctx: ParseContext<'_>,
+    ) -> Result<Option<ParsedMessage<Self::Incoming>>, Parse> {
         debug_assert!(!buf.is_empty(), "parse called with empty buf");
 
         // Loop to skip information status code headers (100 Continue, etc).
@@ -257,7 +255,7 @@ impl Http1Transaction for Client {
         }
     }
 
-    fn encode(msg: Encode<'_, Self::Outgoing>, dst: &mut Vec<u8>) -> core::Result<Encoder> {
+    fn encode(msg: Encode<'_, Self::Outgoing>, dst: &mut Vec<u8>) -> Result<Encoder> {
         trace!(
             "Client::encode method={:?}, body={:?}",
             msg.head.subject.0, msg.body
