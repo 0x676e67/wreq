@@ -169,7 +169,7 @@ impl OnUpgrade {
 }
 
 impl Future for OnUpgrade {
-    type Output = std::result::Result<Upgraded, Error>;
+    type Output = Result<Upgraded, Error>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         match self.rx {

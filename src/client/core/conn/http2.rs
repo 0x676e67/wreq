@@ -14,7 +14,7 @@ use tokio::io::{AsyncRead, AsyncWrite};
 
 use crate::client::core::{
     Result,
-    body::Incoming as IncomingBody,
+    body::Incoming,
     dispatch::{self, TrySendError},
     error::{BoxError, Error},
     proto::{
@@ -26,7 +26,7 @@ use crate::client::core::{
 
 /// The sender side of an established connection.
 pub struct SendRequest<B> {
-    dispatch: dispatch::UnboundedSender<Request<B>, Response<IncomingBody>>,
+    dispatch: dispatch::UnboundedSender<Request<B>, Response<Incoming>>,
 }
 
 impl<B> Clone for SendRequest<B> {
@@ -123,8 +123,7 @@ where
     pub fn try_send_request(
         &mut self,
         req: Request<B>,
-    ) -> impl Future<Output = std::result::Result<Response<IncomingBody>, TrySendError<Request<B>>>>
-    {
+    ) -> impl Future<Output = Result<Response<Incoming>, TrySendError<Request<B>>>> {
         let sent = self.dispatch.try_send(req);
         async move {
             match sent {
@@ -160,6 +159,7 @@ where
 {
     type Output = Result<()>;
 
+    #[inline]
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         match ready!(Pin::new(&mut self.inner.1).poll(cx))? {
             proto::Dispatched::Shutdown => Poll::Ready(Ok(())),
@@ -214,58 +214,54 @@ where
         trace!("client handshake HTTP/2");
 
         // Crate the HTTP/2 client with the provided options.
-        let builder = {
-            let mut builder = http2::client::Builder::default();
-            builder
-                .initial_max_send_streams(self.opts.initial_max_send_streams)
-                .initial_window_size(self.opts.initial_window_size)
-                .initial_connection_window_size(self.opts.initial_conn_window_size)
-                .max_send_buffer_size(self.opts.max_send_buffer_size);
-            if let Some(id) = self.opts.initial_stream_id {
-                builder.initial_stream_id(id);
-            }
-            if let Some(max) = self.opts.max_pending_accept_reset_streams {
-                builder.max_pending_accept_reset_streams(max);
-            }
-            if let Some(max) = self.opts.max_concurrent_reset_streams {
-                builder.max_concurrent_reset_streams(max);
-            }
-            if let Some(max) = self.opts.max_concurrent_streams {
-                builder.max_concurrent_streams(max);
-            }
-            if let Some(max) = self.opts.max_header_list_size {
-                builder.max_header_list_size(max);
-            }
-            if let Some(opt) = self.opts.enable_push {
-                builder.enable_push(opt);
-            }
-            if let Some(max) = self.opts.max_frame_size {
-                builder.max_frame_size(max);
-            }
-            if let Some(max) = self.opts.header_table_size {
-                builder.header_table_size(max);
-            }
-            if let Some(v) = self.opts.enable_connect_protocol {
-                builder.enable_connect_protocol(v);
-            }
-            if let Some(v) = self.opts.no_rfc7540_priorities {
-                builder.no_rfc7540_priorities(v);
-            }
-            if let Some(order) = self.opts.settings_order {
-                builder.settings_order(order);
-            }
-            if let Some(stream_dependency) = self.opts.headers_stream_dependency {
-                builder.headers_stream_dependency(stream_dependency);
-            }
-            if let Some(order) = self.opts.headers_pseudo_order {
-                builder.headers_pseudo_order(order);
-            }
-            if let Some(priority) = self.opts.priorities {
-                builder.priorities(priority);
-            }
-
-            builder
-        };
+        let mut builder = http2::client::Builder::default();
+        builder
+            .initial_max_send_streams(self.opts.initial_max_send_streams)
+            .initial_window_size(self.opts.initial_window_size)
+            .initial_connection_window_size(self.opts.initial_conn_window_size)
+            .max_send_buffer_size(self.opts.max_send_buffer_size);
+        if let Some(id) = self.opts.initial_stream_id {
+            builder.initial_stream_id(id);
+        }
+        if let Some(max) = self.opts.max_pending_accept_reset_streams {
+            builder.max_pending_accept_reset_streams(max);
+        }
+        if let Some(max) = self.opts.max_concurrent_reset_streams {
+            builder.max_concurrent_reset_streams(max);
+        }
+        if let Some(max) = self.opts.max_concurrent_streams {
+            builder.max_concurrent_streams(max);
+        }
+        if let Some(max) = self.opts.max_header_list_size {
+            builder.max_header_list_size(max);
+        }
+        if let Some(opt) = self.opts.enable_push {
+            builder.enable_push(opt);
+        }
+        if let Some(max) = self.opts.max_frame_size {
+            builder.max_frame_size(max);
+        }
+        if let Some(max) = self.opts.header_table_size {
+            builder.header_table_size(max);
+        }
+        if let Some(v) = self.opts.enable_connect_protocol {
+            builder.enable_connect_protocol(v);
+        }
+        if let Some(v) = self.opts.no_rfc7540_priorities {
+            builder.no_rfc7540_priorities(v);
+        }
+        if let Some(order) = self.opts.settings_order {
+            builder.settings_order(order);
+        }
+        if let Some(stream_dependency) = self.opts.headers_stream_dependency {
+            builder.headers_stream_dependency(stream_dependency);
+        }
+        if let Some(order) = self.opts.headers_pseudo_order {
+            builder.headers_pseudo_order(order);
+        }
+        if let Some(priority) = self.opts.priorities {
+            builder.priorities(priority);
+        }
 
         // Create the ping configuration for the connection.
         let ping_config = ping::Config::new(

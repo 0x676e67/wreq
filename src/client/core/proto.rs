@@ -5,8 +5,9 @@ mod headers;
 pub mod http1;
 pub mod http2;
 
-pub(crate) use self::http1::{Conn, dispatch};
-use crate::client::core::upgrade;
+/// A request line of an incoming request message.
+#[derive(Debug, Default, PartialEq)]
+pub(crate) struct RequestLine(http::Method, http::Uri);
 
 /// An Incoming Message head. Includes request/status line, and headers.
 #[derive(Debug, Default)]
@@ -27,9 +28,6 @@ type RequestHead = MessageHead<RequestLine>;
 /// An incoming response message.
 type ResponseHead = MessageHead<http::StatusCode>;
 
-#[derive(Debug, Default, PartialEq)]
-pub(crate) struct RequestLine(http::Method, http::Uri);
-
 #[derive(Debug)]
 pub(crate) enum BodyLength {
     /// Content-Length
@@ -43,7 +41,7 @@ pub(crate) enum Dispatched {
     /// Dispatcher completely shutdown connection.
     Shutdown,
     /// Dispatcher has pending upgrade, and so did not shutdown.
-    Upgrade(upgrade::Pending),
+    Upgrade(crate::client::core::upgrade::Pending),
 }
 
 impl MessageHead<http::StatusCode> {

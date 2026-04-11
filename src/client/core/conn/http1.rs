@@ -14,19 +14,18 @@ use tokio::io::{AsyncRead, AsyncWrite};
 
 use crate::client::core::{
     Error, Result,
-    body::Incoming as IncomingBody,
+    body::Incoming,
     dispatch::{self, TrySendError},
     error::BoxError,
-    http1::Http1Options,
-    proto,
+    proto::{
+        self,
+        http1::{self, Http1Options, conn::Conn, role::Client},
+    },
 };
-
-type Dispatcher<T, B> =
-    proto::dispatch::Dispatcher<proto::dispatch::Client<B>, B, T, proto::http1::ClientTransaction>;
 
 /// The sender side of an established connection.
 pub struct SendRequest<B> {
-    dispatch: dispatch::Sender<Request<B>, Response<IncomingBody>>,
+    dispatch: dispatch::Sender<Request<B>, Response<Incoming>>,
 }
 
 /// Deconstructed parts of a `Connection`.
@@ -59,7 +58,7 @@ where
     T: AsyncRead + AsyncWrite,
     B: Body + 'static,
 {
-    inner: Dispatcher<T, B>,
+    inner: http1::dispatch::Dispatcher<http1::dispatch::Client<B>, B, T, Client>,
 }
 
 impl<T, B> Connection<T, B>
@@ -136,8 +135,7 @@ where
     pub fn try_send_request(
         &mut self,
         req: Request<B>,
-    ) -> impl Future<Output = std::result::Result<Response<IncomingBody>, TrySendError<Request<B>>>>
-    {
+    ) -> impl Future<Output = Result<Response<Incoming>, TrySendError<Request<B>>>> {
         let sent = self.dispatch.try_send(req);
         async move {
             match sent {
@@ -230,7 +228,7 @@ impl Builder {
         trace!("client handshake HTTP/1");
 
         let (tx, rx) = dispatch::channel();
-        let mut conn = proto::Conn::new(io);
+        let mut conn = Conn::new(io);
 
         // Set the HTTP/1 parser configuration
         let h1_parser_config = {
@@ -276,8 +274,8 @@ impl Builder {
             conn.set_max_buf_size(max);
         }
 
-        let cd = proto::http1::dispatch::Client::new(rx);
-        let proto = proto::http1::Dispatcher::new(cd, conn);
+        let cd = http1::dispatch::Client::new(rx);
+        let proto = http1::dispatch::Dispatcher::new(cd, conn);
 
         Ok((SendRequest { dispatch: tx }, Connection { inner: proto }))
     }

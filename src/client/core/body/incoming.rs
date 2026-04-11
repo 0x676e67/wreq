@@ -12,7 +12,7 @@ use http::HeaderMap;
 use http_body::{Body, Frame, SizeHint};
 
 use super::DecodedLength;
-use crate::client::core::{self, Error, common::watch, proto::http2::ping};
+use crate::client::core::{Error, Result, common::watch, proto::http2::ping};
 
 const WANT_PENDING: usize = 1;
 const WANT_READY: usize = 2;
@@ -224,7 +224,7 @@ impl fmt::Debug for Incoming {
 
 impl Sender {
     /// Check to see if this `Sender` can send more data.
-    pub(crate) fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<core::Result<()>> {
+    pub(crate) fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<()>> {
         // Check if the receiver end has tried polling for the body yet
         ready!(self.poll_want(cx)?);
         self.data_tx.poll_ready(cx).map_err(|_| Error::new_closed())
@@ -232,7 +232,7 @@ impl Sender {
 
     /// Check if the receiver end has tried polling for the body yet.
     #[inline]
-    fn poll_want(&mut self, cx: &mut Context<'_>) -> Poll<core::Result<()>> {
+    fn poll_want(&mut self, cx: &mut Context<'_>) -> Poll<Result<()>> {
         match self.want_rx.load(cx) {
             WANT_READY => Poll::Ready(Ok(())),
             WANT_PENDING => Poll::Pending,
@@ -304,7 +304,7 @@ mod tests {
 
     use http_body_util::BodyExt;
 
-    use super::{Body, DecodedLength, Error, Incoming, Sender, SizeHint, core};
+    use super::{Body, DecodedLength, Error, Incoming, Result, Sender, SizeHint};
 
     impl Incoming {
         /// Create a `Body` stream with an associated sender half.
@@ -317,7 +317,7 @@ mod tests {
 
     impl Sender {
         #[cfg(test)]
-        async fn ready(&mut self) -> core::Result<()> {
+        async fn ready(&mut self) -> Result<()> {
             std::future::poll_fn(|cx| self.poll_ready(cx)).await
         }
 
