@@ -72,20 +72,27 @@ impl WebSocketRequestBuilder {
         self
     }
 
-    /// Forces the WebSocket connection to use HTTP/2 protocol.
+    /// Set HTTP version
     ///
-    /// This method configures the WebSocket connection to use HTTP/2's Extended
-    /// CONNECT Protocol (RFC 8441) for the handshake instead of the traditional
-    /// HTTP/1.1 upgrade mechanism.
+    /// Configures the HTTP version used for the WebSocket handshake.
+    /// Defaults to HTTP/1.1.
     ///
-    /// # Behavior
+    /// # HTTP/1.1 (default)
     ///
-    /// - Uses `CONNECT` method with `:protocol: websocket` pseudo-header
-    /// - Requires server support for HTTP/2 WebSocket connections
-    /// - Will fail if server doesn't support HTTP/2 WebSocket upgrade
+    /// - Uses the standard `Upgrade: websocket` mechanism (RFC 6455)
+    /// - Sends an HTTP `GET` request with `Connection: Upgrade` and `Upgrade: websocket` headers
+    /// - Widely supported by servers
+    ///
+    /// # HTTP/2
+    ///
+    /// - Uses the Extended CONNECT Protocol (RFC 8441)
+    /// - Sends a `CONNECT` request with the `:protocol: websocket` pseudo-header instead of the
+    ///   traditional upgrade mechanism
+    /// - Requires explicit server support for HTTP/2 WebSocket connections
+    /// - Will fail if the server does not support HTTP/2 WebSocket upgrade
     #[inline]
-    pub fn force_http2(mut self) -> Self {
-        self.inner = self.inner.version(Version::HTTP_2);
+    pub fn version(mut self, version: Version) -> Self {
+        self.inner = self.inner.version(version);
         self
     }
 
