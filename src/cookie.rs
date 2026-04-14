@@ -561,7 +561,9 @@ fn normalize_path(path: &str) -> &str {
 
 #[cfg(test)]
 mod tests {
-    use super::Jar;
+    use http::{Uri, Version};
+
+    use super::{CookieStore, Cookies, Jar};
 
     #[test]
     fn jar_get_all_backfills_domain_and_path() {
@@ -667,5 +669,71 @@ mod tests {
         let cookies = jar.get_all().collect::<Vec<_>>();
         assert_eq!(cookies.len(), 1);
         assert_eq!(cookies[0].path(), Some("/foo"));
+    }
+
+    #[test]
+    fn jar_sends_parent_domain_cookie_to_subdomain() {
+        let jar = Jar::default();
+        jar.add(
+            "session=abc; Domain=example.com; Path=/",
+            "http://example.com/login",
+        );
+
+        let should_receive = [
+            "http://example.com/dashboard",
+            "http://api.example.com/dashboard",
+            "http://sub.api.example.com/dashboard",
+        ];
+        for uri_str in &should_receive {
+            let uri = Uri::from_static(uri_str);
+            match jar.cookies(&uri, Version::HTTP_11) {
+                Cookies::Compressed(v) => assert_eq!(
+                    v.to_str().unwrap(),
+                    "session=abc",
+                    "expected cookie to be sent to {uri_str}"
+                ),
+                other => panic!("expected Compressed cookie for {uri_str}, got {other:?}"),
+            }
+        }
+
+        let should_not_receive = [
+            "http://notexample.com/dashboard",
+            "http://fakeexample.com/dashboard",
+        ];
+        for uri_str in &should_not_receive {
+            let uri = Uri::from_static(uri_str);
+            assert!(
+                matches!(jar.cookies(&uri, Version::HTTP_11), Cookies::Empty),
+                "cookie must NOT be sent to {uri_str}"
+            );
+        }
+    }
+
+    #[test]
+    fn jar_subdomain_cookie_does_not_leak_to_parent_or_sibling() {
+        let jar = Jar::default();
+        jar.add(
+            "token=xyz; Domain=api.example.com; Path=/",
+            "http://api.example.com/",
+        );
+
+        let uri = Uri::from_static("http://api.example.com/");
+        assert!(
+            matches!(jar.cookies(&uri, Version::HTTP_11), Cookies::Compressed(_)),
+            "cookie must be sent to api.example.com"
+        );
+
+        let must_not_receive = [
+            "http://example.com/",
+            "http://other.example.com/",
+            "http://notapi.example.com/",
+        ];
+        for uri_str in &must_not_receive {
+            let uri = Uri::from_static(uri_str);
+            assert!(
+                matches!(jar.cookies(&uri, Version::HTTP_11), Cookies::Empty),
+                "cookie must NOT leak to {uri_str}"
+            );
+        }
     }
 }
