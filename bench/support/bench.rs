@@ -11,6 +11,7 @@ pub const CURRENT_THREAD_LABEL: &str = "current_thread";
 pub const MULTI_THREAD_LABEL: &str = "multi_thread";
 pub const CONCURRENT_CASES: &[usize] = &[10, 20, 50, 100, 150];
 pub const BODY_CASES: &[&[u8]] = &[
+    &[b'a'; 1024],            // 1 KB
     &[b'a'; 10 * 1024],       // 10 KB
     &[b'a'; 64 * 1024],       // 64 KB
     &[b'a'; 128 * 1024],      // 128 KB
