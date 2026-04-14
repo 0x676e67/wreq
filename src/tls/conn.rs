@@ -586,6 +586,26 @@ where
             MaybeHttpsStream::Https(inner) => Pin::new(inner).poll_shutdown(ctx),
         }
     }
+
+    #[inline]
+    fn is_write_vectored(&self) -> bool {
+        match self {
+            MaybeHttpsStream::Http(inner) => inner.is_write_vectored(),
+            MaybeHttpsStream::Https(inner) => inner.is_write_vectored(),
+        }
+    }
+
+    #[inline]
+    fn poll_write_vectored(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        bufs: &[io::IoSlice<'_>],
+    ) -> Poll<io::Result<usize>> {
+        match self.get_mut() {
+            MaybeHttpsStream::Http(inner) => Pin::new(inner).poll_write_vectored(cx, bufs),
+            MaybeHttpsStream::Https(inner) => Pin::new(inner).poll_write_vectored(cx, bufs),
+        }
+    }
 }
 
 // ===== impl EstablishedConn =====
