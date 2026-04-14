@@ -55,7 +55,7 @@ multipart = ["dep:mime_guess", "dep:sync_wrapper", "sync_wrapper?/futures"]
 hickory-dns = ["dep:hickory-resolver"]
 
 # Enable streaming support.
-stream = ["tokio/fs", "dep:tokio-util", "dep:sync_wrapper", "sync_wrapper?/futures"]
+stream = ["tokio/fs", "dep:sync_wrapper", "sync_wrapper?/futures"]
 
 # Enable SOCKS/4/5 proxy support.
 socks = ["dep:tokio-socks"]
@@ -103,6 +103,7 @@ tokio = { version = "1.50.0", default-features = false, features = [
     "time",
     "rt",
 ] }
+tokio-util = { version = "0.7.18", default-features = false }
 tower = { version = "0.5.3", default-features = false, features = [
     "timeout",
     "util",
@@ -134,9 +135,6 @@ cookie = { version = "0.18", optional = true }
 
 ## tower http
 tower-http = { version = "0.6.8", default-features = false, optional = true }
-
-## tokio util
-tokio-util = { version = "0.7.18", default-features = false, optional = true }
 
 ## socks
 tokio-socks = { version = "0.5.2", optional = true }

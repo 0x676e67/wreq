@@ -6,8 +6,8 @@ use std::{
     task::{Context, Poll, ready},
 };
 
-use bytes::{Buf, BufMut, Bytes, BytesMut};
-use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
+use bytes::{Buf, Bytes, BytesMut};
+use tokio::io::{AsyncRead, AsyncWrite};
 
 use super::{Http1Transaction, ParseContext, ParsedMessage};
 use crate::client::core::{Error, Result, common::buf::BufList};
@@ -216,22 +216,9 @@ where
             self.read_buf.reserve(next);
         }
 
-        // SAFETY: ReadBuf and poll_read promise not to set any uninitialized
-        // bytes onto `dst`.
-        #[allow(unsafe_code)]
-        let dst = unsafe { self.read_buf.chunk_mut().as_uninit_slice_mut() };
-        let mut buf = ReadBuf::uninit(dst);
-        match Pin::new(&mut self.io).poll_read(cx, &mut buf) {
-            Poll::Ready(Ok(_)) => {
-                let n = buf.filled().len();
+        match tokio_util::io::poll_read_buf(Pin::new(&mut self.io), cx, &mut self.read_buf) {
+            Poll::Ready(Ok(n)) => {
                 trace!("received {} bytes", n);
-                #[allow(unsafe_code)]
-                unsafe {
-                    // Safety: we just read that many bytes into the
-                    // uninitialized part of the buffer, so this is okay.
-                    // @tokio pls give me back `poll_read_buf` thanks
-                    self.read_buf.advance_mut(n);
-                }
                 self.read_buf_strategy.record(n);
                 Poll::Ready(Ok(n))
             }
@@ -268,17 +255,16 @@ where
                 return self.poll_flush_flattened(cx);
             }
 
-            const MAX_WRITEV_BUFS: usize = 64;
             loop {
-                let n = {
-                    let mut iovs = [IoSlice::new(&[]); MAX_WRITEV_BUFS];
-                    let len = self.write_buf.chunks_vectored(&mut iovs);
-                    ready!(Pin::new(&mut self.io).poll_write_vectored(cx, &iovs[..len]))?
-                };
-                // TODO(eliza): we have to do this manually because
-                // `poll_write_buf` doesn't exist in Tokio 0.3 yet...when
-                // `poll_write_buf` comes back, the manual advance will need to leave!
-                self.write_buf.advance(n);
+                // Let Tokio pick the write path.
+                // With `tokio-btls` this currently falls back to plain writes;
+                // if we later support vectored TLS writes like `tokio-rustls`,
+                // `poll_write_buf` will pick that up automatically.
+                let n = ready!(tokio_util::io::poll_write_buf(
+                    Pin::new(&mut self.io),
+                    cx,
+                    &mut self.write_buf,
+                )?);
                 debug!("flushed {} bytes", n);
                 if self.write_buf.remaining() == 0 {
                     break;

@@ -125,7 +125,6 @@ impl Body for Incoming {
         cx: &mut Context<'_>,
     ) -> Poll<Option<Result<Frame<Self::Data>, Self::Error>>> {
         match self.kind {
-            Kind::Empty => Poll::Ready(None),
             Kind::H1 {
                 content_length: ref mut len,
                 ref mut data_rx,
@@ -188,6 +187,7 @@ impl Body for Incoming {
                     Err(e) => Poll::Ready(Some(Err(Error::new_h2(e)))),
                 }
             }
+            Kind::Empty => Poll::Ready(None),
         }
     }
 
