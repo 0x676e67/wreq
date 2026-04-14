@@ -255,17 +255,12 @@ where
                 return self.poll_flush_flattened(cx);
             }
 
-            const MAX_WRITEV_BUFS: usize = 64;
             loop {
-                let n = {
-                    let mut iovs = [IoSlice::new(&[]); MAX_WRITEV_BUFS];
-                    let len = self.write_buf.chunks_vectored(&mut iovs);
-                    ready!(Pin::new(&mut self.io).poll_write_vectored(cx, &iovs[..len]))?
-                };
-                // TODO(eliza): we have to do this manually because
-                // `poll_write_buf` doesn't exist in Tokio 0.3 yet...when
-                // `poll_write_buf` comes back, the manual advance will need to leave!
-                self.write_buf.advance(n);
+                let n = ready!(tokio_util::io::poll_write_buf(
+                    Pin::new(&mut self.io),
+                    cx,
+                    &mut self.write_buf,
+                )?);
                 debug!("flushed {} bytes", n);
                 if self.write_buf.remaining() == 0 {
                     break;
