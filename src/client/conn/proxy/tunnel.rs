@@ -1,12 +1,11 @@
 use std::{
-    io,
     marker::{PhantomData, Unpin},
-    pin::Pin,
-    task::{self, Poll, ready},
+    task::{self, Poll},
 };
 
+use bytes::BytesMut;
 use http::{HeaderMap, HeaderValue, Uri};
-use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tower::{BoxError, Service};
 
 use super::Tunneling;
@@ -35,9 +34,9 @@ enum Headers {
 pub enum TunnelError {
     ConnectFailed(BoxError),
     Io(std::io::Error),
+    Parse(httparse::Error),
     MissingHost,
     ProxyAuthRequired,
-    ProxyHeadersTooLong,
     TunnelUnexpectedEof,
     TunnelUnsuccessful,
 }
@@ -175,62 +174,27 @@ where
     // headers end
     buf.extend_from_slice(b"\r\n");
 
-    write_all(&mut conn, &buf).await.map_err(TunnelError::Io)?;
+    conn.write_all(&buf).await.map_err(TunnelError::Io)?;
+    conn.flush().await.map_err(TunnelError::Io)?;
 
-    let mut buf = [0; 8192];
-    let mut pos = 0;
+    let mut buf = BytesMut::with_capacity(8192);
 
     loop {
-        let n = read(&mut conn, &mut buf[pos..])
-            .await
-            .map_err(TunnelError::Io)?;
-
-        if n == 0 {
+        if conn.read_buf(&mut buf).await.map_err(TunnelError::Io)? == 0 {
             return Err(TunnelError::TunnelUnexpectedEof);
         }
-        pos += n;
 
-        let recvd = &buf[..pos];
-        if recvd.starts_with(b"HTTP/1.1 200") || recvd.starts_with(b"HTTP/1.0 200") {
-            if recvd.ends_with(b"\r\n\r\n") {
-                return Ok(conn);
-            }
-            if pos == buf.len() {
-                return Err(TunnelError::ProxyHeadersTooLong);
-            }
-        // else read more
-        } else if recvd.starts_with(b"HTTP/1.1 407") {
-            return Err(TunnelError::ProxyAuthRequired);
-        } else {
-            return Err(TunnelError::TunnelUnsuccessful);
+        let mut headers = [httparse::EMPTY_HEADER; 64];
+        let mut res = httparse::Response::new(&mut headers);
+        match res.parse(&buf).map_err(TunnelError::Parse)? {
+            httparse::Status::Partial => continue,
+            httparse::Status::Complete(_) => match res.code {
+                Some(200) => return Ok(conn),
+                Some(407) => return Err(TunnelError::ProxyAuthRequired),
+                Some(_) | None => return Err(TunnelError::TunnelUnsuccessful),
+            },
         }
     }
-}
-
-async fn read<T>(io: &mut T, buf: &mut [u8]) -> io::Result<usize>
-where
-    T: AsyncRead + Unpin,
-{
-    std::future::poll_fn(move |cx| {
-        let mut buf = ReadBuf::new(buf);
-        ready!(Pin::new(&mut *io).poll_read(cx, &mut buf))?;
-        Poll::Ready(Ok(buf.filled().len()))
-    })
-    .await
-}
-
-async fn write_all<T>(io: &mut T, buf: &[u8]) -> io::Result<()>
-where
-    T: AsyncWrite + Unpin,
-{
-    let mut n = 0;
-    std::future::poll_fn(move |cx| {
-        while n < buf.len() {
-            n += ready!(Pin::new(&mut *io).poll_write(cx, &buf[n..])?);
-        }
-        Poll::Ready(Ok(()))
-    })
-    .await
 }
 
 impl std::fmt::Display for TunnelError {
@@ -240,7 +204,7 @@ impl std::fmt::Display for TunnelError {
         f.write_str(match self {
             TunnelError::MissingHost => "missing destination host",
             TunnelError::ProxyAuthRequired => "proxy authorization required",
-            TunnelError::ProxyHeadersTooLong => "proxy response headers too long",
+            TunnelError::Parse(_) => "invalid proxy response",
             TunnelError::TunnelUnexpectedEof => "unexpected end of file",
             TunnelError::TunnelUnsuccessful => "unsuccessful",
             TunnelError::ConnectFailed(_) => "failed to create underlying connection",
@@ -253,6 +217,7 @@ impl std::error::Error for TunnelError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             TunnelError::Io(e) => Some(e),
+            TunnelError::Parse(e) => Some(e),
             TunnelError::ConnectFailed(e) => Some(&**e),
             _ => None,
         }
