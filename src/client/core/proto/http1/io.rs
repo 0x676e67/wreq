@@ -256,6 +256,10 @@ where
             }
 
             loop {
+                // Let Tokio pick the write path.
+                // With `tokio-btls` this currently falls back to plain writes;
+                // if we later support vectored TLS writes like `tokio-rustls`,
+                // `poll_write_buf` will pick that up automatically.
                 let n = ready!(tokio_util::io::poll_write_buf(
                     Pin::new(&mut self.io),
                     cx,
