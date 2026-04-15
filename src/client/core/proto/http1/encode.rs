@@ -51,20 +51,25 @@ enum BufKind<B> {
 }
 
 impl Encoder {
+    #[inline]
     fn new(kind: Kind) -> Encoder {
         Encoder {
             kind,
             is_last: false,
         }
     }
+
+    #[inline]
     pub(crate) fn chunked() -> Encoder {
         Encoder::new(Kind::Chunked(None))
     }
 
+    #[inline]
     pub(crate) fn length(len: u64) -> Encoder {
         Encoder::new(Kind::Length(len))
     }
 
+    #[inline]
     pub(crate) fn into_chunked_with_trailing_fields(self, trailers: Vec<HeaderName>) -> Encoder {
         match self.kind {
             Kind::Chunked(_) => Encoder {
@@ -75,18 +80,22 @@ impl Encoder {
         }
     }
 
+    #[inline]
     pub(crate) fn is_eof(&self) -> bool {
         matches!(self.kind, Kind::Length(0))
     }
 
+    #[inline]
     pub(crate) fn is_last(&self) -> bool {
         self.is_last
     }
 
+    #[inline]
     pub(crate) fn is_close_delimited(&self) -> bool {
         false
     }
 
+    #[inline]
     pub(crate) fn is_chunked(&self) -> bool {
         matches!(self.kind, Kind::Chunked(_))
     }
@@ -328,7 +337,8 @@ impl Buf for ChunkSize {
     #[inline]
     fn advance(&mut self, cnt: usize) {
         assert!(cnt <= self.remaining());
-        self.pos += cnt as u8; // just asserted cnt fits in u8
+        // just asserted cnt fits in u8
+        self.pos += cnt as u8;
     }
 }
 
