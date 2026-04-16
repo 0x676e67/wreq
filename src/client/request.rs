@@ -412,7 +412,7 @@ impl RequestBuilder {
     pub fn query<T: Serialize + ?Sized>(mut self, query: &T) -> RequestBuilder {
         let mut error = None;
         if let Ok(ref mut req) = self.request {
-            match serde_urlencoded::to_string(query) {
+            match serde_html_form::to_string(query) {
                 Ok(serializer) => {
                     let uri = req.uri_mut();
                     uri.set_query(serializer);
@@ -458,7 +458,7 @@ impl RequestBuilder {
     #[cfg_attr(docsrs, doc(cfg(feature = "form")))]
     pub fn form<T: Serialize + ?Sized>(mut self, form: &T) -> RequestBuilder {
         if let Ok(ref mut req) = self.request {
-            match serde_urlencoded::to_string(form) {
+            match serde_html_form::to_string(form) {
                 Ok(body) => {
                     const HEADER_VALUE: HeaderValue =
                         HeaderValue::from_static("application/x-www-form-urlencoded");

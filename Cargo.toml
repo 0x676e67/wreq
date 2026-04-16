@@ -19,7 +19,7 @@ rustdoc-args = ["--cfg", "docsrs"]
 targets = ["x86_64-unknown-linux-gnu"]
 
 [features]
-default = ["webpki-roots"]
+default = ["webpki-roots", "form", "query"]
 
 # Enable support for decoding text.
 charset = ["dep:encoding_rs", "dep:mime"]
@@ -40,10 +40,10 @@ zstd = ["dep:tower-http", "tower-http?/decompression-zstd"]
 deflate = ["dep:tower-http", "tower-http?/decompression-deflate"]
 
 # Enable URL query string serialization support.
-query = ["dep:serde", "dep:serde_urlencoded"]
+query = ["dep:serde", "dep:serde_html_form"]
 
 # Enable x-www-form-urlencoded form support.
-form = ["dep:serde", "dep:serde_urlencoded"]
+form = ["dep:serde", "dep:serde_html_form"]
 
 # Enable JSON support.
 json = ["dep:serde", "dep:serde_json"]
@@ -115,7 +115,7 @@ tower = { version = "0.5.3", default-features = false, features = [
 ## serde
 serde = { version = "1.0", optional = true }
 serde_json = { version = "1.0", optional = true }
-serde_urlencoded = { version = "0.7.1", optional = true }
+serde_html_form = { version = "0.4.0", optional = true }
 
 ## multipart
 mime_guess = { version = "2.0", default-features = false, optional = true }
