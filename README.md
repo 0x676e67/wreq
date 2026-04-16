@@ -11,7 +11,7 @@
 
 > 🚀 Help me work seamlessly with open source sharing by [sponsoring me on GitHub](https://github.com/0x676e67/0x676e67/blob/main/SPONSOR.md)
 
-An ergonomic and modular Rust HTTP client for advanced and low-level emulation, with customizable TLS, JA3/JA4, and HTTP/2 fingerprinting capabilities.
+An ergonomic and modular Rust HTTP Client for high-fidelity protocol matching, featuring customizable TLS, JA3/JA4, and HTTP/2 signature capabilities.
 
 ## Features
 
@@ -24,7 +24,7 @@ An ergonomic and modular Rust HTTP client for advanced and low-level emulation, 
 - Tower Middleware
 - WebSocket Upgrade
 - HTTPS via BoringSSL
-- HTTP/2 over TLS Emulation
+- HTTP/2 over TLS Parity
 - Certificate Store (CAs & mTLS)
 
 ## Example

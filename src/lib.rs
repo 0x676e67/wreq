@@ -6,81 +6,24 @@
 
 //! # wreq
 //!
-//! An ergonomic all-in-one HTTP client for browser emulation with TLS, JA3/JA4, and HTTP/2
-//! fingerprints.
+//! An ergonomic and modular Rust HTTP Client for high-fidelity protocol matching, featuring customizable TLS, JA3/JA4, and HTTP/2 signature capabilities.
 //!
 //! - Plain bodies, [JSON](#json), [urlencoded](#forms), [multipart]
-//! - Cookies Store
+//! - HTTP Trailer
+//! - Cookie Store
 //! - [Redirect Policy](#redirect-policies)
 //! - Original Header
 //! - Rotating [Proxies](#proxies)
-//! - [Certificate Store](#certificate-store)
 //! - [Tower](https://docs.rs/tower/latest/tower) Middleware
 //! - [WebSocket](#websocket) Upgrade
 //! - HTTPS via [BoringSSL](#tls)
-//! - HTTP/2 over TLS [Emulation](#emulation)
+//! - HTTP/2 over TLS Parity
+//! - [Certificate Store (CAs & mTLS)](#certificate-store)
 //!
 //! Additional learning resources include:
 //!
 //! - [The Rust Cookbook](https://doc.rust-lang.org/stable/book/ch00-00-introduction.html)
 //! - [Repository Examples](https://github.com/0x676e67/wreq/tree/main/examples)
-//!
-//! ## Emulation
-//!
-//! The `emulation` module provides a way to simulate various browser TLS/HTTP2 fingerprints.
-//!
-//! ```rust,no_run
-//! use wreq_util::Emulation;
-//!
-//! #[tokio::main]
-//! async fn main() -> wreq::Result<()> {
-//!     // Use the API you're already familiar with
-//!     let resp = wreq::get("https://tls.peet.ws/api/all")
-//!         .emulation(Emulation::Firefox136)
-//!         .send().await?;
-//!     println!("{}", resp.text().await?);
-//!
-//!     Ok(())
-//! }
-//! ```
-//!
-//! ## Websocket
-//!
-//! The `websocket` module provides a way to upgrade a connection to a websocket.
-//!
-//! ```rust,no_run
-//! use futures_util::{SinkExt, StreamExt, TryStreamExt};
-//! use wreq::{header, ws::message::Message};
-//!
-//! #[tokio::main]
-//! async fn main() -> wreq::Result<()> {
-//!     // Use the API you're already familiar with
-//!     let websocket = wreq::websocket("wss://echo.websocket.org")
-//!         .header(header::USER_AGENT, env!("CARGO_PKG_NAME"))
-//!         .send()
-//!         .await?;
-//!
-//!     assert_eq!(websocket.version(), http::Version::HTTP_11);
-//!
-//!     let (mut tx, mut rx) = websocket.into_websocket().await?.split();
-//!
-//!     tokio::spawn(async move {
-//!         for i in 1..11 {
-//!             if let Err(err) = tx.send(Message::text(format!("Hello, World! {i}"))).await {
-//!                 eprintln!("failed to send message: {err}");
-//!             }
-//!         }
-//!     });
-//!
-//!     while let Some(message) = rx.try_next().await? {
-//!         if let Message::Text(text) = message {
-//!             println!("received: {text}");
-//!         }
-//!     }
-//!
-//!     Ok(())
-//! }
-//! ```
 //!
 //! ## Making a GET request
 //!
@@ -176,6 +119,44 @@
 //!     .await?;
 //! # Ok(())
 //! # }
+//! ```
+//!
+//! ## Websocket
+//!
+//! The `websocket` module provides a way to upgrade a connection to a websocket.
+//!
+//! ```rust,no_run
+//! use futures_util::{SinkExt, StreamExt, TryStreamExt};
+//! use wreq::{header, ws::message::Message};
+//!
+//! #[tokio::main]
+//! async fn main() -> wreq::Result<()> {
+//!     // Use the API you're already familiar with
+//!     let websocket = wreq::websocket("wss://echo.websocket.org")
+//!         .header(header::USER_AGENT, env!("CARGO_PKG_NAME"))
+//!         .send()
+//!         .await?;
+//!
+//!     assert_eq!(websocket.version(), http::Version::HTTP_11);
+//!
+//!     let (mut tx, mut rx) = websocket.into_websocket().await?.split();
+//!
+//!     tokio::spawn(async move {
+//!         for i in 1..11 {
+//!             if let Err(err) = tx.send(Message::text(format!("Hello, World! {i}"))).await {
+//!                 eprintln!("failed to send message: {err}");
+//!             }
+//!         }
+//!     });
+//!
+//!     while let Some(message) = rx.try_next().await? {
+//!         if let Message::Text(text) = message {
+//!             println!("received: {text}");
+//!         }
+//!     }
+//!
+//!     Ok(())
+//! }
 //! ```
 //!
 //! ## Redirect Policies
