@@ -285,7 +285,7 @@ path = "examples/connect_via_lower_priority_tokio_runtime.rs"
 required-features = ["tracing"]
 
 [[example]]
-name = "emulation"
+name = "emulate"
 path = "examples/emulate.rs"
 required-features = ["gzip", "brotli", "zstd", "deflate", "tracing"]
 
