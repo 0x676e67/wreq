@@ -222,12 +222,10 @@ impl Recorder {
         };
 
         let mut locked = shared.lock();
-
         locked.update_last_read_at();
 
         // are we ready to send another bdp ping?
         // if not, we don't need to record bytes either
-
         if let Some(ref next_bdp_at) = locked.next_bdp_at {
             if Instant::now() < *next_bdp_at {
                 return;
@@ -254,7 +252,6 @@ impl Recorder {
         };
 
         let mut locked = shared.lock();
-
         locked.update_last_read_at();
     }
 

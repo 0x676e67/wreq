@@ -6,7 +6,8 @@
 
 //! # wreq
 //!
-//! An ergonomic and modular Rust HTTP Client for high-fidelity protocol matching, featuring customizable TLS, JA3/JA4, and HTTP/2 signature capabilities.
+//! An ergonomic and modular Rust HTTP Client for high-fidelity protocol matching, featuring
+//! customizable TLS, JA3/JA4, and HTTP/2 signature capabilities.
 //!
 //! - Plain bodies, [JSON](#json), [urlencoded](#forms), [multipart]
 //! - HTTP Trailer

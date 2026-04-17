@@ -13,7 +13,7 @@ use tokio::io::{AsyncRead, AsyncWrite};
 use super::{BodyLength, Conn, Http1Transaction, MessageHead, Wants};
 use crate::client::core::{
     Error, Result,
-    body::{self, DecodedLength, Incoming as IncomingBody},
+    body::{self, DecodedLength, Incoming},
     dispatch::{self, TrySendError},
     error::BoxError,
     proto::{self, Dispatched, RequestHead},
@@ -39,21 +39,21 @@ pub(crate) trait Dispatch {
         self: Pin<&mut Self>,
         cx: &mut Context<'_>,
     ) -> Poll<Option<std::result::Result<(Self::PollItem, Self::PollBody), Self::PollError>>>;
-    fn recv_msg(&mut self, msg: Result<(Self::RecvItem, IncomingBody)>) -> Result<()>;
+    fn recv_msg(&mut self, msg: Result<(Self::RecvItem, Incoming)>) -> Result<()>;
     fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<std::result::Result<(), ()>>;
     fn should_poll(&self) -> bool;
 }
 
 pin_project_lite::pin_project! {
     pub(crate) struct Client<B> {
-        callback: Option<dispatch::Callback<Request<B>, http::Response<IncomingBody>>>,
+        callback: Option<dispatch::Callback<Request<B>, http::Response<Incoming>>>,
         #[pin]
         rx: ClientRx<B>,
         rx_closed: bool,
     }
 }
 
-type ClientRx<B> = dispatch::Receiver<Request<B>, http::Response<IncomingBody>>;
+type ClientRx<B> = dispatch::Receiver<Request<B>, http::Response<Incoming>>;
 
 impl<D, Bs, I, T> Dispatcher<D, Bs, I, T>
 where
@@ -248,9 +248,9 @@ where
         match ready!(self.conn.poll_read_head(cx)) {
             Some(Ok((mut head, body_len, wants))) => {
                 let body = match body_len {
-                    DecodedLength::ZERO => IncomingBody::empty(),
+                    DecodedLength::ZERO => Incoming::empty(),
                     other => {
-                        let (tx, rx) = IncomingBody::h1(other, wants.contains(Wants::EXPECT));
+                        let (tx, rx) = Incoming::h1(other, wants.contains(Wants::EXPECT));
                         self.body_tx = Some(tx);
                         rx
                     }
@@ -520,7 +520,7 @@ where
         }
     }
 
-    fn recv_msg(&mut self, msg: Result<(Self::RecvItem, IncomingBody)>) -> Result<()> {
+    fn recv_msg(&mut self, msg: Result<(Self::RecvItem, Incoming)>) -> Result<()> {
         match msg {
             Ok((msg, body)) => {
                 if let Some(cb) = self.callback.take() {
@@ -606,9 +606,7 @@ mod tests {
             //
             handle.read(b"HTTP/1.1 200 OK\r\n\r\n");
 
-            let mut res_rx = tx
-                .try_send(http::Request::new(IncomingBody::empty()))
-                .unwrap();
+            let mut res_rx = tx.try_send(http::Request::new(Incoming::empty())).unwrap();
 
             tokio_test::assert_ready_ok!(Pin::new(&mut dispatcher).poll(cx));
             let err = tokio_test::assert_ready_ok!(Pin::new(&mut res_rx).poll(cx))
@@ -639,7 +637,7 @@ mod tests {
         let _dispatcher = tokio::spawn(dispatcher);
 
         let body = {
-            let (mut tx, body) = IncomingBody::h1(DecodedLength::new(4), false);
+            let (mut tx, body) = Incoming::h1(DecodedLength::new(4), false);
             tx.try_send_data("reee".into()).unwrap();
             body
         };
@@ -669,7 +667,7 @@ mod tests {
         assert!(dispatcher.poll().is_pending());
 
         let body = {
-            let (mut tx, body) = IncomingBody::channel();
+            let (mut tx, body) = Incoming::channel();
             tx.try_send_data("".into()).unwrap();
             body
         };
