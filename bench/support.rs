@@ -4,6 +4,8 @@ pub mod server;
 
 use std::fmt;
 
+pub type BoxError = Box<dyn std::error::Error + Send + Sync>;
+
 #[allow(unused)]
 #[derive(Clone, Copy, Debug)]
 pub enum HttpVersion {

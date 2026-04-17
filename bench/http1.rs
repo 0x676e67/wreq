@@ -7,14 +7,11 @@ use std::time::Duration;
 use criterion::{Criterion, criterion_group, criterion_main};
 use support::{HttpVersion, Tls, bench};
 
-const TLS_MODE: Tls = Tls::Disabled;
-const HTTP_MODE: HttpVersion = HttpVersion::Http1;
-const ADDR: &str = "127.0.0.1:5928";
 const NUM_REQUESTS_TO_SEND: usize = 500;
 
 #[inline]
 fn bench(c: &mut Criterion) {
-    bench::bench(c, TLS_MODE, HTTP_MODE, ADDR, NUM_REQUESTS_TO_SEND)
+    bench::bench(c, Tls::Disabled, HttpVersion::Http1, NUM_REQUESTS_TO_SEND)
         .expect("Failed to run HTTP/1 benchmark server")
 }
 

@@ -1,15 +1,13 @@
-use std::error::Error;
-
 use criterion::Criterion;
 
 use crate::support::{
-    HttpVersion, Tls, client::bench_clients, current_thread_runtime, multi_thread_runtime,
-    server::with_server,
+    BoxError, HttpVersion, Tls, client::bench_clients, current_thread_runtime,
+    multi_thread_runtime, server::with_server,
 };
 
 pub const CURRENT_THREAD_LABEL: &str = "current_thread";
 pub const MULTI_THREAD_LABEL: &str = "multi_thread";
-pub const CONCURRENT_CASES: &[usize] = &[10, 20, 50, 100, 150];
+pub const CONCURRENT_CASES: &[usize] = &[10, 50, 100, 150];
 pub const BODY_CASES: &[&[u8]] = &[
     &[b'a'; 1024],            // 1 KB
     &[b'a'; 10 * 1024],       // 10 KB
@@ -24,9 +22,8 @@ pub fn bench(
     c: &mut Criterion,
     tls: Tls,
     http_version: HttpVersion,
-    addr: &'static str,
     num_requests: usize,
-) -> Result<(), Box<dyn Error>> {
+) -> Result<(), BoxError> {
     const OS: &str = std::env::consts::OS;
     const ARCH: &str = std::env::consts::ARCH;
 
@@ -38,7 +35,7 @@ pub fn bench(
 
     for &concurrent_limit in CONCURRENT_CASES {
         for body in BODY_CASES {
-            with_server(addr, tls, || {
+            with_server(tls, |addr| {
                 // single-threaded client
                 let mut group = c.benchmark_group(format!(
                     "{cpu_model}/{OS}_{ARCH}/{CURRENT_THREAD_LABEL}/{tls}/{http_version}/{concurrent_limit}/{}KB",
@@ -59,7 +56,7 @@ pub fn bench(
                 Ok(())
             })?;
 
-            with_server(addr, tls, || {
+            with_server(tls, |addr| {
                 // multi-threaded client
                 let mut group = c.benchmark_group(format!(
                     "{cpu_model}/{OS}_{ARCH}/{MULTI_THREAD_LABEL}/{tls}/{http_version}/{concurrent_limit}/{}KB",

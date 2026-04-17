@@ -1,4 +1,4 @@
-use std::{convert::Infallible, error::Error, pin::Pin, sync::Arc, time::Duration};
+use std::{convert::Infallible, io, net::SocketAddr, pin::Pin, sync::Arc, time::Duration};
 
 use btls::{
     pkey::PKey,
@@ -20,16 +20,16 @@ use tokio::{
 };
 use tokio_btls::SslStream;
 
-use super::{Tls, multi_thread_runtime};
+use super::{BoxError, Tls, multi_thread_runtime};
 
 pub struct Server {
-    addr: &'static str,
+    listener: std::net::TcpListener,
     tls_acceptor: Option<Arc<SslAcceptor>>,
     builder: Builder<TokioExecutor>,
 }
 
 impl Server {
-    pub fn new(addr: &'static str, tls: Tls) -> Result<Self, Box<dyn Error + Send + Sync>> {
+    pub fn new(tls: Tls) -> Result<Self, BoxError> {
         let tls_acceptor = match tls {
             Tls::Enabled => {
                 let mut builder = SslAcceptor::mozilla_intermediate_v5(SslMethod::tls())?;
@@ -54,40 +54,23 @@ impl Server {
             .timer(TokioTimer::new())
             .keep_alive_interval(Duration::from_secs(30));
 
+        let listener = std::net::TcpListener::bind("127.0.0.1:0")?;
+        listener.set_nonblocking(true)?;
+
         Ok(Server {
-            addr,
+            listener,
             tls_acceptor,
             builder,
         })
     }
 
-    async fn serve<S>(&self, stream: S)
-    where
-        S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
-    {
-        let _ = self
-            .builder
-            .serve_connection(
-                TokioIo::new(stream),
-                service_fn(|req: http::Request<Incoming>| async {
-                    let bytes = req
-                        .into_body()
-                        .collect()
-                        .await
-                        .map(Collected::<Bytes>::to_bytes);
-                    let bytes = bytes.unwrap_or_else(|_| Bytes::new());
-                    Ok::<_, Infallible>(http::Response::new(Full::new(bytes)))
-                }),
-            )
-            .await;
+    fn local_addr(&self) -> io::Result<SocketAddr> {
+        self.listener.local_addr()
     }
 
-    async fn run(
-        self: Arc<Self>,
-        mut shutdown: oneshot::Receiver<()>,
-    ) -> Result<(), Box<dyn Error + Send + Sync>> {
-        let listener = TcpListener::bind(self.addr).await?;
+    async fn run(self, mut shutdown: oneshot::Receiver<()>) -> Result<(), BoxError> {
         let mut join_set = JoinSet::new();
+        let listener = TcpListener::from_std(self.listener)?;
 
         loop {
             tokio::select! {
@@ -97,9 +80,9 @@ impl Server {
                 accept = listener.accept() => {
                     if let Ok((socket, _peer_addr)) = accept {
                         let tls_acceptor = self.tls_acceptor.clone();
-                        let server = self.clone();
+                        let builder = self.builder.clone();
                         join_set.spawn(async move {
-                            handle_connection(socket, tls_acceptor, server).await;
+                            handle_connection(socket, tls_acceptor, builder).await;
                         });
                     }
                 }
@@ -132,33 +115,59 @@ impl Handle {
     }
 }
 
-pub fn with_server<F>(addr: &'static str, tls: Tls, f: F) -> Result<(), Box<dyn Error>>
+pub fn with_server<F>(tls: Tls, f: F) -> Result<(), BoxError>
 where
-    F: FnOnce() -> Result<(), Box<dyn Error>>,
+    F: FnOnce(SocketAddr) -> Result<(), BoxError>,
 {
+    let server = Server::new(tls)?;
+    let addr = server.local_addr()?;
+
     let (shutdown_tx, shutdown_rx) = oneshot::channel();
+
     let join = std::thread::spawn(move || {
-        let server = Arc::new(Server::new(addr, tls).expect("Failed to create server"));
         let rt = multi_thread_runtime();
-        rt.block_on(server.clone().run(shutdown_rx))
+        rt.block_on(server.run(shutdown_rx))
             .expect("Failed to run server with shutdown");
     });
 
     std::thread::sleep(Duration::from_millis(100));
-    let server = Handle {
+
+    let handle = Handle {
         shutdown: shutdown_tx,
         join,
     };
 
-    f()?;
-    server.shutdown();
+    f(addr)?;
+    handle.shutdown();
+
+    std::thread::sleep(Duration::from_millis(100));
     Ok(())
+}
+
+async fn serve<S>(builder: Builder<TokioExecutor>, stream: S)
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+{
+    let _ = builder
+        .serve_connection(
+            TokioIo::new(stream),
+            service_fn(|req: http::Request<Incoming>| async {
+                let bytes = req
+                    .into_body()
+                    .collect()
+                    .await
+                    .map(Collected::<Bytes>::to_bytes);
+                let bytes = bytes.unwrap_or_else(|_| Bytes::new());
+                Ok::<_, Infallible>(http::Response::new(Full::new(bytes)))
+            }),
+        )
+        .await;
 }
 
 async fn handle_connection(
     socket: TcpStream,
     tls_acceptor: Option<Arc<SslAcceptor>>,
-    server: Arc<Server>,
+    builder: Builder<TokioExecutor>,
 ) {
     if let Some(acceptor) = tls_acceptor {
         let ssl = Ssl::new(acceptor.context()).expect("failed to create Ssl");
@@ -172,8 +181,8 @@ async fn handle_connection(
         if Pin::new(&mut stream).accept().await.is_err() {
             return;
         }
-        server.serve(stream).await;
+        serve(builder, stream).await;
     } else {
-        server.serve(socket).await;
+        serve(builder, socket).await;
     }
 }

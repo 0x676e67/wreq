@@ -1,15 +1,15 @@
-use std::{convert::Infallible, error::Error, sync::Arc};
+use std::{convert::Infallible, net::SocketAddr, sync::Arc};
 
 use bytes::Bytes;
 use criterion::{BenchmarkGroup, measurement::WallTime};
 use http_body_util::BodyExt;
 use tokio::{runtime::Runtime, sync::Semaphore};
 
-use super::{HttpVersion, Tls};
+use super::{BoxError, HttpVersion, Tls};
 
 const STREAM_CHUNK_SIZE: usize = 256 * 1024;
 
-fn create_wreq_client(tls: Tls, http_version: HttpVersion) -> Result<wreq::Client, Box<dyn Error>> {
+fn create_wreq_client(tls: Tls, http_version: HttpVersion) -> Result<wreq::Client, BoxError> {
     let builder = wreq::Client::builder()
         .no_proxy()
         .redirect(wreq::redirect::Policy::none())
@@ -23,10 +23,7 @@ fn create_wreq_client(tls: Tls, http_version: HttpVersion) -> Result<wreq::Clien
     Ok(builder.build()?)
 }
 
-fn create_reqwest_client(
-    tls: Tls,
-    http_version: HttpVersion,
-) -> Result<reqwest::Client, Box<dyn Error>> {
+fn create_reqwest_client(tls: Tls, http_version: HttpVersion) -> Result<reqwest::Client, BoxError> {
     let builder = reqwest::Client::builder()
         .no_proxy()
         .redirect(reqwest::redirect::Policy::none())
@@ -98,11 +95,6 @@ fn reqwest_body(stream: bool, body: &'static [u8]) -> reqwest::Body {
     }
 }
 
-#[inline]
-fn box_err<E: Error + Send + 'static>(e: E) -> Box<dyn Error + Send> {
-    Box::new(e)
-}
-
 async fn wreq_requests_concurrent(
     client: &wreq::Client,
     url: &str,
@@ -110,34 +102,29 @@ async fn wreq_requests_concurrent(
     concurrent_limit: usize,
     body: &'static [u8],
     stream: bool,
-) -> Result<(), Box<dyn Error + Send>> {
+) {
     let semaphore = Arc::new(Semaphore::new(concurrent_limit));
     let mut handles = Vec::with_capacity(num_requests);
-
     for _ in 0..num_requests {
-        let url = url.to_owned();
         let client = client.clone();
+        let url = url.to_string();
         let semaphore = semaphore.clone();
-        let task = tokio::spawn(async move {
-            let _permit = semaphore.acquire().await.map_err(box_err)?;
+        let fut = async move {
+            let _permit = semaphore
+                .acquire()
+                .await
+                .expect("Semaphore should be acquirable");
             let response = client
                 .post(url)
                 .body(wreq_body(stream, body))
                 .send()
                 .await
-                .map_err(box_err)?;
-
+                .expect("Unexpected request failure");
             wreq_body_assert(response, body.len()).await;
-            Ok(())
-        });
-
-        handles.push(task);
+        };
+        handles.push(tokio::spawn(fut));
     }
-
-    futures_util::future::join_all(handles)
-        .await
-        .into_iter()
-        .try_for_each(|res| res.map_err(box_err)?)
+    futures_util::future::join_all(handles).await;
 }
 
 async fn reqwest_requests_concurrent(
@@ -147,47 +134,42 @@ async fn reqwest_requests_concurrent(
     concurrent_limit: usize,
     body: &'static [u8],
     stream: bool,
-) -> Result<(), Box<dyn Error + Send>> {
+) {
     let semaphore = Arc::new(Semaphore::new(concurrent_limit));
     let mut handles = Vec::with_capacity(num_requests);
-
     for _ in 0..num_requests {
-        let url = url.to_owned();
         let client = client.clone();
+        let url = url.to_string();
         let semaphore = semaphore.clone();
-        let task = tokio::spawn(async move {
-            let _permit = semaphore.acquire().await.map_err(box_err)?;
+        let fut = async move {
+            let _permit = semaphore
+                .acquire()
+                .await
+                .expect("Semaphore should be acquirable");
             let response = client
                 .post(url)
                 .body(reqwest_body(stream, body))
                 .send()
                 .await
-                .map_err(box_err)?;
-
+                .expect("Unexpected request failure");
             reqwest_body_assert(response, body.len()).await;
-            Ok(())
-        });
-
-        handles.push(task);
+        };
+        handles.push(tokio::spawn(fut));
     }
-
-    futures_util::future::join_all(handles)
-        .await
-        .into_iter()
-        .try_for_each(|res| res.map_err(box_err)?)
+    futures_util::future::join_all(handles).await;
 }
 
 #[allow(clippy::too_many_arguments)]
 pub fn bench_clients(
     group: &mut BenchmarkGroup<'_, WallTime>,
     rt: fn() -> Runtime,
-    addr: &str,
+    addr: SocketAddr,
     tls: Tls,
     http_version: HttpVersion,
     num_requests: usize,
     concurrent_limit: usize,
     body: &'static [u8],
-) -> Result<(), Box<dyn Error>> {
+) -> Result<(), BoxError> {
     let url = format!("{tls}://{addr}");
 
     fn make_benchmark_label<T: ?Sized>(stream: bool) -> String {
