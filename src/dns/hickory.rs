@@ -1,12 +1,14 @@
 //! DNS resolution via the [hickory-resolver](https://github.com/hickory-dns/hickory-dns) crate
 
-use std::{net::SocketAddr, sync::LazyLock};
+use std::{
+    net::{IpAddr, SocketAddr},
+    sync::LazyLock,
+};
 
 use hickory_resolver::{
     TokioResolver,
-    config::{LookupIpStrategy, ResolverConfig},
-    lookup_ip::LookupIpIntoIter,
-    name_server::TokioConnectionProvider,
+    config::{self, LookupIpStrategy, ResolverConfig},
+    net::runtime::TokioRuntimeProvider,
 };
 
 use super::{Addrs, Name, Resolve, Resolving};
@@ -25,8 +27,10 @@ pub struct HickoryDnsResolver {
 impl HickoryDnsResolver {
     /// Create a new resolver with the default configuration,
     /// which reads from `/etc/resolve.conf`. The options are
-    /// overriden to look up for both IPv4 and IPv6 addresses
-    /// to work with "happy eyeballs" algorithm.
+    /// overridden to look up both IPv4 and IPv6 addresses
+    /// to support the "happy eyeballs" algorithm.
+    ///
+    /// SAFETY: `build` only fails if DNS-over-TLS is enabled and default TLS config creation fails.
     pub fn new() -> HickoryDnsResolver {
         static RESOLVER: LazyLock<TokioResolver> = LazyLock::new(|| {
             let mut builder = match TokioResolver::builder_tokio() {
@@ -37,13 +41,13 @@ impl HickoryDnsResolver {
                 Err(_err) => {
                     debug!("error reading DNS system conf: {}, using defaults", _err);
                     TokioResolver::builder_with_config(
-                        ResolverConfig::default(),
-                        TokioConnectionProvider::default(),
+                        ResolverConfig::udp_and_tcp(&config::GOOGLE),
+                        TokioRuntimeProvider::default(),
                     )
                 }
             };
             builder.options_mut().ip_strategy = LookupIpStrategy::Ipv4AndIpv6;
-            builder.build()
+            builder.build().expect("failed to create DNS resolver")
         });
 
         HickoryDnsResolver {
@@ -53,7 +57,7 @@ impl HickoryDnsResolver {
 }
 
 struct SocketAddrs {
-    iter: LookupIpIntoIter,
+    iter: std::vec::IntoIter<IpAddr>,
 }
 
 impl Resolve for HickoryDnsResolver {
@@ -62,7 +66,7 @@ impl Resolve for HickoryDnsResolver {
         Box::pin(async move {
             let lookup = resolver.resolver.lookup_ip(name.as_str()).await?;
             let addrs: Addrs = Box::new(SocketAddrs {
-                iter: lookup.into_iter(),
+                iter: lookup.iter().collect::<Vec<_>>().into_iter(),
             });
             Ok(addrs)
         })
@@ -72,6 +76,7 @@ impl Resolve for HickoryDnsResolver {
 impl Iterator for SocketAddrs {
     type Item = SocketAddr;
 
+    #[inline]
     fn next(&mut self) -> Option<Self::Item> {
         self.iter.next().map(|ip_addr| SocketAddr::new(ip_addr, 0))
     }
