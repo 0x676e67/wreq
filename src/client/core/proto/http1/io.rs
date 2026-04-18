@@ -9,8 +9,8 @@ use std::{
 use bytes::{Buf, Bytes, BytesMut};
 use tokio::io::{AsyncRead, AsyncWrite};
 
-use super::{Http1Transaction, ParseContext, ParsedMessage};
-use crate::client::core::{Error, Result, common::buf::BufList};
+use super::{Http1Transaction, ParseContext, ParsedMessage, buf::BufList};
+use crate::client::core::{Error, Result};
 
 /// The initial buffer size allocated before trying to read from IO.
 pub(crate) const INIT_BUFFER_SIZE: usize = 8192;

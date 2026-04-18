@@ -7,15 +7,12 @@ use std::{
 
 use bytes::Bytes;
 use futures_channel::{mpsc, oneshot};
-use futures_util::{Stream, stream::FusedStream};
+use futures_util::{FutureExt, Stream, stream::FusedStream};
 use http::HeaderMap;
 use http_body::{Body, Frame, SizeHint};
 
-use super::DecodedLength;
-use crate::client::core::{Error, Result, common::watch, proto::http2::ping};
-
-const WANT_PENDING: usize = 1;
-const WANT_READY: usize = 2;
+use super::{DecodedLength, watch};
+use crate::client::core::{Error, Result, proto::http2::ping};
 
 /// A stream of [`Bytes`], used when receiving bodies from the network.
 ///
@@ -71,11 +68,9 @@ impl Incoming {
     pub(crate) fn h1(content_length: DecodedLength, wanter: bool) -> (Sender, Incoming) {
         let (data_tx, data_rx) = mpsc::channel(0);
         let (trailers_tx, trailers_rx) = oneshot::channel();
-
         // If wanter is true, `Sender::poll_ready()` won't becoming ready
         // until the `Body` has been polled for data once.
-        let want = if wanter { WANT_PENDING } else { WANT_READY };
-        let (want_tx, want_rx) = watch::channel(want);
+        let (want_tx, want_rx) = watch::channel(wanter);
 
         (
             Sender {
@@ -131,7 +126,7 @@ impl Body for Incoming {
                 ref mut want_tx,
                 ref mut trailers_rx,
             } => {
-                want_tx.send(WANT_READY);
+                want_tx.send(watch::Value::Ready);
 
                 if !data_rx.is_terminated() {
                     if let Some(chunk) = ready!(Pin::new(data_rx).poll_next(cx)?) {
@@ -226,19 +221,8 @@ impl Sender {
     /// Check to see if this `Sender` can send more data.
     pub(crate) fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<()>> {
         // Check if the receiver end has tried polling for the body yet
-        ready!(self.poll_want(cx)?);
+        ready!(self.want_rx.poll_unpin(cx)?);
         self.data_tx.poll_ready(cx).map_err(|_| Error::new_closed())
-    }
-
-    /// Check if the receiver end has tried polling for the body yet.
-    #[inline]
-    fn poll_want(&mut self, cx: &mut Context<'_>) -> Poll<Result<()>> {
-        match self.want_rx.load(cx) {
-            WANT_READY => Poll::Ready(Ok(())),
-            WANT_PENDING => Poll::Pending,
-            watch::CLOSED => Poll::Ready(Err(Error::new_closed())),
-            unexpected => unreachable!("want_rx value: {}", unexpected),
-        }
     }
 
     /// Try to send data on this channel.
@@ -284,17 +268,6 @@ impl Sender {
     pub(crate) fn send_error(&mut self, err: Error) {
         // clone so the send works even if buffer is full
         let _ = self.data_tx.clone().try_send(Err(err));
-    }
-}
-
-impl fmt::Debug for Sender {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let mut builder = f.debug_tuple(stringify!(Sender));
-        match self.want_rx.peek() {
-            watch::CLOSED => builder.field(&stringify!(Closed)),
-            _ => builder.field(&stringify!(Open)),
-        };
-        builder.finish()
     }
 }
 

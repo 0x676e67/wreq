@@ -1,5 +1,6 @@
 //! HTTP/1 protocol implementation and utilities.
 
+mod buf;
 mod decode;
 mod encode;
 mod io;
