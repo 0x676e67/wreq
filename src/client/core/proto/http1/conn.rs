@@ -204,7 +204,8 @@ where
             self.state.reading = Reading::KeepAlive;
             self.try_keep_alive(cx);
         } else if msg.expect_continue && msg.head.version.gt(&Version::HTTP_10) {
-            let h1_max_header_size = None; // TODO: remove this when we land h1_max_header_size support
+            // TODO: remove this when we land h1_max_header_size support
+            let h1_max_header_size = None;
             self.state.reading = Reading::Continue(Decoder::new(
                 msg.decode,
                 self.state.h1_max_headers,
@@ -212,7 +213,8 @@ where
             ));
             wants = wants.add(Wants::EXPECT);
         } else {
-            let h1_max_header_size = None; // TODO: remove this when we land h1_max_header_size support
+            // TODO: remove this when we land h1_max_header_size support
+            let h1_max_header_size = None;
             self.state.reading = Reading::Body(Decoder::new(
                 msg.decode,
                 self.state.h1_max_headers,

@@ -857,8 +857,8 @@ mod tests {
     use std::time::Duration;
 
     use bytes::Bytes;
-    use futures_channel::oneshot;
     use http_body_util::Full;
+    use tokio::sync::oneshot;
 
     use crate::client::core::{conn::http2::Builder, rt::TokioExecutor};
 

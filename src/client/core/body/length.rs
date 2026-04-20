@@ -6,7 +6,7 @@ use crate::client::core::error::Parse;
 pub(crate) struct DecodedLength(u64);
 
 impl DecodedLength {
-    const MAX_LEN: u64 = u64::MAX - 2;
+    pub(crate) const MAX_LEN: u64 = u64::MAX - 2;
     pub(crate) const CLOSE_DELIMITED: DecodedLength = DecodedLength(u64::MAX);
     pub(crate) const CHUNKED: DecodedLength = DecodedLength(u64::MAX - 1);
     pub(crate) const ZERO: DecodedLength = DecodedLength(0);
@@ -22,6 +22,7 @@ impl DecodedLength {
     }
 
     /// Converts to an `Option<u64>` representing a Known or Unknown length.
+    #[inline]
     pub(crate) fn into_opt(self) -> Option<u64> {
         match self {
             DecodedLength::CHUNKED | DecodedLength::CLOSE_DELIMITED => None,
