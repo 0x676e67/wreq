@@ -57,7 +57,7 @@ impl Resolve for HickoryDnsResolver {
     fn resolve(&self, name: Name) -> Resolving {
         let resolver = self.clone();
         Box::pin(async move {
-            let lookup = resolver.resolver.lookup_ip(name.as_str()).await?; // Force resolution to complete before returning
+            let lookup = resolver.resolver.lookup_ip(name.as_str()).await?;
             let addrs: Addrs = Box::new(
                 lookup
                     .iter()
