@@ -91,7 +91,9 @@ where
         Poll::Ready(ready!(self.poll_inner(cx, should_shutdown)).or_else(|e| {
             // Be sure to alert a streaming body of the failure.
             if let Some(mut body) = self.body_tx.take() {
-                body.send_error(Error::new_body("connection error"));
+                if body.poll_ready(cx).is_ready() {
+                    body.send_error(Error::new_body("connection error"));
+                }
             }
             // An error means we're shutting down either way.
             // We just try to give the error to the user,
@@ -183,7 +185,7 @@ where
                         Poll::Ready(Some(Ok(frame))) => {
                             if frame.is_data() {
                                 let chunk = frame.into_data().unwrap_or_else(|_| unreachable!());
-                                match body.try_send_data(chunk) {
+                                match body.send_data(chunk) {
                                     Ok(()) => {
                                         self.body_tx = Some(body);
                                     }
@@ -197,7 +199,7 @@ where
                             } else if frame.is_trailers() {
                                 let trailers =
                                     frame.into_trailers().unwrap_or_else(|_| unreachable!());
-                                match body.try_send_trailers(trailers) {
+                                match body.send_trailers(trailers) {
                                     Ok(()) => {
                                         self.body_tx = Some(body);
                                     }
@@ -638,7 +640,10 @@ mod tests {
 
         let body = {
             let (mut tx, body) = Incoming::h1(DecodedLength::new(4), false);
-            tx.try_send_data("reee".into()).unwrap();
+            std::future::poll_fn(|cx| tx.poll_ready(cx))
+                .await
+                .expect("ready");
+            tx.send_data("reee".into()).unwrap();
             body
         };
 
@@ -668,7 +673,10 @@ mod tests {
 
         let body = {
             let (mut tx, body) = Incoming::channel();
-            tx.try_send_data("".into()).unwrap();
+            std::future::poll_fn(|cx| tx.poll_ready(cx))
+                .await
+                .expect("ready");
+            tx.send_data("".into()).unwrap();
             body
         };
 

@@ -5,7 +5,6 @@
 //! - The value `0` is reserved for closed.
 
 use std::{
-    pin::Pin,
     sync::{
         Arc,
         atomic::{AtomicU8, Ordering},
@@ -17,19 +16,15 @@ use futures_util::task::AtomicWaker;
 
 use crate::client::core::Error;
 
-#[repr(u8)]
-#[derive(Clone, Copy, PartialEq, Eq)]
-#[must_use = "watch::Value is a bitfield, so the variants are not mutually exclusive"]
-pub(super) enum Value {
-    Pending = 1,
-    Ready = 2,
-    Closed = 0,
-}
+type Value = u8;
+const READY: Value = 2;
+const PENDING: Value = 1;
+const CLOSED: Value = 0;
 
 pub(super) fn channel(wanter: bool) -> (Sender, Receiver) {
-    let initial = if wanter { Value::Pending } else { Value::Ready };
+    let initial = if wanter { PENDING } else { READY };
     let shared = Arc::new(Shared {
-        value: AtomicU8::new(initial as _),
+        value: AtomicU8::new(initial),
         waker: AtomicWaker::new(),
     });
 
@@ -57,33 +52,35 @@ pub(super) struct Receiver {
 // ===== impl Sender =====
 
 impl Sender {
-    #[inline]
-    pub(super) fn send(&mut self, value: Value) {
-        if self.shared.value.swap(value as u8, Ordering::SeqCst) != value as u8 {
+    #[inline(always)]
+    pub(super) fn ready(&self) {
+        self.send(READY);
+    }
+
+    fn send(&self, value: Value) {
+        if self.shared.value.swap(value, Ordering::SeqCst) != value {
             self.shared.waker.wake();
         }
     }
 }
 
 impl Drop for Sender {
-    #[inline]
+    #[inline(always)]
     fn drop(&mut self) {
-        self.send(Value::Closed);
+        self.send(CLOSED);
     }
 }
 
 // ===== impl Receiver =====
 
-impl Future for Receiver {
-    type Output = Result<(), Error>;
-
-    #[inline]
-    fn poll(self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<Self::Output> {
+impl Receiver {
+    #[inline(always)]
+    pub(super) fn poll_ready(&self, cx: &mut task::Context<'_>) -> Poll<Result<(), Error>> {
         self.shared.waker.register(cx.waker());
         match self.shared.value.load(Ordering::SeqCst) {
-            2 => Poll::Ready(Ok(())),
-            1 => Poll::Pending,
-            0 => Poll::Ready(Err(Error::new_closed())),
+            READY => Poll::Ready(Ok(())),
+            PENDING => Poll::Pending,
+            CLOSED => Poll::Ready(Err(Error::new_closed())),
             unexpected => unreachable!("watch value: {}", unexpected),
         }
     }
