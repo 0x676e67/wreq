@@ -110,52 +110,62 @@ pub(super) struct TimedOut;
 
 impl Error {
     /// Returns true if this was an HTTP parse error.
+    #[inline]
     pub fn is_parse(&self) -> bool {
         matches!(self.inner.kind, Kind::Parse(_))
     }
 
     /// Returns true if this was an HTTP parse error caused by an invalid response status code or
     /// reason phrase.
+    #[inline]
     pub fn is_parse_status(&self) -> bool {
         matches!(self.inner.kind, Kind::Parse(Parse::Status))
     }
 
     /// Returns true if this error was caused by user code.
+    #[inline]
     pub fn is_user(&self) -> bool {
         matches!(self.inner.kind, Kind::User(_))
     }
 
     /// Returns true if this was about a `Request` that was canceled.
+    #[inline]
     pub fn is_canceled(&self) -> bool {
         matches!(self.inner.kind, Kind::Canceled)
     }
 
     /// Returns true if a sender's channel is closed.
+    #[inline]
     pub fn is_closed(&self) -> bool {
         matches!(self.inner.kind, Kind::ChannelClosed)
     }
 
     /// Returns true if the connection closed before a message could complete.
+    #[inline]
     pub fn is_incomplete_message(&self) -> bool {
         matches!(self.inner.kind, Kind::IncompleteMessage)
     }
 
     /// Returns true if the body write was aborted.
+    #[inline]
     pub fn is_body_write_aborted(&self) -> bool {
         matches!(self.inner.kind, Kind::User(User::BodyWriteAborted))
     }
 
     /// Returns true if the error was caused by a timeout.
+    #[inline]
     pub fn is_timeout(&self) -> bool {
         self.find_source::<TimedOut>().is_some()
     }
 
+    #[inline]
     pub(super) fn new(kind: Kind) -> Error {
         Error {
             inner: Box::new(ErrorImpl { kind, cause: None }),
         }
     }
 
+    #[inline]
     pub(super) fn with<C: Into<Cause>>(mut self, cause: C) -> Error {
         self.inner.cause = Some(cause.into());
         self
@@ -182,74 +192,92 @@ impl Error {
             .unwrap_or(http2::Reason::INTERNAL_ERROR)
     }
 
+    #[inline]
     pub(super) fn new_canceled() -> Error {
         Error::new(Kind::Canceled)
     }
 
+    #[inline]
     pub(super) fn new_incomplete() -> Error {
         Error::new(Kind::IncompleteMessage)
     }
 
+    #[inline]
     pub(super) fn new_too_large() -> Error {
         Error::new(Kind::Parse(Parse::TooLarge))
     }
 
+    #[inline]
     pub(super) fn new_version_h2() -> Error {
         Error::new(Kind::Parse(Parse::VersionH2))
     }
 
+    #[inline]
     pub(super) fn new_unexpected_message() -> Error {
         Error::new(Kind::UnexpectedMessage)
     }
 
+    #[inline]
     pub(super) fn new_io(cause: std::io::Error) -> Error {
         Error::new(Kind::Io).with(cause)
     }
 
+    #[inline]
     pub(super) fn new_closed() -> Error {
         Error::new(Kind::ChannelClosed)
     }
 
+    #[inline]
     pub(super) fn new_body<E: Into<Cause>>(cause: E) -> Error {
         Error::new(Kind::Body).with(cause)
     }
 
+    #[inline]
     pub(super) fn new_body_write<E: Into<Cause>>(cause: E) -> Error {
         Error::new(Kind::BodyWrite).with(cause)
     }
 
+    #[inline]
     pub(super) fn new_body_write_aborted() -> Error {
         Error::new(Kind::User(User::BodyWriteAborted))
     }
 
+    #[inline]
     fn new_user(user: User) -> Error {
         Error::new(Kind::User(user))
     }
 
+    #[inline]
     pub(super) fn new_user_no_upgrade() -> Error {
         Error::new_user(User::NoUpgrade)
     }
 
+    #[inline]
     pub(super) fn new_user_manual_upgrade() -> Error {
         Error::new_user(User::ManualUpgrade)
     }
 
+    #[inline]
     pub(super) fn new_user_service<E: Into<Cause>>(cause: E) -> Error {
         Error::new_user(User::Service).with(cause)
     }
 
+    #[inline]
     pub(super) fn new_user_body<E: Into<Cause>>(cause: E) -> Error {
         Error::new_user(User::Body).with(cause)
     }
 
+    #[inline]
     pub(super) fn new_user_invalid_connect() -> Error {
         Error::new_user(User::InvalidConnectWithBody)
     }
 
+    #[inline]
     pub(super) fn new_shutdown(cause: std::io::Error) -> Error {
         Error::new(Kind::Shutdown).with(cause)
     }
 
+    #[inline]
     pub(super) fn new_user_dispatch_gone() -> Error {
         Error::new(Kind::User(User::DispatchGone))
     }
@@ -338,10 +366,12 @@ impl From<Parse> for Error {
 }
 
 impl Parse {
+    #[inline]
     pub(crate) fn content_length_invalid() -> Self {
         Parse::Header(Header::ContentLengthInvalid)
     }
 
+    #[inline]
     pub(crate) fn transfer_encoding_unexpected() -> Self {
         Parse::Header(Header::TransferEncodingUnexpected)
     }

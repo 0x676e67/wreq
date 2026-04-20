@@ -140,16 +140,14 @@ where
         async move {
             match sent {
                 Ok(rx) => match rx.await {
-                    Ok(Ok(res)) => Ok(res),
-                    Ok(Err(err)) => Err(err),
+                    Ok(res) => res,
                     // this is definite bug if it happens, but it shouldn't happen!
                     Err(_) => panic!("dispatch dropped without returning error"),
                 },
                 Err(req) => {
                     debug!("connection was not ready");
-                    let error = Error::new_canceled().with("connection was not ready");
                     Err(TrySendError {
-                        error,
+                        error: Error::new_canceled().with("connection was not ready"),
                         message: Some(req),
                     })
                 }

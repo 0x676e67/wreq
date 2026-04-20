@@ -1,4 +1,5 @@
 use std::{
+    convert::Infallible,
     future::Future,
     marker::Unpin,
     pin::Pin,
@@ -38,9 +39,12 @@ pub(crate) trait Dispatch {
     fn poll_msg(
         self: Pin<&mut Self>,
         cx: &mut Context<'_>,
-    ) -> Poll<Option<std::result::Result<(Self::PollItem, Self::PollBody), Self::PollError>>>;
+    ) -> Poll<Option<Result<(Self::PollItem, Self::PollBody), Self::PollError>>>;
+
     fn recv_msg(&mut self, msg: Result<(Self::RecvItem, Incoming)>) -> Result<()>;
-    fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<std::result::Result<(), ()>>;
+
+    fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), ()>>;
+
     fn should_poll(&self) -> bool;
 }
 
@@ -68,6 +72,7 @@ where
     Bs: Body + 'static,
     Bs::Error: Into<BoxError>,
 {
+    #[inline]
     pub(crate) fn new(dispatch: D, conn: Conn<I, Bs::Data, T>) -> Self {
         Dispatcher {
             conn,
@@ -78,6 +83,7 @@ where
         }
     }
 
+    #[inline]
     pub(crate) fn into_inner(self) -> (I, Bytes, D) {
         let (io, buf) = self.conn.into_inner();
         (io, buf, self.dispatch)
@@ -386,6 +392,7 @@ where
         }
     }
 
+    #[inline]
     fn poll_flush(&mut self, cx: &mut Context<'_>) -> Poll<Result<()>> {
         self.conn.poll_flush(cx).map_err(|err| {
             debug!("error writing: {}", err);
@@ -393,6 +400,7 @@ where
         })
     }
 
+    #[inline]
     fn close(&mut self) {
         self.is_closing = true;
         self.conn.close_read();
@@ -445,16 +453,19 @@ where
 struct OptGuard<'a, T>(Pin<&'a mut Option<T>>, bool);
 
 impl<'a, T> OptGuard<'a, T> {
+    #[inline]
     fn new(pin: Pin<&'a mut Option<T>>) -> Self {
         OptGuard(pin, false)
     }
 
+    #[inline]
     fn guard_mut(&mut self) -> (Option<Pin<&mut T>>, &mut bool) {
         (self.0.as_mut().as_pin_mut(), &mut self.1)
     }
 }
 
 impl<T> Drop for OptGuard<'_, T> {
+    #[inline]
     fn drop(&mut self) {
         if self.1 {
             self.0.set(None);
@@ -464,9 +475,8 @@ impl<T> Drop for OptGuard<'_, T> {
 
 // ===== impl Client =====
 
-use std::convert::Infallible;
-
 impl<B> Client<B> {
+    #[inline]
     pub(crate) fn new(rx: ClientRx<B>) -> Client<B> {
         Client {
             callback: None,
@@ -488,7 +498,7 @@ where
     fn poll_msg(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
-    ) -> Poll<Option<std::result::Result<(Self::PollItem, Self::PollBody), Infallible>>> {
+    ) -> Poll<Option<Result<(Self::PollItem, Self::PollBody), Infallible>>> {
         let mut this = self.as_mut();
         debug_assert!(!this.rx_closed);
         match this.rx.poll_recv(cx) {
@@ -564,7 +574,7 @@ where
         }
     }
 
-    fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<std::result::Result<(), ()>> {
+    fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), ()>> {
         match self.callback {
             Some(ref mut cb) => match cb.poll_canceled(cx) {
                 Poll::Ready(()) => {
@@ -577,6 +587,7 @@ where
         }
     }
 
+    #[inline]
     fn should_poll(&self) -> bool {
         self.callback.is_none()
     }

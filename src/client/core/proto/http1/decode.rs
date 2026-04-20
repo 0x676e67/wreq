@@ -134,6 +134,7 @@ impl Decoder {
         }
     }
 
+    #[inline]
     pub(crate) fn is_eof(&self) -> bool {
         matches!(
             self.kind,

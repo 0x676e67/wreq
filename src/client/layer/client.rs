@@ -141,6 +141,7 @@ macro_rules! e {
 
 impl HttpClient<(), ()> {
     /// Create a builder to configure a new [`HttpClient`].
+    #[inline]
     pub fn builder<E>(executor: E) -> Builder
     where
         E: Executor<BoxSendFuture> + Send + Sync + Clone + 'static,
@@ -736,6 +737,7 @@ enum PoolTx<B> {
 // ===== impl PoolClient =====
 
 impl<B> PoolClient<B> {
+    #[inline]
     fn poll_ready(&mut self, cx: &mut task::Context<'_>) -> Poll<Result<(), Error>> {
         match self.tx {
             PoolTx::Http1(ref mut tx) => tx.poll_ready(cx).map_err(Error::closed),
@@ -743,10 +745,12 @@ impl<B> PoolClient<B> {
         }
     }
 
+    #[inline]
     fn is_http1(&self) -> bool {
         !self.is_http2()
     }
 
+    #[inline]
     fn is_http2(&self) -> bool {
         match self.tx {
             PoolTx::Http1(_) => false,
@@ -754,10 +758,12 @@ impl<B> PoolClient<B> {
         }
     }
 
+    #[inline]
     fn is_poisoned(&self) -> bool {
         self.conn_info.poisoned()
     }
 
+    #[inline]
     fn is_ready(&self) -> bool {
         match self.tx {
             PoolTx::Http1(ref tx) => tx.is_ready(),
@@ -767,6 +773,7 @@ impl<B> PoolClient<B> {
 }
 
 impl<B: Body + 'static> PoolClient<B> {
+    #[inline]
     fn try_send_request(
         &mut self,
         req: Request<B>,
@@ -785,6 +792,7 @@ impl<B> pool::Poolable for PoolClient<B>
 where
     B: Send + 'static,
 {
+    #[inline]
     fn is_open(&self) -> bool {
         !self.is_poisoned() && self.is_ready()
     }
@@ -810,6 +818,7 @@ where
         }
     }
 
+    #[inline]
     fn can_share(&self) -> bool {
         self.is_http2()
     }

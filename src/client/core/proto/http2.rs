@@ -217,6 +217,7 @@ trait SendStreamExt {
     fn on_user_err<E>(&mut self, err: E) -> Error
     where
         E: Into<BoxError>;
+
     fn send_eos_frame(&mut self) -> Result<()>;
 }
 

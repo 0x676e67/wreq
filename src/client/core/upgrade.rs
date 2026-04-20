@@ -225,8 +225,6 @@ trait Io: AsyncRead + AsyncWrite + Unpin + 'static {}
 
 impl<T: AsyncRead + AsyncWrite + Unpin + 'static> Io for T {}
 
-impl dyn Io + Send {}
-
 mod sealed {
     use super::OnUpgrade;
 

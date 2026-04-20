@@ -507,6 +507,7 @@ impl<B> WriteBuf<B>
 where
     B: Buf,
 {
+    #[inline]
     fn set_strategy(&mut self, strategy: WriteStrategy) {
         self.strategy = strategy;
     }
@@ -548,6 +549,7 @@ where
         }
     }
 
+    #[inline]
     fn can_buffer(&self) -> bool {
         match self.strategy {
             WriteStrategy::Flatten => self.remaining() < self.max_buf_size,
@@ -557,6 +559,7 @@ where
         }
     }
 
+    #[inline]
     fn headers_mut(&mut self) -> &mut Cursor<Vec<u8>> {
         debug_assert!(!self.queue.has_remaining());
         &mut self.headers

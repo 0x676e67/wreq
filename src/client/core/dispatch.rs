@@ -16,13 +16,14 @@ type RetryPromise<T, U> = oneshot::Receiver<Result<U, TrySendError<T>>>;
 pub(crate) fn channel<T, U>() -> (Sender<T, U>, Receiver<T, U>) {
     let (tx, rx) = mpsc::unbounded_channel();
     let (giver, taker) = want::new();
-    let tx = Sender {
-        buffered_once: false,
-        giver,
-        inner: tx,
-    };
-    let rx = Receiver { inner: rx, taker };
-    (tx, rx)
+    (
+        Sender {
+            buffered_once: false,
+            giver,
+            inner: tx,
+        },
+        Receiver { inner: rx, taker },
+    )
 }
 
 /// An error when calling `try_send_request`.
@@ -157,6 +158,7 @@ impl<T, U> Receiver<T, U> {
         self.inner.close();
     }
 
+    #[inline]
     pub(crate) fn try_recv(&mut self) -> Option<(T, Callback<T, U>)> {
         use futures_util::FutureExt;
         match self.inner.recv().now_or_never() {
@@ -270,7 +272,6 @@ where
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let mut this = self.project();
-
         let mut call_back = this.call_back.take().expect("polled after complete");
 
         match Pin::new(&mut this.when).poll(cx) {
