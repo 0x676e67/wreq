@@ -3,7 +3,7 @@ use std::{
     time::Duration,
 };
 
-use brotli::{CompressorWriter as BrotliDecoder, Decompressor as BrotliEncoder};
+use brotli::{CompressorWriter as BrotliEncoder, Decompressor as BrotliDecoder};
 use flate2::{Compression, read::ZlibDecoder, write::ZlibEncoder};
 use wreq::{
     Client, Emulation,
@@ -13,13 +13,16 @@ use wreq::{
     },
     tls::{
         AlpnProtocol, ExtensionType, KeyShare, TlsOptions, TlsVersion,
-        compress::{CertificateCompressionAlgorithm, CertificateCompressor},
+        compress::{CertificateCompressionAlgorithm, CertificateCompressor, Codec},
     },
 };
 use zstd::stream::{Decoder as ZstdDecoder, Encoder as ZstdEncoder};
 
 #[derive(Debug)]
-struct BrotliCompressor;
+struct BrotliCompressor {
+    q: u32,
+    lgwin: u32,
+}
 
 #[derive(Debug)]
 struct ZlibCompressor;
@@ -28,16 +31,23 @@ struct ZlibCompressor;
 struct ZstdCompressor;
 
 impl CertificateCompressor for BrotliCompressor {
-    fn compress(&self, input: &[u8], output: &mut dyn io::Write) -> io::Result<()> {
-        let mut writer = BrotliDecoder::new(output, input.len(), 11, 22);
-        writer.write_all(input)?;
-        writer.flush()
+    fn compress(&self) -> Codec {
+        let q = self.q;
+        let lgwin = self.lgwin;
+        Codec::Dynamic(Box::new(move |input, output| {
+            let mut writer = BrotliEncoder::new(output, input.len(), q, lgwin);
+            writer.write_all(input)?;
+            writer.flush()?;
+            Ok(())
+        }))
     }
 
-    fn decompress(&self, input: &[u8], output: &mut dyn io::Write) -> io::Result<()> {
-        let mut reader = BrotliEncoder::new(input, 4096);
-        io::copy(&mut reader, output)?;
-        Ok(())
+    fn decompress(&self) -> Codec {
+        Codec::Pointer(|input, output| {
+            let mut reader = BrotliDecoder::new(input, 4096);
+            io::copy(&mut reader, output)?;
+            Ok(())
+        })
     }
 
     fn algorithm(&self) -> CertificateCompressionAlgorithm {
@@ -46,17 +56,21 @@ impl CertificateCompressor for BrotliCompressor {
 }
 
 impl CertificateCompressor for ZlibCompressor {
-    fn compress(&self, input: &[u8], output: &mut dyn io::Write) -> io::Result<()> {
-        let mut encoder = ZlibEncoder::new(output, Compression::default());
-        encoder.write_all(input)?;
-        encoder.finish()?;
-        Ok(())
+    fn compress(&self) -> Codec {
+        Codec::Pointer(|input, output| {
+            let mut encoder = ZlibEncoder::new(output, Compression::default());
+            encoder.write_all(input)?;
+            encoder.finish()?;
+            Ok(())
+        })
     }
 
-    fn decompress(&self, input: &[u8], output: &mut dyn io::Write) -> io::Result<()> {
-        let mut reader = ZlibDecoder::new(input);
-        io::copy(&mut reader, output)?;
-        Ok(())
+    fn decompress(&self) -> Codec {
+        Codec::Pointer(|input, output| {
+            let mut reader = ZlibDecoder::new(input);
+            io::copy(&mut reader, output)?;
+            Ok(())
+        })
     }
 
     fn algorithm(&self) -> CertificateCompressionAlgorithm {
@@ -65,17 +79,21 @@ impl CertificateCompressor for ZlibCompressor {
 }
 
 impl CertificateCompressor for ZstdCompressor {
-    fn compress(&self, input: &[u8], output: &mut dyn io::Write) -> io::Result<()> {
-        let mut encoder = ZstdEncoder::new(output, 0)?;
-        encoder.write_all(input)?;
-        encoder.finish()?;
-        Ok(())
+    fn compress(&self) -> Codec {
+        Codec::Pointer(|input, output| {
+            let mut encoder = ZstdEncoder::new(output, 0)?;
+            encoder.write_all(input)?;
+            encoder.finish()?;
+            Ok(())
+        })
     }
 
-    fn decompress(&self, input: &[u8], output: &mut dyn io::Write) -> io::Result<()> {
-        let mut reader = ZstdDecoder::new(input)?;
-        io::copy(&mut reader, output)?;
-        Ok(())
+    fn decompress(&self) -> Codec {
+        Codec::Pointer(|input, output| {
+            let mut reader = ZstdDecoder::new(input)?;
+            io::copy(&mut reader, output)?;
+            Ok(())
+        })
     }
 
     fn algorithm(&self) -> CertificateCompressionAlgorithm {
@@ -144,8 +162,8 @@ fn tls_options_template() -> TlsOptions {
             "ecdsa_sha1"
         ))
         .certificate_compressors(vec![
-            &BrotliCompressor as _,
             &ZlibCompressor as _,
+            &BrotliCompressor { q: 11, lgwin: 32 } as _,
             &ZstdCompressor as _,
         ])
         .alpn_protocols([AlpnProtocol::HTTP2, AlpnProtocol::HTTP1])
