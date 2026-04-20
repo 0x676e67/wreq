@@ -1,9 +1,6 @@
 //! DNS resolution via the [hickory-resolver](https://github.com/hickory-dns/hickory-dns) crate
 
-use std::{
-    net::{IpAddr, SocketAddr},
-    sync::LazyLock,
-};
+use std::{net::SocketAddr, sync::LazyLock};
 
 use hickory_resolver::{
     TokioResolver,
@@ -56,28 +53,19 @@ impl HickoryDnsResolver {
     }
 }
 
-struct SocketAddrs {
-    iter: std::vec::IntoIter<IpAddr>,
-}
-
 impl Resolve for HickoryDnsResolver {
     fn resolve(&self, name: Name) -> Resolving {
         let resolver = self.clone();
         Box::pin(async move {
-            let lookup = resolver.resolver.lookup_ip(name.as_str()).await?;
-            let addrs: Addrs = Box::new(SocketAddrs {
-                iter: lookup.iter().collect::<Vec<_>>().into_iter(),
-            });
+            let lookup = resolver.resolver.lookup_ip(name.as_str()).await?; // Force resolution to complete before returning
+            let addrs: Addrs = Box::new(
+                lookup
+                    .iter()
+                    .map(|ip_addr| SocketAddr::new(ip_addr, 0))
+                    .collect::<Vec<_>>()
+                    .into_iter(),
+            );
             Ok(addrs)
         })
-    }
-}
-
-impl Iterator for SocketAddrs {
-    type Item = SocketAddr;
-
-    #[inline]
-    fn next(&mut self) -> Option<Self::Item> {
-        self.iter.next().map(|ip_addr| SocketAddr::new(ip_addr, 0))
     }
 }
