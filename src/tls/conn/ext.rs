@@ -1,8 +1,13 @@
+use std::borrow::Cow;
+
 use btls::ssl::{SslConnectorBuilder, SslVerifyMode};
 
 use crate::{
     Error,
-    tls::{compress::CertificateCompressor, trust::CertStore},
+    tls::{
+        compress::{self, CertificateCompressor},
+        trust::CertStore,
+    },
 };
 
 /// SslConnectorBuilderExt trait for `SslConnectorBuilder`.
@@ -16,7 +21,7 @@ pub trait SslConnectorBuilderExt {
     /// Configure the certificate compressors for the given `SslConnectorBuilder`.
     fn set_cert_compressors(
         self,
-        algs: Option<&[&'static dyn CertificateCompressor]>,
+        compressors: Option<&Cow<'static, [&'static dyn CertificateCompressor]>>,
     ) -> crate::Result<SslConnectorBuilder>;
 }
 
@@ -45,12 +50,11 @@ impl SslConnectorBuilderExt for SslConnectorBuilder {
     #[inline]
     fn set_cert_compressors(
         mut self,
-        algs: Option<&[&'static dyn CertificateCompressor]>,
+        compressors: Option<&Cow<'static, [&'static dyn CertificateCompressor]>>,
     ) -> crate::Result<SslConnectorBuilder> {
-        if let Some(algs) = algs {
-            for algorithm in algs {
-                self.add_certificate_compression_algorithm(*algorithm)
-                    .map_err(Error::tls)?;
+        if let Some(compressors) = compressors {
+            for compressor in compressors.as_ref() {
+                compress::register(*compressor, &mut self).map_err(Error::tls)?;
             }
         }
 
