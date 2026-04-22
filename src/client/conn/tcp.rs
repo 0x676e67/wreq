@@ -351,14 +351,9 @@ where
         match self.fallback {
             None => self.preferred.connect(config).await,
             Some(mut fallback) => {
-                let preferred_fut = self.preferred.connect(config);
-                futures_util::pin_mut!(preferred_fut);
-
-                let fallback_fut = fallback.remote.connect(config);
-                futures_util::pin_mut!(fallback_fut);
-
-                let fallback_delay = fallback.delay;
-                futures_util::pin_mut!(fallback_delay);
+                let preferred_fut = pin!(self.preferred.connect(config));
+                let fallback_fut = pin!(fallback.remote.connect(config));
+                let fallback_delay = pin!(fallback.delay);
 
                 let (result, future) =
                     match futures_util::future::select(preferred_fut, fallback_delay).await {
