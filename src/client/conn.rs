@@ -293,6 +293,7 @@ impl<T> TlsInfoFactory for TlsConn<T>
 where
     SslStream<T>: TlsInfoFactory,
 {
+    #[inline]
     fn tls_info(&self) -> Option<TlsInfo> {
         self.stream.tls_info()
     }
@@ -344,6 +345,7 @@ impl Connected {
     }
 
     /// Copies the extra connection information into an `Extensions` map.
+    #[inline]
     pub fn set_extras(&self, extensions: &mut Extensions) {
         if let Some(extra) = &self.extra {
             extra.set(extensions);

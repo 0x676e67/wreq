@@ -258,7 +258,6 @@ where
             // it returns an error, there's not much else to retry
             .map_err(TrySendError::Nope)?;
 
-        #[cfg(feature = "cookies")]
         let uri = req.uri().clone();
 
         if pooled.is_http1() {
@@ -270,17 +269,9 @@ where
             }
 
             if self.config.set_host {
-                let uri = req.uri().clone();
-                req.headers_mut().entry(HOST).or_insert_with(|| {
-                    let hostname = uri.host().expect("authority implies host");
-                    if let Some(port) = get_non_default_port(&uri) {
-                        let s = format!("{hostname}:{port}");
-                        HeaderValue::from_maybe_shared(Bytes::from(s))
-                    } else {
-                        HeaderValue::from_str(hostname)
-                    }
-                    .expect("uri host is valid header value")
-                });
+                req.headers_mut()
+                    .entry(HOST)
+                    .or_insert_with(|| generate_host_header(&uri));
             }
 
             // CONNECT always sends authority-form, so check it first...
@@ -364,11 +355,11 @@ where
             }
         }
 
-        // If the Connector included connection info, add to Response...
-        res.extensions_mut().insert(pooled.conn_info.clone());
-
         // If the Connector included 'extra' info, add to Response...
         pooled.conn_info.set_extras(res.extensions_mut());
+
+        // If the Connector included connection info, add to Response...
+        res.extensions_mut().insert(pooled.conn_info.clone());
 
         // If pooled is HTTP/2, we can toss this reference immediately.
         //
@@ -1147,12 +1138,19 @@ fn normalize_uri<B>(req: &mut Request<B>, is_http_connect: bool) -> Result<Uri, 
     }
 }
 
-fn get_non_default_port(uri: &Uri) -> Option<http::uri::Port<&str>> {
-    match (uri.port().map(|p| p.as_u16()), is_schema_secure(uri)) {
-        (Some(443), true) => None,
-        (Some(80), false) => None,
+fn generate_host_header(uri: &Uri) -> HeaderValue {
+    let hostname = uri.host().expect("authority implies host");
+    let port = match (uri.port().map(|p| p.as_u16()), is_schema_secure(uri)) {
+        (Some(443), true) | (Some(80), false) => None,
         _ => uri.port(),
+    };
+    if let Some(port) = port {
+        let host = format!("{hostname}:{port}");
+        HeaderValue::from_maybe_shared(Bytes::from(host))
+    } else {
+        HeaderValue::from_str(hostname)
     }
+    .expect("uri host is valid header value")
 }
 
 fn set_scheme(uri: &mut Uri, scheme: Scheme) {
