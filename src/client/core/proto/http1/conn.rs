@@ -470,6 +470,7 @@ where
         self.maybe_notify(cx);
     }
 
+    #[inline]
     pub(super) fn can_write_head(&self) -> bool {
         if matches!(self.state.reading, Reading::Closed) {
             return false;
@@ -481,6 +482,7 @@ where
         }
     }
 
+    #[inline]
     pub(super) fn can_write_body(&self) -> bool {
         match self.state.writing {
             Writing::Body(..) => true,
@@ -764,6 +766,7 @@ where
         }
     }
 
+    #[inline]
     pub(super) fn on_upgrade(&mut self) -> upgrade::OnUpgrade {
         trace!("{}: prepare possible HTTP upgrade", T::LOG);
         self.state.prepare_upgrade()
