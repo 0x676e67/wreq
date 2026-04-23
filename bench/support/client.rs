@@ -7,8 +7,6 @@ use tokio::{runtime::Runtime, sync::Semaphore};
 
 use super::{BoxError, HttpVersion, Tls};
 
-const STREAM_CHUNK_SIZE: usize = 256 * 1024;
-
 fn create_wreq_client(tls: Tls, http_version: HttpVersion) -> Result<wreq::Client, BoxError> {
     let builder = wreq::Client::builder()
         .no_proxy()
@@ -63,12 +61,13 @@ async fn reqwest_body_assert(mut response: reqwest::Response, expected_body_size
 
 fn stream_from_bytes(
     body: &'static [u8],
+    chunk_size: usize,
 ) -> impl futures_util::stream::TryStream<Ok = Bytes, Error = Infallible> + Send + 'static {
-    futures_util::stream::unfold((body, 0), |(body, offset)| async move {
+    futures_util::stream::unfold((body, 0), move |(body, offset)| async move {
         if offset >= body.len() {
             None
         } else {
-            let end = (offset + STREAM_CHUNK_SIZE).min(body.len());
+            let end = (offset + chunk_size).min(body.len());
             let chunk = Bytes::from_static(&body[offset..end]);
             Some((Ok::<Bytes, Infallible>(chunk), (body, end)))
         }
@@ -76,9 +75,9 @@ fn stream_from_bytes(
 }
 
 #[inline]
-fn wreq_body(stream: bool, body: &'static [u8]) -> wreq::Body {
+fn wreq_body(stream: bool, (body, chunk_size): (&'static [u8], usize)) -> wreq::Body {
     if stream {
-        let stream = stream_from_bytes(body);
+        let stream = stream_from_bytes(body, chunk_size);
         wreq::Body::wrap_stream(stream)
     } else {
         wreq::Body::from(body)
@@ -86,9 +85,9 @@ fn wreq_body(stream: bool, body: &'static [u8]) -> wreq::Body {
 }
 
 #[inline]
-fn reqwest_body(stream: bool, body: &'static [u8]) -> reqwest::Body {
+fn reqwest_body(stream: bool, (body, chunk_size): (&'static [u8], usize)) -> reqwest::Body {
     if stream {
-        let stream = stream_from_bytes(body);
+        let stream = stream_from_bytes(body, chunk_size);
         reqwest::Body::wrap_stream(stream)
     } else {
         reqwest::Body::from(body)
@@ -100,7 +99,7 @@ async fn wreq_requests_concurrent(
     url: &str,
     num_requests: usize,
     concurrent_limit: usize,
-    body: &'static [u8],
+    body: (&'static [u8], usize),
     stream: bool,
 ) {
     let semaphore = Arc::new(Semaphore::new(concurrent_limit));
@@ -120,7 +119,7 @@ async fn wreq_requests_concurrent(
                 .send()
                 .await
                 .expect("Unexpected request failure");
-            wreq_body_assert(response, body.len()).await;
+            wreq_body_assert(response, body.0.len()).await;
         };
         handles.push(tokio::spawn(fut));
     }
@@ -132,7 +131,7 @@ async fn reqwest_requests_concurrent(
     url: &str,
     num_requests: usize,
     concurrent_limit: usize,
-    body: &'static [u8],
+    body: (&'static [u8], usize),
     stream: bool,
 ) {
     let semaphore = Arc::new(Semaphore::new(concurrent_limit));
@@ -152,7 +151,7 @@ async fn reqwest_requests_concurrent(
                 .send()
                 .await
                 .expect("Unexpected request failure");
-            reqwest_body_assert(response, body.len()).await;
+            reqwest_body_assert(response, body.0.len()).await;
         };
         handles.push(tokio::spawn(fut));
     }
@@ -168,7 +167,7 @@ pub fn bench_clients(
     http_version: HttpVersion,
     num_requests: usize,
     concurrent_limit: usize,
-    body: &'static [u8],
+    body: (&'static [u8], usize),
 ) -> Result<(), BoxError> {
     let url = format!("{tls}://{addr}");
 

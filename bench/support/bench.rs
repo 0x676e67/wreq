@@ -8,14 +8,23 @@ use crate::support::{
 pub const CURRENT_THREAD_LABEL: &str = "current_thread";
 pub const MULTI_THREAD_LABEL: &str = "multi_thread";
 pub const CONCURRENT_CASES: &[usize] = &[10, 50, 100, 150];
-pub const BODY_CASES: &[&[u8]] = &[
-    &[b'a'; 1024],            // 1 KB
-    &[b'a'; 10 * 1024],       // 10 KB
-    &[b'a'; 64 * 1024],       // 64 KB
-    &[b'a'; 128 * 1024],      // 128 KB
-    &[b'a'; 1024 * 1024],     // 1024 KB
-    &[b'a'; 2 * 1024 * 1024], // 2048 KB
-    &[b'a'; 4 * 1024 * 1024], // 4096 KB
+
+/// Recommended chunk sizes for real-world network scenarios:
+///   - 16 KB: Matches standard TCP buffers, ideal for HTTP/2 frames.
+///   - 32 KB: For large HTTP payloads, fits modern socket buffers.
+///   - 64 KB: Default Linux buffer size, optimized for large uploads.
+///   - 128 KB: For high-throughput, large-scale transfers.
+///   - 256 KB: Bulk data, maximum throughput on fast networks.
+///
+/// For benchmarking latency-sensitive and high-throughput transfers.
+pub const BODY_CASES: [(&[u8], usize); 7] = [
+    (&[b'a'; 1024], 1024),                  // 1 KB, chunk 1 KB
+    (&[b'a'; 10 * 1024], 10 * 1024),        // 10 KB, chunk 10 KB
+    (&[b'a'; 64 * 1024], 16 * 1024),        // 64 KB, chunk 16 KB
+    (&[b'a'; 128 * 1024], 32 * 1024),       // 128 KB, chunk 32 KB
+    (&[b'a'; 1024 * 1024], 64 * 1024),      // 1 MB, chunk 64 KB
+    (&[b'a'; 2 * 1024 * 1024], 128 * 1024), // 2 MB, chunk 128 KB
+    (&[b'a'; 4 * 1024 * 1024], 256 * 1024), // 4 MB, chunk 256 KB
 ];
 
 pub fn bench(
@@ -39,7 +48,7 @@ pub fn bench(
                 // single-threaded client
                 let mut group = c.benchmark_group(format!(
                     "{cpu_model}/{OS}_{ARCH}/{CURRENT_THREAD_LABEL}/{tls}/{http_version}/{concurrent_limit}/{}KB",
-                    body.len() / 1024,
+                    body.0.len() / 1024,
                 ));
 
                 bench_clients(
@@ -60,7 +69,7 @@ pub fn bench(
                 // multi-threaded client
                 let mut group = c.benchmark_group(format!(
                     "{cpu_model}/{OS}_{ARCH}/{MULTI_THREAD_LABEL}/{tls}/{http_version}/{concurrent_limit}/{}KB",
-                    body.len() / 1024,
+                    body.0.len() / 1024,
                 ));
                 bench_clients(
                     &mut group,
