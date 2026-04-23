@@ -24,7 +24,7 @@ use crate::client::core::{
 pub(crate) struct Dispatcher<D, Bs: Body, I, T> {
     conn: Conn<I, Bs::Data, T>,
     dispatch: D,
-    body_tx: Option<body::Sender>,
+    body_tx: SenderGuard,
     body_rx: Pin<Box<Option<Bs>>>,
     is_closing: bool,
 }
@@ -77,7 +77,7 @@ where
         Dispatcher {
             conn,
             dispatch,
-            body_tx: None,
+            body_tx: SenderGuard(None),
             body_rx: Box::pin(None),
             is_closing: false,
         }
@@ -97,9 +97,7 @@ where
         Poll::Ready(ready!(self.poll_inner(cx, should_shutdown)).or_else(|e| {
             // Be sure to alert a streaming body of the failure.
             if let Some(mut body) = self.body_tx.take() {
-                if body.poll_ready(cx).is_ready() {
-                    body.send_error(Error::new_body("connection error"));
-                }
+                body.send_error(Error::new_body("connection error"))
             }
             // An error means we're shutting down either way.
             // We just try to give the error to the user,
@@ -176,7 +174,7 @@ where
                     match body.poll_ready(cx) {
                         Poll::Ready(Ok(())) => (),
                         Poll::Pending => {
-                            self.body_tx = Some(body);
+                            self.body_tx.set(body);
                             return Poll::Pending;
                         }
                         Poll::Ready(Err(_canceled)) => {
@@ -193,7 +191,7 @@ where
                                 let chunk = frame.into_data().unwrap_or_else(|_| unreachable!());
                                 match body.send_data(chunk) {
                                     Ok(()) => {
-                                        self.body_tx = Some(body);
+                                        self.body_tx.set(body);
                                     }
                                     Err(_canceled) => {
                                         if self.conn.can_read_body() {
@@ -207,7 +205,7 @@ where
                                     frame.into_trailers().unwrap_or_else(|_| unreachable!());
                                 match body.send_trailers(trailers) {
                                     Ok(()) => {
-                                        self.body_tx = Some(body);
+                                        self.body_tx.set(body);
                                     }
                                     Err(_canceled) => {
                                         if self.conn.can_read_body() {
@@ -225,7 +223,7 @@ where
                             // just drop, the body will close automatically
                         }
                         Poll::Pending => {
-                            self.body_tx = Some(body);
+                            self.body_tx.set(body);
                             return Poll::Pending;
                         }
                         Poll::Ready(Some(Err(e))) => {
@@ -259,7 +257,7 @@ where
                     DecodedLength::ZERO => Incoming::empty(),
                     other => {
                         let (tx, rx) = Incoming::h1(other, wants.contains(Wants::EXPECT));
-                        self.body_tx = Some(tx);
+                        self.body_tx.set(tx);
                         rx
                     }
                 };
@@ -469,6 +467,37 @@ impl<T> Drop for OptGuard<'_, T> {
     fn drop(&mut self) {
         if self.1 {
             self.0.set(None);
+        }
+    }
+}
+
+// ===== impl SenderGuard =====
+
+/// A guard for the body `Sender`.
+///
+/// If the `Dispatcher` future is dropped (e.g. the runtime driving the
+/// connection is shut down) while it still owns a body `Sender`, the guard
+/// sends an incomplete-message error so the receiver sees an error instead
+/// of a silent, clean end-of-stream.
+struct SenderGuard(Option<body::Sender>);
+
+impl SenderGuard {
+    #[inline]
+    fn set(&mut self, sender: body::Sender) {
+        self.0 = Some(sender);
+    }
+
+    #[inline]
+    fn take(&mut self) -> Option<body::Sender> {
+        self.0.take()
+    }
+}
+
+impl Drop for SenderGuard {
+    #[inline]
+    fn drop(&mut self) {
+        if let Some(mut sender) = self.0.take() {
+            sender.send_error(Error::new_incomplete());
         }
     }
 }

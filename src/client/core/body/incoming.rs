@@ -68,7 +68,7 @@ impl Incoming {
     }
 
     pub(crate) fn h1(content_length: DecodedLength, wanter: bool) -> (Sender, Incoming) {
-        let (data_tx, data_rx) = mpsc::channel(1);
+        let (data_tx, data_rx) = mpsc::channel(2);
         let (trailers_tx, trailers_rx) = oneshot::channel();
         // If wanter is true, `Sender::poll_ready()` won't becoming ready
         // until the `Body` has been polled for data once.
@@ -280,14 +280,13 @@ impl Sender {
     }
 
     /// Send an error on this channel, which will cause the body stream to end with an error.
-    ///
-    /// # Panics
-    ///
-    /// If `poll_ready` was not successfully called prior to calling `send_data`, then this method
-    /// will panic.
     #[inline]
     pub(crate) fn send_error(&mut self, err: Error) {
-        let _ = self.data_tx.send_item(Err(err));
+        if !self.data_tx.abort_send() {
+            self.data_tx
+                .get_ref()
+                .map(|sender| sender.try_send(Err(err)));
+        }
     }
 }
 
@@ -309,14 +308,11 @@ mod tests {
     }
 
     impl Sender {
-        #[cfg(test)]
         async fn ready(&mut self) -> Result<()> {
             std::future::poll_fn(|cx| self.poll_ready(cx)).await
         }
 
-        #[cfg(test)]
-        async fn abort(mut self) {
-            self.ready().await.expect("ready");
+        fn abort(mut self) {
             self.send_error(Error::new_body_write_aborted());
         }
     }
@@ -371,7 +367,7 @@ mod tests {
     async fn channel_abort() {
         let (tx, mut rx) = Incoming::channel();
 
-        tx.abort().await;
+        tx.abort();
 
         let err = rx.frame().await.unwrap().unwrap_err();
         assert!(err.is_body_write_aborted(), "{err:?}");
@@ -383,6 +379,8 @@ mod tests {
 
         tx.ready().await.expect("ready");
         tx.send_data("chunk 1".into()).expect("send 1");
+        // buffer is full, but can still send abort
+        tx.abort();
 
         let chunk1 = rx
             .frame()
@@ -393,20 +391,18 @@ mod tests {
             .unwrap();
         assert_eq!(chunk1, "chunk 1");
 
-        // buffer is full, but can still send abort
-        tx.ready().await.expect("ready");
-        tx.abort().await;
-
         let err = rx.frame().await.unwrap().unwrap_err();
         assert!(err.is_body_write_aborted(), "{err:?}");
     }
 
     #[tokio::test]
-    async fn channel_buffers_one() {
+    async fn channel_buffers_two() {
         let (mut tx, _rx) = Incoming::channel();
 
         tx.ready().await.expect("ready");
         tx.send_data("chunk 1".into()).expect("send 1");
+        tx.ready().await.expect("ready");
+        tx.send_data("chunk 2".into()).expect("send 2");
 
         // buffer is now full, poll_ready should not be ready
         let res = tokio::time::timeout(
