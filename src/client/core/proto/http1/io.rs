@@ -302,11 +302,6 @@ where
         }
         Pin::new(&mut self.io).poll_flush(cx)
     }
-
-    #[cfg(test)]
-    fn flush(&mut self) -> impl std::future::Future<Output = io::Result<()>> + '_ {
-        std::future::poll_fn(move |cx| self.poll_flush(cx))
-    }
 }
 
 // The `B` is a `Buf`, we never project a pin to it
@@ -626,6 +621,16 @@ mod tests {
     use tokio_test::io::Builder as Mock;
 
     use super::*;
+
+    impl<T, B> Buffered<T, B>
+    where
+        T: AsyncRead + AsyncWrite + Unpin,
+        B: Buf,
+    {
+        fn flush(&mut self) -> impl std::future::Future<Output = io::Result<()>> + '_ {
+            std::future::poll_fn(move |cx| self.poll_flush(cx))
+        }
+    }
 
     #[tokio::test]
     async fn parse_reads_until_blocked() {
