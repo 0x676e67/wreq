@@ -282,11 +282,12 @@ impl Sender {
     /// Send an error on this channel, which will cause the body stream to end with an error.
     #[inline]
     pub(crate) fn send_error(&mut self, err: Error) {
-        if !self.data_tx.abort_send() {
-            self.data_tx
-                .get_ref()
-                .map(|sender| sender.try_send(Err(err)));
-        }
+        // Free any in-progress reservation so the buffer has room for the error,
+        // then try to deliver the error on the underlying channel.
+        let _ = self.data_tx.abort_send();
+        self.data_tx
+            .get_ref()
+            .map(|sender| sender.try_send(Err(err)));
     }
 }
 
