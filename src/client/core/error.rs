@@ -87,19 +87,14 @@ pub(super) enum User {
     Body,
     /// The user aborted writing of the outgoing body.
     BodyWriteAborted,
-
     /// User tried to send a connect request with a nonzero body
     InvalidConnectWithBody,
-
     /// Error from future of user's Service.
     Service,
-
     /// User tried polling for an upgrade that doesn't exist.
     NoUpgrade,
-
     /// User polled for an upgrade, but low-level API is not using upgrades.
     ManualUpgrade,
-
     /// The dispatch task is gone.
     DispatchGone,
 }
