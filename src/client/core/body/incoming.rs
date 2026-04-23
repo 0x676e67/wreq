@@ -170,15 +170,14 @@ impl Body for Incoming {
                             return Poll::Ready(Some(Ok(Frame::data(bytes))));
                         }
                         Some(Err(e)) => {
-                            return match e.reason() {
-                                // These reasons should cause the body reading to stop, but not fail
-                                // it. The same logic as for `Read
-                                // for H2Upgraded` is applied here.
-                                Some(http2::Reason::NO_ERROR) | Some(http2::Reason::CANCEL) => {
-                                    Poll::Ready(None)
-                                }
-                                _ => Poll::Ready(Some(Err(Error::new_body(e)))),
-                            };
+                            if let Some(http2::Reason::NO_ERROR) = e.reason() {
+                                // As mentioned in RFC 7540 Section 8.1, a RST_STREAM with NO_ERROR
+                                // indicates an early response, and should cause the body reading
+                                // to stop, but not fail it:
+                                return Poll::Ready(None);
+                            } else {
+                                return Poll::Ready(Some(Err(Error::new_body(e))));
+                            }
                         }
                         None => {
                             // fall through to trailers
@@ -193,7 +192,16 @@ impl Body for Incoming {
                         ping.record_non_data();
                         Poll::Ready(Ok(t.map(Frame::trailers)).transpose())
                     }
-                    Err(e) => Poll::Ready(Some(Err(Error::new_h2(e)))),
+                    Err(e) => {
+                        if let Some(http2::Reason::NO_ERROR) = e.reason() {
+                            // Same as above, a RST_STREAM with NO_ERROR indicates an early
+                            // response, and should cause reading the trailers to stop, but
+                            // not fail it:
+                            Poll::Ready(None)
+                        } else {
+                            Poll::Ready(Some(Err(Error::new_h2(e))))
+                        }
+                    }
                 }
             }
             Kind::Empty => Poll::Ready(None),
