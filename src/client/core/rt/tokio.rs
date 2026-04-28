@@ -52,26 +52,28 @@ impl TokioExecutor {
 // ==== impl TokioTimer =====
 
 impl Timer for TokioTimer {
+    #[inline]
     fn sleep(&self, duration: Duration) -> Pin<Box<dyn Sleep>> {
         Box::pin(TokioSleep {
             inner: tokio::time::sleep(duration),
         })
     }
 
+    #[inline]
     fn sleep_until(&self, deadline: Instant) -> Pin<Box<dyn Sleep>> {
         Box::pin(TokioSleep {
             inner: tokio::time::sleep_until(deadline.into()),
         })
     }
 
+    #[inline]
     fn now(&self) -> Instant {
         tokio::time::Instant::now().into()
     }
 
+    #[inline]
     fn reset(&self, sleep: &mut Pin<Box<dyn Sleep>>, new_deadline: Instant) {
-        if let Some(sleep) = sleep.as_mut().downcast_mut_pin::<TokioSleep>() {
-            sleep.reset(new_deadline)
-        }
+        sleep.as_mut().reset(new_deadline);
     }
 }
 
@@ -93,9 +95,7 @@ impl Future for TokioSleep {
     }
 }
 
-impl Sleep for TokioSleep {}
-
-impl TokioSleep {
+impl Sleep for TokioSleep {
     #[inline]
     fn reset(self: Pin<&mut Self>, deadline: Instant) {
         self.project().inner.as_mut().reset(deadline.into());
