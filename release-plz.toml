@@ -1,0 +1,3 @@
+[workspace]
+# set the path of all the crates to the changelog to the root of the repository
+changelog_path = "./RELEASE.md"
