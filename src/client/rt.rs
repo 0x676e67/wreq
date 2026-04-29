@@ -7,8 +7,7 @@ use std::{
 };
 
 use pin_project_lite::pin_project;
-
-use super::{Executor, Sleep, Timer};
+use wreq_proto::rt::{Executor, Sleep, Timer};
 
 /// Future executor that utilises `tokio` threads.
 #[non_exhaustive]

@@ -13,12 +13,12 @@ use tower::{
         budget::{Budget, TpsBudget},
     },
 };
+use wreq_proto::body::Incoming;
 
 pub(crate) use self::{
     classify::{Action, Classifier, ClassifyFn, ReqRep},
     scope::{ScopeFn, Scoped},
 };
-use super::super::core::body::Incoming;
 use crate::{Body, retry};
 
 /// A retry policy for HTTP requests.

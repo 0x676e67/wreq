@@ -16,11 +16,9 @@ use http_body_util::{BodyExt, Collected};
 use mime::Mime;
 #[cfg(feature = "json")]
 use serde::de::DeserializeOwned;
+use wreq_proto::{ext::ReasonPhrase, upgrade};
 
-use super::{
-    conn::HttpInfo,
-    core::{http1::ext::ReasonPhrase, upgrade},
-};
+use super::conn::HttpInfo;
 #[cfg(feature = "cookies")]
 use crate::cookie;
 use crate::{Body, Error, Upgraded, client::Connected, error::BoxError, ext::RequestUri};

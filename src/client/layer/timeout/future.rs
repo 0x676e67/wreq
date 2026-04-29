@@ -8,12 +8,10 @@ use std::{
 use http::Response;
 use pin_project_lite::pin_project;
 use tokio::time::Sleep;
+use wreq_proto::rt::Time;
 
 use super::body::TimeoutBody;
-use crate::{
-    client::core::rt::Time,
-    error::{BoxError, Error, TimedOut},
-};
+use crate::error::{BoxError, Error, TimedOut};
 
 pin_project! {
     /// [`Timeout`] response future
