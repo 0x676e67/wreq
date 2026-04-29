@@ -137,15 +137,15 @@ impl OnPreserveHeaderCallback for OrigHeaderMap {
         std::mem::swap(headers, &mut sorted_headers);
     }
 
-    fn call_for_each(
+    fn call_visit(
         &self,
         headers: &mut HeaderMap,
-        dst: &mut dyn FnMut(&[u8], &http::HeaderValue),
+        dst: &mut dyn FnMut(&dyn AsRef<[u8]>, &http::HeaderValue),
     ) {
         // First, sort headers according to the order defined in this map
         for (name, orig_name) in self.iter() {
             for value in headers.get_all(name) {
-                dst(orig_name.as_ref(), value);
+                dst(orig_name, value);
             }
 
             headers.remove(name);
@@ -156,11 +156,11 @@ impl OnPreserveHeaderCallback for OrigHeaderMap {
         for (name, value) in headers.drain() {
             match (name, &prev_name) {
                 (Some(name), _) => {
-                    dst(name.as_ref(), &value);
+                    dst(&name, &value);
                     prev_name.replace(name.into_orig_header_name());
                 }
                 (None, Some(prev_name)) => {
-                    dst(prev_name.as_ref(), &value);
+                    dst(prev_name, &value);
                 }
                 _ => (),
             };
