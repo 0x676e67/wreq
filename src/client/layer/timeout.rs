@@ -1,6 +1,6 @@
 //! Middleware for setting a timeout on the response.
 
-mod body;
+pub mod body;
 mod future;
 
 use std::{
@@ -11,13 +11,13 @@ use std::{
 
 use http::{Request, Response};
 use tower::{BoxError, Layer, Service};
+use wreq_proto::rt::{Time, Timer};
 
-pub use self::body::TimeoutBody;
-use self::future::{ResponseBodyTimeoutFuture, ResponseFuture};
-use crate::{
-    client::core::rt::{Time, Timer},
-    config::RequestConfig,
+use self::{
+    body::TimeoutBody,
+    future::{ResponseBodyTimeoutFuture, ResponseFuture},
 };
+use crate::config::RequestConfig;
 
 /// Options for configuring timeouts.
 #[derive(Clone, Copy, Default)]

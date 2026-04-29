@@ -20,18 +20,6 @@ macro_rules! trace {
     }
 }
 
-macro_rules! trace_span {
-    ($($arg:tt)*) => {
-        {
-            #[cfg(feature = "tracing")]
-            {
-                let _span = ::tracing::trace_span!($($arg)+);
-                let _ = _span.entered();
-            }
-        }
-    }
-}
-
 macro_rules! warn {
     ($($arg:tt)*) => {
         {

@@ -26,6 +26,13 @@ use http_body::Body;
 use pool::Ver;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tower::{BoxError, util::Oneshot};
+use wreq_proto::{
+    body::Incoming,
+    conn::{self, TrySendError as ConnTrySendError},
+    http1::Http1Options,
+    http2::Http2Options,
+    rt::{Executor, Time, Timer},
+};
 #[cfg(feature = "cookies")]
 use {
     crate::cookie::{CookieStore, Cookies},
@@ -44,15 +51,6 @@ use crate::{
             Connected, Connection,
             descriptor::{ConnectionDescriptor, ConnectionId},
             tunnel,
-        },
-        core::{
-            self,
-            body::Incoming,
-            conn,
-            dispatch::TrySendError as ConnTrySendError,
-            http1::Http1Options,
-            http2::Http2Options,
-            rt::{Executor, Time, Timer},
         },
         layer::config::RequestOptions,
     },
@@ -202,11 +200,12 @@ where
             } = RequestConfig::<RequestOptions>::remove(req.extensions_mut()).unwrap_or_default();
 
             if let Some(opts) = http1_options {
-                this.h1_builder.options(opts);
+                this.h1_builder = this.h1_builder.options(opts);
             }
             if let Some(opts) = http2_options {
-                this.h2_builder.options(opts);
+                this.h2_builder = this.h2_builder.options(opts);
             }
+
             ConnectionDescriptor::new(uri, group, proxy, version, tls_options, socket_bind_options)
         };
 
@@ -844,7 +843,7 @@ impl Builder {
                 ver: Ver::Auto,
             },
             exec: exec.clone(),
-            h1_builder: conn::http1::Builder::new(),
+            h1_builder: conn::http1::Builder::default(),
             h2_builder: conn::http2::Builder::new(exec),
             pool_config: pool::Config {
                 idle_timeout: Some(Duration::from_secs(90)),
@@ -916,7 +915,7 @@ impl Builder {
     where
         M: Timer + Send + Sync + 'static,
     {
-        self.h2_builder.timer(timer);
+        self.h2_builder = self.h2_builder.timer(timer);
         self
     }
 
@@ -927,7 +926,7 @@ impl Builder {
         O: Into<Option<Http1Options>>,
     {
         if let Some(opts) = opts.into() {
-            self.h1_builder.options(opts);
+            self.h1_builder = self.h1_builder.options(opts);
         }
 
         self
@@ -940,7 +939,7 @@ impl Builder {
         O: Into<Option<Http2Options>>,
     {
         if let Some(opts) = opts.into() {
-            self.h2_builder.options(opts);
+            self.h2_builder = self.h2_builder.options(opts);
         }
         self
     }
@@ -1056,12 +1055,12 @@ impl Error {
     }
 
     #[inline]
-    fn tx(src: core::Error) -> Self {
+    fn tx(src: wreq_proto::Error) -> Self {
         Self::new(ErrorKind::SendRequest, src)
     }
 
     #[inline]
-    fn closed(src: core::Error) -> Self {
+    fn closed(src: wreq_proto::Error) -> Self {
         Self::new(ErrorKind::ChannelClosed, src)
     }
 }

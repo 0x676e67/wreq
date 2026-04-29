@@ -1,8 +1,9 @@
 use std::{error::Error as StdError, fmt, io};
 
 use http::Uri;
+use wreq_proto::ext::ReasonPhrase;
 
-use crate::{StatusCode, client::http1::ext::ReasonPhrase, util::Escape};
+use crate::{StatusCode, util::Escape};
 
 /// A `Result` alias where the `Err` case is `wreq::Error`.
 pub type Result<T> = std::result::Result<T, Error>;
@@ -182,7 +183,7 @@ impl Error {
                 return true;
             }
 
-            if let Some(core_err) = err.downcast_ref::<crate::client::CoreError>() {
+            if let Some(core_err) = err.downcast_ref::<wreq_proto::Error>() {
                 if core_err.is_timeout() {
                     return true;
                 }

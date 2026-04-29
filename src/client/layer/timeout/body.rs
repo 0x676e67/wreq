@@ -7,10 +7,10 @@ use std::{
 
 use http_body::Body;
 use pin_project_lite::pin_project;
+use wreq_proto::rt::{Sleep, Time, Timer};
 
 use crate::{
     Error,
-    client::core::rt::{Sleep, Time, Timer},
     error::{BoxError, TimedOut},
 };
 

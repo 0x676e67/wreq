@@ -13,11 +13,6 @@ use http::{Extensions, Uri, Version};
 use serde::Serialize;
 #[cfg(feature = "multipart")]
 use {super::multipart, bytes::Bytes, http::header::CONTENT_LENGTH};
-#[cfg(feature = "cookies")]
-use {
-    crate::cookie::{CookieStore, IntoCookieStore},
-    std::sync::Arc,
-};
 
 #[cfg(any(
     feature = "gzip",
@@ -35,6 +30,8 @@ use super::{
         timeout::TimeoutOptions,
     },
 };
+#[cfg(feature = "cookies")]
+use crate::cookie::{CookieStore, IntoCookieStore};
 use crate::{
     Error, Method, Proxy,
     config::{RequestConfig, RequestConfigValue},
@@ -581,6 +578,8 @@ impl RequestBuilder {
     #[cfg_attr(docsrs, doc(cfg(feature = "cookies")))]
     pub fn cookie_provider<C: IntoCookieStore>(mut self, cookie_store: C) -> RequestBuilder {
         if let Ok(ref mut req) = self.request {
+            use std::sync::Arc;
+
             req.config_mut::<Arc<dyn CookieStore>>()
                 .replace(cookie_store.into_shared());
         }

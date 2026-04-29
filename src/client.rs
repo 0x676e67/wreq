@@ -1,10 +1,10 @@
 mod body;
 mod conn;
-mod core;
 mod emulate;
 mod group;
 mod request;
 mod response;
+mod rt;
 
 pub mod future;
 pub mod layer;
@@ -25,12 +25,19 @@ use std::{
 };
 
 use http::header::{HeaderMap, HeaderValue, USER_AGENT};
+use rt::{TokioExecutor, TokioTimer};
 use tower::{
     BoxError, Layer, Service, ServiceBuilder, ServiceExt,
     retry::{Retry, RetryLayer},
     util::{BoxCloneSyncService, BoxCloneSyncServiceLayer, Either, Oneshot},
 };
+use wreq_proto::body::Incoming;
+pub use wreq_proto::upgrade::Upgraded;
 
+pub(crate) use self::conn::{
+    Connected, Connection,
+    descriptor::{ConnectionDescriptor, ConnectionId},
+};
 #[cfg(any(
     feature = "gzip",
     feature = "zstd",
@@ -42,7 +49,6 @@ use self::layer::decoder::{AcceptEncoding, DecompressionLayer};
 use self::ws::WebSocketRequestBuilder;
 pub use self::{
     body::Body,
-    core::{http1, http2, upgrade::Upgraded},
     emulate::{Emulation, EmulationBuilder, IntoEmulation},
     group::Group,
     request::{Request, RequestBuilder},
@@ -53,10 +59,6 @@ use self::{
         BoxedConnectorLayer, BoxedConnectorService, Conn, Connector, HttpTransport,
         SocketBindOptions, Unnameable,
     },
-    core::{
-        body::Incoming,
-        rt::{TokioExecutor, TokioTimer},
-    },
     future::Pending,
     layer::{
         client::HttpClient,
@@ -64,17 +66,10 @@ use self::{
         redirect::{FollowRedirect, FollowRedirectLayer},
         retry::RetryPolicy,
         timeout::{
-            ResponseBodyTimeout, ResponseBodyTimeoutLayer, Timeout, TimeoutBody, TimeoutLayer,
-            TimeoutOptions,
+            ResponseBodyTimeout, ResponseBodyTimeoutLayer, Timeout, TimeoutLayer, TimeoutOptions,
+            body::TimeoutBody,
         },
     },
-};
-pub(crate) use self::{
-    conn::{
-        Connected, Connection,
-        descriptor::{ConnectionDescriptor, ConnectionId},
-    },
-    core::Error as CoreError,
 };
 #[cfg(feature = "cookies")]
 use crate::cookie;

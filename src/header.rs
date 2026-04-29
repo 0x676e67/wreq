@@ -6,6 +6,7 @@
 
 pub use http::header::*;
 pub use name::OrigHeaderName;
+use wreq_proto::ext::OnPreserveHeaderCallback;
 
 /// Trait for types that can be converted into an [`OrigHeaderName`] (case-preserved header).
 ///
@@ -101,10 +102,8 @@ impl OrigHeaderMap {
     }
 }
 
-impl OrigHeaderMap {
-    /// Sorts headers by this map, preserving original casing.
-    /// Headers in the map come first, others follow.
-    pub(crate) fn sort_headers(&self, headers: &mut HeaderMap) {
+impl OnPreserveHeaderCallback for OrigHeaderMap {
+    fn call(&self, headers: &mut HeaderMap) {
         if headers.len() <= 1 || self.0.is_empty() {
             return;
         }
@@ -138,12 +137,11 @@ impl OrigHeaderMap {
         std::mem::swap(headers, &mut sorted_headers);
     }
 
-    /// Calls the given function for each header in this map's order, preserving original casing.
-    /// Headers in the map are processed first, others follow.
-    pub(crate) fn sort_headers_for_each<F>(&self, headers: &mut HeaderMap, mut dst: F)
-    where
-        F: FnMut(&[u8], &HeaderValue),
-    {
+    fn call_for_each(
+        &self,
+        headers: &mut HeaderMap,
+        dst: &mut dyn FnMut(&[u8], &http::HeaderValue),
+    ) {
         // First, sort headers according to the order defined in this map
         for (name, orig_name) in self.iter() {
             for value in headers.get_all(name) {
@@ -304,6 +302,7 @@ mod sealed {
 #[cfg(test)]
 mod test {
     use http::{HeaderMap, HeaderName, HeaderValue};
+    use wreq_proto::ext::OnPreserveHeaderCallback;
 
     use super::OrigHeaderMap;
 
@@ -415,7 +414,7 @@ mod test {
             .collect();
 
         // Sort headers according to orig_headers order
-        orig_headers.sort_headers(&mut headers);
+        orig_headers.call(&mut headers);
 
         // Verify all cookie values are preserved
         let sorted_cookies: Vec<_> = headers
@@ -479,7 +478,7 @@ mod test {
 
         let total_before = headers.len();
 
-        orig_headers.sort_headers(&mut headers);
+        orig_headers.call(&mut headers);
 
         // Verify all values preserved
         assert_eq!(

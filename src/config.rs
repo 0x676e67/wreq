@@ -73,17 +73,6 @@ where
             .or(self.as_ref())
     }
 
-    /// Stores this value into the given [`http::Extensions`], if a value of the same type is not
-    /// already present.
-    ///
-    /// This method checks whether the provided [`http::Extensions`] contains a
-    /// [`RequestConfig<T>`]. If not, it clones the current value and inserts it into the
-    /// extensions. If a value already exists, the method does nothing.
-    #[inline]
-    pub(crate) fn store<'a>(&'a self, ext: &'a mut Extensions) -> &'a mut Option<T::Value> {
-        &mut ext.get_or_insert_with(|| self.clone()).0
-    }
-
     /// Loads the internal value from the provided [`http::Extensions`], if present.
     ///
     /// This method attempts to remove a value of type [`RequestConfig<T>`] from the provided
@@ -95,6 +84,17 @@ where
             self.0.replace(value);
         }
         self.as_ref()
+    }
+
+    /// Removes and returns the value of this type from the given [`http::Extensions`],
+    /// or returns a clone of the current value if not present.
+    ///
+    /// This method attempts to remove a [`RequestConfig<T>`] from the provided
+    /// [`http::Extensions`]. If a value is found, it is returned. If not, the current value is
+    /// cloned and returned instead.
+    #[inline]
+    pub(crate) fn take<'a>(&'a self, ext: &'a mut Extensions) -> Option<T::Value> {
+        ext.remove().unwrap_or_else(|| self.clone()).0
     }
 
     /// Returns an immutable reference to the stored value from the given [`http::Extensions`], if

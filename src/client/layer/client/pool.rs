@@ -15,12 +15,10 @@ use std::{
 
 use lru::LruCache;
 use tokio::sync::oneshot;
+use wreq_proto::rt::{Executor, Time, Timer};
 
 use super::exec::{self, Exec};
-use crate::{
-    client::core::rt::{Executor, Time, Timer},
-    sync::Mutex,
-};
+use crate::sync::Mutex;
 
 pub struct Pool<T, K: Key> {
     // If the pool is disabled, this is None.
@@ -813,9 +811,11 @@ mod tests {
         time::Duration,
     };
 
+    use wreq_proto::rt::Time;
+
     use super::{Connecting, Key, Pool, Poolable, Reservation, WeakOpt};
     use crate::{
-        client::core::rt::{Time, TokioExecutor, TokioTimer},
+        client::rt::{TokioExecutor, TokioTimer},
         sync::MutexGuard,
     };
 

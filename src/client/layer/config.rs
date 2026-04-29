@@ -6,14 +6,11 @@ use std::{
 use futures_util::future::{self, Either, Ready};
 use http::{HeaderMap, Request, Response, Version};
 use tower::{Layer, Service};
+use wreq_proto::{http1::Http1Options, http2::Http2Options};
 
 use crate::{
     Error,
-    client::{
-        conn::SocketBindOptions,
-        core::{http1::Http1Options, http2::Http2Options},
-        group::Group,
-    },
+    client::{conn::SocketBindOptions, group::Group},
     config::RequestConfig,
     ext::UriExt,
     header::OrigHeaderMap,
@@ -136,7 +133,9 @@ where
         }
 
         // store the original headers in request extensions
-        self.config.orig_headers.store(req.extensions_mut());
+        if let Some(orig_headers) = self.config.orig_headers.take(req.extensions_mut()) {
+            wreq_proto::ext::on_preserve_header(&mut req, orig_headers);
+        }
 
         Either::Left(self.inner.call(req))
     }

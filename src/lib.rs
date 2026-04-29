@@ -253,9 +253,9 @@
 #[macro_use]
 mod trace;
 #[macro_use]
-mod config;
-#[macro_use]
 mod ext;
+#[macro_use]
+mod config;
 mod client;
 mod error;
 mod into_uri;
@@ -270,10 +270,6 @@ pub mod header;
 pub mod redirect;
 pub mod retry;
 pub mod tls;
-
-pub use http::{Method, StatusCode, Uri, Version};
-#[cfg(unix)]
-use libc as _;
 
 #[cfg(feature = "multipart")]
 pub use self::client::multipart;
@@ -293,7 +289,7 @@ pub use self::{
 pub mod http1 {
     //! HTTP/1 protocol implementation and utilities.
 
-    pub use super::client::http1::{Http1Options, Http1OptionsBuilder};
+    pub use wreq_proto::http1::{Http1Options, Http1OptionsBuilder};
 }
 
 pub mod http2 {
@@ -303,9 +299,12 @@ pub mod http2 {
         Priorities, PrioritiesBuilder, Priority, PseudoId, PseudoOrder, Setting, SettingId,
         SettingsOrder, SettingsOrderBuilder, StreamDependency, StreamId,
     };
-
-    pub use super::client::http2::{Http2Options, Http2OptionsBuilder};
+    pub use wreq_proto::http2::{Http2Options, Http2OptionsBuilder};
 }
+
+pub use http::{Method, StatusCode, Uri, Version};
+#[cfg(unix)]
+use libc as _;
 
 fn _assert_impls() {
     fn assert_send<T: Send>() {}
