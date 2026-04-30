@@ -1,9 +1,6 @@
 use std::sync::Arc;
 
-use btls::{
-    ssl::SslConnectorBuilder,
-    x509::store::{X509Store, X509StoreBuilder},
-};
+use btls::x509::store::{X509Store, X509StoreBuilder};
 
 use super::{
     Certificate, CertificateInput,
@@ -148,7 +145,7 @@ impl CertStoreBuilder {
 /// [`Rc`]: std::rc::Rc
 /// [`Arc`]: std::sync::Arc
 #[derive(Clone)]
-pub struct CertStore(Arc<X509Store>);
+pub struct CertStore(pub(in crate::tls) Arc<X509Store>);
 
 // ====== impl CertStore ======
 
@@ -194,13 +191,6 @@ impl CertStore {
         parse_certs_with_stack(certs, Certificate::stack_from_pem)
             .map(Arc::new)
             .map(CertStore)
-    }
-}
-
-impl CertStore {
-    #[inline]
-    pub(crate) fn add_to_tls(&self, tls: &mut SslConnectorBuilder) {
-        tls.set_cert_store_ref(&self.0);
     }
 }
 

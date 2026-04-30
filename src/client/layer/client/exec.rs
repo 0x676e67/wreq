@@ -8,9 +8,8 @@ pub(crate) type BoxSendFuture = Pin<Box<dyn Future<Output = ()> + Send>>;
 #[derive(Clone)]
 pub struct Exec(Arc<dyn Executor<BoxSendFuture> + Send + Sync>);
 
-// ===== impl Exec =====
-
 impl Exec {
+    #[inline]
     pub(super) fn new<E>(inner: E) -> Self
     where
         E: Executor<BoxSendFuture> + Send + Sync + 'static,
@@ -23,6 +22,7 @@ impl<F> Executor<F> for Exec
 where
     F: Future<Output = ()> + Send + 'static,
 {
+    #[inline]
     fn execute(&self, fut: F) {
         self.0.execute(Box::pin(fut));
     }

@@ -9,9 +9,9 @@ use crate::Error;
 /// Represents a private key and X509 cert as a client certificate.
 #[derive(Debug, Clone)]
 pub struct Identity {
-    pkey: PKey<Private>,
-    cert: X509,
-    chain: Vec<X509>,
+    pub(in crate::tls) pkey: PKey<Private>,
+    pub(in crate::tls) cert: X509,
+    pub(in crate::tls) chain: Vec<X509>,
 }
 
 impl Identity {
@@ -86,23 +86,6 @@ impl Identity {
         })?;
         let chain = cert_chain.collect();
         Ok(Identity { pkey, cert, chain })
-    }
-
-    pub(crate) fn add_to_tls(
-        &self,
-        connector: &mut btls::ssl::SslConnectorBuilder,
-    ) -> crate::Result<()> {
-        connector.set_certificate(&self.cert).map_err(Error::tls)?;
-        connector.set_private_key(&self.pkey).map_err(Error::tls)?;
-        for cert in self.chain.iter() {
-            // https://www.openssl.org/docs/manmaster/man3/SSL_CTX_add_extra_chain_cert.html
-            // specifies that "When sending a certificate chain, extra chain certificates are
-            // sent in order following the end entity certificate."
-            connector
-                .add_extra_chain_cert(cert.clone())
-                .map_err(Error::tls)?;
-        }
-        Ok(())
     }
 }
 
