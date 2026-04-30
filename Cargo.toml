@@ -137,10 +137,10 @@ tower-http = { version = "0.6.8", default-features = false, optional = true }
 ## tokio util
 tokio-util = { version = "0.7.18", default-features = false, optional = true }
 
-## socks
+## tokio socks
 tokio-socks = { version = "0.5.2", optional = true }
 
-## websocket
+## tokio websocket
 tokio-tungstenite = { version = "0.29.0", default-features = false, optional = true }
 
 ## hickory-dns
