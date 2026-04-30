@@ -1,13 +1,13 @@
-mod body;
-mod conn;
-mod emulate;
-mod group;
-mod request;
-mod response;
 mod rt;
 
-pub mod future;
-pub mod layer;
+pub(super) mod body;
+pub(super) mod emulate;
+pub(super) mod future;
+pub(super) mod layer;
+pub(super) mod request;
+pub(super) mod response;
+pub(super) mod upgrade;
+
 #[cfg(feature = "multipart")]
 pub mod multipart;
 #[cfg(feature = "ws")]
@@ -32,12 +32,7 @@ use tower::{
     util::{BoxCloneSyncService, BoxCloneSyncServiceLayer, Either, Oneshot},
 };
 use wreq_proto::body::Incoming;
-pub use wreq_proto::upgrade::Upgraded;
 
-pub(crate) use self::conn::{
-    Connected, Connection,
-    descriptor::{ConnectionDescriptor, ConnectionId},
-};
 #[cfg(any(
     feature = "gzip",
     feature = "zstd",
@@ -47,18 +42,9 @@ pub(crate) use self::conn::{
 use self::layer::decoder::{AcceptEncoding, DecompressionLayer};
 #[cfg(feature = "ws")]
 use self::ws::WebSocketRequestBuilder;
-pub use self::{
-    body::Body,
-    emulate::{Emulation, EmulationBuilder, IntoEmulation},
-    group::Group,
-    request::{Request, RequestBuilder},
-    response::Response,
-};
 use self::{
-    conn::{
-        BoxedConnectorLayer, BoxedConnectorService, Conn, Connector, HttpTransport,
-        SocketBindOptions, Unnameable,
-    },
+    body::Body,
+    emulate::IntoEmulation,
     future::Pending,
     layer::{
         client::HttpClient,
@@ -70,6 +56,8 @@ use self::{
             body::TimeoutBody,
         },
     },
+    request::{Request, RequestBuilder},
+    response::Response,
 };
 #[cfg(feature = "cookies")]
 use crate::cookie;
@@ -77,6 +65,10 @@ use crate::cookie;
 use crate::dns::hickory::HickoryDnsResolver;
 use crate::{
     IntoUri, Method, Proxy,
+    conn::{
+        BoxedConnectorLayer, BoxedConnectorService, Conn, Unnameable, connector::Connector,
+        http::HttpTransport, tcp::SocketBindOptions,
+    },
     dns::{DnsResolverWithOverrides, DynResolver, GaiResolver, IntoResolve, Resolve},
     error::{self, Error},
     header::OrigHeaderMap,

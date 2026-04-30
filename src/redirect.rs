@@ -11,7 +11,7 @@ use futures_util::FutureExt;
 use http::{HeaderMap, HeaderName, HeaderValue, StatusCode, Uri};
 
 use crate::{
-    client::{Body, layer::redirect},
+    client::{body::Body, layer::redirect},
     config::RequestConfig,
     error::{BoxError, Error},
     ext::UriExt,

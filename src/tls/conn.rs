@@ -27,7 +27,7 @@ use tower::{BoxError, Service};
 
 use crate::{
     Error,
-    client::{Connected, Connection, ConnectionDescriptor},
+    conn::{Connected, Connection, descriptor::ConnectionDescriptor},
     tls::{
         AlpnProtocol, AlpsProtocol, KeyShare, TlsOptions, TlsVersion,
         keylog::KeyLog,

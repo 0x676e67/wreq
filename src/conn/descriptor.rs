@@ -10,11 +10,7 @@ use std::{
 use http::{Uri, Version};
 use lru::DefaultHasher;
 
-use crate::{
-    client::{conn::SocketBindOptions, group::Group},
-    proxy::Matcher as ProxyMacher,
-    tls::TlsOptions,
-};
+use crate::{conn::tcp::SocketBindOptions, group::Group, proxy::Matcher, tls::TlsOptions};
 
 /// A key that uniquely identifies a group of interchangeable connections for pooling.
 ///
@@ -33,7 +29,7 @@ pub(crate) struct ConnectionId(Arc<(Group, AtomicU64)>);
 pub(crate) struct ConnectionDescriptor {
     uri: Uri,
     version: Option<Version>,
-    proxy: Option<ProxyMacher>,
+    proxy: Option<Matcher>,
     tls_options: Option<TlsOptions>,
     socket_bind: Option<SocketBindOptions>,
     connection_id: ConnectionId,
@@ -80,7 +76,7 @@ impl ConnectionDescriptor {
     pub(crate) fn new(
         uri: Uri,
         mut group: Group,
-        proxy: Option<ProxyMacher>,
+        proxy: Option<Matcher>,
         version: Option<Version>,
         tls_options: Option<TlsOptions>,
         socket_bind: Option<SocketBindOptions>,
@@ -133,9 +129,9 @@ impl ConnectionDescriptor {
         self.tls_options.as_ref()
     }
 
-    /// Return a reference to the [`ProxyMacher`].
+    /// Return a reference to the [`Matcher`].
     #[inline]
-    pub(crate) fn proxy(&self) -> Option<&ProxyMacher> {
+    pub(crate) fn proxy(&self) -> Option<&Matcher> {
         self.proxy.as_ref()
     }
 

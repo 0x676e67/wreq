@@ -257,7 +257,9 @@ mod ext;
 #[macro_use]
 mod config;
 mod client;
+mod conn;
 mod error;
+mod group;
 mod into_uri;
 mod proxy;
 mod sync;
@@ -277,11 +279,16 @@ pub use self::client::multipart;
 pub use self::client::ws;
 pub use self::{
     client::{
-        Body, Client, ClientBuilder, Emulation, EmulationBuilder, Group, IntoEmulation, Request,
-        RequestBuilder, Response, Upgraded,
+        Client, ClientBuilder,
+        body::Body,
+        emulate::{Emulation, EmulationBuilder, IntoEmulation},
+        request::{Request, RequestBuilder},
+        response::Response,
+        upgrade::Upgraded,
     },
     error::{Error, Result},
     ext::{ResponseBuilderExt, ResponseExt},
+    group::Group,
     into_uri::IntoUri,
     proxy::{NoProxy, Proxy},
 };

@@ -21,7 +21,7 @@ use super::{
     TlsConn, TlsInfoFactory, Unnameable, http::HttpTransport, proxy, verbose::Verbose,
 };
 use crate::{
-    client::conn::{TokioTcpConnector, descriptor::ConnectionDescriptor},
+    conn::{TokioTcpConnector, descriptor::ConnectionDescriptor},
     dns::DynResolver,
     error::{ProxyConnect, TimedOut, map_timeout_to_connector_error},
     ext::UriExt,

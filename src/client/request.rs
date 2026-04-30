@@ -24,7 +24,6 @@ use super::layer::decoder::AcceptEncoding;
 use super::{
     Body, Client, IntoEmulation, Response,
     future::Pending,
-    group::Group,
     layer::{
         config::{DefaultHeaders, RequestOptions},
         timeout::TimeoutOptions,
@@ -36,6 +35,7 @@ use crate::{
     Error, Method, Proxy,
     config::{RequestConfig, RequestConfigValue},
     ext::UriExt,
+    group::Group,
     header::{AUTHORIZATION, HeaderMap, HeaderName, HeaderValue, OrigHeaderMap},
     redirect,
 };

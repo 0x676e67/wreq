@@ -1,13 +1,13 @@
-mod connector;
-mod http;
-mod proxy;
-mod tcp;
 mod tls_info;
 #[cfg(unix)]
 mod uds;
 mod verbose;
 
-pub mod descriptor;
+pub(super) mod connector;
+pub(super) mod descriptor;
+pub(super) mod http;
+pub(super) mod proxy;
+pub(super) mod tcp;
 
 use std::{
     fmt::{self, Debug, Formatter},
@@ -23,6 +23,8 @@ use std::{
 
 use ::http::{Extensions, HeaderMap, HeaderValue};
 use pin_project_lite::pin_project;
+use tcp::tokio::TokioTcpConnector;
+use tls_info::TlsInfoFactory;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio_btls::SslStream;
 use tower::{
@@ -30,19 +32,10 @@ use tower::{
     util::{BoxCloneSyncService, BoxCloneSyncServiceLayer},
 };
 
-#[cfg(feature = "socks")]
-pub(super) use self::proxy::socks;
-pub(super) use self::{
-    connector::Connector,
-    http::{HttpInfo, HttpTransport},
-    proxy::tunnel,
-    tcp::{SocketBindOptions, tokio::TokioTcpConnector},
-    tls_info::TlsInfoFactory,
-};
 use crate::{dns::DynResolver, proxy::matcher::Intercept, tls::TlsInfo};
 
 /// HTTP connector with dynamic DNS resolver.
-pub type HttpConnector = self::http::HttpConnector<DynResolver, TokioTcpConnector>;
+pub type HttpConnector = http::HttpConnector<DynResolver, TokioTcpConnector>;
 
 /// Boxed connector service for establishing connections.
 pub type BoxedConnectorService = BoxCloneSyncService<Unnameable, Conn, BoxError>;
