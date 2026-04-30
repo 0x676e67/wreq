@@ -10,11 +10,11 @@ use crate::{
 
 /// SslConnectorBuilderExt trait for `SslConnectorBuilder`.
 pub trait SslConnectorBuilderExt {
-    /// Configure the CertStore for the given `SslConnectorBuilder`.
-    fn set_cert_store(self, store: Option<&CertStore>) -> crate::Result<SslConnectorBuilder>;
-
     /// Configure the Identity for the given `SslConnectorBuilder`.
     fn set_identity(self, identity: Option<&Identity>) -> crate::Result<SslConnectorBuilder>;
+
+    /// Configure the CertStore for the given `SslConnectorBuilder`.
+    fn set_cert_store(self, store: Option<&CertStore>) -> crate::Result<SslConnectorBuilder>;
 
     /// Configure the certificate verification for the given `SslConnectorBuilder`.
     fn set_cert_verification(self, enable: bool) -> SslConnectorBuilder;
@@ -27,16 +27,6 @@ pub trait SslConnectorBuilderExt {
 }
 
 impl SslConnectorBuilderExt for SslConnectorBuilder {
-    fn set_cert_store(mut self, store: Option<&CertStore>) -> crate::Result<SslConnectorBuilder> {
-        if let Some(store) = store {
-            self.set_cert_store_ref(&store.0)
-        } else {
-            self.set_default_verify_paths().map_err(Error::tls)?;
-        }
-
-        Ok(self)
-    }
-
     fn set_identity(mut self, identity: Option<&Identity>) -> crate::Result<SslConnectorBuilder> {
         if let Some(identity) = identity {
             self.set_certificate(&identity.cert).map_err(Error::tls)?;
@@ -49,6 +39,36 @@ impl SslConnectorBuilderExt for SslConnectorBuilder {
                     .map_err(Error::tls)?;
             }
         }
+        Ok(self)
+    }
+
+    fn set_cert_store(mut self, store: Option<&CertStore>) -> crate::Result<SslConnectorBuilder> {
+        if let Some(store) = store {
+            self.set_cert_store_ref(&store.0)
+        } else {
+            #[cfg(feature = "webpki-roots")]
+            {
+                static LOAD_CERTS: std::sync::OnceLock<crate::Result<CertStore>> =
+                    std::sync::OnceLock::new();
+
+                match LOAD_CERTS.get_or_init(|| {
+                    CertStore::from_der_certs(webpki_root_certs::TLS_SERVER_ROOT_CERTS)
+                }) {
+                    Ok(store) => {
+                        self.set_cert_store_ref(&store.0);
+                        return Ok(self);
+                    }
+                    Err(_err) => {
+                        // If loading the certs fails, we can still proceed without them, but we'll
+                        // log the error.
+                        warn!("Failed to load webpki root certificates: {:?}", _err);
+                    }
+                }
+            }
+
+            self.set_default_verify_paths().map_err(Error::tls)?;
+        }
+
         Ok(self)
     }
 
