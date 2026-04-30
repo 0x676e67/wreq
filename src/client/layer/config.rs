@@ -9,13 +9,8 @@ use tower::{Layer, Service};
 use wreq_proto::{http1::Http1Options, http2::Http2Options};
 
 use crate::{
-    Error,
-    client::{conn::SocketBindOptions, group::Group},
-    config::RequestConfig,
-    ext::UriExt,
-    header::OrigHeaderMap,
-    proxy::Matcher,
-    tls::TlsOptions,
+    Error, config::RequestConfig, conn::tcp::SocketBindOptions, ext::UriExt, group::Group,
+    header::OrigHeaderMap, proxy::Matcher, tls::TlsOptions,
 };
 
 /// A marker type for the default headers configuration value.

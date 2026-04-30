@@ -18,7 +18,7 @@ use std::{
 use btls::ssl::{SslSession, SslVersion};
 use lru::LruCache;
 
-use crate::{client::ConnectionId, sync::Mutex, tls::TlsVersion};
+use crate::{conn::descriptor::ConnectionId, sync::Mutex, tls::TlsVersion};
 
 /// An opaque key identifying a TLS session cache entry.
 #[derive(Clone, PartialEq, Eq, Hash)]

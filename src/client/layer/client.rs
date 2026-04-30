@@ -43,18 +43,14 @@ use self::{
     exec::Exec,
     lazy::{Started as Lazy, lazy},
 };
-#[cfg(feature = "socks")]
-use crate::client::conn::socks;
 use crate::{
-    client::{
-        conn::{
-            Connected, Connection,
-            descriptor::{ConnectionDescriptor, ConnectionId},
-            tunnel,
-        },
-        layer::config::RequestOptions,
-    },
+    client::layer::config::RequestOptions,
     config::RequestConfig,
+    conn::{
+        Connected, Connection,
+        descriptor::{ConnectionDescriptor, ConnectionId},
+        proxy,
+    },
     error::ProxyConnect,
 };
 
@@ -1007,10 +1003,10 @@ impl Error {
         E: Into<BoxError>,
     {
         let error = error.into();
-        let kind = if error.is::<tunnel::TunnelError>() || error.is::<ProxyConnect>() || {
+        let kind = if error.is::<proxy::tunnel::TunnelError>() || error.is::<ProxyConnect>() || {
             #[cfg(feature = "socks")]
             {
-                error.is::<socks::SocksError>()
+                error.is::<proxy::socks::SocksError>()
             }
             #[cfg(not(feature = "socks"))]
             {

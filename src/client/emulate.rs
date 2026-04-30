@@ -1,8 +1,7 @@
 use http::HeaderMap;
 use wreq_proto::{http1::Http1Options, http2::Http2Options};
 
-use super::group::Group;
-use crate::{header::OrigHeaderMap, tls::TlsOptions};
+use crate::{group::Group, header::OrigHeaderMap, tls::TlsOptions};
 
 /// Converts a value into an [`Emulation`] configuration.
 ///

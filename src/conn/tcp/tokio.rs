@@ -3,7 +3,7 @@ use std::{future::Future, io, net::SocketAddr, pin::Pin, time::Duration};
 use tokio::net::{TcpSocket, TcpStream};
 
 use super::TcpConnector;
-use crate::client::{Connected, Connection, conn::HttpInfo};
+use crate::conn::{Connected, Connection, http::HttpInfo};
 
 /// A connector that uses `tokio` for TCP connections.
 #[derive(Clone, Copy, Debug, Default)]

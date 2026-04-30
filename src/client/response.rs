@@ -16,12 +16,16 @@ use http_body_util::{BodyExt, Collected};
 use mime::Mime;
 #[cfg(feature = "json")]
 use serde::de::DeserializeOwned;
-use wreq_proto::{ext::ReasonPhrase, upgrade};
+use wreq_proto::ext::ReasonPhrase;
 
-use super::conn::HttpInfo;
 #[cfg(feature = "cookies")]
 use crate::cookie;
-use crate::{Body, Error, Upgraded, client::Connected, error::BoxError, ext::RequestUri};
+use crate::{
+    Body, Error,
+    conn::{Connected, http::HttpInfo},
+    error::BoxError,
+    ext::RequestUri,
+};
 
 /// A Response to a submitted [`crate::Request`].
 #[derive(Debug)]
@@ -463,12 +467,6 @@ impl Response {
         } else {
             Ok(self)
         }
-    }
-
-    /// Consumes the [`Response`] and returns a future for a possible HTTP upgrade.
-    #[inline]
-    pub async fn upgrade(self) -> crate::Result<Upgraded> {
-        upgrade::on(self.res).await.map_err(Error::upgrade)
     }
 }
 

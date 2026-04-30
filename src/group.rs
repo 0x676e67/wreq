@@ -22,7 +22,7 @@ use std::{borrow::Cow, collections::BTreeMap, hash::Hash};
 
 use http::{Uri, Version};
 
-use crate::{client::SocketBindOptions, proxy::Matcher};
+use crate::{conn::tcp::SocketBindOptions, proxy::Matcher};
 
 macro_rules! impl_group_variants {
     ($($name:ident $(($ty:ty))?,)*) => {
