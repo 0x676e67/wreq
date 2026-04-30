@@ -2,9 +2,8 @@
 //!
 //! - Various parts of TLS can also be configured or even disabled on the `ClientBuilder`.
 
-pub(crate) mod conn;
-
 pub mod compress;
+pub(crate) mod conn;
 pub mod keylog;
 pub mod session;
 pub mod trust;

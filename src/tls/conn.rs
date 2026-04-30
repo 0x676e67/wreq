@@ -19,6 +19,7 @@ use btls::{
     ex_data::Index,
     ssl::{Ssl, SslConnector, SslMethod, SslOptions, SslSessionCacheMode},
 };
+use ext::SslConnectorBuilderExt;
 use http::{Uri, Version};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio_btls::SslStream;
@@ -29,7 +30,6 @@ use crate::{
     client::{Connected, Connection, ConnectionDescriptor},
     tls::{
         AlpnProtocol, AlpsProtocol, KeyShare, TlsOptions, TlsVersion,
-        conn::ext::SslConnectorBuilderExt,
         keylog::KeyLog,
         session::{Key, LruTlsSessionCache, TlsSession, TlsSessionCache},
         trust::{CertStore, Identity},
@@ -340,14 +340,10 @@ impl TlsConnectorBuilder {
         // Create the SslConnector with the provided options
         let mut connector = SslConnector::bare_builder(SslMethod::tls())
             .map_err(Error::tls)?
+            .set_identity(self.identity.as_ref())?
             .set_cert_store(self.cert_store.as_ref())?
-            .set_cert_verification(self.cert_verification)?
-            .set_cert_compressors(opts.certificate_compressors.as_ref())?;
-
-        // Set Identity
-        if let Some(ref identity) = self.identity {
-            identity.add_to_tls(&mut connector)?;
-        }
+            .set_cert_verification(self.cert_verification)
+            .set_cert_compressors(opts.certificate_compressors.as_deref())?;
 
         // Set minimum TLS version
         set_option_inner_try!(min_tls_version, connector, set_min_proto_version);

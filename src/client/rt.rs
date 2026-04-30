@@ -12,12 +12,16 @@ use wreq_proto::rt::{Executor, Sleep, Timer};
 /// Future executor that utilises `tokio` threads.
 #[non_exhaustive]
 #[derive(Default, Debug, Clone)]
-pub struct TokioExecutor {}
+pub struct TokioExecutor {
+    _priv: (),
+}
 
 /// A Timer that uses the tokio runtime.
 #[non_exhaustive]
 #[derive(Default, Clone, Debug)]
-pub struct TokioTimer;
+pub struct TokioTimer {
+    _priv: (),
+}
 
 // Use TokioSleep to get tokio::time::Sleep to implement Unpin.
 // see https://docs.rs/tokio/latest/tokio/time/struct.Sleep.html
@@ -36,6 +40,7 @@ where
     Fut: Future + Send + 'static,
     Fut::Output: Send + 'static,
 {
+    #[inline]
     fn execute(&self, fut: Fut) {
         tokio::spawn(fut);
     }
@@ -43,8 +48,9 @@ where
 
 impl TokioExecutor {
     /// Create new executor that relies on [`tokio::spawn`] to execute futures.
+    #[inline]
     pub fn new() -> Self {
-        Self {}
+        Self { _priv: () }
     }
 }
 
@@ -78,8 +84,9 @@ impl Timer for TokioTimer {
 
 impl TokioTimer {
     /// Create a new TokioTimer
+    #[inline]
     pub fn new() -> Self {
-        Self {}
+        Self { _priv: () }
     }
 }
 
