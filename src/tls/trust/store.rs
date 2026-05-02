@@ -8,14 +8,44 @@ use super::{
 };
 use crate::{Error, Result};
 
-/// A builder for constructing a `CertStore`.
+/// A builder for constructing a [`CertStore`].
 pub struct CertStoreBuilder {
     builder: Result<X509StoreBuilder>,
 }
 
-// ====== impl CertStoreBuilder ======
-
 impl CertStoreBuilder {
+    fn parse_cert<'c, C, P>(mut self, cert: C, parser: P) -> Self
+    where
+        C: Into<CertificateInput<'c>>,
+        P: Fn(&'c [u8]) -> Result<Certificate>,
+    {
+        if let Ok(ref mut builder) = self.builder {
+            let input = cert.into();
+            let result = input
+                .with_parser(parser)
+                .and_then(|cert| builder.add_cert(cert.0).map_err(Error::tls));
+
+            if let Err(err) = result {
+                self.builder = Err(err);
+            }
+        }
+        self
+    }
+
+    fn parse_certs<'c, I>(mut self, certs: I, parser: fn(&'c [u8]) -> Result<Certificate>) -> Self
+    where
+        I: IntoIterator,
+        I::Item: Into<CertificateInput<'c>>,
+    {
+        if let Ok(ref mut builder) = self.builder {
+            let certs = filter_map_certs(certs, parser);
+            if let Err(err) = process_certs(certs, builder) {
+                self.builder = Err(err);
+            }
+        }
+        self
+    }
+
     /// Adds a DER-encoded certificate to the certificate store.
     #[inline]
     pub fn add_der_cert<'c, C>(self, cert: C) -> Self
@@ -84,9 +114,9 @@ impl CertStoreBuilder {
         self
     }
 
-    /// Constructs the `CertStore`.
+    /// Constructs the [`CertStore`].
     ///
-    /// This method finalizes the builder and constructs the `CertStore`
+    /// This method finalizes the builder and constructs the [`CertStore`]
     /// containing all the added certificates.
     #[inline]
     pub fn build(self) -> Result<CertStore> {
@@ -94,40 +124,6 @@ impl CertStoreBuilder {
             .map(X509StoreBuilder::build)
             .map(Arc::new)
             .map(CertStore)
-    }
-}
-
-impl CertStoreBuilder {
-    fn parse_cert<'c, C, P>(mut self, cert: C, parser: P) -> Self
-    where
-        C: Into<CertificateInput<'c>>,
-        P: Fn(&'c [u8]) -> Result<Certificate>,
-    {
-        if let Ok(ref mut builder) = self.builder {
-            let input = cert.into();
-            let result = input
-                .with_parser(parser)
-                .and_then(|cert| builder.add_cert(cert.0).map_err(Error::tls));
-
-            if let Err(err) = result {
-                self.builder = Err(err);
-            }
-        }
-        self
-    }
-
-    fn parse_certs<'c, I>(mut self, certs: I, parser: fn(&'c [u8]) -> Result<Certificate>) -> Self
-    where
-        I: IntoIterator,
-        I::Item: Into<CertificateInput<'c>>,
-    {
-        if let Ok(ref mut builder) = self.builder {
-            let certs = filter_map_certs(certs, parser);
-            if let Err(err) = process_certs(certs, builder) {
-                self.builder = Err(err);
-            }
-        }
-        self
     }
 }
 
@@ -147,10 +143,8 @@ impl CertStoreBuilder {
 #[derive(Clone)]
 pub struct CertStore(pub(in crate::tls) Arc<X509Store>);
 
-// ====== impl CertStore ======
-
 impl CertStore {
-    /// Creates a new `CertStoreBuilder`.
+    /// Creates a new [`CertStoreBuilder`].
     #[inline]
     pub fn builder() -> CertStoreBuilder {
         CertStoreBuilder {
@@ -158,7 +152,7 @@ impl CertStore {
         }
     }
 
-    /// Creates a new `CertStore` from a collection of DER-encoded certificates.
+    /// Creates a new [`CertStore`] from a collection of DER-encoded certificates.
     #[inline]
     pub fn from_der_certs<'c, C>(certs: C) -> Result<CertStore>
     where
@@ -170,7 +164,7 @@ impl CertStore {
             .map(CertStore)
     }
 
-    /// Creates a new `CertStore` from a collection of PEM-encoded certificates.
+    /// Creates a new [`CertStore`] from a collection of PEM-encoded certificates.
     #[inline]
     pub fn from_pem_certs<'c, C>(certs: C) -> Result<CertStore>
     where
@@ -182,7 +176,7 @@ impl CertStore {
             .map(CertStore)
     }
 
-    /// Creates a new `CertStore` from a PEM-encoded certificate stack.
+    /// Creates a new [`CertStore`] from a PEM-encoded certificate stack.
     #[inline]
     pub fn from_pem_stack<C>(certs: C) -> Result<CertStore>
     where
@@ -191,28 +185,5 @@ impl CertStore {
         parse_certs_with_stack(certs, Certificate::stack_from_pem)
             .map(Arc::new)
             .map(CertStore)
-    }
-}
-
-impl Default for CertStore {
-    fn default() -> Self {
-        #[cfg(feature = "webpki-roots")]
-        static LOAD_CERTS: std::sync::LazyLock<CertStore> = std::sync::LazyLock::new(|| {
-            CertStore::builder()
-                .add_der_certs(webpki_root_certs::TLS_SERVER_ROOT_CERTS)
-                .build()
-                .expect("failed to load default cert store")
-        });
-
-        #[cfg(not(feature = "webpki-roots"))]
-        {
-            CertStore::builder()
-                .set_default_paths()
-                .build()
-                .expect("failed to load default cert store")
-        }
-
-        #[cfg(feature = "webpki-roots")]
-        LOAD_CERTS.clone()
     }
 }

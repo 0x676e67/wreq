@@ -226,7 +226,7 @@ struct Config {
     tls_sni: bool,
     tls_verify_hostname: bool,
     tls_identity: Option<Identity>,
-    tls_cert_store: CertStore,
+    tls_cert_store: Option<CertStore>,
     tls_cert_verification: bool,
     tls_min_version: Option<TlsVersion>,
     tls_max_version: Option<TlsVersion>,
@@ -312,7 +312,7 @@ impl Client {
                 tls_sni: true,
                 tls_verify_hostname: true,
                 tls_identity: None,
-                tls_cert_store: CertStore::default(),
+                tls_cert_store: None,
                 tls_cert_verification: true,
                 tls_min_version: None,
                 tls_max_version: None,
@@ -1386,7 +1386,7 @@ impl ClientBuilder {
     /// for TLS connections. By default, the system's verify certificate store is used.
     #[inline]
     pub fn tls_cert_store(mut self, store: CertStore) -> ClientBuilder {
-        self.config.tls_cert_store = store;
+        self.config.tls_cert_store = Some(store);
         self
     }
 
