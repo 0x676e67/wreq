@@ -46,7 +46,21 @@ impl SslConnectorBuilderExt for SslConnectorBuilder {
         if let Some(store) = store {
             self.set_cert_store_ref(&store.0)
         } else {
-            self.set_default_verify_paths().map_err(Error::tls)?;
+            #[cfg(feature = "webpki-roots")]
+            {
+                static LOAD_CERTS: std::sync::LazyLock<CertStore> =
+                    std::sync::LazyLock::new(|| {
+                        CertStore::from_der_certs(webpki_root_certs::TLS_SERVER_ROOT_CERTS)
+                            .expect("Failed to load webpki root certificates")
+                    });
+
+                self.set_cert_store_ref(&LOAD_CERTS.0);
+            }
+
+            #[cfg(not(feature = "webpki-roots"))]
+            {
+                self.set_default_verify_paths().map_err(Error::tls)?;
+            }
         }
 
         Ok(self)
