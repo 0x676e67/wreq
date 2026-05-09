@@ -1,14 +1,14 @@
 //! HTTP header types
 //!
-//! This module provides [`HeaderName`], [`HeaderMap`], [`OrigHeaderMap`], [`OrigHeaderName`], and a
+//! This module provides [`HeaderName`], [`HeaderMap`], [`OrigHeaderMap`], [`HeaderCaseName`], and a
 //! number of types used for interacting with `HeaderMap`. These types allow representing both
 //! HTTP/1 and HTTP/2 headers.
 
+use bytes::Bytes;
 pub use http::header::*;
-pub use name::OrigHeaderName;
 use wreq_proto::ext::OnPreserveHeaderCallback;
 
-/// Trait for types that can be converted into an [`OrigHeaderName`] (case-preserved header).
+/// Trait for types that can be converted into an [`HeaderCaseName`] (case-preserved header).
 ///
 /// This trait is sealed, so only known types can implement it.
 /// Supported types:
@@ -17,11 +17,11 @@ use wreq_proto::ext::OnPreserveHeaderCallback;
 /// - `Bytes`
 /// - `HeaderName`
 /// - `&HeaderName`
-/// - `OrigHeaderName`
-/// - `&OrigHeaderName`
-pub trait IntoOrigHeaderName: sealed::Sealed {
-    /// Converts the type into an [`OrigHeaderName`].
-    fn into_orig_header_name(self) -> OrigHeaderName;
+/// - `HeaderCaseName`
+/// - `&HeaderCaseName`
+pub trait IntoHeaderCaseName: sealed::Sealed {
+    /// Converts the type into an [`HeaderCaseName`].
+    fn into_header_case_name(self) -> HeaderCaseName;
 }
 
 /// A map from header names to their original casing as received in an HTTP message.
@@ -30,8 +30,8 @@ pub trait IntoOrigHeaderName: sealed::Sealed {
 /// in the request or response, but also maintains the insertion order of headers. This makes
 /// it suitable for use cases where the order of headers matters, such as HTTP/1.x message
 /// serialization, proxying, or reproducing requests/responses exactly as received.
-#[derive(Debug, Clone, Default)]
-pub struct OrigHeaderMap(HeaderMap<OrigHeaderName>);
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct OrigHeaderMap(HeaderMap<HeaderCaseName>);
 
 // ===== impl OrigHeaderMap =====
 
@@ -60,16 +60,14 @@ impl OrigHeaderMap {
     #[inline]
     pub fn insert<N>(&mut self, orig: N) -> bool
     where
-        N: IntoOrigHeaderName,
+        N: IntoHeaderCaseName,
     {
-        let orig_header_name = orig.into_orig_header_name();
-        match &orig_header_name.kind {
-            name::Kind::Cased(bytes) => HeaderName::from_bytes(bytes)
-                .map(|name| self.0.append(name, orig_header_name))
+        let header_case_name = orig.into_header_case_name();
+        match &header_case_name.inner {
+            Repr::Cased(bytes) => HeaderName::from_bytes(bytes)
+                .map(|header_name| self.0.append(header_name, header_case_name))
                 .unwrap_or(false),
-            name::Kind::Standard(header_name) => {
-                self.0.append(header_name.clone(), orig_header_name)
-            }
+            Repr::Standard(header_name) => self.0.append(header_name.clone(), header_case_name),
         }
     }
 
@@ -97,7 +95,7 @@ impl OrigHeaderMap {
 
     /// Returns an iterator over all header names and their original spellings, in insertion order.
     #[inline]
-    pub fn iter(&self) -> impl Iterator<Item = (&HeaderName, &OrigHeaderName)> {
+    pub fn iter(&self) -> impl Iterator<Item = (&HeaderName, &HeaderCaseName)> {
         self.0.iter()
     }
 }
@@ -143,21 +141,21 @@ impl OnPreserveHeaderCallback for OrigHeaderMap {
         dst: &mut dyn FnMut(&dyn AsRef<[u8]>, &http::HeaderValue),
     ) {
         // First, sort headers according to the order defined in this map
-        for (name, orig_name) in self.iter() {
+        for (name, case_name) in self.iter() {
             for value in headers.get_all(name) {
-                dst(orig_name, value);
+                dst(case_name, value);
             }
 
             headers.remove(name);
         }
 
         // After processing all ordered headers, append any remaining headers
-        let mut prev_name: Option<OrigHeaderName> = None;
+        let mut prev_name: Option<HeaderCaseName> = None;
         for (name, value) in headers.drain() {
             match (name, &prev_name) {
                 (Some(name), _) => {
                     dst(&name, &value);
-                    prev_name.replace(name.into_orig_header_name());
+                    prev_name.replace(name.into_header_case_name());
                 }
                 (None, Some(prev_name)) => {
                     dst(prev_name, &value);
@@ -169,8 +167,8 @@ impl OnPreserveHeaderCallback for OrigHeaderMap {
 }
 
 impl<'a> IntoIterator for &'a OrigHeaderMap {
-    type Item = (&'a HeaderName, &'a OrigHeaderName);
-    type IntoIter = <&'a HeaderMap<OrigHeaderName> as IntoIterator>::IntoIter;
+    type Item = (&'a HeaderName, &'a HeaderCaseName);
+    type IntoIter = <&'a HeaderMap<HeaderCaseName> as IntoIterator>::IntoIter;
 
     #[inline]
     fn into_iter(self) -> Self::IntoIter {
@@ -179,8 +177,8 @@ impl<'a> IntoIterator for &'a OrigHeaderMap {
 }
 
 impl IntoIterator for OrigHeaderMap {
-    type Item = (Option<HeaderName>, OrigHeaderName);
-    type IntoIter = <HeaderMap<OrigHeaderName> as IntoIterator>::IntoIter;
+    type Item = (Option<HeaderName>, HeaderCaseName);
+    type IntoIter = <HeaderMap<HeaderCaseName> as IntoIterator>::IntoIter;
 
     #[inline]
     fn into_iter(self) -> Self::IntoIter {
@@ -190,94 +188,85 @@ impl IntoIterator for OrigHeaderMap {
 
 impl_request_config_value!(OrigHeaderMap);
 
-mod name {
-    use bytes::Bytes;
-    use http::HeaderName;
+/// An HTTP header name with both normalized and original casing.
+///
+/// While HTTP headers are case-insensitive, this type stores both
+/// the canonical [`HeaderName`] and the original casing as received,
+/// useful for preserving header order and formatting in proxies,
+/// debugging, or exact HTTP message reproduction.
+#[derive(Debug, Clone, Hash, PartialEq, Eq)]
+pub struct HeaderCaseName {
+    inner: Repr,
+}
 
-    use super::IntoOrigHeaderName;
+#[derive(Debug, Clone, Hash, PartialEq, Eq)]
+enum Repr {
+    Cased(Bytes),
+    Standard(HeaderName),
+}
 
-    /// An HTTP header name with both normalized and original casing.
-    ///
-    /// While HTTP headers are case-insensitive, this type stores both
-    /// the canonical `HeaderName` and the original casing as received,
-    /// useful for preserving header order and formatting in proxies,
-    /// debugging, or exact HTTP message reproduction.
-    #[derive(Debug, Clone, PartialEq, Eq)]
-    pub struct OrigHeaderName {
-        pub(super) kind: Kind,
-    }
-
-    #[derive(Debug, Clone, PartialEq, Eq)]
-    pub(super) enum Kind {
-        /// The original casing of the header name as received.
-        Cased(Bytes),
-        /// The canonical (normalized, lowercased) header name.
-        Standard(HeaderName),
-    }
-
-    impl AsRef<[u8]> for OrigHeaderName {
-        #[inline]
-        fn as_ref(&self) -> &[u8] {
-            match &self.kind {
-                Kind::Standard(name) => name.as_ref(),
-                Kind::Cased(orig) => orig.as_ref(),
-            }
+impl AsRef<[u8]> for HeaderCaseName {
+    #[inline]
+    fn as_ref(&self) -> &[u8] {
+        match &self.inner {
+            Repr::Standard(name) => name.as_ref(),
+            Repr::Cased(orig) => orig.as_ref(),
         }
     }
+}
 
-    impl IntoOrigHeaderName for &'static str {
-        #[inline]
-        fn into_orig_header_name(self) -> OrigHeaderName {
-            Bytes::from_static(self.as_bytes()).into_orig_header_name()
+impl IntoHeaderCaseName for &'static str {
+    #[inline]
+    fn into_header_case_name(self) -> HeaderCaseName {
+        Bytes::from_static(self.as_bytes()).into_header_case_name()
+    }
+}
+
+impl IntoHeaderCaseName for String {
+    #[inline]
+    fn into_header_case_name(self) -> HeaderCaseName {
+        Bytes::from(self).into_header_case_name()
+    }
+}
+
+impl IntoHeaderCaseName for Bytes {
+    #[inline]
+    fn into_header_case_name(self) -> HeaderCaseName {
+        HeaderCaseName {
+            inner: Repr::Cased(self),
         }
     }
+}
 
-    impl IntoOrigHeaderName for String {
-        #[inline]
-        fn into_orig_header_name(self) -> OrigHeaderName {
-            Bytes::from(self).into_orig_header_name()
+impl IntoHeaderCaseName for &HeaderName {
+    #[inline]
+    fn into_header_case_name(self) -> HeaderCaseName {
+        HeaderCaseName {
+            inner: Repr::Standard(self.clone()),
         }
     }
+}
 
-    impl IntoOrigHeaderName for Bytes {
-        #[inline]
-        fn into_orig_header_name(self) -> OrigHeaderName {
-            OrigHeaderName {
-                kind: Kind::Cased(self),
-            }
+impl IntoHeaderCaseName for HeaderName {
+    #[inline]
+    fn into_header_case_name(self) -> HeaderCaseName {
+        HeaderCaseName {
+            inner: Repr::Standard(self),
         }
     }
+}
 
-    impl IntoOrigHeaderName for &HeaderName {
-        #[inline]
-        fn into_orig_header_name(self) -> OrigHeaderName {
-            OrigHeaderName {
-                kind: Kind::Standard(self.clone()),
-            }
-        }
+impl IntoHeaderCaseName for HeaderCaseName {
+    #[inline]
+    fn into_header_case_name(self) -> HeaderCaseName {
+        self
     }
+}
 
-    impl IntoOrigHeaderName for HeaderName {
-        #[inline]
-        fn into_orig_header_name(self) -> OrigHeaderName {
-            OrigHeaderName {
-                kind: Kind::Standard(self),
-            }
-        }
-    }
-
-    impl IntoOrigHeaderName for OrigHeaderName {
-        #[inline]
-        fn into_orig_header_name(self) -> OrigHeaderName {
-            self
-        }
-    }
-
-    impl IntoOrigHeaderName for &OrigHeaderName {
-        #[inline]
-        fn into_orig_header_name(self) -> OrigHeaderName {
-            self.clone()
-        }
+impl IntoHeaderCaseName for &HeaderCaseName {
+    #[inline]
+    fn into_header_case_name(self) -> HeaderCaseName {
+        self.clone()
     }
 }
 
@@ -286,7 +275,7 @@ mod sealed {
     use bytes::Bytes;
     use http::HeaderName;
 
-    use crate::header::OrigHeaderName;
+    use crate::header::HeaderCaseName;
 
     pub trait Sealed {}
 
@@ -295,8 +284,8 @@ mod sealed {
     impl Sealed for Bytes {}
     impl Sealed for &HeaderName {}
     impl Sealed for HeaderName {}
-    impl Sealed for &OrigHeaderName {}
-    impl Sealed for OrigHeaderName {}
+    impl Sealed for &HeaderCaseName {}
+    impl Sealed for HeaderCaseName {}
 }
 
 #[cfg(test)]
