@@ -1,3 +1,6 @@
+#![allow(dead_code)]
+
+#[cfg(feature = "tokio-rt")]
 use std::{
     io,
     path::Path,
@@ -6,26 +9,33 @@ use std::{
     task::{Context, Poll},
 };
 
+#[cfg(feature = "tokio-rt")]
 use http::Uri;
+#[cfg(feature = "tokio-rt")]
 use tokio::net::UnixStream;
 
+#[cfg(feature = "tokio-rt")]
 use super::{Connected, Connection};
 
+#[cfg(feature = "tokio-rt")]
 type ConnectResult = io::Result<UnixStream>;
+#[cfg(feature = "tokio-rt")]
 type BoxConnecting = Pin<Box<dyn Future<Output = ConnectResult> + Send>>;
 
+#[cfg(feature = "tokio-rt")]
 #[derive(Clone)]
 pub struct UnixConnector {
     path: Arc<Path>,
 }
 
+#[cfg(feature = "tokio-rt")]
 impl UnixConnector {
-    /// Create a new [`UnixConnector`].
     pub fn new(path: impl Into<Arc<Path>>) -> Self {
         Self { path: path.into() }
     }
 }
 
+#[cfg(feature = "tokio-rt")]
 impl tower::Service<Uri> for UnixConnector {
     type Response = UnixStream;
     type Error = io::Error;
@@ -45,6 +55,7 @@ impl tower::Service<Uri> for UnixConnector {
     }
 }
 
+#[cfg(feature = "tokio-rt")]
 impl Connection for UnixStream {
     #[inline]
     fn connected(&self) -> Connected {

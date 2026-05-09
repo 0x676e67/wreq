@@ -1,4 +1,8 @@
+#[cfg(feature = "tokio-rt")]
 pub mod tokio;
+
+#[cfg(feature = "compio-rt")]
+pub(crate) mod compio;
 
 #[cfg(any(
     target_os = "illumos",

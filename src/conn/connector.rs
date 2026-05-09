@@ -14,14 +14,16 @@ use tower::{
     util::{BoxCloneSyncService, MapRequestLayer},
 };
 
-#[cfg(unix)]
+#[cfg(all(unix, feature = "tokio-rt"))]
 use super::uds::UnixConnector;
 use super::{
     AsyncConnWithInfo, BoxedConnectorLayer, BoxedConnectorService, Conn, Connection, HttpConnector,
     TlsConn, TlsInfoFactory, Unnameable, http::HttpTransport, proxy, verbose::Verbose,
 };
+#[cfg(feature = "tokio-rt")]
+use crate::conn::TokioTcpConnector;
 use crate::{
-    conn::{TokioTcpConnector, descriptor::ConnectionDescriptor},
+    conn::descriptor::ConnectionDescriptor,
     dns::DynResolver,
     error::{ProxyConnect, TimedOut, map_timeout_to_connector_error},
     ext::UriExt,
@@ -210,7 +212,13 @@ impl Connector {
             },
             #[cfg(feature = "socks")]
             resolver: resolver.clone(),
+            #[cfg(feature = "tokio-rt")]
             http: HttpConnector::new(resolver, TokioTcpConnector::new()),
+            #[cfg(all(feature = "compio-rt", not(feature = "tokio-rt")))]
+            http: HttpConnector::new(
+                resolver,
+                crate::conn::tcp::compio::CompioTcpConnector::new(),
+            ),
             builder: TlsConnector::builder(),
         }
     }
@@ -455,40 +463,49 @@ impl ConnectorService {
             }
             #[cfg(unix)]
             Intercepted::Unix(unix_socket) => {
-                trace!("connecting via Unix socket: {:?}", unix_socket);
-
-                // Create a Unix connector with the specified socket path.
-                let mut connector =
-                    HttpsConnector::new(UnixConnector::new(unix_socket), self.tls.clone());
-
-                // If the target URI is HTTPS, establish a CONNECT tunnel over the Unix socket,
-                // then upgrade the tunneled stream to TLS.
-                if uri.is_https() {
-                    // Use a dummy HTTP URI so the HTTPS connector works over the Unix socket.
-                    let proxy_uri = http::Uri::from_static("http://localhost");
-
-                    // The tunnel connector will first establish a CONNECT tunnel,
-                    // then perform the TLS handshake over the tunneled stream.
-                    let tunneled = {
-                        // Create a tunnel connector using the Unix socket and the HTTPS connector.
-                        let mut tunnel =
-                            proxy::tunnel::TunnelConnector::new(proxy_uri, connector.clone());
-
-                        tunnel.call(uri).await?
-                    };
-
-                    // Wrap the established tunneled stream with TLS.
-                    let io = connector
-                        .call(EstablishedConn::new(tunneled, descriptor))
-                        .await?;
-
-                    return self.tunnel_conn_from_stream(io);
+                #[cfg(not(feature = "tokio-rt"))]
+                {
+                    let _ = (unix_socket, uri, descriptor);
+                    return Err(BoxError::from("Unix sockets require tokio-rt feature"));
                 }
+                #[cfg(feature = "tokio-rt")]
+                {
+                    trace!("connecting via Unix socket: {:?}", unix_socket);
 
-                // For plain HTTP, use the Unix connector directly.
-                let io = connector.call(descriptor).await?;
+                    // Create a Unix connector with the specified socket path.
+                    let mut connector =
+                        HttpsConnector::new(UnixConnector::new(unix_socket), self.tls.clone());
 
-                self.conn_from_stream(io, None)
+                    // If the target URI is HTTPS, establish a CONNECT tunnel over the Unix socket,
+                    // then upgrade the tunneled stream to TLS.
+                    if uri.is_https() {
+                        // Use a dummy HTTP URI so the HTTPS connector works over the Unix socket.
+                        let proxy_uri = http::Uri::from_static("http://localhost");
+
+                        // The tunnel connector will first establish a CONNECT tunnel,
+                        // then perform the TLS handshake over the tunneled stream.
+                        let tunneled = {
+                            // Create a tunnel connector using the Unix socket and the HTTPS
+                            // connector.
+                            let mut tunnel =
+                                proxy::tunnel::TunnelConnector::new(proxy_uri, connector.clone());
+
+                            tunnel.call(uri).await?
+                        };
+
+                        // Wrap the established tunneled stream with TLS.
+                        let io = connector
+                            .call(EstablishedConn::new(tunneled, descriptor))
+                            .await?;
+
+                        return self.tunnel_conn_from_stream(io);
+                    }
+
+                    // For plain HTTP, use the Unix connector directly.
+                    let io = connector.call(descriptor).await?;
+
+                    self.conn_from_stream(io, None)
+                }
             }
         }
     }

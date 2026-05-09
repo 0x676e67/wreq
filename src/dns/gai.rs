@@ -1,10 +1,9 @@
 use std::{
     future::Future,
     io,
-    net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6, ToSocketAddrs},
+    net::{SocketAddr, ToSocketAddrs},
     pin::Pin,
     task::{self, Poll},
-    vec,
 };
 
 use tokio::task::JoinHandle;
@@ -20,17 +19,12 @@ pub struct GaiResolver {
 
 /// An iterator of IP addresses returned from `getaddrinfo`.
 pub struct GaiAddrs {
-    inner: SocketAddrs,
+    inner: super::SocketAddrs,
 }
 
 /// A future to resolve a name returned by `GaiResolver`.
 pub struct GaiFuture {
-    inner: JoinHandle<Result<SocketAddrs, io::Error>>,
-}
-
-/// A wrapper around `SocketAddrs` to implement the `Iterator` trait.
-pub(crate) struct SocketAddrs {
-    iter: vec::IntoIter<SocketAddr>,
+    inner: JoinHandle<Result<super::SocketAddrs, io::Error>>,
 }
 
 // ==== impl GaiResolver ====
@@ -56,7 +50,7 @@ impl Service<Name> for GaiResolver {
             debug!("resolving {}", name);
             (name.as_str(), 0)
                 .to_socket_addrs()
-                .map(|i| SocketAddrs { iter: i })
+                .map(|i| super::SocketAddrs { iter: i })
         });
 
         GaiFuture { inner: blocking }
@@ -111,83 +105,12 @@ impl Iterator for GaiAddrs {
     }
 }
 
-// ==== impl SocketAddrs ====
-
-impl SocketAddrs {
-    pub(crate) fn new(addrs: Vec<SocketAddr>) -> Self {
-        SocketAddrs {
-            iter: addrs.into_iter(),
-        }
-    }
-
-    pub(crate) fn try_parse(host: &str, port: u16) -> Option<SocketAddrs> {
-        if let Ok(addr) = host.parse::<Ipv4Addr>() {
-            let addr = SocketAddrV4::new(addr, port);
-            return Some(SocketAddrs {
-                iter: vec![SocketAddr::V4(addr)].into_iter(),
-            });
-        }
-        if let Ok(addr) = host.parse::<Ipv6Addr>() {
-            let addr = SocketAddrV6::new(addr, port, 0, 0);
-            return Some(SocketAddrs {
-                iter: vec![SocketAddr::V6(addr)].into_iter(),
-            });
-        }
-        None
-    }
-
-    #[inline]
-    fn filter(self, predicate: impl FnMut(&SocketAddr) -> bool) -> SocketAddrs {
-        SocketAddrs::new(self.iter.filter(predicate).collect())
-    }
-
-    pub(crate) fn split_by_preference(
-        self,
-        local_addr_ipv4: Option<Ipv4Addr>,
-        local_addr_ipv6: Option<Ipv6Addr>,
-    ) -> (SocketAddrs, SocketAddrs) {
-        match (local_addr_ipv4, local_addr_ipv6) {
-            (Some(_), None) => (self.filter(SocketAddr::is_ipv4), SocketAddrs::new(vec![])),
-            (None, Some(_)) => (self.filter(SocketAddr::is_ipv6), SocketAddrs::new(vec![])),
-            _ => {
-                let preferring_v6 = self
-                    .iter
-                    .as_slice()
-                    .first()
-                    .map(SocketAddr::is_ipv6)
-                    .unwrap_or(false);
-
-                let (preferred, fallback) = self
-                    .iter
-                    .partition::<Vec<_>, _>(|addr| addr.is_ipv6() == preferring_v6);
-
-                (SocketAddrs::new(preferred), SocketAddrs::new(fallback))
-            }
-        }
-    }
-
-    pub(crate) fn is_empty(&self) -> bool {
-        self.iter.as_slice().is_empty()
-    }
-
-    pub(crate) fn len(&self) -> usize {
-        self.iter.as_slice().len()
-    }
-}
-
-impl Iterator for SocketAddrs {
-    type Item = SocketAddr;
-    #[inline]
-    fn next(&mut self) -> Option<SocketAddr> {
-        self.iter.next()
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::net::{Ipv4Addr, Ipv6Addr};
 
     use super::*;
+    use crate::dns::SocketAddrs;
 
     #[test]
     fn test_ip_addrs_split_by_preference() {

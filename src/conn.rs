@@ -3,6 +3,9 @@ mod tls_info;
 mod uds;
 mod verbose;
 
+#[cfg(feature = "compio-rt")]
+pub(crate) mod compio_io;
+
 pub(super) mod connector;
 pub(super) mod descriptor;
 pub(super) mod http;
@@ -23,6 +26,7 @@ use std::{
 
 use ::http::{Extensions, HeaderMap, HeaderValue};
 use pin_project_lite::pin_project;
+#[cfg(feature = "tokio-rt")]
 use tcp::tokio::TokioTcpConnector;
 use tls_info::TlsInfoFactory;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
@@ -35,7 +39,10 @@ use tower::{
 use crate::{dns::DynResolver, proxy::matcher::Intercept, tls::TlsInfo};
 
 /// HTTP connector with dynamic DNS resolver.
+#[cfg(feature = "tokio-rt")]
 pub type HttpConnector = http::HttpConnector<DynResolver, TokioTcpConnector>;
+#[cfg(all(feature = "compio-rt", not(feature = "tokio-rt")))]
+pub type HttpConnector = http::HttpConnector<DynResolver, tcp::compio::CompioTcpConnector>;
 
 /// Boxed connector service for establishing connections.
 pub type BoxedConnectorService = BoxCloneSyncService<Unnameable, Conn, BoxError>;

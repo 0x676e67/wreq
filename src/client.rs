@@ -25,7 +25,7 @@ use std::{
 };
 
 use http::header::{HeaderMap, HeaderValue, USER_AGENT};
-use rt::{TokioExecutor, TokioTimer};
+use rt::{DefaultExecutor, DefaultTimer};
 use tower::{
     BoxError, Layer, Service, ServiceBuilder, ServiceExt,
     retry::{Retry, RetryLayer},
@@ -61,6 +61,10 @@ use self::{
 };
 #[cfg(feature = "cookies")]
 use crate::cookie;
+#[cfg(all(feature = "compio-rt", not(feature = "tokio-rt")))]
+use crate::dns::CompioResolver;
+#[cfg(feature = "tokio-rt")]
+use crate::dns::GaiResolver;
 #[cfg(feature = "hickory-dns")]
 use crate::dns::hickory::HickoryDnsResolver;
 use crate::{
@@ -69,7 +73,7 @@ use crate::{
         BoxedConnectorLayer, BoxedConnectorService, Conn, Unnameable, connector::Connector,
         http::HttpTransport, tcp::SocketBindOptions,
     },
-    dns::{DnsResolverWithOverrides, DynResolver, GaiResolver, IntoResolve, Resolve},
+    dns::{DnsResolverWithOverrides, DynResolver, IntoResolve, Resolve},
     error::{self, Error},
     header::OrigHeaderMap,
     http1::Http1Options,
@@ -497,7 +501,10 @@ impl ClientBuilder {
                     Some(dns_resolver) => dns_resolver,
                     #[cfg(feature = "hickory-dns")]
                     None if config.hickory_dns => Arc::new(HickoryDnsResolver::new()),
+                    #[cfg(feature = "tokio-rt")]
                     None => Arc::new(GaiResolver::new()),
+                    #[cfg(all(feature = "compio-rt", not(feature = "tokio-rt")))]
+                    None => Arc::new(CompioResolver::new()),
                 };
 
                 if !config.dns_overrides.is_empty() {
@@ -569,7 +576,7 @@ impl ClientBuilder {
                 .build(config.tls_options, config.connector_layers)?;
 
             #[allow(unused_mut)]
-            let mut builder = HttpClient::builder(TokioExecutor::new());
+            let mut builder = HttpClient::builder(DefaultExecutor::new());
 
             #[cfg(feature = "cookies")]
             {
@@ -580,8 +587,8 @@ impl ClientBuilder {
                 .http1_options(config.http1_options)
                 .http2_options(config.http2_options)
                 .http2_only(matches!(config.http_version_pref, HttpVersionPref::Http2))
-                .http2_timer(TokioTimer::new())
-                .pool_timer(TokioTimer::new())
+                .http2_timer(DefaultTimer::new())
+                .pool_timer(DefaultTimer::new())
                 .pool_idle_timeout(config.pool_idle_timeout)
                 .pool_max_idle_per_host(config.pool_max_idle_per_host)
                 .pool_max_size(config.pool_max_size)
@@ -612,7 +619,7 @@ impl ClientBuilder {
 
             let service = ServiceBuilder::new()
                 .layer(ResponseBodyTimeoutLayer::new(
-                    TokioTimer::new(),
+                    DefaultTimer::new(),
                     config.timeout_options,
                 ))
                 .layer(ConfigServiceLayer::new(
