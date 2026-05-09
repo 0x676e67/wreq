@@ -225,13 +225,13 @@ struct Config {
     https_only: bool,
     layers: Vec<BoxedClientLayer>,
     connector_layers: Vec<BoxedConnectorLayer>,
-    tls_keylog: Option<KeyLog>,
-    tls_info: bool,
     tls_sni: bool,
-    tls_verify_hostname: bool,
+    tls_info: bool,
+    tls_keylog: Option<KeyLog>,
     tls_identity: Option<Identity>,
-    tls_cert_store: CertStore,
+    tls_cert_store: Option<CertStore>,
     tls_cert_verification: bool,
+    tls_verify_hostname: bool,
     tls_min_version: Option<TlsVersion>,
     tls_max_version: Option<TlsVersion>,
     tls_session_cache: Option<Arc<dyn TlsSessionCache>>,
@@ -311,13 +311,13 @@ impl Client {
                 http2_options: None,
                 layers: Vec::new(),
                 connector_layers: Vec::new(),
-                tls_keylog: None,
-                tls_info: false,
                 tls_sni: true,
-                tls_verify_hostname: true,
+                tls_info: false,
+                tls_keylog: None,
                 tls_identity: None,
-                tls_cert_store: CertStore::default(),
+                tls_cert_store: None,
                 tls_cert_verification: true,
+                tls_verify_hostname: true,
                 tls_min_version: None,
                 tls_max_version: None,
                 tls_session_cache: None,
@@ -1393,7 +1393,7 @@ impl ClientBuilder {
     /// for TLS connections. By default, the system's verify certificate store is used.
     #[inline]
     pub fn tls_cert_store(mut self, store: CertStore) -> ClientBuilder {
-        self.config.tls_cert_store = store;
+        self.config.tls_cert_store = Some(store);
         self
     }
 
