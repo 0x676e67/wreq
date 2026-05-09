@@ -88,14 +88,15 @@ jobs:
         run: cargo check
 
   test:
-    name: Test
+    name: Test (${{ matrix.feature-set }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         feature-set:
+          - ""                                         # default (tokio-rt)
+          - "--features compio-rt"                     # compio runtime
           - "--all-features"
-          - "--no-default-features"
           - "--no-default-features --features webpki-roots"
           - "--no-default-features --features form"
           - "--no-default-features --features query"
@@ -108,6 +109,7 @@ jobs:
           - "--features multipart"
           - "--features stream"
           - "--features hickory-dns"
+          - "--features compio-rt,cookies"
     steps:
       - uses: actions/checkout@v6
       - uses: actions-rs/toolchain@v1
