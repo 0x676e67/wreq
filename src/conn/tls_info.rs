@@ -64,3 +64,15 @@ impl TlsInfoFactory for UnixStream {
         None
     }
 }
+
+#[cfg(feature = "compio-rt")]
+impl<S> TlsInfoFactory for wreq_rt::rt::compio::io::CompioIO<S>
+where
+    S: compio::io::util::Splittable + 'static,
+    S::ReadHalf: compio::io::AsyncRead + Unpin,
+    S::WriteHalf: compio::io::AsyncWrite + Unpin,
+{
+    fn tls_info(&self) -> Option<TlsInfo> {
+        None
+    }
+}

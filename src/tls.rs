@@ -79,6 +79,11 @@ impl AlpnProtocol {
     }
 
     #[inline]
+    pub(crate) fn as_bytes(&self) -> &[u8] {
+        self.0
+    }
+
+    #[inline]
     fn encode(self) -> Bytes {
         Self::encode_sequence(std::iter::once(&self))
     }

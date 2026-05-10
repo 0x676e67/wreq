@@ -524,7 +524,7 @@ where
             MaybeHttpsStream::Https(s) => {
                 let mut connected = s.get_ref().connected();
 
-                if s.ssl().selected_alpn_protocol() == Some(b"h2") {
+                if s.ssl().selected_alpn_protocol() == Some(AlpnProtocol::HTTP2.as_bytes()) {
                     connected = connected.negotiated_h2();
                 }
 

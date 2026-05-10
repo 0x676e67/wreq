@@ -94,6 +94,7 @@ async fn spawn_redirect_server(target_url: String) -> String {
     redirect_url
 }
 
+#[cfg(feature = "cookies")]
 async fn spawn_cookie_server() -> String {
     let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
     let addr = listener.local_addr().expect("local_addr");

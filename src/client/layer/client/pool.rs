@@ -815,7 +815,7 @@ mod tests {
 
     use super::{Connecting, Key, Pool, Poolable, Reservation, WeakOpt};
     use crate::{
-        client::rt::{TokioExecutor, TokioTimer},
+        client::rt::{RuntimeExecutor, RuntimeTimer},
         sync::MutexGuard,
     };
 
@@ -862,7 +862,7 @@ mod tests {
                 max_idle_per_host: max_idle,
                 max_pool_size: None,
             },
-            TokioExecutor::new(),
+            RuntimeExecutor::new(),
             Time::Empty,
         )
     }
@@ -976,8 +976,8 @@ mod tests {
                 max_idle_per_host: usize::MAX,
                 max_pool_size: None,
             },
-            TokioExecutor::new(),
-            Time::Timer(Arc::new(TokioTimer::new())),
+            RuntimeExecutor::new(),
+            Time::Timer(Arc::new(RuntimeTimer::new())),
         );
 
         let key = host_key("foo");
@@ -1096,7 +1096,7 @@ mod tests {
                 max_idle_per_host: usize::MAX,
                 max_pool_size: Some(NonZero::new(2).expect("max pool size")),
             },
-            TokioExecutor::new(),
+            RuntimeExecutor::new(),
             Time::Empty,
         );
         let key1 = host_key("foo");

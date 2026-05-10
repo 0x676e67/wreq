@@ -25,7 +25,7 @@ use std::{
 };
 
 use http::header::{HeaderMap, HeaderValue, USER_AGENT};
-use rt::{DefaultExecutor, DefaultTimer};
+use rt::{RuntimeExecutor, RuntimeTimer};
 use tower::{
     BoxError, Layer, Service, ServiceBuilder, ServiceExt,
     retry::{Retry, RetryLayer},
@@ -576,7 +576,7 @@ impl ClientBuilder {
                 .build(config.tls_options, config.connector_layers)?;
 
             #[allow(unused_mut)]
-            let mut builder = HttpClient::builder(DefaultExecutor::new());
+            let mut builder = HttpClient::builder(RuntimeExecutor::new());
 
             #[cfg(feature = "cookies")]
             {
@@ -587,8 +587,8 @@ impl ClientBuilder {
                 .http1_options(config.http1_options)
                 .http2_options(config.http2_options)
                 .http2_only(matches!(config.http_version_pref, HttpVersionPref::Http2))
-                .http2_timer(DefaultTimer::new())
-                .pool_timer(DefaultTimer::new())
+                .http2_timer(RuntimeTimer::new())
+                .pool_timer(RuntimeTimer::new())
                 .pool_idle_timeout(config.pool_idle_timeout)
                 .pool_max_idle_per_host(config.pool_max_idle_per_host)
                 .pool_max_size(config.pool_max_size)
@@ -619,7 +619,7 @@ impl ClientBuilder {
 
             let service = ServiceBuilder::new()
                 .layer(ResponseBodyTimeoutLayer::new(
-                    DefaultTimer::new(),
+                    RuntimeTimer::new(),
                     config.timeout_options,
                 ))
                 .layer(ConfigServiceLayer::new(

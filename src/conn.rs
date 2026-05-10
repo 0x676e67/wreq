@@ -3,9 +3,6 @@ mod tls_info;
 mod uds;
 mod verbose;
 
-#[cfg(feature = "compio-rt")]
-pub(crate) mod compio_io;
-
 pub(super) mod connector;
 pub(super) mod descriptor;
 pub(super) mod http;
@@ -26,8 +23,10 @@ use std::{
 
 use ::http::{Extensions, HeaderMap, HeaderValue};
 use pin_project_lite::pin_project;
+#[cfg(all(feature = "compio-rt", not(feature = "tokio-rt")))]
+use tcp::compio::CompioTcpConnector as TcpConnector;
 #[cfg(feature = "tokio-rt")]
-use tcp::tokio::TokioTcpConnector;
+use tcp::tokio::TokioTcpConnector as TcpConnector;
 use tls_info::TlsInfoFactory;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio_btls::SslStream;
@@ -39,10 +38,7 @@ use tower::{
 use crate::{dns::DynResolver, proxy::matcher::Intercept, tls::TlsInfo};
 
 /// HTTP connector with dynamic DNS resolver.
-#[cfg(feature = "tokio-rt")]
-pub type HttpConnector = http::HttpConnector<DynResolver, TokioTcpConnector>;
-#[cfg(all(feature = "compio-rt", not(feature = "tokio-rt")))]
-pub type HttpConnector = http::HttpConnector<DynResolver, tcp::compio::CompioTcpConnector>;
+pub type HttpConnector = http::HttpConnector<DynResolver, TcpConnector>;
 
 /// Boxed connector service for establishing connections.
 pub type BoxedConnectorService = BoxCloneSyncService<Unnameable, Conn, BoxError>;
@@ -234,12 +230,7 @@ where
     T: Connection,
 {
     fn connected(&self) -> Connected {
-        let connected = self.stream.get_ref().connected();
-        if self.stream.ssl().selected_alpn_protocol() == Some(b"h2") {
-            connected.negotiated_h2()
-        } else {
-            connected
-        }
+        self.stream.get_ref().connected()
     }
 }
 

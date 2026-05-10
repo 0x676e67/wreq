@@ -19,13 +19,13 @@ rustdoc-args = ["--cfg", "docsrs"]
 targets = ["x86_64-unknown-linux-gnu"]
 
 [features]
-default = ["tokio-rt", "webpki-roots"]
+default = ["webpki-roots", "tokio-rt"]
 
 # Enable tokio as the async runtime (default).
-tokio-rt = ["tokio/net", "tokio/rt"]
+tokio-rt = ["tokio/net", "tokio/rt", "wreq-rt/tokio-rt"]
 
 # Enable compio as the async runtime (completion-based, io_uring/IOCP).
-compio-rt = ["dep:compio", "dep:send_wrapper"]
+compio-rt = ["dep:compio", "dep:send_wrapper", "wreq-rt/compio-rt"]
 
 # Enable support for decoding text.
 charset = ["dep:encoding_rs", "dep:mime"]
@@ -119,6 +119,7 @@ tower = { version = "0.5.3", default-features = false, features = [
     "util",
     "retry",
 ] }
+wreq-rt = { path = "../wreq-proto/wreq-rt" }
 wreq-proto = { version = "0.2.2", default-features = false }
 
 # Optional deps...
@@ -179,6 +180,11 @@ system-configuration = { version = "0.7.0", optional = true }
 libc = "0.2.186"
 
 [dev-dependencies]
+wreq-rt = { path = "../wreq-proto/wreq-rt", features = ["tokio-rt"]}
+tokio = { version = "1.0", default-features = false, features = [
+    "macros",
+    "rt-multi-thread",
+] }
 compio = { version = "0.19.0-rc.1", features = ["macros", "net", "runtime", "time", "io", "io-compat"] }
 hyper = { version = "1.7.0", default-features = false, features = [
     "http1",
@@ -193,10 +199,6 @@ hyper-util = { version = "0.1.20", features = [
     "tokio",
 ] }
 serde = { version = "1.0", features = ["derive"] }
-tokio = { version = "1.0", default-features = false, features = [
-    "macros",
-    "rt-multi-thread",
-] }
 futures = { version = "0.3.0", default-features = false, features = ["std"] }
 tower = { version = "0.5.2", default-features = false, features = ["limit"] }
 tokio-test = "0.4.5"

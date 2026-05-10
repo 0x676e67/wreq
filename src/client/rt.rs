@@ -6,27 +6,16 @@
 #[cfg(not(any(feature = "tokio-rt", feature = "compio-rt")))]
 compile_error!("Either the `tokio-rt` or `compio-rt` feature must be enabled");
 
-#[cfg(feature = "compio-rt")]
-mod compio;
-#[cfg(feature = "tokio-rt")]
-mod tokio;
-
-#[cfg(feature = "compio-rt")]
-#[allow(unused_imports)]
-pub(crate) use self::compio::{CompioExecutor, CompioTimer};
-#[cfg(feature = "tokio-rt")]
-pub(crate) use self::tokio::{TokioExecutor, TokioTimer};
-
-/// The default executor type for the selected runtime.
+/// The executor type for the selected runtime.
 /// When both features are enabled, tokio takes precedence.
 #[cfg(feature = "tokio-rt")]
-pub(crate) type DefaultExecutor = TokioExecutor;
+pub(super) type RuntimeExecutor = wreq_rt::rt::tokio::TokioExecutor;
 #[cfg(all(feature = "compio-rt", not(feature = "tokio-rt")))]
-pub(crate) type DefaultExecutor = CompioExecutor;
+pub(super) type RuntimeExecutor = wreq_rt::rt::compio::CompioExecutor;
 
-/// The default timer type for the selected runtime.
+/// The timer type for the selected runtime.
 /// When both features are enabled, tokio takes precedence.
 #[cfg(feature = "tokio-rt")]
-pub(crate) type DefaultTimer = TokioTimer;
+pub(super) type RuntimeTimer = wreq_rt::rt::tokio::TokioTimer;
 #[cfg(all(feature = "compio-rt", not(feature = "tokio-rt")))]
-pub(crate) type DefaultTimer = CompioTimer;
+pub(super) type RuntimeTimer = wreq_rt::rt::compio::CompioTimer;

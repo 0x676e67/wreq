@@ -1,3 +1,5 @@
+//! Tokio-based TCP connector.
+
 use std::{future::Future, io, net::SocketAddr, pin::Pin, time::Duration};
 
 use tokio::net::{TcpSocket, TcpStream};

@@ -2,7 +2,7 @@
 pub mod tokio;
 
 #[cfg(feature = "compio-rt")]
-pub(crate) mod compio;
+pub mod compio;
 
 #[cfg(any(
     target_os = "illumos",

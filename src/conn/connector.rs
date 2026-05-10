@@ -14,14 +14,16 @@ use tower::{
     util::{BoxCloneSyncService, MapRequestLayer},
 };
 
+#[cfg(all(feature = "compio-rt", not(feature = "tokio-rt")))]
+use super::tcp::compio::CompioTcpConnector as TcpConnector;
+#[cfg(feature = "tokio-rt")]
+use super::tcp::tokio::TokioTcpConnector as TcpConnector;
 #[cfg(all(unix, feature = "tokio-rt"))]
 use super::uds::UnixConnector;
 use super::{
     AsyncConnWithInfo, BoxedConnectorLayer, BoxedConnectorService, Conn, Connection, HttpConnector,
     TlsConn, TlsInfoFactory, Unnameable, http::HttpTransport, proxy, verbose::Verbose,
 };
-#[cfg(feature = "tokio-rt")]
-use crate::conn::TokioTcpConnector;
 use crate::{
     conn::descriptor::ConnectionDescriptor,
     dns::DynResolver,
@@ -212,13 +214,7 @@ impl Connector {
             },
             #[cfg(feature = "socks")]
             resolver: resolver.clone(),
-            #[cfg(feature = "tokio-rt")]
-            http: HttpConnector::new(resolver, TokioTcpConnector::new()),
-            #[cfg(all(feature = "compio-rt", not(feature = "tokio-rt")))]
-            http: HttpConnector::new(
-                resolver,
-                crate::conn::tcp::compio::CompioTcpConnector::new(),
-            ),
+            http: HttpConnector::new(resolver, TcpConnector::new()),
             builder: TlsConnector::builder(),
         }
     }
@@ -354,6 +350,7 @@ impl ConnectorService {
         let io = connector.call(descriptor).await?;
 
         // Re-enable Nagle's algorithm if it was disabled earlier
+        #[cfg(feature = "tokio-rt")]
         if is_https && !self.config.nodelay {
             io.as_ref().set_nodelay(false)?;
         }
@@ -448,6 +445,7 @@ impl ConnectorService {
                         .await?;
 
                     // Re-enable Nagle's algorithm if it was disabled earlier
+                    #[cfg(feature = "tokio-rt")]
                     if !self.config.nodelay {
                         io.as_ref().as_ref().set_nodelay(false)?;
                     }
