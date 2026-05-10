@@ -161,8 +161,12 @@ impl TlsConnector {
                 Version::HTTP_2 => {
                     cfg.set_alpn_protos(&AlpnProtocol::HTTP2.encode())?;
                 }
-                // No ALPN protocol for other versions
-                _ => {}
+                Version::HTTP_3 => {
+                    cfg.set_alpn_protos(&AlpnProtocol::HTTP3.encode())?;
+                }
+                _ => {
+                    // For unknown versions, we don't set any ALPN protocols.
+                }
             }
         } else {
             // Default use the connector configuration.
@@ -505,31 +509,24 @@ impl<T> AsRef<T> for MaybeHttpsStream<T> {
     }
 }
 
+impl<T> Connection for MaybeHttpsStream<T>
+where
+    T: Connection,
+{
+    #[inline]
+    fn connected(&self) -> Connected {
+        match self {
+            MaybeHttpsStream::Http(s) => s.connected(),
+            MaybeHttpsStream::Https(s) => s.get_ref().connected(),
+        }
+    }
+}
+
 impl<T> fmt::Debug for MaybeHttpsStream<T> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
             MaybeHttpsStream::Http(..) => f.pad("Http(..)"),
             MaybeHttpsStream::Https(..) => f.pad("Https(..)"),
-        }
-    }
-}
-
-impl<T> Connection for MaybeHttpsStream<T>
-where
-    T: Connection,
-{
-    fn connected(&self) -> Connected {
-        match self {
-            MaybeHttpsStream::Http(s) => s.connected(),
-            MaybeHttpsStream::Https(s) => {
-                let mut connected = s.get_ref().connected();
-
-                if s.ssl().selected_alpn_protocol() == Some(b"h2") {
-                    connected = connected.negotiated_h2();
-                }
-
-                connected
-            }
         }
     }
 }
