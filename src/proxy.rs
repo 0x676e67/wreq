@@ -511,32 +511,18 @@ mod tests {
             .custom_http_headers(headers.clone())
             .into_matcher();
 
-        match m.intercept(&uri).unwrap() {
-            Intercepted::Proxy(proxy) => {
-                let got_headers = proxy.custom_headers().unwrap();
-                assert_eq!(got_headers, &headers, "https forwards");
-            }
-            #[cfg(unix)]
-            _ => {
-                unreachable!("Expected a Proxy Intercepted");
-            }
-        }
+        let proxy = intercept(&m, &uri);
+        let got_headers = proxy.custom_headers().unwrap();
+        assert_eq!(got_headers, &headers, "https forwards");
 
         let m = Proxy::all("http://yo.local")
             .unwrap()
             .custom_http_headers(headers.clone())
             .into_matcher();
 
-        match m.intercept(&uri).unwrap() {
-            Intercepted::Proxy(proxy) => {
-                let got_headers = proxy.custom_headers().unwrap();
-                assert_eq!(got_headers, &headers, "http forwards");
-            }
-            #[cfg(unix)]
-            _ => {
-                unreachable!("Expected a Proxy Intercepted");
-            }
-        }
+        let proxy = intercept(&m, &uri);
+        let got_headers = proxy.custom_headers().unwrap();
+        assert_eq!(got_headers, &headers, "http forwards");
     }
 
     fn test_socks_proxy_default_port(uri: &str, url2: &str, port: u16) {
