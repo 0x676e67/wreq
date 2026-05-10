@@ -35,7 +35,11 @@ use tower::{
     util::{BoxCloneSyncService, BoxCloneSyncServiceLayer},
 };
 
-use crate::{dns::DynResolver, proxy::matcher::Intercept, tls::TlsInfo};
+use crate::{
+    dns::DynResolver,
+    proxy::matcher::Intercept,
+    tls::{AlpnProtocol, TlsInfo},
+};
 
 /// HTTP connector with dynamic DNS resolver.
 pub type HttpConnector = http::HttpConnector<DynResolver, TcpConnector>;
@@ -230,7 +234,17 @@ where
     T: Connection,
 {
     fn connected(&self) -> Connected {
-        self.stream.get_ref().connected()
+        let connected = self.stream.get_ref().connected();
+        if self
+            .stream
+            .ssl()
+            .selected_alpn_protocol()
+            .is_some_and(|alpn| AlpnProtocol::HTTP2.eq(alpn))
+        {
+            connected.negotiated_h2()
+        } else {
+            connected
+        }
     }
 }
 

@@ -72,12 +72,6 @@ impl AlpnProtocol {
     /// Prefer HTTP/3
     pub const HTTP3: AlpnProtocol = AlpnProtocol(b"h3");
 
-    /// Create a new [`AlpnProtocol`] from a static byte slice.
-    #[inline]
-    pub const fn new(value: &'static [u8]) -> Self {
-        AlpnProtocol(value)
-    }
-
     #[inline]
     pub(crate) fn as_bytes(&self) -> &[u8] {
         self.0
@@ -101,6 +95,13 @@ impl AlpnProtocol {
     }
 }
 
+impl PartialEq<[u8]> for AlpnProtocol {
+    #[inline]
+    fn eq(&self, other: &[u8]) -> bool {
+        self.0 == other
+    }
+}
+
 /// A TLS ALPS protocol.
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
 pub struct AlpsProtocol(&'static [u8]);
@@ -114,6 +115,13 @@ impl AlpsProtocol {
 
     /// Prefer HTTP/3
     pub const HTTP3: AlpsProtocol = AlpsProtocol(b"h3");
+}
+
+impl PartialEq<[u8]> for AlpsProtocol {
+    #[inline]
+    fn eq(&self, other: &[u8]) -> bool {
+        self.0 == other
+    }
 }
 
 /// Builder for `[`TlsOptions`]`.
