@@ -26,6 +26,7 @@ An ergonomic and modular Rust HTTP Client for high-fidelity protocol matching, f
 - HTTPS via BoringSSL
 - HTTP/2 over TLS Parity
 - Certificate Store (CAs & mTLS)
+- Multiple Runtime (Tokio, Compio)
 
 ## Example
 

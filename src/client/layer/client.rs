@@ -1,6 +1,5 @@
 //! Much of this codebase is adapted and refined from [hyper](https://github.com/hyperium/hyper-util),
 
-mod exec;
 mod lazy;
 mod pool;
 
@@ -9,8 +8,6 @@ use std::{
     fmt,
     future::Future,
     num::NonZeroUsize,
-    pin::Pin,
-    sync::Arc,
     task::{self, Poll},
     time::Duration,
 };
@@ -31,20 +28,21 @@ use wreq_proto::{
     conn::{self, TrySendError as ConnTrySendError},
     http1::Http1Options,
     http2::Http2Options,
-    rt::{Executor, Time, Timer},
+    rt::Executor as _,
 };
 #[cfg(feature = "cookies")]
 use {
     crate::cookie::{CookieStore, Cookies},
     http::header::COOKIE,
+    std::sync::Arc,
 };
 
-use self::{
-    exec::Exec,
-    lazy::{Started as Lazy, lazy},
-};
+use self::lazy::{Started as Lazy, lazy};
 use crate::{
-    client::layer::config::RequestOptions,
+    client::{
+        layer::config::RequestOptions,
+        rt::{Executor, Timer},
+    },
     config::RequestConfig,
     conn::{
         Connected, Connection,
@@ -54,8 +52,6 @@ use crate::{
     error::ProxyConnect,
 };
 
-type BoxSendFuture = Pin<Box<dyn Future<Output = ()> + Send>>;
-
 /// A HttpClient to make outgoing HTTP requests.
 ///
 /// `HttpClient` is cheap to clone and cloning is the recommended way to share a `HttpClient`. The
@@ -64,9 +60,9 @@ type BoxSendFuture = Pin<Box<dyn Future<Output = ()> + Send>>;
 pub(crate) struct HttpClient<C, B> {
     config: Config,
     connector: C,
-    exec: Exec,
+    exec: Executor,
     h1_builder: conn::http1::Builder,
-    h2_builder: conn::http2::Builder<Exec>,
+    h2_builder: conn::http2::Builder<Executor>,
     pool: pool::Pool<PoolClient<B>, ConnectionId>,
     #[cfg(feature = "cookies")]
     cookie_store: RequestConfig<Arc<dyn CookieStore>>,
@@ -136,10 +132,7 @@ macro_rules! e {
 impl HttpClient<(), ()> {
     /// Create a builder to configure a new [`HttpClient`].
     #[inline]
-    pub fn builder<E>(executor: E) -> Builder
-    where
-        E: Executor<BoxSendFuture> + Send + Sync + Clone + 'static,
-    {
+    pub fn builder(executor: Executor) -> Builder {
         Builder::new(executor)
     }
 }
@@ -814,11 +807,11 @@ where
 #[derive(Clone)]
 pub struct Builder {
     config: Config,
-    exec: Exec,
+    exec: Executor,
     h1_builder: conn::http1::Builder,
-    h2_builder: conn::http2::Builder<Exec>,
+    h2_builder: conn::http2::Builder<Executor>,
     pool_config: pool::Config,
-    pool_timer: Time,
+    pool_timer: Timer,
     #[cfg(feature = "cookies")]
     cookie_store: Option<Arc<dyn CookieStore>>,
 }
@@ -827,11 +820,7 @@ pub struct Builder {
 
 impl Builder {
     /// Construct a new Builder.
-    pub fn new<E>(executor: E) -> Self
-    where
-        E: Executor<BoxSendFuture> + Send + Sync + Clone + 'static,
-    {
-        let exec = Exec::new(executor);
+    pub fn new(exec: Executor) -> Self {
         Self {
             config: Config {
                 retry_canceled_requests: true,
@@ -846,11 +835,12 @@ impl Builder {
                 max_idle_per_host: usize::MAX,
                 max_pool_size: None,
             },
-            pool_timer: Time::Empty,
+            pool_timer: Timer::default(),
             #[cfg(feature = "cookies")]
             cookie_store: None,
         }
     }
+
     /// Set an optional timeout for idle sockets being kept-alive.
     /// A `Timer` is required for this to take effect. See `Builder::pool_timer`
     ///
@@ -907,10 +897,7 @@ impl Builder {
     ///
     /// [`http2::client::Builder::timer`]: https://docs.rs/http2/latest/http2/client/struct.Builder.html#method.timer
     #[inline]
-    pub fn http2_timer<M>(mut self, timer: M) -> Self
-    where
-        M: Timer + Send + Sync + 'static,
-    {
+    pub fn http2_timer(mut self, timer: Timer) -> Self {
         self.h2_builder = self.h2_builder.timer(timer);
         self
     }
@@ -942,11 +929,8 @@ impl Builder {
 
     /// Provide a timer to be used for timeouts and intervals in connection pools.
     #[inline]
-    pub fn pool_timer<M>(mut self, timer: M) -> Self
-    where
-        M: Timer + Clone + Send + Sync + 'static,
-    {
-        self.pool_timer = Time::Timer(Arc::new(timer));
+    pub fn pool_timer(mut self, timer: Timer) -> Self {
+        self.pool_timer = timer;
         self
     }
 

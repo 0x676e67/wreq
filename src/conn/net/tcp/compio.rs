@@ -1,32 +1,38 @@
 //! Compio-based TCP connector.
 
+#![allow(dead_code)]
+
 use std::{future::Future, io, net::SocketAddr, pin::Pin, time::Duration};
 
 use compio::net::{TcpSocket, TcpStream};
-use wreq_rt::rt::compio::io::CompioIO;
+use wreq_rt::rt::compio::{future::SendFuture, io::CompioIO};
 
-use super::TcpConnector;
-use crate::{
-    conn::{Connected, Connection, http::HttpInfo},
-    util::SendFuture,
+use super::BoxConnecting;
+use crate::conn::{
+    Connected, Connection, http::HttpInfo, net::io::CompioConnection, tls_info::TlsInfoFactory,
 };
 
+/// A connector that uses `compio` for TCP connections.
 #[derive(Clone, Copy, Debug, Default)]
-pub struct CompioTcpConnector {
+pub struct TcpConnector {
     _priv: (),
 }
 
-impl CompioTcpConnector {
+// ===== impl TcpConnector =====
+
+impl TcpConnector {
+    /// Creates a new [`TcpConnector`].
+    #[inline]
     pub fn new() -> Self {
         Self { _priv: () }
     }
 }
 
-impl TcpConnector for CompioTcpConnector {
+impl super::TcpConnector for TcpConnector {
     type TcpStream = std::net::TcpStream;
-    type Connection = CompioIO<compio::net::TcpStream>;
+    type Connection = CompioConnection<TcpStream>;
     type Error = io::Error;
-    type Future = Pin<Box<dyn Future<Output = Result<Self::Connection, Self::Error>> + Send>>;
+    type Future = BoxConnecting<Self::Connection, Self::Error>;
     type Sleep = Pin<Box<dyn Future<Output = ()> + Send + 'static>>;
 
     #[inline]
@@ -34,7 +40,11 @@ impl TcpConnector for CompioTcpConnector {
         Box::pin(SendFuture::new(async move {
             let socket = TcpSocket::from_std_stream(socket)?;
             let tcp_stream = socket.connect(addr).await?;
-            Ok(CompioIO::new(tcp_stream))
+            Ok(CompioConnection {
+                peer_addr: tcp_stream.peer_addr().ok(),
+                local_addr: tcp_stream.local_addr().ok(),
+                inner: CompioIO::new(tcp_stream),
+            })
         }))
     }
 
@@ -44,10 +54,10 @@ impl TcpConnector for CompioTcpConnector {
     }
 }
 
-impl Connection for TcpStream {
+impl Connection for CompioConnection<TcpStream> {
     fn connected(&self) -> Connected {
         let connected = Connected::new();
-        if let (Ok(remote_addr), Ok(local_addr)) = (self.peer_addr(), self.local_addr()) {
+        if let (Some(remote_addr), Some(local_addr)) = (self.peer_addr, self.local_addr) {
             connected.extra(HttpInfo {
                 remote_addr,
                 local_addr,
@@ -58,8 +68,4 @@ impl Connection for TcpStream {
     }
 }
 
-impl Connection for CompioIO<TcpStream> {
-    fn connected(&self) -> Connected {
-        Connected::new()
-    }
-}
+impl TlsInfoFactory for CompioConnection<TcpStream> {}

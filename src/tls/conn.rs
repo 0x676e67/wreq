@@ -315,9 +315,6 @@ impl TlsConnectorBuilder {
     }
 
     /// Sets a custom TLS session store.
-    ///
-    /// By default, a [`LruSessionStore`] is used. Use this method to provide
-    /// a custom [`TlsSessionCache`] implementation (e.g., file-based or distributed).
     #[inline]
     pub fn session_store(mut self, store: Option<Arc<dyn TlsSessionCache>>) -> Self {
         if let Some(store) = store {

@@ -7,10 +7,11 @@ use std::{
 
 use http_body::Body;
 use pin_project_lite::pin_project;
-use wreq_proto::rt::{Sleep, Time, Timer};
+use wreq_proto::rt::{Sleep, Timer as _};
 
 use crate::{
     Error,
+    client::rt::Timer,
     error::{BoxError, TimedOut},
 };
 
@@ -61,7 +62,7 @@ pin_project! {
         sleep: Option<Pin<Box<dyn Sleep>>>,
         #[pin]
         body: B,
-        timer: Time,
+        timer: Timer,
     }
 }
 
@@ -69,7 +70,7 @@ pin_project! {
 impl<B> TimeoutBody<B> {
     /// Creates a new [`TimeoutBody`] with no timeout.
     pub fn new(
-        timer: Time,
+        timer: Timer,
         deadline: Option<Duration>,
         read_timeout: Option<Duration>,
         body: B,

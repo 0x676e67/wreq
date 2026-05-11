@@ -1,13 +1,11 @@
 mod tls_info;
-#[cfg(unix)]
-mod uds;
 mod verbose;
 
 pub(super) mod connector;
 pub(super) mod descriptor;
 pub(super) mod http;
+pub(super) mod net;
 pub(super) mod proxy;
-pub(super) mod tcp;
 
 use std::{
     fmt::{self, Debug, Formatter},
@@ -22,11 +20,9 @@ use std::{
 };
 
 use ::http::{Extensions, HeaderMap, HeaderValue};
+#[cfg(any(feature = "tokio-rt", feature = "compio-rt"))]
+use net::TcpConnector;
 use pin_project_lite::pin_project;
-#[cfg(all(feature = "compio-rt", not(feature = "tokio-rt")))]
-use tcp::compio::CompioTcpConnector as TcpConnector;
-#[cfg(feature = "tokio-rt")]
-use tcp::tokio::TokioTcpConnector as TcpConnector;
 use tls_info::TlsInfoFactory;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio_btls::SslStream;

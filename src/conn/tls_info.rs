@@ -1,15 +1,14 @@
 use bytes::Bytes;
-#[cfg(feature = "tokio-rt")]
-use tokio::net::TcpStream;
-#[cfg(all(unix, feature = "tokio-rt"))]
-use tokio::net::UnixStream;
 use tokio_btls::SslStream;
 
 use crate::tls::{TlsInfo, conn::MaybeHttpsStream};
 
 /// A trait for extracting TLS information from a connection.
 pub trait TlsInfoFactory {
-    fn tls_info(&self) -> Option<TlsInfo>;
+    #[inline]
+    fn tls_info(&self) -> Option<TlsInfo> {
+        None
+    }
 }
 
 fn extract_tls_info<S>(ssl_stream: &SslStream<S>) -> TlsInfo {
@@ -44,35 +43,5 @@ impl<T: TlsInfoFactory> TlsInfoFactory for MaybeHttpsStream<T> {
             MaybeHttpsStream::Https(tls) => tls.tls_info(),
             MaybeHttpsStream::Http(_) => None,
         }
-    }
-}
-
-// ===== impl TcpStream =====
-
-#[cfg(feature = "tokio-rt")]
-impl TlsInfoFactory for TcpStream {
-    fn tls_info(&self) -> Option<TlsInfo> {
-        None
-    }
-}
-
-// ===== impl UnixStream =====
-
-#[cfg(all(unix, feature = "tokio-rt"))]
-impl TlsInfoFactory for UnixStream {
-    fn tls_info(&self) -> Option<TlsInfo> {
-        None
-    }
-}
-
-#[cfg(feature = "compio-rt")]
-impl<S> TlsInfoFactory for wreq_rt::rt::compio::io::CompioIO<S>
-where
-    S: compio::io::util::Splittable + 'static,
-    S::ReadHalf: compio::io::AsyncRead + Unpin,
-    S::WriteHalf: compio::io::AsyncWrite + Unpin,
-{
-    fn tls_info(&self) -> Option<TlsInfo> {
-        None
     }
 }

@@ -73,11 +73,6 @@ impl AlpnProtocol {
     pub const HTTP3: AlpnProtocol = AlpnProtocol(b"h3");
 
     #[inline]
-    pub(crate) fn as_bytes(&self) -> &[u8] {
-        self.0
-    }
-
-    #[inline]
     fn encode(self) -> Bytes {
         Self::encode_sequence(std::iter::once(&self))
     }

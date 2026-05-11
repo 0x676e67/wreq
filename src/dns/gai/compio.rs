@@ -1,8 +1,6 @@
+// This module contains the `GaiResolver` implementation for the `compio` runtime.
+
 #![allow(dead_code)]
-//! DNS resolver using compio's `spawn_blocking`.
-//!
-//! Runs `getaddrinfo` on the compio runtime's blocking thread pool,
-//! avoiding extra OS thread creation.
 
 use std::{
     future::Future,
@@ -14,53 +12,55 @@ use std::{
 
 use tower::Service;
 
-use super::{Addrs, Name, Resolve, Resolving, SocketAddrs};
+use crate::dns::{Addrs, Name, Resolve, Resolving, SocketAddrs};
 
-/// A resolver using compio's `spawn_blocking` for DNS lookups.
+/// A resolver using blocking `getaddrinfo` calls in a threadpool.
 #[derive(Clone, Default)]
-pub struct CompioResolver {
+pub struct GaiResolver {
     _priv: (),
 }
 
 /// An iterator of IP addresses returned from `getaddrinfo`.
-pub struct CompioAddrs {
+pub struct GaiAddrs {
     inner: SocketAddrs,
 }
 
-/// A future to resolve a name returned by `CompioResolver`.
-pub struct CompioFuture {
+/// A future to resolve a name returned by `GaiResolver`.
+pub struct GaiFuture {
     inner: compio::runtime::JoinHandle<Result<SocketAddrs, io::Error>>,
 }
 
-// ===== impl CompioResolver =====
+// ==== impl GaiResolver ====
 
-impl CompioResolver {
+impl GaiResolver {
+    /// Creates a new [`GaiResolver`].
     pub fn new() -> Self {
-        Self { _priv: () }
+        GaiResolver { _priv: () }
     }
 }
 
-impl Service<Name> for CompioResolver {
-    type Response = CompioAddrs;
+impl Service<Name> for GaiResolver {
+    type Response = GaiAddrs;
     type Error = io::Error;
-    type Future = CompioFuture;
+    type Future = GaiFuture;
 
+    #[inline]
     fn poll_ready(&mut self, _cx: &mut task::Context<'_>) -> Poll<Result<(), io::Error>> {
         Poll::Ready(Ok(()))
     }
 
     fn call(&mut self, name: Name) -> Self::Future {
-        debug!("resolving {}", name);
-        let handle = compio::runtime::spawn_blocking(move || {
+        let blocking = compio::runtime::spawn_blocking(move || {
+            debug!("resolving {}", name);
             (name.as_str(), 0)
                 .to_socket_addrs()
                 .map(|i| SocketAddrs::new(i.collect()))
         });
-        CompioFuture { inner: handle }
+        GaiFuture { inner: blocking }
     }
 }
 
-impl Resolve for CompioResolver {
+impl Resolve for GaiResolver {
     fn resolve(&self, name: Name) -> Resolving {
         let mut this = self.clone();
         Box::pin(async move {
@@ -72,26 +72,25 @@ impl Resolve for CompioResolver {
     }
 }
 
-// ===== impl CompioFuture =====
+// ==== impl GaiFuture ====
 
-impl Future for CompioFuture {
-    type Output = Result<CompioAddrs, io::Error>;
+impl Future for GaiFuture {
+    type Output = Result<GaiAddrs, io::Error>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<Self::Output> {
         Pin::new(&mut self.inner).poll(cx).map(|res| match res {
-            Ok(Ok(addrs)) => Ok(CompioAddrs { inner: addrs }),
+            Ok(Ok(addrs)) => Ok(GaiAddrs { inner: addrs }),
             Ok(Err(err)) => Err(err),
-            Err(_panic) => Err(io::Error::new(
-                io::ErrorKind::Other,
-                "dns blocking task panicked",
-            )),
+            Err(join_err) => Err(io::Error::other(format!(
+                "DNS resolution blocked task panicked: {join_err}"
+            ))),
         })
     }
 }
 
-// ===== impl CompioAddrs =====
+// ==== impl GaiAddrs ====
 
-impl Iterator for CompioAddrs {
+impl Iterator for GaiAddrs {
     type Item = SocketAddr;
 
     fn next(&mut self) -> Option<Self::Item> {

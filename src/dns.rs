@@ -5,22 +5,15 @@ use std::{
     vec,
 };
 
-#[cfg(feature = "tokio-rt")]
 pub(crate) mod gai;
 #[cfg(feature = "hickory-dns")]
 pub(crate) mod hickory;
 pub(crate) mod resolve;
 
-#[cfg(feature = "compio-rt")]
-pub(crate) mod compio;
-
 pub use resolve::{Addrs, IntoResolve, Name, Resolve, Resolving};
 
-#[cfg(all(feature = "compio-rt", not(feature = "tokio-rt")))]
-pub(crate) use self::compio::CompioResolver;
-#[cfg(feature = "tokio-rt")]
-pub(crate) use self::gai::GaiResolver;
 pub(crate) use self::{
+    gai::GaiResolver,
     resolve::{DnsResolverWithOverrides, DynResolver},
     sealed::{InternalResolve, resolve},
 };
