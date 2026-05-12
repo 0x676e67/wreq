@@ -7,8 +7,6 @@ use bytes::Bytes;
 use http_body::{Body as HttpBody, SizeHint};
 use http_body_util::{BodyExt, Either, Full, combinators::BoxBody};
 use pin_project_lite::pin_project;
-#[cfg(feature = "stream")]
-use {tokio::fs::File, tokio_util::io::ReaderStream};
 
 use crate::error::{BoxError, Error};
 
@@ -177,11 +175,11 @@ impl From<&'static str> for Body {
     }
 }
 
-#[cfg(feature = "stream")]
-impl From<File> for Body {
+#[cfg(all(feature = "tokio-rt", feature = "stream"))]
+impl From<tokio::fs::File> for Body {
     #[inline]
-    fn from(file: File) -> Body {
-        Body::wrap_stream(ReaderStream::new(file))
+    fn from(file: tokio::fs::File) -> Body {
+        Body::wrap_stream(tokio_util::io::ReaderStream::new(file))
     }
 }
 

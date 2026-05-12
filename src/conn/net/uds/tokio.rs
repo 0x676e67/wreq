@@ -1,7 +1,8 @@
+//! Tokio-based unix socket connector.
+
 use std::{
     io,
     path::Path,
-    pin::Pin,
     sync::Arc,
     task::{Context, Poll},
 };
@@ -9,39 +10,33 @@ use std::{
 use http::Uri;
 use tokio::net::UnixStream;
 
-use super::{Connected, Connection};
-
-type ConnectResult = io::Result<UnixStream>;
-type BoxConnecting = Pin<Box<dyn Future<Output = ConnectResult> + Send>>;
+use super::BoxConnecting;
+use crate::conn::{Connected, Connection, tls_info::TlsInfoFactory};
 
 #[derive(Clone)]
-pub struct UnixConnector {
-    path: Arc<Path>,
-}
+pub struct UnixConnector(Arc<Path>);
 
 impl UnixConnector {
-    /// Create a new [`UnixConnector`].
+    /// Creates a new [`UnixConnector`] for the specified socket path.
+    #[inline]
     pub fn new(path: impl Into<Arc<Path>>) -> Self {
-        Self { path: path.into() }
+        Self(path.into())
     }
 }
 
 impl tower::Service<Uri> for UnixConnector {
     type Response = UnixStream;
     type Error = io::Error;
-    type Future = BoxConnecting;
+    type Future = BoxConnecting<Self::Response>;
 
     #[inline]
     fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         Poll::Ready(Ok(()))
     }
 
+    #[inline]
     fn call(&mut self, _: Uri) -> Self::Future {
-        let fut = UnixStream::connect(self.path.clone());
-        Box::pin(async move {
-            let io = fut.await?;
-            Ok::<_, io::Error>(io)
-        })
+        Box::pin(UnixStream::connect(self.0.clone()))
     }
 }
 
@@ -51,3 +46,5 @@ impl Connection for UnixStream {
         Connected::new()
     }
 }
+
+impl TlsInfoFactory for UnixStream {}

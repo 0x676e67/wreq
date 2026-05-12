@@ -25,7 +25,6 @@ use std::{
 };
 
 use http::header::{HeaderMap, HeaderValue, USER_AGENT};
-use rt::{TokioExecutor, TokioTimer};
 use tower::{
     BoxError, Layer, Service, ServiceBuilder, ServiceExt,
     retry::{Retry, RetryLayer},
@@ -65,9 +64,10 @@ use crate::cookie;
 use crate::dns::hickory::HickoryDnsResolver;
 use crate::{
     IntoUri, Method, Proxy,
+    client::rt::{BoxSendFuture, Executor, Timer},
     conn::{
         BoxedConnectorLayer, BoxedConnectorService, Conn, Unnameable, connector::Connector,
-        http::HttpTransport, tcp::SocketBindOptions,
+        http::HttpConnect, net::SocketBindOptions,
     },
     dns::{DnsResolverWithOverrides, DynResolver, GaiResolver, IntoResolve, Resolve},
     error::{self, Error},
@@ -234,6 +234,8 @@ struct Config {
     tls_options: Option<TlsOptions>,
     http1_options: Option<Http1Options>,
     http2_options: Option<Http2Options>,
+    timer: Timer,
+    executor: Executor,
 }
 
 // ===== impl Client =====
@@ -318,6 +320,8 @@ impl Client {
                 tls_max_version: None,
                 tls_session_cache: None,
                 tls_options: None,
+                timer: Timer::default(),
+                executor: Executor::default(),
             },
         }
     }
@@ -569,7 +573,7 @@ impl ClientBuilder {
                 .build(config.tls_options, config.connector_layers)?;
 
             #[allow(unused_mut)]
-            let mut builder = HttpClient::builder(TokioExecutor::new());
+            let mut builder = HttpClient::builder(config.executor);
 
             #[cfg(feature = "cookies")]
             {
@@ -580,8 +584,8 @@ impl ClientBuilder {
                 .http1_options(config.http1_options)
                 .http2_options(config.http2_options)
                 .http2_only(matches!(config.http_version_pref, HttpVersionPref::Http2))
-                .http2_timer(TokioTimer::new())
-                .pool_timer(TokioTimer::new())
+                .http2_timer(config.timer.clone())
+                .pool_timer(config.timer.clone())
                 .pool_idle_timeout(config.pool_idle_timeout)
                 .pool_max_idle_per_host(config.pool_max_idle_per_host)
                 .pool_max_size(config.pool_max_size)
@@ -612,7 +616,7 @@ impl ClientBuilder {
 
             let service = ServiceBuilder::new()
                 .layer(ResponseBodyTimeoutLayer::new(
-                    TokioTimer::new(),
+                    config.timer.clone(),
                     config.timeout_options,
                 ))
                 .layer(ConfigServiceLayer::new(
@@ -624,7 +628,7 @@ impl ClientBuilder {
 
             if config.layers.is_empty() {
                 let service = ServiceBuilder::new()
-                    .layer(TimeoutLayer::new(config.timeout_options))
+                    .layer(TimeoutLayer::new(config.timer, config.timeout_options))
                     .service(service);
 
                 Either::Left(service)
@@ -637,7 +641,7 @@ impl ClientBuilder {
                     });
 
                 let service = ServiceBuilder::new()
-                    .layer(TimeoutLayer::new(config.timeout_options))
+                    .layer(TimeoutLayer::new(config.timer, config.timeout_options))
                     .service(service)
                     .map_err(error::map_timeout_to_request_error);
 
@@ -646,6 +650,28 @@ impl ClientBuilder {
         };
 
         Ok(Client(Arc::new(client)))
+    }
+
+    // Runtime options
+
+    /// Provide a timer to be used for timeouts and intervals in client.
+    #[inline]
+    pub fn timer<M>(mut self, timer: M) -> Self
+    where
+        M: wreq_proto::rt::Timer + Send + Sync + 'static,
+    {
+        self.config.timer = Timer::new(timer);
+        self
+    }
+
+    /// Provide an executor to run background tasks in the client.
+    #[inline]
+    pub fn executor<E>(mut self, executor: E) -> Self
+    where
+        E: wreq_proto::rt::Executor<BoxSendFuture> + Send + Sync + 'static,
+    {
+        self.config.executor = Executor::new(executor);
+        self
     }
 
     // Higher-level options

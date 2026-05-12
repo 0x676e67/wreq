@@ -15,10 +15,12 @@ use std::{
 
 use lru::LruCache;
 use tokio::sync::oneshot;
-use wreq_proto::rt::{Executor, Time, Timer};
+use wreq_proto::rt::{Executor as _, Timer as _};
 
-use super::exec::{self, Exec};
-use crate::sync::Mutex;
+use crate::{
+    client::rt::{Executor, Timer},
+    sync::Mutex,
+};
 
 pub struct Pool<T, K: Key> {
     // If the pool is disabled, this is None.
@@ -91,8 +93,8 @@ struct PoolInner<T, K: Eq + Hash> {
     // A oneshot channel is used to allow the interval to be notified when
     // the Pool completely drops. That way, the interval can cancel immediately.
     idle_interval_ref: Option<oneshot::Sender<Infallible>>,
-    exec: Exec,
-    timer: Time,
+    exec: Executor,
+    timer: Timer,
     timeout: Option<Duration>,
 }
 
@@ -114,10 +116,7 @@ impl Config {
 }
 
 impl<T, K: Key> Pool<T, K> {
-    pub fn new<E>(config: Config, executor: E, timer: Time) -> Pool<T, K>
-    where
-        E: Executor<exec::BoxSendFuture> + Send + Sync + Clone + 'static,
-    {
+    pub fn new(config: Config, exec: Executor, timer: Timer) -> Pool<T, K> {
         let inner = if config.is_enabled() {
             Some(Arc::new(Mutex::new(PoolInner {
                 connecting: HashSet::default(),
@@ -127,7 +126,7 @@ impl<T, K: Key> Pool<T, K> {
                 idle_interval_ref: None,
                 max_idle_per_host: config.max_idle_per_host,
                 waiters: HashMap::default(),
-                exec: Exec::new(executor),
+                exec,
                 timer,
                 timeout: config.idle_timeout,
             })))
@@ -396,7 +395,7 @@ impl<T: Poolable, K: Key> PoolInner<T, K> {
             return;
         }
 
-        if matches!(self.timer, Time::Empty) {
+        if self.timer.is_empty() {
             return;
         }
 
@@ -745,7 +744,7 @@ impl Expiration {
 }
 
 struct IdleTask<T, K: Key> {
-    timer: Time,
+    timer: Timer,
     duration: Duration,
     pool: WeakOpt<Mutex<PoolInner<T, K>>>,
     // This allows the IdleTask to be notified as soon as the entire
@@ -806,16 +805,13 @@ mod tests {
         hash::Hash,
         num::NonZero,
         pin::Pin,
-        sync::Arc,
         task::{self, Poll},
         time::Duration,
     };
 
-    use wreq_proto::rt::Time;
-
     use super::{Connecting, Key, Pool, Poolable, Reservation, WeakOpt};
     use crate::{
-        client::rt::{TokioExecutor, TokioTimer},
+        client::rt::{Executor, Timer},
         sync::MutexGuard,
     };
 
@@ -862,8 +858,8 @@ mod tests {
                 max_idle_per_host: max_idle,
                 max_pool_size: None,
             },
-            TokioExecutor::new(),
-            Time::Empty,
+            Executor::default(),
+            Timer::default(),
         )
     }
 
@@ -976,8 +972,8 @@ mod tests {
                 max_idle_per_host: usize::MAX,
                 max_pool_size: None,
             },
-            TokioExecutor::new(),
-            Time::Timer(Arc::new(TokioTimer::new())),
+            Executor::default(),
+            Timer::default(),
         );
 
         let key = host_key("foo");
@@ -1096,8 +1092,8 @@ mod tests {
                 max_idle_per_host: usize::MAX,
                 max_pool_size: Some(NonZero::new(2).expect("max pool size")),
             },
-            TokioExecutor::new(),
-            Time::Empty,
+            Executor::default(),
+            Timer::default(),
         );
         let key1 = host_key("foo");
         let key2 = host_key("bar");

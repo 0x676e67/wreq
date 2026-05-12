@@ -1,33 +1,31 @@
+//! TCP connection types and utilities.
+
+#[cfg(feature = "tokio-rt")]
 pub mod tokio;
 
-#[cfg(any(
-    target_os = "illumos",
-    target_os = "ios",
-    target_os = "macos",
-    target_os = "solaris",
-    target_os = "tvos",
-    target_os = "visionos",
-    target_os = "watchos",
-    target_os = "android",
-    target_os = "fuchsia",
-    target_os = "linux",
-))]
-use std::borrow::Cow;
+#[cfg(feature = "compio-rt")]
+pub mod compio;
+
 use std::{
     error::Error as StdError,
     fmt,
     future::Future,
     io,
-    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
-    pin::pin,
+    net::{Ipv4Addr, Ipv6Addr, SocketAddr},
+    pin::{Pin, pin},
     time::Duration,
 };
 
 use futures_util::future::Either;
 use socket2::TcpKeepalive;
 
-use super::Connection;
-use crate::{dns, error::BoxError};
+use crate::{
+    conn::{Connection, net::SocketBindOptions},
+    dns,
+    error::BoxError,
+};
+
+type BoxConnecting<T, E> = Pin<Box<dyn Future<Output = Result<T, E>> + Send>>;
 
 /// A builder for tcp connections.
 pub trait TcpConnector: Clone + Send + Sync + 'static {
@@ -58,7 +56,7 @@ pub trait TcpConnector: Clone + Send + Sync + 'static {
     fn sleep(&self, duration: Duration) -> Self::Sleep;
 }
 
-pub(super) struct ConnectingTcp<S: TcpConnector> {
+pub(crate) struct ConnectingTcp<S: TcpConnector> {
     preferred: ConnectingTcpRemote<S>,
     fallback: Option<ConnectingTcpFallback<S>>,
 }
@@ -78,7 +76,7 @@ impl<S: TcpConnector> ConnectingTcp<S>
 where
     S::TcpStream: From<socket2::Socket>,
 {
-    pub(super) fn new(remote_addrs: dns::SocketAddrs, config: &TcpOptions, connector: S) -> Self {
+    pub(crate) fn new(remote_addrs: dns::SocketAddrs, config: &TcpOptions, connector: S) -> Self {
         if let Some(fallback_timeout) = config.happy_eyeballs_timeout {
             let (preferred_addrs, fallback_addrs) = remote_addrs.split_by_preference(
                 config.socket_bind.ipv4_address,
@@ -129,7 +127,6 @@ where
 {
     fn new(addrs: dns::SocketAddrs, connect_timeout: Option<Duration>, connector: S) -> Self {
         let connect_timeout = connect_timeout.and_then(|t| t.checked_div(addrs.len() as u32));
-
         Self {
             addrs,
             connect_timeout,
@@ -344,7 +341,7 @@ impl<S: TcpConnector> ConnectingTcp<S>
 where
     S::TcpStream: From<socket2::Socket>,
 {
-    pub(super) async fn connect(
+    pub(crate) async fn connect(
         mut self,
         config: &TcpOptions,
     ) -> Result<S::Connection, ConnectError> {
@@ -382,13 +379,13 @@ where
 
 // Not publicly exported (so missing_docs doesn't trigger).
 pub struct ConnectError {
-    pub(super) msg: &'static str,
-    pub(super) addr: Option<SocketAddr>,
-    pub(super) cause: Option<BoxError>,
+    pub(crate) msg: &'static str,
+    pub(crate) addr: Option<SocketAddr>,
+    pub(crate) cause: Option<BoxError>,
 }
 
 impl ConnectError {
-    pub(super) fn new<E>(msg: &'static str, cause: E) -> ConnectError
+    pub(crate) fn new<E>(msg: &'static str, cause: E) -> ConnectError
     where
         E: Into<BoxError>,
     {
@@ -399,14 +396,14 @@ impl ConnectError {
         }
     }
 
-    pub(super) fn dns<E>(cause: E) -> ConnectError
+    pub(crate) fn dns<E>(cause: E) -> ConnectError
     where
         E: Into<BoxError>,
     {
         ConnectError::new("dns error", cause)
     }
 
-    pub(super) fn m<E>(msg: &'static str) -> impl FnOnce(E) -> ConnectError
+    pub(crate) fn m<E>(msg: &'static str) -> impl FnOnce(E) -> ConnectError
     where
         E: Into<BoxError>,
     {
@@ -437,107 +434,6 @@ impl fmt::Display for ConnectError {
 impl StdError for ConnectError {
     fn source(&self) -> Option<&(dyn StdError + 'static)> {
         self.cause.as_ref().map(|e| &**e as _)
-    }
-}
-
-/// Options for configuring socket bind behavior for outbound connections.
-#[derive(Debug, Clone, Hash, PartialEq, Eq, Default)]
-pub(crate) struct SocketBindOptions {
-    #[cfg(any(
-        target_os = "illumos",
-        target_os = "ios",
-        target_os = "macos",
-        target_os = "solaris",
-        target_os = "tvos",
-        target_os = "visionos",
-        target_os = "watchos",
-        target_os = "android",
-        target_os = "fuchsia",
-        target_os = "linux",
-    ))]
-    pub interface: Option<Cow<'static, str>>,
-    pub ipv4_address: Option<Ipv4Addr>,
-    pub ipv6_address: Option<Ipv6Addr>,
-}
-
-impl SocketBindOptions {
-    /// Sets the name of the network interface to bind the socket to.
-    ///
-    /// ## Platform behavior
-    /// - On Linux/Fuchsia/Android: sets `SO_BINDTODEVICE`
-    /// - On macOS/illumos/Solaris/iOS/etc.: sets `IP_BOUND_IF`
-    ///
-    /// If `interface` is `None`, the socket will not be explicitly bound to any device.
-    ///
-    /// # Errors
-    ///
-    /// On platforms that require a `CString` (e.g. macOS), this will return an error if the
-    /// interface name contains an internal null byte (`\0`), which is invalid in C strings.
-    ///
-    /// # See Also
-    /// - [VRF documentation](https://www.kernel.org/doc/Documentation/networking/vrf.txt)
-    /// - [`man 7 socket`](https://man7.org/linux/man-pages/man7/socket.7.html)
-    /// - [`man 7p ip`](https://docs.oracle.com/cd/E86824_01/html/E54777/ip-7p.html)
-    #[cfg(any(
-        target_os = "android",
-        target_os = "fuchsia",
-        target_os = "illumos",
-        target_os = "ios",
-        target_os = "linux",
-        target_os = "macos",
-        target_os = "solaris",
-        target_os = "tvos",
-        target_os = "visionos",
-        target_os = "watchos",
-    ))]
-    #[inline]
-    pub fn set_interface<I>(&mut self, interface: I) -> &mut Self
-    where
-        I: Into<std::borrow::Cow<'static, str>>,
-    {
-        self.interface = Some(interface.into());
-        self
-    }
-
-    /// Set that all sockets are bound to the configured address before connection.
-    ///
-    /// If `None`, the sockets will not be bound.
-    ///
-    /// Default is `None`.
-    #[inline]
-    pub fn set_local_address<V>(&mut self, local_address: V)
-    where
-        V: Into<Option<IpAddr>>,
-    {
-        match local_address.into() {
-            Some(IpAddr::V4(a)) => {
-                self.ipv4_address = Some(a);
-            }
-            Some(IpAddr::V6(a)) => {
-                self.ipv6_address = Some(a);
-            }
-            _ => {}
-        };
-    }
-
-    /// Set that all sockets are bound to the configured IPv4 or IPv6 address (depending on host's
-    /// preferences) before connection.
-    ///
-    /// If `None`, the sockets will not be bound.
-    ///
-    /// Default is `None`.
-    #[inline]
-    pub fn set_local_addresses<V4, V6>(&mut self, ipv4_address: V4, ipv6_address: V6)
-    where
-        V4: Into<Option<Ipv4Addr>>,
-        V6: Into<Option<Ipv6Addr>>,
-    {
-        if let Some(addr) = ipv4_address.into() {
-            self.ipv4_address = Some(addr);
-        }
-        if let Some(addr) = ipv6_address.into() {
-            self.ipv6_address = Some(addr);
-        }
     }
 }
 

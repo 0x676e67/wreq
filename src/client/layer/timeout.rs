@@ -4,20 +4,19 @@ pub mod body;
 mod future;
 
 use std::{
-    sync::Arc,
     task::{Context, Poll},
     time::Duration,
 };
 
 use http::{Request, Response};
 use tower::{BoxError, Layer, Service};
-use wreq_proto::rt::{Time, Timer};
+use wreq_proto::rt::Timer as _;
 
 use self::{
     body::TimeoutBody,
     future::{ResponseBodyTimeoutFuture, ResponseFuture},
 };
-use crate::config::RequestConfig;
+use crate::{client::rt::Timer, config::RequestConfig};
 
 /// Options for configuring timeouts.
 #[derive(Clone, Copy, Default)]
@@ -48,13 +47,15 @@ impl_request_config_value!(TimeoutOptions);
 // This layer allows you to set a total timeout and a read timeout for requests.
 #[derive(Clone)]
 pub struct TimeoutLayer {
+    timer: Timer,
     timeout: RequestConfig<TimeoutOptions>,
 }
 
 impl TimeoutLayer {
     /// Create a new [`TimeoutLayer`].
-    pub fn new(options: TimeoutOptions) -> Self {
+    pub fn new(timer: Timer, options: TimeoutOptions) -> Self {
         TimeoutLayer {
+            timer,
             timeout: RequestConfig::new(Some(options)),
         }
     }
@@ -67,6 +68,7 @@ impl<S> Layer<S> for TimeoutLayer {
     fn layer(&self, service: S) -> Self::Service {
         Timeout {
             inner: service,
+            timer: self.timer.clone(),
             timeout: self.timeout,
         }
     }
@@ -76,6 +78,7 @@ impl<S> Layer<S> for TimeoutLayer {
 #[derive(Clone)]
 pub struct Timeout<T> {
     inner: T,
+    timer: Timer,
     timeout: RequestConfig<TimeoutOptions>,
 }
 
@@ -97,8 +100,8 @@ where
         let (total_timeout, read_timeout) = fetch_timeout_options(&self.timeout, req.extensions());
         ResponseFuture {
             response: self.inner.call(req),
-            total_timeout: total_timeout.map(tokio::time::sleep),
-            read_timeout: read_timeout.map(tokio::time::sleep),
+            total_timeout: total_timeout.map(|timeout| self.timer.sleep(timeout)),
+            read_timeout: read_timeout.map(|timeout| self.timer.sleep(timeout)),
         }
     }
 }
@@ -107,18 +110,15 @@ where
 // This layer allows you to set a total timeout and a read timeout for the response body.
 #[derive(Clone)]
 pub struct ResponseBodyTimeoutLayer {
-    timer: Time,
+    timer: Timer,
     timeout: RequestConfig<TimeoutOptions>,
 }
 
 impl ResponseBodyTimeoutLayer {
     /// Creates a new [`ResponseBodyTimeoutLayer`].
-    pub fn new<M>(timer: M, options: TimeoutOptions) -> Self
-    where
-        M: Timer + Send + Sync + 'static,
-    {
+    pub fn new(timer: Timer, options: TimeoutOptions) -> Self {
         Self {
-            timer: Time::Timer(Arc::new(timer)),
+            timer,
             timeout: RequestConfig::new(Some(options)),
         }
     }
@@ -131,8 +131,8 @@ impl<S> Layer<S> for ResponseBodyTimeoutLayer {
     fn layer(&self, inner: S) -> Self::Service {
         ResponseBodyTimeout {
             inner,
-            timeout: self.timeout,
             timer: self.timer.clone(),
+            timeout: self.timeout,
         }
     }
 }
@@ -142,8 +142,8 @@ impl<S> Layer<S> for ResponseBodyTimeoutLayer {
 #[derive(Clone)]
 pub struct ResponseBodyTimeout<S> {
     inner: S,
+    timer: Timer,
     timeout: RequestConfig<TimeoutOptions>,
-    timer: Time,
 }
 
 impl<S, ReqBody, ResBody> Service<Request<ReqBody>> for ResponseBodyTimeout<S>
@@ -164,9 +164,9 @@ where
         let (total_timeout, read_timeout) = fetch_timeout_options(&self.timeout, req.extensions());
         ResponseBodyTimeoutFuture {
             inner: self.inner.call(req),
+            timer: self.timer.clone(),
             total_timeout,
             read_timeout,
-            timer: self.timer.clone(),
         }
     }
 }

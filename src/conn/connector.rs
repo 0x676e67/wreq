@@ -15,13 +15,13 @@ use tower::{
 };
 
 #[cfg(unix)]
-use super::uds::UnixConnector;
+use super::net::UnixConnector;
 use super::{
     AsyncConnWithInfo, BoxedConnectorLayer, BoxedConnectorService, Conn, Connection, HttpConnector,
-    TlsConn, TlsInfoFactory, Unnameable, http::HttpTransport, proxy, verbose::Verbose,
+    TlsConn, TlsInfoFactory, Unnameable, descriptor::ConnectionDescriptor, http::HttpConnect,
+    net::TcpConnector, proxy, verbose::Verbose,
 };
 use crate::{
-    conn::{TokioTcpConnector, descriptor::ConnectionDescriptor},
     dns::DynResolver,
     error::{ProxyConnect, TimedOut, map_timeout_to_connector_error},
     ext::UriExt,
@@ -210,7 +210,7 @@ impl Connector {
             },
             #[cfg(feature = "socks")]
             resolver: resolver.clone(),
-            http: HttpConnector::new(resolver, TokioTcpConnector::new()),
+            http: HttpConnector::new(resolver, TcpConnector::new()),
             builder: TlsConnector::builder(),
         }
     }
@@ -346,9 +346,11 @@ impl ConnectorService {
         let io = connector.call(descriptor).await?;
 
         // Re-enable Nagle's algorithm if it was disabled earlier
-        if is_https && !self.config.nodelay {
-            io.as_ref().set_nodelay(false)?;
-        }
+        if_tokio_rt!(block:{
+            if is_https && !self.config.nodelay {
+                io.as_ref().set_nodelay(false)?;
+            }
+        });
 
         self.conn_from_stream(io, proxy)
     }
@@ -401,9 +403,11 @@ impl ConnectorService {
                             .await?;
 
                         // Re-enable Nagle's algorithm if it was disabled earlier
-                        if is_https && !self.config.nodelay {
-                            io.as_ref().set_nodelay(false)?;
-                        }
+                        if_tokio_rt!(block:{
+                            if is_https && !self.config.nodelay {
+                                io.as_ref().set_nodelay(false)?;
+                            }
+                        });
 
                         return self.tunnel_conn_from_stream(io);
                     }
@@ -440,9 +444,11 @@ impl ConnectorService {
                         .await?;
 
                     // Re-enable Nagle's algorithm if it was disabled earlier
-                    if !self.config.nodelay {
-                        io.as_ref().as_ref().set_nodelay(false)?;
-                    }
+                    if_tokio_rt!(block:{
+                        if !self.config.nodelay {
+                            io.as_ref().as_ref().set_nodelay(false)?;
+                        }
+                    });
 
                     return self.tunnel_conn_from_stream(io);
                 }
@@ -470,7 +476,8 @@ impl ConnectorService {
                     // The tunnel connector will first establish a CONNECT tunnel,
                     // then perform the TLS handshake over the tunneled stream.
                     let tunneled = {
-                        // Create a tunnel connector using the Unix socket and the HTTPS connector.
+                        // Create a tunnel connector using the Unix socket and the HTTPS
+                        // connector.
                         let mut tunnel =
                             proxy::tunnel::TunnelConnector::new(proxy_uri, connector.clone());
 

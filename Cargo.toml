@@ -19,7 +19,13 @@ rustdoc-args = ["--cfg", "docsrs"]
 targets = ["x86_64-unknown-linux-gnu"]
 
 [features]
-default = ["webpki-roots"]
+default = ["webpki-roots", "compio-rt"]
+
+# Enable tokio as the async runtime (default).
+tokio-rt = ["tokio/rt", "tokio/net", "tokio/fs", "wreq-rt/tokio-rt"]
+
+# Enable compio as the async runtime (completion-based, io_uring/IOCP).
+compio-rt = ["dep:compio", "compio?/runtime", "compio?/net", "wreq-rt/compio-rt"]
 
 # Enable support for decoding text.
 charset = ["dep:encoding_rs", "dep:mime"]
@@ -55,7 +61,7 @@ multipart = ["dep:mime_guess", "dep:sync_wrapper", "sync_wrapper?/futures"]
 hickory-dns = ["dep:hickory-resolver"]
 
 # Enable streaming support.
-stream = ["tokio/fs", "dep:tokio-util", "dep:sync_wrapper", "sync_wrapper?/futures"]
+stream = ["dep:tokio-util", "dep:sync_wrapper", "sync_wrapper?/futures"]
 
 # Enable SOCKS/4/5 proxy support.
 socks = ["dep:tokio-socks"]
@@ -96,17 +102,15 @@ lru = "0.18.0"
 btls = "0.5.6"
 btls-sys = "0.5.6"
 tokio-btls = "0.5.6"
-tokio = { version = "1.52.3", default-features = false, features = [
-    "net",
-    "time",
-    "rt",
-] }
+tokio = { version = "1.52.3", default-features = false }
+compio = { version = "0.19.0-rc.1", features = ["io", "io-compat"], optional = true }
+wreq-rt = { version = "0.2.2-rc.2", default-features = false }
+wreq-proto = { version = "0.2.3", default-features = false }
 tower = { version = "0.5.3", default-features = false, features = [
     "timeout",
     "util",
     "retry",
 ] }
-wreq-proto = { version = "0.2.2", default-features = false }
 
 # Optional deps...
 
@@ -134,14 +138,14 @@ cookie = { version = "0.18", optional = true }
 ## tower http
 tower-http = { version = "0.6.8", default-features = false, optional = true }
 
-## tokio util
-tokio-util = { version = "0.7.18", default-features = false, optional = true }
-
-## tokio socks
+## tokio socks (requires tokio-rt)
 tokio-socks = { version = "0.5.2", optional = true }
 
-## tokio websocket
+## tokio websocket (requires tokio-rt)
 tokio-tungstenite = { version = "0.29.0", default-features = false, optional = true }
+
+## tokio util
+tokio-util = { version = "0.7.18", default-features = false, optional = true }
 
 ## hickory-dns
 hickory-resolver = { version = "0.26.0", optional = true }
@@ -165,6 +169,12 @@ system-configuration = { version = "0.7.0", optional = true }
 libc = "0.2.186"
 
 [dev-dependencies]
+wreq-rt = { version = "0.2.2-rc.1", features = ["tokio-rt"] }
+tokio = { version = "1.0", default-features = false, features = [
+    "macros",
+    "rt-multi-thread",
+] }
+compio = { version = "0.19.0-rc.1", features = ["macros", "net", "runtime", "time", "io", "io-compat"] }
 hyper = { version = "1.7.0", default-features = false, features = [
     "http1",
     "http2",
@@ -178,10 +188,6 @@ hyper-util = { version = "0.1.20", features = [
     "tokio",
 ] }
 serde = { version = "1.0", features = ["derive"] }
-tokio = { version = "1.0", default-features = false, features = [
-    "macros",
-    "rt-multi-thread",
-] }
 futures = { version = "0.3.0", default-features = false, features = ["std"] }
 tower = { version = "0.5.2", default-features = false, features = ["limit"] }
 tokio-test = "0.4.5"

@@ -1,13 +1,11 @@
 mod tls_info;
-#[cfg(unix)]
-mod uds;
 mod verbose;
 
 pub(super) mod connector;
 pub(super) mod descriptor;
 pub(super) mod http;
+pub(super) mod net;
 pub(super) mod proxy;
-pub(super) mod tcp;
 
 use std::{
     fmt::{self, Debug, Formatter},
@@ -22,8 +20,9 @@ use std::{
 };
 
 use ::http::{Extensions, HeaderMap, HeaderValue};
+#[cfg(any(feature = "tokio-rt", feature = "compio-rt"))]
+use net::TcpConnector;
 use pin_project_lite::pin_project;
-use tcp::tokio::TokioTcpConnector;
 use tls_info::TlsInfoFactory;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio_btls::SslStream;
@@ -39,7 +38,7 @@ use crate::{
 };
 
 /// HTTP connector with dynamic DNS resolver.
-pub type HttpConnector = http::HttpConnector<DynResolver, TokioTcpConnector>;
+pub type HttpConnector = http::HttpConnector<DynResolver, TcpConnector>;
 
 /// Boxed connector service for establishing connections.
 pub type BoxedConnectorService = BoxCloneSyncService<Unnameable, Conn, BoxError>;

@@ -153,7 +153,7 @@ async fn stream_part() {
     assert_eq!(res.status(), wreq::StatusCode::OK);
 }
 
-#[cfg(feature = "stream")]
+#[cfg(all(feature = "tokio-rt", feature = "stream"))]
 #[tokio::test]
 async fn async_impl_file_part() {
     let _ = env_logger::try_init();
