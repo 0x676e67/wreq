@@ -138,10 +138,10 @@ cookie = { version = "0.18", optional = true }
 ## tower http
 tower-http = { version = "0.6.8", default-features = false, optional = true }
 
-## tokio socks (requires tokio-rt)
+## tokio socks
 tokio-socks = { version = "0.5.2", optional = true }
 
-## tokio websocket (requires tokio-rt)
+## tokio websocket
 tokio-tungstenite = { version = "0.29.0", default-features = false, optional = true }
 
 ## tokio util
