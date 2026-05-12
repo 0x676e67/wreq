@@ -859,7 +859,7 @@ mod tests {
                 max_pool_size: None,
             },
             Executor::default(),
-            Timer::default(),
+            Timer::empty(),
         )
     }
 

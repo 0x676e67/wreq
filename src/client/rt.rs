@@ -89,12 +89,6 @@ impl Executor {
     ///
     /// The value is wrapped in an [`Arc`] and type-erased, so the resulting
     /// handle is cheap to clone and safe to share across threads.
-    ///
-    /// # Example
-    ///
-    /// ```rust,ignore
-    /// let exec = Executor::new(MyExecutor);
-    /// ```
     #[inline]
     pub fn new<E>(exec: E) -> Self
     where
@@ -118,6 +112,7 @@ where
     /// Panics when no runtime feature flag (`tokio-rt` or `compio-rt`) is
     /// enabled and no custom executor has been provided via [`Executor::new`].
     #[inline]
+    #[track_caller]
     fn execute(&self, fut: F) {
         match &self.0 {
             ExecInner::User(exec) => exec.execute(Box::pin(fut)),
@@ -188,15 +183,6 @@ pub struct Timer(Time);
 
 impl Timer {
     /// Creates a [`Timer`] backed by a custom implementation.
-    ///
-    /// The value is wrapped in an [`Arc`] and type-erased, so the resulting
-    /// handle is cheap to clone and safe to share across threads.
-    ///
-    /// # Example
-    ///
-    /// ```rust,ignore
-    /// let timer = Timer::new(MyTimer);
-    /// ```
     #[inline]
     pub fn new<M>(timer: M) -> Self
     where
@@ -205,11 +191,13 @@ impl Timer {
         Timer(Time::Timer(Arc::new(timer)))
     }
 
+    #[cfg(test)]
+    #[doc(hidden)]
+    pub fn empty() -> Self {
+        Timer(Time::Empty)
+    }
+
     /// Returns `true` if no timer implementation has been configured.
-    ///
-    /// An empty timer will panic when any timing operation is attempted.
-    /// This state is only reachable when neither `tokio-rt` nor `compio-rt`
-    /// is enabled and no custom timer has been provided.
     #[inline]
     pub fn is_empty(&self) -> bool {
         matches!(self.0, Time::Empty)
@@ -217,10 +205,6 @@ impl Timer {
 }
 
 impl Default for Timer {
-    /// Returns the runtime-appropriate default timer.
-    ///
-    /// See the [type-level documentation][Timer] for the feature-flag
-    /// selection table.
     #[inline]
     fn default() -> Self {
         if_tokio_rt!(block: {
@@ -242,38 +226,24 @@ impl Default for Timer {
 
 impl rt::Timer for Timer {
     /// Returns a future that resolves after `duration`.
-    ///
-    /// # Panics
-    ///
-    /// Panics if this timer is empty (see [`Timer::is_empty`]).
     #[inline]
     fn sleep(&self, duration: Duration) -> Pin<Box<dyn Sleep>> {
         self.0.sleep(duration)
     }
 
     /// Returns the current time according to the underlying runtime.
-    ///
-    /// Falls back to [`Instant::now`] when the timer is empty.
     #[inline]
     fn now(&self) -> Instant {
         self.0.now()
     }
 
     /// Returns a future that resolves at `deadline`.
-    ///
-    /// # Panics
-    ///
-    /// Panics if this timer is empty (see [`Timer::is_empty`]).
     #[inline]
     fn sleep_until(&self, deadline: Instant) -> Pin<Box<dyn Sleep>> {
         self.0.sleep_until(deadline)
     }
 
     /// Resets an in-flight sleep future to fire at `new_deadline` instead.
-    ///
-    /// # Panics
-    ///
-    /// Panics if this timer is empty (see [`Timer::is_empty`]).
     #[inline]
     fn reset(&self, sleep: &mut Pin<Box<dyn Sleep>>, new_deadline: Instant) {
         self.0.reset(sleep, new_deadline)
