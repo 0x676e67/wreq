@@ -49,11 +49,6 @@ impl SocketAddrs {
         None
     }
 
-    #[inline]
-    fn filter(self, predicate: impl FnMut(&SocketAddr) -> bool) -> SocketAddrs {
-        SocketAddrs::new(self.iter.filter(predicate).collect())
-    }
-
     pub(crate) fn split_by_preference(
         self,
         local_addr_ipv4: Option<Ipv4Addr>,
@@ -79,10 +74,17 @@ impl SocketAddrs {
         }
     }
 
+    #[inline]
+    fn filter(self, predicate: impl FnMut(&SocketAddr) -> bool) -> SocketAddrs {
+        SocketAddrs::new(self.iter.filter(predicate).collect())
+    }
+
+    #[inline]
     pub(crate) fn is_empty(&self) -> bool {
         self.iter.as_slice().is_empty()
     }
 
+    #[inline]
     pub(crate) fn len(&self) -> usize {
         self.iter.as_slice().len()
     }
