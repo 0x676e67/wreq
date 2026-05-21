@@ -11,8 +11,8 @@ use wreq_proto::rt::Sleep;
 
 use super::body::TimeoutBody;
 use crate::{
-    client::rt::Timer,
     error::{BoxError, Error, TimedOut},
+    rt::Timer,
 };
 
 pin_project! {

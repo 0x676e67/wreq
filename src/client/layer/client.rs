@@ -39,10 +39,7 @@ use {
 
 use self::lazy::{Started as Lazy, lazy};
 use crate::{
-    client::{
-        layer::config::RequestOptions,
-        rt::{Executor, Timer},
-    },
+    client::layer::config::RequestOptions,
     config::RequestConfig,
     conn::{
         Connected, Connection,
@@ -50,6 +47,7 @@ use crate::{
         proxy,
     },
     error::ProxyConnect,
+    rt::{Executor, Timer},
 };
 
 /// A HttpClient to make outgoing HTTP requests.

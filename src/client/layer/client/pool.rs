@@ -18,7 +18,7 @@ use tokio::sync::oneshot;
 use wreq_proto::rt::{Executor as _, Timer as _};
 
 use crate::{
-    client::rt::{Executor, Timer},
+    rt::{Executor, Timer},
     sync::Mutex,
 };
 
@@ -811,7 +811,7 @@ mod tests {
 
     use super::{Connecting, Key, Pool, Poolable, Reservation, WeakOpt};
     use crate::{
-        client::rt::{Executor, Timer},
+        rt::{Executor, Timer},
         sync::MutexGuard,
     };
 

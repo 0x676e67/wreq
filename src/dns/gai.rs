@@ -1,17 +1,37 @@
 if_tokio_rt! {
     mod tokio;
-    pub use tokio::GaiResolver;
 }
 
 if_compio_rt!(
     mod compio;
-    pub use compio::GaiResolver;
 );
 
 if_all_rt!(
     mod tokio;
-    pub use tokio::GaiResolver;
 );
+
+use std::net::SocketAddr;
+
+use crate::dns::SocketAddrs;
+
+/// A resolver using blocking `getaddrinfo` calls in a threadpool.
+#[derive(Clone, Default)]
+pub struct GaiResolver {
+    _priv: (),
+}
+
+/// An iterator of IP addresses returned from `getaddrinfo`.
+pub struct GaiAddrs {
+    inner: SocketAddrs,
+}
+
+impl Iterator for GaiAddrs {
+    type Item = SocketAddr;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.inner.next()
+    }
+}
 
 #[cfg(test)]
 mod tests {

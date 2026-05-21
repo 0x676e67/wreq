@@ -3,25 +3,15 @@
 use std::{
     future::Future,
     io,
-    net::{SocketAddr, ToSocketAddrs},
+    net::ToSocketAddrs,
     pin::Pin,
     task::{self, Poll},
 };
 
 use tower::Service;
 
+use super::{GaiAddrs, GaiResolver};
 use crate::dns::{Addrs, Name, Resolve, Resolving, SocketAddrs};
-
-/// A resolver using blocking `getaddrinfo` calls in a threadpool.
-#[derive(Clone, Default)]
-pub struct GaiResolver {
-    _priv: (),
-}
-
-/// An iterator of IP addresses returned from `getaddrinfo`.
-pub struct GaiAddrs {
-    inner: SocketAddrs,
-}
 
 /// A future to resolve a name returned by `GaiResolver`.
 pub struct GaiFuture {
@@ -96,15 +86,5 @@ impl Future for GaiFuture {
 impl Drop for GaiFuture {
     fn drop(&mut self) {
         self.inner.abort();
-    }
-}
-
-// ==== impl GaiAddrs ====
-
-impl Iterator for GaiAddrs {
-    type Item = SocketAddr;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        self.inner.next()
     }
 }

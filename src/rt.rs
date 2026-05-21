@@ -35,13 +35,6 @@ use wreq_proto::rt::{self, Sleep, Time};
 /// pins any qualifying `F` automatically.
 pub type BoxSendFuture = Pin<Box<dyn Future<Output = ()> + Send>>;
 
-/// The internal state of an [`Executor`].
-#[derive(Clone)]
-enum ExecInner {
-    User(Arc<dyn rt::Executor<BoxSendFuture> + Send + Sync>),
-    Empty,
-}
-
 /// A handle to an async task executor.
 ///
 /// `Executor` is used by the HTTP client to spawn background tasks such as
@@ -59,28 +52,8 @@ enum ExecInner {
 /// | `compio-rt` only                  | `CompioExecutor`  |
 /// | both `tokio-rt` and `compio-rt`   | `TokioExecutor`   |
 /// | neither                           | empty (panics)    |
-///
-/// # Custom executors
-///
-/// Any type that implements [`rt::Executor<BoxSendFuture>`] can be wrapped
-/// with [`Executor::new`]:
-///
-/// ```rust,ignore
-/// use wreq::client::rt::{BoxSendFuture, Executor};
-///
-/// #[derive(Clone)]
-/// struct MyExecutor;
-///
-/// impl wreq_proto::rt::Executor<BoxSendFuture> for MyExecutor {
-///     fn execute(&self, fut: BoxSendFuture) {
-///         tokio::spawn(fut);
-///     }
-/// }
-///
-/// let exec = Executor::new(MyExecutor);
-/// ```
 #[derive(Clone)]
-pub struct Executor(ExecInner);
+pub struct Executor(Arc<dyn rt::Executor<BoxSendFuture> + Send + Sync>);
 
 // ===== impl Executor =====
 
@@ -94,32 +67,22 @@ impl Executor {
     where
         E: rt::Executor<BoxSendFuture> + Send + Sync + 'static,
     {
-        Executor(ExecInner::User(Arc::new(exec)))
+        Executor(Arc::new(exec))
     }
 }
 
-impl<F> rt::Executor<F> for Executor
+impl<Fut> rt::Executor<Fut> for Executor
 where
-    F: Future<Output = ()> + Send + 'static,
+    Fut: Future<Output = ()> + Send + 'static,
 {
     /// Spawns `fut` on the underlying executor.
     ///
     /// The future is boxed and pinned internally, so any `F` satisfying the
     /// bounds can be passed without the caller needing to allocate first.
-    ///
-    /// # Panics
-    ///
-    /// Panics when no runtime feature flag (`tokio-rt` or `compio-rt`) is
-    /// enabled and no custom executor has been provided via [`Executor::new`].
-    #[inline]
     #[track_caller]
-    fn execute(&self, fut: F) {
-        match &self.0 {
-            ExecInner::User(exec) => exec.execute(Box::pin(fut)),
-            ExecInner::Empty => {
-                panic!("no executor configured; enable the `tokio-rt` or `compio-rt` feature")
-            }
-        }
+    #[inline(always)]
+    fn execute(&self, fut: Fut) {
+        self.0.execute(Box::pin(fut))
     }
 }
 
@@ -131,19 +94,22 @@ impl Default for Executor {
     #[inline]
     fn default() -> Self {
         if_tokio_rt!(block: {
-            return Executor(ExecInner::User(Arc::new(wreq_rt::rt::tokio::TokioExecutor::new())))
+            return Executor(Arc::new(wreq_rt::rt::tokio::TokioExecutor::new()))
         });
 
         if_compio_rt!(block: {
-            return Executor(ExecInner::User(Arc::new(wreq_rt::rt::compio::CompioExecutor::new())))
+            return Executor(Arc::new(wreq_rt::rt::compio::CompioExecutor::new()))
         });
 
         if_all_rt!(block: {
-            return Executor(ExecInner::User(Arc::new(wreq_rt::rt::tokio::TokioExecutor::new())))
+            return Executor(Arc::new(wreq_rt::rt::tokio::TokioExecutor::new()))
         });
 
-        #[allow(unreachable_code)]
-        Executor(ExecInner::Empty)
+        if_no_rt!(block:{
+            panic!(
+                "no async runtime feature enabled; at least one of `tokio-rt` or `compio-rt` must be active"
+            );
+        });
     }
 }
 
@@ -166,16 +132,6 @@ impl Default for Executor {
 /// | `compio-rt` only                  | `CompioTimer`   |
 /// | both `tokio-rt` and `compio-rt`   | `TokioTimer`    |
 /// | neither                           | empty (panics)  |
-///
-/// # Custom timers
-///
-/// Any type that implements [`rt::Timer`] can be wrapped with [`Timer::new`]:
-///
-/// ```rust,ignore
-/// use wreq::client::rt::Timer;
-///
-/// let timer = Timer::new(MyTimer);
-/// ```
 #[derive(Clone)]
 pub struct Timer(Time);
 
@@ -219,8 +175,9 @@ impl Default for Timer {
             return Timer(rt::Time::Timer(Arc::new(wreq_rt::rt::tokio::TokioTimer::new())))
         });
 
-        #[allow(unreachable_code)]
-        Timer(Time::Empty)
+        if_no_rt!(block: {
+            Timer(Time::Empty)
+        })
     }
 }
 

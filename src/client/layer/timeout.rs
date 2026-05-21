@@ -16,7 +16,7 @@ use self::{
     body::TimeoutBody,
     future::{ResponseBodyTimeoutFuture, ResponseFuture},
 };
-use crate::{client::rt::Timer, config::RequestConfig};
+use crate::{config::RequestConfig, rt::Timer};
 
 /// Options for configuring timeouts.
 #[derive(Clone, Copy, Default)]

@@ -1,5 +1,3 @@
-mod rt;
-
 pub(super) mod body;
 pub(super) mod emulate;
 pub(super) mod future;
@@ -64,7 +62,6 @@ use crate::cookie;
 use crate::dns::hickory::HickoryDnsResolver;
 use crate::{
     IntoUri, Method, Proxy,
-    client::rt::{BoxSendFuture, Executor, Timer},
     conn::{
         BoxedConnectorLayer, BoxedConnectorService, Conn, Unnameable, connector::Connector,
         http::HttpConnect, net::SocketBindOptions,
@@ -77,6 +74,7 @@ use crate::{
     proxy::Matcher as ProxyMatcher,
     redirect::{self, FollowRedirectPolicy},
     retry,
+    rt::{BoxSendFuture, Executor, Timer},
     tls::{
         AlpnProtocol, TlsOptions, TlsVersion,
         keylog::KeyLog,

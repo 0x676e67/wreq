@@ -252,7 +252,7 @@
 macro_rules! if_tokio_rt {
     (block: { $($tt:tt)* }) => {
         #[cfg(all(feature = "tokio-rt", not(feature = "compio-rt")))]
-        { $($tt)* }
+        $($tt)*
     };
     ($($item:item)*) => {$(
         #[cfg(all(feature = "tokio-rt", not(feature = "compio-rt")))]
@@ -263,7 +263,7 @@ macro_rules! if_tokio_rt {
 macro_rules! if_compio_rt {
     (block: { $($tt:tt)* }) => {
         #[cfg(all(feature = "compio-rt", not(feature = "tokio-rt")))]
-        { $($tt)* }
+        $($tt)*
     };
     ($($item:item)*) => {$(
         #[cfg(all(feature = "compio-rt", not(feature = "tokio-rt")))]
@@ -274,7 +274,7 @@ macro_rules! if_compio_rt {
 macro_rules! if_all_rt {
     (block: { $($tt:tt)* }) => {
         #[cfg(all(feature = "tokio-rt", feature = "compio-rt"))]
-        { $($tt)* }
+        $($tt)*
     };
     ($($item:item)*) => {$(
         #[cfg(all(feature = "tokio-rt", feature = "compio-rt"))]
@@ -289,6 +289,13 @@ macro_rules! if_any_rt {
     )*};
 }
 
+macro_rules! if_no_rt {
+    (block: { $($tt:tt)* }) => {
+        #[cfg(not(any(feature = "tokio-rt", feature = "compio-rt")))]
+        $($tt)*
+    };
+}
+
 #[macro_use]
 mod trace;
 #[macro_use]
@@ -301,6 +308,7 @@ mod error;
 mod group;
 mod into_uri;
 mod proxy;
+mod rt;
 mod sync;
 mod util;
 
