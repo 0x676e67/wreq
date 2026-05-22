@@ -164,17 +164,12 @@ impl H3Connector {
         // ===== Create Endpoint =====
         let socket_addr = match local_addr {
             Some(ip) => SocketAddr::new(ip, 0),
-            None => "[::]:0".parse::<SocketAddr>().unwrap(),
+            None => "0.0.0.0:0".parse::<SocketAddr>().unwrap(),
         };
 
         let socket = std::net::UdpSocket::bind(socket_addr)?;
 
-        let endpoint = Endpoint::new(
-            endpoint_config,
-            None,
-            socket,
-            Arc::new(quinn::TokioRuntime),
-        )?;
+        let endpoint = Endpoint::new(endpoint_config, None, socket, Arc::new(quinn::TokioRuntime))?;
         endpoint.set_default_client_config(quinn_client_config);
 
         // ===== H3 Builder Config =====

@@ -5,7 +5,7 @@ use btls::ssl::{SslContextBuilder, SslOptions};
 #[cfg(feature = "http3")]
 use crate::http3::Http3Options;
 use crate::tls::TlsOptions;
-use crate::Error;
+use crate::{Error, tls::compress};
 
 /// Apply fingerprint-relevant TLS options to an [`SslContextBuilder`].
 ///
@@ -30,9 +30,27 @@ pub(crate) fn apply_tls_context_options(
 
     // === Options NOT applicable to QUIC (TLS 1.3 has no renegotiation/tickets) ===
     if !is_quic {
-        set_bool!(tls, !session_ticket, builder, set_options, SslOptions::NO_TICKET);
-        set_bool!(tls, !psk_dhe_ke, builder, set_options, SslOptions::NO_PSK_DHE_KE);
-        set_bool!(tls, !renegotiation, builder, set_options, SslOptions::NO_RENEGOTIATION);
+        set_bool!(
+            tls,
+            !session_ticket,
+            builder,
+            set_options,
+            SslOptions::NO_TICKET
+        );
+        set_bool!(
+            tls,
+            !psk_dhe_ke,
+            builder,
+            set_options,
+            SslOptions::NO_PSK_DHE_KE
+        );
+        set_bool!(
+            tls,
+            !renegotiation,
+            builder,
+            set_options,
+            SslOptions::NO_RENEGOTIATION
+        );
     }
 
     // === OCSP stapling / SCT: QUIC override, fall back to TlsOptions ===
@@ -59,9 +77,19 @@ pub(crate) fn apply_tls_context_options(
     }
 
     // IMPORTANT: preserve_tls13_cipher_list MUST be called before cipher_list.
-    set_option!(tls, preserve_tls13_cipher_list, builder, set_preserve_tls13_cipher_list);
+    set_option!(
+        tls,
+        preserve_tls13_cipher_list,
+        builder,
+        set_preserve_tls13_cipher_list
+    );
     set_option_ref_try!(tls, cipher_list, builder, set_cipher_list);
-    set_option_ref_try!(tls, delegated_credentials, builder, set_delegated_credentials);
+    set_option_ref_try!(
+        tls,
+        delegated_credentials,
+        builder,
+        set_delegated_credentials
+    );
     set_option!(tls, record_size_limit, builder, set_record_size_limit);
     set_option!(tls, aes_hw_override, builder, set_aes_hw_override);
 
@@ -112,10 +140,8 @@ pub(crate) fn apply_tls_context_options(
     let compressors = tls.certificate_compressors.as_deref();
 
     if let Some(compressors) = compressors {
-        for c in compressors {
-            builder
-                .add_certificate_compression_algorithm(*c)
-                .map_err(Error::tls)?;
+        for compressor in compressors {
+            compress::register(*compressor, builder).map_err(Error::tls)?;
         }
     }
 
