@@ -8,7 +8,7 @@ use http::header::HeaderMap;
 use http_body_util::BodyExt;
 use mime_guess::Mime;
 use percent_encoding::{self, AsciiSet, NON_ALPHANUMERIC};
-#[cfg(feature = "stream")]
+#[cfg(all(feature = "tokio-rt", feature = "stream"))]
 use {std::io, std::path::Path, tokio::fs::File};
 
 use super::Body;
@@ -108,8 +108,8 @@ impl Form {
     /// # Errors
     ///
     /// Errors when the file cannot be opened.
-    #[cfg(feature = "stream")]
-    #[cfg_attr(docsrs, doc(cfg(feature = "stream")))]
+    #[cfg(all(feature = "tokio-rt", feature = "stream"))]
+    #[cfg_attr(docsrs, doc(cfg(all(feature = "tokio-rt", feature = "stream"))))]
     pub async fn file<T, U>(self, name: T, path: U) -> io::Result<Form>
     where
         T: Into<Cow<'static, str>>,
@@ -293,8 +293,8 @@ impl Part {
     /// # Errors
     ///
     /// Errors when the file cannot be opened.
-    #[cfg(feature = "stream")]
-    #[cfg_attr(docsrs, doc(cfg(feature = "stream")))]
+    #[cfg(all(feature = "tokio-rt", feature = "stream"))]
+    #[cfg_attr(docsrs, doc(cfg(all(feature = "tokio-rt", feature = "stream"))))]
     pub async fn file<T: AsRef<Path>>(path: T) -> io::Result<Part> {
         let path = path.as_ref();
         let file_name = path
@@ -496,7 +496,7 @@ impl PercentEncoding {
     }
 }
 
-/// See chromium's implementation: https://source.chromium.org/chromium/chromium/src/+/main:third_party/blink/renderer/platform/network/form_data_encoder.cc
+/// See chromium's implementation: <https://source.chromium.org/chromium/chromium/src/+/main:third_party/blink/renderer/platform/network/form_data_encoder.cc>
 fn gen_boundary() -> String {
     use crate::util::fast_random as random;
 

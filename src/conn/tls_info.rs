@@ -1,17 +1,14 @@
 use bytes::Bytes;
-use tokio::net::TcpStream;
-#[cfg(unix)]
-use tokio::net::UnixStream;
 use tokio_btls::SslStream;
 
 use crate::tls::{TlsInfo, conn::MaybeHttpsStream};
 
 /// A trait for extracting TLS information from a connection.
-///
-/// Implementors can provide access to peer certificate data or other TLS-related metadata.
-/// For non-TLS connections, this typically returns `None`.
 pub trait TlsInfoFactory {
-    fn tls_info(&self) -> Option<TlsInfo>;
+    #[inline]
+    fn tls_info(&self) -> Option<TlsInfo> {
+        None
+    }
 }
 
 fn extract_tls_info<S>(ssl_stream: &SslStream<S>) -> TlsInfo {
@@ -31,68 +28,20 @@ fn extract_tls_info<S>(ssl_stream: &SslStream<S>) -> TlsInfo {
     }
 }
 
-// ===== impl TcpStream =====
-
-impl TlsInfoFactory for TcpStream {
-    fn tls_info(&self) -> Option<TlsInfo> {
-        None
-    }
-}
-
-impl TlsInfoFactory for SslStream<TcpStream> {
+// Generic impl: any SslStream can provide TLS info.
+impl<T> TlsInfoFactory for SslStream<T> {
     #[inline]
     fn tls_info(&self) -> Option<TlsInfo> {
         Some(extract_tls_info(self))
     }
 }
 
-impl TlsInfoFactory for MaybeHttpsStream<TcpStream> {
+// Generic impl: MaybeHttpsStream delegates to the inner stream.
+impl<T: TlsInfoFactory> TlsInfoFactory for MaybeHttpsStream<T> {
     fn tls_info(&self) -> Option<TlsInfo> {
         match self {
             MaybeHttpsStream::Https(tls) => tls.tls_info(),
             MaybeHttpsStream::Http(_) => None,
         }
-    }
-}
-
-impl TlsInfoFactory for SslStream<MaybeHttpsStream<TcpStream>> {
-    #[inline]
-    fn tls_info(&self) -> Option<TlsInfo> {
-        Some(extract_tls_info(self))
-    }
-}
-
-// ===== impl UnixStream =====
-
-#[cfg(unix)]
-impl TlsInfoFactory for UnixStream {
-    fn tls_info(&self) -> Option<TlsInfo> {
-        None
-    }
-}
-
-#[cfg(unix)]
-impl TlsInfoFactory for SslStream<UnixStream> {
-    #[inline]
-    fn tls_info(&self) -> Option<TlsInfo> {
-        Some(extract_tls_info(self))
-    }
-}
-
-#[cfg(unix)]
-impl TlsInfoFactory for MaybeHttpsStream<UnixStream> {
-    fn tls_info(&self) -> Option<TlsInfo> {
-        match self {
-            MaybeHttpsStream::Https(tls) => tls.tls_info(),
-            MaybeHttpsStream::Http(_) => None,
-        }
-    }
-}
-
-#[cfg(unix)]
-impl TlsInfoFactory for SslStream<MaybeHttpsStream<UnixStream>> {
-    #[inline]
-    fn tls_info(&self) -> Option<TlsInfo> {
-        Some(extract_tls_info(self))
     }
 }

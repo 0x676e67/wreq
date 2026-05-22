@@ -1,28 +1,31 @@
-use std::{future::Future, io, net::SocketAddr, pin::Pin, time::Duration};
+//! Tokio-based TCP connector.
+
+use std::{io, net::SocketAddr, time::Duration};
 
 use tokio::net::{TcpSocket, TcpStream};
 
-use super::TcpConnector;
-use crate::conn::{Connected, Connection, http::HttpInfo};
+use super::BoxConnecting;
+use crate::conn::{Connected, Connection, http::HttpInfo, tls_info::TlsInfoFactory};
 
 /// A connector that uses `tokio` for TCP connections.
 #[derive(Clone, Copy, Debug, Default)]
-pub struct TokioTcpConnector {
+pub struct TcpConnector {
     _priv: (),
 }
 
-impl TokioTcpConnector {
-    /// Create a new [`TokioTcpConnector`].
+impl TcpConnector {
+    /// Creates a new [`TcpConnector`].
+    #[inline]
     pub fn new() -> Self {
         Self { _priv: () }
     }
 }
 
-impl TcpConnector for TokioTcpConnector {
+impl super::TcpConnector for TcpConnector {
     type TcpStream = std::net::TcpStream;
     type Connection = TcpStream;
     type Error = io::Error;
-    type Future = Pin<Box<dyn Future<Output = Result<Self::Connection, Self::Error>> + Send>>;
+    type Future = BoxConnecting<Self::Connection, Self::Error>;
     type Sleep = tokio::time::Sleep;
 
     #[inline]
@@ -50,3 +53,5 @@ impl Connection for TcpStream {
         }
     }
 }
+
+impl TlsInfoFactory for TcpStream {}

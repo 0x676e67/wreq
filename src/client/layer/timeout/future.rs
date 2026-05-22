@@ -7,21 +7,21 @@ use std::{
 
 use http::Response;
 use pin_project_lite::pin_project;
-use tokio::time::Sleep;
-use wreq_proto::rt::Time;
+use wreq_proto::rt::Sleep;
 
 use super::body::TimeoutBody;
-use crate::error::{BoxError, Error, TimedOut};
+use crate::{
+    error::{BoxError, Error, TimedOut},
+    rt::Timer,
+};
 
 pin_project! {
     /// [`Timeout`] response future
     pub struct ResponseFuture<F> {
         #[pin]
         pub(crate) response: F,
-        #[pin]
-        pub(crate) total_timeout: Option<Sleep>,
-        #[pin]
-        pub(crate) read_timeout: Option<Sleep>,
+        pub(crate) total_timeout: Option<Pin<Box<dyn Sleep>>>,
+        pub(crate) read_timeout: Option<Pin<Box<dyn Sleep>>>,
     }
 }
 
@@ -33,7 +33,7 @@ where
     type Output = Result<T, BoxError>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let mut this = self.project();
+        let this = self.project();
 
         // First, try polling the future
         match this.response.poll(cx) {
@@ -42,9 +42,9 @@ where
         }
 
         // Helper closure for polling a timeout and returning a TimedOut error
-        let mut check_timeout = |sleep: Option<Pin<&mut Sleep>>| {
+        let mut check_timeout = |sleep: Option<&mut Pin<Box<dyn Sleep>>>| {
             if let Some(sleep) = sleep {
-                if sleep.poll(cx).is_ready() {
+                if sleep.as_mut().poll(cx).is_ready() {
                     return Some(Poll::Ready(Err(Error::request(TimedOut).into())));
                 }
             }
@@ -52,12 +52,12 @@ where
         };
 
         // Check total timeout first
-        if let Some(poll) = check_timeout(this.total_timeout.as_mut().as_pin_mut()) {
+        if let Some(poll) = check_timeout(this.total_timeout.as_mut()) {
             return poll;
         }
 
         // Check read timeout
-        if let Some(poll) = check_timeout(this.read_timeout.as_mut().as_pin_mut()) {
+        if let Some(poll) = check_timeout(this.read_timeout.as_mut()) {
             return poll;
         }
 
@@ -70,9 +70,10 @@ pin_project! {
     pub struct ResponseBodyTimeoutFuture<Fut> {
         #[pin]
         pub(super) inner: Fut,
+        pub(super) timer: Timer,
         pub(super) total_timeout: Option<Duration>,
         pub(super) read_timeout: Option<Duration>,
-        pub(super) timer: Time,
+
     }
 }
 

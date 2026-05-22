@@ -15,9 +15,9 @@ use tower::{BoxError, Service};
 
 use super::{
     Connection,
-    tcp::{
-        ConnectError, ConnectingTcp, SocketBindOptions, TcpConnector, TcpKeepaliveOptions,
-        TcpOptions,
+    net::{
+        SocketBindOptions,
+        tcp::{ConnectError, ConnectingTcp, TcpConnector, TcpKeepaliveOptions, TcpOptions},
     },
 };
 use crate::dns::{self, InternalResolve};
@@ -34,7 +34,7 @@ type BoxConnecting<S> = Pin<Box<dyn Future<Output = ConnectResult<S>> + Send>>;
 /// Provides methods to adjust TCP/socket-level settings such as keepalive,
 /// timeouts, buffer sizes, and local address binding. [`HttpConnector`]
 /// is the default implementation.
-pub trait HttpTransport: Service<Uri> + Clone + Send + Sized + 'static
+pub trait HttpConnect: Service<Uri> + Clone + Send + Sized + 'static
 where
     Self::Response: AsyncRead + AsyncWrite + Connection + Unpin + Send + 'static,
     Self::Error: Into<BoxError>,
@@ -176,7 +176,7 @@ impl<R, S> HttpConnector<R, S> {
     }
 }
 
-impl<R, S> HttpTransport for HttpConnector<R, S>
+impl<R, S> HttpConnect for HttpConnector<R, S>
 where
     R: InternalResolve + Clone + Send + Sync + 'static,
     R::Future: Send,

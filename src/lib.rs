@@ -2,7 +2,6 @@
 #![deny(unsafe_code)]
 #![deny(missing_docs)]
 #![cfg_attr(test, deny(warnings))]
-#![cfg_attr(not(test), warn(unused_crate_dependencies))]
 
 //! # wreq
 //!
@@ -250,6 +249,53 @@
 //! [Proxy]: ./struct.Proxy.html
 //! [cargo-features]: https://doc.rust-lang.org/stable/cargo/reference/manifest.html#the-features-section
 
+macro_rules! if_tokio_rt {
+    (block: { $($tt:tt)* }) => {
+        #[cfg(all(feature = "tokio-rt", not(feature = "compio-rt")))]
+        $($tt)*
+    };
+    ($($item:item)*) => {$(
+        #[cfg(all(feature = "tokio-rt", not(feature = "compio-rt")))]
+        $item
+    )*};
+}
+
+macro_rules! if_compio_rt {
+    (block: { $($tt:tt)* }) => {
+        #[cfg(all(feature = "compio-rt", not(feature = "tokio-rt")))]
+        $($tt)*
+    };
+    ($($item:item)*) => {$(
+        #[cfg(all(feature = "compio-rt", not(feature = "tokio-rt")))]
+        $item
+    )*};
+}
+
+macro_rules! if_all_rt {
+    (block: { $($tt:tt)* }) => {
+        #[cfg(all(feature = "tokio-rt", feature = "compio-rt"))]
+        $($tt)*
+    };
+    ($($item:item)*) => {$(
+        #[cfg(all(feature = "tokio-rt", feature = "compio-rt"))]
+        $item
+    )*};
+}
+
+macro_rules! if_any_rt {
+    ($($item:item)*) => {$(
+        #[cfg(any(feature = "tokio-rt", feature = "compio-rt"))]
+        $item
+    )*};
+}
+
+macro_rules! if_no_rt {
+    (block: { $($tt:tt)* }) => {
+        #[cfg(not(any(feature = "tokio-rt", feature = "compio-rt")))]
+        $($tt)*
+    };
+}
+
 #[macro_use]
 mod trace;
 #[macro_use]
@@ -262,6 +308,7 @@ mod error;
 mod group;
 mod into_uri;
 mod proxy;
+mod rt;
 mod sync;
 mod util;
 
