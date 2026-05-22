@@ -51,7 +51,6 @@ pub type BoxSendFuture = Pin<Box<dyn Future<Output = ()> + Send>>;
 /// | `tokio-rt` only                   | `TokioExecutor`   |
 /// | `compio-rt` only                  | `CompioExecutor`  |
 /// | both `tokio-rt` and `compio-rt`   | `TokioExecutor`   |
-/// | neither                           | empty (panics)    |
 #[derive(Clone)]
 pub struct Executor(Arc<dyn rt::Executor<BoxSendFuture> + Send + Sync>);
 
