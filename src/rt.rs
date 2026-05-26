@@ -29,7 +29,7 @@ use wreq_proto::rt::{self, Sleep, Time};
 
 /// A heap-allocated, type-erased future that is [`Send`] and resolves to `()`.
 ///
-/// This is the concrete future type passed to [`Executor::execute`] by the
+/// This is the concrete future type passed to [`rt::Executor::execute`] by the
 /// client's background task machinery.  Callers do not need to construct this
 /// type directly; the [`rt::Executor<F>`] blanket implementation boxes and
 /// pins any qualifying `F` automatically.
