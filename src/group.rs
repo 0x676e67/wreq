@@ -18,23 +18,22 @@
 //! 3. **Resource Affinity**: Resource management (such as connection pooling) respects these
 //!    boundaries, ensuring that resources are never leaked across different request groups.
 
-use std::{borrow::Cow, collections::BTreeMap, hash::Hash};
+use std::collections::BTreeMap;
 
 use http::{Uri, Version};
+use name::GroupId;
 
 use crate::{conn::net::SocketBindOptions, proxy::Matcher};
 
 macro_rules! impl_group_variants {
     ($($name:ident $(($ty:ty))?,)*) => {
-        /// Unique discriminator for request grouping dimensions.
         #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord)]
-        enum GroupId {
+        enum GroupKey {
             $($name,)*
         }
 
-        /// Data container for specific grouping criteria.
         #[derive(Debug, Clone, Hash, PartialEq, Eq)]
-        enum GroupPart {
+        enum GroupVariant {
             $($name $(($ty))?,)*
         }
     }
@@ -43,8 +42,7 @@ macro_rules! impl_group_variants {
 impl_group_variants! {
     Request(Group),
     Emulate(Group),
-    Named(Cow<'static, str>),
-    Number(u64),
+    Named(GroupId),
     Uri(Uri),
     Version(Version),
     Proxy(Matcher),
@@ -58,64 +56,56 @@ impl_group_variants! {
 /// different logical partitions, preventing unintended interaction or
 /// resource sharing between them.
 #[derive(Debug, Default, Clone, Hash, PartialEq, Eq)]
-pub struct Group(BTreeMap<GroupId, GroupPart>);
+pub struct Group(BTreeMap<GroupKey, GroupVariant>);
 
 impl Group {
-    /// Creates a new [`Group`] with a custom name.
+    /// Creates a new [`Group`] with a custom string or numeric identifier.
     #[inline]
-    pub fn named<N: Into<Cow<'static, str>>>(name: N) -> Self {
+    pub fn new<N: Into<GroupId>>(name: N) -> Self {
         Group(BTreeMap::from([(
-            GroupId::Named,
-            GroupPart::Named(name.into()),
-        )]))
-    }
-
-    /// Creates a new [`Group`] with a numeric identifier.
-    pub fn number<V: Into<u64>>(value: V) -> Self {
-        Group(BTreeMap::from([(
-            GroupId::Number,
-            GroupPart::Number(value.into()),
+            GroupKey::Named,
+            GroupVariant::Named(name.into()),
         )]))
     }
 
     /// Groups the request by a specific target [`Uri`].
     #[inline]
     pub(crate) fn uri(&mut self, uri: Uri) -> &mut Self {
-        self.extend(GroupId::Uri, GroupPart::Uri(uri))
+        self.extend(GroupKey::Uri, GroupVariant::Uri(uri))
     }
 
     /// Groups the request by its required HTTP [`Version`].
     #[inline]
     pub(crate) fn version(&mut self, version: Option<Version>) -> &mut Self {
-        self.extend(GroupId::Version, version.map(GroupPart::Version))
+        self.extend(GroupKey::Version, version.map(GroupVariant::Version))
     }
 
     /// Groups the request based on its proxy [`Matcher`] criteria.
     #[inline]
     pub(crate) fn proxy(&mut self, proxy: Option<Matcher>) -> &mut Self {
-        self.extend(GroupId::Proxy, proxy.map(GroupPart::Proxy))
+        self.extend(GroupKey::Proxy, proxy.map(GroupVariant::Proxy))
     }
 
     /// Groups the request by its resolved socket bind options.
     #[inline]
     pub(crate) fn socket_bind(&mut self, opts: Option<SocketBindOptions>) -> &mut Self {
-        self.extend(GroupId::SocketBind, GroupPart::SocketBind(opts))
+        self.extend(GroupKey::SocketBind, GroupVariant::SocketBind(opts))
     }
 
     /// Creates a nested request group.
     #[inline]
     pub(crate) fn request(&mut self, group: Group) -> &mut Self {
-        self.extend(GroupId::Request, GroupPart::Request(group))
+        self.extend(GroupKey::Request, GroupVariant::Request(group))
     }
 
     /// Groups the request by its emulation-layer characteristics.
     #[inline]
     pub(crate) fn emulate(&mut self, group: Group) -> &mut Self {
-        self.extend(GroupId::Emulate, GroupPart::Emulate(group))
+        self.extend(GroupKey::Emulate, GroupVariant::Emulate(group))
     }
 
     #[inline]
-    fn extend<T: Into<Option<GroupPart>>>(&mut self, id: GroupId, entry: T) -> &mut Self {
+    fn extend<T: Into<Option<GroupVariant>>>(&mut self, id: GroupKey, entry: T) -> &mut Self {
         if let Some(entry) = entry.into() {
             self.0.insert(id, entry);
         }
@@ -126,28 +116,67 @@ impl Group {
 impl From<u64> for Group {
     #[inline]
     fn from(value: u64) -> Self {
-        Group::number(value)
+        Group::new(value)
     }
 }
 
 impl From<&'static str> for Group {
     #[inline]
     fn from(value: &'static str) -> Self {
-        Group::named(value)
+        Group::new(value)
     }
 }
 
 impl From<String> for Group {
     #[inline]
     fn from(value: String) -> Self {
-        Group::named(value)
+        Group::new(value)
     }
 }
 
-impl From<Cow<'static, str>> for Group {
+impl From<Box<str>> for Group {
     #[inline]
-    fn from(value: Cow<'static, str>) -> Self {
-        Group::named(value)
+    fn from(value: Box<str>) -> Self {
+        Group::new(value)
+    }
+}
+
+mod name {
+
+    /// A group identifier that can be a string or a numeric tag.
+    #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+    pub enum GroupId {
+        Borrowed(&'static str),
+        Owned(Box<str>),
+        Number(u64),
+    }
+
+    impl From<&'static str> for GroupId {
+        #[inline]
+        fn from(value: &'static str) -> Self {
+            Self::Borrowed(value)
+        }
+    }
+
+    impl From<String> for GroupId {
+        #[inline]
+        fn from(value: String) -> Self {
+            Self::Owned(value.into_boxed_str())
+        }
+    }
+
+    impl From<Box<str>> for GroupId {
+        #[inline]
+        fn from(value: Box<str>) -> Self {
+            Self::Owned(value)
+        }
+    }
+
+    impl From<u64> for GroupId {
+        #[inline]
+        fn from(value: u64) -> Self {
+            Self::Number(value)
+        }
     }
 }
 
@@ -160,12 +189,12 @@ mod tests {
     #[test]
     fn test_group_identity_invariance() {
         let mut g1 = Group::default();
-        g1.extend(GroupId::Number, GroupPart::Number(42));
-        g1.extend(GroupId::Named, GroupPart::Named("worker".into()));
+        g1.extend(GroupKey::Named, GroupVariant::Named("worker".into()));
+        g1.extend(GroupKey::Version, GroupVariant::Version(Version::HTTP_2));
 
         let mut g2 = Group::default();
-        g2.extend(GroupId::Named, GroupPart::Named("worker".into()));
-        g2.extend(GroupId::Number, GroupPart::Number(42));
+        g2.extend(GroupKey::Version, GroupVariant::Version(Version::HTTP_2));
+        g2.extend(GroupKey::Named, GroupVariant::Named("worker".into()));
 
         let mut h1 = DefaultHasher::new();
         g1.hash(&mut h1);
