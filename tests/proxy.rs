@@ -1,5 +1,5 @@
 mod support;
-use std::{env, sync::LazyLock};
+use std::{env, net::SocketAddr, sync::LazyLock};
 
 use support::server;
 use tokio::sync::Mutex;
@@ -399,6 +399,108 @@ async fn tunnel_includes_user_agent() {
         err.contains("unsuccessful"),
         "tunnel unsuccessful expected, got: {err:?}"
     );
+}
+
+/// A mock proxy that asserts the `CONNECT` request-target (and its `Host`
+/// header) equal `expected_target`, then refuses the tunnel with `400` so the
+/// client fails fast without any real TLS handshake.
+fn connect_capturing_proxy(expected_target: &'static str) -> server::Server {
+    server::http(move |req| {
+        assert_eq!(req.method(), "CONNECT");
+        assert_eq!(req.uri(), expected_target);
+        assert_eq!(req.headers()["host"], expected_target);
+
+        async {
+            let mut res = http::Response::default();
+            *res.status_mut() = http::StatusCode::BAD_REQUEST;
+            res
+        }
+    })
+}
+
+/// Asserts the request failed while establishing the proxy tunnel (the `400`
+/// returned by [`connect_capturing_proxy`]).
+fn assert_tunnel_unsuccessful(err: wreq::Error) {
+    let err = support::error::inspect(err).pop().unwrap();
+    assert!(
+        err.contains("unsuccessful"),
+        "tunnel unsuccessful expected, got: {err:?}"
+    );
+}
+
+#[tokio::test]
+async fn tunnel_resolve_local_uses_resolved_connect_target() {
+    let server = connect_capturing_proxy("127.0.0.1:443");
+    let proxy = format!("http://{}", server.addr());
+
+    let err = Client::builder()
+        .resolve("hyper.rs.local", SocketAddr::from(([127, 0, 0, 1], 0)))
+        .proxy(wreq::Proxy::https(&proxy).unwrap().resolve_local(true))
+        .build()
+        .unwrap()
+        .get("https://hyper.rs.local/prox")
+        .send()
+        .await
+        .unwrap_err();
+
+    assert_tunnel_unsuccessful(err);
+}
+
+#[tokio::test]
+async fn tunnel_without_resolve_local_keeps_hostname_connect_target() {
+    // Even with a DNS override present, the default (opt-out) behaviour must
+    // leave the CONNECT target as the hostname: the override is ignored here.
+    let server = connect_capturing_proxy("hyper.rs.local:443");
+    let proxy = format!("http://{}", server.addr());
+
+    let err = Client::builder()
+        .resolve("hyper.rs.local", SocketAddr::from(([127, 0, 0, 1], 0)))
+        .proxy(wreq::Proxy::https(&proxy).unwrap())
+        .build()
+        .unwrap()
+        .get("https://hyper.rs.local/prox")
+        .send()
+        .await
+        .unwrap_err();
+
+    assert_tunnel_unsuccessful(err);
+}
+
+#[tokio::test]
+async fn tunnel_resolve_local_preserves_explicit_port() {
+    // The CONNECT target uses the resolved IP but keeps the URI's explicit port,
+    // not the (zero) port of the resolved address.
+    let server = connect_capturing_proxy("127.0.0.1:8443");
+    let proxy = format!("http://{}", server.addr());
+
+    let err = Client::builder()
+        .resolve("hyper.rs.local", SocketAddr::from(([127, 0, 0, 1], 0)))
+        .proxy(wreq::Proxy::https(&proxy).unwrap().resolve_local(true))
+        .build()
+        .unwrap()
+        .get("https://hyper.rs.local:8443/prox")
+        .send()
+        .await
+        .unwrap_err();
+
+    assert_tunnel_unsuccessful(err);
+}
+
+#[tokio::test]
+async fn tunnel_resolve_local_keeps_ip_literal_connect_target() {
+    let server = connect_capturing_proxy("[::1]:443");
+    let proxy = format!("http://{}", server.addr());
+
+    let err = Client::builder()
+        .proxy(wreq::Proxy::https(&proxy).unwrap().resolve_local(true))
+        .build()
+        .unwrap()
+        .get("https://[::1]/prox")
+        .send()
+        .await
+        .unwrap_err();
+
+    assert_tunnel_unsuccessful(err);
 }
 
 #[tokio::test]

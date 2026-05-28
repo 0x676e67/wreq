@@ -99,6 +99,9 @@ enum ProxyScheme {
 struct Extra {
     auth: Option<HeaderValue>,
     misc: Option<HeaderMap>,
+    /// Resolve the destination host locally and send the HTTP CONNECT request
+    /// to the resolved IP address instead of the hostname.
+    resolve_local: bool,
 }
 
 // ===== impl Proxy =====
@@ -185,6 +188,7 @@ impl Proxy {
             extra: Extra {
                 auth: None,
                 misc: None,
+                resolve_local: false,
             },
             scheme,
             no_proxy: None,
@@ -268,6 +272,41 @@ impl Proxy {
             }
         }
 
+        self
+    }
+
+    /// Resolve the destination host locally and tunnel to its IP address.
+    ///
+    /// By default an HTTP `CONNECT` tunnel is opened to the destination
+    /// *hostname* (e.g. `CONNECT example.com:443`), leaving DNS resolution to
+    /// the proxy. When this is enabled, the destination hostname is resolved by
+    /// the client's own DNS resolver (including any `resolve` overrides) and the
+    /// `CONNECT` request is sent to the resolved IP address instead
+    /// (e.g. `CONNECT 93.184.216.34:443`). The IP is used for both the
+    /// `CONNECT` request-target and the `Host` header of that `CONNECT` request;
+    /// the original port is preserved.
+    ///
+    /// The TLS SNI and tunneled HTTP request still use the original hostname,
+    /// so certificate validation and virtual hosting are unaffected. This
+    /// mirrors the `socks5://` (local DNS) versus `socks5h://` (remote DNS)
+    /// distinction, and is useful when the proxy's own DNS is unreliable,
+    /// censored, or when the hostname in the `CONNECT` line is filtered
+    /// upstream.
+    ///
+    /// Has no effect on SOCKS or Unix-socket proxies, or on plain HTTP requests.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// # extern crate wreq;
+    /// # fn run() -> Result<(), Box<dyn std::error::Error>> {
+    /// let proxy = wreq::Proxy::all("http://proxy.example:8080")?.resolve_local(true);
+    /// # Ok(())
+    /// # }
+    /// # fn main() {}
+    /// ```
+    pub fn resolve_local(mut self, enabled: bool) -> Proxy {
+        self.extra.resolve_local = enabled;
         self
     }
 
@@ -389,6 +428,7 @@ impl Matcher {
 impl Hash for Extra {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.auth.hash(state);
+        self.resolve_local.hash(state);
         if let Some(ref misc) = self.misc {
             for (k, v) in misc.iter() {
                 k.as_str().hash(state);
@@ -478,6 +518,17 @@ mod tests {
         let got = intercept(&p, &uri("http://anywhere.local"));
         let auth = got.basic_auth().unwrap();
         assert_eq!(auth, "testme");
+    }
+
+    #[test]
+    fn test_resolve_local() {
+        let p = Proxy::all("http://example.domain/")
+            .unwrap()
+            .resolve_local(true)
+            .into_matcher();
+
+        let got = intercept(&p, &uri("https://anywhere.local"));
+        assert!(got.resolve_local());
     }
 
     #[test]

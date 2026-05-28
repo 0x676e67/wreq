@@ -165,6 +165,11 @@ impl Intercept {
         self.extra.misc.as_ref()
     }
 
+    #[inline]
+    pub(crate) fn resolve_local(&self) -> bool {
+        self.extra.resolve_local
+    }
+
     #[cfg(feature = "socks")]
     pub(crate) fn raw_auth(&self) -> Option<(Bytes, Bytes)> {
         if let Auth::Raw(ref u, ref p) = self.auth {
