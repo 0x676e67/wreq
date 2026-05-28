@@ -2,7 +2,7 @@ mod support;
 use std::time::Duration;
 
 use pretty_env_logger::env_logger;
-use support::server;
+use support::{layer::DelayBodyLayer, server};
 use wreq::Client;
 
 #[tokio::test]
@@ -221,6 +221,26 @@ async fn read_timeout_applies_to_body() {
     assert!(err.is_timeout());
 }
 
+#[tokio::test]
+async fn read_timeout_applies_to_layer_body_transform() {
+    let _ = env_logger::try_init();
+
+    let server = server::http(move |_req| async { http::Response::new(b"Hello".to_vec().into()) });
+
+    let client = Client::builder()
+        .layer(DelayBodyLayer::new(Duration::from_millis(300)))
+        .read_timeout(Duration::from_millis(100))
+        .no_proxy()
+        .build()
+        .unwrap();
+
+    let url = format!("http://{}/slow", server.addr());
+    let res = client.get(&url).send().await.expect("Failed to get");
+    let err = res.text().await.unwrap_err();
+
+    assert!(err.is_timeout());
+}
+
 #[cfg(feature = "stream")]
 #[tokio::test]
 async fn read_timeout_allows_slow_response_body() {
@@ -266,12 +286,11 @@ async fn response_body_timeout_forwards_size_hint() {
 
     let server = server::http(move |_req| async { http::Response::new(b"hello".to_vec().into()) });
 
-    let client = Client::builder().no_proxy().build().unwrap();
-
-    let url = format!("http://{}/slow", server.addr());
-
-    let res = client
-        .get(&url)
+    let res = Client::builder()
+        .no_proxy()
+        .build()
+        .unwrap()
+        .get(format!("http://{}/slow", server.addr()))
         .timeout(Duration::from_secs(1))
         .send()
         .await

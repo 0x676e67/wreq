@@ -15,7 +15,6 @@ pub use self::{
     gai::GaiResolver,
     resolve::{Addrs, IntoResolve, Name, Resolve, Resolving},
 };
-
 pub(crate) use self::{
     resolve::{DnsResolverWithOverrides, DynResolver},
     sealed::{InternalResolve, resolve},

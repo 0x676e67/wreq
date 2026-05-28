@@ -22,12 +22,21 @@ use std::{
     time::Duration,
 };
 
+use bytes::Bytes;
 use http::header::{HeaderMap, HeaderValue, USER_AGENT};
+use http_body::Body as HttpBody;
 use tower::{
     BoxError, Layer, Service, ServiceBuilder, ServiceExt,
     retry::{Retry, RetryLayer},
-    util::{BoxCloneSyncService, BoxCloneSyncServiceLayer, Either, Oneshot},
+    util::{BoxCloneSyncService, BoxCloneSyncServiceLayer, Either, MapResponse, Oneshot},
 };
+#[cfg(any(
+    feature = "gzip",
+    feature = "zstd",
+    feature = "brotli",
+    feature = "deflate",
+))]
+use tower_http::decompression::DecompressionBody;
 use wreq_proto::body::Incoming;
 
 #[cfg(any(
@@ -50,7 +59,6 @@ use self::{
         retry::RetryPolicy,
         timeout::{
             ResponseBodyTimeout, ResponseBodyTimeoutLayer, Timeout, TimeoutLayer, TimeoutOptions,
-            body::TimeoutBody,
         },
     },
     request::{Request, RequestBuilder},
@@ -101,32 +109,35 @@ type Decompression<T> = T;
 ))]
 type Decompression<T> = self::layer::decoder::Decompression<T>;
 
-/// Response body type with timeout and optional decompression.
-#[cfg(any(
-    feature = "gzip",
-    feature = "zstd",
-    feature = "brotli",
-    feature = "deflate"
-))]
-type ResponseBody = TimeoutBody<tower_http::decompression::DecompressionBody<Incoming>>;
-
-/// Response body type with timeout only (no compression features).
 #[cfg(not(any(
     feature = "gzip",
     feature = "zstd",
     feature = "brotli",
     feature = "deflate"
 )))]
-type ResponseBody = TimeoutBody<Incoming>;
+type ResponseBody = Incoming;
+
+#[cfg(any(
+    feature = "gzip",
+    feature = "zstd",
+    feature = "brotli",
+    feature = "deflate"
+))]
+type ResponseBody = DecompressionBody<Incoming>;
+
+type NormalizeResponse<S> =
+    MapResponse<S, fn(http::Response<ResponseBody>) -> http::Response<Body>>;
 
 /// The complete HTTP client service stack with all middleware layers.
 type ClientService = Timeout<
     ResponseBodyTimeout<
         ConfigService<
-            Decompression<
-                Retry<
-                    RetryPolicy,
-                    FollowRedirect<HttpClient<Connector, Body>, FollowRedirectPolicy>,
+            NormalizeResponse<
+                Decompression<
+                    Retry<
+                        RetryPolicy,
+                        FollowRedirect<HttpClient<Connector, Body>, FollowRedirectPolicy>,
+                    >,
                 >,
             >,
         >,
@@ -134,14 +145,13 @@ type ClientService = Timeout<
 >;
 
 /// Type-erased client service for dynamic middleware composition.
-type BoxedClientService =
-    BoxCloneSyncService<http::Request<Body>, http::Response<ResponseBody>, BoxError>;
+type BoxedClientService = BoxCloneSyncService<http::Request<Body>, http::Response<Body>, BoxError>;
 
 /// Layer type for wrapping boxed client services with additional middleware.
 type BoxedClientLayer = BoxCloneSyncServiceLayer<
     BoxedClientService,
     http::Request<Body>,
-    http::Response<ResponseBody>,
+    http::Response<Body>,
     BoxError,
 >;
 
@@ -613,20 +623,27 @@ impl ClientBuilder {
                 .service(service);
 
             let service = ServiceBuilder::new()
-                .layer(ResponseBodyTimeoutLayer::new(
-                    config.timer.clone(),
-                    config.timeout_options,
-                ))
                 .layer(ConfigServiceLayer::new(
                     config.https_only,
                     config.headers,
                     config.orig_headers,
                 ))
+                .map_response(
+                    (|response: http::Response<ResponseBody>| response.map(Body::wrap))
+                        as fn(http::Response<ResponseBody>) -> http::Response<Body>,
+                )
                 .service(service);
 
             if config.layers.is_empty() {
                 let service = ServiceBuilder::new()
-                    .layer(TimeoutLayer::new(config.timer, config.timeout_options))
+                    .layer(TimeoutLayer::new(
+                        config.timer.clone(),
+                        config.timeout_options,
+                    ))
+                    .layer(ResponseBodyTimeoutLayer::new(
+                        config.timer,
+                        config.timeout_options,
+                    ))
                     .service(service);
 
                 Either::Left(service)
@@ -639,7 +656,14 @@ impl ClientBuilder {
                     });
 
                 let service = ServiceBuilder::new()
-                    .layer(TimeoutLayer::new(config.timer, config.timeout_options))
+                    .layer(TimeoutLayer::new(
+                        config.timer.clone(),
+                        config.timeout_options,
+                    ))
+                    .layer(ResponseBodyTimeoutLayer::new(
+                        config.timer,
+                        config.timeout_options,
+                    ))
                     .service(service)
                     .map_err(error::map_timeout_to_request_error);
 
@@ -1593,18 +1617,27 @@ impl ClientBuilder {
     ///     .unwrap();
     /// ```
     #[inline]
-    pub fn layer<L>(mut self, layer: L) -> ClientBuilder
+    pub fn layer<L, B>(mut self, layer: L) -> ClientBuilder
     where
-        L: Layer<BoxedClientService> + Clone + Send + Sync + 'static,
-        L::Service: Service<http::Request<Body>, Response = http::Response<ResponseBody>, Error = BoxError>
+        L: Layer<BoxedClientService> + Send + Sync + 'static,
+        L::Service: Service<http::Request<Body>, Response = http::Response<B>, Error = BoxError>
             + Clone
             + Send
             + Sync
             + 'static,
         <L::Service as Service<http::Request<Body>>>::Future: Send + 'static,
+        B: HttpBody + Send + Sync + 'static,
+        B::Data: Into<Bytes>,
+        B::Error: Into<BoxError>,
     {
-        let layer = BoxCloneSyncServiceLayer::new(layer);
-        self.config.layers.push(layer);
+        let layer = ServiceBuilder::new()
+            .map_response(|response: http::Response<B>| response.map(Body::wrap))
+            .layer(layer)
+            .into_inner();
+
+        self.config
+            .layers
+            .push(BoxCloneSyncServiceLayer::new(layer));
         self
     }
 

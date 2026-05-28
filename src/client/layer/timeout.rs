@@ -8,15 +8,14 @@ use std::{
     time::Duration,
 };
 
+use bytes::Bytes;
 use http::{Request, Response};
+use http_body::Body as HttpBody;
 use tower::{BoxError, Layer, Service};
 use wreq_proto::rt::Timer as _;
 
-use self::{
-    body::TimeoutBody,
-    future::{ResponseBodyTimeoutFuture, ResponseFuture},
-};
-use crate::{config::RequestConfig, rt::Timer};
+use self::future::{ResponseBodyTimeoutFuture, ResponseFuture};
+use crate::{Body, config::RequestConfig, rt::Timer};
 
 /// Options for configuring timeouts.
 #[derive(Clone, Copy, Default)]
@@ -149,8 +148,11 @@ pub struct ResponseBodyTimeout<S> {
 impl<S, ReqBody, ResBody> Service<Request<ReqBody>> for ResponseBodyTimeout<S>
 where
     S: Service<Request<ReqBody>, Response = Response<ResBody>>,
+    ResBody: HttpBody + Send + Sync + 'static,
+    ResBody::Data: Into<Bytes>,
+    ResBody::Error: Into<BoxError>,
 {
-    type Response = Response<TimeoutBody<ResBody>>;
+    type Response = Response<Body>;
     type Error = S::Error;
     type Future = ResponseBodyTimeoutFuture<S::Future>;
 

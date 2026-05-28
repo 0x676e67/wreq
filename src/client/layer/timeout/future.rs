@@ -5,12 +5,15 @@ use std::{
     time::Duration,
 };
 
+use bytes::Bytes;
 use http::Response;
+use http_body::Body as HttpBody;
 use pin_project_lite::pin_project;
 use wreq_proto::rt::Sleep;
 
 use super::body::TimeoutBody;
 use crate::{
+    Body,
     error::{BoxError, Error, TimedOut},
     rt::Timer,
 };
@@ -80,15 +83,18 @@ pin_project! {
 impl<Fut, ResBody, E> Future for ResponseBodyTimeoutFuture<Fut>
 where
     Fut: Future<Output = Result<Response<ResBody>, E>>,
+    ResBody: HttpBody + Send + Sync + 'static,
+    ResBody::Data: Into<Bytes>,
+    ResBody::Error: Into<BoxError>,
 {
-    type Output = Result<Response<TimeoutBody<ResBody>>, E>;
+    type Output = Result<Response<Body>, E>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let timer = self.timer.clone();
         let total_timeout = self.total_timeout;
         let read_timeout = self.read_timeout;
         let res = ready!(self.project().inner.poll(cx))?
-            .map(|body| TimeoutBody::new(timer, total_timeout, read_timeout, body));
+            .map(|body| Body::wrap(TimeoutBody::new(timer, total_timeout, read_timeout, body)));
         Poll::Ready(Ok(res))
     }
 }
