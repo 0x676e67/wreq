@@ -515,7 +515,7 @@ impl HttpBody for Response {
 
     type Error = Error;
 
-    #[inline]
+    #[inline(always)]
     fn poll_frame(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
@@ -523,12 +523,12 @@ impl HttpBody for Response {
         Pin::new(self.res.body_mut()).poll_frame(cx)
     }
 
-    #[inline]
+    #[inline(always)]
     fn is_end_stream(&self) -> bool {
         self.res.body().is_end_stream()
     }
 
-    #[inline]
+    #[inline(always)]
     fn size_hint(&self) -> http_body::SizeHint {
         self.res.body().size_hint()
     }
