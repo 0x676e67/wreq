@@ -275,8 +275,15 @@ impl Response {
     #[cfg(feature = "json")]
     #[cfg_attr(docsrs, doc(cfg(feature = "json")))]
     pub async fn json<T: DeserializeOwned>(self) -> crate::Result<T> {
-        let full = self.bytes().await?;
-        serde_json::from_slice(&full).map_err(Error::decode)
+        match http_body_util::BodyExt::collect(self.res.into_body())
+            .await
+            .map(Collected::<Bytes>::to_bytes)
+        {
+            Ok(full) => serde_json::from_slice(&full)
+                .map_err(Error::decode)
+                .map_err(|err| err.with_uri(self.uri)),
+            Err(err) => Err(err.with_uri(self.uri)),
+        }
     }
 
     /// Get the full response body as [`Bytes`].
@@ -301,6 +308,7 @@ impl Response {
         BodyExt::collect(self.res.into_body())
             .await
             .map(Collected::<Bytes>::to_bytes)
+            .map_err(|err| err.with_uri(self.uri))
     }
 
     /// Convert the response into a [`Stream`] of [`Bytes`] from the body.
