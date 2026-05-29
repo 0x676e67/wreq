@@ -431,10 +431,10 @@ impl Response {
     /// }
     /// # fn main() {}
     /// ```
-    pub fn error_for_status(mut self) -> crate::Result<Self> {
+    pub fn error_for_status(self) -> crate::Result<Self> {
         let status = self.status();
         if status.is_client_error() || status.is_server_error() {
-            let reason = self.res.extensions_mut().remove::<ReasonPhrase>();
+            let reason = self.res.extensions().get::<ReasonPhrase>().cloned();
             Err(Error::status_code(self.uri, status, reason))
         } else {
             Ok(self)
