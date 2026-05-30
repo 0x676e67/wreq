@@ -22,11 +22,13 @@ use std::{
     time::Duration,
 };
 
+use bytes::Bytes;
 use http::header::{HeaderMap, HeaderValue, USER_AGENT};
+use http_body::Body as HttpBody;
 use tower::{
     BoxError, Layer, Service, ServiceBuilder, ServiceExt,
     retry::{Retry, RetryLayer},
-    util::{BoxCloneSyncService, BoxCloneSyncServiceLayer, Either, Oneshot},
+    util::{BoxCloneSyncService, BoxCloneSyncServiceLayer, Either, MapResponse, Oneshot},
 };
 use wreq_proto::body::Incoming;
 
@@ -96,44 +98,45 @@ type MaybeDecompression<T> = T;
 ))]
 type MaybeDecompression<T> = self::layer::decoder::Decompression<T>;
 
-#[cfg(not(any(
-    feature = "gzip",
-    feature = "zstd",
-    feature = "brotli",
-    feature = "deflate"
-)))]
-type MaybeDecompressionBody<T> = T;
-
 #[cfg(any(
     feature = "gzip",
     feature = "zstd",
     feature = "brotli",
     feature = "deflate"
 ))]
-type MaybeDecompressionBody<T> = tower_http::decompression::DecompressionBody<T>;
+type MaybeDecompressionBody = tower_http::decompression::DecompressionBody<Incoming>;
+
+#[cfg(not(any(
+    feature = "gzip",
+    feature = "zstd",
+    feature = "brotli",
+    feature = "deflate"
+)))]
+type MaybeDecompressionBody = Incoming;
+
+type NormalizeResponse<S> =
+    MapResponse<S, fn(http::Response<MaybeDecompressionBody>) -> http::Response<Body>>;
 
 type ClientService = Timeout<
-    ConfigService<
-        MaybeDecompression<
-            Retry<RetryPolicy, FollowRedirect<HttpClient<Connector, Body>, FollowRedirectPolicy>>,
+    NormalizeResponse<
+        ConfigService<
+            MaybeDecompression<
+                Retry<
+                    RetryPolicy,
+                    FollowRedirect<HttpClient<Connector, Body>, FollowRedirectPolicy>,
+                >,
+            >,
         >,
     >,
 >;
 
-type BoxedClientService = BoxCloneSyncService<
-    http::Request<Body>,
-    http::Response<TimeoutBody<MaybeDecompressionBody<Incoming>>>,
-    BoxError,
->;
+type BoxedClientService =
+    BoxCloneSyncService<http::Request<Body>, http::Response<TimeoutBody<Body>>, BoxError>;
 
 type BoxedClientServiceLayer = BoxCloneSyncServiceLayer<
-    BoxCloneSyncService<
-        http::Request<Body>,
-        http::Response<MaybeDecompressionBody<Incoming>>,
-        BoxError,
-    >,
+    BoxCloneSyncService<http::Request<Body>, http::Response<Body>, BoxError>,
     http::Request<Body>,
-    http::Response<MaybeDecompressionBody<Incoming>>,
+    http::Response<Body>,
     BoxError,
 >;
 
@@ -151,6 +154,7 @@ type BoxedClientServiceLayer = BoxCloneSyncServiceLayer<
 ///
 /// [`Rc`]: std::rc::Rc
 #[derive(Clone)]
+#[repr(transparent)]
 pub struct Client(Arc<Either<ClientService, BoxedClientService>>);
 
 /// A [`ClientBuilder`] can be used to create a [`Client`] with custom configuration.
@@ -425,7 +429,7 @@ impl Client {
         let req = http::Request::<Body>::from(request);
         Pending::Request {
             uri: Some(req.uri().clone()),
-            fut: Box::pin(Oneshot::new((*self.0).clone(), req)),
+            fut: Box::new(Oneshot::new((*self.0).clone(), req)),
         }
     }
 }
@@ -609,7 +613,10 @@ impl ClientBuilder {
                     config.headers,
                     config.orig_headers,
                 ))
-                .service(service);
+                .service(service)
+                .map_response(
+                    (|resp: http::Response<MaybeDecompressionBody>| resp.map(Body::wrap)) as _,
+                );
 
             if config.layers.is_empty() {
                 let service = ServiceBuilder::new()
@@ -1580,29 +1587,28 @@ impl ClientBuilder {
     ///     .unwrap();
     /// ```
     #[inline]
-    pub fn layer<L>(mut self, layer: L) -> ClientBuilder
+    pub fn layer<L, B>(mut self, layer: L) -> ClientBuilder
     where
-        L: Layer<
-                BoxCloneSyncService<
-                    http::Request<Body>,
-                    http::Response<MaybeDecompressionBody<Incoming>>,
-                    BoxError,
-                >,
-            > + Clone
+        L: Layer<BoxCloneSyncService<http::Request<Body>, http::Response<Body>, BoxError>>
+            + Clone
             + Send
             + Sync
             + 'static,
-        L::Service: Service<
-                http::Request<Body>,
-                Response = http::Response<MaybeDecompressionBody<Incoming>>,
-                Error = BoxError,
-            > + Clone
+        L::Service: Service<http::Request<Body>, Response = http::Response<B>, Error = BoxError>
+            + Clone
             + Send
             + Sync
             + 'static,
         <L::Service as Service<http::Request<Body>>>::Future: Send + 'static,
+        B: HttpBody + Send + Sync + 'static,
+        B::Data: Into<Bytes>,
+        B::Error: Into<BoxError>,
     {
-        let layer = BoxCloneSyncServiceLayer::new(layer);
+        let layer = BoxCloneSyncServiceLayer::new(
+            ServiceBuilder::new()
+                .map_response(|resp: http::Response<B>| resp.map(Body::wrap))
+                .layer(layer),
+        );
         self.config.layers.push(layer);
         self
     }

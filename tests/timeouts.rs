@@ -5,6 +5,8 @@ use pretty_env_logger::env_logger;
 use support::server;
 use wreq::Client;
 
+use crate::support::layer::DelayBodyLayer;
+
 #[tokio::test]
 async fn client_timeout() {
     let _ = env_logger::try_init();
@@ -278,4 +280,24 @@ async fn response_body_timeout_forwards_size_hint() {
         .expect("response");
 
     assert_eq!(res.content_length(), Some(5));
+}
+
+#[tokio::test]
+async fn read_timeout_applies_to_layer_body_transform() {
+    let _ = env_logger::try_init();
+
+    let server = server::http(move |_req| async { http::Response::new(b"Hello".to_vec().into()) });
+
+    let client = Client::builder()
+        .layer(DelayBodyLayer::new(Duration::from_millis(300)))
+        .read_timeout(Duration::from_millis(100))
+        .no_proxy()
+        .build()
+        .unwrap();
+
+    let url = format!("http://{}/slow", server.addr());
+    let res = client.get(&url).send().await.expect("Failed to get");
+    let err = res.text().await.unwrap_err();
+
+    assert!(err.is_timeout());
 }

@@ -17,7 +17,8 @@ pin_project! {
     pub enum Pending {
         Request {
             uri: Option<Uri>,
-            fut: Pin<Box<Oneshot<Either<ClientService, BoxedClientService>, Request<Body>>>>,
+            #[pin]
+            fut: Box<Oneshot<Either<ClientService, BoxedClientService>, Request<Body>>>,
         },
         Error {
             error: Option<Error>,
@@ -30,7 +31,7 @@ impl Future for Pending {
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let (uri, res) = match self.project() {
-            PendingProj::Request { uri, fut } => (uri, fut.as_mut().poll(cx)),
+            PendingProj::Request { uri, fut } => (uri, fut.poll(cx)),
             PendingProj::Error { error } => {
                 let err = error
                     .take()

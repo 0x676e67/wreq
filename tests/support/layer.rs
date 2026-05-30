@@ -1,11 +1,14 @@
 use std::{
     future::Future,
     pin::Pin,
-    task::{Context, Poll},
+    task::{Context, Poll, ready},
     time::Duration,
 };
 
+use bytes::Bytes;
 use futures::future::BoxFuture;
+use http::Response;
+use http_body::Body as HttpBody;
 use pin_project_lite::pin_project;
 use tokio::time::Sleep;
 use tower::{BoxError, Layer, Service};
@@ -57,9 +60,7 @@ where
     S::Error: Into<BoxError>,
 {
     type Response = S::Response;
-
     type Error = BoxError;
-
     type Future = ResponseFuture<S::Future>;
 
     fn poll_ready(
@@ -67,17 +68,13 @@ where
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<Result<(), Self::Error>> {
         println!("Delay::poll_ready called");
-        match self.inner.poll_ready(cx) {
-            Poll::Pending => Poll::Pending,
-            Poll::Ready(r) => Poll::Ready(r.map_err(Into::into)),
-        }
+        Poll::Ready(ready!(self.inner.poll_ready(cx)).map_err(Into::into))
     }
 
     fn call(&mut self, req: Request) -> Self::Future {
         println!("Delay::call executed");
         let response = self.inner.call(req);
         let sleep = tokio::time::sleep(self.delay);
-
         ResponseFuture::new(response, sleep)
     }
 }
@@ -96,6 +93,141 @@ pin_project! {
 impl<S> ResponseFuture<S> {
     pub(crate) fn new(response: S, sleep: Sleep) -> Self {
         ResponseFuture { response, sleep }
+    }
+}
+
+#[derive(Clone)]
+pub struct DelayBodyLayer {
+    delay: Duration,
+}
+
+impl DelayBodyLayer {
+    #[allow(unused)]
+    pub const fn new(delay: Duration) -> Self {
+        Self { delay }
+    }
+}
+
+impl<S> Layer<S> for DelayBodyLayer {
+    type Service = DelayBodyService<S>;
+
+    fn layer(&self, inner: S) -> Self::Service {
+        DelayBodyService {
+            inner,
+            delay: self.delay,
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct DelayBodyService<S> {
+    inner: S,
+    delay: Duration,
+}
+
+impl<S, Req, B> Service<Req> for DelayBodyService<S>
+where
+    S: Service<Req, Response = Response<B>>,
+    B: HttpBody<Data = Bytes> + Send + Sync + 'static,
+{
+    type Response = Response<DelayBody<B>>;
+    type Error = S::Error;
+    type Future = DelayBodyResponseFuture<S::Future>;
+
+    fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        self.inner.poll_ready(cx)
+    }
+
+    fn call(&mut self, req: Req) -> Self::Future {
+        DelayBodyResponseFuture {
+            future: self.inner.call(req),
+            delay: self.delay,
+        }
+    }
+}
+
+pin_project! {
+    pub struct DelayBodyResponseFuture<F> {
+        #[pin]
+        future: F,
+        delay: Duration,
+    }
+}
+
+impl<F, B, E> Future for DelayBodyResponseFuture<F>
+where
+    F: Future<Output = Result<Response<B>, E>>,
+    B: HttpBody<Data = Bytes> + Send + Sync + 'static,
+{
+    type Output = Result<Response<DelayBody<B>>, E>;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let this = self.project();
+        match ready!(this.future.poll(cx)) {
+            Ok(response) => Poll::Ready(Ok(response.map(|body| DelayBody::new(body, *this.delay)))),
+            Err(err) => Poll::Ready(Err(err)),
+        }
+    }
+}
+
+pin_project! {
+    pub struct DelayBody<B> {
+        #[pin]
+        body: B,
+        delay: Duration,
+        #[pin]
+        sleep: Option<Sleep>,
+    }
+}
+
+impl<B> DelayBody<B> {
+    fn new(body: B, delay: Duration) -> Self {
+        Self {
+            body,
+            delay,
+            sleep: None,
+        }
+    }
+}
+
+impl<B> HttpBody for DelayBody<B>
+where
+    B: HttpBody<Data = Bytes>,
+{
+    type Data = Bytes;
+    type Error = B::Error;
+
+    fn poll_frame(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Option<Result<http_body::Frame<Self::Data>, Self::Error>>> {
+        let mut this = self.project();
+
+        if this.sleep.is_none() {
+            this.sleep.set(Some(tokio::time::sleep(*this.delay)));
+        }
+
+        if let Some(sleep) = this.sleep.as_mut().as_pin_mut() {
+            if sleep.poll(cx).is_pending() {
+                return Poll::Pending;
+            }
+        }
+
+        match this.body.poll_frame(cx) {
+            Poll::Ready(Some(frame)) => {
+                this.sleep.set(None);
+                Poll::Ready(Some(frame))
+            }
+            other => other,
+        }
+    }
+
+    fn size_hint(&self) -> http_body::SizeHint {
+        self.body.size_hint()
+    }
+
+    fn is_end_stream(&self) -> bool {
+        self.body.is_end_stream()
     }
 }
 
