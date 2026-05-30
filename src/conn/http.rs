@@ -10,18 +10,15 @@ use std::{
 
 use http::uri::{Scheme, Uri};
 use pin_project_lite::pin_project;
-use tokio::io::{AsyncRead, AsyncWrite};
-use tower::{BoxError, Service};
+use tower::Service;
 
 use crate::{
-    conn::{
-        info::ConnectionInfo,
-        net::{
-            SocketBindOptions,
-            tcp::{ConnectError, ConnectingTcp, TcpConnector, TcpKeepaliveOptions, TcpOptions},
-        },
+    conn::net::{
+        SocketBindOptions,
+        tcp::{ConnectError, ConnectingTcp, TcpConnector, TcpKeepaliveOptions, TcpOptions},
     },
     dns::{self, InternalResolve},
+    rt::Timer,
 };
 
 static INVALID_NOT_HTTP: &str = "invalid URI, scheme is not http";
@@ -30,80 +27,6 @@ static INVALID_MISSING_HOST: &str = "invalid URI, host is missing";
 
 type ConnectResult<S> = Result<<S as TcpConnector>::Connection, ConnectError>;
 type BoxConnecting<S> = Pin<Box<dyn Future<Output = ConnectResult<S>> + Send>>;
-
-/// A trait for configuring HTTP transport options on a [`Service<Uri>`] connector.
-///
-/// Provides methods to adjust TCP/socket-level settings such as keepalive,
-/// timeouts, buffer sizes, and local address binding. [`HttpConnector`]
-/// is the default implementation.
-pub trait HttpConnect: Service<Uri> + Clone + Send + Sized + 'static
-where
-    Self::Response: AsyncRead + AsyncWrite + ConnectionInfo + Unpin + Send + 'static,
-    Self::Error: Into<BoxError>,
-    Self::Future: Unpin + Send + 'static,
-{
-    /// Set that all sockets have `SO_KEEPALIVE` set with the supplied duration
-    /// to remain idle before sending TCP keepalive probes.
-    fn enforce_http(&mut self, enforced: bool);
-
-    /// Set that all sockets have `SO_NODELAY` set to the supplied value `nodelay`.
-    fn set_nodelay(&mut self, nodelay: bool);
-
-    /// Sets the value of the `SO_SNDBUF` option on the socket.
-    fn set_send_buffer_size(&mut self, size: Option<usize>);
-
-    /// Sets the value of the `SO_RCVBUF` option on the socket.
-    fn set_recv_buffer_size(&mut self, size: Option<usize>);
-
-    /// Set that all socket have `SO_REUSEADDR` set to the supplied value `reuse_address`.
-    fn set_reuse_address(&mut self, reuse: bool);
-
-    /// Sets the value of the `TCP_USER_TIMEOUT` option on the socket.
-    #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
-    fn set_tcp_user_timeout(&mut self, time: Option<Duration>);
-
-    /// Set the connect timeout.
-    fn set_connect_timeout(&mut self, dur: Option<Duration>);
-
-    /// Set timeout for [RFC 6555 (Happy Eyeballs)][RFC 6555] algorithm.
-    ///
-    /// [RFC 6555]: https://tools.ietf.org/html/rfc6555
-    fn set_happy_eyeballs_timeout(&mut self, dur: Option<Duration>);
-
-    /// Set that all sockets have `SO_KEEPALIVE` set with the supplied duration
-    /// to remain idle before sending TCP keepalive probes.
-    fn set_keepalive(&mut self, time: Option<Duration>);
-
-    /// Set the duration between two successive TCP keepalive retransmissions,
-    /// if acknowledgement to the previous keepalive transmission is not received.
-    fn set_keepalive_interval(&mut self, interval: Option<Duration>);
-
-    /// Set the number of retransmissions to be carried out before declaring that remote end is not
-    /// available.
-    fn set_keepalive_retries(&mut self, retries: Option<u32>);
-
-    /// Sets the name of the interface to bind sockets produced.
-    #[cfg(any(
-        target_os = "android",
-        target_os = "fuchsia",
-        target_os = "illumos",
-        target_os = "ios",
-        target_os = "linux",
-        target_os = "macos",
-        target_os = "solaris",
-        target_os = "tvos",
-        target_os = "visionos",
-        target_os = "watchos",
-    ))]
-    fn set_interface<I: Into<std::borrow::Cow<'static, str>>>(&mut self, interface: I);
-
-    /// Set that all sockets are bound to the configured IPv4 or IPv6 address (depending on host's
-    /// preferences) before connection.
-    fn set_local_addresses<V4, V6>(&mut self, ipv4_address: V4, ipv6_address: V6)
-    where
-        V4: Into<Option<Ipv4Addr>>,
-        V6: Into<Option<Ipv6Addr>>;
-}
 
 /// A connector for the `http` scheme.
 ///
@@ -118,6 +41,7 @@ pub struct HttpConnector<R, S> {
     options: Arc<TcpOptions>,
     resolver: R,
     connector: S,
+    timer: Timer,
 }
 
 /// Extra information about the transport when an HttpConnector is used.
@@ -137,7 +61,7 @@ pub(crate) struct HttpInfo {
 
 impl<R, S> HttpConnector<R, S> {
     /// Construct a new [`HttpConnector`].
-    pub fn new(resolver: R, connector: S) -> HttpConnector<R, S> {
+    pub fn new(resolver: R, connector: S, timer: Timer) -> HttpConnector<R, S> {
         HttpConnector {
             options: Arc::new(TcpOptions {
                 enforce_http: true,
@@ -154,6 +78,7 @@ impl<R, S> HttpConnector<R, S> {
             }),
             resolver,
             connector,
+            timer,
         }
     }
 
@@ -165,17 +90,12 @@ impl<R, S> HttpConnector<R, S> {
     }
 }
 
-impl<R, S> HttpConnect for HttpConnector<R, S>
-where
-    R: InternalResolve + Clone + Send + Sync + 'static,
-    R::Future: Send,
-    S: TcpConnector,
-{
+impl<R, S> HttpConnector<R, S> {
     /// Option to enforce all `Uri`s have the `http` scheme.
     ///
     /// Enabled by default.
     #[inline]
-    fn enforce_http(&mut self, is_enforced: bool) {
+    pub fn enforce_http(&mut self, is_enforced: bool) {
         self.config_mut().enforce_http = is_enforced;
     }
 
@@ -183,19 +103,19 @@ where
     ///
     /// Default is `false`.
     #[inline]
-    fn set_nodelay(&mut self, nodelay: bool) {
+    pub fn set_nodelay(&mut self, nodelay: bool) {
         self.config_mut().nodelay = nodelay;
     }
 
     /// Sets the value of the SO_SNDBUF option on the socket.
     #[inline]
-    fn set_send_buffer_size(&mut self, size: Option<usize>) {
+    pub fn set_send_buffer_size(&mut self, size: Option<usize>) {
         self.config_mut().send_buffer_size = size;
     }
 
     /// Sets the value of the SO_RCVBUF option on the socket.
     #[inline]
-    fn set_recv_buffer_size(&mut self, size: Option<usize>) {
+    pub fn set_recv_buffer_size(&mut self, size: Option<usize>) {
         self.config_mut().recv_buffer_size = size;
     }
 
@@ -203,14 +123,14 @@ where
     ///
     /// Default is `false`.
     #[inline]
-    fn set_reuse_address(&mut self, reuse_address: bool) {
+    pub fn set_reuse_address(&mut self, reuse_address: bool) {
         self.config_mut().reuse_address = reuse_address;
     }
 
     /// Sets the value of the TCP_USER_TIMEOUT option on the socket.
     #[inline]
     #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
-    fn set_tcp_user_timeout(&mut self, time: Option<Duration>) {
+    pub fn set_tcp_user_timeout(&mut self, time: Option<Duration>) {
         self.config_mut().tcp_user_timeout = time;
     }
 
@@ -221,7 +141,7 @@ where
     ///
     /// Default is `None`.
     #[inline]
-    fn set_connect_timeout(&mut self, dur: Option<Duration>) {
+    pub fn set_connect_timeout(&mut self, dur: Option<Duration>) {
         self.config_mut().connect_timeout = dur;
     }
 
@@ -238,7 +158,7 @@ where
     ///
     /// [RFC 6555]: https://tools.ietf.org/html/rfc6555
     #[inline]
-    fn set_happy_eyeballs_timeout(&mut self, dur: Option<Duration>) {
+    pub fn set_happy_eyeballs_timeout(&mut self, dur: Option<Duration>) {
         self.config_mut().happy_eyeballs_timeout = dur;
     }
 
@@ -249,21 +169,21 @@ where
     ///
     /// Default is `None`.
     #[inline]
-    fn set_keepalive(&mut self, time: Option<Duration>) {
+    pub fn set_keepalive(&mut self, time: Option<Duration>) {
         self.config_mut().tcp_keepalive.time = time;
     }
 
     /// Set the duration between two successive TCP keepalive retransmissions,
     /// if acknowledgement to the previous keepalive transmission is not received.
     #[inline]
-    fn set_keepalive_interval(&mut self, interval: Option<Duration>) {
+    pub fn set_keepalive_interval(&mut self, interval: Option<Duration>) {
         self.config_mut().tcp_keepalive.interval = interval;
     }
 
     /// Set the number of retransmissions to be carried out before declaring that remote end is not
     /// available.
     #[inline]
-    fn set_keepalive_retries(&mut self, retries: Option<u32>) {
+    pub fn set_keepalive_retries(&mut self, retries: Option<u32>) {
         self.config_mut().tcp_keepalive.retries = retries;
     }
 
@@ -303,7 +223,7 @@ where
         target_os = "visionos",
         target_os = "watchos",
     ))]
-    fn set_interface<I: Into<std::borrow::Cow<'static, str>>>(&mut self, interface: I) {
+    pub fn set_interface<I: Into<std::borrow::Cow<'static, str>>>(&mut self, interface: I) {
         self.config_mut().socket_bind.set_interface(interface);
     }
 
@@ -313,7 +233,7 @@ where
     /// If `None`, the sockets will not be bound.
     ///
     /// Default is `None`.
-    fn set_local_addresses<V4, V6>(&mut self, ipv4_address: V4, ipv6_address: V6)
+    pub fn set_local_addresses<V4, V6>(&mut self, ipv4_address: V4, ipv6_address: V6)
     where
         V4: Into<Option<Ipv4Addr>>,
         V6: Into<Option<Ipv6Addr>>,
@@ -364,7 +284,7 @@ where
                 dns::SocketAddrs::new(addrs)
             };
 
-            ConnectingTcp::new(addrs, options, this.connector)
+            ConnectingTcp::new(addrs, options, this.connector, this.timer)
                 .connect(options)
                 .await
         };

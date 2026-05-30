@@ -1,6 +1,6 @@
 //! Tokio-based TCP connector.
 
-use std::{io, net::SocketAddr, time::Duration};
+use std::{io, net::SocketAddr};
 
 use tokio::net::{TcpSocket, TcpStream};
 
@@ -26,17 +26,11 @@ impl super::TcpConnector for TcpConnector {
     type Connection = TcpStream;
     type Error = io::Error;
     type Future = BoxConnecting<Self::Connection, Self::Error>;
-    type Sleep = tokio::time::Sleep;
 
     #[inline]
     fn connect(&self, socket: Self::TcpStream, addr: SocketAddr) -> Self::Future {
         let socket = TcpSocket::from_std_stream(socket);
         Box::pin(socket.connect(addr))
-    }
-
-    #[inline]
-    fn sleep(&self, duration: Duration) -> Self::Sleep {
-        tokio::time::sleep(duration)
     }
 }
 

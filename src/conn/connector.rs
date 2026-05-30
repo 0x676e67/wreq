@@ -18,14 +18,15 @@ use tower::{
 use super::net::UnixConnector;
 use super::{
     AsyncConnWithInfo, BoxedConnectorLayer, BoxedConnectorService, Conn, Connection, HttpConnector,
-    TlsConn, TlsInfoFactory, Unnameable, descriptor::ConnectionDescriptor, http::HttpConnect,
-    net::TcpConnector, proxy, verbose::Verbose,
+    TlsConn, TlsInfoFactory, Unnameable, descriptor::ConnectionDescriptor, net::TcpConnector,
+    proxy, verbose::Verbose,
 };
 use crate::{
     dns::DynResolver,
     error::{ProxyConnect, TimedOut, map_timeout_to_connector_error},
     ext::UriExt,
     proxy::{Intercepted, Matcher as ProxyMatcher, matcher::Intercept},
+    rt::Timer,
     tls::{
         TlsOptions,
         conn::{
@@ -502,7 +503,11 @@ impl Service<ConnectionDescriptor> for ConnectorService {
 
 impl Connector {
     /// Creates a new [`Connector`] with the provided configuration and optional layers.
-    pub(crate) fn builder(proxies: Vec<ProxyMatcher>, resolver: DynResolver) -> Builder {
+    pub(crate) fn builder(
+        proxies: Vec<ProxyMatcher>,
+        resolver: DynResolver,
+        timer: Timer,
+    ) -> Builder {
         Builder {
             inner: Inner {
                 proxies: Arc::new(proxies),
@@ -512,7 +517,7 @@ impl Connector {
                 timeout: None,
                 #[cfg(feature = "socks")]
                 resolver: resolver.clone(),
-                http: HttpConnector::new(resolver, TcpConnector::new()),
+                http: HttpConnector::new(resolver, TcpConnector::new(), timer),
             },
             builder: TlsConnector::builder(),
         }

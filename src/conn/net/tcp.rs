@@ -18,11 +18,13 @@ use std::{
 
 use futures_util::future::Either;
 use socket2::TcpKeepalive;
+use wreq_proto::rt::{Sleep, Timer as _};
 
 use crate::{
     conn::{info::ConnectionInfo, net::SocketBindOptions},
     dns,
     error::BoxError,
+    rt::Timer,
 };
 
 type BoxConnecting<T, E> = Pin<Box<dyn Future<Output = Result<T, E>> + Send>>;
@@ -46,14 +48,8 @@ pub trait TcpConnector: Clone + Send + Sync + 'static {
     /// The future type returned by this builder.
     type Future: Future<Output = Result<Self::Connection, Self::Error>> + Send + 'static;
 
-    /// The future type returned by this builder's sleep.
-    type Sleep: Future<Output = ()> + Send + 'static;
-
     /// Build a connection from the given socket and connect to the address.
     fn connect(&self, socket: Self::TcpStream, addr: SocketAddr) -> Self::Future;
-
-    /// Return a future that sleeps for the given duration.
-    fn sleep(&self, duration: Duration) -> Self::Sleep;
 }
 
 pub(crate) struct ConnectingTcp<S: TcpConnector> {
@@ -62,7 +58,7 @@ pub(crate) struct ConnectingTcp<S: TcpConnector> {
 }
 
 struct ConnectingTcpFallback<S: TcpConnector> {
-    delay: S::Sleep,
+    delay: Pin<Box<dyn Sleep>>,
     remote: ConnectingTcpRemote<S>,
 }
 
@@ -70,13 +66,19 @@ struct ConnectingTcpRemote<S: TcpConnector> {
     addrs: dns::SocketAddrs,
     connect_timeout: Option<Duration>,
     connector: S,
+    timer: Timer,
 }
 
 impl<S: TcpConnector> ConnectingTcp<S>
 where
     S::TcpStream: From<socket2::Socket>,
 {
-    pub(crate) fn new(remote_addrs: dns::SocketAddrs, config: &TcpOptions, connector: S) -> Self {
+    pub(crate) fn new(
+        remote_addrs: dns::SocketAddrs,
+        config: &TcpOptions,
+        connector: S,
+        timer: Timer,
+    ) -> Self {
         if let Some(fallback_timeout) = config.happy_eyeballs_timeout {
             let (preferred_addrs, fallback_addrs) = remote_addrs.split_by_preference(
                 config.socket_bind.ipv4_address,
@@ -88,6 +90,7 @@ where
                         preferred_addrs,
                         config.connect_timeout,
                         connector,
+                        timer,
                     ),
                     fallback: None,
                 };
@@ -98,13 +101,15 @@ where
                     preferred_addrs,
                     config.connect_timeout,
                     connector.clone(),
+                    timer.clone(),
                 ),
                 fallback: Some(ConnectingTcpFallback {
-                    delay: connector.sleep(fallback_timeout),
+                    delay: timer.sleep(fallback_timeout),
                     remote: ConnectingTcpRemote::new(
                         fallback_addrs,
                         config.connect_timeout,
                         connector,
+                        timer,
                     ),
                 }),
             }
@@ -114,6 +119,7 @@ where
                     remote_addrs,
                     config.connect_timeout,
                     connector,
+                    timer,
                 ),
                 fallback: None,
             }
@@ -125,12 +131,18 @@ impl<S: TcpConnector> ConnectingTcpRemote<S>
 where
     S::TcpStream: From<socket2::Socket>,
 {
-    fn new(addrs: dns::SocketAddrs, connect_timeout: Option<Duration>, connector: S) -> Self {
+    fn new(
+        addrs: dns::SocketAddrs,
+        connect_timeout: Option<Duration>,
+        connector: S,
+        timer: Timer,
+    ) -> Self {
         let connect_timeout = connect_timeout.and_then(|t| t.checked_div(addrs.len() as u32));
         Self {
             addrs,
             connect_timeout,
             connector,
+            timer,
         }
     }
 
@@ -138,7 +150,13 @@ where
         let mut err = None;
         for addr in &mut self.addrs {
             debug!("connecting to {}", addr);
-            match connect(&addr, config, self.connect_timeout, &self.connector) {
+            match connect(
+                &addr,
+                config,
+                self.connect_timeout,
+                &self.connector,
+                &self.timer,
+            ) {
                 Ok(fut) => match fut.await {
                     Ok(tcp) => {
                         debug!("connected to {}", addr);
@@ -166,7 +184,7 @@ where
             Some(e) => Err(e),
             None => Err(ConnectError::new(
                 "tcp connect error",
-                std::io::Error::new(std::io::ErrorKind::NotConnected, "Network unreachable"),
+                io::Error::new(std::io::ErrorKind::NotConnected, "Network unreachable"),
             )),
         }
     }
@@ -205,6 +223,7 @@ fn connect<S: TcpConnector>(
     config: &TcpOptions,
     connect_timeout: Option<Duration>,
     connector: &S,
+    timer: &Timer,
 ) -> Result<impl Future<Output = Result<S::Connection, ConnectError>>, ConnectError>
 where
     S::TcpStream: From<socket2::Socket>,
@@ -320,7 +339,7 @@ where
     }
 
     let connect = connector.connect(socket.into(), *addr);
-    let sleep = connect_timeout.map(|dur| connector.sleep(dur));
+    let sleep = connect_timeout.map(|dur| timer.sleep(dur));
 
     Ok(async move {
         match sleep {

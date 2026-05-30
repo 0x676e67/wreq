@@ -31,7 +31,6 @@ impl super::TcpConnector for TcpConnector {
     type Connection = CompioConnection<TcpStream>;
     type Error = io::Error;
     type Future = BoxConnecting<Self::Connection, Self::Error>;
-    type Sleep = Pin<Box<dyn Future<Output = ()> + Send + 'static>>;
 
     #[inline]
     fn connect(&self, socket: Self::TcpStream, addr: SocketAddr) -> Self::Future {
@@ -44,11 +43,6 @@ impl super::TcpConnector for TcpConnector {
                 inner: CompioIO::new(tcp_stream),
             })
         }))
-    }
-
-    #[inline]
-    fn sleep(&self, duration: Duration) -> Self::Sleep {
-        Box::pin(SendFuture::new(compio::time::sleep(duration)))
     }
 }
 
