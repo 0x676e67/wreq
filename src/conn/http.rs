@@ -8,6 +8,9 @@ use std::{
     time::Duration,
 };
 
+#[cfg(unix)]
+use std::path::Path;
+
 use http::uri::{Scheme, Uri};
 use pin_project_lite::pin_project;
 use tower::Service;
@@ -15,7 +18,7 @@ use tower::Service;
 use crate::{
     conn::net::{
         SocketBindOptions,
-        tcp::{ConnectError, ConnectingTcp, TcpConnector, TcpKeepaliveOptions, TcpOptions},
+        tcp::{ConnectError, ConnectingTcp, NetConnector, TcpKeepaliveOptions, TcpOptions},
     },
     dns::{self, InternalResolve},
     rt::Timer,
@@ -25,9 +28,24 @@ static INVALID_NOT_HTTP: &str = "invalid URI, scheme is not http";
 static INVALID_MISSING_SCHEME: &str = "invalid URI, scheme is missing";
 static INVALID_MISSING_HOST: &str = "invalid URI, host is missing";
 
-type ConnectResult<S> = Result<<S as TcpConnector>::Connection, ConnectError>;
+type ConnectResult<S> = Result<<S as NetConnector>::Connection, ConnectError>;
 type BoxConnecting<S> = Pin<Box<dyn Future<Output = ConnectResult<S>> + Send>>;
 
+/// The target of a connection request.
+///
+/// `HttpConnector` accepts this enum so that both plain HTTP (TCP with DNS
+/// resolution) and Unix domain socket connections can be handled by a single
+/// service.
+#[allow(dead_code)]
+pub enum ConnectTarget {
+    /// A regular HTTP/HTTPS URI resolved over TCP.
+    Http(Uri),
+    /// A Unix domain socket connection.  The first element is the socket path;
+    /// the second is the URI that will be used as the HTTP `Host` header (its
+    /// scheme/host are inspected for TLS decisions upstream).
+    #[cfg(unix)]
+    Unix(Arc<Path>, Uri),
+}
 /// A connector for the `http` scheme.
 ///
 /// Performs DNS resolution in a thread pool, and then connects over TCP.
@@ -82,6 +100,7 @@ impl<R, S> HttpConnector<R, S> {
         }
     }
 
+    #[inline(always)]
     fn config_mut(&mut self) -> &mut TcpOptions {
         // If the are HttpConnector clones, this will clone the inner
         // config. So mutating the config won't ever affect previous
@@ -248,7 +267,7 @@ impl<R, S> Service<Uri> for HttpConnector<R, S>
 where
     R: InternalResolve + Clone + Send + Sync + 'static,
     R::Future: Send,
-    S: TcpConnector,
+    S: NetConnector,
     S::TcpStream: From<socket2::Socket>,
 {
     type Response = S::Connection;
@@ -292,6 +311,42 @@ where
         HttpConnecting {
             fut: Box::pin(fut),
             _marker: PhantomData,
+        }
+    }
+}
+
+impl<R, S> Service<ConnectTarget> for HttpConnector<R, S>
+where
+    R: InternalResolve + Clone + Send + Sync + 'static,
+    R::Future: Send,
+    S: NetConnector,
+    S::TcpStream: From<socket2::Socket>,
+{
+    type Response = S::Connection;
+    type Error = ConnectError;
+    type Future = HttpConnecting<R, S>;
+
+    #[inline]
+    fn poll_ready(&mut self, cx: &mut task::Context<'_>) -> Poll<Result<(), Self::Error>> {
+        self.resolver.poll_ready(cx).map_err(ConnectError::dns)
+    }
+
+    fn call(&mut self, target: ConnectTarget) -> Self::Future {
+        match target {
+            ConnectTarget::Http(uri) => Service::<Uri>::call(self, uri),
+            #[cfg(unix)]
+            ConnectTarget::Unix(path, _uri) => {
+                let connector = self.connector.clone();
+                HttpConnecting {
+                    fut: Box::pin(async move {
+                        connector
+                            .connect_unix(path)
+                            .await
+                            .map_err(|e| ConnectError::new("unix connect error", e))
+                    }),
+                    _marker: PhantomData,
+                }
+            }
         }
     }
 }
@@ -355,11 +410,13 @@ fn set_port(addr: &mut SocketAddr, host_port: u16, explicit: bool) {
 
 impl HttpInfo {
     /// Get the remote address of the transport used.
+    #[inline(always)]
     pub fn remote_addr(&self) -> SocketAddr {
         self.remote_addr
     }
 
     /// Get the local address of the transport used.
+    #[inline(always)]
     pub fn local_addr(&self) -> SocketAddr {
         self.local_addr
     }
@@ -372,7 +429,7 @@ pin_project! {
     // so that users don't rely on it fitting in a `Pin<Box<dyn Future>>` slot
     // (and thus we can change the type in the future).
     #[must_use = "futures do nothing unless polled"]
-    pub struct HttpConnecting<R, S: TcpConnector> {
+    pub struct HttpConnecting<R, S: NetConnector> {
         #[pin]
         fut: BoxConnecting<S>,
         _marker: PhantomData<R>,
@@ -382,11 +439,11 @@ pin_project! {
 impl<R, S> Future for HttpConnecting<R, S>
 where
     R: InternalResolve,
-    S: TcpConnector,
+    S: NetConnector,
 {
     type Output = ConnectResult<S>;
 
-    #[inline]
+    #[inline(always)]
     fn poll(self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<Self::Output> {
         self.project().fut.poll(cx)
     }

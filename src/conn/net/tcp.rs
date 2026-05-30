@@ -29,12 +29,12 @@ use crate::{
 
 type BoxConnecting<T, E> = Pin<Box<dyn Future<Output = Result<T, E>> + Send>>;
 
-/// A builder for tcp connections.
-pub trait TcpConnector: Clone + Send + Sync + 'static {
-    /// The underlying stream type.
+/// A connector for network connections (TCP and optionally Unix sockets).
+pub trait NetConnector: Clone + Send + Sync + 'static {
+    /// The underlying TCP stream type (constructed from a raw socket).
     type TcpStream: From<socket2::Socket> + Send + Sync + 'static;
 
-    /// The type of connection returned by this builder.
+    /// The type of connection returned by this connector.
     type Connection: ::tokio::io::AsyncRead
         + ::tokio::io::AsyncWrite
         + ConnectionInfo
@@ -42,34 +42,42 @@ pub trait TcpConnector: Clone + Send + Sync + 'static {
         + Unpin
         + 'static;
 
-    /// The type of error returned by this builder.
-    type Error: Into<Box<dyn StdError + Send + Sync>>;
+    /// The type of error returned by this connector.
+    type Error: Into<BoxError>;
 
-    /// The future type returned by this builder.
+    /// The future type returned by TCP connect.
     type Future: Future<Output = Result<Self::Connection, Self::Error>> + Send + 'static;
 
-    /// Build a connection from the given socket and connect to the address.
+    /// Establish a TCP connection from the given socket to the address.
     fn connect(&self, socket: Self::TcpStream, addr: SocketAddr) -> Self::Future;
+
+    /// The future type returned by Unix socket connect.
+    #[cfg(unix)]
+    type UnixFuture: Future<Output = Result<Self::Connection, Self::Error>> + Send + 'static;
+
+    /// Establish a Unix domain socket connection to the given path.
+    #[cfg(unix)]
+    fn connect_unix(&self, path: std::sync::Arc<std::path::Path>) -> Self::UnixFuture;
 }
 
-pub(crate) struct ConnectingTcp<S: TcpConnector> {
+pub(crate) struct ConnectingTcp<S: NetConnector> {
     preferred: ConnectingTcpRemote<S>,
     fallback: Option<ConnectingTcpFallback<S>>,
 }
 
-struct ConnectingTcpFallback<S: TcpConnector> {
+struct ConnectingTcpFallback<S: NetConnector> {
     delay: Pin<Box<dyn Sleep>>,
     remote: ConnectingTcpRemote<S>,
 }
 
-struct ConnectingTcpRemote<S: TcpConnector> {
+struct ConnectingTcpRemote<S: NetConnector> {
     addrs: dns::SocketAddrs,
     connect_timeout: Option<Duration>,
     connector: S,
     timer: Timer,
 }
 
-impl<S: TcpConnector> ConnectingTcp<S>
+impl<S: NetConnector> ConnectingTcp<S>
 where
     S::TcpStream: From<socket2::Socket>,
 {
@@ -127,7 +135,7 @@ where
     }
 }
 
-impl<S: TcpConnector> ConnectingTcpRemote<S>
+impl<S: NetConnector> ConnectingTcpRemote<S>
 where
     S::TcpStream: From<socket2::Socket>,
 {
@@ -218,7 +226,7 @@ fn bind_local_address(
     Ok(())
 }
 
-fn connect<S: TcpConnector>(
+fn connect<S: NetConnector>(
     addr: &SocketAddr,
     config: &TcpOptions,
     connect_timeout: Option<Duration>,
@@ -356,7 +364,7 @@ where
     })
 }
 
-impl<S: TcpConnector> ConnectingTcp<S>
+impl<S: NetConnector> ConnectingTcp<S>
 where
     S::TcpStream: From<socket2::Socket>,
 {

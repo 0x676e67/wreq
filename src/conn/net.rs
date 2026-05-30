@@ -9,21 +9,21 @@ if_any_rt!(
 );
 
 if_all_rt! {
-    pub use tcp::tokio::TcpConnector;
+    pub use tcp::tokio::NetConnector;
     #[cfg(unix)]
-    pub use uds::tokio::UnixConnector;
+    pub(crate) use uds::tokio::UnixConnector;
 }
 
 if_tokio_rt! {
-    pub use tcp::tokio::TcpConnector;
+    pub use tcp::tokio::NetConnector;
     #[cfg(unix)]
-    pub use uds::tokio::UnixConnector;
+    pub(crate) use uds::tokio::UnixConnector;
 }
 
 if_compio_rt! {
-    pub use tcp::compio::TcpConnector;
+    pub use tcp::compio::NetConnector;
     #[cfg(unix)]
-    pub use uds::compio::UnixConnector;
+    pub(crate) use uds::compio::UnixConnector;
 }
 
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};

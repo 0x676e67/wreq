@@ -18,7 +18,7 @@ use tower::{
 use super::net::UnixConnector;
 use super::{
     AsyncConnWithInfo, BoxedConnectorLayer, BoxedConnectorService, Conn, Connection, HttpConnector,
-    TlsConn, TlsInfoFactory, Unnameable, descriptor::ConnectionDescriptor, net::TcpConnector,
+    TlsConn, TlsInfoFactory, Unnameable, descriptor::ConnectionDescriptor, net::NetConnector,
     proxy, verbose::Verbose,
 };
 use crate::{
@@ -412,24 +412,21 @@ impl ConnectorService {
             Intercepted::Unix(unix_socket) => {
                 trace!("connecting via Unix socket: {:?}", unix_socket);
 
-                // Create a Unix connector with the specified socket path.
-                let mut connector =
-                    HttpsConnector::new(UnixConnector::new(unix_socket), self.tls.clone());
-
                 // If the target URI is HTTPS, establish a CONNECT tunnel over the Unix socket,
                 // then upgrade the tunneled stream to TLS.
                 if uri.is_https() {
                     // Use a dummy HTTP URI so the HTTPS connector works over the Unix socket.
                     let proxy_uri = http::Uri::from_static("http://localhost");
 
+                    // Build an HTTPS connector backed by the Unix socket transport.
+                    let mut connector =
+                        HttpsConnector::new(UnixConnector::new(unix_socket), self.tls.clone());
+
                     // The tunnel connector will first establish a CONNECT tunnel,
                     // then perform the TLS handshake over the tunneled stream.
                     let tunneled = {
-                        // Create a tunnel connector using the Unix socket and the HTTPS
-                        // connector.
                         let mut tunnel =
                             proxy::tunnel::TunnelConnector::new(proxy_uri, connector.clone());
-
                         tunnel.call(uri).await?
                     };
 
@@ -441,10 +438,12 @@ impl ConnectorService {
                     return self.stream(io);
                 }
 
-                // For plain HTTP, use the Unix connector directly.
-                let io = connector.call(descriptor).await?;
-
-                self.stream_with_proxy(io, None)
+                // For plain HTTP, connect via the unified HttpConnector.
+                let mut http = self.config.http.clone();
+                let conn = http
+                    .call(super::http::ConnectTarget::Unix(unix_socket, uri))
+                    .await?;
+                self.stream_with_proxy(crate::tls::conn::MaybeHttpsStream::Http(conn), None)
             }
         }
     }
@@ -517,7 +516,7 @@ impl Connector {
                 timeout: None,
                 #[cfg(feature = "socks")]
                 resolver: resolver.clone(),
-                http: HttpConnector::new(resolver, TcpConnector::new(), timer),
+                http: HttpConnector::new(resolver, NetConnector::new(), timer),
             },
             builder: TlsConnector::builder(),
         }
