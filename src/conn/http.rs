@@ -36,6 +36,7 @@ type BoxConnecting<S> = Pin<Box<dyn Future<Output = ConnectResult<S>> + Send>>;
 /// `HttpConnector` accepts this enum so that both plain HTTP (TCP with DNS
 /// resolution) and Unix domain socket connections can be handled by a single
 /// service.
+#[derive(Debug)]
 #[allow(dead_code)]
 pub enum ConnectTarget {
     /// A regular HTTP/HTTPS URI resolved over TCP.
@@ -315,7 +316,7 @@ where
     }
 }
 
-impl<R, S> Service<ConnectTarget> for HttpConnector<R, S>
+impl<R, S> Service<Arc<Path>> for HttpConnector<R, S>
 where
     R: InternalResolve + Clone + Send + Sync + 'static,
     R::Future: Send,
@@ -331,22 +332,16 @@ where
         self.resolver.poll_ready(cx).map_err(ConnectError::dns)
     }
 
-    fn call(&mut self, target: ConnectTarget) -> Self::Future {
-        match target {
-            ConnectTarget::Http(uri) => Service::<Uri>::call(self, uri),
-            #[cfg(unix)]
-            ConnectTarget::Unix(path, _uri) => {
-                let connector = self.connector.clone();
-                HttpConnecting {
-                    fut: Box::pin(async move {
-                        connector
-                            .connect_unix(path)
-                            .await
-                            .map_err(|e| ConnectError::new("unix connect error", e))
-                    }),
-                    _marker: PhantomData,
-                }
-            }
+    fn call(&mut self, path: Arc<std::path::Path>) -> Self::Future {
+        let connector = self.connector.clone();
+        HttpConnecting {
+            fut: Box::pin(async move {
+                connector
+                    .connect_unix(path)
+                    .await
+                    .map_err(|e| ConnectError::new("unix connect error", e))
+            }),
+            _marker: PhantomData,
         }
     }
 }

@@ -14,8 +14,6 @@ use tower::{
     util::{BoxCloneSyncService, Either, MapRequestLayer},
 };
 
-#[cfg(unix)]
-use super::net::UnixConnector;
 use super::{
     AsyncConnWithInfo, BoxedConnectorLayer, BoxedConnectorService, Conn, Connection, HttpConnector,
     TlsConn, TlsInfoFactory, Unnameable, descriptor::ConnectionDescriptor, net::NetConnector,
@@ -419,8 +417,7 @@ impl ConnectorService {
                     let proxy_uri = http::Uri::from_static("http://localhost");
 
                     // Build an HTTPS connector backed by the Unix socket transport.
-                    let mut connector =
-                        HttpsConnector::new(UnixConnector::new(unix_socket), self.tls.clone());
+                    let mut connector = self.build_https_connector(true, &descriptor)?;
 
                     // The tunnel connector will first establish a CONNECT tunnel,
                     // then perform the TLS handshake over the tunneled stream.
@@ -440,10 +437,8 @@ impl ConnectorService {
 
                 // For plain HTTP, connect via the unified HttpConnector.
                 let mut http = self.config.http.clone();
-                let conn = http
-                    .call(super::http::ConnectTarget::Unix(unix_socket, uri))
-                    .await?;
-                self.stream_with_proxy(crate::tls::conn::MaybeHttpsStream::Http(conn), None)
+                let conn = http.call(unix_socket).await?;
+                self.stream_with_proxy(MaybeHttpsStream::Http(conn), None)
             }
         }
     }

@@ -48,12 +48,12 @@ pub trait NetConnector: Clone + Send + Sync + 'static {
     /// The future type returned by TCP connect.
     type Future: Future<Output = Result<Self::Connection, Self::Error>> + Send + 'static;
 
-    /// Establish a TCP connection from the given socket to the address.
-    fn connect(&self, socket: Self::TcpStream, addr: SocketAddr) -> Self::Future;
-
     /// The future type returned by Unix socket connect.
     #[cfg(unix)]
     type UnixFuture: Future<Output = Result<Self::Connection, Self::Error>> + Send + 'static;
+
+    /// Establish a TCP connection from the given socket to the address.
+    fn connect(&self, socket: Self::TcpStream, addr: SocketAddr) -> Self::Future;
 
     /// Establish a Unix domain socket connection to the given path.
     #[cfg(unix)]

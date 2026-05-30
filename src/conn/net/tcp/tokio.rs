@@ -7,11 +7,11 @@ use std::{
     task::{Context, Poll},
 };
 
-use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
-use tokio::net::{TcpSocket, TcpStream};
-
 use super::BoxConnecting;
 use crate::conn::info::ConnectionInfo;
+use futures_util::{FutureExt, TryFutureExt};
+use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
+use tokio::net::{TcpSocket, TcpStream};
 
 /// A unified network stream that may be either TCP or a Unix domain socket.
 #[derive(Debug)]
@@ -124,22 +124,20 @@ impl super::NetConnector for NetConnector {
     type Error = io::Error;
     type Future = BoxConnecting<Self::Connection, Self::Error>;
 
-    #[inline]
-    fn connect(&self, socket: Self::TcpStream, addr: SocketAddr) -> Self::Future {
-        let socket = TcpSocket::from_std_stream(socket);
-        Box::pin(async move { socket.connect(addr).await.map(NetStream::Tcp) })
-    }
-
     #[cfg(unix)]
     type UnixFuture = BoxConnecting<Self::Connection, Self::Error>;
 
-    #[cfg(unix)]
     #[inline]
+    fn connect(&self, socket: Self::TcpStream, addr: SocketAddr) -> Self::Future {
+        let socket = TcpSocket::from_std_stream(socket);
+        socket.connect(addr).map_ok(NetStream::Tcp).boxed()
+    }
+
+    #[inline]
+    #[cfg(unix)]
     fn connect_unix(&self, path: std::sync::Arc<std::path::Path>) -> Self::UnixFuture {
-        Box::pin(async move {
-            tokio::net::UnixStream::connect(&*path)
-                .await
-                .map(NetStream::Unix)
-        })
+        tokio::net::UnixStream::connect(path)
+            .map_ok(NetStream::Unix)
+            .boxed()
     }
 }
