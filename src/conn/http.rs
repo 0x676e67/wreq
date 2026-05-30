@@ -13,14 +13,16 @@ use pin_project_lite::pin_project;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tower::{BoxError, Service};
 
-use super::{
-    Connection,
-    net::{
-        SocketBindOptions,
-        tcp::{ConnectError, ConnectingTcp, TcpConnector, TcpKeepaliveOptions, TcpOptions},
+use crate::{
+    conn::{
+        info::ConnectionInfo,
+        net::{
+            SocketBindOptions,
+            tcp::{ConnectError, ConnectingTcp, TcpConnector, TcpKeepaliveOptions, TcpOptions},
+        },
     },
+    dns::{self, InternalResolve},
 };
-use crate::dns::{self, InternalResolve};
 
 static INVALID_NOT_HTTP: &str = "invalid URI, scheme is not http";
 static INVALID_MISSING_SCHEME: &str = "invalid URI, scheme is missing";
@@ -36,7 +38,7 @@ type BoxConnecting<S> = Pin<Box<dyn Future<Output = ConnectResult<S>> + Send>>;
 /// is the default implementation.
 pub trait HttpConnect: Service<Uri> + Clone + Send + Sized + 'static
 where
-    Self::Response: AsyncRead + AsyncWrite + Connection + Unpin + Send + 'static,
+    Self::Response: AsyncRead + AsyncWrite + ConnectionInfo + Unpin + Send + 'static,
     Self::Error: Into<BoxError>,
     Self::Future: Unpin + Send + 'static,
 {
@@ -120,26 +122,13 @@ pub struct HttpConnector<R, S> {
 
 /// Extra information about the transport when an HttpConnector is used.
 ///
-/// # Example
-///
-/// ```
-/// # fn doc(res: http::Response<()>) {
-/// use crate::util::client::connect::HttpInfo;
-///
-/// // res = http::Response
-/// res.extensions().get::<HttpInfo>().map(|info| {
-///     println!("remote addr = {}", info.remote_addr());
-/// });
-/// # }
-/// ```
-///
 /// # Note
 ///
 /// If a different connector is used besides [`HttpConnector`],
 /// this value will not exist in the extensions. Consult that specific
 /// connector to see what "extra" information it might provide to responses.
 #[derive(Clone, Debug)]
-pub struct HttpInfo {
+pub(crate) struct HttpInfo {
     pub(crate) remote_addr: SocketAddr,
     pub(crate) local_addr: SocketAddr,
 }

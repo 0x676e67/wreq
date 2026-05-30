@@ -20,13 +20,6 @@ pub struct GaiFuture {
 
 // ==== impl GaiResolver ====
 
-impl GaiResolver {
-    /// Creates a new [`GaiResolver`].
-    pub fn new() -> Self {
-        GaiResolver { _priv: () }
-    }
-}
-
 impl Service<Name> for GaiResolver {
     type Response = GaiAddrs;
     type Error = io::Error;
@@ -70,7 +63,6 @@ impl Future for GaiFuture {
             Ok(Ok(addrs)) => Ok(GaiAddrs { inner: addrs }),
             Ok(Err(err)) => Err(err),
             Err(join_err) => {
-                #[cfg(feature = "tokio-rt")]
                 if join_err.is_cancelled() {
                     return Err(io::Error::new(io::ErrorKind::Interrupted, join_err));
                 }

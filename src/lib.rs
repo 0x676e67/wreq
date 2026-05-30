@@ -294,6 +294,10 @@ macro_rules! if_no_rt {
         #[cfg(not(any(feature = "tokio-rt", feature = "compio-rt")))]
         $($tt)*
     };
+    ($($item:item)*) => {$(
+        #[cfg(not(any(feature = "tokio-rt", feature = "compio-rt")))]
+        $item
+    )*};
 }
 
 #[macro_use]

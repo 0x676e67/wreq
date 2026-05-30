@@ -1,7 +1,21 @@
+use std::net::SocketAddr;
+
 use bytes::Bytes;
 use tokio_btls::SslStream;
 
-use crate::tls::{TlsInfo, conn::MaybeHttpsStream};
+use crate::{
+    conn::{Connected, Connection, http::HttpInfo},
+    tls::{TlsInfo, conn::MaybeHttpsStream},
+};
+
+/// A trait for extracting connection information such as peer and local addresses.
+pub trait ConnectionInfo {
+    /// Returns the remote address that this stream is connected to.
+    fn peer_addr(&self) -> Option<SocketAddr>;
+
+    /// Returns the local address that this stream is bound to.
+    fn local_addr(&self) -> Option<SocketAddr>;
+}
 
 /// A trait for extracting TLS information from a connection.
 pub trait TlsInfoFactory {
@@ -10,6 +24,29 @@ pub trait TlsInfoFactory {
         None
     }
 }
+
+// ===== impl ConnectionInfo =====
+
+impl<T> Connection for T
+where
+    T: ConnectionInfo,
+{
+    #[inline]
+    fn connected(&self) -> Connected {
+        let connected = Connected::new();
+        match (self.peer_addr(), self.local_addr()) {
+            (Some(remote_addr), Some(local_addr)) => connected.extra(HttpInfo {
+                remote_addr,
+                local_addr,
+            }),
+            _ => connected,
+        }
+    }
+}
+
+impl<T> TlsInfoFactory for T where T: ConnectionInfo {}
+
+// ===== impl TlsInfoFactory =====
 
 fn extract_tls_info<S>(ssl_stream: &SslStream<S>) -> TlsInfo {
     let ssl = ssl_stream.ssl();

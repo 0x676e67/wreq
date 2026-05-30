@@ -11,7 +11,7 @@ use http::Uri;
 use tokio::net::UnixStream;
 
 use super::BoxConnecting;
-use crate::conn::{Connected, Connection, tls_info::TlsInfoFactory};
+use crate::conn::{Connected, Connection, info::TlsInfoFactory};
 
 #[derive(Clone)]
 pub struct UnixConnector(Arc<Path>);

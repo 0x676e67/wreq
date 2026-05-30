@@ -8,9 +8,7 @@ use compio::net::{TcpSocket, TcpStream};
 use wreq_rt::rt::compio::{future::SendFuture, io::CompioIO};
 
 use super::BoxConnecting;
-use crate::conn::{
-    Connected, Connection, http::HttpInfo, net::io::CompioConnection, tls_info::TlsInfoFactory,
-};
+use crate::conn::{info::ConnectionInfo, net::io::CompioConnection};
 
 /// A connector that uses `compio` for TCP connections.
 #[derive(Clone, Copy, Debug, Default)]
@@ -54,18 +52,14 @@ impl super::TcpConnector for TcpConnector {
     }
 }
 
-impl Connection for CompioConnection<TcpStream> {
-    fn connected(&self) -> Connected {
-        let connected = Connected::new();
-        if let (Some(remote_addr), Some(local_addr)) = (self.peer_addr, self.local_addr) {
-            connected.extra(HttpInfo {
-                remote_addr,
-                local_addr,
-            })
-        } else {
-            connected
-        }
+impl ConnectionInfo for CompioConnection<TcpStream> {
+    #[inline]
+    fn peer_addr(&self) -> Option<SocketAddr> {
+        self.peer_addr
+    }
+
+    #[inline]
+    fn local_addr(&self) -> Option<SocketAddr> {
+        self.local_addr
     }
 }
-
-impl TlsInfoFactory for CompioConnection<TcpStream> {}

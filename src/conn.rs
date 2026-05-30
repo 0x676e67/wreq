@@ -1,4 +1,4 @@
-mod tls_info;
+mod info;
 mod verbose;
 
 pub(super) mod connector;
@@ -9,8 +9,7 @@ pub(super) mod proxy;
 
 use std::{
     fmt::{self, Debug, Formatter},
-    io,
-    io::IoSlice,
+    io::{self, IoSlice},
     pin::Pin,
     sync::{
         Arc,
@@ -20,10 +19,10 @@ use std::{
 };
 
 use ::http::{Extensions, HeaderMap, HeaderValue};
+use info::TlsInfoFactory;
 #[cfg(any(feature = "tokio-rt", feature = "compio-rt"))]
 use net::TcpConnector;
 use pin_project_lite::pin_project;
-use tls_info::TlsInfoFactory;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio_btls::SslStream;
 use tower::{

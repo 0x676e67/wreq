@@ -20,13 +20,6 @@ pub struct GaiFuture {
 
 // ==== impl GaiResolver ====
 
-impl GaiResolver {
-    /// Creates a new [`GaiResolver`].
-    pub fn new() -> Self {
-        GaiResolver { _priv: () }
-    }
-}
-
 impl Service<Name> for GaiResolver {
     type Response = GaiAddrs;
     type Error = io::Error;

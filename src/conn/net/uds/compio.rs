@@ -14,7 +14,7 @@ use http::Uri;
 use wreq_rt::rt::compio::{future::SendFuture, io::CompioIO};
 
 use super::BoxConnecting;
-use crate::conn::{Connected, Connection, net::io::CompioConnection, tls_info::TlsInfoFactory};
+use crate::conn::{Connected, Connection, info::TlsInfoFactory, net::io::CompioConnection};
 
 #[derive(Clone)]
 pub struct UnixConnector(Arc<Path>);

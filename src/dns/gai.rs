@@ -10,14 +10,25 @@ if_all_rt!(
     mod tokio;
 );
 
+if_no_rt!(
+    use super::{Resolve, Resolving, Name};
+);
+
 use std::net::SocketAddr;
 
-use crate::dns::SocketAddrs;
+use super::SocketAddrs;
 
 /// A resolver using blocking `getaddrinfo` calls in a threadpool.
 #[derive(Clone, Default)]
 pub struct GaiResolver {
     _priv: (),
+}
+
+impl GaiResolver {
+    /// Creates a new [`GaiResolver`].
+    pub fn new() -> Self {
+        GaiResolver { _priv: () }
+    }
 }
 
 /// An iterator of IP addresses returned from `getaddrinfo`.
@@ -28,6 +39,7 @@ pub struct GaiAddrs {
 impl Iterator for GaiAddrs {
     type Item = SocketAddr;
 
+    #[inline(always)]
     fn next(&mut self) -> Option<Self::Item> {
         self.inner.next()
     }

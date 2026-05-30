@@ -20,7 +20,7 @@ use futures_util::future::Either;
 use socket2::TcpKeepalive;
 
 use crate::{
-    conn::{Connection, net::SocketBindOptions},
+    conn::{info::ConnectionInfo, net::SocketBindOptions},
     dns,
     error::BoxError,
 };
@@ -35,7 +35,7 @@ pub trait TcpConnector: Clone + Send + Sync + 'static {
     /// The type of connection returned by this builder.
     type Connection: ::tokio::io::AsyncRead
         + ::tokio::io::AsyncWrite
-        + Connection
+        + ConnectionInfo
         + Send
         + Unpin
         + 'static;

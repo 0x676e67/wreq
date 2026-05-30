@@ -5,7 +5,7 @@ use std::{io, net::SocketAddr, time::Duration};
 use tokio::net::{TcpSocket, TcpStream};
 
 use super::BoxConnecting;
-use crate::conn::{Connected, Connection, http::HttpInfo, tls_info::TlsInfoFactory};
+use crate::conn::info::ConnectionInfo;
 
 /// A connector that uses `tokio` for TCP connections.
 #[derive(Clone, Copy, Debug, Default)]
@@ -40,18 +40,14 @@ impl super::TcpConnector for TcpConnector {
     }
 }
 
-impl Connection for TcpStream {
-    fn connected(&self) -> Connected {
-        let connected = Connected::new();
-        if let (Ok(remote_addr), Ok(local_addr)) = (self.peer_addr(), self.local_addr()) {
-            connected.extra(HttpInfo {
-                remote_addr,
-                local_addr,
-            })
-        } else {
-            connected
-        }
+impl ConnectionInfo for TcpStream {
+    #[inline]
+    fn local_addr(&self) -> Option<SocketAddr> {
+        self.local_addr().ok()
+    }
+
+    #[inline]
+    fn peer_addr(&self) -> Option<SocketAddr> {
+        self.peer_addr().ok()
     }
 }
-
-impl TlsInfoFactory for TcpStream {}
