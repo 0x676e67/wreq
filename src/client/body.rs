@@ -187,7 +187,7 @@ impl HttpBody for Body {
     type Data = Bytes;
     type Error = Error;
 
-    #[inline]
+    #[inline(always)]
     fn poll_frame(
         mut self: Pin<&mut Self>,
         cx: &mut Context,
@@ -198,12 +198,12 @@ impl HttpBody for Body {
         })
     }
 
-    #[inline]
+    #[inline(always)]
     fn size_hint(&self) -> SizeHint {
         self.0.size_hint()
     }
 
-    #[inline]
+    #[inline(always)]
     fn is_end_stream(&self) -> bool {
         self.0.is_end_stream()
     }
@@ -219,6 +219,7 @@ where
     type Data = Bytes;
     type Error = B::Error;
 
+    #[inline(always)]
     fn poll_frame(
         self: Pin<&mut Self>,
         cx: &mut Context,
@@ -230,12 +231,12 @@ where
         }
     }
 
-    #[inline]
+    #[inline(always)]
     fn size_hint(&self) -> SizeHint {
         self.inner.size_hint()
     }
 
-    #[inline]
+    #[inline(always)]
     fn is_end_stream(&self) -> bool {
         self.inner.is_end_stream()
     }
