@@ -17,9 +17,9 @@ use crate::{
 
 pin_project! {
     /// [`Timeout`] response future
-    pub struct ResponseFuture<F> {
+    pub struct ResponseFuture<Fut> {
         #[pin]
-        pub(crate) response: F,
+        pub(crate) fut: Fut,
         pub(crate) total_timeout: Option<Pin<Box<dyn Sleep>>>,
         pub(crate) read_timeout: Option<Pin<Box<dyn Sleep>>>,
     }
@@ -36,7 +36,7 @@ where
         let this = self.project();
 
         // First, try polling the future
-        match this.response.poll(cx) {
+        match this.fut.poll(cx) {
             Poll::Ready(v) => return Poll::Ready(v.map_err(Into::into)),
             Poll::Pending => {}
         }
@@ -66,10 +66,10 @@ where
 }
 
 pin_project! {
-    /// Response future for [`ResponseBodyTimeout`].
+    /// Response future for wrapping the response body in [`TimeoutBody`].
     pub struct ResponseBodyTimeoutFuture<Fut> {
         #[pin]
-        pub(super) inner: Fut,
+        pub(super) fut: Fut,
         pub(super) timer: Timer,
         pub(super) total_timeout: Option<Duration>,
         pub(super) read_timeout: Option<Duration>,
@@ -83,11 +83,12 @@ where
 {
     type Output = Result<Response<TimeoutBody<ResBody>>, E>;
 
+    #[inline(always)]
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let timer = self.timer.clone();
         let total_timeout = self.total_timeout;
         let read_timeout = self.read_timeout;
-        let res = ready!(self.project().inner.poll(cx))?
+        let res = ready!(self.project().fut.poll(cx))?
             .map(|body| TimeoutBody::new(timer, total_timeout, read_timeout, body));
         Poll::Ready(Ok(res))
     }
