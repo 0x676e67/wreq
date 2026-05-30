@@ -126,7 +126,7 @@ type BoxedClientService = BoxCloneSyncService<
     BoxError,
 >;
 
-type BoxedClientLayer = BoxCloneSyncServiceLayer<
+type BoxedClientServiceLayer = BoxCloneSyncServiceLayer<
     BoxCloneSyncService<
         http::Request<Body>,
         http::Response<MaybeDecompressionBody<Incoming>>,
@@ -151,7 +151,6 @@ type BoxedClientLayer = BoxCloneSyncServiceLayer<
 ///
 /// [`Rc`]: std::rc::Rc
 #[derive(Clone)]
-#[repr(transparent)]
 pub struct Client(Arc<Either<ClientService, BoxedClientService>>);
 
 /// A [`ClientBuilder`] can be used to create a [`Client`] with custom configuration.
@@ -209,7 +208,7 @@ struct Config {
     dns_resolver: Option<Arc<dyn Resolve>>,
     http_version_pref: HttpVersionPref,
     https_only: bool,
-    layers: Vec<BoxedClientLayer>,
+    layers: Vec<BoxedClientServiceLayer>,
     connector_layers: Vec<BoxedConnectorLayer>,
     tls_sni: bool,
     tls_info: bool,
