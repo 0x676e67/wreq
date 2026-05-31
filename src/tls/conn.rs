@@ -126,6 +126,16 @@ impl TlsConnector {
         }
     }
 
+    /// Build a [`TlsConnector`] from [`TlsOptions`] (e.g. from an emulation profile).
+    ///
+    /// This is a convenience method that creates a default [`TlsConnectorBuilder`]
+    /// and applies the given `TlsOptions`. Use this when you need a standalone
+    /// `TlsConnector` to share across multiple `Client` instances via
+    /// [`ClientBuilder::preconfigured_tls`](crate::ClientBuilder::preconfigured_tls).
+    pub fn from_tls_options(opts: TlsOptions) -> crate::Result<Self> {
+        Self::builder().build(Cow::Owned(opts))
+    }
+
     fn setup_ssl(&self, uri: Uri) -> Result<Ssl, BoxError> {
         let cfg = self.ssl.configure()?;
         let host = uri.host().ok_or("URI missing host")?;

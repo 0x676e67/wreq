@@ -221,6 +221,7 @@ struct Config {
     tls_max_version: Option<TlsVersion>,
     tls_session_cache: Option<Arc<dyn TlsSessionCache>>,
     tls_options: Option<TlsOptions>,
+    preconfigured_tls: Option<crate::tls::TlsConnector>,
     http1_options: Option<Http1Options>,
     http2_options: Option<Http2Options>,
     timer: Timer,
@@ -309,6 +310,7 @@ impl Client {
                 tls_max_version: None,
                 tls_session_cache: None,
                 tls_options: None,
+                preconfigured_tls: None,
                 timer: Timer::default(),
                 executor: Executor::default(),
             },
@@ -502,12 +504,18 @@ impl ClientBuilder {
                 DynResolver::new(resolver)
             };
 
-            let connector = Connector::builder(config.proxies, resolver)
+            let mut connector_builder = Connector::builder(config.proxies, resolver)
                 .timeout(config.connect_timeout)
                 .tls_info(config.tls_info)
                 .tcp_nodelay(config.tcp_nodelay)
-                .verbose(config.connection_verbose)
-                .with_tls(|tls| {
+                .verbose(config.connection_verbose);
+
+            // If a preconfigured TlsConnector was provided, use it directly.
+            // Otherwise, build one from individual TLS config options.
+            if let Some(preconfigured) = config.preconfigured_tls.take() {
+                connector_builder = connector_builder.preconfigured_tls(preconfigured);
+            } else {
+                connector_builder = connector_builder.with_tls(|tls| {
                     tls.alpn_protocol(match config.http_version_pref {
                         HttpVersionPref::Http1 => Some(AlpnProtocol::HTTP1),
                         HttpVersionPref::Http2 => Some(AlpnProtocol::HTTP2),
@@ -522,7 +530,10 @@ impl ClientBuilder {
                     .verify_hostname(config.tls_verify_hostname)
                     .cert_verification(config.tls_cert_verification)
                     .session_store(config.tls_session_cache)
-                })
+                });
+            }
+
+            let connector = connector_builder
                 .with_http(|http| {
                     http.enforce_http(false);
                     http.set_keepalive(config.tcp_keepalive);
@@ -1494,6 +1505,51 @@ impl ClientBuilder {
         T: Into<Option<TlsOptions>>,
     {
         self.config.tls_options = options.into();
+        self
+    }
+
+    /// Use a pre-built [`TlsConnector`], allowing `SSL_CTX` reuse across multiple
+    /// `Client` instances.
+    ///
+    /// When set, the connector is used directly instead of building a new one from
+    /// individual TLS config options (`tls_sni`, `tls_identity`, `tls_cert_store`, etc.).
+    /// This avoids redundant `SSL_CTX` allocations when many clients share the same
+    /// emulation profile.
+    ///
+    /// `TlsConnector` is cheaply cloneable — its internal `SslConnector` uses
+    /// reference counting (`SSL_CTX_up_ref`), so the underlying BoringSSL `SSL_CTX`
+    /// is shared across all clones.
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use wreq::tls::TlsConnector;
+    /// use wreq::Client;
+    ///
+    /// // Build one TlsConnector per emulation profile
+    /// let connector = TlsConnector::builder()
+    ///     .emulation(wreq_util::EmulationOption::builder()
+    ///         .emulation(wreq_util::Emulation::Chrome145)
+    ///         .build())
+    ///     .build()
+    ///     .unwrap();
+    ///
+    /// // Share it across multiple clients
+    /// let client_a = Client::builder()
+    ///     .preconfigured_tls(connector.clone())
+    ///     .proxy(wreq::Proxy::all("socks5h://user1:pass1@host:port").unwrap())
+    ///     .build()
+    ///     .unwrap();
+    ///
+    /// let client_b = Client::builder()
+    ///     .preconfigured_tls(connector.clone())
+    ///     .proxy(wreq::Proxy::all("socks5h://user2:pass2@host:port").unwrap())
+    ///     .build()
+    ///     .unwrap();
+    /// ```
+    #[inline]
+    pub fn preconfigured_tls(mut self, connector: crate::tls::TlsConnector) -> ClientBuilder {
+        self.config.preconfigured_tls = Some(connector);
         self
     }
 

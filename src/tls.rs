@@ -9,6 +9,8 @@ pub mod keylog;
 pub mod session;
 pub mod trust;
 
+pub use conn::TlsConnector;
+
 use std::borrow::Cow;
 
 /// Re-exports of TLS-related types from `btls` for public use.

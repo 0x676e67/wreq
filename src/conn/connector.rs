@@ -57,6 +57,7 @@ pub struct ConnectorBuilder {
     resolver: DynResolver,
     http: HttpConnector,
     builder: TlsConnectorBuilder,
+    preconfigured_tls: Option<TlsConnector>,
 }
 
 /// Connector service that establishes connections.
@@ -97,6 +98,17 @@ impl ConnectorBuilder {
         F: FnOnce(TlsConnectorBuilder) -> TlsConnectorBuilder,
     {
         self.builder = call(self.builder);
+        self
+    }
+
+    /// Use a pre-built `TlsConnector` instead of building one from `TlsConnectorBuilder`.
+    ///
+    /// When set, [`build`](Self::build) will use this connector directly,
+    /// skipping the `TlsConnectorBuilder::build()` call. The `TlsConnector` is
+    /// cheaply cloneable (BoringSSL `SSL_CTX` is reference-counted).
+    #[inline]
+    pub fn preconfigured_tls(mut self, connector: TlsConnector) -> ConnectorBuilder {
+        self.preconfigured_tls = Some(connector);
         self
     }
 
@@ -142,9 +154,12 @@ impl ConnectorBuilder {
             #[cfg(feature = "socks")]
             resolver: self.resolver.clone(),
             http: self.http,
-            tls: self
-                .builder
-                .build(tls_options.map(Cow::Owned).unwrap_or_default())?,
+            tls: match self.preconfigured_tls {
+                Some(connector) => connector,
+                None => self
+                    .builder
+                    .build(tls_options.map(Cow::Owned).unwrap_or_default())?,
+            },
             builder: Arc::new(self.builder),
         };
 
@@ -212,6 +227,7 @@ impl Connector {
             resolver: resolver.clone(),
             http: HttpConnector::new(resolver, TcpConnector::new()),
             builder: TlsConnector::builder(),
+            preconfigured_tls: None,
         }
     }
 }
