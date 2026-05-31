@@ -2,10 +2,6 @@
 
 pub mod conn;
 
-if_any_rt!(
-    mod io;
-);
-
 if_all_rt! {
     pub use conn::tokio::NetConnector;
 }

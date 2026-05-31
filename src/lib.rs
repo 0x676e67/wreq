@@ -282,13 +282,6 @@ macro_rules! if_all_rt {
     )*};
 }
 
-macro_rules! if_any_rt {
-    ($($item:item)*) => {$(
-        #[cfg(any(feature = "tokio-rt", feature = "compio-rt"))]
-        $item
-    )*};
-}
-
 macro_rules! if_no_rt {
     (block: { $($tt:tt)* }) => {
         #[cfg(not(any(feature = "tokio-rt", feature = "compio-rt")))]
