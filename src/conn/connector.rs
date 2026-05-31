@@ -20,6 +20,7 @@ use super::{
     proxy, verbose::Verbose,
 };
 use crate::{
+    conn::net::conn::DynConnector,
     dns::DynResolver,
     error::{ProxyConnect, TimedOut, map_timeout_to_connector_error},
     ext::UriExt,
@@ -293,11 +294,9 @@ impl ConnectorService {
         let io = connector.call(descriptor).await?;
 
         // Re-enable Nagle's algorithm if it was disabled earlier
-        if_tokio_rt!(block:{
-            if is_https && !self.config.nodelay {
-                io.as_ref().set_nodelay(false)?;
-            }
-        });
+        if is_https && !self.config.nodelay {
+            io.as_ref().set_nodelay(false)?;
+        }
 
         self.stream_with_proxy(io, proxy)
     }
@@ -350,11 +349,9 @@ impl ConnectorService {
                             .await?;
 
                         // Re-enable Nagle's algorithm if it was disabled earlier
-                        if_tokio_rt!(block:{
-                            if is_https && !self.config.nodelay {
-                                io.as_ref().set_nodelay(false)?;
-                            }
-                        });
+                        if is_https && !self.config.nodelay {
+                            io.as_ref().set_nodelay(false)?;
+                        }
 
                         return self.stream(io);
                     }
@@ -391,11 +388,9 @@ impl ConnectorService {
                         .await?;
 
                     // Re-enable Nagle's algorithm if it was disabled earlier
-                    if_tokio_rt!(block:{
-                        if !self.config.nodelay {
-                            io.as_ref().as_ref().set_nodelay(false)?;
-                        }
-                    });
+                    if !self.config.nodelay {
+                        io.as_ref().as_ref().set_nodelay(false)?;
+                    }
 
                     return self.stream(io);
                 }
@@ -511,7 +506,7 @@ impl Connector {
                 timeout: None,
                 #[cfg(feature = "socks")]
                 resolver: resolver.clone(),
-                http: HttpConnector::new(resolver, NetConnector::new(), timer),
+                http: HttpConnector::new(resolver, DynConnector::new(NetConnector::new()), timer),
             },
             builder: TlsConnector::builder(),
         }

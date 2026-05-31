@@ -1,21 +1,21 @@
 //! Network connection types and utilities.
 
-pub(super) mod tcp;
+pub mod conn;
 
 if_any_rt!(
     mod io;
 );
 
 if_all_rt! {
-    pub use tcp::tokio::NetConnector;
+    pub use conn::tokio::NetConnector;
 }
 
 if_tokio_rt! {
-    pub use tcp::tokio::NetConnector;
+    pub use conn::tokio::NetConnector;
 }
 
 if_compio_rt! {
-    pub use tcp::compio::NetConnector;
+    pub use conn::compio::NetConnector;
 }
 
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};

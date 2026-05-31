@@ -20,8 +20,6 @@ use std::{
 
 use ::http::{Extensions, HeaderMap, HeaderValue};
 use info::TlsInfoFactory;
-#[cfg(any(feature = "tokio-rt", feature = "compio-rt"))]
-use net::NetConnector;
 use pin_project_lite::pin_project;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio_btls::SslStream;
@@ -31,13 +29,14 @@ use tower::{
 };
 
 use crate::{
+    conn::net::conn::DynConnector,
     dns::DynResolver,
     proxy::matcher::Intercept,
     tls::{AlpnProtocol, TlsInfo},
 };
 
 /// HTTP connector with dynamic DNS resolver.
-pub type HttpConnector = http::HttpConnector<DynResolver, NetConnector>;
+pub type HttpConnector = http::HttpConnector<DynResolver, DynConnector>;
 
 /// Boxed connector service for establishing connections.
 pub type BoxedConnectorService = BoxCloneSyncService<Unnameable, Conn, BoxError>;

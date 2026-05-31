@@ -659,6 +659,15 @@ impl ClientBuilder {
         self
     }
 
+    /// Provider a connector to be used for making connections in the client.
+    #[inline]
+    pub fn connector<C>(self, _: C) -> crate::Result<Self>
+    where
+        C: crate::conn::net::conn::Connector + Send + Sync + 'static,
+    {
+        Ok(self)
+    }
+
     // Higher-level options
 
     /// Sets the `User-Agent` header to be used by this client.

@@ -3,22 +3,26 @@ use std::{
     marker::PhantomData,
     net::{Ipv4Addr, Ipv6Addr, SocketAddr},
     pin::Pin,
-    sync::Arc,
     task::{self, Poll},
     time::Duration,
 };
 
-#[cfg(unix)]
-use std::path::Path;
-
 use http::uri::{Scheme, Uri};
 use pin_project_lite::pin_project;
 use tower::Service;
+#[cfg(unix)]
+use {
+    futures_util::{FutureExt, TryFutureExt},
+    std::path::Path,
+    std::sync::Arc,
+};
 
 use crate::{
     conn::net::{
         SocketBindOptions,
-        tcp::{ConnectError, ConnectingTcp, NetConnector, TcpKeepaliveOptions, TcpOptions},
+        conn::{
+            BoxConnection, ConnectError, ConnectingTcp, Connector, TcpKeepaliveOptions, TcpOptions,
+        },
     },
     dns::{self, InternalResolve},
     rt::Timer,
@@ -28,25 +32,9 @@ static INVALID_NOT_HTTP: &str = "invalid URI, scheme is not http";
 static INVALID_MISSING_SCHEME: &str = "invalid URI, scheme is missing";
 static INVALID_MISSING_HOST: &str = "invalid URI, host is missing";
 
-type ConnectResult<S> = Result<<S as NetConnector>::Connection, ConnectError>;
-type BoxConnecting<S> = Pin<Box<dyn Future<Output = ConnectResult<S>> + Send>>;
+type ConnectResult = Result<BoxConnection, ConnectError>;
+type BoxConnecting = Pin<Box<dyn Future<Output = ConnectResult> + Send>>;
 
-/// The target of a connection request.
-///
-/// `HttpConnector` accepts this enum so that both plain HTTP (TCP with DNS
-/// resolution) and Unix domain socket connections can be handled by a single
-/// service.
-#[derive(Debug)]
-#[allow(dead_code)]
-pub enum ConnectTarget {
-    /// A regular HTTP/HTTPS URI resolved over TCP.
-    Http(Uri),
-    /// A Unix domain socket connection.  The first element is the socket path;
-    /// the second is the URI that will be used as the HTTP `Host` header (its
-    /// scheme/host are inspected for TLS decisions upstream).
-    #[cfg(unix)]
-    Unix(Arc<Path>, Uri),
-}
 /// A connector for the `http` scheme.
 ///
 /// Performs DNS resolution in a thread pool, and then connects over TCP.
@@ -268,10 +256,9 @@ impl<R, S> Service<Uri> for HttpConnector<R, S>
 where
     R: InternalResolve + Clone + Send + Sync + 'static,
     R::Future: Send,
-    S: NetConnector,
-    S::TcpStream: From<socket2::Socket>,
+    S: Connector + Clone + 'static,
 {
-    type Response = S::Connection;
+    type Response = BoxConnection;
     type Error = ConnectError;
     type Future = HttpConnecting<R, S>;
 
@@ -320,10 +307,9 @@ impl<R, S> Service<Arc<Path>> for HttpConnector<R, S>
 where
     R: InternalResolve + Clone + Send + Sync + 'static,
     R::Future: Send,
-    S: NetConnector,
-    S::TcpStream: From<socket2::Socket>,
+    S: Connector + Clone,
 {
-    type Response = S::Connection;
+    type Response = BoxConnection;
     type Error = ConnectError;
     type Future = HttpConnecting<R, S>;
 
@@ -332,15 +318,13 @@ where
         self.resolver.poll_ready(cx).map_err(ConnectError::dns)
     }
 
-    fn call(&mut self, path: Arc<std::path::Path>) -> Self::Future {
+    fn call(&mut self, path: Arc<Path>) -> Self::Future {
         let connector = self.connector.clone();
         HttpConnecting {
-            fut: Box::pin(async move {
-                connector
-                    .connect_unix(path)
-                    .await
-                    .map_err(|e| ConnectError::new("unix connect error", e))
-            }),
+            fut: connector
+                .unix_connect(path)
+                .map_err(|e| ConnectError::new("unix connect error", e))
+                .boxed(),
             _marker: PhantomData,
         }
     }
@@ -424,19 +408,19 @@ pin_project! {
     // so that users don't rely on it fitting in a `Pin<Box<dyn Future>>` slot
     // (and thus we can change the type in the future).
     #[must_use = "futures do nothing unless polled"]
-    pub struct HttpConnecting<R, S: NetConnector> {
+    pub struct HttpConnecting<R, S> {
         #[pin]
-        fut: BoxConnecting<S>,
-        _marker: PhantomData<R>,
+        fut: BoxConnecting,
+        _marker: PhantomData<(R, S)>,
     }
 }
 
 impl<R, S> Future for HttpConnecting<R, S>
 where
     R: InternalResolve,
-    S: NetConnector,
+    S: Connector,
 {
-    type Output = ConnectResult<S>;
+    type Output = ConnectResult;
 
     #[inline(always)]
     fn poll(self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<Self::Output> {

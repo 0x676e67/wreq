@@ -19,7 +19,7 @@ rustdoc-args = ["--cfg", "docsrs"]
 targets = ["x86_64-unknown-linux-gnu"]
 
 [features]
-default = ["webpki-roots", "tokio-rt"]
+default = ["webpki-roots", "tokio-rt", "compio-rt"]
 
 # Enable tokio as the async runtime (default).
 tokio-rt = ["tokio/rt", "tokio/net", "tokio/fs", "wreq-rt/tokio-rt"]

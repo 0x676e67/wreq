@@ -1,4 +1,4 @@
-use std::net::SocketAddr;
+use std::{io, net::SocketAddr};
 
 use bytes::Bytes;
 use tokio_btls::SslStream;
@@ -15,6 +15,10 @@ pub trait ConnectionInfo {
 
     /// Returns the local address that this stream is bound to.
     fn local_addr(&self) -> Option<SocketAddr>;
+
+    /// Set the value of the `TCP_NODELAY` option on the underlying TCP stream.
+    /// For non-TCP streams (e.g. Unix sockets) the default implementation is a no-op.
+    fn set_nodelay(&self, _nodelay: bool) -> io::Result<()>;
 }
 
 /// A trait for extracting TLS information from a connection.
@@ -44,6 +48,23 @@ where
     }
 }
 
+impl<T: ConnectionInfo + ?Sized> ConnectionInfo for Box<T> {
+    #[inline(always)]
+    fn peer_addr(&self) -> Option<SocketAddr> {
+        (**self).peer_addr()
+    }
+
+    #[inline(always)]
+    fn local_addr(&self) -> Option<SocketAddr> {
+        (**self).local_addr()
+    }
+
+    #[inline(always)]
+    fn set_nodelay(&self, nodelay: bool) -> std::io::Result<()> {
+        (**self).set_nodelay(nodelay)
+    }
+}
+
 impl<T> TlsInfoFactory for T where T: ConnectionInfo {}
 
 // ===== impl TlsInfoFactory =====
@@ -67,7 +88,7 @@ fn extract_tls_info<S>(ssl_stream: &SslStream<S>) -> TlsInfo {
 
 // Generic impl: any SslStream can provide TLS info.
 impl<T> TlsInfoFactory for SslStream<T> {
-    #[inline]
+    #[inline(always)]
     fn tls_info(&self) -> Option<TlsInfo> {
         Some(extract_tls_info(self))
     }

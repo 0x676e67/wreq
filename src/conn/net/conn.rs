@@ -6,16 +6,21 @@ pub mod tokio;
 #[cfg(feature = "compio-rt")]
 pub mod compio;
 
+#[cfg(unix)]
+use std::path::Path;
 use std::{
     error::Error as StdError,
     fmt,
+    fmt::Debug,
     future::Future,
     io,
-    net::{Ipv4Addr, Ipv6Addr, SocketAddr},
+    net::{Ipv4Addr, Ipv6Addr, SocketAddr, TcpStream},
     pin::{Pin, pin},
+    sync::Arc,
     time::Duration,
 };
 
+use ::tokio::io::{AsyncRead, AsyncWrite};
 use futures_util::future::Either;
 use socket2::TcpKeepalive;
 use wreq_proto::rt::{Sleep, Timer as _};
@@ -27,64 +32,77 @@ use crate::{
     rt::Timer,
 };
 
-type BoxConnecting<T, E> = Pin<Box<dyn Future<Output = Result<T, E>> + Send>>;
+/// Supertrait combining async I/O with connection metadata so that
+/// `Box<dyn NetStream + Send + Unpin>` forms a single trait object.
+pub trait Stream: AsyncRead + AsyncWrite + ConnectionInfo + Debug {}
+
+/// A type-erased heap-allocated network connection.
+pub type BoxConnection = Box<dyn Stream + Send + Sync + Unpin + 'static>;
+
+/// The future type returned by [`NetConnector`] methods.
+pub type Connecting = Pin<Box<dyn Future<Output = Result<BoxConnection, BoxError>> + Send>>;
+
+impl<T: AsyncRead + AsyncWrite + ConnectionInfo + Debug> Stream for T {}
 
 /// A connector for network connections (TCP and optionally Unix sockets).
-pub trait NetConnector: Clone + Send + Sync + 'static {
-    /// The underlying TCP stream type (constructed from a raw socket).
-    type TcpStream: From<socket2::Socket> + Send + Sync + 'static;
-
-    /// The type of connection returned by this connector.
-    type Connection: ::tokio::io::AsyncRead
-        + ::tokio::io::AsyncWrite
-        + ConnectionInfo
-        + Send
-        + Unpin
-        + 'static;
-
-    /// The type of error returned by this connector.
-    type Error: Into<BoxError>;
-
-    /// The future type returned by TCP connect.
-    type Future: Future<Output = Result<Self::Connection, Self::Error>> + Send + 'static;
-
-    /// The future type returned by Unix socket connect.
-    #[cfg(unix)]
-    type UnixFuture: Future<Output = Result<Self::Connection, Self::Error>> + Send + 'static;
-
+pub trait Connector: Send + Sync {
     /// Establish a TCP connection from the given socket to the address.
-    fn connect(&self, socket: Self::TcpStream, addr: SocketAddr) -> Self::Future;
+    fn connect(&self, socket: TcpStream, addr: SocketAddr) -> Connecting;
 
     /// Establish a Unix domain socket connection to the given path.
     #[cfg(unix)]
-    fn connect_unix(&self, path: std::sync::Arc<std::path::Path>) -> Self::UnixFuture;
+    fn unix_connect(&self, path: Arc<Path>) -> Connecting;
 }
 
-pub(crate) struct ConnectingTcp<S: NetConnector> {
-    preferred: ConnectingTcpRemote<S>,
-    fallback: Option<ConnectingTcpFallback<S>>,
+/// A cloneable, type-erased [`DynConnector`] backed by an `Arc`.
+#[derive(Clone)]
+pub struct DynConnector(Arc<dyn Connector>);
+
+impl DynConnector {
+    /// Creates a new [`DynConnector`].
+    pub fn new(connector: impl Connector + 'static) -> Self {
+        Self(Arc::new(connector))
+    }
 }
 
-struct ConnectingTcpFallback<S: NetConnector> {
+impl Connector for DynConnector {
+    #[inline(always)]
+    fn connect(&self, socket: TcpStream, addr: SocketAddr) -> Connecting {
+        self.0.connect(socket, addr)
+    }
+
+    #[cfg(unix)]
+    #[inline(always)]
+    fn unix_connect(&self, path: Arc<Path>) -> Connecting {
+        self.0.unix_connect(path)
+    }
+}
+
+pub(crate) struct ConnectingTcp<C> {
+    preferred: ConnectingTcpRemote<C>,
+    fallback: Option<ConnectingTcpFallback<C>>,
+}
+
+struct ConnectingTcpFallback<C> {
     delay: Pin<Box<dyn Sleep>>,
-    remote: ConnectingTcpRemote<S>,
+    remote: ConnectingTcpRemote<C>,
 }
 
-struct ConnectingTcpRemote<S: NetConnector> {
+struct ConnectingTcpRemote<C> {
     addrs: dns::SocketAddrs,
     connect_timeout: Option<Duration>,
-    connector: S,
+    connector: C,
     timer: Timer,
 }
 
-impl<S: NetConnector> ConnectingTcp<S>
+impl<C> ConnectingTcp<C>
 where
-    S::TcpStream: From<socket2::Socket>,
+    C: Connector + Clone + 'static,
 {
     pub(crate) fn new(
         remote_addrs: dns::SocketAddrs,
         config: &TcpOptions,
-        connector: S,
+        connector: C,
         timer: Timer,
     ) -> Self {
         if let Some(fallback_timeout) = config.happy_eyeballs_timeout {
@@ -135,14 +153,14 @@ where
     }
 }
 
-impl<S: NetConnector> ConnectingTcpRemote<S>
+impl<C> ConnectingTcpRemote<C>
 where
-    S::TcpStream: From<socket2::Socket>,
+    C: Connector + 'static,
 {
     fn new(
         addrs: dns::SocketAddrs,
         connect_timeout: Option<Duration>,
-        connector: S,
+        connector: C,
         timer: Timer,
     ) -> Self {
         let connect_timeout = connect_timeout.and_then(|t| t.checked_div(addrs.len() as u32));
@@ -154,7 +172,7 @@ where
         }
     }
 
-    async fn connect(&mut self, config: &TcpOptions) -> Result<S::Connection, ConnectError> {
+    async fn connect(&mut self, config: &TcpOptions) -> Result<BoxConnection, ConnectError> {
         let mut err = None;
         for addr in &mut self.addrs {
             debug!("connecting to {}", addr);
@@ -226,15 +244,15 @@ fn bind_local_address(
     Ok(())
 }
 
-fn connect<S: NetConnector>(
+fn connect<C>(
     addr: &SocketAddr,
     config: &TcpOptions,
     connect_timeout: Option<Duration>,
-    connector: &S,
+    connector: &C,
     timer: &Timer,
-) -> Result<impl Future<Output = Result<S::Connection, ConnectError>>, ConnectError>
+) -> Result<impl Future<Output = Result<BoxConnection, ConnectError>>, ConnectError>
 where
-    S::TcpStream: From<socket2::Socket>,
+    C: Connector + 'static,
 {
     use socket2::{Domain, Protocol, Socket, Type};
 
@@ -358,20 +376,20 @@ where
                 Either::Right((Ok(s), _)) => Ok(s),
                 Either::Right((Err(e), _)) => Err(e.into()),
             },
-            None => connect.await.map_err(Into::into),
+            None => connect.await,
         }
         .map_err(ConnectError::m("tcp connect error"))
     })
 }
 
-impl<S: NetConnector> ConnectingTcp<S>
+impl<C> ConnectingTcp<C>
 where
-    S::TcpStream: From<socket2::Socket>,
+    C: Connector + 'static,
 {
     pub(crate) async fn connect(
         mut self,
         config: &TcpOptions,
-    ) -> Result<S::Connection, ConnectError> {
+    ) -> Result<BoxConnection, ConnectError> {
         match self.fallback {
             None => self.preferred.connect(config).await,
             Some(mut fallback) => {
