@@ -14,7 +14,7 @@ use std::{
 use futures_util::future::Either;
 use socket2::TcpKeepalive;
 use wreq_rt::{
-    conn::{BoxConnection, Connector},
+    conn::{BoxConnection, Connect},
     timer::{Sleep, Timer},
 };
 
@@ -38,7 +38,7 @@ struct ConnectingTcpRemote<C> {
 
 impl<C> ConnectingTcp<C>
 where
-    C: Connector + Timer + Clone + 'static,
+    C: Connect + Timer + Clone + 'static,
 {
     pub(crate) fn new(connector: C, remote_addrs: dns::SocketAddrs, config: &TcpOptions) -> Self {
         if let Some(fallback_timeout) = config.happy_eyeballs_timeout {
@@ -87,7 +87,7 @@ where
 
 impl<C> ConnectingTcpRemote<C>
 where
-    C: Connector + Timer + 'static,
+    C: Connect + Timer + 'static,
 {
     fn new(connector: C, addrs: dns::SocketAddrs, connect_timeout: Option<Duration>) -> Self {
         let connect_timeout = connect_timeout.and_then(|t| t.checked_div(addrs.len() as u32));
@@ -171,7 +171,7 @@ fn connect<C>(
     connect_timeout: Option<Duration>,
 ) -> Result<impl Future<Output = Result<BoxConnection, ConnectError>>, ConnectError>
 where
-    C: Connector + Timer + 'static,
+    C: Connect + Timer + 'static,
 {
     use socket2::{Domain, Protocol, Socket, Type};
 
@@ -303,7 +303,7 @@ where
 
 impl<C> ConnectingTcp<C>
 where
-    C: Connector + Timer + 'static,
+    C: Connect + Timer + 'static,
 {
     pub(crate) async fn connect(
         mut self,

@@ -29,7 +29,7 @@ use std::{
 
 use wreq_rt::{
     Executor,
-    conn::{Connecting, Connector},
+    conn::{Connect, Connecting},
     dns::{DnsResolver, Resolving},
     timer::{Sleep, Timer},
 };
@@ -41,7 +41,7 @@ pub type BoxSendFuture = Pin<Box<dyn Future<Output = ()> + Send>>;
 
 /// Runtime capabilities required by [`RuntimeHandle`].
 pub trait Runtime<Fut>:
-    Executor<Fut> + Timer + Connector + DnsResolver + Send + Sync + 'static
+    Executor<Fut> + Timer + Connect + DnsResolver + Send + Sync + 'static
 {
 }
 
@@ -55,7 +55,7 @@ pub(crate) struct RuntimeHandle(Arc<dyn Runtime<BoxSendFuture>>);
 // ===== impl Runtime =====
 
 impl<T, Fut> Runtime<Fut> for T where
-    T: Executor<Fut> + Timer + Connector + DnsResolver + Send + Sync + 'static
+    T: Executor<Fut> + Timer + Connect + DnsResolver + Send + Sync + 'static
 {
 }
 
@@ -119,7 +119,7 @@ impl Timer for RuntimeHandle {
     }
 }
 
-impl Connector for RuntimeHandle {
+impl Connect for RuntimeHandle {
     /// Connects the given TCP socket to `addr`.
     #[inline(always)]
     fn tcp_connect(&self, socket: TcpStream, addr: SocketAddr) -> Connecting {

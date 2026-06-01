@@ -71,7 +71,7 @@ use crate::{
     proxy::Matcher as ProxyMatcher,
     redirect::{self, FollowRedirectPolicy},
     retry,
-    rt::{BoxSendFuture, Runtime, RuntimeHandle},
+    rt::RuntimeHandle,
     tls::{
         AlpnProtocol, TlsOptions, TlsVersion,
         keylog::KeyLog,
@@ -79,6 +79,9 @@ use crate::{
         trust::{CertStore, Identity},
     },
 };
+
+#[cfg(not(any(feature = "tokio-rt", feature = "compio-rt")))]
+use crate::rt::{BoxSendFuture, Runtime};
 
 #[cfg(not(any(
     feature = "gzip",
@@ -157,6 +160,7 @@ pub struct Client(Arc<Either<ClientService, BoxedClientService>>);
 #[must_use]
 pub struct ClientBuilder {
     config: Config,
+    runtime: RuntimeHandle,
 }
 
 /// The HTTP version preference for the client.
@@ -227,12 +231,6 @@ struct Config {
 
 // ===== impl Client =====
 
-impl Default for Client {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl Client {
     /// Constructs a new [`Client`].
     ///
@@ -244,19 +242,25 @@ impl Client {
     /// Use [`Client::builder()`] if you wish to handle the failure as an [`Error`]
     /// instead of panicking.
     #[inline]
+    #[cfg(any(feature = "tokio-rt", feature = "compio-rt"))]
     pub fn new() -> Client {
-        #[cfg(any(feature = "tokio-rt", feature = "compio-rt"))]
-        {
-            return Client::builder().build().expect("Client::new()");
-        }
+        Client::builder().build().expect("Client::new()")
+    }
 
-        #[cfg(not(any(feature = "tokio-rt", feature = "compio-rt")))]
-        panic!(
-            "no async runtime feature enabled; at least one of `tokio-rt` or `compio-rt` must be active"
-        );
+    /// Constructs a new [`Client`] with an explicit runtime.
+    ///
+    /// This is used when no runtime feature is enabled.
+    #[inline]
+    #[cfg(not(any(feature = "tokio-rt", feature = "compio-rt")))]
+    pub fn new<R>(runtime: R) -> Client
+    where
+        R: Runtime<BoxSendFuture> + Send + Sync + 'static,
+    {
+        Client::builder(runtime).build().expect("Client::new()")
     }
 
     /// Creates a [`ClientBuilder`] to configure a [`Client`].
+    #[cfg(any(feature = "tokio-rt", feature = "compio-rt"))]
     pub fn builder() -> ClientBuilder {
         ClientBuilder {
             config: Config {
@@ -316,6 +320,90 @@ impl Client {
                 tls_session_cache: None,
                 tls_options: None,
             },
+            runtime: {
+                #[cfg(all(feature = "tokio-rt", not(feature = "compio-rt")))]
+                {
+                    RuntimeHandle::new(wreq_rt::tokio::TokioRuntime::new())
+                }
+
+                #[cfg(all(feature = "compio-rt", not(feature = "tokio-rt")))]
+                {
+                    RuntimeHandle::new(wreq_rt::compio::CompioRuntime::new())
+                }
+
+                #[cfg(all(feature = "tokio-rt", feature = "compio-rt"))]
+                {
+                    RuntimeHandle::new(wreq_rt::tokio::TokioRuntime::new())
+                }
+            },
+        }
+    }
+
+    /// Creates a [`ClientBuilder`] to configure a [`Client`] with an explicit runtime.
+    #[cfg(not(any(feature = "tokio-rt", feature = "compio-rt")))]
+    pub fn builder<R>(runtime: R) -> ClientBuilder
+    where
+        R: Runtime<BoxSendFuture> + Send + Sync + 'static,
+    {
+        ClientBuilder {
+            config: Config {
+                error: None,
+                headers: HeaderMap::new(),
+                orig_headers: OrigHeaderMap::new(),
+                #[cfg(any(
+                    feature = "gzip",
+                    feature = "zstd",
+                    feature = "brotli",
+                    feature = "deflate",
+                ))]
+                accept_encoding: AcceptEncoding::default(),
+                connect_timeout: None,
+                connection_verbose: false,
+                pool_idle_timeout: Some(Duration::from_secs(90)),
+                pool_max_idle_per_host: usize::MAX,
+                pool_max_size: None,
+                tcp_keepalive: Some(Duration::from_secs(15)),
+                tcp_keepalive_interval: Some(Duration::from_secs(15)),
+                tcp_keepalive_retries: Some(3),
+                #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
+                tcp_user_timeout: Some(Duration::from_secs(30)),
+                tcp_nodelay: true,
+                tcp_reuse_address: false,
+                tcp_send_buffer_size: None,
+                tcp_recv_buffer_size: None,
+                tcp_happy_eyeballs_timeout: Some(Duration::from_millis(300)),
+                socket_bind_options: SocketBindOptions::default(),
+                proxies: Vec::new(),
+                auto_sys_proxy: true,
+                retry_policy: retry::Policy::default(),
+                redirect_policy: redirect::Policy::none(),
+                referer: true,
+                timeout_options: TimeoutOptions::default(),
+                #[cfg(feature = "hickory-dns")]
+                hickory_dns: cfg!(feature = "hickory-dns"),
+                #[cfg(feature = "cookies")]
+                cookie_store: None,
+                dns_overrides: HashMap::new(),
+                dns_resolver: None,
+                http_version_pref: HttpVersionPref::All,
+                https_only: false,
+                http1_options: None,
+                http2_options: None,
+                layers: Vec::new(),
+                connector_layers: Vec::new(),
+                tls_sni: true,
+                tls_info: false,
+                tls_keylog: None,
+                tls_identity: None,
+                tls_cert_store: None,
+                tls_cert_verification: true,
+                tls_verify_hostname: true,
+                tls_min_version: None,
+                tls_max_version: None,
+                tls_session_cache: None,
+                tls_options: None,
+            },
+            runtime: RuntimeHandle::new(runtime),
         }
     }
 
@@ -466,71 +554,30 @@ impl tower::Service<Request> for &'_ Client {
     }
 }
 
+#[cfg(any(feature = "tokio-rt", feature = "compio-rt"))]
+impl Default for Client {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 // ===== impl ClientBuilder =====
 
 impl ClientBuilder {
-    /// Returns a [`Client`] that uses this [`ClientBuilder`] configuration.
+    /// Builds a [`Client`] from this [`ClientBuilder`].
+    ///
+    /// The runtime is already attached to the builder.
     ///
     /// # Errors
     ///
     /// This method fails if a TLS backend cannot be initialized, or the resolver
     /// cannot load the system configuration.
-    ///
-    ///
-    /// # Default behavior
-    ///
-    /// | Feature flags active            | Backend         |
-    /// |---------------------------------|-----------------|
-    /// | `tokio-rt` only                 | `TokioRuntime`  |
-    /// | `compio-rt` only                | `CompioRuntime` |
-    /// | both `tokio-rt` and `compio-rt` | `TokioRuntime`  |
-    /// | neither                         | panic           |
     #[inline(always)]
-    #[cfg(any(feature = "tokio-rt", feature = "compio-rt"))]
     pub fn build(self) -> crate::Result<Client> {
-        #[cfg(all(feature = "tokio-rt", not(feature = "compio-rt")))]
-        {
-            return self.build_runtime(wreq_rt::tokio::TokioRuntime::new());
-        }
-
-        #[cfg(all(feature = "compio-rt", not(feature = "tokio-rt")))]
-        {
-            return self.build_runtime(wreq_rt::compio::CompioRuntime::new());
-        }
-
-        #[cfg(all(feature = "tokio-rt", feature = "compio-rt"))]
-        {
-            return self.build_runtime(wreq_rt::tokio::TokioRuntime::new());
-        }
-    }
-
-    /// Returns a [`Client`] that uses this [`ClientBuilder`] configuration.
-    ///
-    /// # Errors
-    ///
-    /// This method fails if a TLS backend cannot be initialized, or the resolver
-    /// cannot load the system configuration.
-    #[inline(always)]
-    #[cfg(not(any(feature = "tokio-rt", feature = "compio-rt")))]
-    pub fn build<E>(self, runtime: E) -> crate::Result<Client>
-    where
-        E: Runtime<BoxSendFuture> + Send + Sync + 'static,
-    {
-        self.build_runtime(runtime)
-    }
-
-    /// Returns a [`Client`] that uses this [`ClientBuilder`] configuration.
-    ///
-    /// # Errors
-    ///
-    /// This method fails if a TLS backend cannot be initialized, or the resolver
-    /// cannot load the system configuration.
-    fn build_runtime<E>(self, runtime: E) -> crate::Result<Client>
-    where
-        E: Runtime<BoxSendFuture> + Send + Sync + 'static,
-    {
-        let runtime = RuntimeHandle::new(runtime);
-        let mut config = self.config;
+        let ClientBuilder {
+            mut config,
+            runtime,
+        } = self;
 
         if let Some(err) = config.error {
             return Err(err);

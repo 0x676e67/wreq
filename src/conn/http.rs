@@ -12,7 +12,7 @@ use http::uri::{Scheme, Uri};
 use pin_project_lite::pin_project;
 use tower::Service;
 use wreq_rt::{
-    conn::{BoxConnection, Connector},
+    conn::{BoxConnection, Connect},
     timer::Timer,
 };
 #[cfg(unix)]
@@ -255,7 +255,7 @@ impl<R, S> Service<Uri> for HttpConnector<R, S>
 where
     R: InternalResolve + Clone + Send + Sync + 'static,
     R::Future: Send,
-    S: Connector + Timer + Send + Clone + 'static,
+    S: Connect + Timer + Send + Clone + 'static,
 {
     type Response = BoxConnection;
     type Error = ConnectError;
@@ -418,7 +418,7 @@ pin_project! {
 impl<R, S> Future for HttpConnecting<R, S>
 where
     R: InternalResolve,
-    S: Connector,
+    S: Connect,
 {
     type Output = ConnectResult;
 

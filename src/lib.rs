@@ -359,6 +359,7 @@ fn _assert_impls() {
 /// # }
 /// ```
 #[inline]
+#[cfg(any(feature = "tokio-rt", feature = "compio-rt"))]
 pub fn get<T: IntoUri>(uri: T) -> RequestBuilder {
     Client::new().get(uri)
 }
@@ -384,6 +385,7 @@ pub fn get<T: IntoUri>(uri: T) -> RequestBuilder {
 /// # }
 /// ```
 #[inline]
+#[cfg(any(feature = "tokio-rt", feature = "compio-rt"))]
 pub fn post<T: IntoUri>(uri: T) -> RequestBuilder {
     Client::new().post(uri)
 }
@@ -409,6 +411,7 @@ pub fn post<T: IntoUri>(uri: T) -> RequestBuilder {
 /// # }
 /// ```
 #[inline]
+#[cfg(any(feature = "tokio-rt", feature = "compio-rt"))]
 pub fn put<T: IntoUri>(uri: T) -> RequestBuilder {
     Client::new().put(uri)
 }
@@ -433,6 +436,7 @@ pub fn put<T: IntoUri>(uri: T) -> RequestBuilder {
 /// # }
 /// ```
 #[inline]
+#[cfg(any(feature = "tokio-rt", feature = "compio-rt"))]
 pub fn delete<T: IntoUri>(uri: T) -> RequestBuilder {
     Client::new().delete(uri)
 }
@@ -457,6 +461,7 @@ pub fn delete<T: IntoUri>(uri: T) -> RequestBuilder {
 /// # }
 /// ```
 #[inline]
+#[cfg(any(feature = "tokio-rt", feature = "compio-rt"))]
 pub fn head<T: IntoUri>(uri: T) -> RequestBuilder {
     Client::new().head(uri)
 }
@@ -482,6 +487,7 @@ pub fn head<T: IntoUri>(uri: T) -> RequestBuilder {
 /// # }
 /// ```
 #[inline]
+#[cfg(any(feature = "tokio-rt", feature = "compio-rt"))]
 pub fn patch<T: IntoUri>(uri: T) -> RequestBuilder {
     Client::new().patch(uri)
 }
@@ -506,6 +512,7 @@ pub fn patch<T: IntoUri>(uri: T) -> RequestBuilder {
 /// # }
 /// ```
 #[inline]
+#[cfg(any(feature = "tokio-rt", feature = "compio-rt"))]
 pub fn options<T: IntoUri>(uri: T) -> RequestBuilder {
     Client::new().options(uri)
 }
@@ -531,6 +538,7 @@ pub fn options<T: IntoUri>(uri: T) -> RequestBuilder {
 /// # }
 /// ```
 #[inline]
+#[cfg(any(feature = "tokio-rt", feature = "compio-rt"))]
 pub fn request<T: IntoUri>(method: Method, uri: T) -> RequestBuilder {
     Client::new().request(method, uri)
 }
@@ -584,7 +592,7 @@ pub fn request<T: IntoUri>(method: Method, uri: T) -> RequestBuilder {
 /// ```
 #[inline]
 #[cfg(feature = "ws")]
-#[cfg_attr(docsrs, doc(cfg(feature = "ws")))]
+#[cfg(any(feature = "tokio-rt", feature = "compio-rt"))]
 pub fn websocket<T: IntoUri>(uri: T) -> ws::WebSocketRequestBuilder {
     Client::new().websocket(uri)
 }
