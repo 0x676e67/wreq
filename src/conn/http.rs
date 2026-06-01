@@ -290,7 +290,7 @@ where
                 dns::SocketAddrs::new(addrs)
             };
 
-            ConnectingTcp::new(addrs, options, this.connector)
+            ConnectingTcp::new(this.connector, addrs, options)
                 .connect(options)
                 .await
         };

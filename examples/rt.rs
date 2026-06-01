@@ -3,9 +3,10 @@ use wreq_rt::compio::CompioRuntime;
 
 // Short example of a POST request with form data.
 //
-// This is using the `tokio` runtime. You'll need the following dependency:
+// This is using the `compio` runtime. You'll need the following dependency:
 //
-// `tokio = { version = "1", features = ["full"] }`
+// `compio = { version = "*", features = ["runtime"] }`
+// `wreq-rt = { version = "*", features = ["compio-rt"] }`
 #[compio::main]
 async fn main() {
     let client = Client::builder()

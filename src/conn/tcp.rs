@@ -40,7 +40,7 @@ impl<C> ConnectingTcp<C>
 where
     C: Connector + Timer + Clone + 'static,
 {
-    pub(crate) fn new(remote_addrs: dns::SocketAddrs, config: &TcpOptions, connector: C) -> Self {
+    pub(crate) fn new(connector: C, remote_addrs: dns::SocketAddrs, config: &TcpOptions) -> Self {
         if let Some(fallback_timeout) = config.happy_eyeballs_timeout {
             let (preferred_addrs, fallback_addrs) = remote_addrs.split_by_preference(
                 config.socket_bind.ipv4_address,
@@ -49,9 +49,9 @@ where
             if fallback_addrs.is_empty() {
                 return ConnectingTcp {
                     preferred: ConnectingTcpRemote::new(
+                        connector,
                         preferred_addrs,
                         config.connect_timeout,
-                        connector,
                     ),
                     fallback: None,
                 };
@@ -59,25 +59,25 @@ where
 
             ConnectingTcp {
                 preferred: ConnectingTcpRemote::new(
+                    connector.clone(),
                     preferred_addrs,
                     config.connect_timeout,
-                    connector.clone(),
                 ),
                 fallback: Some(ConnectingTcpFallback {
                     delay: connector.sleep(fallback_timeout),
                     remote: ConnectingTcpRemote::new(
+                        connector,
                         fallback_addrs,
                         config.connect_timeout,
-                        connector,
                     ),
                 }),
             }
         } else {
             ConnectingTcp {
                 preferred: ConnectingTcpRemote::new(
+                    connector,
                     remote_addrs,
                     config.connect_timeout,
-                    connector,
                 ),
                 fallback: None,
             }
@@ -89,7 +89,7 @@ impl<C> ConnectingTcpRemote<C>
 where
     C: Connector + Timer + 'static,
 {
-    fn new(addrs: dns::SocketAddrs, connect_timeout: Option<Duration>, connector: C) -> Self {
+    fn new(connector: C, addrs: dns::SocketAddrs, connect_timeout: Option<Duration>) -> Self {
         let connect_timeout = connect_timeout.and_then(|t| t.checked_div(addrs.len() as u32));
         Self {
             addrs,
@@ -102,7 +102,7 @@ where
         let mut err = None;
         for addr in &mut self.addrs {
             debug!("connecting to {}", addr);
-            match connect(&addr, config, self.connect_timeout, &self.connector) {
+            match connect(&self.connector, &addr, config, self.connect_timeout) {
                 Ok(fut) => match fut.await {
                     Ok(tcp) => {
                         debug!("connected to {}", addr);
@@ -165,10 +165,10 @@ fn bind_local_address(
 }
 
 fn connect<C>(
+    connector: &C,
     addr: &SocketAddr,
     config: &TcpOptions,
     connect_timeout: Option<Duration>,
-    connector: &C,
 ) -> Result<impl Future<Output = Result<BoxConnection, ConnectError>>, ConnectError>
 where
     C: Connector + Timer + 'static,
