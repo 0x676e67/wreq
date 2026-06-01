@@ -10,7 +10,7 @@ use std::{
 
 use http::{Request, Response};
 use tower::{BoxError, Layer, Service};
-use wreq_rt::rt::timer::Timer as _;
+use wreq_rt::timer::Timer as _;
 
 use self::{
     body::TimeoutBody,

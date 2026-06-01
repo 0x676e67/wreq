@@ -29,7 +29,7 @@ use wreq_proto::{
     http1::Http1Options,
     http2::Http2Options,
 };
-use wreq_rt::rt::Executor as _;
+use wreq_rt::Executor as _;
 #[cfg(feature = "cookies")]
 use {
     crate::cookie::{CookieStore, Cookies},

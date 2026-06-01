@@ -7,7 +7,7 @@ use std::{
 
 use http::Response;
 use pin_project_lite::pin_project;
-use wreq_rt::rt::timer::Sleep;
+use wreq_rt::timer::Sleep;
 
 use super::body::TimeoutBody;
 use crate::{

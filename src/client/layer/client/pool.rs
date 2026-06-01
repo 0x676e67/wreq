@@ -15,7 +15,7 @@ use std::{
 
 use lru::LruCache;
 use tokio::sync::oneshot;
-use wreq_rt::rt::{Executor as _, timer::Timer as _};
+use wreq_rt::{Executor as _, timer::Timer as _};
 
 use crate::{rt::RuntimeHandle, sync::Mutex};
 

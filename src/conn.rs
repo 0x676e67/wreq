@@ -28,7 +28,7 @@ use tower::{
     BoxError,
     util::{BoxCloneSyncService, BoxCloneSyncServiceLayer},
 };
-use wreq_rt::rt::BoxConnection;
+use wreq_rt::conn::BoxConnection;
 
 use crate::{
     conn::http::HttpInfo,

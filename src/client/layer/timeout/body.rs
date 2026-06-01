@@ -7,7 +7,7 @@ use std::{
 
 use http_body::Body;
 use pin_project_lite::pin_project;
-use wreq_rt::rt::timer::{Sleep, Timer as _};
+use wreq_rt::timer::{Sleep, Timer as _};
 
 use crate::{
     Error,

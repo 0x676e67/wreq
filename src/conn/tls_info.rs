@@ -1,6 +1,6 @@
 use bytes::Bytes;
 use tokio_btls::SslStream;
-use wreq_rt::rt::BoxConnection;
+use wreq_rt::conn::BoxConnection;
 
 use crate::tls::{TlsInfo, conn::MaybeHttpsStream};
 
@@ -36,9 +36,6 @@ impl<T> TlsInfoFactory for SslStream<T> {
     }
 }
 
-// Boxed runtime streams are plain transports, so they have no TLS metadata.
-impl TlsInfoFactory for BoxConnection {}
-
 impl<T: TlsInfoFactory> TlsInfoFactory for MaybeHttpsStream<T> {
     fn tls_info(&self) -> Option<TlsInfo> {
         match self {
@@ -47,3 +44,5 @@ impl<T: TlsInfoFactory> TlsInfoFactory for MaybeHttpsStream<T> {
         }
     }
 }
+
+impl TlsInfoFactory for BoxConnection {}

@@ -27,8 +27,10 @@ use std::{
     time::{Duration, Instant},
 };
 
-use wreq_rt::rt::{
-    Connecting, Connector, Executor, Resolver, Resolving,
+use wreq_rt::{
+    Executor,
+    conn::{Connecting, Connector},
+    dns::{DnsResolver, Resolving},
     timer::{Sleep, Timer},
 };
 
@@ -39,14 +41,14 @@ pub type BoxSendFuture = Pin<Box<dyn Future<Output = ()> + Send>>;
 
 /// Runtime capabilities required by [`RuntimeHandle`].
 pub trait Runtime<Fut>:
-    Executor<Fut> + Timer + Connector + Resolver + Send + Sync + 'static
+    Executor<Fut> + Timer + Connector + DnsResolver + Send + Sync + 'static
 {
 }
 
 /// A shared runtime handle used by the client.
 ///
 /// Besides spawning background work, it also forwards timer, connector, and
-/// resolver calls to the selected runtime.
+/// dns resolver calls to the selected runtime.
 ///
 /// # Default behavior
 ///
@@ -64,7 +66,7 @@ pub(crate) struct RuntimeHandle(Arc<dyn Runtime<BoxSendFuture>>);
 // ===== impl Runtime =====
 
 impl<T, Fut> Runtime<Fut> for T where
-    T: Executor<Fut> + Timer + Connector + Resolver + Send + Sync + 'static
+    T: Executor<Fut> + Timer + Connector + DnsResolver + Send + Sync + 'static
 {
 }
 
@@ -93,12 +95,12 @@ where
     }
 }
 
-impl Resolver for RuntimeHandle {
+impl DnsResolver for RuntimeHandle {
     /// Resolves a host name.
     #[track_caller]
     #[inline(always)]
-    fn lookup(&self, host: Box<str>) -> Resolving {
-        self.0.lookup(host)
+    fn resolve(&self, host: Box<str>) -> Resolving {
+        self.0.resolve(host)
     }
 }
 
@@ -147,15 +149,15 @@ impl Default for RuntimeHandle {
     #[inline]
     fn default() -> Self {
         if_tokio_rt!(block: {
-            return RuntimeHandle(Arc::new(wreq_rt::rt::tokio::TokioRuntime::new()))
+            return RuntimeHandle(Arc::new(wreq_rt::tokio::TokioRuntime::new()))
         });
 
         if_compio_rt!(block: {
-            return RuntimeHandle(Arc::new(wreq_rt::rt::compio::CompioRuntime::new()))
+            return RuntimeHandle(Arc::new(wreq_rt::compio::CompioRuntime::new()))
         });
 
         if_all_rt!(block: {
-            return RuntimeHandle(Arc::new(wreq_rt::rt::tokio::TokioRuntime::new()))
+            return RuntimeHandle(Arc::new(wreq_rt::tokio::TokioRuntime::new()))
         });
 
         if_no_rt!(block:{

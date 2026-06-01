@@ -1,7 +1,7 @@
 use std::task::{self, Poll};
 
 use tower::Service;
-use wreq_rt::rt::Resolver;
+use wreq_rt::dns::DnsResolver;
 
 use super::{Addrs, Name, Resolve, Resolving};
 use crate::{error::BoxError, rt::RuntimeHandle};
@@ -30,7 +30,7 @@ impl Service<Name> for GaiResolver {
 
     #[inline(always)]
     fn call(&mut self, name: Name) -> Self::Future {
-        self.0.lookup(name.into_inner())
+        self.0.resolve(name.into_inner())
     }
 }
 

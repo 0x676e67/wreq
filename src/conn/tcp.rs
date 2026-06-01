@@ -13,8 +13,8 @@ use std::{
 
 use futures_util::future::Either;
 use socket2::TcpKeepalive;
-use wreq_rt::rt::{
-    BoxConnection, Connector,
+use wreq_rt::{
+    conn::{BoxConnection, Connector},
     timer::{Sleep, Timer},
 };
 

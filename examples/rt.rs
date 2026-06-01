@@ -1,5 +1,5 @@
 use wreq::Client;
-use wreq_rt::rt::compio::CompioRuntime;
+use wreq_rt::compio::CompioRuntime;
 
 // Short example of a POST request with form data.
 //
