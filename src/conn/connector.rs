@@ -18,7 +18,6 @@ use super::{
     AsyncConnWithInfo, BoxedConnectorLayer, BoxedConnectorService, Conn, Connection, HttpConnector,
     TlsConn, TlsInfoFactory, Unnameable, descriptor::ConnectionDescriptor, proxy, verbose::Verbose,
 };
-// use crate::conn::info::ConnectionInfo;
 use crate::{
     dns::DynResolver,
     error::{ProxyConnect, TimedOut, map_timeout_to_connector_error},
@@ -349,7 +348,7 @@ impl ConnectorService {
 
                         // Re-enable Nagle's algorithm if it was disabled earlier
                         if is_https && !self.config.nodelay {
-                            ConnectionInfo::set_nodelay(io.as_ref(), false)?;
+                            io.as_ref().set_nodelay(false)?;
                         }
 
                         return self.stream(io);
