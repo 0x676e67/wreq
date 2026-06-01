@@ -1,47 +1,43 @@
-if_tokio_rt! {
-    mod tokio;
-}
+use std::task::{self, Poll};
 
-if_compio_rt!(
-    mod compio;
-);
+use tower::Service;
+use wreq_rt::rt::Resolver;
 
-if_all_rt!(
-    mod tokio;
-);
-
-if_no_rt!(
-    use super::{Resolve, Resolving, Name};
-);
-
-use std::net::SocketAddr;
-
-use super::SocketAddrs;
+use super::{Addrs, Name, Resolve, Resolving};
+use crate::{error::BoxError, rt::Executor};
 
 /// A resolver using blocking `getaddrinfo` calls in a threadpool.
 #[derive(Clone, Default)]
-pub struct GaiResolver {
-    _priv: (),
-}
+pub struct GaiResolver(Executor);
 
 impl GaiResolver {
     /// Creates a new [`GaiResolver`].
-    pub fn new() -> Self {
-        GaiResolver { _priv: () }
+    #[inline(always)]
+    pub fn new(exec: Executor) -> Self {
+        GaiResolver(exec)
     }
 }
 
-/// An iterator of IP addresses returned from `getaddrinfo`.
-pub struct GaiAddrs {
-    inner: SocketAddrs,
-}
-
-impl Iterator for GaiAddrs {
-    type Item = SocketAddr;
+impl Service<Name> for GaiResolver {
+    type Response = Addrs;
+    type Error = BoxError;
+    type Future = Resolving;
 
     #[inline(always)]
-    fn next(&mut self) -> Option<Self::Item> {
-        self.inner.next()
+    fn poll_ready(&mut self, _cx: &mut task::Context<'_>) -> Poll<Result<(), Self::Error>> {
+        Poll::Ready(Ok(()))
+    }
+
+    #[inline(always)]
+    fn call(&mut self, name: Name) -> Self::Future {
+        self.0.lookup(name.into_inner())
+    }
+}
+
+impl Resolve for GaiResolver {
+    #[inline(always)]
+    fn resolve(&self, name: Name) -> Resolving {
+        self.clone().call(name)
     }
 }
 
@@ -105,7 +101,7 @@ mod tests {
     fn test_name_from_str() {
         const DOMAIN: &str = "test.example.com";
         let name = Name::from(DOMAIN);
-        assert_eq!(name.as_str(), DOMAIN);
         assert_eq!(name.to_string(), DOMAIN);
+        assert_eq!(name.into_inner().as_ref(), DOMAIN);
     }
 }

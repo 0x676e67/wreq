@@ -18,14 +18,22 @@
 //! [tokio]: https://docs.rs/tokio
 //! [compio]: https://docs.rs/compio
 
+#[cfg(unix)]
+use std::path::Path;
 use std::{
     future::Future,
+    net::{SocketAddr, TcpStream},
     pin::Pin,
     sync::Arc,
     time::{Duration, Instant},
 };
 
-use wreq_proto::rt::{self, Sleep, Time};
+#[cfg(unix)]
+use wreq_rt::rt::Connecting;
+use wreq_rt::rt::{
+    self, Connector, Resolver, Resolving,
+    timer::{Sleep, Timer},
+};
 
 /// A heap-allocated, type-erased future that is [`Send`] and resolves to `()`.
 ///
@@ -34,6 +42,16 @@ use wreq_proto::rt::{self, Sleep, Time};
 /// type directly; the [`rt::Executor<F>`] blanket implementation boxes and
 /// pins any qualifying `F` automatically.
 pub type BoxSendFuture = Pin<Box<dyn Future<Output = ()> + Send>>;
+
+pub trait Runtime<Fut>:
+    rt::Executor<Fut> + Timer + Connector + Resolver + Send + Sync + 'static
+{
+}
+
+impl<T, Fut> Runtime<Fut> for T where
+    T: rt::Executor<Fut> + Timer + Connector + Resolver + Send + Sync + 'static
+{
+}
 
 /// A handle to an async task executor.
 ///
@@ -53,19 +71,14 @@ pub type BoxSendFuture = Pin<Box<dyn Future<Output = ()> + Send>>;
 /// | both `tokio-rt` and `compio-rt`   | `TokioExecutor`   |
 /// | neither                           | empty (panics)    |
 #[derive(Clone)]
-pub struct Executor(Arc<dyn rt::Executor<BoxSendFuture> + Send + Sync>);
-
-// ===== impl Executor =====
+pub struct Executor(Arc<dyn Runtime<BoxSendFuture>>);
 
 impl Executor {
     /// Creates an [`Executor`] backed by a custom implementation.
-    ///
-    /// The value is wrapped in an [`Arc`] and type-erased, so the resulting
-    /// handle is cheap to clone and safe to share across threads.
     #[inline]
     pub fn new<E>(exec: E) -> Self
     where
-        E: rt::Executor<BoxSendFuture> + Send + Sync + 'static,
+        E: Runtime<BoxSendFuture>,
     {
         Executor(Arc::new(exec))
     }
@@ -75,10 +88,7 @@ impl<Fut> rt::Executor<Fut> for Executor
 where
     Fut: Future<Output = ()> + Send + 'static,
 {
-    /// Spawns `fut` on the underlying executor.
-    ///
-    /// The future is boxed and pinned internally, so any `F` satisfying the
-    /// bounds can be passed without the caller needing to allocate first.
+    /// Place the future into the executor to be run.
     #[track_caller]
     #[inline(always)]
     fn execute(&self, fut: Fut) {
@@ -86,102 +96,16 @@ where
     }
 }
 
-impl Default for Executor {
-    /// Returns the runtime-appropriate default executor.
-    ///
-    /// See the [type-level documentation][Executor] for the feature-flag
-    /// selection table.
-    #[inline]
-    fn default() -> Self {
-        if_tokio_rt!(block: {
-            return Executor(Arc::new(wreq_rt::rt::tokio::TokioExecutor::new()))
-        });
-
-        if_compio_rt!(block: {
-            return Executor(Arc::new(wreq_rt::rt::compio::CompioExecutor::new()))
-        });
-
-        if_all_rt!(block: {
-            return Executor(Arc::new(wreq_rt::rt::tokio::TokioExecutor::new()))
-        });
-
-        if_no_rt!(block:{
-            panic!(
-                "no async runtime feature enabled; at least one of `tokio-rt` or `compio-rt` must be active"
-            );
-        });
+impl Resolver for Executor {
+    /// Performs a DNS resolution.
+    #[track_caller]
+    #[inline(always)]
+    fn lookup(&self, host: Box<str>) -> Resolving {
+        self.0.lookup(host)
     }
 }
 
-// ===== Timer =====
-
-/// A handle to an async timer.
-///
-/// `Timer` is used by the HTTP client to drive request and connection timeouts,
-/// as well as the connection pool's idle-expiry loop.  It wraps an
-/// [`rt::Timer`] implementation in a cheap-to-clone, type-erased handle.
-///
-/// # Default behavior
-///
-/// [`Timer::default`] picks the runtime-appropriate implementation based on
-/// the active feature flags:
-///
-/// | Feature flags active              | Timer           |
-/// |-----------------------------------|-----------------|
-/// | `tokio-rt` only                   | `TokioTimer`    |
-/// | `compio-rt` only                  | `CompioTimer`   |
-/// | both `tokio-rt` and `compio-rt`   | `TokioTimer`    |
-/// | neither                           | empty (panics)  |
-#[derive(Clone)]
-pub struct Timer(Time);
-
-// ===== impl Timer =====
-
-impl Timer {
-    /// Creates a [`Timer`] backed by a custom implementation.
-    #[inline]
-    pub fn new<M>(timer: M) -> Self
-    where
-        M: rt::Timer + Send + Sync + 'static,
-    {
-        Timer(Time::Timer(Arc::new(timer)))
-    }
-
-    #[cfg(test)]
-    #[doc(hidden)]
-    pub fn empty() -> Self {
-        Timer(Time::Empty)
-    }
-
-    /// Returns `true` if no timer implementation has been configured.
-    #[inline]
-    pub fn is_empty(&self) -> bool {
-        matches!(self.0, Time::Empty)
-    }
-}
-
-impl Default for Timer {
-    #[inline]
-    fn default() -> Self {
-        if_tokio_rt!(block: {
-            return Timer(rt::Time::Timer(Arc::new(wreq_rt::rt::tokio::TokioTimer::new())))
-        });
-
-        if_compio_rt!(block: {
-            return Timer(rt::Time::Timer(Arc::new(wreq_rt::rt::compio::CompioTimer::new())))
-        });
-
-        if_all_rt!(block: {
-            return Timer(rt::Time::Timer(Arc::new(wreq_rt::rt::tokio::TokioTimer::new())))
-        });
-
-        if_no_rt!(block: {
-            Timer(Time::Empty)
-        })
-    }
-}
-
-impl rt::Timer for Timer {
+impl Timer for Executor {
     /// Returns a future that resolves after `duration`.
     #[inline]
     fn sleep(&self, duration: Duration) -> Pin<Box<dyn Sleep>> {
@@ -204,5 +128,43 @@ impl rt::Timer for Timer {
     #[inline]
     fn reset(&self, sleep: &mut Pin<Box<dyn Sleep>>, new_deadline: Instant) {
         self.0.reset(sleep, new_deadline)
+    }
+}
+
+impl Connector for Executor {
+    /// Establish a TCP connection from the given socket to the address.
+    #[inline(always)]
+    fn tcp_connect(&self, socket: TcpStream, addr: SocketAddr) -> Connecting {
+        self.0.tcp_connect(socket, addr)
+    }
+
+    /// Establish a Unix domain socket connection to the given path.
+    #[cfg(unix)]
+    #[inline(always)]
+    fn unix_connect(&self, path: Arc<Path>) -> Connecting {
+        self.0.unix_connect(path)
+    }
+}
+
+impl Default for Executor {
+    #[inline]
+    fn default() -> Self {
+        if_tokio_rt!(block: {
+            return Executor(Arc::new(wreq_rt::rt::tokio::TokioRuntime::new()))
+        });
+
+        if_compio_rt!(block: {
+            return Executor(Arc::new(wreq_rt::rt::compio::CompioRuntime::new()))
+        });
+
+        if_all_rt!(block: {
+            return Executor(Arc::new(wreq_rt::rt::tokio::TokioRuntime::new()))
+        });
+
+        if_no_rt!(block:{
+            panic!(
+                "no async runtime feature enabled; at least one of `tokio-rt` or `compio-rt` must be active"
+            );
+        });
     }
 }

@@ -23,7 +23,7 @@ use std::collections::BTreeMap;
 use http::{Uri, Version};
 use name::GroupId;
 
-use crate::{conn::net::SocketBindOptions, proxy::Matcher};
+use crate::{conn::opts::SocketBindOptions, proxy::Matcher};
 
 macro_rules! impl_group_variants {
     ($($name:ident $(($ty:ty))?,)*) => {

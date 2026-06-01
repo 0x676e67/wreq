@@ -10,13 +10,13 @@ use std::{
 
 use http::{Request, Response};
 use tower::{BoxError, Layer, Service};
-use wreq_proto::rt::Timer as _;
+use wreq_rt::rt::timer::Timer as _;
 
 use self::{
     body::TimeoutBody,
     future::{ResponseBodyTimeoutFuture, ResponseFuture},
 };
-use crate::{config::RequestConfig, rt::Timer};
+use crate::{config::RequestConfig, rt::Executor};
 
 /// Options for configuring timeouts.
 #[derive(Clone, Copy, Default)]
@@ -47,15 +47,15 @@ impl_request_config_value!(TimeoutOptions);
 // This layer allows you to set a total timeout and a read timeout for requests.
 #[derive(Clone)]
 pub struct TimeoutLayer {
-    timer: Timer,
+    exec: Executor,
     timeout: RequestConfig<TimeoutOptions>,
 }
 
 impl TimeoutLayer {
     /// Create a new [`TimeoutLayer`].
-    pub fn new(timer: Timer, options: TimeoutOptions) -> Self {
+    pub fn new(exec: Executor, options: TimeoutOptions) -> Self {
         TimeoutLayer {
-            timer,
+            exec,
             timeout: RequestConfig::new(Some(options)),
         }
     }
@@ -68,7 +68,7 @@ impl<S> Layer<S> for TimeoutLayer {
     fn layer(&self, service: S) -> Self::Service {
         Timeout {
             inner: service,
-            timer: self.timer.clone(),
+            exec: self.exec.clone(),
             timeout: self.timeout,
         }
     }
@@ -78,7 +78,7 @@ impl<S> Layer<S> for TimeoutLayer {
 #[derive(Clone)]
 pub struct Timeout<T> {
     inner: T,
-    timer: Timer,
+    exec: Executor,
     timeout: RequestConfig<TimeoutOptions>,
 }
 
@@ -101,12 +101,12 @@ where
         ResponseFuture {
             fut: ResponseBodyTimeoutFuture {
                 fut: self.inner.call(req),
-                timer: self.timer.clone(),
                 total_timeout,
                 read_timeout,
+                exec: self.exec.clone(),
             },
-            total_timeout: total_timeout.map(|timeout| self.timer.sleep(timeout)),
-            read_timeout: read_timeout.map(|timeout| self.timer.sleep(timeout)),
+            total_timeout: total_timeout.map(|timeout| self.exec.sleep(timeout)),
+            read_timeout: read_timeout.map(|timeout| self.exec.sleep(timeout)),
         }
     }
 }

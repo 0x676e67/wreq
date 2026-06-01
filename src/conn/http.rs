@@ -10,6 +10,7 @@ use std::{
 use http::uri::{Scheme, Uri};
 use pin_project_lite::pin_project;
 use tower::Service;
+use wreq_rt::rt::{BoxConnection, Connector, timer::Timer};
 #[cfg(unix)]
 use {
     futures_util::{FutureExt, TryFutureExt},
@@ -18,14 +19,11 @@ use {
 };
 
 use crate::{
-    conn::net::{
-        SocketBindOptions,
-        conn::{
-            BoxConnection, ConnectError, ConnectingTcp, Connector, TcpKeepaliveOptions, TcpOptions,
-        },
+    conn::{
+        opts::SocketBindOptions,
+        tcp::{ConnectError, ConnectingTcp, TcpKeepaliveOptions, TcpOptions},
     },
     dns::{self, InternalResolve},
-    rt::Timer,
 };
 
 static INVALID_NOT_HTTP: &str = "invalid URI, scheme is not http";
@@ -48,7 +46,6 @@ pub struct HttpConnector<R, S> {
     options: Arc<TcpOptions>,
     resolver: R,
     connector: S,
-    timer: Timer,
 }
 
 /// Extra information about the transport when an HttpConnector is used.
@@ -68,7 +65,7 @@ pub(crate) struct HttpInfo {
 
 impl<R, S> HttpConnector<R, S> {
     /// Construct a new [`HttpConnector`].
-    pub fn new(resolver: R, connector: S, timer: Timer) -> HttpConnector<R, S> {
+    pub fn new(resolver: R, connector: S) -> HttpConnector<R, S> {
         HttpConnector {
             options: Arc::new(TcpOptions {
                 enforce_http: true,
@@ -85,7 +82,6 @@ impl<R, S> HttpConnector<R, S> {
             }),
             resolver,
             connector,
-            timer,
         }
     }
 
@@ -256,7 +252,7 @@ impl<R, S> Service<Uri> for HttpConnector<R, S>
 where
     R: InternalResolve + Clone + Send + Sync + 'static,
     R::Future: Send,
-    S: Connector + Clone + 'static,
+    S: Connector + Timer + Send + Clone + 'static,
 {
     type Response = BoxConnection;
     type Error = ConnectError;
@@ -291,7 +287,7 @@ where
                 dns::SocketAddrs::new(addrs)
             };
 
-            ConnectingTcp::new(addrs, options, this.connector, this.timer)
+            ConnectingTcp::new(addrs, options, this.connector)
                 .connect(options)
                 .await
         };

@@ -1,5 +1,5 @@
-use wreq::{Client, dns};
-use wreq_rt::rt;
+use wreq::Client;
+use wreq_rt::rt::compio::CompioRuntime;
 
 // Short example of a POST request with form data.
 //
@@ -9,9 +9,7 @@ use wreq_rt::rt;
 #[compio::main]
 async fn main() {
     Client::builder()
-        .timer(rt::compio::CompioTimer::new())
-        .executor(rt::compio::CompioExecutor::new())
-        .dns_resolver(dns::GaiResolver::new())
+        .runtime(CompioRuntime::new())
         .build()
         .expect("build client");
 

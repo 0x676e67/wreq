@@ -7,12 +7,12 @@ use std::{
 
 use http::Response;
 use pin_project_lite::pin_project;
-use wreq_proto::rt::Sleep;
+use wreq_rt::rt::timer::Sleep;
 
 use super::body::TimeoutBody;
 use crate::{
     error::{BoxError, Error, TimedOut},
-    rt::Timer,
+    rt::Executor,
 };
 
 pin_project! {
@@ -70,7 +70,7 @@ pin_project! {
     pub struct ResponseBodyTimeoutFuture<Fut> {
         #[pin]
         pub(super) fut: Fut,
-        pub(super) timer: Timer,
+        pub(super) exec: Executor,
         pub(super) total_timeout: Option<Duration>,
         pub(super) read_timeout: Option<Duration>,
 
@@ -85,11 +85,11 @@ where
 
     #[inline(always)]
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let timer = self.timer.clone();
+        let exec = self.exec.clone();
         let total_timeout = self.total_timeout;
         let read_timeout = self.read_timeout;
         let res = ready!(self.project().fut.poll(cx))?
-            .map(|body| TimeoutBody::new(timer, total_timeout, read_timeout, body));
+            .map(|body| TimeoutBody::new(exec, total_timeout, read_timeout, body));
         Poll::Ready(Ok(res))
     }
 }

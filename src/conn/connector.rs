@@ -16,16 +16,15 @@ use tower::{
 
 use super::{
     AsyncConnWithInfo, BoxedConnectorLayer, BoxedConnectorService, Conn, Connection, HttpConnector,
-    TlsConn, TlsInfoFactory, Unnameable, descriptor::ConnectionDescriptor, net::NetConnector,
-    proxy, verbose::Verbose,
+    TlsConn, TlsInfoFactory, Unnameable, descriptor::ConnectionDescriptor, proxy, verbose::Verbose,
 };
+// use crate::conn::info::ConnectionInfo;
 use crate::{
-    conn::net::conn::DynConnector,
     dns::DynResolver,
     error::{ProxyConnect, TimedOut, map_timeout_to_connector_error},
     ext::UriExt,
     proxy::{Intercepted, Matcher as ProxyMatcher, matcher::Intercept},
-    rt::Timer,
+    rt::Executor,
     tls::{
         TlsOptions,
         conn::{
@@ -350,7 +349,7 @@ impl ConnectorService {
 
                         // Re-enable Nagle's algorithm if it was disabled earlier
                         if is_https && !self.config.nodelay {
-                            io.as_ref().set_nodelay(false)?;
+                            ConnectionInfo::set_nodelay(io.as_ref(), false)?;
                         }
 
                         return self.stream(io);
@@ -495,7 +494,7 @@ impl Connector {
     pub(crate) fn builder(
         proxies: Vec<ProxyMatcher>,
         resolver: DynResolver,
-        timer: Timer,
+        exec: Executor,
     ) -> Builder {
         Builder {
             inner: Inner {
@@ -506,7 +505,7 @@ impl Connector {
                 timeout: None,
                 #[cfg(feature = "socks")]
                 resolver: resolver.clone(),
-                http: HttpConnector::new(resolver, DynConnector::new(NetConnector::new()), timer),
+                http: HttpConnector::new(resolver, exec),
             },
             builder: TlsConnector::builder(),
         }

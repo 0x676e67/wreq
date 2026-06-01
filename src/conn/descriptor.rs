@@ -10,7 +10,7 @@ use std::{
 use http::{Uri, Version};
 use lru::DefaultHasher;
 
-use crate::{conn::net::SocketBindOptions, group::Group, proxy::Matcher, tls::TlsOptions};
+use crate::{conn::opts::SocketBindOptions, group::Group, proxy::Matcher, tls::TlsOptions};
 
 /// A key that uniquely identifies a group of interchangeable connections for pooling.
 ///

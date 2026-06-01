@@ -254,10 +254,6 @@ macro_rules! if_tokio_rt {
         #[cfg(all(feature = "tokio-rt", not(feature = "compio-rt")))]
         $($tt)*
     };
-    ($($item:item)*) => {$(
-        #[cfg(all(feature = "tokio-rt", not(feature = "compio-rt")))]
-        $item
-    )*};
 }
 
 macro_rules! if_compio_rt {
@@ -265,10 +261,6 @@ macro_rules! if_compio_rt {
         #[cfg(all(feature = "compio-rt", not(feature = "tokio-rt")))]
         $($tt)*
     };
-    ($($item:item)*) => {$(
-        #[cfg(all(feature = "compio-rt", not(feature = "tokio-rt")))]
-        $item
-    )*};
 }
 
 macro_rules! if_all_rt {
@@ -276,10 +268,6 @@ macro_rules! if_all_rt {
         #[cfg(all(feature = "tokio-rt", feature = "compio-rt"))]
         $($tt)*
     };
-    ($($item:item)*) => {$(
-        #[cfg(all(feature = "tokio-rt", feature = "compio-rt"))]
-        $item
-    )*};
 }
 
 macro_rules! if_no_rt {
@@ -287,10 +275,6 @@ macro_rules! if_no_rt {
         #[cfg(not(any(feature = "tokio-rt", feature = "compio-rt")))]
         $($tt)*
     };
-    ($($item:item)*) => {$(
-        #[cfg(not(any(feature = "tokio-rt", feature = "compio-rt")))]
-        $item
-    )*};
 }
 
 #[macro_use]

@@ -1,19 +1,5 @@
 //! Network connection types and utilities.
 
-pub mod conn;
-
-if_all_rt! {
-    pub use conn::tokio::NetConnector;
-}
-
-if_tokio_rt! {
-    pub use conn::tokio::NetConnector;
-}
-
-if_compio_rt! {
-    pub use conn::compio::NetConnector;
-}
-
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
 /// Options for configuring socket bind behavior for outbound connections.

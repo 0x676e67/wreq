@@ -9,7 +9,7 @@ use tower::{Layer, Service};
 use wreq_proto::{http1::Http1Options, http2::Http2Options};
 
 use crate::{
-    Error, config::RequestConfig, conn::net::SocketBindOptions, ext::UriExt, group::Group,
+    Error, config::RequestConfig, conn::opts::SocketBindOptions, ext::UriExt, group::Group,
     header::OrigHeaderMap, proxy::Matcher, tls::TlsOptions,
 };
 
