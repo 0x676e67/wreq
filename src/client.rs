@@ -56,7 +56,7 @@ use self::{
 #[cfg(feature = "cookies")]
 use crate::cookie;
 #[cfg(feature = "hickory-dns")]
-use crate::dns::hickory::HickoryDnsResolver;
+use crate::dns::hickory::HickoryResolver;
 use crate::{
     IntoUri, Method, Proxy,
     conn::{
@@ -487,7 +487,7 @@ impl ClientBuilder {
                 let mut resolver: Arc<dyn Resolve> = match config.dns_resolver {
                     Some(dns_resolver) => dns_resolver,
                     #[cfg(feature = "hickory-dns")]
-                    None if config.hickory_dns => Arc::new(HickoryDnsResolver::new()),
+                    None if config.hickory_dns => Arc::new(HickoryResolver::new()),
                     None => Arc::new(GaiResolver::new(config.executor.clone())),
                 };
 
