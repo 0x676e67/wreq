@@ -307,7 +307,7 @@ impl<R, S> Service<Arc<Path>> for HttpConnector<R, S>
 where
     R: InternalResolve + Clone + Send + Sync + 'static,
     R::Future: Send,
-    S: Connector + Clone,
+    S: Connect + Clone,
 {
     type Response = BoxConnection;
     type Error = ConnectError;
