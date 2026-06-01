@@ -28,10 +28,8 @@ use std::{
     time::{Duration, Instant},
 };
 
-#[cfg(unix)]
-use wreq_rt::rt::Connecting;
 use wreq_rt::rt::{
-    self, Connector, Resolver, Resolving,
+    self, Connecting, Connector, Resolver, Resolving,
     timer::{Sleep, Timer},
 };
 
