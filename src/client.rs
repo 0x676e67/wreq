@@ -490,7 +490,7 @@ impl ClientBuilder {
     pub fn build(self) -> crate::Result<Client> {
         #[cfg(all(feature = "tokio-rt", not(feature = "compio-rt")))]
         {
-            return self.build_with_runtime(wreq_rt::tokio::TokioRuntime::new());
+            return self.build_runtime(wreq_rt::tokio::TokioRuntime::new());
         }
 
         #[cfg(all(feature = "compio-rt", not(feature = "tokio-rt")))]
@@ -516,7 +516,7 @@ impl ClientBuilder {
     where
         E: Runtime<BoxSendFuture> + Send + Sync + 'static,
     {
-        self.build_with_runtime(runtime)
+        self.build_runtime(runtime)
     }
 
     /// Returns a [`Client`] that uses this [`ClientBuilder`] configuration.
@@ -525,7 +525,7 @@ impl ClientBuilder {
     ///
     /// This method fails if a TLS backend cannot be initialized, or the resolver
     /// cannot load the system configuration.
-    fn build_with_runtime<E>(self, runtime: E) -> crate::Result<Client>
+    fn build_runtime<E>(self, runtime: E) -> crate::Result<Client>
     where
         E: Runtime<BoxSendFuture> + Send + Sync + 'static,
     {
