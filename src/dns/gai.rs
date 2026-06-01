@@ -7,7 +7,7 @@ use super::{Addrs, Name, Resolve, Resolving};
 use crate::{error::BoxError, rt::RuntimeHandle};
 
 /// A resolver using blocking `getaddrinfo` calls in a threadpool.
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct GaiResolver(RuntimeHandle);
 
 impl GaiResolver {

@@ -130,8 +130,8 @@ macro_rules! e {
 impl HttpClient<(), ()> {
     /// Create a builder to configure a new [`HttpClient`].
     #[inline]
-    pub fn builder(rt: RuntimeHandle) -> Builder {
-        Builder::new(rt)
+    pub fn builder(runtime: RuntimeHandle) -> Builder {
+        Builder::new(runtime)
     }
 }
 

@@ -49,17 +49,6 @@ pub trait Runtime<Fut>:
 ///
 /// Besides spawning background work, it also forwards timer, connector, and
 /// dns resolver calls to the selected runtime.
-///
-/// # Default behavior
-///
-/// [`RuntimeHandle::default`] picks a backend from the active feature flags:
-///
-/// | Feature flags active            | Backend         |
-/// |---------------------------------|-----------------|
-/// | `tokio-rt` only                 | `TokioRuntime`  |
-/// | `compio-rt` only                | `CompioRuntime` |
-/// | both `tokio-rt` and `compio-rt` | `TokioRuntime`  |
-/// | neither                         | panic           |
 #[derive(Clone)]
 pub(crate) struct RuntimeHandle(Arc<dyn Runtime<BoxSendFuture>>);
 
@@ -142,28 +131,5 @@ impl Connector for RuntimeHandle {
     #[inline(always)]
     fn unix_connect(&self, path: Arc<Path>) -> Connecting {
         self.0.unix_connect(path)
-    }
-}
-
-impl Default for RuntimeHandle {
-    #[inline]
-    fn default() -> Self {
-        if_tokio_rt!(block: {
-            return RuntimeHandle(Arc::new(wreq_rt::tokio::TokioRuntime::new()))
-        });
-
-        if_compio_rt!(block: {
-            return RuntimeHandle(Arc::new(wreq_rt::compio::CompioRuntime::new()))
-        });
-
-        if_all_rt!(block: {
-            return RuntimeHandle(Arc::new(wreq_rt::tokio::TokioRuntime::new()))
-        });
-
-        if_no_rt!(block:{
-            panic!(
-                "no async runtime feature enabled; at least one of `tokio-rt` or `compio-rt` must be active"
-            );
-        });
     }
 }

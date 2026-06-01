@@ -223,7 +223,6 @@ struct Config {
     tls_options: Option<TlsOptions>,
     http1_options: Option<Http1Options>,
     http2_options: Option<Http2Options>,
-    executor: RuntimeHandle,
 }
 
 // ===== impl Client =====
@@ -246,7 +245,15 @@ impl Client {
     /// instead of panicking.
     #[inline]
     pub fn new() -> Client {
-        Client::builder().build().expect("Client::new()")
+        #[cfg(any(feature = "tokio-rt", feature = "compio-rt"))]
+        {
+            return Client::builder().build().expect("Client::new()");
+        }
+
+        #[cfg(not(any(feature = "tokio-rt", feature = "compio-rt")))]
+        panic!(
+            "no async runtime feature enabled; at least one of `tokio-rt` or `compio-rt` must be active"
+        );
     }
 
     /// Creates a [`ClientBuilder`] to configure a [`Client`].
@@ -308,7 +315,6 @@ impl Client {
                 tls_max_version: None,
                 tls_session_cache: None,
                 tls_options: None,
-                executor: RuntimeHandle::default(),
             },
         }
     }
@@ -469,7 +475,61 @@ impl ClientBuilder {
     ///
     /// This method fails if a TLS backend cannot be initialized, or the resolver
     /// cannot load the system configuration.
+    ///
+    ///
+    /// # Default behavior
+    ///
+    /// | Feature flags active            | Backend         |
+    /// |---------------------------------|-----------------|
+    /// | `tokio-rt` only                 | `TokioRuntime`  |
+    /// | `compio-rt` only                | `CompioRuntime` |
+    /// | both `tokio-rt` and `compio-rt` | `TokioRuntime`  |
+    /// | neither                         | panic           |
+    #[inline(always)]
+    #[cfg(any(feature = "tokio-rt", feature = "compio-rt"))]
     pub fn build(self) -> crate::Result<Client> {
+        #[cfg(all(feature = "tokio-rt", not(feature = "compio-rt")))]
+        {
+            return self.build_with_runtime(wreq_rt::tokio::TokioRuntime::new());
+        }
+
+        #[cfg(all(feature = "compio-rt", not(feature = "tokio-rt")))]
+        {
+            return self.build_runtime(wreq_rt::compio::CompioRuntime::new());
+        }
+
+        #[cfg(all(feature = "tokio-rt", feature = "compio-rt"))]
+        {
+            return self.build_runtime(wreq_rt::tokio::TokioRuntime::new());
+        }
+    }
+
+    /// Returns a [`Client`] that uses this [`ClientBuilder`] configuration.
+    ///
+    /// # Errors
+    ///
+    /// This method fails if a TLS backend cannot be initialized, or the resolver
+    /// cannot load the system configuration.
+    #[inline(always)]
+    #[cfg(not(any(feature = "tokio-rt", feature = "compio-rt")))]
+    pub fn build<E>(self, runtime: E) -> crate::Result<Client>
+    where
+        E: Runtime<BoxSendFuture> + Send + Sync + 'static,
+    {
+        self.build_with_runtime(runtime)
+    }
+
+    /// Returns a [`Client`] that uses this [`ClientBuilder`] configuration.
+    ///
+    /// # Errors
+    ///
+    /// This method fails if a TLS backend cannot be initialized, or the resolver
+    /// cannot load the system configuration.
+    fn build_with_runtime<E>(self, runtime: E) -> crate::Result<Client>
+    where
+        E: Runtime<BoxSendFuture> + Send + Sync + 'static,
+    {
+        let runtime = RuntimeHandle::new(runtime);
         let mut config = self.config;
 
         if let Some(err) = config.error {
@@ -488,7 +548,7 @@ impl ClientBuilder {
                     Some(dns_resolver) => dns_resolver,
                     #[cfg(feature = "hickory-dns")]
                     None if config.hickory_dns => Arc::new(HickoryResolver::new()),
-                    None => Arc::new(GaiResolver::new(config.executor.clone())),
+                    None => Arc::new(GaiResolver::new(runtime.clone())),
                 };
 
                 if !config.dns_overrides.is_empty() {
@@ -500,7 +560,7 @@ impl ClientBuilder {
                 DynResolver::new(resolver)
             };
 
-            let connector = Connector::builder(config.proxies, resolver, config.executor.clone())
+            let connector = Connector::builder(config.proxies, resolver, runtime.clone())
                 .timeout(config.connect_timeout)
                 .tls_info(config.tls_info)
                 .tcp_nodelay(config.tcp_nodelay)
@@ -560,7 +620,7 @@ impl ClientBuilder {
                 .build(config.tls_options, config.connector_layers)?;
 
             #[allow(unused_mut)]
-            let mut builder = HttpClient::builder(config.executor.clone());
+            let mut builder = HttpClient::builder(runtime.clone());
 
             #[cfg(feature = "cookies")]
             {
@@ -609,7 +669,7 @@ impl ClientBuilder {
 
             if config.layers.is_empty() {
                 let service = ServiceBuilder::new()
-                    .layer(TimeoutLayer::new(config.executor, config.timeout_options))
+                    .layer(TimeoutLayer::new(runtime, config.timeout_options))
                     .service(service);
 
                 Either::Left(service)
@@ -622,7 +682,7 @@ impl ClientBuilder {
                     });
 
                 let service = ServiceBuilder::new()
-                    .layer(TimeoutLayer::new(config.executor, config.timeout_options))
+                    .layer(TimeoutLayer::new(runtime, config.timeout_options))
                     .service(service)
                     .map_err(error::map_timeout_to_request_error);
 
@@ -631,18 +691,6 @@ impl ClientBuilder {
         };
 
         Ok(Client(Arc::new(client)))
-    }
-
-    // Runtime options
-
-    /// Provide a runtime to be used for spawning background tasks in client.
-    #[inline]
-    pub fn runtime<E>(mut self, executor: E) -> Self
-    where
-        E: Runtime<BoxSendFuture> + Send + Sync + 'static,
-    {
-        self.config.executor = RuntimeHandle::new(executor);
-        self
     }
 
     // Higher-level options

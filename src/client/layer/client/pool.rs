@@ -800,6 +800,8 @@ mod tests {
         time::Duration,
     };
 
+    use wreq_rt::tokio::TokioRuntime;
+
     use super::{Connecting, Key, Pool, Poolable, Reservation, WeakOpt};
     use crate::{rt::RuntimeHandle, sync::MutexGuard};
 
@@ -846,7 +848,7 @@ mod tests {
                 max_idle_per_host: max_idle,
                 max_pool_size: None,
             },
-            RuntimeHandle::default(),
+            RuntimeHandle::new(TokioRuntime::new()),
         )
     }
 
@@ -926,8 +928,8 @@ mod tests {
         assert!(pool.locked().idle.get(&key).is_none());
     }
 
-    #[test]
-    fn test_pool_max_idle_per_host() {
+    #[tokio::test]
+    async fn test_pool_max_idle_per_host() {
         let pool = pool_max_idle_no_timer(2);
         let key = host_key("foo");
 
@@ -959,7 +961,7 @@ mod tests {
                 max_idle_per_host: usize::MAX,
                 max_pool_size: None,
             },
-            RuntimeHandle::default(),
+            RuntimeHandle::new(TokioRuntime::new()),
         );
 
         let key = host_key("foo");
@@ -1078,7 +1080,7 @@ mod tests {
                 max_idle_per_host: usize::MAX,
                 max_pool_size: Some(NonZero::new(2).expect("max pool size")),
             },
-            RuntimeHandle::default(),
+            RuntimeHandle::new(TokioRuntime::new()),
         );
         let key1 = host_key("foo");
         let key2 = host_key("bar");

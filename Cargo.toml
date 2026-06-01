@@ -217,142 +217,150 @@ incremental = false
 name = "http1"
 path = "bench/http1.rs"
 harness = false
-required-features = ["stream"]
+required-features = ["tokio-rt", "stream"]
 
 [[bench]]
 name = "http2"
 path = "bench/http2.rs"
 harness = false
-required-features = ["stream"]
+required-features = ["tokio-rt", "stream"]
 
 [[bench]]
 name = "http1_over_tls"
 path = "bench/http1_over_tls.rs"
 harness = false
-required-features = ["stream"]
+required-features = ["tokio-rt", "stream"]
 
 [[bench]]
 name = "http2_over_tls"
 path = "bench/http2_over_tls.rs"
 harness = false
-required-features = ["stream"]
+required-features = ["tokio-rt", "stream"]
+
+[[test]]
+name = "badssl"
+path = "tests/badssl.rs"
+required-features = ["tokio-rt"]
 
 [[test]]
 name = "cookie"
 path = "tests/cookie.rs"
-required-features = ["cookies"]
+required-features = ["tokio-rt", "cookies"]
 
 [[test]]
 name = "gzip"
 path = "tests/gzip.rs"
-required-features = ["gzip", "stream"]
+required-features = ["tokio-rt", "gzip", "stream"]
 
 [[test]]
 name = "brotli"
 path = "tests/brotli.rs"
-required-features = ["brotli", "stream"]
+required-features = ["tokio-rt", "brotli", "stream"]
 
 [[test]]
 name = "zstd"
 path = "tests/zstd.rs"
-required-features = ["zstd", "stream"]
+required-features = ["tokio-rt", "zstd", "stream"]
 
 [[test]]
 name = "deflate"
 path = "tests/deflate.rs"
-required-features = ["deflate", "stream"]
+required-features = ["tokio-rt", "deflate", "stream"]
 
 [[test]]
 name = "multipart"
 path = "tests/multipart.rs"
-required-features = ["multipart", "stream"]
+required-features = ["tokio-rt", "multipart", "stream"]
 
 [[test]]
 name = "retry"
 path = "tests/retry.rs"
+required-features = ["tokio-rt"]
 
 [[example]]
 name = "json_dynamic"
 path = "examples/json_dynamic.rs"
-required-features = ["json"]
+required-features = ["tokio-rt", "json"]
 
 [[example]]
 name = "json_typed"
 path = "examples/json_typed.rs"
-required-features = ["json"]
+required-features = ["tokio-rt", "json"]
 
 [[example]]
 name = "tor_socks"
 path = "examples/tor_socks.rs"
-required-features = ["socks"]
+required-features = ["tokio-rt", "socks"]
 
 [[example]]
 name = "form"
 path = "examples/form.rs"
-required-features = ["form"]
+required-features = ["tokio-rt", "form"]
 
 [[example]]
 name = "connect_via_lower_priority_tokio_runtime"
 path = "examples/connect_via_lower_priority_tokio_runtime.rs"
-required-features = ["tracing"]
+required-features = ["tokio-rt", "tracing"]
 
 [[example]]
 name = "emulate"
 path = "examples/emulate.rs"
-required-features = ["gzip", "brotli", "zstd", "deflate", "tracing"]
+required-features = ["tokio-rt", "gzip", "brotli", "zstd", "deflate", "tracing"]
 
 [[example]]
 name = "cert_store"
 path = "examples/cert_store.rs"
-required-features = ["webpki-roots"]
+required-features = ["tokio-rt", "webpki-roots"]
 
 [[example]]
 name = "request_with_redirect"
 path = "examples/request_with_redirect.rs"
+required-features = ["tokio-rt"]
 
 [[example]]
 name = "request_with_version"
 path = "examples/request_with_version.rs"
+required-features = ["tokio-rt"]
 
 [[example]]
 name = "request_with_proxy"
 path = "examples/request_with_proxy.rs"
-required-features = ["socks"]
+required-features = ["tokio-rt", "socks"]
 
 [[example]]
 name = "request_with_emulate"
 path = "examples/request_with_emulate.rs"
-required-features = ["gzip", "brotli", "zstd", "deflate", "tracing"]
+required-features = ["tokio-rt", "gzip", "brotli", "zstd", "deflate", "tracing"]
 
 [[example]]
 name = "request_with_local_address"
 path = "examples/request_with_local_address.rs"
+required-features = ["tokio-rt"]
 
 [[example]]
 name = "request_with_interface"
 path = "examples/request_with_interface.rs"
+required-features = ["tokio-rt"]
 
 [[example]]
 name = "http1_websocket"
 path = "examples/http1_websocket.rs"
-required-features = ["ws", "futures-util/std"]
+required-features = ["tokio-rt", "ws", "futures-util/std"]
 
 [[example]]
 name = "http2_websocket"
 path = "examples/http2_websocket.rs"
-required-features = ["ws", "futures-util/std"]
+required-features = ["tokio-rt", "ws", "futures-util/std"]
 
 [[example]]
 name = "keylog"
 path = "examples/keylog.rs"
+required-features = ["tokio-rt"]
 
 [[example]]
 name = "unix_socket"
 path = "examples/unix_socket.rs"
-
-[[example]]
-name = "compio_rt"
-path = "examples/compio_rt.rs"
+required-features = ["tokio-rt"]
 
 [patch.crates-io]
 wreq-rt = { git = "https://github.com/0x676e67/wreq-proto", branch = "dns" }

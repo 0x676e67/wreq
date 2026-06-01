@@ -249,34 +249,6 @@
 //! [Proxy]: ./struct.Proxy.html
 //! [cargo-features]: https://doc.rust-lang.org/stable/cargo/reference/manifest.html#the-features-section
 
-macro_rules! if_tokio_rt {
-    (block: { $($tt:tt)* }) => {
-        #[cfg(all(feature = "tokio-rt", not(feature = "compio-rt")))]
-        $($tt)*
-    };
-}
-
-macro_rules! if_compio_rt {
-    (block: { $($tt:tt)* }) => {
-        #[cfg(all(feature = "compio-rt", not(feature = "tokio-rt")))]
-        $($tt)*
-    };
-}
-
-macro_rules! if_all_rt {
-    (block: { $($tt:tt)* }) => {
-        #[cfg(all(feature = "tokio-rt", feature = "compio-rt"))]
-        $($tt)*
-    };
-}
-
-macro_rules! if_no_rt {
-    (block: { $($tt:tt)* }) => {
-        #[cfg(not(any(feature = "tokio-rt", feature = "compio-rt")))]
-        $($tt)*
-    };
-}
-
 #[macro_use]
 mod trace;
 #[macro_use]
