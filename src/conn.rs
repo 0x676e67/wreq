@@ -34,12 +34,12 @@ use crate::{
     conn::http::HttpInfo,
     dns::DynResolver,
     proxy::matcher::Intercept,
-    rt::Executor,
+    rt::RuntimeHandle,
     tls::{AlpnProtocol, TlsInfo},
 };
 
 /// HTTP connector with dynamic DNS resolver.
-pub type HttpConnector = http::HttpConnector<DynResolver, Executor>;
+pub type HttpConnector = http::HttpConnector<DynResolver, RuntimeHandle>;
 
 /// Boxed connector service for establishing connections.
 pub type BoxedConnectorService = BoxCloneSyncService<Unnameable, Conn, BoxError>;

@@ -24,7 +24,7 @@ use crate::{
     error::{ProxyConnect, TimedOut, map_timeout_to_connector_error},
     ext::UriExt,
     proxy::{Intercepted, Matcher as ProxyMatcher, matcher::Intercept},
-    rt::Executor,
+    rt::RuntimeHandle,
     tls::{
         TlsOptions,
         conn::{
@@ -494,7 +494,7 @@ impl Connector {
     pub(crate) fn builder(
         proxies: Vec<ProxyMatcher>,
         resolver: DynResolver,
-        exec: Executor,
+        runtime: RuntimeHandle,
     ) -> Builder {
         Builder {
             inner: Inner {
@@ -505,7 +505,7 @@ impl Connector {
                 timeout: None,
                 #[cfg(feature = "socks")]
                 resolver: resolver.clone(),
-                http: HttpConnector::new(resolver, exec),
+                http: HttpConnector::new(resolver, runtime),
             },
             builder: TlsConnector::builder(),
         }

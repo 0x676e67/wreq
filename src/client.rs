@@ -71,7 +71,7 @@ use crate::{
     proxy::Matcher as ProxyMatcher,
     redirect::{self, FollowRedirectPolicy},
     retry,
-    rt::{BoxSendFuture, Executor, Runtime},
+    rt::{BoxSendFuture, Runtime, RuntimeHandle},
     tls::{
         AlpnProtocol, TlsOptions, TlsVersion,
         keylog::KeyLog,
@@ -223,7 +223,7 @@ struct Config {
     tls_options: Option<TlsOptions>,
     http1_options: Option<Http1Options>,
     http2_options: Option<Http2Options>,
-    executor: Executor,
+    executor: RuntimeHandle,
 }
 
 // ===== impl Client =====
@@ -308,7 +308,7 @@ impl Client {
                 tls_max_version: None,
                 tls_session_cache: None,
                 tls_options: None,
-                executor: Executor::default(),
+                executor: RuntimeHandle::default(),
             },
         }
     }
@@ -641,7 +641,7 @@ impl ClientBuilder {
     where
         E: Runtime<BoxSendFuture> + Send + Sync + 'static,
     {
-        self.config.executor = Executor::new(executor);
+        self.config.executor = RuntimeHandle::new(executor);
         self
     }
 

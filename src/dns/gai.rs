@@ -4,17 +4,17 @@ use tower::Service;
 use wreq_rt::rt::Resolver;
 
 use super::{Addrs, Name, Resolve, Resolving};
-use crate::{error::BoxError, rt::Executor};
+use crate::{error::BoxError, rt::RuntimeHandle};
 
 /// A resolver using blocking `getaddrinfo` calls in a threadpool.
 #[derive(Clone, Default)]
-pub struct GaiResolver(Executor);
+pub struct GaiResolver(RuntimeHandle);
 
 impl GaiResolver {
     /// Creates a new [`GaiResolver`].
     #[inline(always)]
-    pub fn new(exec: Executor) -> Self {
-        GaiResolver(exec)
+    pub fn new(runtime: RuntimeHandle) -> Self {
+        GaiResolver(runtime)
     }
 }
 

@@ -3,6 +3,7 @@ use std::{
     marker::PhantomData,
     net::{Ipv4Addr, Ipv6Addr, SocketAddr},
     pin::Pin,
+    sync::Arc,
     task::{self, Poll},
     time::Duration,
 };
@@ -15,7 +16,6 @@ use wreq_rt::rt::{BoxConnection, Connector, timer::Timer};
 use {
     futures_util::{FutureExt, TryFutureExt},
     std::path::Path,
-    std::sync::Arc,
 };
 
 use crate::{
@@ -299,6 +299,7 @@ where
     }
 }
 
+#[cfg(unix)]
 impl<R, S> Service<Arc<Path>> for HttpConnector<R, S>
 where
     R: InternalResolve + Clone + Send + Sync + 'static,

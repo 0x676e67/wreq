@@ -16,7 +16,7 @@ use self::{
     body::TimeoutBody,
     future::{ResponseBodyTimeoutFuture, ResponseFuture},
 };
-use crate::{config::RequestConfig, rt::Executor};
+use crate::{config::RequestConfig, rt::RuntimeHandle};
 
 /// Options for configuring timeouts.
 #[derive(Clone, Copy, Default)]
@@ -47,15 +47,15 @@ impl_request_config_value!(TimeoutOptions);
 // This layer allows you to set a total timeout and a read timeout for requests.
 #[derive(Clone)]
 pub struct TimeoutLayer {
-    exec: Executor,
+    runtime: RuntimeHandle,
     timeout: RequestConfig<TimeoutOptions>,
 }
 
 impl TimeoutLayer {
     /// Create a new [`TimeoutLayer`].
-    pub fn new(exec: Executor, options: TimeoutOptions) -> Self {
+    pub fn new(runtime: RuntimeHandle, options: TimeoutOptions) -> Self {
         TimeoutLayer {
-            exec,
+            runtime,
             timeout: RequestConfig::new(Some(options)),
         }
     }
@@ -68,7 +68,7 @@ impl<S> Layer<S> for TimeoutLayer {
     fn layer(&self, service: S) -> Self::Service {
         Timeout {
             inner: service,
-            exec: self.exec.clone(),
+            runtime: self.runtime.clone(),
             timeout: self.timeout,
         }
     }
@@ -78,7 +78,7 @@ impl<S> Layer<S> for TimeoutLayer {
 #[derive(Clone)]
 pub struct Timeout<T> {
     inner: T,
-    exec: Executor,
+    runtime: RuntimeHandle,
     timeout: RequestConfig<TimeoutOptions>,
 }
 
@@ -103,10 +103,10 @@ where
                 fut: self.inner.call(req),
                 total_timeout,
                 read_timeout,
-                exec: self.exec.clone(),
+                runtime: self.runtime.clone(),
             },
-            total_timeout: total_timeout.map(|timeout| self.exec.sleep(timeout)),
-            read_timeout: read_timeout.map(|timeout| self.exec.sleep(timeout)),
+            total_timeout: total_timeout.map(|timeout| self.runtime.sleep(timeout)),
+            read_timeout: read_timeout.map(|timeout| self.runtime.sleep(timeout)),
         }
     }
 }

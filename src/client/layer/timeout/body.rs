@@ -12,7 +12,7 @@ use wreq_rt::rt::timer::{Sleep, Timer as _};
 use crate::{
     Error,
     error::{BoxError, TimedOut},
-    rt::Executor,
+    rt::RuntimeHandle,
 };
 
 pin_project! {
@@ -62,7 +62,7 @@ pin_project! {
         sleep: Option<Pin<Box<dyn Sleep>>>,
         #[pin]
         body: B,
-        exec: Executor,
+        runtime: RuntimeHandle,
     }
 }
 
@@ -70,12 +70,12 @@ pin_project! {
 impl<B> TimeoutBody<B> {
     /// Creates a new [`TimeoutBody`] with no timeout.
     pub fn new(
-        exec: Executor,
+        runtime: RuntimeHandle,
         deadline: Option<Duration>,
         read_timeout: Option<Duration>,
         body: B,
     ) -> Self {
-        let deadline = deadline.map(|deadline| exec.sleep(deadline));
+        let deadline = deadline.map(|deadline| runtime.sleep(deadline));
         match (deadline, read_timeout) {
             (Some(total_timeout), Some(read_timeout)) => TimeoutBody::CombinedTimeout {
                 body: TotalTimeoutBody {
@@ -84,7 +84,7 @@ impl<B> TimeoutBody<B> {
                         timeout: read_timeout,
                         sleep: None,
                         body,
-                        exec,
+                        runtime,
                     },
                 },
             },
@@ -96,7 +96,7 @@ impl<B> TimeoutBody<B> {
                     timeout,
                     sleep: None,
                     body,
-                    exec,
+                    runtime,
                 },
             },
             (None, None) => TimeoutBody::Plain { body },
@@ -208,7 +208,7 @@ where
 
         // Error if the timeout has expired.
         if this.sleep.is_none() {
-            this.sleep.set(Some(this.exec.sleep(*this.timeout)));
+            this.sleep.set(Some(this.runtime.sleep(*this.timeout)));
         }
 
         // Error if the timeout has expired.

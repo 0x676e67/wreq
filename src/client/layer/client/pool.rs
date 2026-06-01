@@ -17,7 +17,7 @@ use lru::LruCache;
 use tokio::sync::oneshot;
 use wreq_rt::rt::{Executor as _, timer::Timer as _};
 
-use crate::{rt::Executor, sync::Mutex};
+use crate::{rt::RuntimeHandle, sync::Mutex};
 
 pub struct Pool<T, K: Key> {
     // If the pool is disabled, this is None.
@@ -90,8 +90,8 @@ struct PoolInner<T, K: Eq + Hash> {
     // A oneshot channel is used to allow the interval to be notified when
     // the Pool completely drops. That way, the interval can cancel immediately.
     idle_interval_ref: Option<oneshot::Sender<Infallible>>,
-    exec: Executor,
     timeout: Option<Duration>,
+    runtime: RuntimeHandle,
 }
 
 // This is because `Weak::new()` *allocates* space for `T`, even if it
@@ -112,7 +112,7 @@ impl Config {
 }
 
 impl<T, K: Key> Pool<T, K> {
-    pub fn new(config: Config, exec: Executor) -> Pool<T, K> {
+    pub fn new(config: Config, runtime: RuntimeHandle) -> Pool<T, K> {
         let inner = if config.is_enabled() {
             Some(Arc::new(Mutex::new(PoolInner {
                 connecting: HashSet::default(),
@@ -122,8 +122,8 @@ impl<T, K: Key> Pool<T, K> {
                 idle_interval_ref: None,
                 max_idle_per_host: config.max_idle_per_host,
                 waiters: HashMap::default(),
-                exec,
                 timeout: config.idle_timeout,
+                runtime,
             })))
         } else {
             None
@@ -293,7 +293,7 @@ impl<'a, T: Poolable + 'a, K: Debug> IdlePopper<'a, T, K> {
 
 impl<T: Poolable, K: Key> PoolInner<T, K> {
     fn now(&self) -> Instant {
-        self.exec.now()
+        self.runtime.now()
     }
 
     fn put(&mut self, key: &K, value: T, __pool_ref: &Arc<Mutex<PoolInner<T, K>>>) {
@@ -407,13 +407,13 @@ impl<T: Poolable, K: Key> PoolInner<T, K> {
         self.idle_interval_ref = Some(tx);
 
         let interval = IdleTask {
-            exec: self.exec.clone(),
+            runtime: self.runtime.clone(),
             duration: dur,
             pool: WeakOpt::downgrade(pool_ref),
             pool_drop_notifier: rx,
         };
 
-        self.exec.execute(interval.run());
+        self.runtime.execute(interval.run());
     }
 }
 
@@ -735,7 +735,7 @@ impl Expiration {
 }
 
 struct IdleTask<T, K: Key> {
-    exec: Executor,
+    runtime: RuntimeHandle,
     duration: Duration,
     pool: WeakOpt<Mutex<PoolInner<T, K>>>,
     // This allows the IdleTask to be notified as soon as the entire
@@ -748,7 +748,7 @@ impl<T: Poolable + 'static, K: Key> IdleTask<T, K> {
     async fn run(self) {
         use futures_util::future;
 
-        let mut sleep = self.exec.sleep_until(self.exec.now() + self.duration);
+        let mut sleep = self.runtime.sleep_until(self.runtime.now() + self.duration);
         let mut on_pool_drop = self.pool_drop_notifier;
         loop {
             match future::select(&mut on_pool_drop, &mut sleep).await {
@@ -764,8 +764,8 @@ impl<T: Poolable + 'static, K: Key> IdleTask<T, K> {
                         drop(inner);
                     }
 
-                    let deadline = self.exec.now() + self.duration;
-                    self.exec.reset(&mut sleep, deadline);
+                    let deadline = self.runtime.now() + self.duration;
+                    self.runtime.reset(&mut sleep, deadline);
                 }
             }
         }
@@ -801,7 +801,7 @@ mod tests {
     };
 
     use super::{Connecting, Key, Pool, Poolable, Reservation, WeakOpt};
-    use crate::{rt::Executor, sync::MutexGuard};
+    use crate::{rt::RuntimeHandle, sync::MutexGuard};
 
     #[derive(Clone, Debug, PartialEq, Eq, Hash)]
     struct KeyImpl(http::uri::Scheme, http::uri::Authority);
@@ -846,7 +846,7 @@ mod tests {
                 max_idle_per_host: max_idle,
                 max_pool_size: None,
             },
-            Executor::default(),
+            RuntimeHandle::default(),
         )
     }
 
@@ -959,7 +959,7 @@ mod tests {
                 max_idle_per_host: usize::MAX,
                 max_pool_size: None,
             },
-            Executor::default(),
+            RuntimeHandle::default(),
         );
 
         let key = host_key("foo");
@@ -1078,7 +1078,7 @@ mod tests {
                 max_idle_per_host: usize::MAX,
                 max_pool_size: Some(NonZero::new(2).expect("max pool size")),
             },
-            Executor::default(),
+            RuntimeHandle::default(),
         );
         let key1 = host_key("foo");
         let key2 = host_key("bar");
