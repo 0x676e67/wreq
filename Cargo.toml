@@ -351,8 +351,8 @@ name = "unix_socket"
 path = "examples/unix_socket.rs"
 
 [[example]]
-name = "rt"
-path = "examples/rt.rs"
+name = "compio_rt"
+path = "examples/compio_rt.rs"
 
 [patch.crates-io]
 wreq-rt = { git = "https://github.com/0x676e67/wreq-proto", branch = "dns" }
