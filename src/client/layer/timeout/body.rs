@@ -69,7 +69,7 @@ pin_project! {
 /// ==== impl TimeoutBody ====
 impl<B> TimeoutBody<B> {
     /// Creates a new [`TimeoutBody`] with no timeout.
-    pub fn new(
+    pub(super) fn new(
         runtime: RuntimeHandle,
         deadline: Option<Duration>,
         read_timeout: Option<Duration>,

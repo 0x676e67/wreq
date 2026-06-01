@@ -13,7 +13,7 @@ pub struct GaiResolver(RuntimeHandle);
 impl GaiResolver {
     /// Creates a new [`GaiResolver`].
     #[inline(always)]
-    pub fn new(runtime: RuntimeHandle) -> Self {
+    pub(crate) fn new(runtime: RuntimeHandle) -> Self {
         GaiResolver(runtime)
     }
 }

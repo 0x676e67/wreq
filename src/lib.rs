@@ -289,7 +289,6 @@ mod error;
 mod group;
 mod into_uri;
 mod proxy;
-mod rt;
 mod sync;
 mod util;
 
@@ -299,6 +298,7 @@ pub mod dns;
 pub mod header;
 pub mod redirect;
 pub mod retry;
+pub mod rt;
 pub mod tls;
 
 #[cfg(feature = "multipart")]

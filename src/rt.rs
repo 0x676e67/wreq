@@ -1,7 +1,8 @@
 //! Runtime glue for the client.
 //!
-//! This module defines [`Executor`], a small wrapper around the runtime traits
-//! the client needs for spawning tasks, sleeping, opening sockets, and DNS.
+//! This module defines [`RuntimeHandle`], a small wrapper around the runtime
+//! traits the client needs for spawning tasks, sleeping, opening sockets, and
+//! DNS.
 //!
 //! # Feature flags
 //!
@@ -11,7 +12,7 @@
 //! - `compio-rt` — uses [compio] as the underlying runtime.
 //!
 //! When both are enabled, `tokio-rt` wins. When neither is enabled,
-//! [`Executor::default`] panics.
+//! [`RuntimeHandle::default`] panics.
 //!
 //! [tokio]: https://docs.rs/tokio
 //! [compio]: https://docs.rs/compio
@@ -36,14 +37,9 @@ use wreq_rt::rt::{
 /// This is the concrete task type passed into [`Executor::execute`].
 pub type BoxSendFuture = Pin<Box<dyn Future<Output = ()> + Send>>;
 
-/// Runtime capabilities required by [`Executor`].
+/// Runtime capabilities required by [`RuntimeHandle`].
 pub trait Runtime<Fut>:
     Executor<Fut> + Timer + Connector + Resolver + Send + Sync + 'static
-{
-}
-
-impl<T, Fut> Runtime<Fut> for T where
-    T: Executor<Fut> + Timer + Connector + Resolver + Send + Sync + 'static
 {
 }
 
@@ -54,7 +50,7 @@ impl<T, Fut> Runtime<Fut> for T where
 ///
 /// # Default behavior
 ///
-/// [`Executor::default`] picks a backend from the active feature flags:
+/// [`RuntimeHandle::default`] picks a backend from the active feature flags:
 ///
 /// | Feature flags active            | Backend         |
 /// |---------------------------------|-----------------|
@@ -63,14 +59,23 @@ impl<T, Fut> Runtime<Fut> for T where
 /// | both `tokio-rt` and `compio-rt` | `TokioRuntime`  |
 /// | neither                         | panic           |
 #[derive(Clone)]
-pub struct RuntimeHandle(Arc<dyn Runtime<BoxSendFuture>>);
+pub(crate) struct RuntimeHandle(Arc<dyn Runtime<BoxSendFuture>>);
+
+// ===== impl Runtime =====
+
+impl<T, Fut> Runtime<Fut> for T where
+    T: Executor<Fut> + Timer + Connector + Resolver + Send + Sync + 'static
+{
+}
+
+// ===== impl RuntimeHandle =====
 
 impl RuntimeHandle {
-    /// Creates an [`Executor`] from a custom runtime.
+    /// Creates a [`RuntimeHandle`] from a custom runtime.
     #[inline]
-    pub fn new<E>(runtime: E) -> Self
+    pub fn new<R>(runtime: R) -> Self
     where
-        E: Runtime<BoxSendFuture>,
+        R: Runtime<BoxSendFuture>,
     {
         RuntimeHandle(Arc::new(runtime))
     }

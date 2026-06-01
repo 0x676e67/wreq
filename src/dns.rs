@@ -11,11 +11,9 @@ mod resolve;
 #[cfg(feature = "hickory-dns")]
 pub(crate) mod hickory;
 
-pub use self::{
-    gai::GaiResolver,
-    resolve::{Addrs, IntoResolve, Name, Resolve, Resolving},
-};
+pub use self::resolve::{Addrs, IntoResolve, Name, Resolve, Resolving};
 pub(crate) use self::{
+    gai::GaiResolver,
     resolve::{DnsResolverWithOverrides, DynResolver},
     sealed::{InternalResolve, resolve},
 };
