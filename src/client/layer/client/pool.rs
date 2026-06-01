@@ -390,10 +390,6 @@ impl<T: Poolable, K: Key> PoolInner<T, K> {
             return;
         }
 
-        // if self.exec.is_empty() {
-        //     return;
-        // }
-
         // While someone might want a shorter duration, and it will be respected
         // at checkout time, there's no need to wake up and proactively evict
         // faster than this.

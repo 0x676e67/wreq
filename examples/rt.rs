@@ -8,12 +8,13 @@ use wreq_rt::rt::compio::CompioRuntime;
 // `tokio = { version = "1", features = ["full"] }`
 #[compio::main]
 async fn main() {
-    Client::builder()
+    let client = Client::builder()
         .runtime(CompioRuntime::new())
         .build()
         .expect("build client");
 
-    let response = wreq::post("http://www.baidu.com")
+    let response = client
+        .post("http://www.baidu.com")
         .send()
         .await
         .expect("send");
