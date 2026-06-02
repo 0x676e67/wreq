@@ -293,7 +293,7 @@ where
                     Err(io::Error::new(io::ErrorKind::TimedOut, "connect timeout").into())
                 }
                 Either::Right((Ok(s), _)) => Ok(s),
-                Either::Right((Err(e), _)) => Err(e.into()),
+                Either::Right((Err(e), _)) => Err(e),
             },
             None => connect.await,
         }
