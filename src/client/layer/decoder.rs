@@ -70,8 +70,13 @@ impl<S> Layer<S> for DecompressionLayer {
 
     #[inline(always)]
     fn layer(&self, service: S) -> Self::Service {
+        let decoder = decompression::Decompression::new(service)
+            .no_br()
+            .no_deflate()
+            .no_gzip()
+            .no_zstd();
         Decompression(Some(Decompression::<S>::accept_in_place(
-            decompression::Decompression::new(service),
+            decoder,
             &self.accept,
         )))
     }
@@ -126,10 +131,10 @@ where
     }
 
     fn call(&mut self, req: Request<ReqBody>) -> Self::Future {
-        if let Some(accept) = RequestConfig::<AcceptEncoding>::get(req.extensions()) {
+        if let Some(accept_encoding) = RequestConfig::<AcceptEncoding>::get(req.extensions()) {
             if let Some(decoder) = self.0.take() {
                 self.0
-                    .replace(Decompression::accept_in_place(decoder, accept));
+                    .replace(Decompression::accept_in_place(decoder, accept_encoding));
             }
             debug_assert!(self.0.is_some());
         }
