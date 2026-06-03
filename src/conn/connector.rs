@@ -364,7 +364,7 @@ impl ConnectorService {
                     // Build a tunnel connector to establish the CONNECT tunnel.
                     let tunneled = {
                         let mut tunnel =
-                            proxy::tunnel::TunnelConnector::new(proxy_uri, connector.clone());
+                            proxy::tunnel::TunnelConnector::new(connector.clone(), proxy_uri);
 
                         // If the proxy requires basic authentication, add it to the tunnel.
                         if let Some(auth) = proxy.basic_auth() {
@@ -402,26 +402,22 @@ impl ConnectorService {
             #[cfg(unix)]
             Intercepted::Unix(unix_socket) => {
                 trace!("connecting via Unix socket: {:?}", unix_socket);
+                let mut connector = self.config.http.clone();
 
                 // If the target URI is HTTPS, establish a CONNECT tunnel over the Unix socket,
                 // then upgrade the tunneled stream to TLS.
                 if uri.is_https() {
-                    // Use a dummy HTTP URI so the HTTPS connector works over the Unix socket.
-                    let proxy_uri = http::Uri::from_static("http://localhost");
-
-                    // Build an HTTPS connector backed by the Unix socket transport.
-                    let mut connector = self.build_https_connector(true, &descriptor)?;
-
                     // The tunnel connector will first establish a CONNECT tunnel,
                     // then perform the TLS handshake over the tunneled stream.
                     let tunneled = {
                         let mut tunnel =
-                            proxy::tunnel::TunnelConnector::new(proxy_uri, connector.clone());
+                            proxy::tunnel::TunnelConnector::new(connector, unix_socket);
                         tunnel.call(uri).await?
                     };
 
                     // Wrap the established tunneled stream with TLS.
-                    let io = connector
+                    let io = self
+                        .build_https_connector(true, &descriptor)?
                         .call(EstablishedConn::new(tunneled, descriptor))
                         .await?;
 
@@ -429,9 +425,12 @@ impl ConnectorService {
                 }
 
                 // For plain HTTP, connect via the unified HttpConnector.
-                let mut http = self.config.http.clone();
-                let conn = http.call(unix_socket).await?;
-                self.stream_with_proxy(MaybeHttpsStream::Http(conn), None)
+                let io = connector
+                    .call(unix_socket)
+                    .await
+                    .map(MaybeHttpsStream::Http)?;
+
+                self.stream_with_proxy(io, None)
             }
         }
     }
