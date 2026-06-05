@@ -1,5 +1,6 @@
 pub mod bench;
 pub mod client;
+pub mod rt;
 pub mod server;
 
 use std::fmt;

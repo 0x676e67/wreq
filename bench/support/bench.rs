@@ -54,6 +54,7 @@ pub fn bench(
                 bench_clients(
                     &mut group,
                     current_thread_runtime,
+                    true,
                     addr,
                     tls,
                     http_version,
@@ -74,6 +75,7 @@ pub fn bench(
                 bench_clients(
                     &mut group,
                     multi_thread_runtime,
+                    false,
                     addr,
                     tls,
                     http_version,

@@ -2,10 +2,11 @@ use std::{convert::Infallible, net::SocketAddr, sync::Arc};
 
 use bytes::Bytes;
 use criterion::{BenchmarkGroup, measurement::WallTime};
+use futures::{StreamExt, TryStreamExt};
 use http_body_util::BodyExt;
 use tokio::{runtime::Runtime, sync::Semaphore};
 
-use super::{BoxError, HttpVersion, Tls};
+use super::{BoxError, HttpVersion, Tls, rt::CompioBenchExecutor};
 
 fn create_wreq_client(tls: Tls, http_version: HttpVersion) -> Result<wreq::Client, BoxError> {
     let builder = wreq::Client::builder()
@@ -35,6 +36,20 @@ fn create_reqwest_client(tls: Tls, http_version: HttpVersion) -> Result<reqwest:
     Ok(builder.build()?)
 }
 
+fn create_cyper_client(tls: Tls, http_version: HttpVersion) -> Result<cyper::Client, BoxError> {
+    let builder = cyper::Client::builder()
+        .no_proxy()
+        .redirect(cyper::redirect::Policy::none())
+        .danger_accept_invalid_certs(matches!(tls, Tls::Enabled));
+
+    let builder = match http_version {
+        HttpVersion::Http1 => builder,
+        HttpVersion::Http2 => builder.http2_prior_knowledge(),
+    };
+
+    Ok(builder.build()?)
+}
+
 async fn wreq_body_assert(mut response: wreq::Response, expected_body_size: usize) {
     let mut body_size = 0;
     while let Some(Ok(chunk)) = response.frame().await {
@@ -51,6 +66,17 @@ async fn wreq_body_assert(mut response: wreq::Response, expected_body_size: usiz
 async fn reqwest_body_assert(mut response: reqwest::Response, expected_body_size: usize) {
     let mut body_size = 0;
     while let Ok(Some(chunk)) = response.chunk().await {
+        body_size += chunk.len();
+    }
+    assert!(
+        body_size == expected_body_size,
+        "Unexpected response body: got {body_size} bytes, expected {expected_body_size} bytes"
+    );
+}
+
+async fn cyper_body_assert(mut response: cyper::Response, expected_body_size: usize) {
+    let mut body_size = 0;
+    while let Some(Ok(chunk)) = response.next().await {
         body_size += chunk.len();
     }
     assert!(
@@ -91,6 +117,16 @@ fn reqwest_body(stream: bool, (body, chunk_size): (&'static [u8], usize)) -> req
         reqwest::Body::wrap_stream(stream)
     } else {
         reqwest::Body::from(body)
+    }
+}
+
+#[inline]
+fn cyper_body(stream: bool, (body, chunk_size): (&'static [u8], usize)) -> cyper::Body {
+    if stream {
+        let stream = stream_from_bytes(body, chunk_size).map_err(|never| match never {});
+        cyper::Body::stream(stream)
+    } else {
+        cyper::Body::from(body)
     }
 }
 
@@ -158,10 +194,44 @@ async fn reqwest_requests_concurrent(
     futures_util::future::join_all(handles).await;
 }
 
+async fn cyper_requests_concurrent(
+    client: &cyper::Client,
+    url: &str,
+    num_requests: usize,
+    concurrent_limit: usize,
+    body: (&'static [u8], usize),
+    stream: bool,
+) {
+    let semaphore = Arc::new(Semaphore::new(concurrent_limit));
+    let mut handles = Vec::with_capacity(num_requests);
+    for _ in 0..num_requests {
+        let client = client.clone();
+        let url = url.to_string();
+        let semaphore = semaphore.clone();
+        let fut = async move {
+            let _permit = semaphore
+                .acquire()
+                .await
+                .expect("Semaphore should be acquirable");
+            let response = client
+                .post(url)
+                .expect("Unexpected request failure")
+                .body(cyper_body(stream, body))
+                .send()
+                .await
+                .expect("Unexpected request failure");
+            cyper_body_assert(response, body.0.len()).await;
+        };
+        handles.push(compio::runtime::spawn(fut));
+    }
+    futures_util::future::join_all(handles).await;
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn bench_clients(
     group: &mut BenchmarkGroup<'_, WallTime>,
     rt: fn() -> Runtime,
+    include_cyper: bool,
     addr: SocketAddr,
     tls: Tls,
     http_version: HttpVersion,
@@ -211,6 +281,23 @@ pub fn bench_clients(
             })
         });
         ::std::mem::drop(client);
+
+        if include_cyper {
+            let compio_executor = CompioBenchExecutor::new()?;
+            let client = create_cyper_client(tls, http_version)?;
+            group.bench_function(make_benchmark_label::<cyper::Client>(stream), |b| {
+                b.to_async(&compio_executor).iter(|| {
+                    cyper_requests_concurrent(
+                        &client,
+                        &url,
+                        num_requests,
+                        concurrent_limit,
+                        body,
+                        stream,
+                    )
+                })
+            });
+        }
     }
 
     Ok(())
