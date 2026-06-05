@@ -1,8 +1,10 @@
 use criterion::Criterion;
 
 use crate::support::{
-    BoxError, HttpVersion, Tls, client::bench_clients, current_thread_runtime,
-    multi_thread_runtime, server::with_server,
+    BoxError, HttpVersion, Tls,
+    client::bench_clients,
+    rt::{current_thread_runtime, multi_thread_runtime},
+    server::with_server,
 };
 
 pub const CURRENT_THREAD_LABEL: &str = "current_thread";
