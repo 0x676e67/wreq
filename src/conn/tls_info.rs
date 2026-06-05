@@ -1,6 +1,5 @@
 use bytes::Bytes;
 use tokio_btls::SslStream;
-use wreq_rt::conn::BoxConnection;
 
 use crate::tls::{TlsInfo, conn::MaybeHttpsStream};
 
@@ -45,4 +44,4 @@ impl<T: TlsInfoFactory> TlsInfoFactory for MaybeHttpsStream<T> {
     }
 }
 
-impl TlsInfoFactory for BoxConnection {}
+impl TlsInfoFactory for wreq_rt::BoxConnection {}

@@ -4,13 +4,14 @@ pub mod body;
 mod future;
 
 use std::{
+    sync::Arc,
     task::{Context, Poll},
     time::Duration,
 };
 
 use http::{Request, Response};
 use tower::{BoxError, Layer, Service};
-use wreq_rt::timer::Timer as _;
+use wreq_rt::Timer;
 
 use self::{
     body::TimeoutBody,
@@ -47,7 +48,7 @@ impl_request_config_value!(TimeoutOptions);
 // This layer allows you to set a total timeout and a read timeout for requests.
 #[derive(Clone)]
 pub struct TimeoutLayer {
-    runtime: RuntimeHandle,
+    timer: Arc<dyn Timer>,
     timeout: RequestConfig<TimeoutOptions>,
 }
 
@@ -55,7 +56,7 @@ impl TimeoutLayer {
     /// Create a new [`TimeoutLayer`].
     pub fn new(runtime: RuntimeHandle, options: TimeoutOptions) -> Self {
         TimeoutLayer {
-            runtime,
+            timer: runtime.timer(),
             timeout: RequestConfig::new(Some(options)),
         }
     }
@@ -68,7 +69,7 @@ impl<S> Layer<S> for TimeoutLayer {
     fn layer(&self, service: S) -> Self::Service {
         Timeout {
             inner: service,
-            runtime: self.runtime.clone(),
+            timer: self.timer.clone(),
             timeout: self.timeout,
         }
     }
@@ -78,7 +79,7 @@ impl<S> Layer<S> for TimeoutLayer {
 #[derive(Clone)]
 pub struct Timeout<T> {
     inner: T,
-    runtime: RuntimeHandle,
+    timer: Arc<dyn Timer>,
     timeout: RequestConfig<TimeoutOptions>,
 }
 
@@ -98,15 +99,16 @@ where
     #[inline(always)]
     fn call(&mut self, req: Request<ReqBody>) -> Self::Future {
         let (total_timeout, read_timeout) = fetch_timeout_options(&self.timeout, req.extensions());
+        let timer = self.timer.clone();
         ResponseFuture {
+            total_timeout: total_timeout.map(|timeout| timer.sleep(timeout)),
+            read_timeout: read_timeout.map(|timeout| timer.sleep(timeout)),
             fut: ResponseBodyTimeoutFuture {
                 fut: self.inner.call(req),
                 total_timeout,
                 read_timeout,
-                runtime: self.runtime.clone(),
+                timer,
             },
-            total_timeout: total_timeout.map(|timeout| self.runtime.sleep(timeout)),
-            read_timeout: read_timeout.map(|timeout| self.runtime.sleep(timeout)),
         }
     }
 }

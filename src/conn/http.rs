@@ -11,10 +11,7 @@ use std::{
 use http::uri::{Scheme, Uri};
 use pin_project_lite::pin_project;
 use tower::Service;
-use wreq_rt::{
-    conn::{BoxConnection, Connect},
-    timer::Timer,
-};
+use wreq_rt::{BoxConnection, Connect, Timer};
 #[cfg(unix)]
 use {
     futures_util::{FutureExt, TryFutureExt},

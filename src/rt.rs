@@ -27,12 +27,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use wreq_rt::{
-    Executor,
-    conn::{Connect, Connecting},
-    dns::{DnsResolver, Resolving},
-    timer::{Sleep, Timer},
-};
+use wreq_rt::{Connect, Connecting, DnsResolver, Executor, Resolving, Sleep, Timer};
 
 /// A boxed `Send` future that resolves to `()`.
 ///
@@ -49,7 +44,7 @@ pub trait Runtime<Fut>:
 ///
 /// Besides spawning background work, it also forwards timer, connector, and
 /// dns resolver calls to the selected runtime.
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub(crate) struct RuntimeHandle(Arc<dyn Runtime<BoxSendFuture>>);
 
 // ===== impl Runtime =====
@@ -64,11 +59,16 @@ impl<T, Fut> Runtime<Fut> for T where
 impl RuntimeHandle {
     /// Creates a [`RuntimeHandle`] from a custom runtime.
     #[inline]
-    pub fn new<R>(runtime: R) -> Self
+    pub(crate) fn new<R>(runtime: R) -> Self
     where
         R: Runtime<BoxSendFuture>,
     {
         RuntimeHandle(Arc::new(runtime))
+    }
+
+    #[inline]
+    pub(crate) fn timer(&self) -> Arc<dyn Timer> {
+        self.0.clone()
     }
 }
 

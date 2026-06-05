@@ -1,18 +1,18 @@
 use std::{
     future::Future,
     pin::Pin,
+    sync::Arc,
     task::{Context, Poll, ready},
     time::Duration,
 };
 
 use http_body::Body;
 use pin_project_lite::pin_project;
-use wreq_rt::timer::{Sleep, Timer as _};
+use wreq_rt::{Sleep, Timer};
 
 use crate::{
     Error,
     error::{BoxError, TimedOut},
-    rt::RuntimeHandle,
 };
 
 pin_project! {
@@ -62,7 +62,7 @@ pin_project! {
         sleep: Option<Pin<Box<dyn Sleep>>>,
         #[pin]
         body: B,
-        runtime: RuntimeHandle,
+        timer: Arc<dyn Timer>,
     }
 }
 
@@ -70,12 +70,12 @@ pin_project! {
 impl<B> TimeoutBody<B> {
     /// Creates a new [`TimeoutBody`] with no timeout.
     pub(super) fn new(
-        runtime: RuntimeHandle,
+        timer: Arc<dyn Timer>,
         deadline: Option<Duration>,
         read_timeout: Option<Duration>,
         body: B,
     ) -> Self {
-        let deadline = deadline.map(|deadline| runtime.sleep(deadline));
+        let deadline = deadline.map(|deadline| timer.sleep(deadline));
         match (deadline, read_timeout) {
             (Some(total_timeout), Some(read_timeout)) => TimeoutBody::CombinedTimeout {
                 body: TotalTimeoutBody {
@@ -84,7 +84,7 @@ impl<B> TimeoutBody<B> {
                         timeout: read_timeout,
                         sleep: None,
                         body,
-                        runtime,
+                        timer,
                     },
                 },
             },
@@ -96,7 +96,7 @@ impl<B> TimeoutBody<B> {
                     timeout,
                     sleep: None,
                     body,
-                    runtime,
+                    timer,
                 },
             },
             (None, None) => TimeoutBody::Plain { body },
@@ -208,7 +208,7 @@ where
 
         // Error if the timeout has expired.
         if this.sleep.is_none() {
-            this.sleep.set(Some(this.runtime.sleep(*this.timeout)));
+            this.sleep.set(Some(this.timer.sleep(*this.timeout)));
         }
 
         // Error if the timeout has expired.

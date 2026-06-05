@@ -28,7 +28,6 @@ use tower::{
     BoxError,
     util::{BoxCloneSyncService, BoxCloneSyncServiceLayer},
 };
-use wreq_rt::conn::BoxConnection;
 
 use crate::{
     conn::http::HttpInfo,
@@ -301,7 +300,7 @@ where
     }
 }
 
-impl Connection for BoxConnection {
+impl Connection for wreq_rt::BoxConnection {
     #[inline]
     fn connected(&self) -> Connected {
         let connected = Connected::new();

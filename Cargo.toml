@@ -360,5 +360,7 @@ path = "examples/unix_socket.rs"
 required-features = ["tokio-rt"]
 
 [patch.crates-io]
-wreq-rt = { git = "https://github.com/0x676e67/wreq-proto", branch = "dns" }
-wreq-proto = { git = "https://github.com/0x676e67/wreq-proto", branch = "dns" }
+# wreq-rt = { git = "https://github.com/0x676e67/wreq-proto", branch = "dns" }
+# wreq-proto = { git = "https://github.com/0x676e67/wreq-proto", branch = "dns" }
+wreq-rt = { path = "../wreq-proto/wreq-rt" }
+wreq-proto = { path = "../wreq-proto/wreq-proto" }

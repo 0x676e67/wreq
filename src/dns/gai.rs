@@ -1,7 +1,7 @@
 use std::task::{self, Poll};
 
 use tower::Service;
-use wreq_rt::dns::DnsResolver;
+use wreq_rt::DnsResolver;
 
 use super::{Addrs, Name, Resolve, Resolving};
 use crate::{error::BoxError, rt::RuntimeHandle};

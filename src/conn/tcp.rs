@@ -13,10 +13,7 @@ use std::{
 
 use futures_util::future::Either;
 use socket2::TcpKeepalive;
-use wreq_rt::{
-    conn::{BoxConnection, Connect},
-    timer::{Sleep, Timer},
-};
+use wreq_rt::{BoxConnection, Connect, Sleep, Timer};
 
 use crate::{conn::opts::SocketBindOptions, dns, error::BoxError};
 
