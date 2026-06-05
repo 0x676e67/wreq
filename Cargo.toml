@@ -202,6 +202,7 @@ zstd = "0.13.3"
 sysinfo = { version = "0.39.1", default-features = false, features = ["system"] }
 criterion = { version = "0.8.2", features = ["async_tokio"] }
 reqwest = { version = "0.13.3", default-features = false, features = ["rustls", "stream", "http2"] }
+cyper = { version = "0.9.0",  default-features = false, features = ["rustls", "stream"] }
 
 [profile.release]
 codegen-units = 1
