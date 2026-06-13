@@ -1,18 +1,18 @@
 use std::{
     future::Future,
     pin::Pin,
+    sync::Arc,
     task::{Context, Poll, ready},
     time::Duration,
 };
 
 use http_body::Body;
 use pin_project_lite::pin_project;
-use wreq_proto::rt::{Sleep, Timer as _};
+use wreq_rt::{Sleep, Timer};
 
 use crate::{
     Error,
     error::{BoxError, TimedOut},
-    rt::Timer,
 };
 
 pin_project! {
@@ -62,15 +62,15 @@ pin_project! {
         sleep: Option<Pin<Box<dyn Sleep>>>,
         #[pin]
         body: B,
-        timer: Timer,
+        timer: Arc<dyn Timer>,
     }
 }
 
 /// ==== impl TimeoutBody ====
 impl<B> TimeoutBody<B> {
     /// Creates a new [`TimeoutBody`] with no timeout.
-    pub fn new(
-        timer: Timer,
+    pub(super) fn new(
+        timer: Arc<dyn Timer>,
         deadline: Option<Duration>,
         read_timeout: Option<Duration>,
         body: B,

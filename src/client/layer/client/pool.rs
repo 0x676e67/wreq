@@ -15,12 +15,9 @@ use std::{
 
 use lru::LruCache;
 use tokio::sync::oneshot;
-use wreq_proto::rt::{Executor as _, Timer as _};
+use wreq_rt::{Executor as _, Timer as _};
 
-use crate::{
-    rt::{Executor, Timer},
-    sync::Mutex,
-};
+use crate::{rt::RuntimeHandle, sync::Mutex};
 
 pub struct Pool<T, K: Key> {
     // If the pool is disabled, this is None.
@@ -93,9 +90,8 @@ struct PoolInner<T, K: Eq + Hash> {
     // A oneshot channel is used to allow the interval to be notified when
     // the Pool completely drops. That way, the interval can cancel immediately.
     idle_interval_ref: Option<oneshot::Sender<Infallible>>,
-    exec: Executor,
-    timer: Timer,
     timeout: Option<Duration>,
+    runtime: RuntimeHandle,
 }
 
 // This is because `Weak::new()` *allocates* space for `T`, even if it
@@ -116,7 +112,7 @@ impl Config {
 }
 
 impl<T, K: Key> Pool<T, K> {
-    pub fn new(config: Config, exec: Executor, timer: Timer) -> Pool<T, K> {
+    pub fn new(config: Config, runtime: RuntimeHandle) -> Pool<T, K> {
         let inner = if config.is_enabled() {
             Some(Arc::new(Mutex::new(PoolInner {
                 connecting: HashSet::default(),
@@ -126,9 +122,8 @@ impl<T, K: Key> Pool<T, K> {
                 idle_interval_ref: None,
                 max_idle_per_host: config.max_idle_per_host,
                 waiters: HashMap::default(),
-                exec,
-                timer,
                 timeout: config.idle_timeout,
+                runtime,
             })))
         } else {
             None
@@ -298,7 +293,7 @@ impl<'a, T: Poolable + 'a, K: Debug> IdlePopper<'a, T, K> {
 
 impl<T: Poolable, K: Key> PoolInner<T, K> {
     fn now(&self) -> Instant {
-        self.timer.now()
+        self.runtime.now()
     }
 
     fn put(&mut self, key: &K, value: T, __pool_ref: &Arc<Mutex<PoolInner<T, K>>>) {
@@ -395,10 +390,6 @@ impl<T: Poolable, K: Key> PoolInner<T, K> {
             return;
         }
 
-        if self.timer.is_empty() {
-            return;
-        }
-
         // While someone might want a shorter duration, and it will be respected
         // at checkout time, there's no need to wake up and proactively evict
         // faster than this.
@@ -416,13 +407,13 @@ impl<T: Poolable, K: Key> PoolInner<T, K> {
         self.idle_interval_ref = Some(tx);
 
         let interval = IdleTask {
-            timer: self.timer.clone(),
+            runtime: self.runtime.clone(),
             duration: dur,
             pool: WeakOpt::downgrade(pool_ref),
             pool_drop_notifier: rx,
         };
 
-        self.exec.execute(interval.run());
+        self.runtime.execute(interval.run());
     }
 }
 
@@ -744,7 +735,7 @@ impl Expiration {
 }
 
 struct IdleTask<T, K: Key> {
-    timer: Timer,
+    runtime: RuntimeHandle,
     duration: Duration,
     pool: WeakOpt<Mutex<PoolInner<T, K>>>,
     // This allows the IdleTask to be notified as soon as the entire
@@ -757,7 +748,7 @@ impl<T: Poolable + 'static, K: Key> IdleTask<T, K> {
     async fn run(self) {
         use futures_util::future;
 
-        let mut sleep = self.timer.sleep_until(self.timer.now() + self.duration);
+        let mut sleep = self.runtime.sleep_until(self.runtime.now() + self.duration);
         let mut on_pool_drop = self.pool_drop_notifier;
         loop {
             match future::select(&mut on_pool_drop, &mut sleep).await {
@@ -773,8 +764,8 @@ impl<T: Poolable + 'static, K: Key> IdleTask<T, K> {
                         drop(inner);
                     }
 
-                    let deadline = self.timer.now() + self.duration;
-                    self.timer.reset(&mut sleep, deadline);
+                    let deadline = self.runtime.now() + self.duration;
+                    self.runtime.reset(&mut sleep, deadline);
                 }
             }
         }
@@ -809,11 +800,10 @@ mod tests {
         time::Duration,
     };
 
+    use wreq_rt::tokio::TokioRuntime;
+
     use super::{Connecting, Key, Pool, Poolable, Reservation, WeakOpt};
-    use crate::{
-        rt::{Executor, Timer},
-        sync::MutexGuard,
-    };
+    use crate::{rt::RuntimeHandle, sync::MutexGuard};
 
     #[derive(Clone, Debug, PartialEq, Eq, Hash)]
     struct KeyImpl(http::uri::Scheme, http::uri::Authority);
@@ -858,8 +848,7 @@ mod tests {
                 max_idle_per_host: max_idle,
                 max_pool_size: None,
             },
-            Executor::default(),
-            Timer::empty(),
+            RuntimeHandle::new(TokioRuntime::new()),
         )
     }
 
@@ -939,8 +928,8 @@ mod tests {
         assert!(pool.locked().idle.get(&key).is_none());
     }
 
-    #[test]
-    fn test_pool_max_idle_per_host() {
+    #[tokio::test]
+    async fn test_pool_max_idle_per_host() {
         let pool = pool_max_idle_no_timer(2);
         let key = host_key("foo");
 
@@ -972,8 +961,7 @@ mod tests {
                 max_idle_per_host: usize::MAX,
                 max_pool_size: None,
             },
-            Executor::default(),
-            Timer::default(),
+            RuntimeHandle::new(TokioRuntime::new()),
         );
 
         let key = host_key("foo");
@@ -1092,8 +1080,7 @@ mod tests {
                 max_idle_per_host: usize::MAX,
                 max_pool_size: Some(NonZero::new(2).expect("max pool size")),
             },
-            Executor::default(),
-            Timer::default(),
+            RuntimeHandle::new(TokioRuntime::new()),
         );
         let key1 = host_key("foo");
         let key2 = host_key("bar");

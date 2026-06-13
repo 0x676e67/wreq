@@ -11,21 +11,19 @@ use tokio_btls::SslStream;
 use tower::{
     BoxError, Service, ServiceBuilder, ServiceExt,
     timeout::TimeoutLayer,
-    util::{BoxCloneSyncService, MapRequestLayer},
+    util::{BoxCloneSyncService, Either, MapRequestLayer},
 };
 
-#[cfg(unix)]
-use super::net::UnixConnector;
 use super::{
     AsyncConnWithInfo, BoxedConnectorLayer, BoxedConnectorService, Conn, Connection, HttpConnector,
-    TlsConn, TlsInfoFactory, Unnameable, descriptor::ConnectionDescriptor, http::HttpConnect,
-    net::TcpConnector, proxy, verbose::Verbose,
+    TlsConn, TlsInfoFactory, Unnameable, descriptor::ConnectionDescriptor, proxy, verbose::Verbose,
 };
 use crate::{
     dns::DynResolver,
     error::{ProxyConnect, TimedOut, map_timeout_to_connector_error},
     ext::UriExt,
     proxy::{Intercepted, Matcher as ProxyMatcher, matcher::Intercept},
+    rt::RuntimeHandle,
     tls::{
         TlsOptions,
         conn::{
@@ -36,9 +34,15 @@ use crate::{
 
 type Connecting = Pin<Box<dyn Future<Output = Result<Conn, BoxError>> + Send>>;
 
-/// Configuration for the connector service.
+/// Builder for `Connector`.
+pub struct Builder {
+    inner: Inner,
+    builder: TlsConnectorBuilder,
+}
+
+/// Connector internal configuration and state.
 #[derive(Clone)]
-struct Config {
+struct Inner {
     proxies: Arc<Vec<ProxyMatcher>>,
     verbose: Verbose,
     nodelay: bool,
@@ -48,51 +52,39 @@ struct Config {
     /// This lets us avoid an extra `Box::pin` indirection layer
     /// since `tokio::time::Timeout` is `Unpin`
     timeout: Option<Duration>,
-}
-
-/// Builder for `Connector`.
-pub struct ConnectorBuilder {
-    config: Config,
     #[cfg(feature = "socks")]
     resolver: DynResolver,
     http: HttpConnector,
-    builder: TlsConnectorBuilder,
-}
-
-/// Connector service that establishes connections.
-#[derive(Clone)]
-pub enum Connector {
-    Simple(ConnectorService),
-    WithLayers(BoxedConnectorService),
 }
 
 /// Service that establishes connections to HTTP servers.
 #[derive(Clone)]
 pub struct ConnectorService {
-    config: Config,
-    #[cfg(feature = "socks")]
-    resolver: DynResolver,
+    config: Inner,
     tls: TlsConnector,
-    http: HttpConnector,
     builder: Arc<TlsConnectorBuilder>,
 }
 
+/// Connector service that establishes connections.
+#[derive(Clone)]
+pub struct Connector(Either<ConnectorService, BoxedConnectorService>);
+
 // ===== impl ConnectorBuilder =====
 
-impl ConnectorBuilder {
+impl Builder {
     /// Set the HTTP connector to use.
     #[inline]
-    pub fn with_http<F>(mut self, call: F) -> ConnectorBuilder
+    pub fn with_http<F>(mut self, call: F) -> Builder
     where
         F: FnOnce(&mut HttpConnector),
     {
-        call(&mut self.http);
+        call(&mut self.inner.http);
         self
     }
 
     /// Set the TLS connector builder to use.
     #[inline]
-    pub fn with_tls<F>(mut self, call: F) -> ConnectorBuilder
+    pub fn with_tls<F>(mut self, call: F) -> Builder
     where
         F: FnOnce(TlsConnectorBuilder) -> TlsConnectorBuilder,
     {
@@ -105,29 +97,29 @@ impl ConnectorBuilder {
     /// If a domain resolves to multiple IP addresses, the timeout will be
     /// evenly divided across them.
     #[inline]
-    pub fn timeout(mut self, timeout: Option<Duration>) -> ConnectorBuilder {
-        self.config.timeout = timeout;
+    pub fn timeout(mut self, timeout: Option<Duration>) -> Builder {
+        self.inner.timeout = timeout;
         self
     }
 
     /// Set connecting verbose mode.
     #[inline]
-    pub fn verbose(mut self, enabled: bool) -> ConnectorBuilder {
-        self.config.verbose.0 = enabled;
+    pub fn verbose(mut self, enabled: bool) -> Builder {
+        self.inner.verbose.0 = enabled;
         self
     }
 
     /// Sets the TLS info flag.
     #[inline]
-    pub fn tls_info(mut self, enabled: bool) -> ConnectorBuilder {
-        self.config.tls_info = enabled;
+    pub fn tls_info(mut self, enabled: bool) -> Builder {
+        self.inner.tls_info = enabled;
         self
     }
 
     /// Sets the TCP_NODELAY option for connections.
     #[inline]
-    pub fn tcp_nodelay(mut self, enabled: bool) -> ConnectorBuilder {
-        self.config.nodelay = enabled;
+    pub fn tcp_nodelay(mut self, enabled: bool) -> Builder {
+        self.inner.nodelay = enabled;
         self
     }
 
@@ -138,10 +130,7 @@ impl ConnectorBuilder {
         layers: Vec<BoxedConnectorLayer>,
     ) -> crate::Result<Connector> {
         let mut service = ConnectorService {
-            config: self.config,
-            #[cfg(feature = "socks")]
-            resolver: self.resolver.clone(),
-            http: self.http,
+            config: self.inner,
             tls: self
                 .builder
                 .build(tls_options.map(Cow::Owned).unwrap_or_default())?,
@@ -150,7 +139,7 @@ impl ConnectorBuilder {
 
         // we have no user-provided layers, only use concrete types
         if layers.is_empty() {
-            return Ok(Connector::Simple(service));
+            return Ok(Connector(Either::Left(service)));
         }
 
         // user-provided layers exist, the timeout will be applied as an additional layer.
@@ -179,7 +168,7 @@ impl ConnectorBuilder {
                     .service(service)
                     .map_err(map_timeout_to_connector_error);
 
-                Ok(Connector::WithLayers(BoxCloneSyncService::new(service)))
+                Ok(Connector(Either::Right(BoxCloneSyncService::new(service))))
             }
             None => {
                 // no timeout, but still map err
@@ -189,51 +178,8 @@ impl ConnectorBuilder {
                     .service(service)
                     .map_err(map_timeout_to_connector_error);
 
-                Ok(Connector::WithLayers(BoxCloneSyncService::new(service)))
+                Ok(Connector(Either::Right(BoxCloneSyncService::new(service))))
             }
-        }
-    }
-}
-
-// ===== impl Connector =====
-
-impl Connector {
-    /// Creates a new [`Connector`] with the provided configuration and optional layers.
-    pub(crate) fn builder(proxies: Vec<ProxyMatcher>, resolver: DynResolver) -> ConnectorBuilder {
-        ConnectorBuilder {
-            config: Config {
-                proxies: Arc::new(proxies),
-                verbose: Verbose::OFF,
-                nodelay: true,
-                tls_info: false,
-                timeout: None,
-            },
-            #[cfg(feature = "socks")]
-            resolver: resolver.clone(),
-            http: HttpConnector::new(resolver, TcpConnector::new()),
-            builder: TlsConnector::builder(),
-        }
-    }
-}
-
-impl Service<ConnectionDescriptor> for Connector {
-    type Response = Conn;
-    type Error = BoxError;
-    type Future = Connecting;
-
-    #[inline]
-    fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        match self {
-            Connector::Simple(service) => service.poll_ready(cx),
-            Connector::WithLayers(service) => service.poll_ready(cx),
-        }
-    }
-
-    #[inline]
-    fn call(&mut self, descriptor: ConnectionDescriptor) -> Self::Future {
-        match self {
-            Connector::Simple(service) => service.call(descriptor),
-            Connector::WithLayers(service) => service.call(Unnameable(descriptor)),
         }
     }
 }
@@ -246,7 +192,7 @@ impl ConnectorService {
         https: bool,
         descriptor: &ConnectionDescriptor,
     ) -> Result<HttpsConnector<HttpConnector>, BoxError> {
-        let mut http = self.http.clone();
+        let mut http = self.config.http.clone();
 
         // Disable Nagle's algorithm for TLS handshake
         //
@@ -285,7 +231,7 @@ impl ConnectorService {
         Ok(HttpsConnector::new(http, tls))
     }
 
-    fn tunnel_conn_from_stream<IO>(&self, io: MaybeHttpsStream<IO>) -> Result<Conn, BoxError>
+    fn stream<IO>(&self, io: MaybeHttpsStream<IO>) -> Result<Conn, BoxError>
     where
         IO: AsyncConnWithInfo,
         TlsConn<IO>: Connection,
@@ -307,7 +253,7 @@ impl ConnectorService {
         Ok(conn)
     }
 
-    fn conn_from_stream<IO, P>(&self, io: MaybeHttpsStream<IO>, proxy: P) -> Result<Conn, BoxError>
+    fn stream_with_proxy<IO, P>(&self, io: MaybeHttpsStream<IO>, proxy: P) -> Result<Conn, BoxError>
     where
         IO: AsyncConnWithInfo,
         TlsConn<IO>: Connection,
@@ -346,13 +292,11 @@ impl ConnectorService {
         let io = connector.call(descriptor).await?;
 
         // Re-enable Nagle's algorithm if it was disabled earlier
-        if_tokio_rt!(block:{
-            if is_https && !self.config.nodelay {
-                io.as_ref().set_nodelay(false)?;
-            }
-        });
+        if is_https && !self.config.nodelay {
+            io.as_ref().set_nodelay(false)?;
+        }
 
-        self.conn_from_stream(io, proxy)
+        self.stream_with_proxy(io, proxy)
     }
 
     async fn connect_via_proxy(
@@ -385,8 +329,8 @@ impl ConnectorService {
                             // Build a SOCKS connector.
                             let mut socks = SocksConnector::new(
                                 proxy_uri,
-                                self.http.clone(),
-                                self.resolver.clone(),
+                                self.config.http.clone(),
+                                self.config.resolver.clone(),
                             );
                             socks.set_auth(proxy.raw_auth());
                             socks.set_version(version);
@@ -403,13 +347,11 @@ impl ConnectorService {
                             .await?;
 
                         // Re-enable Nagle's algorithm if it was disabled earlier
-                        if_tokio_rt!(block:{
-                            if is_https && !self.config.nodelay {
-                                io.as_ref().set_nodelay(false)?;
-                            }
-                        });
+                        if is_https && !self.config.nodelay {
+                            io.as_ref().set_nodelay(false)?;
+                        }
 
-                        return self.tunnel_conn_from_stream(io);
+                        return self.stream(io);
                     }
                 }
 
@@ -422,7 +364,7 @@ impl ConnectorService {
                     // Build a tunnel connector to establish the CONNECT tunnel.
                     let tunneled = {
                         let mut tunnel =
-                            proxy::tunnel::TunnelConnector::new(proxy_uri, connector.clone());
+                            proxy::tunnel::TunnelConnector::new(connector.clone(), proxy_uri);
 
                         // If the proxy requires basic authentication, add it to the tunnel.
                         if let Some(auth) = proxy.basic_auth() {
@@ -444,13 +386,11 @@ impl ConnectorService {
                         .await?;
 
                     // Re-enable Nagle's algorithm if it was disabled earlier
-                    if_tokio_rt!(block:{
-                        if !self.config.nodelay {
-                            io.as_ref().as_ref().set_nodelay(false)?;
-                        }
-                    });
+                    if !self.config.nodelay {
+                        io.as_ref().as_ref().set_nodelay(false)?;
+                    }
 
-                    return self.tunnel_conn_from_stream(io);
+                    return self.stream(io);
                 }
 
                 *descriptor.uri_mut() = proxy_uri;
@@ -462,40 +402,35 @@ impl ConnectorService {
             #[cfg(unix)]
             Intercepted::Unix(unix_socket) => {
                 trace!("connecting via Unix socket: {:?}", unix_socket);
-
-                // Create a Unix connector with the specified socket path.
-                let mut connector =
-                    HttpsConnector::new(UnixConnector::new(unix_socket), self.tls.clone());
+                let mut connector = self.config.http.clone();
 
                 // If the target URI is HTTPS, establish a CONNECT tunnel over the Unix socket,
                 // then upgrade the tunneled stream to TLS.
                 if uri.is_https() {
-                    // Use a dummy HTTP URI so the HTTPS connector works over the Unix socket.
-                    let proxy_uri = http::Uri::from_static("http://localhost");
-
                     // The tunnel connector will first establish a CONNECT tunnel,
                     // then perform the TLS handshake over the tunneled stream.
                     let tunneled = {
-                        // Create a tunnel connector using the Unix socket and the HTTPS
-                        // connector.
                         let mut tunnel =
-                            proxy::tunnel::TunnelConnector::new(proxy_uri, connector.clone());
-
+                            proxy::tunnel::TunnelConnector::new(connector, unix_socket);
                         tunnel.call(uri).await?
                     };
 
                     // Wrap the established tunneled stream with TLS.
-                    let io = connector
+                    let io = self
+                        .build_https_connector(true, &descriptor)?
                         .call(EstablishedConn::new(tunneled, descriptor))
                         .await?;
 
-                    return self.tunnel_conn_from_stream(io);
+                    return self.stream(io);
                 }
 
-                // For plain HTTP, use the Unix connector directly.
-                let io = connector.call(descriptor).await?;
+                // For plain HTTP, connect via the unified HttpConnector.
+                let io = connector
+                    .call(unix_socket)
+                    .await
+                    .map(MaybeHttpsStream::Http)?;
 
-                self.conn_from_stream(io, None)
+                self.stream_with_proxy(io, None)
             }
         }
     }
@@ -547,5 +482,52 @@ impl Service<ConnectionDescriptor> for ConnectorService {
     #[inline]
     fn call(&mut self, descriptor: ConnectionDescriptor) -> Self::Future {
         Box::pin(self.clone().connect_auto(descriptor))
+    }
+}
+
+// ===== impl Connector =====
+
+impl Connector {
+    /// Creates a new [`Connector`] with the provided configuration and optional layers.
+    pub(crate) fn builder(
+        proxies: Vec<ProxyMatcher>,
+        resolver: DynResolver,
+        runtime: RuntimeHandle,
+    ) -> Builder {
+        Builder {
+            inner: Inner {
+                proxies: Arc::new(proxies),
+                verbose: Verbose::OFF,
+                nodelay: true,
+                tls_info: false,
+                timeout: None,
+                #[cfg(feature = "socks")]
+                resolver: resolver.clone(),
+                http: HttpConnector::new(resolver, runtime),
+            },
+            builder: TlsConnector::builder(),
+        }
+    }
+}
+
+impl Service<ConnectionDescriptor> for Connector {
+    type Response = Conn;
+    type Error = BoxError;
+    type Future = Connecting;
+
+    #[inline]
+    fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        match &mut self.0 {
+            Either::Left(service) => service.poll_ready(cx),
+            Either::Right(service) => service.poll_ready(cx),
+        }
+    }
+
+    #[inline]
+    fn call(&mut self, descriptor: ConnectionDescriptor) -> Self::Future {
+        match &mut self.0 {
+            Either::Left(service) => service.call(descriptor),
+            Either::Right(service) => service.call(Unnameable(descriptor)),
+        }
     }
 }

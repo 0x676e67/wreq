@@ -1,14 +1,9 @@
 //! TCP connection types and utilities.
 
-#[cfg(feature = "tokio-rt")]
-pub mod tokio;
-
-#[cfg(feature = "compio-rt")]
-pub mod compio;
-
 use std::{
     error::Error as StdError,
     fmt,
+    fmt::Debug,
     future::Future,
     io,
     net::{Ipv4Addr, Ipv6Addr, SocketAddr},
@@ -18,65 +13,31 @@ use std::{
 
 use futures_util::future::Either;
 use socket2::TcpKeepalive;
+use wreq_rt::{BoxConnection, Connect, Sleep, Timer};
 
-use crate::{
-    conn::{Connection, net::SocketBindOptions},
-    dns,
-    error::BoxError,
-};
+use crate::{conn::opts::SocketBindOptions, dns, error::BoxError};
 
-type BoxConnecting<T, E> = Pin<Box<dyn Future<Output = Result<T, E>> + Send>>;
-
-/// A builder for tcp connections.
-pub trait TcpConnector: Clone + Send + Sync + 'static {
-    /// The underlying stream type.
-    type TcpStream: From<socket2::Socket> + Send + Sync + 'static;
-
-    /// The type of connection returned by this builder.
-    type Connection: ::tokio::io::AsyncRead
-        + ::tokio::io::AsyncWrite
-        + Connection
-        + Send
-        + Unpin
-        + 'static;
-
-    /// The type of error returned by this builder.
-    type Error: Into<Box<dyn StdError + Send + Sync>>;
-
-    /// The future type returned by this builder.
-    type Future: Future<Output = Result<Self::Connection, Self::Error>> + Send + 'static;
-
-    /// The future type returned by this builder's sleep.
-    type Sleep: Future<Output = ()> + Send + 'static;
-
-    /// Build a connection from the given socket and connect to the address.
-    fn connect(&self, socket: Self::TcpStream, addr: SocketAddr) -> Self::Future;
-
-    /// Return a future that sleeps for the given duration.
-    fn sleep(&self, duration: Duration) -> Self::Sleep;
+pub(crate) struct ConnectingTcp<C> {
+    preferred: ConnectingTcpRemote<C>,
+    fallback: Option<ConnectingTcpFallback<C>>,
 }
 
-pub(crate) struct ConnectingTcp<S: TcpConnector> {
-    preferred: ConnectingTcpRemote<S>,
-    fallback: Option<ConnectingTcpFallback<S>>,
+struct ConnectingTcpFallback<C> {
+    delay: Pin<Box<dyn Sleep>>,
+    remote: ConnectingTcpRemote<C>,
 }
 
-struct ConnectingTcpFallback<S: TcpConnector> {
-    delay: S::Sleep,
-    remote: ConnectingTcpRemote<S>,
-}
-
-struct ConnectingTcpRemote<S: TcpConnector> {
+struct ConnectingTcpRemote<C> {
     addrs: dns::SocketAddrs,
     connect_timeout: Option<Duration>,
-    connector: S,
+    connector: C,
 }
 
-impl<S: TcpConnector> ConnectingTcp<S>
+impl<C> ConnectingTcp<C>
 where
-    S::TcpStream: From<socket2::Socket>,
+    C: Connect + Timer + Clone + 'static,
 {
-    pub(crate) fn new(remote_addrs: dns::SocketAddrs, config: &TcpOptions, connector: S) -> Self {
+    pub(crate) fn new(connector: C, remote_addrs: dns::SocketAddrs, config: &TcpOptions) -> Self {
         if let Some(fallback_timeout) = config.happy_eyeballs_timeout {
             let (preferred_addrs, fallback_addrs) = remote_addrs.split_by_preference(
                 config.socket_bind.ipv4_address,
@@ -85,9 +46,9 @@ where
             if fallback_addrs.is_empty() {
                 return ConnectingTcp {
                     preferred: ConnectingTcpRemote::new(
+                        connector,
                         preferred_addrs,
                         config.connect_timeout,
-                        connector,
                     ),
                     fallback: None,
                 };
@@ -95,25 +56,25 @@ where
 
             ConnectingTcp {
                 preferred: ConnectingTcpRemote::new(
+                    connector.clone(),
                     preferred_addrs,
                     config.connect_timeout,
-                    connector.clone(),
                 ),
                 fallback: Some(ConnectingTcpFallback {
                     delay: connector.sleep(fallback_timeout),
                     remote: ConnectingTcpRemote::new(
+                        connector,
                         fallback_addrs,
                         config.connect_timeout,
-                        connector,
                     ),
                 }),
             }
         } else {
             ConnectingTcp {
                 preferred: ConnectingTcpRemote::new(
+                    connector,
                     remote_addrs,
                     config.connect_timeout,
-                    connector,
                 ),
                 fallback: None,
             }
@@ -121,11 +82,11 @@ where
     }
 }
 
-impl<S: TcpConnector> ConnectingTcpRemote<S>
+impl<C> ConnectingTcpRemote<C>
 where
-    S::TcpStream: From<socket2::Socket>,
+    C: Connect + Timer + 'static,
 {
-    fn new(addrs: dns::SocketAddrs, connect_timeout: Option<Duration>, connector: S) -> Self {
+    fn new(connector: C, addrs: dns::SocketAddrs, connect_timeout: Option<Duration>) -> Self {
         let connect_timeout = connect_timeout.and_then(|t| t.checked_div(addrs.len() as u32));
         Self {
             addrs,
@@ -134,11 +95,11 @@ where
         }
     }
 
-    async fn connect(&mut self, config: &TcpOptions) -> Result<S::Connection, ConnectError> {
+    async fn connect(&mut self, config: &TcpOptions) -> Result<BoxConnection, ConnectError> {
         let mut err = None;
         for addr in &mut self.addrs {
             debug!("connecting to {}", addr);
-            match connect(&addr, config, self.connect_timeout, &self.connector) {
+            match connect(&self.connector, &addr, config, self.connect_timeout) {
                 Ok(fut) => match fut.await {
                     Ok(tcp) => {
                         debug!("connected to {}", addr);
@@ -166,7 +127,7 @@ where
             Some(e) => Err(e),
             None => Err(ConnectError::new(
                 "tcp connect error",
-                std::io::Error::new(std::io::ErrorKind::NotConnected, "Network unreachable"),
+                io::Error::new(std::io::ErrorKind::NotConnected, "Network unreachable"),
             )),
         }
     }
@@ -200,14 +161,14 @@ fn bind_local_address(
     Ok(())
 }
 
-fn connect<S: TcpConnector>(
+fn connect<C>(
+    connector: &C,
     addr: &SocketAddr,
     config: &TcpOptions,
     connect_timeout: Option<Duration>,
-    connector: &S,
-) -> Result<impl Future<Output = Result<S::Connection, ConnectError>>, ConnectError>
+) -> Result<impl Future<Output = Result<BoxConnection, ConnectError>>, ConnectError>
 where
-    S::TcpStream: From<socket2::Socket>,
+    C: Connect + Timer + 'static,
 {
     use socket2::{Domain, Protocol, Socket, Type};
 
@@ -319,7 +280,7 @@ where
         warn!("tcp set_tcp_nodelay error: {_e}");
     }
 
-    let connect = connector.connect(socket.into(), *addr);
+    let connect = connector.tcp_connect(socket.into(), *addr);
     let sleep = connect_timeout.map(|dur| connector.sleep(dur));
 
     Ok(async move {
@@ -329,22 +290,22 @@ where
                     Err(io::Error::new(io::ErrorKind::TimedOut, "connect timeout").into())
                 }
                 Either::Right((Ok(s), _)) => Ok(s),
-                Either::Right((Err(e), _)) => Err(e.into()),
+                Either::Right((Err(e), _)) => Err(e),
             },
-            None => connect.await.map_err(Into::into),
+            None => connect.await,
         }
         .map_err(ConnectError::m("tcp connect error"))
     })
 }
 
-impl<S: TcpConnector> ConnectingTcp<S>
+impl<C> ConnectingTcp<C>
 where
-    S::TcpStream: From<socket2::Socket>,
+    C: Connect + Timer + 'static,
 {
     pub(crate) async fn connect(
         mut self,
         config: &TcpOptions,
-    ) -> Result<S::Connection, ConnectError> {
+    ) -> Result<BoxConnection, ConnectError> {
         match self.fallback {
             None => self.preferred.connect(config).await,
             Some(mut fallback) => {

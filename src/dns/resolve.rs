@@ -24,10 +24,10 @@ impl Name {
         Name { host }
     }
 
-    /// View the hostname as a string slice.
+    /// Returns the inner hostname as a string slice.
     #[inline]
-    pub fn as_str(&self) -> &str {
-        &self.host
+    pub fn into_inner(self) -> Box<str> {
+        self.host
     }
 }
 
@@ -135,7 +135,7 @@ impl DnsResolverWithOverrides {
 
 impl Resolve for DnsResolverWithOverrides {
     fn resolve(&self, name: Name) -> Resolving {
-        match self.overrides.get(name.as_str()) {
+        match self.overrides.get(name.host.as_ref()) {
             Some(dest) => {
                 let addrs: Addrs = Box::new(dest.clone().into_iter());
                 Box::pin(std::future::ready(Ok(addrs)))

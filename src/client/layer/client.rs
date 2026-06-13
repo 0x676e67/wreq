@@ -28,8 +28,8 @@ use wreq_proto::{
     conn::{self, TrySendError as ConnTrySendError},
     http1::Http1Options,
     http2::Http2Options,
-    rt::Executor as _,
 };
+use wreq_rt::Executor as _;
 #[cfg(feature = "cookies")]
 use {
     crate::cookie::{CookieStore, Cookies},
@@ -47,7 +47,7 @@ use crate::{
         proxy,
     },
     error::ProxyConnect,
-    rt::{Executor, Timer},
+    rt::RuntimeHandle,
 };
 
 /// A HttpClient to make outgoing HTTP requests.
@@ -58,9 +58,9 @@ use crate::{
 pub(crate) struct HttpClient<C, B> {
     config: Config,
     connector: C,
-    exec: Executor,
+    runtime: RuntimeHandle,
     h1_builder: conn::http1::Builder,
-    h2_builder: conn::http2::Builder<Executor>,
+    h2_builder: conn::http2::Builder<RuntimeHandle>,
     pool: pool::Pool<PoolClient<B>, ConnectionId>,
     #[cfg(feature = "cookies")]
     cookie_store: RequestConfig<Arc<dyn CookieStore>>,
@@ -130,8 +130,8 @@ macro_rules! e {
 impl HttpClient<(), ()> {
     /// Create a builder to configure a new [`HttpClient`].
     #[inline]
-    pub fn builder(executor: Executor) -> Builder {
-        Builder::new(executor)
+    pub fn builder(runtime: RuntimeHandle) -> Builder {
+        Builder::new(runtime)
     }
 }
 
@@ -361,7 +361,7 @@ where
             drop(pooled);
         } else {
             let on_idle = std::future::poll_fn(move |cx| pooled.poll_ready(cx)).map(|_| ());
-            self.exec.execute(on_idle);
+            self.runtime.execute(on_idle);
         }
 
         Ok(res)
@@ -442,7 +442,7 @@ where
                         });
                     // An execute error here isn't important, we're just trying
                     // to prevent a waste of a socket...
-                    self.exec.execute(bg);
+                    self.runtime.execute(bg);
                 }
                 Ok(checked_out)
             }
@@ -488,7 +488,7 @@ where
     + Send
     + Unpin
     + 'static {
-        let executor = self.exec.clone();
+        let executor = self.runtime.clone();
         let pool = self.pool.clone();
 
         let h1_builder = self.h1_builder.clone();
@@ -689,7 +689,7 @@ impl<C: Clone, B> Clone for HttpClient<C, B> {
     fn clone(&self) -> HttpClient<C, B> {
         HttpClient {
             config: self.config,
-            exec: self.exec.clone(),
+            runtime: self.runtime.clone(),
             h1_builder: self.h1_builder.clone(),
             h2_builder: self.h2_builder.clone(),
             connector: self.connector.clone(),
@@ -805,11 +805,10 @@ where
 #[derive(Clone)]
 pub struct Builder {
     config: Config,
-    exec: Executor,
+    runtime: RuntimeHandle,
     h1_builder: conn::http1::Builder,
-    h2_builder: conn::http2::Builder<Executor>,
+    h2_builder: conn::http2::Builder<RuntimeHandle>,
     pool_config: pool::Config,
-    pool_timer: Timer,
     #[cfg(feature = "cookies")]
     cookie_store: Option<Arc<dyn CookieStore>>,
 }
@@ -818,22 +817,21 @@ pub struct Builder {
 
 impl Builder {
     /// Construct a new Builder.
-    pub fn new(exec: Executor) -> Self {
+    pub fn new(runtime: RuntimeHandle) -> Self {
         Self {
             config: Config {
                 retry_canceled_requests: true,
                 set_host: true,
                 ver: Ver::Auto,
             },
-            exec: exec.clone(),
+            runtime: runtime.clone(),
             h1_builder: conn::http1::Builder::default(),
-            h2_builder: conn::http2::Builder::new(exec),
+            h2_builder: conn::http2::Builder::new(runtime),
             pool_config: pool::Config {
                 idle_timeout: Some(Duration::from_secs(90)),
                 max_idle_per_host: usize::MAX,
                 max_pool_size: None,
             },
-            pool_timer: Timer::default(),
             #[cfg(feature = "cookies")]
             cookie_store: None,
         }
@@ -888,18 +886,6 @@ impl Builder {
         self
     }
 
-    /// Provide a timer to be used for http2
-    ///
-    /// See the documentation of [`http2::client::Builder::timer`] for more
-    /// details.
-    ///
-    /// [`http2::client::Builder::timer`]: https://docs.rs/http2/latest/http2/client/struct.Builder.html#method.timer
-    #[inline]
-    pub fn http2_timer(mut self, timer: Timer) -> Self {
-        self.h2_builder = self.h2_builder.timer(timer);
-        self
-    }
-
     /// Provide a configuration for HTTP/1.
     #[inline]
     pub fn http1_options<O>(mut self, opts: O) -> Self
@@ -925,13 +911,6 @@ impl Builder {
         self
     }
 
-    /// Provide a timer to be used for timeouts and intervals in connection pools.
-    #[inline]
-    pub fn pool_timer(mut self, timer: Timer) -> Self {
-        self.pool_timer = timer;
-        self
-    }
-
     /// Provide a cookie store for automatic cookie management.
     #[inline]
     #[cfg(feature = "cookies")]
@@ -950,15 +929,14 @@ impl Builder {
         B: Body + Send,
         B::Data: Send,
     {
-        let exec = self.exec.clone();
-        let timer = self.pool_timer.clone();
+        let runtime = self.runtime.clone();
         HttpClient {
             config: self.config,
-            exec: exec.clone(),
+            runtime: runtime.clone(),
             connector,
             h1_builder: self.h1_builder,
             h2_builder: self.h2_builder,
-            pool: pool::Pool::new(self.pool_config, exec, timer),
+            pool: pool::Pool::new(self.pool_config, runtime),
             #[cfg(feature = "cookies")]
             cookie_store: RequestConfig::new(self.cookie_store),
         }

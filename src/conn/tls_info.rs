@@ -28,15 +28,13 @@ fn extract_tls_info<S>(ssl_stream: &SslStream<S>) -> TlsInfo {
     }
 }
 
-// Generic impl: any SslStream can provide TLS info.
 impl<T> TlsInfoFactory for SslStream<T> {
-    #[inline]
+    #[inline(always)]
     fn tls_info(&self) -> Option<TlsInfo> {
         Some(extract_tls_info(self))
     }
 }
 
-// Generic impl: MaybeHttpsStream delegates to the inner stream.
 impl<T: TlsInfoFactory> TlsInfoFactory for MaybeHttpsStream<T> {
     fn tls_info(&self) -> Option<TlsInfo> {
         match self {
@@ -45,3 +43,5 @@ impl<T: TlsInfoFactory> TlsInfoFactory for MaybeHttpsStream<T> {
         }
     }
 }
+
+impl TlsInfoFactory for wreq_rt::BoxConnection {}

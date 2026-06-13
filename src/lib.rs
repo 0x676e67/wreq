@@ -249,53 +249,6 @@
 //! [Proxy]: ./struct.Proxy.html
 //! [cargo-features]: https://doc.rust-lang.org/stable/cargo/reference/manifest.html#the-features-section
 
-macro_rules! if_tokio_rt {
-    (block: { $($tt:tt)* }) => {
-        #[cfg(all(feature = "tokio-rt", not(feature = "compio-rt")))]
-        $($tt)*
-    };
-    ($($item:item)*) => {$(
-        #[cfg(all(feature = "tokio-rt", not(feature = "compio-rt")))]
-        $item
-    )*};
-}
-
-macro_rules! if_compio_rt {
-    (block: { $($tt:tt)* }) => {
-        #[cfg(all(feature = "compio-rt", not(feature = "tokio-rt")))]
-        $($tt)*
-    };
-    ($($item:item)*) => {$(
-        #[cfg(all(feature = "compio-rt", not(feature = "tokio-rt")))]
-        $item
-    )*};
-}
-
-macro_rules! if_all_rt {
-    (block: { $($tt:tt)* }) => {
-        #[cfg(all(feature = "tokio-rt", feature = "compio-rt"))]
-        $($tt)*
-    };
-    ($($item:item)*) => {$(
-        #[cfg(all(feature = "tokio-rt", feature = "compio-rt"))]
-        $item
-    )*};
-}
-
-macro_rules! if_any_rt {
-    ($($item:item)*) => {$(
-        #[cfg(any(feature = "tokio-rt", feature = "compio-rt"))]
-        $item
-    )*};
-}
-
-macro_rules! if_no_rt {
-    (block: { $($tt:tt)* }) => {
-        #[cfg(not(any(feature = "tokio-rt", feature = "compio-rt")))]
-        $($tt)*
-    };
-}
-
 #[macro_use]
 mod trace;
 #[macro_use]
@@ -308,7 +261,6 @@ mod error;
 mod group;
 mod into_uri;
 mod proxy;
-mod rt;
 mod sync;
 mod util;
 
@@ -318,6 +270,7 @@ pub mod dns;
 pub mod header;
 pub mod redirect;
 pub mod retry;
+pub mod rt;
 pub mod tls;
 
 #[cfg(feature = "multipart")]
@@ -406,6 +359,7 @@ fn _assert_impls() {
 /// # }
 /// ```
 #[inline]
+#[cfg(any(feature = "tokio-rt", feature = "compio-rt"))]
 pub fn get<T: IntoUri>(uri: T) -> RequestBuilder {
     Client::new().get(uri)
 }
@@ -431,6 +385,7 @@ pub fn get<T: IntoUri>(uri: T) -> RequestBuilder {
 /// # }
 /// ```
 #[inline]
+#[cfg(any(feature = "tokio-rt", feature = "compio-rt"))]
 pub fn post<T: IntoUri>(uri: T) -> RequestBuilder {
     Client::new().post(uri)
 }
@@ -456,6 +411,7 @@ pub fn post<T: IntoUri>(uri: T) -> RequestBuilder {
 /// # }
 /// ```
 #[inline]
+#[cfg(any(feature = "tokio-rt", feature = "compio-rt"))]
 pub fn put<T: IntoUri>(uri: T) -> RequestBuilder {
     Client::new().put(uri)
 }
@@ -480,6 +436,7 @@ pub fn put<T: IntoUri>(uri: T) -> RequestBuilder {
 /// # }
 /// ```
 #[inline]
+#[cfg(any(feature = "tokio-rt", feature = "compio-rt"))]
 pub fn delete<T: IntoUri>(uri: T) -> RequestBuilder {
     Client::new().delete(uri)
 }
@@ -504,6 +461,7 @@ pub fn delete<T: IntoUri>(uri: T) -> RequestBuilder {
 /// # }
 /// ```
 #[inline]
+#[cfg(any(feature = "tokio-rt", feature = "compio-rt"))]
 pub fn head<T: IntoUri>(uri: T) -> RequestBuilder {
     Client::new().head(uri)
 }
@@ -529,6 +487,7 @@ pub fn head<T: IntoUri>(uri: T) -> RequestBuilder {
 /// # }
 /// ```
 #[inline]
+#[cfg(any(feature = "tokio-rt", feature = "compio-rt"))]
 pub fn patch<T: IntoUri>(uri: T) -> RequestBuilder {
     Client::new().patch(uri)
 }
@@ -553,6 +512,7 @@ pub fn patch<T: IntoUri>(uri: T) -> RequestBuilder {
 /// # }
 /// ```
 #[inline]
+#[cfg(any(feature = "tokio-rt", feature = "compio-rt"))]
 pub fn options<T: IntoUri>(uri: T) -> RequestBuilder {
     Client::new().options(uri)
 }
@@ -578,6 +538,7 @@ pub fn options<T: IntoUri>(uri: T) -> RequestBuilder {
 /// # }
 /// ```
 #[inline]
+#[cfg(any(feature = "tokio-rt", feature = "compio-rt"))]
 pub fn request<T: IntoUri>(method: Method, uri: T) -> RequestBuilder {
     Client::new().request(method, uri)
 }
@@ -631,7 +592,7 @@ pub fn request<T: IntoUri>(method: Method, uri: T) -> RequestBuilder {
 /// ```
 #[inline]
 #[cfg(feature = "ws")]
-#[cfg_attr(docsrs, doc(cfg(feature = "ws")))]
+#[cfg(any(feature = "tokio-rt", feature = "compio-rt"))]
 pub fn websocket<T: IntoUri>(uri: T) -> ws::WebSocketRequestBuilder {
     Client::new().websocket(uri)
 }

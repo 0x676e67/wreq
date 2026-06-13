@@ -1,7 +1,8 @@
-//! Runtime components — executor and timer abstractions.
+//! Runtime glue for the client.
 //!
-//! This module provides [`Executor`] and [`Timer`], the two runtime primitives
-//! used by the HTTP client for spawning background tasks and driving timeouts.
+//! This module defines [`RuntimeHandle`], a small wrapper around the runtime
+//! traits the client needs for spawning tasks, sleeping, opening sockets, and
+//! DNS.
 //!
 //! # Feature flags
 //!
@@ -10,75 +11,72 @@
 //! - `tokio-rt` — uses [tokio] as the underlying runtime (default).
 //! - `compio-rt` — uses [compio] as the underlying runtime.
 //!
-//! When both are enabled, `tokio-rt` takes precedence for both [`Executor`]
-//! and [`Timer`].  When neither is enabled, [`Executor::default`] and
-//! [`Timer::default`] return empty placeholders that panic on use, so a
-//! runtime feature flag **must** be active in practice.
+//! When both are enabled, `tokio-rt` wins. When neither is enabled,
+//! [`RuntimeHandle::default`] panics.
 //!
 //! [tokio]: https://docs.rs/tokio
 //! [compio]: https://docs.rs/compio
 
+#[cfg(unix)]
+use std::path::Path;
 use std::{
     future::Future,
+    net::{SocketAddr, TcpStream},
     pin::Pin,
     sync::Arc,
     time::{Duration, Instant},
 };
 
-use wreq_proto::rt::{self, Sleep, Time};
+use wreq_rt::{Connect, Connecting, DnsResolver, Executor, Resolving, Sleep, Timer};
 
-/// A heap-allocated, type-erased future that is [`Send`] and resolves to `()`.
+/// A boxed `Send` future that resolves to `()`.
 ///
-/// This is the concrete future type passed to [`rt::Executor::execute`] by the
-/// client's background task machinery.  Callers do not need to construct this
-/// type directly; the [`rt::Executor<F>`] blanket implementation boxes and
-/// pins any qualifying `F` automatically.
+/// This is the concrete task type passed into [`Executor::execute`].
 pub type BoxSendFuture = Pin<Box<dyn Future<Output = ()> + Send>>;
 
-/// A handle to an async task executor.
-///
-/// `Executor` is used by the HTTP client to spawn background tasks such as
-/// connection-pool cleanup and keep-alive management, without coupling the
-/// client to a specific async runtime.
-///
-/// # Default behavior
-///
-/// [`Executor::default`] picks the runtime-appropriate implementation based
-/// on the active feature flags:
-///
-/// | Feature flags active              | Executor          |
-/// |-----------------------------------|-------------------|
-/// | `tokio-rt` only                   | `TokioExecutor`   |
-/// | `compio-rt` only                  | `CompioExecutor`  |
-/// | both `tokio-rt` and `compio-rt`   | `TokioExecutor`   |
-/// | neither                           | empty (panics)    |
-#[derive(Clone)]
-pub struct Executor(Arc<dyn rt::Executor<BoxSendFuture> + Send + Sync>);
+/// Runtime capabilities required by [`RuntimeHandle`].
+pub trait Runtime<Fut>:
+    Executor<Fut> + Timer + Connect + DnsResolver + Send + Sync + 'static
+{
+}
 
-// ===== impl Executor =====
+/// A shared runtime handle used by the client.
+///
+/// Besides spawning background work, it also forwards timer, connector, and
+/// dns resolver calls to the selected runtime.
+#[derive(Debug, Clone)]
+pub(crate) struct RuntimeHandle(Arc<dyn Runtime<BoxSendFuture>>);
 
-impl Executor {
-    /// Creates an [`Executor`] backed by a custom implementation.
-    ///
-    /// The value is wrapped in an [`Arc`] and type-erased, so the resulting
-    /// handle is cheap to clone and safe to share across threads.
+// ===== impl Runtime =====
+
+impl<T, Fut> Runtime<Fut> for T where
+    T: Executor<Fut> + Timer + Connect + DnsResolver + Send + Sync + 'static
+{
+}
+
+// ===== impl RuntimeHandle =====
+
+impl RuntimeHandle {
+    /// Creates a [`RuntimeHandle`] from a custom runtime.
     #[inline]
-    pub fn new<E>(exec: E) -> Self
+    pub(crate) fn new<R>(runtime: R) -> Self
     where
-        E: rt::Executor<BoxSendFuture> + Send + Sync + 'static,
+        R: Runtime<BoxSendFuture>,
     {
-        Executor(Arc::new(exec))
+        RuntimeHandle(Arc::new(runtime))
+    }
+
+    #[inline]
+    pub(crate) fn timer(&self) -> Arc<dyn Timer> {
+        self.0.clone()
     }
 }
 
-impl<Fut> rt::Executor<Fut> for Executor
+impl<Fut> Executor<Fut> for RuntimeHandle
 where
     Fut: Future<Output = ()> + Send + 'static,
 {
-    /// Spawns `fut` on the underlying executor.
-    ///
-    /// The future is boxed and pinned internally, so any `F` satisfying the
-    /// bounds can be passed without the caller needing to allocate first.
+    /// Spawns the future on the underlying runtime.
     #[track_caller]
     #[inline(always)]
     fn execute(&self, fut: Fut) {
@@ -86,123 +84,52 @@ where
     }
 }
 
-impl Default for Executor {
-    /// Returns the runtime-appropriate default executor.
-    ///
-    /// See the [type-level documentation][Executor] for the feature-flag
-    /// selection table.
-    #[inline]
-    fn default() -> Self {
-        if_tokio_rt!(block: {
-            return Executor(Arc::new(wreq_rt::rt::tokio::TokioExecutor::new()))
-        });
-
-        if_compio_rt!(block: {
-            return Executor(Arc::new(wreq_rt::rt::compio::CompioExecutor::new()))
-        });
-
-        if_all_rt!(block: {
-            return Executor(Arc::new(wreq_rt::rt::tokio::TokioExecutor::new()))
-        });
-
-        if_no_rt!(block:{
-            panic!(
-                "no async runtime feature enabled; at least one of `tokio-rt` or `compio-rt` must be active"
-            );
-        });
+impl DnsResolver for RuntimeHandle {
+    /// Resolves a host name.
+    #[track_caller]
+    #[inline(always)]
+    fn resolve(&self, host: Box<str>) -> Resolving {
+        self.0.resolve(host)
     }
 }
 
-// ===== Timer =====
-
-/// A handle to an async timer.
-///
-/// `Timer` is used by the HTTP client to drive request and connection timeouts,
-/// as well as the connection pool's idle-expiry loop.  It wraps an
-/// [`rt::Timer`] implementation in a cheap-to-clone, type-erased handle.
-///
-/// # Default behavior
-///
-/// [`Timer::default`] picks the runtime-appropriate implementation based on
-/// the active feature flags:
-///
-/// | Feature flags active              | Timer           |
-/// |-----------------------------------|-----------------|
-/// | `tokio-rt` only                   | `TokioTimer`    |
-/// | `compio-rt` only                  | `CompioTimer`   |
-/// | both `tokio-rt` and `compio-rt`   | `TokioTimer`    |
-/// | neither                           | empty (panics)  |
-#[derive(Clone)]
-pub struct Timer(Time);
-
-// ===== impl Timer =====
-
-impl Timer {
-    /// Creates a [`Timer`] backed by a custom implementation.
-    #[inline]
-    pub fn new<M>(timer: M) -> Self
-    where
-        M: rt::Timer + Send + Sync + 'static,
-    {
-        Timer(Time::Timer(Arc::new(timer)))
-    }
-
-    #[cfg(test)]
-    #[doc(hidden)]
-    pub fn empty() -> Self {
-        Timer(Time::Empty)
-    }
-
-    /// Returns `true` if no timer implementation has been configured.
-    #[inline]
-    pub fn is_empty(&self) -> bool {
-        matches!(self.0, Time::Empty)
-    }
-}
-
-impl Default for Timer {
-    #[inline]
-    fn default() -> Self {
-        if_tokio_rt!(block: {
-            return Timer(rt::Time::Timer(Arc::new(wreq_rt::rt::tokio::TokioTimer::new())))
-        });
-
-        if_compio_rt!(block: {
-            return Timer(rt::Time::Timer(Arc::new(wreq_rt::rt::compio::CompioTimer::new())))
-        });
-
-        if_all_rt!(block: {
-            return Timer(rt::Time::Timer(Arc::new(wreq_rt::rt::tokio::TokioTimer::new())))
-        });
-
-        if_no_rt!(block: {
-            Timer(Time::Empty)
-        })
-    }
-}
-
-impl rt::Timer for Timer {
-    /// Returns a future that resolves after `duration`.
+impl Timer for RuntimeHandle {
+    /// Returns a sleep future for `duration`.
     #[inline]
     fn sleep(&self, duration: Duration) -> Pin<Box<dyn Sleep>> {
         self.0.sleep(duration)
     }
 
-    /// Returns the current time according to the underlying runtime.
+    /// Returns the runtime's current time.
     #[inline]
     fn now(&self) -> Instant {
         self.0.now()
     }
 
-    /// Returns a future that resolves at `deadline`.
+    /// Returns a sleep future that completes at `deadline`.
     #[inline]
     fn sleep_until(&self, deadline: Instant) -> Pin<Box<dyn Sleep>> {
         self.0.sleep_until(deadline)
     }
 
-    /// Resets an in-flight sleep future to fire at `new_deadline` instead.
+    /// Resets an existing sleep future to `new_deadline`.
     #[inline]
     fn reset(&self, sleep: &mut Pin<Box<dyn Sleep>>, new_deadline: Instant) {
         self.0.reset(sleep, new_deadline)
+    }
+}
+
+impl Connect for RuntimeHandle {
+    /// Connects the given TCP socket to `addr`.
+    #[inline(always)]
+    fn tcp_connect(&self, socket: TcpStream, addr: SocketAddr) -> Connecting {
+        self.0.tcp_connect(socket, addr)
+    }
+
+    /// Connects to the Unix socket at `path`.
+    #[cfg(unix)]
+    #[inline(always)]
+    fn unix_connect(&self, path: Arc<Path>) -> Connecting {
+        self.0.unix_connect(path)
     }
 }

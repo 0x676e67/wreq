@@ -12,7 +12,7 @@ use super::{Addrs, Name, Resolve, Resolving};
 
 /// Wrapper around an [`TokioResolver`], which implements the `Resolve` trait.
 #[derive(Debug, Clone)]
-pub struct HickoryDnsResolver {
+pub struct HickoryResolver {
     /// Shared, lazily-initialized Tokio-based DNS resolver.
     ///
     /// Backed by [`LazyLock`] to guarantee thread-safe, one-time creation.
@@ -21,14 +21,14 @@ pub struct HickoryDnsResolver {
     resolver: &'static LazyLock<TokioResolver>,
 }
 
-impl HickoryDnsResolver {
+impl HickoryResolver {
     /// Create a new resolver with the default configuration,
     /// which reads from `/etc/resolve.conf`. The options are
     /// overridden to look up both IPv4 and IPv6 addresses
     /// to support the "happy eyeballs" algorithm.
     ///
     /// SAFETY: `build` only fails if DNS-over-TLS is enabled and default TLS config creation fails.
-    pub fn new() -> HickoryDnsResolver {
+    pub fn new() -> HickoryResolver {
         static RESOLVER: LazyLock<TokioResolver> = LazyLock::new(|| {
             let mut builder = match TokioResolver::builder_tokio() {
                 Ok(resolver) => {
@@ -47,17 +47,20 @@ impl HickoryDnsResolver {
             builder.build().expect("failed to create DNS resolver")
         });
 
-        HickoryDnsResolver {
+        HickoryResolver {
             resolver: &RESOLVER,
         }
     }
 }
 
-impl Resolve for HickoryDnsResolver {
+impl Resolve for HickoryResolver {
     fn resolve(&self, name: Name) -> Resolving {
         let resolver = self.clone();
         Box::pin(async move {
-            let lookup = resolver.resolver.lookup_ip(name.as_str()).await?;
+            let lookup = resolver
+                .resolver
+                .lookup_ip(name.into_inner().as_ref())
+                .await?;
             let addrs: Addrs = Box::new(
                 lookup
                     .iter()

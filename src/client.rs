@@ -56,12 +56,12 @@ use self::{
 #[cfg(feature = "cookies")]
 use crate::cookie;
 #[cfg(feature = "hickory-dns")]
-use crate::dns::hickory::HickoryDnsResolver;
+use crate::dns::hickory::HickoryResolver;
 use crate::{
     IntoUri, Method, Proxy,
     conn::{
         BoxedConnectorLayer, BoxedConnectorService, Conn, Unnameable, connector::Connector,
-        http::HttpConnect, net::SocketBindOptions,
+        opts::SocketBindOptions,
     },
     dns::{DnsResolverWithOverrides, DynResolver, GaiResolver, IntoResolve, Resolve},
     error::{self, Error},
@@ -71,7 +71,7 @@ use crate::{
     proxy::Matcher as ProxyMatcher,
     redirect::{self, FollowRedirectPolicy},
     retry,
-    rt::{BoxSendFuture, Executor, Timer},
+    rt::{BoxSendFuture, Runtime, RuntimeHandle},
     tls::{
         AlpnProtocol, TlsOptions, TlsVersion,
         keylog::KeyLog,
@@ -157,6 +157,7 @@ pub struct Client(Arc<Either<ClientService, BoxedClientService>>);
 #[must_use]
 pub struct ClientBuilder {
     config: Config,
+    runtime: RuntimeHandle,
 }
 
 /// The HTTP version preference for the client.
@@ -223,17 +224,9 @@ struct Config {
     tls_options: Option<TlsOptions>,
     http1_options: Option<Http1Options>,
     http2_options: Option<Http2Options>,
-    timer: Timer,
-    executor: Executor,
 }
 
 // ===== impl Client =====
-
-impl Default for Client {
-    fn default() -> Self {
-        Self::new()
-    }
-}
 
 impl Client {
     /// Constructs a new [`Client`].
@@ -246,73 +239,51 @@ impl Client {
     /// Use [`Client::builder()`] if you wish to handle the failure as an [`Error`]
     /// instead of panicking.
     #[inline]
+    #[cfg(any(feature = "tokio-rt", feature = "compio-rt"))]
     pub fn new() -> Client {
         Client::builder().build().expect("Client::new()")
     }
 
+    /// Constructs a new [`Client`] with an explicit runtime.
+    ///
+    /// This is used when no runtime feature is enabled.
+    #[inline]
+    #[cfg(not(any(feature = "tokio-rt", feature = "compio-rt")))]
+    pub fn new<R>(runtime: R) -> Client
+    where
+        R: Runtime<BoxSendFuture> + Send + Sync + 'static,
+    {
+        Client::builder(runtime).build().expect("Client::new()")
+    }
+
     /// Creates a [`ClientBuilder`] to configure a [`Client`].
+    #[cfg(any(feature = "tokio-rt", feature = "compio-rt"))]
     pub fn builder() -> ClientBuilder {
-        ClientBuilder {
-            config: Config {
-                error: None,
-                headers: HeaderMap::new(),
-                orig_headers: OrigHeaderMap::new(),
-                #[cfg(any(
-                    feature = "gzip",
-                    feature = "zstd",
-                    feature = "brotli",
-                    feature = "deflate",
-                ))]
-                accept_encoding: AcceptEncoding::default(),
-                connect_timeout: None,
-                connection_verbose: false,
-                pool_idle_timeout: Some(Duration::from_secs(90)),
-                pool_max_idle_per_host: usize::MAX,
-                pool_max_size: None,
-                tcp_keepalive: Some(Duration::from_secs(15)),
-                tcp_keepalive_interval: Some(Duration::from_secs(15)),
-                tcp_keepalive_retries: Some(3),
-                #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
-                tcp_user_timeout: Some(Duration::from_secs(30)),
-                tcp_nodelay: true,
-                tcp_reuse_address: false,
-                tcp_send_buffer_size: None,
-                tcp_recv_buffer_size: None,
-                tcp_happy_eyeballs_timeout: Some(Duration::from_millis(300)),
-                socket_bind_options: SocketBindOptions::default(),
-                proxies: Vec::new(),
-                auto_sys_proxy: true,
-                retry_policy: retry::Policy::default(),
-                redirect_policy: redirect::Policy::none(),
-                referer: true,
-                timeout_options: TimeoutOptions::default(),
-                #[cfg(feature = "hickory-dns")]
-                hickory_dns: cfg!(feature = "hickory-dns"),
-                #[cfg(feature = "cookies")]
-                cookie_store: None,
-                dns_overrides: HashMap::new(),
-                dns_resolver: None,
-                http_version_pref: HttpVersionPref::All,
-                https_only: false,
-                http1_options: None,
-                http2_options: None,
-                layers: Vec::new(),
-                connector_layers: Vec::new(),
-                tls_sni: true,
-                tls_info: false,
-                tls_keylog: None,
-                tls_identity: None,
-                tls_cert_store: None,
-                tls_cert_verification: true,
-                tls_verify_hostname: true,
-                tls_min_version: None,
-                tls_max_version: None,
-                tls_session_cache: None,
-                tls_options: None,
-                timer: Timer::default(),
-                executor: Executor::default(),
-            },
-        }
+        Self::builder_runtime({
+            #[cfg(all(feature = "tokio-rt", not(feature = "compio-rt")))]
+            {
+                wreq_rt::tokio::TokioRuntime::new()
+            }
+
+            #[cfg(all(feature = "compio-rt", not(feature = "tokio-rt")))]
+            {
+                wreq_rt::compio::CompioRuntime::new()
+            }
+
+            #[cfg(all(feature = "tokio-rt", feature = "compio-rt"))]
+            {
+                wreq_rt::tokio::TokioRuntime::new()
+            }
+        })
+    }
+
+    /// Creates a [`ClientBuilder`] to configure a [`Client`] with an explicit runtime.
+    #[cfg(not(any(feature = "tokio-rt", feature = "compio-rt")))]
+    pub fn builder<R>(runtime: R) -> ClientBuilder
+    where
+        R: Runtime<BoxSendFuture> + Send + Sync + 'static,
+    {
+        Self::builder_runtime(runtime)
     }
 
     /// Convenience method to make a `GET` request to a URI.
@@ -428,6 +399,74 @@ impl Client {
             fut: Box::pin(Oneshot::new((*self.0).clone(), req)),
         }
     }
+
+    // private
+
+    fn builder_runtime<R>(runtime: R) -> ClientBuilder
+    where
+        R: Runtime<BoxSendFuture> + Send + Sync + 'static,
+    {
+        ClientBuilder {
+            config: Config {
+                error: None,
+                headers: HeaderMap::new(),
+                orig_headers: OrigHeaderMap::new(),
+                #[cfg(any(
+                    feature = "gzip",
+                    feature = "zstd",
+                    feature = "brotli",
+                    feature = "deflate",
+                ))]
+                accept_encoding: AcceptEncoding::default(),
+                connect_timeout: None,
+                connection_verbose: false,
+                pool_idle_timeout: Some(Duration::from_secs(90)),
+                pool_max_idle_per_host: usize::MAX,
+                pool_max_size: None,
+                tcp_keepalive: Some(Duration::from_secs(15)),
+                tcp_keepalive_interval: Some(Duration::from_secs(15)),
+                tcp_keepalive_retries: Some(3),
+                #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
+                tcp_user_timeout: Some(Duration::from_secs(30)),
+                tcp_nodelay: true,
+                tcp_reuse_address: false,
+                tcp_send_buffer_size: None,
+                tcp_recv_buffer_size: None,
+                tcp_happy_eyeballs_timeout: Some(Duration::from_millis(300)),
+                socket_bind_options: SocketBindOptions::default(),
+                proxies: Vec::new(),
+                auto_sys_proxy: true,
+                retry_policy: retry::Policy::default(),
+                redirect_policy: redirect::Policy::none(),
+                referer: true,
+                timeout_options: TimeoutOptions::default(),
+                #[cfg(feature = "hickory-dns")]
+                hickory_dns: cfg!(feature = "hickory-dns"),
+                #[cfg(feature = "cookies")]
+                cookie_store: None,
+                dns_overrides: HashMap::new(),
+                dns_resolver: None,
+                http_version_pref: HttpVersionPref::All,
+                https_only: false,
+                http1_options: None,
+                http2_options: None,
+                layers: Vec::new(),
+                connector_layers: Vec::new(),
+                tls_sni: true,
+                tls_info: false,
+                tls_keylog: None,
+                tls_identity: None,
+                tls_cert_store: None,
+                tls_cert_verification: true,
+                tls_verify_hostname: true,
+                tls_min_version: None,
+                tls_max_version: None,
+                tls_session_cache: None,
+                tls_options: None,
+            },
+            runtime: RuntimeHandle::new(runtime),
+        }
+    }
 }
 
 impl tower::Service<Request> for Client {
@@ -462,17 +501,30 @@ impl tower::Service<Request> for &'_ Client {
     }
 }
 
+#[cfg(any(feature = "tokio-rt", feature = "compio-rt"))]
+impl Default for Client {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 // ===== impl ClientBuilder =====
 
 impl ClientBuilder {
-    /// Returns a [`Client`] that uses this [`ClientBuilder`] configuration.
+    /// Builds a [`Client`] from this [`ClientBuilder`].
+    ///
+    /// The runtime is already attached to the builder.
     ///
     /// # Errors
     ///
     /// This method fails if a TLS backend cannot be initialized, or the resolver
     /// cannot load the system configuration.
+    #[inline(always)]
     pub fn build(self) -> crate::Result<Client> {
-        let mut config = self.config;
+        let ClientBuilder {
+            mut config,
+            runtime,
+        } = self;
 
         if let Some(err) = config.error {
             return Err(err);
@@ -489,8 +541,8 @@ impl ClientBuilder {
                 let mut resolver: Arc<dyn Resolve> = match config.dns_resolver {
                     Some(dns_resolver) => dns_resolver,
                     #[cfg(feature = "hickory-dns")]
-                    None if config.hickory_dns => Arc::new(HickoryDnsResolver::new()),
-                    None => Arc::new(GaiResolver::new()),
+                    None if config.hickory_dns => Arc::new(HickoryResolver::new()),
+                    None => Arc::new(GaiResolver::new(runtime.clone())),
                 };
 
                 if !config.dns_overrides.is_empty() {
@@ -502,7 +554,7 @@ impl ClientBuilder {
                 DynResolver::new(resolver)
             };
 
-            let connector = Connector::builder(config.proxies, resolver)
+            let connector = Connector::builder(config.proxies, resolver, runtime.clone())
                 .timeout(config.connect_timeout)
                 .tls_info(config.tls_info)
                 .tcp_nodelay(config.tcp_nodelay)
@@ -562,7 +614,7 @@ impl ClientBuilder {
                 .build(config.tls_options, config.connector_layers)?;
 
             #[allow(unused_mut)]
-            let mut builder = HttpClient::builder(config.executor);
+            let mut builder = HttpClient::builder(runtime.clone());
 
             #[cfg(feature = "cookies")]
             {
@@ -573,8 +625,6 @@ impl ClientBuilder {
                 .http1_options(config.http1_options)
                 .http2_options(config.http2_options)
                 .http2_only(matches!(config.http_version_pref, HttpVersionPref::Http2))
-                .http2_timer(config.timer.clone())
-                .pool_timer(config.timer.clone())
                 .pool_idle_timeout(config.pool_idle_timeout)
                 .pool_max_idle_per_host(config.pool_max_idle_per_host)
                 .pool_max_size(config.pool_max_size)
@@ -613,7 +663,7 @@ impl ClientBuilder {
 
             if config.layers.is_empty() {
                 let service = ServiceBuilder::new()
-                    .layer(TimeoutLayer::new(config.timer, config.timeout_options))
+                    .layer(TimeoutLayer::new(runtime, config.timeout_options))
                     .service(service);
 
                 Either::Left(service)
@@ -626,7 +676,7 @@ impl ClientBuilder {
                     });
 
                 let service = ServiceBuilder::new()
-                    .layer(TimeoutLayer::new(config.timer, config.timeout_options))
+                    .layer(TimeoutLayer::new(runtime, config.timeout_options))
                     .service(service)
                     .map_err(error::map_timeout_to_request_error);
 
@@ -635,28 +685,6 @@ impl ClientBuilder {
         };
 
         Ok(Client(Arc::new(client)))
-    }
-
-    // Runtime options
-
-    /// Provide a timer to be used for timeouts and intervals in client.
-    #[inline]
-    pub fn timer<M>(mut self, timer: M) -> Self
-    where
-        M: wreq_proto::rt::Timer + Send + Sync + 'static,
-    {
-        self.config.timer = Timer::new(timer);
-        self
-    }
-
-    /// Provide an executor to run background tasks in the client.
-    #[inline]
-    pub fn executor<E>(mut self, executor: E) -> Self
-    where
-        E: wreq_proto::rt::Executor<BoxSendFuture> + Send + Sync + 'static,
-    {
-        self.config.executor = Executor::new(executor);
-        self
     }
 
     // Higher-level options

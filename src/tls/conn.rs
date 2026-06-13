@@ -91,7 +91,7 @@ where
     S: Service<Uri, Response = T> + Send,
     S::Error: Into<BoxError>,
     S::Future: Unpin + Send + 'static,
-    T: AsyncRead + AsyncWrite + Connection + Unpin + Debug + Sync + Send + 'static,
+    T: AsyncRead + AsyncWrite + Unpin + Debug + Sync + Send + 'static,
 {
     /// Creates a new [`HttpsConnector`] with a given [`TlsConnector`].
     #[inline]

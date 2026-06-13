@@ -1,6 +1,6 @@
 use std::{
     marker::{PhantomData, Unpin},
-    task::{self, Poll},
+    task::{Context, Poll},
 };
 
 use bytes::BytesMut;
@@ -17,10 +17,10 @@ use crate::ext::UriExt;
 /// another connector, and after getting an underlying connection, it creates
 /// an HTTP CONNECT tunnel over it.
 #[derive(Debug)]
-pub struct TunnelConnector<C> {
+pub struct TunnelConnector<C, D> {
     headers: Headers,
     inner: C,
-    proxy_dst: Uri,
+    proxy_dst: D,
 }
 
 #[derive(Clone, Debug)]
@@ -41,7 +41,7 @@ pub enum TunnelError {
     TunnelUnsuccessful,
 }
 
-impl<C> TunnelConnector<C> {
+impl<C, D> TunnelConnector<C, D> {
     /// Create a new tunnel connector.
     ///
     /// This wraps an underlying connector, and stores the address of a
@@ -50,7 +50,7 @@ impl<C> TunnelConnector<C> {
     /// A `TunnelConnector` can then be called with any destination. The `proxy_dst` passed to
     /// `call` will not be used to create the underlying connection, but will
     /// be used in an HTTP CONNECT request sent to the proxy destination.
-    pub fn new(proxy_dst: Uri, connector: C) -> Self {
+    pub fn new(connector: C, proxy_dst: D) -> Self {
         Self {
             headers: Headers::Empty,
             inner: connector,
@@ -100,19 +100,20 @@ impl<C> TunnelConnector<C> {
     }
 }
 
-impl<C> Service<Uri> for TunnelConnector<C>
+impl<C, D> Service<Uri> for TunnelConnector<C, D>
 where
-    C: Service<Uri>,
+    C: Service<D>,
     C::Future: Send + 'static,
     C::Response: AsyncRead + AsyncWrite + Unpin + Send + 'static,
     C::Error: Into<BoxError>,
+    D: Clone,
 {
     type Response = C::Response;
     type Error = TunnelError;
     type Future = Tunneling<C::Future, C::Response, Self::Error>;
 
     #[inline]
-    fn poll_ready(&mut self, cx: &mut task::Context<'_>) -> Poll<Result<(), Self::Error>> {
+    fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         self.inner
             .poll_ready(cx)
             .map_err(Into::into)
@@ -133,7 +134,7 @@ where
                     conn,
                     dst.host().ok_or(TunnelError::MissingHost)?,
                     dst.port_or_default(),
-                    &headers,
+                    headers,
                 )
                 .await
             }),
@@ -142,7 +143,7 @@ where
     }
 }
 
-async fn tunnel<T>(mut conn: T, host: &str, port: u16, headers: &Headers) -> Result<T, TunnelError>
+async fn tunnel<T>(mut conn: T, host: &str, port: u16, headers: Headers) -> Result<T, TunnelError>
 where
     T: AsyncRead + AsyncWrite + Unpin,
 {
@@ -161,8 +162,8 @@ where
             buf.extend_from_slice(b"\r\n");
         }
         Headers::Extra(extra) => {
-            for (name, value) in extra {
-                buf.extend_from_slice(name.as_str().as_bytes());
+            for (name, value) in extra.iter() {
+                buf.extend_from_slice(name.as_ref());
                 buf.extend_from_slice(b": ");
                 buf.extend_from_slice(value.as_bytes());
                 buf.extend_from_slice(b"\r\n");

@@ -1,19 +1,17 @@
 use std::{
     future::Future,
     pin::Pin,
+    sync::Arc,
     task::{Context, Poll, ready},
     time::Duration,
 };
 
 use http::Response;
 use pin_project_lite::pin_project;
-use wreq_proto::rt::Sleep;
+use wreq_rt::{Sleep, Timer};
 
 use super::body::TimeoutBody;
-use crate::{
-    error::{BoxError, Error, TimedOut},
-    rt::Timer,
-};
+use crate::error::{BoxError, Error, TimedOut};
 
 pin_project! {
     /// [`Timeout`] response future
@@ -70,9 +68,9 @@ pin_project! {
     pub struct ResponseBodyTimeoutFuture<Fut> {
         #[pin]
         pub(super) fut: Fut,
-        pub(super) timer: Timer,
         pub(super) total_timeout: Option<Duration>,
         pub(super) read_timeout: Option<Duration>,
+        pub(super) timer: Arc<dyn Timer>,
 
     }
 }

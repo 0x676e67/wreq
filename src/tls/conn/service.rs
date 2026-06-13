@@ -11,10 +11,7 @@ use tokio_btls::SslStream;
 use tower::{BoxError, Service};
 
 use super::{EstablishedConn, HttpsConnector, MaybeHttpsStream};
-use crate::{
-    conn::{Connection, descriptor::ConnectionDescriptor},
-    ext::UriExt,
-};
+use crate::{conn::descriptor::ConnectionDescriptor, ext::UriExt};
 
 type BoxFuture<T, E> = Pin<Box<dyn Future<Output = Result<T, E>> + Send>>;
 
@@ -32,7 +29,7 @@ where
     S: Service<Uri, Response = T> + Send,
     S::Error: Into<BoxError>,
     S::Future: Unpin + Send + 'static,
-    T: AsyncRead + AsyncWrite + Connection + Unpin + Debug + Sync + Send + 'static,
+    T: AsyncRead + AsyncWrite + Unpin + Debug + Sync + Send + 'static,
 {
     type Response = MaybeHttpsStream<T>;
     type Error = BoxError;
@@ -68,7 +65,7 @@ where
     S: Service<Uri, Response = T> + Send,
     S::Error: Into<BoxError>,
     S::Future: Unpin + Send + 'static,
-    T: AsyncRead + AsyncWrite + Connection + Unpin + Debug + Sync + Send + 'static,
+    T: AsyncRead + AsyncWrite + Unpin + Debug + Sync + Send + 'static,
 {
     type Response = MaybeHttpsStream<T>;
     type Error = BoxError;
@@ -105,7 +102,7 @@ where
     S: Service<Uri, Response = T> + Send + Clone + 'static,
     S::Error: Into<BoxError>,
     S::Future: Unpin + Send + 'static,
-    T: AsyncRead + AsyncWrite + Connection + Unpin + Debug + Sync + Send + 'static,
+    T: AsyncRead + AsyncWrite + Unpin + Debug + Sync + Send + 'static,
     IO: AsyncRead + AsyncWrite + Unpin + Send + Sync + Debug + 'static,
 {
     type Response = MaybeHttpsStream<IO>;

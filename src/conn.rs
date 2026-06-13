@@ -4,13 +4,13 @@ mod verbose;
 pub(super) mod connector;
 pub(super) mod descriptor;
 pub(super) mod http;
-pub(super) mod net;
+pub(super) mod opts;
 pub(super) mod proxy;
+pub(super) mod tcp;
 
 use std::{
     fmt::{self, Debug, Formatter},
-    io,
-    io::IoSlice,
+    io::{self, IoSlice},
     pin::Pin,
     sync::{
         Arc,
@@ -20,8 +20,6 @@ use std::{
 };
 
 use ::http::{Extensions, HeaderMap, HeaderValue};
-#[cfg(any(feature = "tokio-rt", feature = "compio-rt"))]
-use net::TcpConnector;
 use pin_project_lite::pin_project;
 use tls_info::TlsInfoFactory;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
@@ -32,13 +30,15 @@ use tower::{
 };
 
 use crate::{
+    conn::http::HttpInfo,
     dns::DynResolver,
     proxy::matcher::Intercept,
+    rt::RuntimeHandle,
     tls::{AlpnProtocol, TlsInfo},
 };
 
 /// HTTP connector with dynamic DNS resolver.
-pub type HttpConnector = http::HttpConnector<DynResolver, TcpConnector>;
+pub type HttpConnector = http::HttpConnector<DynResolver, RuntimeHandle>;
 
 /// Boxed connector service for establishing connections.
 pub type BoxedConnectorService = BoxCloneSyncService<Unnameable, Conn, BoxError>;
@@ -297,6 +297,20 @@ where
     #[inline]
     fn tls_info(&self) -> Option<TlsInfo> {
         self.stream.tls_info()
+    }
+}
+
+impl Connection for wreq_rt::BoxConnection {
+    #[inline]
+    fn connected(&self) -> Connected {
+        let connected = Connected::new();
+        match (self.peer_addr(), self.local_addr()) {
+            (Some(remote_addr), Some(local_addr)) => connected.extra(HttpInfo {
+                remote_addr,
+                local_addr,
+            }),
+            _ => connected,
+        }
     }
 }
 
