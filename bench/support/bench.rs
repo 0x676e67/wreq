@@ -1,8 +1,10 @@
 use criterion::Criterion;
 
 use crate::support::{
-    BoxError, HttpVersion, Tls, client::bench_clients, current_thread_runtime,
-    multi_thread_runtime, server::with_server,
+    BoxError, HttpVersion, Tls,
+    client::bench_clients,
+    rt::{current_thread_runtime, multi_thread_runtime},
+    server::with_server,
 };
 
 pub const CURRENT_THREAD_LABEL: &str = "current_thread";
@@ -54,6 +56,7 @@ pub fn bench(
                 bench_clients(
                     &mut group,
                     current_thread_runtime,
+                    true,
                     addr,
                     tls,
                     http_version,
@@ -74,6 +77,7 @@ pub fn bench(
                 bench_clients(
                     &mut group,
                     multi_thread_runtime,
+                    false,
                     addr,
                     tls,
                     http_version,

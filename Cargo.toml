@@ -1,6 +1,6 @@
 [package]
 name = "wreq"
-version = "6.0.0-rc.28"
+version = "6.0.0-rc.29"
 description = "An ergonomic Rust HTTP Client with TLS fingerprint"
 keywords = ["http", "client", "websocket", "ja3", "ja4"]
 categories = ["web-programming::http-client"]
@@ -201,6 +201,7 @@ zstd = "0.13.3"
 sysinfo = { version = "0.39.1", default-features = false, features = ["system"] }
 criterion = { version = "0.8.2", features = ["async_tokio"] }
 reqwest = { version = "0.13.3", default-features = false, features = ["rustls", "stream", "http2"] }
+cyper = { version = "0.9.0",  default-features = false, features = ["rustls", "stream"] }
 
 [profile.release]
 codegen-units = 1
