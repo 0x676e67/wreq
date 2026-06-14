@@ -114,9 +114,7 @@ type MaybeDecompressionBody<T> = tower_http::decompression::DecompressionBody<T>
 
 type ClientService = Timeout<
     ConfigService<
-        MaybeDecompression<
-            Retry<RetryPolicy, FollowRedirect<HttpClient<Connector, Body>, FollowRedirectPolicy>>,
-        >,
+        MaybeDecompression<Retry<RetryPolicy, FollowRedirect<HttpClient<Connector, Body>>>>,
     >,
 >;
 
