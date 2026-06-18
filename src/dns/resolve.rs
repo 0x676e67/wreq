@@ -9,7 +9,10 @@ use std::{
     task::{Context, Poll},
 };
 
+use futures_util::{TryFutureExt, future::MapErr};
 use tower::{BoxError, Service};
+
+use crate::error::DnsError;
 
 /// A domain name to resolve into IP addresses.
 #[derive(Clone, Hash, Eq, PartialEq)]
@@ -99,14 +102,17 @@ impl DynResolver {
 impl Service<Name> for DynResolver {
     type Response = Addrs;
     type Error = BoxError;
-    type Future = Resolving;
+    type Future = MapErr<MapErr<Resolving, fn(BoxError) -> DnsError>, fn(DnsError) -> Self::Error>;
 
     fn poll_ready(&mut self, _: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         Poll::Ready(Ok(()))
     }
 
     fn call(&mut self, name: Name) -> Self::Future {
-        self.resolver.resolve(name)
+        self.resolver
+            .resolve(name)
+            .map_err(DnsError as _)
+            .map_err(Into::into)
     }
 }
 

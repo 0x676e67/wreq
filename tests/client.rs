@@ -1090,3 +1090,27 @@ async fn response_trailers() {
     assert_eq!(trailers["chunky-trailer1"], "value1");
     assert_eq!(trailers["chunky-trailer2"], "value2");
 }
+
+#[tokio::test]
+async fn dns_resolution_failure_is_dns_error() {
+    let _ = env_logger::builder().is_test(true).try_init();
+
+    struct FailingResolver;
+
+    impl wreq::dns::Resolve for FailingResolver {
+        fn resolve(&self, _name: wreq::dns::Name) -> reqwest::dns::Resolving {
+            Box::pin(async { Err("simulated resolver failure".into()) })
+        }
+    }
+
+    let client = Client::builder()
+        .no_proxy()
+        .dns_resolver(FailingResolver)
+        .build()
+        .expect("client builder");
+
+    let err = client.get("http://hyper.rs").send().await.unwrap_err();
+
+    assert!(err.is_dns(), "expected a DNS error, got: {err:?}");
+    assert!(err.is_connect(), "expected is_connect() to also be true");
+}

@@ -14,7 +14,7 @@ use tower::Service;
 
 use super::Tunneling;
 use crate::{
-    dns::{GaiResolver, InternalResolve, Name},
+    dns::{DnsResolver, GaiResolver, Name, resolve},
     error::BoxError,
     ext::UriExt,
 };
@@ -100,7 +100,7 @@ pub struct SocksConnector<C, R = GaiResolver> {
 
 impl<C, R> SocksConnector<C, R>
 where
-    R: InternalResolve + Clone,
+    R: DnsResolver + Clone,
 {
     /// Create a new [`SocksConnector`].
     pub fn new(proxy_dst: Uri, inner: C, resolver: R) -> Self {
@@ -139,8 +139,8 @@ where
     C::Future: Send + 'static,
     C::Response: AsyncRead + AsyncWrite + Unpin + Send + 'static,
     C::Error: Into<BoxError>,
-    R: InternalResolve + Clone + Send + 'static,
-    <R as InternalResolve>::Future: Send + 'static,
+    R: DnsResolver + Clone + Send + 'static,
+    R::Future: Send + 'static,
 {
     type Response = C::Response;
     type Error = SocksError;
@@ -176,8 +176,7 @@ where
             // Resolve the target address using the provided resolver.
             let target_addr = match dns_resolve {
                 DnsResolve::Local => {
-                    let mut socket_addr = resolver
-                        .resolve(Name::new(host.into()))
+                    let mut socket_addr = resolve(&mut resolver, Name::new(host.into()))
                         .await
                         .map(|mut s| s.next())
                         .transpose()

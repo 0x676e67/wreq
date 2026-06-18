@@ -261,6 +261,21 @@ impl Error {
         false
     }
 
+    /// Returns true if the error is related to DNS resolution.
+    pub fn is_dns(&self) -> bool {
+        let mut source = self.source();
+
+        while let Some(err) = source {
+            if err.is::<DnsError>() {
+                return true;
+            }
+
+            source = err.source();
+        }
+
+        false
+    }
+
     /// Returns true if the error is related to the request or response body
     #[inline]
     pub fn is_body(&self) -> bool {
@@ -403,6 +418,9 @@ pub(crate) struct BadScheme;
 #[derive(Debug)]
 pub(crate) struct ProxyConnect(pub(crate) BoxError);
 
+#[derive(Debug)]
+pub(crate) struct DnsError(pub(crate) BoxError);
+
 // ==== impl TimedOut ====
 
 impl StdError for TimedOut {}
@@ -435,6 +453,21 @@ impl StdError for ProxyConnect {
 impl fmt::Display for ProxyConnect {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "proxy connect error: {}", self.0)
+    }
+}
+
+// ==== impl DnsError ====
+
+impl StdError for DnsError {
+    #[inline]
+    fn source(&self) -> Option<&(dyn StdError + 'static)> {
+        Some(&*self.0)
+    }
+}
+
+impl fmt::Display for DnsError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "dns resolution error: {}", self.0)
     }
 }
 
