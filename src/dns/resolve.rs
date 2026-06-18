@@ -1,3 +1,4 @@
+use futures_util::TryFutureExt;
 use std::{
     borrow::Cow,
     collections::HashMap,
@@ -106,7 +107,12 @@ impl Service<Name> for DynResolver {
     }
 
     fn call(&mut self, name: Name) -> Self::Future {
-        self.resolver.resolve(name)
+        Box::pin(
+            self.resolver
+                .resolve(name)
+                .map_err(crate::error::DnsError)
+                .map_err(Into::into),
+        )
     }
 }
 
