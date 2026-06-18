@@ -17,7 +17,7 @@ pub use self::{
 };
 pub(crate) use self::{
     resolve::{DnsResolverWithOverrides, DynResolver},
-    sealed::{InternalResolve, resolve},
+    sealed::{DnsResolver, resolve},
 };
 
 /// A wrapper around `Vec<SocketAddr>` to implement the `Iterator` trait.
@@ -113,7 +113,7 @@ mod sealed {
     /// This trait provides a unified interface for different resolver implementations,
     /// allowing both custom [`super::Resolve`] types and Tower [`Service`] implementations
     /// to be used interchangeably within the connector.
-    pub trait InternalResolve {
+    pub trait DnsResolver {
         type Addrs: Iterator<Item = SocketAddr>;
         type Error: Into<BoxError>;
         type Future: Future<Output = Result<Self::Addrs, Self::Error>>;
@@ -123,7 +123,7 @@ mod sealed {
     }
 
     /// Automatic implementation for any Tower [`Service`] that resolves names to socket addresses.
-    impl<S> InternalResolve for S
+    impl<S> DnsResolver for S
     where
         S: Service<Name>,
         S::Response: Iterator<Item = SocketAddr>,
@@ -144,7 +144,7 @@ mod sealed {
 
     pub async fn resolve<R>(resolver: &mut R, name: Name) -> Result<R::Addrs, R::Error>
     where
-        R: InternalResolve,
+        R: DnsResolver,
     {
         std::future::poll_fn(|cx| resolver.poll_ready(cx)).await?;
         resolver.resolve(name).await

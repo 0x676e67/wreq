@@ -20,7 +20,7 @@ use super::{
         tcp::{ConnectError, ConnectingTcp, TcpConnector, TcpKeepaliveOptions, TcpOptions},
     },
 };
-use crate::dns::{self, InternalResolve};
+use crate::dns::{self, DnsResolver};
 
 static INVALID_NOT_HTTP: &str = "invalid URI, scheme is not http";
 static INVALID_MISSING_SCHEME: &str = "invalid URI, scheme is missing";
@@ -178,7 +178,7 @@ impl<R, S> HttpConnector<R, S> {
 
 impl<R, S> HttpConnect for HttpConnector<R, S>
 where
-    R: InternalResolve + Clone + Send + Sync + 'static,
+    R: DnsResolver + Clone + Send + Sync + 'static,
     R::Future: Send,
     S: TcpConnector,
 {
@@ -337,7 +337,7 @@ where
 
 impl<R, S> Service<Uri> for HttpConnector<R, S>
 where
-    R: InternalResolve + Clone + Send + Sync + 'static,
+    R: DnsResolver + Clone + Send + Sync + 'static,
     R::Future: Send,
     S: TcpConnector,
     S::TcpStream: From<socket2::Socket>,
@@ -472,7 +472,7 @@ pin_project! {
 
 impl<R, S> Future for HttpConnecting<R, S>
 where
-    R: InternalResolve,
+    R: DnsResolver,
     S: TcpConnector,
 {
     type Output = ConnectResult<S>;
