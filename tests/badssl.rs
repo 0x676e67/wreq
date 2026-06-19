@@ -15,7 +15,6 @@ macro_rules! join {
 async fn test_badssl_modern() {
     let text = Client::builder()
         .no_proxy()
-        .connect_timeout(Duration::from_secs(360))
         .build()
         .unwrap()
         .get("https://mozilla-modern.badssl.com/")
@@ -26,14 +25,13 @@ async fn test_badssl_modern() {
         .await
         .unwrap();
 
-    assert!(!text.is_empty());
+    assert!(text.contains("<title>mozilla-modern.badssl.com</title>"));
 }
 
 #[tokio::test]
 async fn test_badssl_self_signed() {
     let text = Client::builder()
         .tls_cert_verification(false)
-        .connect_timeout(Duration::from_secs(360))
         .no_proxy()
         .build()
         .unwrap()
@@ -45,8 +43,37 @@ async fn test_badssl_self_signed() {
         .await
         .unwrap();
 
-    assert!(!text.is_empty());
+    assert!(text.contains("<title>self-signed.badssl.com</title>"));
 }
+
+#[tokio::test]
+async fn test_badssl_wrong_host() {
+    let text = Client::builder()
+        .tls_verify_hostname(false)
+        .no_proxy()
+        .build()
+        .unwrap()
+        .get("https://wrong.host.badssl.com/")
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+
+    assert!(text.contains("<title>wrong.host.badssl.com</title>"));
+
+    let result = Client::builder()
+        .tls_verify_hostname(false)
+        .build()
+        .unwrap()
+        .get("https://self-signed.badssl.com/")
+        .send()
+        .await;
+
+    assert!(result.is_err());
+}
+
 const CURVES_LIST: &str = join!(
     ":",
     "X25519",
@@ -189,7 +216,6 @@ async fn test_aes_hw_override() -> wreq::Result<()> {
 async fn test_tls_self_signed_cert() {
     let client = Client::builder()
         .tls_cert_verification(false)
-        .connect_timeout(Duration::from_secs(360))
         .tls_info(true)
         .build()
         .unwrap();
