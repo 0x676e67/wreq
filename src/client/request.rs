@@ -565,6 +565,45 @@ impl RequestBuilder {
         self
     }
 
+    /// Register a callback for 1xx informational responses.
+    ///
+    /// The callback is invoked when a 1xx informational response (such as
+    /// `100 Continue`) is received from the server, before the final response.
+    ///
+    /// This is useful for handling the `Expect: 100-continue` flow, where
+    /// the client can decide when to send the request body after receiving
+    /// a `100 Continue` response.
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// # use wreq::Error;
+    /// #
+    /// # async fn run() -> Result<(), Error> {
+    /// use wreq::informational::Response;
+    ///
+    /// let client = wreq::Client::new();
+    /// let resp = client
+    ///     .post("http://httpbin.org/post")
+    ///     .body("data")
+    ///     .on_informational(|res: Response<'_>| {
+    ///         println!("Received: {}", res.status());
+    ///     })
+    ///     .send()
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn on_informational<F>(mut self, callback: F) -> RequestBuilder
+    where
+        F: Fn(wreq_proto::ext::Response<'_>) + Send + Sync + 'static,
+    {
+        if let Ok(ref mut req) = self.request {
+            wreq_proto::ext::on_informational(&mut req.0, callback);
+        }
+        self
+    }
+
     /// Set the redirect policy for this request.
     pub fn redirect(mut self, policy: redirect::Policy) -> RequestBuilder {
         if let Ok(ref mut req) = self.request {
