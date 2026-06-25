@@ -565,41 +565,49 @@ impl RequestBuilder {
         self
     }
 
-    /// Register a callback for 1xx informational responses.
+    /// Enable `Expect: 100-continue` with the given timeout.
     ///
-    /// The callback is invoked when a 1xx informational response (such as
-    /// `100 Continue`) is received from the server, before the final response.
+    /// When set, the client sends the request headers first and waits
+    /// for a `100 Continue` response before sending the body. If the
+    /// timeout elapses before `100 Continue` arrives, the body is sent
+    /// anyway.
     ///
-    /// This is useful for handling the `Expect: 100-continue` flow, where
-    /// the client can decide when to send the request body after receiving
-    /// a `100 Continue` response.
+    /// This matches the behavior of Go's `http.Transport.ExpectContinueTimeout`
+    /// and curl's `--expect100-timeout`.
     ///
     /// # Example
     ///
     /// ```rust,no_run
     /// # use wreq::Error;
+    /// # use std::time::Duration;
     /// #
     /// # async fn run() -> Result<(), Error> {
-    /// use wreq::informational::Response;
-    ///
     /// let client = wreq::Client::new();
     /// let resp = client
-    ///     .post("http://httpbin.org/post")
-    ///     .body("data")
-    ///     .on_informational(|res: Response<'_>| {
-    ///         println!("Received: {}", res.status());
-    ///     })
+    ///     .post("http://example.com/upload")
+    ///     .body("large payload")
+    ///     .expect_continue_timeout(Duration::from_secs(1))
     ///     .send()
     ///     .await?;
     /// # Ok(())
     /// # }
     /// ```
-    pub fn on_informational<F>(mut self, callback: F) -> RequestBuilder
-    where
-        F: Fn(wreq_proto::ext::Response<'_>) + Send + Sync + 'static,
-    {
+    pub fn expect_continue_timeout(mut self, dur: Duration) -> RequestBuilder {
         if let Ok(ref mut req) = self.request {
-            wreq_proto::ext::on_informational(&mut req.0, callback);
+            req.headers_mut().insert(
+                http::header::EXPECT,
+                http::header::HeaderValue::from_static("100-continue"),
+            );
+
+            let state = super::expect_continue::ExpectContinueState::new();
+            let sig = state.clone();
+            wreq_proto::ext::on_informational(&mut req.0, move |_res| {
+                sig.signal();
+            });
+
+            let inner = req.body_mut().take().unwrap_or_else(Body::empty);
+            let wrapped = super::expect_continue::ExpectContinueBody::new(inner, state, dur);
+            *req.body_mut() = Some(Body::wrap(wrapped));
         }
         self
     }

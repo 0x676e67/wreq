@@ -346,15 +346,6 @@ pub mod http1 {
     pub use wreq_proto::http1::{Http1Options, Http1OptionsBuilder};
 }
 
-pub mod informational {
-    //! Types for handling HTTP 1xx informational responses.
-    //!
-    //! The [`Response`] type is used in the callback passed to
-    //! [`RequestBuilder::on_informational`](crate::RequestBuilder::on_informational).
-
-    pub use wreq_proto::ext::Response;
-}
-
 pub mod http2 {
     //! HTTP/2 protocol implementation and utilities.
 
