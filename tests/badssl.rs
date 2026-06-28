@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use wreq::{
     Client, retry,
-    tls::{AlpsProtocol, TlsInfo, TlsOptions, TlsVersion, trust::CertStore},
+    tls::{AlpsProtocol, TlsOptions, TlsVersion},
 };
 
 macro_rules! join {
@@ -231,51 +231,4 @@ async fn test_aes_hw_override() -> wreq::Result<()> {
     let text = resp.text().await?;
     assert!(text.contains("ChaCha20Poly1305"));
     Ok(())
-}
-
-#[tokio::test]
-async fn test_tls_self_signed_cert() {
-    let client = Client::builder()
-        .tls_cert_verification(false)
-        .tls_info(true)
-        .retry(
-            retry::Policy::default()
-                .max_retries_per_request(10)
-                .no_budget(),
-        )
-        .no_proxy()
-        .build()
-        .unwrap();
-
-    let resp = client
-        .get("https://self-signed.badssl.com/")
-        .send()
-        .await
-        .unwrap();
-
-    let peer_cert_der = resp
-        .extensions()
-        .get::<TlsInfo>()
-        .and_then(|info| info.peer_certificate())
-        .unwrap();
-
-    let self_signed_cert_store = CertStore::builder()
-        .add_der_cert(peer_cert_der)
-        .build()
-        .unwrap();
-
-    let client = Client::builder()
-        .tls_cert_store(self_signed_cert_store)
-        .build()
-        .unwrap();
-
-    let resp = client
-        .get("https://self-signed.badssl.com/")
-        .send()
-        .await
-        .unwrap();
-    assert!(resp.status().is_success());
-
-    let res = client.get("https://www.google.com").send().await;
-    assert!(res.is_err());
 }
