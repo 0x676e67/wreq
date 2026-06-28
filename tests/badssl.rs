@@ -1,7 +1,7 @@
-use std::time::Duration;
+use std::{error::Error as StdError, io, time::Duration};
 
 use wreq::{
-    Client,
+    Client, Method, retry,
     tls::{AlpsProtocol, TlsInfo, TlsOptions, TlsVersion, trust::CertStore},
 };
 
@@ -11,10 +11,45 @@ macro_rules! join {
     };
 }
 
+fn badssl_connection_reset_retry_policy(host: &'static str) -> retry::Policy {
+    retry::Policy::for_host(host)
+        .max_retries_per_request(10)
+        .no_budget()
+        .classify_fn(|req_rep| {
+            let should_retry = *req_rep.method() == Method::GET
+                && req_rep.error().is_some_and(is_connection_reset);
+
+            if should_retry {
+                req_rep.retryable()
+            } else {
+                req_rep.success()
+            }
+        })
+}
+
+fn is_connection_reset(err: &(dyn StdError + 'static)) -> bool {
+    let mut source = Some(err);
+
+    while let Some(err) = source {
+        if let Some(io) = err.downcast_ref::<io::Error>() {
+            if io.kind() == io::ErrorKind::ConnectionReset {
+                return true;
+            }
+        }
+
+        source = err.source();
+    }
+
+    false
+}
+
 #[tokio::test]
 async fn test_badssl_modern() {
     let text = Client::builder()
         .no_proxy()
+        .retry(badssl_connection_reset_retry_policy(
+            "mozilla-modern.badssl.com",
+        ))
         .build()
         .unwrap()
         .get("https://mozilla-modern.badssl.com/")
@@ -33,6 +68,9 @@ async fn test_badssl_self_signed() {
     let text = Client::builder()
         .tls_cert_verification(false)
         .no_proxy()
+        .retry(badssl_connection_reset_retry_policy(
+            "self-signed.badssl.com",
+        ))
         .build()
         .unwrap()
         .get("https://self-signed.badssl.com/")
@@ -51,6 +89,9 @@ async fn test_badssl_wrong_host() {
     let text = Client::builder()
         .tls_verify_hostname(false)
         .no_proxy()
+        .retry(badssl_connection_reset_retry_policy(
+            "wrong.host.badssl.com",
+        ))
         .build()
         .unwrap()
         .get("https://wrong.host.badssl.com/")
@@ -65,6 +106,7 @@ async fn test_badssl_wrong_host() {
 
     let result = Client::builder()
         .tls_verify_hostname(false)
+        .no_proxy()
         .build()
         .unwrap()
         .get("https://self-signed.badssl.com/")
@@ -99,6 +141,7 @@ async fn test_3des_support() -> wreq::Result<()> {
     let client = Client::builder()
         .tls_options(tls_options)
         .tls_cert_verification(false)
+        .retry(badssl_connection_reset_retry_policy("3des.badssl.com"))
         .connect_timeout(Duration::from_secs(360))
         .build()?;
 
@@ -132,6 +175,7 @@ async fn test_firefox_7x_100_cipher() -> wreq::Result<()> {
     let client = Client::builder()
         .tls_options(tls_options)
         .tls_cert_verification(false)
+        .retry(badssl_connection_reset_retry_policy("dh2048.badssl.com"))
         .connect_timeout(Duration::from_secs(360))
         .build()?;
 
@@ -217,6 +261,10 @@ async fn test_tls_self_signed_cert() {
     let client = Client::builder()
         .tls_cert_verification(false)
         .tls_info(true)
+        .retry(badssl_connection_reset_retry_policy(
+            "self-signed.badssl.com",
+        ))
+        .no_proxy()
         .build()
         .unwrap();
 
@@ -239,6 +287,10 @@ async fn test_tls_self_signed_cert() {
 
     let client = Client::builder()
         .tls_cert_store(self_signed_cert_store)
+        .retry(badssl_connection_reset_retry_policy(
+            "self-signed.badssl.com",
+        ))
+        .no_proxy()
         .build()
         .unwrap();
 
