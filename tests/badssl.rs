@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use wreq::{
-    Client,
+    Client, retry,
     tls::{AlpsProtocol, TlsInfo, TlsOptions, TlsVersion, trust::CertStore},
 };
 
@@ -14,6 +14,11 @@ macro_rules! join {
 #[tokio::test]
 async fn test_badssl_modern() {
     let text = Client::builder()
+        .retry(
+            retry::Policy::default()
+                .max_retries_per_request(10)
+                .no_budget(),
+        )
         .no_proxy()
         .build()
         .unwrap()
@@ -33,6 +38,11 @@ async fn test_badssl_self_signed() {
     let text = Client::builder()
         .tls_cert_verification(false)
         .no_proxy()
+        .retry(
+            retry::Policy::default()
+                .max_retries_per_request(10)
+                .no_budget(),
+        )
         .build()
         .unwrap()
         .get("https://self-signed.badssl.com/")
@@ -51,6 +61,11 @@ async fn test_badssl_wrong_host() {
     let text = Client::builder()
         .tls_verify_hostname(false)
         .no_proxy()
+        .retry(
+            retry::Policy::default()
+                .max_retries_per_request(10)
+                .no_budget(),
+        )
         .build()
         .unwrap()
         .get("https://wrong.host.badssl.com/")
@@ -65,6 +80,12 @@ async fn test_badssl_wrong_host() {
 
     let result = Client::builder()
         .tls_verify_hostname(false)
+        .retry(
+            retry::Policy::default()
+                .max_retries_per_request(10)
+                .no_budget(),
+        )
+        .no_proxy()
         .build()
         .unwrap()
         .get("https://self-signed.badssl.com/")
@@ -217,6 +238,12 @@ async fn test_tls_self_signed_cert() {
     let client = Client::builder()
         .tls_cert_verification(false)
         .tls_info(true)
+        .retry(
+            retry::Policy::default()
+                .max_retries_per_request(10)
+                .no_budget(),
+        )
+        .no_proxy()
         .build()
         .unwrap();
 
