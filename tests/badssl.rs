@@ -1,7 +1,7 @@
 use std::{error::Error as StdError, io, time::Duration};
 
 use wreq::{
-    Client, Method, retry,
+    Client, retry,
     tls::{AlpsProtocol, TlsInfo, TlsOptions, TlsVersion, trust::CertStore},
 };
 
@@ -16,10 +16,7 @@ fn badssl_connection_reset_retry_policy() -> retry::Policy {
         .max_retries_per_request(10)
         .no_budget()
         .classify_fn(|req_rep| {
-            let should_retry = *req_rep.method() == Method::GET
-                && req_rep.error().is_some_and(is_connection_reset);
-
-            if should_retry {
+            if req_rep.error().is_some_and(is_connection_reset) {
                 req_rep.retryable()
             } else {
                 req_rep.success()
