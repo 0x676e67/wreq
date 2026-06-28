@@ -47,6 +47,9 @@ fn is_connection_reset(err: &(dyn StdError + 'static)) -> bool {
 async fn test_badssl_modern() {
     let text = Client::builder()
         .no_proxy()
+        .retry(badssl_connection_reset_retry_policy(
+            "mozilla-modern.badssl.com",
+        ))
         .build()
         .unwrap()
         .get("https://mozilla-modern.badssl.com/")
@@ -138,6 +141,7 @@ async fn test_3des_support() -> wreq::Result<()> {
     let client = Client::builder()
         .tls_options(tls_options)
         .tls_cert_verification(false)
+        .retry(badssl_connection_reset_retry_policy("3des.badssl.com"))
         .connect_timeout(Duration::from_secs(360))
         .build()?;
 
@@ -171,6 +175,7 @@ async fn test_firefox_7x_100_cipher() -> wreq::Result<()> {
     let client = Client::builder()
         .tls_options(tls_options)
         .tls_cert_verification(false)
+        .retry(badssl_connection_reset_retry_policy("dh2048.badssl.com"))
         .connect_timeout(Duration::from_secs(360))
         .build()?;
 
