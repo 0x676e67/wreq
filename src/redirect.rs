@@ -11,7 +11,7 @@ use futures_util::FutureExt;
 use http::{HeaderMap, HeaderName, HeaderValue, StatusCode, Uri};
 
 use crate::{
-    client::{body::Body, layer::redirect},
+    client::layer::redirect,
     config::RequestConfig,
     error::{BoxError, Error},
     ext::UriExt,
@@ -52,9 +52,7 @@ pub struct Attempt<'a, const PENDING: bool = true> {
 
 /// An action to perform when a redirect status code is found.
 #[derive(Debug)]
-pub struct Action {
-    inner: redirect::Action,
-}
+pub struct Action(redirect::Action);
 
 /// Redirect history information for a response.
 #[derive(Debug, Clone)]
@@ -221,7 +219,7 @@ impl Policy {
             uri: Cow::Borrowed(next),
             previous: Cow::Borrowed(previous),
         })
-        .inner
+        .0
     }
 }
 
@@ -241,9 +239,7 @@ impl<const PENDING: bool> Attempt<'_, PENDING> {
     /// Returns an action meaning wreq should follow the next URI.
     #[inline]
     pub fn follow(self) -> Action {
-        Action {
-            inner: redirect::Action::Follow,
-        }
+        Action(redirect::Action::Follow)
     }
 
     /// Returns an action meaning wreq should not follow the next URI.
@@ -251,9 +247,7 @@ impl<const PENDING: bool> Attempt<'_, PENDING> {
     /// The 30x response will be returned as the `Ok` result.
     #[inline]
     pub fn stop(self) -> Action {
-        Action {
-            inner: redirect::Action::Stop,
-        }
+        Action(redirect::Action::Stop)
     }
 
     /// Returns an [`Action`] failing the redirect with an error.
@@ -261,9 +255,7 @@ impl<const PENDING: bool> Attempt<'_, PENDING> {
     /// The [`Error`] will be returned for the result of the sent request.
     #[inline]
     pub fn error<E: Into<BoxError>>(self, error: E) -> Action {
-        Action {
-            inner: redirect::Action::Error(error.into()),
-        }
+        Action(redirect::Action::Error(error.into()))
     }
 }
 
@@ -300,10 +292,10 @@ impl Attempt<'_, true> {
             uri: Cow::Owned(self.uri.into_owned()),
             previous: Cow::Owned(self.previous.into_owned()),
         };
-        let pending = Box::pin(func(attempt).map(|action| action.inner));
-        Action {
-            inner: redirect::Action::Pending(pending),
-        }
+
+        Action(redirect::Action::Pending(Box::pin(
+            func(attempt).map(|action| action.0),
+        )))
     }
 }
 
@@ -356,7 +348,7 @@ impl StdError for TooManyRedirects {}
 impl FollowRedirectPolicy {
     /// Creates a new redirect policy handler with the given [`Policy`].
     pub fn new(policy: Policy) -> Self {
-        Self {
+        FollowRedirectPolicy {
             policy: RequestConfig::new(Some(policy)),
             referer: false,
             uris: Vec::new(),
@@ -380,13 +372,14 @@ impl FollowRedirectPolicy {
     }
 }
 
-impl redirect::Policy<Body, BoxError> for FollowRedirectPolicy {
-    fn redirect(&mut self, attempt: redirect::Attempt<'_>) -> Result<redirect::Action, BoxError> {
+impl FollowRedirectPolicy {
+    pub(crate) fn redirect(
+        &mut self,
+        attempt: redirect::Attempt<'_>,
+    ) -> Result<redirect::Action, BoxError> {
         // Parse the next URI from the attempt.
         let previous_uri = attempt.previous;
         let next_uri = attempt.location;
-
-        // Push the previous URI to the list of URLs.
         self.uris.push(previous_uri.clone());
 
         // Get policy from config
@@ -394,49 +387,51 @@ impl redirect::Policy<Body, BoxError> for FollowRedirectPolicy {
             .policy
             .as_ref()
             .expect("[BUG] FollowRedirectPolicy should always have a policy set");
+        let action = policy.check(attempt.status, attempt.headers, next_uri, &self.uris);
 
-        // Check if the next URI is already in the list of URLs.
-        match policy.check(attempt.status, attempt.headers, next_uri, &self.uris) {
-            redirect::Action::Follow => {
-                // Validate the redirect URI scheme
-                if !(next_uri.is_http() || next_uri.is_https()) {
-                    return Err(Error::uri_bad_scheme(next_uri.clone()).into());
-                }
-
-                // Check HTTPS-only policy
-                if self.https_only && !next_uri.is_https() {
-                    return Err(Error::redirect(
-                        Error::uri_bad_scheme(next_uri.clone()),
-                        next_uri.clone(),
-                    )
-                    .into());
-                }
-
-                // Record redirect history
-                if !matches!(policy.inner, PolicyKind::None) {
-                    self.history.get_or_insert_default().push(HistoryEntry {
-                        status: attempt.status,
-                        uri: attempt.location.clone(),
-                        previous: attempt.previous.clone(),
-                        headers: attempt.headers.clone(),
-                    });
-                }
-
-                Ok(redirect::Action::Follow)
-            }
-            redirect::Action::Stop => Ok(redirect::Action::Stop),
-            redirect::Action::Pending(task) => Ok(redirect::Action::Pending(task)),
-            redirect::Action::Error(err) => Err(Error::redirect(err, previous_uri.clone()).into()),
+        // Handle errors from the policy immediately
+        if let redirect::Action::Error(err) = action {
+            return Err(Error::redirect(err, previous_uri.clone()).into());
         }
+
+        // Handle follow redirect action
+        if matches!(&action, redirect::Action::Follow) {
+            // Validate the redirect URI scheme
+            if !(next_uri.is_http() || next_uri.is_https()) {
+                return Err(Error::uri_bad_scheme(next_uri.clone()).into());
+            }
+
+            // Check HTTPS-only policy
+            if self.https_only && !next_uri.is_https() {
+                return Err(Error::redirect(
+                    Error::uri_bad_scheme(next_uri.clone()),
+                    next_uri.clone(),
+                )
+                .into());
+            }
+
+            // Record redirect history
+            if !matches!(policy.inner, PolicyKind::None) {
+                self.history.get_or_insert_default().push(HistoryEntry {
+                    status: attempt.status,
+                    uri: attempt.location.clone(),
+                    previous: attempt.previous.clone(),
+                    headers: attempt.headers.clone(),
+                });
+            }
+        }
+
+        Ok(action)
     }
 
-    fn follow_redirects(&mut self, request: &mut http::Request<Body>) -> bool {
+    pub(crate) fn for_request<B>(&mut self, request: &mut http::Request<B>) -> Option<Self> {
         self.policy
             .load(request.extensions_mut())
             .is_some_and(|policy| !matches!(policy.inner, PolicyKind::None))
+            .then(|| self.clone())
     }
 
-    fn on_request(&mut self, req: &mut http::Request<Body>) {
+    pub(crate) fn on_request<B>(&mut self, req: &mut http::Request<B>) {
         let next_url = req.uri().clone();
         remove_sensitive_headers(req.headers_mut(), &next_url, &self.uris);
         if self.referer {
@@ -448,15 +443,10 @@ impl redirect::Policy<Body, BoxError> for FollowRedirectPolicy {
         }
     }
 
-    fn on_response<Body>(&mut self, response: &mut http::Response<Body>) {
+    pub(crate) fn on_response<B>(&mut self, response: &mut http::Response<B>) {
         if let Some(history) = self.history.take() {
             response.extensions_mut().insert(History(history));
         }
-    }
-
-    #[inline]
-    fn clone_body(&self, body: &Body) -> Option<Body> {
-        body.try_clone()
     }
 }
 
