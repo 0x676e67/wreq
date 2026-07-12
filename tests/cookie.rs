@@ -1,5 +1,7 @@
 mod support;
 
+use std::sync::Arc;
+
 use http::{Version, header::COOKIE};
 use support::server;
 use wreq::{Client, cookie::Jar};
@@ -297,6 +299,63 @@ async fn cookie_request_level_compression() {
     // Request with uncompressed cookies
     client
         .get(format!("{}/uncompressed", base_url))
+        .version(Version::HTTP_2)
+        .send()
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn cookie_request_order_matches_chromium() {
+    let server = server::http(|req| async move {
+        match req.uri().path() {
+            "/foo/bar/http1" => {
+                assert_eq!(req.version(), Version::HTTP_11);
+                assert_eq!(
+                    req.headers()
+                        .get(COOKIE)
+                        .and_then(|value| value.to_str().ok()),
+                    Some("B=B3; A=A3; B=B2; A=A2; B=B1; A=A1")
+                );
+            }
+            "/foo/bar/http2" => {
+                assert_eq!(req.version(), Version::HTTP_2);
+                let cookies = req
+                    .headers()
+                    .get_all(COOKIE)
+                    .iter()
+                    .map(|value| value.to_str().unwrap())
+                    .collect::<Vec<_>>();
+                assert_eq!(cookies, ["B=B3", "A=A3", "B=B2", "A=A2", "B=B1", "A=A1"]);
+            }
+            path => panic!("unexpected request path: {path}"),
+        }
+
+        http::Response::default()
+    });
+
+    let base_url = format!("http://{}", server.addr());
+    let jar = Arc::new(Jar::default());
+    for cookie in [
+        "B=B1; Path=/",
+        "B=B2; Path=/foo",
+        "B=B3; Path=/foo/bar",
+        "A=A1; Path=/",
+        "A=A2; Path=/foo",
+        "A=A3; Path=/foo/bar",
+    ] {
+        jar.add(cookie, &base_url);
+    }
+
+    let client = Client::builder().cookie_provider(jar).build().unwrap();
+    client
+        .get(format!("{base_url}/foo/bar/http1"))
+        .version(Version::HTTP_11)
+        .send()
+        .await
+        .unwrap();
+    client
+        .get(format!("{base_url}/foo/bar/http2"))
         .version(Version::HTTP_2)
         .send()
         .await
