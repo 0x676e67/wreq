@@ -3,7 +3,10 @@
 use std::{collections::HashMap, convert::TryInto, fmt, sync::Arc, time::SystemTime};
 
 use bytes::Bytes;
-use cookie::{Cookie as RawCookie, CookieJar, Expiration, SameSite, time::Duration};
+use cookie::{
+    Cookie as RawCookie, CookieJar, Expiration, SameSite,
+    time::{Duration, OffsetDateTime},
+};
 use http::{Uri, Version};
 use url::Host;
 
@@ -226,15 +229,14 @@ impl Jar {
     pub fn get<U: IntoUri>(&self, name: &str, uri: U) -> Option<Cookie<'static>> {
         let uri = uri.into_uri().ok()?;
         let host = canonical_host(uri.host()?)?;
-        let cookie = self
-            .0
-            .read()
-            .get(&host)?
-            .get(uri.path())?
-            .get(name)?
-            .clone()
-            .into_owned();
-        Some(Cookie(cookie))
+        let store = self.0.read();
+        let cookie = store.get(&host)?.get(uri.path())?.get(name)?;
+
+        if cookie_is_expired(cookie, OffsetDateTime::now_utc()) {
+            return None;
+        }
+
+        Some(Cookie(cookie.clone().into_owned()))
     }
 
     /// Get all cookies in this jar.
@@ -252,12 +254,17 @@ impl Jar {
     /// }
     /// ```
     pub fn get_all(&self) -> impl Iterator<Item = Cookie<'static>> {
+        let now = OffsetDateTime::now_utc();
         self.0
             .read()
             .iter()
             .flat_map(|(domain, path_map)| {
                 path_map.iter().flat_map(|(path, name_map)| {
-                    name_map.iter().map(|cookie| {
+                    name_map.iter().filter_map(|cookie| {
+                        if cookie_is_expired(cookie, now) {
+                            return None;
+                        }
+
                         let mut cookie = cookie.clone().into_owned();
 
                         if cookie.domain().is_none() {
@@ -268,7 +275,7 @@ impl Jar {
                             cookie.set_path(path.to_owned());
                         }
 
-                        Cookie(cookie)
+                        Some(Cookie(cookie))
                     })
                 })
             })
@@ -331,6 +338,24 @@ impl Jar {
                 host
             };
 
+            // Max-Age takes precedence over Expires and is relative to when the cookie is
+            // received. Store its effective deadline so every read path applies the same
+            // expiration decision. RFC 6265 sections 5.2.2 and 5.3:
+            // https://www.rfc-editor.org/rfc/rfc6265.html#section-5.2.2
+            // https://www.rfc-editor.org/rfc/rfc6265.html#section-5.3
+            let now = OffsetDateTime::now_utc();
+            let expired = match cookie.max_age() {
+                Some(max_age) if max_age <= Duration::ZERO => true,
+                Some(max_age) => {
+                    let deadline = now.saturating_add(max_age);
+                    cookie.set_expires(deadline);
+                    false
+                }
+                None => cookie
+                    .expires_datetime()
+                    .is_some_and(|deadline| deadline <= now),
+            };
+
             // If the request-uri contains no path component or if the first character of the
             // path component of the request-uri is not a %x2F ("/") OR if the cookie's path-
             // attribute is missing or does not start with a %x2F ("/"):
@@ -353,12 +378,6 @@ impl Jar {
                 .or_default()
                 .entry(path.to_owned())
                 .or_default();
-
-            // RFC 6265: If Max-Age=0 or Expires in the past, remove the cookie
-            let expired = cookie
-                .expires_datetime()
-                .is_some_and(|dt| dt <= SystemTime::now())
-                || cookie.max_age().is_some_and(Duration::is_zero);
 
             if expired {
                 name_map.remove(cookie);
@@ -441,6 +460,7 @@ impl CookieStore for Jar {
             None => return Cookies::Empty,
         };
 
+        let now = OffsetDateTime::now_utc();
         let store = self.0.read();
         let request_host = &host;
         let iter = store
@@ -464,10 +484,7 @@ impl CookieStore for Jar {
                                 return false;
                             }
 
-                            if cookie
-                                .expires_datetime()
-                                .is_some_and(|dt| dt <= SystemTime::now())
-                            {
+                            if cookie_is_expired(cookie, now) {
                                 return false;
                             }
 
@@ -516,6 +533,16 @@ impl CookieStore for Jar {
 }
 
 const DEFAULT_PATH: &str = "/";
+
+/// Returns whether a stored cookie has reached its effective expiration deadline.
+fn cookie_is_expired(cookie: &RawCookie<'_>, now: OffsetDateTime) -> bool {
+    cookie
+        .max_age()
+        .is_some_and(|max_age| max_age <= Duration::ZERO)
+        || cookie
+            .expires_datetime()
+            .is_some_and(|deadline| deadline <= now)
+}
 
 /// Determines if the given `host` matches the cookie `domain` according to
 /// [RFC 6265 section 5.1.3](https://datatracker.ietf.org/doc/html/rfc6265#section-5.1.3).
@@ -590,6 +617,8 @@ fn normalize_path(path: &str) -> &str {
 
 #[cfg(test)]
 mod tests {
+    use std::{thread, time::Duration as StdDuration};
+
     use http::{Uri, Version};
 
     use super::{CookieStore, Cookies, Jar};
@@ -788,6 +817,125 @@ mod tests {
             Cookies::Compressed(value) => assert_eq!(value, "session=abc"),
             other => panic!("expected domain cookie for matching subdomain, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn jar_enforces_positive_max_age_deadline() {
+        let jar = Jar::default();
+        let uri = Uri::from_static("http://example.com/");
+        jar.add("short=lived; Max-Age=1; Path=/", &uri);
+
+        let cookie = jar.get("short", &uri).expect("cookie should be stored");
+        assert_eq!(cookie.max_age(), Some(StdDuration::from_secs(1)));
+        assert!(cookie.expires().is_some());
+        assert_eq!(jar.get_all().count(), 1);
+        assert!(matches!(
+            jar.cookies(&uri, Version::HTTP_11),
+            Cookies::Compressed(_)
+        ));
+
+        thread::sleep(StdDuration::from_millis(1100));
+
+        assert!(jar.get("short", &uri).is_none());
+        assert_eq!(jar.get_all().count(), 0);
+        assert!(matches!(
+            jar.cookies(&uri, Version::HTTP_11),
+            Cookies::Empty
+        ));
+    }
+
+    #[test]
+    fn jar_removes_non_positive_max_age() {
+        let jar = Jar::default();
+        let uri = "http://example.com/";
+
+        jar.add("zero=old; Path=/", uri);
+        jar.add("zero=gone; Max-Age=0; Path=/", uri);
+        assert!(jar.get("zero", uri).is_none());
+
+        jar.add("negative=old; Path=/", uri);
+        jar.add("negative=gone; Max-Age=-10; Path=/", uri);
+        assert!(jar.get("negative", uri).is_none());
+    }
+
+    #[test]
+    fn jar_max_age_overrides_expires_in_either_order() {
+        let jar = Jar::default();
+        let uri = "http://example.com/";
+
+        jar.add(
+            "first=kept; Max-Age=60; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Path=/",
+            uri,
+        );
+        jar.add(
+            "last=kept; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Max-Age=60; Path=/",
+            uri,
+        );
+        assert!(jar.get("first", uri).is_some());
+        assert!(jar.get("last", uri).is_some());
+
+        jar.add("remove_first=old; Path=/", uri);
+        jar.add(
+            "remove_first=gone; Max-Age=0; Expires=Fri, 31 Dec 9999 23:59:59 GMT; Path=/",
+            uri,
+        );
+        jar.add("remove_last=old; Path=/", uri);
+        jar.add(
+            "remove_last=gone; Expires=Fri, 31 Dec 9999 23:59:59 GMT; Max-Age=0; Path=/",
+            uri,
+        );
+        assert!(jar.get("remove_first", uri).is_none());
+        assert!(jar.get("remove_last", uri).is_none());
+    }
+
+    #[test]
+    fn jar_uses_last_valid_max_age() {
+        let jar = Jar::default();
+        let uri = "http://example.com/";
+
+        jar.add("kept=value; Max-Age=0; Max-Age=60; Path=/", uri);
+        assert!(jar.get("kept", uri).is_some());
+
+        jar.add("removed=old; Path=/", uri);
+        jar.add("removed=gone; Max-Age=60; Max-Age=0; Path=/", uri);
+        assert!(jar.get("removed", uri).is_none());
+
+        jar.add(
+            "malformed=kept; Max-Age=60; Max-Age=invalid; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Path=/",
+            uri,
+        );
+        assert!(jar.get("malformed", uri).is_some());
+    }
+
+    #[test]
+    fn jar_ignores_malformed_max_age() {
+        let jar = Jar::default();
+        let uri = "http://example.com/";
+
+        jar.add(
+            "persistent=value; Max-Age=invalid; Expires=Fri, 31 Dec 9999 23:59:59 GMT; Path=/",
+            uri,
+        );
+        assert!(jar.get("persistent", uri).is_some());
+
+        jar.add(
+            "expired=value; Max-Age=invalid; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Path=/",
+            uri,
+        );
+        assert!(jar.get("expired", uri).is_none());
+
+        jar.add(
+            "plus=value; Max-Age=+60; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Path=/",
+            uri,
+        );
+        assert!(jar.get("plus", uri).is_none());
+
+        jar.add("session=value; Max-Age=invalid; Path=/", uri);
+        let session = jar
+            .get("session", uri)
+            .expect("session cookie should be stored");
+        assert_eq!(session.max_age(), None);
+        assert_eq!(session.expires(), None);
     }
 
     #[test]
