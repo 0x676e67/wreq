@@ -5,8 +5,12 @@ use std::{collections::HashMap, convert::TryInto, fmt, sync::Arc, time::SystemTi
 use bytes::Bytes;
 use cookie::{Cookie as RawCookie, CookieJar, Expiration, SameSite, time::Duration};
 use http::{Uri, Version};
+use url::Host;
 
 use crate::{IntoUri, error::Error, ext::UriExt, header::HeaderValue, sync::RwLock};
+
+/// Canonical immutable host used as a cookie domain key.
+type CanonicalHost = Host<Box<str>>;
 
 /// Cookie header values in two forms.
 #[derive(Debug, Clone)]
@@ -66,7 +70,7 @@ pub struct Cookie<'a>(RawCookie<'a>);
 /// This type is exposed to allow creating one and filling it with some
 /// existing cookies more easily, before creating a [`crate::Client`].
 #[derive(Debug, Default)]
-pub struct Jar(RwLock<HashMap<String, HashMap<String, CookieJar>>>);
+pub struct Jar(RwLock<HashMap<CanonicalHost, HashMap<String, CookieJar>>>);
 
 // ===== impl IntoCookie =====
 
@@ -221,11 +225,11 @@ impl Jar {
     /// ```
     pub fn get<U: IntoUri>(&self, name: &str, uri: U) -> Option<Cookie<'static>> {
         let uri = uri.into_uri().ok()?;
-        let host = normalize_domain(uri.host()?);
+        let host = canonical_host(uri.host()?)?;
         let cookie = self
             .0
             .read()
-            .get(host)?
+            .get(&host)?
             .get(uri.path())?
             .get(name)?
             .clone()
@@ -257,7 +261,7 @@ impl Jar {
                         let mut cookie = cookie.clone().into_owned();
 
                         if cookie.domain().is_none() {
-                            cookie.set_domain(domain.to_owned());
+                            cookie.set_domain(domain.to_string());
                         }
 
                         if cookie.path().is_none() {
@@ -302,7 +306,7 @@ impl Jar {
             let mut cookie: RawCookie<'static> = cookie.into();
 
             // If the request-uri contains no host component:
-            let Some(host) = uri.host() else {
+            let Some(host) = uri.host().and_then(canonical_host) else {
                 return;
             };
 
@@ -313,14 +317,18 @@ impl Jar {
             // RFC 6265 §5.3 + §5.1.3:
             // https://datatracker.ietf.org/doc/html/rfc6265#section-5.3
             // https://datatracker.ietf.org/doc/html/rfc6265#section-5.1.3
-            let domain = if let Some(domain) = cookie.domain() {
-                let domain = normalize_domain(domain);
-                if domain.is_empty() || !domain_match(normalize_domain(host), domain) {
+            let domain = if let Some(raw_domain) = cookie.domain() {
+                let Some(domain) = canonical_host(raw_domain) else {
+                    return;
+                };
+                if !domain_match(&host, &domain) {
                     return;
                 }
+
+                cookie.set_domain(domain.to_string());
                 domain
             } else {
-                normalize_domain(host)
+                host
             };
 
             // If the request-uri contains no path component or if the first character of the
@@ -341,7 +349,7 @@ impl Jar {
 
             let mut inner = self.0.write();
             let name_map = inner
-                .entry(domain.to_owned())
+                .entry(domain)
                 .or_default()
                 .entry(path.to_owned())
                 .or_default();
@@ -382,9 +390,11 @@ impl Jar {
     {
         let uri = into_uri!(uri);
         if let Some(host) = uri.host() {
-            let host = normalize_domain(host);
+            let Some(host) = canonical_host(host) else {
+                return;
+            };
             let mut inner = self.0.write();
-            if let Some(path_map) = inner.get_mut(host) {
+            if let Some(path_map) = inner.get_mut(&host) {
                 if let Some(name_map) = path_map.get_mut(uri.path()) {
                     name_map.remove(cookie.into());
                 }
@@ -424,20 +434,32 @@ impl CookieStore for Jar {
 
     fn cookies(&self, uri: &Uri, version: Version) -> Cookies {
         let host = match uri.host() {
-            Some(h) => normalize_domain(h),
+            Some(host) => match canonical_host(host) {
+                Some(host) => host,
+                None => return Cookies::Empty,
+            },
             None => return Cookies::Empty,
         };
 
         let store = self.0.read();
+        let request_host = &host;
         let iter = store
             .iter()
-            .filter(|(domain, _)| domain_match(host, domain))
-            .flat_map(|(_, path_map)| {
+            .filter(|(domain, _)| domain_match(request_host, domain))
+            .flat_map(|(domain, path_map)| {
                 path_map
                     .iter()
                     .filter(|(path, _)| path_match(uri.path(), path))
-                    .flat_map(|(_, name_map)| {
-                        name_map.iter().filter(|cookie| {
+                    .flat_map(move |(_, name_map)| {
+                        name_map.iter().filter(move |cookie| {
+                            // RFC 6265 section 5.4 requires host-only cookies to match the
+                            // request host exactly. Only cookies with a Domain attribute may
+                            // be sent to matching subdomains.
+                            // https://www.rfc-editor.org/rfc/rfc6265.html#section-5.4
+                            if cookie.domain().is_none() && request_host != domain {
+                                return false;
+                            }
+
                             if cookie.secure() == Some(true) && uri.is_http() {
                                 return false;
                             }
@@ -499,18 +521,21 @@ const DEFAULT_PATH: &str = "/";
 /// [RFC 6265 section 5.1.3](https://datatracker.ietf.org/doc/html/rfc6265#section-5.1.3).
 ///
 /// - Returns true if the host and domain are identical.
-/// - Returns true if the host is a subdomain of the domain (host ends with ".domain").
+/// - Returns true if two DNS names have a matching dot-delimited domain suffix.
+/// - IP literals never use suffix matching.
 /// - Returns false otherwise.
-fn domain_match(host: &str, domain: &str) -> bool {
-    if domain.is_empty() {
-        return false;
-    }
+fn domain_match(host: &CanonicalHost, domain: &CanonicalHost) -> bool {
     if host == domain {
         return true;
     }
+
+    let (Host::Domain(host), Host::Domain(domain)) = (host, domain) else {
+        return false;
+    };
+
     host.len() > domain.len()
         && host.as_bytes()[host.len() - domain.len() - 1] == b'.'
-        && host.ends_with(domain)
+        && host.ends_with(domain.as_ref())
 }
 
 /// Determines if the request path matches the cookie path according to
@@ -528,17 +553,21 @@ fn path_match(req_path: &str, cookie_path: &str) -> bool {
                 || req_path[cookie_path.len()..].starts_with(DEFAULT_PATH))
 }
 
-/// Normalizes a domain by stripping any port information.
+/// Canonicalizes a DNS name or IP literal for cookie domain matching.
 ///
-/// According to [RFC 6265 section 5.2.3](https://datatracker.ietf.org/doc/html/rfc6265#section-5.2.3),
-/// the domain attribute of a cookie must not include a port. If a port is present (non-standard),
-/// it will be ignored for domain matching purposes.
-fn normalize_domain(domain: &str) -> &str {
-    let host_without_port = domain.split(':').next().unwrap_or(domain);
-    let without_leading = host_without_port
-        .strip_prefix(".")
-        .unwrap_or(host_without_port);
-    without_leading.strip_suffix(".").unwrap_or(without_leading)
+/// DNS names are converted to lowercase ASCII, while IPv4 and IPv6 addresses remain typed so
+/// they can only match exactly, as required by
+/// [RFC 6265 section 5.1.3](https://www.rfc-editor.org/rfc/rfc6265.html#section-5.1.3).
+fn canonical_host(host: &str) -> Option<CanonicalHost> {
+    // RFC 6265 section 5.2.3 requires a leading dot in Domain to be ignored.
+    // https://www.rfc-editor.org/rfc/rfc6265.html#section-5.2.3
+    let host = host.strip_prefix('.').unwrap_or(host);
+
+    match Host::parse(host).ok()? {
+        Host::Domain(domain) => Some(Host::Domain(domain.into_boxed_str())),
+        Host::Ipv4(address) => Some(Host::Ipv4(address)),
+        Host::Ipv6(address) => Some(Host::Ipv6(address)),
+    }
 }
 
 /// Computes the normalized default path for a cookie as specified in
@@ -707,6 +736,90 @@ mod tests {
                 "cookie must NOT be sent to {uri_str}"
             );
         }
+    }
+
+    #[test]
+    fn jar_does_not_send_host_only_cookie_to_subdomain() {
+        let jar = Jar::default();
+        jar.add("session=abc; Path=/", "http://example.com/login");
+
+        let origin = Uri::from_static("http://example.com/dashboard");
+        match jar.cookies(&origin, Version::HTTP_11) {
+            Cookies::Compressed(value) => assert_eq!(value, "session=abc"),
+            other => panic!("expected host-only cookie for origin host, got {other:?}"),
+        }
+
+        let subdomain = Uri::from_static("http://api.example.com/dashboard");
+        assert!(
+            matches!(jar.cookies(&subdomain, Version::HTTP_11), Cookies::Empty),
+            "host-only cookie must not be sent to a subdomain"
+        );
+    }
+
+    #[test]
+    fn jar_accepts_and_normalizes_mixed_case_domain() {
+        let jar = Jar::default();
+        jar.add(
+            "session=abc; Domain=EXAMPLE.COM; Path=/",
+            "https://example.com/login",
+        );
+
+        let cookies = jar.get_all().collect::<Vec<_>>();
+        assert_eq!(cookies.len(), 1);
+        assert_eq!(cookies[0].domain(), Some("example.com"));
+
+        let subdomain = Uri::from_static("https://api.example.com/dashboard");
+        match jar.cookies(&subdomain, Version::HTTP_11) {
+            Cookies::Compressed(value) => assert_eq!(value, "session=abc"),
+            other => panic!("expected domain cookie for matching subdomain, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn jar_ignores_leading_dot_in_domain() {
+        let jar = Jar::default();
+        jar.add(
+            "session=abc; Domain=.example.com; Path=/",
+            "https://example.com/login",
+        );
+
+        let subdomain = Uri::from_static("https://api.example.com/dashboard");
+        match jar.cookies(&subdomain, Version::HTTP_11) {
+            Cookies::Compressed(value) => assert_eq!(value, "session=abc"),
+            other => panic!("expected domain cookie for matching subdomain, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn jar_does_not_suffix_match_ipv4_addresses() {
+        let jar = Jar::default();
+        jar.add("session=abc; Domain=0.1; Path=/", "http://192.168.0.1/");
+
+        assert_eq!(jar.get_all().count(), 0);
+
+        let unrelated = Uri::from_static("http://10.0.0.1/");
+        assert!(matches!(
+            jar.cookies(&unrelated, Version::HTTP_11),
+            Cookies::Empty
+        ));
+    }
+
+    #[test]
+    fn jar_preserves_ipv6_host_identity() {
+        let jar = Jar::default();
+        jar.add("session=abc; Path=/", "http://[2001:db8::1]/");
+
+        let equivalent = Uri::from_static("http://[2001:0db8:0:0:0:0:0:1]/");
+        match jar.cookies(&equivalent, Version::HTTP_11) {
+            Cookies::Compressed(value) => assert_eq!(value, "session=abc"),
+            other => panic!("expected cookie for equivalent IPv6 host, got {other:?}"),
+        }
+
+        let unrelated = Uri::from_static("http://[2001:db8::2]/");
+        assert!(matches!(
+            jar.cookies(&unrelated, Version::HTTP_11),
+            Cookies::Empty
+        ));
     }
 
     #[test]
