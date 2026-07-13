@@ -101,7 +101,7 @@ async fn brotli_case(response_size: usize, chunk_size: usize) {
          Content-Encoding: br\r\n\
          Content-Length: {}\r\n\
          \r\n",
-        &brotlied_content.len()
+        brotlied_content.len()
     )
     .into_bytes();
     response.extend(&brotlied_content);
