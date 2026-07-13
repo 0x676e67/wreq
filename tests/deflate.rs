@@ -100,7 +100,7 @@ async fn deflate_case(response_size: usize, chunk_size: usize) {
          Content-Encoding: deflate\r\n\
          Content-Length: {}\r\n\
          \r\n",
-        &deflated_content.len()
+        deflated_content.len()
     )
     .into_bytes();
     response.extend(&deflated_content);
