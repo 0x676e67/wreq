@@ -97,7 +97,7 @@ async fn zstd_case(response_size: usize, chunk_size: usize) {
          Content-Encoding: zstd\r\n\
          Content-Length: {}\r\n\
          \r\n",
-        &zstded_content.len()
+        zstded_content.len()
     )
     .into_bytes();
     response.extend(&zstded_content);

@@ -100,7 +100,7 @@ async fn gzip_case(response_size: usize, chunk_size: usize) {
          Content-Encoding: gzip\r\n\
          Content-Length: {}\r\n\
          \r\n",
-        &gzipped_content.len()
+        gzipped_content.len()
     )
     .into_bytes();
     response.extend(&gzipped_content);
