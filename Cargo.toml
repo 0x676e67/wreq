@@ -1,6 +1,6 @@
 [package]
 name = "wreq"
-version = "6.0.0-rc.29"
+version = "6.0.0-rc.30"
 description = "An ergonomic, censorship-resistant Rust HTTP client"
 keywords = ["http", "client", "websocket", "ja3", "ja4"]
 categories = ["web-programming::http-client"]
