@@ -46,12 +46,12 @@ pub trait CookieStore: Send + Sync {
     /// Serializes the cookies that apply to `uri` for the requested HTTP version.
     ///
     /// HTTP/1.1 combines cookie pairs into one field value using the format from
-    /// [RFC 6265 section 5.4]. HTTP/2 and HTTP/3 keep cookie pairs on separate field lines; for
-    /// HTTP/2, [RFC 9113 section 8.2.3] defines these representations as equivalent and permits
-    /// splitting them to improve compression.
+    /// [RFC 6265 section 5.4]. HTTP/2 and HTTP/3 may split them across field lines to improve
+    /// compression, as described by [RFC 9113 section 8.2.3] and [RFC 9114 section 4.2.1].
     ///
     /// [RFC 6265 section 5.4]: https://www.rfc-editor.org/rfc/rfc6265.html#section-5.4
     /// [RFC 9113 section 8.2.3]: https://www.rfc-editor.org/rfc/rfc9113.html#section-8.2.3
+    /// [RFC 9114 section 4.2.1]: https://www.rfc-editor.org/rfc/rfc9114.html#section-4.2.1
     fn cookies(&self, uri: &Uri, version: Version) -> Cookies;
 }
 

@@ -9,8 +9,7 @@ use super::{
     Cookie, CookieStore, Cookies, IntoCookie,
     helper::{
         CookieStorage, DEFAULT_PATH, canonical_host, cookie_is_expired, domain_match,
-        insert_stored_cookie, matching_cookies, normalize_path, remove_stored_cookie,
-        would_overlay_secure_cookie,
+        normalize_path,
     },
 };
 use crate::{IntoUri, ext::UriExt, header::HeaderValue, sync::RwLock};
@@ -37,7 +36,8 @@ impl Jar {
     ///
     /// The URI host is canonicalized and its path is used as the exact stored cookie path. Use
     /// [`matches`](Self::matches) to select every cookie that would apply to a request URI through
-    /// RFC domain and path matching.
+    /// RFC domain and path matching. When both storage scopes contain the name, the older cookie is
+    /// returned.
     ///
     /// # Example
     /// ```
@@ -50,14 +50,17 @@ impl Jar {
     pub fn get<U: IntoUri>(&self, name: &str, uri: U) -> Option<Cookie<'static>> {
         let uri = uri.into_uri().ok()?;
         let host = canonical_host(uri.host()?)?;
+        let now = OffsetDateTime::now_utc();
         let store = self.0.read();
-        let cookie = &store.cookies.get(&host)?.get(uri.path())?.get(name)?.cookie;
+        let cookie = store
+            .cookies
+            .get(&host)?
+            .get(uri.path())?
+            .entries(name)
+            .filter(|entry| !cookie_is_expired(&entry.cookie, now))
+            .min_by_key(|entry| entry.creation_index)?;
 
-        if cookie_is_expired(cookie, OffsetDateTime::now_utc()) {
-            return None;
-        }
-
-        Some(Cookie::from(cookie.clone()))
+        Some(Cookie::from(cookie.cookie.clone()))
     }
 
     /// Returns whether an unexpired cookie exists for an exact URI scope.
@@ -70,21 +73,25 @@ impl Jar {
         let Some(host) = uri.host().and_then(canonical_host) else {
             return false;
         };
+        let now = OffsetDateTime::now_utc();
 
         self.0
             .read()
             .cookies
             .get(&host)
             .and_then(|path_map| path_map.get(uri.path()))
-            .and_then(|name_map| name_map.get(name))
-            .is_some_and(|entry| !cookie_is_expired(&entry.cookie, OffsetDateTime::now_utc()))
+            .is_some_and(|cookie_map| {
+                cookie_map
+                    .entries(name)
+                    .any(|entry| !cookie_is_expired(&entry.cookie, now))
+            })
     }
 
     /// Returns all unexpired cookies in the jar.
     ///
     /// The returned cookies are owned snapshots with their effective stored `Path`. Host-only
     /// cookies keep their `Domain` attribute absent, so importing a snapshot into another jar does
-    /// not broaden its domain scope.
+    /// not broaden its domain scope. Snapshots are returned in creation order.
     ///
     /// # Example
     /// ```
@@ -97,23 +104,25 @@ impl Jar {
     /// ```
     pub fn get_all(&self) -> impl Iterator<Item = Cookie<'static>> {
         let now = OffsetDateTime::now_utc();
-        self.0
+        let mut cookies = self
+            .0
             .read()
             .cookies
             .values()
             .flat_map(|path_map| {
-                path_map.values().flat_map(|name_map| {
-                    name_map.values().filter_map(|entry| {
+                path_map.values().flat_map(|cookie_map| {
+                    cookie_map.values().filter_map(|entry| {
                         if cookie_is_expired(&entry.cookie, now) {
                             return None;
                         }
 
-                        Some(Cookie::from(entry.cookie.clone()))
+                        Some((entry.creation_index, Cookie::from(entry.cookie.clone())))
                     })
                 })
             })
-            .collect::<Vec<_>>()
-            .into_iter()
+            .collect::<Vec<_>>();
+        cookies.sort_unstable_by_key(|(creation_index, _)| *creation_index);
+        cookies.into_iter().map(|(_, cookie)| cookie)
     }
 
     /// Returns the number of unexpired cookies in the jar.
@@ -127,7 +136,7 @@ impl Jar {
             .cookies
             .values()
             .flat_map(|path_map| path_map.values())
-            .flat_map(|name_map| name_map.values())
+            .flat_map(|cookie_map| cookie_map.values())
             .filter(|entry| !cookie_is_expired(&entry.cookie, now))
             .count()
     }
@@ -141,7 +150,7 @@ impl Jar {
             .cookies
             .values()
             .flat_map(|path_map| path_map.values())
-            .flat_map(|name_map| name_map.values())
+            .flat_map(|cookie_map| cookie_map.values())
             .any(|entry| !cookie_is_expired(&entry.cookie, now))
     }
 
@@ -179,8 +188,8 @@ impl Jar {
 
         let now = OffsetDateTime::now_utc();
         let store = self.0.read();
-        matching_cookies(&store.cookies, &uri, &host, now)
-            .into_iter()
+        store
+            .matching_cookies(&uri, &host, now)
             .map(|(_, _, entry)| Cookie::from(entry.cookie.clone()))
             .collect::<Vec<_>>()
             .into_iter()
@@ -191,9 +200,9 @@ impl Jar {
     /// The URI supplies the host-only domain and default path when those attributes are absent.
     /// Cookies with an invalid URI or an invalid or mismatched `Domain` are ignored. A non-positive
     /// `Max-Age` removes an existing cookie in the same scope, as required by the
-    /// [RFC 6265 storage model]. A positive `Max-Age` is converted to an effective deadline when
-    /// this method is called. Insecure origins cannot set `Secure` cookies or overlay an existing
-    /// `Secure` cookie, following the [RFC 6265bis storage model].
+    /// [RFC 6265 storage model]. A positive `Max-Age` is stored as an absolute deadline. Insecure
+    /// origins cannot set `Secure` cookies or overlay an existing `Secure` cookie, following the
+    /// [RFC 6265bis storage model].
     ///
     /// # Example
     ///
@@ -228,6 +237,7 @@ impl Jar {
             let Some(host) = uri.host().and_then(canonical_host) else {
                 return;
             };
+            let host_only = cookie.domain().is_none();
 
             // If the canonicalized request-host does not domain-match the
             // domain-attribute:
@@ -260,6 +270,7 @@ impl Jar {
                 Some(max_age) if max_age <= Duration::ZERO => true,
                 Some(max_age) => {
                     let deadline = now.saturating_add(max_age);
+                    cookie.set_max_age(None);
                     cookie.set_expires(deadline);
                     false
                 }
@@ -287,24 +298,24 @@ impl Jar {
 
             let mut storage = self.0.write();
             if !secure_origin
-                && would_overlay_secure_cookie(&storage.cookies, cookie.name(), &domain, &path, now)
+                && storage.would_overlay_secure_cookie(cookie.name(), &domain, &path, now)
             {
                 return;
             }
 
             if expired {
-                remove_stored_cookie(&mut storage.cookies, &domain, &path, cookie.name());
+                storage.remove_stored_cookie(&domain, &path, cookie.name(), host_only);
             } else {
                 cookie.set_path(path.clone());
-                insert_stored_cookie(&mut storage, domain, path, cookie);
+                storage.insert_stored_cookie(domain, path, cookie);
             }
         }
     }
 
     /// Removes a cookie from an exact URI scope.
     ///
-    /// The URI host and path identify the stored scope. When several cookies share a name across
-    /// different domains or paths, only the exact scope is removed.
+    /// The URI host and path identify the stored scope. Both host-only and `Domain` cookies with
+    /// the same name in that scope are removed; other domains and paths are left unchanged.
     ///
     /// # Example
     /// ```
@@ -327,7 +338,7 @@ impl Jar {
             };
             let cookie = cookie.into();
             let mut storage = self.0.write();
-            remove_stored_cookie(&mut storage.cookies, &host, uri.path(), cookie.name());
+            storage.remove_stored_cookies(&host, uri.path(), cookie.name());
         }
     }
 
@@ -370,7 +381,7 @@ impl CookieStore for Jar {
 
         let now = OffsetDateTime::now_utc();
         let store = self.0.read();
-        let mut matches = matching_cookies(&store.cookies, uri, &host, now);
+        let mut matches = store.matching_cookies(uri, &host, now).collect::<Vec<_>>();
 
         // Chromium sorts cookies selected for a request by longest path first, then oldest
         // creation time. Cookie names and domains do not participate in the comparison.
@@ -621,6 +632,58 @@ mod tests {
     }
 
     #[test]
+    fn jar_get_all_export_import_preserves_absolute_expiration() {
+        let source = Jar::default();
+        let uri = "http://example.com/";
+        source.add("session=abc; Max-Age=60; Path=/", uri);
+
+        let exported = source
+            .get_all()
+            .next()
+            .expect("source cookie should be stored");
+        let expires = exported.expires();
+        assert_eq!(exported.max_age(), None);
+        assert!(expires.is_some());
+
+        let target = Jar::default();
+        target.add(exported, uri);
+
+        let imported = target
+            .get("session", uri)
+            .expect("snapshot should be imported");
+        assert_eq!(imported.max_age(), None);
+        assert_eq!(imported.expires(), expires);
+    }
+
+    #[test]
+    fn jar_get_all_export_import_preserves_creation_order() {
+        let source = Jar::default();
+        let uri = "http://example.com/";
+        source.add("B=first; Path=/", uri);
+        source.add("A=second; Path=/", uri);
+
+        let exported = source.get_all().collect::<Vec<_>>();
+        assert_eq!(
+            exported
+                .iter()
+                .map(|cookie| cookie.name())
+                .collect::<Vec<_>>(),
+            ["B", "A"]
+        );
+
+        let target = Jar::default();
+        for cookie in exported {
+            target.add(cookie, uri);
+        }
+
+        let uri = Uri::from_static("http://example.com/");
+        match target.cookies(&uri, Version::HTTP_11) {
+            Cookies::Compressed(value) => assert_eq!(value, "B=first; A=second"),
+            other => panic!("expected imported Cookie field, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn cookie_store_invalid_explicit_path_falls_back_to_default_path() {
         let jar = Jar::default();
         jar.add("key=val; Path=noslash", "http://example.com/foo/bar");
@@ -746,6 +809,54 @@ mod tests {
         );
         assert_eq!(values("https://example.com/api/users"), ["domain", "path"]);
         assert!(values("https://other.example/api/users").is_empty());
+    }
+
+    #[test]
+    fn jar_keeps_host_only_and_domain_cookies_with_the_same_key() {
+        let jar = Jar::default();
+        let origin = "https://example.com/";
+        jar.add("id=host; Path=/", origin);
+        jar.add("id=domain; Domain=example.com; Path=/", origin);
+
+        assert_eq!(jar.len(), 2);
+        assert_eq!(
+            jar.get("id", origin)
+                .map(|cookie| cookie.value().to_owned()),
+            Some("host".to_owned())
+        );
+
+        let origin_uri = Uri::from_static("https://example.com/");
+        match jar.cookies(&origin_uri, Version::HTTP_11) {
+            Cookies::Compressed(value) => assert_eq!(value, "id=host; id=domain"),
+            other => panic!("expected both origin cookies, got {other:?}"),
+        }
+
+        let subdomain = Uri::from_static("https://api.example.com/");
+        match jar.cookies(&subdomain, Version::HTTP_11) {
+            Cookies::Compressed(value) => assert_eq!(value, "id=domain"),
+            other => panic!("expected only the domain cookie, got {other:?}"),
+        }
+
+        jar.add("id=gone; Max-Age=0; Path=/", origin);
+        assert_eq!(jar.len(), 1);
+        assert!(jar.contains("id", origin));
+        assert_eq!(
+            jar.get("id", origin)
+                .map(|cookie| cookie.value().to_owned()),
+            Some("domain".to_owned())
+        );
+        match jar.cookies(&origin_uri, Version::HTTP_11) {
+            Cookies::Compressed(value) => assert_eq!(value, "id=domain"),
+            other => panic!("expected the remaining domain cookie, got {other:?}"),
+        }
+
+        jar.add("id=gone; Max-Age=0; Domain=example.com; Path=/", origin);
+        assert!(jar.is_empty());
+
+        jar.add("id=host; Path=/", origin);
+        jar.add("id=domain; Domain=example.com; Path=/", origin);
+        jar.remove("id", origin);
+        assert!(jar.is_empty());
     }
 
     #[test]
@@ -935,7 +1046,7 @@ mod tests {
         jar.add("short=lived; Max-Age=1; Path=/", &uri);
 
         let cookie = jar.get("short", &uri).expect("cookie should be stored");
-        assert_eq!(cookie.max_age(), Some(StdDuration::from_secs(1)));
+        assert_eq!(cookie.max_age(), None);
         assert!(cookie.expires().is_some());
         assert!(jar.contains("short", &uri));
         assert_eq!(jar.len(), 1);

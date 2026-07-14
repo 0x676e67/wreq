@@ -14,126 +14,221 @@ pub const DEFAULT_PATH: &str = "/";
 /// Canonical immutable host used as a cookie domain key.
 type CanonicalHost = Host<Box<str>>;
 type NameMap = HashMap<Box<str>, CookieEntry>;
-type PathMap = HashMap<Box<str>, NameMap>;
+type PathMap = HashMap<Box<str>, CookieScopeMap>;
 type DomainMap = HashMap<CanonicalHost, PathMap>;
 
+/// A stored cookie and its sequence number for request ordering.
 #[derive(Debug)]
 pub struct CookieEntry {
     pub cookie: RawCookie<'static>,
     pub creation_index: u64,
 }
 
+/// Keeps host-only and `Domain` cookies separate because the host-only flag is part of a cookie's
+/// identity under the RFC 6265bis storage model.
+///
+/// https://httpwg.org/http-extensions/draft-ietf-httpbis-rfc6265bis.html#section-5.7
+#[derive(Debug, Default)]
+pub struct CookieScopeMap {
+    host_only: NameMap,
+    domain: NameMap,
+}
+
+impl CookieScopeMap {
+    /// Returns a mutable cookie from the selected host-only or `Domain` scope.
+    pub fn get_mut(&mut self, name: &str, host_only: bool) -> Option<&mut CookieEntry> {
+        if host_only {
+            self.host_only.get_mut(name)
+        } else {
+            self.domain.get_mut(name)
+        }
+    }
+
+    /// Returns cookies with the requested name from both storage scopes.
+    pub fn entries(&self, name: &str) -> impl Iterator<Item = &CookieEntry> {
+        self.host_only
+            .get(name)
+            .into_iter()
+            .chain(self.domain.get(name))
+    }
+
+    /// Inserts a cookie into its host-only or `Domain` scope.
+    pub fn insert(&mut self, name: Box<str>, host_only: bool, entry: CookieEntry) {
+        if host_only {
+            self.host_only.insert(name, entry);
+        } else {
+            self.domain.insert(name, entry);
+        }
+    }
+
+    /// Removes a cookie from the selected host-only or `Domain` scope.
+    pub fn remove(&mut self, name: &str, host_only: bool) {
+        if host_only {
+            self.host_only.remove(name);
+        } else {
+            self.domain.remove(name);
+        }
+    }
+
+    /// Removes both host-only and `Domain` cookies with the requested name.
+    pub fn remove_all(&mut self, name: &str) {
+        self.host_only.remove(name);
+        self.domain.remove(name);
+    }
+
+    /// Returns every cookie in this domain and path scope.
+    pub fn values(&self) -> impl Iterator<Item = &CookieEntry> {
+        self.host_only.values().chain(self.domain.values())
+    }
+
+    /// Returns `true` when the host-only and `Domain` scopes are empty.
+    pub fn is_empty(&self) -> bool {
+        self.host_only.is_empty() && self.domain.is_empty()
+    }
+}
+
+/// Stores cookies by domain, path, host-only scope, and name.
 #[derive(Debug, Default)]
 pub struct CookieStorage {
     pub cookies: DomainMap,
     next_creation_index: u64,
 }
 
-pub fn insert_stored_cookie(
-    storage: &mut CookieStorage,
-    domain: CanonicalHost,
-    path: String,
-    cookie: RawCookie<'static>,
-) {
-    // Chromium inherits the creation time only when the replacement keeps the same value. A value
-    // change receives a new creation time and therefore moves later among equal-length paths.
-    // https://chromium.googlesource.com/chromium/src/+/main/net/cookies/cookie_monster.cc
-    if let Some(entry) = storage
-        .cookies
-        .get_mut(&domain)
-        .and_then(|path_map| path_map.get_mut(path.as_str()))
-        .and_then(|name_map| name_map.get_mut(cookie.name()))
-    {
-        if entry.cookie.value() != cookie.value() {
-            entry.creation_index = storage.next_creation_index;
-            storage.next_creation_index = storage.next_creation_index.saturating_add(1);
+impl CookieStorage {
+    /// Inserts or replaces a cookie in its domain and path scope.
+    pub fn insert_stored_cookie(
+        &mut self,
+        domain: CanonicalHost,
+        path: String,
+        cookie: RawCookie<'static>,
+    ) {
+        let host_only = cookie.domain().is_none();
+
+        // Chromium inherits the creation time only when the replacement keeps the same value. A
+        // value change receives a new creation time and therefore moves later among equal-length
+        // paths.
+        // https://chromium.googlesource.com/chromium/src/+/main/net/cookies/cookie_monster.cc
+        if let Some(entry) = self
+            .cookies
+            .get_mut(&domain)
+            .and_then(|path_map| path_map.get_mut(path.as_str()))
+            .and_then(|cookie_map| cookie_map.get_mut(cookie.name(), host_only))
+        {
+            if entry.cookie.value() != cookie.value() {
+                entry.creation_index = self.next_creation_index;
+                self.next_creation_index = self.next_creation_index.saturating_add(1);
+            }
+            entry.cookie = cookie;
+            return;
         }
-        entry.cookie = cookie;
-        return;
+
+        let creation_index = self.next_creation_index;
+        self.next_creation_index = self.next_creation_index.saturating_add(1);
+        let name = Box::from(cookie.name());
+
+        self.cookies
+            .entry(domain)
+            .or_default()
+            .entry(path.into_boxed_str())
+            .or_default()
+            .insert(
+                name,
+                host_only,
+                CookieEntry {
+                    cookie,
+                    creation_index,
+                },
+            );
     }
 
-    let creation_index = storage.next_creation_index;
-    storage.next_creation_index = storage.next_creation_index.saturating_add(1);
-    let name = Box::from(cookie.name());
+    /// Removes a cookie matching the domain, path, name, and selected storage scope.
+    pub fn remove_stored_cookie(
+        &mut self,
+        domain: &CanonicalHost,
+        path: &str,
+        name: &str,
+        host_only: bool,
+    ) {
+        self.remove_stored_cookie_inner(domain, path, name, Some(host_only));
+    }
 
-    storage
-        .cookies
-        .entry(domain)
-        .or_default()
-        .entry(path.into_boxed_str())
-        .or_default()
-        .insert(
-            name,
-            CookieEntry {
-                cookie,
-                creation_index,
-            },
-        );
-}
+    /// Removes both host-only and `Domain` cookies matching the domain, path, and name.
+    pub fn remove_stored_cookies(&mut self, domain: &CanonicalHost, path: &str, name: &str) {
+        self.remove_stored_cookie_inner(domain, path, name, None);
+    }
 
-pub fn remove_stored_cookie(store: &mut DomainMap, domain: &CanonicalHost, path: &str, name: &str) {
-    let remove_domain = if let Some(path_map) = store.get_mut(domain) {
-        let remove_path = if let Some(name_map) = path_map.get_mut(path) {
-            name_map.remove(name);
-            name_map.is_empty()
+    fn remove_stored_cookie_inner(
+        &mut self,
+        domain: &CanonicalHost,
+        path: &str,
+        name: &str,
+        host_only: Option<bool>,
+    ) {
+        let remove_domain = if let Some(path_map) = self.cookies.get_mut(domain) {
+            let remove_path = if let Some(cookie_map) = path_map.get_mut(path) {
+                if let Some(host_only) = host_only {
+                    cookie_map.remove(name, host_only);
+                } else {
+                    cookie_map.remove_all(name);
+                }
+                cookie_map.is_empty()
+            } else {
+                false
+            };
+
+            if remove_path {
+                path_map.remove(path);
+            }
+
+            path_map.is_empty()
         } else {
             false
         };
 
-        if remove_path {
-            path_map.remove(path);
+        if remove_domain {
+            self.cookies.remove(domain);
         }
-
-        path_map.is_empty()
-    } else {
-        false
-    };
-
-    if remove_domain {
-        store.remove(domain);
     }
-}
 
-pub fn matching_cookies<'a>(
-    store: &'a DomainMap,
-    uri: &Uri,
-    request_host: &CanonicalHost,
-    now: OffsetDateTime,
-) -> Vec<(&'a CanonicalHost, &'a str, &'a CookieEntry)> {
-    store
-        .iter()
-        .flat_map(|(domain, path_map)| {
-            path_map.iter().flat_map(move |(path, name_map)| {
-                name_map.values().filter_map(move |entry| {
+    /// Returns the unexpired cookies that apply to a request URI.
+    pub fn matching_cookies<'a>(
+        &'a self,
+        uri: &'a Uri,
+        request_host: &'a CanonicalHost,
+        now: OffsetDateTime,
+    ) -> impl Iterator<Item = (&'a CanonicalHost, &'a str, &'a CookieEntry)> + 'a {
+        self.cookies.iter().flat_map(move |(domain, path_map)| {
+            path_map.iter().flat_map(move |(path, cookie_map)| {
+                cookie_map.values().filter_map(move |entry| {
                     request_matches_cookie(uri, request_host, domain, path, &entry.cookie, now)
                         .then_some((domain, path.as_ref(), entry))
                 })
             })
         })
-        .collect()
-}
+    }
 
-/// Returns whether an insecure cookie would overlay an unexpired `Secure` cookie.
-///
-/// RFC 6265bis section 5.7:
-/// https://httpwg.org/http-extensions/draft-ietf-httpbis-rfc6265bis.html#section-5.7
-pub fn would_overlay_secure_cookie(
-    store: &DomainMap,
-    name: &str,
-    domain: &CanonicalHost,
-    path: &str,
-    now: OffsetDateTime,
-) -> bool {
-    store.iter().any(|(stored_domain, path_map)| {
-        (domain_match(stored_domain, domain) || domain_match(domain, stored_domain))
-            && path_map.iter().any(|(stored_path, name_map)| {
-                path_match(path, stored_path)
-                    && name_map.get(name).is_some_and(|entry| {
-                        entry.cookie.secure() == Some(true)
-                            && !cookie_is_expired(&entry.cookie, now)
-                    })
-            })
-    })
+    /// Returns whether an insecure cookie would overlay an unexpired `Secure` cookie.
+    ///
+    /// RFC 6265bis section 5.7:
+    /// https://httpwg.org/http-extensions/draft-ietf-httpbis-rfc6265bis.html#section-5.7
+    pub fn would_overlay_secure_cookie(
+        &self,
+        name: &str,
+        domain: &CanonicalHost,
+        path: &str,
+        now: OffsetDateTime,
+    ) -> bool {
+        self.cookies.iter().any(|(stored_domain, path_map)| {
+            (domain_match(stored_domain, domain) || domain_match(domain, stored_domain))
+                && path_map.iter().any(|(stored_path, cookie_map)| {
+                    path_match(path, stored_path)
+                        && cookie_map.entries(name).any(|entry| {
+                            entry.cookie.secure() == Some(true)
+                                && !cookie_is_expired(&entry.cookie, now)
+                        })
+                })
+        })
+    }
 }
 
 /// Applies the RFC 6265 request selection rules supported by this HTTP client.
