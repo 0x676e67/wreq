@@ -113,6 +113,29 @@ pub fn matching_cookies<'a>(
         .collect()
 }
 
+/// Returns whether an insecure cookie would overlay an unexpired `Secure` cookie.
+///
+/// RFC 6265bis section 5.7:
+/// https://httpwg.org/http-extensions/draft-ietf-httpbis-rfc6265bis.html#section-5.7
+pub fn would_overlay_secure_cookie(
+    store: &DomainMap,
+    name: &str,
+    domain: &CanonicalHost,
+    path: &str,
+    now: OffsetDateTime,
+) -> bool {
+    store.iter().any(|(stored_domain, path_map)| {
+        (domain_match(stored_domain, domain) || domain_match(domain, stored_domain))
+            && path_map.iter().any(|(stored_path, name_map)| {
+                path_match(path, stored_path)
+                    && name_map.get(name).is_some_and(|entry| {
+                        entry.cookie.secure() == Some(true)
+                            && !cookie_is_expired(&entry.cookie, now)
+                    })
+            })
+    })
+}
+
 /// Applies the RFC 6265 request selection rules supported by this HTTP client.
 fn request_matches_cookie(
     uri: &Uri,

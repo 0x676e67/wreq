@@ -10,9 +10,10 @@ use super::{
     helper::{
         CookieStorage, DEFAULT_PATH, canonical_host, cookie_is_expired, domain_match,
         insert_stored_cookie, matching_cookies, normalize_path, remove_stored_cookie,
+        would_overlay_secure_cookie,
     },
 };
-use crate::{IntoUri, header::HeaderValue, sync::RwLock};
+use crate::{IntoUri, ext::UriExt, header::HeaderValue, sync::RwLock};
 
 /// A good default `CookieStore` implementation.
 ///
@@ -191,7 +192,8 @@ impl Jar {
     /// Cookies with an invalid URI or an invalid or mismatched `Domain` are ignored. A non-positive
     /// `Max-Age` removes an existing cookie in the same scope, as required by the
     /// [RFC 6265 storage model]. A positive `Max-Age` is converted to an effective deadline when
-    /// this method is called.
+    /// this method is called. Insecure origins cannot set `Secure` cookies or overlay an existing
+    /// `Secure` cookie, following the [RFC 6265bis storage model].
     ///
     /// # Example
     ///
@@ -207,6 +209,7 @@ impl Jar {
     /// ```
     ///
     /// [RFC 6265 storage model]: https://www.rfc-editor.org/rfc/rfc6265.html#section-5.3
+    /// [RFC 6265bis storage model]: https://httpwg.org/http-extensions/draft-ietf-httpbis-rfc6265bis.html#section-5.7
     pub fn add<C, U>(&self, cookie: C, uri: U)
     where
         C: IntoCookie,
@@ -215,6 +218,11 @@ impl Jar {
         if let Some(cookie) = cookie.into_cookie() {
             let uri = into_uri!(uri);
             let mut cookie: RawCookie<'static> = cookie.into();
+            let secure_origin = uri.is_https();
+
+            if cookie.secure() == Some(true) && !secure_origin {
+                return;
+            }
 
             // If the request-uri contains no host component:
             let Some(host) = uri.host().and_then(canonical_host) else {
@@ -278,6 +286,12 @@ impl Jar {
                 .to_owned();
 
             let mut storage = self.0.write();
+            if !secure_origin
+                && would_overlay_secure_cookie(&storage.cookies, cookie.name(), &domain, &path, now)
+            {
+                return;
+            }
+
             if expired {
                 remove_stored_cookie(&mut storage.cookies, &domain, &path, cookie.name());
             } else {
@@ -490,6 +504,93 @@ mod tests {
         let cookies = jar.get_all().collect::<Vec<_>>();
         assert_eq!(cookies.len(), 1);
         assert_eq!(cookies[0].domain(), Some("example.com"));
+    }
+
+    #[test]
+    fn jar_rejects_secure_cookie_from_insecure_origin() {
+        let jar = Jar::default();
+
+        jar.add("session=secure; Secure; Path=/", "http://example.com/");
+        assert!(jar.is_empty());
+
+        jar.add("session=plain; Path=/", "https://example.com/");
+        jar.add(
+            "session=gone; Secure; Max-Age=0; Path=/",
+            "http://example.com/",
+        );
+
+        let cookie = jar
+            .get("session", "https://example.com/")
+            .expect("insecure deletion must not remove the stored cookie");
+        assert_eq!(cookie.value(), "plain");
+    }
+
+    #[test]
+    fn jar_blocks_insecure_cookie_that_overlays_secure_path() {
+        let jar = Jar::default();
+        jar.add(
+            "session=secure; Secure; Domain=example.com; Path=/login",
+            "https://example.com/login",
+        );
+
+        for cookie in [
+            "session=exact; Domain=example.com; Path=/login",
+            "session=deeper; Domain=example.com; Path=/login/profile",
+            "session=gone; Domain=example.com; Path=/login; Max-Age=0",
+        ] {
+            jar.add(cookie, "http://example.com/login/profile");
+        }
+
+        // A shorter path does not overlay the existing Secure cookie.
+        jar.add(
+            "session=root; Domain=example.com; Path=/",
+            "http://example.com/",
+        );
+
+        let uri = Uri::from_static("https://example.com/login/profile");
+        match jar.cookies(&uri, Version::HTTP_11) {
+            Cookies::Compressed(value) => assert_eq!(value, "session=secure; session=root"),
+            other => panic!("expected protected Secure cookie, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn jar_blocks_secure_cookie_overlay_across_related_domains() {
+        let parent = Jar::default();
+        parent.add(
+            "session=secure; Secure; Domain=example.com; Path=/",
+            "https://example.com/",
+        );
+        parent.add(
+            "session=child; Domain=api.example.com; Path=/",
+            "http://api.example.com/",
+        );
+        assert_eq!(parent.get_all().count(), 1);
+
+        let child = Jar::default();
+        child.add(
+            "session=secure; Secure; Domain=api.example.com; Path=/",
+            "https://api.example.com/",
+        );
+        child.add(
+            "session=parent; Domain=example.com; Path=/",
+            "http://example.com/",
+        );
+        assert_eq!(child.get_all().count(), 1);
+    }
+
+    #[test]
+    fn jar_allows_secure_origin_to_replace_secure_cookie() {
+        let jar = Jar::default();
+        let uri = "https://example.com/";
+        jar.add("session=secure; Secure; Path=/", uri);
+        jar.add("session=plain; Path=/", uri);
+
+        let cookie = jar
+            .get("session", uri)
+            .expect("secure origin should replace the cookie");
+        assert_eq!(cookie.value(), "plain");
+        assert!(!cookie.secure());
     }
 
     #[test]
