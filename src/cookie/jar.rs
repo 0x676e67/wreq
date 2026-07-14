@@ -7,10 +7,7 @@ use http::{Uri, Version};
 
 use super::{
     Cookie, CookieStore, Cookies, IntoCookie,
-    helper::{
-        CookieStorage, DEFAULT_PATH, canonical_host, cookie_is_expired, domain_match,
-        normalize_path,
-    },
+    store::{DEFAULT_PATH, Store, canonical_host, cookie_is_expired, domain_match, normalize_path},
 };
 use crate::{IntoUri, ext::UriExt, header::HeaderValue, sync::RwLock};
 
@@ -20,7 +17,7 @@ use crate::{IntoUri, ext::UriExt, header::HeaderValue, sync::RwLock};
 /// This type is exposed to allow creating one and filling it with some
 /// existing cookies more easily, before creating a [`crate::Client`].
 #[derive(Debug, Default)]
-pub struct Jar(RwLock<CookieStorage>);
+pub struct Jar(RwLock<Store>);
 
 macro_rules! into_uri {
     ($expr:expr) => {
@@ -296,18 +293,18 @@ impl Jar {
                 .unwrap_or_else(|| normalize_path(uri.path()))
                 .to_owned();
 
-            let mut storage = self.0.write();
+            let mut store = self.0.write();
             if !secure_origin
-                && storage.would_overlay_secure_cookie(cookie.name(), &domain, &path, now)
+                && store.would_overlay_secure_cookie(cookie.name(), &domain, &path, now)
             {
                 return;
             }
 
             if expired {
-                storage.remove_stored_cookie(&domain, &path, cookie.name(), host_only);
+                store.remove_stored_cookie(&domain, &path, cookie.name(), host_only);
             } else {
                 cookie.set_path(path.clone());
-                storage.insert_stored_cookie(domain, path, cookie);
+                store.insert_stored_cookie(domain, path, cookie);
             }
         }
     }
@@ -337,8 +334,8 @@ impl Jar {
                 return;
             };
             let cookie = cookie.into();
-            let mut storage = self.0.write();
-            storage.remove_stored_cookies(&host, uri.path(), cookie.name());
+            let mut store = self.0.write();
+            store.remove_stored_cookies(&host, uri.path(), cookie.name());
         }
     }
 
@@ -354,7 +351,7 @@ impl Jar {
     /// assert_eq!(jar.get_all().count(), 0);
     /// ```
     pub fn clear(&self) {
-        *self.0.write() = CookieStorage::default();
+        *self.0.write() = Store::default();
     }
 }
 

@@ -89,12 +89,12 @@ impl CookieScopeMap {
 
 /// Stores cookies by domain, path, host-only scope, and name.
 #[derive(Debug, Default)]
-pub struct CookieStorage {
+pub struct Store {
     pub cookies: DomainMap,
     next_creation_index: u64,
 }
 
-impl CookieStorage {
+impl Store {
     /// Inserts or replaces a cookie in its domain and path scope.
     pub fn insert_stored_cookie(
         &mut self,
