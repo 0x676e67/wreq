@@ -303,6 +303,12 @@ where
         }
     }
 
+    if let Some(linger) = config.linger {
+        if let Err(_e) = socket.set_linger(Some(linger)) {
+            warn!("tcp set_linger error: {_e}");
+        }
+    }
+
     if let Some(size) = config.send_buffer_size {
         if let Err(_e) = socket.set_send_buffer_size(size) {
             warn!("tcp set_buffer_size error: {_e}");
@@ -444,6 +450,7 @@ pub(crate) struct TcpOptions {
     pub happy_eyeballs_timeout: Option<Duration>,
     pub nodelay: bool,
     pub reuse_address: bool,
+    pub linger: Option<Duration>,
     pub send_buffer_size: Option<usize>,
     pub recv_buffer_size: Option<usize>,
     #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]

@@ -56,6 +56,9 @@ where
     /// Set that all socket have `SO_REUSEADDR` set to the supplied value `reuse_address`.
     fn set_reuse_address(&mut self, reuse: bool);
 
+    /// Sets the value of the `SO_LINGER` option on the socket.
+    fn set_linger(&mut self, linger: Option<Duration>);
+
     /// Sets the value of the `TCP_USER_TIMEOUT` option on the socket.
     #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
     fn set_tcp_user_timeout(&mut self, time: Option<Duration>);
@@ -156,6 +159,7 @@ impl<R, S> HttpConnector<R, S> {
                 happy_eyeballs_timeout: Some(Duration::from_millis(300)),
                 nodelay: false,
                 reuse_address: false,
+                linger: None,
                 send_buffer_size: None,
                 recv_buffer_size: None,
                 #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
@@ -216,6 +220,14 @@ where
     #[inline]
     fn set_reuse_address(&mut self, reuse_address: bool) {
         self.config_mut().reuse_address = reuse_address;
+    }
+
+    /// Sets the value of the SO_LINGER option on the socket.
+    ///
+    /// Default is `None`, which leaves the option untouched.
+    #[inline]
+    fn set_linger(&mut self, linger: Option<Duration>) {
+        self.config_mut().linger = linger;
     }
 
     /// Sets the value of the TCP_USER_TIMEOUT option on the socket.

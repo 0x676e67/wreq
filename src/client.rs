@@ -185,6 +185,7 @@ struct Config {
     pool_max_size: Option<NonZeroUsize>,
     tcp_nodelay: bool,
     tcp_reuse_address: bool,
+    tcp_linger: Option<Duration>,
     tcp_keepalive: Option<Duration>,
     tcp_keepalive_interval: Option<Duration>,
     tcp_keepalive_retries: Option<u32>,
@@ -276,6 +277,7 @@ impl Client {
                 tcp_user_timeout: Some(Duration::from_secs(30)),
                 tcp_nodelay: true,
                 tcp_reuse_address: false,
+                tcp_linger: None,
                 tcp_send_buffer_size: None,
                 tcp_recv_buffer_size: None,
                 tcp_happy_eyeballs_timeout: Some(Duration::from_millis(300)),
@@ -529,6 +531,7 @@ impl ClientBuilder {
                     http.set_keepalive_interval(config.tcp_keepalive_interval);
                     http.set_keepalive_retries(config.tcp_keepalive_retries);
                     http.set_reuse_address(config.tcp_reuse_address);
+                    http.set_linger(config.tcp_linger);
                     http.set_connect_timeout(config.connect_timeout);
                     http.set_nodelay(config.tcp_nodelay);
                     http.set_send_buffer_size(config.tcp_send_buffer_size);
@@ -1217,6 +1220,27 @@ impl ClientBuilder {
     #[inline]
     pub fn tcp_reuse_address(mut self, enabled: bool) -> ClientBuilder {
         self.config.tcp_reuse_address = enabled;
+        self
+    }
+
+    /// Set that all sockets have `SO_LINGER` set with the supplied duration.
+    ///
+    /// This option controls how long the socket lingers on close while data
+    /// remains unsent. A duration of zero aborts the connection on close: unsent
+    /// data is discarded, the connection is reset (`RST`) rather than going
+    /// through the normal `FIN` termination sequence, and the socket does not
+    /// enter `TIME_WAIT`.
+    ///
+    /// If `None`, the option will not be set and the operating system default
+    /// applies.
+    ///
+    /// Default is `None`.
+    #[inline]
+    pub fn tcp_linger<D>(mut self, val: D) -> ClientBuilder
+    where
+        D: Into<Option<Duration>>,
+    {
+        self.config.tcp_linger = val.into();
         self
     }
 
