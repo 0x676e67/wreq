@@ -53,7 +53,7 @@ async fn main() -> wreq::Result<()> {
         .build()?;
 
     // Use the API you're already familiar with
-    let resp = client.get("https://tls.peet.ws/api/all").send().await?;
+    let resp = client.get("https://pingly.us.kg/api/all").send().await?;
     println!("{}", resp.text().await?);
     Ok(())
 }

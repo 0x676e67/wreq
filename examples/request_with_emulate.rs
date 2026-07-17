@@ -105,7 +105,7 @@ async fn main() -> wreq::Result<()> {
         .build(Default::default());
 
     // Use the API you're already familiar with
-    let resp = wreq::get("https://tls.peet.ws/api/all")
+    let resp = wreq::get("https://pingly.us.kg/api/all")
         .emulation(emulation)
         .send()
         .await?;
