@@ -11,40 +11,39 @@ use http::{
     header::{CONTENT_ENCODING, CONTENT_LENGTH, CONTENT_TYPE, LOCATION, TRANSFER_ENCODING},
     request::Parts,
 };
-use http_body::Body;
 use pin_project_lite::pin_project;
 use tower::{BoxError, Service, util::Oneshot};
 use url::Url;
 
 use super::{
     BodyRepr,
-    policy::{Action, Attempt, Policy},
+    policy::{Action, Attempt},
 };
-use crate::{Error, ext::RequestUri, into_uri::IntoUriSealed};
+use crate::{Body, ext::RequestUri, into_uri::IntoUriSealed, redirect::FollowRedirectPolicy};
 
 /// Pending future state for handling redirects.
-pub struct Pending<ReqBody, Response> {
+pub struct Pending<Response> {
     future: Pin<Box<dyn Future<Output = Action> + Send>>,
     location: Uri,
-    body: ReqBody,
+    body: Body,
     res: Response,
 }
 
 pin_project! {
     /// Response future for [`FollowRedirect`].
     #[project = ResponseFutureProj]
-    pub enum ResponseFuture<S, B, P>
+    pub enum ResponseFuture<S>
     where
-        S: Service<Request<B>>,
+        S: Service<Request<Body>>,
     {
         Redirect {
             #[pin]
-            future: Either<S::Future, Oneshot<S, Request<B>>>,
-            pending_future: Option<Pending<B, S::Response>>,
+            future: Either<S::Future, Oneshot<S, Request<Body>>>,
+            pending_future: Option<Pending<S::Response>>,
             service: S,
-            policy: P,
+            policy: FollowRedirectPolicy,
             parts: Parts,
-            body_repr: BodyRepr<B>,
+            body_repr: BodyRepr<Body>,
         },
 
         Direct {
@@ -54,14 +53,12 @@ pin_project! {
     }
 }
 
-impl<S, ReqBody, ResBody, P> Future for ResponseFuture<S, ReqBody, P>
+impl<S, B> Future for ResponseFuture<S>
 where
-    S: Service<Request<ReqBody>, Response = Response<ResBody>> + Clone,
+    S: Service<Request<Body>, Response = Response<B>> + Clone,
     S::Error: From<BoxError>,
-    P: Policy<ReqBody, S::Error>,
-    ReqBody: Body + Default,
 {
-    type Output = Result<Response<ResBody>, S::Error>;
+    type Output = Result<Response<B>, S::Error>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         match self.project() {
@@ -215,41 +212,36 @@ fn drop_payload_headers(headers: &mut HeaderMap) {
     }
 }
 
-type RedirectFuturePin<'a, S, ReqBody> =
-    Pin<&'a mut Either<<S as Service<Request<ReqBody>>>::Future, Oneshot<S, Request<ReqBody>>>>;
+type RedirectFuturePin<'a, S> =
+    Pin<&'a mut Either<<S as Service<Request<Body>>>::Future, Oneshot<S, Request<Body>>>>;
 
-struct RedirectAction<'a, S, ReqBody, ResBody, P>
+struct RedirectAction<'a, S, B>
 where
-    S: Service<Request<ReqBody>, Response = Response<ResBody>> + Clone,
-    P: Policy<ReqBody, S::Error>,
+    S: Service<Request<Body>, Response = Response<B>> + Clone,
 {
     action: Action,
-    future: &'a mut RedirectFuturePin<'a, S, ReqBody>,
+    future: &'a mut RedirectFuturePin<'a, S>,
     service: &'a S,
-    policy: &'a mut P,
+    policy: &'a mut FollowRedirectPolicy,
     parts: &'a mut Parts,
-    body: ReqBody,
-    body_repr: &'a mut BodyRepr<ReqBody>,
-    res: Response<ResBody>,
+    body: Body,
+    body_repr: &'a mut BodyRepr<Body>,
+    res: Response<B>,
     location: Uri,
 }
 
-fn handle_action<S, ReqBody, ResBody, P>(
+fn handle_action<S, B>(
     cx: &mut Context<'_>,
-    redirect: RedirectAction<'_, S, ReqBody, ResBody, P>,
-) -> Poll<Result<Response<ResBody>, S::Error>>
+    redirect: RedirectAction<'_, S, B>,
+) -> Poll<Result<Response<B>, S::Error>>
 where
-    S: Service<Request<ReqBody>, Response = Response<ResBody>> + Clone,
+    S: Service<Request<Body>, Response = Response<B>> + Clone,
     S::Error: From<BoxError>,
-    P: Policy<ReqBody, S::Error>,
-    ReqBody: Body + Default,
 {
     match redirect.action {
         Action::Follow => {
             redirect.parts.uri = redirect.location;
-            redirect
-                .body_repr
-                .try_clone_from(&redirect.body, redirect.policy);
+            redirect.body_repr.try_clone_from(&redirect.body);
 
             let mut req = Request::from_parts(redirect.parts.clone(), redirect.body);
             redirect.policy.on_request(&mut req);
@@ -261,13 +253,7 @@ where
             Poll::Pending
         }
         Action::Stop => Poll::Ready(Ok(redirect.res)),
-        Action::Pending(_) => Poll::Ready(Err(S::Error::from(
-            Error::redirect(
-                "Nested pending Action is not supported in redirect policy",
-                redirect.parts.uri.clone(),
-            )
-            .into(),
-        ))),
         Action::Error(err) => Poll::Ready(Err(err.into())),
+        Action::Pending(_) => unreachable!(),
     }
 }
