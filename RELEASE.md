@@ -172,6 +172,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - *(request)* static init for common content-type header ([#1060](https://github.com/0x676e67/wreq/pull/1060))
 ## [unreleased]
 
+## [6.0.0-rc.30](https://github.com/0x676e67/wreq/compare/v6.0.0-rc.29...v6.0.0-rc.30) - 2026-07-20
+
+### Added
+
+- *(socket)* tcp SO_LINGER option ([#1217](https://github.com/0x676e67/wreq/pull/1217))
+- *(cookie)* expand cookie jar APIs ([#1216](https://github.com/0x676e67/wreq/pull/1216))
+- *(dns)* implement `Error::is_dns()` to detect DNS resolve failures ([#1201](https://github.com/0x676e67/wreq/pull/1201))
+
+### Fixed
+
+- *(cookie)* enforce max-age expiration ([#1214](https://github.com/0x676e67/wreq/pull/1214))
+- *(cookie)* correct domain matching ([#1211](https://github.com/0x676e67/wreq/pull/1211))
+
+### Other
+
+- *(deps)* update package dependency versions
+- update examples
+- fix clippy lints for Rust 1.97.0 ([#1213](https://github.com/0x676e67/wreq/pull/1213))
+- Update .gitignore
+- *(badssl)* retry on `badssl.com` connection reset errors ([#1207](https://github.com/0x676e67/wreq/pull/1207))
+- update package description
+- *(badssl)* add test case for wrong host on BadSSL ([#1202](https://github.com/0x676e67/wreq/pull/1202))
+- add single-threaded benchmark for `cyper` HTTP Client ([#1195](https://github.com/0x676e67/wreq/pull/1195))
+
 ### Features
 
 - *(cookie)* RFC 9113 compliant cookie handling ([#1106](https://github.com/0x676e67/wreq/issues/1106)) - ([81f3adb](https://github.com/0x676e67/wreq/commit/81f3adb85e0fff869439bd4eac48405e78916c9a))
