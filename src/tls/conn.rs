@@ -20,6 +20,7 @@ use btls::{
     ssl::{Ssl, SslConnector, SslMethod, SslOptions, SslSessionCacheMode},
 };
 use ext::SslConnectorBuilderExt;
+use foreign_types::ForeignTypeRef;
 use http::{Uri, Version};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio_btls::SslStream;
@@ -52,6 +53,7 @@ pub struct HandshakeSettings {
     alps_protocols: Option<Cow<'static, [AlpsProtocol]>>,
     alps_use_new_codepoint: bool,
     key_shares: Option<Cow<'static, [KeyShare]>>,
+    requested_trust_anchors: Option<Cow<'static, [u8]>>,
     random_aes_hw_override: bool,
 }
 
@@ -191,6 +193,20 @@ impl TlsConnector {
         // Set TLS key shares
         if let Some(ref key_shares) = self.settings.key_shares {
             cfg.set_client_key_shares(key_shares.as_ref())?;
+        }
+
+        // Set requested trust anchor identifiers (trust_anchors extension,
+        // draft-ietf-tls-trust-anchor-ids). An empty list still sends the
+        // extension; `None` (the default) sends nothing.
+        if let Some(ref ids) = self.settings.requested_trust_anchors {
+            let ids = ids.as_ref();
+            #[allow(unsafe_code)]
+            let r = unsafe {
+                btls_sys::SSL_set1_requested_trust_anchors(cfg.as_ptr(), ids.as_ptr(), ids.len())
+            };
+            if r != 1 {
+                return Err(ErrorStack::get().into());
+            }
         }
 
         let uri = descriptor.uri().clone();
@@ -452,6 +468,7 @@ impl TlsConnectorBuilder {
             alps_use_new_codepoint: opts.alps_use_new_codepoint,
             enable_ech_grease: opts.enable_ech_grease,
             key_shares: opts.key_shares.clone(),
+            requested_trust_anchors: opts.requested_trust_anchors.clone(),
             random_aes_hw_override: opts.random_aes_hw_override,
         };
 
