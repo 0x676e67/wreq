@@ -232,6 +232,7 @@ where
         }
     }
 
+    #[allow(clippy::result_large_err)]
     async fn try_send_request(
         &self,
         mut req: Request<B>,
@@ -751,6 +752,7 @@ impl<B> PoolClient<B> {
 
 impl<B: Body + 'static> PoolClient<B> {
     #[inline]
+    #[allow(clippy::result_large_err)]
     fn try_send_request(
         &mut self,
         req: Request<B>,
