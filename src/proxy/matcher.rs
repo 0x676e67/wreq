@@ -544,6 +544,8 @@ mod builder {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(all(feature = "system-proxy", windows))]
+    use super::super::win;
     use super::*;
 
     #[test]
@@ -625,6 +627,25 @@ mod tests {
         for host in &should_match {
             assert!(no_proxy.contains(host), "should contain {host:?}");
         }
+    }
+
+    #[cfg(all(feature = "system-proxy", windows))]
+    #[test]
+    fn test_windows_proxy_override_ip_wildcard() {
+        let normalized =
+            win::normalize_proxy_override("127.*; 10.*.*.*; 192.168.*; 192.168.1.*; *.example.com");
+        let no_proxy = NoProxy::from_string(&normalized);
+
+        assert!(no_proxy.contains("127.0.0.1"));
+        assert!(no_proxy.contains("10.12.34.56"));
+        assert!(no_proxy.contains("192.168.42.1"));
+        assert!(no_proxy.contains("192.168.1.42"));
+        assert!(no_proxy.contains("www.example.com"));
+        assert!(!no_proxy.contains("128.0.0.1"));
+        assert!(!no_proxy.contains("192.169.42.1"));
+
+        let subnet = NoProxy::from_string(&win::normalize_proxy_override("192.168.1.*"));
+        assert!(!subnet.contains("192.168.2.42"));
     }
 
     macro_rules! p {

@@ -1,3 +1,38 @@
+fn ipv4_wildcard_to_cidr(value: &str) -> Option<String> {
+    let parts = value.split('.').collect::<Vec<_>>();
+    let wildcard = parts.iter().position(|part| *part == "*")?;
+
+    if wildcard == 0 || wildcard > 3 || parts[wildcard..].iter().any(|part| *part != "*") {
+        return None;
+    }
+
+    let mut octets = [0; 4];
+    for (index, part) in parts[..wildcard].iter().enumerate() {
+        octets[index] = part.parse().ok()?;
+    }
+
+    Some(format!(
+        "{}.{}.{}.{}/{}",
+        octets[0],
+        octets[1],
+        octets[2],
+        octets[3],
+        wildcard * 8
+    ))
+}
+
+pub(super) fn normalize_proxy_override(value: &str) -> String {
+    value
+        .split(';')
+        .map(|entry| {
+            let entry = entry.trim();
+            ipv4_wildcard_to_cidr(entry).unwrap_or_else(|| entry.to_string())
+        })
+        .collect::<Vec<_>>()
+        .join(",")
+        .replace("*.", "")
+}
+
 pub(super) fn with_system(builder: &mut super::matcher::Builder) {
     let Ok(settings) = windows_registry::CURRENT_USER
         .open("Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings")
@@ -20,12 +55,7 @@ pub(super) fn with_system(builder: &mut super::matcher::Builder) {
 
     if builder.no.is_empty() {
         if let Ok(val) = settings.get_string("ProxyOverride") {
-            builder.no = val
-                .split(';')
-                .map(|s| s.trim())
-                .collect::<Vec<&str>>()
-                .join(",")
-                .replace("*.", "");
+            builder.no = normalize_proxy_override(&val);
         }
     }
 }
