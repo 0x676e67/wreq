@@ -365,7 +365,7 @@ where
             let options = &this.options;
 
             let (host, port) = get_host_port(options, &dst)?;
-            let host = host.trim_start_matches('[').trim_end_matches(']');
+            let host = crate::util::strip_ipv6_brackets(host);
 
             let addrs = if let Some(addrs) = dns::SocketAddrs::try_parse(host, port) {
                 addrs

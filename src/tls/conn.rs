@@ -222,17 +222,9 @@ impl TlsConnector {
     /// it (otherwise, boring will fail to parse the host as an IP address, eventually
     /// causing the handshake to fail due a hostname verification error).
     fn normalize_host(host: &str) -> &str {
-        if host.is_empty() {
-            return host;
-        }
-
-        let last = host.len() - 1;
-        let mut chars = host.chars();
-
-        if let (Some('['), Some(']')) = (chars.next(), chars.last()) {
-            if host[1..last].parse::<std::net::Ipv6Addr>().is_ok() {
-                return &host[1..last];
-            }
+        let normalized = crate::util::strip_ipv6_brackets(host);
+        if normalized.len() != host.len() && normalized.parse::<std::net::Ipv6Addr>().is_ok() {
+            return normalized;
         }
 
         host

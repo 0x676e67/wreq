@@ -164,6 +164,7 @@ where
 
         let fut = async move {
             let host = dst.host().ok_or(SocksError::MissingHost)?;
+            let host = crate::util::strip_ipv6_brackets(host);
             let port = dst.port_or_default();
 
             // Attempt to tcp connect to the proxy server.

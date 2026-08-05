@@ -437,14 +437,7 @@ impl NoProxy {
 
     /// Return true if this matches the host (domain or IP).
     pub fn contains(&self, host: &str) -> bool {
-        // According to RFC3986, raw IPv6 hosts will be wrapped in []. So we need to strip those off
-        // the end in order to parse correctly
-        let host = if host.starts_with('[') {
-            let x: &[_] = &['[', ']'];
-            host.trim_matches(x)
-        } else {
-            host
-        };
+        let host = crate::util::strip_ipv6_brackets(host);
         match host.parse::<IpAddr>() {
             // If we can parse an IP addr, then use it, otherwise, assume it is a domain
             Ok(ip) => self.ips.contains(ip),
