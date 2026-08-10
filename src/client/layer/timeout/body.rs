@@ -221,8 +221,11 @@ where
         // Poll the actual body
         match ready!(this.body.poll_frame(cx)) {
             Some(Ok(frame)) => {
-                // Reset timeout on successful read
-                this.sleep.set(None);
+                // Reuse the sleep to avoid allocating and registering a new timer for every frame.
+                if let Some(sleep) = this.sleep.as_mut().as_pin_mut() {
+                    let deadline = this.timer.now() + *this.timeout;
+                    this.timer.reset(sleep.get_mut(), deadline);
+                }
                 Poll::Ready(Some(Ok(frame)))
             }
             Some(Err(err)) => Poll::Ready(Some(Err(err.into()))),
