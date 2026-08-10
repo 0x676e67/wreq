@@ -206,9 +206,10 @@ where
     ) -> Poll<Option<Result<http_body::Frame<Self::Data>, Self::Error>>> {
         let mut this = self.project();
 
-        // Error if the timeout has expired.
+        // Start the timeout on the first poll.
         if this.sleep.is_none() {
-            this.sleep.set(Some(this.timer.sleep(*this.timeout)));
+            let deadline = this.timer.now() + *this.timeout;
+            this.sleep.set(Some(this.timer.sleep_until(deadline)));
         }
 
         // Error if the timeout has expired.
