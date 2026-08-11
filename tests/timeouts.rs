@@ -162,7 +162,7 @@ async fn response_timeout() {
     let res = client.get(&url).send().await.expect("Failed to get");
     let err = res.text().await.unwrap_err();
 
-    assert!(err.is_timeout());
+    assert!(err.is_body() && err.is_timeout());
 }
 
 #[tokio::test]
@@ -218,7 +218,7 @@ async fn read_timeout_applies_to_body() {
     let res = client.get(&url).send().await.expect("Failed to get");
     let err = res.text().await.unwrap_err();
 
-    assert!(err.is_timeout());
+    assert!(err.is_body() && err.is_timeout());
 }
 
 #[cfg(feature = "stream")]

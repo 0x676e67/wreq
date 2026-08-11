@@ -215,7 +215,7 @@ where
         // Error if the timeout has expired.
         if let Some(sleep) = this.sleep.as_mut().as_pin_mut() {
             if sleep.poll(cx).is_ready() {
-                return Poll::Ready(Some(Err(Box::new(TimedOut))));
+                return Poll::Ready(Some(Err(Error::body(TimedOut).into())));
             }
         }
 
