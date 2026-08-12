@@ -977,5 +977,14 @@ mod tests {
             req.headers().get(AUTHORIZATION),
             Some(&HeaderValue::from_static("let me in"))
         );
+
+        req.headers_mut()
+            .insert(COOKIE, HeaderValue::from_static("foo=bar"));
+        *req.uri_mut() = Uri::from_static("http://example.com:8443/next");
+        let previous = [Uri::from_static("https://example.com:8443/previous")];
+
+        remove_sensitive_headers(&mut req, &previous);
+        assert_eq!(req.headers().get(AUTHORIZATION), None);
+        assert_eq!(req.headers().get(COOKIE), None);
     }
 }
