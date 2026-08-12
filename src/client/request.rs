@@ -473,6 +473,10 @@ impl RequestBuilder {
 
     /// Send a JSON body.
     ///
+    /// Serializes the value as JSON and sets the resulting bytes as the request body.
+    ///
+    /// Sets `Content-Type` to `application/json` unless it is already set.
+    ///
     /// # Optional
     ///
     /// This requires the optional `json` feature enabled.
