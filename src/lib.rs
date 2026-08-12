@@ -299,6 +299,8 @@ macro_rules! if_no_rt {
 
 #[macro_use]
 mod trace;
+/// C ABI bindings for consuming wreq from native applications and C#.
+pub mod c_abi;
 #[macro_use]
 mod ext;
 #[macro_use]

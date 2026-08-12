@@ -11,7 +11,10 @@ readme = "README.md"
 license = "Apache-2.0"
 edition = "2024"
 rust-version = "1.85"
-include = ["README.md", "LICENSE", "src/**/*.rs"]
+include = ["README.md", "LICENSE", "src/**/*.rs", "include/wreq.h", "examples/WreqNative.cs"]
+
+[lib]
+crate-type = ["rlib", "cdylib"]
 
 [package.metadata.docs.rs]
 all-features = true
@@ -102,7 +105,7 @@ lru = "0.18.0"
 btls = "0.5.6"
 btls-sys = "0.5.6"
 tokio-btls = "0.5.6"
-tokio = { version = "1.52.3", default-features = false }
+tokio = { version = "1.52.3", default-features = false, features = ["rt-multi-thread", "time"] }
 compio = { version = "0.19.0-rc.1", features = ["io", "io-compat"], optional = true }
 wreq-rt = { version = "0.2.2-rc.2", default-features = false }
 wreq-proto = { version = "0.2.3", default-features = false }
