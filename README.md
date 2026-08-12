@@ -89,6 +89,17 @@ reserved because wreq has no named profile, request ID, or explicit idle-pool
 close operation. `HeaderOrder` is comma- or newline-separated and `Headers`
 uses `Name: value` lines.
 
+## Rust TLS client facade
+
+`wreq::tls_client::{TlsClient, TlsClientPool}` provides a reusable async client
+facade modeled after the Go `tls-client` flow. It supports per-ID client
+caching, proxy configuration, total/read timeouts, redirect policy, request
+headers/header order, and complete response collection. The current wreq
+repository does not contain a named browser-profile registry, so profile names
+other than `default` are rejected instead of silently using a different TLS
+fingerprint. Named profiles can be layered in by constructing the corresponding
+`wreq::Emulation` from the separate `wreq-util` crate.
+
 ## Building
 
 Compiling alongside **openssl-sys** can cause symbol conflicts with **boringssl** that lead to [link failures](https://github.com/cloudflare/boring/issues/197), and on **Linux** and **Android** this can be avoided by enabling the **`prefix-symbols`** feature.
