@@ -73,6 +73,33 @@ Due to the complexity of **TLS** encryption and the widespread adoption of **HTT
 
 **TLS** and **HTTP/2** fingerprints are often identical across various browser models because these underlying protocols evolve slower than browser release cycles. **100+ browser device emulation profiles** are maintained in [wreq-util](https://github.com/0x676e67/wreq-util).
 
+## C ABI and C#
+
+The crate also builds a `cdylib` for native callers. The ABI declarations are in
+[`include/wreq.h`](include/wreq.h), and the corresponding C# P/Invoke declarations
+are in [`examples/WreqNative.cs`](examples/WreqNative.cs). Request strings are
+borrowed NUL-terminated UTF-8 input. A successful response owns all returned
+strings and body bytes; release it with `wreq_response_free`. Release error
+strings with `wreq_error_free`.
+
+`Timeout` and `IdleTimeout` are milliseconds; the latter is mapped to wreq's
+per-request read timeout. `ProxyUrl`, `Headers`, `HeaderOrder`, `Body`, and
+`Cookies` are supported. `TlsProfile`, `Id`, and `CloseIdleConnections` are
+reserved because wreq has no named profile, request ID, or explicit idle-pool
+close operation. `HeaderOrder` is comma- or newline-separated and `Headers`
+uses `Name: value` lines.
+
+## Rust TLS client facade
+
+`wreq::tls_client::{TlsClient, TlsClientPool}` provides a reusable async client
+facade modeled after the Go `tls-client` flow. It supports per-ID client
+caching, proxy configuration, total/read timeouts, redirect policy, request
+headers/header order, and complete response collection. The current wreq
+repository does not contain a named browser-profile registry, so profile names
+other than `default` are rejected instead of silently using a different TLS
+fingerprint. Named profiles can be layered in by constructing the corresponding
+`wreq::Emulation` from the separate `wreq-util` crate.
+
 ## Building
 
 Compiling alongside **openssl-sys** can cause symbol conflicts with **boringssl** that lead to [link failures](https://github.com/cloudflare/boring/issues/197), and on **Linux** and **Android** this can be avoided by enabling the **`prefix-symbols`** feature.
