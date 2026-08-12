@@ -353,3 +353,7 @@ path = "examples/unix_socket.rs"
 name = "rt"
 path = "examples/rt.rs"
 required-features = ["compio-rt"]
+
+[[example]]
+name = "external_client"
+path = "examples/external_client.rs"

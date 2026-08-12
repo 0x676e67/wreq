@@ -59,6 +59,30 @@ async fn main() -> wreq::Result<()> {
 }
 ```
 
+### Keeping the dependency behind an application boundary
+
+When `wreq` is used by a larger application, keep its API in a small adapter
+module. This makes upgrades easier because the rest of the application depends
+on the adapter's stable methods instead of on `wreq` request builders directly.
+The repository includes a complete example in
+[`examples/external_client.rs`](examples/external_client.rs) and
+[`examples/support/wreq_client.rs`](examples/support/wreq_client.rs).
+
+The dependency can use a compatible release range while still selecting the
+features required by the application:
+
+```toml
+[dependencies]
+wreq = { version = "6.0.0-rc", default-features = true }
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+```
+
+Run the example with:
+
+```bash
+cargo run --example external_client
+```
+
 ## Behavior
 
 - **HTTP/1 over TLS**
