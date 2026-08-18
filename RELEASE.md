@@ -172,6 +172,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - *(request)* static init for common content-type header ([#1060](https://github.com/0x676e67/wreq/pull/1060))
 ## [unreleased]
 
+## [6.0.0-rc.30](https://github.com/0x676e67/wreq/compare/v6.0.0-rc.29...v6.0.0-rc.30) - 2026-08-18
+
+### Added
+
+- *(socket)* tcp SO_LINGER option ([#1217](https://github.com/0x676e67/wreq/pull/1217))
+- *(cookie)* expand cookie jar APIs ([#1216](https://github.com/0x676e67/wreq/pull/1216))
+- *(dns)* implement `Error::is_dns()` to detect DNS resolve failures ([#1201](https://github.com/0x676e67/wreq/pull/1201))
+
+### Fixed
+
+- *(error)* classify read timeout as body error ([#1233](https://github.com/0x676e67/wreq/pull/1233))
+- *(proxy)* handle WinINET IP wildcards ([#1226](https://github.com/0x676e67/wreq/pull/1226))
+- *(socket)* prefer ready connection at timeout boundary
+- *(socket)* race resolved addresses within connect timeout
+- *(cookie)* enforce max-age expiration ([#1214](https://github.com/0x676e67/wreq/pull/1214))
+- *(cookie)* correct domain matching ([#1211](https://github.com/0x676e67/wreq/pull/1211))
+
+### Other
+
+- *(deps)* bump taiki-e/install-action from 2.85.10 to 2.85.13 ([#1239](https://github.com/0x676e67/wreq/pull/1239))
+- release v6.0.0-rc.30 ([#1212](https://github.com/0x676e67/wreq/pull/1212))
+- *(redirect)* cover sensitive headers on scheme changes ([#1236](https://github.com/0x676e67/wreq/pull/1236))
+- *(request)* document JSON content type ([#1235](https://github.com/0x676e67/wreq/pull/1235))
+- add pull request template for human-written content ([#1232](https://github.com/0x676e67/wreq/pull/1232))
+- *(body)* use absolute read timeout deadline ([#1231](https://github.com/0x676e67/wreq/pull/1231))
+- *(deps)* bump taiki-e/install-action from 2.85.5 to 2.85.10 ([#1229](https://github.com/0x676e67/wreq/pull/1229))
+- *(body)* reuse read timeout timer ([#1230](https://github.com/0x676e67/wreq/pull/1230))
+- restore doc_cfg feature gate ([#1228](https://github.com/0x676e67/wreq/pull/1228))
+- *(client)* centralize IPv6 bracket parsing ([#1227](https://github.com/0x676e67/wreq/pull/1227))
+- Merge pull request #1203 from 0x676e67/dependabot/github_actions/actions/checkout-7
+- Merge pull request #1224 from 0x676e67/fix/multi-ip-connect-timeout-157-1
+- update
+- move release-plz config to .github
+- *(redirect)* simplify internal abstractions for redirect handling ([#1200](https://github.com/0x676e67/wreq/pull/1200))
+- *(deps)* update package dependency versions
+- update examples
+- fix clippy lints for Rust 1.97.0 ([#1213](https://github.com/0x676e67/wreq/pull/1213))
+- Update .gitignore
+- *(badssl)* retry on `badssl.com` connection reset errors ([#1207](https://github.com/0x676e67/wreq/pull/1207))
+- update package description
+- *(badssl)* add test case for wrong host on BadSSL ([#1202](https://github.com/0x676e67/wreq/pull/1202))
+- add single-threaded benchmark for `cyper` HTTP Client ([#1195](https://github.com/0x676e67/wreq/pull/1195))
+
 ## [6.0.0-rc.30](https://github.com/0x676e67/wreq/compare/v6.0.0-rc.29...v6.0.0-rc.30) - 2026-08-12
 
 ### Added
