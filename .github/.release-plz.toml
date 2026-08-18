@@ -2,5 +2,7 @@
 # set the path of all the crates to the changelog to the root of the repository
 changelog_path = "./RELEASE.md"
 release_always = false
+# Tag CI creates GitHub releases with auto-generated notes.
+git_release_enable = false
 git_tag_enable = true
 git_tag_name = "v{{ version }}"
