@@ -1,5 +1,6 @@
 [workspace]
 # set the path of all the crates to the changelog to the root of the repository
 changelog_path = "./RELEASE.md"
+release_always = false
 git_tag_enable = true
 git_tag_name = "v{{ version }}"
