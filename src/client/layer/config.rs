@@ -1,6 +1,7 @@
 use std::{
     sync::Arc,
     task::{Context, Poll},
+    time::Duration,
 };
 
 use futures_util::future::{self, Either, Ready};
@@ -25,6 +26,7 @@ pub(crate) struct RequestOptions {
     pub group: Group,
     pub proxy: Option<Matcher>,
     pub version: Option<Version>,
+    pub connect_timeout: Option<Duration>,
     pub tls_options: Option<TlsOptions>,
     pub http1_options: Option<Http1Options>,
     pub http2_options: Option<Http2Options>,

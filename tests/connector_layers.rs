@@ -49,6 +49,34 @@ async fn non_op_layer_with_timeout() {
 }
 
 #[tokio::test]
+async fn request_connect_timeout_overrides_client_timeout() {
+    let _ = env_logger::try_init();
+
+    let overridden_server = server::http(move |_req| async { http::Response::default() });
+    let default_server = server::http(move |_req| async { http::Response::default() });
+    let client = Client::builder()
+        .connector_layer(DelayLayer::new(Duration::from_millis(100)))
+        .connect_timeout(Duration::from_millis(50))
+        .no_proxy()
+        .build()
+        .unwrap();
+
+    let response = client
+        .get(format!("http://{}", overridden_server.addr()))
+        .connect_timeout(Duration::from_secs(1))
+        .send()
+        .await;
+    assert!(response.is_ok());
+
+    let error = client
+        .get(format!("http://{}", default_server.addr()))
+        .send()
+        .await
+        .unwrap_err();
+    assert!(error.is_connect() && error.is_timeout());
+}
+
+#[tokio::test]
 async fn with_connect_timeout_layer_never_returning() {
     let _ = env_logger::try_init();
 
