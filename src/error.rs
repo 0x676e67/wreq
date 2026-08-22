@@ -183,16 +183,16 @@ impl Error {
                 return true;
             }
 
-            if let Some(core_err) = err.downcast_ref::<wreq_proto::Error>() {
-                if core_err.is_timeout() {
-                    return true;
-                }
+            if let Some(core_err) = err.downcast_ref::<wreq_proto::Error>()
+                && core_err.is_timeout()
+            {
+                return true;
             }
 
-            if let Some(io) = err.downcast_ref::<io::Error>() {
-                if io.kind() == io::ErrorKind::TimedOut {
-                    return true;
-                }
+            if let Some(io) = err.downcast_ref::<io::Error>()
+                && io.kind() == io::ErrorKind::TimedOut
+            {
+                return true;
             }
 
             source = err.source();
@@ -214,10 +214,10 @@ impl Error {
         let mut source = self.source();
 
         while let Some(err) = source {
-            if let Some(err) = err.downcast_ref::<Error>() {
-                if err.is_connect() {
-                    return true;
-                }
+            if let Some(err) = err.downcast_ref::<Error>()
+                && err.is_connect()
+            {
+                return true;
             }
 
             source = err.source();
@@ -233,10 +233,10 @@ impl Error {
         let mut source = self.source();
 
         while let Some(err) = source {
-            if let Some(err) = err.downcast_ref::<Error>() {
-                if err.is_proxy_connect() {
-                    return true;
-                }
+            if let Some(err) = err.downcast_ref::<Error>()
+                && err.is_proxy_connect()
+            {
+                return true;
             }
 
             source = err.source();
@@ -250,10 +250,10 @@ impl Error {
         let mut source = self.source();
 
         while let Some(err) = source {
-            if let Some(io) = err.downcast_ref::<io::Error>() {
-                if io.kind() == io::ErrorKind::ConnectionReset {
-                    return true;
-                }
+            if let Some(io) = err.downcast_ref::<io::Error>()
+                && io.kind() == io::ErrorKind::ConnectionReset
+            {
+                return true;
             }
             source = err.source();
         }

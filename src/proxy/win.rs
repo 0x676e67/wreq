@@ -53,9 +53,9 @@ pub(super) fn with_system(builder: &mut super::matcher::Builder) {
         }
     }
 
-    if builder.no.is_empty() {
-        if let Ok(val) = settings.get_string("ProxyOverride") {
-            builder.no = normalize_proxy_override(&val);
-        }
+    if builder.no.is_empty()
+        && let Ok(val) = settings.get_string("ProxyOverride")
+    {
+        builder.no = normalize_proxy_override(&val);
     }
 }

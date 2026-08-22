@@ -28,10 +28,10 @@ fn is_connection_reset(err: &(dyn StdError + 'static)) -> bool {
     let mut source = Some(err);
 
     while let Some(err) = source {
-        if let Some(io) = err.downcast_ref::<io::Error>() {
-            if io.kind() == io::ErrorKind::ConnectionReset {
-                return true;
-            }
+        if let Some(io) = err.downcast_ref::<io::Error>()
+            && io.kind() == io::ErrorKind::ConnectionReset
+        {
+            return true;
         }
 
         source = err.source();

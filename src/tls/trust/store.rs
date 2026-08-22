@@ -106,10 +106,10 @@ impl CertStoreBuilder {
     /// environment variables if present, or defaults specified at OpenSSL
     /// build time otherwise.
     pub fn set_default_paths(mut self) -> Self {
-        if let Ok(ref mut builder) = self.builder {
-            if let Err(err) = builder.set_default_paths() {
-                self.builder = Err(Error::tls(err));
-            }
+        if let Ok(ref mut builder) = self.builder
+            && let Err(err) = builder.set_default_paths()
+        {
+            self.builder = Err(Error::tls(err));
         }
         self
     }

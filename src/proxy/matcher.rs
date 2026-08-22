@@ -288,10 +288,10 @@ impl Builder {
         if let Some(https) = https.as_mut() {
             https.extra = extra.clone();
         }
-        if http.is_none() || https.is_none() {
-            if let Some(all) = all.as_mut() {
-                all.extra = extra;
-            }
+        if (http.is_none() || https.is_none())
+            && let Some(all) = all.as_mut()
+        {
+            all.extra = extra;
         }
 
         Matcher {
