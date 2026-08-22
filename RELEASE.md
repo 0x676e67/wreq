@@ -7,7 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [6.0.0-rc.32](https://github.com/0x676e67/wreq/compare/v6.0.0-rc.31...v6.0.0-rc.32) - 2026-08-22
+## [0.16.0](https://github.com/0x676e67/wreq/compare/v6.0.0-rc.31...v0.16.0) - 2026-08-23
+
+This release starts the new 0.x version line. The 6.0.0 RC line is no longer
+updated; users of those prereleases need to migrate to 0.16.x.
 
 ### Fixed
 
