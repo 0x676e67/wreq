@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.16.0](https://github.com/0x676e67/wreq/compare/v0.15.3...v0.16.0) - 2026-08-22
+
+### Fixed
+
+- *(ci)* use default Cargo Dependabot strategy
+
+### Other
+
+- *(release)* [**breaking**] reset version baseline ([#1256](https://github.com/0x676e67/wreq/pull/1256))
+- *(deps)* update compio to 0.19.2 ([#1255](https://github.com/0x676e67/wreq/pull/1255))
+- Modify Dependabot settings for Cargo
+- *(msrv)* update to Rust 1.98 ([#1249](https://github.com/0x676e67/wreq/pull/1249))
+
 ## [6.0.0-rc.31](https://github.com/0x676e67/wreq/compare/v6.0.0-rc.29...v6.0.0-rc.31) - 2026-08-18
 
 ### Added
