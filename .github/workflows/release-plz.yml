@@ -10,6 +10,8 @@ jobs:
     name: Release-plz release
     runs-on: ubuntu-latest
     if: ${{ github.repository_owner == '0x676e67' }}
+    outputs:
+      releases_created: ${{ steps.release-plz.outputs.releases_created }}
     permissions:
       contents: write
       id-token: write
@@ -25,6 +27,7 @@ jobs:
         name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
       - name: Run release-plz
+        id: release-plz
         uses: release-plz/action@v0.5
         with:
           command: release
@@ -34,8 +37,14 @@ jobs:
 
   release-plz-pr:
     name: Release-plz PR
+    needs: release-plz-release
     runs-on: ubuntu-latest
-    if: ${{ github.repository_owner == '0x676e67' }}
+    if: >-
+      ${{
+        github.repository_owner == '0x676e67' &&
+        needs.release-plz-release.result == 'success' &&
+        needs.release-plz-release.outputs.releases_created == 'false'
+      }}
     permissions:
       pull-requests: write
       contents: write
