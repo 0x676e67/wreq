@@ -3,7 +3,7 @@
 [![CI](https://github.com/0x676e67/wreq/actions/workflows/ci.yml/badge.svg)](https://github.com/0x676e67/wreq/actions/workflows/ci.yml)
 [![Crates.io License](https://img.shields.io/crates/l/wreq)](https://github.com/0x676e67/wreq/blob/main/LICENSE)
 [![Crates.io MSRV](https://img.shields.io/crates/msrv/wreq?logo=rust)](https://crates.io/crates/wreq)
-[![crates.io](https://img.shields.io/crates/v/wreq.svg?logo=rust)](https://crates.io/crates/wreq)
+[![crates.io](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fcrates.io%2Fapi%2Fv1%2Fcrates%2Fwreq&query=%24.crate.max_stable_version&prefix=v&label=crates.io&color=orange&logo=rust)](https://crates.io/crates/wreq)
 [![Discord chat][discord-badge]][discord-url]
 
 [discord-badge]: https://img.shields.io/discord/1486741856397164788.svg?logo=discord
@@ -35,8 +35,8 @@ The following example uses the [Tokio](https://tokio.rs) runtime with optional f
 ```toml
 [dependencies]
 tokio = { version = "1", features = ["full"] }
-wreq = "6.0.0-rc"
-wreq-util = "3.0.0-rc"
+wreq = "0.16"
+wreq-util = "0.2"
 ```
 
 And then the code:
