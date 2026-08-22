@@ -1,8 +1,11 @@
 mod support;
-use std::time::Duration;
+use std::{
+    net::{Ipv4Addr, SocketAddr},
+    time::Duration,
+};
 
 use pretty_env_logger::env_logger;
-use support::server;
+use support::{layer::DelayLayer, server};
 use wreq::Client;
 
 #[tokio::test]
@@ -61,16 +64,19 @@ async fn request_timeout() {
 async fn connect_timeout() {
     let _ = env_logger::try_init();
 
+    let server = server::http(move |_req| async { http::Response::default() });
+
     let client = Client::builder()
+        .connector_layer(DelayLayer::new(Duration::from_secs(60)))
         .connect_timeout(Duration::from_millis(100))
         .no_proxy()
         .build()
         .unwrap();
 
-    let url = "http://192.0.2.1:81/slow";
+    let url = format!("http://{}", server.addr());
 
     let err = client
-        .get(url)
+        .get(&url)
         .timeout(Duration::from_millis(1000))
         .send()
         .await
@@ -84,13 +90,13 @@ async fn connect_many_timeout_succeeds() {
     let _ = env_logger::try_init();
 
     let server = server::http(move |_req| async { http::Response::default() });
+    let unavailable = std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+    let unavailable_addr = unavailable.local_addr().unwrap();
+    drop(unavailable);
     let port = server.addr().port();
 
     let client = Client::builder()
-        .resolve_to_addrs(
-            "many_addrs",
-            ["127.0.0.1:81".parse().unwrap(), server.addr()],
-        )
+        .resolve_to_addrs("many_addrs", [unavailable_addr, server.addr()])
         .connect_timeout(Duration::from_millis(100))
         .no_proxy()
         .build()
@@ -114,10 +120,11 @@ async fn connect_many_timeout() {
         .resolve_to_addrs(
             "many_addrs",
             [
-                "192.0.2.1:81".parse().unwrap(),
-                "192.0.2.2:81".parse().unwrap(),
+                SocketAddr::from((Ipv4Addr::LOCALHOST, 81)),
+                SocketAddr::from((Ipv4Addr::LOCALHOST, 82)),
             ],
         )
+        .connector_layer(DelayLayer::new(Duration::from_secs(60)))
         .connect_timeout(Duration::from_millis(100))
         .no_proxy()
         .build()

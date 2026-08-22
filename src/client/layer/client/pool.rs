@@ -156,20 +156,20 @@ impl<T: Poolable, K: Key> Pool<T, K> {
     /// Ensure that there is only ever 1 connecting task for HTTP/2
     /// connections. This does nothing for HTTP/1.
     pub fn connecting(&self, key: K, ver: Ver) -> Option<Connecting<T, K>> {
-        if ver == Ver::Http2 {
-            if let Some(ref enabled) = self.inner {
-                let mut inner = enabled.lock();
-                return if inner.connecting.insert(key.clone()) {
-                    let connecting = Connecting {
-                        key,
-                        pool: WeakOpt::downgrade(enabled),
-                    };
-                    Some(connecting)
-                } else {
-                    trace!("HTTP/2 connecting already in progress for {:?}", key);
-                    None
+        if ver == Ver::Http2
+            && let Some(ref enabled) = self.inner
+        {
+            let mut inner = enabled.lock();
+            return if inner.connecting.insert(key.clone()) {
+                let connecting = Connecting {
+                    key,
+                    pool: WeakOpt::downgrade(enabled),
                 };
-            }
+                Some(connecting)
+            } else {
+                trace!("HTTP/2 connecting already in progress for {:?}", key);
+                None
+            };
         }
 
         // else
@@ -233,10 +233,10 @@ impl<T: Poolable, K: Key> Pool<T, K> {
         // unique or shared. So, the hack is to just assume Ver::Http2 means
         // shared... :(
         let mut pool_ref = WeakOpt::none();
-        if !value.can_share() {
-            if let Some(ref enabled) = self.inner {
-                pool_ref = WeakOpt::downgrade(enabled);
-            }
+        if !value.can_share()
+            && let Some(ref enabled) = self.inner
+        {
+            pool_ref = WeakOpt::downgrade(enabled);
         }
 
         Pooled {

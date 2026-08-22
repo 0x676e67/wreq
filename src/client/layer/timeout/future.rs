@@ -43,10 +43,10 @@ where
 
         // Helper closure for polling a timeout and returning a TimedOut error
         let mut check_timeout = |sleep: Option<&mut Pin<Box<dyn Sleep>>>| {
-            if let Some(sleep) = sleep {
-                if sleep.as_mut().poll(cx).is_ready() {
-                    return Some(Poll::Ready(Err(Error::request(TimedOut).into())));
-                }
+            if let Some(sleep) = sleep
+                && sleep.as_mut().poll(cx).is_ready()
+            {
+                return Some(Poll::Ready(Err(Error::request(TimedOut).into())));
             }
             None
         };

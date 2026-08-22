@@ -508,10 +508,10 @@ where
         .set_nonblocking(true)
         .map_err(ConnectError::m("tcp set_nonblocking error"))?;
 
-    if let Some(tcp_keepalive) = &config.tcp_keepalive.into_tcpkeepalive() {
-        if let Err(_e) = socket.set_tcp_keepalive(tcp_keepalive) {
-            warn!("tcp set_keepalive error: {_e}");
-        }
+    if let Some(tcp_keepalive) = &config.tcp_keepalive.into_tcpkeepalive()
+        && let Err(_e) = socket.set_tcp_keepalive(tcp_keepalive)
+    {
+        warn!("tcp set_keepalive error: {_e}");
     }
 
     // That this only works for some socket types, particularly AF_INET sockets.
@@ -570,10 +570,10 @@ where
     }
 
     #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
-    if let Some(tcp_user_timeout) = &config.tcp_user_timeout {
-        if let Err(_e) = socket.set_tcp_user_timeout(Some(*tcp_user_timeout)) {
-            warn!("tcp set_tcp_user_timeout error: {_e}");
-        }
+    if let Some(tcp_user_timeout) = &config.tcp_user_timeout
+        && let Err(_e) = socket.set_tcp_user_timeout(Some(*tcp_user_timeout))
+    {
+        warn!("tcp set_tcp_user_timeout error: {_e}");
     }
 
     bind_local_address(
@@ -584,28 +584,28 @@ where
     )
     .map_err(ConnectError::m("tcp bind local error"))?;
 
-    if config.reuse_address {
-        if let Err(_e) = socket.set_reuse_address(true) {
-            warn!("tcp set_reuse_address error: {_e}");
-        }
+    if config.reuse_address
+        && let Err(_e) = socket.set_reuse_address(true)
+    {
+        warn!("tcp set_reuse_address error: {_e}");
     }
 
-    if let Some(linger) = config.linger {
-        if let Err(_e) = socket.set_linger(Some(linger)) {
-            warn!("tcp set_linger error: {_e}");
-        }
+    if let Some(linger) = config.linger
+        && let Err(_e) = socket.set_linger(Some(linger))
+    {
+        warn!("tcp set_linger error: {_e}");
     }
 
-    if let Some(size) = config.send_buffer_size {
-        if let Err(_e) = socket.set_send_buffer_size(size) {
-            warn!("tcp set_buffer_size error: {_e}");
-        }
+    if let Some(size) = config.send_buffer_size
+        && let Err(_e) = socket.set_send_buffer_size(size)
+    {
+        warn!("tcp set_buffer_size error: {_e}");
     }
 
-    if let Some(size) = config.recv_buffer_size {
-        if let Err(_e) = socket.set_recv_buffer_size(size) {
-            warn!("tcp set_recv_buffer_size error: {_e}");
-        }
+    if let Some(size) = config.recv_buffer_size
+        && let Err(_e) = socket.set_recv_buffer_size(size)
+    {
+        warn!("tcp set_recv_buffer_size error: {_e}");
     }
 
     if let Err(_e) = socket.set_tcp_nodelay(config.nodelay) {

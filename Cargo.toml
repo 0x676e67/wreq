@@ -10,7 +10,7 @@ authors = ["0x676e67 <gngppz@gmail.com>"]
 readme = "README.md"
 license = "Apache-2.0"
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.98"
 include = ["/README.md", "/LICENSE", "/src/**/*.rs"]
 
 [package.metadata.docs.rs]

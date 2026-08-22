@@ -34,15 +34,17 @@ async fn non_op_layer() {
 async fn non_op_layer_with_timeout() {
     let _ = env_logger::try_init();
 
+    let server = server::http(move |_req| async { http::Response::default() });
+
     let client = Client::builder()
         .layer(Identity::new())
+        .connector_layer(DelayLayer::new(Duration::from_secs(60)))
         .connect_timeout(Duration::from_millis(200))
         .no_proxy()
         .build()
         .unwrap();
 
-    // never returns
-    let url = "http://192.0.2.1:81/slow";
+    let url = format!("http://{}", server.addr());
 
     let res = client.get(url).send().await;
 
@@ -55,14 +57,16 @@ async fn non_op_layer_with_timeout() {
 async fn with_connect_timeout_layer_never_returning() {
     let _ = env_logger::try_init();
 
+    let server = server::http(move |_req| async { http::Response::default() });
+
     let client = Client::builder()
+        .connector_layer(DelayLayer::new(Duration::from_secs(60)))
         .layer(TimeoutLayer::new(Duration::from_millis(100)))
         .no_proxy()
         .build()
         .unwrap();
 
-    // never returns
-    let url = "http://192.0.2.1:81/slow";
+    let url = format!("http://{}", server.addr());
 
     let res = client.get(url).send().await;
 

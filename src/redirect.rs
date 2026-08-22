@@ -440,10 +440,10 @@ impl FollowRedirectPolicy {
 
     pub(crate) fn on_request<B>(&mut self, req: &mut http::Request<B>) {
         remove_sensitive_headers(req, &self.uris);
-        if !self.uris.is_empty() {
-            if let Some(referrer) = &mut self.referrer {
-                referrer.apply(req);
-            }
+        if !self.uris.is_empty()
+            && let Some(referrer) = &mut self.referrer
+        {
+            referrer.apply(req);
         }
     }
 
@@ -455,18 +455,18 @@ impl FollowRedirectPolicy {
 }
 
 fn remove_sensitive_headers<B>(req: &mut http::Request<B>, previous: &[Uri]) {
-    if let Some(previous) = previous.last() {
-        if !same_origin(req.uri(), previous) {
-            /// Avoid dynamic allocation of `HeaderName` by using `from_static`.
-            /// https://github.com/hyperium/http/blob/e9de46c9269f0a476b34a02a401212e20f639df2/src/header/map.rs#L3794
-            const COOKIE2: HeaderName = HeaderName::from_static("cookie2");
-            let headers = req.headers_mut();
-            headers.remove(AUTHORIZATION);
-            headers.remove(COOKIE);
-            headers.remove(COOKIE2);
-            headers.remove(PROXY_AUTHORIZATION);
-            headers.remove(WWW_AUTHENTICATE);
-        }
+    if let Some(previous) = previous.last()
+        && !same_origin(req.uri(), previous)
+    {
+        /// Avoid dynamic allocation of `HeaderName` by using `from_static`.
+        /// https://github.com/hyperium/http/blob/e9de46c9269f0a476b34a02a401212e20f639df2/src/header/map.rs#L3794
+        const COOKIE2: HeaderName = HeaderName::from_static("cookie2");
+        let headers = req.headers_mut();
+        headers.remove(AUTHORIZATION);
+        headers.remove(COOKIE);
+        headers.remove(COOKIE2);
+        headers.remove(PROXY_AUTHORIZATION);
+        headers.remove(WWW_AUTHENTICATE);
     }
 }
 

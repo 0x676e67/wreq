@@ -189,14 +189,13 @@ impl TlsSessionCache for LruTlsSessionCache {
         // https://tools.ietf.org/html/rfc8446#appendix-C.4
         // OpenSSL will remove the session from its cache after the handshake completes anyway, but
         // this ensures that concurrent handshakes don't end up with the same session.
-        if session.protocol_version() == TlsVersion::TLS_1_3 {
-            if let Some(key) = inner.reverse.remove(&session) {
-                if let Entry::Occupied(mut entry) = inner.per_host_sessions.entry(key) {
-                    entry.get_mut().pop(&session);
-                    if entry.get().is_empty() {
-                        entry.remove();
-                    }
-                }
+        if session.protocol_version() == TlsVersion::TLS_1_3
+            && let Some(key) = inner.reverse.remove(&session)
+            && let Entry::Occupied(mut entry) = inner.per_host_sessions.entry(key)
+        {
+            entry.get_mut().pop(&session);
+            if entry.get().is_empty() {
+                entry.remove();
             }
         }
 
