@@ -136,7 +136,7 @@ webpki-root-certs = { version = "1.0.7", optional = true }
 cookie = { version = "0.18", optional = true }
 
 ## tower http
-tower-http = { version = "0.6.8", default-features = false, optional = true }
+tower-http = { version = "0.7.0", default-features = false, optional = true }
 
 ## tokio socks
 tokio-socks = { version = "0.5.2", optional = true }
