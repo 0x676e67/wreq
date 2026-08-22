@@ -60,7 +60,7 @@ async fn main() -> wreq::Result<()> {
         && let Some(peer_cert_der) = tls_info.peer_certificate()
     {
         // Create self-signed certificate Store
-        let self_signed_store = CertStore::from_der_certs(&[peer_cert_der])?;
+        let self_signed_store = CertStore::from_der_certs([peer_cert_der])?;
 
         // Create a client with self-signed certificate store
         let client = Client::builder()
