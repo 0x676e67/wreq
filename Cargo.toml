@@ -103,7 +103,7 @@ btls = "0.5.6"
 btls-sys = "0.5.6"
 tokio-btls = "0.5.6"
 tokio = { version = "1.52.3", default-features = false }
-compio = { version = "0.19.0-rc.1", features = ["io", "io-compat"], optional = true }
+compio = { version = "0.19.2", features = ["io", "io-compat"], optional = true }
 wreq-rt = { version = "0.2.2-rc.2", default-features = false }
 wreq-proto = { version = "0.2.3", default-features = false }
 tower = { version = "0.5.3", default-features = false, features = [
@@ -174,7 +174,7 @@ tokio = { version = "1.0", default-features = false, features = [
     "macros",
     "rt-multi-thread",
 ] }
-compio = { version = "0.19.0-rc.1", features = ["macros", "net", "runtime", "time", "io", "io-compat"] }
+compio = { version = "0.19.2", features = ["macros", "net", "runtime", "time", "io", "io-compat"] }
 hyper = { version = "1.7.0", default-features = false, features = [
     "http1",
     "http2",
