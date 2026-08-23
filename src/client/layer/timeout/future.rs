@@ -19,11 +19,11 @@ pin_project! {
     /// Waits for response headers, then moves the total timeout into the response body.
     pub struct ResponseFuture<Fut> {
         #[pin]
-        pub(crate) fut: Fut,
-        pub(crate) timer: Timer,
-        pub(crate) read_timeout: Option<Duration>,
-        pub(crate) read_timeout_fut: Option<Pin<Box<dyn Sleep>>>,
-        pub(crate) total_timeout_fut: Option<Pin<Box<dyn Sleep>>>,
+        pub(super) fut: Fut,
+        pub(super) timer: Timer,
+        pub(super) read_timeout: Option<Duration>,
+        pub(super) read_timeout_fut: Option<Pin<Box<dyn Sleep>>>,
+        pub(super) total_timeout_fut: Option<Pin<Box<dyn Sleep>>>,
     }
 }
 
