@@ -2,7 +2,7 @@ use std::{
     future::Future,
     pin::Pin,
     task::{Context, Poll, ready},
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 use http_body::Body;
@@ -57,38 +57,33 @@ pin_project! {
     /// The timeout resets after every successful read. If a single read
     /// takes longer than the specified duration, an error is returned.
     pub struct ReadTimeoutBody<B> {
-        timeout: Duration,
-        #[pin]
-        sleep: Option<Pin<Box<dyn Sleep>>>,
         #[pin]
         body: B,
+        #[pin]
+        sleep: Option<Pin<Box<dyn Sleep>>>,
+        timeout: Duration,
         timer: Timer,
     }
 }
 
 /// ==== impl TimeoutBody ====
+
 impl<B> TimeoutBody<B> {
-    /// Creates a new [`TimeoutBody`] with no timeout.
-    ///
-    /// `deadline` is an absolute instant, not a duration: it is the total
-    /// request budget's deadline computed once when the request started, so
-    /// that time already spent waiting on the response head counts against
-    /// it instead of the body getting a fresh full duration of its own.
+    /// Wraps a body with the active total timeout and an optional read timeout.
     pub fn new(
-        timer: Timer,
-        deadline: Option<Instant>,
-        read_timeout: Option<Duration>,
         body: B,
+        timer: Timer,
+        read_timeout: Option<Duration>,
+        total_timeout: Option<Pin<Box<dyn Sleep>>>,
     ) -> Self {
-        let deadline = deadline.map(|deadline| timer.sleep_until(deadline));
-        match (deadline, read_timeout) {
+        match (total_timeout, read_timeout) {
             (Some(total_timeout), Some(read_timeout)) => TimeoutBody::CombinedTimeout {
                 body: TotalTimeoutBody {
                     timeout: total_timeout,
                     body: ReadTimeoutBody {
-                        timeout: read_timeout,
-                        sleep: None,
                         body,
+                        sleep: None,
+                        timeout: read_timeout,
                         timer,
                     },
                 },
@@ -166,6 +161,7 @@ where
 }
 
 // ==== impl TotalTimeoutBody ====
+
 impl<B> Body for TotalTimeoutBody<B>
 where
     B: Body,
@@ -197,6 +193,7 @@ where
 }
 
 /// ==== impl ReadTimeoutBody ====
+
 impl<B> Body for ReadTimeoutBody<B>
 where
     B: Body,

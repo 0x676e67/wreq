@@ -2,7 +2,7 @@ use std::{
     future::Future,
     pin::Pin,
     task::{Context, Poll, ready},
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 use http::Response;
@@ -16,83 +16,55 @@ use crate::{
 };
 
 pin_project! {
-    /// [`Timeout`] response future
+    /// Waits for response headers, then moves the total timeout into the response body.
     pub struct ResponseFuture<Fut> {
         #[pin]
         pub(crate) fut: Fut,
-        pub(crate) total_timeout: Option<Pin<Box<dyn Sleep>>>,
-        pub(crate) read_timeout: Option<Pin<Box<dyn Sleep>>>,
+        pub(crate) timer: Timer,
+        pub(crate) read_timeout: Option<Duration>,
+        pub(crate) read_timeout_fut: Option<Pin<Box<dyn Sleep>>>,
+        pub(crate) total_timeout_fut: Option<Pin<Box<dyn Sleep>>>,
     }
 }
 
-impl<F, T, E> Future for ResponseFuture<F>
+impl<Fut, ResBody, E> Future for ResponseFuture<Fut>
 where
-    F: Future<Output = Result<T, E>>,
+    Fut: Future<Output = Result<Response<ResBody>, E>>,
     E: Into<BoxError>,
 {
-    type Output = Result<T, BoxError>;
+    type Output = Result<Response<TimeoutBody<ResBody>>, BoxError>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let this = self.project();
 
-        // First, try polling the future
-        match this.fut.poll(cx) {
-            Poll::Ready(v) => return Poll::Ready(v.map_err(Into::into)),
-            Poll::Pending => {}
+        // The total timer covers response headers and body. Poll it first so an
+        // expired timeout wins, then move it into `TimeoutBody` below.
+        if let Some(timeout) = this.total_timeout_fut.as_mut()
+            && timeout.as_mut().poll(cx).is_ready()
+        {
+            return Poll::Ready(Err(Error::request(TimedOut).into()));
         }
 
-        // Helper closure for polling a timeout and returning a TimedOut error
-        let mut check_timeout = |sleep: Option<&mut Pin<Box<dyn Sleep>>>| {
-            if let Some(sleep) = sleep
-                && sleep.as_mut().poll(cx).is_ready()
-            {
-                return Some(Poll::Ready(Err(Error::request(TimedOut).into())));
-            }
-            None
-        };
-
-        // Check total timeout first
-        if let Some(poll) = check_timeout(this.total_timeout.as_mut()) {
-            return poll;
+        // Before headers arrive, the read timer limits that wait. The body starts
+        // and resets its own read timer after each successful frame.
+        if let Some(timeout) = this.read_timeout_fut.as_mut()
+            && timeout.as_mut().poll(cx).is_ready()
+        {
+            return Poll::Ready(Err(Error::request(TimedOut).into()));
         }
 
-        // Check read timeout
-        if let Some(poll) = check_timeout(this.read_timeout.as_mut()) {
-            return poll;
-        }
+        // Poll the request after both timers so every pending future registers the
+        // current waker before `ready!` returns.
+        let response = ready!(this.fut.poll(cx)).map_err(Into::into)?;
 
-        Poll::Pending
-    }
-}
-
-pin_project! {
-    /// Response future for wrapping the response body in [`TimeoutBody`].
-    pub struct ResponseBodyTimeoutFuture<Fut> {
-        #[pin]
-        pub(super) fut: Fut,
-        pub(super) timer: Timer,
-        // Absolute deadline for the *whole* request (head + body), computed
-        // once by the caller — NOT a duration to be restarted here. See the
-        // comment in `Timeout::call` for why this must stay a fixed instant.
-        pub(super) total_deadline: Option<Instant>,
-        pub(super) read_timeout: Option<Duration>,
-
-    }
-}
-
-impl<Fut, ResBody, E> Future for ResponseBodyTimeoutFuture<Fut>
-where
-    Fut: Future<Output = Result<Response<ResBody>, E>>,
-{
-    type Output = Result<Response<TimeoutBody<ResBody>>, E>;
-
-    #[inline(always)]
-    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let timer = self.timer.clone();
-        let total_deadline = self.total_deadline;
-        let read_timeout = self.read_timeout;
-        let res = ready!(self.project().fut.poll(cx))?
-            .map(|body| TimeoutBody::new(timer, total_deadline, read_timeout, body));
-        Poll::Ready(Ok(res))
+        // Moving the running total timer preserves the original deadline.
+        Poll::Ready(Ok(response.map(|body| {
+            TimeoutBody::new(
+                body,
+                this.timer.clone(),
+                *this.read_timeout,
+                this.total_timeout_fut.take(),
+            )
+        })))
     }
 }
