@@ -172,6 +172,46 @@ async fn response_timeout() {
     assert!(err.is_body() && err.is_timeout());
 }
 
+/// `timeout()` is documented as a budget for the whole request. Head and
+/// body delays below are each individually under the configured timeout,
+/// but their sum is not — a request that only honors the budget per-phase
+/// (restarting it once the body starts) would incorrectly let this succeed.
+#[cfg(feature = "stream")]
+#[tokio::test]
+async fn total_timeout_bounds_head_and_body_combined() {
+    let _ = env_logger::try_init();
+
+    let server = server::http(move |_req| async {
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        let body = wreq::Body::wrap_stream(futures_util::stream::once(async {
+            tokio::time::sleep(Duration::from_millis(150)).await;
+            Ok::<_, std::convert::Infallible>("Hello")
+        }));
+        http::Response::new(body)
+    });
+
+    let client = Client::builder()
+        .timeout(Duration::from_millis(220))
+        .no_proxy()
+        .build()
+        .unwrap();
+
+    let url = format!("http://{}/slow", server.addr());
+    let started = std::time::Instant::now();
+    let res = client.get(&url).send().await.expect("Failed to get");
+    let result = res.text().await;
+
+    assert!(
+        result.is_err(),
+        "head (150ms) + body (150ms) = 300ms exceeds the 220ms total \
+         budget, but succeeded in {:?} — total_timeout was restarted for \
+         the body instead of being one deadline for the whole request",
+        started.elapsed()
+    );
+    let err = result.unwrap_err();
+    assert!(err.is_body() && err.is_timeout());
+}
+
 #[tokio::test]
 async fn read_timeout_applies_to_headers() {
     let _ = env_logger::try_init();

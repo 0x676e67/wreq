@@ -2,7 +2,7 @@ use std::{
     future::Future,
     pin::Pin,
     task::{Context, Poll, ready},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use http_body::Body;
@@ -69,13 +69,18 @@ pin_project! {
 /// ==== impl TimeoutBody ====
 impl<B> TimeoutBody<B> {
     /// Creates a new [`TimeoutBody`] with no timeout.
+    ///
+    /// `deadline` is an absolute instant, not a duration: it is the total
+    /// request budget's deadline computed once when the request started, so
+    /// that time already spent waiting on the response head counts against
+    /// it instead of the body getting a fresh full duration of its own.
     pub fn new(
         timer: Timer,
-        deadline: Option<Duration>,
+        deadline: Option<Instant>,
         read_timeout: Option<Duration>,
         body: B,
     ) -> Self {
-        let deadline = deadline.map(|deadline| timer.sleep(deadline));
+        let deadline = deadline.map(|deadline| timer.sleep_until(deadline));
         match (deadline, read_timeout) {
             (Some(total_timeout), Some(read_timeout)) => TimeoutBody::CombinedTimeout {
                 body: TotalTimeoutBody {

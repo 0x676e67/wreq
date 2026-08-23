@@ -2,7 +2,7 @@ use std::{
     future::Future,
     pin::Pin,
     task::{Context, Poll, ready},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use http::Response;
@@ -71,7 +71,10 @@ pin_project! {
         #[pin]
         pub(super) fut: Fut,
         pub(super) timer: Timer,
-        pub(super) total_timeout: Option<Duration>,
+        // Absolute deadline for the *whole* request (head + body), computed
+        // once by the caller — NOT a duration to be restarted here. See the
+        // comment in `Timeout::call` for why this must stay a fixed instant.
+        pub(super) total_deadline: Option<Instant>,
         pub(super) read_timeout: Option<Duration>,
 
     }
@@ -86,10 +89,10 @@ where
     #[inline(always)]
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let timer = self.timer.clone();
-        let total_timeout = self.total_timeout;
+        let total_deadline = self.total_deadline;
         let read_timeout = self.read_timeout;
         let res = ready!(self.project().fut.poll(cx))?
-            .map(|body| TimeoutBody::new(timer, total_timeout, read_timeout, body));
+            .map(|body| TimeoutBody::new(timer, total_deadline, read_timeout, body));
         Poll::Ready(Ok(res))
     }
 }
