@@ -5,6 +5,7 @@ use std::{
         Arc, LazyLock,
         atomic::{AtomicU64, Ordering},
     },
+    time::Duration,
 };
 
 use http::{Uri, Version};
@@ -32,6 +33,7 @@ pub(crate) struct ConnectionDescriptor {
     proxy: Option<Matcher>,
     tls_options: Option<TlsOptions>,
     socket_bind: Option<SocketBindOptions>,
+    connect_timeout: Option<Duration>,
     connection_id: ConnectionId,
 }
 
@@ -80,6 +82,7 @@ impl ConnectionDescriptor {
         version: Option<Version>,
         tls_options: Option<TlsOptions>,
         socket_bind: Option<SocketBindOptions>,
+        connect_timeout: Option<Duration>,
     ) -> ConnectionDescriptor {
         let connection_id = {
             group
@@ -96,6 +99,7 @@ impl ConnectionDescriptor {
             version,
             tls_options,
             socket_bind,
+            connect_timeout,
             connection_id,
         }
     }
@@ -139,5 +143,11 @@ impl ConnectionDescriptor {
     #[inline]
     pub(crate) fn socket_bind_options(&self) -> Option<&SocketBindOptions> {
         self.socket_bind.as_ref()
+    }
+
+    /// Return the request-level connection timeout, if any.
+    #[inline]
+    pub(crate) fn connect_timeout(&self) -> Option<Duration> {
+        self.connect_timeout
     }
 }

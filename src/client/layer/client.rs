@@ -180,6 +180,7 @@ where
                 group,
                 proxy,
                 version,
+                connect_timeout,
                 tls_options,
                 http1_options,
                 http2_options,
@@ -193,7 +194,15 @@ where
                 this.h2_builder = this.h2_builder.options(opts);
             }
 
-            ConnectionDescriptor::new(uri, group, proxy, version, tls_options, socket_bind_options)
+            ConnectionDescriptor::new(
+                uri,
+                group,
+                proxy,
+                version,
+                tls_options,
+                socket_bind_options,
+                connect_timeout,
+            )
         };
 
         Box::pin(this.send_request(req, descriptor).map_err(Into::into))

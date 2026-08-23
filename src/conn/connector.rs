@@ -10,7 +10,6 @@ use std::{
 use tokio_btls::SslStream;
 use tower::{
     BoxError, Service, ServiceBuilder, ServiceExt,
-    timeout::TimeoutLayer,
     util::{BoxCloneSyncService, MapRequestLayer},
 };
 
@@ -63,7 +62,10 @@ pub struct ConnectorBuilder {
 #[derive(Clone)]
 pub enum Connector {
     Simple(ConnectorService),
-    WithLayers(BoxedConnectorService),
+    WithLayers {
+        service: BoxedConnectorService,
+        timeout: Option<Duration>,
+    },
 }
 
 /// Service that establishes connections to HTTP servers.
@@ -150,7 +152,7 @@ impl ConnectorBuilder {
             return Ok(Connector::Simple(service));
         }
 
-        // user-provided layers exist, the timeout will be applied as an additional layer.
+        // User-provided layers exist, so the timeout is applied when the request is dispatched.
         let timeout = service.config.timeout.take();
 
         // otherwise we have user provided layers
@@ -166,29 +168,15 @@ impl ConnectorBuilder {
             |service, layer| ServiceBuilder::new().layer(layer).service(service),
         );
 
-        // now we handle the concrete stuff - any `connect_timeout`,
-        // plus a final map_err layer we can use to cast default tower layer
-        // errors to internal errors
-        match timeout {
-            Some(timeout) => {
-                let service = ServiceBuilder::new()
-                    .layer(TimeoutLayer::new(timeout))
-                    .service(service)
-                    .map_err(map_timeout_to_connector_error);
+        // Map errors from user-provided layers to internal connector errors.
+        let service = ServiceBuilder::new()
+            .service(service)
+            .map_err(map_timeout_to_connector_error);
 
-                Ok(Connector::WithLayers(BoxCloneSyncService::new(service)))
-            }
-            None => {
-                // no timeout, but still map err
-                // no named timeout layer but we still map errors since
-                // we might have user-provided timeout layer
-                let service = ServiceBuilder::new()
-                    .service(service)
-                    .map_err(map_timeout_to_connector_error);
-
-                Ok(Connector::WithLayers(BoxCloneSyncService::new(service)))
-            }
-        }
+        Ok(Connector::WithLayers {
+            service: BoxCloneSyncService::new(service),
+            timeout,
+        })
     }
 }
 
@@ -222,7 +210,7 @@ impl Service<ConnectionDescriptor> for Connector {
     fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         match self {
             Connector::Simple(service) => service.poll_ready(cx),
-            Connector::WithLayers(service) => service.poll_ready(cx),
+            Connector::WithLayers { service, .. } => service.poll_ready(cx),
         }
     }
 
@@ -230,7 +218,11 @@ impl Service<ConnectionDescriptor> for Connector {
     fn call(&mut self, descriptor: ConnectionDescriptor) -> Self::Future {
         match self {
             Connector::Simple(service) => service.call(descriptor),
-            Connector::WithLayers(service) => service.call(Unnameable(descriptor)),
+            Connector::WithLayers { service, timeout } => {
+                let timeout = descriptor.connect_timeout().or(*timeout);
+                let future = service.call(Unnameable(descriptor));
+                Box::pin(with_connect_timeout(future, timeout))
+            }
         }
     }
 }
@@ -238,12 +230,20 @@ impl Service<ConnectionDescriptor> for Connector {
 // ===== impl ConnectorService =====
 
 impl ConnectorService {
+    fn http_connector_for(&self, descriptor: &ConnectionDescriptor) -> HttpConnector {
+        let mut http = self.http.clone();
+        if let Some(timeout) = descriptor.connect_timeout() {
+            http.set_connect_timeout(Some(timeout));
+        }
+        http
+    }
+
     fn build_https_connector(
         &self,
         https: bool,
         descriptor: &ConnectionDescriptor,
     ) -> Result<HttpsConnector<HttpConnector>, BoxError> {
-        let mut http = self.http.clone();
+        let mut http = self.http_connector_for(descriptor);
 
         // Disable Nagle's algorithm for TLS handshake
         //
@@ -382,7 +382,7 @@ impl ConnectorService {
                             // Build a SOCKS connector.
                             let mut socks = SocksConnector::new(
                                 proxy_uri,
-                                self.http.clone(),
+                                self.http_connector_for(&descriptor),
                                 self.resolver.clone(),
                             );
                             socks.set_auth(proxy.raw_auth());
@@ -500,7 +500,7 @@ impl ConnectorService {
     async fn connect_auto(self, req: ConnectionDescriptor) -> Result<Conn, BoxError> {
         debug!("starting new connection: {:?}", req.uri());
 
-        let timeout = self.config.timeout;
+        let timeout = req.connect_timeout().or(self.config.timeout);
 
         // Determine if a proxy should be used for this request.
         let fut = async {
@@ -522,12 +522,19 @@ impl ConnectorService {
             }
         };
 
-        // Apply timeout if configured.
-        if let Some(to) = timeout {
-            tokio::time::timeout(to, fut).await.map_err(|_| TimedOut)?
-        } else {
-            fut.await
-        }
+        with_connect_timeout(fut, timeout).await
+    }
+}
+
+async fn with_connect_timeout<F>(future: F, timeout: Option<Duration>) -> Result<Conn, BoxError>
+where
+    F: Future<Output = Result<Conn, BoxError>>,
+{
+    match timeout {
+        Some(timeout) => tokio::time::timeout(timeout, future)
+            .await
+            .map_err(|_| TimedOut)?,
+        None => future.await,
     }
 }
 

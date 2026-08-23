@@ -386,6 +386,19 @@ impl RequestBuilder {
         self
     }
 
+    /// Sets a timeout for establishing a new connection.
+    ///
+    /// This affects only this request and overrides the timeout configured using
+    /// `ClientBuilder::connect_timeout()`. Reused pooled connections are unaffected.
+    pub fn connect_timeout(mut self, timeout: Duration) -> RequestBuilder {
+        if let Ok(ref mut req) = self.request {
+            req.config_mut::<RequestOptions>()
+                .get_or_insert_default()
+                .connect_timeout = Some(timeout);
+        }
+        self
+    }
+
     /// Modify the query string of the URI.
     ///
     /// Modifies the URI of this request, adding the parameters provided.
