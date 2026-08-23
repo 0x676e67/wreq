@@ -66,7 +66,7 @@ pin_project! {
     }
 }
 
-/// ==== impl TimeoutBody ====
+// ===== impl TimeoutBody =====
 
 impl<B> TimeoutBody<B> {
     /// Wraps a body with the active total timeout and an optional read timeout.
@@ -160,7 +160,7 @@ where
     )
 }
 
-// ==== impl TotalTimeoutBody ====
+// ===== impl TotalTimeoutBody =====
 
 impl<B> Body for TotalTimeoutBody<B>
 where
@@ -192,7 +192,7 @@ where
     }
 }
 
-/// ==== impl ReadTimeoutBody ====
+// ===== impl ReadTimeoutBody =====
 
 impl<B> Body for ReadTimeoutBody<B>
 where
