@@ -504,6 +504,7 @@ impl ClientBuilder {
 
             let connector = Connector::builder(config.proxies, resolver)
                 .timeout(config.connect_timeout)
+                .timer(config.timer.clone())
                 .tls_info(config.tls_info)
                 .tcp_nodelay(config.tcp_nodelay)
                 .verbose(config.connection_verbose)

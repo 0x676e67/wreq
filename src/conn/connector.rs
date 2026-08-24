@@ -1,18 +1,19 @@
 use std::{
     borrow::Cow,
     future::Future,
-    pin::Pin,
+    pin::{Pin, pin},
     sync::Arc,
     task::{Context, Poll},
     time::Duration,
 };
 
+use futures_util::future::Either;
 use tokio_btls::SslStream;
 use tower::{
     BoxError, Service, ServiceBuilder, ServiceExt,
-    timeout::TimeoutLayer,
     util::{BoxCloneSyncService, MapRequestLayer},
 };
+use wreq_proto::rt::{Sleep, Timer as _};
 
 #[cfg(unix)]
 use super::net::UnixConnector;
@@ -26,6 +27,7 @@ use crate::{
     error::{ProxyConnect, TimedOut, map_timeout_to_connector_error},
     ext::UriExt,
     proxy::{Intercepted, Matcher as ProxyMatcher, matcher::Intercept},
+    rt::Timer,
     tls::{
         TlsOptions,
         conn::{
@@ -43,10 +45,13 @@ struct Config {
     verbose: Verbose,
     nodelay: bool,
     tls_info: bool,
+    /// Drives the connect timeout, so the deadline works on whichever runtime
+    /// the client runs on instead of requiring a Tokio timer.
+    timer: Timer,
     /// When there is a single timeout layer and no other layers,
     /// we embed it directly inside our base Service::call().
-    /// This lets us avoid an extra `Box::pin` indirection layer
-    /// since `tokio::time::Timeout` is `Unpin`
+    /// This lets us avoid an extra service layer, since the deadline is just a
+    /// `Sleep` future raced against the connect future.
     timeout: Option<Duration>,
 }
 
@@ -107,6 +112,13 @@ impl ConnectorBuilder {
         self
     }
 
+    /// Set the timer used to drive the connect timeout.
+    #[inline]
+    pub fn timer(mut self, timer: Timer) -> ConnectorBuilder {
+        self.config.timer = timer;
+        self
+    }
+
     /// Set connecting verbose mode.
     #[inline]
     pub fn verbose(mut self, enabled: bool) -> ConnectorBuilder {
@@ -152,6 +164,7 @@ impl ConnectorBuilder {
 
         // user-provided layers exist, the timeout will be applied as an additional layer.
         let timeout = service.config.timeout.take();
+        let timer = service.config.timer.clone();
 
         // otherwise we have user provided layers
         // so we need type erasure all the way through
@@ -171,8 +184,12 @@ impl ConnectorBuilder {
         // errors to internal errors
         match timeout {
             Some(timeout) => {
+                // Like `tower::timeout::Timeout`, except the deadline comes from
+                // the client's timer rather than from `tokio::time`.
                 let service = ServiceBuilder::new()
-                    .layer(TimeoutLayer::new(timeout))
+                    .map_future(move |connecting| {
+                        with_deadline(connecting, Some(timer.sleep(timeout)))
+                    })
                     .service(service)
                     .map_err(map_timeout_to_connector_error);
 
@@ -203,6 +220,7 @@ impl Connector {
                 verbose: Verbose::OFF,
                 nodelay: true,
                 tls_info: false,
+                timer: Timer::default(),
                 timeout: None,
             },
             #[cfg(feature = "socks")]
@@ -500,7 +518,8 @@ impl ConnectorService {
     async fn connect_auto(self, req: ConnectionDescriptor) -> Result<Conn, BoxError> {
         debug!("starting new connection: {:?}", req.uri());
 
-        let timeout = self.config.timeout;
+        // The sleep must be created before `self` is moved into the future below.
+        let sleep = self.config.timeout.map(|to| self.config.timer.sleep(to));
 
         // Determine if a proxy should be used for this request.
         let fut = async {
@@ -522,12 +541,7 @@ impl ConnectorService {
             }
         };
 
-        // Apply timeout if configured.
-        if let Some(to) = timeout {
-            tokio::time::timeout(to, fut).await.map_err(|_| TimedOut)?
-        } else {
-            fut.await
-        }
+        with_deadline(fut, sleep).await
     }
 }
 
@@ -544,5 +558,26 @@ impl Service<ConnectionDescriptor> for ConnectorService {
     #[inline]
     fn call(&mut self, descriptor: ConnectionDescriptor) -> Self::Future {
         Box::pin(self.clone().connect_auto(descriptor))
+    }
+}
+
+/// Bounds one connect with an optional deadline, reporting expiry as [`TimedOut`].
+///
+/// The connect is polled first, so a connection ready at the deadline wins the
+/// tie, matching Tokio and Tower timeout semantics.
+async fn with_deadline<F, T>(
+    connecting: F,
+    deadline: Option<Pin<Box<dyn Sleep>>>,
+) -> Result<T, BoxError>
+where
+    F: Future<Output = Result<T, BoxError>>,
+{
+    let Some(deadline) = deadline else {
+        return connecting.await;
+    };
+
+    match futures_util::future::select(pin!(connecting), deadline).await {
+        Either::Left((result, _)) => result,
+        Either::Right(((), _)) => Err(Box::new(TimedOut) as BoxError),
     }
 }
