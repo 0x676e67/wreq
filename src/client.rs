@@ -1054,8 +1054,9 @@ impl ClientBuilder {
     ///
     /// # Note
     ///
-    /// This **requires** the futures be executed in a tokio runtime with
-    /// a tokio timer enabled.
+    /// The whole connect (DNS, TCP, TLS, proxy tunnel) is bounded on the configured
+    /// [`timer`](ClientBuilder::timer); the TCP dial alone is bounded on the clock of the
+    /// runtime selected at compile time.
     #[inline]
     pub fn connect_timeout(mut self, timeout: Duration) -> ClientBuilder {
         self.config.connect_timeout = Some(timeout);
