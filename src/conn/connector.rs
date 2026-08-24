@@ -581,3 +581,85 @@ where
         Either::Right(((), _)) => Err(Box::new(TimedOut) as BoxError),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::{future::pending, sync::Mutex, time::Instant};
+
+    use tower::layer::util::Identity;
+
+    use super::*;
+    use crate::{Client, ClientBuilder};
+
+    const CONNECT_TIMEOUT: Duration = Duration::from_millis(50);
+
+    /// A [`Timer`] that records every deadline it hands out.
+    #[derive(Clone)]
+    struct RecordingTimer {
+        inner: Timer,
+        sleeps: Arc<Mutex<Vec<Duration>>>,
+    }
+
+    impl wreq_proto::rt::Timer for RecordingTimer {
+        fn sleep(&self, duration: Duration) -> Pin<Box<dyn Sleep>> {
+            self.sleeps.lock().unwrap().push(duration);
+            self.inner.sleep(duration)
+        }
+
+        fn sleep_until(&self, deadline: Instant) -> Pin<Box<dyn Sleep>> {
+            self.inner.sleep_until(deadline)
+        }
+    }
+
+    /// Asserts that the connect deadline is drawn from the client's own timer.
+    ///
+    /// Nothing else here sleeps for [`CONNECT_TIMEOUT`], so seeing it in the
+    /// recording means the connector asked *this* timer for it. Reaching for
+    /// `tokio::time` instead still works under Tokio but panics on any other
+    /// runtime.
+    async fn assert_deadline_comes_from_the_timer(builder: ClientBuilder) {
+        // Accepts and then never speaks, so the TCP dial succeeds at once and
+        // only the connector's own deadline can end the TLS handshake.
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let _accepted = listener.accept().await;
+            pending::<()>().await
+        });
+
+        let sleeps = Arc::new(Mutex::new(Vec::new()));
+        let client = builder
+            .timer(RecordingTimer {
+                inner: Timer::default(),
+                sleeps: Arc::clone(&sleeps),
+            })
+            .connect_timeout(CONNECT_TIMEOUT)
+            .no_proxy()
+            .build()
+            .expect("client");
+
+        let err = client
+            .get(format!("https://{addr}/"))
+            .send()
+            .await
+            .expect_err("the handshake never completes");
+
+        assert!(err.is_connect() && err.is_timeout(), "{err:?}");
+        assert!(
+            sleeps.lock().unwrap().contains(&CONNECT_TIMEOUT),
+            "connect deadline did not come from the configured timer",
+        );
+    }
+
+    #[tokio::test]
+    async fn connect_timeout_uses_the_configured_timer() {
+        assert_deadline_comes_from_the_timer(Client::builder()).await;
+    }
+
+    #[tokio::test]
+    async fn layered_connect_timeout_uses_the_configured_timer() {
+        // Any user layer switches the connector to the `WithLayers` path.
+        assert_deadline_comes_from_the_timer(Client::builder().connector_layer(Identity::new()))
+            .await;
+    }
+}
