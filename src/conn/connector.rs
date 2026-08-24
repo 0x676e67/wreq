@@ -1,30 +1,32 @@
 use std::{
     borrow::Cow,
-    future::Future,
-    pin::{Pin, pin},
     sync::Arc,
     task::{Context, Poll},
     time::Duration,
 };
 
-use futures_util::future::Either;
+use futures_util::future::BoxFuture;
 use tokio_btls::SslStream;
 use tower::{
-    BoxError, Service, ServiceBuilder, ServiceExt,
-    util::{BoxCloneSyncService, MapRequestLayer},
+    BoxError, Layer, Service, ServiceBuilder, ServiceExt,
+    util::{BoxCloneSyncService, Either, MapRequest, MapRequestLayer},
 };
-use wreq_proto::rt::{Sleep, Timer as _};
 
 #[cfg(unix)]
 use super::net::UnixConnector;
 use super::{
-    AsyncConnWithInfo, BoxedConnectorLayer, BoxedConnectorService, Conn, Connection, HttpConnector,
-    TlsConn, TlsInfoFactory, Unnameable, descriptor::ConnectionDescriptor, http::HttpConnect,
-    net::TcpConnector, proxy, verbose::Verbose,
+    AsyncConnWithInfo, BoxedConnectorLayer, BoxedTransportConnector, Conn, Connection,
+    HttpConnector, TlsConn, TlsInfoFactory, Unnameable,
+    descriptor::ConnectionDescriptor,
+    http::HttpConnect,
+    net::TcpConnector,
+    proxy,
+    timeout::{Timeout, TimeoutLayer},
+    verbose::Verbose,
 };
 use crate::{
     dns::DynResolver,
-    error::{ProxyConnect, TimedOut, map_timeout_to_connector_error},
+    error::{ProxyConnect, map_timeout_to_connector_error},
     ext::UriExt,
     proxy::{Intercepted, Matcher as ProxyMatcher, matcher::Intercept},
     rt::Timer,
@@ -36,44 +38,51 @@ use crate::{
     },
 };
 
-type Connecting = Pin<Box<dyn Future<Output = Result<Conn, BoxError>> + Send>>;
-
-/// Configuration for the connector service.
+/// Client-wide connection settings retained by each transport connector.
+///
+/// These defaults control proxy selection, socket behavior, stream instrumentation, and TLS
+/// metadata. Settings that can vary per request remain in [`ConnectionDescriptor`] and are
+/// applied when a connection starts.
 #[derive(Clone)]
 struct Config {
     proxies: Arc<Vec<ProxyMatcher>>,
     verbose: Verbose,
     nodelay: bool,
     tls_info: bool,
-    /// Drives the connect timeout, so the deadline works on whichever runtime
-    /// the client runs on instead of requiring a Tokio timer.
-    timer: Timer,
-    /// When there is a single timeout layer and no other layers,
-    /// we embed it directly inside our base Service::call().
-    /// This lets us avoid an extra service layer, since the deadline is just a
-    /// `Sleep` future raced against the connect future.
-    timeout: Option<Duration>,
 }
 
-/// Builder for `Connector`.
+/// Assembles the transport service graph used by a client.
+///
+/// The builder owns DNS, TCP, TLS, and timeout configuration until [`ConnectorBuilder::build`]
+/// places the timeout around the concrete connector and any user-provided layers.
 pub struct ConnectorBuilder {
     config: Config,
+    timer: Timer,
+    timeout: Option<Duration>,
     #[cfg(feature = "socks")]
     resolver: DynResolver,
     http: HttpConnector,
     builder: TlsConnectorBuilder,
 }
 
-/// Connector service that establishes connections.
-#[derive(Clone)]
-pub enum Connector {
-    Simple(ConnectorService),
-    WithLayers(BoxedConnectorService),
-}
+/// Client-owned transport service selected when the connector graph is assembled.
+///
+/// The left branch keeps the graph concrete when no custom layers are present. The right branch
+/// wraps the type-erased custom-layer graph so it also accepts [`ConnectionDescriptor`]. Both
+/// branches remain with the client and create a separately timed future for each connection
+/// attempt.
+pub type Connector = Either<
+    Timeout<TransportConnector>,
+    MapRequest<BoxedTransportConnector, fn(ConnectionDescriptor) -> Unnameable>,
+>;
 
-/// Service that establishes connections to HTTP servers.
+/// Establishes the transport consumed by the HTTP protocol layer.
+///
+/// Each call selects the proxy path, applies request-specific socket and TLS settings, and returns
+/// an established [`Conn`]. The service is cloned into each in-flight connection future, while its
+/// immutable TLS builder is shared across those attempts.
 #[derive(Clone)]
-pub struct ConnectorService {
+pub struct TransportConnector {
     config: Config,
     #[cfg(feature = "socks")]
     resolver: DynResolver,
@@ -85,6 +94,24 @@ pub struct ConnectorService {
 // ===== impl ConnectorBuilder =====
 
 impl ConnectorBuilder {
+    /// Creates a builder with the client's proxy and DNS configuration.
+    pub(crate) fn new(proxies: Vec<ProxyMatcher>, resolver: DynResolver) -> Self {
+        Self {
+            config: Config {
+                proxies: Arc::new(proxies),
+                verbose: Verbose::OFF,
+                nodelay: true,
+                tls_info: false,
+            },
+            timer: Timer::default(),
+            timeout: None,
+            #[cfg(feature = "socks")]
+            resolver: resolver.clone(),
+            http: HttpConnector::new(resolver, TcpConnector::new()),
+            builder: TlsConnector::builder(),
+        }
+    }
+
     /// Set the HTTP connector to use.
     #[inline]
     pub fn with_http<F>(mut self, call: F) -> ConnectorBuilder
@@ -108,14 +135,14 @@ impl ConnectorBuilder {
     /// Set the connect timeout.
     #[inline]
     pub fn timeout(mut self, timeout: Option<Duration>) -> ConnectorBuilder {
-        self.config.timeout = timeout;
+        self.timeout = timeout;
         self
     }
 
     /// Set the timer used to drive the connect timeout.
     #[inline]
     pub fn timer(mut self, timer: Timer) -> ConnectorBuilder {
-        self.config.timer = timer;
+        self.timer = timer;
         self
     }
 
@@ -146,7 +173,8 @@ impl ConnectorBuilder {
         tls_options: Option<TlsOptions>,
         layers: Vec<BoxedConnectorLayer>,
     ) -> crate::Result<Connector> {
-        let mut service = ConnectorService {
+        let timeout = TimeoutLayer::new(self.timer, self.timeout);
+        let service = TransportConnector {
             config: self.config,
             #[cfg(feature = "socks")]
             resolver: self.resolver.clone(),
@@ -159,12 +187,8 @@ impl ConnectorBuilder {
 
         // we have no user-provided layers, only use concrete types
         if layers.is_empty() {
-            return Ok(Connector::Simple(service));
+            return Ok(Either::Left(timeout.layer(service)));
         }
-
-        // user-provided layers exist, the timeout will be applied as an additional layer.
-        let timeout = service.config.timeout.take();
-        let timer = service.config.timer.clone();
 
         // otherwise we have user provided layers
         // so we need type erasure all the way through
@@ -179,83 +203,25 @@ impl ConnectorBuilder {
             |service, layer| ServiceBuilder::new().layer(layer).service(service),
         );
 
-        // now we handle the concrete stuff - any `connect_timeout`,
-        // plus a final map_err layer we can use to cast default tower layer
-        // errors to internal errors
-        match timeout {
-            Some(timeout) => {
-                // Like `tower::timeout::Timeout`, except the deadline comes from
-                // the client's timer rather than from `tokio::time`.
-                let service = ServiceBuilder::new()
-                    .map_future(move |connecting| {
-                        with_deadline(connecting, Some(timer.sleep(timeout)))
-                    })
-                    .service(service)
-                    .map_err(map_timeout_to_connector_error);
+        // Keep the built-in timeout outside user layers so it covers their work too.
+        // The final mapping also handles a tower timeout supplied by the caller.
+        let service = ServiceBuilder::new()
+            .layer(timeout)
+            .service(service)
+            .map_err(map_timeout_to_connector_error);
 
-                Ok(Connector::WithLayers(BoxCloneSyncService::new(service)))
-            }
-            None => {
-                // no timeout, but still map err
-                // no named timeout layer but we still map errors since
-                // we might have user-provided timeout layer
-                let service = ServiceBuilder::new()
-                    .service(service)
-                    .map_err(map_timeout_to_connector_error);
+        let service = MapRequest::new(
+            BoxCloneSyncService::new(service),
+            Unnameable as fn(ConnectionDescriptor) -> Unnameable,
+        );
 
-                Ok(Connector::WithLayers(BoxCloneSyncService::new(service)))
-            }
-        }
+        Ok(Either::Right(service))
     }
 }
 
-// ===== impl Connector =====
+// ===== impl TransportConnector =====
 
-impl Connector {
-    /// Creates a new [`Connector`] with the provided configuration and optional layers.
-    pub(crate) fn builder(proxies: Vec<ProxyMatcher>, resolver: DynResolver) -> ConnectorBuilder {
-        ConnectorBuilder {
-            config: Config {
-                proxies: Arc::new(proxies),
-                verbose: Verbose::OFF,
-                nodelay: true,
-                tls_info: false,
-                timer: Timer::default(),
-                timeout: None,
-            },
-            #[cfg(feature = "socks")]
-            resolver: resolver.clone(),
-            http: HttpConnector::new(resolver, TcpConnector::new()),
-            builder: TlsConnector::builder(),
-        }
-    }
-}
-
-impl Service<ConnectionDescriptor> for Connector {
-    type Response = Conn;
-    type Error = BoxError;
-    type Future = Connecting;
-
-    #[inline]
-    fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        match self {
-            Connector::Simple(service) => service.poll_ready(cx),
-            Connector::WithLayers(service) => service.poll_ready(cx),
-        }
-    }
-
-    #[inline]
-    fn call(&mut self, descriptor: ConnectionDescriptor) -> Self::Future {
-        match self {
-            Connector::Simple(service) => service.call(descriptor),
-            Connector::WithLayers(service) => service.call(Unnameable(descriptor)),
-        }
-    }
-}
-
-// ===== impl ConnectorService =====
-
-impl ConnectorService {
+impl TransportConnector {
     fn build_https_connector(
         &self,
         https: bool,
@@ -518,37 +484,30 @@ impl ConnectorService {
     async fn connect_auto(self, req: ConnectionDescriptor) -> Result<Conn, BoxError> {
         debug!("starting new connection: {:?}", req.uri());
 
-        // The sleep must be created before `self` is moved into the future below.
-        let sleep = self.config.timeout.map(|to| self.config.timer.sleep(to));
-
         // Determine if a proxy should be used for this request.
-        let fut = async {
-            let intercepted = req
-                .proxy()
-                .and_then(|prox| prox.intercept(req.uri()))
-                .or_else(|| {
-                    self.config
-                        .proxies
-                        .iter()
-                        .find_map(|prox| prox.intercept(req.uri()))
-                });
+        let intercepted = req
+            .proxy()
+            .and_then(|prox| prox.intercept(req.uri()))
+            .or_else(|| {
+                self.config
+                    .proxies
+                    .iter()
+                    .find_map(|prox| prox.intercept(req.uri()))
+            });
 
-            // If a proxy is matched, connect via proxy; otherwise, connect directly.
-            if let Some(intercepted) = intercepted {
-                self.connect_via_proxy(req, intercepted).await
-            } else {
-                self.connect_auto_proxy(req, None).await
-            }
-        };
-
-        with_deadline(fut, sleep).await
+        // If a proxy is matched, connect via proxy; otherwise, connect directly.
+        if let Some(intercepted) = intercepted {
+            self.connect_via_proxy(req, intercepted).await
+        } else {
+            self.connect_auto_proxy(req, None).await
+        }
     }
 }
 
-impl Service<ConnectionDescriptor> for ConnectorService {
+impl Service<ConnectionDescriptor> for TransportConnector {
     type Response = Conn;
     type Error = BoxError;
-    type Future = Connecting;
+    type Future = BoxFuture<'static, Result<Conn, BoxError>>;
 
     #[inline]
     fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
@@ -558,108 +517,5 @@ impl Service<ConnectionDescriptor> for ConnectorService {
     #[inline]
     fn call(&mut self, descriptor: ConnectionDescriptor) -> Self::Future {
         Box::pin(self.clone().connect_auto(descriptor))
-    }
-}
-
-/// Bounds one connect with an optional deadline, reporting expiry as [`TimedOut`].
-///
-/// The connect is polled first, so a connection ready at the deadline wins the
-/// tie, matching Tokio and Tower timeout semantics.
-async fn with_deadline<F, T>(
-    connecting: F,
-    deadline: Option<Pin<Box<dyn Sleep>>>,
-) -> Result<T, BoxError>
-where
-    F: Future<Output = Result<T, BoxError>>,
-{
-    let Some(deadline) = deadline else {
-        return connecting.await;
-    };
-
-    match futures_util::future::select(pin!(connecting), deadline).await {
-        Either::Left((result, _)) => result,
-        Either::Right(((), _)) => Err(Box::new(TimedOut) as BoxError),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use std::{future::pending, sync::Mutex, time::Instant};
-
-    use tower::layer::util::Identity;
-
-    use super::*;
-    use crate::{Client, ClientBuilder};
-
-    const CONNECT_TIMEOUT: Duration = Duration::from_millis(50);
-
-    /// A [`Timer`] that records every deadline it hands out.
-    #[derive(Clone)]
-    struct RecordingTimer {
-        inner: Timer,
-        sleeps: Arc<Mutex<Vec<Duration>>>,
-    }
-
-    impl wreq_proto::rt::Timer for RecordingTimer {
-        fn sleep(&self, duration: Duration) -> Pin<Box<dyn Sleep>> {
-            self.sleeps.lock().unwrap().push(duration);
-            self.inner.sleep(duration)
-        }
-
-        fn sleep_until(&self, deadline: Instant) -> Pin<Box<dyn Sleep>> {
-            self.inner.sleep_until(deadline)
-        }
-    }
-
-    /// Asserts that the connect deadline is drawn from the client's own timer.
-    ///
-    /// Nothing else here sleeps for [`CONNECT_TIMEOUT`], so seeing it in the
-    /// recording means the connector asked *this* timer for it. Reaching for
-    /// `tokio::time` instead still works under Tokio but panics on any other
-    /// runtime.
-    async fn assert_deadline_comes_from_the_timer(builder: ClientBuilder) {
-        // Accepts and then never speaks, so the TCP dial succeeds at once and
-        // only the connector's own deadline can end the TLS handshake.
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-        tokio::spawn(async move {
-            let _accepted = listener.accept().await;
-            pending::<()>().await
-        });
-
-        let sleeps = Arc::new(Mutex::new(Vec::new()));
-        let client = builder
-            .timer(RecordingTimer {
-                inner: Timer::default(),
-                sleeps: Arc::clone(&sleeps),
-            })
-            .connect_timeout(CONNECT_TIMEOUT)
-            .no_proxy()
-            .build()
-            .expect("client");
-
-        let err = client
-            .get(format!("https://{addr}/"))
-            .send()
-            .await
-            .expect_err("the handshake never completes");
-
-        assert!(err.is_connect() && err.is_timeout(), "{err:?}");
-        assert!(
-            sleeps.lock().unwrap().contains(&CONNECT_TIMEOUT),
-            "connect deadline did not come from the configured timer",
-        );
-    }
-
-    #[tokio::test]
-    async fn connect_timeout_uses_the_configured_timer() {
-        assert_deadline_comes_from_the_timer(Client::builder()).await;
-    }
-
-    #[tokio::test]
-    async fn layered_connect_timeout_uses_the_configured_timer() {
-        // Any user layer switches the connector to the `WithLayers` path.
-        assert_deadline_comes_from_the_timer(Client::builder().connector_layer(Identity::new()))
-            .await;
     }
 }

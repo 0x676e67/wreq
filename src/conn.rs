@@ -1,3 +1,4 @@
+mod timeout;
 mod tls_info;
 mod verbose;
 
@@ -40,12 +41,12 @@ use crate::{
 /// HTTP connector with dynamic DNS resolver.
 pub type HttpConnector = http::HttpConnector<DynResolver, TcpConnector>;
 
-/// Boxed connector service for establishing connections.
-pub type BoxedConnectorService = BoxCloneSyncService<Unnameable, Conn, BoxError>;
+/// Type-erased transport service retained after custom connector layers are composed.
+pub type BoxedTransportConnector = BoxCloneSyncService<Unnameable, Conn, BoxError>;
 
-/// Boxed layer for building a boxed connector service.
+/// Type-erased layer applied while assembling a [`BoxedTransportConnector`].
 pub type BoxedConnectorLayer =
-    BoxCloneSyncServiceLayer<BoxedConnectorService, Unnameable, Conn, BoxError>;
+    BoxCloneSyncServiceLayer<BoxedTransportConnector, Unnameable, Conn, BoxError>;
 
 /// A wrapper type for [`descriptor::ConnectionDescriptor`] used to erase its concrete type.
 ///

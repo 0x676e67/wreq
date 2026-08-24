@@ -60,8 +60,10 @@ use crate::dns::hickory::HickoryDnsResolver;
 use crate::{
     IntoUri, Method, Proxy,
     conn::{
-        BoxedConnectorLayer, BoxedConnectorService, Conn, Unnameable, connector::Connector,
-        http::HttpConnect, net::SocketBindOptions,
+        BoxedConnectorLayer, BoxedTransportConnector, Conn, Unnameable,
+        connector::{Connector, ConnectorBuilder},
+        http::HttpConnect,
+        net::SocketBindOptions,
     },
     dns::{DnsResolverWithOverrides, DynResolver, GaiResolver, IntoResolve, Resolve},
     error::{self, Error},
@@ -502,9 +504,9 @@ impl ClientBuilder {
                 DynResolver::new(resolver)
             };
 
-            let connector = Connector::builder(config.proxies, resolver)
-                .timeout(config.connect_timeout)
+            let connector = ConnectorBuilder::new(config.proxies, resolver)
                 .timer(config.timer.clone())
+                .timeout(config.connect_timeout)
                 .tls_info(config.tls_info)
                 .tcp_nodelay(config.tcp_nodelay)
                 .verbose(config.connection_verbose)
@@ -1047,16 +1049,10 @@ impl ClientBuilder {
 
     /// Set a timeout for only the connect phase of a `Client`.
     ///
-    /// When a host resolves to multiple addresses, the timeout covers the
-    /// entire connection race.
+    /// The timeout covers DNS resolution, the complete TCP address race,
+    /// proxy tunneling, and the TLS handshake.
     ///
     /// Default is `None`.
-    ///
-    /// # Note
-    ///
-    /// The whole connect (DNS, TCP, TLS, proxy tunnel) is bounded on the configured
-    /// [`timer`](ClientBuilder::timer); the TCP dial alone is bounded on the clock of the
-    /// runtime selected at compile time.
     #[inline]
     pub fn connect_timeout(mut self, timeout: Duration) -> ClientBuilder {
         self.config.connect_timeout = Some(timeout);
@@ -1661,7 +1657,7 @@ impl ClientBuilder {
     #[inline]
     pub fn connector_layer<L>(mut self, layer: L) -> ClientBuilder
     where
-        L: Layer<BoxedConnectorService> + Clone + Send + Sync + 'static,
+        L: Layer<BoxedTransportConnector> + Clone + Send + Sync + 'static,
         L::Service:
             Service<Unnameable, Response = Conn, Error = BoxError> + Clone + Send + Sync + 'static,
         <L::Service as Service<Unnameable>>::Future: Send + 'static,
