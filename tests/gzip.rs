@@ -4,6 +4,7 @@ use std::io::Write;
 use flate2::{Compression, write::GzEncoder};
 use support::server;
 use tokio::io::AsyncWriteExt;
+use wreq::header;
 
 #[tokio::test]
 async fn gzip_response() {
@@ -80,6 +81,57 @@ async fn test_accept_encoding_header_is_not_changed_if_set() {
         .unwrap();
 
     assert_eq!(res.status(), wreq::StatusCode::OK);
+}
+
+#[tokio::test]
+async fn test_range_requests_use_identity_encoding() {
+    let server = server::http(move |req| async move {
+        match req.uri().path() {
+            "/range" => {
+                assert_eq!(req.headers()[header::RANGE], "bytes=0-3");
+                assert_eq!(req.headers()[header::ACCEPT_ENCODING], "identity");
+            }
+            "/regular" => {
+                assert!(
+                    req.headers()[header::ACCEPT_ENCODING]
+                        .to_str()
+                        .unwrap()
+                        .contains("gzip")
+                );
+            }
+            "/disabled" => {
+                assert_eq!(req.headers()[header::ACCEPT_ENCODING], "gzip");
+            }
+            path => panic!("unexpected path: {path}"),
+        }
+
+        http::Response::default()
+    });
+    let base = format!("http://{}", server.addr());
+
+    let client = wreq::Client::new();
+    client
+        .get(format!("{base}/range"))
+        .header(header::RANGE, "bytes=0-3")
+        .header(header::ACCEPT_ENCODING, "gzip")
+        .send()
+        .await
+        .unwrap();
+    client.get(format!("{base}/regular")).send().await.unwrap();
+
+    wreq::Client::builder()
+        .no_gzip()
+        .no_brotli()
+        .no_zstd()
+        .no_deflate()
+        .build()
+        .unwrap()
+        .get(format!("{base}/disabled"))
+        .header(header::RANGE, "bytes=0-3")
+        .header(header::ACCEPT_ENCODING, "gzip")
+        .send()
+        .await
+        .unwrap();
 }
 
 async fn gzip_case(response_size: usize, chunk_size: usize) {

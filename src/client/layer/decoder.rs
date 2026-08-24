@@ -2,7 +2,10 @@
 
 use std::task::{Context, Poll};
 
-use http::{Request, Response};
+use http::{
+    HeaderValue, Request, Response,
+    header::{ACCEPT_ENCODING, RANGE},
+};
 use http_body::Body;
 use tower::{Layer, Service};
 use tower_http::decompression::{self, DecompressionBody, ResponseFuture};
@@ -26,15 +29,26 @@ pub(crate) struct AcceptEncoding {
     pub(crate) deflate: bool,
 }
 
-/// Layer that adds response body decompression to a service.
+/// Builds response decompression middleware for a client service.
+///
+/// `DecompressionLayer` stores the client's default [`AcceptEncoding`] configuration
+/// and applies it when constructing a [`Decompression`] service.
 #[derive(Clone)]
 pub struct DecompressionLayer {
     accept: AcceptEncoding,
 }
 
-/// Service that decompresses response bodies based on the [`AcceptEncoding`] configuration.
+/// Negotiates response encodings and transparently decodes response bodies.
+///
+/// Before forwarding a request, `Decompression` applies request-specific
+/// [`AcceptEncoding`] settings and keeps range requests on the identity representation.
+/// The wrapped `tower-http` service then advertises enabled encodings and decodes matching
+/// responses.
 #[derive(Clone)]
-pub struct Decompression<S>(Option<decompression::Decompression<S>>);
+pub struct Decompression<S> {
+    decoder: Option<decompression::Decompression<S>>,
+    enabled: bool,
+}
 
 // ===== AcceptEncoding =====
 
@@ -50,6 +64,32 @@ impl Default for AcceptEncoding {
             #[cfg(feature = "deflate")]
             deflate: true,
         }
+    }
+}
+
+impl AcceptEncoding {
+    fn is_enabled(&self) -> bool {
+        #[cfg(feature = "gzip")]
+        if self.gzip {
+            return true;
+        }
+
+        #[cfg(feature = "deflate")]
+        if self.deflate {
+            return true;
+        }
+
+        #[cfg(feature = "brotli")]
+        if self.brotli {
+            return true;
+        }
+
+        #[cfg(feature = "zstd")]
+        if self.zstd {
+            return true;
+        }
+
+        false
     }
 }
 
@@ -75,10 +115,10 @@ impl<S> Layer<S> for DecompressionLayer {
             .no_deflate()
             .no_gzip()
             .no_zstd();
-        Decompression(Some(Decompression::<S>::accept_in_place(
-            decoder,
-            &self.accept,
-        )))
+        Decompression {
+            decoder: Some(Decompression::<S>::accept_in_place(decoder, &self.accept)),
+            enabled: self.accept.is_enabled(),
+        }
     }
 }
 
@@ -127,18 +167,32 @@ where
 
     #[inline(always)]
     fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        self.0.as_mut().expect(Self::BUG_MSG).poll_ready(cx)
+        self.decoder.as_mut().expect(Self::BUG_MSG).poll_ready(cx)
     }
 
-    fn call(&mut self, req: Request<ReqBody>) -> Self::Future {
-        if let Some(accept_encoding) = RequestConfig::<AcceptEncoding>::get(req.extensions()) {
-            if let Some(decoder) = self.0.take() {
-                self.0
-                    .replace(Decompression::accept_in_place(decoder, accept_encoding));
-            }
-            debug_assert!(self.0.is_some());
+    fn call(&mut self, mut req: Request<ReqBody>) -> Self::Future {
+        let enabled =
+            if let Some(accept_encoding) = RequestConfig::<AcceptEncoding>::get(req.extensions()) {
+                if let Some(decoder) = self.decoder.take() {
+                    self.decoder
+                        .replace(Decompression::accept_in_place(decoder, accept_encoding));
+                }
+                debug_assert!(self.decoder.is_some());
+                accept_encoding.is_enabled()
+            } else {
+                self.enabled
+            };
+
+        if enabled && req.headers().contains_key(RANGE) {
+            // tower-http does not account for Range when adding Accept-Encoding, so correct it
+            // before delegating. RFC 9110 section 14.1.2 applies byte ranges to the encoded
+            // representation, and Fetch avoids partial codings by requesting identity:
+            // https://www.rfc-editor.org/rfc/rfc9110.html#section-14.1.2
+            // https://fetch.spec.whatwg.org/#http-network-or-cache-fetch
+            req.headers_mut()
+                .insert(ACCEPT_ENCODING, HeaderValue::from_static("identity"));
         }
 
-        self.0.as_mut().expect(Self::BUG_MSG).call(req)
+        self.decoder.as_mut().expect(Self::BUG_MSG).call(req)
     }
 }
