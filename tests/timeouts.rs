@@ -172,6 +172,34 @@ async fn response_timeout() {
     assert!(err.is_body() && err.is_timeout());
 }
 
+#[cfg(feature = "stream")]
+#[tokio::test]
+async fn total_timeout_includes_response_head_and_body() {
+    let _ = env_logger::try_init();
+
+    // Each delay is shorter than the timeout, but together they exceed it.
+    let server = server::http(move |_req| async {
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        let body = wreq::Body::wrap_stream(futures_util::stream::once(async {
+            tokio::time::sleep(Duration::from_millis(150)).await;
+            Ok::<_, std::convert::Infallible>("Hello")
+        }));
+        http::Response::new(body)
+    });
+
+    let client = Client::builder()
+        .timeout(Duration::from_millis(220))
+        .no_proxy()
+        .build()
+        .unwrap();
+
+    let url = format!("http://{}/slow", server.addr());
+    let res = client.get(&url).send().await.expect("Failed to get");
+    let err = res.text().await.unwrap_err();
+
+    assert!(err.is_body() && err.is_timeout());
+}
+
 #[tokio::test]
 async fn read_timeout_applies_to_headers() {
     let _ = env_logger::try_init();

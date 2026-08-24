@@ -12,17 +12,14 @@ use http::{Request, Response};
 use tower::{BoxError, Layer, Service};
 use wreq_proto::rt::Timer as _;
 
-use self::{
-    body::TimeoutBody,
-    future::{ResponseBodyTimeoutFuture, ResponseFuture},
-};
+use self::{body::TimeoutBody, future::ResponseFuture};
 use crate::{config::RequestConfig, rt::Timer};
 
 /// Options for configuring timeouts.
 #[derive(Clone, Copy, Default)]
 pub struct TimeoutOptions {
-    total_timeout: Option<Duration>,
     read_timeout: Option<Duration>,
+    total_timeout: Option<Duration>,
 }
 
 impl TimeoutOptions {
@@ -88,7 +85,7 @@ where
 {
     type Response = Response<TimeoutBody<ResBody>>;
     type Error = BoxError;
-    type Future = ResponseFuture<ResponseBodyTimeoutFuture<S::Future>>;
+    type Future = ResponseFuture<S::Future>;
 
     #[inline(always)]
     fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
@@ -99,14 +96,11 @@ where
     fn call(&mut self, req: Request<ReqBody>) -> Self::Future {
         let (total_timeout, read_timeout) = fetch_timeout_options(&self.timeout, req.extensions());
         ResponseFuture {
-            fut: ResponseBodyTimeoutFuture {
-                fut: self.inner.call(req),
-                timer: self.timer.clone(),
-                total_timeout,
-                read_timeout,
-            },
-            total_timeout: total_timeout.map(|timeout| self.timer.sleep(timeout)),
-            read_timeout: read_timeout.map(|timeout| self.timer.sleep(timeout)),
+            fut: self.inner.call(req),
+            timer: self.timer.clone(),
+            read_timeout,
+            read_timeout_fut: read_timeout.map(|timeout| self.timer.sleep(timeout)),
+            total_timeout_fut: total_timeout.map(|timeout| self.timer.sleep(timeout)),
         }
     }
 }
