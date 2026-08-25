@@ -792,9 +792,8 @@ impl ClientBuilder {
     ///
     /// If auto gzip decompression is turned on:
     ///
-    /// - When sending a request and if the request's headers do not already contain an
-    ///   `Accept-Encoding` **and** `Range` values, the `Accept-Encoding` header is set to `gzip`.
-    ///   The request body is **not** automatically compressed.
+    /// - Requests without `Accept-Encoding` advertise `gzip`. Range requests use `Accept-Encoding:
+    ///   identity` instead. The request body is **not** automatically compressed.
     /// - When receiving a response, if its headers contain a `Content-Encoding` value of `gzip`,
     ///   both `Content-Encoding` and `Content-Length` are removed from the headers' set. The
     ///   response body is automatically decompressed.
@@ -816,9 +815,8 @@ impl ClientBuilder {
     ///
     /// If auto brotli decompression is turned on:
     ///
-    /// - When sending a request and if the request's headers do not already contain an
-    ///   `Accept-Encoding` **and** `Range` values, the `Accept-Encoding` header is set to `br`. The
-    ///   request body is **not** automatically compressed.
+    /// - Requests without `Accept-Encoding` advertise `br`. Range requests use `Accept-Encoding:
+    ///   identity` instead. The request body is **not** automatically compressed.
     /// - When receiving a response, if its headers contain a `Content-Encoding` value of `br`, both
     ///   `Content-Encoding` and `Content-Length` are removed from the headers' set. The response
     ///   body is automatically decompressed.
@@ -840,9 +838,8 @@ impl ClientBuilder {
     ///
     /// If auto zstd decompression is turned on:
     ///
-    /// - When sending a request and if the request's headers do not already contain an
-    ///   `Accept-Encoding` **and** `Range` values, the `Accept-Encoding` header is set to `zstd`.
-    ///   The request body is **not** automatically compressed.
+    /// - Requests without `Accept-Encoding` advertise `zstd`. Range requests use `Accept-Encoding:
+    ///   identity` instead. The request body is **not** automatically compressed.
     /// - When receiving a response, if its headers contain a `Content-Encoding` value of `zstd`,
     ///   both `Content-Encoding` and `Content-Length` are removed from the headers' set. The
     ///   response body is automatically decompressed.
@@ -864,9 +861,8 @@ impl ClientBuilder {
     ///
     /// If auto deflate decompression is turned on:
     ///
-    /// - When sending a request and if the request's headers do not already contain an
-    ///   `Accept-Encoding` **and** `Range` values, the `Accept-Encoding` header is set to
-    ///   `deflate`. The request body is **not** automatically compressed.
+    /// - Requests without `Accept-Encoding` advertise `deflate`. Range requests use
+    ///   `Accept-Encoding: identity` instead. The request body is **not** automatically compressed.
     /// - When receiving a response, if it's headers contain a `Content-Encoding` value that equals
     ///   to `deflate`, both values `Content-Encoding` and `Content-Length` are removed from the
     ///   headers' set. The response body is automatically decompressed.
