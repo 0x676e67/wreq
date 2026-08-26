@@ -35,6 +35,7 @@ use crate::{
         conn::{
             EstablishedConn, HttpsConnector, MaybeHttpsStream, TlsConnector, TlsConnectorBuilder,
         },
+        session::{SessionCache, TlsSessionCache},
     },
 };
 
@@ -62,7 +63,8 @@ pub struct ConnectorBuilder {
     #[cfg(feature = "socks")]
     resolver: DynResolver,
     http: HttpConnector,
-    builder: TlsConnectorBuilder,
+    tls_builder: TlsConnectorBuilder,
+    tls_session_cache: Option<Arc<dyn TlsSessionCache>>,
 }
 
 /// Client-owned transport service selected when the connector graph is assembled.
@@ -88,7 +90,8 @@ pub struct TransportConnector {
     resolver: DynResolver,
     tls: TlsConnector,
     http: HttpConnector,
-    builder: Arc<TlsConnectorBuilder>,
+    tls_builder: Arc<TlsConnectorBuilder>,
+    tls_session_cache: Arc<SessionCache>,
 }
 
 // ===== impl ConnectorBuilder =====
@@ -108,7 +111,8 @@ impl ConnectorBuilder {
             #[cfg(feature = "socks")]
             resolver: resolver.clone(),
             http: HttpConnector::new(resolver, TcpConnector::new()),
-            builder: TlsConnector::builder(),
+            tls_builder: TlsConnector::builder(),
+            tls_session_cache: None,
         }
     }
 
@@ -128,7 +132,7 @@ impl ConnectorBuilder {
     where
         F: FnOnce(TlsConnectorBuilder) -> TlsConnectorBuilder,
     {
-        self.builder = call(self.builder);
+        self.tls_builder = call(self.tls_builder);
         self
     }
 
@@ -160,6 +164,13 @@ impl ConnectorBuilder {
         self
     }
 
+    /// Sets the cache used by TLS session resumption.
+    #[inline]
+    pub fn tls_session_cache(mut self, cache: Option<Arc<dyn TlsSessionCache>>) -> Self {
+        self.tls_session_cache = cache;
+        self
+    }
+
     /// Sets the TCP_NODELAY option for connections.
     #[inline]
     pub fn tcp_nodelay(mut self, enabled: bool) -> ConnectorBuilder {
@@ -174,15 +185,19 @@ impl ConnectorBuilder {
         layers: Vec<BoxedConnectorLayer>,
     ) -> crate::Result<Connector> {
         let timeout = TimeoutLayer::new(self.timer, self.timeout);
+        let tls_session_cache = Arc::new(SessionCache::new(self.tls_session_cache));
+        let tls = self.tls_builder.build(
+            tls_options.map(Cow::Owned).unwrap_or_default(),
+            Arc::clone(&tls_session_cache),
+        )?;
         let service = TransportConnector {
             config: self.config,
             #[cfg(feature = "socks")]
             resolver: self.resolver.clone(),
             http: self.http,
-            tls: self
-                .builder
-                .build(tls_options.map(Cow::Owned).unwrap_or_default())?,
-            builder: Arc::new(self.builder),
+            tls,
+            tls_builder: Arc::new(self.tls_builder),
+            tls_session_cache,
         };
 
         // we have no user-provided layers, only use concrete types
@@ -222,9 +237,27 @@ impl ConnectorBuilder {
 // ===== impl TransportConnector =====
 
 impl TransportConnector {
+    fn tls_connector(
+        &self,
+        is_https: bool,
+        descriptor: &ConnectionDescriptor,
+    ) -> Result<TlsConnector, BoxError> {
+        if !is_https {
+            return Ok(self.tls.clone());
+        }
+
+        let Some(options) = descriptor.tls_options() else {
+            return Ok(self.tls.clone());
+        };
+
+        self.tls_builder
+            .build(Cow::Borrowed(options), Arc::clone(&self.tls_session_cache))
+            .map_err(Into::into)
+    }
+
     fn build_https_connector(
         &self,
-        https: bool,
+        is_https: bool,
         descriptor: &ConnectionDescriptor,
     ) -> Result<HttpsConnector<HttpConnector>, BoxError> {
         let mut http = self.http.clone();
@@ -232,7 +265,7 @@ impl TransportConnector {
         // Disable Nagle's algorithm for TLS handshake
         //
         // https://www.openssl.org/docs/man1.1.1/man3/SSL_connect.html#NOTES
-        if https && !self.config.nodelay {
+        if is_https && !self.config.nodelay {
             http.set_nodelay(true);
         }
 
@@ -256,12 +289,7 @@ impl TransportConnector {
             }
         }
 
-        // Prefer TLS options from metadata, fallback to default
-        let tls = descriptor
-            .tls_options()
-            .map(|opts| self.builder.build(Cow::Borrowed(opts)))
-            .transpose()?
-            .unwrap_or_else(|| self.tls.clone());
+        let tls = self.tls_connector(is_https, descriptor)?;
 
         Ok(HttpsConnector::new(http, tls))
     }
@@ -445,12 +473,13 @@ impl TransportConnector {
                 trace!("connecting via Unix socket: {:?}", unix_socket);
 
                 // Create a Unix connector with the specified socket path.
-                let mut connector =
-                    HttpsConnector::new(UnixConnector::new(unix_socket), self.tls.clone());
+                let is_https = uri.is_https();
+                let tls = self.tls_connector(is_https, &descriptor)?;
+                let mut connector = HttpsConnector::new(UnixConnector::new(unix_socket), tls);
 
                 // If the target URI is HTTPS, establish a CONNECT tunnel over the Unix socket,
                 // then upgrade the tunneled stream to TLS.
-                if uri.is_https() {
+                if is_https {
                     // Use a dummy HTTP URI so the HTTPS connector works over the Unix socket.
                     let proxy_uri = http::Uri::from_static("http://localhost");
 
