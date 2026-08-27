@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.16.1](https://github.com/0x676e67/wreq/compare/v0.16.0...v0.16.1) - 2026-08-25
+
+### Fixed
+
+- *(decoder)* use identity encoding for range requests ([#1265](https://github.com/0x676e67/wreq/pull/1265))
+- *(connect)* drive connect_timeout with the configured timer ([#1264](https://github.com/0x676e67/wreq/pull/1264))
+- *(timeout)* preserve total timeout across response head and body ([#1263](https://github.com/0x676e67/wreq/pull/1263))
+- *(ci)* avoid duplicate release PRs ([#1259](https://github.com/0x676e67/wreq/pull/1259))
+
+### Other
+
+- *(readme)* show latest published MSRV ([#1262](https://github.com/0x676e67/wreq/pull/1262))
+- *(readme)* update stable release versions ([#1261](https://github.com/0x676e67/wreq/pull/1261))
+
 ## [0.16.0](https://github.com/0x676e67/wreq/compare/v0.15.3...v0.16.0) - 2026-08-22
 
 ### Fixed
