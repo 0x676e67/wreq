@@ -22,7 +22,10 @@ use std::{
     time::Duration,
 };
 
-use http::header::{HeaderMap, HeaderValue, USER_AGENT};
+use http::{
+    Version,
+    header::{HeaderMap, HeaderValue, USER_AGENT},
+};
 use tower::{
     BoxError, Layer, Service, ServiceBuilder, ServiceExt,
     retry::{Retry, RetryLayer},
@@ -151,7 +154,14 @@ type BoxedClientServiceLayer = BoxCloneSyncServiceLayer<
 ///
 /// [`Rc`]: std::rc::Rc
 #[derive(Clone)]
-pub struct Client(Arc<Either<ClientService, BoxedClientService>>);
+pub struct Client(Arc<ClientInner>);
+
+/// Shared request service and protocol version exposed to user layers.
+/// Every [`Client`] clone retains this same instance.
+struct ClientInner {
+    service: Either<ClientService, BoxedClientService>,
+    version: Version,
+}
 
 /// A [`ClientBuilder`] can be used to create a [`Client`] with custom configuration.
 #[must_use]
@@ -424,10 +434,11 @@ impl Client {
     /// This method fails if there was an error while sending request,
     /// redirect loop was detected or redirect limit was exhausted.
     pub fn execute(&self, request: Request) -> Pending {
-        let req = http::Request::<Body>::from(request);
+        let version = request.version().unwrap_or(self.0.version);
+        let req = request.into_http(version);
         Pending::Request {
             uri: Some(req.uri().clone()),
-            fut: Box::pin(Oneshot::new((*self.0).clone(), req)),
+            fut: Box::pin(Oneshot::new(self.0.service.clone(), req)),
         }
     }
 }
@@ -479,6 +490,11 @@ impl ClientBuilder {
         if let Some(err) = config.error {
             return Err(err);
         }
+
+        let version = match &config.http_version_pref {
+            HttpVersionPref::Http2 => Version::HTTP_2,
+            HttpVersionPref::Http1 | HttpVersionPref::All => Version::HTTP_11,
+        };
 
         // Prepare proxies
         if config.auto_sys_proxy {
@@ -638,7 +654,10 @@ impl ClientBuilder {
             }
         };
 
-        Ok(Client(Arc::new(client)))
+        Ok(Client(Arc::new(ClientInner {
+            service: client,
+            version,
+        })))
     }
 
     // Runtime options
@@ -1671,16 +1690,9 @@ impl ClientBuilder {
 
     // TLS/HTTP2 emulation options
 
-    /// Configures the client builder to emulation the specified HTTP context.
-    ///
-    /// This method sets the necessary headers, HTTP/1 and HTTP/2 options configurations, and  TLS
-    /// options config to use the specified HTTP context. It allows the client to mimic the
-    /// behavior of different versions or setups, which can be useful for testing or ensuring
-    /// compatibility with various environments.
-    ///
-    /// # Note
-    /// This will overwrite the existing configuration.
-    /// You must set emulation before you can perform subsequent HTTP1/HTTP2/TLS fine-tuning.
+    /// Applies the profile's headers and TLS, HTTP/1, and HTTP/2 options.
+    /// These values replace the corresponding client settings; the profile
+    /// does not create a connection group.
     #[inline]
     pub fn emulation<T: IntoEmulation>(self, emulation: T) -> ClientBuilder {
         let emulation = emulation.into_emulation();

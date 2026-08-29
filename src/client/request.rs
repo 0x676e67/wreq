@@ -24,16 +24,14 @@ use super::layer::decoder::AcceptEncoding;
 use super::{
     Body, Client, IntoEmulation, Response,
     future::Pending,
-    layer::{
-        config::{DefaultHeaders, RequestOptions},
-        timeout::TimeoutOptions,
-    },
+    layer::{config::DefaultHeaders, timeout::TimeoutOptions},
 };
 #[cfg(feature = "cookies")]
 use crate::cookie::{CookieStore, IntoCookieStore};
 use crate::{
     Error, Method, Proxy,
     config::{RequestConfig, RequestConfigValue},
+    conn::descriptor::ConnectionOptions,
     ext::UriExt,
     group::Group,
     header::{AUTHORIZATION, HeaderMap, HeaderName, HeaderValue, OrigHeaderMap},
@@ -43,6 +41,10 @@ use crate::{
 /// A request which can be executed with [`Client::execute()`].
 #[derive(Debug)]
 pub struct Request(http::Request<Option<Body>>);
+
+/// Marks a materialized wire version as inherited from the client.
+#[derive(Clone, Copy)]
+struct UseClientVersion;
 
 /// A builder to construct the properties of a [`Request`].
 ///
@@ -110,18 +112,20 @@ impl Request {
         self.0.body_mut()
     }
 
-    /// Get the http version.
+    /// Returns the request-level HTTP version override.
+    /// `None` uses the client's configured protocol preference.
     #[inline]
     pub fn version(&self) -> Option<Version> {
-        self.config::<RequestOptions>()
+        self.config::<ConnectionOptions>()
             .and_then(|opts| opts.version)
     }
 
-    /// Get a mutable reference to the http version.
+    /// Returns the request-level HTTP version override for mutation.
+    /// Setting it to `None` restores the client's protocol preference.
     #[inline]
     pub fn version_mut(&mut self) -> &mut Option<Version> {
         &mut self
-            .config_mut::<RequestOptions>()
+            .config_mut::<ConnectionOptions>()
             .get_or_insert_default()
             .version
     }
@@ -169,10 +173,18 @@ impl Request {
         };
         let mut req = Request::new(self.method().clone(), self.uri().clone());
         *req.headers_mut() = self.headers().clone();
-        *req.version_mut() = self.version();
+        *req.0.version_mut() = self.0.version();
         *req.extensions_mut() = self.extensions().clone();
         *req.body_mut() = body;
         Some(req)
+    }
+
+    /// Converts this request with an already resolved wire version.
+    #[inline]
+    pub(super) fn into_http(self, version: Version) -> http::Request<Body> {
+        let mut request = self.0.map(|body| body.unwrap_or_else(Body::empty));
+        *request.version_mut() = version;
+        request
     }
 
     #[inline]
@@ -562,9 +574,6 @@ impl RequestBuilder {
     pub fn version(mut self, version: Version) -> RequestBuilder {
         if let Ok(ref mut req) = self.request {
             req.version_mut().replace(version);
-            req.config_mut::<RequestOptions>()
-                .get_or_insert_default()
-                .version = Some(version);
         }
         self
     }
@@ -641,7 +650,7 @@ impl RequestBuilder {
     /// Set the proxy for this request.
     pub fn proxy(mut self, proxy: Proxy) -> RequestBuilder {
         if let Ok(ref mut req) = self.request {
-            req.config_mut::<RequestOptions>()
+            req.config_mut::<ConnectionOptions>()
                 .get_or_insert_default()
                 .proxy = Some(proxy.into_matcher());
         }
@@ -654,7 +663,7 @@ impl RequestBuilder {
         V: Into<Option<IpAddr>>,
     {
         if let Ok(ref mut req) = self.request {
-            req.config_mut::<RequestOptions>()
+            req.config_mut::<ConnectionOptions>()
                 .get_or_insert_default()
                 .socket_bind_options
                 .get_or_insert_default()
@@ -670,7 +679,7 @@ impl RequestBuilder {
         V6: Into<Option<Ipv6Addr>>,
     {
         if let Ok(ref mut req) = self.request {
-            req.config_mut::<RequestOptions>()
+            req.config_mut::<ConnectionOptions>()
                 .get_or_insert_default()
                 .socket_bind_options
                 .get_or_insert_default()
@@ -743,7 +752,7 @@ impl RequestBuilder {
         I: Into<std::borrow::Cow<'static, str>>,
     {
         if let Ok(ref mut req) = self.request {
-            req.config_mut::<RequestOptions>()
+            req.config_mut::<ConnectionOptions>()
                 .get_or_insert_default()
                 .socket_bind_options
                 .get_or_insert_default()
@@ -752,21 +761,15 @@ impl RequestBuilder {
         self
     }
 
-    /// Sets the request builder to emulation the specified HTTP context.
-    ///
-    /// This method sets the necessary headers, HTTP/1 and HTTP/2 options configurations, and  TLS
-    /// options config to use the specified HTTP context. It allows the client to mimic the
-    /// behavior of different versions or setups, which can be useful for testing or ensuring
-    /// compatibility with various environments.
-    ///
-    /// # Note
-    /// This will overwrite the existing configuration.
-    /// You must set emulation before you can perform subsequent HTTP1/HTTP2/TLS fine-tuning.
+    /// Applies the profile's headers and TLS, HTTP/1, and HTTP/2 options.
+    /// Existing values in those categories may be replaced; connection group,
+    /// proxy, version, and socket settings remain unchanged.
     pub fn emulation<T: IntoEmulation>(mut self, emulation: T) -> RequestBuilder {
         if let Ok(ref mut req) = self.request {
             let emulation = emulation.into_emulation();
-            let opts = req.config_mut::<RequestOptions>().get_or_insert_default();
-            opts.group.emulate(emulation.group);
+            let opts = req
+                .config_mut::<ConnectionOptions>()
+                .get_or_insert_default();
             opts.tls_options = emulation.tls_options;
             opts.http1_options = emulation.http1_options;
             opts.http2_options = emulation.http2_options;
@@ -778,17 +781,14 @@ impl RequestBuilder {
         self
     }
 
-    /// Assigns a logical group to this request.
-    ///
-    /// Groups define the request's identity and execution context.
-    /// Requests in different groups are logically partitioned to ensure
-    /// resource isolation and prevent metadata leakage.
+    /// Adds a caller-defined connection-pool partition to this request.
+    /// A group can prevent reuse across requests, but it never makes otherwise
+    /// incompatible connection settings share a connection.
     pub fn group(mut self, group: Group) -> RequestBuilder {
         if let Ok(ref mut req) = self.request {
-            req.config_mut::<RequestOptions>()
+            req.config_mut::<ConnectionOptions>()
                 .get_or_insert_default()
-                .group
-                .request(group);
+                .group = Some(group);
         }
         self
     }
@@ -894,13 +894,31 @@ fn extract_authority(uri: &mut Uri) -> Option<(String, Option<String>)> {
 impl<T: Into<Body>> From<http::Request<T>> for Request {
     #[inline]
     fn from(req: http::Request<T>) -> Request {
-        Request(req.map(Into::into).map(Some))
+        let version = req.version();
+        let mut request = Request(req.map(Into::into).map(Some));
+        let use_client_version = request
+            .extensions_mut()
+            .remove::<UseClientVersion>()
+            .is_some();
+        if !use_client_version || version != Version::HTTP_11 {
+            if let Some(options) = request.config_mut::<ConnectionOptions>().as_mut() {
+                options.reconcile_version(version, Version::HTTP_11);
+            } else {
+                request.version_mut().replace(version);
+            }
+        }
+        request
     }
 }
 
 impl From<Request> for http::Request<Body> {
     #[inline]
     fn from(req: Request) -> http::Request<Body> {
-        req.0.map(|body| body.unwrap_or_else(Body::empty))
+        let version = req.version();
+        let mut request = req.into_http(version.unwrap_or(Version::HTTP_11));
+        if version.is_none() {
+            request.extensions_mut().insert(UseClientVersion);
+        }
+        request
     }
 }

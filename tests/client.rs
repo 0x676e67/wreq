@@ -15,7 +15,10 @@ use http_body_util::{BodyExt, Full};
 use pretty_env_logger::env_logger;
 use support::server;
 use tokio::io::AsyncWriteExt;
-use wreq::{Client, header::OrigHeaderMap, tls::TlsInfo};
+use wreq::{
+    Client, Emulation, header::OrigHeaderMap, http1::Http1Options, http2::Http2Options,
+    tls::TlsInfo,
+};
 
 #[tokio::test]
 async fn auto_headers() {
@@ -716,10 +719,8 @@ async fn error_has_url() {
 async fn http1_only() {
     let server = server::http(move |_| async move { http::Response::default() });
 
-    let resp = Client::builder()
-        .http1_only()
-        .build()
-        .unwrap()
+    let http1_client = Client::builder().http1_only().build().unwrap();
+    let resp = http1_client
         .get(format!("http://{}", server.addr()))
         .send()
         .await
@@ -727,13 +728,67 @@ async fn http1_only() {
 
     assert_eq!(resp.version(), wreq::Version::HTTP_11);
 
-    let resp = wreq::get(format!("http://{}", server.addr()))
+    let request = wreq::Request::new(
+        http::Method::GET,
+        format!("http://{}", server.addr()).parse().unwrap(),
+    );
+    let request = wreq::Request::from(http::Request::<wreq::Body>::from(request));
+    assert_eq!(request.version(), None);
+
+    let client = Client::builder().http2_only().build().unwrap();
+    let resp = client
+        .get(format!("http://{}", server.addr()))
         .version(Version::HTTP_11)
         .send()
         .await
         .unwrap();
 
     assert_eq!(resp.version(), wreq::Version::HTTP_11);
+
+    let request = http::Request::builder()
+        .uri(format!("http://{}", server.addr()))
+        .version(Version::HTTP_11)
+        .body(wreq::Body::default())
+        .unwrap();
+    let resp = client.execute(request.into()).await.unwrap();
+    assert_eq!(resp.version(), wreq::Version::HTTP_11);
+
+    let request = http::Request::builder()
+        .uri(format!("http://{}", server.addr()))
+        .version(Version::HTTP_2)
+        .body(wreq::Body::default())
+        .unwrap();
+    let mut request = wreq::Request::from(request);
+    *request.version_mut() = None;
+    let resp = http1_client.execute(request).await.unwrap();
+    assert_eq!(resp.version(), wreq::Version::HTTP_11);
+
+    let layered_client = Client::builder()
+        .http2_only()
+        .layer(tower::util::MapRequestLayer::new(
+            |mut request: http::Request<wreq::Body>| {
+                *request.version_mut() = Version::HTTP_11;
+                request
+            },
+        ))
+        .build()
+        .unwrap();
+    let resp = layered_client
+        .get(format!("http://{}", server.addr()))
+        .version(Version::HTTP_2)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.version(), wreq::Version::HTTP_11);
+
+    let err = client
+        .get(format!("http://{}", server.addr()))
+        .version(Version::HTTP_3)
+        .send()
+        .await
+        .unwrap_err();
+    assert!(err.is_request());
+    assert!(!err.is_connect());
 }
 
 #[tokio::test]
@@ -751,7 +806,11 @@ async fn http2_only() {
 
     assert_eq!(resp.version(), wreq::Version::HTTP_2);
 
-    let resp = wreq::get(format!("http://{}", server.addr()))
+    let resp = Client::builder()
+        .http1_only()
+        .build()
+        .unwrap()
+        .get(format!("http://{}", server.addr()))
         .version(Version::HTTP_2)
         .send()
         .await
@@ -794,6 +853,58 @@ async fn connection_pool_cache() {
 
     assert_eq!(resp.status(), wreq::StatusCode::OK);
     assert_eq!(resp.version(), http::Version::HTTP_2);
+}
+
+#[tokio::test]
+async fn connection_pool_separates_protocol_options() {
+    let mut server = server::http(|_| async { http::Response::default() });
+    let client = Client::builder().no_proxy().build().unwrap();
+    let url = format!("http://{}", server.addr());
+
+    let accepted_connections = |server: &mut server::Server| {
+        server
+            .events()
+            .into_iter()
+            .filter(|event| matches!(event, server::Event::ConnectionAccepted))
+            .count()
+    };
+
+    for max_headers in [64, 32, 32] {
+        let emulation = Emulation::builder()
+            .http1_options(Http1Options::builder().max_headers(max_headers).build())
+            .build();
+        client
+            .get(&url)
+            .emulation(emulation)
+            .send()
+            .await
+            .unwrap()
+            .bytes()
+            .await
+            .unwrap();
+    }
+    assert_eq!(accepted_connections(&mut server), 2);
+
+    for header_table_size in [4096, 8192, 8192] {
+        let emulation = Emulation::builder()
+            .http2_options(
+                Http2Options::builder()
+                    .header_table_size(header_table_size)
+                    .build(),
+            )
+            .build();
+        client
+            .get(&url)
+            .version(Version::HTTP_2)
+            .emulation(emulation)
+            .send()
+            .await
+            .unwrap()
+            .bytes()
+            .await
+            .unwrap();
+    }
+    assert_eq!(accepted_connections(&mut server), 2);
 }
 
 #[tokio::test]

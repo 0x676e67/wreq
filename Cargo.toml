@@ -106,7 +106,7 @@ tokio-btls = "0.5.6"
 tokio = { version = "1.52.3", default-features = false }
 compio = { version = "0.19.2", features = ["io", "io-compat"], optional = true }
 wreq-rt = { version = "0.2.2-rc.2", default-features = false }
-wreq-proto = { version = "0.2.3", default-features = false }
+wreq-proto = { version = "=0.2.5", default-features = false }
 tower = { version = "0.5.3", default-features = false, features = [
     "timeout",
     "util",
@@ -356,6 +356,7 @@ path = "examples/rt.rs"
 required-features = ["compio-rt"]
 
 [patch.crates-io]
-btls = { git = "https://github.com/0x676e67/btls", rev = "8b3fead2bce250e9253ed59eeed44abac316cfda" }
-btls-sys = { git = "https://github.com/0x676e67/btls", rev = "8b3fead2bce250e9253ed59eeed44abac316cfda" }
-tokio-btls = { git = "https://github.com/0x676e67/btls", rev = "8b3fead2bce250e9253ed59eeed44abac316cfda" }
+btls = { git = "https://github.com/0x676e67/btls", rev = "3ec91a002400ade1c71db8524f677d47231f100d" }
+btls-sys = { git = "https://github.com/0x676e67/btls", rev = "3ec91a002400ade1c71db8524f677d47231f100d" }
+tokio-btls = { git = "https://github.com/0x676e67/btls", rev = "3ec91a002400ade1c71db8524f677d47231f100d" }
+wreq-proto = { git = "https://github.com/0x676e67/wreq-proto", rev = "92514ffabffb4c8a976af079d22db83b346fc35c" }

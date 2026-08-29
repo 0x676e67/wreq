@@ -8,6 +8,7 @@ use std::{
     fmt,
     future::Future,
     num::NonZeroUsize,
+    sync::Arc,
     task::{self, Poll},
     time::Duration,
 };
@@ -34,16 +35,14 @@ use wreq_proto::{
 use {
     crate::cookie::{CookieStore, Cookies},
     http::header::COOKIE,
-    std::sync::Arc,
 };
 
 use self::lazy::{Started as Lazy, lazy};
 use crate::{
-    client::layer::config::RequestOptions,
     config::RequestConfig,
     conn::{
         Connected, Connection,
-        descriptor::{ConnectionDescriptor, ConnectionId},
+        descriptor::{ConnectionDescriptor, ConnectionId, ConnectionOptions},
         proxy,
     },
     error::ProxyConnect,
@@ -59,8 +58,8 @@ pub(crate) struct HttpClient<C, B> {
     config: Config,
     connector: C,
     exec: Executor,
-    h1_builder: conn::http1::Builder,
-    h2_builder: conn::http2::Builder<Executor>,
+    h1_builder: Arc<conn::http1::Builder>,
+    h2_builder: Arc<conn::http2::Builder<Executor>>,
     pool: pool::Pool<PoolClient<B>, ConnectionId>,
     #[cfg(feature = "cookies")]
     cookie_store: RequestConfig<Arc<dyn CookieStore>>,
@@ -172,31 +171,21 @@ where
             }
         };
 
-        let mut this = self.clone();
-
-        // Extract per-request options from the request extensions and apply them to the client.
-        let descriptor = {
-            let RequestOptions {
-                group,
-                proxy,
-                version,
-                tls_options,
-                http1_options,
-                http2_options,
-                socket_bind_options,
-            } = RequestConfig::<RequestOptions>::remove(req.extensions_mut()).unwrap_or_default();
-
-            if let Some(opts) = http1_options {
-                this.h1_builder = this.h1_builder.options(opts);
-            }
-            if let Some(opts) = http2_options {
-                this.h2_builder = this.h2_builder.options(opts);
-            }
-
-            ConnectionDescriptor::new(uri, group, proxy, version, tls_options, socket_bind_options)
+        let mut options =
+            RequestConfig::<ConnectionOptions>::remove(req.extensions_mut()).unwrap_or_default();
+        let client_version = if self.config.ver == Ver::Http2 {
+            Version::HTTP_2
+        } else {
+            Version::HTTP_11
         };
+        options.reconcile_version(req.version(), client_version);
+        let descriptor = ConnectionDescriptor::new(uri, options);
 
-        Box::pin(this.send_request(req, descriptor).map_err(Into::into))
+        Box::pin(
+            self.clone()
+                .send_request(req, descriptor)
+                .map_err(Into::into),
+        )
     }
 
     async fn send_request(
@@ -395,10 +384,12 @@ where
         &self,
         descriptor: ConnectionDescriptor,
     ) -> Result<pool::Pooled<PoolClient<B>, ConnectionId>, ClientConnectError> {
+        let ver = connection_version(self.config.ver, descriptor.options().version);
+
         // Return a single connection if pooling is not enabled
         if !self.pool.is_enabled() {
             return self
-                .connect_to(descriptor)
+                .connect_to(descriptor, ver)
                 .await
                 .map_err(ClientConnectError::Normal);
         }
@@ -414,8 +405,8 @@ where
         //   available first), the started connection future is spawned into the runtime to
         //   complete, and then be inserted into the pool as an idle connection.
         let checkout = self.pool.checkout(descriptor.id());
-        let connect = self.connect_to(descriptor);
-        let is_ver_h2 = self.config.ver == Ver::Http2;
+        let connect = self.connect_to(descriptor, ver);
+        let is_ver_h2 = ver == Ver::Http2;
 
         // The order of the `select` is depended on below...
 
@@ -485,6 +476,7 @@ where
     fn connect_to(
         &self,
         descriptor: ConnectionDescriptor,
+        ver: Ver,
     ) -> impl Lazy<Output = Result<pool::Pooled<PoolClient<B>, ConnectionId>, Error>>
     + Send
     + Unpin
@@ -494,10 +486,6 @@ where
 
         let h1_builder = self.h1_builder.clone();
         let h2_builder = self.h2_builder.clone();
-        let ver = match descriptor.version() {
-            Some(Version::HTTP_2) => Ver::Http2,
-            _ => self.config.ver,
-        };
         let is_ver_h2 = ver == Ver::Http2;
         let connector = self.connector.clone();
         lazy(move || {
@@ -513,6 +501,16 @@ where
                     return Either::Right(futures_util::future::err(e!(Canceled)));
                 }
             };
+
+            let mut h1_builder = (*h1_builder).clone();
+            let mut h2_builder = (*h2_builder).clone();
+            if let Some(options) = descriptor.options().http1_options.clone() {
+                h1_builder = h1_builder.options(options);
+            }
+            if let Some(options) = descriptor.options().http2_options.clone() {
+                h2_builder = h2_builder.options(options);
+            }
+
             Either::Left(
                 Oneshot::new(connector, descriptor)
                     .map_err(|src| Error::new(ErrorKind::Connect, src))
@@ -691,8 +689,8 @@ impl<C: Clone, B> Clone for HttpClient<C, B> {
         HttpClient {
             config: self.config,
             exec: self.exec.clone(),
-            h1_builder: self.h1_builder.clone(),
-            h2_builder: self.h2_builder.clone(),
+            h1_builder: Arc::clone(&self.h1_builder),
+            h2_builder: Arc::clone(&self.h2_builder),
             connector: self.connector.clone(),
             pool: self.pool.clone(),
             #[cfg(feature = "cookies")]
@@ -958,8 +956,8 @@ impl Builder {
             config: self.config,
             exec: exec.clone(),
             connector,
-            h1_builder: self.h1_builder,
-            h2_builder: self.h2_builder,
+            h1_builder: Arc::new(self.h1_builder),
+            h2_builder: Arc::new(self.h2_builder),
             pool: pool::Pool::new(self.pool_config, exec, timer),
             #[cfg(feature = "cookies")]
             cookie_store: RequestConfig::new(self.cookie_store),
@@ -967,7 +965,7 @@ impl Builder {
     }
 }
 
-// ==== impl Error ====
+// ===== impl Error =====
 
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -1086,6 +1084,15 @@ fn authority_form(uri: &mut Uri) {
             unreachable!("authority_form with relative uri");
         }
     };
+}
+
+#[inline]
+fn connection_version(client: Ver, request: Option<Version>) -> Ver {
+    match request {
+        Some(Version::HTTP_2) => Ver::Http2,
+        Some(_) => Ver::Auto,
+        None => client,
+    }
 }
 
 fn normalize_uri<B>(req: &mut Request<B>, is_http_connect: bool) -> Result<Uri, Error> {

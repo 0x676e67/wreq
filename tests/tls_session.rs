@@ -16,7 +16,7 @@ use hyper_util::rt::TokioIo;
 use tokio::net::TcpListener;
 use tokio_btls::SslStream;
 use wreq::{
-    Client, Emulation, Group,
+    Client, Emulation,
     tls::{
         TlsOptions, TlsVersion,
         session::{Key, LruTlsSessionCache, TlsSession, TlsSessionCache},
@@ -122,9 +122,7 @@ async fn tls13_tickets_resume_with_fresh_contexts_and_client_scope() {
         .tls_session_cache(Arc::new(PanickingSessionCache))
         .build()
         .unwrap();
-    let emulation = Emulation::builder()
-        .tls_options(tls)
-        .build(Group::new("tls13-session-resumption"));
+    let emulation = Emulation::builder().tls_options(tls).build();
     let url = format!("https://{address}/");
 
     for client in [

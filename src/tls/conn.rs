@@ -155,7 +155,7 @@ impl TlsConnector {
         }
 
         // Set ALPN protocols
-        if let Some(version) = descriptor.version() {
+        if let Some(version) = descriptor.options().version {
             match version {
                 Version::HTTP_11 | Version::HTTP_10 | Version::HTTP_09 => {
                     cfg.set_alpn_protos(&AlpnProtocol::HTTP1.encode())?;
@@ -237,7 +237,7 @@ impl TlsConnector {
     }
 }
 
-// ====== impl TlsConnectorBuilder =====
+// ===== impl TlsConnectorBuilder =====
 
 impl TlsConnectorBuilder {
     /// Sets the alpn protocol to be used.

@@ -237,6 +237,38 @@ impl ConnectorBuilder {
 // ===== impl TransportConnector =====
 
 impl TransportConnector {
+    /// Clones the client connector and applies options for this TCP attempt.
+    /// HTTPS temporarily disables Nagle while the TLS handshake is running.
+    fn http_connector(&self, is_https: bool, descriptor: &ConnectionDescriptor) -> HttpConnector {
+        let mut http = self.http.clone();
+
+        // https://www.openssl.org/docs/man1.1.1/man3/SSL_connect.html#NOTES
+        if is_https && !self.config.nodelay {
+            http.set_nodelay(true);
+        }
+
+        if let Some(socket_options) = descriptor.options().socket_bind_options.as_ref() {
+            http.set_local_addresses(socket_options.ipv4_address, socket_options.ipv6_address);
+            #[cfg(any(
+                target_os = "android",
+                target_os = "fuchsia",
+                target_os = "illumos",
+                target_os = "ios",
+                target_os = "linux",
+                target_os = "macos",
+                target_os = "solaris",
+                target_os = "tvos",
+                target_os = "visionos",
+                target_os = "watchos",
+            ))]
+            if let Some(interface) = &socket_options.interface {
+                http.set_interface(interface.clone());
+            }
+        }
+
+        http
+    }
+
     fn tls_connector(
         &self,
         is_https: bool,
@@ -246,7 +278,7 @@ impl TransportConnector {
             return Ok(self.tls.clone());
         }
 
-        let Some(options) = descriptor.tls_options() else {
+        let Some(options) = descriptor.options().tls_options.as_ref() else {
             return Ok(self.tls.clone());
         };
 
@@ -260,35 +292,7 @@ impl TransportConnector {
         is_https: bool,
         descriptor: &ConnectionDescriptor,
     ) -> Result<HttpsConnector<HttpConnector>, BoxError> {
-        let mut http = self.http.clone();
-
-        // Disable Nagle's algorithm for TLS handshake
-        //
-        // https://www.openssl.org/docs/man1.1.1/man3/SSL_connect.html#NOTES
-        if is_https && !self.config.nodelay {
-            http.set_nodelay(true);
-        }
-
-        // Apply TCP options if provided in metadata
-        if let Some(socket_opts) = descriptor.socket_bind_options() {
-            http.set_local_addresses(socket_opts.ipv4_address, socket_opts.ipv6_address);
-            #[cfg(any(
-                target_os = "android",
-                target_os = "fuchsia",
-                target_os = "illumos",
-                target_os = "ios",
-                target_os = "linux",
-                target_os = "macos",
-                target_os = "solaris",
-                target_os = "tvos",
-                target_os = "visionos",
-                target_os = "watchos",
-            ))]
-            if let Some(interface) = &socket_opts.interface {
-                http.set_interface(interface.clone());
-            }
-        }
-
+        let http = self.http_connector(is_https, descriptor);
         let tls = self.tls_connector(is_https, descriptor)?;
 
         Ok(HttpsConnector::new(http, tls))
@@ -394,7 +398,7 @@ impl TransportConnector {
                             // Build a SOCKS connector.
                             let mut socks = SocksConnector::new(
                                 proxy_uri,
-                                self.http.clone(),
+                                self.http_connector(is_https, &descriptor),
                                 self.resolver.clone(),
                             );
                             socks.set_auth(proxy.raw_auth());
@@ -462,7 +466,7 @@ impl TransportConnector {
                     return self.tunnel_conn_from_stream(io);
                 }
 
-                *descriptor.uri_mut() = proxy_uri;
+                descriptor.set_uri(proxy_uri);
                 self.connect_auto_proxy(descriptor, proxy)
                     .await
                     .map_err(ProxyConnect)
@@ -515,7 +519,9 @@ impl TransportConnector {
 
         // Determine if a proxy should be used for this request.
         let intercepted = req
-            .proxy()
+            .options()
+            .proxy
+            .as_ref()
             .and_then(|prox| prox.intercept(req.uri()))
             .or_else(|| {
                 self.config
@@ -546,5 +552,57 @@ impl Service<ConnectionDescriptor> for TransportConnector {
     #[inline]
     fn call(&mut self, descriptor: ConnectionDescriptor) -> Self::Future {
         Box::pin(self.clone().connect_auto(descriptor))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::net::{Ipv4Addr, Ipv6Addr};
+
+    use http::Uri;
+
+    use super::*;
+    use crate::{
+        conn::{descriptor::ConnectionOptions, net::SocketBindOptions},
+        dns::GaiResolver,
+    };
+
+    #[test]
+    fn request_socket_options_configure_each_tcp_attempt() {
+        let resolver = DynResolver::new(Arc::new(GaiResolver::new()));
+        let builder = ConnectorBuilder::new(Vec::new(), resolver).tcp_nodelay(false);
+        let tls_session_cache = Arc::new(SessionCache::new(None));
+        let tls_options = TlsOptions::default();
+        let tls = builder
+            .tls_builder
+            .build(Cow::Borrowed(&tls_options), Arc::clone(&tls_session_cache))
+            .unwrap();
+        let connector = TransportConnector {
+            config: builder.config,
+            #[cfg(feature = "socks")]
+            resolver: builder.resolver,
+            tls,
+            http: builder.http,
+            tls_builder: Arc::new(builder.tls_builder),
+            tls_session_cache,
+        };
+        let mut socket_bind_options = SocketBindOptions::default();
+        socket_bind_options.set_local_addresses(Ipv4Addr::LOCALHOST, Ipv6Addr::LOCALHOST);
+        let descriptor = ConnectionDescriptor::new(
+            Uri::from_static("https://example.test"),
+            ConnectionOptions {
+                socket_bind_options: Some(socket_bind_options.clone()),
+                ..Default::default()
+            },
+        );
+
+        let http = connector.http_connector(true, &descriptor);
+
+        assert_eq!(http.socket_bind_options(), &socket_bind_options);
+        assert!(http.nodelay());
+        assert_eq!(
+            connector.http.socket_bind_options(),
+            &SocketBindOptions::default()
+        );
     }
 }
