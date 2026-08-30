@@ -6,7 +6,7 @@ use cookie::{
 use http::{Uri, Version};
 
 use super::{
-    Cookie, CookieStore, Cookies, IntoCookie, ScopedCookie,
+    Cookie, CookieStore, Cookies, IntoCookie,
     store::{DEFAULT_PATH, Store, canonical_host, cookie_is_expired, domain_match, normalize_path},
 };
 use crate::{IntoUri, ext::UriExt, header::HeaderValue, sync::RwLock};
@@ -49,7 +49,7 @@ impl Jar {
         let host = canonical_host(uri.host()?)?;
         let now = OffsetDateTime::now_utc();
         let store = self.0.read();
-        let cookie = store
+        let entry = store
             .cookies
             .get(&host)?
             .get(uri.path())?
@@ -57,7 +57,7 @@ impl Jar {
             .filter(|entry| !cookie_is_expired(&entry.cookie, now))
             .min_by_key(|entry| entry.creation_index)?;
 
-        Some(Cookie::from(cookie.cookie.clone()))
+        Some(Cookie::from(entry.cookie.clone()))
     }
 
     /// Returns whether an unexpired cookie exists for an exact URI scope.
@@ -70,6 +70,7 @@ impl Jar {
         let Some(host) = uri.host().and_then(canonical_host) else {
             return false;
         };
+
         let now = OffsetDateTime::now_utc();
 
         self.0
@@ -100,49 +101,22 @@ impl Jar {
     /// }
     /// ```
     pub fn get_all(&self) -> impl Iterator<Item = Cookie<'static>> {
-        self.get_all_scoped().map(ScopedCookie::into_cookie)
-    }
-
-    /// Returns all unexpired cookies in the jar together with the scope they are stored under.
-    ///
-    /// [`get_all`](Self::get_all) leaves the `Domain` attribute of a host-only cookie absent, which
-    /// is what re-importing it requires, but that also drops the origin host the jar keeps as part
-    /// of its stored identity. Use this when a snapshot has to outlive the jar, such as persisting
-    /// a session to disk, so that each cookie can later be restored into the scope it came from.
-    /// Snapshots are returned in creation order.
-    ///
-    /// # Example
-    /// ```
-    /// use wreq::cookie::Jar;
-    /// let source = Jar::default();
-    /// source.add("foo=bar", "http://example.com");
-    ///
-    /// let target = Jar::default();
-    /// for stored in source.get_all_scoped() {
-    ///     let uri = format!("http://{}/", stored.domain());
-    ///     target.add(stored.into_cookie(), uri);
-    /// }
-    /// ```
-    pub fn get_all_scoped(&self) -> impl Iterator<Item = ScopedCookie> {
         let now = OffsetDateTime::now_utc();
         let mut cookies = self
             .0
             .read()
             .cookies
             .iter()
-            .flat_map(|(domain, path_map)| {
+            .flat_map(|(host, path_map)| {
                 path_map.values().flat_map(move |cookie_map| {
                     cookie_map.values().filter_map(move |entry| {
                         if cookie_is_expired(&entry.cookie, now) {
                             return None;
                         }
 
-                        let cookie = entry.cookie.clone();
-                        let host_only = cookie.domain().is_none();
-                        Some((
-                            entry.creation_index,
-                            ScopedCookie::new(Cookie::from(cookie), domain.to_string(), host_only),
-                        ))
+                        let mut cookie = Cookie::from(entry.cookie.clone());
+                        cookie.host = Some(host.clone());
+                        Some((entry.creation_index, cookie))
                     })
                 })
             })
@@ -463,9 +437,14 @@ impl CookieStore for Jar {
 
 #[cfg(test)]
 mod tests {
-    use std::{thread, time::Duration as StdDuration};
+    use std::{
+        net::{Ipv4Addr, Ipv6Addr},
+        thread,
+        time::Duration as StdDuration,
+    };
 
     use http::{Uri, Version};
+    use url::Host;
 
     use super::{CookieStore, Cookies, Jar};
 
@@ -663,19 +642,19 @@ mod tests {
         source.add("session=abc", "http://example.com/foo/bar");
         source.add("pref=dark; Domain=example.com", "http://www.example.com/");
 
-        let scoped = source.get_all_scoped().collect::<Vec<_>>();
+        let scoped = source.get_all().collect::<Vec<_>>();
         assert_eq!(scoped.len(), 2);
 
         let session = &scoped[0];
-        assert!(session.host_only());
-        assert_eq!(session.domain(), "example.com");
-        assert_eq!(session.cookie().domain(), None);
-        assert_eq!(session.cookie().path(), Some("/foo"));
+        assert!(session.domain().is_none());
+        assert_eq!(session.host(), Some(&Host::Domain("example.com".into())));
+        assert_eq!(session.domain(), None);
+        assert_eq!(session.path(), Some("/foo"));
 
         let pref = &scoped[1];
-        assert!(!pref.host_only());
-        assert_eq!(pref.domain(), "example.com");
-        assert_eq!(pref.cookie().domain(), Some("example.com"));
+        assert!(!pref.domain().is_none());
+        assert_eq!(pref.host(), Some(&Host::Domain("example.com".into())));
+        assert_eq!(pref.domain(), Some("example.com"));
     }
 
     #[test]
@@ -684,15 +663,15 @@ mod tests {
         jar.add("v6=1", "http://[::1]:8080/");
         jar.add("v4=1", "http://127.0.0.1:8080/");
 
-        let scoped = jar.get_all_scoped().collect::<Vec<_>>();
-        assert_eq!(scoped[0].domain(), "[::1]");
-        assert_eq!(scoped[1].domain(), "127.0.0.1");
+        let scoped = jar.get_all().collect::<Vec<_>>();
+        assert_eq!(scoped[0].host(), Some(&Host::Ipv6(Ipv6Addr::LOCALHOST)));
+        assert_eq!(scoped[1].host(), Some(&Host::Ipv4(Ipv4Addr::LOCALHOST)));
 
         // The reported form can be put straight back into a URI authority.
         let target = Jar::default();
         for stored in scoped {
-            let uri = format!("http://{}/", stored.domain());
-            target.add(stored.into_cookie(), uri);
+            let uri = format!("http://{}/", stored.host().unwrap());
+            target.add(stored, uri);
         }
         assert_eq!(target.get_all().count(), 2);
         assert!(target.contains("v6", "http://[::1]:9999/"));
@@ -708,9 +687,9 @@ mod tests {
 
         // The scope is the only thing the caller needs to put a snapshot back.
         let target = Jar::default();
-        for stored in source.get_all_scoped() {
-            let uri = format!("http://{}/", stored.domain());
-            target.add(stored.into_cookie(), uri);
+        for stored in source.get_all() {
+            let uri = format!("http://{}/", stored.host().unwrap());
+            target.add(stored, uri);
         }
 
         for uri in [
