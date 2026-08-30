@@ -130,6 +130,56 @@ impl<'c> From<Cookie<'c>> for RawCookie<'c> {
     }
 }
 
+/// A cookie stored in a [`Jar`], together with the domain and host-only scope it is kept under.
+///
+/// Returned by [`Jar::get_all_scoped`].
+#[derive(Debug, Clone)]
+pub struct ScopedCookie {
+    cookie: Cookie<'static>,
+    domain: String,
+    host_only: bool,
+}
+
+impl ScopedCookie {
+    #[inline]
+    pub(super) fn new(cookie: Cookie<'static>, domain: String, host_only: bool) -> ScopedCookie {
+        ScopedCookie {
+            cookie,
+            domain,
+            host_only,
+        }
+    }
+
+    /// Returns the cookie of `self`.
+    #[inline]
+    pub fn cookie(&self) -> &Cookie<'static> {
+        &self.cookie
+    }
+
+    /// Returns the domain `self` is stored under.
+    ///
+    /// For a host-only cookie this is the request host it was received from, which its own
+    /// `Domain` attribute does not carry. Otherwise it is the canonicalized `Domain` attribute.
+    /// The domain is returned in URI authority form, so an IPv6 host keeps its brackets.
+    #[inline]
+    pub fn domain(&self) -> &str {
+        &self.domain
+    }
+
+    /// Returns whether `self` is stored host-only, meaning it was received without a `Domain`
+    /// attribute and applies to its origin host alone.
+    #[inline]
+    pub fn host_only(&self) -> bool {
+        self.host_only
+    }
+
+    /// Converts `self` into the stored cookie.
+    #[inline]
+    pub fn into_cookie(self) -> Cookie<'static> {
+        self.cookie
+    }
+}
+
 /// Serialized `Cookie` field values selected for an outgoing request.
 #[derive(Debug, Clone)]
 #[non_exhaustive]

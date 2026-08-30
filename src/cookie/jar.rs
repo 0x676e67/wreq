@@ -6,7 +6,7 @@ use cookie::{
 use http::{Uri, Version};
 
 use super::{
-    Cookie, CookieStore, Cookies, IntoCookie,
+    Cookie, CookieStore, Cookies, IntoCookie, ScopedCookie,
     store::{DEFAULT_PATH, Store, canonical_host, cookie_is_expired, domain_match, normalize_path},
 };
 use crate::{IntoUri, ext::UriExt, header::HeaderValue, sync::RwLock};
@@ -100,20 +100,49 @@ impl Jar {
     /// }
     /// ```
     pub fn get_all(&self) -> impl Iterator<Item = Cookie<'static>> {
+        self.get_all_scoped().map(ScopedCookie::into_cookie)
+    }
+
+    /// Returns all unexpired cookies in the jar together with the scope they are stored under.
+    ///
+    /// [`get_all`](Self::get_all) leaves the `Domain` attribute of a host-only cookie absent, which
+    /// is what re-importing it requires, but that also drops the origin host the jar keeps as part
+    /// of its stored identity. Use this when a snapshot has to outlive the jar, such as persisting
+    /// a session to disk, so that each cookie can later be restored into the scope it came from.
+    /// Snapshots are returned in creation order.
+    ///
+    /// # Example
+    /// ```
+    /// use wreq::cookie::Jar;
+    /// let source = Jar::default();
+    /// source.add("foo=bar", "http://example.com");
+    ///
+    /// let target = Jar::default();
+    /// for stored in source.get_all_scoped() {
+    ///     let uri = format!("http://{}/", stored.domain());
+    ///     target.add(stored.into_cookie(), uri);
+    /// }
+    /// ```
+    pub fn get_all_scoped(&self) -> impl Iterator<Item = ScopedCookie> {
         let now = OffsetDateTime::now_utc();
         let mut cookies = self
             .0
             .read()
             .cookies
-            .values()
-            .flat_map(|path_map| {
-                path_map.values().flat_map(|cookie_map| {
-                    cookie_map.values().filter_map(|entry| {
+            .iter()
+            .flat_map(|(domain, path_map)| {
+                path_map.values().flat_map(move |cookie_map| {
+                    cookie_map.values().filter_map(move |entry| {
                         if cookie_is_expired(&entry.cookie, now) {
                             return None;
                         }
 
-                        Some((entry.creation_index, Cookie::from(entry.cookie.clone())))
+                        let cookie = entry.cookie.clone();
+                        let host_only = cookie.domain().is_none();
+                        Some((
+                            entry.creation_index,
+                            ScopedCookie::new(Cookie::from(cookie), domain.to_string(), host_only),
+                        ))
                     })
                 })
             })
@@ -626,6 +655,77 @@ mod tests {
             target.cookies(&subdomain, Version::HTTP_11),
             Cookies::Empty
         ));
+    }
+
+    #[test]
+    fn jar_get_all_scoped_reports_the_host_only_origin() {
+        let source = Jar::default();
+        source.add("session=abc", "http://example.com/foo/bar");
+        source.add("pref=dark; Domain=example.com", "http://www.example.com/");
+
+        let scoped = source.get_all_scoped().collect::<Vec<_>>();
+        assert_eq!(scoped.len(), 2);
+
+        let session = &scoped[0];
+        assert!(session.host_only());
+        assert_eq!(session.domain(), "example.com");
+        assert_eq!(session.cookie().domain(), None);
+        assert_eq!(session.cookie().path(), Some("/foo"));
+
+        let pref = &scoped[1];
+        assert!(!pref.host_only());
+        assert_eq!(pref.domain(), "example.com");
+        assert_eq!(pref.cookie().domain(), Some("example.com"));
+    }
+
+    #[test]
+    fn jar_get_all_scoped_reports_ip_hosts_in_uri_form() {
+        let jar = Jar::default();
+        jar.add("v6=1", "http://[::1]:8080/");
+        jar.add("v4=1", "http://127.0.0.1:8080/");
+
+        let scoped = jar.get_all_scoped().collect::<Vec<_>>();
+        assert_eq!(scoped[0].domain(), "[::1]");
+        assert_eq!(scoped[1].domain(), "127.0.0.1");
+
+        // The reported form can be put straight back into a URI authority.
+        let target = Jar::default();
+        for stored in scoped {
+            let uri = format!("http://{}/", stored.domain());
+            target.add(stored.into_cookie(), uri);
+        }
+        assert_eq!(target.get_all().count(), 2);
+        assert!(target.contains("v6", "http://[::1]:9999/"));
+        assert!(target.contains("v4", "http://127.0.0.1:9999/"));
+    }
+
+    #[test]
+    fn jar_get_all_scoped_restores_a_snapshot_without_a_known_origin() {
+        let source = Jar::default();
+        source.add("session=abc", "http://example.com/foo/bar");
+        source.add("other=xyz", "http://other.example/");
+        source.add("pref=dark; Domain=example.com", "http://www.example.com/");
+
+        // The scope is the only thing the caller needs to put a snapshot back.
+        let target = Jar::default();
+        for stored in source.get_all_scoped() {
+            let uri = format!("http://{}/", stored.domain());
+            target.add(stored.into_cookie(), uri);
+        }
+
+        for uri in [
+            "http://example.com/foo/bar",
+            "http://other.example/",
+            "http://www.example.com/",
+            "http://api.example.com/",
+        ] {
+            let uri = uri.parse::<Uri>().unwrap();
+            assert_eq!(
+                format!("{:?}", target.cookies(&uri, Version::HTTP_11)),
+                format!("{:?}", source.cookies(&uri, Version::HTTP_11)),
+                "restored jar should select the same cookies for {uri}"
+            );
+        }
     }
 
     #[test]
