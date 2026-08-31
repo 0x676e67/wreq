@@ -57,7 +57,7 @@ impl Jar {
             .filter(|entry| !cookie_is_expired(&entry.cookie, now))
             .min_by_key(|entry| entry.creation_index)?;
 
-        Some(Cookie::from(entry.cookie.clone()))
+        Some(Cookie::from(entry.cookie.clone()).with_storage_host(host))
     }
 
     /// Returns whether an unexpired cookie exists for an exact URI scope.
@@ -114,8 +114,8 @@ impl Jar {
                             return None;
                         }
 
-                        let mut cookie = Cookie::from(entry.cookie.clone());
-                        cookie.host = Some(host.clone());
+                        let cookie =
+                            Cookie::from(entry.cookie.clone()).with_storage_host(host.clone());
                         Some((entry.creation_index, cookie))
                     })
                 })
@@ -190,7 +190,9 @@ impl Jar {
         let store = self.0.read();
         store
             .matching_cookies(&uri, &host, now)
-            .map(|(_, _, entry)| Cookie::from(entry.cookie.clone()))
+            .map(|(host, _, entry)| {
+                Cookie::from(entry.cookie.clone()).with_storage_host(host.clone())
+            })
             .collect::<Vec<_>>()
             .into_iter()
     }
@@ -647,14 +649,23 @@ mod tests {
 
         let session = &scoped[0];
         assert!(session.domain().is_none());
-        assert_eq!(session.host(), Some(&Host::Domain("example.com".into())));
+        assert_eq!(session.host(), Some(Host::Domain("example.com")));
         assert_eq!(session.domain(), None);
         assert_eq!(session.path(), Some("/foo"));
 
         let pref = &scoped[1];
         assert!(!pref.domain().is_none());
-        assert_eq!(pref.host(), Some(&Host::Domain("example.com".into())));
+        assert_eq!(pref.host(), Some(Host::Domain("example.com")));
         assert_eq!(pref.domain(), Some("example.com"));
+
+        let exact = source.get("session", "http://example.com/foo").unwrap();
+        assert_eq!(exact.host(), Some(Host::Domain("example.com")));
+
+        let matched = source
+            .matches("http://example.com/foo/bar")
+            .find(|cookie| cookie.name() == "session")
+            .unwrap();
+        assert_eq!(matched.host(), Some(Host::Domain("example.com")));
     }
 
     #[test]
@@ -664,8 +675,8 @@ mod tests {
         jar.add("v4=1", "http://127.0.0.1:8080/");
 
         let scoped = jar.get_all().collect::<Vec<_>>();
-        assert_eq!(scoped[0].host(), Some(&Host::Ipv6(Ipv6Addr::LOCALHOST)));
-        assert_eq!(scoped[1].host(), Some(&Host::Ipv4(Ipv4Addr::LOCALHOST)));
+        assert_eq!(scoped[0].host(), Some(Host::Ipv6(Ipv6Addr::LOCALHOST)));
+        assert_eq!(scoped[1].host(), Some(Host::Ipv4(Ipv4Addr::LOCALHOST)));
 
         // The reported form can be put straight back into a URI authority.
         let target = Jar::default();

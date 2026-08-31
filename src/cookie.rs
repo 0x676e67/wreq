@@ -38,6 +38,12 @@ impl<'a> Cookie<'a> {
             })
     }
 
+    #[inline]
+    fn with_storage_host(mut self, host: Host<Box<str>>) -> Self {
+        self.host = Some(host);
+        self
+    }
+
     /// Returns the name of `self`.
     #[inline]
     pub fn name(&self) -> &str {
@@ -98,8 +104,12 @@ impl<'a> Cookie<'a> {
     /// `Domain` attribute does not carry. Otherwise it is the canonicalized `Domain` attribute.
     /// The domain is returned in URI authority form, so an IPv6 host keeps its brackets.
     #[inline]
-    pub fn host(&self) -> Option<&Host<Box<str>>> {
-        self.host.as_ref()
+    pub fn host(&self) -> Option<Host<&str>> {
+        self.host.as_ref().map(|host| match host {
+            Host::Domain(domain) => Host::Domain(domain.as_ref()),
+            Host::Ipv4(address) => Host::Ipv4(*address),
+            Host::Ipv6(address) => Host::Ipv6(*address),
+        })
     }
 
     /// Returns the specified max-age of the cookie if it is non-negative and representable.
