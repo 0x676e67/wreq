@@ -179,6 +179,16 @@ pub struct TlsOptions {
     /// **Default:** `None` (library default applied)
     pub max_tls_version: Option<TlsVersion>,
 
+    /// Enables PSK with (EC)DHE key establishment (`psk_dhe_ke`).
+    ///
+    /// **Default:** `true`
+    pub psk_dhe_ke: bool,
+
+    /// Whether to skip session tickets when using PSK.
+    ///
+    /// **Default:** `false`
+    pub psk_skip_session_ticket: bool,
+
     /// Enables Pre-Shared Key (PSK) cipher suites ([RFC 4279](https://datatracker.ietf.org/doc/html/rfc4279)).
     ///
     /// Authentication relies on out-of-band pre-shared keys instead of certificates.
@@ -205,6 +215,14 @@ pub struct TlsOptions {
     /// **Default:** `None` (implementation default)
     pub grease_enabled: Option<bool>,
 
+    /// Sets whether the context should include a GREASE value in [`Self::sigalgs_list`]
+    /// extensions when sending ClientHello.
+    ///
+    /// See [RFC 8701].
+    ///
+    /// [RFC 8701]: https://www.rfc-editor.org/rfc/rfc8701.html
+    pub grease_sigalgs_enabled: Option<bool>,
+
     /// Enables OCSP stapling for the connection.
     ///
     /// **Default:** `false`
@@ -220,20 +238,10 @@ pub struct TlsOptions {
     /// **Default:** `None`
     pub record_size_limit: Option<u16>,
 
-    /// Whether to skip session tickets when using PSK.
-    ///
-    /// **Default:** `false`
-    pub psk_skip_session_ticket: bool,
-
     /// Whether to set specific key shares for TLS 1.3 handshakes.
     ///
     /// **Default:** `None`
     pub key_shares: Option<Cow<'static, [KeyShare]>>,
-
-    /// Enables PSK with (EC)DHE key establishment (`psk_dhe_ke`).
-    ///
-    /// **Default:** `true`
-    pub psk_dhe_ke: bool,
 
     /// Enables TLS renegotiation by sending the `renegotiation_info` extension.
     ///
@@ -554,25 +562,26 @@ impl Default for TlsOptions {
             session_ticket: true,
             min_tls_version: None,
             max_tls_version: None,
-            pre_shared_key: false,
             enable_ech_grease: false,
             permute_extensions: None,
             grease_enabled: None,
+            grease_sigalgs_enabled: None,
             enable_ocsp_stapling: false,
             enable_signed_cert_timestamps: false,
             record_size_limit: None,
-            psk_skip_session_ticket: false,
             key_shares: None,
             psk_dhe_ke: true,
+            pre_shared_key: false,
+            psk_skip_session_ticket: false,
             renegotiation: true,
             delegated_credentials: None,
             curves_list: None,
-            cipher_list: None,
             sigalgs_list: None,
+            cipher_list: None,
+            preserve_tls13_cipher_list: None,
             certificate_compressors: None,
             extension_permutation: None,
             aes_hw_override: None,
-            preserve_tls13_cipher_list: None,
             random_aes_hw_override: false,
         }
     }
