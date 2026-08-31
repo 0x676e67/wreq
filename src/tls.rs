@@ -215,12 +215,10 @@ pub struct TlsOptions {
     /// **Default:** `None` (implementation default)
     pub grease_enabled: Option<bool>,
 
-    /// Sets whether the context should include a GREASE value in [`Self::sigalgs_list`]
-    /// extensions when sending ClientHello.
+    /// Controls whether the ClientHello `signature_algorithms` extension includes a
+    /// GREASE value ([RFC 8701](https://www.rfc-editor.org/rfc/rfc8701.html)).
     ///
-    /// See [RFC 8701].
-    ///
-    /// [RFC 8701]: https://www.rfc-editor.org/rfc/rfc8701.html
+    /// **Default:** `None` (implementation default)
     pub grease_sigalgs_enabled: Option<bool>,
 
     /// Enables OCSP stapling for the connection.
@@ -380,7 +378,8 @@ impl TlsOptionsBuilder {
         self
     }
 
-    /// Sets the GREASE signature algorithms enabled flag.
+    /// Sets whether the ClientHello `signature_algorithms` extension includes a
+    /// GREASE value.
     #[inline]
     pub fn grease_sigalgs_enabled<T>(mut self, enabled: T) -> Self
     where
