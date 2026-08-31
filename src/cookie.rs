@@ -39,7 +39,7 @@ impl<'a> Cookie<'a> {
     }
 
     #[inline]
-    fn with_storage_host(mut self, host: Host<Box<str>>) -> Self {
+    fn with_host(mut self, host: Host<Box<str>>) -> Self {
         self.host = Some(host);
         self
     }

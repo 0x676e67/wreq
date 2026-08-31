@@ -57,7 +57,7 @@ impl Jar {
             .filter(|entry| !cookie_is_expired(&entry.cookie, now))
             .min_by_key(|entry| entry.creation_index)?;
 
-        Some(Cookie::from(entry.cookie.clone()).with_storage_host(host))
+        Some(Cookie::from(entry.cookie.clone()).with_host(host))
     }
 
     /// Returns whether an unexpired cookie exists for an exact URI scope.
@@ -120,8 +120,7 @@ impl Jar {
                             return None;
                         }
 
-                        let cookie =
-                            Cookie::from(entry.cookie.clone()).with_storage_host(host.clone());
+                        let cookie = Cookie::from(entry.cookie.clone()).with_host(host.clone());
                         Some((entry.creation_index, cookie))
                     })
                 })
@@ -196,9 +195,7 @@ impl Jar {
         let store = self.0.read();
         store
             .matching_cookies(&uri, &host, now)
-            .map(|(host, _, entry)| {
-                Cookie::from(entry.cookie.clone()).with_storage_host(host.clone())
-            })
+            .map(|(host, _, entry)| Cookie::from(entry.cookie.clone()).with_host(host.clone()))
             .collect::<Vec<_>>()
             .into_iter()
     }
