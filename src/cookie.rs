@@ -19,7 +19,7 @@ use url::Host;
 pub use self::jar::Jar;
 use crate::{error::Error, header::HeaderValue};
 
-/// A parsed HTTP cookie.
+/// A parsed HTTP cookie with optional [`Jar`] storage metadata.
 #[derive(Debug, Clone)]
 pub struct Cookie<'a> {
     inner: RawCookie<'a>,
@@ -98,11 +98,9 @@ impl<'a> Cookie<'a> {
         self.inner.domain()
     }
 
-    /// Returns the host `self` is stored under.
+    /// Returns the canonical host used to store this cookie.
     ///
-    /// For a host-only cookie this is the request host it was received from, which its own
-    /// `Domain` attribute does not carry. Otherwise it is the canonicalized `Domain` attribute.
-    /// The domain is returned in URI authority form, so an IPv6 host keeps its brackets.
+    /// Cookies returned by [`Jar`] query methods include this value.
     #[inline]
     pub fn host(&self) -> Option<Host<&str>> {
         self.host.as_ref().map(|host| match host {
