@@ -30,6 +30,10 @@ pub enum Codec {
 /// Provides methods for compressing and decompressing certificate data,
 /// as well as identifying the algorithm in use.
 ///
+/// The reported algorithm must remain stable for the object's lifetime, and
+/// both codecs must implement that algorithm. Implementations reporting the
+/// same algorithm are interchangeable for connection and session identity.
+///
 /// See [RFC 8879, §3](https://www.rfc-editor.org/rfc/rfc8879.html#name-compression-algorithms)
 /// for the list of IANA-assigned compression algorithm identifiers.
 pub trait CertificateCompressor: Debug + Sync + Send + 'static {

@@ -9,12 +9,16 @@ pub mod keylog;
 pub mod session;
 pub mod trust;
 
-use std::borrow::Cow;
+use std::{
+    borrow::Cow,
+    hash::{Hash, Hasher},
+};
 
 /// Re-exports of TLS-related types from `btls` for public use.
 pub use btls::ssl::{ExtensionType, KeyShare};
 use bytes::{BufMut, Bytes, BytesMut};
 use compress::CertificateCompressor;
+use educe::Educe;
 
 /// Http extension carrying extra TLS layer information.
 /// Made available to clients on responses when `tls_info` is set.
@@ -137,7 +141,8 @@ pub struct TlsOptionsBuilder {
 ///
 /// All fields are optional or have defaults. See each field for details.
 #[non_exhaustive]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Educe)]
+#[educe(PartialEq, Eq, Hash)]
 pub struct TlsOptions {
     /// Application-Layer Protocol Negotiation ([RFC 7301](https://datatracker.ietf.org/doc/html/rfc7301)).
     ///
@@ -179,9 +184,11 @@ pub struct TlsOptions {
     /// **Default:** `None` (library default applied)
     pub max_tls_version: Option<TlsVersion>,
 
-    /// Enables Pre-Shared Key (PSK) cipher suites ([RFC 4279](https://datatracker.ietf.org/doc/html/rfc4279)).
+    /// Enables ticket-based session resumption and the TLS 1.3 `pre_shared_key` extension.
     ///
-    /// Authentication relies on out-of-band pre-shared keys instead of certificates.
+    /// BoringSSL derives the PSK from a session established with this client. This does not
+    /// configure the out-of-band PSKs described by RFC 4279. See
+    /// [RFC 8446 section 4.2.11](https://datatracker.ietf.org/doc/html/rfc8446#section-4.2.11).
     ///
     /// **Default:** `false`
     pub pre_shared_key: bool,
@@ -273,6 +280,10 @@ pub struct TlsOptions {
     /// Supported certificate compression algorithms ([RFC 8879](https://datatracker.ietf.org/doc/html/rfc8879)).
     ///
     /// **Default:** `None`
+    #[educe(
+        PartialEq(method(certificate_compressors_eq)),
+        Hash(method(hash_certificate_compressors))
+    )]
     pub certificate_compressors: Option<Cow<'static, [&'static dyn CertificateCompressor]>>,
 
     /// Supported TLS extensions, used for extension ordering/permutation.
@@ -345,7 +356,7 @@ impl TlsOptionsBuilder {
         self
     }
 
-    /// Sets the pre-shared key flag.
+    /// Sets whether ticket-based session resumption is enabled.
     #[inline]
     pub fn pre_shared_key(mut self, enabled: bool) -> Self {
         self.config.pre_shared_key = enabled;
@@ -545,6 +556,36 @@ impl TlsOptions {
     }
 }
 
+#[inline]
+fn certificate_compressors_eq(
+    left: &Option<Cow<'static, [&'static dyn CertificateCompressor]>>,
+    right: &Option<Cow<'static, [&'static dyn CertificateCompressor]>>,
+) -> bool {
+    left.as_deref()
+        .into_iter()
+        .flatten()
+        .map(|compressor| compressor.algorithm())
+        .eq(right
+            .as_deref()
+            .into_iter()
+            .flatten()
+            .map(|compressor| compressor.algorithm()))
+}
+
+#[inline]
+fn hash_certificate_compressors<H: Hasher>(
+    compressors: &Option<Cow<'static, [&'static dyn CertificateCompressor]>>,
+    state: &mut H,
+) {
+    let compressors = compressors.as_deref();
+    compressors
+        .map_or(0, |compressors| compressors.len())
+        .hash(state);
+    for compressor in compressors.into_iter().flatten() {
+        compressor.algorithm().hash(state);
+    }
+}
+
 impl Default for TlsOptions {
     fn default() -> Self {
         TlsOptions {
@@ -580,7 +621,43 @@ impl Default for TlsOptions {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::hash_map::DefaultHasher;
+
     use super::*;
+    use crate::tls::compress::CertificateCompressionAlgorithm;
+
+    #[derive(Debug)]
+    struct AlgorithmOnlyCompressor(CertificateCompressionAlgorithm);
+
+    static BROTLI_A: AlgorithmOnlyCompressor =
+        AlgorithmOnlyCompressor(CertificateCompressionAlgorithm::BROTLI);
+    static BROTLI_B: AlgorithmOnlyCompressor =
+        AlgorithmOnlyCompressor(CertificateCompressionAlgorithm::BROTLI);
+    static ZLIB: AlgorithmOnlyCompressor =
+        AlgorithmOnlyCompressor(CertificateCompressionAlgorithm::ZLIB);
+    static ALGORITHMS_A: [&dyn CertificateCompressor; 2] = [&BROTLI_A, &ZLIB];
+    static ALGORITHMS_B: [&dyn CertificateCompressor; 2] = [&BROTLI_B, &ZLIB];
+    static REVERSED_ALGORITHMS: [&dyn CertificateCompressor; 2] = [&ZLIB, &BROTLI_A];
+
+    impl CertificateCompressor for AlgorithmOnlyCompressor {
+        fn compress(&self) -> compress::Codec {
+            unreachable!("identity test does not register the compressor")
+        }
+
+        fn decompress(&self) -> compress::Codec {
+            unreachable!("identity test does not register the compressor")
+        }
+
+        fn algorithm(&self) -> CertificateCompressionAlgorithm {
+            self.0
+        }
+    }
+
+    fn tls_options_hash(options: &TlsOptions) -> u64 {
+        let mut state = DefaultHasher::new();
+        options.hash(&mut state);
+        state.finish()
+    }
 
     #[test]
     fn alpn_protocol_encode() {
@@ -614,5 +691,27 @@ mod tests {
 
         let alpn = AlpnProtocol::HTTP3.encode();
         assert_eq!(alpn, b"\x02h3".as_ref());
+    }
+
+    #[test]
+    fn tls_options_identify_certificate_compressors_by_algorithm() {
+        let options = |compressors| {
+            TlsOptions::builder()
+                .certificate_compressors(compressors)
+                .build()
+        };
+        let first = options(&ALGORITHMS_A[..]);
+        let same_algorithms = options(&ALGORITHMS_B[..]);
+        let reversed = options(&REVERSED_ALGORITHMS[..]);
+        let empty = options(&[][..]);
+
+        assert_eq!(first, same_algorithms);
+        assert_eq!(tls_options_hash(&first), tls_options_hash(&same_algorithms));
+        assert_ne!(first, reversed);
+        assert_eq!(TlsOptions::default(), empty);
+        assert_eq!(
+            tls_options_hash(&TlsOptions::default()),
+            tls_options_hash(&empty)
+        );
     }
 }

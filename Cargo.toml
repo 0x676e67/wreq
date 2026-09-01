@@ -88,6 +88,7 @@ prefix-symbols = ["btls/prefix-symbols"]
 [dependencies]
 url = "2.5.8"
 bytes = "1.11.1"
+educe = { version = "0.7.6", default-features = false, features = ["PartialEq", "Eq", "Hash"] }
 http = "1.4.0"
 http2 = "0.5.17"
 httparse = "1.10.1"
@@ -353,3 +354,8 @@ path = "examples/unix_socket.rs"
 name = "rt"
 path = "examples/rt.rs"
 required-features = ["compio-rt"]
+
+[patch.crates-io]
+btls = { git = "https://github.com/0x676e67/btls", rev = "8b3fead2bce250e9253ed59eeed44abac316cfda" }
+btls-sys = { git = "https://github.com/0x676e67/btls", rev = "8b3fead2bce250e9253ed59eeed44abac316cfda" }
+tokio-btls = { git = "https://github.com/0x676e67/btls", rev = "8b3fead2bce250e9253ed59eeed44abac316cfda" }

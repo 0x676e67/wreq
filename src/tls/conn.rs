@@ -1,4 +1,4 @@
-//! SSL support via BoringSSL.
+//! TLS connector and handshake support via BoringSSL.
 
 #[macro_use]
 mod macros;
@@ -31,17 +31,20 @@ use crate::{
     tls::{
         AlpnProtocol, AlpsProtocol, KeyShare, TlsOptions, TlsVersion,
         keylog::KeyLog,
-        session::{Key, LruTlsSessionCache, TlsSession, TlsSessionCache},
+        session::{Key, SessionCache},
         trust::{CertStore, Identity},
     },
 };
+
+const SESSION_TIMEOUT: u32 = 60 * 60;
 
 fn key_index() -> Result<Index<Ssl, Key>, ErrorStack> {
     static IDX: LazyLock<Result<Index<Ssl, Key>, ErrorStack>> = LazyLock::new(Ssl::new_ex_index);
     IDX.clone()
 }
 
-/// Settings for [`TlsConnector`]
+/// Settings applied after creating each `SSL` and before its handshake.
+/// Values come from the current request and live with its connector.
 #[derive(Clone)]
 pub struct HandshakeSettings {
     no_ticket: bool,
@@ -73,14 +76,14 @@ pub struct TlsConnectorBuilder {
     cert_store: Option<CertStore>,
     cert_verification: bool,
     keylog: Option<KeyLog>,
-    session_cache: Arc<dyn TlsSessionCache>,
 }
 
-/// A layer which wraps services in an `SslConnector`.
+/// Creates BoringSSL connections from one context and its handshake settings.
+/// The optional session cache is attached only when resumption is enabled.
 #[derive(Clone)]
 pub struct TlsConnector {
-    ssl: SslConnector,
-    cache: Option<Arc<dyn TlsSessionCache>>,
+    connector: SslConnector,
+    session: Option<Arc<SessionCache>>,
     settings: HandshakeSettings,
 }
 
@@ -122,12 +125,11 @@ impl TlsConnector {
             cert_store: None,
             cert_verification: true,
             keylog: None,
-            session_cache: Arc::new(LruTlsSessionCache::new(8)),
         }
     }
 
     fn setup_ssl(&self, uri: Uri) -> Result<Ssl, BoxError> {
-        let cfg = self.ssl.configure()?;
+        let cfg = self.connector.configure()?;
         let host = uri.host().ok_or("URI missing host")?;
         let host = Self::normalize_host(host);
         let ssl = cfg.into_ssl(host)?;
@@ -135,7 +137,7 @@ impl TlsConnector {
     }
 
     fn setup_ssl2(&self, descriptor: ConnectionDescriptor) -> Result<Ssl, BoxError> {
-        let mut cfg = self.ssl.configure()?;
+        let mut cfg = self.connector.configure()?;
 
         // Use server name indication
         cfg.set_use_server_name_indication(self.settings.tls_sni);
@@ -197,14 +199,18 @@ impl TlsConnector {
         let host = uri.host().ok_or("URI missing host")?;
         let host = Self::normalize_host(host);
 
-        if let Some(ref cache) = self.cache {
-            let key = Key(descriptor.id());
+        if let Some(ref session) = self.session {
+            let key = Key(descriptor.id(), session.session_id_context()?);
 
             // If the session cache is enabled, we try to retrieve the session
             // associated with the key. If it exists, we set it in the SSL configuration.
-            if let Some(session) = cache.pop(&key) {
+            if let Some(session) = session.pop(&key) {
+                // SAFETY: The cache scope fixes the client identity, certificate store, and
+                // verification policy. SessionCache also validates the endpoint and complete
+                // request TLS options, every context uses the same session ID context, and this
+                // fresh ConnectConfiguration has not started its handshake.
                 #[allow(unsafe_code)]
-                unsafe { cfg.set_session(&session.0) }?;
+                unsafe { cfg.set_session(&session) }?;
 
                 if self.settings.no_ticket {
                     cfg.set_options(SslOptions::NO_TICKET);
@@ -306,29 +312,19 @@ impl TlsConnectorBuilder {
         self
     }
 
-    /// Sets a custom TLS session store.
-    #[inline]
-    pub fn session_store(mut self, store: Option<Arc<dyn TlsSessionCache>>) -> Self {
-        if let Some(store) = store {
-            self.session_cache = store;
-        }
-        self
-    }
-
-    /// Build the `TlsConnector` with the provided configuration.
-    pub fn build<'a, T>(&self, opts: T) -> crate::Result<TlsConnector>
+    /// Builds a connector with the session cache owned by the current client.
+    pub(crate) fn build<'a, T>(
+        &self,
+        opts: T,
+        session_cache: Arc<SessionCache>,
+    ) -> crate::Result<TlsConnector>
     where
         T: Into<Cow<'a, TlsOptions>>,
     {
         let opts = opts.into();
-
         // Replace the default configuration with the provided one
         let max_tls_version = opts.max_tls_version.or(self.max_version);
         let min_tls_version = opts.min_tls_version.or(self.min_version);
-        let alpn_protocols = self
-            .alpn_protocol
-            .map(|proto| Cow::Owned(vec![proto]))
-            .or_else(|| opts.alpn_protocols.clone());
 
         // Create the SslConnector with the provided options
         let mut connector = SslConnector::bare_builder(SslMethod::tls())
@@ -434,40 +430,54 @@ impl TlsConnectorBuilder {
             });
         }
 
-        // Create the handshake settings with the default session cache capacity.
-        let settings = HandshakeSettings {
-            tls_sni: self.tls_sni,
-            verify_hostname: self.verify_hostname,
-            no_ticket: opts.psk_skip_session_ticket,
-            alpn_protocols,
-            alps_protocols: opts.alps_protocols.clone(),
-            alps_use_new_codepoint: opts.alps_use_new_codepoint,
-            enable_ech_grease: opts.enable_ech_grease,
-            key_shares: opts.key_shares.clone(),
-            random_aes_hw_override: opts.random_aes_hw_override,
-        };
-
         // If the session cache is disabled, we don't need to set up any callbacks.
-        let cache = opts.pre_shared_key.then(|| {
-            let session_cache = self.session_cache.clone();
-
-            connector.set_session_cache_mode(SslSessionCacheMode::CLIENT);
+        let session = if opts.pre_shared_key {
+            // BoringSSL only supports reverify-on-resume with a custom verifier. This context uses
+            // its built-in certificate verification, so enabling that flag would reject resumes.
+            let session_id_context = session_cache.session_id_context().map_err(Error::tls)?;
+            connector
+                .set_session_id_context(&session_id_context)
+                .map_err(Error::tls)?;
+            connector.set_session_cache_mode(
+                SslSessionCacheMode::CLIENT | SslSessionCacheMode::NO_INTERNAL,
+            );
+            // BoringSSL applies this timeout to TLS 1.2 and earlier sessions. TLS 1.3 instead uses
+            // BoringSSL's PSK and authentication limits, further capped by the server lifetime.
+            connector.set_session_timeout(SESSION_TIMEOUT);
+            let cache = Arc::downgrade(&session_cache);
             connector.set_new_session_callback({
-                let cache = session_cache.clone();
                 move |ssl, session| {
-                    if let Ok(Some(key)) = key_index().map(|idx| ssl.ex_data(idx)) {
-                        cache.put(key.clone(), TlsSession(session));
+                    if let Some(cache) = cache.upgrade()
+                        && let Ok(Some(key)) = key_index().map(|idx| ssl.ex_data(idx))
+                    {
+                        cache.insert(key.clone(), session);
                     }
                 }
             });
+            Some(session_cache)
+        } else {
+            None
+        };
 
-            session_cache
-        });
+        let alpn_protocols = self
+            .alpn_protocol
+            .map(|proto| Cow::Owned(vec![proto]))
+            .or_else(|| opts.alpn_protocols.clone());
 
         Ok(TlsConnector {
-            ssl: connector.build(),
-            cache,
-            settings,
+            connector: connector.build(),
+            session,
+            settings: HandshakeSettings {
+                tls_sni: self.tls_sni,
+                verify_hostname: self.verify_hostname,
+                no_ticket: opts.psk_skip_session_ticket,
+                alpn_protocols,
+                alps_protocols: opts.alps_protocols.clone(),
+                alps_use_new_codepoint: opts.alps_use_new_codepoint,
+                enable_ech_grease: opts.enable_ech_grease,
+                key_shares: opts.key_shares.clone(),
+                random_aes_hw_override: opts.random_aes_hw_override,
+            },
         })
     }
 }

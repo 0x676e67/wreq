@@ -508,6 +508,7 @@ impl ClientBuilder {
                 .timer(config.timer.clone())
                 .timeout(config.connect_timeout)
                 .tls_info(config.tls_info)
+                .tls_session_cache(config.tls_session_cache)
                 .tcp_nodelay(config.tcp_nodelay)
                 .verbose(config.connection_verbose)
                 .with_tls(|tls| {
@@ -524,7 +525,6 @@ impl ClientBuilder {
                     .tls_sni(config.tls_sni)
                     .verify_hostname(config.tls_verify_hostname)
                     .cert_verification(config.tls_cert_verification)
-                    .session_store(config.tls_session_cache)
                 })
                 .with_http(|http| {
                     http.enforce_http(false);
@@ -1501,11 +1501,13 @@ impl ClientBuilder {
 
     /// Sets the TLS session cache.
     ///
-    /// By default, an in-memory LRU cache is used. Use this method to provide
-    /// a custom [`TlsSessionCache`] implementation (e.g., file-based or distributed).
+    /// When ticket-based resumption is enabled, the built-in cache retains up
+    /// to eight connection identities with two tickets each. Use this method
+    /// to provide an application-owned [`TlsSessionCache`] implementation.
+    /// BoringSSL's session ID context keeps tickets scoped to this client.
     #[inline]
-    pub fn tls_session_cache<S: IntoTlsSessionCache>(mut self, store: S) -> ClientBuilder {
-        self.config.tls_session_cache = Some(store.into_shared());
+    pub fn tls_session_cache<S: IntoTlsSessionCache>(mut self, cache: S) -> ClientBuilder {
+        self.config.tls_session_cache = Some(cache.into_shared());
         self
     }
 
