@@ -179,6 +179,16 @@ pub struct TlsOptions {
     /// **Default:** `None` (library default applied)
     pub max_tls_version: Option<TlsVersion>,
 
+    /// Enables PSK with (EC)DHE key establishment (`psk_dhe_ke`).
+    ///
+    /// **Default:** `true`
+    pub psk_dhe_ke: bool,
+
+    /// Whether to skip session tickets when using PSK.
+    ///
+    /// **Default:** `false`
+    pub psk_skip_session_ticket: bool,
+
     /// Enables Pre-Shared Key (PSK) cipher suites ([RFC 4279](https://datatracker.ietf.org/doc/html/rfc4279)).
     ///
     /// Authentication relies on out-of-band pre-shared keys instead of certificates.
@@ -205,6 +215,12 @@ pub struct TlsOptions {
     /// **Default:** `None` (implementation default)
     pub grease_enabled: Option<bool>,
 
+    /// Controls whether the ClientHello `signature_algorithms` extension includes a
+    /// GREASE value ([RFC 8701](https://www.rfc-editor.org/rfc/rfc8701.html)).
+    ///
+    /// **Default:** `None` (implementation default)
+    pub grease_sigalgs_enabled: Option<bool>,
+
     /// Enables OCSP stapling for the connection.
     ///
     /// **Default:** `false`
@@ -220,20 +236,10 @@ pub struct TlsOptions {
     /// **Default:** `None`
     pub record_size_limit: Option<u16>,
 
-    /// Whether to skip session tickets when using PSK.
-    ///
-    /// **Default:** `false`
-    pub psk_skip_session_ticket: bool,
-
     /// Whether to set specific key shares for TLS 1.3 handshakes.
     ///
     /// **Default:** `None`
     pub key_shares: Option<Cow<'static, [KeyShare]>>,
-
-    /// Enables PSK with (EC)DHE key establishment (`psk_dhe_ke`).
-    ///
-    /// **Default:** `true`
-    pub psk_dhe_ke: bool,
 
     /// Enables TLS renegotiation by sending the `renegotiation_info` extension.
     ///
@@ -345,13 +351,6 @@ impl TlsOptionsBuilder {
         self
     }
 
-    /// Sets the pre-shared key flag.
-    #[inline]
-    pub fn pre_shared_key(mut self, enabled: bool) -> Self {
-        self.config.pre_shared_key = enabled;
-        self
-    }
-
     /// Sets the GREASE ECH extension flag.
     #[inline]
     pub fn enable_ech_grease(mut self, enabled: bool) -> Self {
@@ -379,6 +378,17 @@ impl TlsOptionsBuilder {
         self
     }
 
+    /// Sets whether the ClientHello `signature_algorithms` extension includes a
+    /// GREASE value.
+    #[inline]
+    pub fn grease_sigalgs_enabled<T>(mut self, enabled: T) -> Self
+    where
+        T: Into<Option<bool>>,
+    {
+        self.config.grease_sigalgs_enabled = enabled.into();
+        self
+    }
+
     /// Sets the OCSP stapling flag.
     #[inline]
     pub fn enable_ocsp_stapling(mut self, enabled: bool) -> Self {
@@ -400,17 +410,24 @@ impl TlsOptionsBuilder {
         self
     }
 
-    /// Sets the PSK skip session ticket flag.
-    #[inline]
-    pub fn psk_skip_session_ticket(mut self, skip: bool) -> Self {
-        self.config.psk_skip_session_ticket = skip;
-        self
-    }
-
     /// Sets the PSK DHE key establishment flag.
     #[inline]
     pub fn psk_dhe_ke(mut self, enabled: bool) -> Self {
         self.config.psk_dhe_ke = enabled;
+        self
+    }
+
+    /// Sets the pre-shared key flag.
+    #[inline]
+    pub fn pre_shared_key(mut self, enabled: bool) -> Self {
+        self.config.pre_shared_key = enabled;
+        self
+    }
+
+    /// Sets the PSK skip session ticket flag.
+    #[inline]
+    pub fn psk_skip_session_ticket(mut self, skip: bool) -> Self {
+        self.config.psk_skip_session_ticket = skip;
         self
     }
 
@@ -451,6 +468,16 @@ impl TlsOptionsBuilder {
         self
     }
 
+    /// Sets the supported signature algorithms.
+    #[inline]
+    pub fn sigalgs_list<T>(mut self, sigalgs: T) -> Self
+    where
+        T: Into<Cow<'static, str>>,
+    {
+        self.config.sigalgs_list = Some(sigalgs.into());
+        self
+    }
+
     /// Sets the cipher list.
     #[inline]
     pub fn cipher_list<T>(mut self, ciphers: T) -> Self
@@ -461,13 +488,24 @@ impl TlsOptionsBuilder {
         self
     }
 
-    /// Sets the supported signature algorithms.
+    /// Sets whether to preserve the TLS 1.3 cipher list as configured by [`Self::cipher_list`].
+    ///
+    /// By default, BoringSSL does not preserve the TLS 1.3 cipher list. When this option is
+    /// disabled (the default), BoringSSL uses its internal default TLS 1.3 cipher suites in its
+    /// default order, regardless of what is set via [`Self::cipher_list`].
+    ///
+    /// When enabled, this option ensures that the TLS 1.3 cipher suites explicitly set via
+    /// [`Self::cipher_list`] are retained in their original order, without being reordered or
+    /// modified by BoringSSL's internal logic. This is useful for maintaining specific cipher suite
+    /// priorities for TLS 1.3. Note that if [`Self::cipher_list`] does not include any TLS 1.3
+    /// cipher suites, BoringSSL will still fall back to its default TLS 1.3 cipher suites and
+    /// order.
     #[inline]
-    pub fn sigalgs_list<T>(mut self, sigalgs: T) -> Self
+    pub fn preserve_tls13_cipher_list<T>(mut self, enabled: T) -> Self
     where
-        T: Into<Cow<'static, str>>,
+        T: Into<Option<bool>>,
     {
-        self.config.sigalgs_list = Some(sigalgs.into());
+        self.config.preserve_tls13_cipher_list = enabled.into();
         self
     }
 
@@ -508,27 +546,6 @@ impl TlsOptionsBuilder {
         self
     }
 
-    /// Sets whether to preserve the TLS 1.3 cipher list as configured by [`Self::cipher_list`].
-    ///
-    /// By default, BoringSSL does not preserve the TLS 1.3 cipher list. When this option is
-    /// disabled (the default), BoringSSL uses its internal default TLS 1.3 cipher suites in its
-    /// default order, regardless of what is set via [`Self::cipher_list`].
-    ///
-    /// When enabled, this option ensures that the TLS 1.3 cipher suites explicitly set via
-    /// [`Self::cipher_list`] are retained in their original order, without being reordered or
-    /// modified by BoringSSL's internal logic. This is useful for maintaining specific cipher suite
-    /// priorities for TLS 1.3. Note that if [`Self::cipher_list`] does not include any TLS 1.3
-    /// cipher suites, BoringSSL will still fall back to its default TLS 1.3 cipher suites and
-    /// order.
-    #[inline]
-    pub fn preserve_tls13_cipher_list<T>(mut self, enabled: T) -> Self
-    where
-        T: Into<Option<bool>>,
-    {
-        self.config.preserve_tls13_cipher_list = enabled.into();
-        self
-    }
-
     /// Builds the `TlsOptions` from the builder.
     #[inline]
     pub fn build(self) -> TlsOptions {
@@ -554,25 +571,26 @@ impl Default for TlsOptions {
             session_ticket: true,
             min_tls_version: None,
             max_tls_version: None,
-            pre_shared_key: false,
             enable_ech_grease: false,
             permute_extensions: None,
             grease_enabled: None,
+            grease_sigalgs_enabled: None,
             enable_ocsp_stapling: false,
             enable_signed_cert_timestamps: false,
             record_size_limit: None,
-            psk_skip_session_ticket: false,
             key_shares: None,
             psk_dhe_ke: true,
+            pre_shared_key: false,
+            psk_skip_session_ticket: false,
             renegotiation: true,
             delegated_credentials: None,
             curves_list: None,
-            cipher_list: None,
             sigalgs_list: None,
+            cipher_list: None,
+            preserve_tls13_cipher_list: None,
             certificate_compressors: None,
             extension_permutation: None,
             aes_hw_override: None,
-            preserve_tls13_cipher_list: None,
             random_aes_hw_override: false,
         }
     }

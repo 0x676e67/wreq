@@ -385,6 +385,14 @@ impl TlsConnectorBuilder {
         // Set TLS grease options
         set_option!(opts, grease_enabled, connector, set_grease_enabled);
 
+        // Set TLS signature algorithms grease options
+        set_option!(
+            opts,
+            grease_sigalgs_enabled,
+            connector,
+            set_grease_sigalgs_enabled
+        );
+
         // Set TLS permute extensions options
         set_option!(opts, permute_extensions, connector, set_permute_extensions);
 

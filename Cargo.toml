@@ -353,3 +353,7 @@ path = "examples/unix_socket.rs"
 name = "rt"
 path = "examples/rt.rs"
 required-features = ["compio-rt"]
+
+[patch.crates-io]
+btls = { git = "https://github.com/0x676e67/btls", branch = "main" }
+btls-sys = { git = "https://github.com/0x676e67/btls", branch = "main" }
