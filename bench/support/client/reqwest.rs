@@ -1,9 +1,12 @@
+//! reqwest adapter for the shared client benchmark scheduler.
+
 use super::{ClientAdapter, WorkerCase, assert_response_body, stream_from_bytes};
 use crate::support::{BenchTarget, BodyCase, BoxError, HttpVersion, runtime::tokio_runtime};
 
 /// Stateless adapter for running reqwest through the shared benchmark scheduler.
 pub(super) struct Adapter;
 
+/// Builds a complete or streamed reqwest request body for one request.
 fn body(body: BodyCase, stream: bool) -> ::reqwest::Body {
     if stream {
         ::reqwest::Body::wrap_stream(stream_from_bytes(body))

@@ -1,9 +1,12 @@
+//! wreq adapter for the shared client benchmark scheduler.
+
 use super::{ClientAdapter, WorkerCase, assert_response_body, stream_from_bytes};
 use crate::support::{BenchTarget, BodyCase, BoxError, HttpVersion, runtime::tokio_runtime};
 
 /// Stateless adapter for running wreq through the shared benchmark scheduler.
 pub(super) struct Adapter;
 
+/// Builds a complete or streamed wreq request body for one request.
 fn body(body: BodyCase, stream: bool) -> ::wreq::Body {
     if stream {
         ::wreq::Body::wrap_stream(stream_from_bytes(body))

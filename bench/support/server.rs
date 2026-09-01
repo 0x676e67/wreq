@@ -1,3 +1,5 @@
+//! Loopback echo-server lifecycle used by every protocol benchmark group.
+
 use std::{convert::Infallible, io, net::SocketAddr, pin::Pin, sync::Arc, time::Duration};
 
 use btls::{
@@ -22,6 +24,9 @@ use tokio_btls::SslStream;
 
 use super::{BoxError, ThreadMode, Tls, runtime::tokio_runtime};
 
+/// Owns the listener and protocol configuration for one benchmark group.
+///
+/// The value moves to a dedicated server thread when [`Server::run`] starts.
 struct Server {
     listener: std::net::TcpListener,
     tls_acceptor: Option<Arc<SslAcceptor>>,
@@ -31,6 +36,9 @@ struct Server {
 // ===== impl Server =====
 
 impl Server {
+    /// Binds a loopback echo server with the selected transport.
+    ///
+    /// Returns an error if TLS setup or listener configuration fails.
     fn new(tls: Tls) -> Result<Self, BoxError> {
         let tls_acceptor = match tls {
             Tls::Enabled => {
@@ -66,10 +74,17 @@ impl Server {
         })
     }
 
+    /// Returns the address assigned to the bound listener.
+    ///
+    /// Returns an error if the operating system cannot query the address.
     fn local_addr(&self) -> io::Result<SocketAddr> {
         self.listener.local_addr()
     }
 
+    /// Accepts connections until shutdown, then cancels group-owned connections.
+    ///
+    /// Returns an error if listener registration, accepting a connection, or TLS
+    /// state construction fails, or if a connection task panics.
     async fn run(self, mut shutdown: oneshot::Receiver<()>) -> Result<(), BoxError> {
         let mut join_set = JoinSet::new();
         let listener = TcpListener::from_std(self.listener)?;
@@ -80,13 +95,10 @@ impl Server {
                     break;
                 }
                 accept = listener.accept() => {
-                    if let Ok((socket, _peer_addr)) = accept {
-                        let tls_acceptor = self.tls_acceptor.clone();
-                        let builder = self.builder.clone();
-                        join_set.spawn(async move {
-                            handle_connection(socket, tls_acceptor, builder).await;
-                        });
-                    }
+                    let (socket, _peer_addr) = accept?;
+                    let tls_acceptor = self.tls_acceptor.clone();
+                    let builder = self.builder.clone();
+                    join_set.spawn(handle_connection(socket, tls_acceptor, builder));
                 }
             }
         }
@@ -95,16 +107,17 @@ impl Server {
         ::std::mem::drop(listener);
         join_set.abort_all();
         while let Some(result) = join_set.join_next().await {
-            if let Err(error) = result
-                && !error.is_cancelled()
-            {
-                return Err(error.into());
+            match result {
+                Ok(result) => result?,
+                Err(error) if error.is_cancelled() => {}
+                Err(error) => return Err(error.into()),
             }
         }
         Ok(())
     }
 }
 
+/// Signals and joins the server thread owned by one benchmark group.
 struct Handle {
     shutdown: oneshot::Sender<()>,
     join: std::thread::JoinHandle<Result<(), BoxError>>,
@@ -113,6 +126,9 @@ struct Handle {
 // ===== impl Handle =====
 
 impl Handle {
+    /// Requests shutdown and waits for the server thread to finish.
+    ///
+    /// Returns an error if the thread panics or the server loop fails.
     fn shutdown(self) -> Result<(), BoxError> {
         // A closed receiver means the server already stopped; joining below returns its result.
         let _ = self.shutdown.send(());
@@ -122,6 +138,10 @@ impl Handle {
     }
 }
 
+/// Runs a callback against a fresh server and joins it before returning.
+///
+/// Teardown still runs when the callback fails. Setup, callback, and shutdown
+/// failures are propagated, with the callback result taking precedence.
 pub(super) fn with_server<F>(tls: Tls, f: F) -> Result<(), BoxError>
 where
     F: FnOnce(SocketAddr) -> Result<(), BoxError>,
@@ -148,11 +168,15 @@ where
     shutdown_result
 }
 
+/// Serves one accepted stream and echoes each fully collected request body.
+///
+/// Body read failures yield an empty response. Connection-driver errors are
+/// ignored because benchmark teardown may close otherwise healthy streams.
 async fn serve<S>(builder: Builder<TokioExecutor>, stream: S)
 where
     S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
 {
-    // Client teardown can close an otherwise healthy benchmark connection.
+    // Client teardown can close an otherwise healthy connection.
     let _ = builder
         .serve_connection(
             TokioIo::new(stream),
@@ -169,25 +193,27 @@ where
         .await;
 }
 
+/// Applies optional TLS and serves one accepted socket.
+///
+/// TLS handshake failures end only the current connection and are not returned.
+/// Returns an error if BoringSSL cannot create the connection's TLS state.
 async fn handle_connection(
     socket: TcpStream,
     tls_acceptor: Option<Arc<SslAcceptor>>,
     builder: Builder<TokioExecutor>,
-) {
+) -> Result<(), BoxError> {
     if let Some(acceptor) = tls_acceptor {
-        let ssl = Ssl::new(acceptor.context()).expect("failed to create Ssl");
-        let mut stream = SslStream::new(ssl, socket).expect("failed to create SslStream");
+        let ssl = Ssl::new(acceptor.context())?;
+        let mut stream = SslStream::new(ssl, socket)?;
 
-        // The client (or its connection pool) may proactively close the connection,
-        // especially during benchmarks or when cleaning up idle connections.
-        // This can cause TLS handshake failures (e.g., ConnectionReset, ConnectionAborted).
-        // Such errors are expected and should be handled gracefully to avoid panicking
-        // and to ensure the server remains robust under load.
+        // Clients may disconnect while a benchmark group is tearing down.
         if Pin::new(&mut stream).accept().await.is_err() {
-            return;
+            return Ok(());
         }
         serve(builder, stream).await;
     } else {
         serve(builder, socket).await;
     }
+
+    Ok(())
 }

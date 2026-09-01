@@ -1,3 +1,5 @@
+//! cyper adapter for the shared client benchmark scheduler.
+
 use futures::TryStreamExt;
 
 use super::{ClientAdapter, WorkerCase, assert_response_body, stream_from_bytes};
@@ -6,6 +8,7 @@ use crate::support::{BenchTarget, BodyCase, BoxError, HttpVersion, runtime::Comp
 /// Stateless adapter for running cyper through the shared benchmark scheduler.
 pub(super) struct Adapter;
 
+/// Builds a complete or streamed cyper request body for one request.
 fn body(body: BodyCase, stream: bool) -> ::cyper::Body {
     if stream {
         let stream = stream_from_bytes(body).map_err(|never| match never {});

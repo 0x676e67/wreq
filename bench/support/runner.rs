@@ -1,3 +1,5 @@
+//! Criterion configuration and workload-matrix orchestration.
+
 use std::time::Duration;
 
 use criterion::{Criterion, Throughput};
@@ -9,12 +11,16 @@ use super::{
     server::with_server,
 };
 
+/// Builds the Criterion configuration shared by every protocol target.
 pub fn criterion() -> Criterion {
     Criterion::default()
         .sample_size(10)
         .warm_up_time(Duration::from_secs(3))
 }
 
+/// Runs the complete concurrency and body matrix for one benchmark target.
+///
+/// Returns any throughput conversion, server, client, or runtime setup error.
 pub fn bench(
     criterion: &mut Criterion,
     target: BenchTarget,

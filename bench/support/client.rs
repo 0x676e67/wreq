@@ -1,3 +1,5 @@
+//! Statically dispatched client adapters and closed-loop worker scheduling.
+
 mod cyper;
 mod reqwest;
 mod wreq;
@@ -23,6 +25,7 @@ pub(super) struct ClientBenchCase {
 // ===== impl ClientBenchCase =====
 
 impl ClientBenchCase {
+    /// Creates the client input shared by both request-body representations.
     pub(super) const fn new(
         addr: SocketAddr,
         target: BenchTarget,
@@ -60,19 +63,44 @@ struct WorkerCase {
     expected_size: usize,
 }
 
-/// Adapts one concrete client and runtime pair to the shared worker scheduler.
+/// Adapts one client/runtime pair to the statically dispatched worker scheduler.
+///
+/// Construction stays outside measured iterations. Native spawning preserves
+/// Tokio's `Send` and Compio's local `!Send` worker rules without boxing.
 trait ClientAdapter {
+    /// Client created outside measurement and cloned once per fixed worker.
     type Client: Clone + 'static;
+
+    /// Criterion executor created outside measurement and reused across iterations.
     type Executor;
+
+    /// Error returned when the native runtime cannot join a worker.
     type JoinError: Debug;
+
+    /// Future returned by the native runtime for observing worker completion.
     type JoinHandle: Future<Output = Result<(), Self::JoinError>>;
 
+    /// Stable client name appended to the Criterion benchmark ID.
     const NAME: &'static str;
 
+    /// Builds a client for the selected transport and HTTP version.
+    ///
+    /// Returns an error if the client configuration cannot be built.
     fn create_client(target: BenchTarget) -> Result<Self::Client, BoxError>;
 
+    /// Builds the executor used for every iteration of this client case.
+    ///
+    /// Returns an error if the underlying async runtime cannot be created.
     fn create_executor(target: BenchTarget) -> Result<Self::Executor, BoxError>;
 
+    /// Spawns one closed-loop worker that sends its assigned requests in sequence.
+    ///
+    /// The handle must complete only after all response bodies are consumed and
+    /// validated. Worker failures are returned through [`Self::JoinHandle`].
+    ///
+    /// # Panics
+    ///
+    /// Panics if the matching executor is not active.
     fn spawn_worker(
         client: Self::Client,
         url: String,
@@ -84,11 +112,15 @@ trait ClientAdapter {
 // ===== impl ClientCase =====
 
 impl ClientCase<'_> {
+    /// Builds the body/client suffix used in the Criterion benchmark ID.
     fn label(self, client: &str) -> String {
         format!("{}/{client}", self.body_kind)
     }
 }
 
+/// Registers both body representations for every client valid for this target.
+///
+/// Returns an error if a client or its runtime cannot be created.
 pub(super) fn bench_clients(
     group: &mut BenchmarkGroup<'_, WallTime>,
     bench_case: ClientBenchCase,
@@ -115,9 +147,19 @@ pub(super) fn bench_clients(
     Ok(())
 }
 
+/// Streams a static payload in fixed chunks without copying its bytes.
+///
+/// # Panics
+///
+/// Panics if a non-empty payload has a zero chunk size.
 fn stream_from_bytes(
     body: BodyCase,
 ) -> impl futures_util::stream::TryStream<Ok = Bytes, Error = Infallible> + Send + 'static {
+    assert!(
+        body.bytes.is_empty() || body.chunk_size > 0,
+        "non-empty benchmark bodies require a non-zero chunk size"
+    );
+
     futures_util::stream::unfold((body.bytes, 0), move |(bytes, offset)| async move {
         if offset >= bytes.len() {
             None
@@ -129,12 +171,22 @@ fn stream_from_bytes(
     })
 }
 
+/// Adds one response chunk to the checked body-size total.
+///
+/// # Panics
+///
+/// Panics if the total body size overflows `usize`.
 fn add_body_size(body_size: &mut usize, chunk_size: usize) {
     *body_size = body_size
         .checked_add(chunk_size)
         .expect("response body size should fit in usize");
 }
 
+/// Consumes a response stream and verifies its protocol and complete body size.
+///
+/// # Panics
+///
+/// Panics on an unexpected version, body error, size overflow, or size mismatch.
 async fn assert_response_body<S, E>(
     client: &str,
     version: http::Version,
@@ -162,6 +214,11 @@ async fn assert_response_body<S, E>(
     );
 }
 
+/// Divides a request batch as evenly as possible among fixed closed-loop workers.
+///
+/// # Panics
+///
+/// Panics if `concurrent_limit` is zero.
 fn worker_request_counts(
     num_requests: usize,
     concurrent_limit: usize,
@@ -179,6 +236,11 @@ fn worker_request_counts(
     (0..worker_count).map(move |worker| requests_per_worker + usize::from(worker < remainder))
 }
 
+/// Runs one measured request batch through its statically selected adapter.
+///
+/// # Panics
+///
+/// Panics if any worker is cancelled or panics.
 async fn requests<A>(client: &A::Client, case: ClientCase<'_>)
 where
     A: ClientAdapter,
@@ -198,6 +260,9 @@ where
     }
 }
 
+/// Registers one client while keeping its client and executor outside measurement.
+///
+/// Returns an error if either resource cannot be created.
 fn register<A>(
     group: &mut BenchmarkGroup<'_, WallTime>,
     case: ClientCase<'_>,
