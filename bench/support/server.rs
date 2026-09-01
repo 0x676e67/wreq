@@ -20,16 +20,18 @@ use tokio::{
 };
 use tokio_btls::SslStream;
 
-use super::{BoxError, Tls, rt::multi_thread_runtime};
+use super::{BoxError, ThreadMode, Tls, runtime::tokio_runtime};
 
-pub struct Server {
+struct Server {
     listener: std::net::TcpListener,
     tls_acceptor: Option<Arc<SslAcceptor>>,
     builder: Builder<TokioExecutor>,
 }
 
+// ===== impl Server =====
+
 impl Server {
-    pub fn new(tls: Tls) -> Result<Self, BoxError> {
+    fn new(tls: Tls) -> Result<Self, BoxError> {
         let tls_acceptor = match tls {
             Tls::Enabled => {
                 let mut builder = SslAcceptor::mozilla_intermediate_v5(SslMethod::tls())?;
@@ -89,33 +91,38 @@ impl Server {
             }
         }
 
+        // Stop accepting first, then cancel keep-alive connections owned by this group.
+        ::std::mem::drop(listener);
+        join_set.abort_all();
         while let Some(result) = join_set.join_next().await {
-            if let Err(e) = result {
-                eprintln!("connection task failed: {e}");
+            if let Err(error) = result
+                && !error.is_cancelled()
+            {
+                return Err(error.into());
             }
         }
-
-        // Tokio internally accepts TCP connections while the TCPListener is active;
-        // drop the listener to immediately refuse connections rather than letting
-        // them hang.
-        ::std::mem::drop(listener);
         Ok(())
     }
 }
 
-pub struct Handle {
+struct Handle {
     shutdown: oneshot::Sender<()>,
-    join: std::thread::JoinHandle<()>,
+    join: std::thread::JoinHandle<Result<(), BoxError>>,
 }
 
+// ===== impl Handle =====
+
 impl Handle {
-    pub fn shutdown(self) {
+    fn shutdown(self) -> Result<(), BoxError> {
+        // A closed receiver means the server already stopped; joining below returns its result.
         let _ = self.shutdown.send(());
-        let _ = self.join.join();
+        self.join
+            .join()
+            .map_err(|_| io::Error::other("benchmark server thread panicked"))?
     }
 }
 
-pub fn with_server<F>(tls: Tls, f: F) -> Result<(), BoxError>
+pub(super) fn with_server<F>(tls: Tls, f: F) -> Result<(), BoxError>
 where
     F: FnOnce(SocketAddr) -> Result<(), BoxError>,
 {
@@ -125,29 +132,27 @@ where
     let (shutdown_tx, shutdown_rx) = oneshot::channel();
 
     let join = std::thread::spawn(move || {
-        let rt = multi_thread_runtime();
-        rt.block_on(server.run(shutdown_rx))
-            .expect("Failed to run server with shutdown");
+        let runtime = tokio_runtime(ThreadMode::Multi)?;
+        runtime.block_on(server.run(shutdown_rx))
     });
-
-    std::thread::sleep(Duration::from_millis(100));
 
     let handle = Handle {
         shutdown: shutdown_tx,
         join,
     };
 
-    f(addr)?;
-    handle.shutdown();
+    let result = f(addr);
+    let shutdown_result = handle.shutdown();
 
-    std::thread::sleep(Duration::from_millis(100));
-    Ok(())
+    result?;
+    shutdown_result
 }
 
 async fn serve<S>(builder: Builder<TokioExecutor>, stream: S)
 where
     S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
 {
+    // Client teardown can close an otherwise healthy benchmark connection.
     let _ = builder
         .serve_connection(
             TokioIo::new(stream),
