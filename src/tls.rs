@@ -241,16 +241,19 @@ pub struct TlsOptions {
     /// **Default:** `None`
     pub key_shares: Option<Cow<'static, [KeyShare]>>,
 
-    /// Trust Anchor IDs sent in ClientHello using the draft's one-byte-length-prefixed format.
+    /// Encoded Trust Anchor IDs sent in a TLS 1.3 [`ClientHello`].
     ///
-    /// The value must be valid and describe roots accepted by the configured certificate store.
-    /// Malformed encoding fails TLS setup; mismatched IDs can make the handshake fail.
+    /// Each ID must be non-empty and have a one-byte length prefix; omit the list's outer two-byte
+    /// length. IDs only guide server certificate selection and must identify roots accepted by the
+    /// configured certificate store, or certificate verification may fail.
     ///
-    /// An empty slice still sends the [`trust_anchors` extension](https://datatracker.ietf.org/doc/draft-ietf-tls-trust-anchor-ids/)
-    /// without requesting a specific anchor. wreq does not currently retry with IDs returned by
-    /// the server.
+    /// `Some(&[])` sends an empty [`trust_anchors` extension]; `None` omits it. Invalid encoding
+    /// fails TLS setup, and wreq does not implement the specification's retry mechanism.
     ///
     /// **Default:** `None`
+    ///
+    /// [`ClientHello`]: https://www.rfc-editor.org/rfc/rfc9846.html#section-4.2.2
+    /// [`trust_anchors` extension]: https://datatracker.ietf.org/doc/html/draft-ietf-tls-trust-anchor-ids-04#section-4.1
     pub trust_anchors: Option<Cow<'static, [u8]>>,
 
     /// Enables TLS renegotiation by sending the `renegotiation_info` extension.
@@ -470,10 +473,9 @@ impl TlsOptionsBuilder {
         self
     }
 
-    /// Sets the wire-encoded [`TlsOptions::trust_anchors`] sent in ClientHello.
+    /// Sets the encoded Trust Anchor IDs sent in ClientHello.
     ///
-    /// The value must be valid and describe roots accepted by the configured certificate store.
-    /// Malformed encoding fails TLS setup; mismatched IDs can make the handshake fail.
+    /// See [`TlsOptions::trust_anchors`] for encoding and verification requirements.
     #[inline]
     pub fn trust_anchors<T>(mut self, ids: T) -> Self
     where

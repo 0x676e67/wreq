@@ -338,8 +338,8 @@ impl TlsConnectorBuilder {
             .set_cert_verification(self.cert_verification)
             .set_cert_compressors(opts.certificate_compressors.as_deref())?;
 
-        // An empty list sends the extension without requesting a specific anchor.
-        // https://datatracker.ietf.org/doc/draft-ietf-tls-trust-anchor-ids/
+        // The specification distinguishes an empty requested list from omitting the extension.
+        // https://datatracker.ietf.org/doc/html/draft-ietf-tls-trust-anchor-ids-04#section-4.1
         if let Some(ids) = opts.trust_anchors.as_deref() {
             connector
                 .set_requested_trust_anchors(ids)

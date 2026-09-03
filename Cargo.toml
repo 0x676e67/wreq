@@ -69,10 +69,10 @@ socks = ["dep:tokio-socks"]
 # Enable WebSocket support.
 ws = ["dep:tokio-tungstenite", "tokio-tungstenite?/handshake"]
 
-# Enable Chromium Root Store certificates for TLS validation (default).
+# Use static Chromium Root Store certificates for TLS verification (default).
 chromium-roots = ["dep:chromium-roots"]
 
-# Enable Mozilla root certificates for TLS validation.
+# Use static Mozilla root certificates for TLS verification.
 webpki-roots = ["dep:webpki-root-certs"]
 
 # Use the system's proxy configuration.

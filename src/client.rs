@@ -1415,7 +1415,7 @@ impl ClientBuilder {
 
     /// Sets a custom certificate store for TLS server verification.
     ///
-    /// Without one, wreq uses the root source selected by Cargo features.
+    /// This replaces bundled roots and BoringSSL's default verification paths.
     #[inline]
     pub fn tls_cert_store(mut self, store: CertStore) -> ClientBuilder {
         self.config.tls_cert_store = Some(store);
