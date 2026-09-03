@@ -202,7 +202,7 @@ zstd = "0.13.3"
 sysinfo = { version = "0.39.1", default-features = false, features = ["system"] }
 criterion = { version = "0.8.2", features = ["async_tokio"] }
 reqwest = { version = "0.13.3", default-features = false, features = ["rustls", "stream", "http2"] }
-cyper = { version = "0.9.0",  default-features = false, features = ["rustls", "stream"] }
+cyper = { version = "0.9.0", default-features = false, features = ["rustls", "stream", "http2"] }
 
 [profile.release]
 codegen-units = 1
@@ -213,28 +213,52 @@ codegen-units = 1
 incremental = false
 
 [[bench]]
-name = "http1"
-path = "bench/http1.rs"
+name = "http1_current_thread"
+path = "bench/http1_current_thread.rs"
 harness = false
-required-features = ["stream"]
+required-features = ["tokio-rt", "stream"]
 
 [[bench]]
-name = "http2"
-path = "bench/http2.rs"
+name = "http1_multi_thread"
+path = "bench/http1_multi_thread.rs"
 harness = false
-required-features = ["stream"]
+required-features = ["tokio-rt", "stream"]
 
 [[bench]]
-name = "http1_over_tls"
-path = "bench/http1_over_tls.rs"
+name = "http2_current_thread"
+path = "bench/http2_current_thread.rs"
 harness = false
-required-features = ["stream"]
+required-features = ["tokio-rt", "stream"]
 
 [[bench]]
-name = "http2_over_tls"
-path = "bench/http2_over_tls.rs"
+name = "http2_multi_thread"
+path = "bench/http2_multi_thread.rs"
 harness = false
-required-features = ["stream"]
+required-features = ["tokio-rt", "stream"]
+
+[[bench]]
+name = "http1_over_tls_current_thread"
+path = "bench/http1_over_tls_current_thread.rs"
+harness = false
+required-features = ["tokio-rt", "stream"]
+
+[[bench]]
+name = "http1_over_tls_multi_thread"
+path = "bench/http1_over_tls_multi_thread.rs"
+harness = false
+required-features = ["tokio-rt", "stream"]
+
+[[bench]]
+name = "http2_over_tls_current_thread"
+path = "bench/http2_over_tls_current_thread.rs"
+harness = false
+required-features = ["tokio-rt", "stream"]
+
+[[bench]]
+name = "http2_over_tls_multi_thread"
+path = "bench/http2_over_tls_multi_thread.rs"
+harness = false
+required-features = ["tokio-rt", "stream"]
 
 [[test]]
 name = "cookie"

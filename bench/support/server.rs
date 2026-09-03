@@ -1,3 +1,5 @@
+//! Loopback echo-server lifecycle used by every protocol benchmark group.
+
 use std::{convert::Infallible, io, net::SocketAddr, pin::Pin, sync::Arc, time::Duration};
 
 use btls::{
@@ -20,16 +22,24 @@ use tokio::{
 };
 use tokio_btls::SslStream;
 
-use super::{BoxError, Tls, rt::multi_thread_runtime};
+use super::{BoxError, ThreadMode, Tls, runtime::tokio_runtime};
 
-pub struct Server {
+/// Owns the listener and protocol configuration for one benchmark group.
+///
+/// The value moves to a dedicated server thread when [`Server::run`] starts.
+struct Server {
     listener: std::net::TcpListener,
     tls_acceptor: Option<Arc<SslAcceptor>>,
     builder: Builder<TokioExecutor>,
 }
 
+// ===== impl Server =====
+
 impl Server {
-    pub fn new(tls: Tls) -> Result<Self, BoxError> {
+    /// Binds a loopback echo server with the selected transport.
+    ///
+    /// Returns an error if TLS setup or listener configuration fails.
+    fn new(tls: Tls) -> Result<Self, BoxError> {
         let tls_acceptor = match tls {
             Tls::Enabled => {
                 let mut builder = SslAcceptor::mozilla_intermediate_v5(SslMethod::tls())?;
@@ -64,10 +74,17 @@ impl Server {
         })
     }
 
+    /// Returns the address assigned to the bound listener.
+    ///
+    /// Returns an error if the operating system cannot query the address.
     fn local_addr(&self) -> io::Result<SocketAddr> {
         self.listener.local_addr()
     }
 
+    /// Accepts connections until shutdown, then cancels group-owned connections.
+    ///
+    /// Returns an error if listener registration, accepting a connection, or TLS
+    /// state construction fails, or if a connection task panics.
     async fn run(self, mut shutdown: oneshot::Receiver<()>) -> Result<(), BoxError> {
         let mut join_set = JoinSet::new();
         let listener = TcpListener::from_std(self.listener)?;
@@ -78,44 +95,54 @@ impl Server {
                     break;
                 }
                 accept = listener.accept() => {
-                    if let Ok((socket, _peer_addr)) = accept {
-                        let tls_acceptor = self.tls_acceptor.clone();
-                        let builder = self.builder.clone();
-                        join_set.spawn(async move {
-                            handle_connection(socket, tls_acceptor, builder).await;
-                        });
-                    }
+                    let (socket, _peer_addr) = accept?;
+                    let tls_acceptor = self.tls_acceptor.clone();
+                    let builder = self.builder.clone();
+                    join_set.spawn(handle_connection(socket, tls_acceptor, builder));
                 }
             }
         }
 
+        // Stop accepting first, then cancel keep-alive connections owned by this group.
+        ::std::mem::drop(listener);
+        join_set.abort_all();
         while let Some(result) = join_set.join_next().await {
-            if let Err(e) = result {
-                eprintln!("connection task failed: {e}");
+            match result {
+                Ok(result) => result?,
+                Err(error) if error.is_cancelled() => {}
+                Err(error) => return Err(error.into()),
             }
         }
-
-        // Tokio internally accepts TCP connections while the TCPListener is active;
-        // drop the listener to immediately refuse connections rather than letting
-        // them hang.
-        ::std::mem::drop(listener);
         Ok(())
     }
 }
 
-pub struct Handle {
+/// Signals and joins the server thread owned by one benchmark group.
+struct Handle {
     shutdown: oneshot::Sender<()>,
-    join: std::thread::JoinHandle<()>,
+    join: std::thread::JoinHandle<Result<(), BoxError>>,
 }
 
+// ===== impl Handle =====
+
 impl Handle {
-    pub fn shutdown(self) {
+    /// Requests shutdown and waits for the server thread to finish.
+    ///
+    /// Returns an error if the thread panics or the server loop fails.
+    fn shutdown(self) -> Result<(), BoxError> {
+        // A closed receiver means the server already stopped; joining below returns its result.
         let _ = self.shutdown.send(());
-        let _ = self.join.join();
+        self.join
+            .join()
+            .map_err(|_| io::Error::other("benchmark server thread panicked"))?
     }
 }
 
-pub fn with_server<F>(tls: Tls, f: F) -> Result<(), BoxError>
+/// Runs a callback against a fresh server and joins it before returning.
+///
+/// Teardown still runs when the callback fails. Setup, callback, and shutdown
+/// failures are propagated, with the callback result taking precedence.
+pub(super) fn with_server<F>(tls: Tls, f: F) -> Result<(), BoxError>
 where
     F: FnOnce(SocketAddr) -> Result<(), BoxError>,
 {
@@ -125,29 +152,31 @@ where
     let (shutdown_tx, shutdown_rx) = oneshot::channel();
 
     let join = std::thread::spawn(move || {
-        let rt = multi_thread_runtime();
-        rt.block_on(server.run(shutdown_rx))
-            .expect("Failed to run server with shutdown");
+        let runtime = tokio_runtime(ThreadMode::Multi)?;
+        runtime.block_on(server.run(shutdown_rx))
     });
-
-    std::thread::sleep(Duration::from_millis(100));
 
     let handle = Handle {
         shutdown: shutdown_tx,
         join,
     };
 
-    f(addr)?;
-    handle.shutdown();
+    let result = f(addr);
+    let shutdown_result = handle.shutdown();
 
-    std::thread::sleep(Duration::from_millis(100));
-    Ok(())
+    result?;
+    shutdown_result
 }
 
+/// Serves one accepted stream and echoes each fully collected request body.
+///
+/// Body read failures yield an empty response. Connection-driver errors are
+/// ignored because benchmark teardown may close otherwise healthy streams.
 async fn serve<S>(builder: Builder<TokioExecutor>, stream: S)
 where
     S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
 {
+    // Client teardown can close an otherwise healthy connection.
     let _ = builder
         .serve_connection(
             TokioIo::new(stream),
@@ -164,25 +193,27 @@ where
         .await;
 }
 
+/// Applies optional TLS and serves one accepted socket.
+///
+/// TLS handshake failures end only the current connection and are not returned.
+/// Returns an error if BoringSSL cannot create the connection's TLS state.
 async fn handle_connection(
     socket: TcpStream,
     tls_acceptor: Option<Arc<SslAcceptor>>,
     builder: Builder<TokioExecutor>,
-) {
+) -> Result<(), BoxError> {
     if let Some(acceptor) = tls_acceptor {
-        let ssl = Ssl::new(acceptor.context()).expect("failed to create Ssl");
-        let mut stream = SslStream::new(ssl, socket).expect("failed to create SslStream");
+        let ssl = Ssl::new(acceptor.context())?;
+        let mut stream = SslStream::new(ssl, socket)?;
 
-        // The client (or its connection pool) may proactively close the connection,
-        // especially during benchmarks or when cleaning up idle connections.
-        // This can cause TLS handshake failures (e.g., ConnectionReset, ConnectionAborted).
-        // Such errors are expected and should be handled gracefully to avoid panicking
-        // and to ensure the server remains robust under load.
+        // Clients may disconnect while a benchmark group is tearing down.
         if Pin::new(&mut stream).accept().await.is_err() {
-            return;
+            return Ok(());
         }
         serve(builder, stream).await;
     } else {
         serve(builder, socket).await;
     }
+
+    Ok(())
 }
