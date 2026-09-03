@@ -8,6 +8,30 @@ use crate::{
     },
 };
 
+#[cfg(any(feature = "chromium-roots", feature = "webpki-roots"))]
+static BUNDLED_CERT_STORE: std::sync::LazyLock<CertStore> = std::sync::LazyLock::new(|| {
+    #[cfg(feature = "chromium-roots")]
+    let chromium_certs = chromium_roots::TLS_SERVER_ROOT_CERTS;
+    #[cfg(not(feature = "chromium-roots"))]
+    let chromium_certs = &[];
+
+    #[cfg(feature = "webpki-roots")]
+    let webpki_certs = webpki_root_certs::TLS_SERVER_ROOT_CERTS;
+    #[cfg(not(feature = "webpki-roots"))]
+    let webpki_certs = &[];
+
+    let certs = chromium_certs
+        .iter()
+        .chain(
+            webpki_certs
+                .iter()
+                .filter(|cert| !chromium_certs.contains(*cert)),
+        )
+        .map(AsRef::as_ref);
+
+    CertStore::from_der_certs(certs).expect("failed to load bundled root certificates")
+});
+
 /// SslConnectorBuilderExt trait for `SslConnectorBuilder`.
 pub trait SslConnectorBuilderExt {
     /// Configure the Identity for the given `SslConnectorBuilder`.
@@ -47,34 +71,7 @@ impl SslConnectorBuilderExt for SslConnectorBuilder {
             self.set_cert_store_ref(&store.0)
         } else {
             #[cfg(any(feature = "chromium-roots", feature = "webpki-roots"))]
-            {
-                static DEFAULT_CERT_STORE: std::sync::LazyLock<CertStore> =
-                    std::sync::LazyLock::new(|| {
-                        let certs = std::iter::empty::<&'static [u8]>();
-
-                        #[cfg(feature = "chromium-roots")]
-                        let certs = certs.chain(
-                            chromium_roots::TLS_SERVER_ROOT_CERTS
-                                .iter()
-                                .map(AsRef::as_ref),
-                        );
-
-                        #[cfg(feature = "webpki-roots")]
-                        let webpki_certs = webpki_root_certs::TLS_SERVER_ROOT_CERTS.iter();
-
-                        #[cfg(all(feature = "chromium-roots", feature = "webpki-roots"))]
-                        let webpki_certs = webpki_certs
-                            .filter(|cert| !chromium_roots::TLS_SERVER_ROOT_CERTS.contains(*cert));
-
-                        #[cfg(feature = "webpki-roots")]
-                        let certs = certs.chain(webpki_certs.map(AsRef::as_ref));
-
-                        CertStore::from_der_certs(certs)
-                            .expect("failed to load bundled root certificates")
-                    });
-
-                self.set_cert_store_ref(&DEFAULT_CERT_STORE.0);
-            }
+            self.set_cert_store_ref(&BUNDLED_CERT_STORE.0);
 
             #[cfg(not(any(feature = "chromium-roots", feature = "webpki-roots")))]
             {
