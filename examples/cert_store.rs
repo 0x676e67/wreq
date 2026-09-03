@@ -9,8 +9,9 @@ use wreq::{
 ///
 /// In most cases, you don't need to manually configure certificate stores. wreq automatically
 /// uses appropriate default certificates:
-/// - With `webpki-roots` feature enabled: Uses Mozilla's maintained root certificate collection
-/// - Without this feature: Uses system default certificate store paths
+/// - With the default `chromium-roots` feature: Uses Chromium Root Store certificates
+/// - With `webpki-roots`: Also loads Mozilla's maintained root certificate collection
+/// - Without either feature: Uses system default certificate store paths
 ///
 /// Manual certificate store configuration is only needed in the following special cases:
 ///

@@ -241,6 +241,18 @@ pub struct TlsOptions {
     /// **Default:** `None`
     pub key_shares: Option<Cow<'static, [KeyShare]>>,
 
+    /// Trust Anchor IDs sent in ClientHello using the draft's one-byte-length-prefixed format.
+    ///
+    /// The value must be valid and describe roots accepted by the configured certificate store.
+    /// Malformed encoding fails TLS setup; mismatched IDs can make the handshake fail.
+    ///
+    /// An empty slice still sends the [`trust_anchors` extension](https://datatracker.ietf.org/doc/draft-ietf-tls-trust-anchor-ids/)
+    /// without requesting a specific anchor. wreq does not currently retry with IDs returned by
+    /// the server.
+    ///
+    /// **Default:** `None`
+    pub trust_anchors: Option<Cow<'static, [u8]>>,
+
     /// Enables TLS renegotiation by sending the `renegotiation_info` extension.
     ///
     /// **Default:** `true`
@@ -458,6 +470,19 @@ impl TlsOptionsBuilder {
         self
     }
 
+    /// Sets the wire-encoded [`TlsOptions::trust_anchors`] sent in ClientHello.
+    ///
+    /// The value must be valid and describe roots accepted by the configured certificate store.
+    /// Malformed encoding fails TLS setup; mismatched IDs can make the handshake fail.
+    #[inline]
+    pub fn trust_anchors<T>(mut self, ids: T) -> Self
+    where
+        T: Into<Cow<'static, [u8]>>,
+    {
+        self.config.trust_anchors = Some(ids.into());
+        self
+    }
+
     /// Sets the supported curves list.
     #[inline]
     pub fn curves_list<T>(mut self, curves: T) -> Self
@@ -579,6 +604,7 @@ impl Default for TlsOptions {
             enable_signed_cert_timestamps: false,
             record_size_limit: None,
             key_shares: None,
+            trust_anchors: None,
             psk_dhe_ke: true,
             pre_shared_key: false,
             psk_skip_session_ticket: false,

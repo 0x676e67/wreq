@@ -338,6 +338,14 @@ impl TlsConnectorBuilder {
             .set_cert_verification(self.cert_verification)
             .set_cert_compressors(opts.certificate_compressors.as_deref())?;
 
+        // An empty list sends the extension without requesting a specific anchor.
+        // https://datatracker.ietf.org/doc/draft-ietf-tls-trust-anchor-ids/
+        if let Some(ids) = opts.trust_anchors.as_deref() {
+            connector
+                .set_requested_trust_anchors(ids)
+                .map_err(Error::tls)?;
+        }
+
         // Set minimum TLS version
         set_option_inner_try!(min_tls_version, connector, set_min_proto_version);
 
