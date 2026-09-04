@@ -34,7 +34,7 @@ pub enum PoolStrategy {
     ///
     /// An empty connection group still connects immediately. The delay is used
     /// only when the group already has idle, checked-out, or connecting state
-    /// that may become reusable.
+    /// that may become reusable. A zero duration behaves like [`PoolStrategy::Race`].
     ReuseFirst(Duration),
 }
 
@@ -130,6 +130,8 @@ impl PoolLimitsBuilder {
     }
 
     /// Sets the maximum number of connections in each configured scope.
+    ///
+    /// When the global limit is lower, it bounds every scope first.
     #[inline]
     pub const fn max_connections_per_scope(mut self, max: usize) -> Self {
         self.limits.max_connections_per_scope = NonZeroUsize::new(max);

@@ -15,6 +15,25 @@ fn body(body: BodyCase, stream: bool) -> ::wreq::Body {
     }
 }
 
+/// Builds a wreq client with the selected connection-pool acquisition policy.
+pub(super) fn create_client(
+    target: BenchTarget,
+    pool_strategy: ::wreq::pool::PoolStrategy,
+) -> Result<::wreq::Client, BoxError> {
+    let builder = ::wreq::Client::builder()
+        .no_proxy()
+        .redirect(::wreq::redirect::Policy::none())
+        .pool_strategy(pool_strategy)
+        .tls_cert_verification(!target.tls.is_enabled());
+
+    let builder = match target.http_version {
+        HttpVersion::Http1 => builder.http1_only(),
+        HttpVersion::Http2 => builder.http2_only(),
+    };
+
+    Ok(builder.build()?)
+}
+
 impl ClientAdapter for Adapter {
     type Client = ::wreq::Client;
     type Executor = tokio::runtime::Runtime;
@@ -24,17 +43,7 @@ impl ClientAdapter for Adapter {
     const NAME: &'static str = "wreq";
 
     fn create_client(target: BenchTarget) -> Result<Self::Client, BoxError> {
-        let builder = ::wreq::Client::builder()
-            .no_proxy()
-            .redirect(::wreq::redirect::Policy::none())
-            .tls_cert_verification(!target.tls.is_enabled());
-
-        let builder = match target.http_version {
-            HttpVersion::Http1 => builder.http1_only(),
-            HttpVersion::Http2 => builder.http2_only(),
-        };
-
-        Ok(builder.build()?)
+        create_client(target, ::wreq::pool::PoolStrategy::default())
     }
 
     fn create_executor(target: BenchTarget) -> Result<Self::Executor, BoxError> {

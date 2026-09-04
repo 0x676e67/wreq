@@ -142,7 +142,7 @@ impl Handle {
 ///
 /// Teardown still runs when the callback fails. Setup, callback, and shutdown
 /// failures are propagated, with the callback result taking precedence.
-pub(super) fn with_server<F>(tls: Tls, f: F) -> Result<(), BoxError>
+pub(crate) fn with_server<F>(tls: Tls, f: F) -> Result<(), BoxError>
 where
     F: FnOnce(SocketAddr) -> Result<(), BoxError>,
 {

@@ -1099,6 +1099,8 @@ impl ClientBuilder {
     }
 
     /// Sets the maximum number of connection groups retained by the pool.
+    ///
+    /// Passing `0` disables this limit.
     #[inline]
     pub fn pool_max_size(mut self, max: usize) -> ClientBuilder {
         self.config.pool_max_size = NonZeroUsize::new(max);

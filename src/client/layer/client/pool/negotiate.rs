@@ -159,10 +159,13 @@ pin_project! {
 pub(super) struct Builder<C, I, L, R> {
     /// Service that establishes the intermediate connection.
     connect: C,
+
     /// Predicate selecting the upgraded path.
     inspect: I,
+
     /// Layer applied to fallback connections.
     fallback: L,
+
     /// Layer applied to upgraded connections.
     upgrade: R,
 }
@@ -189,6 +192,8 @@ pub(super) trait Existing<S>: Service<S> {
     /// Joins existing upgraded state without starting a new maker.
     fn checkout(&self) -> Option<Self::Future>;
 }
+
+// ===== impl Builder =====
 
 impl<C, I, L, R> Builder<C, I, L, R> {
     /// Sets the service that creates intermediate connections.
@@ -262,8 +267,9 @@ impl<C, I, L, R> Builder<C, I, L, R> {
     }
 }
 
+// ===== impl Negotiate =====
+
 impl<L: Clone, R: Clone, S> Clone for Negotiate<L, R, S> {
-    /// Clones both pool handles while sharing the pending upgrade queue.
     fn clone(&self) -> Self {
         Self {
             fallback: self.fallback.clone(),
@@ -299,25 +305,23 @@ impl<L, R, S> Negotiate<L, R, S> {
     where
         F: FnMut(&S) -> bool,
     {
-        {
-            let mut predicate = predicate;
-            let mut pending = self.pending.lock();
-            let mut discarded = Vec::new();
-            let mut index = 0;
+        let mut predicate = predicate;
+        let mut pending = self.pending.lock();
+        let mut discarded = Vec::new();
+        let queued = pending.len();
 
-            while index < pending.len() {
-                if predicate(&pending[index]) {
-                    index += 1;
-                } else {
-                    let Some(service) = pending.remove(index) else {
-                        break;
-                    };
-                    discarded.push(service);
-                }
+        for _ in 0..queued {
+            let Some(service) = pending.pop_front() else {
+                break;
+            };
+            if predicate(&service) {
+                pending.push_back(service);
+            } else {
+                discarded.push(service);
             }
-
-            discarded
         }
+
+        discarded
     }
 
     /// Removes the first queued upgraded connection matching `predicate`.
@@ -349,15 +353,10 @@ where
     type Error = BoxError;
     type Future = Negotiating<Dst, L, R, S>;
 
-    /// Uses fallback readiness because it owns the connection maker.
     fn poll_ready(&mut self, cx: &mut task::Context<'_>) -> Poll<Result<(), Self::Error>> {
         self.fallback.poll_ready(cx).map_err(Into::into)
     }
 
-    /// Prefers an existing or queued upgraded service before starting fallback.
-    ///
-    /// The pending lock spans queue consumption and singleton handoff so a
-    /// concurrent inspector cannot publish an upgrade between those steps.
     fn call(&mut self, dst: Dst) -> Self::Future {
         let mut pending = self.pending.lock();
         let (state, discarded) = if let Some(future) = self.upgrade.checkout() {
@@ -390,6 +389,8 @@ where
     }
 }
 
+// ===== impl Negotiating =====
+
 impl<Dst, L, R, S> Future for Negotiating<Dst, L, R, S>
 where
     L: Service<Dst> + Clone,
@@ -401,7 +402,6 @@ where
 {
     type Output = Result<Negotiated<L::Response, R::Response>, BoxError>;
 
-    /// Completes fallback or switches to the upgraded pool after inspection.
     fn poll(self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<Self::Output> {
         let mut this = self.project();
         loop {
@@ -455,6 +455,8 @@ where
     }
 }
 
+// ===== impl Negotiated =====
+
 impl<L, R, Req, Res, E> Service<Req> for Negotiated<L, R>
 where
     L: Service<Req, Response = Res, Error = E>,
@@ -464,7 +466,6 @@ where
     type Error = E;
     type Future = NegotiatedFuture<L::Future, R::Future>;
 
-    /// Delegates readiness to the selected service.
     fn poll_ready(&mut self, cx: &mut task::Context<'_>) -> Poll<Result<(), Self::Error>> {
         match self {
             Self::Fallback(service) => service.poll_ready(cx),
@@ -472,7 +473,6 @@ where
         }
     }
 
-    /// Sends a request through the selected service.
     fn call(&mut self, req: Req) -> Self::Future {
         match self {
             Self::Fallback(service) => NegotiatedFuture::Fallback {
@@ -485,6 +485,8 @@ where
     }
 }
 
+// ===== impl NegotiatedFuture =====
+
 impl<L, R, Out> Future for NegotiatedFuture<L, R>
 where
     L: Future<Output = Out>,
@@ -492,7 +494,6 @@ where
 {
     type Output = Out;
 
-    /// Polls the request future returned by the selected service.
     fn poll(self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<Self::Output> {
         match self.project() {
             NegotiatedFutureProj::Fallback { future } => future.poll(cx),
@@ -512,6 +513,8 @@ struct UpgradeSignal {
     /// Wrapping generation observed by each fallback attempt.
     generation: watch::Sender<usize>,
 }
+
+// ===== impl UpgradeSignal =====
 
 impl UpgradeSignal {
     /// Creates a signal at generation zero.
@@ -551,10 +554,13 @@ impl UpgradeSignal {
 pub(super) struct Inspector<M, S, I> {
     /// Intermediate connection service.
     service: M,
+
     /// Predicate selecting the upgraded protocol.
     inspect: I,
+
     /// Queue consumed by the upgraded pool.
     pending: Arc<Mutex<VecDeque<S>>>,
+
     /// Notification shared by concurrent fallback attempts.
     signal: UpgradeSignal,
 }
@@ -570,22 +576,28 @@ pin_project! {
         // Intermediate connection future.
         #[pin]
         future: F,
+
         // Checks once for an upgrade queued before this subscription existed.
         check_pending: bool,
+
         // Notification that another attempt produced an upgraded connection.
         #[pin]
         notified: BoxFuture<'static, ()>,
+
         // Predicate selecting the upgraded protocol.
         inspect: I,
+
         // Queue receiving this result when it upgrades.
         pending: Arc<Mutex<VecDeque<S>>>,
+
         // Signal advanced after the result is queued.
         signal: UpgradeSignal,
     }
 }
 
+// ===== impl Inspector =====
+
 impl<M: Clone, S, I: Clone> Clone for Inspector<M, S, I> {
-    /// Clones connector state while sharing the queue and signal.
     fn clone(&self) -> Self {
         Self {
             service: self.service.clone(),
@@ -607,12 +619,10 @@ where
     type Error = BoxError;
     type Future = InspectFuture<M::Future, S, I>;
 
-    /// Delegates readiness to the intermediate connection service.
     fn poll_ready(&mut self, cx: &mut task::Context<'_>) -> Poll<Result<(), Self::Error>> {
         self.service.poll_ready(cx).map_err(Into::into)
     }
 
-    /// Starts an inspected connection attempt with its own signal subscription.
     fn call(&mut self, dst: Dst) -> Self::Future {
         InspectFuture {
             future: self.service.call(dst),
@@ -625,6 +635,8 @@ where
     }
 }
 
+// ===== impl InspectFuture =====
+
 impl<F, S, I, E> Future for InspectFuture<F, S, I>
 where
     F: Future<Output = Result<S, E>>,
@@ -634,7 +646,6 @@ where
 {
     type Output = Result<S, BoxError>;
 
-    /// Returns fallback results directly and queues upgraded results for handoff.
     fn poll(self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<Self::Output> {
         let this = self.project();
         if std::mem::take(this.check_pending) && !this.pending.lock().is_empty() {
@@ -675,8 +686,9 @@ where
 /// value unchanged and performs no readiness or allocation work.
 pub(super) struct Provided<S>(PhantomData<fn(S)>);
 
+// ===== impl Provided =====
+
 impl<S> Clone for Provided<S> {
-    /// Copies the zero-sized identity maker.
     fn clone(&self) -> Self {
         *self
     }
@@ -689,12 +701,10 @@ impl<S> Service<S> for Provided<S> {
     type Error = BoxError;
     type Future = std::future::Ready<Result<S, BoxError>>;
 
-    /// Identity construction is always ready.
     fn poll_ready(&mut self, _cx: &mut task::Context<'_>) -> Poll<Result<(), Self::Error>> {
         Poll::Ready(Ok(()))
     }
 
-    /// Returns the supplied connection unchanged.
     fn call(&mut self, service: S) -> Self::Future {
         std::future::ready(Ok(service))
     }
@@ -707,8 +717,9 @@ impl<S> Service<S> for Provided<S> {
 #[derive(Debug)]
 struct UseOther;
 
+// ===== impl UseOther =====
+
 impl fmt::Display for UseOther {
-    /// Writes the internal branch-switch reason.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str("use the other negotiated service")
     }

@@ -4,7 +4,9 @@ mod cyper;
 mod reqwest;
 mod wreq;
 
-use std::{convert::Infallible, fmt::Debug, future::Future, net::SocketAddr};
+use std::{
+    convert::Infallible, fmt::Debug, future::Future, net::SocketAddr, time::Duration,
+};
 
 use bytes::Bytes;
 use criterion::{BenchmarkGroup, async_executor::AsyncExecutor, measurement::WallTime};
@@ -142,6 +144,49 @@ pub(super) fn bench_clients(
         if matches!(bench_case.target.thread_mode, ThreadMode::Current) {
             register::<cyper::Adapter>(group, client_case)?;
         }
+    }
+
+    Ok(())
+}
+
+/// Registers the fixed-worker wreq workload for each connection-pool strategy.
+///
+/// Returns an error if the client or its Tokio runtime cannot be created.
+pub(crate) fn bench_wreq_pool_strategies(
+    group: &mut BenchmarkGroup<'_, WallTime>,
+    addr: SocketAddr,
+    target: BenchTarget,
+    num_requests: usize,
+    concurrent_limit: usize,
+    body: BodyCase,
+    reuse_first_timeout: Duration,
+) -> Result<(), BoxError> {
+    let url = format!("{}://{addr}", target.tls);
+    let executor = <wreq::Adapter as ClientAdapter>::create_executor(target)?;
+    let case = ClientCase {
+        url: &url,
+        target,
+        num_requests,
+        concurrent_limit,
+        body,
+        body_kind: BodyKind::Full,
+    };
+    let reuse_first_label = format!("reuse_first_{reuse_first_timeout:?}");
+    let strategies = [
+        ("race", ::wreq::pool::PoolStrategy::Race),
+        (
+            reuse_first_label.as_str(),
+            ::wreq::pool::PoolStrategy::ReuseFirst(reuse_first_timeout),
+        ),
+    ];
+
+    for (label, strategy) in strategies {
+        let client = wreq::create_client(target, strategy)?;
+        group.bench_function(label, |bencher| {
+            bencher
+                .to_async(&executor)
+                .iter(|| requests::<wreq::Adapter>(&client, case));
+        });
     }
 
     Ok(())

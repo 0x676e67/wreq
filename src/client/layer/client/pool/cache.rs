@@ -57,7 +57,7 @@ use crate::sync::Mutex;
 /// Cache policy waits can be canceled cheaply. Physical connection work may
 /// already own resources, so the event handler uses this signal before deciding
 /// whether to continue a lost race in the background.
-pub(super) trait Started: Future {
+pub trait Started: Future {
     /// Returns `true` after canceling the future would waste started work.
     fn started(&self) -> bool;
 }
@@ -87,16 +87,22 @@ where
 {
     /// Creates a service when no reusable service wins the race.
     connector: M,
+
     /// State shared by every cache clone and checked-out service.
     shared: Arc<Mutex<Shared<M::Response>>>,
+
     /// Decides what happens to a connection attempt that loses to reuse.
     events: Ev,
+
     /// Service reserved by this clone during `poll_ready`.
     ready: Ready<M::Response>,
+
     /// FIFO waiter registered by this clone during `poll_ready`.
     ready_waiter: Option<WaiterId>,
+
     /// Number of services currently checked out from this cache.
     active: Arc<AtomicUsize>,
+
     /// Carries the destination type without owning a destination.
     _dst: PhantomData<fn(Dst)>,
 }
@@ -126,14 +132,19 @@ pub(super) struct Builder<Ev> {
 pub(super) struct Cached<S> {
     /// Prevents a failed or explicitly discarded service from returning.
     discard: bool,
+
     /// Records whether this checkout came from the cache.
     reused: bool,
+
     /// Owned service, removed only while `Drop` returns it.
     inner: Option<S>,
+
     /// Weak reference avoids keeping an otherwise unused cache alive.
     shared: Weak<Mutex<Shared<S>>>,
+
     /// Shared active-checkout counter used by idle cleanup.
     active: Arc<AtomicUsize>,
+
     /// Prevents the active checkout from being released more than once.
     active_checkout: bool,
 }
@@ -194,14 +205,19 @@ where
 pub(super) struct Shared<S> {
     /// Idle services not reserved for a waiter.
     services: Vec<S>,
+
     /// Checkouts waiting for a returned service.
     waiters: VecDeque<Waiter>,
+
     /// Services assigned to a specific waiter but not yet collected.
     reservations: Vec<(WaiterId, S)>,
+
     /// Wrapping identifier source; only live IDs need to be distinct.
     next_waiter: usize,
+
     /// Maximum idle services retained when no waiter exists.
     max_idle: usize,
+
     /// Closes when the cache state is dropped, canceling background makers.
     shutdown: watch::Sender<()>,
 }
@@ -239,6 +255,8 @@ struct CancelResult<S> {
     /// Service rejected by the idle limit during handoff.
     discarded: Option<S>,
 }
+
+// ===== impl Builder =====
 
 impl<Ev> Builder<Ev> {
     /// Completes useful maker work in the supplied executor after reuse wins.
@@ -279,6 +297,8 @@ impl<Ev> Builder<Ev> {
         }
     }
 }
+
+// ===== impl Cache =====
 
 impl<M, Dst, Ev> Cache<M, Dst, Ev>
 where
@@ -344,7 +364,6 @@ where
     type Error = M::Error;
     type Future = CacheFuture<M, Dst, Ev>;
 
-    /// Reserves a returned service or waits until the maker can be called.
     fn poll_ready(&mut self, cx: &mut task::Context<'_>) -> Poll<Result<(), Self::Error>> {
         if matches!(self.ready, Ready::Cached(_)) {
             return Poll::Ready(Ok(()));
@@ -405,7 +424,6 @@ where
         }
     }
 
-    /// Checks out a reserved service or races reuse against a new service.
     fn call(&mut self, target: Dst) -> Self::Future {
         match std::mem::replace(&mut self.ready, Ready::None) {
             Ready::Cached(service) => {
@@ -468,7 +486,6 @@ where
     M: Service<Dst> + Clone,
     Ev: Clone,
 {
-    /// Creates a handle with independent readiness and shared cache state.
     fn clone(&self) -> Self {
         Self {
             connector: self.connector.clone(),
@@ -486,7 +503,6 @@ impl<M, Dst, Ev> Drop for Cache<M, Dst, Ev>
 where
     M: Service<Dst>,
 {
-    /// Returns this clone's reservation and removes its pending waiter.
     fn drop(&mut self) {
         if let Ready::Cached(service) = std::mem::replace(&mut self.ready, Ready::None) {
             let result = self.shared.lock().put(service);
@@ -499,11 +515,12 @@ where
     }
 }
 
+// ===== impl CacheFuture =====
+
 impl<M, Dst, Ev> Drop for CacheFuture<M, Dst, Ev>
 where
     M: Service<Dst>,
 {
-    /// Cancels the FIFO waiter when the checkout future is abandoned.
     fn drop(&mut self) {
         if let Self::Racing { shared, waiter, .. } = self {
             let result = shared.lock().cancel_waiter(*waiter);
@@ -521,7 +538,6 @@ where
 {
     type Output = Result<Cached<M::Response>, M::Error>;
 
-    /// Polls reuse first, then the maker, preserving useful lost-race work.
     fn poll(mut self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<Self::Output> {
         match &mut *self {
             Self::Racing {
@@ -605,6 +621,8 @@ where
         }
     }
 }
+
+// ===== impl Cached =====
 
 impl<S> Cached<S> {
     /// Wraps a service and records its active checkout.
@@ -702,7 +720,6 @@ where
     type Error = S::Error;
     type Future = S::Future;
 
-    /// Delegates readiness and discards the service if readiness fails.
     fn poll_ready(&mut self, cx: &mut task::Context<'_>) -> Poll<Result<(), Self::Error>> {
         self.inner_mut().poll_ready(cx).map_err(|error| {
             self.discard = true;
@@ -710,17 +727,12 @@ where
         })
     }
 
-    /// Sends a request through the checked-out service.
     fn call(&mut self, req: Req) -> Self::Future {
         self.inner_mut().call(req)
     }
 }
 
 impl<S> Drop for Cached<S> {
-    /// Returns a healthy service and closes its active checkout atomically.
-    ///
-    /// Both transitions share the cache lock so cleanup cannot remove the
-    /// returned service while still observing this checkout as active.
     fn drop(&mut self) {
         let discarded = match self.inner.take() {
             Some(service) if !self.discard => match self.shared.upgrade() {
@@ -744,11 +756,12 @@ impl<S> Drop for Cached<S> {
 }
 
 impl<S: fmt::Debug> fmt::Debug for Cached<S> {
-    /// Formats the wrapped service without exposing cache bookkeeping.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_tuple("Cached").field(&self.inner).finish()
     }
 }
+
+// ===== impl Shared =====
 
 impl<S> Shared<S> {
     /// Removes services rejected by `predicate` and returns them for unlocked drop.
@@ -898,6 +911,8 @@ pub(super) struct BackgroundConnect<F, S> {
     shutdown: BoxFuture<'static, ()>,
 }
 
+// ===== impl BackgroundConnect =====
+
 impl<F, S, E> Started for BackgroundConnect<F, S>
 where
     F: Started + Future<Output = Result<S, E>> + Unpin,
@@ -914,7 +929,6 @@ where
 {
     type Output = ();
 
-    /// Returns a successful background result to the cache.
     fn poll(mut self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<Self::Output> {
         if self.shutdown.as_mut().poll(cx).is_ready() {
             return Poll::Ready(());
@@ -1022,7 +1036,7 @@ pub(super) mod events {
     /// This is useful when finishing the work would provide no value or when no
     /// executor is available for detached connection work.
     #[derive(Clone, Debug)]
-    pub(in crate::client::layer::client::pool) struct Ignore;
+    pub struct Ignore;
 
     /// Policy that completes useful lost maker futures on an executor.
     ///
@@ -1030,18 +1044,22 @@ pub(super) mod events {
     /// Once physical connection work starts, the executor can finish it and put
     /// a successful service into the cache for a later checkout.
     #[derive(Clone, Debug)]
-    pub(in crate::client::layer::client::pool) struct WithExecutor<E>(pub(super) E);
+    pub struct WithExecutor<E>(pub(super) E);
 
     /// Handles a maker future after connection reuse wins.
-    pub(in crate::client::layer::client::pool) trait Events<F> {
+    pub trait Events<F> {
         /// Receives the maker future that lost the race.
         fn on_race_lost(&self, future: F);
     }
+
+    // ===== impl Ignore =====
 
     impl<F> Events<F> for Ignore {
         /// Drops the maker future immediately.
         fn on_race_lost(&self, _future: F) {}
     }
+
+    // ===== impl WithExecutor =====
 
     impl<E, F> Events<F> for WithExecutor<E>
     where
