@@ -1569,7 +1569,7 @@ impl EntryUse {
     fn new(state: Arc<EntryState>) -> Self {
         let _ = state
             .uses
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |count| {
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |count| {
                 Some(count.saturating_add(1))
             });
         Self {
@@ -1585,7 +1585,7 @@ impl EntryUse {
         if let Some(state) = &state {
             let _ = state
                 .uses
-                .fetch_update(Ordering::AcqRel, Ordering::Acquire, |count| {
+                .try_update(Ordering::AcqRel, Ordering::Acquire, |count| {
                     Some(count.saturating_sub(1))
                 });
         }
@@ -1603,7 +1603,7 @@ impl Drop for EntryUse {
         };
         let previous = state
             .uses
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |count| {
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |count| {
                 Some(count.saturating_sub(1))
             });
         if self.cleanup_on_drop && previous == Ok(1) {

@@ -652,7 +652,7 @@ impl<S> Cached<S> {
         active: Arc<AtomicUsize>,
         reused: bool,
     ) -> Self {
-        let _ = active.fetch_update(Ordering::AcqRel, Ordering::Acquire, |count| {
+        let _ = active.try_update(Ordering::AcqRel, Ordering::Acquire, |count| {
             Some(count.saturating_add(1))
         });
         Self {
@@ -694,7 +694,7 @@ impl<S> Cached<S> {
         if std::mem::take(&mut self.active_checkout) {
             let _ = self
                 .active
-                .fetch_update(Ordering::AcqRel, Ordering::Acquire, |count| {
+                .try_update(Ordering::AcqRel, Ordering::Acquire, |count| {
                     Some(count.saturating_sub(1))
                 });
         }

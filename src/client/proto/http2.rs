@@ -174,7 +174,7 @@ impl Http2State {
     fn acquire(&self) {
         let _ = self
             .checkouts
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |count| {
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |count| {
                 Some(count.saturating_add(1))
             });
     }
