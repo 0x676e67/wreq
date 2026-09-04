@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.16.2](https://github.com/0x676e67/wreq/compare/v0.16.1...v0.16.2) - 2026-09-04
+
+### Added
+
+- *(tls)* add chromium roots and trust anchor IDs ([#1273](https://github.com/0x676e67/wreq/pull/1273))
+- *(tls)* expose signature algorithms GREASE setting ([#1270](https://github.com/0x676e67/wreq/pull/1270))
+
+### Other
+
+- track Cargo.lock ([#1275](https://github.com/0x676e67/wreq/pull/1275))
+- split protocol benchmarks by runtime ([#1271](https://github.com/0x676e67/wreq/pull/1271))
+- *(deps)* update system-configuration requirement from 0.7.0 to 0.8.0 ([#1252](https://github.com/0x676e67/wreq/pull/1252))
+- *(deps)* update tower-http requirement from 0.6.8 to 0.7.0 ([#1251](https://github.com/0x676e67/wreq/pull/1251))
+- *(deps)* bump taiki-e/install-action from 2.86.3 to 2.86.6 ([#1267](https://github.com/0x676e67/wreq/pull/1267))
+
 ## [0.16.1](https://github.com/0x676e67/wreq/compare/v0.16.0...v0.16.1) - 2026-08-25
 
 ### Fixed
