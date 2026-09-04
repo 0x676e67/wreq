@@ -23,10 +23,7 @@ use pretty_env_logger::env_logger;
 use support::server;
 use tokio::io::AsyncWriteExt;
 use wreq::{
-    Client, Emulation, Group,
-    header::OrigHeaderMap,
-    http1::Http1Options,
-    pool::{PoolLimits, PoolStrategy},
+    Client, Emulation, Group, header::OrigHeaderMap, http1::Http1Options, pool::PoolStrategy,
     tls::TlsInfo,
 };
 
@@ -813,22 +810,13 @@ async fn connection_pool_cache() {
 async fn connection_pool_reuses_http1_and_http2_connections() {
     let mut server = server::http(move |_| async move { http::Response::default() });
     let url = format!("http://{}", server.addr());
-    let limits = PoolLimits::builder().max_connections(1).build();
 
-    let http1 = Client::builder()
-        .http1_only()
-        .pool_limits(limits)
-        .build()
-        .unwrap();
+    let http1 = Client::builder().http1_only().build().unwrap();
     for _ in 0..2 {
         http1.get(&url).send().await.unwrap().bytes().await.unwrap();
     }
 
-    let http2 = Client::builder()
-        .http2_only()
-        .pool_limits(limits)
-        .build()
-        .unwrap();
+    let http2 = Client::builder().http2_only().build().unwrap();
     let responses = futures_util::future::join_all((0..8).map(|_| http2.get(&url).send())).await;
     for response in responses {
         response.unwrap();

@@ -6,7 +6,7 @@
 //! HTTP/1 preparation is composed from [`SetHost`] and [`Http1RequestTarget`].
 //!
 //! HTTP/1 request-target forms are defined by RFC 9112 section 3.2:
-//! https://www.rfc-editor.org/rfc/rfc9112.html#section-3.2
+//! <https://www.rfc-editor.org/rfc/rfc9112.html#section-3.2>
 
 use std::{
     future::Future,
@@ -37,7 +37,7 @@ use crate::{
     client::layer::config::RequestOptions,
     config::RequestConfig,
     conn::{Connected, Connection, descriptor::ConnectionDescriptor},
-    rt::Executor,
+    rt::{Executor, Timer},
 };
 
 /// Request and connection settings prepared for one low-level send operation.
@@ -94,9 +94,11 @@ pub(crate) struct RetryUnsent<S> {
 /// Performs one connection-pool checkout and protocol send attempt.
 ///
 /// Each call checks out a compatible sender, applies cookies, dispatches the
-/// request, attaches connection metadata, and releases the sender checkout at
-/// the response-header boundary. Errors preserve an unsent request when the
-/// protocol dispatcher can prove encoding never began.
+/// request, and attaches connection metadata. HTTP/2 releases its local
+/// checkout after response headers. HTTP/1 returns immediately only when its
+/// sender is ready again; otherwise a pool-owned task waits before returning
+/// it. Errors preserve an unsent request when the protocol dispatcher can prove
+/// encoding never began.
 pub(crate) struct PoolService<C, B>
 where
     C: Service<ConnectionDescriptor> + Clone + Send + Sync + 'static,
@@ -329,25 +331,25 @@ where
     B::Data: Send,
     B::Error: Into<BoxError>,
 {
-    /// Creates the terminal request service for one shared pool.
-    pub(super) fn new(pool: pool::Pool<C, B>, version: Ver, exec: Executor) -> Self {
+    /// Creates the terminal request service and its shared connection pool.
+    pub(super) fn new(
+        pool_config: pool::Config,
+        connector: C,
+        version: Ver,
+        exec: Executor,
+        timer: Timer,
+        set_host: bool,
+        #[cfg(feature = "cookies")] cookie_store: Option<Arc<dyn CookieStore>>,
+    ) -> Self {
+        let pool = pool::Pool::new(pool_config, connector, exec.clone(), timer, set_host);
+
         Self {
             pool,
             version,
             exec,
             #[cfg(feature = "cookies")]
-            cookie_store: RequestConfig::new(None),
+            cookie_store: RequestConfig::new(cookie_store),
         }
-    }
-
-    /// Installs the cookie store used by this request service.
-    #[cfg(feature = "cookies")]
-    pub(super) fn with_cookie_store(
-        mut self,
-        cookie_store: RequestConfig<Arc<dyn CookieStore>>,
-    ) -> Self {
-        self.cookie_store = cookie_store;
-        self
     }
 }
 
@@ -531,10 +533,7 @@ where
         pooled.conn_info().set_extras(response.extensions_mut());
         response.extensions_mut().insert(pooled.conn_info().clone());
 
-        if pooled.is_http2()
-            || (!pooled.is_pool_enabled() && !pooled.has_connection_limit())
-            || pooled.is_ready()
-        {
+        if pooled.is_http2() || !pooled.is_pool_enabled() || pooled.is_ready() {
             drop(pooled);
         } else {
             let on_idle = std::future::poll_fn(move |cx| pooled.poll_ready(cx));

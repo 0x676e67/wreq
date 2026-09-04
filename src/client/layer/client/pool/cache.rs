@@ -262,7 +262,10 @@ impl<Ev> Builder<Ev> {
     /// Completes useful maker work in the supplied executor after reuse wins.
     pub(super) fn executor<E>(self, executor: E) -> Builder<events::WithExecutor<E>> {
         Builder {
-            events: events::WithExecutor(executor),
+            events: events::WithExecutor {
+                executor,
+                on_complete: None,
+            },
             max_idle: self.max_idle,
         }
     }
@@ -298,6 +301,17 @@ impl<Ev> Builder<Ev> {
     }
 }
 
+impl<E> Builder<events::WithExecutor<E>> {
+    /// Runs `callback` after useful lost maker work finishes.
+    pub(super) fn on_background_complete<F>(mut self, callback: F) -> Self
+    where
+        F: Fn() + Send + Sync + 'static,
+    {
+        self.events.on_complete = Some(Arc::new(callback));
+        self
+    }
+}
+
 // ===== impl Cache =====
 
 impl<M, Dst, Ev> Cache<M, Dst, Ev>
@@ -325,6 +339,21 @@ where
         discarded
     }
 
+    /// Removes all unreserved idle services.
+    pub(super) fn drain_idle(&mut self) -> Vec<M::Response> {
+        let mut discarded = Vec::new();
+        if let Ready::Cached(service) = std::mem::replace(&mut self.ready, Ready::None) {
+            discarded.push(service);
+        }
+        discarded.extend(self.shared.lock().drain_services());
+        discarded
+    }
+
+    /// Returns whether at least one unreserved idle service exists.
+    pub(super) fn has_idle(&self) -> bool {
+        matches!(self.ready, Ready::Cached(_)) || !self.shared.lock().services.is_empty()
+    }
+
     /// Returns whether no ready, idle, reserved, waiting, or active work remains.
     pub(super) fn is_empty(&self) -> bool {
         matches!(self.ready, Ready::None) && self.active.load(Ordering::Acquire) == 0 && {
@@ -333,23 +362,6 @@ where
                 && shared.reservations.is_empty()
                 && shared.waiters.is_empty()
         }
-    }
-
-    /// Removes one matching idle service without creating a replacement.
-    ///
-    /// Waiter fairness takes priority, so this returns `None` while a waiter
-    /// could consume the same service.
-    pub(super) fn try_pop_idle_if<F>(&mut self, predicate: F) -> Option<M::Response>
-    where
-        F: Fn(&M::Response) -> bool,
-    {
-        if matches!(&self.ready, Ready::Cached(service) if predicate(service)) {
-            if let Ready::Cached(service) = std::mem::replace(&mut self.ready, Ready::None) {
-                return Some(service);
-            }
-        }
-
-        self.shared.lock().take_available_if(predicate)
     }
 }
 
@@ -680,16 +692,10 @@ impl<S> Cached<S> {
         }
     }
 
-    /// Returns this service to a waiter or retains it when `predicate` allows.
+    /// Returns this service to a waiter or retains it as idle.
     ///
-    /// Waiter handoff and the retention decision share one cache lock. This
-    /// closes the gap where external capacity reclamation could run just before
-    /// a service became visible as idle. The result reports whether the service
-    /// was handed off or retained.
-    pub(super) fn return_to_cache_if<F>(&mut self, predicate: F) -> bool
-    where
-        F: FnOnce(&S) -> bool,
-    {
+    /// The result reports whether the service was handed off or retained.
+    pub(super) fn return_to_cache(&mut self) -> bool {
         if self.discard {
             return false;
         }
@@ -702,7 +708,7 @@ impl<S> Cached<S> {
 
         let result = {
             let mut shared = shared.lock();
-            let result = shared.put_if(service, predicate);
+            let result = shared.put(service);
             self.release_active();
             result
         };
@@ -783,20 +789,17 @@ impl<S> Shared<S> {
         discarded
     }
 
-    /// Gives a returned service to the oldest waiter or stores it as idle.
-    fn put(&mut self, service: S) -> (Option<Waker>, Option<S>) {
-        self.put_if(service, |_| true)
+    /// Removes every unreserved idle service.
+    fn drain_services(&mut self) -> Vec<S> {
+        std::mem::take(&mut self.services)
     }
 
-    /// Gives a service to the oldest waiter or conditionally stores it as idle.
-    fn put_if<F>(&mut self, service: S, retain: F) -> (Option<Waker>, Option<S>)
-    where
-        F: FnOnce(&S) -> bool,
-    {
+    /// Gives a returned service to the oldest waiter or stores it as idle.
+    fn put(&mut self, service: S) -> (Option<Waker>, Option<S>) {
         if let Some(mut waiter) = self.waiters.pop_front() {
             self.reservations.push((waiter.id, service));
             (waiter.waker.take(), None)
-        } else if retain(&service) && self.services.len() < self.max_idle {
+        } else if self.services.len() < self.max_idle {
             self.services.push(service);
             (None, None)
         } else {
@@ -811,19 +814,6 @@ impl<S> Shared<S> {
         } else {
             None
         }
-    }
-
-    /// Takes one matching idle service when no waiter has priority.
-    fn take_available_if<F>(&mut self, predicate: F) -> Option<S>
-    where
-        F: Fn(&S) -> bool,
-    {
-        if !self.waiters.is_empty() {
-            return None;
-        }
-
-        let index = self.services.iter().rposition(predicate)?;
-        Some(self.services.remove(index))
     }
 
     /// Appends a checkout to the FIFO waiter queue.
@@ -957,11 +947,12 @@ fn cache_shutdown(mut receiver: watch::Receiver<()>) -> BoxFuture<'static, ()> {
 #[cfg(test)]
 mod tests {
     use std::{
+        convert::Infallible,
         sync::{
             Arc,
-            atomic::{AtomicUsize, Ordering},
+            atomic::{AtomicBool, AtomicUsize, Ordering},
         },
-        task::Context,
+        task::{Context, Wake, Waker},
     };
 
     use super::*;
@@ -975,6 +966,91 @@ mod tests {
         fn poll(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Self::Output> {
             self.0.fetch_add(1, Ordering::SeqCst);
             Poll::Pending
+        }
+    }
+
+    /// Creates one service immediately, then leaves later connection attempts pending.
+    #[derive(Clone, Default)]
+    struct QueueConnector {
+        calls: Arc<AtomicUsize>,
+
+        allow_ready: Arc<AtomicBool>,
+    }
+
+    impl Service<usize> for QueueConnector {
+        type Response = usize;
+        type Error = Infallible;
+        type Future = futures_util::future::Either<
+            std::future::Ready<Result<usize, Infallible>>,
+            std::future::Pending<Result<usize, Infallible>>,
+        >;
+
+        fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+            if self.allow_ready.load(Ordering::SeqCst) {
+                Poll::Ready(Ok(()))
+            } else {
+                Poll::Pending
+            }
+        }
+
+        fn call(&mut self, _target: usize) -> Self::Future {
+            if self.calls.fetch_add(1, Ordering::SeqCst) == 0 {
+                futures_util::future::Either::Left(std::future::ready(Ok(0)))
+            } else {
+                futures_util::future::Either::Right(std::future::pending())
+            }
+        }
+    }
+
+    /// Records whether a parked cache service was explicitly woken.
+    struct WakeFlag(AtomicBool);
+
+    impl Wake for WakeFlag {
+        fn wake(self: Arc<Self>) {
+            self.0.store(true, Ordering::SeqCst);
+        }
+
+        fn wake_by_ref(self: &Arc<Self>) {
+            self.0.store(true, Ordering::SeqCst);
+        }
+    }
+
+    /// Connector that rejects calls not preceded by readiness.
+    #[derive(Default)]
+    struct StrictConnector {
+        poll_ready_count: Arc<AtomicUsize>,
+        next: Arc<AtomicUsize>,
+        calls: Arc<std::sync::Mutex<Vec<usize>>>,
+        ready: bool,
+    }
+
+    impl Clone for StrictConnector {
+        fn clone(&self) -> Self {
+            Self {
+                poll_ready_count: self.poll_ready_count.clone(),
+                next: self.next.clone(),
+                calls: self.calls.clone(),
+                ready: false,
+            }
+        }
+    }
+
+    impl Service<usize> for StrictConnector {
+        type Response = usize;
+        type Error = Infallible;
+        type Future = std::future::Ready<Result<usize, Infallible>>;
+
+        fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+            self.ready = true;
+            self.poll_ready_count.fetch_add(1, Ordering::SeqCst);
+            Poll::Ready(Ok(()))
+        }
+
+        fn call(&mut self, target: usize) -> Self::Future {
+            assert!(self.ready, "connector called without readiness");
+            self.ready = false;
+            self.calls.lock().unwrap().push(target);
+            std::future::ready(Ok(self.next.fetch_add(1, Ordering::SeqCst)))
         }
     }
 
@@ -1008,7 +1084,7 @@ mod tests {
     }
 
     #[test]
-    fn returned_service_prefers_a_waiter_over_idle_rejection() {
+    fn returned_service_prefers_a_waiter() {
         let active = Arc::new(AtomicUsize::new(0));
         let shared = Arc::new(Mutex::new(Shared {
             services: Vec::new(),
@@ -1021,14 +1097,137 @@ mod tests {
         let waiter = shared.lock().push_waiter();
         let mut service = Cached::new(7, Arc::downgrade(&shared), active, false);
 
-        service.return_to_cache_if(|_| false);
+        service.return_to_cache();
 
         assert_eq!(shared.lock().take_reserved(waiter), Some(7));
+    }
+
+    #[tokio::test]
+    async fn reuse_is_fifo_and_skips_canceled_waiters() {
+        let connector = QueueConnector::default();
+        connector.allow_ready.store(true, Ordering::SeqCst);
+        let mut cache = builder().build(connector.clone());
+        std::future::poll_fn(|cx| cache.poll_ready(cx))
+            .await
+            .unwrap();
+        let held = cache.call(0).await.unwrap();
+
+        connector.allow_ready.store(false, Ordering::SeqCst);
+        let wake = Arc::new(WakeFlag(AtomicBool::new(false)));
+        let waker = Waker::from(wake.clone());
+        let mut wake_cx = Context::from_waker(&waker);
+        let mut ready = Box::pin(std::future::poll_fn(|cx| cache.poll_ready(cx)));
+        assert!(ready.as_mut().poll(&mut wake_cx).is_pending());
+
+        drop(held);
+        assert!(wake.0.load(Ordering::SeqCst));
+        assert!(matches!(
+            ready.as_mut().poll(&mut wake_cx),
+            Poll::Ready(Ok(()))
+        ));
+        drop(ready);
+        let held = cache.call(0).await.unwrap();
+
+        connector.allow_ready.store(true, Ordering::SeqCst);
+        let mut cx = Context::from_waker(Waker::noop());
+        std::future::poll_fn(|cx| cache.poll_ready(cx))
+            .await
+            .unwrap();
+        let mut first = Box::pin(cache.call(1));
+        assert!(first.as_mut().poll(&mut cx).is_pending());
+
+        std::future::poll_fn(|cx| cache.poll_ready(cx))
+            .await
+            .unwrap();
+        let mut canceled = Box::pin(cache.call(2));
+        assert!(canceled.as_mut().poll(&mut cx).is_pending());
+
+        std::future::poll_fn(|cx| cache.poll_ready(cx))
+            .await
+            .unwrap();
+        let mut third = Box::pin(cache.call(3));
+        assert!(third.as_mut().poll(&mut cx).is_pending());
+        drop(canceled);
+
+        drop(held);
+        let Poll::Ready(Ok(first_service)) = first.as_mut().poll(&mut cx) else {
+            panic!("oldest live waiter should receive the returned service");
+        };
+        assert_eq!(*first_service.inner(), 0);
+        assert!(third.as_mut().poll(&mut cx).is_pending());
+
+        drop(first_service);
+        let Poll::Ready(Ok(third_service)) = third.as_mut().poll(&mut cx) else {
+            panic!("canceled waiter should not block the next live waiter");
+        };
+        assert_eq!(*third_service.inner(), 0);
+        drop(third_service);
+
+        std::future::poll_fn(|cx| cache.poll_ready(cx))
+            .await
+            .unwrap();
+        assert!(cache.call(4).await.unwrap().is_reused());
+    }
+
+    #[tokio::test]
+    async fn clone_readiness_reserves_returns_and_retains_services() {
+        let connector = StrictConnector::default();
+        let poll_ready_count = connector.poll_ready_count.clone();
+        let calls = connector.calls.clone();
+        let mut cache = builder().build(connector);
+
+        std::future::poll_fn(|cx| cache.poll_ready(cx))
+            .await
+            .unwrap();
+        let service = cache.call(1).await.unwrap();
+        assert_eq!(*service.inner(), 0);
+        drop(service);
+
+        let mut first = cache.clone();
+        let mut second = cache.clone();
+        std::future::poll_fn(|cx| first.poll_ready(cx))
+            .await
+            .unwrap();
+        assert_eq!(poll_ready_count.load(Ordering::SeqCst), 1);
+        std::future::poll_fn(|cx| second.poll_ready(cx))
+            .await
+            .unwrap();
+        assert_eq!(poll_ready_count.load(Ordering::SeqCst), 2);
+
+        let first_service = first.call(10).await.unwrap();
+        let second_service = second.call(20).await.unwrap();
+        assert_eq!(*first_service.inner(), 0);
+        assert_eq!(*second_service.inner(), 1);
+        assert_eq!(*calls.lock().unwrap(), vec![1, 20]);
+        drop(first_service);
+        drop(second_service);
+
+        let mut reserved = cache.clone();
+        std::future::poll_fn(|cx| reserved.poll_ready(cx))
+            .await
+            .unwrap();
+        drop(reserved);
+        let before = poll_ready_count.load(Ordering::SeqCst);
+        std::future::poll_fn(|cx| cache.poll_ready(cx))
+            .await
+            .unwrap();
+        assert_eq!(poll_ready_count.load(Ordering::SeqCst), before);
+
+        cache.retain(|_| false);
+        assert!(cache.is_empty());
+        std::future::poll_fn(|cx| cache.poll_ready(cx))
+            .await
+            .unwrap();
+        assert_eq!(poll_ready_count.load(Ordering::SeqCst), before + 1);
     }
 }
 
 /// Policies for maker futures that lose the reuse race.
 pub(super) mod events {
+    use std::{fmt, sync::Arc};
+
+    use futures_util::future::BoxFuture;
+
     use super::Started;
 
     /// Policy that cancels maker futures after another service wins the race.
@@ -1040,11 +1239,16 @@ pub(super) mod events {
 
     /// Policy that completes useful lost maker futures on an executor.
     ///
-    /// Futures that have only waited for reuse or capacity are still canceled.
+    /// Futures that have only waited for reuse are still canceled.
     /// Once physical connection work starts, the executor can finish it and put
     /// a successful service into the cache for a later checkout.
-    #[derive(Clone, Debug)]
-    pub struct WithExecutor<E>(pub(super) E);
+    #[derive(Clone)]
+    pub struct WithExecutor<E> {
+        /// Runtime used to finish a connection attempt.
+        pub(super) executor: E,
+        /// Optional maintenance callback invoked after completion.
+        pub(super) on_complete: Option<Arc<dyn Fn() + Send + Sync>>,
+    }
 
     /// Handles a maker future after connection reuse wins.
     pub trait Events<F> {
@@ -1063,14 +1267,29 @@ pub(super) mod events {
 
     impl<E, F> Events<F> for WithExecutor<E>
     where
-        F: Started + Send + 'static,
-        E: wreq_proto::rt::Executor<F>,
+        F: Started<Output = ()> + Send + 'static,
+        E: wreq_proto::rt::Executor<BoxFuture<'static, ()>>,
     {
         /// Spawns the maker only when it has started useful work.
         fn on_race_lost(&self, future: F) {
             if future.started() {
-                self.0.execute(future);
+                let on_complete = self.on_complete.clone();
+                self.executor.execute(Box::pin(async move {
+                    future.await;
+                    if let Some(on_complete) = on_complete {
+                        on_complete();
+                    }
+                }));
             }
+        }
+    }
+
+    impl<E: fmt::Debug> fmt::Debug for WithExecutor<E> {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            f.debug_struct("WithExecutor")
+                .field("executor", &self.executor)
+                .field("on_complete", &self.on_complete.is_some())
+                .finish()
         }
     }
 }

@@ -106,6 +106,18 @@ where
         discarded
     }
 
+    /// Removes the completed service without interrupting an in-progress maker.
+    pub(super) fn take(&mut self) -> Option<M::Response> {
+        let mut state = self.state.lock();
+        match std::mem::replace(&mut *state, State::Empty) {
+            State::Made { service, .. } => Some(service),
+            previous => {
+                *state = previous;
+                None
+            }
+        }
+    }
+
     /// Returns whether no service exists and none is being created.
     pub(super) fn is_empty(&self) -> bool {
         matches!(*self.state.lock(), State::Empty)
@@ -141,27 +153,6 @@ where
                 generation: generation.clone(),
                 state: Arc::downgrade(&self.state),
             }),
-        }
-    }
-
-    /// Removes the completed service when it satisfies `predicate`.
-    ///
-    /// This does not cancel an in-progress creation.
-    pub(super) fn try_take_if<F>(&mut self, predicate: F) -> Option<M::Response>
-    where
-        F: FnOnce(&M::Response) -> bool,
-    {
-        let mut state = self.state.lock();
-        let State::Made { service, .. } = &*state else {
-            return None;
-        };
-        if !predicate(service) {
-            return None;
-        }
-
-        match std::mem::replace(&mut *state, State::Empty) {
-            State::Made { service, .. } => Some(service),
-            _ => None,
         }
     }
 }
@@ -288,7 +279,8 @@ pub(super) enum SingletonFuture<F, S> {
 
 // ===== impl SingletonFuture =====
 
-/// Safe because the maker future is pinned separately inside [`Batch`].
+// The maker future is pinned separately inside `Batch`, so moving this outer
+// state machine never moves the maker itself.
 impl<F, S> Unpin for SingletonFuture<F, S> {}
 
 /// Lifecycle of the shared singleton service.
@@ -844,7 +836,14 @@ impl std::error::Error for Canceled {}
 
 #[cfg(test)]
 mod tests {
-    use std::{future::Ready, sync::Arc};
+    use std::{
+        future::Ready,
+        sync::{
+            Arc,
+            atomic::{AtomicBool, AtomicUsize, Ordering},
+        },
+        task::{Context, Poll},
+    };
 
     use tower::{BoxError, Service, util::Oneshot};
 
@@ -876,6 +875,54 @@ mod tests {
         }
     }
 
+    /// Shared service whose readiness can be failed by the test.
+    #[derive(Clone)]
+    struct ReadinessService {
+        fail: Arc<AtomicBool>,
+    }
+
+    impl Service<()> for ReadinessService {
+        type Response = ();
+        type Error = std::io::Error;
+        type Future = Ready<Result<(), Self::Error>>;
+
+        fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+            if self.fail.load(Ordering::SeqCst) {
+                Poll::Ready(Err(std::io::Error::other("readiness failed")))
+            } else {
+                Poll::Ready(Ok(()))
+            }
+        }
+
+        fn call(&mut self, _request: ()) -> Self::Future {
+            std::future::ready(Ok(()))
+        }
+    }
+
+    /// Immediately creates a readiness-controlled service and counts creations.
+    #[derive(Clone)]
+    struct CountingMaker {
+        calls: Arc<AtomicUsize>,
+        fail: Arc<AtomicBool>,
+    }
+
+    impl Service<()> for CountingMaker {
+        type Response = ReadinessService;
+        type Error = BoxError;
+        type Future = Ready<Result<Self::Response, Self::Error>>;
+
+        fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+            Poll::Ready(Ok(()))
+        }
+
+        fn call(&mut self, _target: ()) -> Self::Future {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            std::future::ready(Ok(ReadinessService {
+                fail: self.fail.clone(),
+            }))
+        }
+    }
+
     #[test]
     fn stale_checkout_cannot_discard_replacement() {
         type MakeFuture = Ready<Result<(), BoxError>>;
@@ -895,6 +942,34 @@ mod tests {
             State::Made { generation, .. }
                 if Arc::ptr_eq(generation, &replacement_generation)
         ));
+    }
+
+    #[tokio::test]
+    async fn made_service_is_reused_and_readiness_failure_clears_it() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let fail = Arc::new(AtomicBool::new(false));
+        let singleton = Singleton::new(CountingMaker {
+            calls: calls.clone(),
+            fail: fail.clone(),
+        });
+
+        let first = Oneshot::new(singleton.clone(), ()).await.unwrap();
+        assert!(!first.is_reused());
+        let mut reused = Oneshot::new(singleton.clone(), ()).await.unwrap();
+        assert!(reused.is_reused());
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+
+        fail.store(true, Ordering::SeqCst);
+        assert!(
+            std::future::poll_fn(|cx| reused.poll_ready(cx))
+                .await
+                .is_err()
+        );
+        fail.store(false, Ordering::SeqCst);
+
+        let replacement = Oneshot::new(singleton, ()).await.unwrap();
+        assert!(!replacement.is_reused());
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
     }
 
     #[test]
@@ -924,6 +999,29 @@ mod tests {
         let mut driver = tokio_test::task::spawn(Oneshot::new(singleton.clone(), ()));
         assert!(driver.poll().is_pending());
         let sender = sender.lock().take().expect("maker started");
+        let mut canceled = tokio_test::task::spawn(Oneshot::new(singleton.clone(), ()));
+        let mut waiter = tokio_test::task::spawn(Oneshot::new(singleton, ()));
+        assert!(canceled.poll().is_pending());
+        assert!(waiter.poll().is_pending());
+        drop(canceled);
+        sender.send("shared").expect("live participants remain");
+
+        let std::task::Poll::Ready(Ok(driver_service)) = driver.poll() else {
+            panic!("driver should complete after a non-driver cancellation");
+        };
+        let std::task::Poll::Ready(Ok(waiter_service)) = waiter.poll() else {
+            panic!("remaining waiter should receive the shared service");
+        };
+        assert_eq!(*driver_service.inner(), "shared");
+        assert_eq!(*waiter_service.inner(), "shared");
+
+        let sender = Arc::new(Mutex::new(None));
+        let singleton = Singleton::new(ControlledMaker {
+            sender: sender.clone(),
+        });
+        let mut driver = tokio_test::task::spawn(Oneshot::new(singleton.clone(), ()));
+        assert!(driver.poll().is_pending());
+        let sender = sender.lock().take().expect("maker started");
         let mut waiter = tokio_test::task::spawn(Oneshot::new(singleton, ()));
         assert!(waiter.poll().is_pending());
 
@@ -937,5 +1035,17 @@ mod tests {
             panic!("waiter should be released for a new batch");
         };
         assert!(super::SingletonError::is_canceled(&waiter_error));
+
+        let sender = Arc::new(Mutex::new(None));
+        let singleton = Singleton::new(ControlledMaker {
+            sender: sender.clone(),
+        });
+        let mut driver = tokio_test::task::spawn(Oneshot::new(singleton.clone(), ()));
+        let mut waiter = tokio_test::task::spawn(Oneshot::new(singleton.clone(), ()));
+        assert!(driver.poll().is_pending());
+        assert!(waiter.poll().is_pending());
+        drop(driver);
+        drop(waiter);
+        assert!(singleton.is_empty());
     }
 }

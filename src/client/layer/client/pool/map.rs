@@ -8,9 +8,9 @@
 //! destination -> compatibility key -> cache/negotiation service
 //! ```
 //!
-//! Entries are created lazily and may be bounded by an LRU limit. Eviction only
-//! removes an entry from future lookup. Checkouts already holding clones of its
-//! shared state can finish normally.
+//! Entries are created lazily in an unbounded routing map. An optional LRU tracks
+//! only entries that currently retain reusable connection state, preserving the
+//! legacy pool's global idle-host limit without counting active work.
 //!
 //! # Example
 //!
@@ -18,17 +18,16 @@
 //! any evicted service after releasing that lock:
 //!
 //! ```rust,ignore
-//! let ((checkout, discarded), evicted) = map.with_service(target, |service, target| {
+//! let (checkout, discarded) = map.with_service(target, |service, target| {
 //!     let discarded = service.retain(now, idle_timeout);
 //!     let checkout = service.checkout(target, true);
 //!     (checkout, discarded)
 //! });
-//! drop(evicted);
 //! drop(discarded);
 //! let sender = checkout.await?;
 //! ```
 
-use std::{hash::Hash, marker::PhantomData, num::NonZeroUsize};
+use std::{collections::HashMap, hash::Hash, marker::PhantomData, num::NonZeroUsize};
 
 use lru::LruCache;
 
@@ -36,22 +35,26 @@ use lru::LruCache;
 ///
 /// `Map` owns no synchronization. The pool coordinator locks it around lookup
 /// and maintenance operations. Methods that remove an entry return the service
-/// to the caller so connection senders and capacity permits can be dropped only
-/// after that outer lock has been released.
+/// to the caller so connection senders can be dropped only after that outer
+/// lock has been released.
 ///
-/// Successful lookups refresh LRU order. A miss creates one service through the
-/// configured [`Target`] and may return the least recently used service as an
-/// eviction. Returning removals instead of dropping them internally is part of
-/// the type's contract: mapped services may own senders, permits, and wakers
-/// whose destructors can re-enter other pool components.
+/// A miss creates one service through the configured [`Target`]. Successful
+/// lookups refresh the optional idle-group LRU only when that key is already
+/// tracked. The pool coordinator decides when a service gains or loses reusable
+/// state and performs any resulting eviction outside this type.
 pub(super) struct Map<T, Dst>
 where
     T: Target<Dst>,
 {
     /// Services indexed by connection compatibility key.
-    entries: LruCache<T::Key, T::Service>,
+    entries: HashMap<T::Key, T::Service>,
+
+    /// Least-recently-used keys that currently retain reusable state.
+    retained: Option<LruCache<T::Key, ()>>,
+
     /// Derives keys and creates missing services.
     targeter: T,
+
     /// Carries the destination type without owning a destination.
     _dst: PhantomData<fn(Dst)>,
 }
@@ -79,43 +82,88 @@ where
     T: Target<Dst>,
     T::Key: Eq + Hash,
 {
-    /// Creates a lazy map with an optional LRU entry limit.
-    pub(super) fn new(targeter: T, max_entries: Option<NonZeroUsize>) -> Self {
+    /// Creates a lazy map with an optional retained-group LRU limit.
+    pub(super) fn new(targeter: T, max_retained: Option<NonZeroUsize>) -> Self {
         Self {
-            entries: max_entries.map_or_else(LruCache::unbounded, LruCache::new),
+            entries: HashMap::new(),
+            retained: max_retained.map(LruCache::new),
             targeter,
             _dst: PhantomData,
         }
     }
 
-    /// Applies `operation` to the service for `dst` and returns any LRU eviction.
-    ///
-    /// The caller can drop the evicted service after releasing its outer lock.
-    pub(super) fn with_service<R, F>(&mut self, dst: Dst, operation: F) -> (R, Option<T::Service>)
+    /// Applies `operation` to the service for `dst`.
+    pub(super) fn with_service<R, F>(&mut self, dst: Dst, operation: F) -> R
     where
         T::Key: Clone,
         F: FnOnce(&mut T::Service, Dst) -> R,
     {
         let key = self.targeter.key(&dst);
-        if let Some(service) = self.entries.get_mut(&key) {
-            return (operation(service, dst), None);
+        if let Some(retained) = &mut self.retained {
+            let _ = retained.get(&key);
         }
 
-        let evicted = self
-            .entries
-            .push(key.clone(), self.targeter.service(&dst))
-            .map(|(_, service)| service);
         let targeter = &self.targeter;
         let service = self
             .entries
-            .get_or_insert_mut(key, || targeter.service(&dst));
-        (operation(service, dst), evicted)
+            .entry(key)
+            .or_insert_with(|| targeter.service(&dst));
+        operation(service, dst)
+    }
+
+    /// Returns the service stored for `key` without changing idle LRU order.
+    pub(super) fn get_mut(&mut self, key: &T::Key) -> Option<&mut T::Service> {
+        self.entries.get_mut(key)
+    }
+
+    /// Removes idle markers whose services no longer satisfy `predicate`.
+    pub(super) fn prune_retained<F>(&mut self, mut predicate: F)
+    where
+        T::Key: Clone,
+        F: FnMut(&T::Service) -> bool,
+    {
+        let Some(retained) = &mut self.retained else {
+            return;
+        };
+        let stale = retained
+            .iter()
+            .filter(|(key, ())| {
+                self.entries
+                    .get(*key)
+                    .is_none_or(|service| !predicate(service))
+            })
+            .map(|(key, ())| key.clone())
+            .collect::<Vec<_>>();
+        for key in stale {
+            let _ = retained.pop(&key);
+        }
+    }
+
+    /// Marks `key` as the most recently used retained group.
+    ///
+    /// The returned key is the least recently used group displaced by the
+    /// configured limit. An unbounded map returns `None`.
+    pub(super) fn mark_retained(&mut self, key: &T::Key) -> Option<T::Key>
+    where
+        T::Key: Clone,
+    {
+        let retained = self.retained.as_mut()?;
+        if retained.get(key).is_some() {
+            return None;
+        }
+        retained.push(key.clone(), ()).map(|(key, ())| key)
+    }
+
+    /// Stops counting `key` as a retained idle group.
+    pub(super) fn unmark_retained(&mut self, key: &T::Key) {
+        if let Some(retained) = &mut self.retained {
+            let _ = retained.pop(key);
+        }
     }
 
     /// Retains entries selected by `predicate` and returns removed services.
     ///
-    /// Keys are collected before removal because `LruCache` cannot be mutated
-    /// while its entries are being visited.
+    /// Keys are collected before removal so removed services can be returned.
     pub(super) fn retain<F>(&mut self, mut predicate: F) -> Vec<T::Service>
     where
         T::Key: Clone,
@@ -129,14 +177,15 @@ where
 
         removed
             .into_iter()
-            .filter_map(|key| self.entries.pop(&key))
+            .filter_map(|key| {
+                self.unmark_retained(&key);
+                self.entries.remove(&key)
+            })
             .collect()
     }
 
-    /// Iterates from most to least recently used without changing LRU order.
-    pub(super) fn iter_mut(
-        &mut self,
-    ) -> impl DoubleEndedIterator<Item = (&T::Key, &mut T::Service)> {
+    /// Iterates over mapped services without changing idle LRU order.
+    pub(super) fn iter_mut(&mut self) -> impl Iterator<Item = (&T::Key, &mut T::Service)> {
         self.entries.iter_mut()
     }
 
@@ -145,11 +194,17 @@ where
     where
         F: FnOnce(&T::Service) -> bool,
     {
-        let remove = self.entries.peek(key).is_some_and(predicate);
-        remove.then(|| self.entries.pop(key)).flatten()
+        let remove = self.entries.get(key).is_some_and(predicate);
+        if remove {
+            self.unmark_retained(key);
+            self.entries.remove(key)
+        } else {
+            None
+        }
     }
 
-    /// Returns whether the map currently contains no service entries.
+    /// Returns whether the map contains no service entries.
+    #[cfg(test)]
     pub(super) fn is_empty(&self) -> bool {
         self.entries.is_empty()
     }
@@ -194,11 +249,17 @@ mod tests {
         let drops = Arc::new(AtomicUsize::new(0));
         let mut map = Map::new(ProbeTarget(drops.clone()), NonZeroUsize::new(1));
 
-        let (_, evicted) = map.with_service(1, |_, _| ());
-        assert!(evicted.is_none());
-        let (_, evicted) = map.with_service(2, |_, _| ());
+        map.with_service(1, |_, _| ());
+        assert_eq!(map.mark_retained(&1), None);
+        map.with_service(2, |_, _| ());
         assert_eq!(drops.load(Ordering::SeqCst), 0);
-        drop(evicted);
+
+        let evicted = map.mark_retained(&2);
+        assert_eq!(evicted, Some(1));
+        assert_eq!(drops.load(Ordering::SeqCst), 0);
+
+        let removed = map.remove_if(&evicted.unwrap(), |_| true);
+        drop(removed);
         assert_eq!(drops.load(Ordering::SeqCst), 1);
 
         let removed = map.remove_if(&2, |_| true);

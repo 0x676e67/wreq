@@ -53,6 +53,7 @@ pub(super) fn builder() -> Builder<WantsConnect, WantsInspect, WantsFallback, Wa
         inspect: WantsInspect,
         fallback: WantsFallback,
         upgrade: WantsUpgrade,
+        signal: UpgradeSignal::new(),
     }
 }
 
@@ -168,6 +169,9 @@ pub(super) struct Builder<C, I, L, R> {
 
     /// Layer applied to upgraded connections.
     upgrade: R,
+
+    /// Notification shared by fallback and direct upgraded attempts.
+    signal: UpgradeSignal,
 }
 
 /// Type-state marker indicating that the connector has not been supplied.
@@ -203,6 +207,7 @@ impl<C, I, L, R> Builder<C, I, L, R> {
             inspect: self.inspect,
             fallback: self.fallback,
             upgrade: self.upgrade,
+            signal: self.signal,
         }
     }
 
@@ -213,6 +218,7 @@ impl<C, I, L, R> Builder<C, I, L, R> {
             inspect,
             fallback: self.fallback,
             upgrade: self.upgrade,
+            signal: self.signal,
         }
     }
 
@@ -223,6 +229,7 @@ impl<C, I, L, R> Builder<C, I, L, R> {
             inspect: self.inspect,
             fallback,
             upgrade: self.upgrade,
+            signal: self.signal,
         }
     }
 
@@ -233,6 +240,7 @@ impl<C, I, L, R> Builder<C, I, L, R> {
             inspect: self.inspect,
             fallback: self.fallback,
             upgrade,
+            signal: self.signal,
         }
     }
 
@@ -251,7 +259,7 @@ impl<C, I, L, R> Builder<C, I, L, R> {
         I: Fn(&C::Response) -> bool + Clone,
     {
         let pending = Arc::new(Mutex::new(VecDeque::new()));
-        let signal = UpgradeSignal::new();
+        let signal = self.signal;
         let fallback = self.fallback.layer(Inspector {
             service: self.connect,
             inspect: self.inspect,
@@ -322,16 +330,6 @@ impl<L, R, S> Negotiate<L, R, S> {
         }
 
         discarded
-    }
-
-    /// Removes the first queued upgraded connection matching `predicate`.
-    pub(super) fn take_pending_if<F>(&mut self, predicate: F) -> Option<S>
-    where
-        F: Fn(&S) -> bool,
-    {
-        let mut pending = self.pending.lock();
-        let index = pending.iter().position(predicate)?;
-        pending.remove(index)
     }
 
     /// Returns whether no upgraded connection is waiting for handoff.
@@ -508,8 +506,8 @@ where
 /// the current wrapping generation. Publishing increments the generation after
 /// queue insertion, so a wake always observes either a pending connection or a
 /// later state change. The signal is a hint; consumers recover from stale wakes.
-#[derive(Clone)]
-struct UpgradeSignal {
+#[derive(Clone, Debug)]
+pub(super) struct UpgradeSignal {
     /// Wrapping generation observed by each fallback attempt.
     generation: watch::Sender<usize>,
 }
@@ -518,7 +516,7 @@ struct UpgradeSignal {
 
 impl UpgradeSignal {
     /// Creates a signal at generation zero.
-    fn new() -> Self {
+    pub(super) fn new() -> Self {
         let (generation, _) = watch::channel(0);
         Self { generation }
     }
@@ -540,7 +538,7 @@ impl UpgradeSignal {
     }
 
     /// Advances the generation and wakes fallback attempts.
-    fn notify(&self) {
+    pub(super) fn notify(&self) {
         self.generation
             .send_modify(|generation| *generation = generation.wrapping_add(1));
     }
@@ -754,6 +752,39 @@ mod tests {
     use super::*;
     use crate::client::layer::client::pool::singleton::Singleton;
 
+    /// Immediately returns the protocol label supplied by the test.
+    #[derive(Clone, Copy)]
+    struct ReadyConnector(&'static str);
+
+    impl Service<()> for ReadyConnector {
+        type Response = &'static str;
+        type Error = BoxError;
+        type Future = std::future::Ready<Result<Self::Response, Self::Error>>;
+
+        fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+            Poll::Ready(Ok(()))
+        }
+
+        fn call(&mut self, _target: ()) -> Self::Future {
+            std::future::ready(Ok(self.0))
+        }
+    }
+
+    /// Small layer adapter used to compose the two test pool paths.
+    #[derive(Clone, Copy)]
+    struct LayerFn<F>(F);
+
+    impl<F, S, Out> Layer<S> for LayerFn<F>
+    where
+        F: Fn(S) -> Out,
+    {
+        type Service = Out;
+
+        fn layer(&self, inner: S) -> Self::Service {
+            (self.0)(inner)
+        }
+    }
+
     /// Fallback service that rejects calls not preceded by readiness.
     struct StrictFallback {
         calls: Arc<AtomicUsize>,
@@ -787,6 +818,30 @@ mod tests {
                 std::future::ready(Err(UseOther.into()))
             } else {
                 std::future::ready(Ok("fallback"))
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn inspected_connections_select_the_expected_pool() {
+        for (protocol, upgraded) in [("http/1.1", false), ("h2", true)] {
+            let negotiate = builder()
+                .connect(ReadyConnector(protocol))
+                .inspect(|protocol: &&str| *protocol == "h2")
+                .fallback(LayerFn(|service| service))
+                .upgrade(LayerFn(Singleton::new))
+                .build::<()>();
+
+            let selected = Oneshot::new(negotiate, ()).await.unwrap();
+            match selected {
+                Negotiated::Fallback(service) => {
+                    assert!(!upgraded);
+                    assert_eq!(service, "http/1.1");
+                }
+                Negotiated::Upgraded(service) => {
+                    assert!(upgraded);
+                    assert_eq!(*service.inner(), "h2");
+                }
             }
         }
     }

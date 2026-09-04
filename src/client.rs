@@ -70,7 +70,7 @@ use crate::{
     header::OrigHeaderMap,
     http1::Http1Options,
     http2::Http2Options,
-    pool::{PoolLimits, PoolStrategy},
+    pool::PoolStrategy,
     proxy::Matcher as ProxyMatcher,
     redirect::{self, FollowRedirectPolicy},
     retry,
@@ -185,7 +185,6 @@ struct Config {
     pool_max_idle_per_host: usize,
     pool_max_size: Option<NonZeroUsize>,
     pool_strategy: PoolStrategy,
-    pool_limits: PoolLimits,
     tcp_nodelay: bool,
     tcp_reuse_address: bool,
     tcp_linger: Option<Duration>,
@@ -274,7 +273,6 @@ impl Client {
                 pool_max_idle_per_host: usize::MAX,
                 pool_max_size: None,
                 pool_strategy: PoolStrategy::default(),
-                pool_limits: PoolLimits::default(),
                 tcp_keepalive: Some(Duration::from_secs(15)),
                 tcp_keepalive_interval: Some(Duration::from_secs(15)),
                 tcp_keepalive_retries: Some(3),
@@ -589,7 +587,6 @@ impl ClientBuilder {
                 .pool_max_idle_per_host(config.pool_max_idle_per_host)
                 .pool_max_size(config.pool_max_size)
                 .pool_strategy(config.pool_strategy)
-                .pool_limits(config.pool_limits)
                 .build(connector)
         };
 
@@ -1077,11 +1074,9 @@ impl ClientBuilder {
 
     // HTTP options
 
-    /// Set an optional timeout for idle sockets being kept-alive.
+    /// Sets how long an idle pooled connection remains eligible for reuse.
     ///
-    /// Pass `None` to disable timeout.
-    ///
-    /// Default is 90 seconds.
+    /// Pass `None` to disable time-based eviction. The default is 90 seconds.
     #[inline]
     pub fn pool_idle_timeout<D>(mut self, val: D) -> ClientBuilder
     where
@@ -1091,33 +1086,31 @@ impl ClientBuilder {
         self
     }
 
-    /// Sets the maximum idle connection per host allowed in the pool.
+    /// Sets the maximum idle HTTP/1 connections retained per compatibility group.
+    ///
+    /// This does not limit active physical connections. Passing `0` disables
+    /// connection reuse.
     #[inline]
     pub fn pool_max_idle_per_host(mut self, max: usize) -> ClientBuilder {
         self.config.pool_max_idle_per_host = max;
         self
     }
 
-    /// Sets the maximum number of connection groups retained by the pool.
+    /// Sets the maximum number of compatibility groups retaining idle connections.
     ///
-    /// Passing `0` disables this limit.
+    /// A group is counted only while the pool owns a reusable sender. Empty and
+    /// connecting-only groups are not counted, and this does not limit physical
+    /// connections. Passing `0` disables the limit.
     #[inline]
     pub fn pool_max_size(mut self, max: usize) -> ClientBuilder {
         self.config.pool_max_size = NonZeroUsize::new(max);
         self
     }
 
-    /// Sets the connection acquisition strategy.
+    /// Selects whether a reuse miss immediately connects or briefly waits for reuse.
     #[inline]
     pub fn pool_strategy(mut self, strategy: PoolStrategy) -> ClientBuilder {
         self.config.pool_strategy = strategy;
-        self
-    }
-
-    /// Sets connection limits for the pool.
-    #[inline]
-    pub fn pool_limits(mut self, limits: PoolLimits) -> ClientBuilder {
-        self.config.pool_limits = limits;
         self
     }
 

@@ -4,10 +4,8 @@
 //! services. The pool can therefore compose connection making, protocol
 //! negotiation, and reuse without owning handshake state machines itself.
 //!
-//! A successful handshake transfers the physical connection permit to both the
-//! sender and the spawned protocol driver. The permit is released only after
-//! both owners are gone, so removing a sender from the pool cannot free capacity
-//! while its socket task is still shutting down.
+//! A successful handshake starts the protocol driver and returns a sender with
+//! the connection metadata needed by request middleware and pool health checks.
 
 use std::{
     fmt,
@@ -35,7 +33,7 @@ use wreq_proto::{
 
 use super::{
     Error, ErrorKind,
-    pool::{BlockedBy, Capacity, ConnectionPermit, LimitKey, Started, Ver},
+    pool::{Started, Ver},
     service::{Http1RequestTarget, SetHost},
 };
 use crate::{
@@ -47,17 +45,14 @@ use crate::{
 /// Physical transport and request-specific protocol configuration.
 ///
 /// Connection making creates this value before protocol negotiation. The
-/// selected handshake consumes it exactly once and transfers its permit to the
-/// resulting sender and protocol driver.
+/// selected handshake consumes it exactly once and transfers the transport to
+/// the resulting protocol driver.
 pub(super) struct Established<T> {
     /// Connected transport stream.
     io: T,
 
     /// Metadata supplied by the connector.
     connected: Connected,
-
-    /// Permit retained for the physical connection lifetime.
-    permit: ConnectionPermit,
 
     /// Requested protocol mode.
     version: Ver,
@@ -83,12 +78,6 @@ pub(super) struct Http1Client<B> {
     /// HTTP/1 request sender, uniquely checked out.
     tx: SetHost<Http1RequestTarget<Http1Sender<B>>>,
 
-    /// Physical connection-capacity reservation.
-    permit: ConnectionPermit,
-
-    /// Capacity manager used to detect queued work.
-    capacity: Option<Capacity>,
-
     /// Last time the sender became idle.
     idle_at: Instant,
 
@@ -99,19 +88,14 @@ pub(super) struct Http1Client<B> {
 /// Cloneable HTTP/2 sender and its shared connection metadata.
 ///
 /// The pool singleton stores one instance and gives each checkout a sender
-/// clone. Protocol stream availability remains owned by the sender.
+/// clone. Protocol stream availability remains owned by wreq-proto; the local
+/// state records sender checkout only and is not an active-stream count.
 pub(super) struct Http2Client<B> {
     /// Metadata and poisoning state for the connection.
     conn_info: Connected,
 
     /// Cloneable multiplexed request sender.
     tx: proto::http2::SendRequest<B>,
-
-    /// Physical connection-capacity reservation.
-    permit: ConnectionPermit,
-
-    /// Capacity manager used to detect queued work.
-    capacity: Option<Capacity>,
 
     /// Checkout count and idle timestamp shared by sender clones.
     state: Arc<Http2State>,
@@ -126,7 +110,7 @@ pub(super) struct Http2Client<B> {
 /// stream lease must also follow the accepted request body, response body, and
 /// extended `CONNECT` upgrade until both stream directions terminate. The
 /// lifecycle is specified by smithy-rs's latest pool design:
-/// https://github.com/smithy-lang/smithy-rs/blob/connection-pool-main/rust-runtime/aws-smithy-http-client/docs/design/connection-pool.md
+/// <https://github.com/smithy-lang/smithy-rs/blob/connection-pool-main/rust-runtime/aws-smithy-http-client/docs/design/connection-pool.md>
 struct Http2State {
     /// Number of `Pooled` handles currently using the sender.
     checkouts: AtomicUsize,
@@ -164,9 +148,6 @@ struct Http1Sender<B> {
 /// handshake, installs HTTP/1 request middleware, and returns a cacheable
 /// [`Http1Client`].
 pub(super) struct Http1Layer<B> {
-    /// Capacity manager copied into completed senders.
-    capacity: Option<Capacity>,
-
     /// Runtime used by the protocol driver.
     exec: Executor,
 
@@ -186,9 +167,6 @@ pub(super) struct Http1Layer<B> {
 /// transport. The resulting sender is cloneable and can be stored in the
 /// pool's singleton service.
 pub(super) struct Http2Layer<B> {
-    /// Capacity manager copied into completed senders.
-    capacity: Option<Capacity>,
-
     /// Runtime used by the protocol driver.
     exec: Executor,
 
@@ -201,15 +179,12 @@ pub(super) struct Http2Layer<B> {
 
 /// Connects a transport and performs an HTTP/1 handshake.
 ///
-/// The inner service may include reuse delays and capacity acquisition. Its
+/// The inner service may include a reuse delay before connecting. Its
 /// [`Started`] state is preserved so the HTTP/1 cache can decide whether a lost
 /// reuse race should finish in the background.
 pub(super) struct Http1Connect<S, B> {
     /// Service producing established transports.
     service: S,
-
-    /// Capacity manager copied into completed senders.
-    capacity: Option<Capacity>,
 
     /// Runtime used by the protocol driver.
     exec: Executor,
@@ -233,9 +208,6 @@ pub(super) struct Http2Connect<S, B> {
     /// Service yielding the inspected transport.
     service: S,
 
-    /// Capacity manager copied into the completed sender.
-    capacity: Option<Capacity>,
-
     /// Runtime used by the protocol driver.
     exec: Executor,
 
@@ -254,9 +226,6 @@ pub(super) struct Http2Connect<S, B> {
 pub(super) struct Http1ConnectFuture<F, T, B> {
     /// Current connection or handshake phase.
     state: Http1ConnectState<F, B>,
-
-    /// Capacity manager moved into the completed sender.
-    capacity: Option<Capacity>,
 
     /// Runtime moved into the protocol driver.
     exec: Option<Executor>,
@@ -363,7 +332,6 @@ impl<T> Established<T> {
     pub(super) fn new(
         io: T,
         connected: Connected,
-        permit: ConnectionPermit,
         version: Ver,
         h1_builder: proto::http1::Builder,
         h2_builder: proto::http2::Builder<Executor>,
@@ -372,7 +340,6 @@ impl<T> Established<T> {
         Self {
             io,
             connected,
-            permit,
             version,
             h1_builder,
             h2_builder,
@@ -383,11 +350,6 @@ impl<T> Established<T> {
     /// Returns when this transport became available for protocol selection.
     pub(super) fn idle_at(&self) -> Instant {
         self.idle_at
-    }
-
-    /// Returns whether reclaiming this transport can satisfy a blocked limit.
-    pub(super) fn matches_limit(&self, key: &LimitKey, blocked_by: BlockedBy) -> bool {
-        matches!(blocked_by, BlockedBy::Total) || self.permit.matches(key)
     }
 
     /// Chooses HTTP/2 when requested explicitly or negotiated by the transport.
@@ -401,14 +363,8 @@ impl<T> Established<T> {
 
 impl<B> Http1Layer<B> {
     /// Creates an HTTP/1 handshake layer for pooled connections.
-    pub(super) fn new(
-        capacity: Option<Capacity>,
-        exec: Executor,
-        timer: Timer,
-        set_host: bool,
-    ) -> Self {
+    pub(super) fn new(exec: Executor, timer: Timer, set_host: bool) -> Self {
         Self {
-            capacity,
             exec,
             timer,
             set_host,
@@ -419,12 +375,7 @@ impl<B> Http1Layer<B> {
 
 impl<B> Clone for Http1Layer<B> {
     fn clone(&self) -> Self {
-        Self::new(
-            self.capacity.clone(),
-            self.exec.clone(),
-            self.timer.clone(),
-            self.set_host,
-        )
+        Self::new(self.exec.clone(), self.timer.clone(), self.set_host)
     }
 }
 
@@ -434,7 +385,6 @@ impl<S, B> Layer<S> for Http1Layer<B> {
     fn layer(&self, service: S) -> Self::Service {
         Http1Connect {
             service,
-            capacity: self.capacity.clone(),
             exec: self.exec.clone(),
             timer: self.timer.clone(),
             set_host: self.set_host,
@@ -447,9 +397,8 @@ impl<S, B> Layer<S> for Http1Layer<B> {
 
 impl<B> Http2Layer<B> {
     /// Creates an HTTP/2 handshake layer for pooled connections.
-    pub(super) fn new(capacity: Option<Capacity>, exec: Executor, timer: Timer) -> Self {
+    pub(super) fn new(exec: Executor, timer: Timer) -> Self {
         Self {
-            capacity,
             exec,
             timer,
             _body: PhantomData,
@@ -459,7 +408,7 @@ impl<B> Http2Layer<B> {
 
 impl<B> Clone for Http2Layer<B> {
     fn clone(&self) -> Self {
-        Self::new(self.capacity.clone(), self.exec.clone(), self.timer.clone())
+        Self::new(self.exec.clone(), self.timer.clone())
     }
 }
 
@@ -469,7 +418,6 @@ impl<S, B> Layer<S> for Http2Layer<B> {
     fn layer(&self, service: S) -> Self::Service {
         Http2Connect {
             service,
-            capacity: self.capacity.clone(),
             exec: self.exec.clone(),
             timer: self.timer.clone(),
             _body: PhantomData,
@@ -483,7 +431,6 @@ impl<S: Clone, B> Clone for Http1Connect<S, B> {
     fn clone(&self) -> Self {
         Self {
             service: self.service.clone(),
-            capacity: self.capacity.clone(),
             exec: self.exec.clone(),
             timer: self.timer.clone(),
             set_host: self.set_host,
@@ -512,7 +459,6 @@ where
     fn call(&mut self, target: Dst) -> Self::Future {
         Http1ConnectFuture {
             state: Http1ConnectState::Connecting(self.service.call(target)),
-            capacity: self.capacity.clone(),
             exec: Some(self.exec.clone()),
             timer: Some(self.timer.clone()),
             set_host: self.set_host,
@@ -552,10 +498,8 @@ where
                         self.state = Http1ConnectState::Done;
                         return Poll::Ready(Err(HandshakeStateError.into()));
                     };
-                    let capacity = self.capacity.take();
                     self.state = Http1ConnectState::Handshaking(Box::pin(establish_http1(
                         established,
-                        capacity,
                         exec,
                         timer,
                         self.set_host,
@@ -595,7 +539,6 @@ impl<S: Clone, B> Clone for Http2Connect<S, B> {
     fn clone(&self) -> Self {
         Self {
             service: self.service.clone(),
-            capacity: self.capacity.clone(),
             exec: self.exec.clone(),
             timer: self.timer.clone(),
             _body: PhantomData,
@@ -603,12 +546,9 @@ impl<S: Clone, B> Clone for Http2Connect<S, B> {
     }
 }
 
-impl<S, T, B> Service<Established<T>> for Http2Connect<S, B>
+impl<S, T, B, Dst> Service<Dst> for Http2Connect<S, B>
 where
-    S: Service<Established<T>, Response = Established<T>, Error = BoxError>
-        + Clone
-        + Send
-        + 'static,
+    S: Service<Dst, Response = Established<T>, Error = BoxError> + Clone + Send + 'static,
     S::Future: Send + 'static,
     T: AsyncRead + AsyncWrite + Unpin + Send + 'static,
     B: Body + Send + Unpin + 'static,
@@ -623,19 +563,17 @@ where
         self.service.poll_ready(cx)
     }
 
-    fn call(&mut self, target: Established<T>) -> Self::Future {
+    fn call(&mut self, target: Dst) -> Self::Future {
         let future = self.service.call(target);
-        let capacity = self.capacity.clone();
         let exec = self.exec.clone();
         let timer = self.timer.clone();
-        Box::pin(async move { establish_http2(future.await?, capacity, exec, timer).await })
+        Box::pin(async move { establish_http2(future.await?, exec, timer).await })
     }
 }
 
 /// Handshakes an HTTP/1 transport and starts its connection driver.
 async fn establish_http1<T, B>(
     established: Established<T>,
-    capacity: Option<Capacity>,
     exec: Executor,
     timer: Timer,
     set_host: bool,
@@ -649,15 +587,12 @@ where
     let Established {
         io,
         connected,
-        permit,
         h1_builder,
         ..
     } = established;
     let (mut tx, connection) = h1_builder.handshake(io).await?;
     let (error_tx, error_rx) = tokio::sync::oneshot::channel();
-    let driver_permit = permit.clone();
     exec.execute(async move {
-        let _permit = driver_permit;
         if let Err(error) = connection.with_upgrades().await {
             debug!("client connection error: {error:?}");
             let _ = error_tx.send(error);
@@ -681,8 +616,6 @@ where
     Ok(Http1Client {
         conn_info: connected,
         tx: request_service,
-        permit,
-        capacity,
         idle_at: clock_now(&timer),
         timer,
     })
@@ -691,7 +624,6 @@ where
 /// Handshakes an HTTP/2 transport and starts its connection driver.
 async fn establish_http2<T, B>(
     established: Established<T>,
-    capacity: Option<Capacity>,
     exec: Executor,
     timer: Timer,
 ) -> Result<Http2Client<B>, BoxError>
@@ -704,14 +636,11 @@ where
     let Established {
         io,
         connected,
-        permit,
         h2_builder,
         ..
     } = established;
     let (mut tx, connection) = h2_builder.handshake(io).await?;
-    let driver_permit = permit.clone();
     exec.execute(async move {
-        let _permit = driver_permit;
         if let Err(_error) = connection.await {
             debug!("client connection error: {_error}");
         }
@@ -721,8 +650,6 @@ where
     Ok(Http2Client {
         conn_info: connected,
         tx,
-        permit,
-        capacity,
         state: Arc::new(Http2State::new(clock_now(&timer))),
         timer,
     })
@@ -746,11 +673,6 @@ where
     /// Returns metadata for the underlying transport.
     pub(super) fn conn_info(&self) -> &Connected {
         &self.conn_info
-    }
-
-    /// Returns whether this sender consumes a configured capacity slot.
-    pub(super) fn has_connection_limit(&self) -> bool {
-        self.permit.is_limited()
     }
 
     /// Returns whether the protocol sender is immediately ready.
@@ -779,18 +701,6 @@ where
     /// Returns whether the sender is healthy and within its idle timeout.
     pub(super) fn is_reusable(&self, now: Instant, timeout: Option<Duration>) -> bool {
         self.is_open() && !is_expired(self.idle_at, now, timeout)
-    }
-
-    /// Returns whether reclaiming this sender can satisfy a blocked limit.
-    pub(super) fn matches_limit(&self, key: &LimitKey, blocked_by: BlockedBy) -> bool {
-        matches!(blocked_by, BlockedBy::Total) || self.permit.matches(key)
-    }
-
-    /// Returns whether this idle connection should yield its capacity slot.
-    pub(super) fn should_release_idle(&self) -> bool {
-        self.capacity
-            .as_ref()
-            .is_some_and(|capacity| capacity.should_release_idle(&self.permit))
     }
 }
 
@@ -871,8 +781,6 @@ impl<B> Clone for Http2Client<B> {
         Self {
             conn_info: self.conn_info.clone(),
             tx: self.tx.clone(),
-            permit: self.permit.clone(),
-            capacity: self.capacity.clone(),
             state: self.state.clone(),
             timer: self.timer.clone(),
         }
@@ -891,11 +799,6 @@ where
     /// Returns metadata for the underlying transport.
     pub(super) fn conn_info(&self) -> &Connected {
         &self.conn_info
-    }
-
-    /// Returns whether this sender consumes a configured capacity slot.
-    pub(super) fn has_connection_limit(&self) -> bool {
-        self.permit.is_limited()
     }
 
     /// Returns whether the protocol sender is immediately ready.
@@ -921,17 +824,17 @@ where
         self.tx.try_send_request(req).map_err(SendError::Protocol)
     }
 
-    /// Registers a checkout of the shared sender.
+    /// Marks the shared sender checked out until response headers are returned.
     pub(super) fn begin_checkout(&self) {
         self.state.acquire();
     }
 
-    /// Ends a checkout and records when the shared sender became idle.
+    /// Ends response-header checkout and records when its count reaches zero.
     pub(super) fn finish_checkout(&self) {
         let _ = self.state.release(clock_now(&self.timer));
     }
 
-    /// Returns whether no checkout uses this sender.
+    /// Returns whether no response-header checkout currently uses this sender.
     pub(super) fn is_idle(&self) -> bool {
         self.state.is_idle()
     }
@@ -945,20 +848,6 @@ where
         !self.conn_info.poisoned()
             && !self.tx.is_closed()
             && (!self.is_idle() || !is_expired(self.state.idle_at(), now, timeout))
-    }
-
-    /// Returns whether reclaiming this sender can satisfy a blocked limit.
-    pub(super) fn matches_limit(&self, key: &LimitKey, blocked_by: BlockedBy) -> bool {
-        matches!(blocked_by, BlockedBy::Total) || self.permit.matches(key)
-    }
-
-    /// Returns whether this idle connection should yield its capacity slot.
-    pub(super) fn should_release_idle(&self) -> bool {
-        self.is_idle()
-            && self
-                .capacity
-                .as_ref()
-                .is_some_and(|capacity| capacity.should_release_idle(&self.permit))
     }
 }
 
