@@ -1,4 +1,3 @@
-mod pool;
 mod proto;
 mod svc;
 
@@ -7,6 +6,7 @@ pub(super) mod emulate;
 pub(super) mod error;
 pub(super) mod future;
 pub(super) mod layer;
+pub(super) mod pool;
 pub(super) mod request;
 pub(super) mod response;
 pub(super) mod upgrade;
@@ -61,7 +61,7 @@ use self::{
         retry::RetryPolicy,
         timeout::{Timeout, TimeoutLayer, TimeoutOptions, body::TimeoutBody},
     },
-    pool::Ver,
+    pool::{PoolStrategy, Ver},
     request::{Request, RequestBuilder},
     response::Response,
     svc::{configure::Configure, dispatch::Dispatch, retry::RetryUnsent},
@@ -84,7 +84,6 @@ use crate::{
     header::OrigHeaderMap,
     http1::Http1Options,
     http2::Http2Options,
-    pool::PoolStrategy,
     proxy::Matcher as ProxyMatcher,
     redirect::{self, FollowRedirectPolicy},
     retry,

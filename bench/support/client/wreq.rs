@@ -18,7 +18,7 @@ fn body(body: BodyCase, stream: bool) -> ::wreq::Body {
 /// Builds a wreq client with the selected connection-pool acquisition policy.
 pub(super) fn create_client(
     target: BenchTarget,
-    pool_strategy: ::wreq::pool::PoolStrategy,
+    pool_strategy: ::wreq::PoolStrategy,
 ) -> Result<::wreq::Client, BoxError> {
     let builder = ::wreq::Client::builder()
         .no_proxy()
@@ -43,7 +43,7 @@ impl ClientAdapter for Adapter {
     const NAME: &'static str = "wreq";
 
     fn create_client(target: BenchTarget) -> Result<Self::Client, BoxError> {
-        create_client(target, ::wreq::pool::PoolStrategy::default())
+        create_client(target, ::wreq::PoolStrategy::default())
     }
 
     fn create_executor(target: BenchTarget) -> Result<Self::Executor, BoxError> {

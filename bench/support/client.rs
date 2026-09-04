@@ -173,10 +173,10 @@ pub(crate) fn bench_wreq_pool_strategies(
     };
     let reuse_first_label = format!("reuse_first_{reuse_first_timeout:?}");
     let strategies = [
-        ("race", ::wreq::pool::PoolStrategy::Race),
+        ("race", ::wreq::PoolStrategy::Race),
         (
             reuse_first_label.as_str(),
-            ::wreq::pool::PoolStrategy::ReuseFirst(reuse_first_timeout),
+            ::wreq::PoolStrategy::ReuseFirst(reuse_first_timeout),
         ),
     ];
 

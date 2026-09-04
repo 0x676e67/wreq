@@ -23,7 +23,7 @@ use pretty_env_logger::env_logger;
 use support::server;
 use tokio::io::AsyncWriteExt;
 use wreq::{
-    Client, Emulation, Group, header::OrigHeaderMap, http1::Http1Options, pool::PoolStrategy,
+    Client, Emulation, Group, PoolStrategy, header::OrigHeaderMap, http1::Http1Options,
     tls::TlsInfo,
 };
 
@@ -807,7 +807,7 @@ async fn connection_pool_cache() {
 }
 
 #[tokio::test]
-async fn connection_pool_reuses_http1_and_http2_connections() {
+async fn connection_pool_reuses_and_discards_poisoned_connections() {
     let mut server = server::http(move |_| async move { http::Response::default() });
     let url = format!("http://{}", server.addr());
 
@@ -828,6 +828,30 @@ async fn connection_pool_reuses_http1_and_http2_connections() {
         .filter(|event| matches!(event, server::Event::ConnectionAccepted))
         .count();
     assert_eq!(accepted, 2);
+
+    for client in [&http1, &http2] {
+        let response = client.get(&url).send().await.unwrap();
+        response.forbid_recycle();
+        response.bytes().await.unwrap();
+
+        for _ in 0..2 {
+            client
+                .get(&url)
+                .send()
+                .await
+                .unwrap()
+                .bytes()
+                .await
+                .unwrap();
+        }
+    }
+
+    let replacement_connections = server
+        .events()
+        .iter()
+        .filter(|event| matches!(event, server::Event::ConnectionAccepted))
+        .count();
+    assert_eq!(replacement_connections, 2);
 }
 
 #[tokio::test]

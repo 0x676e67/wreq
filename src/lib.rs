@@ -317,7 +317,6 @@ mod util;
 pub mod cookie;
 pub mod dns;
 pub mod header;
-pub mod pool;
 pub mod redirect;
 pub mod retry;
 pub mod tls;
@@ -331,6 +330,7 @@ pub use self::{
         Client, ClientBuilder,
         body::Body,
         emulate::{Emulation, EmulationBuilder, IntoEmulation},
+        pool::PoolStrategy,
         request::{Request, RequestBuilder},
         response::Response,
         upgrade::Upgraded,
