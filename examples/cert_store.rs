@@ -7,10 +7,10 @@ use wreq::{
 
 /// Certificate Store Example
 ///
-/// In most cases, you don't need to manually configure certificate stores. wreq automatically
-/// uses appropriate default certificates:
-/// - With `webpki-roots` feature enabled: Uses Mozilla's maintained root certificate collection
-/// - Without this feature: Uses system default certificate store paths
+/// In most cases, wreq can choose the certificate store automatically:
+/// - `chromium-roots` loads Chromium Root Store certificates and is enabled by default.
+/// - `webpki-roots` loads Mozilla root certificates and can be combined with Chromium roots.
+/// - Without either feature, BoringSSL uses its default verification paths.
 ///
 /// Manual certificate store configuration is only needed in the following special cases:
 ///
