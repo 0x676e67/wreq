@@ -49,20 +49,18 @@ use std::{
 use futures_util::future::{BoxFuture, Either};
 use http::{Request, Response};
 use http_body::Body;
-use tokio::{
-    io::{AsyncRead, AsyncWrite},
-    sync::watch,
-};
+use tokio::io::{AsyncRead, AsyncWrite};
 use tower::{BoxError, Layer, Service, util::Oneshot};
 use wreq_proto::{
     body::Incoming,
     conn::{self},
-    rt::{Executor as _, Timer as _},
+    rt::Timer as _,
 };
 
 pub(super) use self::cache::Started;
 use self::{
     cache::Cached,
+    expire::{Expire, Inspect},
     map::{Map, Target},
     negotiate::{Negotiate, Negotiated},
     singleton::Singled,
@@ -85,6 +83,7 @@ use crate::{
 };
 
 mod cache;
+mod expire;
 mod map;
 mod negotiate;
 mod singleton;
@@ -180,8 +179,8 @@ where
 /// is held. The coordinator also owns the weak back-reference used by failed
 /// checkout cleanup.
 ///
-/// At most one periodic idle task is active. Its watch receiver is notified when
-/// this coordinator is dropped, allowing long idle timers to stop immediately.
+/// Its [`Expire`] component owns the single weakly referenced maintenance task,
+/// allowing long idle timers to stop immediately when this coordinator drops.
 struct PoolInner<C, B>
 where
     C: Service<ConnectionDescriptor> + Clone + Send + Sync + 'static,
@@ -198,17 +197,8 @@ where
     /// Maximum idle duration applied during cleanup and checkout.
     idle_timeout: Option<Duration>,
 
-    /// Ensures at most one periodic cleanup task is running.
-    idle_task_running: AtomicBool,
-
-    /// Closes the periodic cleanup task when the pool is dropped.
-    idle_shutdown: watch::Sender<()>,
-
-    /// Runtime used for protocol drivers and cleanup.
-    exec: Executor,
-
-    /// Clock and sleep provider used by idle cleanup.
-    timer: Timer,
+    /// Schedules the single outer expiration watcher.
+    expire: Expire<Self>,
 
     /// Factory used when pooling is disabled or a map entry is missing.
     targeter: PoolTargeter<C, B>,
@@ -654,7 +644,6 @@ where
             _ => None,
         };
 
-        let (idle_shutdown, _) = watch::channel(());
         let inner = Arc::new_cyclic(|pool| {
             let targeter = PoolTargeter {
                 connector,
@@ -670,10 +659,7 @@ where
             PoolInner {
                 enabled: config.is_enabled(),
                 idle_timeout: config.idle_timeout,
-                idle_task_running: AtomicBool::new(false),
-                idle_shutdown,
-                exec,
-                timer,
+                expire: Expire::new(pool.clone(), exec, timer),
                 services: Mutex::new(Map::new(targeter.clone(), config.max_pool_size)),
                 targeter,
             }
@@ -702,8 +688,8 @@ where
         };
 
         let (future, discarded) = if self.inner.enabled {
-            let mut services = self.inner.services.lock();
             let now = self.inner.now();
+            let mut services = self.inner.services.lock();
             let result = services.with_service(target, |service, target| {
                 let discarded = service.retain(now, self.inner.idle_timeout);
                 let future = service.checkout(target, true);
@@ -754,12 +740,19 @@ where
 {
     /// Reads the configured clock, falling back to `Instant::now`.
     fn now(&self) -> Instant {
-        clock_now(&self.timer)
+        self.expire.now()
+    }
+
+    /// Returns the proactive idle-check interval when retained state exists.
+    fn expiration_interval(&self, has_retained: bool) -> Option<Duration> {
+        self.idle_timeout
+            .filter(|timeout| self.enabled && has_retained && *timeout != Duration::ZERO)
+            .map(|timeout| timeout.max(Duration::from_millis(90)))
     }
 
     /// Reconciles one entry with empty cleanup and the global idle-group LRU.
     fn maintain_entry(self: &Arc<Self>, key: &ConnectionId, identity: &Arc<EntryState>) {
-        let (removed, discarded, has_retained) = {
+        let (removed, discarded, schedule_expiration) = {
             let mut services = self.services.lock();
             services.prune_retained(|entry| entry.is_retained());
 
@@ -770,6 +763,7 @@ where
             });
             let mut removed = Vec::new();
             let mut discarded = Vec::new();
+            let mut schedule_expiration = false;
 
             match state {
                 Some((true, _)) => {
@@ -778,6 +772,7 @@ where
                     }
                 }
                 Some((false, true)) => {
+                    schedule_expiration = true;
                     if let Some(evicted) = services.mark_retained(key) {
                         let empty = services.get_mut(&evicted).is_some_and(|entry| {
                             discarded.extend(entry.evict_retained());
@@ -794,83 +789,55 @@ where
                 None => {}
             }
 
-            let has_retained = services.iter_mut().any(|(_, entry)| entry.is_retained());
-            (removed, discarded, has_retained)
+            (removed, discarded, schedule_expiration)
         };
         drop(removed);
         drop(discarded);
 
-        if has_retained {
-            self.ensure_idle_task();
-        }
+        self.expire
+            .schedule(self.expiration_interval(schedule_expiration));
+    }
+}
+
+impl<C, B> Inspect for PoolInner<C, B>
+where
+    C: Service<ConnectionDescriptor> + Clone + Send + Sync + 'static,
+    C::Response: AsyncRead + AsyncWrite + Connection + Unpin + Send + 'static,
+    C::Error: Into<BoxError>,
+    C::Future: Unpin + Send + 'static,
+    B: Body + Send + Unpin + 'static,
+    B::Data: Send,
+    B::Error: Into<BoxError>,
+{
+    /// Removes expired senders and empty entries for unlocked destruction.
+    fn retain(&self, now: Instant) -> Option<Duration> {
+        let (has_retained, removed, discarded) = {
+            let mut services = self.services.lock();
+            let mut discarded = Vec::new();
+            let mut has_retained = false;
+            let removed = services.retain(|_, entry| {
+                discarded.extend(entry.retain(now, self.idle_timeout));
+                let keep = !entry.is_empty();
+                has_retained |= keep && entry.is_retained();
+                keep
+            });
+            services.prune_retained(|entry| entry.is_retained());
+            (has_retained, removed, discarded)
+        };
+        drop(removed);
+        drop(discarded);
+        self.expiration_interval(has_retained)
     }
 
-    /// Starts the single periodic idle cleanup task when one is required.
-    ///
-    /// The empty-pool recheck closes the race where a checkout inserts an entry
-    /// while the previous cleanup task is stopping.
-    fn ensure_idle_task(self: &Arc<Self>) {
-        let Some(timeout) = self.idle_timeout else {
-            return;
-        };
-        if !self.enabled || timeout == Duration::ZERO || self.timer.is_empty() {
-            return;
-        }
-        if self
-            .idle_task_running
-            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-            .is_err()
-        {
-            return;
-        }
+    /// Returns the idle inspection interval while reusable state remains.
+    fn next(&self) -> Option<Duration> {
+        let has_retained = self
+            .services
+            .lock()
+            .iter_mut()
+            .any(|(_, entry)| entry.is_retained());
 
-        let interval = timeout.max(Duration::from_millis(90));
-        let pool = Arc::downgrade(self);
-        let timer = self.timer.clone();
-        let mut shutdown = self.idle_shutdown.subscribe();
-        self.exec.execute(async move {
-            loop {
-                if !wait_for_idle_tick(timer.sleep(interval), &mut shutdown).await {
-                    return;
-                }
-                let Some(pool) = pool.upgrade() else {
-                    return;
-                };
-                let now = pool.now();
-                let (has_retained, removed, discarded) = {
-                    let mut services = pool.services.lock();
-                    let mut discarded = Vec::new();
-                    let removed = services.retain(|_, entry| {
-                        discarded.extend(entry.retain(now, pool.idle_timeout));
-                        !entry.is_empty()
-                    });
-                    services.prune_retained(|entry| entry.is_retained());
-                    let has_retained = services.iter_mut().any(|(_, entry)| entry.is_retained());
-                    (has_retained, removed, discarded)
-                };
-                drop(removed);
-                drop(discarded);
-
-                if !has_retained {
-                    pool.idle_task_running.store(false, Ordering::Release);
-
-                    let has_retained = pool
-                        .services
-                        .lock()
-                        .iter_mut()
-                        .any(|(_, entry)| entry.is_retained());
-                    if has_retained
-                        && pool
-                            .idle_task_running
-                            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-                            .is_ok()
-                    {
-                        continue;
-                    }
-                    return;
-                }
-            }
-        });
+        self.expiration_interval(has_retained)
     }
 }
 
@@ -1702,25 +1669,6 @@ fn clock_now(timer: &Timer) -> Instant {
     }
 }
 
-/// Waits for the next cleanup tick or for the pool shutdown signal.
-async fn wait_for_idle_tick<F>(mut sleep: F, shutdown: &mut watch::Receiver<()>) -> bool
-where
-    F: Future<Output = ()> + Unpin,
-{
-    let mut changed = std::pin::pin!(shutdown.changed());
-
-    std::future::poll_fn(|cx| {
-        if changed.as_mut().poll(cx).is_ready() {
-            Poll::Ready(false)
-        } else if Pin::new(&mut sleep).poll(cx).is_ready() {
-            Poll::Ready(true)
-        } else {
-            Poll::Pending
-        }
-    })
-    .await
-}
-
 #[cfg(test)]
 mod tests {
     use std::io;
@@ -1860,14 +1808,7 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
-    async fn idle_task_tracks_reusable_state_and_shutdown() {
-        let (shutdown, mut receiver) = watch::channel(());
-        let wait = wait_for_idle_tick(std::future::pending(), &mut receiver);
-
-        drop(shutdown);
-
-        assert!(!wait.await);
-
+    async fn idle_task_tracks_reusable_state() {
         let pool = Pool::<_, crate::Body>::new(
             Config {
                 idle_timeout: Some(Duration::from_millis(10)),
@@ -1888,16 +1829,43 @@ mod tests {
             .await
             .expect("successful checkout");
 
-        assert!(!pool.inner.idle_task_running.load(Ordering::Acquire));
+        assert!(!pool.inner.expire.is_running());
         drop(pooled);
-        assert!(pool.inner.idle_task_running.load(Ordering::Acquire));
+        assert!(pool.inner.expire.is_running());
 
         tokio::task::yield_now().await;
         tokio::time::advance(Duration::from_millis(100)).await;
         tokio::task::yield_now().await;
 
         assert!(pool.inner.services.lock().is_empty());
-        assert!(!pool.inner.idle_task_running.load(Ordering::Acquire));
+        assert!(!pool.inner.expire.is_running());
+
+        let pool = Pool::<_, crate::Body>::new(
+            Config {
+                idle_timeout: Some(Duration::ZERO),
+                ..Config::default()
+            },
+            TestConnector::KeepsAlive,
+            Executor::default(),
+            Timer::default(),
+            true,
+        );
+        let pooled = pool
+            .checkout(
+                descriptor(),
+                Ver::Http1,
+                conn::http1::Builder::default(),
+                conn::http2::Builder::new(Executor::default()),
+            )
+            .await
+            .expect("successful checkout");
+
+        drop(pooled);
+        tokio::time::advance(Duration::from_millis(100)).await;
+        tokio::task::yield_now().await;
+
+        assert!(!pool.inner.services.lock().is_empty());
+        assert!(!pool.inner.expire.is_running());
     }
 
     #[tokio::test]
@@ -1913,7 +1881,7 @@ mod tests {
             .await;
         assert!(result.is_err());
         assert!(pool.inner.services.lock().is_empty());
-        assert!(!pool.inner.idle_task_running.load(Ordering::Acquire));
+        assert!(!pool.inner.expire.is_running());
 
         let pool = test_pool(TestConnector::Pending);
         let mut first = tokio_test::task::spawn(pool.checkout(
@@ -1934,7 +1902,7 @@ mod tests {
         assert!(!pool.inner.services.lock().is_empty());
         drop(second);
         assert!(pool.inner.services.lock().is_empty());
-        assert!(!pool.inner.idle_task_running.load(Ordering::Acquire));
+        assert!(!pool.inner.expire.is_running());
 
         let pool = test_pool(TestConnector::ClosesAfterResponse);
         let mut pooled = pool
@@ -1967,7 +1935,7 @@ mod tests {
         drop(pooled);
 
         assert!(pool.inner.services.lock().is_empty());
-        assert!(!pool.inner.idle_task_running.load(Ordering::Acquire));
+        assert!(!pool.inner.expire.is_running());
 
         let request_read = Arc::new(tokio::sync::Notify::new());
         let pool = test_pool(TestConnector::StallsAfterRequest(request_read.clone()));
@@ -1999,7 +1967,7 @@ mod tests {
         drop(pooled);
 
         assert!(pool.inner.services.lock().is_empty());
-        assert!(!pool.inner.idle_task_running.load(Ordering::Acquire));
+        assert!(!pool.inner.expire.is_running());
 
         let pool = test_pool(TestConnector::KeepsAlive);
         let descriptor = grouped_descriptor(Group::new("active"));

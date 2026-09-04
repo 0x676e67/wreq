@@ -356,29 +356,33 @@ where
     }
 
     fn call(&mut self, dst: Dst) -> Self::Future {
-        let mut pending = self.pending.lock();
-        let (state, discarded) = if let Some(future) = self.upgrade.checkout() {
-            (State::Upgrade { future }, std::mem::take(&mut *pending))
-        } else if let Some(service) = pending.pop_front() {
-            (
-                State::Upgrade {
-                    future: self.upgrade.call(service),
-                },
-                std::mem::take(&mut *pending),
-            )
+        let (existing, service, discarded) = {
+            let mut pending = self.pending.lock();
+            if let Some(future) = self.upgrade.checkout() {
+                (Some(future), None, std::mem::take(&mut *pending))
+            } else if let Some(service) = pending.pop_front() {
+                (None, Some(service), std::mem::take(&mut *pending))
+            } else {
+                (None, None, VecDeque::new())
+            }
+        };
+        drop(discarded);
+
+        let state = if let Some(future) = existing {
+            State::Upgrade { future }
+        } else if let Some(service) = service {
+            State::Upgrade {
+                future: self.upgrade.call(service),
+            }
         } else {
             let destination = dst.clone();
-            (
-                State::Fallback {
-                    future: Either::Left(self.fallback.call(dst)),
-                    fallback: self.fallback.clone(),
-                    destination,
-                },
-                VecDeque::new(),
-            )
+            State::Fallback {
+                future: Either::Left(self.fallback.call(dst)),
+                fallback: self.fallback.clone(),
+                destination,
+            }
         };
-        drop(pending);
-        drop(discarded);
+
         Negotiating {
             state,
             upgrade: self.upgrade.clone(),
@@ -416,20 +420,24 @@ where
                             return Poll::Ready(Err(error));
                         }
 
-                        let mut pending = this.pending.lock();
-                        if let Some(future) = this.upgrade.checkout() {
-                            let discarded = std::mem::take(&mut *pending);
-                            drop(pending);
+                        let (existing, service, discarded) = {
+                            let mut pending = this.pending.lock();
+                            if let Some(future) = this.upgrade.checkout() {
+                                (Some(future), None, std::mem::take(&mut *pending))
+                            } else if let Some(service) = pending.pop_front() {
+                                (None, Some(service), std::mem::take(&mut *pending))
+                            } else {
+                                (None, None, VecDeque::new())
+                            }
+                        };
+                        drop(discarded);
+
+                        if let Some(future) = existing {
                             this.state.set(State::Upgrade { future });
-                            drop(discarded);
-                        } else if let Some(service) = pending.pop_front() {
+                        } else if let Some(service) = service {
                             let future = this.upgrade.call(service);
-                            let discarded = std::mem::take(&mut *pending);
-                            drop(pending);
                             this.state.set(State::Upgrade { future });
-                            drop(discarded);
                         } else {
-                            drop(pending);
                             let fallback = (*fallback).clone();
                             let destination = (*destination).clone();
                             let future = Oneshot::new(fallback.clone(), destination.clone());
