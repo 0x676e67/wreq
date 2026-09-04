@@ -64,11 +64,7 @@ use self::{
     pool::{PoolStrategy, Ver},
     request::{Request, RequestBuilder},
     response::Response,
-    svc::{
-        configure::{Configure, ConfigureLayer},
-        dispatch::Dispatch,
-        retry::{RetryUnsent, RetryUnsentLayer},
-    },
+    svc::dispatch::Dispatch,
 };
 #[cfg(feature = "cookies")]
 use crate::cookie;
@@ -1728,13 +1724,6 @@ impl ClientBuilder {
 mod sealed {
     use super::*;
 
-    /// Concrete ordering of the low-level request services.
-    ///
-    /// Configuration runs before retry so each retry can reuse the same prepared
-    /// connection descriptor and request body. [`Dispatch`] is terminal
-    /// and performs one checkout and dispatch attempt.
-    type Stack<C, B> = Configure<RetryUnsent<Dispatch<C, B>>>;
-
     /// Validates and sends low-level HTTP requests through the client service stack.
     ///
     /// This is the caller-facing Tower service used beneath [`crate::Client`]. It
@@ -1754,7 +1743,7 @@ mod sealed {
         B::Error: Into<BoxError>,
     {
         /// Composed service stack shared by client clones.
-        inner: Stack<C, B>,
+        inner: svc::Stack<C, B>,
     }
 
     /// Immutable request behavior installed while the service stack is built.
@@ -1818,7 +1807,7 @@ mod sealed {
         type Response = HttpResponse<Incoming>;
         type Error = BoxError;
         type Future = FutureEither<
-            <Stack<C, B> as Service<HttpRequest<B>>>::Future,
+            <svc::Stack<C, B> as Service<HttpRequest<B>>>::Future,
             Ready<Result<Self::Response, Self::Error>>,
         >;
 
@@ -2046,8 +2035,8 @@ mod sealed {
 
             Client {
                 inner: ServiceBuilder::new()
-                    .layer(ConfigureLayer::new(self.h1_builder, self.h2_builder))
-                    .layer(RetryUnsentLayer::new(retry_canceled_requests))
+                    .layer(svc::configure::layer(self.h1_builder, self.h2_builder))
+                    .layer(svc::retry::layer(retry_canceled_requests))
                     .service(service),
             }
         }

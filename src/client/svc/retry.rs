@@ -10,14 +10,22 @@ use std::{
 use futures_util::future::Either;
 use http::Uri;
 use pin_project_lite::pin_project;
-use tower::{BoxError, Layer, Service, util::Oneshot};
+use tower::{BoxError, Layer, Service, layer::layer_fn, util::Oneshot};
 
 use super::{ConfiguredRequest, dispatch::AttemptError};
 
-/// Builds retry middleware for requests returned before protocol encoding.
-#[derive(Clone, Copy)]
-pub struct RetryUnsentLayer {
-    enabled: bool,
+/// Creates the internal retry layer for requests not accepted by the protocol.
+///
+/// The returned layer captures whether retries are enabled and wraps the
+/// one-attempt dispatch service in [`RetryUnsent`]. A retry is allowed only when
+/// dispatch returns the original [`ConfiguredRequest`] before encoding begins;
+/// the request body is never cloned or reconstructed. Disabling retries keeps
+/// the same service shape but forwards the first terminal error immediately.
+///
+/// This layer belongs between request configuration and dispatch so every
+/// attempt uses the same prepared connection descriptor and request body.
+pub fn layer<S>(enabled: bool) -> impl Layer<S, Service = RetryUnsent<S>> + Clone {
+    layer_fn(move |inner| RetryUnsent::new(inner, enabled))
 }
 
 /// Retries requests returned before protocol encoding begins.
@@ -50,28 +58,11 @@ pin_project! {
     }
 }
 
-// ===== impl RetryUnsentLayer =====
-
-impl RetryUnsentLayer {
-    /// Creates a layer with internal unsent-request retries enabled or disabled.
-    pub fn new(enabled: bool) -> Self {
-        Self { enabled }
-    }
-}
-
-impl<S> Layer<S> for RetryUnsentLayer {
-    type Service = RetryUnsent<S>;
-
-    fn layer(&self, inner: S) -> Self::Service {
-        RetryUnsent::new(inner, self.enabled)
-    }
-}
-
 // ===== impl RetryUnsent =====
 
 impl<S> RetryUnsent<S> {
     /// Wraps one-attempt request service with internal cancellation retries.
-    pub fn new(inner: S, enabled: bool) -> Self {
+    fn new(inner: S, enabled: bool) -> Self {
         Self { inner, enabled }
     }
 }

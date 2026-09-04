@@ -4,7 +4,7 @@ use std::task::{Context, Poll};
 
 use futures_util::future::{self, Either, Ready};
 use http::{Request, Uri, uri::PathAndQuery};
-use tower::{BoxError, Layer, Service};
+use tower::{BoxError, Layer, Service, layer::layer_fn};
 use wreq_proto::conn;
 
 use super::ConfiguredRequest;
@@ -15,14 +15,21 @@ use crate::{
     rt::Executor,
 };
 
-/// Builds request configuration middleware with base protocol settings.
+/// Creates the request-configuration layer used before internal retries.
 ///
-/// The layer owns the HTTP builders until the low-level client stack is
-/// assembled, then clones them into the resulting [`Configure`] service.
-#[derive(Clone)]
-pub struct ConfigureLayer {
+/// The returned layer owns the base HTTP/1 and HTTP/2 builders. Each service
+/// built from it receives a clone of both builders, while request-local protocol
+/// options are applied later by [`Configure::call`]. This keeps handshake
+/// configuration attached to the request that creates a connection without
+/// rebuilding the outer client service stack.
+///
+/// The layer transforms `Request<B>` into [`ConfiguredRequest<B>`], so it must
+/// remain outside the retry and dispatch services in the low-level stack.
+pub fn layer<S>(
     h1_builder: conn::http1::Builder,
     h2_builder: conn::http2::Builder<Executor>,
+) -> impl Layer<S, Service = Configure<S>> + Clone {
+    layer_fn(move |inner| Configure::new(inner, h1_builder.clone(), h2_builder.clone()))
 }
 
 /// Applies request-local connection and protocol configuration.
@@ -37,34 +44,9 @@ pub struct Configure<S> {
     h2_builder: conn::http2::Builder<Executor>,
 }
 
-// ===== impl ConfigureLayer =====
-
-impl ConfigureLayer {
-    /// Creates a layer from the base HTTP/1 and HTTP/2 builders.
-    pub fn new(
-        h1_builder: conn::http1::Builder,
-        h2_builder: conn::http2::Builder<Executor>,
-    ) -> Self {
-        Self {
-            h1_builder,
-            h2_builder,
-        }
-    }
-}
-
-impl<S> Layer<S> for ConfigureLayer {
-    type Service = Configure<S>;
-
-    fn layer(&self, inner: S) -> Self::Service {
-        Configure::new(inner, self.h1_builder.clone(), self.h2_builder.clone())
-    }
-}
-
-// ===== impl Configure =====
-
 impl<S> Configure<S> {
     /// Wraps a pool request service with request-local configuration handling.
-    pub fn new(
+    fn new(
         inner: S,
         h1_builder: conn::http1::Builder,
         h2_builder: conn::http2::Builder<Executor>,

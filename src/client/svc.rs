@@ -28,6 +28,13 @@ pub(super) mod configure;
 pub(super) mod dispatch;
 pub(super) mod retry;
 
+/// Concrete ordering of the low-level request services.
+///
+/// Request configuration runs before retry so every attempt reuses the same
+/// connection descriptor and request body. [`dispatch::Dispatch`] is terminal
+/// and performs one pool checkout and protocol dispatch attempt.
+pub(super) type Stack<C, B> = configure::Configure<retry::RetryUnsent<dispatch::Dispatch<C, B>>>;
+
 /// A request with the connection and protocol settings needed for dispatch.
 ///
 /// The request body stays owned by this value until protocol dispatch begins.
