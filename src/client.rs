@@ -1413,10 +1413,9 @@ impl ClientBuilder {
         self
     }
 
-    /// Sets the verify certificate store for the client.
+    /// Sets a custom certificate store for TLS server verification.
     ///
-    /// This method allows you to specify a custom verify certificate store to be used
-    /// for TLS connections. By default, the system's verify certificate store is used.
+    /// This replaces bundled roots and BoringSSL's default verification paths.
     #[inline]
     pub fn tls_cert_store(mut self, store: CertStore) -> ClientBuilder {
         self.config.tls_cert_store = Some(store);

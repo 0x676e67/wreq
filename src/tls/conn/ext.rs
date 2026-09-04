@@ -46,18 +46,36 @@ impl SslConnectorBuilderExt for SslConnectorBuilder {
         if let Some(store) = store {
             self.set_cert_store_ref(&store.0)
         } else {
-            #[cfg(feature = "webpki-roots")]
+            #[cfg(any(feature = "chromium-roots", feature = "webpki-roots"))]
             {
-                static LOAD_CERTS: std::sync::LazyLock<CertStore> =
+                static BUNDLED_CERT_STORE: std::sync::LazyLock<CertStore> =
                     std::sync::LazyLock::new(|| {
-                        CertStore::from_der_certs(webpki_root_certs::TLS_SERVER_ROOT_CERTS)
-                            .expect("Failed to load webpki root certificates")
+                        let sources = &[
+                            #[cfg(feature = "chromium-roots")]
+                            chromium_roots::TLS_SERVER_ROOT_CERTS,
+                            #[cfg(feature = "webpki-roots")]
+                            webpki_root_certs::TLS_SERVER_ROOT_CERTS,
+                        ];
+
+                        let certs = sources
+                            .iter()
+                            .enumerate()
+                            .flat_map(|(source_index, source)| {
+                                let previous_sources = &sources[..source_index];
+                                source.iter().filter(move |cert| {
+                                    !previous_sources.iter().any(|source| source.contains(*cert))
+                                })
+                            })
+                            .map(AsRef::as_ref);
+
+                        CertStore::from_der_certs(certs)
+                            .expect("failed to load bundled root certificates")
                     });
 
-                self.set_cert_store_ref(&LOAD_CERTS.0);
+                self.set_cert_store_ref(&BUNDLED_CERT_STORE.0);
             }
 
-            #[cfg(not(feature = "webpki-roots"))]
+            #[cfg(not(any(feature = "chromium-roots", feature = "webpki-roots")))]
             {
                 self.set_default_verify_paths().map_err(Error::tls)?;
             }

@@ -207,11 +207,11 @@
 //!
 //! ## Certificate Store
 //!
-//! By default, wreq uses Mozilla's root certificates through the webpki-roots crate.
-//! This static root certificate bundle is not automatically updated and ignores any root
-//! certificates installed on the host. You can disable default-features to use the system's default
-//! certificate path. Additionally, wreq provides a certificate store for users to customize and
-//! update certificates.
+//! By default, wreq uses static certificates from the Chromium Root Store. The `webpki-roots`
+//! feature can be used alone or combined with it; certificates shared by both bundles are loaded
+//! once. Bundled roots ignore certificates installed on the host and update only with their
+//! dependencies. Chromium-specific root metadata constraints are not applied. Disable both root
+//! features to use BoringSSL's default verification paths, or provide a custom certificate store.
 //!
 //! Custom Certificate Store verification supports Root CA certificates, peer certificates, and
 //! self-signed certificate SSL pinning.
@@ -236,7 +236,8 @@
 //! - **ws**: Provides websocket support.
 //! - **hickory-dns**: Enables a hickory-dns async resolver instead of default threadpool using
 //!   `getaddrinfo`.
-//! - **webpki-roots** *(enabled by default)*: Use the webpki-roots crate for root certificates.
+//! - **chromium-roots** *(enabled by default)*: Load static Chromium Root Store certificates.
+//! - **webpki-roots**: Load static Mozilla root certificates.
 //! - **system-proxy**: Enable system proxy support.
 //! - **tracing**: Enable tracing logging support.
 //! - **prefix-symbols**: Prefix BoringSSL symbols to avoid OpenSSL conflicts.
