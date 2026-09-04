@@ -4,14 +4,15 @@
 //! steady-state request throughput and body reads rather than client creation.
 //! They do not measure cold starts or count physical connections.
 
-#[allow(dead_code)]
+#[allow(dead_code, unused_imports)]
 mod support;
 
 use std::time::Duration;
 
 use criterion::{Criterion, Throughput, criterion_group, criterion_main};
 use support::{
-    BenchTarget, BodyCase, HttpVersion, ThreadMode, Tls, bench_wreq_pool_strategies, with_server,
+    BenchTarget, BodyCase, HttpVersion, ThreadMode, Tls, client::bench_wreq_pool_strategies,
+    server::with_server,
 };
 
 const NUM_REQUESTS_TO_SEND: usize = 500;

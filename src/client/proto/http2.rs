@@ -15,7 +15,7 @@ use http::{Request, Response};
 use http_body::Body;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tower::{BoxError, Layer, Service};
-use wreq_proto::{body::Incoming, rt::Executor as _};
+use wreq_proto::{body::Incoming, conn, rt::Executor as _};
 
 use super::{Established, SendError, clock_now, is_expired};
 use crate::{
@@ -35,7 +35,7 @@ pub struct Http2Client<B> {
     conn_info: Connected,
 
     /// Cloneable multiplexed request sender.
-    tx: wreq_proto::conn::http2::SendRequest<B>,
+    tx: conn::http2::SendRequest<B>,
 
     /// Checkout count and idle timestamp shared by sender clones.
     state: Arc<Http2State>,
@@ -64,6 +64,7 @@ struct Http2State {
 /// Negotiation selects this layer only after it has inspected the established
 /// transport. The resulting sender is cloneable and can be stored in the
 /// pool's singleton service.
+#[derive(Clone)]
 pub struct Http2Layer<B> {
     /// Runtime used by the protocol driver.
     exec: Executor,
@@ -107,12 +108,6 @@ impl<B> Http2Layer<B> {
     }
 }
 
-impl<B> Clone for Http2Layer<B> {
-    fn clone(&self) -> Self {
-        Self::new(self.exec.clone(), self.timer.clone())
-    }
-}
-
 impl<S, B> Layer<S> for Http2Layer<B> {
     type Service = Http2Connect<S, B>;
 
@@ -121,7 +116,7 @@ impl<S, B> Layer<S> for Http2Layer<B> {
             service,
             exec: self.exec.clone(),
             timer: self.timer.clone(),
-            _body: PhantomData,
+            _body: self._body,
         }
     }
 }
@@ -134,7 +129,7 @@ impl<S: Clone, B> Clone for Http2Connect<S, B> {
             service: self.service.clone(),
             exec: self.exec.clone(),
             timer: self.timer.clone(),
-            _body: PhantomData,
+            _body: self._body,
         }
     }
 }

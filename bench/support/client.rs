@@ -4,9 +4,7 @@ mod cyper;
 mod reqwest;
 mod wreq;
 
-use std::{
-    convert::Infallible, fmt::Debug, future::Future, net::SocketAddr, time::Duration,
-};
+use std::{convert::Infallible, fmt::Debug, future::Future, net::SocketAddr, time::Duration};
 
 use bytes::Bytes;
 use criterion::{BenchmarkGroup, async_executor::AsyncExecutor, measurement::WallTime};
@@ -152,6 +150,7 @@ pub(super) fn bench_clients(
 /// Registers the fixed-worker wreq workload for each connection-pool strategy.
 ///
 /// Returns an error if the client or its Tokio runtime cannot be created.
+#[allow(dead_code)]
 pub(crate) fn bench_wreq_pool_strategies(
     group: &mut BenchmarkGroup<'_, WallTime>,
     addr: SocketAddr,
@@ -277,7 +276,8 @@ fn worker_request_counts(
     let requests_per_worker = num_requests.checked_div(worker_count).unwrap_or(0);
     let remainder = num_requests.checked_rem(worker_count).unwrap_or(0);
 
-    // Pre-splitting the work keeps shared counters out of the measured path.
+    // Keep the quotient and remainder split identical across clients and pool
+    // strategies. Dropping the remainder changes measured work and biases results.
     (0..worker_count).map(move |worker| requests_per_worker + usize::from(worker < remainder))
 }
 

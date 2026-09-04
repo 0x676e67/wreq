@@ -1,16 +1,14 @@
 //! Shared types and lifecycle helpers for the protocol benchmark targets.
 
 mod case;
-mod client;
+pub(crate) mod client;
 mod runner;
 mod runtime;
-mod server;
+pub(crate) mod server;
 
 pub use case::{BenchTarget, HttpVersion, ThreadMode, Tls};
 pub(crate) use case::{BodyCase, BodyKind};
-pub(crate) use client::bench_wreq_pool_strategies;
 pub use runner::{bench, criterion};
-pub(crate) use server::with_server;
 
 /// Error type used while preparing or cleaning up a benchmark case.
 pub type BoxError = Box<dyn std::error::Error + Send + Sync>;

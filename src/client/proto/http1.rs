@@ -12,9 +12,12 @@ use std::{
 use futures_util::{TryFutureExt, future::BoxFuture};
 use http::{Request, Response};
 use http_body::Body;
-use tokio::io::{AsyncRead, AsyncWrite};
+use tokio::{
+    io::{AsyncRead, AsyncWrite},
+    sync::oneshot,
+};
 use tower::{BoxError, Layer, Service, ServiceBuilder};
-use wreq_proto::{body::Incoming, rt::Executor as _};
+use wreq_proto::{body::Incoming, conn, rt::Executor as _};
 
 use super::{Established, SendError, clock_now, is_expired};
 use crate::{
@@ -52,7 +55,7 @@ pub struct Http1Client<B> {
 /// exposing protocol internals to the pool.
 pub struct Http1Sender<B> {
     /// Raw protocol dispatcher created by the HTTP/1 handshake.
-    inner: wreq_proto::conn::http1::SendRequest<B>,
+    inner: conn::http1::SendRequest<B>,
 }
 
 /// Layers HTTP/1 handshaking over a transport-producing service.
@@ -60,6 +63,7 @@ pub struct Http1Sender<B> {
 /// The resulting service waits for the physical connector, performs the
 /// handshake, installs HTTP/1 request middleware, and returns a cacheable
 /// [`Http1Client`].
+#[derive(Clone)]
 pub struct Http1Layer<B> {
     /// Runtime used by the protocol driver.
     exec: Executor,
@@ -136,7 +140,7 @@ struct HandshakeStateError;
 
 impl<B> Http1Sender<B> {
     /// Wraps a raw HTTP/1 protocol sender.
-    fn new(inner: wreq_proto::conn::http1::SendRequest<B>) -> Self {
+    fn new(inner: conn::http1::SendRequest<B>) -> Self {
         Self { inner }
     }
 
@@ -182,12 +186,6 @@ impl<B> Http1Layer<B> {
             set_host,
             _body: PhantomData,
         }
-    }
-}
-
-impl<B> Clone for Http1Layer<B> {
-    fn clone(&self) -> Self {
-        Self::new(self.exec.clone(), self.timer.clone(), self.set_host)
     }
 }
 
@@ -278,6 +276,7 @@ where
                         self.state = Http1ConnectState::Done;
                         return Poll::Ready(Err(HandshakeStateError.into()));
                     };
+
                     self.state = Http1ConnectState::Handshaking(Box::pin(establish_http1(
                         established,
                         exec,
@@ -395,8 +394,9 @@ where
         h1_builder,
         ..
     } = established;
+
     let (mut tx, connection) = h1_builder.handshake(io).await?;
-    let (error_tx, error_rx) = tokio::sync::oneshot::channel();
+    let (error_tx, error_rx) = oneshot::channel();
     exec.execute(async move {
         if let Err(error) = connection.with_upgrades().await {
             debug!("client connection error: {error:?}");
@@ -413,14 +413,12 @@ where
         Err(error) => return Err(error.into()),
     }
 
-    let request_connected = connected.clone();
-    let request_service = ServiceBuilder::new()
-        .layer_fn(move |inner| SetHost::new(inner, set_host))
-        .layer_fn(move |inner| Http1RequestTarget::new(inner, request_connected.clone()))
-        .service(Http1Sender::new(tx));
     Ok(Http1Client {
-        conn_info: connected,
-        tx: request_service,
+        conn_info: connected.clone(),
+        tx: ServiceBuilder::new()
+            .layer_fn(move |inner| SetHost::new(inner, set_host))
+            .layer_fn(move |inner| Http1RequestTarget::new(inner, connected.clone()))
+            .service(Http1Sender::new(tx)),
         idle_at: clock_now(&timer),
         timer,
     })
