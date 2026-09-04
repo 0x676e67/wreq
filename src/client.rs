@@ -64,7 +64,11 @@ use self::{
     pool::{PoolStrategy, Ver},
     request::{Request, RequestBuilder},
     response::Response,
-    svc::{configure::Configure, dispatch::Dispatch, retry::RetryUnsent},
+    svc::{
+        configure::{Configure, ConfigureLayer},
+        dispatch::Dispatch,
+        retry::{RetryUnsent, RetryUnsentLayer},
+    },
 };
 #[cfg(feature = "cookies")]
 use crate::cookie;
@@ -1739,7 +1743,7 @@ mod sealed {
     /// protocol dispatch. Clones share all connection-pool state and never clone
     /// request bodies.
     #[must_use]
-    pub(super) struct Client<C, B>
+    pub struct Client<C, B>
     where
         C: tower::Service<ConnectionDescriptor> + Clone + Send + Sync + 'static,
         C::Response: AsyncRead + AsyncWrite + Connection + Unpin + Send + 'static,
@@ -1758,7 +1762,7 @@ mod sealed {
     /// The fields are copied into the middleware that owns each concern. This
     /// configuration does not hold pool state or request-local data.
     #[derive(Clone)]
-    struct Config {
+    pub struct Config {
         /// Whether requests canceled before encoding may be retried.
         retry_canceled_requests: bool,
 
@@ -1779,7 +1783,7 @@ mod sealed {
     /// consumes it. The resulting client clones share the pool created around
     /// the supplied connector.
     #[derive(Clone)]
-    pub(super) struct Builder {
+    pub struct Builder {
         /// Request retry and protocol-selection behavior.
         config: Config,
 
@@ -1867,7 +1871,7 @@ mod sealed {
 
     impl Builder {
         /// Creates a builder using `exec` for protocol drivers and pool tasks.
-        pub(super) fn new(exec: Executor) -> Self {
+        pub fn new(exec: Executor) -> Self {
             Self {
                 config: Config {
                     retry_canceled_requests: true,
@@ -1894,7 +1898,7 @@ mod sealed {
         /// `None` disables time-based eviction. A timer supplied through
         /// [`Builder::pool_timer`] is required. The default is 90 seconds.
         #[inline]
-        pub(super) fn pool_idle_timeout<D>(mut self, val: D) -> Self
+        pub fn pool_idle_timeout<D>(mut self, val: D) -> Self
         where
             D: Into<Option<Duration>>,
         {
@@ -1907,7 +1911,7 @@ mod sealed {
         /// This does not limit active physical connections. `0` disables pooling;
         /// the default is `usize::MAX`.
         #[inline]
-        pub(super) fn pool_max_idle_per_host(mut self, max_idle: usize) -> Self {
+        pub fn pool_max_idle_per_host(mut self, max_idle: usize) -> Self {
             self.pool_config.max_idle_per_host = max_idle;
             self
         }
@@ -1918,14 +1922,14 @@ mod sealed {
         /// and connecting entries are not counted. This does not limit physical
         /// connections. The default is `None`.
         #[inline]
-        pub(super) fn pool_max_size(mut self, max_size: impl Into<Option<NonZeroUsize>>) -> Self {
+        pub fn pool_max_size(mut self, max_size: impl Into<Option<NonZeroUsize>>) -> Self {
             self.pool_config.max_pool_size = max_size.into();
             self
         }
 
         /// Selects whether a reuse miss immediately connects or waits for reuse.
         #[inline]
-        pub(super) fn pool_strategy(mut self, strategy: PoolStrategy) -> Self {
+        pub fn pool_strategy(mut self, strategy: PoolStrategy) -> Self {
             self.pool_config.strategy = strategy;
             self
         }
@@ -1935,7 +1939,7 @@ mod sealed {
         /// Disabling this option restores automatic negotiation only when HTTP/1
         /// was the current requirement.
         #[inline]
-        pub(super) fn http1_only(mut self, val: bool) -> Self {
+        pub fn http1_only(mut self, val: bool) -> Self {
             if val {
                 self.config.ver = Ver::Http1;
             } else if self.config.ver == Ver::Http1 {
@@ -1950,7 +1954,7 @@ mod sealed {
         /// knowledge or ALPN; this option does not configure ALPN itself. Disabling
         /// it restores automatic negotiation only when HTTP/2 was required.
         #[inline]
-        pub(super) fn http2_only(mut self, val: bool) -> Self {
+        pub fn http2_only(mut self, val: bool) -> Self {
             if val {
                 self.config.ver = Ver::Http2;
             } else if self.config.ver == Ver::Http2 {
@@ -1961,7 +1965,7 @@ mod sealed {
 
         /// Sets the timer used by the HTTP/2 protocol driver.
         #[inline]
-        pub(super) fn http2_timer(mut self, timer: Timer) -> Self {
+        pub fn http2_timer(mut self, timer: Timer) -> Self {
             self.h2_builder = self.h2_builder.timer(timer);
             self
         }
@@ -1970,7 +1974,7 @@ mod sealed {
         ///
         /// Request-local options may override this base for one connection attempt.
         #[inline]
-        pub(super) fn http1_options<O>(mut self, opts: O) -> Self
+        pub fn http1_options<O>(mut self, opts: O) -> Self
         where
             O: Into<Option<Http1Options>>,
         {
@@ -1985,7 +1989,7 @@ mod sealed {
         ///
         /// Request-local options may override this base for one connection attempt.
         #[inline]
-        pub(super) fn http2_options<O>(mut self, opts: O) -> Self
+        pub fn http2_options<O>(mut self, opts: O) -> Self
         where
             O: Into<Option<Http2Options>>,
         {
@@ -1997,7 +2001,7 @@ mod sealed {
 
         /// Sets the clock and sleeper used by pool delays and idle cleanup.
         #[inline]
-        pub(super) fn pool_timer(mut self, timer: Timer) -> Self {
+        pub fn pool_timer(mut self, timer: Timer) -> Self {
             self.pool_timer = timer;
             self
         }
@@ -2005,16 +2009,13 @@ mod sealed {
         /// Sets the cookie store consulted immediately around protocol dispatch.
         #[inline]
         #[cfg(feature = "cookies")]
-        pub(super) fn cookie_store(
-            mut self,
-            cookie_store: Option<Arc<dyn cookie::CookieStore>>,
-        ) -> Self {
+        pub fn cookie_store(mut self, cookie_store: Option<Arc<dyn cookie::CookieStore>>) -> Self {
             self.config.cookie_store = cookie_store;
             self
         }
 
         /// Consumes the builder and wraps `connector` in the complete client stack.
-        pub(super) fn build<C, B>(self, connector: C) -> Client<C, B>
+        pub fn build<C, B>(self, connector: C) -> Client<C, B>
         where
             C: tower::Service<ConnectionDescriptor> + Clone + Send + Sync + 'static,
             C::Response: AsyncRead + AsyncWrite + Connection + Unpin + Send + 'static,
@@ -2043,88 +2044,72 @@ mod sealed {
                 cookie_store,
             );
 
-            let h1_builder = self.h1_builder;
-            let h2_builder = self.h2_builder;
-            let service = ServiceBuilder::new()
-                .layer_fn(move |inner| {
-                    Configure::new(inner, h1_builder.clone(), h2_builder.clone())
-                })
-                .layer_fn(move |inner| RetryUnsent::new(inner, retry_canceled_requests))
-                .service(service);
-            Client { inner: service }
+            Client {
+                inner: ServiceBuilder::new()
+                    .layer(ConfigureLayer::new(self.h1_builder, self.h2_builder))
+                    .layer(RetryUnsentLayer::new(retry_canceled_requests))
+                    .service(service),
+            }
         }
     }
-}
 
-/// Prepares a request URI for the client service stack.
-///
-/// URIs with both a scheme and authority pass through unchanged. An
-/// authority-form `CONNECT` target is converted to an internal absolute URI
-/// using `https` for port 443 and `http` otherwise, allowing connection
-/// selection to use the same URI shape as other requests. HTTP/1 target handling
-/// converts it back to authority-form before encoding, as required by RFC 9112
-/// section 3.2.3:
-/// <https://www.rfc-editor.org/rfc/rfc9112.html#section-3.2.3>
-///
-/// # Errors
-///
-/// Returns an error when the request target is neither absolute nor a valid
-/// authority-form `CONNECT` target, or when the normalized URI cannot be built.
-fn normalize_uri<B>(req: &mut HttpRequest<B>, is_http_connect: bool) -> Result<(), error::Error> {
-    match (req.uri().scheme(), req.uri().authority()) {
-        (Some(_), Some(_)) => Ok(()),
-        (None, Some(authority)) if is_http_connect => {
-            let scheme = match authority.port_u16() {
-                Some(443) => Scheme::HTTPS,
-                _ => Scheme::HTTP,
-            };
-            set_scheme(req.uri_mut(), scheme)
-        }
-        _ => {
-            debug!(
-                "Client requires absolute-form URIs, received: {:?}",
-                req.uri()
-            );
-            Err(error::Error::from_kind(
-                error::ErrorKind::UserAbsoluteUriRequired,
-            ))
+    /// Prepares a request URI for the client service stack.
+    ///
+    /// URIs with both a scheme and authority pass through unchanged. An
+    /// authority-form `CONNECT` target is converted to an internal absolute URI
+    /// using `https` for port 443 and `http` otherwise, allowing connection
+    /// selection to use the same URI shape as other requests. HTTP/1 target handling
+    /// converts it back to authority-form before encoding, as required by RFC 9112
+    /// section 3.2.3:
+    /// <https://www.rfc-editor.org/rfc/rfc9112.html#section-3.2.3>
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the request target is neither absolute nor a valid
+    /// authority-form `CONNECT` target, or when the normalized URI cannot be built.
+    fn normalize_uri<B>(
+        req: &mut HttpRequest<B>,
+        is_http_connect: bool,
+    ) -> Result<(), error::Error> {
+        match (req.uri().scheme(), req.uri().authority()) {
+            (Some(_), Some(_)) => Ok(()),
+            (None, Some(authority)) if is_http_connect => {
+                let scheme = match authority.port_u16() {
+                    Some(443) => Scheme::HTTPS,
+                    _ => Scheme::HTTP,
+                };
+                set_scheme(req.uri_mut(), scheme)
+            }
+            _ => {
+                debug!(
+                    "Client requires absolute-form URIs, received: {:?}",
+                    req.uri()
+                );
+                Err(error::Error::from_kind(
+                    error::ErrorKind::UserAbsoluteUriRequired,
+                ))
+            }
         }
     }
-}
 
-/// Builds the origin URI used to select and configure a connection.
-///
-/// The scheme and authority are preserved while the path and query are replaced
-/// with `/`. The request URI itself remains unchanged so protocol encoding still
-/// receives the original request target.
-///
-/// # Errors
-///
-/// Returns an error when the origin URI cannot be reconstructed from the
-/// normalized request URI.
-fn connection_origin(uri: &Uri) -> Result<Uri, error::Error> {
-    let mut parts = uri.clone().into_parts();
-    parts.path_and_query = Some(PathAndQuery::from_static("/"));
-    Uri::from_parts(parts)
-        .map_err(|source| error::Error::new(error::ErrorKind::UserAbsoluteUriRequired, source))
-}
-
-/// Converts an authority-form URI into the internal absolute form used by the client.
-///
-/// The authority is preserved, `scheme` is installed, and the path is set to
-/// `/`. This helper is only used while normalizing `CONNECT`; protocol-specific
-/// request-target handling chooses the final wire representation later.
-///
-/// # Errors
-///
-/// Returns an error when the URI cannot be reconstructed with the supplied
-/// scheme.
-fn set_scheme(uri: &mut Uri, scheme: Scheme) -> Result<(), error::Error> {
-    let old = std::mem::take(uri);
-    let mut parts: http::uri::Parts = old.into();
-    parts.scheme = Some(scheme);
-    parts.path_and_query = Some(PathAndQuery::from_static("/"));
-    *uri = Uri::from_parts(parts)
-        .map_err(|source| error::Error::new(error::ErrorKind::UserAbsoluteUriRequired, source))?;
-    Ok(())
+    /// Converts an authority-form URI into the internal absolute form used by the client.
+    ///
+    /// The authority is preserved, `scheme` is installed, and the path is set to
+    /// `/`. This helper is only used while normalizing `CONNECT`; protocol-specific
+    /// request-target handling chooses the final wire representation later.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the URI cannot be reconstructed with the supplied
+    /// scheme.
+    fn set_scheme(uri: &mut Uri, scheme: Scheme) -> Result<(), error::Error> {
+        let old = std::mem::take(uri);
+        let mut parts: http::uri::Parts = old.into();
+        parts.scheme = Some(scheme);
+        parts.path_and_query = Some(PathAndQuery::from_static("/"));
+        *uri = Uri::from_parts(parts).map_err(|source| {
+            error::Error::new(error::ErrorKind::UserAbsoluteUriRequired, source)
+        })?;
+        Ok(())
+    }
 }

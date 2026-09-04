@@ -10,9 +10,15 @@ use std::{
 use futures_util::future::Either;
 use http::Uri;
 use pin_project_lite::pin_project;
-use tower::{BoxError, Service, util::Oneshot};
+use tower::{BoxError, Layer, Service, util::Oneshot};
 
 use super::{ConfiguredRequest, dispatch::AttemptError};
+
+/// Builds retry middleware for requests returned before protocol encoding.
+#[derive(Clone, Copy)]
+pub struct RetryUnsentLayer {
+    enabled: bool,
+}
 
 /// Retries requests returned before protocol encoding begins.
 ///
@@ -41,6 +47,23 @@ pin_project! {
         service: S,
         original_uri: Uri,
         enabled: bool,
+    }
+}
+
+// ===== impl RetryUnsentLayer =====
+
+impl RetryUnsentLayer {
+    /// Creates a layer with internal unsent-request retries enabled or disabled.
+    pub fn new(enabled: bool) -> Self {
+        Self { enabled }
+    }
+}
+
+impl<S> Layer<S> for RetryUnsentLayer {
+    type Service = RetryUnsent<S>;
+
+    fn layer(&self, inner: S) -> Self::Service {
+        RetryUnsent::new(inner, self.enabled)
     }
 }
 

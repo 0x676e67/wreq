@@ -26,7 +26,7 @@ pub(crate) struct ConnectionId(Arc<(Group, AtomicU64)>);
 /// and other configurations needed to establish a connection.
 #[must_use]
 #[derive(Clone)]
-pub(crate) struct ConnectionDescriptor {
+pub struct ConnectionDescriptor {
     uri: Uri,
     version: Option<Version>,
     proxy: Option<Matcher>,

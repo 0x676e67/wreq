@@ -3,17 +3,27 @@
 use std::task::{Context, Poll};
 
 use futures_util::future::{self, Either, Ready};
-use http::Request;
-use tower::{BoxError, Service};
+use http::{Request, Uri, uri::PathAndQuery};
+use tower::{BoxError, Layer, Service};
 use wreq_proto::conn;
 
 use super::ConfiguredRequest;
 use crate::{
-    client::{connection_origin, layer::config::RequestOptions},
+    client::{error, layer::config::RequestOptions},
     config::RequestConfig,
     conn::descriptor::ConnectionDescriptor,
     rt::Executor,
 };
+
+/// Builds request configuration middleware with base protocol settings.
+///
+/// The layer owns the HTTP builders until the low-level client stack is
+/// assembled, then clones them into the resulting [`Configure`] service.
+#[derive(Clone)]
+pub struct ConfigureLayer {
+    h1_builder: conn::http1::Builder,
+    h2_builder: conn::http2::Builder<Executor>,
+}
 
 /// Applies request-local connection and protocol configuration.
 ///
@@ -26,6 +36,31 @@ pub struct Configure<S> {
     h1_builder: conn::http1::Builder,
     h2_builder: conn::http2::Builder<Executor>,
 }
+
+// ===== impl ConfigureLayer =====
+
+impl ConfigureLayer {
+    /// Creates a layer from the base HTTP/1 and HTTP/2 builders.
+    pub fn new(
+        h1_builder: conn::http1::Builder,
+        h2_builder: conn::http2::Builder<Executor>,
+    ) -> Self {
+        Self {
+            h1_builder,
+            h2_builder,
+        }
+    }
+}
+
+impl<S> Layer<S> for ConfigureLayer {
+    type Service = Configure<S>;
+
+    fn layer(&self, inner: S) -> Self::Service {
+        Configure::new(inner, self.h1_builder.clone(), self.h2_builder.clone())
+    }
+}
+
+// ===== impl Configure =====
 
 impl<S> Configure<S> {
     /// Wraps a pool request service with request-local configuration handling.
@@ -86,4 +121,21 @@ where
             h2_builder,
         }))
     }
+}
+
+/// Builds the origin URI used to select and configure a connection.
+///
+/// The scheme and authority are preserved while the path and query are replaced
+/// with `/`. The request URI itself remains unchanged so protocol encoding still
+/// receives the original request target.
+///
+/// # Errors
+///
+/// Returns an error when the origin URI cannot be reconstructed from the
+/// normalized request URI.
+fn connection_origin(uri: &Uri) -> Result<Uri, error::Error> {
+    let mut parts = uri.clone().into_parts();
+    parts.path_and_query = Some(PathAndQuery::from_static("/"));
+    Uri::from_parts(parts)
+        .map_err(|source| error::Error::new(error::ErrorKind::UserAbsoluteUriRequired, source))
 }
