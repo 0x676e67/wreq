@@ -15,7 +15,7 @@ use http_body_util::{BodyExt, Full};
 use pretty_env_logger::env_logger;
 use support::server;
 use tokio::io::AsyncWriteExt;
-use wreq::{Client, header::OrigHeaderMap, tls::TlsInfo};
+use wreq::{Client, header::OrigHeaderMap, pool::PoolLimits, tls::TlsInfo};
 
 #[tokio::test]
 async fn auto_headers() {
@@ -794,6 +794,39 @@ async fn connection_pool_cache() {
 
     assert_eq!(resp.status(), wreq::StatusCode::OK);
     assert_eq!(resp.version(), http::Version::HTTP_2);
+}
+
+#[tokio::test]
+async fn connection_pool_reuses_http1_and_http2_connections() {
+    let mut server = server::http(move |_| async move { http::Response::default() });
+    let url = format!("http://{}", server.addr());
+    let limits = PoolLimits::builder().max_connections(1).build();
+
+    let http1 = Client::builder()
+        .http1_only()
+        .pool_limits(limits)
+        .build()
+        .unwrap();
+    for _ in 0..2 {
+        http1.get(&url).send().await.unwrap().bytes().await.unwrap();
+    }
+
+    let http2 = Client::builder()
+        .http2_only()
+        .pool_limits(limits)
+        .build()
+        .unwrap();
+    let responses = futures_util::future::join_all((0..8).map(|_| http2.get(&url).send())).await;
+    for response in responses {
+        response.unwrap();
+    }
+
+    let accepted = server
+        .events()
+        .iter()
+        .filter(|event| matches!(event, server::Event::ConnectionAccepted))
+        .count();
+    assert_eq!(accepted, 2);
 }
 
 #[tokio::test]

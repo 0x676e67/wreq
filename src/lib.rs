@@ -317,6 +317,7 @@ mod util;
 pub mod cookie;
 pub mod dns;
 pub mod header;
+pub mod pool;
 pub mod redirect;
 pub mod retry;
 pub mod tls;

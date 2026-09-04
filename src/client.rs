@@ -44,7 +44,7 @@ use self::{
     emulate::IntoEmulation,
     future::Pending,
     layer::{
-        client::HttpClient,
+        client::{Builder as HttpClientBuilder, HttpClient},
         config::{ConfigService, ConfigServiceLayer},
         redirect::{FollowRedirect, FollowRedirectLayer},
         retry::RetryPolicy,
@@ -70,6 +70,7 @@ use crate::{
     header::OrigHeaderMap,
     http1::Http1Options,
     http2::Http2Options,
+    pool::{PoolLimits, PoolStrategy},
     proxy::Matcher as ProxyMatcher,
     redirect::{self, FollowRedirectPolicy},
     retry,
@@ -183,6 +184,8 @@ struct Config {
     pool_idle_timeout: Option<Duration>,
     pool_max_idle_per_host: usize,
     pool_max_size: Option<NonZeroUsize>,
+    pool_strategy: PoolStrategy,
+    pool_limits: PoolLimits,
     tcp_nodelay: bool,
     tcp_reuse_address: bool,
     tcp_linger: Option<Duration>,
@@ -270,6 +273,8 @@ impl Client {
                 pool_idle_timeout: Some(Duration::from_secs(90)),
                 pool_max_idle_per_host: usize::MAX,
                 pool_max_size: None,
+                pool_strategy: PoolStrategy::default(),
+                pool_limits: PoolLimits::default(),
                 tcp_keepalive: Some(Duration::from_secs(15)),
                 tcp_keepalive_interval: Some(Duration::from_secs(15)),
                 tcp_keepalive_retries: Some(3),
@@ -566,7 +571,7 @@ impl ClientBuilder {
                 .build(config.tls_options, config.connector_layers)?;
 
             #[allow(unused_mut)]
-            let mut builder = HttpClient::builder(config.executor);
+            let mut builder = HttpClientBuilder::new(config.executor);
 
             #[cfg(feature = "cookies")]
             {
@@ -576,12 +581,15 @@ impl ClientBuilder {
             builder
                 .http1_options(config.http1_options)
                 .http2_options(config.http2_options)
+                .http1_only(matches!(config.http_version_pref, HttpVersionPref::Http1))
                 .http2_only(matches!(config.http_version_pref, HttpVersionPref::Http2))
                 .http2_timer(config.timer.clone())
                 .pool_timer(config.timer.clone())
                 .pool_idle_timeout(config.pool_idle_timeout)
                 .pool_max_idle_per_host(config.pool_max_idle_per_host)
                 .pool_max_size(config.pool_max_size)
+                .pool_strategy(config.pool_strategy)
+                .pool_limits(config.pool_limits)
                 .build(connector)
         };
 
@@ -1090,10 +1098,24 @@ impl ClientBuilder {
         self
     }
 
-    /// Sets the maximum number of connections in the pool.
+    /// Sets the maximum number of connection groups retained by the pool.
     #[inline]
     pub fn pool_max_size(mut self, max: usize) -> ClientBuilder {
         self.config.pool_max_size = NonZeroUsize::new(max);
+        self
+    }
+
+    /// Sets the connection acquisition strategy.
+    #[inline]
+    pub fn pool_strategy(mut self, strategy: PoolStrategy) -> ClientBuilder {
+        self.config.pool_strategy = strategy;
+        self
+    }
+
+    /// Sets connection limits for the pool.
+    #[inline]
+    pub fn pool_limits(mut self, limits: PoolLimits) -> ClientBuilder {
+        self.config.pool_limits = limits;
         self
     }
 
