@@ -963,7 +963,7 @@ where
         Box::pin(async move {
             Oneshot::new(service, target)
                 .await
-                .map(|service| Pooled::new(Negotiated::Fallback(service), enabled, usage))
+                .map(|service| Pooled::new(Negotiated::Left(service), enabled, usage))
         })
     }
 
@@ -1039,7 +1039,7 @@ where
                     future.await.map_err(|error| Box::new(error) as BoxError)?
                 }
             };
-            Ok(Pooled::new(Negotiated::Upgraded(service), enabled, usage))
+            Ok(Pooled::new(Negotiated::Right(service), enabled, usage))
         })
     }
 
@@ -1405,7 +1405,7 @@ where
         pool_enabled: bool,
         usage: EntryUse,
     ) -> Self {
-        if let Negotiated::Upgraded(service) = &inner {
+        if let Negotiated::Right(service) = &inner {
             service.inner().begin_checkout();
         }
         let cleanup = usage.into_cleanup();
@@ -1421,19 +1421,19 @@ where
 
     /// Returns whether this checkout uses HTTP/1.
     pub(super) fn is_http1(&self) -> bool {
-        matches!(self.inner, Negotiated::Fallback(_))
+        matches!(self.inner, Negotiated::Left(_))
     }
 
     /// Returns whether this checkout uses HTTP/2.
     pub(super) fn is_http2(&self) -> bool {
-        matches!(self.inner, Negotiated::Upgraded(_))
+        matches!(self.inner, Negotiated::Right(_))
     }
 
     /// Returns whether the sender came from an existing pooled connection.
     pub(super) fn is_reused(&self) -> bool {
         match &self.inner {
-            Negotiated::Fallback(service) => service.is_reused(),
-            Negotiated::Upgraded(service) => service.is_reused(),
+            Negotiated::Left(service) => service.is_reused(),
+            Negotiated::Right(service) => service.is_reused(),
         }
     }
 
@@ -1445,22 +1445,22 @@ where
     /// Returns whether the protocol sender can accept a request immediately.
     pub(super) fn is_ready(&self) -> bool {
         match &self.inner {
-            Negotiated::Fallback(service) => service.inner().is_ready(),
-            Negotiated::Upgraded(service) => service.inner().is_ready(),
+            Negotiated::Left(service) => service.inner().is_ready(),
+            Negotiated::Right(service) => service.inner().is_ready(),
         }
     }
 
     /// Polls protocol readiness and discards a sender that has failed.
     pub(super) fn poll_ready(&mut self, cx: &mut task::Context<'_>) -> Poll<Result<(), Error>> {
         match &mut self.inner {
-            Negotiated::Fallback(service) => {
+            Negotiated::Left(service) => {
                 let ready = service.inner_mut().poll_ready(cx);
                 if matches!(&ready, Poll::Ready(Err(_))) {
                     service.discard_on_drop();
                 }
                 ready
             }
-            Negotiated::Upgraded(service) => {
+            Negotiated::Right(service) => {
                 let ready = service.inner_mut().poll_ready(cx);
                 if matches!(&ready, Poll::Ready(Err(_))) {
                     service.inner().poison();
@@ -1474,8 +1474,8 @@ where
     /// Returns metadata for the underlying physical connection.
     pub(super) fn conn_info(&self) -> &Connected {
         match &self.inner {
-            Negotiated::Fallback(service) => service.inner().conn_info(),
-            Negotiated::Upgraded(service) => service.inner().conn_info(),
+            Negotiated::Left(service) => service.inner().conn_info(),
+            Negotiated::Right(service) => service.inner().conn_info(),
         }
     }
 
@@ -1485,12 +1485,8 @@ where
         req: Request<B>,
     ) -> impl Future<Output = Result<Response<Incoming>, SendError<B>>> {
         match &mut self.inner {
-            Negotiated::Fallback(service) => {
-                Either::Left(service.inner_mut().try_send_request(req))
-            }
-            Negotiated::Upgraded(service) => {
-                Either::Right(service.inner_mut().try_send_request(req))
-            }
+            Negotiated::Left(service) => Either::Left(service.inner_mut().try_send_request(req)),
+            Negotiated::Right(service) => Either::Right(service.inner_mut().try_send_request(req)),
         }
     }
 }
@@ -1503,7 +1499,7 @@ where
 {
     fn drop(&mut self) {
         match &mut self.inner {
-            Negotiated::Fallback(service) => {
+            Negotiated::Left(service) => {
                 service.inner_mut().mark_idle();
                 if !service.inner().is_open() {
                     service.discard_on_drop();
@@ -1517,7 +1513,7 @@ where
                     }
                 }
             }
-            Negotiated::Upgraded(service) => {
+            Negotiated::Right(service) => {
                 let discard = {
                     let client = service.inner();
                     client.finish_checkout();

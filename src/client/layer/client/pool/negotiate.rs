@@ -42,7 +42,10 @@ use std::{
 use futures_util::future::{BoxFuture, Either};
 use pin_project_lite::pin_project;
 use tokio::sync::watch;
-use tower::{BoxError, Layer, Service, util::Oneshot};
+use tower::{
+    BoxError, Layer, Service,
+    util::{Either as ServiceEither, Oneshot},
+};
 
 use super::cache::Started;
 use crate::sync::Mutex;
@@ -81,15 +84,8 @@ pub(super) struct Negotiate<L, R, S> {
 
 /// A checked-out service selected by [`Negotiate`].
 ///
-/// The enum keeps the two concrete service types without boxing. Its `Service`
-/// implementation delegates readiness and requests to the selected variant.
-#[derive(Clone, Debug)]
-pub(super) enum Negotiated<L, R> {
-    /// Service produced by the fallback pool.
-    Fallback(L),
-    /// Service produced by the upgraded pool.
-    Upgraded(R),
-}
+/// `Left` is the fallback service and `Right` is the upgraded service.
+pub(super) type Negotiated<L, R> = ServiceEither<L, R>;
 
 pin_project! {
     /// Future that completes the currently selected pool path.
@@ -135,20 +131,6 @@ pin_project! {
             #[pin]
             future: FR,
         },
-    }
-}
-
-pin_project! {
-    #[project = NegotiatedFutureProj]
-    /// Request future delegated to the selected service type.
-    ///
-    /// This enum provides static dispatch for the different future types
-    /// returned by fallback and upgraded services.
-    pub(super) enum NegotiatedFuture<L, R> {
-        /// Future returned by the fallback service.
-        Fallback { #[pin] future: L },
-        /// Future returned by the upgraded service.
-        Upgraded { #[pin] future: R },
     }
 }
 
@@ -413,7 +395,7 @@ where
                     fallback,
                     destination,
                 } => match ready!(future.poll(cx)) {
-                    Ok(service) => return Poll::Ready(Ok(Negotiated::Fallback(service))),
+                    Ok(service) => return Poll::Ready(Ok(Negotiated::Left(service))),
                     Err(error) => {
                         let error = error.into();
                         if !UseOther::is(&*error) {
@@ -444,7 +426,7 @@ where
                 StateProj::Upgrade { future } => {
                     return Poll::Ready(
                         ready!(future.poll(cx))
-                            .map(Negotiated::Upgraded)
+                            .map(Negotiated::Right)
                             .map_err(Into::into),
                     );
                 }
@@ -473,53 +455,6 @@ where
     };
     drop(discarded);
     selection
-}
-
-// ===== impl Negotiated =====
-
-impl<L, R, Req, Res, E> Service<Req> for Negotiated<L, R>
-where
-    L: Service<Req, Response = Res, Error = E>,
-    R: Service<Req, Response = Res, Error = E>,
-{
-    type Response = Res;
-    type Error = E;
-    type Future = NegotiatedFuture<L::Future, R::Future>;
-
-    fn poll_ready(&mut self, cx: &mut task::Context<'_>) -> Poll<Result<(), Self::Error>> {
-        match self {
-            Self::Fallback(service) => service.poll_ready(cx),
-            Self::Upgraded(service) => service.poll_ready(cx),
-        }
-    }
-
-    fn call(&mut self, req: Req) -> Self::Future {
-        match self {
-            Self::Fallback(service) => NegotiatedFuture::Fallback {
-                future: service.call(req),
-            },
-            Self::Upgraded(service) => NegotiatedFuture::Upgraded {
-                future: service.call(req),
-            },
-        }
-    }
-}
-
-// ===== impl NegotiatedFuture =====
-
-impl<L, R, Out> Future for NegotiatedFuture<L, R>
-where
-    L: Future<Output = Out>,
-    R: Future<Output = Out>,
-{
-    type Output = Out;
-
-    fn poll(self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<Self::Output> {
-        match self.project() {
-            NegotiatedFutureProj::Fallback { future } => future.poll(cx),
-            NegotiatedFutureProj::Upgraded { future } => future.poll(cx),
-        }
-    }
 }
 
 /// Broadcasts that an upgraded connection has entered the pending queue.
@@ -855,11 +790,11 @@ mod tests {
 
             let selected = Oneshot::new(negotiate, ()).await.unwrap();
             match selected {
-                Negotiated::Fallback(service) => {
+                Negotiated::Left(service) => {
                     assert!(!upgraded);
                     assert_eq!(service, "http/1.1");
                 }
-                Negotiated::Upgraded(service) => {
+                Negotiated::Right(service) => {
                     assert!(upgraded);
                     assert_eq!(*service.inner(), "h2");
                 }
@@ -883,7 +818,7 @@ mod tests {
 
         assert!(matches!(
             Oneshot::new(negotiate, ()).await.unwrap(),
-            Negotiated::Fallback("fallback")
+            Negotiated::Left("fallback")
         ));
         assert_eq!(calls.load(Ordering::SeqCst), 2);
 
@@ -901,7 +836,7 @@ mod tests {
             pending: pending.clone(),
         };
 
-        let Negotiated::Upgraded(service) = Oneshot::new(negotiate, ()).await.unwrap() else {
+        let Negotiated::Right(service) = Oneshot::new(negotiate, ()).await.unwrap() else {
             panic!("existing upgraded service should be preferred");
         };
         assert_eq!(*service.inner(), "existing");
