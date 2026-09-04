@@ -14,13 +14,17 @@ use std::{convert::TryInto, fmt, sync::Arc, time::SystemTime};
 
 use cookie::{Cookie as RawCookie, Expiration, SameSite};
 use http::{Uri, Version};
+use url::Host;
 
 pub use self::jar::Jar;
 use crate::{error::Error, header::HeaderValue};
 
-/// A parsed HTTP cookie.
+/// A parsed HTTP cookie with optional [`Jar`] storage metadata.
 #[derive(Debug, Clone)]
-pub struct Cookie<'a>(RawCookie<'a>);
+pub struct Cookie<'a> {
+    inner: RawCookie<'a>,
+    host: Option<Host<Box<str>>>,
+}
 
 impl<'a> Cookie<'a> {
     pub(crate) fn parse(value: &'a HeaderValue) -> crate::Result<Cookie<'a>> {
@@ -28,13 +32,22 @@ impl<'a> Cookie<'a> {
             .map_err(cookie::ParseError::from)
             .and_then(cookie::Cookie::parse)
             .map_err(Error::decode)
-            .map(Cookie)
+            .map(|cookie| Cookie {
+                inner: cookie,
+                host: None,
+            })
+    }
+
+    #[inline]
+    fn with_host(mut self, host: Host<Box<str>>) -> Self {
+        self.host = Some(host);
+        self
     }
 
     /// Returns the name of `self`.
     #[inline]
     pub fn name(&self) -> &str {
-        self.0.name()
+        self.inner.name()
     }
 
     /// Returns the value of `self`.
@@ -42,37 +55,37 @@ impl<'a> Cookie<'a> {
     /// Does not strip surrounding quotes.
     #[inline]
     pub fn value(&self) -> &str {
-        self.0.value()
+        self.inner.value()
     }
 
     /// Returns whether this cookie was marked `HttpOnly` or not.
     #[inline]
     pub fn http_only(&self) -> bool {
-        self.0.http_only().unwrap_or(false)
+        self.inner.http_only().unwrap_or(false)
     }
 
     /// Returns whether this cookie was marked `Secure` or not.
     #[inline]
     pub fn secure(&self) -> bool {
-        self.0.secure().unwrap_or(false)
+        self.inner.secure().unwrap_or(false)
     }
 
     /// Returns whether the `SameSite` attribute of this cookie is `Lax`.
     #[inline]
     pub fn same_site_lax(&self) -> bool {
-        self.0.same_site() == Some(SameSite::Lax)
+        self.inner.same_site() == Some(SameSite::Lax)
     }
 
     /// Returns whether the `SameSite` attribute of this cookie is `Strict`.
     #[inline]
     pub fn same_site_strict(&self) -> bool {
-        self.0.same_site() == Some(SameSite::Strict)
+        self.inner.same_site() == Some(SameSite::Strict)
     }
 
     /// Returns the `Path` of the cookie if one was specified.
     #[inline]
     pub fn path(&self) -> Option<&str> {
-        self.0.path()
+        self.inner.path()
     }
 
     /// Returns the `Domain` of the cookie if one was specified.
@@ -82,13 +95,25 @@ impl<'a> Cookie<'a> {
     /// stripped.
     #[inline]
     pub fn domain(&self) -> Option<&str> {
-        self.0.domain()
+        self.inner.domain()
+    }
+
+    /// Returns the canonical host used to store this cookie.
+    ///
+    /// Cookies returned by [`Jar`] query methods include this value.
+    #[inline]
+    pub fn host(&self) -> Option<Host<&str>> {
+        self.host.as_ref().map(|host| match host {
+            Host::Domain(domain) => Host::Domain(domain.as_ref()),
+            Host::Ipv4(address) => Host::Ipv4(*address),
+            Host::Ipv6(address) => Host::Ipv6(*address),
+        })
     }
 
     /// Returns the specified max-age of the cookie if it is non-negative and representable.
     #[inline]
     pub fn max_age(&self) -> Option<std::time::Duration> {
-        self.0.max_age().and_then(|d| d.try_into().ok())
+        self.inner.max_age().and_then(|d| d.try_into().ok())
     }
 
     /// Returns the expiration date-time of the cookie if one was specified.
@@ -96,7 +121,7 @@ impl<'a> Cookie<'a> {
     /// Session cookies return `None`.
     #[inline]
     pub fn expires(&self) -> Option<SystemTime> {
-        match self.0.expires() {
+        match self.inner.expires() {
             Some(Expiration::DateTime(offset)) => Some(SystemTime::from(offset)),
             None | Some(Expiration::Session) => None,
         }
@@ -105,28 +130,34 @@ impl<'a> Cookie<'a> {
     /// Converts `self` into a `Cookie` with a static lifetime with as few allocations as possible.
     #[inline]
     pub fn into_owned(self) -> Cookie<'static> {
-        Cookie(self.0.into_owned())
+        Cookie {
+            inner: self.inner.into_owned(),
+            host: self.host,
+        }
     }
 }
 
 impl fmt::Display for Cookie<'_> {
     #[inline]
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        self.0.fmt(f)
+        self.inner.fmt(f)
     }
 }
 
 impl<'c> From<RawCookie<'c>> for Cookie<'c> {
     #[inline]
     fn from(cookie: RawCookie<'c>) -> Cookie<'c> {
-        Cookie(cookie)
+        Cookie {
+            inner: cookie,
+            host: None,
+        }
     }
 }
 
 impl<'c> From<Cookie<'c>> for RawCookie<'c> {
     #[inline]
     fn from(cookie: Cookie<'c>) -> RawCookie<'c> {
-        cookie.0
+        cookie.inner
     }
 }
 

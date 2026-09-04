@@ -49,7 +49,7 @@ impl Jar {
         let host = canonical_host(uri.host()?)?;
         let now = OffsetDateTime::now_utc();
         let store = self.0.read();
-        let cookie = store
+        let entry = store
             .cookies
             .get(&host)?
             .get(uri.path())?
@@ -57,7 +57,7 @@ impl Jar {
             .filter(|entry| !cookie_is_expired(&entry.cookie, now))
             .min_by_key(|entry| entry.creation_index)?;
 
-        Some(Cookie::from(cookie.cookie.clone()))
+        Some(Cookie::from(entry.cookie.clone()).with_host(host))
     }
 
     /// Returns whether an unexpired cookie exists for an exact URI scope.
@@ -70,6 +70,7 @@ impl Jar {
         let Some(host) = uri.host().and_then(canonical_host) else {
             return false;
         };
+
         let now = OffsetDateTime::now_utc();
 
         self.0
@@ -84,20 +85,26 @@ impl Jar {
             })
     }
 
-    /// Returns all unexpired cookies in the jar.
+    /// Returns all unexpired cookies in creation order.
     ///
-    /// The returned cookies are owned snapshots with their effective stored `Path`. Host-only
-    /// cookies keep their `Domain` attribute absent, so importing a snapshot into another jar does
-    /// not broaden its domain scope. Snapshots are returned in creation order.
+    /// Each snapshot preserves its effective `Path` and canonical storage host. Host-only cookies
+    /// keep `Domain` absent; use [`Cookie::host`] when restoring them.
     ///
     /// # Example
     /// ```
     /// use wreq::cookie::Jar;
-    /// let jar = Jar::default();
-    /// jar.add("foo=bar; Domain=example.com", "http://example.com");
-    /// for cookie in jar.get_all() {
-    ///     println!("{}={}", cookie.name(), cookie.value());
+    /// let source = Jar::default();
+    /// source.add("session=abc; Secure", "https://example.com");
+    ///
+    /// let target = Jar::default();
+    /// for cookie in source.get_all() {
+    ///     if let Some(host) = cookie.host() {
+    ///         let scheme = if cookie.secure() { "https" } else { "http" };
+    ///         let uri = format!("{scheme}://{host}/");
+    ///         target.add(cookie, uri);
+    ///     }
     /// }
+    /// assert_eq!(target.get_all().count(), 1);
     /// ```
     pub fn get_all(&self) -> impl Iterator<Item = Cookie<'static>> {
         let now = OffsetDateTime::now_utc();
@@ -105,15 +112,16 @@ impl Jar {
             .0
             .read()
             .cookies
-            .values()
-            .flat_map(|path_map| {
-                path_map.values().flat_map(|cookie_map| {
-                    cookie_map.values().filter_map(|entry| {
+            .iter()
+            .flat_map(|(host, path_map)| {
+                path_map.values().flat_map(move |cookie_map| {
+                    cookie_map.values().filter_map(move |entry| {
                         if cookie_is_expired(&entry.cookie, now) {
                             return None;
                         }
 
-                        Some((entry.creation_index, Cookie::from(entry.cookie.clone())))
+                        let cookie = Cookie::from(entry.cookie.clone()).with_host(host.clone());
+                        Some((entry.creation_index, cookie))
                     })
                 })
             })
@@ -187,7 +195,7 @@ impl Jar {
         let store = self.0.read();
         store
             .matching_cookies(&uri, &host, now)
-            .map(|(_, _, entry)| Cookie::from(entry.cookie.clone()))
+            .map(|(host, _, entry)| Cookie::from(entry.cookie.clone()).with_host(host.clone()))
             .collect::<Vec<_>>()
             .into_iter()
     }
@@ -434,9 +442,14 @@ impl CookieStore for Jar {
 
 #[cfg(test)]
 mod tests {
-    use std::{thread, time::Duration as StdDuration};
+    use std::{
+        net::{Ipv4Addr, Ipv6Addr},
+        thread,
+        time::Duration as StdDuration,
+    };
 
     use http::{Uri, Version};
+    use url::Host;
 
     use super::{CookieStore, Cookies, Jar};
 
@@ -602,30 +615,60 @@ mod tests {
     }
 
     #[test]
-    fn jar_get_all_export_import_keeps_host_only_scope_and_effective_path() {
+    fn jar_get_all_preserves_storage_scope() {
         let source = Jar::default();
         source.add("session=abc", "http://example.com/foo/bar");
+        source.add("pref=dark; Domain=example.com", "http://www.example.com/");
+        source.add("secure=1; Secure", "https://secure.example/");
+        source.add("v6=1", "http://[::1]:8080/");
+        source.add("v4=1", "http://127.0.0.1:8080/");
 
         let exported = source.get_all().collect::<Vec<_>>();
-        assert_eq!(exported.len(), 1);
-        assert_eq!(exported[0].domain(), None);
-        assert_eq!(exported[0].path(), Some("/foo"));
+        assert_eq!(exported.len(), 5);
+
+        let session = &exported[0];
+        assert_eq!(session.host(), Some(Host::Domain("example.com")));
+        assert_eq!(session.domain(), None);
+        assert_eq!(session.path(), Some("/foo"));
+
+        let pref = &exported[1];
+        assert_eq!(pref.host(), Some(Host::Domain("example.com")));
+        assert_eq!(pref.domain(), Some("example.com"));
+        assert_eq!(exported[2].host(), Some(Host::Domain("secure.example")));
+        assert_eq!(exported[3].host(), Some(Host::Ipv6(Ipv6Addr::LOCALHOST)));
+        assert_eq!(exported[4].host(), Some(Host::Ipv4(Ipv4Addr::LOCALHOST)));
+
+        let exact = source.get("session", "http://example.com/foo").unwrap();
+        assert_eq!(exact.host(), Some(Host::Domain("example.com")));
+
+        let matched = source
+            .matches("http://example.com/foo/bar")
+            .find(|cookie| cookie.name() == "session")
+            .unwrap();
+        assert_eq!(matched.host(), Some(Host::Domain("example.com")));
 
         let target = Jar::default();
         for cookie in exported {
-            target.add(cookie, "http://example.com/another/deeper");
+            let scheme = if cookie.secure() { "https" } else { "http" };
+            let uri = format!("{scheme}://{}/", cookie.host().unwrap());
+            target.add(cookie, uri);
         }
 
-        let imported = target.get_all().collect::<Vec<_>>();
-        assert_eq!(imported.len(), 1);
-        assert_eq!(imported[0].domain(), None);
-        assert_eq!(imported[0].path(), Some("/foo"));
-
-        let subdomain = Uri::from_static("http://api.example.com/foo/resource");
-        assert!(matches!(
-            target.cookies(&subdomain, Version::HTTP_11),
-            Cookies::Empty
-        ));
+        for uri in [
+            "http://example.com/foo/bar",
+            "http://api.example.com/",
+            "https://secure.example/",
+            "http://secure.example/",
+            "http://[::1]:9999/",
+            "http://127.0.0.1:9999/",
+        ] {
+            let uri = uri.parse::<Uri>().unwrap();
+            assert_eq!(
+                format!("{:?}", target.cookies(&uri, Version::HTTP_11)),
+                format!("{:?}", source.cookies(&uri, Version::HTTP_11)),
+                "restored jar should select the same cookies for {uri}"
+            );
+        }
     }
 
     #[test]
