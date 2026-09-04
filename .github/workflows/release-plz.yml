@@ -31,7 +31,6 @@ jobs:
         uses: release-plz/action@v0.5
         with:
           command: release
-          config: .github/.release-plz.toml
         env:
           GITHUB_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
 
@@ -58,6 +57,5 @@ jobs:
         uses: release-plz/action@v0.5
         with:
           command: release-pr
-          config: .github/.release-plz.toml
         env:
           GITHUB_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
