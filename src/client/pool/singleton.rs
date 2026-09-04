@@ -602,11 +602,6 @@ impl<F, S> Singled<F, S> {
         &self.inner
     }
 
-    /// Mutably borrows the checked-out service clone.
-    pub(super) fn inner_mut(&mut self) -> &mut S {
-        &mut self.inner
-    }
-
     /// Returns whether this checkout joined an existing singleton operation.
     pub(super) fn is_reused(&self) -> bool {
         self.reused

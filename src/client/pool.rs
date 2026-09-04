@@ -65,12 +65,10 @@ use self::{
     negotiate::{Negotiate, Negotiated},
     singleton::Singled,
 };
-use super::{
-    Error,
-    conn::{
-        Established, Http1Client, Http1Connect, Http1Layer, Http2Client, Http2Connect, Http2Layer,
-        SendError,
-    },
+use super::proto::{
+    Established, SendError,
+    http1::{Http1Client, Http1Connect, Http1Layer},
+    http2::{Http2Client, Http2Connect, Http2Layer},
 };
 use crate::{
     conn::{
@@ -99,7 +97,7 @@ pub(super) fn is_canceled(error: &(dyn std::error::Error + 'static)) -> bool {
 /// protocol is mandatory.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 #[repr(u8)]
-pub(super) enum Ver {
+pub enum Ver {
     /// Selects the protocol from request requirements and connection negotiation.
     Auto,
     /// Requires an HTTP/1 connection.
@@ -114,7 +112,7 @@ pub(super) enum Ver {
 /// same idle policy and acquisition strategy while retaining request-specific
 /// protocol handshake builders in [`PoolTarget`].
 #[derive(Clone, Copy, Debug)]
-pub(super) struct Config {
+pub struct Config {
     /// Maximum time an unused connection remains reusable.
     pub(super) idle_timeout: Option<Duration>,
 
@@ -394,6 +392,9 @@ type H2MakeFuture<B> = BoxFuture<'static, Result<Http2Client<B>, BoxError>>;
 /// Generation-aware checkout of the shared HTTP/2 sender.
 type H2Pooled<B> = Singled<H2MakeFuture<B>, Http2Client<B>>;
 
+/// HTTP sender selected for one pool checkout.
+type PooledInner<B> = Negotiated<Cached<Http1Client<B>>, H2Pooled<B>>;
+
 /// Type-erased connection state held until the outer map lock is released.
 ///
 /// One value may aggregate several concrete senders from the same entry. This
@@ -419,7 +420,7 @@ where
     B::Error: Into<BoxError>,
 {
     /// HTTP/1 cache checkout or HTTP/2 singleton checkout.
-    inner: Negotiated<Cached<Http1Client<B>>, H2Pooled<B>>,
+    inner: PooledInner<B>,
     /// Whether healthy senders should return to their pool.
     pool_enabled: bool,
     /// Runs after `inner` is dropped when this checkout discarded its sender.
@@ -1400,11 +1401,7 @@ where
     B::Error: Into<BoxError>,
 {
     /// Wraps a negotiated sender and registers an HTTP/2 checkout when needed.
-    fn new(
-        inner: Negotiated<Cached<Http1Client<B>>, H2Pooled<B>>,
-        pool_enabled: bool,
-        usage: EntryUse,
-    ) -> Self {
+    fn new(inner: PooledInner<B>, pool_enabled: bool, usage: EntryUse) -> Self {
         if let Negotiated::Right(service) = &inner {
             service.inner().begin_checkout();
         }
@@ -1450,27 +1447,6 @@ where
         }
     }
 
-    /// Polls protocol readiness and discards a sender that has failed.
-    pub(super) fn poll_ready(&mut self, cx: &mut task::Context<'_>) -> Poll<Result<(), Error>> {
-        match &mut self.inner {
-            Negotiated::Left(service) => {
-                let ready = service.inner_mut().poll_ready(cx);
-                if matches!(&ready, Poll::Ready(Err(_))) {
-                    service.discard_on_drop();
-                }
-                ready
-            }
-            Negotiated::Right(service) => {
-                let ready = service.inner_mut().poll_ready(cx);
-                if matches!(&ready, Poll::Ready(Err(_))) {
-                    service.inner().poison();
-                    service.discard_shared();
-                }
-                ready
-            }
-        }
-    }
-
     /// Returns metadata for the underlying physical connection.
     pub(super) fn conn_info(&self) -> &Connected {
         match &self.inner {
@@ -1478,16 +1454,27 @@ where
             Negotiated::Right(service) => service.inner().conn_info(),
         }
     }
+}
 
-    /// Sends a request without waiting for an additional readiness transition.
-    pub(super) fn try_send_request(
-        &mut self,
-        req: Request<B>,
-    ) -> impl Future<Output = Result<Response<Incoming>, SendError<B>>> {
-        match &mut self.inner {
-            Negotiated::Left(service) => Either::Left(service.inner_mut().try_send_request(req)),
-            Negotiated::Right(service) => Either::Right(service.inner_mut().try_send_request(req)),
-        }
+impl<B> Service<Request<B>> for Pooled<B>
+where
+    B: Body + Send + Unpin + 'static,
+    B::Data: Send,
+    B::Error: Into<BoxError>,
+{
+    type Response = Response<Incoming>;
+    type Error = SendError<B>;
+    type Future = tower::util::future::EitherResponseFuture<
+        <Http1Client<B> as Service<Request<B>>>::Future,
+        <Http2Client<B> as Service<Request<B>>>::Future,
+    >;
+
+    fn poll_ready(&mut self, cx: &mut task::Context<'_>) -> Poll<Result<(), Self::Error>> {
+        self.inner.poll_ready(cx)
+    }
+
+    fn call(&mut self, req: Request<B>) -> Self::Future {
+        self.inner.call(req)
     }
 }
 
@@ -1883,7 +1870,7 @@ mod tests {
             .await
             .expect("ready sender");
         let response = pooled
-            .try_send_request(
+            .call(
                 Request::builder()
                     .uri("http://localhost/")
                     .body(crate::Body::default())
@@ -1917,7 +1904,7 @@ mod tests {
             .await
             .expect("ready sender");
         let mut response = tokio_test::task::spawn(
-            pooled.try_send_request(
+            pooled.call(
                 Request::builder()
                     .uri("http://localhost/")
                     .body(crate::Body::default())
@@ -1949,7 +1936,7 @@ mod tests {
             .await
             .expect("ready sender");
         first
-            .try_send_request(
+            .call(
                 Request::builder()
                     .uri("http://localhost/")
                     .body(crate::Body::default())
@@ -2001,7 +1988,7 @@ mod tests {
                 .await
                 .expect("ready sender");
             client
-                .try_send_request(
+                .call(
                     Request::builder()
                         .uri("http://localhost/")
                         .body(crate::Body::default())

@@ -1,0 +1,89 @@
+//! Request-local connection and protocol configuration.
+
+use std::task::{Context, Poll};
+
+use futures_util::future::{self, Either, Ready};
+use http::Request;
+use tower::{BoxError, Service};
+use wreq_proto::conn;
+
+use super::ConfiguredRequest;
+use crate::{
+    client::{connection_origin, layer::config::RequestOptions},
+    config::RequestConfig,
+    conn::descriptor::ConnectionDescriptor,
+    rt::Executor,
+};
+
+/// Applies request-local connection and protocol configuration.
+///
+/// This is the first service in the low-level client stack. It strips the URI
+/// to a connection origin, consumes private request options, and forwards a
+/// [`ConfiguredRequest`] while leaving the request body untouched.
+#[derive(Clone)]
+pub struct Configure<S> {
+    inner: S,
+    h1_builder: conn::http1::Builder,
+    h2_builder: conn::http2::Builder<Executor>,
+}
+
+impl<S> Configure<S> {
+    /// Wraps a pool request service with request-local configuration handling.
+    pub fn new(
+        inner: S,
+        h1_builder: conn::http1::Builder,
+        h2_builder: conn::http2::Builder<Executor>,
+    ) -> Self {
+        Self {
+            inner,
+            h1_builder,
+            h2_builder,
+        }
+    }
+}
+
+impl<S, B> Service<Request<B>> for Configure<S>
+where
+    S: Service<ConfiguredRequest<B>, Error = BoxError>,
+{
+    type Response = S::Response;
+    type Error = BoxError;
+    type Future = Either<S::Future, Ready<Result<Self::Response, Self::Error>>>;
+
+    fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        self.inner.poll_ready(cx)
+    }
+
+    fn call(&mut self, mut request: Request<B>) -> Self::Future {
+        let uri = match connection_origin(request.uri()) {
+            Ok(uri) => uri,
+            Err(error) => return Either::Right(future::err(error.into())),
+        };
+
+        let RequestOptions {
+            group,
+            proxy,
+            version,
+            tls_options,
+            http1_options,
+            http2_options,
+            socket_bind_options,
+        } = RequestConfig::<RequestOptions>::remove(request.extensions_mut()).unwrap_or_default();
+
+        let h1_builder = http1_options
+            .map(|options| self.h1_builder.clone().options(options))
+            .unwrap_or_else(|| self.h1_builder.clone());
+        let h2_builder = http2_options
+            .map(|options| self.h2_builder.clone().options(options))
+            .unwrap_or_else(|| self.h2_builder.clone());
+        let descriptor =
+            ConnectionDescriptor::new(uri, group, proxy, version, tls_options, socket_bind_options);
+
+        Either::Left(self.inner.call(ConfiguredRequest {
+            request,
+            descriptor,
+            h1_builder,
+            h2_builder,
+        }))
+    }
+}

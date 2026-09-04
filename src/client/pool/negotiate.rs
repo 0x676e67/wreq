@@ -706,7 +706,7 @@ mod tests {
     };
 
     use super::*;
-    use crate::client::layer::client::pool::singleton::Singleton;
+    use crate::client::pool::singleton::Singleton;
 
     /// Immediately returns the protocol label supplied by the test.
     #[derive(Clone, Copy)]

@@ -81,16 +81,7 @@ impl Error {
         E: Into<BoxError>,
     {
         let error = error.into();
-        let kind = if error.is::<proxy::tunnel::TunnelError>() || error.is::<ProxyConnect>() || {
-            #[cfg(feature = "socks")]
-            {
-                error.is::<proxy::socks::SocksError>()
-            }
-            #[cfg(not(feature = "socks"))]
-            {
-                false
-            }
-        } {
+        let kind = if is_proxy_connect_error(&*error) {
             ErrorKind::ProxyConnect
         } else {
             kind
@@ -128,5 +119,56 @@ impl Error {
     #[inline]
     pub(super) fn closed(source: wreq_proto::Error) -> Self {
         Self::new(ErrorKind::ChannelClosed, source)
+    }
+}
+
+/// Returns whether any error in the source chain came from proxy setup.
+fn is_proxy_connect_error(error: &(dyn StdError + 'static)) -> bool {
+    let mut current = Some(error);
+    while let Some(error) = current {
+        if error.is::<proxy::tunnel::TunnelError>() || error.is::<ProxyConnect>() || {
+            #[cfg(feature = "socks")]
+            {
+                error.is::<proxy::socks::SocksError>()
+            }
+            #[cfg(not(feature = "socks"))]
+            {
+                false
+            }
+        } {
+            return true;
+        }
+        current = error.source();
+    }
+    false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[derive(Debug)]
+    struct WrappedError(BoxError);
+
+    impl fmt::Display for WrappedError {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            f.write_str("wrapped error")
+        }
+    }
+
+    impl StdError for WrappedError {
+        fn source(&self) -> Option<&(dyn StdError + 'static)> {
+            Some(&*self.0)
+        }
+    }
+
+    #[test]
+    fn classifies_wrapped_proxy_errors() {
+        let source = std::io::Error::other("proxy unavailable");
+        let error = WrappedError(Box::new(ProxyConnect(Box::new(source))));
+        let error = Error::new(ErrorKind::Connect, error);
+
+        assert!(error.is_proxy_connect());
+        assert!(!error.is_connect());
     }
 }
