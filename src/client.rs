@@ -40,7 +40,7 @@ use tower::{
     retry::{Retry, RetryLayer},
     util::{BoxCloneSyncService, BoxCloneSyncServiceLayer, Either, Oneshot},
 };
-use wreq_proto::body::Incoming;
+use wreq_proto::{body::Incoming, conn};
 
 #[cfg(any(
     feature = "gzip",
@@ -130,7 +130,7 @@ type MaybeDecompressionBody<T> = tower_http::decompression::DecompressionBody<T>
 
 type ClientService = Timeout<
     ConfigService<
-        MaybeDecompression<Retry<RetryPolicy, FollowRedirect<HttpClient<Connector, Body>>>>,
+        MaybeDecompression<Retry<RetryPolicy, FollowRedirect<sealed::Client<Connector, Body>>>>,
     >,
 >;
 
@@ -582,7 +582,7 @@ impl ClientBuilder {
                 .build(config.tls_options, config.connector_layers)?;
 
             #[allow(unused_mut)]
-            let mut builder = HttpClientBuilder::new(config.executor);
+            let mut builder = sealed::Builder::new(config.executor);
 
             #[cfg(feature = "cookies")]
             {
@@ -1716,296 +1716,30 @@ impl ClientBuilder {
     }
 }
 
-/// Concrete ordering of the low-level request services.
+/// Private namespace for the low-level client service and its configuration.
 ///
-/// Configuration runs before retry so each retry can reuse the same prepared
-/// connection descriptor and request body. [`Dispatch`] is terminal
-/// and performs one checkout and dispatch attempt.
-type ClientStack<C, B> = Configure<RetryUnsent<Dispatch<C, B>>>;
+/// Keeping these types together avoids repeating an `HttpClient` prefix solely
+/// to distinguish them from the public [`Client`], [`ClientBuilder`], and their
+/// configuration.
+mod sealed {
+    use super::*;
 
-/// Validates and sends low-level HTTP requests through the client service stack.
-///
-/// This is the caller-facing Tower service used beneath [`Client`]. It validates
-/// request versions and absolute URIs before request-local configuration,
-/// internal cancellation retries, connection checkout, and protocol dispatch.
-/// Clones share all connection-pool state and never clone request bodies.
-#[must_use]
-pub(crate) struct HttpClient<C, B>
-where
-    C: tower::Service<ConnectionDescriptor> + Clone + Send + Sync + 'static,
-    C::Response: AsyncRead + AsyncWrite + Connection + Unpin + Send + 'static,
-    C::Error: Into<BoxError>,
-    C::Future: Unpin + Send + 'static,
-    B: HttpBody + Send + Unpin + 'static,
-    B::Data: Send,
-    B::Error: Into<BoxError>,
-{
-    /// Composed service stack shared by client clones.
-    inner: ClientStack<C, B>,
-}
-
-/// Immutable request behavior installed while the service stack is built.
-///
-/// The fields are copied into the middleware that owns each concern. This
-/// configuration does not hold pool state or request-local data.
-#[derive(Clone)]
-struct HttpClientConfig {
-    /// Whether requests canceled before encoding may be retried.
-    retry_canceled_requests: bool,
-
-    /// Whether HTTP/1 should generate a missing `Host` field.
-    set_host: bool,
-
-    /// Preferred protocol when a request does not require one.
-    ver: Ver,
-
-    #[cfg(feature = "cookies")]
-    /// Optional cookie store installed on the dispatch service.
-    cookie_store: Option<Arc<dyn cookie::CookieStore>>,
-}
-
-/// Assembles the protocol, runtime, and pool services used by [`HttpClient`].
-///
-/// The builder owns base handshake configuration until
-/// [`HttpClientBuilder::build`] consumes it. The resulting client clones share
-/// the pool created around the supplied connector.
-#[derive(Clone)]
-pub(crate) struct HttpClientBuilder {
-    /// Request retry and protocol-selection behavior.
-    config: HttpClientConfig,
-
-    /// Runtime used by protocol drivers and pool maintenance.
-    exec: Executor,
-
-    /// Base HTTP/1 handshake configuration.
-    h1_builder: wreq_proto::conn::http1::Builder,
-
-    /// Base HTTP/2 handshake configuration.
-    h2_builder: wreq_proto::conn::http2::Builder<Executor>,
-
-    /// Connection-pool reuse and retention policy.
-    pool_config: pool::Config,
-
-    /// Clock used by connection-pool maintenance.
-    pool_timer: Timer,
-}
-
-// ===== impl HttpClient =====
-
-impl<C, B> Service<HttpRequest<B>> for HttpClient<C, B>
-where
-    C: tower::Service<ConnectionDescriptor> + Clone + Send + Sync + 'static,
-    C::Response: AsyncRead + AsyncWrite + Connection + Unpin + Send + 'static,
-    C::Error: Into<BoxError>,
-    C::Future: Unpin + Send + 'static,
-    B: HttpBody + Send + Unpin + 'static,
-    B::Data: Send,
-    B::Error: Into<BoxError>,
-{
-    type Response = HttpResponse<Incoming>;
-    type Error = BoxError;
-    type Future = FutureEither<
-        <ClientStack<C, B> as Service<HttpRequest<B>>>::Future,
-        Ready<Result<Self::Response, Self::Error>>,
-    >;
-
-    fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        self.inner.poll_ready(cx)
-    }
-
-    fn call(&mut self, mut req: HttpRequest<B>) -> Self::Future {
-        let is_http_connect = req.method() == Method::CONNECT;
-        match req.version() {
-            Version::HTTP_10 if is_http_connect => {
-                warn!("CONNECT is not allowed for HTTP/1.0");
-                let error = error::Error::from_kind(error::ErrorKind::UserUnsupportedRequestMethod);
-                return FutureEither::Right(future_err(error.into()));
-            }
-            Version::HTTP_10 | Version::HTTP_11 | Version::HTTP_2 => {}
-            _unsupported => {
-                warn!("Request has unsupported version: {:?}", _unsupported);
-                let error = error::Error::from_kind(error::ErrorKind::UserUnsupportedVersion);
-                return FutureEither::Right(future_err(error.into()));
-            }
-        }
-
-        match normalize_uri(&mut req, is_http_connect) {
-            Ok(()) => FutureEither::Left(self.inner.call(req)),
-            Err(error) => FutureEither::Right(future_err(error.into())),
-        }
-    }
-}
-
-// Deriving this implementation would unnecessarily require `B: Clone`.
-impl<C, B> Clone for HttpClient<C, B>
-where
-    C: tower::Service<ConnectionDescriptor> + Clone + Send + Sync + 'static,
-    C::Response: AsyncRead + AsyncWrite + Connection + Unpin + Send + 'static,
-    C::Error: Into<BoxError>,
-    C::Future: Unpin + Send + 'static,
-    B: HttpBody + Send + Unpin + 'static,
-    B::Data: Send,
-    B::Error: Into<BoxError>,
-{
-    fn clone(&self) -> Self {
-        Self {
-            inner: self.inner.clone(),
-        }
-    }
-}
-
-// ===== impl HttpClientBuilder =====
-
-impl HttpClientBuilder {
-    /// Creates a builder using `exec` for protocol drivers and pool tasks.
-    pub(crate) fn new(exec: Executor) -> Self {
-        Self {
-            config: HttpClientConfig {
-                retry_canceled_requests: true,
-                set_host: true,
-                ver: Ver::Auto,
-                #[cfg(feature = "cookies")]
-                cookie_store: None,
-            },
-            exec: exec.clone(),
-            h1_builder: wreq_proto::conn::http1::Builder::default(),
-            h2_builder: wreq_proto::conn::http2::Builder::new(exec),
-            pool_config: pool::Config {
-                idle_timeout: Some(Duration::from_secs(90)),
-                max_idle_per_host: usize::MAX,
-                max_pool_size: None,
-                ..pool::Config::default()
-            },
-            pool_timer: Timer::default(),
-        }
-    }
-
-    /// Sets how long a connection considered idle remains eligible for reuse.
+    /// Concrete ordering of the low-level request services.
     ///
-    /// `None` disables time-based eviction. A timer supplied through
-    /// [`HttpClientBuilder::pool_timer`] is required. The default is 90 seconds.
-    #[inline]
-    pub(crate) fn pool_idle_timeout<D>(mut self, val: D) -> Self
-    where
-        D: Into<Option<Duration>>,
-    {
-        self.pool_config.idle_timeout = val.into();
-        self
-    }
+    /// Configuration runs before retry so each retry can reuse the same prepared
+    /// connection descriptor and request body. [`Dispatch`] is terminal
+    /// and performs one checkout and dispatch attempt.
+    type Stack<C, B> = Configure<RetryUnsent<Dispatch<C, B>>>;
 
-    /// Sets the maximum idle HTTP/1 senders retained per compatibility group.
+    /// Validates and sends low-level HTTP requests through the client service stack.
     ///
-    /// This does not limit active physical connections. `0` disables pooling;
-    /// the default is `usize::MAX`.
-    #[inline]
-    pub(crate) fn pool_max_idle_per_host(mut self, max_idle: usize) -> Self {
-        self.pool_config.max_idle_per_host = max_idle;
-        self
-    }
-
-    /// Sets the maximum number of compatibility groups retaining idle state.
-    ///
-    /// An entry is counted only while it owns a reusable sender. Routing-only
-    /// and connecting entries are not counted. This does not limit physical
-    /// connections. The default is `None`.
-    #[inline]
-    pub(crate) fn pool_max_size(mut self, max_size: impl Into<Option<NonZeroUsize>>) -> Self {
-        self.pool_config.max_pool_size = max_size.into();
-        self
-    }
-
-    /// Selects whether a reuse miss immediately connects or waits for reuse.
-    #[inline]
-    pub(crate) fn pool_strategy(mut self, strategy: PoolStrategy) -> Self {
-        self.pool_config.strategy = strategy;
-        self
-    }
-
-    /// Requires HTTP/1 when enabled.
-    ///
-    /// Disabling this option restores automatic negotiation only when HTTP/1
-    /// was the current requirement.
-    #[inline]
-    pub(crate) fn http1_only(mut self, val: bool) -> Self {
-        if val {
-            self.config.ver = Ver::Http1;
-        } else if self.config.ver == Ver::Http1 {
-            self.config.ver = Ver::Auto;
-        }
-        self
-    }
-
-    /// Requires HTTP/2 when enabled.
-    ///
-    /// The connector must provide an HTTP/2-capable transport through prior
-    /// knowledge or ALPN; this option does not configure ALPN itself. Disabling
-    /// it restores automatic negotiation only when HTTP/2 was required.
-    #[inline]
-    pub(crate) fn http2_only(mut self, val: bool) -> Self {
-        if val {
-            self.config.ver = Ver::Http2;
-        } else if self.config.ver == Ver::Http2 {
-            self.config.ver = Ver::Auto;
-        }
-        self
-    }
-
-    /// Sets the timer used by the HTTP/2 protocol driver.
-    #[inline]
-    pub(crate) fn http2_timer(mut self, timer: Timer) -> Self {
-        self.h2_builder = self.h2_builder.timer(timer);
-        self
-    }
-
-    /// Sets the base HTTP/1 handshake options.
-    ///
-    /// Request-local options may override this base for one connection attempt.
-    #[inline]
-    pub(crate) fn http1_options<O>(mut self, opts: O) -> Self
-    where
-        O: Into<Option<Http1Options>>,
-    {
-        if let Some(opts) = opts.into() {
-            self.h1_builder = self.h1_builder.options(opts);
-        }
-
-        self
-    }
-
-    /// Sets the base HTTP/2 handshake options.
-    ///
-    /// Request-local options may override this base for one connection attempt.
-    #[inline]
-    pub(crate) fn http2_options<O>(mut self, opts: O) -> Self
-    where
-        O: Into<Option<Http2Options>>,
-    {
-        if let Some(opts) = opts.into() {
-            self.h2_builder = self.h2_builder.options(opts);
-        }
-        self
-    }
-
-    /// Sets the clock and sleeper used by pool delays and idle cleanup.
-    #[inline]
-    pub(crate) fn pool_timer(mut self, timer: Timer) -> Self {
-        self.pool_timer = timer;
-        self
-    }
-
-    /// Sets the cookie store consulted immediately around protocol dispatch.
-    #[inline]
-    #[cfg(feature = "cookies")]
-    pub(crate) fn cookie_store(
-        mut self,
-        cookie_store: Option<Arc<dyn cookie::CookieStore>>,
-    ) -> Self {
-        self.config.cookie_store = cookie_store;
-        self
-    }
-
-    /// Consumes the builder and wraps `connector` in the complete client stack.
-    pub(crate) fn build<C, B>(self, connector: C) -> HttpClient<C, B>
+    /// This is the caller-facing Tower service used beneath [`crate::Client`]. It
+    /// validates request versions and absolute URIs before request-local
+    /// configuration, internal cancellation retries, connection checkout, and
+    /// protocol dispatch. Clones share all connection-pool state and never clone
+    /// request bodies.
+    #[must_use]
+    pub(super) struct Client<C, B>
     where
         C: tower::Service<ConnectionDescriptor> + Clone + Send + Sync + 'static,
         C::Response: AsyncRead + AsyncWrite + Connection + Unpin + Send + 'static,
@@ -2015,36 +1749,327 @@ impl HttpClientBuilder {
         B::Data: Send,
         B::Error: Into<BoxError>,
     {
-        let HttpClientConfig {
-            retry_canceled_requests,
-            set_host,
-            ver,
-            #[cfg(feature = "cookies")]
-            cookie_store,
-        } = self.config;
+        /// Composed service stack shared by client clones.
+        inner: Stack<C, B>,
+    }
 
-        let service = Dispatch::new(
-            self.pool_config,
-            connector,
-            ver,
-            self.exec,
-            self.pool_timer,
-            set_host,
-            #[cfg(feature = "cookies")]
-            cookie_store,
-        );
+    /// Immutable request behavior installed while the service stack is built.
+    ///
+    /// The fields are copied into the middleware that owns each concern. This
+    /// configuration does not hold pool state or request-local data.
+    #[derive(Clone)]
+    struct Config {
+        /// Whether requests canceled before encoding may be retried.
+        retry_canceled_requests: bool,
 
-        let h1_builder = self.h1_builder;
-        let h2_builder = self.h2_builder;
-        let service = ServiceBuilder::new()
-            .layer_fn(move |inner| Configure::new(inner, h1_builder.clone(), h2_builder.clone()))
-            .layer_fn(move |inner| RetryUnsent::new(inner, retry_canceled_requests))
-            .service(service);
-        HttpClient { inner: service }
+        /// Whether HTTP/1 should generate a missing `Host` field.
+        set_host: bool,
+
+        /// Preferred protocol when a request does not require one.
+        ver: Ver,
+
+        #[cfg(feature = "cookies")]
+        /// Optional cookie store installed on the dispatch service.
+        cookie_store: Option<Arc<dyn cookie::CookieStore>>,
+    }
+
+    /// Assembles the protocol, runtime, and pool services used by [`Client`].
+    ///
+    /// The builder owns base handshake configuration until [`Builder::build`]
+    /// consumes it. The resulting client clones share the pool created around
+    /// the supplied connector.
+    #[derive(Clone)]
+    pub(super) struct Builder {
+        /// Request retry and protocol-selection behavior.
+        config: Config,
+
+        /// Runtime used by protocol drivers and pool maintenance.
+        exec: Executor,
+
+        /// Base HTTP/1 handshake configuration.
+        h1_builder: conn::http1::Builder,
+
+        /// Base HTTP/2 handshake configuration.
+        h2_builder: conn::http2::Builder<Executor>,
+
+        /// Connection-pool reuse and retention policy.
+        pool_config: pool::Config,
+
+        /// Clock used by connection-pool maintenance.
+        pool_timer: Timer,
+    }
+
+    // ===== impl Client =====
+
+    impl<C, B> Service<HttpRequest<B>> for Client<C, B>
+    where
+        C: tower::Service<ConnectionDescriptor> + Clone + Send + Sync + 'static,
+        C::Response: AsyncRead + AsyncWrite + Connection + Unpin + Send + 'static,
+        C::Error: Into<BoxError>,
+        C::Future: Unpin + Send + 'static,
+        B: HttpBody + Send + Unpin + 'static,
+        B::Data: Send,
+        B::Error: Into<BoxError>,
+    {
+        type Response = HttpResponse<Incoming>;
+        type Error = BoxError;
+        type Future = FutureEither<
+            <Stack<C, B> as Service<HttpRequest<B>>>::Future,
+            Ready<Result<Self::Response, Self::Error>>,
+        >;
+
+        fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+            self.inner.poll_ready(cx)
+        }
+
+        fn call(&mut self, mut req: HttpRequest<B>) -> Self::Future {
+            let is_http_connect = req.method() == Method::CONNECT;
+            match req.version() {
+                Version::HTTP_10 if is_http_connect => {
+                    warn!("CONNECT is not allowed for HTTP/1.0");
+                    let error =
+                        error::Error::from_kind(error::ErrorKind::UserUnsupportedRequestMethod);
+                    return FutureEither::Right(future_err(error.into()));
+                }
+                Version::HTTP_10 | Version::HTTP_11 | Version::HTTP_2 => {}
+                _unsupported => {
+                    warn!("Request has unsupported version: {:?}", _unsupported);
+                    let error = error::Error::from_kind(error::ErrorKind::UserUnsupportedVersion);
+                    return FutureEither::Right(future_err(error.into()));
+                }
+            }
+
+            match normalize_uri(&mut req, is_http_connect) {
+                Ok(()) => FutureEither::Left(self.inner.call(req)),
+                Err(error) => FutureEither::Right(future_err(error.into())),
+            }
+        }
+    }
+
+    impl<C, B> Clone for Client<C, B>
+    where
+        C: tower::Service<ConnectionDescriptor> + Clone + Send + Sync + 'static,
+        C::Response: AsyncRead + AsyncWrite + Connection + Unpin + Send + 'static,
+        C::Error: Into<BoxError>,
+        C::Future: Unpin + Send + 'static,
+        B: HttpBody + Send + Unpin + 'static,
+        B::Data: Send,
+        B::Error: Into<BoxError>,
+    {
+        fn clone(&self) -> Self {
+            Self {
+                inner: self.inner.clone(),
+            }
+        }
+    }
+
+    // ===== impl Builder =====
+
+    impl Builder {
+        /// Creates a builder using `exec` for protocol drivers and pool tasks.
+        pub(super) fn new(exec: Executor) -> Self {
+            Self {
+                config: Config {
+                    retry_canceled_requests: true,
+                    set_host: true,
+                    ver: Ver::Auto,
+                    #[cfg(feature = "cookies")]
+                    cookie_store: None,
+                },
+                exec: exec.clone(),
+                h1_builder: conn::http1::Builder::default(),
+                h2_builder: conn::http2::Builder::new(exec),
+                pool_config: pool::Config {
+                    idle_timeout: Some(Duration::from_secs(90)),
+                    max_idle_per_host: usize::MAX,
+                    max_pool_size: None,
+                    ..pool::Config::default()
+                },
+                pool_timer: Timer::default(),
+            }
+        }
+
+        /// Sets how long a connection considered idle remains eligible for reuse.
+        ///
+        /// `None` disables time-based eviction. A timer supplied through
+        /// [`Builder::pool_timer`] is required. The default is 90 seconds.
+        #[inline]
+        pub(super) fn pool_idle_timeout<D>(mut self, val: D) -> Self
+        where
+            D: Into<Option<Duration>>,
+        {
+            self.pool_config.idle_timeout = val.into();
+            self
+        }
+
+        /// Sets the maximum idle HTTP/1 senders retained per compatibility group.
+        ///
+        /// This does not limit active physical connections. `0` disables pooling;
+        /// the default is `usize::MAX`.
+        #[inline]
+        pub(super) fn pool_max_idle_per_host(mut self, max_idle: usize) -> Self {
+            self.pool_config.max_idle_per_host = max_idle;
+            self
+        }
+
+        /// Sets the maximum number of compatibility groups retaining idle state.
+        ///
+        /// An entry is counted only while it owns a reusable sender. Routing-only
+        /// and connecting entries are not counted. This does not limit physical
+        /// connections. The default is `None`.
+        #[inline]
+        pub(super) fn pool_max_size(mut self, max_size: impl Into<Option<NonZeroUsize>>) -> Self {
+            self.pool_config.max_pool_size = max_size.into();
+            self
+        }
+
+        /// Selects whether a reuse miss immediately connects or waits for reuse.
+        #[inline]
+        pub(super) fn pool_strategy(mut self, strategy: PoolStrategy) -> Self {
+            self.pool_config.strategy = strategy;
+            self
+        }
+
+        /// Requires HTTP/1 when enabled.
+        ///
+        /// Disabling this option restores automatic negotiation only when HTTP/1
+        /// was the current requirement.
+        #[inline]
+        pub(super) fn http1_only(mut self, val: bool) -> Self {
+            if val {
+                self.config.ver = Ver::Http1;
+            } else if self.config.ver == Ver::Http1 {
+                self.config.ver = Ver::Auto;
+            }
+            self
+        }
+
+        /// Requires HTTP/2 when enabled.
+        ///
+        /// The connector must provide an HTTP/2-capable transport through prior
+        /// knowledge or ALPN; this option does not configure ALPN itself. Disabling
+        /// it restores automatic negotiation only when HTTP/2 was required.
+        #[inline]
+        pub(super) fn http2_only(mut self, val: bool) -> Self {
+            if val {
+                self.config.ver = Ver::Http2;
+            } else if self.config.ver == Ver::Http2 {
+                self.config.ver = Ver::Auto;
+            }
+            self
+        }
+
+        /// Sets the timer used by the HTTP/2 protocol driver.
+        #[inline]
+        pub(super) fn http2_timer(mut self, timer: Timer) -> Self {
+            self.h2_builder = self.h2_builder.timer(timer);
+            self
+        }
+
+        /// Sets the base HTTP/1 handshake options.
+        ///
+        /// Request-local options may override this base for one connection attempt.
+        #[inline]
+        pub(super) fn http1_options<O>(mut self, opts: O) -> Self
+        where
+            O: Into<Option<Http1Options>>,
+        {
+            if let Some(opts) = opts.into() {
+                self.h1_builder = self.h1_builder.options(opts);
+            }
+
+            self
+        }
+
+        /// Sets the base HTTP/2 handshake options.
+        ///
+        /// Request-local options may override this base for one connection attempt.
+        #[inline]
+        pub(super) fn http2_options<O>(mut self, opts: O) -> Self
+        where
+            O: Into<Option<Http2Options>>,
+        {
+            if let Some(opts) = opts.into() {
+                self.h2_builder = self.h2_builder.options(opts);
+            }
+            self
+        }
+
+        /// Sets the clock and sleeper used by pool delays and idle cleanup.
+        #[inline]
+        pub(super) fn pool_timer(mut self, timer: Timer) -> Self {
+            self.pool_timer = timer;
+            self
+        }
+
+        /// Sets the cookie store consulted immediately around protocol dispatch.
+        #[inline]
+        #[cfg(feature = "cookies")]
+        pub(super) fn cookie_store(
+            mut self,
+            cookie_store: Option<Arc<dyn cookie::CookieStore>>,
+        ) -> Self {
+            self.config.cookie_store = cookie_store;
+            self
+        }
+
+        /// Consumes the builder and wraps `connector` in the complete client stack.
+        pub(super) fn build<C, B>(self, connector: C) -> Client<C, B>
+        where
+            C: tower::Service<ConnectionDescriptor> + Clone + Send + Sync + 'static,
+            C::Response: AsyncRead + AsyncWrite + Connection + Unpin + Send + 'static,
+            C::Error: Into<BoxError>,
+            C::Future: Unpin + Send + 'static,
+            B: HttpBody + Send + Unpin + 'static,
+            B::Data: Send,
+            B::Error: Into<BoxError>,
+        {
+            let Config {
+                retry_canceled_requests,
+                set_host,
+                ver,
+                #[cfg(feature = "cookies")]
+                cookie_store,
+            } = self.config;
+
+            let service = Dispatch::new(
+                self.pool_config,
+                connector,
+                ver,
+                self.exec,
+                self.pool_timer,
+                set_host,
+                #[cfg(feature = "cookies")]
+                cookie_store,
+            );
+
+            let h1_builder = self.h1_builder;
+            let h2_builder = self.h2_builder;
+            let service = ServiceBuilder::new()
+                .layer_fn(move |inner| {
+                    Configure::new(inner, h1_builder.clone(), h2_builder.clone())
+                })
+                .layer_fn(move |inner| RetryUnsent::new(inner, retry_canceled_requests))
+                .service(service);
+            Client { inner: service }
+        }
     }
 }
 
-/// Validates an absolute request URI and normalizes authority-form `CONNECT`.
+/// Prepares a request URI for the client service stack.
+///
+/// URIs with both a scheme and authority pass through unchanged. An
+/// authority-form `CONNECT` target is converted to an internal absolute URI
+/// using `https` for port 443 and `http` otherwise, allowing connection
+/// selection to use the same URI shape as other requests. HTTP/1 target handling
+/// converts it back to authority-form before encoding, as required by RFC 9112
+/// section 3.2.3:
+/// <https://www.rfc-editor.org/rfc/rfc9112.html#section-3.2.3>
+///
+/// # Errors
+///
+/// Returns an error when the request target is neither absolute nor a valid
+/// authority-form `CONNECT` target, or when the normalized URI cannot be built.
 fn normalize_uri<B>(req: &mut HttpRequest<B>, is_http_connect: bool) -> Result<(), error::Error> {
     match (req.uri().scheme(), req.uri().authority()) {
         (Some(_), Some(_)) => Ok(()),
@@ -2067,7 +2092,16 @@ fn normalize_uri<B>(req: &mut HttpRequest<B>, is_http_connect: bool) -> Result<(
     }
 }
 
-/// Clones a validated request URI and strips it to its connection origin.
+/// Builds the origin URI used to select and configure a connection.
+///
+/// The scheme and authority are preserved while the path and query are replaced
+/// with `/`. The request URI itself remains unchanged so protocol encoding still
+/// receives the original request target.
+///
+/// # Errors
+///
+/// Returns an error when the origin URI cannot be reconstructed from the
+/// normalized request URI.
 fn connection_origin(uri: &Uri) -> Result<Uri, error::Error> {
     let mut parts = uri.clone().into_parts();
     parts.path_and_query = Some(PathAndQuery::from_static("/"));
@@ -2075,7 +2109,16 @@ fn connection_origin(uri: &Uri) -> Result<Uri, error::Error> {
         .map_err(|source| error::Error::new(error::ErrorKind::UserAbsoluteUriRequired, source))
 }
 
-/// Adds a scheme to an authority-form URI while preserving its authority.
+/// Converts an authority-form URI into the internal absolute form used by the client.
+///
+/// The authority is preserved, `scheme` is installed, and the path is set to
+/// `/`. This helper is only used while normalizing `CONNECT`; protocol-specific
+/// request-target handling chooses the final wire representation later.
+///
+/// # Errors
+///
+/// Returns an error when the URI cannot be reconstructed with the supplied
+/// scheme.
 fn set_scheme(uri: &mut Uri, scheme: Scheme) -> Result<(), error::Error> {
     let old = std::mem::take(uri);
     let mut parts: http::uri::Parts = old.into();
