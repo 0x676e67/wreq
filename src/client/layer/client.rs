@@ -369,15 +369,24 @@ where
             _ => self.config.ver,
         };
 
-        self.pool
-            .checkout(
-                descriptor,
-                ver,
-                self.h1_builder.clone(),
-                self.h2_builder.clone(),
-            )
-            .await
-            .map_err(|error| Error::new(ErrorKind::Connect, error))
+        loop {
+            match self
+                .pool
+                .checkout(
+                    descriptor.clone(),
+                    ver,
+                    self.h1_builder.clone(),
+                    self.h2_builder.clone(),
+                )
+                .await
+            {
+                Ok(connection) => return Ok(connection),
+                Err(error) if self.config.retry_canceled_requests && pool::is_canceled(&*error) => {
+                    trace!("singleton connection batch canceled, trying again");
+                }
+                Err(error) => return Err(Error::new(ErrorKind::Connect, error)),
+            }
+        }
     }
 }
 
@@ -490,7 +499,7 @@ impl Builder {
         self
     }
 
-    /// Sets the maximum number of connections in the pool.
+    /// Sets the maximum number of connection groups retained by the pool.
     ///
     /// Default is `None` (no limit).
     #[inline]

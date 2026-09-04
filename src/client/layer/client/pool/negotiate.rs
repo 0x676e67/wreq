@@ -1,13 +1,33 @@
 //! Selects a pool after inspecting a newly established connection.
 //!
 //! Unlike request routing, negotiation chooses from an intermediate connection
-//! result. wreq uses this for ALPN: HTTP/1 enters the fallback cache, while an
-//! HTTP/2 connection enters the singleton pool shared by concurrent requests.
+//! result. wreq uses the fallback path to establish a transport and inspect its
+//! ALPN result. HTTP/1 stays in the fallback cache, while HTTP/2 is handed to the
+//! upgraded singleton:
 //!
-//! The first upgraded result is queued before a generation signal wakes other
-//! fallback attempts. The queue lock also covers the handoff into `Singleton`,
-//! ensuring each waiter either consumes the result or observes the in-progress
-//! singleton without a lost-notification window.
+//! ```text
+//! connect -> inspect -> HTTP/1 cache
+//!                   -> pending HTTP/2 -> singleton
+//! ```
+//!
+//! An upgraded result enters the pending queue before [`UpgradeSignal`] wakes
+//! concurrent fallback attempts. Queue consumption and singleton handoff share
+//! one lock. If a notification becomes stale because its connection was already
+//! consumed or canceled, the affected checkout starts a fresh fallback attempt.
+//!
+//! # Example
+//!
+//! The builder composes a connector, an inspection predicate, and one layer for
+//! each protocol path:
+//!
+//! ```rust,ignore
+//! let pool = negotiate::builder()
+//!     .connect(connector)
+//!     .inspect(|established| established.negotiated_h2())
+//!     .fallback(http1_cache_layer)
+//!     .upgrade(http2_singleton_layer)
+//!     .build();
+//! ```
 
 use std::{
     collections::VecDeque,
@@ -19,10 +39,10 @@ use std::{
     task::{self, Poll, ready},
 };
 
-use futures_util::future::BoxFuture;
+use futures_util::future::{BoxFuture, Either};
 use pin_project_lite::pin_project;
 use tokio::sync::watch;
-use tower::{BoxError, Layer, Service};
+use tower::{BoxError, Layer, Service, util::Oneshot};
 
 use crate::sync::Mutex;
 
@@ -37,6 +57,17 @@ pub(super) fn builder() -> Builder<WantsConnect, WantsInspect, WantsFallback, Wa
 }
 
 /// Selects a fallback or upgraded pool from an intermediate connection result.
+///
+/// `fallback` owns the connection maker and inspector. `upgrade` accepts
+/// connections already selected by that inspector. The pending queue bridges
+/// the two service graphs without requiring the upgraded pool to reconnect.
+///
+/// Clones share the pending queue and the state inside both child pools. A
+/// checkout first joins an existing upgraded service, then consumes a queued
+/// connection, and only then starts the fallback path. This keeps redundant
+/// pending transports out of an already active singleton. Pending transports
+/// removed during a race are returned to the caller for destruction outside the
+/// negotiation lock.
 pub(super) struct Negotiate<L, R, S> {
     /// Pool used when inspection rejects the upgraded protocol.
     fallback: L,
@@ -46,7 +77,10 @@ pub(super) struct Negotiate<L, R, S> {
     pending: Arc<Mutex<VecDeque<S>>>,
 }
 
-/// A service selected by [`Negotiate`].
+/// A checked-out service selected by [`Negotiate`].
+///
+/// The enum keeps the two concrete service types without boxing. Its `Service`
+/// implementation delegates readiness and requests to the selected variant.
 #[derive(Clone, Debug)]
 pub(super) enum Negotiated<L, R> {
     /// Service produced by the fallback pool.
@@ -57,6 +91,11 @@ pub(super) enum Negotiated<L, R> {
 
 pin_project! {
     /// Future that completes the currently selected pool path.
+    ///
+    /// The fallback state retains a clone of the fallback service and its
+    /// destination. They are used only when an upgrade notification is stale and
+    /// a replacement connection must be started with a fresh readiness cycle.
+    /// The upgrade state owns the singleton checkout future after handoff.
     pub(super) struct Negotiating<Dst, L, R, S>
     where
         L: Service<Dst>,
@@ -64,7 +103,7 @@ pin_project! {
     {
         // Fallback or upgraded future currently being polled.
         #[pin]
-        state: State<L::Future, R::Future>,
+        state: State<Dst, L, Either<L::Future, Oneshot<L, Dst>>, R::Future>,
         // Clone used to join or start the upgraded singleton after handoff.
         upgrade: R,
         // Upgraded connection queue shared with inspectors.
@@ -75,11 +114,19 @@ pin_project! {
 pin_project! {
     #[project = StateProj]
     /// Active branch of one negotiation future.
-    enum State<FL, FR> {
+    ///
+    /// A future starts in `Fallback` unless a queued or existing upgraded
+    /// service was available. `UseOther` moves it to `Upgrade`; a stale signal
+    /// creates a new fallback future in the same state.
+    enum State<Dst, L, FL, FR> {
         /// Establishes and inspects a connection through the fallback path.
         Fallback {
             #[pin]
             future: FL,
+            // Fallback pool retained only for a stale-signal retry.
+            fallback: L,
+            // Destination retained only for a stale-signal retry.
+            destination: Dst,
         },
         /// Builds or joins the upgraded service.
         Upgrade {
@@ -92,6 +139,9 @@ pin_project! {
 pin_project! {
     #[project = NegotiatedFutureProj]
     /// Request future delegated to the selected service type.
+    ///
+    /// This enum provides static dispatch for the different future types
+    /// returned by fallback and upgraded services.
     pub(super) enum NegotiatedFuture<L, R> {
         /// Future returned by the fallback service.
         Fallback { #[pin] future: L },
@@ -101,6 +151,10 @@ pin_project! {
 }
 
 /// Type-state builder for the connector, inspector, and two pool layers.
+///
+/// Each setter replaces one marker with its concrete component. `build` is
+/// available only after the connector, inspection predicate, fallback layer,
+/// and upgrade layer have compatible service types.
 #[derive(Debug)]
 pub(super) struct Builder<C, I, L, R> {
     /// Service that establishes the intermediate connection.
@@ -113,20 +167,24 @@ pub(super) struct Builder<C, I, L, R> {
     upgrade: R,
 }
 
-/// Builder marker requiring a connector.
+/// Type-state marker indicating that the connector has not been supplied.
 #[derive(Debug)]
 pub(super) struct WantsConnect;
-/// Builder marker requiring an inspection predicate.
+/// Type-state marker indicating that the inspection predicate is missing.
 #[derive(Debug)]
 pub(super) struct WantsInspect;
-/// Builder marker requiring a fallback layer.
+/// Type-state marker indicating that the fallback layer is missing.
 #[derive(Debug)]
 pub(super) struct WantsFallback;
-/// Builder marker requiring an upgrade layer.
+/// Type-state marker indicating that the upgrade layer is missing.
 #[derive(Debug)]
 pub(super) struct WantsUpgrade;
 
 /// Checks out a service only when one exists or is already being constructed.
+///
+/// Negotiation uses this operation before starting another physical connection.
+/// Unlike `Service::call`, an empty implementation must return `None` and leave
+/// its maker untouched.
 pub(super) trait Existing<S>: Service<S> {
     /// Joins existing upgraded state without starting a new maker.
     fn checkout(&self) -> Option<Self::Future>;
@@ -237,11 +295,29 @@ impl<L, R, S> Negotiate<L, R, S> {
     }
 
     /// Retains queued upgraded connections selected by `predicate`.
-    pub(super) fn retain_pending<F>(&mut self, predicate: F)
+    pub(super) fn retain_pending<F>(&mut self, predicate: F) -> Vec<S>
     where
         F: FnMut(&S) -> bool,
     {
-        self.pending.lock().retain(predicate);
+        {
+            let mut predicate = predicate;
+            let mut pending = self.pending.lock();
+            let mut discarded = Vec::new();
+            let mut index = 0;
+
+            while index < pending.len() {
+                if predicate(&pending[index]) {
+                    index += 1;
+                } else {
+                    let Some(service) = pending.remove(index) else {
+                        break;
+                    };
+                    discarded.push(service);
+                }
+            }
+
+            discarded
+        }
     }
 
     /// Removes the first queued upgraded connection matching `predicate`.
@@ -262,10 +338,11 @@ impl<L, R, S> Negotiate<L, R, S> {
 
 impl<L, R, S, Dst> Service<Dst> for Negotiate<L, R, S>
 where
-    L: Service<Dst>,
+    L: Service<Dst> + Clone,
     L::Error: Into<BoxError>,
     R: Existing<S> + Clone,
     R::Error: Into<BoxError>,
+    Dst: Clone,
     S: Send + 'static,
 {
     type Response = Negotiated<L::Response, R::Response>;
@@ -277,24 +354,34 @@ where
         self.fallback.poll_ready(cx).map_err(Into::into)
     }
 
-    /// Prefers a queued or existing upgraded service before starting fallback.
+    /// Prefers an existing or queued upgraded service before starting fallback.
     ///
     /// The pending lock spans queue consumption and singleton handoff so a
     /// concurrent inspector cannot publish an upgrade between those steps.
     fn call(&mut self, dst: Dst) -> Self::Future {
         let mut pending = self.pending.lock();
-        let state = if let Some(service) = pending.pop_front() {
-            State::Upgrade {
-                future: self.upgrade.call(service),
-            }
-        } else if let Some(future) = self.upgrade.checkout() {
-            State::Upgrade { future }
+        let (state, discarded) = if let Some(future) = self.upgrade.checkout() {
+            (State::Upgrade { future }, std::mem::take(&mut *pending))
+        } else if let Some(service) = pending.pop_front() {
+            (
+                State::Upgrade {
+                    future: self.upgrade.call(service),
+                },
+                std::mem::take(&mut *pending),
+            )
         } else {
-            State::Fallback {
-                future: self.fallback.call(dst),
-            }
+            let destination = dst.clone();
+            (
+                State::Fallback {
+                    future: Either::Left(self.fallback.call(dst)),
+                    fallback: self.fallback.clone(),
+                    destination,
+                },
+                VecDeque::new(),
+            )
         };
         drop(pending);
+        drop(discarded);
         Negotiating {
             state,
             upgrade: self.upgrade.clone(),
@@ -305,10 +392,11 @@ where
 
 impl<Dst, L, R, S> Future for Negotiating<Dst, L, R, S>
 where
-    L: Service<Dst>,
+    L: Service<Dst> + Clone,
     L::Error: Into<BoxError>,
     R: Existing<S>,
     R::Error: Into<BoxError>,
+    Dst: Clone,
     S: Send + 'static,
 {
     type Output = Result<Negotiated<L::Response, R::Response>, BoxError>;
@@ -318,7 +406,11 @@ where
         let mut this = self.project();
         loop {
             match this.state.as_mut().project() {
-                StateProj::Fallback { future } => match ready!(future.poll(cx)) {
+                StateProj::Fallback {
+                    future,
+                    fallback,
+                    destination,
+                } => match ready!(future.poll(cx)) {
                     Ok(service) => return Poll::Ready(Ok(Negotiated::Fallback(service))),
                     Err(error) => {
                         let error = error.into();
@@ -327,15 +419,28 @@ where
                         }
 
                         let mut pending = this.pending.lock();
-                        let future = if let Some(service) = pending.pop_front() {
-                            this.upgrade.call(service)
-                        } else if let Some(future) = this.upgrade.checkout() {
-                            future
+                        if let Some(future) = this.upgrade.checkout() {
+                            let discarded = std::mem::take(&mut *pending);
+                            drop(pending);
+                            this.state.set(State::Upgrade { future });
+                            drop(discarded);
+                        } else if let Some(service) = pending.pop_front() {
+                            let future = this.upgrade.call(service);
+                            let discarded = std::mem::take(&mut *pending);
+                            drop(pending);
+                            this.state.set(State::Upgrade { future });
+                            drop(discarded);
                         } else {
-                            return Poll::Ready(Err(InvalidState.into()));
-                        };
-                        drop(pending);
-                        this.state.set(State::Upgrade { future });
+                            drop(pending);
+                            let fallback = (*fallback).clone();
+                            let destination = (*destination).clone();
+                            let future = Oneshot::new(fallback.clone(), destination.clone());
+                            this.state.set(State::Fallback {
+                                future: Either::Right(future),
+                                fallback,
+                                destination,
+                            });
+                        }
                     }
                 },
                 StateProj::Upgrade { future } => {
@@ -397,6 +502,11 @@ where
 }
 
 /// Broadcasts that an upgraded connection has entered the pending queue.
+///
+/// Each fallback attempt subscribes before it starts connecting and remembers
+/// the current wrapping generation. Publishing increments the generation after
+/// queue insertion, so a wake always observes either a pending connection or a
+/// later state change. The signal is a hint; consumers recover from stale wakes.
 #[derive(Clone)]
 struct UpgradeSignal {
     /// Wrapping generation observed by each fallback attempt.
@@ -434,6 +544,10 @@ impl UpgradeSignal {
 }
 
 /// Wraps the connector and diverts upgraded results into the pending queue.
+///
+/// A fallback result passes through unchanged. An upgraded result is queued,
+/// followed by a signal to sibling attempts, and the current future returns the
+/// private [`UseOther`] marker so [`Negotiating`] switches to the singleton.
 pub(super) struct Inspector<M, S, I> {
     /// Intermediate connection service.
     service: M,
@@ -447,10 +561,17 @@ pub(super) struct Inspector<M, S, I> {
 
 pin_project! {
     /// Future that races connection completion against another observed upgrade.
+    ///
+    /// The notification is polled first. If another attempt has already queued
+    /// an upgraded connection, this future yields to that shared result. When its
+    /// own connection completes first, the inspector either returns it through
+    /// the fallback path or publishes it for upgrade handoff.
     pub(super) struct InspectFuture<F, S, I> {
         // Intermediate connection future.
         #[pin]
         future: F,
+        // Checks once for an upgrade queued before this subscription existed.
+        check_pending: bool,
         // Notification that another attempt produced an upgraded connection.
         #[pin]
         notified: BoxFuture<'static, ()>,
@@ -495,6 +616,7 @@ where
     fn call(&mut self, dst: Dst) -> Self::Future {
         InspectFuture {
             future: self.service.call(dst),
+            check_pending: true,
             notified: self.signal.notified(),
             inspect: self.inspect.clone(),
             pending: self.pending.clone(),
@@ -515,6 +637,9 @@ where
     /// Returns fallback results directly and queues upgraded results for handoff.
     fn poll(self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<Self::Output> {
         let this = self.project();
+        if std::mem::take(this.check_pending) && !this.pending.lock().is_empty() {
+            return Poll::Ready(Err(UseOther.into()));
+        }
         if this.notified.poll(cx).is_ready() {
             return Poll::Ready(Err(UseOther.into()));
         }
@@ -544,6 +669,10 @@ where
 }
 
 /// Identity maker for a connection already produced by the inspector.
+///
+/// The upgraded pool expects a make-service interface, but negotiation already
+/// owns the physical connection. This zero-sized adapter returns that supplied
+/// value unchanged and performs no readiness or allocation work.
 pub(super) struct Provided<S>(PhantomData<fn(S)>);
 
 impl<S> Clone for Provided<S> {
@@ -571,7 +700,10 @@ impl<S> Service<S> for Provided<S> {
     }
 }
 
-/// Internal control-flow error requesting the upgraded branch.
+/// Private control-flow marker requesting the upgraded branch.
+///
+/// It may be wrapped by intermediate service errors, so branch selection walks
+/// the source chain rather than relying on the outer error type.
 #[derive(Debug)]
 struct UseOther;
 
@@ -598,15 +730,110 @@ impl UseOther {
     }
 }
 
-/// Indicates that an upgrade signal had no queued or shared service.
-#[derive(Debug)]
-struct InvalidState;
+#[cfg(test)]
+mod tests {
+    use std::{
+        sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+        },
+        task::Context,
+    };
 
-impl fmt::Display for InvalidState {
-    /// Writes the inconsistent negotiation state message.
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("protocol negotiation state is unavailable")
+    use super::*;
+    use crate::client::layer::client::pool::singleton::Singleton;
+
+    /// Fallback service that rejects calls not preceded by readiness.
+    struct StrictFallback {
+        calls: Arc<AtomicUsize>,
+        ready: bool,
+    }
+
+    impl Clone for StrictFallback {
+        fn clone(&self) -> Self {
+            Self {
+                calls: self.calls.clone(),
+                ready: false,
+            }
+        }
+    }
+
+    impl Service<()> for StrictFallback {
+        type Response = &'static str;
+        type Error = BoxError;
+        type Future = std::future::Ready<Result<Self::Response, Self::Error>>;
+
+        fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+            self.ready = true;
+            Poll::Ready(Ok(()))
+        }
+
+        fn call(&mut self, _target: ()) -> Self::Future {
+            assert!(self.ready, "fallback called without readiness");
+            self.ready = false;
+
+            if self.calls.fetch_add(1, Ordering::SeqCst) == 0 {
+                std::future::ready(Err(UseOther.into()))
+            } else {
+                std::future::ready(Ok("fallback"))
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn negotiation_recovers_stale_signal_and_discards_redundant_upgrade() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let fallback = StrictFallback {
+            calls: calls.clone(),
+            ready: false,
+        };
+        let upgrade = Singleton::new(Provided(PhantomData::<fn(&'static str)>));
+        let negotiate = Negotiate {
+            fallback,
+            upgrade,
+            pending: Arc::new(Mutex::new(VecDeque::new())),
+        };
+
+        assert!(matches!(
+            Oneshot::new(negotiate, ()).await.unwrap(),
+            Negotiated::Fallback("fallback")
+        ));
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+
+        let calls = Arc::new(AtomicUsize::new(0));
+        let fallback = StrictFallback {
+            calls: calls.clone(),
+            ready: false,
+        };
+        let upgrade = Singleton::new(Provided(PhantomData::<fn(&'static str)>));
+        drop(Oneshot::new(upgrade.clone(), "existing").await.unwrap());
+        let pending = Arc::new(Mutex::new(VecDeque::from(["redundant-a", "redundant-b"])));
+        let negotiate = Negotiate {
+            fallback,
+            upgrade,
+            pending: pending.clone(),
+        };
+
+        let Negotiated::Upgraded(service) = Oneshot::new(negotiate, ()).await.unwrap() else {
+            panic!("existing upgraded service should be preferred");
+        };
+        assert_eq!(*service.inner(), "existing");
+        assert!(pending.lock().is_empty());
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+
+        let signal = UpgradeSignal::new();
+        signal.notify();
+        let pending = Arc::new(Mutex::new(VecDeque::from(["queued-before-subscribe"])));
+        let error = InspectFuture {
+            future: std::future::pending::<Result<&'static str, BoxError>>(),
+            check_pending: true,
+            notified: signal.notified(),
+            inspect: |_: &&str| false,
+            pending,
+            signal,
+        }
+        .await
+        .expect_err("the queued upgrade should win despite the missed notification");
+        assert!(UseOther::is(&*error));
     }
 }
-
-impl std::error::Error for InvalidState {}

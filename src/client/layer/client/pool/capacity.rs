@@ -1,13 +1,34 @@
-//! Enforces connection limits across every mapped pool entry.
+//! Enforces physical connection limits across every mapped pool entry.
 //!
-//! A [`ConnectionPermit`] represents one physical connection from dialing until
-//! its protocol driver exits. Clones held by the sender and driver share the same
-//! reservation, so a slot is released only after the actual connection is gone.
+//! A [`ConnectionPermit`] reserves one slot before dialing starts. The protocol
+//! sender and connection driver hold clones of the same permit, so accounting is
+//! released only after the physical connection has fully left the pool.
 //!
-//! Waiters are considered in arrival order, but a waiter blocked by its own
-//! scope does not prevent an eligible waiter for another scope from proceeding.
-//! Idle connections can be reclaimed when releasing one would satisfy queued
-//! work.
+//! # Scheduling
+//!
+//! Acquisitions enter one shared queue. Eligible waiters are granted in arrival
+//! order, while a waiter blocked by its own scope does not prevent another scope
+//! from using free global capacity. Before an acquisition sleeps, the outer pool
+//! may reclaim an idle connection when releasing it would satisfy queued work.
+//!
+//! Permit delivery and destruction happen outside the state lock. This matters
+//! because dropping a permit can grant capacity and wake another task.
+//!
+//! # Example
+//!
+//! The connection maker acquires once, then gives clones to the sender and the
+//! protocol driver. The slot is returned only after both owners are gone:
+//!
+//! ```rust,ignore
+//! let permit = capacity.acquire(limit_key).await?;
+//! let driver_permit = permit.clone();
+//! spawn(async move {
+//!     drive_connection(io).await;
+//!     drop(driver_permit);
+//! });
+//! let sender_permit = permit;
+//! // `sender_permit` remains with the protocol sender until it is dropped.
+//! ```
 
 use std::{
     collections::{HashMap, VecDeque},
@@ -20,7 +41,7 @@ use std::{
     task::{Context, Poll},
 };
 
-use http::Uri;
+use http::{Uri, uri::Scheme};
 use tokio::sync::oneshot;
 
 use super::Ver;
@@ -30,15 +51,50 @@ use crate::{
     sync::Mutex,
 };
 
-/// Key used for per-scope connection accounting.
+/// Key used for per-scope physical connection accounting.
+///
+/// The selected variant is fixed by [`PoolLimitScope`] for a client. It affects
+/// only the per-scope limit; every permit also contributes to the global count.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub(in crate::client::layer::client) enum LimitKey {
     /// Groups every compatible connection for one URI origin.
-    Origin(Uri),
+    Origin(Origin),
     /// Separates an origin by its requested protocol mode.
-    OriginAndProtocol(Uri, Ver),
+    OriginAndProtocol(Origin, Ver),
     /// Uses the complete connection compatibility group.
     Group(ConnectionId),
+}
+
+/// Normalized URI origin used by per-scope accounting.
+///
+/// The host is lowercased once when limits are enabled, while clones share its
+/// allocation. Storing the effective port makes implicit and explicit default
+/// ports part of the same scope.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub(super) struct Origin {
+    /// URI scheme participating in origin comparison.
+    scheme: Option<Scheme>,
+    /// ASCII case-insensitive host in normalized form.
+    host: Arc<str>,
+    /// Explicit or scheme-default port.
+    port: u16,
+}
+
+impl Origin {
+    /// Normalizes the origin components of an absolute request URI.
+    fn new(uri: &Uri) -> Self {
+        let host = uri.host().unwrap_or_default().to_ascii_lowercase().into();
+        let port = uri.port_u16().unwrap_or_else(|| match uri.scheme_str() {
+            Some("https" | "wss") => 443,
+            _ => 80,
+        });
+
+        Self {
+            scheme: uri.scheme().cloned(),
+            host,
+            port,
+        }
+    }
 }
 
 impl LimitKey {
@@ -50,21 +106,34 @@ impl LimitKey {
         group: &ConnectionId,
     ) -> Self {
         match scope {
-            PoolLimitScope::Origin => Self::Origin(origin.clone()),
-            PoolLimitScope::OriginAndProtocol => Self::OriginAndProtocol(origin.clone(), protocol),
+            PoolLimitScope::Origin => Self::Origin(Origin::new(origin)),
+            PoolLimitScope::OriginAndProtocol => {
+                Self::OriginAndProtocol(Origin::new(origin), protocol)
+            }
             PoolLimitScope::Group => Self::Group(group.clone()),
         }
     }
 }
 
-/// Shared connection-capacity manager.
+/// Cloneable manager for global and per-scope connection capacity.
+///
+/// Every mapped pool entry shares the same [`Inner`] state. `Capacity::new`
+/// returns `None` when both limits are disabled, keeping the unrestricted hot
+/// path free of queue and permit bookkeeping. Cloning this handle shares one
+/// scheduler; it does not reserve capacity until [`Capacity::acquire`] is
+/// polled.
 #[derive(Clone)]
 pub(super) struct Capacity {
     /// Counters and waiters shared by all connection groups.
     inner: Arc<Mutex<Inner>>,
 }
 
-/// Mutable connection counters and pending acquisitions.
+/// Mutable counters and pending acquisitions protected by the capacity lock.
+///
+/// `total` equals the number of live reservations, and each `per_scope` value
+/// counts the same reservations for one [`LimitKey`]. A waiter enters this state
+/// before idle reclamation runs, which prevents a returned connection from
+/// missing newly blocked work.
 struct Inner {
     /// Configured global and per-scope limits.
     limits: PoolLimits,
@@ -77,6 +146,10 @@ struct Inner {
 }
 
 /// One queued capacity acquisition.
+///
+/// The queue owns only the sending half of the result channel. Closing the
+/// receiver marks the waiter for removal, and a failed permit delivery restores
+/// the reservation before another waiter is considered.
 struct Waiter {
     /// Scope requested by the connection attempt.
     key: LimitKey,
@@ -85,10 +158,18 @@ struct Waiter {
 }
 
 /// Shared reservation for one physical connection.
+///
+/// Cloning a permit does not consume another slot. The sender and protocol
+/// driver use clones to tie accounting to the complete socket lifetime. The
+/// default value is an untracked permit used when limits are disabled.
 #[derive(Clone, Default)]
 pub(in crate::client::layer::client) struct ConnectionPermit(Option<Arc<PermitInner>>);
 
-/// Releases capacity after the final permit clone is dropped.
+/// Owns the accounting key shared by every clone of a connection permit.
+///
+/// Only the final `Arc` drop reaches this value. Its destructor removes one
+/// global and one scoped reservation, then dispatches any newly eligible
+/// waiters after releasing the capacity lock.
 struct PermitInner {
     /// Capacity manager, held weakly to avoid extending pool lifetime.
     capacity: Weak<Mutex<Inner>>,
@@ -96,13 +177,20 @@ struct PermitInner {
     key: Option<LimitKey>,
 }
 
-/// Future that acquires one connection permit.
+/// Cancel-safe future that acquires one physical connection permit.
+///
+/// The first poll either reserves immediately or appends a waiter. Dropping a
+/// waiting future closes its receiver and removes stale queue state. A permit
+/// already sent into that receiver is dropped normally and returns its slot.
 pub(in crate::client::layer::client) struct Acquire {
     /// Current acquisition phase.
     state: AcquireState,
 }
 
-/// Lifecycle of a capacity acquisition.
+/// Lifecycle of one capacity acquisition.
+///
+/// State transitions are explicit so cancellation can distinguish an unpolled
+/// future from a registered waiter and a completed acquisition.
 enum AcquireState {
     /// Capacity has not been inspected yet.
     Init {
@@ -122,11 +210,17 @@ enum AcquireState {
     Done,
 }
 
-/// Indicates that a queued capacity acquisition was canceled.
+/// Indicates that a queued capacity acquisition no longer has a grant source.
+///
+/// This normally means the owning capacity manager or channel state disappeared
+/// while the future was waiting.
 #[derive(Debug)]
 pub(in crate::client::layer::client) struct AcquireError;
 
-/// Identifies the limit preventing a connection reservation.
+/// Identifies which limit currently prevents a connection reservation.
+///
+/// The outer pool uses this distinction to reclaim either any idle connection
+/// for a full global limit or a matching connection for a full scoped limit.
 #[derive(Clone, Copy)]
 pub(super) enum BlockedBy {
     /// The client-wide connection limit is full.
@@ -169,12 +263,17 @@ impl Capacity {
             return false;
         };
 
-        let mut inner = self.inner.lock();
-        inner.clean_waiters();
-        inner
-            .waiters
-            .iter()
-            .any(|waiter| inner.can_reserve_after_release(&waiter.key, key))
+        let (should_release, canceled) = {
+            let mut inner = self.inner.lock();
+            let canceled = inner.take_canceled_waiters();
+            let should_release = inner
+                .waiters
+                .iter()
+                .any(|waiter| inner.can_reserve_after_release(&waiter.key, key));
+            (should_release, canceled)
+        };
+        drop(canceled);
+        should_release
     }
 }
 
@@ -188,19 +287,21 @@ impl Future for Acquire {
         loop {
             match mem::replace(&mut this.state, AcquireState::Done) {
                 AcquireState::Init { capacity, key } => {
-                    let acquired = {
+                    let (acquired, canceled) = {
                         let mut inner = capacity.inner.lock();
-                        inner.clean_waiters();
+                        let canceled = inner.take_canceled_waiters();
 
-                        if inner.waiters.is_empty() && inner.can_reserve(&key) {
+                        let acquired = if inner.waiters.is_empty() && inner.can_reserve(&key) {
                             inner.reserve(&key);
                             Ok(ConnectionPermit::new(&capacity.inner, key))
                         } else {
                             let (tx, rx) = oneshot::channel();
                             inner.waiters.push_back(Waiter { key, tx });
                             Err((rx, inner.collect_grants()))
-                        }
+                        };
+                        (acquired, canceled)
                     };
+                    drop(canceled);
 
                     match acquired {
                         Ok(permit) => {
@@ -231,7 +332,8 @@ impl Drop for Acquire {
     fn drop(&mut self) {
         if let AcquireState::Waiting { capacity, rx } = &mut self.state {
             rx.close();
-            capacity.inner.lock().clean_waiters();
+            let canceled = capacity.inner.lock().take_canceled_waiters();
+            drop(canceled);
         }
     }
 }
@@ -262,23 +364,24 @@ impl ConnectionPermit {
         self.0.as_ref()?.key.as_ref()
     }
 
-    /// Releases a failed grant and collects newly eligible waiters.
+    /// Releases a failed grant and collects eligible and canceled waiters.
     ///
     /// If another permit clone exists, its eventual drop performs the release.
-    fn release_into(mut self, capacity: &Arc<Mutex<Inner>>) -> Vec<Waiter> {
+    fn release_into(mut self, capacity: &Arc<Mutex<Inner>>) -> (Vec<Waiter>, Vec<Waiter>) {
         let Some(permit) = self.0.take() else {
-            return Vec::new();
+            return (Vec::new(), Vec::new());
         };
         let Ok(mut permit) = Arc::try_unwrap(permit) else {
-            return Vec::new();
+            return (Vec::new(), Vec::new());
         };
         let Some(key) = permit.key.take() else {
-            return Vec::new();
+            return (Vec::new(), Vec::new());
         };
 
         let mut inner = capacity.lock();
         inner.release(&key);
-        inner.collect_grants()
+        let canceled = inner.take_canceled_waiters();
+        (inner.collect_grants(), canceled)
     }
 }
 
@@ -292,11 +395,13 @@ impl Drop for PermitInner {
             return;
         };
 
-        let grants = {
+        let (grants, canceled) = {
             let mut inner = capacity.lock();
             inner.release(&key);
-            inner.collect_grants()
+            let canceled = inner.take_canceled_waiters();
+            (inner.collect_grants(), canceled)
         };
+        drop(canceled);
         dispatch_grants(&capacity, grants);
     }
 }
@@ -360,14 +465,26 @@ impl Inner {
         }
     }
 
-    /// Removes waiters whose receivers have already been dropped.
-    fn clean_waiters(&mut self) {
-        self.waiters.retain(|waiter| !waiter.tx.is_closed());
+    /// Removes canceled waiters for destruction after releasing the state lock.
+    fn take_canceled_waiters(&mut self) -> Vec<Waiter> {
+        let mut canceled = Vec::new();
+        let mut index = 0;
+
+        while index < self.waiters.len() {
+            if self.waiters[index].tx.is_closed() {
+                if let Some(waiter) = self.waiters.remove(index) {
+                    canceled.push(waiter);
+                }
+            } else {
+                index += 1;
+            }
+        }
+
+        canceled
     }
 
     /// Reserves every currently eligible waiter without head-of-line blocking.
     fn collect_grants(&mut self) -> Vec<Waiter> {
-        self.clean_waiters();
         let mut grants = Vec::new();
 
         while let Some(index) = self
@@ -394,7 +511,9 @@ fn dispatch_grants(capacity: &Arc<Mutex<Inner>>, grants: Vec<Waiter>) {
     while let Some(waiter) = grants.pop_front() {
         let permit = ConnectionPermit::new(capacity, waiter.key);
         if let Err(permit) = waiter.tx.send(permit) {
-            grants.extend(permit.release_into(capacity));
+            let (recovered, canceled) = permit.release_into(capacity);
+            drop(canceled);
+            grants.extend(recovered);
         }
     }
 }
@@ -417,11 +536,16 @@ mod tests {
     use super::*;
 
     fn key(host: &'static str) -> LimitKey {
-        LimitKey::Origin(Uri::from_static(host))
+        LimitKey::Origin(Origin::new(&Uri::from_static(host)))
     }
 
     #[test]
     fn limits_are_scoped_and_wake_eligible_waiters_in_order() {
+        assert_eq!(
+            Origin::new(&Uri::from_static("http://EXAMPLE.test/")),
+            Origin::new(&Uri::from_static("http://example.TEST:80/path"))
+        );
+
         let capacity = Capacity::new(
             PoolLimits::builder()
                 .max_connections(2)
@@ -461,5 +585,18 @@ mod tests {
         drop(second_a);
         assert!(matches!(third_a.poll(), Poll::Ready(Ok(_))));
         drop(second_b);
+
+        let mut held = task::spawn(capacity.acquire(key("http://cancel.test/")));
+        let Poll::Ready(Ok(held)) = held.poll() else {
+            panic!("initial cancellation-test permit should be ready");
+        };
+        let mut canceled = task::spawn(capacity.acquire(key("http://cancel.test/")));
+        let mut survivor = task::spawn(capacity.acquire(key("http://cancel.test/")));
+        assert!(canceled.poll().is_pending());
+        assert!(survivor.poll().is_pending());
+
+        drop(held);
+        drop(canceled);
+        assert!(matches!(survivor.poll(), Poll::Ready(Ok(_))));
     }
 }

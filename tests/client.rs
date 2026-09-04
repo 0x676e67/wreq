@@ -2,6 +2,13 @@ mod support;
 
 #[cfg(feature = "json")]
 use std::collections::HashMap;
+use std::{
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
+    time::Duration,
+};
 
 use bytes::Bytes;
 use http::{
@@ -15,7 +22,13 @@ use http_body_util::{BodyExt, Full};
 use pretty_env_logger::env_logger;
 use support::server;
 use tokio::io::AsyncWriteExt;
-use wreq::{Client, header::OrigHeaderMap, pool::PoolLimits, tls::TlsInfo};
+use wreq::{
+    Client, Emulation, Group,
+    header::OrigHeaderMap,
+    http1::Http1Options,
+    pool::{PoolLimits, PoolStrategy},
+    tls::TlsInfo,
+};
 
 #[tokio::test]
 async fn auto_headers() {
@@ -827,6 +840,107 @@ async fn connection_pool_reuses_http1_and_http2_connections() {
         .filter(|event| matches!(event, server::Event::ConnectionAccepted))
         .count();
     assert_eq!(accepted, 2);
+}
+
+#[tokio::test]
+async fn connection_pool_reuse_first_waits_for_busy_http1_connection() {
+    let requests = Arc::new(AtomicUsize::new(0));
+    let first_started = Arc::new(tokio::sync::Notify::new());
+    let release_first = Arc::new(tokio::sync::Notify::new());
+    let mut server = server::http({
+        let requests = requests.clone();
+        let first_started = first_started.clone();
+        let release_first = release_first.clone();
+        move |_| {
+            let requests = requests.clone();
+            let first_started = first_started.clone();
+            let release_first = release_first.clone();
+            async move {
+                if requests.fetch_add(1, Ordering::SeqCst) == 0 {
+                    first_started.notify_one();
+                    release_first.notified().await;
+                }
+                http::Response::default()
+            }
+        }
+    });
+    let client = Client::builder()
+        .http1_only()
+        .pool_strategy(PoolStrategy::ReuseFirst(Duration::from_secs(3)))
+        .build()
+        .unwrap();
+    let url = format!("http://{}", server.addr());
+
+    let first = tokio::spawn({
+        let client = client.clone();
+        let url = url.clone();
+        async move { client.get(url).send().await }
+    });
+    tokio::time::timeout(Duration::from_secs(1), first_started.notified())
+        .await
+        .expect("an empty pool should connect without the reuse delay");
+
+    let mut second = Box::pin(client.get(url).send());
+    assert!(
+        tokio::time::timeout(Duration::from_millis(100), second.as_mut())
+            .await
+            .is_err(),
+        "the busy HTTP/1 connection should keep the second request waiting"
+    );
+    release_first.notify_one();
+
+    tokio::time::timeout(Duration::from_secs(1), first)
+        .await
+        .expect("released response should complete promptly")
+        .unwrap()
+        .unwrap()
+        .bytes()
+        .await
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(1), second)
+        .await
+        .expect("returned connection should wake the waiting request")
+        .unwrap()
+        .bytes()
+        .await
+        .unwrap();
+
+    let accepted = server
+        .events()
+        .iter()
+        .filter(|event| matches!(event, server::Event::ConnectionAccepted))
+        .count();
+    assert_eq!(accepted, 1);
+}
+
+#[tokio::test]
+async fn connection_pool_uses_each_requests_handshake_options() {
+    let responses = Arc::new(AtomicUsize::new(0));
+    let server = server::low_level_with_response(move |_, stream| {
+        let response = if responses.fetch_add(1, Ordering::SeqCst) == 0 {
+            b"HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: 0\r\n\r\n".as_slice()
+        } else {
+            b"HTTP/1.1 200 OK\r\nX-0: 0\r\nX-1: 1\r\nX-2: 2\r\nX-3: 3\r\nX-4: 4\r\nX-5: 5\r\nX-6: 6\r\nX-7: 7\r\nConnection: close\r\nContent-Length: 0\r\n\r\n".as_slice()
+        };
+        Box::new(async move {
+            stream.write_all(response).await.unwrap();
+            stream.shutdown().await.unwrap();
+        })
+    });
+    let client = Client::builder().http1_only().no_proxy().build().unwrap();
+    let group = Group::new("request-handshake-options");
+    let strict = Emulation::builder()
+        .http1_options(Http1Options::builder().max_headers(4).build())
+        .build(group.clone());
+    let relaxed = Emulation::builder()
+        .http1_options(Http1Options::builder().max_headers(16).build())
+        .build(group);
+    let url = format!("http://{}", server.addr());
+
+    client.get(&url).emulation(strict).send().await.unwrap();
+    let response = client.get(url).emulation(relaxed).send().await.unwrap();
+
+    assert_eq!(response.headers().get("x-7").unwrap(), "7");
 }
 
 #[tokio::test]
