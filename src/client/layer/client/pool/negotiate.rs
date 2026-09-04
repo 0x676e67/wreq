@@ -44,6 +44,7 @@ use pin_project_lite::pin_project;
 use tokio::sync::watch;
 use tower::{BoxError, Layer, Service, util::Oneshot};
 
+use super::cache::Started;
 use crate::sync::Mutex;
 
 /// Starts configuring a protocol-negotiating pool.
@@ -197,6 +198,16 @@ pub(super) trait Existing<S>: Service<S> {
     fn checkout(&self) -> Option<Self::Future>;
 }
 
+/// Existing upgraded work selected before falling back to a new connection.
+enum Selection<F, S> {
+    /// Future joining a completed or in-progress upgraded service.
+    Existing(F),
+    /// Queued upgraded transport ready to enter the upgraded pool.
+    Pending(S),
+    /// No upgraded work is currently available.
+    Fallback,
+}
+
 // ===== impl Builder =====
 
 impl<C, I, L, R> Builder<C, I, L, R> {
@@ -309,27 +320,28 @@ impl<L, R, S> Negotiate<L, R, S> {
     }
 
     /// Retains queued upgraded connections selected by `predicate`.
-    pub(super) fn retain_pending<F>(&mut self, predicate: F) -> Vec<S>
+    pub(super) fn retain_pending<F>(&mut self, predicate: F) -> VecDeque<S>
     where
         F: FnMut(&S) -> bool,
     {
         let mut predicate = predicate;
         let mut pending = self.pending.lock();
-        let mut discarded = Vec::new();
-        let queued = pending.len();
+        let mut discarded = VecDeque::new();
 
-        for _ in 0..queued {
-            let Some(service) = pending.pop_front() else {
-                break;
-            };
-            if predicate(&service) {
-                pending.push_back(service);
-            } else {
-                discarded.push(service);
+        for _ in 0..pending.len() {
+            match pending.pop_front() {
+                Some(service) if predicate(&service) => pending.push_back(service),
+                Some(service) => discarded.push_back(service),
+                None => break,
             }
         }
 
         discarded
+    }
+
+    /// Removes every queued upgraded connection for unlocked destruction.
+    pub(super) fn drain_pending(&mut self) -> VecDeque<S> {
+        std::mem::take(&mut *self.pending.lock())
     }
 
     /// Returns whether no upgraded connection is waiting for handoff.
@@ -356,30 +368,18 @@ where
     }
 
     fn call(&mut self, dst: Dst) -> Self::Future {
-        let (existing, service, discarded) = {
-            let mut pending = self.pending.lock();
-            if let Some(future) = self.upgrade.checkout() {
-                (Some(future), None, std::mem::take(&mut *pending))
-            } else if let Some(service) = pending.pop_front() {
-                (None, Some(service), std::mem::take(&mut *pending))
-            } else {
-                (None, None, VecDeque::new())
-            }
-        };
-        drop(discarded);
-
-        let state = if let Some(future) = existing {
-            State::Upgrade { future }
-        } else if let Some(service) = service {
-            State::Upgrade {
+        let state = match select_upgrade(&mut self.upgrade, &self.pending) {
+            Selection::Existing(future) => State::Upgrade { future },
+            Selection::Pending(service) => State::Upgrade {
                 future: self.upgrade.call(service),
-            }
-        } else {
-            let destination = dst.clone();
-            State::Fallback {
-                future: Either::Left(self.fallback.call(dst)),
-                fallback: self.fallback.clone(),
-                destination,
+            },
+            Selection::Fallback => {
+                let destination = dst.clone();
+                State::Fallback {
+                    future: Either::Left(self.fallback.call(dst)),
+                    fallback: self.fallback.clone(),
+                    destination,
+                }
             }
         };
 
@@ -420,32 +420,24 @@ where
                             return Poll::Ready(Err(error));
                         }
 
-                        let (existing, service, discarded) = {
-                            let mut pending = this.pending.lock();
-                            if let Some(future) = this.upgrade.checkout() {
-                                (Some(future), None, std::mem::take(&mut *pending))
-                            } else if let Some(service) = pending.pop_front() {
-                                (None, Some(service), std::mem::take(&mut *pending))
-                            } else {
-                                (None, None, VecDeque::new())
+                        match select_upgrade(this.upgrade, this.pending) {
+                            Selection::Existing(future) => {
+                                this.state.set(State::Upgrade { future });
                             }
-                        };
-                        drop(discarded);
-
-                        if let Some(future) = existing {
-                            this.state.set(State::Upgrade { future });
-                        } else if let Some(service) = service {
-                            let future = this.upgrade.call(service);
-                            this.state.set(State::Upgrade { future });
-                        } else {
-                            let fallback = (*fallback).clone();
-                            let destination = (*destination).clone();
-                            let future = Oneshot::new(fallback.clone(), destination.clone());
-                            this.state.set(State::Fallback {
-                                future: Either::Right(future),
-                                fallback,
-                                destination,
-                            });
+                            Selection::Pending(service) => {
+                                let future = this.upgrade.call(service);
+                                this.state.set(State::Upgrade { future });
+                            }
+                            Selection::Fallback => {
+                                let fallback = (*fallback).clone();
+                                let destination = (*destination).clone();
+                                let future = Oneshot::new(fallback.clone(), destination.clone());
+                                this.state.set(State::Fallback {
+                                    future: Either::Right(future),
+                                    fallback,
+                                    destination,
+                                });
+                            }
                         }
                     }
                 },
@@ -459,6 +451,28 @@ where
             }
         }
     }
+}
+
+/// Selects upgraded work atomically and destroys redundant transports unlocked.
+fn select_upgrade<R, S>(upgrade: &mut R, pending: &Mutex<VecDeque<S>>) -> Selection<R::Future, S>
+where
+    R: Existing<S>,
+{
+    let (selection, discarded) = {
+        let mut pending = pending.lock();
+        let selection = match upgrade.checkout() {
+            Some(future) => Selection::Existing(future),
+            None => match pending.pop_front() {
+                Some(service) => Selection::Pending(service),
+                None => Selection::Fallback,
+            },
+        };
+        let discarded =
+            (!matches!(&selection, Selection::Fallback)).then(|| std::mem::take(&mut *pending));
+        (selection, discarded)
+    };
+    drop(discarded);
+    selection
 }
 
 // ===== impl Negotiated =====
@@ -672,16 +686,15 @@ where
     }
 }
 
-impl<F, S, I, E> super::cache::Started for InspectFuture<F, S, I>
+impl<F, S, I, E> Started for InspectFuture<F, S, I>
 where
-    F: super::cache::Started + Future<Output = Result<S, E>>,
+    F: Started + Future<Output = Result<S, E>>,
     E: Into<BoxError>,
     S: Send + 'static,
     I: Fn(&S) -> bool,
 {
-    /// Reports whether the underlying connection attempt began useful work.
     fn started(&self) -> bool {
-        super::cache::Started::started(&self.future)
+        Started::started(&self.future)
     }
 }
 

@@ -89,21 +89,21 @@ where
     where
         F: FnMut(&mut M::Response) -> bool,
     {
-        let mut state = self.state.lock();
-        let discarded = if let State::Made { service, .. } = &mut *state {
-            if !predicate(service) {
+        {
+            let mut state = self.state.lock();
+            let remove = match &mut *state {
+                State::Made { service, .. } => !predicate(service),
+                State::Empty | State::Making(_) => false,
+            };
+            if remove {
                 match std::mem::replace(&mut *state, State::Empty) {
                     State::Made { service, .. } => Some(service),
-                    _ => None,
+                    State::Empty | State::Making(_) => None,
                 }
             } else {
                 None
             }
-        } else {
-            None
-        };
-        drop(state);
-        discarded
+        }
     }
 
     /// Removes the completed service without interrupting an in-progress maker.

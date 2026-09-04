@@ -46,16 +46,9 @@ use crate::{
 /// This lets a canceled pool checkout or an encoding-before-send failure return
 /// the same request to [`RetryUnsent`] without cloning its body.
 pub(crate) struct PoolRequest<B> {
-    /// User request after request-local options have been removed.
     request: Request<B>,
-
-    /// Connection identity and transport options shared by retries.
     descriptor: ConnectionDescriptor,
-
-    /// HTTP/1 handshake configuration for this logical request.
     h1_builder: proto::http1::Builder,
-
-    /// HTTP/2 handshake configuration for this logical request.
     h2_builder: proto::http2::Builder<Executor>,
 }
 
@@ -66,13 +59,8 @@ pub(crate) struct PoolRequest<B> {
 /// [`PoolRequest`] while leaving the request body untouched.
 #[derive(Clone)]
 pub(crate) struct ConfigureRequest<S> {
-    /// Service receiving the prepared pool request.
     inner: S,
-
-    /// Base HTTP/1 configuration cloned for each logical request.
     h1_builder: proto::http1::Builder,
-
-    /// Base HTTP/2 configuration cloned for each logical request.
     h2_builder: proto::http2::Builder<Executor>,
 }
 
@@ -84,10 +72,7 @@ pub(crate) struct ConfigureRequest<S> {
 /// left to the public retry policy.
 #[derive(Clone)]
 pub(crate) struct RetryUnsent<S> {
-    /// Service performing one pool checkout and send attempt.
     inner: S,
-
-    /// Whether internal cancellation retries are enabled.
     enabled: bool,
 }
 
@@ -109,40 +94,24 @@ where
     B::Data: Send,
     B::Error: Into<BoxError>,
 {
-    /// Shared connection pool and protocol sender factory.
     pool: pool::Pool<C, B>,
-
-    /// Default protocol selection when the request does not force a version.
     version: Ver,
-
-    /// Runtime used to return a busy HTTP/1 sender in the background.
     exec: Executor,
-
     #[cfg(feature = "cookies")]
-    /// Optional cookie store selected through request extensions.
     cookie_store: RequestConfig<Arc<dyn CookieStore>>,
 }
 
 /// Failure from one pool checkout and send attempt.
-#[allow(clippy::large_enum_variant)]
 pub(crate) enum AttemptError<B> {
     /// A singleton creation generation disappeared before checkout completed.
     CheckoutCanceled {
-        /// Client error reported when internal retries are disabled.
         error: Error,
-
-        /// Request that never reached protocol dispatch.
-        request: PoolRequest<B>,
+        request: Box<PoolRequest<B>>,
     },
     /// Protocol dispatch returned a request before encoding began.
     Unsent {
-        /// Dispatch failure associated with the returned request.
         error: Error,
-
-        /// Exact request and connection settings available for retry.
-        request: PoolRequest<B>,
-
-        /// Whether the failed sender came from existing pool state.
+        request: Box<PoolRequest<B>>,
         connection_reused: bool,
     },
     /// Failure that cannot be retried by the internal middleware.
@@ -160,16 +129,9 @@ pin_project! {
         S: Service<PoolRequest<B>>,
     {
         #[pin]
-        // Current first-attempt or readiness-aware retry future.
         future: Either<S::Future, Oneshot<S, PoolRequest<B>>>,
-
-        // One-attempt service cloned for later retries.
         service: S,
-
-        // Absolute URI restored after connection-bound request preparation.
         original_uri: Uri,
-
-        // Whether canceled or proven-unsent requests may be retried.
         enabled: bool,
     }
 }
@@ -296,7 +258,7 @@ where
                 request,
             }) if *this.enabled => {
                 trace!("singleton connection batch canceled, trying again (reason={_error:?})");
-                request
+                *request
             }
             Err(AttemptError::Unsent {
                 error: _error,
@@ -304,7 +266,7 @@ where
                 connection_reused: true,
             }) if *this.enabled => {
                 trace!("unstarted request canceled, trying again (reason={_error:?})");
-                request
+                *request
             }
             Err(AttemptError::CheckoutCanceled { error, .. })
             | Err(AttemptError::Unsent { error, .. })
@@ -393,156 +355,142 @@ where
     }
 
     fn call(&mut self, request: PoolRequest<B>) -> Self::Future {
-        let service = self.clone();
-        Box::pin(service.send(request))
-    }
-}
-
-impl<C, B> PoolService<C, B>
-where
-    C: Service<ConnectionDescriptor> + Clone + Send + Sync + 'static,
-    C::Response: AsyncRead + AsyncWrite + Connection + Unpin + Send + 'static,
-    C::Error: Into<BoxError>,
-    C::Future: Unpin + Send + 'static,
-    B: Body + Send + Unpin + 'static,
-    B::Data: Send,
-    B::Error: Into<BoxError>,
-{
-    /// Executes one pool checkout and request dispatch attempt.
-    async fn send(self, request: PoolRequest<B>) -> Result<Response<Incoming>, AttemptError<B>> {
-        let PoolRequest {
-            request,
-            descriptor,
-            h1_builder,
-            h2_builder,
-        } = request;
-        #[cfg(feature = "cookies")]
-        let mut request = request;
-        let version = match descriptor.version() {
-            Some(Version::HTTP_10 | Version::HTTP_11) => Ver::Http1,
-            Some(Version::HTTP_2) => Ver::Http2,
-            _ => self.version,
-        };
-        let checkout = self
-            .pool
-            .checkout(
-                descriptor.clone(),
-                version,
-                h1_builder.clone(),
-                h2_builder.clone(),
-            )
-            .await;
-        let mut pooled = match checkout {
-            Ok(pooled) => pooled,
-            Err(error) if pool::is_canceled(&*error) => {
-                return Err(AttemptError::CheckoutCanceled {
-                    error: Error::new(ErrorKind::Connect, error),
-                    request: PoolRequest {
-                        request,
-                        descriptor,
-                        h1_builder,
-                        h2_builder,
-                    },
-                });
-            }
-            Err(error) => {
-                return Err(AttemptError::Terminal(Error::new(
-                    ErrorKind::Connect,
-                    error,
-                )));
-            }
-        };
-
-        if pooled.is_http1() && request.version() == Version::HTTP_2 {
-            warn!("Connection is HTTP/1, but request requires HTTP/2");
-            return Err(AttemptError::Terminal(
-                Error::from_kind(ErrorKind::UserUnsupportedVersion)
-                    .with_connect_info(pooled.conn_info().clone()),
-            ));
-        }
-
-        #[cfg(feature = "cookies")]
-        let uri = request.uri().clone();
-        #[cfg(feature = "cookies")]
-        let cookie_store = self.cookie_store.fetch(request.extensions()).cloned();
-
-        #[cfg(feature = "cookies")]
-        if let Some(ref cookie_store) = cookie_store {
-            let headers = request.headers_mut();
-            if !headers.contains_key(COOKIE) {
-                let version = if pooled.is_http2() {
-                    Version::HTTP_2
-                } else {
-                    Version::HTTP_11
-                };
-
-                match cookie_store.cookies(&uri, version) {
-                    Cookies::Compressed(value) => {
-                        headers.insert(COOKIE, value);
-                    }
-                    Cookies::Uncompressed(values) => {
-                        for value in values {
-                            headers.append(COOKIE, value);
-                        }
-                    }
-                    Cookies::Empty => {}
-                }
-            }
-        }
-
-        let mut response = match pooled.try_send_request(request).await {
-            Ok(response) => response,
-            Err(mut error) => {
-                let connection_reused = pooled.is_reused();
-                let connect_info = pooled.conn_info().clone();
-                return if let Some(request) = error.take_message() {
-                    Err(AttemptError::Unsent {
-                        error: error
-                            .into_client_error(ErrorKind::Canceled)
-                            .with_connect_info(connect_info),
-                        request: PoolRequest {
+        let this = self.clone();
+        Box::pin(async move {
+            let PoolRequest {
+                request,
+                descriptor,
+                h1_builder,
+                h2_builder,
+            } = request;
+            #[cfg(feature = "cookies")]
+            let mut request = request;
+            let version = match descriptor.version() {
+                Some(Version::HTTP_10 | Version::HTTP_11) => Ver::Http1,
+                Some(Version::HTTP_2) => Ver::Http2,
+                _ => this.version,
+            };
+            let checkout = this
+                .pool
+                .checkout(
+                    descriptor.clone(),
+                    version,
+                    h1_builder.clone(),
+                    h2_builder.clone(),
+                )
+                .await;
+            let mut pooled = match checkout {
+                Ok(pooled) => pooled,
+                Err(error) if pool::is_canceled(&*error) => {
+                    return Err(AttemptError::CheckoutCanceled {
+                        error: Error::new(ErrorKind::Connect, error),
+                        request: Box::new(PoolRequest {
                             request,
                             descriptor,
                             h1_builder,
                             h2_builder,
-                        },
-                        connection_reused,
-                    })
-                } else {
-                    Err(AttemptError::Terminal(
-                        error
-                            .into_client_error(ErrorKind::SendRequest)
-                            .with_connect_info(connect_info),
-                    ))
-                };
+                        }),
+                    });
+                }
+                Err(error) => {
+                    return Err(AttemptError::Terminal(Error::new(
+                        ErrorKind::Connect,
+                        error,
+                    )));
+                }
+            };
+
+            if pooled.is_http1() && request.version() == Version::HTTP_2 {
+                warn!("Connection is HTTP/1, but request requires HTTP/2");
+                return Err(AttemptError::Terminal(
+                    Error::from_kind(ErrorKind::UserUnsupportedVersion)
+                        .with_connect_info(pooled.conn_info().clone()),
+                ));
             }
-        };
 
-        #[cfg(feature = "cookies")]
-        if let Some(cookie_store) = cookie_store {
-            let mut cookies = response
-                .headers()
-                .get_all(http::header::SET_COOKIE)
-                .iter()
-                .peekable();
-            if cookies.peek().is_some() {
-                cookie_store.set_cookies(&mut cookies, &uri);
+            #[cfg(feature = "cookies")]
+            let uri = request.uri().clone();
+            #[cfg(feature = "cookies")]
+            let cookie_store = this.cookie_store.fetch(request.extensions()).cloned();
+
+            #[cfg(feature = "cookies")]
+            if let Some(ref cookie_store) = cookie_store {
+                let headers = request.headers_mut();
+                if !headers.contains_key(COOKIE) {
+                    let version = if pooled.is_http2() {
+                        Version::HTTP_2
+                    } else {
+                        Version::HTTP_11
+                    };
+
+                    match cookie_store.cookies(&uri, version) {
+                        Cookies::Compressed(value) => {
+                            headers.insert(COOKIE, value);
+                        }
+                        Cookies::Uncompressed(values) => {
+                            for value in values {
+                                headers.append(COOKIE, value);
+                            }
+                        }
+                        Cookies::Empty => {}
+                    }
+                }
             }
-        }
 
-        pooled.conn_info().set_extras(response.extensions_mut());
-        response.extensions_mut().insert(pooled.conn_info().clone());
+            let mut response = match pooled.try_send_request(request).await {
+                Ok(response) => response,
+                Err(mut error) => {
+                    let connection_reused = pooled.is_reused();
+                    let connect_info = pooled.conn_info().clone();
+                    return if let Some(request) = error.take_message() {
+                        Err(AttemptError::Unsent {
+                            error: error
+                                .into_client_error(ErrorKind::Canceled)
+                                .with_connect_info(connect_info),
+                            request: Box::new(PoolRequest {
+                                request,
+                                descriptor,
+                                h1_builder,
+                                h2_builder,
+                            }),
+                            connection_reused,
+                        })
+                    } else {
+                        Err(AttemptError::Terminal(
+                            error
+                                .into_client_error(ErrorKind::SendRequest)
+                                .with_connect_info(connect_info),
+                        ))
+                    };
+                }
+            };
 
-        if pooled.is_http2() || !pooled.is_pool_enabled() || pooled.is_ready() {
-            drop(pooled);
-        } else {
-            let on_idle = std::future::poll_fn(move |cx| pooled.poll_ready(cx));
-            self.exec.execute(async move {
-                let _ = on_idle.await;
-            });
-        }
+            #[cfg(feature = "cookies")]
+            if let Some(cookie_store) = cookie_store {
+                let mut cookies = response
+                    .headers()
+                    .get_all(http::header::SET_COOKIE)
+                    .iter()
+                    .peekable();
+                if cookies.peek().is_some() {
+                    cookie_store.set_cookies(&mut cookies, &uri);
+                }
+            }
 
-        Ok(response)
+            pooled.conn_info().set_extras(response.extensions_mut());
+            response.extensions_mut().insert(pooled.conn_info().clone());
+
+            if pooled.is_http2() || !pooled.is_pool_enabled() || pooled.is_ready() {
+                drop(pooled);
+            } else {
+                let on_idle = std::future::poll_fn(move |cx| pooled.poll_ready(cx));
+                this.exec.execute(async move {
+                    let _ = on_idle.await;
+                });
+            }
+
+            Ok(response)
+        })
     }
 }
 
@@ -553,10 +501,7 @@ where
 /// that URI to HTTP/1 origin-form or authority-form.
 #[derive(Clone)]
 pub struct SetHost<S> {
-    /// Protocol service receiving the request after `Host` handling.
     inner: S,
-
-    /// Whether a missing `Host` field should be generated.
     enabled: bool,
 }
 
@@ -568,10 +513,7 @@ pub struct SetHost<S> {
 /// selected connection.
 #[derive(Clone)]
 pub struct Http1RequestTarget<S> {
-    /// Protocol sender receiving the prepared request.
     inner: S,
-
-    /// Metadata supplied by the selected connector.
     connected: Connected,
 }
 
@@ -685,10 +627,10 @@ fn origin_form(uri: &mut Uri) -> Result<(), Error> {
 
 /// Converts an absolute URI to authority-form for an HTTP `CONNECT` request.
 fn authority_form(uri: &mut Uri) -> Result<(), Error> {
-    if let Some(path) = uri.path_and_query() {
-        if path != "/" {
-            warn!("HTTP/1.1 CONNECT request stripping path: {:?}", path);
-        }
+    if let Some(path) = uri.path_and_query()
+        && path != "/"
+    {
+        warn!("HTTP/1.1 CONNECT request stripping path: {:?}", path);
     }
 
     let Some(authority) = uri.authority().cloned() else {

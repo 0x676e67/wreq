@@ -35,7 +35,6 @@
 
 use std::{
     collections::VecDeque,
-    fmt,
     future::Future,
     marker::PhantomData,
     pin::Pin,
@@ -329,23 +328,21 @@ where
             Ready::Cached(service) => !predicate(service),
             Ready::None => false,
         };
-        let mut discarded = Vec::new();
-        if discard_ready {
-            if let Ready::Cached(service) = std::mem::replace(&mut self.ready, Ready::None) {
-                discarded.push(service);
-            }
+        let mut discarded = self.shared.lock().retain_services(predicate);
+        if discard_ready
+            && let Ready::Cached(service) = std::mem::replace(&mut self.ready, Ready::None)
+        {
+            discarded.push(service);
         }
-        discarded.extend(self.shared.lock().retain_services(predicate));
         discarded
     }
 
     /// Removes all unreserved idle services.
     pub(super) fn drain_idle(&mut self) -> Vec<M::Response> {
-        let mut discarded = Vec::new();
+        let mut discarded = self.shared.lock().drain_services();
         if let Ready::Cached(service) = std::mem::replace(&mut self.ready, Ready::None) {
             discarded.push(service);
         }
-        discarded.extend(self.shared.lock().drain_services());
         discarded
     }
 
@@ -450,28 +447,39 @@ where
             }
             Ready::None => {
                 if let Some(id) = self.ready_waiter.take() {
-                    let mut shared = self.shared.lock();
-                    if let Some(service) = shared.take_reserved(id) {
-                        return CacheFuture::Cached {
-                            service: Some(Cached::new(
-                                service,
-                                Arc::downgrade(&self.shared),
-                                self.active.clone(),
-                                true,
-                            )),
-                        };
+                    let reserved = {
+                        let mut shared = self.shared.lock();
+                        match shared.take_reserved(id) {
+                            Some(service) => Ok(service),
+                            None => Err(shared.cancel_waiter(id)),
+                        }
+                    };
+                    match reserved {
+                        Ok(service) => {
+                            return CacheFuture::Cached {
+                                service: Some(Cached::new(
+                                    service,
+                                    Arc::downgrade(&self.shared),
+                                    self.active.clone(),
+                                    true,
+                                )),
+                            };
+                        }
+                        Err(result) => finish_cancel(result),
                     }
-                    let result = shared.cancel_waiter(id);
-                    drop(shared);
-                    finish_cancel(result);
                 }
             }
         }
 
-        let waiter = {
+        let available = {
             let mut shared = self.shared.lock();
-            if let Some(service) = shared.take_available() {
-                drop(shared);
+            match shared.take_available() {
+                Some(service) => Ok(service),
+                None => Err(shared.push_waiter()),
+            }
+        };
+        let waiter = match available {
+            Ok(service) => {
                 return CacheFuture::Cached {
                     service: Some(Cached::new(
                         service,
@@ -481,7 +489,7 @@ where
                     )),
                 };
             }
-            shared.push_waiter()
+            Err(waiter) => waiter,
         };
         CacheFuture::Racing {
             shared: self.shared.clone(),
@@ -756,14 +764,8 @@ impl<S> Drop for Cached<S> {
             },
             service => service,
         };
-        drop(discarded);
         self.release_active();
-    }
-}
-
-impl<S: fmt::Debug> fmt::Debug for Cached<S> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_tuple("Cached").field(&self.inner).finish()
+        drop(discarded);
     }
 }
 
@@ -826,14 +828,13 @@ impl<S> Shared<S> {
 
     /// Stores the latest waker and returns the replaced value for unlocked drop.
     fn store_waker(&mut self, id: WaiterId, waker: &Waker) -> Option<Waker> {
-        if let Some(waiter) = self.waiters.iter_mut().find(|waiter| waiter.id == id) {
-            if waiter
+        if let Some(waiter) = self.waiters.iter_mut().find(|waiter| waiter.id == id)
+            && waiter
                 .waker
                 .as_ref()
                 .is_none_or(|current| !current.will_wake(waker))
-            {
-                return waiter.waker.replace(waker.clone());
-            }
+        {
+            return waiter.waker.replace(waker.clone());
         }
         None
     }
@@ -1224,7 +1225,7 @@ mod tests {
 
 /// Policies for maker futures that lose the reuse race.
 pub(super) mod events {
-    use std::{fmt, sync::Arc};
+    use std::sync::Arc;
 
     use futures_util::future::BoxFuture;
 
@@ -1281,15 +1282,6 @@ pub(super) mod events {
                     }
                 }));
             }
-        }
-    }
-
-    impl<E: fmt::Debug> fmt::Debug for WithExecutor<E> {
-        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-            f.debug_struct("WithExecutor")
-                .field("executor", &self.executor)
-                .field("on_complete", &self.on_complete.is_some())
-                .finish()
         }
     }
 }

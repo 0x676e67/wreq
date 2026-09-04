@@ -139,26 +139,26 @@ where
                 };
 
                 let now = timer.now();
-                if let Some(next) = target.retain(now) {
-                    if next != Duration::ZERO {
-                        if let Some(deadline) = timer.now().checked_add(next) {
-                            timer.reset(&mut sleep, deadline);
-                            continue;
-                        }
-                    }
+                if let Some(deadline) = target
+                    .retain(now)
+                    .filter(|next| *next != Duration::ZERO)
+                    .and_then(|next| timer.now().checked_add(next))
+                {
+                    timer.reset(&mut sleep, deadline);
+                    continue;
                 }
 
                 running.store(false, Ordering::Release);
-                if let Some(next) = target.next().filter(|interval| *interval != Duration::ZERO)
+                if let Some(deadline) = target
+                    .next()
+                    .filter(|next| *next != Duration::ZERO)
+                    .and_then(|next| timer.now().checked_add(next))
                     && running
                         .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
                         .is_ok()
                 {
-                    if let Some(deadline) = timer.now().checked_add(next) {
-                        timer.reset(&mut sleep, deadline);
-                        continue;
-                    }
-                    running.store(false, Ordering::Release);
+                    timer.reset(&mut sleep, deadline);
+                    continue;
                 }
                 return;
             }

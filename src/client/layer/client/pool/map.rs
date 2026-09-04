@@ -67,6 +67,7 @@ where
 pub(super) trait Target<Dst> {
     /// Stable key shared by destinations with compatible connections.
     type Key;
+
     /// Service responsible for one compatibility group.
     type Service;
 
@@ -125,7 +126,7 @@ where
         let Some(retained) = &mut self.retained else {
             return;
         };
-        let stale = retained
+        retained
             .iter()
             .filter(|(key, ())| {
                 self.entries
@@ -133,10 +134,11 @@ where
                     .is_none_or(|service| !predicate(service))
             })
             .map(|(key, ())| key.clone())
-            .collect::<Vec<_>>();
-        for key in stale {
-            let _ = retained.pop(&key);
-        }
+            .collect::<Vec<_>>()
+            .into_iter()
+            .for_each(|key| {
+                let _ = retained.pop(&key);
+            });
     }
 
     /// Marks `key` as the most recently used retained group.
@@ -162,25 +164,20 @@ where
     }
 
     /// Retains entries selected by `predicate` and returns removed services.
-    ///
-    /// Keys are collected before removal so removed services can be returned.
     pub(super) fn retain<F>(&mut self, mut predicate: F) -> Vec<T::Service>
     where
-        T::Key: Clone,
         F: FnMut(&T::Key, &mut T::Service) -> bool,
     {
-        let removed = self
-            .entries
-            .iter_mut()
-            .filter_map(|(key, service)| (!predicate(key, service)).then(|| key.clone()))
-            .collect::<Vec<_>>();
-
-        removed
-            .into_iter()
-            .filter_map(|key| {
-                self.unmark_retained(&key);
-                self.entries.remove(&key)
+        let retained = &mut self.retained;
+        self.entries
+            .extract_if(|key, service| {
+                let remove = !predicate(key, service);
+                if remove {
+                    let _ = retained.as_mut().and_then(|retained| retained.pop(key));
+                }
+                remove
             })
+            .map(|(_, service)| service)
             .collect()
     }
 

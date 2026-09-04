@@ -129,7 +129,7 @@ pub enum SendError<B> {
     /// Request middleware rejected the request before protocol dispatch.
     Request(Error),
     /// The protocol dispatcher failed and may return the unsent request.
-    Protocol(ConnTrySendError<Request<B>>),
+    Protocol(Box<ConnTrySendError<Request<B>>>),
 }
 
 /// Adapts the HTTP/1 protocol sender to Tower's [`Service`] interface.
@@ -268,6 +268,11 @@ impl<B> From<Error> for SendError<B> {
 }
 
 impl<B> SendError<B> {
+    /// Boxes a protocol failure that may carry the complete unsent request.
+    fn protocol(error: ConnTrySendError<Request<B>>) -> Self {
+        Self::Protocol(Box::new(error))
+    }
+
     /// Takes a request recovered before protocol encoding began.
     pub fn take_message(&mut self) -> Option<Request<B>> {
         match self {
@@ -280,7 +285,7 @@ impl<B> SendError<B> {
     pub fn into_client_error(self, kind: ErrorKind) -> Error {
         match self {
             Self::Request(error) => error,
-            Self::Protocol(error) => Error::new(kind, error.into_error()),
+            Self::Protocol(error) => Error::new(kind, (*error).into_error()),
         }
     }
 }
@@ -319,7 +324,7 @@ where
         Box::pin(
             self.inner
                 .try_send_request(req)
-                .map_err(SendError::Protocol),
+                .map_err(SendError::protocol),
         )
     }
 }
@@ -821,7 +826,7 @@ where
         &mut self,
         req: Request<B>,
     ) -> impl Future<Output = Result<Response<Incoming>, SendError<B>>> {
-        self.tx.try_send_request(req).map_err(SendError::Protocol)
+        self.tx.try_send_request(req).map_err(SendError::protocol)
     }
 
     /// Marks the shared sender checked out until response headers are returned.

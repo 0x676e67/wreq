@@ -293,13 +293,13 @@ where
     ) -> BoxFuture<'static, Result<Pooled<B>, BoxError>>;
 
     /// Removes expired or closed idle connections for unlocked destruction.
-    fn retain(&mut self, now: Instant, timeout: Option<Duration>) -> Vec<DeferredDrop>;
+    fn retain(&mut self, now: Instant, timeout: Option<Duration>) -> Option<DeferredDrop>;
 
     /// Returns whether this entry retains reusable connection state.
     fn is_retained(&self) -> bool;
 
     /// Removes reusable state selected by the global idle-group LRU.
-    fn evict_retained(&mut self) -> Vec<DeferredDrop>;
+    fn evict_retained(&mut self) -> Option<DeferredDrop>;
 
     /// Returns whether this is the entry identified by `state`.
     fn matches_identity(&self, state: &Arc<EntryState>) -> bool;
@@ -395,6 +395,9 @@ type H2MakeFuture<B> = BoxFuture<'static, Result<Http2Client<B>, BoxError>>;
 type H2Pooled<B> = Singled<H2MakeFuture<B>, Http2Client<B>>;
 
 /// Type-erased connection state held until the outer map lock is released.
+///
+/// One value may aggregate several concrete senders from the same entry. This
+/// keeps cleanup type-erased without allocating one box per removed connection.
 type DeferredDrop = Box<dyn Send>;
 
 /// Identity-aware maintenance operation for one mapped entry.
@@ -539,6 +542,22 @@ struct EntryState {
     uses: AtomicUsize,
     /// Reconciles this exact entry with cleanup and idle-group limits.
     maintain: Box<EntryMaintenance>,
+}
+
+/// Type-erases one aggregate resource for destruction after unlocking.
+fn defer_drop<T>(value: T) -> DeferredDrop
+where
+    T: Send + 'static,
+{
+    Box::new(value)
+}
+
+/// Defers a vector only when it owns at least one resource.
+fn defer_drop_vec<T>(value: Vec<T>) -> Option<DeferredDrop>
+where
+    T: Send + 'static,
+{
+    (!value.is_empty()).then(|| defer_drop(value))
 }
 
 // ===== impl PoolTargeter =====
@@ -700,7 +719,7 @@ where
         } else {
             (
                 self.inner.targeter.service(&target).checkout(target, false),
-                Vec::new(),
+                None,
             )
         };
         drop(discarded);
@@ -761,27 +780,23 @@ where
                     .matches_identity(identity)
                     .then(|| (entry.is_empty(), entry.is_retained()))
             });
-            let mut removed = Vec::new();
-            let mut discarded = Vec::new();
+            let mut removed = None;
+            let mut discarded = None;
             let mut schedule_expiration = false;
 
             match state {
                 Some((true, _)) => {
-                    if let Some(entry) = services.remove_if(key, |_| true) {
-                        removed.push(entry);
-                    }
+                    removed = services.remove_if(key, |_| true);
                 }
                 Some((false, true)) => {
                     schedule_expiration = true;
                     if let Some(evicted) = services.mark_retained(key) {
                         let empty = services.get_mut(&evicted).is_some_and(|entry| {
-                            discarded.extend(entry.evict_retained());
+                            discarded = entry.evict_retained();
                             entry.is_empty()
                         });
                         if empty {
-                            if let Some(entry) = services.remove_if(&evicted, |_| true) {
-                                removed.push(entry);
-                            }
+                            removed = services.remove_if(&evicted, |_| true);
                         }
                     }
                 }
@@ -955,12 +970,8 @@ where
     /// Removes closed or expired idle senders for unlocked destruction.
     ///
     /// Active checkouts and FIFO waiters remain owned by the cache.
-    fn retain(&mut self, now: Instant, timeout: Option<Duration>) -> Vec<DeferredDrop> {
-        self.service
-            .retain_idle(now, timeout)
-            .into_iter()
-            .map(|connection| Box::new(connection) as DeferredDrop)
-            .collect()
+    fn retain(&mut self, now: Instant, timeout: Option<Duration>) -> Option<DeferredDrop> {
+        defer_drop_vec(self.service.retain_idle(now, timeout))
     }
 
     /// Returns whether this entry contributes an idle sender to the global LRU.
@@ -971,12 +982,8 @@ where
     /// Drains idle senders selected by the global retained-group LRU.
     ///
     /// Checked-out senders remain valid and can finish their requests.
-    fn evict_retained(&mut self) -> Vec<DeferredDrop> {
-        self.service
-            .drain_idle()
-            .into_iter()
-            .map(|connection| Box::new(connection) as DeferredDrop)
-            .collect()
+    fn evict_retained(&mut self) -> Option<DeferredDrop> {
+        defer_drop_vec(self.service.drain_idle())
     }
 
     /// Compares cleanup state with this exact mapped entry.
@@ -1040,16 +1047,14 @@ where
     ///
     /// Pending singleton creation is left untouched. Active sender checkouts are
     /// kept by [`Http2Client::is_reusable`].
-    fn retain(&mut self, now: Instant, timeout: Option<Duration>) -> Vec<DeferredDrop> {
+    fn retain(&mut self, now: Instant, timeout: Option<Duration>) -> Option<DeferredDrop> {
         if self.state.uses.load(Ordering::Acquire) != 0 {
-            return Vec::new();
+            return None;
         }
 
         self.service
             .retain(|client| client.is_reusable(now, timeout))
-            .into_iter()
-            .map(|connection| Box::new(connection) as DeferredDrop)
-            .collect()
+            .map(defer_drop)
     }
 
     /// Returns whether the singleton owns a completed reusable sender.
@@ -1061,12 +1066,8 @@ where
     ///
     /// Existing sender clones remain valid, while later checkouts create or join
     /// a new singleton generation.
-    fn evict_retained(&mut self) -> Vec<DeferredDrop> {
-        self.service
-            .take()
-            .into_iter()
-            .map(|connection| Box::new(connection) as DeferredDrop)
-            .collect()
+    fn evict_retained(&mut self) -> Option<DeferredDrop> {
+        self.service.take().map(defer_drop)
     }
 
     /// Compares cleanup state with this exact mapped entry.
@@ -1119,41 +1120,25 @@ where
     }
 
     /// Cleans pending negotiation results and both protocol pools.
-    fn retain(&mut self, now: Instant, timeout: Option<Duration>) -> Vec<DeferredDrop> {
-        let mut discarded = Vec::new();
+    fn retain(&mut self, now: Instant, timeout: Option<Duration>) -> Option<DeferredDrop> {
         let entry_in_use = self.state.uses.load(Ordering::Acquire) != 0;
-        if self.service.upgrade().has_service() {
-            discarded.extend(
-                self.service
-                    .retain_pending(|_| false)
-                    .into_iter()
-                    .map(|connection| Box::new(connection) as DeferredDrop),
-            );
+        let pending = if self.service.upgrade().has_service() {
+            self.service.drain_pending()
         } else if !entry_in_use {
-            discarded.extend(
-                self.service
-                    .retain_pending(|connection| !is_expired(connection.idle_at(), now, timeout))
-                    .into_iter()
-                    .map(|connection| Box::new(connection) as DeferredDrop),
-            );
-        }
-        discarded.extend(
             self.service
-                .fallback_mut()
-                .retain_idle(now, timeout)
-                .into_iter()
-                .map(|connection| Box::new(connection) as DeferredDrop),
-        );
-        if !entry_in_use {
-            discarded.extend(
-                self.service
-                    .upgrade_mut()
-                    .retain_idle(now, timeout)
-                    .into_iter()
-                    .map(|connection| Box::new(connection) as DeferredDrop),
-            );
-        }
-        discarded
+                .retain_pending(|connection| !is_expired(connection.idle_at(), now, timeout))
+        } else {
+            Default::default()
+        };
+        let fallback = self.service.fallback_mut().retain_idle(now, timeout);
+        let upgrade = if entry_in_use {
+            None
+        } else {
+            self.service.upgrade_mut().retain_idle(now, timeout)
+        };
+
+        (!pending.is_empty() || !fallback.is_empty() || upgrade.is_some())
+            .then(|| defer_drop((pending, fallback, upgrade)))
     }
 
     /// Reports reusable connections owned by any negotiated path.
@@ -1164,28 +1149,13 @@ where
     }
 
     /// Drains every reusable connection while preserving active HTTP/1 work.
-    fn evict_retained(&mut self) -> Vec<DeferredDrop> {
-        let mut discarded = self
-            .service
-            .retain_pending(|_| false)
-            .into_iter()
-            .map(|connection| Box::new(connection) as DeferredDrop)
-            .collect::<Vec<_>>();
-        discarded.extend(
-            self.service
-                .fallback_mut()
-                .drain_idle()
-                .into_iter()
-                .map(|connection| Box::new(connection) as DeferredDrop),
-        );
-        discarded.extend(
-            self.service
-                .upgrade_mut()
-                .take_idle()
-                .into_iter()
-                .map(|connection| Box::new(connection) as DeferredDrop),
-        );
-        discarded
+    fn evict_retained(&mut self) -> Option<DeferredDrop> {
+        let pending = self.service.drain_pending();
+        let fallback = self.service.fallback_mut().drain_idle();
+        let upgrade = self.service.upgrade_mut().take_idle();
+
+        (!pending.is_empty() || !fallback.is_empty() || upgrade.is_some())
+            .then(|| defer_drop((pending, fallback, upgrade)))
     }
 
     /// Compares shared checkout state with this exact entry instance.
@@ -1510,7 +1480,6 @@ where
     }
 
     /// Sends a request without waiting for an additional readiness transition.
-    #[allow(clippy::result_large_err)]
     pub(super) fn try_send_request(
         &mut self,
         req: Request<B>,
@@ -1647,10 +1616,10 @@ impl EntryCleanupGuard {
 
 impl Drop for EntryCleanupGuard {
     fn drop(&mut self) {
-        if self.armed {
-            if let Some(state) = &self.state {
-                (state.maintain)(state);
-            }
+        if self.armed
+            && let Some(state) = &self.state
+        {
+            (state.maintain)(state);
         }
     }
 }
