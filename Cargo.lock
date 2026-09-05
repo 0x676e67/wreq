@@ -313,6 +313,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "chromium-roots"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "229b200495e6cf4d4b599a1884c30f5af57898604e6c0bd94a217295c0d1df69"
+dependencies = [
+ "rustls-pki-types",
+]
+
+[[package]]
 name = "ciborium"
 version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3781,6 +3790,7 @@ dependencies = [
  "btls",
  "btls-sys",
  "bytes",
+ "chromium-roots",
  "compio",
  "cookie",
  "criterion",

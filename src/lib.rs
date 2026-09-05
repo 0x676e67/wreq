@@ -331,6 +331,7 @@ pub use self::{
         Client, ClientBuilder,
         body::Body,
         emulate::{Emulation, EmulationBuilder, IntoEmulation},
+        pool::PoolStrategy,
         request::{Request, RequestBuilder},
         response::Response,
         upgrade::Upgraded,
