@@ -31,16 +31,9 @@ use crate::{
 /// clone. Protocol stream availability remains owned by wreq-proto; the local
 /// state records sender checkout only and is not an active-stream count.
 pub struct Http2Client<B> {
-    /// Metadata and poisoning state for the connection.
     conn_info: Connected,
-
-    /// Cloneable multiplexed request sender.
     tx: conn::http2::SendRequest<B>,
-
-    /// Checkout count and idle timestamp shared by sender clones.
     state: Arc<Http2State>,
-
-    /// Clock used for idle timestamps.
     timer: Timer,
 }
 
@@ -52,10 +45,7 @@ pub struct Http2Client<B> {
 /// lifecycle is specified by smithy-rs's latest pool design:
 /// <https://github.com/smithy-lang/smithy-rs/blob/connection-pool-main/rust-runtime/aws-smithy-http-client/docs/design/connection-pool.md>
 struct Http2State {
-    /// Number of `Pooled` handles currently using the sender.
     checkouts: AtomicUsize,
-
-    /// Time when the final checkout was released.
     idle_at: Mutex<Instant>,
 }
 
@@ -66,13 +56,8 @@ struct Http2State {
 /// pool's singleton service.
 #[derive(Clone)]
 pub struct Http2Layer<B> {
-    /// Runtime used by the protocol driver.
     exec: Executor,
-
-    /// Clock used for idle timestamps.
     timer: Timer,
-
-    /// Carries the request-body type without owning a body.
     _body: PhantomData<fn(B)>,
 }
 
@@ -82,16 +67,9 @@ pub struct Http2Layer<B> {
 /// consumes it once, starts the protocol driver, and returns the shared sender
 /// stored by the singleton pool.
 pub struct Http2Connect<S, B> {
-    /// Service yielding the inspected transport.
     service: S,
-
-    /// Runtime used by the protocol driver.
     exec: Executor,
-
-    /// Clock used for idle timestamps.
     timer: Timer,
-
-    /// Carries the request-body type without owning a body.
     _body: PhantomData<fn(B)>,
 }
 

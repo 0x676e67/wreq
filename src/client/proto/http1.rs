@@ -1,16 +1,27 @@
-//! HTTP/1 handshake, sender, and pooled connection lifecycle.
+//! HTTP/1 handshake, request preparation, sender, and pooled connection lifecycle.
+//!
+//! [`SetHost`] runs before [`Http1RequestTarget`] so `Host` is generated from
+//! the absolute URI before the selected connection determines its wire form.
+//! HTTP/1 request-target forms are defined by RFC 9112 section 3.2:
+//! <https://www.rfc-editor.org/rfc/rfc9112.html#section-3.2>
 
 use std::{
     fmt,
     future::Future,
     marker::PhantomData,
     pin::Pin,
-    task::{self, Poll, ready},
+    task::{self, Context, Poll, ready},
     time::{Duration, Instant},
 };
 
-use futures_util::{TryFutureExt, future::BoxFuture};
-use http::{Request, Response};
+use futures_util::{
+    TryFutureExt,
+    future::{self, BoxFuture, Either, Ready},
+};
+use http::{
+    HeaderValue, Method, Request, Response, Uri,
+    header::{HOST, PROXY_AUTHORIZATION},
+};
 use http_body::Body;
 use tokio::{
     io::{AsyncRead, AsyncWrite},
@@ -22,9 +33,8 @@ use wreq_proto::{body::Incoming, conn, rt::Executor as _};
 use super::{Established, SendError, clock_now, is_expired};
 use crate::{
     client::{
-        error::Error,
+        error::{Error, ErrorKind},
         pool::Started,
-        svc::{Http1RequestTarget, SetHost},
     },
     conn::Connected,
     rt::{Executor, Timer},
@@ -35,27 +45,10 @@ use crate::{
 /// HTTP/1 permits one active checkout. The pool moves this value into a request
 /// and receives it back after the response releases the checkout.
 pub struct Http1Client<B> {
-    /// Metadata and poisoning state for the connection.
     conn_info: Connected,
-
-    /// HTTP/1 request sender, uniquely checked out.
-    tx: SetHost<Http1RequestTarget<Http1Sender<B>>>,
-
-    /// Last time the sender became idle.
+    tx: SetHost<Http1RequestTarget<B>>,
     idle_at: Instant,
-
-    /// Clock used for idle timestamps.
     timer: Timer,
-}
-
-/// Adapts the HTTP/1 protocol sender to Tower's [`Service`] interface.
-///
-/// wreq-proto currently returns an opaque response future. This adapter boxes
-/// that future so the HTTP/1 middleware chain can compose with it without
-/// exposing protocol internals to the pool.
-pub struct Http1Sender<B> {
-    /// Raw protocol dispatcher created by the HTTP/1 handshake.
-    inner: conn::http1::SendRequest<B>,
 }
 
 /// Layers HTTP/1 handshaking over a transport-producing service.
@@ -65,16 +58,9 @@ pub struct Http1Sender<B> {
 /// [`Http1Client`].
 #[derive(Clone)]
 pub struct Http1Layer<B> {
-    /// Runtime used by the protocol driver.
-    exec: Executor,
-
-    /// Clock used for idle timestamps.
-    timer: Timer,
-
-    /// Whether a missing `Host` field should be generated.
     set_host: bool,
-
-    /// Carries the request-body type without owning a body.
+    exec: Executor,
+    timer: Timer,
     _body: PhantomData<fn(B)>,
 }
 
@@ -84,19 +70,10 @@ pub struct Http1Layer<B> {
 /// [`Started`] state is preserved so the HTTP/1 cache can decide whether a lost
 /// reuse race should finish in the background.
 pub struct Http1Connect<S, B> {
-    /// Service producing established transports.
     service: S,
-
-    /// Runtime used by the protocol driver.
-    exec: Executor,
-
-    /// Clock used for idle timestamps.
-    timer: Timer,
-
-    /// Whether a missing `Host` field should be generated.
     set_host: bool,
-
-    /// Carries the request-body type without owning a body.
+    exec: Executor,
+    timer: Timer,
     _body: PhantomData<fn(B)>,
 }
 
@@ -106,19 +83,10 @@ pub struct Http1Connect<S, B> {
 /// to the cache while the operation moves from transport creation to the boxed
 /// protocol handshake future.
 pub struct Http1ConnectFuture<F, T, B> {
-    /// Current connection or handshake phase.
     state: Http1ConnectState<F, B>,
-
-    /// Runtime moved into the protocol driver.
-    exec: Option<Executor>,
-
-    /// Clock moved into the completed sender.
-    timer: Option<Timer>,
-
-    /// Whether a missing `Host` field should be generated.
     set_host: bool,
-
-    /// Carries the transport type produced by the connection future.
+    exec: Option<Executor>,
+    timer: Option<Timer>,
     _io: PhantomData<fn(T)>,
 }
 
@@ -126,8 +94,10 @@ pub struct Http1ConnectFuture<F, T, B> {
 enum Http1ConnectState<F, B> {
     /// Waiting for the physical transport.
     Connecting(F),
+
     /// Performing the protocol handshake.
     Handshaking(BoxFuture<'static, Result<Http1Client<B>, BoxError>>),
+
     /// Future has completed and owns no reusable state.
     Done,
 }
@@ -136,21 +106,85 @@ enum Http1ConnectState<F, B> {
 #[derive(Debug)]
 struct HandshakeStateError;
 
-// ===== impl Http1Sender =====
+/// Ensures an HTTP request has a `Host` field before protocol encoding.
+///
+/// The middleware can be disabled for callers that manage `Host` themselves.
+/// It reads the absolute request URI before an inner target middleware converts
+/// that URI to HTTP/1 origin-form or authority-form.
+#[derive(Clone)]
+pub struct SetHost<S> {
+    inner: S,
+    enabled: bool,
+}
 
-impl<B> Http1Sender<B> {
-    /// Wraps a raw HTTP/1 protocol sender.
-    fn new(inner: conn::http1::SendRequest<B>) -> Self {
-        Self { inner }
+/// Prepares and sends requests over one established HTTP/1 connection.
+///
+/// Direct requests use origin-form, `CONNECT` uses authority-form, and forward
+/// proxy requests retain absolute-form. Proxy authorization and configured
+/// proxy headers are applied before the owned protocol sender encodes a request.
+pub struct Http1RequestTarget<B> {
+    inner: conn::http1::SendRequest<B>,
+    connected: Connected,
+}
+
+// ===== impl SetHost =====
+
+impl<S> SetHost<S> {
+    /// Wraps a request service with optional `Host` generation.
+    pub fn new(inner: S, enabled: bool) -> Self {
+        Self { inner, enabled }
     }
 
-    /// Returns whether the protocol dispatcher currently wants a request.
-    fn is_ready(&self) -> bool {
-        self.inner.is_ready()
+    /// Borrows the wrapped request service.
+    pub fn inner(&self) -> &S {
+        &self.inner
     }
 }
 
-impl<B> Service<Request<B>> for Http1Sender<B>
+impl<S, B> Service<Request<B>> for SetHost<S>
+where
+    S: Service<Request<B>>,
+    S::Error: From<Error>,
+{
+    type Response = S::Response;
+    type Error = S::Error;
+    type Future = Either<S::Future, Ready<Result<Self::Response, Self::Error>>>;
+
+    fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        self.inner.poll_ready(cx)
+    }
+
+    fn call(&mut self, mut req: Request<B>) -> Self::Future {
+        let result = if self.enabled && !req.headers().contains_key(HOST) {
+            generate_host_header(req.uri()).map(|host| {
+                req.headers_mut().insert(HOST, host);
+            })
+        } else {
+            Ok(())
+        };
+
+        match result {
+            Ok(()) => Either::Left(self.inner.call(req)),
+            Err(error) => Either::Right(future::err(error.into())),
+        }
+    }
+}
+
+// ===== impl Http1RequestTarget =====
+
+impl<B> Http1RequestTarget<B> {
+    /// Wraps a protocol sender with connection-specific target handling.
+    pub fn new(inner: conn::http1::SendRequest<B>, connected: Connected) -> Self {
+        Self { inner, connected }
+    }
+
+    /// Borrows the wrapped protocol sender.
+    pub fn inner(&self) -> &conn::http1::SendRequest<B> {
+        &self.inner
+    }
+}
+
+impl<B> Service<Request<B>> for Http1RequestTarget<B>
 where
     B: Body + Send + 'static,
     B::Data: Send,
@@ -158,20 +192,42 @@ where
 {
     type Response = Response<Incoming>;
     type Error = SendError<B>;
-    type Future = BoxFuture<'static, Result<Self::Response, Self::Error>>;
+    type Future = Either<
+        BoxFuture<'static, Result<Self::Response, Self::Error>>,
+        Ready<Result<Self::Response, Self::Error>>,
+    >;
 
-    fn poll_ready(&mut self, cx: &mut task::Context<'_>) -> Poll<Result<(), Self::Error>> {
+    fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         self.inner
             .poll_ready(cx)
             .map_err(|error| SendError::Request(Error::closed(error)))
     }
 
-    fn call(&mut self, req: Request<B>) -> Self::Future {
-        Box::pin(
-            self.inner
-                .try_send_request(req)
-                .map_err(SendError::protocol),
-        )
+    fn call(&mut self, mut req: Request<B>) -> Self::Future {
+        let result = if req.method() == Method::CONNECT {
+            authority_form(req.uri_mut())
+        } else if self.connected.is_proxied() {
+            if let Some(auth) = self.connected.proxy_auth() {
+                req.headers_mut()
+                    .entry(PROXY_AUTHORIZATION)
+                    .or_insert_with(|| auth.clone());
+            }
+            if let Some(headers) = self.connected.proxy_headers() {
+                crate::util::replace_headers(req.headers_mut(), headers.clone());
+            }
+            Ok(())
+        } else {
+            origin_form(req.uri_mut())
+        };
+
+        match result {
+            Ok(()) => Either::Left(Box::pin(
+                self.inner
+                    .try_send_request(req)
+                    .map_err(SendError::protocol),
+            )),
+            Err(error) => Either::Right(future::err(error.into())),
+        }
     }
 }
 
@@ -354,7 +410,7 @@ where
 {
     type Response = Response<Incoming>;
     type Error = SendError<B>;
-    type Future = <SetHost<Http1RequestTarget<Http1Sender<B>>> as Service<Request<B>>>::Future;
+    type Future = <SetHost<Http1RequestTarget<B>> as Service<Request<B>>>::Future;
 
     fn poll_ready(&mut self, cx: &mut task::Context<'_>) -> Poll<Result<(), Self::Error>> {
         self.tx.poll_ready(cx)
@@ -418,8 +474,68 @@ where
         tx: ServiceBuilder::new()
             .layer_fn(move |inner| SetHost::new(inner, set_host))
             .layer_fn(move |inner| Http1RequestTarget::new(inner, connected.clone()))
-            .service(Http1Sender::new(tx)),
+            .service(tx),
         idle_at: clock_now(&timer),
         timer,
     })
+}
+
+/// Converts an absolute URI to origin-form while preserving path and query.
+fn origin_form(uri: &mut Uri) -> Result<(), Error> {
+    let target = match uri.path_and_query() {
+        Some(path) if path.as_str() != "/" => {
+            let mut parts = ::http::uri::Parts::default();
+            parts.path_and_query = Some(path.clone());
+            Uri::from_parts(parts).map_err(|error| Error::new(ErrorKind::SendRequest, error))?
+        }
+        _ => Uri::default(),
+    };
+    *uri = target;
+    Ok(())
+}
+
+/// Converts an absolute URI to authority-form for an HTTP `CONNECT` request.
+fn authority_form(uri: &mut Uri) -> Result<(), Error> {
+    if let Some(path) = uri.path_and_query()
+        && path != "/"
+    {
+        warn!("HTTP/1.1 CONNECT request stripping path: {:?}", path);
+    }
+
+    let Some(authority) = uri.authority().cloned() else {
+        return Err(Error::from_kind(ErrorKind::UserAbsoluteUriRequired));
+    };
+    let mut parts = ::http::uri::Parts::default();
+    parts.authority = Some(authority);
+    *uri = Uri::from_parts(parts).map_err(|error| Error::new(ErrorKind::SendRequest, error))?;
+    Ok(())
+}
+
+/// Creates the HTTP/1 `Host` value without an intermediate string allocation.
+fn generate_host_header(uri: &Uri) -> Result<HeaderValue, Error> {
+    let Some(host) = uri.host() else {
+        return Err(Error::from_kind(ErrorKind::UserAbsoluteUriRequired));
+    };
+    let port = match (uri.port().map(|port| port.as_u16()), is_scheme_secure(uri)) {
+        (Some(443), true) | (Some(80), false) => None,
+        _ => uri.port(),
+    };
+    let value = if port.is_some() {
+        let Some(authority) = uri.authority() else {
+            return Err(Error::from_kind(ErrorKind::UserAbsoluteUriRequired));
+        };
+        let authority = authority.as_str();
+        authority
+            .rsplit_once('@')
+            .map_or(authority, |(_, host_and_port)| host_and_port)
+    } else {
+        host
+    };
+
+    HeaderValue::from_str(value).map_err(|error| Error::new(ErrorKind::SendRequest, error))
+}
+
+/// Returns whether the URI scheme uses a secure transport by default.
+fn is_scheme_secure(uri: &Uri) -> bool {
+    matches!(uri.scheme_str(), Some("https" | "wss"))
 }
