@@ -115,26 +115,25 @@ enum Alpn {
 #[derive(Clone)]
 struct PoisonPill(Arc<AtomicBool>);
 
-/// A boxed asynchronous connection with associated information.
-#[derive(Debug)]
-struct Extra(Box<dyn ExtraInner>);
+/// Shared connection metadata copied into each response's extensions.
+#[derive(Debug, Clone)]
+struct Extra(Arc<dyn ExtraInner>);
 
 /// Inner trait for extra connection information.
 trait ExtraInner: Send + Sync + Debug {
-    fn clone_box(&self) -> Box<dyn ExtraInner>;
     fn set(&self, res: &mut Extensions);
 }
 
 // This indirection allows the `Connected` to have a type-erased "extra" value,
 // while that type still knows its inner extra type. This allows the correct
 // TypeId to be used when inserting into `res.extensions_mut()`.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 struct ExtraEnvelope<T>(T);
 
 /// Chains two `ExtraInner` implementations together, inserting both into
 /// the extensions.
 #[derive(Debug)]
-struct ExtraChain<T>(Box<dyn ExtraInner>, T);
+struct ExtraChain<T>(Arc<dyn ExtraInner>, T);
 
 /// Information about an HTTP proxy identity.
 #[derive(Debug, Default, Clone)]
@@ -151,7 +150,7 @@ struct ProxyIdentity {
 #[derive(Debug, Clone)]
 pub struct Connected {
     alpn: Alpn,
-    proxy: Box<ProxyIdentity>,
+    proxy: Arc<ProxyIdentity>,
     extra: Option<Extra>,
     poisoned: PoisonPill,
 }
@@ -330,7 +329,7 @@ impl Connected {
     pub fn new() -> Connected {
         Connected {
             alpn: Alpn::None,
-            proxy: Box::new(ProxyIdentity::default()),
+            proxy: Arc::new(ProxyIdentity::default()),
             extra: None,
             poisoned: PoisonPill::healthy(),
         }
@@ -339,9 +338,9 @@ impl Connected {
     /// Set extra connection information to be set in the extensions of every `Response`.
     pub fn extra<T: Clone + Send + Sync + Debug + 'static>(mut self, extra: T) -> Connected {
         if let Some(prev) = self.extra {
-            self.extra = Some(Extra(Box::new(ExtraChain(prev.0, extra))));
+            self.extra = Some(Extra(Arc::new(ExtraChain(prev.0, extra))));
         } else {
-            self.extra = Some(Extra(Box::new(ExtraEnvelope(extra))));
+            self.extra = Some(Extra(Arc::new(ExtraEnvelope(extra))));
         }
         self
     }
@@ -356,14 +355,15 @@ impl Connected {
 
     /// Set that the proxy was used for this connected transport.
     pub fn proxy(mut self, proxy: Intercept) -> Connected {
-        self.proxy.is_proxied = true;
+        let identity = Arc::make_mut(&mut self.proxy);
+        identity.is_proxied = true;
 
         if let Some(auth) = proxy.basic_auth() {
-            self.proxy.auth.replace(auth.clone());
+            identity.auth.replace(auth.clone());
         }
 
         if let Some(headers) = proxy.custom_headers() {
-            self.proxy.headers.replace(headers.clone());
+            identity.headers.replace(headers.clone());
         }
 
         self
@@ -428,22 +428,12 @@ impl Extra {
     }
 }
 
-impl Clone for Extra {
-    fn clone(&self) -> Extra {
-        Extra(self.0.clone_box())
-    }
-}
-
 // ===== impl ExtraEnvelope =====
 
 impl<T> ExtraInner for ExtraEnvelope<T>
 where
     T: Clone + Send + Sync + Debug + 'static,
 {
-    fn clone_box(&self) -> Box<dyn ExtraInner> {
-        Box::new(self.clone())
-    }
-
     fn set(&self, res: &mut Extensions) {
         res.insert(self.0.clone());
     }
@@ -451,22 +441,72 @@ where
 
 // ===== impl ExtraChain =====
 
-impl<T: Clone> Clone for ExtraChain<T> {
-    fn clone(&self) -> Self {
-        ExtraChain(self.0.clone_box(), self.1.clone())
-    }
-}
-
 impl<T> ExtraInner for ExtraChain<T>
 where
     T: Clone + Send + Sync + Debug + 'static,
 {
-    fn clone_box(&self) -> Box<dyn ExtraInner> {
-        Box::new(self.clone())
-    }
-
     fn set(&self, res: &mut Extensions) {
         self.0.set(res);
         res.insert(self.1.clone());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::atomic::AtomicUsize;
+
+    use ::http::header::VIA;
+
+    use super::*;
+
+    /// Counts copies of user metadata, excluding shared handle clones.
+    #[derive(Debug)]
+    struct CloneCount(Arc<AtomicUsize>);
+
+    impl Clone for CloneCount {
+        fn clone(&self) -> Self {
+            self.0.fetch_add(1, Ordering::Relaxed);
+            Self(self.0.clone())
+        }
+    }
+
+    #[test]
+    fn connected_shares_metadata_without_changing_response_extras() {
+        let clones = Arc::new(AtomicUsize::new(0));
+        let original = Connected::new()
+            .extra(CloneCount(clones.clone()))
+            .extra(String::from("original"));
+        let changed = original.clone().extra(String::from("changed"));
+        let proxy = crate::Proxy::http("http://localhost:8080")
+            .unwrap()
+            .basic_auth("user", "password")
+            .custom_http_headers(HeaderMap::from_iter([(
+                VIA,
+                HeaderValue::from_static("1.1 localhost"),
+            )]))
+            .into_matcher();
+        let proxy = match proxy.intercept(&"http://localhost/".parse().unwrap()) {
+            Some(crate::proxy::Intercepted::Proxy(proxy)) => proxy,
+            _ => unreachable!("expected HTTP proxy"),
+        };
+        let changed = changed.proxy(proxy).negotiated_h2();
+        assert_eq!(clones.load(Ordering::Relaxed), 0);
+        assert!(!original.is_proxied());
+        assert!(!original.is_negotiated_h2());
+        assert_eq!(original.proxy_auth(), None);
+        assert_eq!(original.proxy_headers(), None);
+        assert!(changed.is_proxied());
+        assert!(changed.proxy_auth().is_some());
+        assert_eq!(changed.proxy_headers().unwrap()[VIA], "1.1 localhost");
+
+        for (connected, value) in [(&original, "original"), (&changed, "changed")] {
+            let mut extensions = Extensions::new();
+            connected.set_extras(&mut extensions);
+            assert_eq!(extensions.get::<String>().unwrap(), value);
+            assert!(extensions.get::<CloneCount>().is_some());
+        }
+        assert_eq!(clones.load(Ordering::Relaxed), 2);
+        changed.poison();
+        assert!(original.poisoned());
     }
 }

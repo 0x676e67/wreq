@@ -42,11 +42,11 @@ use std::{
         Arc, Weak,
         atomic::{AtomicBool, AtomicUsize, Ordering},
     },
-    task::{self, Poll},
+    task::{self, Poll, ready},
     time::{Duration, Instant},
 };
 
-use futures_util::future::{BoxFuture, Either};
+use futures_util::future::BoxFuture;
 use http::{Request, Response};
 use http_body::Body;
 use tokio::io::{AsyncRead, AsyncWrite};
@@ -245,20 +245,34 @@ where
 /// of the reuse-first delay.
 #[derive(Clone)]
 pub(super) struct PoolTarget {
-    /// Complete blueprint for the physical connection.
-    descriptor: ConnectionDescriptor,
+    /// Immutable configuration shared with retries and negotiation.
+    connection: Arc<ConnectionConfig>,
 
     /// Requested protocol selection mode.
     version: Ver,
 
     /// Whether this checkout can wait for existing pool state to become reusable.
     wait_for_reuse: bool,
+}
 
-    /// HTTP/1 handshake configuration for this request.
-    h1_builder: conn::http1::Builder,
+/// Immutable connection inputs shared by one request's checkout and retries.
+///
+/// Pool hits only clone the shared handle. A connection attempt clones the
+/// descriptor and prepares protocol builders after the reuse wait, so neither
+/// retries nor negotiation copy request-local options speculatively.
+pub(super) struct ConnectionConfig {
+    /// Physical connection blueprint and existing compatibility key.
+    pub(super) descriptor: ConnectionDescriptor,
 
-    /// HTTP/2 handshake configuration for this request.
-    h2_builder: conn::http2::Builder<Executor>,
+    /// Base HTTP/1 builder shared with the client configuration layer.
+    pub(super) h1_builder: Arc<conn::http1::Builder>,
+    /// Base HTTP/2 builder shared with the client configuration layer.
+    pub(super) h2_builder: Arc<conn::http2::Builder<Executor>>,
+
+    /// HTTP/1 overrides applied only for a new transport.
+    pub(super) http1_options: Option<wreq_proto::http1::Http1Options>,
+    /// HTTP/2 overrides applied only for a new transport.
+    pub(super) http2_options: Option<wreq_proto::http2::Http2Options>,
 }
 
 /// Factory that creates one protocol-specific service graph per destination group.
@@ -315,11 +329,7 @@ where
     B::Error: Into<BoxError>,
 {
     /// Checks out a protocol sender for `target`.
-    fn checkout(
-        &mut self,
-        target: PoolTarget,
-        enabled: bool,
-    ) -> BoxFuture<'static, Result<Pooled<B>, BoxError>>;
+    fn checkout(&mut self, target: PoolTarget, enabled: bool) -> Checkout<B>;
 
     /// Removes expired or closed idle connections for unlocked destruction.
     fn retain(&mut self, now: Instant, timeout: Option<Duration>) -> Option<DeferredDrop>;
@@ -422,6 +432,37 @@ type H2MakeFuture<B> = BoxFuture<'static, Result<Http2Client<B>, BoxError>>;
 
 /// Generation-aware checkout of the shared HTTP/2 sender.
 type H2Pooled<B> = Singled<H2MakeFuture<B>, Http2Client<B>>;
+
+/// Future joining an existing HTTP/2 singleton generation.
+type H2Checkout<B> = singleton::SingletonFuture<H2MakeFuture<B>, Http2Client<B>>;
+
+/// Defers checkout completion and resource destruction until the map is unlocked.
+///
+/// Existing HTTP/2 generations retain their concrete singleton future. Cold
+/// creation and HTTP/1 races keep the composed service future boxed. In either
+/// case, the entry remains active until it is transferred to the sender.
+enum Checkout<B>
+where
+    B: Body + Send + Unpin + 'static,
+    B::Data: Send,
+    B::Error: Into<BoxError>,
+{
+    /// Existing singleton work, without another box around its future.
+    Http2 {
+        /// Owns the sender clone or pending-generation participation.
+        future: H2Checkout<B>,
+        /// Redundant negotiated transports released on the first poll or drop.
+        discarded: Option<DeferredDrop>,
+        /// Keeps request metadata alive until outside the outer map lock.
+        _connection: Arc<ConnectionConfig>,
+        /// Drops after the singleton participant so cleanup sees its final state.
+        usage: Option<EntryUse>,
+        /// Whether the resulting sender belongs to a shared pool.
+        enabled: bool,
+    },
+    /// Composed cache or negotiation work, retaining its own scheduling state.
+    Service(BoxFuture<'static, Result<Pooled<B>, BoxError>>),
+}
 
 /// HTTP sender selected for one pool checkout.
 type PooledInner<B> = Negotiated<Cached<Http1Client<B>>, H2Pooled<B>>;
@@ -725,17 +766,13 @@ where
     /// pooling is disabled, the call creates a temporary entry for this request.
     pub(super) async fn checkout(
         &self,
-        descriptor: ConnectionDescriptor,
+        connection: Arc<ConnectionConfig>,
         version: Ver,
-        h1_builder: conn::http1::Builder,
-        h2_builder: conn::http2::Builder<Executor>,
     ) -> Result<Pooled<B>, BoxError> {
         let target = PoolTarget {
-            descriptor,
+            connection,
             version,
             wait_for_reuse: false,
-            h1_builder,
-            h2_builder,
         };
 
         let (future, discarded) = if self.inner.enabled {
@@ -903,13 +940,13 @@ where
 
     /// Uses the descriptor's complete compatibility identifier.
     fn key(&self, target: &PoolTarget) -> Self::Key {
-        target.descriptor.id()
+        target.connection.descriptor.id()
     }
 
     /// Builds only the pool components required by the target's protocol mode.
     fn service(&self, target: &PoolTarget) -> Self::Service {
         let pool = self.pool.clone();
-        let key = target.descriptor.id();
+        let key = target.connection.descriptor.id();
         let state = Arc::new(EntryState {
             uses: AtomicUsize::new(0),
             maintain: Box::new(move |identity| {
@@ -984,19 +1021,15 @@ where
     /// A reuse-first delay is enabled only when the entry already contains work
     /// that may yield a sender. [`EntryUse`] keeps the map entry alive until the
     /// checkout either fails or transfers ownership to [`Pooled`].
-    fn checkout(
-        &mut self,
-        mut target: PoolTarget,
-        enabled: bool,
-    ) -> BoxFuture<'static, Result<Pooled<B>, BoxError>> {
+    fn checkout(&mut self, mut target: PoolTarget, enabled: bool) -> Checkout<B> {
         target.wait_for_reuse = enabled && !self.is_empty();
         let service = self.service.clone();
         let usage = EntryUse::new(self.state.clone());
-        Box::pin(async move {
+        Checkout::Service(Box::pin(async move {
             Oneshot::new(service, target)
                 .await
                 .map(|service| Pooled::new(Negotiated::Left(service), enabled, usage))
-        })
+        }))
     }
 
     /// Removes closed or expired idle senders for unlocked destruction.
@@ -1051,28 +1084,23 @@ where
     ///
     /// A fixed HTTP/2 cold start never waits for HTTP/1-style reuse. Every
     /// participant still carries [`EntryUse`] until singleton checkout finishes.
-    fn checkout(
-        &mut self,
-        mut target: PoolTarget,
-        enabled: bool,
-    ) -> BoxFuture<'static, Result<Pooled<B>, BoxError>> {
+    fn checkout(&mut self, mut target: PoolTarget, enabled: bool) -> Checkout<B> {
         target.wait_for_reuse = false;
-        let future = match self.service.checkout() {
-            Some(future) => Either::Left(future),
-            None => Either::Right(Oneshot::new(self.service.clone(), target)),
-        };
         let usage = EntryUse::new(self.state.clone());
-        Box::pin(async move {
-            let service = match future {
-                Either::Left(future) => {
-                    future.await.map_err(|error| Box::new(error) as BoxError)?
-                }
-                Either::Right(future) => {
-                    future.await.map_err(|error| Box::new(error) as BoxError)?
-                }
+        if let Some(future) = self.service.checkout() {
+            return Checkout::Http2 {
+                future,
+                discarded: None,
+                _connection: target.connection,
+                usage: Some(usage),
+                enabled,
             };
+        }
+        let service = self.service.clone();
+        Checkout::Service(Box::pin(async move {
+            let service = Oneshot::new(service, target).await?;
             Ok(Pooled::new(Negotiated::Right(service), enabled, usage))
-        })
+        }))
     }
 
     /// Removes a completed HTTP/2 sender when it is closed or has expired idle.
@@ -1125,7 +1153,8 @@ impl<L, R, T, B> Entry<B> for NegotiatedEntry<L, R, Established<T>>
 where
     L: Http1Pool<B>,
     L::Future: Send,
-    R: Http2Pool<B> + negotiate::Existing<Established<T>, Response = H2Pooled<B>>,
+    R: Http2Pool<B>
+        + negotiate::Existing<Established<T>, Response = H2Pooled<B>, Future = H2Checkout<B>>,
     R::Error: Into<BoxError>,
     R::Future: Send,
     T: Send + 'static,
@@ -1133,22 +1162,27 @@ where
     B::Data: Send,
     B::Error: Into<BoxError>,
 {
-    /// Clones the composed service and keeps the map entry active until completion.
-    fn checkout(
-        &mut self,
-        mut target: PoolTarget,
-        enabled: bool,
-    ) -> BoxFuture<'static, Result<Pooled<B>, BoxError>> {
+    /// Joins existing upgraded work or checks out through the composed service.
+    fn checkout(&mut self, mut target: PoolTarget, enabled: bool) -> Checkout<B> {
         target.wait_for_reuse = enabled && !self.is_empty();
-        let service = self.service.clone();
         let usage = EntryUse::new(self.state.clone());
-        Box::pin(async move {
+        if let Some((future, discarded)) = self.service.checkout_existing() {
+            return Checkout::Http2 {
+                future,
+                discarded: (!discarded.is_empty()).then(|| defer_drop(discarded)),
+                _connection: target.connection,
+                usage: Some(usage),
+                enabled,
+            };
+        }
+        let service = self.service.clone();
+        Checkout::Service(Box::pin(async move {
             let future = Oneshot::new(service, target);
             match future.await {
                 Ok(service) => Ok(Pooled::new(service, enabled, usage)),
                 Err(error) => Err(error),
             }
-        })
+        }))
     }
 
     /// Cleans pending negotiation results and both protocol pools.
@@ -1207,6 +1241,43 @@ where
     #[cfg(test)]
     fn protocol(&self) -> Ver {
         Ver::Auto
+    }
+}
+
+// ===== impl Checkout =====
+
+impl<B> Future for Checkout<B>
+where
+    B: Body + Send + Unpin + 'static,
+    B::Data: Send,
+    B::Error: Into<BoxError>,
+{
+    type Output = Result<Pooled<B>, BoxError>;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<Self::Output> {
+        match self.get_mut() {
+            Self::Http2 {
+                future,
+                discarded,
+                usage,
+                enabled,
+                ..
+            } => {
+                drop(discarded.take());
+                let result = ready!(Pin::new(future).poll(cx));
+                let Some(usage) = usage.take() else {
+                    return Poll::Pending;
+                };
+                // Pooled::new starts H2 accounting before releasing EntryUse and
+                // may run map maintenance, so it must execute outside the lock.
+                Poll::Ready(
+                    result
+                        .map(|service| Pooled::new(Negotiated::Right(service), *enabled, usage))
+                        .map_err(Into::into),
+                )
+            }
+            Self::Service(future) => future.as_mut().poll(cx),
+        }
     }
 }
 
@@ -1310,11 +1381,9 @@ where
 
     fn call(&mut self, target: PoolTarget) -> Self::Future {
         let PoolTarget {
-            descriptor,
+            connection,
             version,
             wait_for_reuse,
-            h1_builder,
-            h2_builder,
         } = target;
         let reuse_delay = if wait_for_reuse {
             self.reuse_delay.clone()
@@ -1336,10 +1405,20 @@ where
             if let Some(started) = &start_signal {
                 started.store(true, Ordering::Release);
             }
-            let io = Oneshot::new(connector, descriptor)
+            let io = Oneshot::new(connector, connection.descriptor.clone())
                 .await
                 .map_err(Into::into)?;
             let connected = io.connected();
+            let h1_builder = connection.h1_builder.as_ref().clone();
+            let h1_builder = match &connection.http1_options {
+                Some(options) => h1_builder.options(options.clone()),
+                None => h1_builder,
+            };
+            let h2_builder = connection.h2_builder.as_ref().clone();
+            let h2_builder = match &connection.http2_options {
+                Some(options) => h2_builder.options(options.clone()),
+                None => h2_builder,
+            };
             Ok(Established::new(
                 io,
                 connected,
@@ -1656,6 +1735,8 @@ fn clock_now(timer: &Timer) -> Instant {
 mod tests {
     use std::io;
 
+    use bytes::Bytes;
+    use http_body_util::Empty;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     use super::*;
@@ -1674,6 +1755,8 @@ mod tests {
         KeepsAlive,
         /// Accepts a request without producing response headers.
         StallsAfterRequest(Arc<tokio::sync::Notify>),
+        /// Counts HTTP/2 connection attempts and gates transport creation.
+        Http2(Arc<AtomicUsize>, Arc<tokio::sync::Semaphore>),
     }
 
     impl Service<ConnectionDescriptor> for TestConnector {
@@ -1692,6 +1775,25 @@ mod tests {
                 )
                 .into()))),
                 Self::Pending => Box::pin(std::future::pending()),
+                Self::Http2(calls, gate) => {
+                    calls.fetch_add(1, Ordering::Relaxed);
+                    let gate = gate.clone();
+                    Box::pin(async move {
+                        gate.acquire().await.unwrap().forget();
+                        let (client, server) = tokio::io::duplex(4096);
+                        tokio::spawn(async move {
+                            let service = hyper::service::service_fn(|_| async {
+                                Ok::<_, io::Error>(Response::new(Empty::<Bytes>::new()))
+                            });
+                            let _ = hyper::server::conn::http2::Builder::new(
+                                hyper_util::rt::TokioExecutor::new(),
+                            )
+                            .serve_connection(hyper_util::rt::TokioIo::new(server), service)
+                            .await;
+                        });
+                        Ok(client)
+                    })
+                }
                 Self::ClosesAfterResponse => Box::pin(async {
                     let (client, mut server) = tokio::io::duplex(1024);
                     tokio::spawn(async move {
@@ -1746,6 +1848,17 @@ mod tests {
         grouped_descriptor(Group::default())
     }
 
+    /// Supplies default protocol configuration for a test connection.
+    fn connection(descriptor: ConnectionDescriptor) -> Arc<ConnectionConfig> {
+        Arc::new(ConnectionConfig {
+            descriptor,
+            h1_builder: Arc::new(conn::http1::Builder::default()),
+            h2_builder: Arc::new(conn::http2::Builder::new(Executor::default())),
+            http1_options: None,
+            http2_options: None,
+        })
+    }
+
     /// Creates a descriptor with an explicit connection compatibility group.
     fn grouped_descriptor(group: Group) -> ConnectionDescriptor {
         ConnectionDescriptor::new(
@@ -1778,15 +1891,113 @@ mod tests {
 
         for version in [Ver::Http1, Ver::Http2, Ver::Auto] {
             let target = PoolTarget {
-                descriptor: descriptor(),
+                connection: connection(descriptor()),
                 version,
                 wait_for_reuse: false,
-                h1_builder: conn::http1::Builder::default(),
-                h2_builder: conn::http2::Builder::new(Executor::default()),
             };
             let entry = pool.inner.targeter.service(&target);
 
             assert_eq!(entry.protocol(), version);
+        }
+    }
+
+    #[tokio::test]
+    async fn http2_checkouts_preserve_generation_and_cancellation() {
+        for version in [Ver::Http2, Ver::Auto] {
+            let calls = Arc::new(AtomicUsize::new(0));
+            let gate = Arc::new(tokio::sync::Semaphore::new(0));
+            let pool = test_pool(TestConnector::Http2(calls.clone(), gate.clone()));
+            let checkout = || {
+                let target = PoolTarget {
+                    connection: connection(descriptor()),
+                    version,
+                    wait_for_reuse: false,
+                };
+                pool.inner
+                    .services
+                    .lock()
+                    .with_service(target, |entry, mut target| {
+                        assert_eq!(entry.protocol(), version);
+                        // Exercise the Auto graph without TLS by selecting H2 at
+                        // the transport stage, where ALPN would normally choose it.
+                        target.version = Ver::Http2;
+                        entry.checkout(target, true)
+                    })
+            };
+
+            let mut driver = tokio_test::task::spawn(checkout());
+            assert!(driver.poll().is_pending());
+            assert_eq!(calls.load(Ordering::Relaxed), 1);
+            let held = if version == Ver::Http2 {
+                let waiter = checkout();
+                assert!(matches!(waiter, Checkout::Http2 { .. }));
+                let mut waiter = tokio_test::task::spawn(waiter);
+                assert!(waiter.poll().is_pending());
+                drop(driver);
+                assert!(waiter.is_woken());
+                gate.add_permits(1);
+                let held = tokio::time::timeout(Duration::from_secs(1), waiter)
+                    .await
+                    .unwrap()
+                    .unwrap();
+                assert!(held.is_reused());
+                held
+            } else {
+                // Auto has no singleton generation until transport negotiation.
+                gate.add_permits(1);
+                tokio::time::timeout(Duration::from_secs(1), driver)
+                    .await
+                    .unwrap()
+                    .unwrap()
+            };
+
+            let mut checkouts = Vec::new();
+            for i in 0..100 {
+                let future = checkout();
+                assert!(matches!(future, Checkout::Http2 { .. }));
+                if i % 2 == 0 {
+                    checkouts.push(future);
+                }
+            }
+            for pooled in futures_util::future::join_all(checkouts).await {
+                assert!(pooled.unwrap().is_reused());
+            }
+            assert_eq!(calls.load(Ordering::Relaxed), 1);
+
+            let poisoned = checkout().await.unwrap();
+            poisoned.conn_info().poison();
+            drop(poisoned);
+            gate.add_permits(1);
+            let mut replacement = tokio::time::timeout(Duration::from_secs(1), checkout())
+                .await
+                .unwrap()
+                .unwrap();
+            assert!(!replacement.is_reused());
+            drop(held);
+            assert!(checkout().await.unwrap().is_reused());
+            assert_eq!(calls.load(Ordering::Relaxed), 2);
+            assert_eq!(pool.inner.services.lock().iter_mut().count(), 1);
+
+            let response = Oneshot::new(
+                &mut replacement,
+                Request::builder()
+                    .uri("http://localhost/")
+                    .body(crate::Body::default())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+            assert_eq!(response.version(), http::Version::HTTP_2);
+            replacement.conn_info().poison();
+            drop(replacement);
+            assert!(pool.inner.services.lock().is_empty());
+
+            let mut driver = tokio_test::task::spawn(checkout());
+            assert!(driver.poll().is_pending());
+            let waiter = checkout();
+            drop(driver);
+            drop(waiter);
+            assert!(pool.inner.services.lock().is_empty());
         }
     }
 
@@ -1803,12 +2014,7 @@ mod tests {
             true,
         );
         let pooled = pool
-            .checkout(
-                descriptor(),
-                Ver::Http1,
-                conn::http1::Builder::default(),
-                conn::http2::Builder::new(Executor::default()),
-            )
+            .checkout(connection(descriptor()), Ver::Http1)
             .await
             .expect("successful checkout");
 
@@ -1834,12 +2040,7 @@ mod tests {
             true,
         );
         let pooled = pool
-            .checkout(
-                descriptor(),
-                Ver::Http1,
-                conn::http1::Builder::default(),
-                conn::http2::Builder::new(Executor::default()),
-            )
+            .checkout(connection(descriptor()), Ver::Http1)
             .await
             .expect("successful checkout");
 
@@ -1854,31 +2055,16 @@ mod tests {
     #[tokio::test]
     async fn checkouts_remove_empty_map_entries() {
         let pool = test_pool(TestConnector::Fails);
-        let result = pool
-            .checkout(
-                descriptor(),
-                Ver::Http1,
-                conn::http1::Builder::default(),
-                conn::http2::Builder::new(Executor::default()),
-            )
-            .await;
+        let result = pool.checkout(connection(descriptor()), Ver::Http1).await;
         assert!(result.is_err());
         assert!(pool.inner.services.lock().is_empty());
         assert!(!pool.inner.expire.is_running());
 
         let pool = test_pool(TestConnector::Pending);
-        let mut first = tokio_test::task::spawn(pool.checkout(
-            descriptor(),
-            Ver::Http1,
-            conn::http1::Builder::default(),
-            conn::http2::Builder::new(Executor::default()),
-        ));
-        let mut second = tokio_test::task::spawn(pool.checkout(
-            descriptor(),
-            Ver::Http1,
-            conn::http1::Builder::default(),
-            conn::http2::Builder::new(Executor::default()),
-        ));
+        let mut first =
+            tokio_test::task::spawn(pool.checkout(connection(descriptor()), Ver::Http1));
+        let mut second =
+            tokio_test::task::spawn(pool.checkout(connection(descriptor()), Ver::Http1));
         assert!(first.poll().is_pending());
         assert!(second.poll().is_pending());
         drop(first);
@@ -1889,12 +2075,7 @@ mod tests {
 
         let pool = test_pool(TestConnector::ClosesAfterResponse);
         let mut pooled = pool
-            .checkout(
-                descriptor(),
-                Ver::Http1,
-                conn::http1::Builder::default(),
-                conn::http2::Builder::new(Executor::default()),
-            )
+            .checkout(connection(descriptor()), Ver::Http1)
             .await
             .expect("successful checkout");
         std::future::poll_fn(|cx| pooled.poll_ready(cx))
@@ -1923,12 +2104,7 @@ mod tests {
         let request_read = Arc::new(tokio::sync::Notify::new());
         let pool = test_pool(TestConnector::StallsAfterRequest(request_read.clone()));
         let mut pooled = pool
-            .checkout(
-                descriptor(),
-                Ver::Http1,
-                conn::http1::Builder::default(),
-                conn::http2::Builder::new(Executor::default()),
-            )
+            .checkout(connection(descriptor()), Ver::Http1)
             .await
             .expect("successful checkout");
         std::future::poll_fn(|cx| pooled.poll_ready(cx))
@@ -1955,12 +2131,7 @@ mod tests {
         let pool = test_pool(TestConnector::KeepsAlive);
         let descriptor = grouped_descriptor(Group::new("active"));
         let mut first = pool
-            .checkout(
-                descriptor.clone(),
-                Ver::Http1,
-                conn::http1::Builder::default(),
-                conn::http2::Builder::new(Executor::default()),
-            )
+            .checkout(connection(descriptor.clone()), Ver::Http1)
             .await
             .expect("first checkout");
         std::future::poll_fn(|cx| first.poll_ready(cx))
@@ -1998,12 +2169,7 @@ mod tests {
         drop(first);
 
         let second = pool
-            .checkout(
-                descriptor,
-                Ver::Http1,
-                conn::http1::Builder::default(),
-                conn::http2::Builder::new(Executor::default()),
-            )
+            .checkout(connection(descriptor), Ver::Http1)
             .await
             .expect("second checkout");
 
@@ -2045,23 +2211,13 @@ mod tests {
         let second_key = second_descriptor.id();
 
         let mut first = pool
-            .checkout(
-                first_descriptor,
-                Ver::Http1,
-                conn::http1::Builder::default(),
-                conn::http2::Builder::new(Executor::default()),
-            )
+            .checkout(connection(first_descriptor), Ver::Http1)
             .await
             .expect("first checkout");
         send(&mut first).await;
 
         let mut second = pool
-            .checkout(
-                second_descriptor,
-                Ver::Http1,
-                conn::http1::Builder::default(),
-                conn::http2::Builder::new(Executor::default()),
-            )
+            .checkout(connection(second_descriptor), Ver::Http1)
             .await
             .expect("second checkout");
         send(&mut second).await;

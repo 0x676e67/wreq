@@ -45,7 +45,6 @@ use crate::{
 /// HTTP/1 permits one active checkout. The pool moves this value into a request
 /// and receives it back after the response releases the checkout.
 pub struct Http1Client<B> {
-    conn_info: Connected,
     tx: SetHost<Http1RequestTarget<B>>,
     idle_at: Instant,
     timer: Timer,
@@ -415,7 +414,6 @@ where
         }
 
         Ok(Self {
-            conn_info: connected.clone(),
             tx: SetHost::new(Http1RequestTarget::new(tx, connected), set_host),
             idle_at: clock_now(&timer),
             timer,
@@ -424,7 +422,7 @@ where
 
     /// Returns metadata for the underlying transport.
     pub fn conn_info(&self) -> &Connected {
-        &self.conn_info
+        &self.tx.inner().connected
     }
 
     /// Returns whether the protocol sender is immediately ready.
@@ -439,7 +437,7 @@ where
 
     /// Returns whether the exclusive sender can safely re-enter the cache.
     pub fn is_open(&self) -> bool {
-        !self.conn_info.poisoned() && self.tx.inner().inner().is_ready()
+        !self.conn_info().poisoned() && self.is_ready()
     }
 
     /// Returns whether the sender is healthy and within its idle timeout.

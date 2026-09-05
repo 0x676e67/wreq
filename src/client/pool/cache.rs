@@ -777,18 +777,9 @@ impl<S> Shared<S> {
     where
         F: FnMut(&mut S) -> bool,
     {
-        let mut discarded = Vec::new();
-        let mut index = 0;
-
-        while index < self.services.len() {
-            if predicate(&mut self.services[index]) {
-                index += 1;
-            } else {
-                discarded.push(self.services.remove(index));
-            }
-        }
-
-        discarded
+        self.services
+            .extract_if(.., |service| !predicate(service))
+            .collect()
     }
 
     /// Removes every unreserved idle service.
@@ -1220,6 +1211,27 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(poll_ready_count.load(Ordering::SeqCst), before + 1);
+
+        // Bulk pruning must preserve the order used by subsequent LIFO reuse.
+        let discarded = {
+            let mut shared = cache.shared.lock();
+            shared.services.extend(0..64);
+            let mut visited = Vec::new();
+            let discarded = shared.retain_services(|value| {
+                visited.push(*value);
+                *value % 3 == 0
+            });
+            assert_eq!(visited, (0..64).collect::<Vec<_>>());
+            assert_eq!(
+                shared.services,
+                (0..64).filter(|value| value % 3 == 0).collect::<Vec<_>>()
+            );
+            discarded
+        };
+        assert_eq!(
+            discarded,
+            (0..64).filter(|value| value % 3 != 0).collect::<Vec<_>>()
+        );
     }
 }
 

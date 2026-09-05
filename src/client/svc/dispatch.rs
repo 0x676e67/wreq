@@ -58,12 +58,14 @@ pub enum AttemptError<B> {
         error: Error,
         request: Box<ConfiguredRequest<B>>,
     },
+
     /// Protocol dispatch returned a request before encoding began.
     Unsent {
         error: Error,
         request: Box<ConfiguredRequest<B>>,
         connection_reused: bool,
     },
+
     /// Failure that cannot be retried by the internal middleware.
     Terminal(Error),
 }
@@ -146,26 +148,16 @@ where
         Box::pin(async move {
             let ConfiguredRequest {
                 request,
-                descriptor,
-                h1_builder,
-                h2_builder,
+                connection,
             } = request;
             #[cfg(feature = "cookies")]
             let mut request = request;
-            let version = match descriptor.version() {
+            let version = match connection.descriptor.version() {
                 Some(Version::HTTP_10 | Version::HTTP_11) => Ver::Http1,
                 Some(Version::HTTP_2) => Ver::Http2,
                 _ => this.version,
             };
-            let checkout = this
-                .pool
-                .checkout(
-                    descriptor.clone(),
-                    version,
-                    h1_builder.clone(),
-                    h2_builder.clone(),
-                )
-                .await;
+            let checkout = this.pool.checkout(connection.clone(), version).await;
             let mut pooled = match checkout {
                 Ok(pooled) => pooled,
                 Err(error) if pool::is_canceled(&*error) => {
@@ -173,9 +165,7 @@ where
                         error: Error::new(ErrorKind::Connect, error),
                         request: Box::new(ConfiguredRequest {
                             request,
-                            descriptor,
-                            h1_builder,
-                            h2_builder,
+                            connection,
                         }),
                     });
                 }
@@ -236,9 +226,7 @@ where
                                 .with_connect_info(connect_info),
                             request: Box::new(ConfiguredRequest {
                                 request,
-                                descriptor,
-                                h1_builder,
-                                h2_builder,
+                                connection,
                             }),
                             connection_reused,
                         })

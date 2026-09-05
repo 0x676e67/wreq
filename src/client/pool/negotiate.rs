@@ -281,6 +281,15 @@ impl<L: Clone, R: Clone, S> Clone for Negotiate<L, R, S> {
 }
 
 impl<L, R, S> Negotiate<L, R, S> {
+    /// Joins existing upgraded work without invoking the fallback service.
+    /// Returns redundant transports for destruction outside any caller-held lock.
+    pub(super) fn checkout_existing(&self) -> Option<(R::Future, VecDeque<S>)>
+    where
+        R: Existing<S>,
+    {
+        checkout_existing(&self.upgrade, &mut self.pending.lock())
+    }
+
     /// Borrows the fallback pool.
     pub(super) fn fallback(&self) -> &L {
         &self.fallback
@@ -442,19 +451,29 @@ where
 {
     let (selection, discarded) = {
         let mut pending = pending.lock();
-        let selection = match upgrade.checkout() {
-            Some(future) => Selection::Existing(future),
+        match checkout_existing(upgrade, &mut pending) {
+            Some((future, discarded)) => (Selection::Existing(future), discarded),
             None => match pending.pop_front() {
-                Some(service) => Selection::Pending(service),
-                None => Selection::Fallback,
+                Some(service) => (Selection::Pending(service), std::mem::take(&mut *pending)),
+                None => (Selection::Fallback, VecDeque::new()),
             },
-        };
-        let discarded =
-            (!matches!(&selection, Selection::Fallback)).then(|| std::mem::take(&mut *pending));
-        (selection, discarded)
+        }
     };
     drop(discarded);
     selection
+}
+
+/// Selects an existing generation and detaches transports made redundant by it.
+fn checkout_existing<R, S>(
+    upgrade: &R,
+    pending: &mut VecDeque<S>,
+) -> Option<(R::Future, VecDeque<S>)>
+where
+    R: Existing<S>,
+{
+    upgrade
+        .checkout()
+        .map(|future| (future, std::mem::take(pending)))
 }
 
 /// Broadcasts that an upgraded connection has entered the pending queue.
@@ -835,6 +854,12 @@ mod tests {
             upgrade,
             pending: pending.clone(),
         };
+
+        let (existing, discarded) = negotiate.checkout_existing().unwrap();
+        assert_eq!(discarded, ["redundant-a", "redundant-b"]);
+        assert_eq!(*existing.await.unwrap().inner(), "existing");
+        assert!(pending.lock().is_empty());
+        pending.lock().extend(["redundant-a", "redundant-b"]);
 
         let Negotiated::Right(service) = Oneshot::new(negotiate, ()).await.unwrap() else {
             panic!("existing upgraded service should be preferred");

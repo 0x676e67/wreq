@@ -4,9 +4,11 @@
 //! [`retry::RetryUnsent`] retries only requests returned before encoding, and
 //! [`dispatch::Dispatch`] performs one checkout and dispatch attempt.
 
+use std::sync::Arc;
+
 use http::Request;
 
-use crate::{conn::descriptor::ConnectionDescriptor, rt::Executor};
+use super::pool::ConnectionConfig;
 
 pub(super) mod configure;
 pub(super) mod dispatch;
@@ -26,7 +28,5 @@ pub(super) type Stack<C, B> = configure::Configure<retry::RetryUnsent<dispatch::
 /// the same request to [`retry::RetryUnsent`] without cloning its body.
 pub struct ConfiguredRequest<B> {
     request: Request<B>,
-    descriptor: ConnectionDescriptor,
-    h1_builder: wreq_proto::conn::http1::Builder,
-    h2_builder: wreq_proto::conn::http2::Builder<Executor>,
+    connection: Arc<ConnectionConfig>,
 }
