@@ -27,7 +27,7 @@ use tokio::{
     io::{AsyncRead, AsyncWrite},
     sync::oneshot,
 };
-use tower::{BoxError, Layer, Service, ServiceBuilder};
+use tower::{BoxError, Layer, Service};
 use wreq_proto::{body::Incoming, conn, rt::Executor as _};
 
 use super::{Established, SendError, clock_now, is_expired};
@@ -333,7 +333,7 @@ where
                         return Poll::Ready(Err(HandshakeStateError.into()));
                     };
 
-                    self.state = Http1ConnectState::Handshaking(Box::pin(establish_http1(
+                    self.state = Http1ConnectState::Handshaking(Box::pin(Http1Client::handshake(
                         established,
                         exec,
                         timer,
@@ -376,6 +376,52 @@ where
     B::Data: Send,
     B::Error: Into<BoxError>,
 {
+    /// Handshakes a transport and returns a ready HTTP/1 sender.
+    /// Starts the driver before waiting for readiness, preserving its error if
+    /// the sender closes during setup.
+    async fn handshake<T>(
+        established: Established<T>,
+        exec: Executor,
+        timer: Timer,
+        set_host: bool,
+    ) -> Result<Self, BoxError>
+    where
+        T: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+        B: Unpin,
+    {
+        let Established {
+            io,
+            connected,
+            h1_builder,
+            ..
+        } = established;
+
+        let (mut tx, connection) = h1_builder.handshake(io).await?;
+        let (error_tx, error_rx) = oneshot::channel();
+        exec.execute(async move {
+            if let Err(error) = connection.with_upgrades().await {
+                debug!("client connection error: {error:?}");
+                let _ = error_tx.send(error);
+            }
+        });
+
+        match tx.ready().await {
+            Ok(()) => drop(error_rx),
+            Err(error) if error.is_closed() => match error_rx.await {
+                Ok(connection_error) => return Err(connection_error.into()),
+                Err(_) => return Err(error.into()),
+            },
+            Err(error) => return Err(error.into()),
+        }
+
+        Ok(Self {
+            conn_info: connected.clone(),
+            tx: SetHost::new(Http1RequestTarget::new(tx, connected), set_host),
+            idle_at: clock_now(&timer),
+            timer,
+        })
+    }
+
     /// Returns metadata for the underlying transport.
     pub fn conn_info(&self) -> &Connected {
         &self.conn_info
@@ -430,55 +476,6 @@ impl fmt::Display for HandshakeStateError {
 }
 
 impl std::error::Error for HandshakeStateError {}
-
-/// Handshakes an HTTP/1 transport and starts its connection driver.
-async fn establish_http1<T, B>(
-    established: Established<T>,
-    exec: Executor,
-    timer: Timer,
-    set_host: bool,
-) -> Result<Http1Client<B>, BoxError>
-where
-    T: AsyncRead + AsyncWrite + Unpin + Send + 'static,
-    B: Body + Send + Unpin + 'static,
-    B::Data: Send,
-    B::Error: Into<BoxError>,
-{
-    let Established {
-        io,
-        connected,
-        h1_builder,
-        ..
-    } = established;
-
-    let (mut tx, connection) = h1_builder.handshake(io).await?;
-    let (error_tx, error_rx) = oneshot::channel();
-    exec.execute(async move {
-        if let Err(error) = connection.with_upgrades().await {
-            debug!("client connection error: {error:?}");
-            let _ = error_tx.send(error);
-        }
-    });
-
-    match tx.ready().await {
-        Ok(()) => drop(error_rx),
-        Err(error) if error.is_closed() => match error_rx.await {
-            Ok(connection_error) => return Err(connection_error.into()),
-            Err(_) => return Err(error.into()),
-        },
-        Err(error) => return Err(error.into()),
-    }
-
-    Ok(Http1Client {
-        conn_info: connected.clone(),
-        tx: ServiceBuilder::new()
-            .layer_fn(move |inner| SetHost::new(inner, set_host))
-            .layer_fn(move |inner| Http1RequestTarget::new(inner, connected.clone()))
-            .service(tx),
-        idle_at: clock_now(&timer),
-        timer,
-    })
-}
 
 /// Converts an absolute URI to origin-form while preserving path and query.
 fn origin_form(uri: &mut Uri) -> Result<(), Error> {

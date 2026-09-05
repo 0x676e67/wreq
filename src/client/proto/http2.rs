@@ -1,6 +1,7 @@
 //! HTTP/2 handshake, sender, and pooled connection lifecycle.
 
 use std::{
+    future::Future,
     marker::PhantomData,
     sync::{
         Arc,
@@ -133,7 +134,7 @@ where
         let future = self.service.call(target);
         let exec = self.exec.clone();
         let timer = self.timer.clone();
-        Box::pin(async move { establish_http2(future.await?, exec, timer).await })
+        Box::pin(Http2Client::handshake(future, exec, timer))
     }
 }
 
@@ -224,6 +225,38 @@ impl<B> Http2Client<B>
 where
     B: Body + 'static,
 {
+    /// Awaits a transport and returns a handshaken HTTP/2 sender.
+    /// Starts the connection driver before waiting for sender readiness.
+    async fn handshake<F, T>(future: F, exec: Executor, timer: Timer) -> Result<Self, BoxError>
+    where
+        F: Future<Output = Result<Established<T>, BoxError>>,
+        T: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+        B: Send + Unpin,
+        B::Data: Send,
+        B::Error: Into<BoxError>,
+    {
+        let Established {
+            io,
+            connected,
+            h2_builder,
+            ..
+        } = future.await?;
+        let (mut tx, connection) = h2_builder.handshake(io).await?;
+        exec.execute(async move {
+            if let Err(_error) = connection.await {
+                debug!("client connection error: {_error}");
+            }
+        });
+        tx.ready().await?;
+
+        Ok(Self {
+            conn_info: connected,
+            tx,
+            state: Arc::new(Http2State::new(clock_now(&timer))),
+            timer,
+        })
+    }
+
     /// Returns metadata for the underlying transport.
     pub fn conn_info(&self) -> &Connected {
         &self.conn_info
@@ -288,38 +321,4 @@ where
     fn call(&mut self, req: Request<B>) -> Self::Future {
         Box::pin(self.tx.try_send_request(req).map_err(SendError::protocol))
     }
-}
-
-/// Handshakes an HTTP/2 transport and starts its connection driver.
-async fn establish_http2<T, B>(
-    established: Established<T>,
-    exec: Executor,
-    timer: Timer,
-) -> Result<Http2Client<B>, BoxError>
-where
-    T: AsyncRead + AsyncWrite + Unpin + Send + 'static,
-    B: Body + Send + Unpin + 'static,
-    B::Data: Send,
-    B::Error: Into<BoxError>,
-{
-    let Established {
-        io,
-        connected,
-        h2_builder,
-        ..
-    } = established;
-    let (mut tx, connection) = h2_builder.handshake(io).await?;
-    exec.execute(async move {
-        if let Err(_error) = connection.await {
-            debug!("client connection error: {_error}");
-        }
-    });
-    tx.ready().await?;
-
-    Ok(Http2Client {
-        conn_info: connected,
-        tx,
-        state: Arc::new(Http2State::new(clock_now(&timer))),
-        timer,
-    })
 }
