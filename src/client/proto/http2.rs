@@ -242,7 +242,8 @@ where
             ..
         } = established.await?;
 
-        let builder = config.h2_builder.as_ref().clone();
+        let (_, builder) = config.proto.as_ref();
+        let builder = builder.clone();
         let builder = match &config.http2_options {
             Some(options) => builder.options(options.clone()),
             None => builder,

@@ -60,8 +60,7 @@ pub struct Stack<S, B> {
         reason = "Keep the concrete Tower stack local without another alias"
     )]
     inner: MapErr<RetryUnsent<S>, fn(DispatchError<B>) -> BoxError>,
-    h1_builder: Arc<conn::http1::Builder>,
-    h2_builder: Arc<conn::http2::Builder<Executor>>,
+    proto: Arc<(conn::http1::Builder, conn::http2::Builder<Executor>)>,
 }
 
 /// A request paired with the connection configuration shared by its attempts.
@@ -116,9 +115,9 @@ where
 {
     pool: pool::Pool<C, B>,
     version: Ver,
-    exec: Executor,
     #[cfg(feature = "cookies")]
     cookie_store: RequestConfig<Arc<dyn CookieStore>>,
+    exec: Executor,
 }
 
 /// Failure from one pool checkout and send attempt.
@@ -145,14 +144,14 @@ pub fn layer<S, B>(
     h2_builder: conn::http2::Builder<Executor>,
     retry_unsent: bool,
 ) -> impl Layer<S, Service = Stack<S, B>> + Clone {
-    let h1_builder = Arc::new(h1_builder);
-    let h2_builder = Arc::new(h2_builder);
+    // Both builders share one lifetime. One Arc avoids a second allocation and
+    // separate reference-count updates on stack clones and pooled requests.
+    let proto = Arc::new((h1_builder, h2_builder));
 
     ServiceBuilder::new()
         .layer_fn(move |inner| Stack {
             inner,
-            h1_builder: h1_builder.clone(),
-            h2_builder: h2_builder.clone(),
+            proto: proto.clone(),
         })
         .map_err(DispatchError::into_error as fn(DispatchError<B>) -> BoxError)
         .layer_fn(move |inner| RetryUnsent {
@@ -168,8 +167,7 @@ impl<S: Clone, B> Clone for Stack<S, B> {
     fn clone(&self) -> Self {
         Self {
             inner: self.inner.clone(),
-            h1_builder: self.h1_builder.clone(),
-            h2_builder: self.h2_builder.clone(),
+            proto: self.proto.clone(),
         }
     }
 }
@@ -219,8 +217,7 @@ where
             request,
             connection: Arc::new(ConnectionConfig {
                 descriptor,
-                h1_builder: self.h1_builder.clone(),
-                h2_builder: self.h2_builder.clone(),
+                proto: self.proto.clone(),
                 http1_options,
                 http2_options,
             }),
@@ -266,32 +263,39 @@ where
     type Output = Result<S::Response, DispatchError<B>>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        const MAX_ATTEMPTS_PER_POLL: usize = 2;
+
         let mut this = self.project();
-        let result = ready!(this.future.as_mut().poll(cx));
 
-        let mut request = match result {
-            Ok(response) => return Poll::Ready(Ok(response)),
-            Err(DispatchError::CheckoutCanceled {
-                error: _error,
-                request,
-            }) if *this.enabled => {
-                trace!("singleton connection batch canceled, trying again (reason={_error:?})");
-                *request
-            }
-            Err(DispatchError::Unsent {
-                error: _error,
-                request,
-                connection_reused: true,
-            }) if *this.enabled => {
-                trace!("unstarted request canceled, trying again (reason={_error:?})");
-                *request
-            }
-            Err(error) => return Poll::Ready(Err(error)),
-        };
+        // Retry recovery: https://github.com/hyperium/hyper-util/blob/d480d9f802c7062cb0aeece9ee0020ecce840521/src/client/legacy/client.rs#L241
+        // Poll budget: https://github.com/hyperium/hyper/blob/4f36f33a28709f93d693bc9f942b93b54d7032a4/src/proto/h1/dispatch.rs#L166
+        for _ in 0..MAX_ATTEMPTS_PER_POLL {
+            let mut request = match ready!(this.future.as_mut().poll(cx)) {
+                Ok(response) => return Poll::Ready(Ok(response)),
+                Err(DispatchError::CheckoutCanceled {
+                    error: _error,
+                    request,
+                }) if *this.enabled => {
+                    trace!("singleton connection batch canceled, trying again (reason={_error:?})");
+                    *request
+                }
+                Err(DispatchError::Unsent {
+                    error: _error,
+                    request,
+                    connection_reused: true,
+                }) if *this.enabled => {
+                    trace!("unstarted request canceled, trying again (reason={_error:?})");
+                    *request
+                }
+                Err(error) => return Poll::Ready(Err(error)),
+            };
 
-        *request.request.uri_mut() = this.original_uri.clone();
-        this.future
-            .set(Either::Right(Oneshot::new(this.service.clone(), request)));
+            *request.request.uri_mut() = this.original_uri.clone();
+            this.future
+                .set(Either::Right(Oneshot::new(this.service.clone(), request)));
+        }
+
+        // The next Oneshot has not registered a waker; resume it after yielding.
         cx.waker().wake_by_ref();
         Poll::Pending
     }
@@ -329,14 +333,12 @@ where
         exec: Executor,
         timer: Timer,
     ) -> Self {
-        let pool = pool::Pool::new(pool_config, connector, exec.clone(), timer, config.set_host);
-
         Self {
-            pool,
+            pool: pool::Pool::new(pool_config, connector, exec.clone(), timer, config.set_host),
             version: config.version,
-            exec,
             #[cfg(feature = "cookies")]
             cookie_store: RequestConfig::new(config.cookie_store),
+            exec,
         }
     }
 }
@@ -513,9 +515,12 @@ mod tests {
 
     #[tokio::test]
     async fn unsent_retries_keep_request_state_and_error_sources() {
-        for (enabled, reused, expected_calls) in
-            [(true, true, 2), (false, true, 1), (true, false, 1)]
-        {
+        for (enabled, reused, unsent, expected_calls) in [
+            (true, true, false, 1),
+            (true, true, true, 2),
+            (false, true, true, 1),
+            (true, false, true, 1),
+        ] {
             let calls = Arc::new(AtomicUsize::new(0));
             let attempts = calls.clone();
             let mut connection = None;
@@ -524,7 +529,7 @@ mod tests {
                 assert_eq!(request.request.body(), b"payload");
                 assert_eq!(request.connection.descriptor.uri(), "http://localhost/");
 
-                let result = if attempts.fetch_add(1, Ordering::Relaxed) == 0 {
+                let result = if attempts.fetch_add(1, Ordering::Relaxed) == 0 && unsent {
                     connection = Some(request.connection.clone());
                     *request.request.uri_mut() = Uri::from_static("/upload?part=1");
                     Err(DispatchError::Unsent {
@@ -533,10 +538,9 @@ mod tests {
                         connection_reused: reused,
                     })
                 } else {
-                    assert!(Arc::ptr_eq(
-                        connection.as_ref().unwrap(),
-                        &request.connection
-                    ));
+                    if let Some(connection) = &connection {
+                        assert!(Arc::ptr_eq(connection, &request.connection));
+                    }
                     Ok(())
                 };
                 future::ready(result)
@@ -554,17 +558,51 @@ mod tests {
                         .uri("http://localhost/upload?part=1")
                         .body(b"payload".to_vec())
                         .unwrap(),
-                )
-                .await;
+                );
+            let mut task = tokio_test::task::spawn(result);
+            let Poll::Ready(result) = task.poll() else {
+                panic!("a successful or terminal result should finish without yielding");
+            };
+            assert!(!task.is_woken());
 
             assert_eq!(calls.load(Ordering::Relaxed), expected_calls);
-            if expected_calls == 2 {
+            if !unsent || expected_calls == 2 {
                 result.unwrap();
             } else {
                 let error = result.unwrap_err();
                 assert!(error.is::<Error>());
                 assert_eq!(error.source().unwrap().to_string(), "unsent");
             }
+        }
+
+        let calls = Arc::new(AtomicUsize::new(0));
+        let attempts = calls.clone();
+        let service = tower::service_fn(move |request: PoolRequest<Vec<u8>>| {
+            attempts.fetch_add(1, Ordering::Relaxed);
+            future::ready(Err::<(), _>(DispatchError::CheckoutCanceled {
+                error: Error::from_kind(ErrorKind::Canceled),
+                request: Box::new(request),
+            }))
+        });
+        let mut task = tokio_test::task::spawn(
+            ServiceBuilder::new()
+                .layer(layer(
+                    conn::http1::Builder::default(),
+                    conn::http2::Builder::new(Executor::default()),
+                    true,
+                ))
+                .service(service)
+                .oneshot(
+                    Request::builder()
+                        .uri("http://localhost/")
+                        .body(Vec::new())
+                        .unwrap(),
+                ),
+        );
+        for expected in [2, 4] {
+            assert!(task.poll().is_pending());
+            assert!(task.is_woken());
+            assert_eq!(calls.load(Ordering::Relaxed), expected);
         }
     }
 }

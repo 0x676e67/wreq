@@ -51,11 +51,7 @@ use http::{Request, Response};
 use http_body::Body;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tower::{BoxError, Layer, Service, ServiceBuilder, util::Oneshot};
-use wreq_proto::{
-    body::Incoming,
-    conn::{self},
-    rt::Timer as _,
-};
+use wreq_proto::{body::Incoming, conn, rt::Timer as _};
 
 pub(super) use self::cache::Started;
 use self::{
@@ -260,10 +256,8 @@ pub(super) struct ConnectionConfig {
     /// Physical connection blueprint and existing compatibility key.
     pub(super) descriptor: ConnectionDescriptor,
 
-    /// Base HTTP/1 builder shared with the client configuration layer.
-    pub(super) h1_builder: Arc<conn::http1::Builder>,
-    /// Base HTTP/2 builder shared with the client configuration layer.
-    pub(super) h2_builder: Arc<conn::http2::Builder<Executor>>,
+    /// Base handshake builders shared with the client configuration layer.
+    pub(super) proto: Arc<(conn::http1::Builder, conn::http2::Builder<Executor>)>,
 
     /// HTTP/1 overrides applied only for a new transport.
     pub(super) http1_options: Option<wreq_proto::http1::Http1Options>,
@@ -1751,8 +1745,10 @@ mod tests {
     fn connection(descriptor: ConnectionDescriptor) -> Arc<ConnectionConfig> {
         Arc::new(ConnectionConfig {
             descriptor,
-            h1_builder: Arc::new(conn::http1::Builder::default()),
-            h2_builder: Arc::new(conn::http2::Builder::new(Executor::default())),
+            proto: Arc::new((
+                conn::http1::Builder::default(),
+                conn::http2::Builder::new(Executor::default()),
+            )),
             http1_options: None,
             http2_options: None,
         })

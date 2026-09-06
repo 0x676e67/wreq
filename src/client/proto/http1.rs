@@ -268,7 +268,8 @@ where
             ..
         } = established;
 
-        let builder = config.h1_builder.as_ref().clone();
+        let (builder, _) = config.proto.as_ref();
+        let builder = builder.clone();
         let builder = match &config.http1_options {
             Some(options) => builder.options(options.clone()),
             None => builder,
