@@ -673,6 +673,8 @@ where
         let (future, discarded) = if self.inner.enabled {
             let now = self.inner.now();
             let mut services = self.inner.services.lock();
+            // Inspect only this group on checkout. A global retained-group scan
+            // would add O(group count) work and nested locking to every pool hit.
             services.with_service(&self.inner.targeter, target, |service, target| {
                 let discarded = service.retain(now, self.inner.idle_timeout);
                 let future = service.checkout(target, true);
@@ -735,6 +737,9 @@ where
     fn maintain_entry(self: &Arc<Self>, key: &ConnectionId, identity: &Arc<EntryState>) {
         let (removed, discarded, schedule_expiration) = {
             let mut services = self.services.lock();
+            // Keep per-entry maintenance independent of the retained-group count.
+            // mark_retained checks other markers only before capacity eviction;
+            // periodic expiration still performs the global sweep.
             let state = services.get_mut(key).and_then(|entry| {
                 entry
                     .matches_identity(identity)
