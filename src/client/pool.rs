@@ -324,7 +324,9 @@ where
     B::Data: Send,
     B::Error: Into<BoxError>,
 {
-    /// Checks out a protocol sender for `target`.
+    /// Selects a checkout without polling service code under the map lock.
+    /// Polling or dropping the checkout may trigger identity-aware cleanup;
+    /// both must happen after the caller releases that lock.
     fn checkout(&mut self, target: PoolTarget, enabled: bool) -> Checkout<B>;
 
     /// Removes expired or closed idle connections for unlocked destruction.
@@ -671,13 +673,11 @@ where
         let (future, discarded) = if self.inner.enabled {
             let now = self.inner.now();
             let mut services = self.inner.services.lock();
-            let result = services.with_service(&self.inner.targeter, target, |service, target| {
+            services.with_service(&self.inner.targeter, target, |service, target| {
                 let discarded = service.retain(now, self.inner.idle_timeout);
                 let future = service.checkout(target, true);
                 (future, discarded)
-            });
-            services.prune_retained(|entry| entry.is_retained());
-            result
+            })
         } else {
             (
                 self.inner.targeter.service(&target).checkout(target, false),
@@ -735,8 +735,6 @@ where
     fn maintain_entry(self: &Arc<Self>, key: &ConnectionId, identity: &Arc<EntryState>) {
         let (removed, discarded, schedule_expiration) = {
             let mut services = self.services.lock();
-            services.prune_retained(|entry| entry.is_retained());
-
             let state = services.get_mut(key).and_then(|entry| {
                 entry
                     .matches_identity(identity)
@@ -752,7 +750,8 @@ where
                 }
                 Some((false, true)) => {
                     schedule_expiration = true;
-                    if let Some(evicted) = services.mark_retained(key) {
+                    if let Some(evicted) = services.mark_retained(key, |entry| entry.is_retained())
+                    {
                         let empty = services.get_mut(&evicted).is_some_and(|entry| {
                             discarded = entry.evict_retained();
                             entry.is_empty()

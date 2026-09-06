@@ -49,7 +49,7 @@ where
     /// Services indexed by connection compatibility key.
     entries: HashMap<T::Key, T::Service>,
 
-    /// Least-recently-used keys that currently retain reusable state.
+    /// Retained-group LRU; stale markers are reconciled before capacity eviction.
     retained: Option<LruCache<T::Key, ()>>,
 
     /// Names the borrowed factory and destination without owning either.
@@ -122,6 +122,8 @@ where
         let Some(retained) = &mut self.retained else {
             return;
         };
+        // LRU iteration borrows its ordering links. Collect keys before removal
+        // so pruning cannot invalidate the iterator or reorder surviving groups.
         retained
             .iter()
             .filter(|(key, ())| {
@@ -139,17 +141,30 @@ where
 
     /// Marks `key` as the most recently used retained group.
     ///
-    /// The returned key is the least recently used group displaced by the
-    /// configured limit. An unbounded map returns `None`.
-    pub(super) fn mark_retained(&mut self, key: &T::Key) -> Option<T::Key>
+    /// A full LRU removes markers rejected by `predicate` before eviction.
+    /// The returned key is the remaining least recently used group displaced by
+    /// the limit. An unbounded map returns `None`.
+    pub(super) fn mark_retained<F>(&mut self, key: &T::Key, predicate: F) -> Option<T::Key>
     where
         T::Key: Clone,
+        F: FnMut(&T::Service) -> bool,
     {
         let retained = self.retained.as_mut()?;
         if retained.get(key).is_some() {
             return None;
         }
-        retained.push(key.clone(), ()).map(|(key, ())| key)
+
+        // Checkout/return updates its own key. Other entries can lose reusable
+        // state independently, but only a full LRU needs that state reconciled.
+        // Scan all markers before eviction: a stale MRU must free capacity before
+        // a healthy LRU is displaced. Hot hits need neither this scan nor a Vec.
+        if retained.len() == retained.cap().get() {
+            self.prune_retained(predicate);
+        }
+        self.retained
+            .as_mut()?
+            .push(key.clone(), ())
+            .map(|(key, ())| key)
     }
 
     /// Stops counting `key` as a retained idle group.
@@ -212,8 +227,8 @@ mod tests {
 
     use super::*;
 
-    /// Counts when a mapped service is actually destroyed.
-    struct DropProbe(Arc<AtomicUsize>);
+    /// Models retained state and counts when a mapped service is destroyed.
+    struct DropProbe(Arc<AtomicUsize>, bool);
 
     impl Drop for DropProbe {
         fn drop(&mut self) {
@@ -233,7 +248,7 @@ mod tests {
         }
 
         fn service(&self, _dst: &usize) -> Self::Service {
-            DropProbe(self.0.clone())
+            DropProbe(self.0.clone(), true)
         }
     }
 
@@ -244,11 +259,11 @@ mod tests {
         let mut map = Map::new(NonZeroUsize::new(1));
 
         map.with_service(&targeter, 1, |_, _| ());
-        assert_eq!(map.mark_retained(&1), None);
+        assert_eq!(map.mark_retained(&1, |probe| probe.1), None);
         map.with_service(&targeter, 2, |_, _| ());
         assert_eq!(drops.load(Ordering::SeqCst), 0);
 
-        let evicted = map.mark_retained(&2);
+        let evicted = map.mark_retained(&2, |probe| probe.1);
         assert_eq!(evicted, Some(1));
         assert_eq!(drops.load(Ordering::SeqCst), 0);
 
@@ -260,5 +275,51 @@ mod tests {
         assert_eq!(drops.load(Ordering::SeqCst), 1);
         drop(removed);
         assert_eq!(drops.load(Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn retained_lru_checks_stale_markers_only_before_eviction() {
+        let drops = Arc::new(AtomicUsize::new(0));
+        let targeter = ProbeTarget(drops.clone());
+        let mut map = Map::new(NonZeroUsize::new(3));
+        let inspected = AtomicUsize::new(0);
+        let retains = |probe: &DropProbe| {
+            inspected.fetch_add(1, Ordering::Relaxed);
+            probe.1
+        };
+
+        for key in 1..=3 {
+            map.with_service(&targeter, key, |_, _| ());
+            assert_eq!(map.mark_retained(&key, retains), None);
+        }
+        for _ in 0..100 {
+            assert_eq!(map.mark_retained(&1, retains), None);
+        }
+        assert_eq!(inspected.load(Ordering::Relaxed), 0);
+
+        // Lose the most recent group's idle state without removing its entry.
+        // Its stale marker must not evict the healthy least recent group (2).
+        map.with_service(&targeter, 3, |probe, _| probe.1 = false);
+        map.with_service(&targeter, 4, |_, _| ());
+        assert_eq!(map.mark_retained(&4, retains), None);
+        assert_eq!(inspected.load(Ordering::Relaxed), 3);
+        assert_eq!(drops.load(Ordering::Relaxed), 0);
+
+        map.with_service(&targeter, 5, |_, _| ());
+        assert_eq!(map.mark_retained(&5, retains), Some(2));
+        assert_eq!(inspected.load(Ordering::Relaxed), 6);
+        assert_eq!(
+            map.retained
+                .as_ref()
+                .unwrap()
+                .iter()
+                .map(|(key, ())| *key)
+                .collect::<Vec<_>>(),
+            [5, 4, 1]
+        );
+        let removed = map.remove_if(&2, |_| true);
+        assert_eq!(drops.load(Ordering::Relaxed), 0);
+        drop(removed);
+        assert_eq!(drops.load(Ordering::Relaxed), 1);
     }
 }
