@@ -18,7 +18,7 @@
 //! any evicted service after releasing that lock:
 //!
 //! ```rust,ignore
-//! let (checkout, discarded) = map.with_service(target, |service, target| {
+//! let (checkout, discarded) = map.with_service(&targeter, target, |service, target| {
 //!     let discarded = service.retain(now, idle_timeout);
 //!     let checkout = service.checkout(target, true);
 //!     (checkout, discarded)
@@ -38,7 +38,7 @@ use lru::LruCache;
 /// to the caller so connection senders can be dropped only after that outer
 /// lock has been released.
 ///
-/// A miss creates one service through the configured [`Target`]. Successful
+/// A miss creates one service through the borrowed [`Target`]. Successful
 /// lookups refresh the optional idle-group LRU only when that key is already
 /// tracked. The pool coordinator decides when a service gains or loses reusable
 /// state and performs any resulting eviction outside this type.
@@ -52,11 +52,8 @@ where
     /// Least-recently-used keys that currently retain reusable state.
     retained: Option<LruCache<T::Key, ()>>,
 
-    /// Derives keys and creates missing services.
-    targeter: T,
-
-    /// Carries the destination type without owning a destination.
-    _dst: PhantomData<fn(Dst)>,
+    /// Names the borrowed factory and destination without owning either.
+    _target: PhantomData<fn(T, Dst)>,
 }
 
 /// Defines how destinations are grouped and how each group service is created.
@@ -84,27 +81,26 @@ where
     T::Key: Eq + Hash,
 {
     /// Creates a lazy map with an optional retained-group LRU limit.
-    pub(super) fn new(targeter: T, max_retained: Option<NonZeroUsize>) -> Self {
+    pub(super) fn new(max_retained: Option<NonZeroUsize>) -> Self {
         Self {
             entries: HashMap::new(),
             retained: max_retained.map(LruCache::new),
-            targeter,
-            _dst: PhantomData,
+            _target: PhantomData,
         }
     }
 
-    /// Applies `operation` to the service for `dst`.
-    pub(super) fn with_service<R, F>(&mut self, dst: Dst, operation: F) -> R
+    /// Applies `operation` to the service for `dst`, creating it on a miss.
+    /// The coordinator supplies its factory without copying it into the map.
+    pub(super) fn with_service<R, F>(&mut self, targeter: &T, dst: Dst, operation: F) -> R
     where
         T::Key: Clone,
         F: FnOnce(&mut T::Service, Dst) -> R,
     {
-        let key = self.targeter.key(&dst);
+        let key = targeter.key(&dst);
         if let Some(retained) = &mut self.retained {
             let _ = retained.get(&key);
         }
 
-        let targeter = &self.targeter;
         let service = self
             .entries
             .entry(key)
@@ -244,11 +240,12 @@ mod tests {
     #[test]
     fn removed_services_are_returned_for_deferred_drop() {
         let drops = Arc::new(AtomicUsize::new(0));
-        let mut map = Map::new(ProbeTarget(drops.clone()), NonZeroUsize::new(1));
+        let targeter = ProbeTarget(drops.clone());
+        let mut map = Map::new(NonZeroUsize::new(1));
 
-        map.with_service(1, |_, _| ());
+        map.with_service(&targeter, 1, |_, _| ());
         assert_eq!(map.mark_retained(&1), None);
-        map.with_service(2, |_, _| ());
+        map.with_service(&targeter, 2, |_, _| ());
         assert_eq!(drops.load(Ordering::SeqCst), 0);
 
         let evicted = map.mark_retained(&2);

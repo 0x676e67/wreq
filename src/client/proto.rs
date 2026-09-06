@@ -6,64 +6,48 @@
 //! itself.
 //!
 //! A successful handshake starts the protocol driver and returns a sender with
-//! the connection metadata needed by request middleware and pool health checks.
+//! the connection metadata needed by request preparation and pool health checks.
 
 pub(super) mod http1;
 pub(super) mod http2;
 
-use std::time::{Duration, Instant};
+use std::{
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use http::Request;
-use wreq_proto::{
-    conn::{self, TrySendError},
-    rt::Timer as _,
-};
+use wreq_proto::{conn::TrySendError, rt::Timer as _};
 
 use super::{
     error::{Error, ErrorKind},
-    pool::Ver,
+    pool::{ConnectionConfig, Ver},
 };
-use crate::{
-    conn::Connected,
-    rt::{Executor, Timer},
-};
+use crate::{conn::Connected, rt::Timer};
 
 /// Physical transport and request-specific protocol configuration.
 ///
 /// Connection making creates this value before protocol negotiation. The
 /// selected handshake consumes it exactly once and transfers the transport to
-/// the resulting protocol driver.
+/// the resulting protocol driver. Configuration stays shared until that
+/// handshake applies the selected protocol's overrides.
 pub(super) struct Established<T> {
-    /// Connected transport stream.
     io: T,
-
-    /// Metadata supplied by the connector.
     connected: Connected,
-
-    /// Requested protocol mode.
     version: Ver,
-
-    /// HTTP/1 configuration supplied by this connection attempt.
-    h1_builder: conn::http1::Builder,
-
-    /// HTTP/2 configuration supplied by this connection attempt.
-    h2_builder: conn::http2::Builder<Executor>,
-
-    /// Time the transport became available for handshake.
+    config: Arc<ConnectionConfig>,
     idle_at: Instant,
 }
 
 /// Error returned while preparing or dispatching a protocol request.
 ///
-/// Preparation failures originate in the HTTP/1 request middleware and never
+/// Preparation failures originate in the HTTP/1 sender and never
 /// carry a request for retry. Protocol failures preserve wreq-proto's optional
 /// unsent request so the outer client can retry only when encoding did not
 /// begin.
 #[derive(Debug)]
 pub enum SendError<B> {
-    /// Request middleware rejected the request before protocol dispatch.
     Request(Error),
-    /// The protocol dispatcher failed and may return the unsent request.
     Protocol(Box<TrySendError<Request<B>>>),
 }
 
@@ -75,16 +59,14 @@ impl<T> Established<T> {
         io: T,
         connected: Connected,
         version: Ver,
-        h1_builder: conn::http1::Builder,
-        h2_builder: conn::http2::Builder<Executor>,
+        config: Arc<ConnectionConfig>,
         idle_at: Instant,
     ) -> Self {
         Self {
             io,
             connected,
             version,
-            h1_builder,
-            h2_builder,
+            config,
             idle_at,
         }
     }

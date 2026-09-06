@@ -42,8 +42,8 @@ use crate::{
 
 /// Prepares and sends requests over one reusable HTTP/1 connection.
 ///
-/// HTTP/1 permits one active checkout. The pool moves this value into a request
-/// and receives it back after the response releases the checkout.
+/// HTTP/1 permits one active checkout. Dispatch returns this sender only after
+/// it becomes ready again; a busy sender is held by a readiness task.
 pub struct Connection<B> {
     tx: conn::http1::SendRequest<B>,
     conn_info: Connected,
@@ -264,11 +264,17 @@ where
         let Established {
             io,
             connected,
-            h1_builder,
+            config,
             ..
         } = established;
 
-        let (mut tx, connection) = h1_builder.handshake(io).await?;
+        let builder = config.h1_builder.as_ref().clone();
+        let builder = match &config.http1_options {
+            Some(options) => builder.options(options.clone()),
+            None => builder,
+        };
+        drop(config);
+        let (mut tx, connection) = builder.handshake(io).await?;
         let (error_tx, error_rx) = oneshot::channel();
         exec.execute(async move {
             if let Err(error) = connection.with_upgrades().await {

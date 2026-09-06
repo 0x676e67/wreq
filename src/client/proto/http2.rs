@@ -43,7 +43,7 @@ pub struct Connection<B> {
 /// This currently covers sender checkout through response headers. A complete
 /// stream lease must also follow the accepted request body, response body, and
 /// extended `CONNECT` upgrade until both stream directions terminate. The
-/// lifecycle is specified by smithy-rs's latest pool design:
+/// lifecycle follows the lease boundary in the smithy-rs pool design:
 /// <https://github.com/smithy-lang/smithy-rs/blob/connection-pool-main/rust-runtime/aws-smithy-http-client/docs/design/connection-pool.md>
 struct ConnectionState {
     checkouts: AtomicUsize,
@@ -52,8 +52,8 @@ struct ConnectionState {
 
 /// Layers HTTP/2 handshaking over an established-transport service.
 ///
-/// Negotiation selects this layer only after it has inspected the established
-/// transport. The resulting sender is cloneable and can be stored in the
+/// Fixed HTTP/2 wraps the connector directly; automatic mode supplies a
+/// transport selected by negotiation. Both return a cloneable sender for the
 /// pool's singleton service.
 #[derive(Clone)]
 pub struct ConnectLayer<B> {
@@ -62,11 +62,11 @@ pub struct ConnectLayer<B> {
     _body: PhantomData<fn(B)>,
 }
 
-/// Performs an HTTP/2 handshake for a negotiated transport.
+/// Performs an HTTP/2 handshake for a transport-producing service.
 ///
-/// The inner service yields the transport chosen by negotiation. This service
-/// consumes it once, starts the protocol driver, and returns the shared sender
-/// stored by the singleton pool.
+/// The inner service either connects directly or yields a negotiated transport.
+/// This service consumes it once, starts the protocol driver, and returns the
+/// shared sender stored by the singleton pool.
 pub struct Connect<S, B> {
     service: S,
     exec: Executor,
@@ -238,11 +238,17 @@ where
         let Established {
             io,
             connected,
-            h2_builder,
+            config,
             ..
         } = established.await?;
 
-        let (mut tx, connection) = h2_builder.handshake(io).await?;
+        let builder = config.h2_builder.as_ref().clone();
+        let builder = match &config.http2_options {
+            Some(options) => builder.options(options.clone()),
+            None => builder,
+        };
+        drop(config);
+        let (mut tx, connection) = builder.handshake(io).await?;
         exec.execute(async move {
             if let Err(_error) = connection.await {
                 debug!("client connection error: {_error}");

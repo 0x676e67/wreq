@@ -23,8 +23,8 @@
 //! 1. The map finds or creates the complete connection-compatibility group.
 //! 2. Fixed entries check only their protocol pool. Automatic entries first try reusable HTTP/2
 //!    state, then HTTP/1 reuse, and only then allow the connection maker to dial.
-//! 3. The established transport carries the request's protocol builders into the selected
-//!    handshake.
+//! 3. The established transport carries the request's shared protocol configuration into the
+//!    selected handshake.
 //! 4. A successful checkout transfers entry cleanup into [`Pooled`]. Cancellation instead removes
 //!    the same map entry when no shared work remains.
 //!
@@ -50,7 +50,7 @@ use futures_util::future::BoxFuture;
 use http::{Request, Response};
 use http_body::Body;
 use tokio::io::{AsyncRead, AsyncWrite};
-use tower::{BoxError, Layer, Service, util::Oneshot};
+use tower::{BoxError, Layer, Service, ServiceBuilder, util::Oneshot};
 use wreq_proto::{
     body::Incoming,
     conn::{self},
@@ -136,8 +136,8 @@ pub enum Ver {
 /// Immutable retention and acquisition policy for one connection pool.
 ///
 /// The client builder assembles this value once. Every mapped entry inherits the
-/// same idle policy and acquisition strategy while retaining request-specific
-/// protocol handshake builders in [`PoolTarget`].
+/// same idle policy and acquisition strategy; request-specific handshake inputs
+/// remain in [`PoolTarget`].
 #[derive(Clone, Copy, Debug)]
 pub struct Config {
     /// Maximum time an unused connection remains reusable.
@@ -235,8 +235,8 @@ where
 /// Destination and protocol configuration for one pool checkout.
 ///
 /// The descriptor is both the physical connection blueprint and the source of
-/// the map compatibility key. Handshake builders remain request-local because
-/// protocol settings may vary between otherwise compatible connection attempts.
+/// the map compatibility key. Shared base builders and request-local overrides
+/// travel together so each new connection uses its initiating request's settings.
 /// `wait_for_reuse` is computed by the existing entry, keeping cold starts free
 /// of the reuse-first delay.
 #[derive(Clone)]
@@ -254,8 +254,8 @@ pub(super) struct PoolTarget {
 /// Immutable connection inputs shared by one request's checkout and retries.
 ///
 /// Pool hits only clone the shared handle. A connection attempt clones the
-/// descriptor and prepares protocol builders after the reuse wait, so neither
-/// retries nor negotiation copy request-local options speculatively.
+/// descriptor after the reuse wait; the selected handshake alone prepares its
+/// builder, so retries and negotiation do not copy unused protocol options.
 pub(super) struct ConnectionConfig {
     /// Physical connection blueprint and existing compatibility key.
     pub(super) descriptor: ConnectionDescriptor,
@@ -294,7 +294,7 @@ where
     max_idle_per_host: usize,
 
     /// Optional delay before a cache miss starts connecting.
-    reuse_delay: Option<(Duration, Timer)>,
+    reuse_delay: Option<Duration>,
 
     /// Pool coordinator used for identity-aware entry cleanup.
     pool: Weak<PoolInner<C, B>>,
@@ -497,8 +497,10 @@ where
 {
     /// HTTP/1 cache checkout or HTTP/2 singleton checkout.
     inner: PooledInner<B>,
+
     /// Whether healthy senders should return to their pool.
     pool_enabled: bool,
+
     /// Runs after `inner` is dropped when this checkout discarded its sender.
     cleanup: EntryCleanupGuard,
 }
@@ -508,6 +510,7 @@ where
 /// The maker defers every expensive step until its future is polled. It may wait
 /// for a reuse-first window, then runs a cloned connector through `Oneshot` so
 /// readiness and `call` use the same service instance.
+#[derive(Clone)]
 struct ConnectionMaker<C>
 where
     C: Service<ConnectionDescriptor> + Clone + Send + Sync + 'static,
@@ -519,9 +522,9 @@ where
     connector: C,
 
     /// Optional delay giving connection reuse time to win.
-    reuse_delay: Option<(Duration, Timer)>,
+    reuse_delay: Option<Duration>,
 
-    /// Clock used to timestamp established transports.
+    /// Clock shared by reuse waits and transport timestamps.
     timer: Timer,
 }
 
@@ -538,48 +541,6 @@ struct ConnectFuture<T> {
     polled: bool,
     /// Separates waiting for policy from useful connection work.
     started: Option<Arc<AtomicBool>>,
-}
-
-/// Layer that turns established transports into cached HTTP/1 senders.
-///
-/// The layer applies [`http1::ConnectLayer`] before the cache and retains at most
-/// `max_idle` exclusive senders.
-struct Http1PoolLayer<B> {
-    /// Entry maintenance invoked after a background connection finishes.
-    entry_state: Arc<EntryState>,
-
-    /// Runtime used by protocol drivers and lost-race work.
-    exec: Executor,
-
-    /// Maximum idle senders retained by the cache.
-    max_idle: usize,
-
-    /// Clock used for idle timestamps.
-    timer: Timer,
-
-    /// Whether HTTP/1 should generate a missing `Host` field.
-    set_host: bool,
-
-    /// Carries the request-body type without owning a body.
-    _body: PhantomData<fn(B)>,
-}
-
-/// Layer that turns established transports into one shared HTTP/2 sender.
-///
-/// The layer applies [`http2::ConnectLayer`] before the singleton. An inspected transport
-/// is consumed exactly once; later checkouts clone the shared sender.
-struct Http2PoolLayer<B, T> {
-    /// Runtime used by the protocol driver.
-    exec: Executor,
-
-    /// Clock used for idle timestamps.
-    timer: Timer,
-
-    /// Carries the request-body type without owning a body.
-    _body: PhantomData<fn(B)>,
-
-    /// Carries the transport type selected by negotiation.
-    _io: PhantomData<fn(T)>,
 }
 
 /// RAII count keeping a mapped entry alive while checkout is pending.
@@ -637,78 +598,6 @@ where
     (!value.is_empty()).then(|| defer_drop(value))
 }
 
-// ===== impl PoolTargeter =====
-
-impl<C, B> Clone for PoolTargeter<C, B>
-where
-    C: Service<ConnectionDescriptor> + Clone + Send + Sync + 'static,
-    C::Response: AsyncRead + AsyncWrite + Connection + Unpin + Send + 'static,
-    C::Error: Into<BoxError>,
-    C::Future: Unpin + Send + 'static,
-    B: Body + Send + Unpin + 'static,
-    B::Data: Send,
-    B::Error: Into<BoxError>,
-{
-    fn clone(&self) -> Self {
-        Self {
-            connector: self.connector.clone(),
-            max_idle_per_host: self.max_idle_per_host,
-            reuse_delay: self.reuse_delay.clone(),
-            pool: self.pool.clone(),
-            exec: self.exec.clone(),
-            timer: self.timer.clone(),
-            set_host: self.set_host,
-            _body: PhantomData,
-        }
-    }
-}
-
-// ===== impl ConnectionMaker =====
-
-impl<C> Clone for ConnectionMaker<C>
-where
-    C: Service<ConnectionDescriptor> + Clone + Send + Sync + 'static,
-    C::Response: AsyncRead + AsyncWrite + Connection + Unpin + Send + 'static,
-    C::Error: Into<BoxError>,
-    C::Future: Unpin + Send + 'static,
-{
-    fn clone(&self) -> Self {
-        Self {
-            connector: self.connector.clone(),
-            reuse_delay: self.reuse_delay.clone(),
-            timer: self.timer.clone(),
-        }
-    }
-}
-
-// ===== impl Http1PoolLayer =====
-
-impl<B> Clone for Http1PoolLayer<B> {
-    fn clone(&self) -> Self {
-        Self {
-            entry_state: self.entry_state.clone(),
-            exec: self.exec.clone(),
-            max_idle: self.max_idle,
-            timer: self.timer.clone(),
-            set_host: self.set_host,
-            _body: PhantomData,
-        }
-    }
-}
-
-// ===== impl Http2PoolLayer =====
-
-impl<B, T> Clone for Http2PoolLayer<B, T> {
-    fn clone(&self) -> Self {
-        Self {
-            exec: self.exec.clone(),
-            timer: self.timer.clone(),
-            _body: PhantomData,
-            _io: PhantomData,
-        }
-    }
-}
-
 // ===== impl Pool =====
 
 impl<C, B> Pool<C, B>
@@ -735,7 +624,7 @@ where
             PoolStrategy::ReuseFirst(duration)
                 if config.is_enabled() && duration != Duration::ZERO && !timer.is_empty() =>
             {
-                Some((duration, timer.clone()))
+                Some(duration)
             }
             _ => None,
         };
@@ -756,7 +645,7 @@ where
                 enabled: config.is_enabled(),
                 idle_timeout: config.idle_timeout,
                 expire: Expire::new(pool.clone(), exec, timer),
-                services: Mutex::new(Map::new(targeter.clone(), config.max_pool_size)),
+                services: Mutex::new(Map::new(config.max_pool_size)),
                 targeter,
             }
         });
@@ -782,7 +671,7 @@ where
         let (future, discarded) = if self.inner.enabled {
             let now = self.inner.now();
             let mut services = self.inner.services.lock();
-            let result = services.with_service(target, |service, target| {
+            let result = services.with_service(&self.inner.targeter, target, |service, target| {
                 let discarded = service.retain(now, self.inner.idle_timeout);
                 let future = service.checkout(target, true);
                 (future, discarded)
@@ -897,7 +786,6 @@ where
     B::Data: Send,
     B::Error: Into<BoxError>,
 {
-    /// Removes expired senders and empty entries for unlocked destruction.
     fn retain(&self, now: Instant) -> Option<Duration> {
         let (has_retained, removed, discarded) = {
             let mut services = self.services.lock();
@@ -917,7 +805,6 @@ where
         self.expiration_interval(has_retained)
     }
 
-    /// Returns the idle inspection interval while reusable state remains.
     fn next(&self) -> Option<Duration> {
         let has_retained = self
             .services
@@ -926,6 +813,54 @@ where
             .any(|(_, entry)| entry.is_retained());
 
         self.expiration_interval(has_retained)
+    }
+}
+
+// ===== impl PoolTargeter =====
+
+impl<C, B> PoolTargeter<C, B>
+where
+    C: Service<ConnectionDescriptor> + Clone + Send + Sync + 'static,
+    C::Response: AsyncRead + AsyncWrite + Connection + Unpin + Send + 'static,
+    C::Error: Into<BoxError>,
+    C::Future: Unpin + Send + 'static,
+    B: Body + Send + Unpin + 'static,
+    B::Data: Send,
+    B::Error: Into<BoxError>,
+{
+    /// Composes an HTTP/1 cache around protocol handshaking.
+    /// Only the cache's background-completion callback owns an entry-state clone.
+    fn http1_layer<S, T>(
+        &self,
+        state: &Arc<EntryState>,
+    ) -> impl Layer<
+        S,
+        Service = cache::Cache<
+            http1::Connect<S, B>,
+            PoolTarget,
+            cache::events::WithExecutor<Executor>,
+        >,
+    >
+    where
+        S: Service<PoolTarget, Response = Established<T>, Error = BoxError> + Clone,
+        S::Future: Started + Unpin,
+        T: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+    {
+        ServiceBuilder::new()
+            .layer_fn(move |service| {
+                let state = state.clone();
+                cache::builder()
+                    .executor(self.exec.clone())
+                    .on_background_complete(move || (state.maintain)(&state))
+                    .max_idle(self.max_idle_per_host)
+                    .build(service)
+            })
+            .layer(http1::ConnectLayer::new(
+                self.exec.clone(),
+                self.timer.clone(),
+                self.set_host,
+            ))
+            .into_inner()
     }
 }
 
@@ -963,46 +898,41 @@ where
 
         let connect = ConnectionMaker {
             connector: self.connector.clone(),
-            reuse_delay: self.reuse_delay.clone(),
+            reuse_delay: self.reuse_delay,
             timer: self.timer.clone(),
-        };
-
-        let http1 = Http1PoolLayer {
-            entry_state: state.clone(),
-            exec: self.exec.clone(),
-            max_idle: self.max_idle_per_host,
-            timer: self.timer.clone(),
-            set_host: self.set_host,
-            _body: PhantomData,
         };
 
         // Fixed protocol modes use smaller service graphs; only Auto needs both
         // pools and negotiation: https://github.com/hyperium/hyper/issues/3948
         match target.version {
-            Ver::Http1 => Box::new(Http1Entry {
-                service: http1.layer(connect),
+            Ver::Http1 => {
+                let service = self.http1_layer(&state).layer(connect);
+                Box::new(Http1Entry { service, state })
+            }
+            Ver::Http2 => Box::new(Http2Entry {
+                service: ServiceBuilder::new()
+                    .layer_fn(singleton::Singleton::new)
+                    .layer(http2::ConnectLayer::new(
+                        self.exec.clone(),
+                        self.timer.clone(),
+                    ))
+                    .service(connect),
                 state,
             }),
-            Ver::Http2 => {
-                let maker =
-                    http2::ConnectLayer::new(self.exec.clone(), self.timer.clone()).layer(connect);
-                Box::new(Http2Entry {
-                    service: singleton::Singleton::new(maker),
-                    state,
-                })
-            }
             Ver::Auto => {
                 let inspect: fn(&Established<C::Response>) -> bool = Established::should_use_http2;
                 let service = negotiate::builder()
                     .connect(connect)
                     .inspect(inspect)
-                    .fallback(http1)
-                    .upgrade(Http2PoolLayer {
-                        exec: self.exec.clone(),
-                        timer: self.timer.clone(),
-                        _body: PhantomData,
-                        _io: PhantomData,
-                    })
+                    .fallback(self.http1_layer(&state))
+                    .upgrade(
+                        ServiceBuilder::new()
+                            .layer_fn(singleton::Singleton::new)
+                            .layer(http2::ConnectLayer::new(
+                                self.exec.clone(),
+                                self.timer.clone(),
+                            )),
+                    )
                     .build::<PoolTarget>();
 
                 Box::new(NegotiatedEntry { service, state })
@@ -1384,6 +1314,8 @@ where
     }
 }
 
+// ===== impl ConnectionMaker =====
+
 impl<C> Service<PoolTarget> for ConnectionMaker<C>
 where
     C: Service<ConnectionDescriptor> + Clone + Send + Sync + 'static,
@@ -1406,7 +1338,7 @@ where
             wait_for_reuse,
         } = target;
         let reuse_delay = if wait_for_reuse {
-            self.reuse_delay.clone()
+            self.reuse_delay
         } else {
             None
         };
@@ -1418,7 +1350,7 @@ where
         let timer = self.timer.clone();
 
         let future = Box::pin(async move {
-            if let Some((duration, timer)) = reuse_delay {
+            if let Some(duration) = reuse_delay {
                 timer.sleep(duration).await;
             }
 
@@ -1429,22 +1361,11 @@ where
                 .await
                 .map_err(Into::into)?;
             let connected = io.connected();
-            let h1_builder = connection.h1_builder.as_ref().clone();
-            let h1_builder = match &connection.http1_options {
-                Some(options) => h1_builder.options(options.clone()),
-                None => h1_builder,
-            };
-            let h2_builder = connection.h2_builder.as_ref().clone();
-            let h2_builder = match &connection.http2_options {
-                Some(options) => h2_builder.options(options.clone()),
-                None => h2_builder,
-            };
             Ok(Established::new(
                 io,
                 connected,
                 version,
-                h1_builder,
-                h2_builder,
+                connection,
                 clock_now(&timer),
             ))
         });
@@ -1473,51 +1394,6 @@ impl<T> Started for ConnectFuture<T> {
         self.started
             .as_ref()
             .map_or(self.polled, |started| started.load(Ordering::Acquire))
-    }
-}
-
-impl<B, S, T> Layer<S> for Http1PoolLayer<B>
-where
-    S: Service<PoolTarget, Response = Established<T>, Error = BoxError> + Clone,
-    S::Future: Started + Unpin,
-    T: AsyncRead + AsyncWrite + Unpin + Send + 'static,
-    B: Body + Send + Unpin + 'static,
-    B::Data: Send,
-    B::Error: Into<BoxError>,
-{
-    type Service =
-        cache::Cache<http1::Connect<S, B>, PoolTarget, cache::events::WithExecutor<Executor>>;
-
-    fn layer(&self, service: S) -> Self::Service {
-        let entry_state = self.entry_state.clone();
-        cache::builder()
-            .executor(self.exec.clone())
-            .on_background_complete(move || (entry_state.maintain)(&entry_state))
-            .max_idle(self.max_idle)
-            .build(
-                http1::ConnectLayer::new(self.exec.clone(), self.timer.clone(), self.set_host)
-                    .layer(service),
-            )
-    }
-}
-
-impl<B, S, T> Layer<S> for Http2PoolLayer<B, T>
-where
-    S: Service<Established<T>, Response = Established<T>, Error = BoxError>
-        + Clone
-        + Send
-        + 'static,
-    S::Future: Send + 'static,
-    T: AsyncRead + AsyncWrite + Unpin + Send + 'static,
-    B: Body + Send + Unpin + 'static,
-    B::Data: Send,
-    B::Error: Into<BoxError>,
-{
-    type Service = singleton::Singleton<http2::Connect<S, B>, Established<T>>;
-
-    fn layer(&self, service: S) -> Self::Service {
-        let maker = http2::ConnectLayer::new(self.exec.clone(), self.timer.clone()).layer(service);
-        singleton::Singleton::new(maker)
     }
 }
 
@@ -1906,9 +1782,32 @@ mod tests {
 
     #[test]
     fn protocol_modes_build_specialized_entries() {
-        let pool = test_pool(TestConnector::Pending);
+        /// Counts connector copies made while composing protocol entries.
+        struct CloneCounter(Arc<AtomicUsize>);
 
-        for version in [Ver::Http1, Ver::Http2, Ver::Auto] {
+        impl Clone for CloneCounter {
+            fn clone(&self) -> Self {
+                self.0.fetch_add(1, Ordering::Relaxed);
+                Self(self.0.clone())
+            }
+        }
+
+        let clones = Arc::new(AtomicUsize::new(0));
+        let counter = CloneCounter(clones.clone());
+        let connector = tower::service_fn(move |_: ConnectionDescriptor| {
+            let _counter = &counter;
+            std::future::pending::<Result<tokio::io::DuplexStream, BoxError>>()
+        });
+        let pool = Pool::<_, crate::Body>::new(
+            Config::default(),
+            connector,
+            Executor::default(),
+            Timer::default(),
+            true,
+        );
+        assert_eq!(clones.load(Ordering::Relaxed), 0);
+
+        for (index, version) in [Ver::Http1, Ver::Http2, Ver::Auto].into_iter().enumerate() {
             let target = PoolTarget {
                 connection: connection(descriptor()),
                 version,
@@ -1917,6 +1816,7 @@ mod tests {
             let entry = pool.inner.targeter.service(&target);
 
             assert_eq!(entry.protocol(), version);
+            assert_eq!(clones.load(Ordering::Relaxed), index + 1);
         }
     }
 
@@ -1932,16 +1832,17 @@ mod tests {
                     version,
                     wait_for_reuse: false,
                 };
-                pool.inner
-                    .services
-                    .lock()
-                    .with_service(target, |entry, mut target| {
+                pool.inner.services.lock().with_service(
+                    &pool.inner.targeter,
+                    target,
+                    |entry, mut target| {
                         assert_eq!(entry.protocol(), version);
                         // Exercise the Auto graph without TLS by selecting H2 at
                         // the transport stage, where ALPN would normally choose it.
                         target.version = Ver::Http2;
                         entry.checkout(target, true)
-                    })
+                    },
+                )
             };
 
             let mut driver = tokio_test::task::spawn(checkout());

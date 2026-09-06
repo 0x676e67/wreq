@@ -64,7 +64,6 @@ use self::{
     pool::{PoolStrategy, Ver},
     request::{Request, RequestBuilder},
     response::Response,
-    svc::dispatch::Dispatch,
 };
 #[cfg(feature = "cookies")]
 use crate::cookie;
@@ -1715,7 +1714,7 @@ impl ClientBuilder {
     }
 }
 
-/// Private namespace for the low-level client service and its configuration.
+/// Private namespace for the low-level client service and its builder.
 ///
 /// Keeping these types together avoids repeating an `HttpClient` prefix solely
 /// to distinguish them from the public [`Client`], [`ClientBuilder`], and their
@@ -1742,27 +1741,7 @@ mod sealed {
         B::Error: Into<BoxError>,
     {
         /// Composed service stack shared by client clones.
-        inner: svc::Stack<C, B>,
-    }
-
-    /// Immutable request behavior installed while the service stack is built.
-    ///
-    /// The fields are copied into the middleware that owns each concern. This
-    /// configuration does not hold pool state or request-local data.
-    #[derive(Clone)]
-    pub struct Config {
-        /// Whether requests canceled before encoding may be retried.
-        retry_canceled_requests: bool,
-
-        /// Whether HTTP/1 should generate a missing `Host` field.
-        set_host: bool,
-
-        /// Preferred protocol when a request does not require one.
-        ver: Ver,
-
-        #[cfg(feature = "cookies")]
-        /// Optional cookie store installed on the dispatch service.
-        cookie_store: Option<Arc<dyn cookie::CookieStore>>,
+        inner: svc::Stack<svc::Dispatch<C, B>, B>,
     }
 
     /// Assembles the protocol, runtime, and pool services used by [`Client`].
@@ -1773,7 +1752,7 @@ mod sealed {
     #[derive(Clone)]
     pub struct Builder {
         /// Request retry and protocol-selection behavior.
-        config: Config,
+        config: svc::Config,
 
         /// Runtime used by protocol drivers and pool maintenance.
         exec: Executor,
@@ -1806,7 +1785,7 @@ mod sealed {
         type Response = HttpResponse<Incoming>;
         type Error = BoxError;
         type Future = FutureEither<
-            <svc::Stack<C, B> as Service<HttpRequest<B>>>::Future,
+            <svc::Stack<svc::Dispatch<C, B>, B> as Service<HttpRequest<B>>>::Future,
             Ready<Result<Self::Response, Self::Error>>,
         >;
 
@@ -1861,10 +1840,10 @@ mod sealed {
         /// Creates a builder using `exec` for protocol drivers and pool tasks.
         pub fn new(exec: Executor) -> Self {
             Self {
-                config: Config {
-                    retry_canceled_requests: true,
+                config: svc::Config {
+                    retry_unsent: true,
                     set_host: true,
-                    ver: Ver::Auto,
+                    version: Ver::Auto,
                     #[cfg(feature = "cookies")]
                     cookie_store: None,
                 },
@@ -1929,9 +1908,9 @@ mod sealed {
         #[inline]
         pub fn http1_only(mut self, val: bool) -> Self {
             if val {
-                self.config.ver = Ver::Http1;
-            } else if self.config.ver == Ver::Http1 {
-                self.config.ver = Ver::Auto;
+                self.config.version = Ver::Http1;
+            } else if self.config.version == Ver::Http1 {
+                self.config.version = Ver::Auto;
             }
             self
         }
@@ -1944,9 +1923,9 @@ mod sealed {
         #[inline]
         pub fn http2_only(mut self, val: bool) -> Self {
             if val {
-                self.config.ver = Ver::Http2;
-            } else if self.config.ver == Ver::Http2 {
-                self.config.ver = Ver::Auto;
+                self.config.version = Ver::Http2;
+            } else if self.config.version == Ver::Http2 {
+                self.config.version = Ver::Auto;
             }
             self
         }
@@ -2013,30 +1992,20 @@ mod sealed {
             B::Data: Send,
             B::Error: Into<BoxError>,
         {
-            let Config {
-                retry_canceled_requests,
-                set_host,
-                ver,
-                #[cfg(feature = "cookies")]
-                cookie_store,
-            } = self.config;
-
-            let service = Dispatch::new(
-                self.pool_config,
-                connector,
-                ver,
-                self.exec,
-                self.pool_timer,
-                set_host,
-                #[cfg(feature = "cookies")]
-                cookie_store,
-            );
-
             Client {
                 inner: ServiceBuilder::new()
-                    .layer(svc::configure::layer(self.h1_builder, self.h2_builder))
-                    .layer(svc::retry::layer(retry_canceled_requests))
-                    .service(service),
+                    .layer(svc::layer(
+                        self.h1_builder,
+                        self.h2_builder,
+                        self.config.retry_unsent,
+                    ))
+                    .service(svc::Dispatch::new(
+                        self.pool_config,
+                        connector,
+                        self.config,
+                        self.exec,
+                        self.pool_timer,
+                    )),
             }
         }
     }
