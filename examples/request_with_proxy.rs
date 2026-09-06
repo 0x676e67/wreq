@@ -7,6 +7,7 @@ async fn main() -> wreq::Result<()> {
         .proxy(Proxy::all("socks5h://localhost:6153")?)
         .send()
         .await?;
+
     println!("{}", resp.text().await?);
 
     Ok(())
