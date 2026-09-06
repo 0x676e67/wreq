@@ -289,8 +289,8 @@ where
 
         let mut this = self.project();
 
-        // Retry recovery: https://github.com/hyperium/hyper-util/blob/d480d9f802c7062cb0aeece9ee0020ecce840521/src/client/legacy/client.rs#L241
-        // Poll budget: https://github.com/hyperium/hyper/blob/4f36f33a28709f93d693bc9f942b93b54d7032a4/src/proto/h1/dispatch.rs#L166
+        // Retry recovery follows hyper-util's legacy client.
+        // Poll budgeting follows Hyper's HTTP/1 dispatcher.
         for _ in 0..MAX_ATTEMPTS_PER_POLL {
             let mut request = match ready!(this.future.as_mut().poll(cx)) {
                 Ok(response) => return Poll::Ready(Ok(response)),
