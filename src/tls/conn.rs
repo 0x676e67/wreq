@@ -27,7 +27,10 @@ use tower::{BoxError, Service};
 
 use crate::{
     Error,
-    conn::{Connected, Connection, descriptor::ConnectionDescriptor},
+    conn::{
+        Connected, Connection,
+        descriptor::{ConnectionDescriptor, HttpVersion},
+    },
     tls::{
         AlpnProtocol, AlpsProtocol, KeyShare, TlsOptions, TlsVersion,
         keylog::KeyLog,
@@ -153,27 +156,28 @@ impl TlsConnector {
         }
 
         // Set ALPN protocols
-        if let Some(version) = descriptor.version() {
-            match version {
-                Version::HTTP_11 | Version::HTTP_10 | Version::HTTP_09 => {
-                    cfg.set_alpn_protos(&AlpnProtocol::HTTP1.encode())?;
-                }
-                Version::HTTP_2 => {
-                    cfg.set_alpn_protos(&AlpnProtocol::HTTP2.encode())?;
-                }
-                Version::HTTP_3 => {
-                    cfg.set_alpn_protos(&AlpnProtocol::HTTP3.encode())?;
-                }
-                _ => {
-                    // For unknown versions, we don't set any ALPN protocols.
+        match descriptor.version() {
+            Some(HttpVersion::Exact(Version::HTTP_11 | Version::HTTP_10 | Version::HTTP_09)) => {
+                cfg.set_alpn_protos(&AlpnProtocol::HTTP1.encode())?;
+            }
+            Some(HttpVersion::Exact(Version::HTTP_2)) => {
+                cfg.set_alpn_protos(&AlpnProtocol::HTTP2.encode())?;
+            }
+            Some(HttpVersion::PreferHttp2) => {
+                // Choose the wire protocol only after ALPN completes.
+                // https://www.rfc-editor.org/rfc/rfc9113.html#section-3.2
+                cfg.set_alpn_protos(b"\x02h2\x08http/1.1")?;
+            }
+            Some(HttpVersion::Exact(Version::HTTP_3)) => {
+                cfg.set_alpn_protos(&AlpnProtocol::HTTP3.encode())?;
+            }
+            None => {
+                if let Some(ref alpn_values) = self.settings.alpn_protocols {
+                    let encoded = AlpnProtocol::encode_sequence(alpn_values.as_ref());
+                    cfg.set_alpn_protos(&encoded)?;
                 }
             }
-        } else {
-            // Default use the connector configuration.
-            if let Some(ref alpn_values) = self.settings.alpn_protocols {
-                let encoded = AlpnProtocol::encode_sequence(alpn_values.as_ref());
-                cfg.set_alpn_protos(&encoded)?;
-            }
+            Some(_) => {}
         }
 
         // Set ALPS protos

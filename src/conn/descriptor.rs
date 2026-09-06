@@ -20,6 +20,16 @@ use crate::{conn::net::SocketBindOptions, group::Group, proxy::Matcher, tls::Tls
 #[derive(Debug, Clone)]
 pub(crate) struct ConnectionId(Arc<(Group, AtomicU64)>);
 
+/// HTTP version policy carried from request configuration into TLS and pooling.
+/// A preference can negotiate H1; an exact version selects a fixed protocol pool.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub(crate) enum HttpVersion {
+    /// Selects a protocol explicitly, including cleartext H2 prior knowledge.
+    Exact(Version),
+    /// Prefers H2 over HTTPS, allowing H1 when TLS does not negotiate H2.
+    PreferHttp2,
+}
+
 /// A blueprint for creating a new client connection, containing all necessary parameters.
 ///
 /// This descriptor bundles the target `Uri`, HTTP version, `TlsOptions`, proxy settings,
@@ -28,7 +38,7 @@ pub(crate) struct ConnectionId(Arc<(Group, AtomicU64)>);
 #[derive(Clone)]
 pub struct ConnectionDescriptor {
     uri: Uri,
-    version: Option<Version>,
+    version: Option<HttpVersion>,
     proxy: Option<Matcher>,
     tls_options: Option<TlsOptions>,
     socket_bind: Option<SocketBindOptions>,
@@ -77,7 +87,7 @@ impl ConnectionDescriptor {
         uri: Uri,
         mut group: Group,
         proxy: Option<Matcher>,
-        version: Option<Version>,
+        version: Option<HttpVersion>,
         tls_options: Option<TlsOptions>,
         socket_bind: Option<SocketBindOptions>,
     ) -> ConnectionDescriptor {
@@ -118,8 +128,8 @@ impl ConnectionDescriptor {
         &mut self.uri
     }
 
-    /// Return the negotiated HTTP version, if any.
-    pub(crate) fn version(&self) -> Option<Version> {
+    /// Returns the requested version policy, not the negotiated wire version.
+    pub(crate) fn version(&self) -> Option<HttpVersion> {
         self.version
     }
 

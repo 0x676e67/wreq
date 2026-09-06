@@ -36,7 +36,11 @@ use super::{
 };
 use crate::{
     config::RequestConfig,
-    conn::{Connection, descriptor::ConnectionDescriptor},
+    conn::{
+        Connection,
+        descriptor::{ConnectionDescriptor, HttpVersion},
+    },
+    ext::UriExt,
     rt::{Executor, Timer},
 };
 
@@ -61,6 +65,7 @@ pub struct Stack<S, B> {
     )]
     inner: MapErr<RetryUnsent<S>, fn(DispatchError<B>) -> BoxError>,
     proto: Arc<(conn::http1::Builder, conn::http2::Builder<Executor>)>,
+    version: Ver,
 }
 
 /// A request paired with the connection configuration shared by its attempts.
@@ -143,6 +148,7 @@ pub fn layer<S, B>(
     h1_builder: conn::http1::Builder,
     h2_builder: conn::http2::Builder<Executor>,
     retry_unsent: bool,
+    version: Ver,
 ) -> impl Layer<S, Service = Stack<S, B>> + Clone {
     // Both builders share one lifetime. One Arc avoids a second allocation and
     // separate reference-count updates on stack clones and pooled requests.
@@ -152,6 +158,7 @@ pub fn layer<S, B>(
         .layer_fn(move |inner| Stack {
             inner,
             proto: proto.clone(),
+            version,
         })
         .map_err(DispatchError::into_error as fn(DispatchError<B>) -> BoxError)
         .layer_fn(move |inner| RetryUnsent {
@@ -168,6 +175,7 @@ impl<S: Clone, B> Clone for Stack<S, B> {
         Self {
             inner: self.inner.clone(),
             proto: self.proto.clone(),
+            version: self.version,
         }
     }
 }
@@ -210,6 +218,20 @@ where
             socket_bind_options,
         } = RequestConfig::<RequestOptions>::remove(request.extensions_mut()).unwrap_or_default();
 
+        // curl's ordinary H2 mode allows HTTPS negotiation; prior knowledge
+        // remains explicit: https://curl.se/libcurl/c/CURLOPT_HTTP_VERSION.html
+        // Extended CONNECT cannot become an H1 tunnel:
+        // https://www.rfc-editor.org/rfc/rfc8441.html#section-4
+        let version = version.map(|version| match version {
+            Version::HTTP_2
+                if uri.is_https()
+                    && self.version != Ver::Http2
+                    && request.extensions().get::<http2::ext::Protocol>().is_none() =>
+            {
+                HttpVersion::PreferHttp2
+            }
+            version => HttpVersion::Exact(version),
+        });
         let descriptor =
             ConnectionDescriptor::new(uri, group, proxy, version, tls_options, socket_bind_options);
 
@@ -386,14 +408,14 @@ where
         let this = self.clone();
         Box::pin(async move {
             let PoolRequest {
-                #[allow(unused_mut)]
                 mut request,
                 connection,
             } = request;
 
             let version = match connection.descriptor.version() {
-                Some(Version::HTTP_10 | Version::HTTP_11) => Ver::Http1,
-                Some(Version::HTTP_2) => Ver::Http2,
+                Some(HttpVersion::Exact(Version::HTTP_10 | Version::HTTP_11)) => Ver::Http1,
+                Some(HttpVersion::Exact(Version::HTTP_2)) => Ver::Http2,
+                Some(HttpVersion::PreferHttp2) => Ver::Auto,
                 _ => this.version,
             };
 
@@ -416,7 +438,15 @@ where
                 }
             };
 
-            if pooled.is_http1() && request.version() == Version::HTTP_2 {
+            if connection.descriptor.version() == Some(HttpVersion::PreferHttp2) {
+                // Resolve the wire version on every attempt: an unsent retry may
+                // select a different protocol, but retains the original preference.
+                *request.version_mut() = if pooled.is_http2() {
+                    Version::HTTP_2
+                } else {
+                    Version::HTTP_11
+                };
+            } else if pooled.is_http1() && request.version() == Version::HTTP_2 {
                 warn!("Connection is HTTP/1, but request requires HTTP/2");
                 return Err(DispatchError::Terminal(
                     Error::from_kind(ErrorKind::UserUnsupportedVersion)
@@ -470,10 +500,18 @@ where
                             connection_reused,
                         })
                     } else {
+                        let mut error = error.into_client_error(ErrorKind::SendRequest);
+                        if pooled.is_http2()
+                            && connection.descriptor.uri().is_https()
+                            && !connect_info.is_negotiated_h2()
+                        {
+                            error = error.with_context(
+                                "HTTP/2 was used for HTTPS without reported h2 ALPN; \
+                                 the peer may not support HTTP/2",
+                            );
+                        }
                         Err(DispatchError::Terminal(
-                            error
-                                .into_client_error(ErrorKind::SendRequest)
-                                .with_connect_info(connect_info),
+                            error.with_connect_info(connect_info),
                         ))
                     };
                 }
@@ -551,6 +589,7 @@ mod tests {
                     conn::http1::Builder::default(),
                     conn::http2::Builder::new(Executor::default()),
                     enabled,
+                    Ver::Auto,
                 ))
                 .service(service)
                 .oneshot(
@@ -600,6 +639,7 @@ mod tests {
                     conn::http1::Builder::default(),
                     conn::http2::Builder::new(Executor::default()),
                     true,
+                    Ver::Auto,
                 ))
                 .service(service)
                 .oneshot(
@@ -631,6 +671,7 @@ mod tests {
                     conn::http1::Builder::default(),
                     conn::http2::Builder::new(Executor::default()),
                     true,
+                    Ver::Auto,
                 ))
                 .service(service)
                 .oneshot(

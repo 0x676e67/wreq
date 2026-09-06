@@ -16,13 +16,11 @@ use crate::{
 /// selected transport for higher-level diagnostics.
 #[derive(Debug)]
 pub struct Error {
-    /// Stage that classified the failure.
     kind: ErrorKind,
-    /// Original error, when one was available.
     source: Option<BoxError>,
-    /// Metadata for the connection that observed the failure.
-    #[allow(unused)]
+    #[expect(dead_code, reason = "Retained for derived Debug diagnostics")]
     connect_info: Option<Connected>,
+    context: Option<&'static str>,
 }
 
 /// Internal categories used by the public error inspection methods.
@@ -55,7 +53,11 @@ pub(super) enum ErrorKind {
 
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "client error ({:?})", self.kind)
+        write!(f, "client error ({:?})", self.kind)?;
+        if let Some(context) = self.context {
+            write!(f, ": {context}")?;
+        }
+        Ok(())
     }
 }
 
@@ -72,6 +74,7 @@ impl Error {
             kind,
             source: None,
             connect_info: None,
+            context: None,
         }
     }
 
@@ -91,6 +94,7 @@ impl Error {
             kind,
             source: Some(error),
             connect_info: None,
+            context: None,
         }
     }
 
@@ -111,6 +115,14 @@ impl Error {
     pub(super) fn with_connect_info(self, connect_info: Connected) -> Self {
         Self {
             connect_info: Some(connect_info),
+            ..self
+        }
+    }
+
+    /// Adds an explanatory note while preserving classification and source.
+    pub(super) fn with_context(self, context: &'static str) -> Self {
+        Self {
+            context: Some(context),
             ..self
         }
     }

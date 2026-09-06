@@ -558,7 +558,12 @@ impl RequestBuilder {
         self
     }
 
-    /// Set HTTP version
+    /// Sets the HTTP version for this request.
+    ///
+    /// HTTP/2 over HTTPS is a preference and may negotiate HTTP/1.1, unless the
+    /// client uses [`ClientBuilder::http2_only`](crate::ClientBuilder::http2_only).
+    /// Cleartext HTTP/2 uses prior knowledge without an HTTP/1 Upgrade.
+    /// HTTP/2 Extended CONNECT requests never fall back to HTTP/1.
     pub fn version(mut self, version: Version) -> RequestBuilder {
         if let Ok(ref mut req) = self.request {
             req.version_mut().replace(version);

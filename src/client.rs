@@ -1135,14 +1135,22 @@ impl ClientBuilder {
         self
     }
 
-    /// Only use HTTP/1.
+    /// Uses HTTP/1 for both cleartext and TLS connections, without upgrading to H2.
+    /// Only `http/1.1` is offered through TLS ALPN. A request-level
+    /// [`version`](RequestBuilder::version) overrides this client setting.
     #[inline]
     pub fn http1_only(mut self) -> ClientBuilder {
         self.config.http_version_pref = HttpVersionPref::Http1;
         self
     }
 
-    /// Only use HTTP/2.
+    /// Uses HTTP/2 without falling back to HTTP/1.
+    ///
+    /// Cleartext connections use prior knowledge, without an HTTP/1 Upgrade.
+    /// TLS connections offer only `h2` through ALPN; if the peer omits ALPN,
+    /// the client still attempts H2 and fails if the peer cannot speak it.
+    /// An explicit HTTP/1 [`version`](RequestBuilder::version) on a request
+    /// overrides this setting.
     #[inline]
     pub fn http2_only(mut self) -> ClientBuilder {
         self.config.http_version_pref = HttpVersionPref::Http2;
@@ -1998,6 +2006,7 @@ mod sealed {
                         self.h1_builder,
                         self.h2_builder,
                         self.config.retry_unsent,
+                        self.config.version,
                     ))
                     .service(svc::Dispatch::new(
                         self.pool_config,
