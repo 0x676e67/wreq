@@ -5,6 +5,9 @@ use std::{
 use tokio::{io::AsyncReadExt, net::TcpStream, runtime, sync::oneshot};
 use wreq::Body;
 
+/// Handle for a test server running on its own runtime thread.
+/// Exposes the listener address and recorded connection lifecycle events.
+/// Drop requests shutdown and checks that the server thread finished without panic.
 pub struct Server {
     addr: net::SocketAddr,
     panic_rx: std_mpsc::Receiver<()>,

@@ -159,6 +159,9 @@ fn is_proxy_connect_error(error: &(dyn StdError + 'static)) -> bool {
 mod tests {
     use super::*;
 
+    /// Adds an error-chain layer around a test failure.
+    /// Exposes the wrapped error through `source` for recursive classification.
+    /// Owns that error until the wrapper is dropped.
     #[derive(Debug)]
     struct WrappedError(BoxError);
 

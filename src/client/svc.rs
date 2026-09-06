@@ -45,7 +45,8 @@ use crate::{
 };
 
 /// Immutable behavior installed while the low-level service stack is built.
-/// Each option moves into the layer that owns it; this value holds no pool state.
+/// Each option moves into the layer that owns it during client construction.
+/// This value holds no pool state or request body.
 #[derive(Clone)]
 pub struct Config {
     pub retry_unsent: bool,
@@ -69,6 +70,7 @@ pub struct Stack<S, B> {
 }
 
 /// A request paired with the connection configuration shared by its attempts.
+/// Configuration is captured before checkout and retained across unsent retries.
 /// Dispatch returns this value only when the original body has not been sent.
 pub struct PoolRequest<B> {
     request: Request<B>,

@@ -7,11 +7,11 @@
 //!
 //! # Checkout lifecycle
 //!
-//! 1. `poll_ready` reserves an idle service when one is available. Otherwise it registers a waiter
-//!    and polls the maker.
+//! 1. `poll_ready` reserves an idle service when available. Otherwise it polls the maker and
+//!    registers a waiter if the maker is pending.
 //! 2. `call` either returns the reserved service or races the waiter against a newly made service.
-//! 3. [`Cached`] returns a healthy service when it is dropped. A failed or explicitly discarded
-//!    service is destroyed instead.
+//! 3. [`Cached`] returns the service on drop unless readiness failed or the caller marked it for
+//!    discard. The caller is responsible for protocol-specific health checks before return.
 //!
 //! Returned services go to the oldest waiter before they enter the idle list.
 //! If reuse wins after connection work has started, the configured event handler
@@ -30,7 +30,7 @@
 //!
 //! poll_fn(|cx| cache.poll_ready(cx)).await?;
 //! let sender = cache.call(destination).await?;
-//! drop(sender); // returns a healthy exclusive service to the cache
+//! drop(sender); // returns the exclusive service unless marked for discard
 //! ```
 
 use std::{
@@ -121,13 +121,9 @@ pub(super) struct Builder<Ev> {
 
 /// RAII checkout for one exclusive cached service.
 ///
-/// The wrapper delegates the `Service` implementation to the inner service and
-/// records whether it came from the idle cache. On drop, a healthy service is
-/// handed to the oldest waiter or retained as idle. Readiness failures and
-/// explicit discard requests prevent reinsertion.
-///
-/// Its weak cache reference allows a connection to be destroyed normally after
-/// the owning map entry has been evicted.
+/// Drop returns the service to the oldest waiter or idle list unless readiness
+/// failed or the caller requested discard. It does not check protocol health.
+/// A weak cache reference lets the service outlive its map entry.
 pub(super) struct Cached<S> {
     /// Prevents a failed or explicitly discarded service from returning.
     discard: bool,
@@ -135,7 +131,7 @@ pub(super) struct Cached<S> {
     /// Records whether this checkout came from the cache.
     reused: bool,
 
-    /// Owned service, removed only while `Drop` returns it.
+    /// Owned service, taken by `return_to_cache` or `Drop`.
     inner: Option<S>,
 
     /// Weak reference avoids keeping an otherwise unused cache alive.
@@ -317,9 +313,9 @@ impl<M, Dst, Ev> Cache<M, Dst, Ev>
 where
     M: Service<Dst>,
 {
-    /// Removes idle services that do not satisfy `predicate`.
-    ///
-    /// Active checkouts and waiter reservations are left untouched.
+    /// Removes rejected idle services and this clone's readiness reservation.
+    /// Active checkouts and reservations held for other callers are untouched.
+    /// Returns removed services for destruction outside the caller's locks.
     pub(super) fn retain<F>(&mut self, mut predicate: F) -> Vec<M::Response>
     where
         F: FnMut(&mut M::Response) -> bool,
@@ -337,7 +333,8 @@ where
         discarded
     }
 
-    /// Removes all unreserved idle services.
+    /// Removes shared idle services and this clone's readiness reservation.
+    /// Reservations held for other callers are untouched.
     pub(super) fn drain_idle(&mut self) -> Vec<M::Response> {
         let mut discarded = self.shared.lock().drain_services();
         if let Ready::Cached(service) = std::mem::replace(&mut self.ready, Ready::None) {
@@ -346,7 +343,7 @@ where
         discarded
     }
 
-    /// Returns whether at least one unreserved idle service exists.
+    /// Returns whether shared idle state or this clone holds a ready service.
     pub(super) fn has_idle(&self) -> bool {
         matches!(self.ready, Ready::Cached(_)) || !self.shared.lock().services.is_empty()
     }
@@ -949,6 +946,8 @@ mod tests {
     use super::*;
 
     /// Pending connection future that records every poll.
+    /// Lets shutdown tests detect work polled after the cache disappears.
+    /// Shares only the counter with the test and never produces a service.
     struct CountingPending(Arc<AtomicUsize>);
 
     impl Future for CountingPending {
@@ -961,6 +960,8 @@ mod tests {
     }
 
     /// Creates one service immediately, then leaves later connection attempts pending.
+    /// Clones share the call count and a test-controlled readiness gate.
+    /// This keeps reuse races observable without opening network connections.
     #[derive(Clone, Default)]
     struct QueueConnector {
         calls: Arc<AtomicUsize>,
@@ -994,6 +995,8 @@ mod tests {
     }
 
     /// Records whether a parked cache service was explicitly woken.
+    /// Both wake methods set the same flag for deterministic poll assertions.
+    /// The test holds it through an Arc while the cache owns a task waker.
     struct WakeFlag(AtomicBool);
 
     impl Wake for WakeFlag {
@@ -1007,6 +1010,8 @@ mod tests {
     }
 
     /// Connector that rejects calls not preceded by readiness.
+    /// Each clone starts unready while sharing call and reservation counters.
+    /// A successful call consumes that clone's readiness and returns a service ID.
     #[derive(Default)]
     struct StrictConnector {
         poll_ready_count: Arc<AtomicUsize>,

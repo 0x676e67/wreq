@@ -770,6 +770,8 @@ async fn http2_only() {
 #[tokio::test]
 async fn connection_pool_respects_https_version_policy() {
     /// Echoes the cookie serialization version into the request headers.
+    /// Lets the server verify that cookies follow the negotiated wire protocol.
+    /// Holds no cookie state and ignores response updates.
     #[cfg(feature = "cookies")]
     struct VersionCookies;
 

@@ -39,12 +39,8 @@ pub struct Connection<B> {
 }
 
 /// Shared checkout state for one HTTP/2 physical connection.
-///
-/// This currently covers sender checkout through response headers. A complete
-/// stream lease must also follow the accepted request body, response body, and
-/// extended `CONNECT` upgrade until both stream directions terminate. The
-/// lifecycle follows the lease boundary in the smithy-rs pool design:
-/// <https://github.com/smithy-lang/smithy-rs/blob/connection-pool-main/rust-runtime/aws-smithy-http-client/docs/design/connection-pool.md>
+/// Accounting ends at response headers or checkout cancellation, not stream end.
+/// Bodies and extended `CONNECT` upgrades do not hold this checkout state.
 struct ConnectionState {
     checkouts: AtomicUsize,
     idle_at: Mutex<Instant>,

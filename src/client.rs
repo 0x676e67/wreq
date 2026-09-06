@@ -1108,11 +1108,11 @@ impl ClientBuilder {
         self
     }
 
-    /// Sets the maximum number of compatibility groups retaining idle connections.
+    /// Sets the maximum number of compatibility groups retaining reusable connections.
     ///
-    /// A group is counted only while the pool owns a reusable sender. Empty and
-    /// connecting-only groups are not counted, and this does not limit physical
-    /// connections. Passing `0` disables the limit.
+    /// Idle HTTP/1 senders and shared HTTP/2 senders count toward this limit,
+    /// including HTTP/2 senders with active requests. Eviction leaves existing
+    /// requests running. This does not limit physical connections; `0` means unlimited.
     #[inline]
     pub fn pool_max_size(mut self, max: usize) -> ClientBuilder {
         self.config.pool_max_size = NonZeroUsize::new(max);
@@ -1722,11 +1722,7 @@ impl ClientBuilder {
     }
 }
 
-/// Private namespace for the low-level client service and its builder.
-///
-/// Keeping these types together avoids repeating an `HttpClient` prefix solely
-/// to distinguish them from the public [`Client`], [`ClientBuilder`], and their
-/// configuration.
+/// Low-level Tower client and builder used by the public client.
 mod sealed {
     use super::*;
 
@@ -2058,16 +2054,8 @@ mod sealed {
         }
     }
 
-    /// Converts an authority-form URI into the internal absolute form used by the client.
-    ///
-    /// The authority is preserved, `scheme` is installed, and the path is set to
-    /// `/`. This helper is only used while normalizing `CONNECT`; protocol-specific
-    /// request-target handling chooses the final wire representation later.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when the URI cannot be reconstructed with the supplied
-    /// scheme.
+    /// Adds a scheme and `/` path to an authority-form URI.
+    /// Returns an error if these parts cannot form an absolute URI.
     fn set_scheme(uri: &mut Uri, scheme: Scheme) -> Result<(), error::Error> {
         let old = std::mem::take(uri);
         let mut parts: http::uri::Parts = old.into();

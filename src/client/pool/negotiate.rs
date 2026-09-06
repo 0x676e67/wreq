@@ -11,9 +11,9 @@
 //! ```
 //!
 //! An upgraded result enters the pending queue before [`UpgradeSignal`] wakes
-//! concurrent fallback attempts. Queue consumption and singleton handoff share
-//! one lock. If a notification becomes stale because its connection was already
-//! consumed or canceled, the affected checkout starts a fresh fallback attempt.
+//! concurrent fallback attempts. Selection checks the singleton and removes queued
+//! transports under the pending lock; maker calls and future polling happen afterward.
+//! A stale notification starts a fresh fallback attempt if no upgraded work remains.
 //!
 //! # Example
 //!
@@ -158,15 +158,23 @@ pub(super) struct Builder<C, I, L, R> {
 }
 
 /// Type-state marker indicating that the connector has not been supplied.
+/// `Builder::connect` replaces it with a transport-producing service.
+/// It owns no connection and is absent from the built pool.
 #[derive(Debug)]
 pub(super) struct WantsConnect;
 /// Type-state marker indicating that the inspection predicate is missing.
+/// `Builder::inspect` replaces it with the protocol-selection predicate.
+/// It holds no runtime state and is absent from the built pool.
 #[derive(Debug)]
 pub(super) struct WantsInspect;
 /// Type-state marker indicating that the fallback layer is missing.
+/// `Builder::fallback` replaces it with the layer for non-upgraded connections.
+/// It owns no fallback service and is absent from the built pool.
 #[derive(Debug)]
 pub(super) struct WantsFallback;
 /// Type-state marker indicating that the upgrade layer is missing.
+/// `Builder::upgrade` replaces it with the layer for inspected connections.
+/// It owns no upgraded service and is absent from the built pool.
 #[derive(Debug)]
 pub(super) struct WantsUpgrade;
 
@@ -727,6 +735,8 @@ mod tests {
     use crate::client::pool::singleton::Singleton;
 
     /// Immediately returns the protocol label supplied by the test.
+    /// Substitutes for transport creation when testing protocol selection.
+    /// The static label is shared without allocating a connection.
     #[derive(Clone, Copy)]
     struct ReadyConnector(&'static str);
 
@@ -745,6 +755,8 @@ mod tests {
     }
 
     /// Small layer adapter used to compose the two test pool paths.
+    /// Applies its closure to the supplied inner service during construction.
+    /// The returned service owns runtime state; this adapter owns only the closure.
     #[derive(Clone, Copy)]
     struct LayerFn<F>(F);
 
@@ -760,6 +772,8 @@ mod tests {
     }
 
     /// Fallback service that rejects calls not preceded by readiness.
+    /// Its first call emits an upgrade signal; later calls return a fallback label.
+    /// Clones share the call count but must acquire their own readiness.
     struct StrictFallback {
         calls: Arc<AtomicUsize>,
         ready: bool,

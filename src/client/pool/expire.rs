@@ -192,6 +192,8 @@ mod tests {
     use super::*;
 
     /// Controllable retained state inspected by the watcher.
+    /// Counts checks and lets the test switch periodic maintenance off.
+    /// The test owns the target; the watcher keeps only a weak reference.
     struct TestTarget {
         /// Whether another expiration tick is required.
         retained: AtomicBool,

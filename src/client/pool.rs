@@ -345,10 +345,9 @@ where
     fn protocol(&self) -> Ver;
 }
 
-/// Entry containing only an HTTP/1 connection cache.
-///
-/// This is created for a fixed HTTP/1 target. It owns exclusive senders until
-/// checkout and returns reusable senders to the cache after dispatch.
+/// Fixed HTTP/1 entry owning the cache and its checkout-cleanup identity.
+/// Each checkout takes an exclusive sender from the cache or a new handshake.
+/// Ready senders return to the cache; pending uses keep the entry from removal.
 struct Http1Entry<L> {
     /// Exclusive HTTP/1 sender cache.
     service: L,
@@ -357,10 +356,9 @@ struct Http1Entry<L> {
     state: Arc<EntryState>,
 }
 
-/// Entry containing only an HTTP/2 singleton.
-///
-/// This is created for a fixed HTTP/2 target. Concurrent cold checkouts join
-/// one connection generation and later checkouts clone its shared sender.
+/// Fixed HTTP/2 entry sharing one connection generation across cold checkouts.
+/// Once established, the sender is cloned for concurrent requests.
+/// Pending uses keep the entry alive; `state` identifies it during cleanup.
 struct Http2Entry<R> {
     /// Shared HTTP/2 sender singleton.
     service: R,
@@ -382,10 +380,7 @@ struct NegotiatedEntry<L, R, S> {
     state: Arc<EntryState>,
 }
 
-/// Idle-management operations required from the HTTP/1 cache.
-///
-/// This local trait keeps the type-erased entry independent of the exact cache
-/// builder type while exposing only cleanup and empty-state checks.
+/// HTTP/1 cache maintenance used by entries without naming the maker type.
 trait Http1Pool<B>:
     Service<PoolTarget, Response = Cached<http1::Connection<B>>, Error = BoxError>
     + Clone
@@ -558,8 +553,8 @@ struct EntryUse {
 ///
 /// This field is declared after [`Pooled::inner`], so Rust drops the negotiated
 /// sender and updates cache checkout accounting before this guard inspects the
-/// mapped entry. Healthy return paths leave the guard disarmed and avoid taking
-/// the outer map lock.
+/// mapped entry. A disarmed guard takes no lock on drop; successful return paths
+/// perform their own maintenance before this guard is dropped.
 struct EntryCleanupGuard {
     /// Entry identity and cleanup operation transferred from [`EntryUse`].
     state: Option<Arc<EntryState>>,
@@ -877,7 +872,7 @@ where
     type Key = ConnectionId;
     type Service = Box<dyn Entry<B>>;
 
-    /// Uses the descriptor's complete compatibility identifier.
+    /// Uses the descriptor's key, including the caller's configuration group.
     fn key(&self, target: &PoolTarget) -> Self::Key {
         target.connection.descriptor.id()
     }
@@ -1785,6 +1780,8 @@ mod tests {
     #[test]
     fn protocol_modes_build_specialized_entries() {
         /// Counts connector copies made while composing protocol entries.
+        /// Shares the counter between clones without creating a transport.
+        /// Captured by the connector closure to observe service graph construction.
         struct CloneCounter(Arc<AtomicUsize>);
 
         impl Clone for CloneCounter {

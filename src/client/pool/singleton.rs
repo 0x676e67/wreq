@@ -285,7 +285,7 @@ impl<F, S> Unpin for SingletonFuture<F, S> {}
 
 /// Lifecycle of the shared singleton service.
 ///
-/// `Making` owns exactly one pinned maker future and at most one driver.
+/// `Making` tracks one maker generation with at most one driver polling it.
 /// `Made` stores the cloneable service with the generation allowed to invalidate
 /// it. Transitions that destroy a future, service, or result sender move that
 /// value out first so destruction and task wakeups happen outside the lock.
@@ -366,7 +366,7 @@ struct Driver {
 struct Waiter<S> {
     /// Waiter participant identifier.
     id: WaiterId,
-    /// Delivers the shared service or shared maker error.
+    /// Delivers the shared service; maker failure closes the channel.
     sender: oneshot::Sender<S>,
 }
 
@@ -672,10 +672,8 @@ impl<F, S> Batch<F, S> {
         (id, receiver)
     }
 
-    /// Removes a participant and returns whether the batch became empty.
-    ///
-    /// When the driver leaves first, the newest waiter takes its role and keeps
-    /// polling the same maker future.
+    /// Removes a participant and reports whether the batch became empty.
+    /// If the driver leaves, one remaining waiter takes over the same maker.
     fn remove(&mut self, id: WaiterId) -> ParticipantRemoval<F, S> {
         if let Some(index) = self.waiters.iter().position(|waiter| waiter.id == id) {
             return ParticipantRemoval {
@@ -846,6 +844,8 @@ mod tests {
     use crate::sync::Mutex;
 
     /// Maker completed explicitly by a test-held sender.
+    /// Each call stores a new completion sender and waits on its receiver.
+    /// Dropping that sender lets the test fail the current maker generation.
     #[derive(Clone)]
     struct ControlledMaker {
         sender: Arc<Mutex<Option<tokio::sync::oneshot::Sender<&'static str>>>>,
@@ -871,6 +871,8 @@ mod tests {
     }
 
     /// Shared service whose readiness can be failed by the test.
+    /// Clones observe the same failure flag while requests complete immediately.
+    /// Used to check that readiness failure invalidates only its own generation.
     #[derive(Clone)]
     struct ReadinessService {
         fail: Arc<AtomicBool>,
@@ -895,6 +897,8 @@ mod tests {
     }
 
     /// Immediately creates a readiness-controlled service and counts creations.
+    /// The test uses the count to distinguish reuse from replacement.
+    /// Maker clones and returned services share the test's failure flag.
     #[derive(Clone)]
     struct CountingMaker {
         calls: Arc<AtomicUsize>,

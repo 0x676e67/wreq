@@ -101,6 +101,8 @@ enum ConnectState<F, B> {
 }
 
 /// Reports a consumed HTTP/1 handshake state.
+/// Returned if the connect future no longer owns its executor or timer.
+/// Carries no transport; the failed future releases its connection state.
 #[derive(Debug)]
 struct HandshakeStateError;
 

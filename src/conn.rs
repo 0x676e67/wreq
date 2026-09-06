@@ -116,6 +116,8 @@ enum Alpn {
 struct PoisonPill(Arc<AtomicBool>);
 
 /// Shared connection metadata copied into each response's extensions.
+/// Cloning a connection shares this handle without copying the user's metadata.
+/// The metadata is cloned only when it is inserted into a response.
 #[derive(Debug, Clone)]
 struct Extra(Arc<dyn ExtraInner>);
 
@@ -124,18 +126,21 @@ trait ExtraInner: Send + Sync + Debug {
     fn set(&self, res: &mut Extensions);
 }
 
-// This indirection allows the `Connected` to have a type-erased "extra" value,
-// while that type still knows its inner extra type. This allows the correct
-// TypeId to be used when inserting into `res.extensions_mut()`.
+/// Preserves a metadata value's concrete type inside a type-erased extra.
+/// Uses that type when inserting a clone into response extensions.
+/// The original value remains owned by the connection's shared metadata.
 #[derive(Debug)]
 struct ExtraEnvelope<T>(T);
 
-/// Chains two `ExtraInner` implementations together, inserting both into
-/// the extensions.
+/// Adds metadata after the connection's previously attached extras.
+/// Response insertion visits the shared chain before inserting this value.
+/// The chain shares earlier extras without copying their contents.
 #[derive(Debug)]
 struct ExtraChain<T>(Arc<dyn ExtraInner>, T);
 
 /// Information about an HTTP proxy identity.
+/// Carries forward-proxy status, credentials, and headers for request preparation.
+/// Connection clones share it; updates use copy-on-write to preserve other clones.
 #[derive(Debug, Default, Clone)]
 struct ProxyIdentity {
     is_proxied: bool,
@@ -460,6 +465,8 @@ mod tests {
     use super::*;
 
     /// Counts copies of user metadata, excluding shared handle clones.
+    /// Acts as a response extra whose Clone increments the test's counter.
+    /// The counter survives metadata drops so each insertion remains observable.
     #[derive(Debug)]
     struct CloneCount(Arc<AtomicUsize>);
 

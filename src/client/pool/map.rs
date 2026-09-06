@@ -228,6 +228,8 @@ mod tests {
     use super::*;
 
     /// Models retained state and counts when a mapped service is destroyed.
+    /// The flag lets the test change retention without replacing the entry.
+    /// Drop updates a shared counter to verify deferred destruction.
     struct DropProbe(Arc<AtomicUsize>, bool);
 
     impl Drop for DropProbe {
@@ -237,6 +239,8 @@ mod tests {
     }
 
     /// Creates one drop probe for each numeric destination.
+    /// Uses the destination unchanged as the map key.
+    /// All probes share a counter that remains readable after their removal.
     struct ProbeTarget(Arc<AtomicUsize>);
 
     impl Target<usize> for ProbeTarget {
