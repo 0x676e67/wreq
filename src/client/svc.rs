@@ -577,6 +577,47 @@ mod tests {
 
         let calls = Arc::new(AtomicUsize::new(0));
         let attempts = calls.clone();
+        let gate = Arc::new(tokio::sync::Notify::new());
+        let ready = gate.clone();
+        let service = tower::service_fn(move |request: PoolRequest<Vec<u8>>| {
+            let first = attempts.fetch_add(1, Ordering::Relaxed) == 0;
+            let ready = ready.clone();
+            async move {
+                if first {
+                    Err(DispatchError::CheckoutCanceled {
+                        error: Error::from_kind(ErrorKind::Canceled),
+                        request: Box::new(request),
+                    })
+                } else {
+                    ready.notified().await;
+                    Ok(())
+                }
+            }
+        });
+        let mut task = tokio_test::task::spawn(
+            ServiceBuilder::new()
+                .layer(layer(
+                    conn::http1::Builder::default(),
+                    conn::http2::Builder::new(Executor::default()),
+                    true,
+                ))
+                .service(service)
+                .oneshot(
+                    Request::builder()
+                        .uri("http://localhost/")
+                        .body(Vec::new())
+                        .unwrap(),
+                ),
+        );
+        assert!(task.poll().is_pending());
+        assert!(!task.is_woken(), "a pending retry owns its wakeup");
+        assert_eq!(calls.load(Ordering::Relaxed), 2);
+        gate.notify_one();
+        assert!(task.is_woken());
+        assert!(matches!(task.poll(), Poll::Ready(Ok(()))));
+
+        let calls = Arc::new(AtomicUsize::new(0));
+        let attempts = calls.clone();
         let service = tower::service_fn(move |request: PoolRequest<Vec<u8>>| {
             attempts.fetch_add(1, Ordering::Relaxed);
             future::ready(Err::<(), _>(DispatchError::CheckoutCanceled {

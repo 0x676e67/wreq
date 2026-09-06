@@ -1076,21 +1076,35 @@ mod tests {
 
     #[test]
     fn returned_service_prefers_a_waiter() {
-        let active = Arc::new(AtomicUsize::new(0));
-        let shared = Arc::new(Mutex::new(Shared {
-            services: Vec::new(),
-            waiters: VecDeque::new(),
-            reservations: Vec::new(),
-            next_waiter: 0,
-            max_idle: usize::MAX,
-            shutdown: watch::channel(()).0,
-        }));
-        let waiter = shared.lock().push_waiter();
-        let mut service = Cached::new(7, Arc::downgrade(&shared), active, false);
+        for max_idle in [0, 1, 2] {
+            let active = Arc::new(AtomicUsize::new(0));
+            let shared = Arc::new(Mutex::new(Shared {
+                services: Vec::new(),
+                waiters: VecDeque::new(),
+                reservations: Vec::new(),
+                next_waiter: 0,
+                max_idle,
+                shutdown: watch::channel(()).0,
+            }));
+            let waiter = shared.lock().push_waiter();
+            let mut service = Cached::new(7, Arc::downgrade(&shared), active.clone(), false);
 
-        service.return_to_cache();
+            assert!(service.return_to_cache());
+            assert_eq!(shared.lock().take_reserved(waiter), Some(7));
+            drop(service);
 
-        assert_eq!(shared.lock().take_reserved(waiter), Some(7));
+            // Retention limits must not prevent waiter handoff or leak active counts.
+            for value in 0..3 {
+                drop(Cached::new(
+                    value,
+                    Arc::downgrade(&shared),
+                    active.clone(),
+                    false,
+                ));
+            }
+            assert_eq!(shared.lock().services.len(), max_idle);
+            assert_eq!(active.load(Ordering::Acquire), 0);
+        }
     }
 
     #[tokio::test]

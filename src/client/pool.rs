@@ -1,9 +1,11 @@
 //! Composes the client connection pool from small service components.
 //!
-//! [`Map`] owns one entry per complete connection compatibility group. Fixed
+//! [`Map`] owns one entry per [`ConnectionId`]. Fixed
 //! protocol entries build only an HTTP/1 [`cache::Cache`] or an HTTP/2
 //! [`singleton::Singleton`]. Automatic entries use [`Negotiate`] to route an
 //! established connection between both pools.
+//! Request-local TLS and protocol overrides still require [`crate::Group`]
+//! partitioning; this refactor preserves the existing connection identity.
 //!
 //! ```text
 //! Pool
@@ -1974,24 +1976,26 @@ mod tests {
 
     #[tokio::test]
     async fn checkouts_remove_empty_map_entries() {
-        let pool = test_pool(TestConnector::Fails);
-        let result = pool.checkout(connection(descriptor()), Ver::Http1).await;
-        assert!(result.is_err());
-        assert!(pool.inner.services.lock().is_empty());
-        assert!(!pool.inner.expire.is_running());
+        for version in [Ver::Http1, Ver::Http2, Ver::Auto] {
+            let pool = test_pool(TestConnector::Fails);
+            let result = pool.checkout(connection(descriptor()), version).await;
+            assert!(result.is_err());
+            assert!(pool.inner.services.lock().is_empty());
+            assert!(!pool.inner.expire.is_running());
 
-        let pool = test_pool(TestConnector::Pending);
-        let mut first =
-            tokio_test::task::spawn(pool.checkout(connection(descriptor()), Ver::Http1));
-        let mut second =
-            tokio_test::task::spawn(pool.checkout(connection(descriptor()), Ver::Http1));
-        assert!(first.poll().is_pending());
-        assert!(second.poll().is_pending());
-        drop(first);
-        assert!(!pool.inner.services.lock().is_empty());
-        drop(second);
-        assert!(pool.inner.services.lock().is_empty());
-        assert!(!pool.inner.expire.is_running());
+            let pool = test_pool(TestConnector::Pending);
+            let mut first =
+                tokio_test::task::spawn(pool.checkout(connection(descriptor()), version));
+            let mut second =
+                tokio_test::task::spawn(pool.checkout(connection(descriptor()), version));
+            assert!(first.poll().is_pending());
+            assert!(second.poll().is_pending());
+            drop(first);
+            assert!(!pool.inner.services.lock().is_empty());
+            drop(second);
+            assert!(pool.inner.services.lock().is_empty());
+            assert!(!pool.inner.expire.is_running());
+        }
 
         let pool = test_pool(TestConnector::ClosesAfterResponse);
         let mut pooled = pool

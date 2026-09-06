@@ -980,6 +980,7 @@ mod tests {
         let mut waiter = tokio_test::task::spawn(Oneshot::new(singleton, ()));
         assert!(waiter.poll().is_pending());
         drop(driver);
+        assert!(waiter.is_woken());
         sender.send("shared").expect("waiter still owns maker");
 
         let std::task::Poll::Ready(Ok(service)) = waiter.poll() else {
@@ -1026,6 +1027,7 @@ mod tests {
             panic!("driver should receive the maker error");
         };
         assert!(!super::SingletonError::is_canceled(&driver_error));
+        assert!(waiter.is_woken());
         let std::task::Poll::Ready(Err(waiter_error)) = waiter.poll() else {
             panic!("waiter should be released for a new batch");
         };
@@ -1042,5 +1044,6 @@ mod tests {
         drop(driver);
         drop(waiter);
         assert!(singleton.is_empty());
+        assert!(sender.lock().take().unwrap().is_closed());
     }
 }

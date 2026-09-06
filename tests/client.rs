@@ -21,7 +21,7 @@ use http::{
 use http_body_util::{BodyExt, Full};
 use pretty_env_logger::env_logger;
 use support::server;
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use wreq::{
     Client, Emulation, Group, PoolStrategy, header::OrigHeaderMap, http1::Http1Options,
     tls::TlsInfo,
@@ -953,6 +953,217 @@ async fn connection_pool_uses_each_requests_handshake_options() {
     let response = client.get(url).emulation(relaxed).send().await.unwrap();
 
     assert_eq!(response.headers().get("x-7").unwrap(), "7");
+}
+
+#[tokio::test]
+async fn connection_pool_closes_idle_transports() {
+    // Adapted from hyper-util tests/legacy_client.rs: drop_client_closes_idle_connections
+    // and no_keep_alive_closes_connection.
+    for version in [Version::HTTP_11, Version::HTTP_2] {
+        for keep_alive in [true, false] {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let url = format!("http://{}", listener.local_addr().unwrap());
+            let mut server = tokio::spawn(async move {
+                let (io, _) = listener.accept().await.unwrap();
+                hyper_util::server::conn::auto::Builder::new(hyper_util::rt::TokioExecutor::new())
+                    .serve_connection(
+                        hyper_util::rt::TokioIo::new(io),
+                        hyper::service::service_fn(|_| async {
+                            Ok::<_, std::convert::Infallible>(http::Response::new(Full::new(
+                                Bytes::from_static(b"body"),
+                            )))
+                        }),
+                    )
+                    .await
+                    .unwrap();
+            });
+            let client = Client::builder()
+                .no_proxy()
+                .pool_idle_timeout(None)
+                .pool_max_idle_per_host(if keep_alive { 1 } else { 0 })
+                .timeout(Duration::from_secs(2))
+                .build()
+                .unwrap();
+            let response = client.get(&url).version(version).send().await.unwrap();
+            assert_eq!(response.version(), version);
+            assert_eq!(response.bytes().await.unwrap(), "body");
+
+            if keep_alive {
+                let clone = client.clone();
+                drop(client);
+                assert!(futures_util::poll!(&mut server).is_pending());
+                // The listener accepts only once, so this must reuse the live socket.
+                tokio::time::timeout(Duration::from_secs(2), async {
+                    clone
+                        .get(&url)
+                        .version(version)
+                        .send()
+                        .await
+                        .unwrap()
+                        .bytes()
+                        .await
+                        .unwrap();
+                })
+                .await
+                .unwrap();
+                drop(clone);
+            }
+
+            tokio::time::timeout(Duration::from_secs(2), server)
+                .await
+                .expect("the transport must close without an idle timer")
+                .unwrap();
+        }
+    }
+}
+
+#[tokio::test]
+async fn connection_pool_cancellation_closes_http1_transport() {
+    // Adapted from hyper-util tests/legacy_client.rs:
+    // drop_response_future_closes_in_progress_connection
+    // and drop_response_body_closes_in_progress_connection (Hyper #1353).
+    for response_started in [false, true] {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let (received, request_received) = tokio::sync::oneshot::channel();
+        let server = tokio::spawn(async move {
+            let (mut io, _) = listener.accept().await.unwrap();
+            let mut head = Vec::new();
+            while !head.ends_with(b"\r\n\r\n") {
+                head.push(io.read_u8().await.unwrap());
+            }
+            if response_started {
+                io.write_all(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n")
+                    .await
+                    .unwrap();
+            }
+            received.send(()).unwrap();
+            let mut byte = [0];
+            match io.read(&mut byte).await {
+                Ok(0) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::ConnectionReset => {}
+                result => panic!("canceled transport remained open: {result:?}"),
+            }
+        });
+        let client = Client::builder().http1_only().no_proxy().build().unwrap();
+        let mut request = Box::pin(client.get(url).send());
+        tokio::time::timeout(Duration::from_secs(2), async {
+            if response_started {
+                drop(request.as_mut().await.unwrap());
+            } else {
+                tokio::select! {
+                    _ = request_received => {}
+                    result = request.as_mut() => panic!("unexpected response: {result:?}"),
+                }
+            }
+        })
+        .await
+        .unwrap();
+        drop(request);
+
+        // Keep Client alive: cancellation itself must close the busy transport.
+        tokio::time::timeout(Duration::from_secs(2), server)
+            .await
+            .expect("cancellation must release the transport")
+            .unwrap();
+        drop(client);
+    }
+}
+
+#[tokio::test]
+async fn connection_pool_preserves_upload_after_response_headers() {
+    // Adapted from hyper-util tests/legacy_client.rs:
+    // client_keep_alive_when_response_before_request_body_ends.
+    for version in [Version::HTTP_11, Version::HTTP_2] {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let (uploaded, mut upload_received) = tokio::sync::oneshot::channel();
+        let uploaded = Arc::new(std::sync::Mutex::new(Some(uploaded)));
+        let server = tokio::spawn(async move {
+            let (io, _) = listener.accept().await.unwrap();
+            let service =
+                hyper::service::service_fn(move |request: http::Request<hyper::body::Incoming>| {
+                    if request.method() == http::Method::POST {
+                        let uploaded = uploaded.lock().unwrap().take().unwrap();
+                        tokio::spawn(async move {
+                            uploaded
+                                .send(request.into_body().collect().await.unwrap().to_bytes())
+                                .unwrap();
+                        });
+                    }
+                    async {
+                        Ok::<_, std::convert::Infallible>(http::Response::new(Full::new(
+                            Bytes::new(),
+                        )))
+                    }
+                });
+            hyper_util::server::conn::auto::Builder::new(hyper_util::rt::TokioExecutor::new())
+                .serve_connection(hyper_util::rt::TokioIo::new(io), service)
+                .await
+                .unwrap();
+        });
+        let client = Client::builder()
+            .no_proxy()
+            .pool_idle_timeout(None)
+            .pool_strategy(PoolStrategy::ReuseFirst(Duration::from_secs(30)))
+            .build()
+            .unwrap();
+        let (release, upload) = tokio::sync::oneshot::channel();
+        let body = wreq::Body::wrap(http_body_util::StreamBody::new(futures_util::stream::once(
+            async { upload.await.map(http_body::Frame::data) },
+        )));
+        tokio::time::timeout(Duration::from_secs(2), async {
+            client
+                .post(&url)
+                .version(version)
+                .body(body)
+                .send()
+                .await
+                .unwrap()
+                .bytes()
+                .await
+                .unwrap();
+        })
+        .await
+        .expect("response headers must not wait for the upload");
+        assert!(futures_util::poll!(&mut upload_received).is_pending());
+
+        let mut second = Box::pin(client.get(&url).version(version).send());
+        if version == Version::HTTP_11 {
+            assert!(futures_util::poll!(second.as_mut()).is_pending());
+        } else {
+            tokio::time::timeout(Duration::from_secs(2), second.as_mut())
+                .await
+                .unwrap()
+                .unwrap()
+                .bytes()
+                .await
+                .unwrap();
+        }
+        release.send(Bytes::from_static(b"upload")).unwrap();
+        assert_eq!(
+            tokio::time::timeout(Duration::from_secs(2), upload_received)
+                .await
+                .unwrap()
+                .unwrap(),
+            "upload"
+        );
+        if version == Version::HTTP_11 {
+            tokio::time::timeout(Duration::from_secs(2), second.as_mut())
+                .await
+                .unwrap()
+                .unwrap()
+                .bytes()
+                .await
+                .unwrap();
+        }
+        drop(second);
+        drop(client);
+        tokio::time::timeout(Duration::from_secs(2), server)
+            .await
+            .unwrap()
+            .unwrap();
+    }
 }
 
 #[tokio::test]
