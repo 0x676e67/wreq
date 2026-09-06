@@ -384,18 +384,18 @@ where
         let this = self.clone();
         Box::pin(async move {
             let PoolRequest {
-                request,
+                #[allow(unused_mut)]
+                mut request,
                 connection,
             } = request;
-            #[cfg(feature = "cookies")]
-            let mut request = request;
+
             let version = match connection.descriptor.version() {
                 Some(Version::HTTP_10 | Version::HTTP_11) => Ver::Http1,
                 Some(Version::HTTP_2) => Ver::Http2,
                 _ => this.version,
             };
-            let checkout = this.pool.checkout(connection.clone(), version).await;
-            let mut pooled = match checkout {
+
+            let mut pooled = match this.pool.checkout(connection.clone(), version).await {
                 Ok(pooled) => pooled,
                 Err(error) if pool::is_canceled(&*error) => {
                     return Err(DispatchError::CheckoutCanceled {
