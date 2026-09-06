@@ -311,11 +311,6 @@ path = "examples/json_typed.rs"
 required-features = ["json"]
 
 [[example]]
-name = "tor_socks"
-path = "examples/tor_socks.rs"
-required-features = ["socks"]
-
-[[example]]
 name = "form"
 path = "examples/form.rs"
 required-features = ["form"]

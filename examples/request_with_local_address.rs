@@ -10,6 +10,7 @@ async fn main() -> wreq::Result<()> {
         .local_address(IpAddr::from([192, 168, 1, 226]))
         .send()
         .await?;
+
     println!("{}", resp.text().await?);
 
     Ok(())

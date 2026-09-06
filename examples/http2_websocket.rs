@@ -1,10 +1,3 @@
-//! Run websocket server
-//!
-//! ```not_rust
-//! git clone https://github.com/tokio-rs/axum && cd axum
-//! cargo run -p example-websockets-http2
-//! ```
-
 use futures_util::{SinkExt, StreamExt, TryStreamExt};
 use wreq::{Version, header, ws::message::Message};
 
