@@ -1,6 +1,6 @@
 //! Adapts established transports into protocol request senders.
 //!
-//! [`http1::Http1Layer`] and [`http2::Http2Layer`] place protocol handshakes
+//! [`http1::ConnectLayer`] and [`http2::ConnectLayer`] place protocol handshakes
 //! behind Tower services. The pool can therefore compose connection making,
 //! protocol negotiation, and reuse without owning handshake state machines
 //! itself.

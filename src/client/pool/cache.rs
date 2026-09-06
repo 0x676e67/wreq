@@ -899,7 +899,6 @@ impl<F, S, E> Started for BackgroundConnect<F, S>
 where
     F: Started + Future<Output = Result<S, E>> + Unpin,
 {
-    /// Delegates the started-work decision to the maker future.
     fn started(&self) -> bool {
         self.future.started()
     }

@@ -65,11 +65,7 @@ use self::{
     negotiate::{Negotiate, Negotiated},
     singleton::Singled,
 };
-use super::proto::{
-    Established, SendError,
-    http1::{Http1Client, Http1Connect, Http1Layer},
-    http2::{Http2Client, Http2Connect, Http2Layer},
-};
+use super::proto::{Established, SendError, http1, http2};
 use crate::{
     conn::{
         Connected, Connection,
@@ -393,13 +389,17 @@ struct NegotiatedEntry<L, R, S> {
 /// This local trait keeps the type-erased entry independent of the exact cache
 /// builder type while exposing only cleanup and empty-state checks.
 trait Http1Pool<B>:
-    Service<PoolTarget, Response = Cached<Http1Client<B>>, Error = BoxError> + Clone + Send + 'static
+    Service<PoolTarget, Response = Cached<http1::Connection<B>>, Error = BoxError>
+    + Clone
+    + Send
+    + 'static
 {
     /// Removes closed or expired idle HTTP/1 senders.
-    fn retain_idle(&mut self, now: Instant, timeout: Option<Duration>) -> Vec<Http1Client<B>>;
+    fn retain_idle(&mut self, now: Instant, timeout: Option<Duration>)
+    -> Vec<http1::Connection<B>>;
 
     /// Removes all unreserved idle HTTP/1 senders.
-    fn drain_idle(&mut self) -> Vec<Http1Client<B>>;
+    fn drain_idle(&mut self) -> Vec<http1::Connection<B>>;
 
     /// Returns whether at least one unreserved idle HTTP/1 sender exists.
     fn has_idle(&self) -> bool;
@@ -415,10 +415,14 @@ trait Http1Pool<B>:
 /// would also cancel participating checkouts.
 trait Http2Pool<B>: Clone + Send + 'static {
     /// Removes a closed or expired idle HTTP/2 sender.
-    fn retain_idle(&mut self, now: Instant, timeout: Option<Duration>) -> Option<Http2Client<B>>;
+    fn retain_idle(
+        &mut self,
+        now: Instant,
+        timeout: Option<Duration>,
+    ) -> Option<http2::Connection<B>>;
 
     /// Removes the completed shared HTTP/2 sender without canceling its maker.
-    fn take_idle(&mut self) -> Option<Http2Client<B>>;
+    fn take_idle(&mut self) -> Option<http2::Connection<B>>;
 
     /// Returns whether the HTTP/2 singleton is empty.
     fn idle_is_empty(&self) -> bool;
@@ -428,13 +432,13 @@ trait Http2Pool<B>: Clone + Send + 'static {
 }
 
 /// Boxed future that establishes the singleton HTTP/2 sender.
-type H2MakeFuture<B> = BoxFuture<'static, Result<Http2Client<B>, BoxError>>;
+type H2MakeFuture<B> = BoxFuture<'static, Result<http2::Connection<B>, BoxError>>;
 
 /// Generation-aware checkout of the shared HTTP/2 sender.
-type H2Pooled<B> = Singled<H2MakeFuture<B>, Http2Client<B>>;
+type H2Pooled<B> = Singled<H2MakeFuture<B>, http2::Connection<B>>;
 
 /// Future joining an existing HTTP/2 singleton generation.
-type H2Checkout<B> = singleton::SingletonFuture<H2MakeFuture<B>, Http2Client<B>>;
+type H2Checkout<B> = singleton::SingletonFuture<H2MakeFuture<B>, http2::Connection<B>>;
 
 /// Defers checkout completion and resource destruction until the map is unlocked.
 ///
@@ -465,7 +469,7 @@ where
 }
 
 /// HTTP sender selected for one pool checkout.
-type PooledInner<B> = Negotiated<Cached<Http1Client<B>>, H2Pooled<B>>;
+type PooledInner<B> = Negotiated<Cached<http1::Connection<B>>, H2Pooled<B>>;
 
 /// Type-erased connection state held until the outer map lock is released.
 ///
@@ -538,7 +542,7 @@ struct ConnectFuture<T> {
 
 /// Layer that turns established transports into cached HTTP/1 senders.
 ///
-/// The layer applies [`Http1Layer`] before the cache and retains at most
+/// The layer applies [`http1::ConnectLayer`] before the cache and retains at most
 /// `max_idle` exclusive senders.
 struct Http1PoolLayer<B> {
     /// Entry maintenance invoked after a background connection finishes.
@@ -562,7 +566,7 @@ struct Http1PoolLayer<B> {
 
 /// Layer that turns established transports into one shared HTTP/2 sender.
 ///
-/// The layer applies [`Http2Layer`] before the singleton. An inspected transport
+/// The layer applies [`http2::ConnectLayer`] before the singleton. An inspected transport
 /// is consumed exactly once; later checkouts clone the shared sender.
 struct Http2PoolLayer<B, T> {
     /// Runtime used by the protocol driver.
@@ -980,7 +984,8 @@ where
                 state,
             }),
             Ver::Http2 => {
-                let maker = Http2Layer::new(self.exec.clone(), self.timer.clone()).layer(connect);
+                let maker =
+                    http2::ConnectLayer::new(self.exec.clone(), self.timer.clone()).layer(connect);
                 Box::new(Http2Entry {
                     service: singleton::Singleton::new(maker),
                     state,
@@ -1072,8 +1077,12 @@ where
 
 impl<M, B> Entry<B> for Http2Entry<singleton::Singleton<M, PoolTarget>>
 where
-    M: Service<PoolTarget, Response = Http2Client<B>, Error = BoxError, Future = H2MakeFuture<B>>
-        + Clone
+    M: Service<
+            PoolTarget,
+            Response = http2::Connection<B>,
+            Error = BoxError,
+            Future = H2MakeFuture<B>,
+        > + Clone
         + Send
         + 'static,
     B: Body + Send + Unpin + 'static,
@@ -1106,14 +1115,14 @@ where
     /// Removes a completed HTTP/2 sender when it is closed or has expired idle.
     ///
     /// Pending singleton creation is left untouched. Active sender checkouts are
-    /// kept by [`Http2Client::is_reusable`].
+    /// kept by [`http2::Connection::is_reusable`].
     fn retain(&mut self, now: Instant, timeout: Option<Duration>) -> Option<DeferredDrop> {
         if self.state.uses.load(Ordering::Acquire) != 0 {
             return None;
         }
 
         self.service
-            .retain(|client| client.is_reusable(now, timeout))
+            .retain(|connection| connection.is_reusable(now, timeout))
             .map(defer_drop)
     }
 
@@ -1285,7 +1294,10 @@ where
 
 impl<M, Ev, B> Http1Pool<B> for cache::Cache<M, PoolTarget, Ev>
 where
-    M: Service<PoolTarget, Response = Http1Client<B>, Error = BoxError> + Clone + Send + 'static,
+    M: Service<PoolTarget, Response = http1::Connection<B>, Error = BoxError>
+        + Clone
+        + Send
+        + 'static,
     M::Future: Unpin + Send,
     M::Response: Unpin,
     Ev: cache::events::Events<cache::BackgroundConnect<M::Future, M::Response>>
@@ -1298,12 +1310,16 @@ where
     B::Error: Into<BoxError>,
 {
     /// Retains reusable HTTP/1 senders.
-    fn retain_idle(&mut self, now: Instant, timeout: Option<Duration>) -> Vec<Http1Client<B>> {
-        self.retain(|client| client.is_reusable(now, timeout))
+    fn retain_idle(
+        &mut self,
+        now: Instant,
+        timeout: Option<Duration>,
+    ) -> Vec<http1::Connection<B>> {
+        self.retain(|connection| connection.is_reusable(now, timeout))
     }
 
     /// Drains unreserved idle HTTP/1 senders.
-    fn drain_idle(&mut self) -> Vec<Http1Client<B>> {
+    fn drain_idle(&mut self) -> Vec<http1::Connection<B>> {
         cache::Cache::drain_idle(self)
     }
 
@@ -1322,7 +1338,7 @@ where
 
 impl<M, Dst, B> Http2Pool<B> for singleton::Singleton<M, Dst>
 where
-    M: Service<Dst, Response = Http2Client<B>> + Clone + Send + 'static,
+    M: Service<Dst, Response = http2::Connection<B>> + Clone + Send + 'static,
     M::Future: Send + 'static,
     Dst: Send + 'static,
     B: Body + Send + Unpin + 'static,
@@ -1332,12 +1348,16 @@ where
     /// Removes a completed sender only when the pool's health policy rejects it.
     ///
     /// A maker generation still in progress is never canceled by maintenance.
-    fn retain_idle(&mut self, now: Instant, timeout: Option<Duration>) -> Option<Http2Client<B>> {
-        self.retain(|client| client.is_reusable(now, timeout))
+    fn retain_idle(
+        &mut self,
+        now: Instant,
+        timeout: Option<Duration>,
+    ) -> Option<http2::Connection<B>> {
+        self.retain(|connection| connection.is_reusable(now, timeout))
     }
 
     /// Detaches the completed sender without interrupting an active maker.
-    fn take_idle(&mut self) -> Option<Http2Client<B>> {
+    fn take_idle(&mut self) -> Option<http2::Connection<B>> {
         self.take()
     }
 
@@ -1449,7 +1469,6 @@ impl<T> Future for ConnectFuture<T> {
 }
 
 impl<T> Started for ConnectFuture<T> {
-    /// Returns whether useful connection work has begun after policy waits.
     fn started(&self) -> bool {
         self.started
             .as_ref()
@@ -1467,7 +1486,7 @@ where
     B::Error: Into<BoxError>,
 {
     type Service =
-        cache::Cache<Http1Connect<S, B>, PoolTarget, cache::events::WithExecutor<Executor>>;
+        cache::Cache<http1::Connect<S, B>, PoolTarget, cache::events::WithExecutor<Executor>>;
 
     fn layer(&self, service: S) -> Self::Service {
         let entry_state = self.entry_state.clone();
@@ -1476,7 +1495,7 @@ where
             .on_background_complete(move || (entry_state.maintain)(&entry_state))
             .max_idle(self.max_idle)
             .build(
-                Http1Layer::new(self.exec.clone(), self.timer.clone(), self.set_host)
+                http1::ConnectLayer::new(self.exec.clone(), self.timer.clone(), self.set_host)
                     .layer(service),
             )
     }
@@ -1494,10 +1513,10 @@ where
     B::Data: Send,
     B::Error: Into<BoxError>,
 {
-    type Service = singleton::Singleton<Http2Connect<S, B>, Established<T>>;
+    type Service = singleton::Singleton<http2::Connect<S, B>, Established<T>>;
 
     fn layer(&self, service: S) -> Self::Service {
-        let maker = Http2Layer::new(self.exec.clone(), self.timer.clone()).layer(service);
+        let maker = http2::ConnectLayer::new(self.exec.clone(), self.timer.clone()).layer(service);
         singleton::Singleton::new(maker)
     }
 }
@@ -1575,8 +1594,8 @@ where
     type Response = Response<Incoming>;
     type Error = SendError<B>;
     type Future = tower::util::future::EitherResponseFuture<
-        <Http1Client<B> as Service<Request<B>>>::Future,
-        <Http2Client<B> as Service<Request<B>>>::Future,
+        <http1::Connection<B> as Service<Request<B>>>::Future,
+        <http2::Connection<B> as Service<Request<B>>>::Future,
     >;
 
     fn poll_ready(&mut self, cx: &mut task::Context<'_>) -> Poll<Result<(), Self::Error>> {
@@ -1612,9 +1631,9 @@ where
             }
             Negotiated::Right(service) => {
                 let discard = {
-                    let client = service.inner();
-                    client.finish_checkout();
-                    client.conn_info().poisoned() || client.is_closed()
+                    let connection = service.inner();
+                    connection.finish_checkout();
+                    connection.conn_info().poisoned() || connection.is_closed()
                 };
                 if discard {
                     service.discard_shared();

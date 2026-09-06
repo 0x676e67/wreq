@@ -555,7 +555,6 @@ pin_project! {
         check_pending: bool,
 
         // Notification that another attempt produced an upgraded connection.
-        #[pin]
         notified: BoxFuture<'static, ()>,
 
         // Predicate selecting the upgraded protocol.
@@ -625,7 +624,7 @@ where
         if std::mem::take(this.check_pending) && !this.pending.lock().is_empty() {
             return Poll::Ready(Err(UseOther.into()));
         }
-        if this.notified.poll(cx).is_ready() {
+        if this.notified.as_mut().poll(cx).is_ready() {
             return Poll::Ready(Err(UseOther.into()));
         }
 

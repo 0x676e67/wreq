@@ -26,15 +26,15 @@ use crate::{
     sync::Mutex,
 };
 
-/// Cloneable HTTP/2 sender and its shared connection metadata.
+/// Cloneable request-side handle for one HTTP/2 connection.
 ///
 /// The pool singleton stores one instance and gives each checkout a sender
 /// clone. Protocol stream availability remains owned by wreq-proto; the local
 /// state records sender checkout only and is not an active-stream count.
-pub struct Http2Client<B> {
-    conn_info: Connected,
+pub struct Connection<B> {
     tx: conn::http2::SendRequest<B>,
-    state: Arc<Http2State>,
+    state: Arc<ConnectionState>,
+    conn_info: Connected,
     timer: Timer,
 }
 
@@ -45,7 +45,7 @@ pub struct Http2Client<B> {
 /// extended `CONNECT` upgrade until both stream directions terminate. The
 /// lifecycle is specified by smithy-rs's latest pool design:
 /// <https://github.com/smithy-lang/smithy-rs/blob/connection-pool-main/rust-runtime/aws-smithy-http-client/docs/design/connection-pool.md>
-struct Http2State {
+struct ConnectionState {
     checkouts: AtomicUsize,
     idle_at: Mutex<Instant>,
 }
@@ -56,7 +56,7 @@ struct Http2State {
 /// transport. The resulting sender is cloneable and can be stored in the
 /// pool's singleton service.
 #[derive(Clone)]
-pub struct Http2Layer<B> {
+pub struct ConnectLayer<B> {
     exec: Executor,
     timer: Timer,
     _body: PhantomData<fn(B)>,
@@ -67,16 +67,16 @@ pub struct Http2Layer<B> {
 /// The inner service yields the transport chosen by negotiation. This service
 /// consumes it once, starts the protocol driver, and returns the shared sender
 /// stored by the singleton pool.
-pub struct Http2Connect<S, B> {
+pub struct Connect<S, B> {
     service: S,
     exec: Executor,
     timer: Timer,
     _body: PhantomData<fn(B)>,
 }
 
-// ===== impl Http2Layer =====
+// ===== impl ConnectLayer =====
 
-impl<B> Http2Layer<B> {
+impl<B> ConnectLayer<B> {
     /// Creates an HTTP/2 handshake layer for pooled connections.
     pub fn new(exec: Executor, timer: Timer) -> Self {
         Self {
@@ -87,11 +87,11 @@ impl<B> Http2Layer<B> {
     }
 }
 
-impl<S, B> Layer<S> for Http2Layer<B> {
-    type Service = Http2Connect<S, B>;
+impl<S, B> Layer<S> for ConnectLayer<B> {
+    type Service = Connect<S, B>;
 
     fn layer(&self, service: S) -> Self::Service {
-        Http2Connect {
+        Connect {
             service,
             exec: self.exec.clone(),
             timer: self.timer.clone(),
@@ -100,9 +100,9 @@ impl<S, B> Layer<S> for Http2Layer<B> {
     }
 }
 
-// ===== impl Http2Connect =====
+// ===== impl Connect =====
 
-impl<S: Clone, B> Clone for Http2Connect<S, B> {
+impl<S: Clone, B> Clone for Connect<S, B> {
     fn clone(&self) -> Self {
         Self {
             service: self.service.clone(),
@@ -113,7 +113,7 @@ impl<S: Clone, B> Clone for Http2Connect<S, B> {
     }
 }
 
-impl<S, T, B, Dst> Service<Dst> for Http2Connect<S, B>
+impl<S, T, B, Dst> Service<Dst> for Connect<S, B>
 where
     S: Service<Dst, Response = Established<T>, Error = BoxError> + Clone + Send + 'static,
     S::Future: Send + 'static,
@@ -122,7 +122,7 @@ where
     B::Data: Send,
     B::Error: Into<BoxError>,
 {
-    type Response = Http2Client<B>;
+    type Response = Connection<B>;
     type Error = BoxError;
     type Future = BoxFuture<'static, Result<Self::Response, Self::Error>>;
 
@@ -134,13 +134,13 @@ where
         let future = self.service.call(target);
         let exec = self.exec.clone();
         let timer = self.timer.clone();
-        Box::pin(Http2Client::handshake(future, exec, timer))
+        Box::pin(Connection::handshake(future, exec, timer))
     }
 }
 
-// ===== impl Http2State =====
+// ===== impl ConnectionState =====
 
-impl Http2State {
+impl ConnectionState {
     /// Creates idle checkout state for a newly established connection.
     fn new(idle_at: Instant) -> Self {
         Self {
@@ -208,26 +208,26 @@ impl Http2State {
     }
 }
 
-// ===== impl Http2Client =====
+// ===== impl Connection =====
 
-impl<B> Clone for Http2Client<B> {
+impl<B> Clone for Connection<B> {
     fn clone(&self) -> Self {
         Self {
-            conn_info: self.conn_info.clone(),
             tx: self.tx.clone(),
+            conn_info: self.conn_info.clone(),
             state: self.state.clone(),
             timer: self.timer.clone(),
         }
     }
 }
 
-impl<B> Http2Client<B>
+impl<B> Connection<B>
 where
     B: Body + 'static,
 {
     /// Awaits a transport and returns a handshaken HTTP/2 sender.
     /// Starts the connection driver before waiting for sender readiness.
-    async fn handshake<F, T>(future: F, exec: Executor, timer: Timer) -> Result<Self, BoxError>
+    async fn handshake<F, T>(established: F, exec: Executor, timer: Timer) -> Result<Self, BoxError>
     where
         F: Future<Output = Result<Established<T>, BoxError>>,
         T: AsyncRead + AsyncWrite + Unpin + Send + 'static,
@@ -240,7 +240,8 @@ where
             connected,
             h2_builder,
             ..
-        } = future.await?;
+        } = established.await?;
+
         let (mut tx, connection) = h2_builder.handshake(io).await?;
         exec.execute(async move {
             if let Err(_error) = connection.await {
@@ -250,9 +251,9 @@ where
         tx.ready().await?;
 
         Ok(Self {
-            conn_info: connected,
             tx,
-            state: Arc::new(Http2State::new(clock_now(&timer))),
+            conn_info: connected,
+            state: Arc::new(ConnectionState::new(clock_now(&timer))),
             timer,
         })
     }
@@ -299,7 +300,7 @@ where
     }
 }
 
-impl<B> Service<Request<B>> for Http2Client<B>
+impl<B> Service<Request<B>> for Connection<B>
 where
     B: Body + Send + 'static,
 {
