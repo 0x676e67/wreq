@@ -721,20 +721,50 @@ async fn error_has_url() {
 
 #[tokio::test]
 async fn http1_only() {
-    let server = server::http(move |_| async move { http::Response::default() });
-
-    let resp = Client::builder()
+    let mut server = server::http(move |request| async move {
+        http::Response::builder()
+            .header("x-wire-version", format!("{:?}", request.version()))
+            .body(Default::default())
+            .unwrap()
+    });
+    let client = Client::builder()
         .http1_only()
+        .no_proxy()
+        .timeout(Duration::from_secs(5))
         .build()
-        .unwrap()
-        .get(format!("http://{}", server.addr()))
-        .send()
-        .await
         .unwrap();
+    let url = format!("http://{}", server.addr());
 
-    assert_eq!(resp.version(), wreq::Version::HTTP_11);
+    // The protocol sender caps later requests after the peer answers with HTTP/1.0.
+    for (version, wire_version) in [
+        (Version::HTTP_11, Version::HTTP_11),
+        (Version::HTTP_10, Version::HTTP_10),
+        (Version::HTTP_11, Version::HTTP_10),
+    ] {
+        let response = client
+            .get(&url)
+            .version(version)
+            .header(header::CONNECTION, "keep-alive")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(
+            response.headers()["x-wire-version"],
+            format!("{wire_version:?}")
+        );
+        response.bytes().await.unwrap();
+    }
+    let accepted = server
+        .events()
+        .iter()
+        .filter(|event| matches!(event, server::Event::ConnectionAccepted))
+        .count();
+    assert_eq!(
+        accepted, 1,
+        "HTTP/1 minor versions share a reusable connection"
+    );
 
-    let resp = wreq::get(format!("http://{}", server.addr()))
+    let resp = wreq::get(url)
         .version(Version::HTTP_11)
         .send()
         .await
@@ -769,6 +799,10 @@ async fn http2_only() {
 
 #[tokio::test]
 async fn connection_pool_respects_https_version_policy() {
+    use std::{borrow::Cow, sync::Mutex};
+
+    use wreq::tls::{AlpnProtocol, TlsOptions};
+
     /// Echoes the cookie serialization version into the request headers.
     /// Lets the server verify that cookies follow the negotiated wire protocol.
     /// Holds no cookie state and ignores response updates.
@@ -790,20 +824,67 @@ async fn connection_pool_respects_https_version_policy() {
         }
     }
 
-    for (alpn, client_version) in [
-        (b"\x02h2\x08http/1.1".as_slice(), None),
-        (b"\x08http/1.1".as_slice(), None),
-        (b"".as_slice(), None),
-        (b"\x02h2\x08http/1.1".as_slice(), Some(Version::HTTP_11)),
-        (b"\x02h2\x08http/1.1".as_slice(), Some(Version::HTTP_2)),
+    let both = b"\x02h2\x08http/1.1".as_slice();
+    let h1 = b"\x08http/1.1".as_slice();
+    let h2 = b"\x02h2".as_slice();
+    let protocols = Some([AlpnProtocol::HTTP2, AlpnProtocol::HTTP1].as_slice());
+    for (alpn, client_version, tls_alpn, configured_offer) in [
+        (both, None, protocols, both),
+        (h1, None, protocols, both),
+        (b"", None, protocols, both),
+        (both, Some(Version::HTTP_11), protocols, both),
+        (both, Some(Version::HTTP_2), protocols, both),
+        (both, None, Some([AlpnProtocol::HTTP1].as_slice()), h1),
+        (both, None, Some([AlpnProtocol::HTTP2].as_slice()), h2),
+        (
+            both,
+            None,
+            Some([AlpnProtocol::HTTP1, AlpnProtocol::HTTP2].as_slice()),
+            b"\x08http/1.1\x02h2",
+        ),
+        (
+            both,
+            None,
+            Some(
+                [
+                    AlpnProtocol::HTTP1,
+                    AlpnProtocol::HTTP2,
+                    AlpnProtocol::HTTP1,
+                ]
+                .as_slice(),
+            ),
+            b"\x08http/1.1\x02h2\x08http/1.1",
+        ),
+        (both, None, None, both),
+        (both, None, Some([].as_slice()), both),
+        (both, Some(Version::HTTP_11), None, both),
+        (both, Some(Version::HTTP_2), None, both),
+        (both, Some(Version::HTTP_11), Some([].as_slice()), both),
+        (both, Some(Version::HTTP_2), Some([].as_slice()), both),
+        (
+            both,
+            Some(Version::HTTP_11),
+            Some([AlpnProtocol::HTTP2].as_slice()),
+            h2,
+        ),
+        (
+            both,
+            Some(Version::HTTP_2),
+            Some([AlpnProtocol::HTTP1].as_slice()),
+            h1,
+        ),
     ] {
-        let acceptor = server::tls_acceptor(alpn);
+        let offers = Arc::new(Mutex::new(Vec::new()));
+        let acceptor = server::tls_acceptor_with_alpn(alpn, {
+            let offers = offers.clone();
+            move |offered| offers.lock().unwrap().push(offered.to_vec())
+        });
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("https://{}/upload?part=1", listener.local_addr().unwrap());
         let server = tokio::spawn(async move {
             let mut connections = tokio::task::JoinSet::new();
-            // Accept exactly two transports; extra dialing cannot silently pass as reuse.
-            for id in ["0", "1"] {
+            // One transport per request policy; extra dialing cannot pass as reuse.
+            for id in ["0", "1", "2"] {
                 let (socket, _) = listener.accept().await.unwrap();
                 let stream = server::tls_accept(&acceptor, socket).await;
                 let version = match stream.ssl().selected_alpn_protocol() {
@@ -847,14 +928,20 @@ async fn connection_pool_respects_https_version_policy() {
                 result.unwrap();
             }
         });
-        let builder = match client_version {
-            Some(Version::HTTP_11) => Client::builder().http1_only(),
-            Some(Version::HTTP_2) => Client::builder().http2_only(),
-            _ => Client::builder(),
-        };
+        let builder = Client::builder().http_version(match client_version {
+            Some(Version::HTTP_11) => wreq::HttpVersion::Http1,
+            Some(Version::HTTP_2) => wreq::HttpVersion::Http2,
+            _ => wreq::HttpVersion::Auto,
+        });
         #[cfg(feature = "cookies")]
         let builder = builder.cookie_provider(VersionCookies);
+        let tls = tls_alpn.map(|protocols| {
+            let mut tls = TlsOptions::default();
+            tls.alpn_protocols = Some(Cow::Borrowed(protocols));
+            tls
+        });
         let client = builder
+            .tls_options(tls)
             .no_proxy()
             .tls_cert_verification(false)
             .pool_idle_timeout(None)
@@ -862,26 +949,39 @@ async fn connection_pool_respects_https_version_policy() {
             .build()
             .unwrap();
 
-        for (version, id) in [
-            (Version::HTTP_2, "0"),
-            (Version::HTTP_11, "1"),
-            (Version::HTTP_2, "0"),
-            (Version::HTTP_11, "1"),
+        let preference_offer = if client_version == Some(Version::HTTP_2) {
+            h2
+        } else {
+            configured_offer
+        };
+        let client_offer = match client_version {
+            Some(Version::HTTP_11) => h1,
+            Some(Version::HTTP_2) => h2,
+            _ => configured_offer,
+        };
+        for (version, id, offer) in [
+            (Some(Version::HTTP_2), "0", preference_offer),
+            (Some(Version::HTTP_11), "1", h1),
+            (Some(Version::HTTP_2), "0", preference_offer),
+            (Some(Version::HTTP_11), "1", h1),
+            (None, "2", client_offer),
+            (None, "2", client_offer),
         ] {
-            let response = client
-                .post(&url)
-                .version(version)
-                .body("payload")
-                .send()
-                .await
-                .unwrap();
+            let mut request = client.post(&url).body("payload");
+            if let Some(version) = version {
+                request = request.version(version);
+            }
+            let response = request.send().await.unwrap();
             assert_eq!(response.status(), StatusCode::OK);
-            let expected = if version == Version::HTTP_2 && alpn.starts_with(b"\x02h2") {
-                Version::HTTP_2
-            } else {
-                Version::HTTP_11
+            let expected = match btls::ssl::select_next_proto(alpn, offer) {
+                Some(b"h2") => Version::HTTP_2,
+                _ => Version::HTTP_11,
             };
-            assert_eq!(response.version(), expected);
+            assert_eq!(
+                response.version(),
+                expected,
+                "server ALPN={alpn:?}, client={client_version:?}, TLS ALPN={tls_alpn:?}, request={version:?}, offer={offer:?}",
+            );
             assert_eq!(response.bytes().await.unwrap(), id);
         }
         drop(client);
@@ -889,6 +989,10 @@ async fn connection_pool_respects_https_version_policy() {
             .await
             .unwrap()
             .unwrap();
+        assert_eq!(
+            *offers.lock().unwrap(),
+            [preference_offer, h1, client_offer]
+        );
     }
 }
 

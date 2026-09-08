@@ -9,6 +9,106 @@ use wreq::Client;
 static HTTP_PROXY_ENV_MUTEX: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
 #[tokio::test]
+async fn https_proxy_keeps_transport_and_target_alpn_separate() {
+    use std::{sync::Arc, time::Duration};
+
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use wreq::{
+        Version,
+        tls::{AlpnProtocol, TlsOptions},
+    };
+
+    for tunnel in [false, true] {
+        let offers = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let acceptor = server::tls_acceptor_with_alpn(b"\x02h2\x08http/1.1", {
+            let offers = offers.clone();
+            move |offer| offers.lock().unwrap().push(offer.to_vec())
+        });
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let proxy = format!("https://{}", listener.local_addr().unwrap());
+        let url = if tunnel {
+            "https://target.invalid/resource"
+        } else {
+            "http://target.invalid/resource"
+        };
+        let server = tokio::spawn(async move {
+            let (socket, _) = listener.accept().await.unwrap();
+            let mut stream = server::tls_accept(&acceptor, socket).await;
+            assert!(stream.ssl().selected_alpn_protocol().is_none());
+            let handler = move |request: http::Request<hyper::body::Incoming>| async move {
+                assert_eq!(request.version(), Version::HTTP_11);
+                if tunnel {
+                    assert_eq!(request.uri(), "/resource");
+                } else {
+                    assert_eq!(request.uri(), url);
+                }
+                http::Response::builder()
+                    .header(http::header::CONNECTION, "close")
+                    .body(wreq::Body::from("body"))
+                    .unwrap()
+            };
+            if tunnel {
+                let mut head = Vec::new();
+                while !head.ends_with(b"\r\n\r\n") {
+                    head.push(stream.read_u8().await.unwrap());
+                }
+                assert!(head.starts_with(b"CONNECT target.invalid:443 HTTP/1.1\r\n"));
+                stream
+                    .write_all(b"HTTP/1.1 200 Connection Established\r\n\r\n")
+                    .await
+                    .unwrap();
+                let stream = server::tls_accept(&acceptor, stream).await;
+                assert_eq!(
+                    stream.ssl().selected_alpn_protocol(),
+                    Some(b"http/1.1".as_slice())
+                );
+                server::serve_connection(stream, Version::HTTP_11, handler)
+                    .await
+                    .unwrap();
+            } else {
+                server::serve_connection(stream, Version::HTTP_11, handler)
+                    .await
+                    .unwrap();
+            }
+        });
+        let client = Client::builder()
+            .proxy(wreq::Proxy::all(proxy).unwrap())
+            .tls_cert_verification(false)
+            .tls_options(
+                TlsOptions::builder()
+                    .alpn_protocols([AlpnProtocol::HTTP1])
+                    .build(),
+            )
+            .timeout(Duration::from_secs(5))
+            .build()
+            .unwrap();
+        let response = client
+            .get(url)
+            .version(if tunnel {
+                Version::HTTP_2
+            } else {
+                Version::HTTP_11
+            })
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.version(), Version::HTTP_11);
+        assert_eq!(response.bytes().await.unwrap(), "body");
+        tokio::time::timeout(Duration::from_secs(5), server)
+            .await
+            .unwrap()
+            .unwrap();
+        drop(client);
+        let expected: Vec<_> = if tunnel {
+            vec![b"\x08http/1.1".as_slice()]
+        } else {
+            Vec::new()
+        };
+        assert_eq!(*offers.lock().unwrap(), expected);
+    }
+}
+
+#[tokio::test]
 async fn http_proxy() {
     let url = "http://hyper.rs.local/prox";
     let server = server::http(move |req| {

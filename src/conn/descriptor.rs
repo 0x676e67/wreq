@@ -7,10 +7,12 @@ use std::{
     },
 };
 
-use http::{Uri, Version};
+use http::Uri;
 use lru::DefaultHasher;
 
-use crate::{conn::net::SocketBindOptions, group::Group, proxy::Matcher, tls::TlsOptions};
+use crate::{
+    HttpVersion, conn::net::SocketBindOptions, group::Group, proxy::Matcher, tls::TlsOptions,
+};
 
 /// A key that uniquely identifies a group of interchangeable connections for pooling.
 ///
@@ -19,16 +21,6 @@ use crate::{conn::net::SocketBindOptions, group::Group, proxy::Matcher, tls::Tls
 /// ID are considered equivalent and can be reused.
 #[derive(Debug, Clone)]
 pub(crate) struct ConnectionId(Arc<(Group, AtomicU64)>);
-
-/// HTTP version policy carried from request configuration into TLS and pooling.
-/// A preference can negotiate H1; an exact version selects a fixed protocol pool.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub(crate) enum HttpVersion {
-    /// Selects a protocol explicitly, including cleartext H2 prior knowledge.
-    Exact(Version),
-    /// Prefers H2 over HTTPS, allowing H1 when TLS does not negotiate H2.
-    PreferHttp2,
-}
 
 /// A blueprint for creating a new client connection, containing all necessary parameters.
 ///
@@ -82,7 +74,9 @@ impl Eq for ConnectionId {}
 // ===== impl ConnectionDescriptor =====
 
 impl ConnectionDescriptor {
-    /// Create a new [`ConnectionDescriptor`].
+    /// Creates a connection blueprint from request-local configuration.
+    /// Protocol selection is shared by TLS and the pool's compatibility key.
+    /// The request retains its wire version independently of this descriptor.
     pub(crate) fn new(
         uri: Uri,
         mut group: Group,
@@ -128,7 +122,8 @@ impl ConnectionDescriptor {
         &mut self.uri
     }
 
-    /// Returns the requested version policy, not the negotiated wire version.
+    /// Returns the request's protocol selection, not the negotiated wire version.
+    /// `None` inherits the client; `Some(Auto)` explicitly allows negotiation.
     pub(crate) fn version(&self) -> Option<HttpVersion> {
         self.version
     }

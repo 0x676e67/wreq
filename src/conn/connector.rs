@@ -1,5 +1,4 @@
 use std::{
-    borrow::Cow,
     sync::Arc,
     task::{Context, Poll},
     time::Duration,
@@ -19,195 +18,94 @@ use super::{
     HttpConnector, TlsConn, TlsInfoFactory, Unnameable,
     descriptor::ConnectionDescriptor,
     http::HttpConnect,
-    net::TcpConnector,
     proxy,
     timeout::{Timeout, TimeoutLayer},
     verbose::Verbose,
 };
+#[cfg(feature = "socks")]
+use crate::dns::DynResolver;
 use crate::{
-    dns::DynResolver,
     error::{ProxyConnect, map_timeout_to_connector_error},
     ext::UriExt,
     proxy::{Intercepted, Matcher as ProxyMatcher, matcher::Intercept},
     rt::Timer,
-    tls::{
-        TlsOptions,
-        conn::{
-            EstablishedConn, HttpsConnector, MaybeHttpsStream, TlsConnector, TlsConnectorBuilder,
-        },
-    },
+    tls::conn::{EstablishedConn, HttpsConnector, MaybeHttpsStream, TlsConnector},
 };
 
 /// Client-wide connection settings retained by each transport connector.
-///
-/// These defaults control proxy selection, socket behavior, stream instrumentation, and TLS
-/// metadata. Settings that can vary per request remain in [`ConnectionDescriptor`] and are
-/// applied when a connection starts.
+/// Controls proxy selection, connection instrumentation, and post-handshake socket policy.
+/// Request-local socket and TLS options remain in the connection descriptor.
 #[derive(Clone)]
-struct Config {
-    proxies: Arc<Vec<ProxyMatcher>>,
-    verbose: Verbose,
-    nodelay: bool,
-    tls_info: bool,
+pub(crate) struct Config {
+    pub proxies: Arc<Vec<ProxyMatcher>>,
+    pub verbose: bool,
+    pub nodelay: bool,
+    pub tls_info: bool,
 }
 
-/// Assembles the transport service graph used by a client.
-///
-/// The builder owns DNS, TCP, TLS, and timeout configuration until [`ConnectorBuilder::build`]
-/// places the timeout around the concrete connector and any user-provided layers.
-pub struct ConnectorBuilder {
-    config: Config,
-    timer: Timer,
-    timeout: Option<Duration>,
-    #[cfg(feature = "socks")]
-    resolver: DynResolver,
-    http: HttpConnector,
-    builder: TlsConnectorBuilder,
-}
-
-/// Client-owned transport service selected when the connector graph is assembled.
-///
-/// The left branch keeps the graph concrete when no custom layers are present. The right branch
-/// wraps the type-erased custom-layer graph so it also accepts [`ConnectionDescriptor`]. Both
-/// branches remain with the client and create a separately timed future for each connection
-/// attempt.
-pub type Connector = Either<
-    Timeout<TransportConnector>,
+/// The connector graph produced by [`ConnectorLayer`] and retained by the client.
+/// Uses a concrete timeout wrapper without custom layers, otherwise a type-erased stack.
+/// Both branches accept connection descriptors and time each connection attempt separately.
+pub type Stack = Either<
+    Timeout<Connector>,
     MapRequest<BoxedTransportConnector, fn(ConnectionDescriptor) -> Unnameable>,
 >;
 
-/// Establishes the transport consumed by the HTTP protocol layer.
-///
-/// Each call selects the proxy path, applies request-specific socket and TLS settings, and returns
-/// an established [`Conn`]. The service is cloned into each in-flight connection future, while its
-/// immutable TLS builder is shared across those attempts.
+/// Composes user connector layers inside the complete connection timeout.
+/// The uncustomized path remains concrete; only user layers require type erasure.
+/// Applying the layer does not configure sockets or build TLS contexts.
 #[derive(Clone)]
-pub struct TransportConnector {
+pub struct ConnectorLayer {
+    layers: Vec<BoxedConnectorLayer>,
+    timeout: TimeoutLayer,
+}
+
+/// Establishes the transport consumed by the HTTP protocol layer.
+/// Selects the proxy path and composes the configured HTTP and TLS connectors.
+/// Clones share TLS state; this service owns no initialization builder or pool state.
+#[derive(Clone)]
+pub struct Connector {
     config: Config,
     #[cfg(feature = "socks")]
     resolver: DynResolver,
     tls: TlsConnector,
     http: HttpConnector,
-    builder: Arc<TlsConnectorBuilder>,
 }
 
-// ===== impl ConnectorBuilder =====
+// ===== impl ConnectorLayer =====
 
-impl ConnectorBuilder {
-    /// Creates a builder with the client's proxy and DNS configuration.
-    pub(crate) fn new(proxies: Vec<ProxyMatcher>, resolver: DynResolver) -> Self {
+impl ConnectorLayer {
+    /// Retains middleware and timeout policy until the transport graph is assembled.
+    pub fn new(layers: Vec<BoxedConnectorLayer>, timer: Timer, timeout: Option<Duration>) -> Self {
         Self {
-            config: Config {
-                proxies: Arc::new(proxies),
-                verbose: Verbose::OFF,
-                nodelay: true,
-                tls_info: false,
-            },
-            timer: Timer::default(),
-            timeout: None,
-            #[cfg(feature = "socks")]
-            resolver: resolver.clone(),
-            http: HttpConnector::new(resolver, TcpConnector::new()),
-            builder: TlsConnector::builder(),
+            layers,
+            timeout: TimeoutLayer::new(timer, timeout),
         }
     }
+}
 
-    /// Set the HTTP connector to use.
-    #[inline]
-    pub fn with_http<F>(mut self, call: F) -> ConnectorBuilder
-    where
-        F: FnOnce(&mut HttpConnector),
-    {
-        call(&mut self.http);
-        self
-    }
+impl Layer<Connector> for ConnectorLayer {
+    type Service = Stack;
 
-    /// Set the TLS connector builder to use.
-    #[inline]
-    pub fn with_tls<F>(mut self, call: F) -> ConnectorBuilder
-    where
-        F: FnOnce(TlsConnectorBuilder) -> TlsConnectorBuilder,
-    {
-        self.builder = call(self.builder);
-        self
-    }
-
-    /// Set the connect timeout.
-    #[inline]
-    pub fn timeout(mut self, timeout: Option<Duration>) -> ConnectorBuilder {
-        self.timeout = timeout;
-        self
-    }
-
-    /// Set the timer used to drive the connect timeout.
-    #[inline]
-    pub fn timer(mut self, timer: Timer) -> ConnectorBuilder {
-        self.timer = timer;
-        self
-    }
-
-    /// Set connecting verbose mode.
-    #[inline]
-    pub fn verbose(mut self, enabled: bool) -> ConnectorBuilder {
-        self.config.verbose.0 = enabled;
-        self
-    }
-
-    /// Sets the TLS info flag.
-    #[inline]
-    pub fn tls_info(mut self, enabled: bool) -> ConnectorBuilder {
-        self.config.tls_info = enabled;
-        self
-    }
-
-    /// Sets the TCP_NODELAY option for connections.
-    #[inline]
-    pub fn tcp_nodelay(mut self, enabled: bool) -> ConnectorBuilder {
-        self.config.nodelay = enabled;
-        self
-    }
-
-    /// Build a [`Connector`] with the provided layers.
-    pub fn build(
-        self,
-        tls_options: Option<TlsOptions>,
-        layers: Vec<BoxedConnectorLayer>,
-    ) -> crate::Result<Connector> {
-        let timeout = TimeoutLayer::new(self.timer, self.timeout);
-        let service = TransportConnector {
-            config: self.config,
-            #[cfg(feature = "socks")]
-            resolver: self.resolver.clone(),
-            http: self.http,
-            tls: self
-                .builder
-                .build(tls_options.map(Cow::Owned).unwrap_or_default())?,
-            builder: Arc::new(self.builder),
-        };
-
-        // we have no user-provided layers, only use concrete types
-        if layers.is_empty() {
-            return Ok(Either::Left(timeout.layer(service)));
+    fn layer(&self, service: Connector) -> Self::Service {
+        if self.layers.is_empty() {
+            return Either::Left(self.timeout.layer(service));
         }
 
-        // otherwise we have user provided layers
-        // so we need type erasure all the way through
-        // as well as mapping the unnameable type of the layers back to ConnectionDescriptor for the
-        // inner service
-        let service = layers.into_iter().fold(
+        let service = self.layers.iter().fold(
             BoxCloneSyncService::new(
                 ServiceBuilder::new()
                     .layer(MapRequestLayer::new(|request: Unnameable| request.0))
                     .service(service),
             ),
-            |service, layer| ServiceBuilder::new().layer(layer).service(service),
+            |service, layer| layer.layer(service),
         );
 
         // Keep the built-in timeout outside user layers so it covers their work too.
         // The final mapping also handles a tower timeout supplied by the caller.
-        let service = ServiceBuilder::new()
-            .layer(timeout)
-            .service(service)
+        let service = self
+            .timeout
+            .layer(service)
             .map_err(map_timeout_to_connector_error);
 
         let service = MapRequest::new(
@@ -215,13 +113,29 @@ impl ConnectorBuilder {
             Unnameable as fn(ConnectionDescriptor) -> Unnameable,
         );
 
-        Ok(Either::Right(service))
+        Either::Right(service)
     }
 }
 
-// ===== impl TransportConnector =====
+// ===== impl Connector =====
 
-impl TransportConnector {
+impl Connector {
+    /// Combines initialized HTTP and TLS components with transport policy.
+    pub(crate) fn new(
+        config: Config,
+        http: HttpConnector,
+        tls: TlsConnector,
+        #[cfg(feature = "socks")] resolver: DynResolver,
+    ) -> Self {
+        Self {
+            config,
+            http,
+            tls,
+            #[cfg(feature = "socks")]
+            resolver,
+        }
+    }
+
     fn build_https_connector(
         &self,
         https: bool,
@@ -256,14 +170,10 @@ impl TransportConnector {
             }
         }
 
-        // Prefer TLS options from metadata, fallback to default
-        let tls = descriptor
-            .tls_options()
-            .map(|opts| self.builder.build(Cow::Borrowed(opts)))
-            .transpose()?
-            .unwrap_or_else(|| self.tls.clone());
-
-        Ok(HttpsConnector::new(http, tls))
+        self.tls
+            .layer(http)
+            .with_options(descriptor.tls_options())
+            .map_err(Into::into)
     }
 
     fn tunnel_conn_from_stream<IO>(&self, io: MaybeHttpsStream<IO>) -> Result<Conn, BoxError>
@@ -274,12 +184,12 @@ impl TransportConnector {
     {
         let conn = match io {
             MaybeHttpsStream::Http(stream) => Conn {
-                stream: self.config.verbose.wrap(stream),
+                stream: Verbose(self.config.verbose).wrap(stream),
                 tls_info: false,
                 proxy: None,
             },
             MaybeHttpsStream::Https(stream) => Conn {
-                stream: self.config.verbose.wrap(TlsConn { stream }),
+                stream: Verbose(self.config.verbose).wrap(TlsConn { stream }),
                 tls_info: self.config.tls_info,
                 proxy: None,
             },
@@ -296,8 +206,10 @@ impl TransportConnector {
         P: Into<Option<Intercept>>,
     {
         let conn = match io {
-            MaybeHttpsStream::Http(stream) => self.config.verbose.wrap(stream),
-            MaybeHttpsStream::Https(stream) => self.config.verbose.wrap(TlsConn { stream }),
+            MaybeHttpsStream::Http(stream) => Verbose(self.config.verbose).wrap(stream),
+            MaybeHttpsStream::Https(stream) => {
+                Verbose(self.config.verbose).wrap(TlsConn { stream })
+            }
         };
 
         Ok(Conn {
@@ -445,8 +357,7 @@ impl TransportConnector {
                 trace!("connecting via Unix socket: {:?}", unix_socket);
 
                 // Create a Unix connector with the specified socket path.
-                let mut connector =
-                    HttpsConnector::new(UnixConnector::new(unix_socket), self.tls.clone());
+                let mut connector = self.tls.layer(UnixConnector::new(unix_socket));
 
                 // If the target URI is HTTPS, establish a CONNECT tunnel over the Unix socket,
                 // then upgrade the tunneled stream to TLS.
@@ -504,7 +415,7 @@ impl TransportConnector {
     }
 }
 
-impl Service<ConnectionDescriptor> for TransportConnector {
+impl Service<ConnectionDescriptor> for Connector {
     type Response = Conn;
     type Error = BoxError;
     type Future = BoxFuture<'static, Result<Conn, BoxError>>;

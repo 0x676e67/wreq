@@ -23,10 +23,7 @@ use std::collections::BTreeMap;
 use http::Uri;
 use name::GroupId;
 
-use crate::{
-    conn::{descriptor::HttpVersion, net::SocketBindOptions},
-    proxy::Matcher,
-};
+use crate::{HttpVersion, conn::net::SocketBindOptions, proxy::Matcher};
 
 macro_rules! impl_group_variants {
     ($($name:ident $(($ty:ty))?,)*) => {
@@ -78,6 +75,7 @@ impl Group {
     }
 
     /// Keeps negotiated preferences separate from fixed protocol requirements.
+    /// HTTP/1.0 and HTTP/1.1 share the same HTTP/1 connection group.
     #[inline]
     pub(crate) fn version(&mut self, version: Option<HttpVersion>) -> &mut Self {
         self.extend(GroupKey::Version, version.map(GroupVariant::Version))
@@ -187,18 +185,16 @@ mod name {
 mod tests {
     use std::hash::{DefaultHasher, Hash, Hasher};
 
-    use http::Version;
-
     use super::*;
 
     #[test]
     fn test_group_identity_invariance() {
         let mut g1 = Group::default();
         g1.extend(GroupKey::Named, GroupVariant::Named("worker".into()));
-        g1.version(Some(HttpVersion::Exact(Version::HTTP_2)));
+        g1.version(Some(HttpVersion::Http2));
 
         let mut g2 = Group::default();
-        g2.version(Some(HttpVersion::Exact(Version::HTTP_2)));
+        g2.version(Some(HttpVersion::Http2));
         g2.extend(GroupKey::Named, GroupVariant::Named("worker".into()));
 
         let mut h1 = DefaultHasher::new();

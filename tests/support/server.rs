@@ -60,6 +60,19 @@ impl Drop for Server {
     reason = "Shared support is also compiled by tests without TLS fixtures"
 )]
 pub fn tls_acceptor(alpn: &'static [u8]) -> btls::ssl::SslAcceptor {
+    tls_acceptor_with_alpn(alpn, |_| {})
+}
+
+/// Builds the TLS fixture while exposing the client's offered ALPN bytes.
+/// Observes the offer before selection; absent extensions do not call the observer.
+#[allow(
+    dead_code,
+    reason = "Only ALPN policy tests inspect the ClientHello offer"
+)]
+pub fn tls_acceptor_with_alpn(
+    alpn: &'static [u8],
+    observe: impl Fn(&[u8]) + Send + Sync + 'static,
+) -> btls::ssl::SslAcceptor {
     use btls::{
         pkey::PKey,
         ssl::{AlpnError, SslAcceptor, SslMethod, select_next_proto},
@@ -74,11 +87,14 @@ pub fn tls_acceptor(alpn: &'static [u8]) -> btls::ssl::SslAcceptor {
         .set_private_key(&PKey::private_key_from_der(include_bytes!("server.key")).unwrap())
         .unwrap();
     acceptor.check_private_key().unwrap();
-    if !alpn.is_empty() {
-        acceptor.set_alpn_select_callback(move |_, offered| {
+    acceptor.set_alpn_select_callback(move |_, offered| {
+        observe(offered);
+        if alpn.is_empty() {
+            Err(AlpnError::NOACK)
+        } else {
             select_next_proto(alpn, offered).ok_or(AlpnError::ALERT_FATAL)
-        });
-    }
+        }
+    });
     acceptor.build()
 }
 
@@ -88,10 +104,13 @@ pub fn tls_acceptor(alpn: &'static [u8]) -> btls::ssl::SslAcceptor {
     dead_code,
     reason = "Shared support is also compiled by tests without TLS fixtures"
 )]
-pub async fn tls_accept(
+pub async fn tls_accept<IO>(
     acceptor: &btls::ssl::SslAcceptor,
-    socket: TcpStream,
-) -> tokio_btls::SslStream<TcpStream> {
+    socket: IO,
+) -> tokio_btls::SslStream<IO>
+where
+    IO: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+{
     let ssl = btls::ssl::Ssl::new(acceptor.context()).unwrap();
     let mut stream = tokio_btls::SslStream::new(ssl, socket).unwrap();
     std::pin::Pin::new(&mut stream).accept().await.unwrap();

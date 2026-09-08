@@ -58,7 +58,9 @@ impl TlsVersion {
     pub const TLS_1_3: TlsVersion = TlsVersion(btls::ssl::SslVersion::TLS1_3);
 }
 
-/// A TLS ALPN protocol.
+/// An application protocol identifier for TLS ALPN negotiation.
+/// Lists of these identifiers define the offer and its preference order.
+/// Identifiers borrow static bytes and can be reused across TLS configurations.
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
 pub struct AlpnProtocol(&'static [u8]);
 
@@ -72,15 +74,9 @@ impl AlpnProtocol {
     /// Prefer HTTP/3
     pub const HTTP3: AlpnProtocol = AlpnProtocol(b"h3");
 
-    #[inline]
-    fn encode(self) -> Bytes {
-        Self::encode_sequence(std::iter::once(&self))
-    }
-
-    fn encode_sequence<'a, I>(items: I) -> Bytes
-    where
-        I: IntoIterator<Item = &'a AlpnProtocol>,
-    {
+    fn encode_sequence(items: &[AlpnProtocol]) -> Bytes {
+        // RFC 7301 section 3.1 uses length-prefixed identifiers in preference order.
+        // https://www.rfc-editor.org/rfc/rfc7301.html#section-3.1
         let mut buf = BytesMut::new();
         for item in items {
             buf.put_u8(item.0.len() as u8);
@@ -137,14 +133,17 @@ pub struct TlsOptionsBuilder {
 ///
 /// All fields are optional or have defaults. See each field for details.
 #[non_exhaustive]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct TlsOptions {
     /// Application-Layer Protocol Negotiation ([RFC 7301](https://datatracker.ietf.org/doc/html/rfc7301)).
     ///
     /// Specifies which application protocols (e.g., HTTP/2, HTTP/1.1) may be negotiated
     /// over a single TLS connection.
+    /// Negotiated requests preserve this list and its order; fixed HTTP version
+    /// requirements override it. `None` and empty lists inherit the client's offer,
+    /// which defaults to HTTP/2 then HTTP/1.1 in automatic mode.
     ///
-    /// **Default:** `Some([HTTP/2, HTTP/1.1])`
+    /// **Default:** `None`. An automatic client offers HTTP/2, then HTTP/1.1.
     pub alpn_protocols: Option<Cow<'static, [AlpnProtocol]>>,
 
     /// Application-Layer Protocol Settings (ALPS).
@@ -166,8 +165,8 @@ pub struct TlsOptions {
     ///
     /// Allows session resumption without requiring server-side state.
     ///
-    /// **Default:** `true`
-    pub session_ticket: bool,
+    /// **Default:** `None` (backend policy unchanged).
+    pub session_ticket: Option<bool>,
 
     /// Minimum TLS version allowed for the connection.
     ///
@@ -181,8 +180,8 @@ pub struct TlsOptions {
 
     /// Enables PSK with (EC)DHE key establishment (`psk_dhe_ke`).
     ///
-    /// **Default:** `true`
-    pub psk_dhe_ke: bool,
+    /// **Default:** `None` (backend policy unchanged).
+    pub psk_dhe_ke: Option<bool>,
 
     /// Whether to skip session tickets when using PSK.
     ///
@@ -258,8 +257,8 @@ pub struct TlsOptions {
 
     /// Enables TLS renegotiation by sending the `renegotiation_info` extension.
     ///
-    /// **Default:** `true`
-    pub renegotiation: bool,
+    /// **Default:** `None` (backend policy unchanged).
+    pub renegotiation: Option<bool>,
 
     /// Delegated Credentials ([RFC 9345](https://datatracker.ietf.org/doc/html/rfc9345)).
     ///
@@ -342,7 +341,7 @@ impl TlsOptionsBuilder {
     /// Sets the session ticket flag.
     #[inline]
     pub fn session_ticket(mut self, enabled: bool) -> Self {
-        self.config.session_ticket = enabled;
+        self.config.session_ticket = Some(enabled);
         self
     }
 
@@ -428,7 +427,7 @@ impl TlsOptionsBuilder {
     /// Sets the PSK DHE key establishment flag.
     #[inline]
     pub fn psk_dhe_ke(mut self, enabled: bool) -> Self {
-        self.config.psk_dhe_ke = enabled;
+        self.config.psk_dhe_ke = Some(enabled);
         self
     }
 
@@ -449,7 +448,7 @@ impl TlsOptionsBuilder {
     /// Sets the renegotiation flag.
     #[inline]
     pub fn renegotiation(mut self, enabled: bool) -> Self {
-        self.config.renegotiation = enabled;
+        self.config.renegotiation = Some(enabled);
         self
     }
 
@@ -589,41 +588,6 @@ impl TlsOptions {
     }
 }
 
-impl Default for TlsOptions {
-    fn default() -> Self {
-        TlsOptions {
-            alpn_protocols: Some(Cow::Borrowed(&[AlpnProtocol::HTTP2, AlpnProtocol::HTTP1])),
-            alps_protocols: None,
-            alps_use_new_codepoint: false,
-            session_ticket: true,
-            min_tls_version: None,
-            max_tls_version: None,
-            enable_ech_grease: false,
-            permute_extensions: None,
-            grease_enabled: None,
-            grease_sigalgs_enabled: None,
-            enable_ocsp_stapling: false,
-            enable_signed_cert_timestamps: false,
-            record_size_limit: None,
-            key_shares: None,
-            trust_anchors: None,
-            psk_dhe_ke: true,
-            pre_shared_key: false,
-            psk_skip_session_ticket: false,
-            renegotiation: true,
-            delegated_credentials: None,
-            curves_list: None,
-            sigalgs_list: None,
-            cipher_list: None,
-            preserve_tls13_cipher_list: None,
-            certificate_compressors: None,
-            extension_permutation: None,
-            aes_hw_override: None,
-            random_aes_hw_override: false,
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -632,6 +596,9 @@ mod tests {
     fn alpn_protocol_encode() {
         let alpn = AlpnProtocol::encode_sequence(&[AlpnProtocol::HTTP1, AlpnProtocol::HTTP2]);
         assert_eq!(alpn, Bytes::from_static(b"\x08http/1.1\x02h2"));
+
+        let alpn = AlpnProtocol::encode_sequence(&[AlpnProtocol::HTTP2, AlpnProtocol::HTTP1]);
+        assert_eq!(alpn, Bytes::from_static(b"\x02h2\x08http/1.1"));
 
         let alpn = AlpnProtocol::encode_sequence(&[AlpnProtocol::HTTP3]);
         assert_eq!(alpn, Bytes::from_static(b"\x02h3"));
@@ -652,13 +619,13 @@ mod tests {
 
     #[test]
     fn alpn_protocol_encode_single() {
-        let alpn = AlpnProtocol::HTTP1.encode();
+        let alpn = AlpnProtocol::encode_sequence(&[AlpnProtocol::HTTP1]);
         assert_eq!(alpn, b"\x08http/1.1".as_ref());
 
-        let alpn = AlpnProtocol::HTTP2.encode();
+        let alpn = AlpnProtocol::encode_sequence(&[AlpnProtocol::HTTP2]);
         assert_eq!(alpn, b"\x02h2".as_ref());
 
-        let alpn = AlpnProtocol::HTTP3.encode();
+        let alpn = AlpnProtocol::encode_sequence(&[AlpnProtocol::HTTP3]);
         assert_eq!(alpn, b"\x02h3".as_ref());
     }
 }

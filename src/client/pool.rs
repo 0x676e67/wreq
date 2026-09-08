@@ -65,6 +65,7 @@ use self::{
 };
 use super::proto::{Established, SendError, http1, http2};
 use crate::{
+    HttpVersion,
     conn::{
         Connected, Connection,
         descriptor::{ConnectionDescriptor, ConnectionId},
@@ -114,21 +115,6 @@ pub enum PoolStrategy {
     /// when idle, checked-out, or connecting state may become reusable. A zero
     /// duration behaves like [`PoolStrategy::Race`].
     ReuseFirst(Duration),
-}
-
-/// Protocol mode requested for a pooled connection.
-///
-/// This value tells negotiation whether ALPN may choose the protocol or one
-/// protocol is mandatory.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-#[repr(u8)]
-pub enum Ver {
-    /// Selects the protocol from request requirements and connection negotiation.
-    Auto,
-    /// Requires an HTTP/1 connection.
-    Http1,
-    /// Requires an HTTP/2 connection.
-    Http2,
 }
 
 /// Immutable retention and acquisition policy for one connection pool.
@@ -243,7 +229,7 @@ pub(super) struct PoolTarget {
     connection: Arc<ConnectionConfig>,
 
     /// Requested protocol selection mode.
-    version: Ver,
+    version: HttpVersion,
 
     /// Whether this checkout can wait for existing pool state to become reusable.
     wait_for_reuse: bool,
@@ -342,7 +328,7 @@ where
 
     /// Returns the protocol topology constructed for this entry.
     #[cfg(test)]
-    fn protocol(&self) -> Ver;
+    fn protocol(&self) -> HttpVersion;
 }
 
 /// Fixed HTTP/1 entry owning the cache and its checkout-cleanup identity.
@@ -653,7 +639,7 @@ where
     pub(super) async fn checkout(
         &self,
         connection: Arc<ConnectionConfig>,
-        version: Ver,
+        version: HttpVersion,
     ) -> Result<Pooled<B>, BoxError> {
         let target = PoolTarget {
             connection,
@@ -900,11 +886,11 @@ where
         // Fixed protocol modes use smaller service graphs; only Auto needs both
         // pools and negotiation: https://github.com/hyperium/hyper/issues/3948
         match target.version {
-            Ver::Http1 => {
+            HttpVersion::Http1 => {
                 let service = self.http1_layer(&state).layer(connect);
                 Box::new(Http1Entry { service, state })
             }
-            Ver::Http2 => Box::new(Http2Entry {
+            HttpVersion::Http2 => Box::new(Http2Entry {
                 service: ServiceBuilder::new()
                     .layer_fn(singleton::Singleton::new)
                     .layer(http2::ConnectLayer::new(
@@ -914,7 +900,7 @@ where
                     .service(connect),
                 state,
             }),
-            Ver::Auto => {
+            HttpVersion::Auto => {
                 let inspect: fn(&Established<C::Response>) -> bool = Established::should_use_http2;
                 let service = negotiate::builder()
                     .connect(connect)
@@ -993,8 +979,8 @@ where
 
     /// Identifies the fixed HTTP/1 topology in tests.
     #[cfg(test)]
-    fn protocol(&self) -> Ver {
-        Ver::Http1
+    fn protocol(&self) -> HttpVersion {
+        HttpVersion::Http1
     }
 }
 
@@ -1076,8 +1062,8 @@ where
 
     /// Identifies the fixed HTTP/2 topology in tests.
     #[cfg(test)]
-    fn protocol(&self) -> Ver {
-        Ver::Http2
+    fn protocol(&self) -> HttpVersion {
+        HttpVersion::Http2
     }
 }
 
@@ -1111,11 +1097,9 @@ where
         }
         let service = self.service.clone();
         Checkout::Service(Box::pin(async move {
-            let future = Oneshot::new(service, target);
-            match future.await {
-                Ok(service) => Ok(Pooled::new(service, enabled, usage)),
-                Err(error) => Err(error),
-            }
+            Oneshot::new(service, target)
+                .await
+                .map(|service| Pooled::new(service, enabled, usage))
         }))
     }
 
@@ -1173,8 +1157,8 @@ where
 
     /// Identifies the negotiated HTTP/1-or-HTTP/2 topology in tests.
     #[cfg(test)]
-    fn protocol(&self) -> Ver {
-        Ver::Auto
+    fn protocol(&self) -> HttpVersion {
+        HttpVersion::Auto
     }
 }
 
@@ -1806,7 +1790,10 @@ mod tests {
         );
         assert_eq!(clones.load(Ordering::Relaxed), 0);
 
-        for (index, version) in [Ver::Http1, Ver::Http2, Ver::Auto].into_iter().enumerate() {
+        for (index, version) in [HttpVersion::Http1, HttpVersion::Http2, HttpVersion::Auto]
+            .into_iter()
+            .enumerate()
+        {
             let target = PoolTarget {
                 connection: connection(descriptor()),
                 version,
@@ -1821,7 +1808,7 @@ mod tests {
 
     #[tokio::test]
     async fn http2_checkouts_preserve_generation_and_cancellation() {
-        for version in [Ver::Http2, Ver::Auto] {
+        for version in [HttpVersion::Http2, HttpVersion::Auto] {
             let calls = Arc::new(AtomicUsize::new(0));
             let gate = Arc::new(tokio::sync::Semaphore::new(0));
             let pool = test_pool(TestConnector::Http2(calls.clone(), gate.clone()));
@@ -1838,7 +1825,7 @@ mod tests {
                         assert_eq!(entry.protocol(), version);
                         // Exercise the Auto graph without TLS by selecting H2 at
                         // the transport stage, where ALPN would normally choose it.
-                        target.version = Ver::Http2;
+                        target.version = HttpVersion::Http2;
                         entry.checkout(target, true)
                     },
                 )
@@ -1847,7 +1834,7 @@ mod tests {
             let mut driver = tokio_test::task::spawn(checkout());
             assert!(driver.poll().is_pending());
             assert_eq!(calls.load(Ordering::Relaxed), 1);
-            let held = if version == Ver::Http2 {
+            let held = if version == HttpVersion::Http2 {
                 let waiter = checkout();
                 assert!(matches!(waiter, Checkout::Http2 { .. }));
                 let mut waiter = tokio_test::task::spawn(waiter);
@@ -1933,7 +1920,7 @@ mod tests {
             true,
         );
         let pooled = pool
-            .checkout(connection(descriptor()), Ver::Http1)
+            .checkout(connection(descriptor()), HttpVersion::Http1)
             .await
             .expect("successful checkout");
 
@@ -1959,7 +1946,7 @@ mod tests {
             true,
         );
         let pooled = pool
-            .checkout(connection(descriptor()), Ver::Http1)
+            .checkout(connection(descriptor()), HttpVersion::Http1)
             .await
             .expect("successful checkout");
 
@@ -1973,7 +1960,7 @@ mod tests {
 
     #[tokio::test]
     async fn checkouts_remove_empty_map_entries() {
-        for version in [Ver::Http1, Ver::Http2, Ver::Auto] {
+        for version in [HttpVersion::Http1, HttpVersion::Http2, HttpVersion::Auto] {
             let pool = test_pool(TestConnector::Fails);
             let result = pool.checkout(connection(descriptor()), version).await;
             assert!(result.is_err());
@@ -1996,7 +1983,7 @@ mod tests {
 
         let pool = test_pool(TestConnector::ClosesAfterResponse);
         let mut pooled = pool
-            .checkout(connection(descriptor()), Ver::Http1)
+            .checkout(connection(descriptor()), HttpVersion::Http1)
             .await
             .expect("successful checkout");
         std::future::poll_fn(|cx| pooled.poll_ready(cx))
@@ -2025,7 +2012,7 @@ mod tests {
         let request_read = Arc::new(tokio::sync::Notify::new());
         let pool = test_pool(TestConnector::StallsAfterRequest(request_read.clone()));
         let mut pooled = pool
-            .checkout(connection(descriptor()), Ver::Http1)
+            .checkout(connection(descriptor()), HttpVersion::Http1)
             .await
             .expect("successful checkout");
         std::future::poll_fn(|cx| pooled.poll_ready(cx))
@@ -2052,7 +2039,7 @@ mod tests {
         let pool = test_pool(TestConnector::KeepsAlive);
         let descriptor = grouped_descriptor(Group::new("active"));
         let mut first = pool
-            .checkout(connection(descriptor.clone()), Ver::Http1)
+            .checkout(connection(descriptor.clone()), HttpVersion::Http1)
             .await
             .expect("first checkout");
         std::future::poll_fn(|cx| first.poll_ready(cx))
@@ -2090,7 +2077,7 @@ mod tests {
         drop(first);
 
         let second = pool
-            .checkout(connection(descriptor), Ver::Http1)
+            .checkout(connection(descriptor), HttpVersion::Http1)
             .await
             .expect("second checkout");
 
@@ -2132,13 +2119,13 @@ mod tests {
         let second_key = second_descriptor.id();
 
         let mut first = pool
-            .checkout(connection(first_descriptor), Ver::Http1)
+            .checkout(connection(first_descriptor), HttpVersion::Http1)
             .await
             .expect("first checkout");
         send(&mut first).await;
 
         let mut second = pool
-            .checkout(connection(second_descriptor), Ver::Http1)
+            .checkout(connection(second_descriptor), HttpVersion::Http1)
             .await
             .expect("second checkout");
         send(&mut second).await;

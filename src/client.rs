@@ -61,7 +61,7 @@ use self::{
         retry::RetryPolicy,
         timeout::{Timeout, TimeoutLayer, TimeoutOptions, body::TimeoutBody},
     },
-    pool::{PoolStrategy, Ver},
+    pool::PoolStrategy,
     request::{Request, RequestBuilder},
     response::Response,
 };
@@ -70,13 +70,13 @@ use crate::cookie;
 #[cfg(feature = "hickory-dns")]
 use crate::dns::hickory::HickoryDnsResolver;
 use crate::{
-    IntoUri, Method, Proxy,
+    HttpVersion, IntoUri, Method, Proxy,
     conn::{
-        BoxedConnectorLayer, BoxedTransportConnector, Conn, Connection, Unnameable,
-        connector::{Connector, ConnectorBuilder},
+        BoxedConnectorLayer, BoxedTransportConnector, Conn, Connection, HttpConnector, Unnameable,
+        connector::{self, Connector, ConnectorLayer},
         descriptor::ConnectionDescriptor,
         http::HttpConnect,
-        net::SocketBindOptions,
+        net::{SocketBindOptions, TcpConnector},
     },
     dns::{DnsResolverWithOverrides, DynResolver, GaiResolver, IntoResolve, Resolve},
     error::Error,
@@ -88,7 +88,8 @@ use crate::{
     retry,
     rt::{BoxSendFuture, Executor, Timer},
     tls::{
-        AlpnProtocol, TlsOptions, TlsVersion,
+        TlsOptions, TlsVersion,
+        conn::TlsConnector,
         keylog::KeyLog,
         session::{IntoTlsSessionCache, TlsSessionCache},
         trust::{CertStore, Identity},
@@ -129,7 +130,9 @@ type MaybeDecompressionBody<T> = tower_http::decompression::DecompressionBody<T>
 
 type ClientService = Timeout<
     ConfigService<
-        MaybeDecompression<Retry<RetryPolicy, FollowRedirect<sealed::Client<Connector, Body>>>>,
+        MaybeDecompression<
+            Retry<RetryPolicy, FollowRedirect<sealed::Client<connector::Stack, Body>>>,
+        >,
     >,
 >;
 
@@ -172,14 +175,9 @@ pub struct ClientBuilder {
     config: Config,
 }
 
-/// The HTTP version preference for the client.
-#[repr(u8)]
-enum HttpVersionPref {
-    Http1,
-    Http2,
-    All,
-}
-
+/// Configuration collected before the client service stack is built.
+/// Holds transport settings, protocol selection, and request defaults.
+/// Building consumes it into the shared services and their middleware.
 struct Config {
     error: Option<Error>,
     headers: HeaderMap,
@@ -221,7 +219,7 @@ struct Config {
     hickory_dns: bool,
     dns_overrides: HashMap<Cow<'static, str>, Vec<SocketAddr>>,
     dns_resolver: Option<Arc<dyn Resolve>>,
-    http_version_pref: HttpVersionPref,
+    http_version: HttpVersion,
     https_only: bool,
     layers: Vec<BoxedClientServiceLayer>,
     connector_layers: Vec<BoxedConnectorLayer>,
@@ -309,7 +307,7 @@ impl Client {
                 cookie_store: None,
                 dns_overrides: HashMap::new(),
                 dns_resolver: None,
-                http_version_pref: HttpVersionPref::All,
+                http_version: HttpVersion::Auto,
                 https_only: false,
                 http1_options: None,
                 http2_options: None,
@@ -519,80 +517,83 @@ impl ClientBuilder {
                 DynResolver::new(resolver)
             };
 
-            let connector = ConnectorBuilder::new(config.proxies, resolver)
-                .timer(config.timer.clone())
-                .timeout(config.connect_timeout)
-                .tls_info(config.tls_info)
-                .tcp_nodelay(config.tcp_nodelay)
-                .verbose(config.connection_verbose)
-                .with_tls(|tls| {
-                    tls.alpn_protocol(match config.http_version_pref {
-                        HttpVersionPref::Http1 => Some(AlpnProtocol::HTTP1),
-                        HttpVersionPref::Http2 => Some(AlpnProtocol::HTTP2),
-                        _ => None,
-                    })
-                    .keylog(config.tls_keylog)
-                    .cert_store(config.tls_cert_store)
-                    .identity(config.tls_identity)
-                    .max_version(config.tls_max_version)
-                    .min_version(config.tls_min_version)
-                    .tls_sni(config.tls_sni)
-                    .verify_hostname(config.tls_verify_hostname)
-                    .cert_verification(config.tls_cert_verification)
-                    .session_store(config.tls_session_cache)
-                })
-                .with_http(|http| {
-                    http.enforce_http(false);
-                    http.set_keepalive(config.tcp_keepalive);
-                    http.set_keepalive_interval(config.tcp_keepalive_interval);
-                    http.set_keepalive_retries(config.tcp_keepalive_retries);
-                    http.set_reuse_address(config.tcp_reuse_address);
-                    http.set_linger(config.tcp_linger);
-                    http.set_connect_timeout(config.connect_timeout);
-                    http.set_nodelay(config.tcp_nodelay);
-                    http.set_send_buffer_size(config.tcp_send_buffer_size);
-                    http.set_recv_buffer_size(config.tcp_recv_buffer_size);
-                    http.set_happy_eyeballs_timeout(config.tcp_happy_eyeballs_timeout);
+            let tls = TlsConnector::builder()
+                .http_version(config.http_version)
+                .keylog(config.tls_keylog)
+                .cert_store(config.tls_cert_store)
+                .identity(config.tls_identity)
+                .max_version(config.tls_max_version)
+                .min_version(config.tls_min_version)
+                .verify_hostname(config.tls_verify_hostname)
+                .cert_verification(config.tls_cert_verification)
+                .tls_sni(config.tls_sni)
+                .session(config.tls_session_cache)
+                .build(config.tls_options)?;
 
-                    #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
-                    http.set_tcp_user_timeout(config.tcp_user_timeout);
+            #[cfg(feature = "socks")]
+            let socks_resolver = resolver.clone();
 
-                    #[cfg(any(
-                        target_os = "android",
-                        target_os = "fuchsia",
-                        target_os = "illumos",
-                        target_os = "ios",
-                        target_os = "linux",
-                        target_os = "macos",
-                        target_os = "solaris",
-                        target_os = "tvos",
-                        target_os = "visionos",
-                        target_os = "watchos",
-                    ))]
-                    if let Some(interface) = config.socket_bind_options.interface {
-                        http.set_interface(interface);
-                    }
-
-                    http.set_local_addresses(
-                        config.socket_bind_options.ipv4_address,
-                        config.socket_bind_options.ipv6_address,
-                    );
-                })
-                .build(config.tls_options, config.connector_layers)?;
-
-            #[allow(unused_mut)]
-            let mut builder = sealed::Builder::new(config.executor);
-
-            #[cfg(feature = "cookies")]
-            {
-                builder = builder.cookie_store(config.cookie_store);
+            let mut http = HttpConnector::new(resolver, TcpConnector::new());
+            http.enforce_http(false);
+            http.set_keepalive(config.tcp_keepalive);
+            http.set_keepalive_interval(config.tcp_keepalive_interval);
+            http.set_keepalive_retries(config.tcp_keepalive_retries);
+            http.set_reuse_address(config.tcp_reuse_address);
+            http.set_linger(config.tcp_linger);
+            http.set_connect_timeout(config.connect_timeout);
+            http.set_nodelay(config.tcp_nodelay);
+            http.set_send_buffer_size(config.tcp_send_buffer_size);
+            http.set_recv_buffer_size(config.tcp_recv_buffer_size);
+            http.set_happy_eyeballs_timeout(config.tcp_happy_eyeballs_timeout);
+            #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
+            http.set_tcp_user_timeout(config.tcp_user_timeout);
+            #[cfg(any(
+                target_os = "android",
+                target_os = "fuchsia",
+                target_os = "illumos",
+                target_os = "ios",
+                target_os = "linux",
+                target_os = "macos",
+                target_os = "solaris",
+                target_os = "tvos",
+                target_os = "visionos",
+                target_os = "watchos",
+            ))]
+            if let Some(interface) = config.socket_bind_options.interface {
+                http.set_interface(interface);
             }
+            http.set_local_addresses(
+                config.socket_bind_options.ipv4_address,
+                config.socket_bind_options.ipv6_address,
+            );
 
-            builder
+            let connector = ServiceBuilder::new()
+                .layer(ConnectorLayer::new(
+                    config.connector_layers,
+                    config.timer.clone(),
+                    config.connect_timeout,
+                ))
+                .service(Connector::new(
+                    connector::Config {
+                        proxies: Arc::new(config.proxies),
+                        verbose: config.connection_verbose,
+                        nodelay: config.tcp_nodelay,
+                        tls_info: config.tls_info,
+                    },
+                    http,
+                    tls,
+                    #[cfg(feature = "socks")]
+                    socks_resolver,
+                ));
+
+            sealed::Builder::new(config.executor)
+                .cookie_store(
+                    #[cfg(feature = "cookies")]
+                    config.cookie_store,
+                )
                 .http1_options(config.http1_options)
                 .http2_options(config.http2_options)
-                .http1_only(matches!(config.http_version_pref, HttpVersionPref::Http1))
-                .http2_only(matches!(config.http_version_pref, HttpVersionPref::Http2))
+                .http_version(config.http_version)
                 .http2_timer(config.timer.clone())
                 .pool_timer(config.timer.clone())
                 .pool_idle_timeout(config.pool_idle_timeout)
@@ -1135,13 +1136,21 @@ impl ClientBuilder {
         self
     }
 
+    /// Selects the client's HTTP protocol, defaulting to [`HttpVersion::Auto`].
+    /// An explicit request [`version`](RequestBuilder::version) overrides this setting.
+    /// Fixed modes take precedence over TLS ALPN options.
+    #[inline]
+    pub fn http_version(mut self, version: HttpVersion) -> ClientBuilder {
+        self.config.http_version = version;
+        self
+    }
+
     /// Uses HTTP/1 for both cleartext and TLS connections, without upgrading to H2.
     /// Only `http/1.1` is offered through TLS ALPN. A request-level
     /// [`version`](RequestBuilder::version) overrides this client setting.
     #[inline]
-    pub fn http1_only(mut self) -> ClientBuilder {
-        self.config.http_version_pref = HttpVersionPref::Http1;
-        self
+    pub fn http1_only(self) -> ClientBuilder {
+        self.http_version(HttpVersion::Http1)
     }
 
     /// Uses HTTP/2 without falling back to HTTP/1.
@@ -1152,9 +1161,8 @@ impl ClientBuilder {
     /// An explicit HTTP/1 [`version`](RequestBuilder::version) on a request
     /// overrides this setting.
     #[inline]
-    pub fn http2_only(mut self) -> ClientBuilder {
-        self.config.http_version_pref = HttpVersionPref::Http2;
-        self
+    pub fn http2_only(self) -> ClientBuilder {
+        self.http_version(HttpVersion::Http2)
     }
 
     /// Sets the HTTP/1 options for the client.
@@ -1847,7 +1855,7 @@ mod sealed {
                 config: svc::Config {
                     retry_unsent: true,
                     set_host: true,
-                    version: Ver::Auto,
+                    version: HttpVersion::Auto,
                     #[cfg(feature = "cookies")]
                     cookie_store: None,
                 },
@@ -1905,32 +1913,10 @@ mod sealed {
             self
         }
 
-        /// Requires HTTP/1 when enabled.
-        ///
-        /// Disabling this option restores automatic negotiation only when HTTP/1
-        /// was the current requirement.
+        /// Shares the client's protocol selection with the request stack and pool.
         #[inline]
-        pub fn http1_only(mut self, val: bool) -> Self {
-            if val {
-                self.config.version = Ver::Http1;
-            } else if self.config.version == Ver::Http1 {
-                self.config.version = Ver::Auto;
-            }
-            self
-        }
-
-        /// Requires HTTP/2 when enabled.
-        ///
-        /// The connector must provide an HTTP/2-capable transport through prior
-        /// knowledge or ALPN; this option does not configure ALPN itself. Disabling
-        /// it restores automatic negotiation only when HTTP/2 was required.
-        #[inline]
-        pub fn http2_only(mut self, val: bool) -> Self {
-            if val {
-                self.config.version = Ver::Http2;
-            } else if self.config.version == Ver::Http2 {
-                self.config.version = Ver::Auto;
-            }
+        pub fn http_version(mut self, version: HttpVersion) -> Self {
+            self.config.version = version;
             self
         }
 
@@ -1979,9 +1965,18 @@ mod sealed {
 
         /// Sets the cookie store consulted immediately around protocol dispatch.
         #[inline]
-        #[cfg(feature = "cookies")]
-        pub fn cookie_store(mut self, cookie_store: Option<Arc<dyn cookie::CookieStore>>) -> Self {
-            self.config.cookie_store = cookie_store;
+        pub fn cookie_store(
+            #[cfg_attr(
+                not(feature = "cookies"),
+                expect(unused_mut, reason = "Only the cookies feature mutates this builder")
+            )]
+            mut self,
+            #[cfg(feature = "cookies")] cookie_store: Option<Arc<dyn cookie::CookieStore>>,
+        ) -> Self {
+            #[cfg(feature = "cookies")]
+            {
+                self.config.cookie_store = cookie_store;
+            }
             self
         }
 

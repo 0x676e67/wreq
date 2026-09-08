@@ -21,9 +21,9 @@ use wreq_proto::{conn::TrySendError, rt::Timer as _};
 
 use super::{
     error::{Error, ErrorKind},
-    pool::{ConnectionConfig, Ver},
+    pool::ConnectionConfig,
 };
-use crate::{conn::Connected, rt::Timer};
+use crate::{HttpVersion, conn::Connected, rt::Timer};
 
 /// Physical transport and request-specific protocol configuration.
 ///
@@ -34,7 +34,7 @@ use crate::{conn::Connected, rt::Timer};
 pub(super) struct Established<T> {
     io: T,
     connected: Connected,
-    version: Ver,
+    version: HttpVersion,
     config: Arc<ConnectionConfig>,
     idle_at: Instant,
 }
@@ -58,7 +58,7 @@ impl<T> Established<T> {
     pub(super) fn new(
         io: T,
         connected: Connected,
-        version: Ver,
+        version: HttpVersion,
         config: Arc<ConnectionConfig>,
         idle_at: Instant,
     ) -> Self {
@@ -78,8 +78,8 @@ impl<T> Established<T> {
 
     /// Chooses HTTP/2 when requested explicitly or negotiated by the transport.
     pub(super) fn should_use_http2(&self) -> bool {
-        self.version == Ver::Http2
-            || (self.version != Ver::Http1 && self.connected.is_negotiated_h2())
+        self.version == HttpVersion::Http2
+            || (self.version == HttpVersion::Auto && self.connected.is_negotiated_h2())
     }
 }
 
