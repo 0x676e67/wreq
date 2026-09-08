@@ -34,6 +34,7 @@ use crate::cookie::{CookieStore, IntoCookieStore};
 use crate::{
     Error, Method, Proxy,
     config::{RequestConfig, RequestConfigValue},
+    conn::BindOptions,
     ext::UriExt,
     group::Group,
     header::{AUTHORIZATION, HeaderMap, HeaderName, HeaderValue, OrigHeaderMap},
@@ -646,7 +647,8 @@ impl RequestBuilder {
         if let Ok(ref mut req) = self.request {
             req.config_mut::<RequestOptions>()
                 .get_or_insert_default()
-                .proxy = Some(proxy.into_matcher());
+                .extensions
+                .set(Some(proxy.into_matcher()));
         }
         self
     }
@@ -657,11 +659,13 @@ impl RequestBuilder {
         V: Into<Option<IpAddr>>,
     {
         if let Ok(ref mut req) = self.request {
-            req.config_mut::<RequestOptions>()
+            let extensions = &mut req
+                .config_mut::<RequestOptions>()
                 .get_or_insert_default()
-                .socket_bind_options
-                .get_or_insert_default()
-                .set_local_address(local_address);
+                .extensions;
+            let mut options = extensions.remove::<BindOptions>().unwrap_or_default();
+            options.set_local_address(local_address);
+            extensions.insert(options);
         }
         self
     }
@@ -673,11 +677,13 @@ impl RequestBuilder {
         V6: Into<Option<Ipv6Addr>>,
     {
         if let Ok(ref mut req) = self.request {
-            req.config_mut::<RequestOptions>()
+            let extensions = &mut req
+                .config_mut::<RequestOptions>()
                 .get_or_insert_default()
-                .socket_bind_options
-                .get_or_insert_default()
-                .set_local_addresses(ipv4_address, ipv6_address);
+                .extensions;
+            let mut options = extensions.remove::<BindOptions>().unwrap_or_default();
+            options.set_local_addresses(ipv4_address, ipv6_address);
+            extensions.insert(options);
         }
         self
     }
@@ -746,11 +752,13 @@ impl RequestBuilder {
         I: Into<std::borrow::Cow<'static, str>>,
     {
         if let Ok(ref mut req) = self.request {
-            req.config_mut::<RequestOptions>()
+            let extensions = &mut req
+                .config_mut::<RequestOptions>()
                 .get_or_insert_default()
-                .socket_bind_options
-                .get_or_insert_default()
-                .set_interface(interface);
+                .extensions;
+            let mut options = extensions.remove::<BindOptions>().unwrap_or_default();
+            options.set_interface(interface);
+            extensions.insert(options);
         }
         self
     }
@@ -770,9 +778,9 @@ impl RequestBuilder {
             let emulation = emulation.into_emulation();
             let opts = req.config_mut::<RequestOptions>().get_or_insert_default();
             opts.group.emulate(emulation.group);
-            opts.tls_options = emulation.tls_options;
-            opts.http1_options = emulation.http1_options;
-            opts.http2_options = emulation.http2_options;
+            opts.extensions.set(emulation.tls_options);
+            opts.extensions.set(emulation.http1_options);
+            opts.extensions.set(emulation.http2_options);
             return self
                 .headers(emulation.headers)
                 .orig_headers(emulation.orig_headers);

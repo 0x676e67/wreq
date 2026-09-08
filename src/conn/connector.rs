@@ -14,9 +14,8 @@ use tower::{
 #[cfg(unix)]
 use super::net::UnixConnector;
 use super::{
-    AsyncConnWithInfo, BoxedConnectorLayer, BoxedTransportConnector, Conn, Connection,
-    HttpConnector, TlsConn, TlsInfoFactory, Unnameable,
-    descriptor::ConnectionDescriptor,
+    AsyncConnWithInfo, BindOptions, BoxedConnectorLayer, BoxedTransportConnector, Conn,
+    ConnectContext, Connection, HttpConnector, TlsConn, TlsInfoFactory, Unnameable,
     http::HttpConnect,
     proxy,
     timeout::{Timeout, TimeoutLayer},
@@ -29,12 +28,15 @@ use crate::{
     ext::UriExt,
     proxy::{Intercepted, Matcher as ProxyMatcher, matcher::Intercept},
     rt::Timer,
-    tls::conn::{EstablishedConn, HttpsConnector, MaybeHttpsStream, TlsConnector},
+    tls::{
+        TlsOptions,
+        conn::{EstablishedConn, HttpsConnector, MaybeHttpsStream, TlsConnector},
+    },
 };
 
 /// Client-wide connection settings retained by each transport connector.
 /// Controls proxy selection, connection instrumentation, and post-handshake socket policy.
-/// Request-local socket and TLS options remain in the connection descriptor.
+/// Request-local socket and TLS options remain in the connection request.
 #[derive(Clone)]
 pub(crate) struct Config {
     pub proxies: Arc<Vec<ProxyMatcher>>,
@@ -45,10 +47,10 @@ pub(crate) struct Config {
 
 /// The connector graph produced by [`ConnectorLayer`] and retained by the client.
 /// Uses a concrete timeout wrapper without custom layers, otherwise a type-erased stack.
-/// Both branches accept connection descriptors and time each connection attempt separately.
+/// Both branches accept connection inputs and time each connection attempt separately.
 pub type Stack = Either<
     Timeout<Connector>,
-    MapRequest<BoxedTransportConnector, fn(ConnectionDescriptor) -> Unnameable>,
+    MapRequest<BoxedTransportConnector, fn(ConnectContext) -> Unnameable>,
 >;
 
 /// Composes user connector layers inside the complete connection timeout.
@@ -110,7 +112,7 @@ impl Layer<Connector> for ConnectorLayer {
 
         let service = MapRequest::new(
             BoxCloneSyncService::new(service),
-            Unnameable as fn(ConnectionDescriptor) -> Unnameable,
+            Unnameable as fn(ConnectContext) -> Unnameable,
         );
 
         Either::Right(service)
@@ -136,11 +138,7 @@ impl Connector {
         }
     }
 
-    fn build_https_connector(
-        &self,
-        https: bool,
-        descriptor: &ConnectionDescriptor,
-    ) -> Result<HttpsConnector<HttpConnector>, BoxError> {
+    fn http_for_connection(&self, https: bool, request: &ConnectContext) -> HttpConnector {
         let mut http = self.http.clone();
 
         // Disable Nagle's algorithm for TLS handshake
@@ -151,7 +149,7 @@ impl Connector {
         }
 
         // Apply TCP options if provided in metadata
-        if let Some(socket_opts) = descriptor.socket_bind_options() {
+        if let Some(socket_opts) = request.extensions().get::<BindOptions>() {
             http.set_local_addresses(socket_opts.ipv4_address, socket_opts.ipv6_address);
             #[cfg(any(
                 target_os = "android",
@@ -170,9 +168,17 @@ impl Connector {
             }
         }
 
+        http
+    }
+
+    fn build_https_connector(
+        &self,
+        https: bool,
+        request: &ConnectContext,
+    ) -> Result<HttpsConnector<HttpConnector>, BoxError> {
         self.tls
-            .layer(http)
-            .with_options(descriptor.tls_options())
+            .layer(self.http_for_connection(https, request))
+            .with_options(request.extensions().get::<TlsOptions>())
             .map_err(Into::into)
     }
 
@@ -221,22 +227,22 @@ impl Connector {
 
     async fn connect_auto_proxy<P: Into<Option<Intercept>>>(
         self,
-        descriptor: ConnectionDescriptor,
+        request: ConnectContext,
         proxy: P,
     ) -> Result<Conn, BoxError> {
-        let is_https = descriptor.uri().is_https();
+        let is_https = request.route_uri().is_https();
         let proxy = proxy.into();
 
         trace!("connect with maybe proxy: {:?}", proxy);
 
-        let mut connector = self.build_https_connector(is_https, &descriptor)?;
+        let mut connector = self.build_https_connector(is_https, &request)?;
 
         // When using a proxy for HTTPS targets, disable ALPN to avoid protocol negotiation issues
         if proxy.is_some() && is_https {
             connector.no_alpn();
         }
 
-        let io = connector.call(descriptor).await?;
+        let io = connector.call(request).await?;
 
         // Re-enable Nagle's algorithm if it was disabled earlier
         if_tokio_rt!(block:{
@@ -250,10 +256,10 @@ impl Connector {
 
     async fn connect_via_proxy(
         self,
-        mut descriptor: ConnectionDescriptor,
+        request: ConnectContext,
         proxy: Intercepted,
     ) -> Result<Conn, BoxError> {
-        let uri = descriptor.uri().clone();
+        let uri = request.uri().clone();
 
         match proxy {
             Intercepted::Proxy(proxy) => {
@@ -278,7 +284,7 @@ impl Connector {
                             // Build a SOCKS connector.
                             let mut socks = SocksConnector::new(
                                 proxy_uri,
-                                self.http.clone(),
+                                self.http_for_connection(is_https, &request),
                                 self.resolver.clone(),
                             );
                             socks.set_auth(proxy.raw_auth());
@@ -288,12 +294,10 @@ impl Connector {
                         };
 
                         // Build an HTTPS connector.
-                        let mut connector = self.build_https_connector(is_https, &descriptor)?;
+                        let mut connector = self.build_https_connector(is_https, &request)?;
 
                         // Wrap the established SOCKS connection with TLS if needed.
-                        let io = connector
-                            .call(EstablishedConn::new(conn, descriptor))
-                            .await?;
+                        let io = connector.call(EstablishedConn::new(conn, request)).await?;
 
                         // Re-enable Nagle's algorithm if it was disabled earlier
                         if_tokio_rt!(block:{
@@ -310,7 +314,7 @@ impl Connector {
                     trace!("tunneling over HTTP(s) proxy: {:?}", proxy_uri);
 
                     // Build an HTTPS connector.
-                    let mut connector = self.build_https_connector(is_https, &descriptor)?;
+                    let mut connector = self.build_https_connector(is_https, &request)?;
 
                     // Build a tunnel connector to establish the CONNECT tunnel.
                     let tunneled = {
@@ -333,7 +337,7 @@ impl Connector {
 
                     // Wrap the established tunneled stream with TLS.
                     let io = connector
-                        .call(EstablishedConn::new(tunneled, descriptor))
+                        .call(EstablishedConn::new(tunneled, request))
                         .await?;
 
                     // Re-enable Nagle's algorithm if it was disabled earlier
@@ -346,8 +350,7 @@ impl Connector {
                     return self.tunnel_conn_from_stream(io);
                 }
 
-                *descriptor.uri_mut() = proxy_uri;
-                self.connect_auto_proxy(descriptor, proxy)
+                self.connect_auto_proxy(request.with_route_uri(proxy_uri), proxy)
                     .await
                     .map_err(ProxyConnect)
                     .map_err(Into::into)
@@ -357,7 +360,10 @@ impl Connector {
                 trace!("connecting via Unix socket: {:?}", unix_socket);
 
                 // Create a Unix connector with the specified socket path.
-                let mut connector = self.tls.layer(UnixConnector::new(unix_socket));
+                let mut connector = self
+                    .tls
+                    .layer(UnixConnector::new(unix_socket))
+                    .with_options(request.extensions().get::<TlsOptions>())?;
 
                 // If the target URI is HTTPS, establish a CONNECT tunnel over the Unix socket,
                 // then upgrade the tunneled stream to TLS.
@@ -378,44 +384,45 @@ impl Connector {
 
                     // Wrap the established tunneled stream with TLS.
                     let io = connector
-                        .call(EstablishedConn::new(tunneled, descriptor))
+                        .call(EstablishedConn::new(tunneled, request))
                         .await?;
 
                     return self.tunnel_conn_from_stream(io);
                 }
 
                 // For plain HTTP, use the Unix connector directly.
-                let io = connector.call(descriptor).await?;
+                let io = connector.call(request).await?;
 
                 self.conn_from_stream(io, None)
             }
         }
     }
 
-    async fn connect_auto(self, req: ConnectionDescriptor) -> Result<Conn, BoxError> {
-        debug!("starting new connection: {:?}", req.uri());
+    async fn connect_auto(self, request: ConnectContext) -> Result<Conn, BoxError> {
+        debug!("starting new connection: {:?}", request.uri());
 
         // Determine if a proxy should be used for this request.
-        let intercepted = req
-            .proxy()
-            .and_then(|prox| prox.intercept(req.uri()))
+        let intercepted = request
+            .extensions()
+            .get::<ProxyMatcher>()
+            .and_then(|prox| prox.intercept(request.uri()))
             .or_else(|| {
                 self.config
                     .proxies
                     .iter()
-                    .find_map(|prox| prox.intercept(req.uri()))
+                    .find_map(|prox| prox.intercept(request.uri()))
             });
 
         // If a proxy is matched, connect via proxy; otherwise, connect directly.
         if let Some(intercepted) = intercepted {
-            self.connect_via_proxy(req, intercepted).await
+            self.connect_via_proxy(request, intercepted).await
         } else {
-            self.connect_auto_proxy(req, None).await
+            self.connect_auto_proxy(request, None).await
         }
     }
 }
 
-impl Service<ConnectionDescriptor> for Connector {
+impl Service<ConnectContext> for Connector {
     type Response = Conn;
     type Error = BoxError;
     type Future = BoxFuture<'static, Result<Conn, BoxError>>;
@@ -426,7 +433,7 @@ impl Service<ConnectionDescriptor> for Connector {
     }
 
     #[inline]
-    fn call(&mut self, descriptor: ConnectionDescriptor) -> Self::Future {
-        Box::pin(self.clone().connect_auto(descriptor))
+    fn call(&mut self, request: ConnectContext) -> Self::Future {
+        Box::pin(self.clone().connect_auto(request))
     }
 }

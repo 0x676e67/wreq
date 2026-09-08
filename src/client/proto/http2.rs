@@ -240,7 +240,11 @@ where
 
         let (_, builder) = config.proto.as_ref();
         let builder = builder.clone();
-        let builder = match &config.http2_options {
+        let builder = match config
+            .context
+            .extensions()
+            .get::<wreq_proto::http2::Http2Options>()
+        {
             Some(options) => builder.options(options.clone()),
             None => builder,
         };

@@ -72,11 +72,11 @@ use crate::dns::hickory::HickoryDnsResolver;
 use crate::{
     HttpVersion, IntoUri, Method, Proxy,
     conn::{
-        BoxedConnectorLayer, BoxedTransportConnector, Conn, Connection, HttpConnector, Unnameable,
+        BindOptions, BoxedConnectorLayer, BoxedTransportConnector, Conn, ConnectContext,
+        Connection, HttpConnector, Unnameable,
         connector::{self, Connector, ConnectorLayer},
-        descriptor::ConnectionDescriptor,
         http::HttpConnect,
-        net::{SocketBindOptions, TcpConnector},
+        net::TcpConnector,
     },
     dns::{DnsResolverWithOverrides, DynResolver, GaiResolver, IntoResolve, Resolve},
     error::Error,
@@ -91,7 +91,7 @@ use crate::{
         TlsOptions, TlsVersion,
         conn::TlsConnector,
         keylog::KeyLog,
-        session::{IntoTlsSessionCache, TlsSessionCache},
+        session::{IntoTlsSessionStore, TlsSessionStore},
         trust::{CertStore, Identity},
     },
 };
@@ -206,7 +206,7 @@ struct Config {
     tcp_send_buffer_size: Option<usize>,
     tcp_recv_buffer_size: Option<usize>,
     tcp_happy_eyeballs_timeout: Option<Duration>,
-    socket_bind_options: SocketBindOptions,
+    bind_options: BindOptions,
     proxies: Vec<ProxyMatcher>,
     auto_sys_proxy: bool,
     retry_policy: retry::Policy,
@@ -232,7 +232,7 @@ struct Config {
     tls_verify_hostname: bool,
     tls_min_version: Option<TlsVersion>,
     tls_max_version: Option<TlsVersion>,
-    tls_session_cache: Option<Arc<dyn TlsSessionCache>>,
+    tls_session_store: Option<Arc<dyn TlsSessionStore>>,
     tls_options: Option<TlsOptions>,
     http1_options: Option<Http1Options>,
     http2_options: Option<Http2Options>,
@@ -294,7 +294,7 @@ impl Client {
                 tcp_send_buffer_size: None,
                 tcp_recv_buffer_size: None,
                 tcp_happy_eyeballs_timeout: Some(Duration::from_millis(300)),
-                socket_bind_options: SocketBindOptions::default(),
+                bind_options: BindOptions::default(),
                 proxies: Vec::new(),
                 auto_sys_proxy: true,
                 retry_policy: retry::Policy::default(),
@@ -322,7 +322,7 @@ impl Client {
                 tls_verify_hostname: true,
                 tls_min_version: None,
                 tls_max_version: None,
-                tls_session_cache: None,
+                tls_session_store: None,
                 tls_options: None,
                 timer: Timer::default(),
                 executor: Executor::default(),
@@ -527,7 +527,7 @@ impl ClientBuilder {
                 .verify_hostname(config.tls_verify_hostname)
                 .cert_verification(config.tls_cert_verification)
                 .tls_sni(config.tls_sni)
-                .session(config.tls_session_cache)
+                .tls_session_store(config.tls_session_store)
                 .build(config.tls_options)?;
 
             #[cfg(feature = "socks")]
@@ -559,12 +559,12 @@ impl ClientBuilder {
                 target_os = "visionos",
                 target_os = "watchos",
             ))]
-            if let Some(interface) = config.socket_bind_options.interface {
+            if let Some(interface) = config.bind_options.interface {
                 http.set_interface(interface);
             }
             http.set_local_addresses(
-                config.socket_bind_options.ipv4_address,
-                config.socket_bind_options.ipv6_address,
+                config.bind_options.ipv4_address,
+                config.bind_options.ipv6_address,
             );
 
             let connector = ServiceBuilder::new()
@@ -1349,9 +1349,7 @@ impl ClientBuilder {
     where
         T: Into<Option<IpAddr>>,
     {
-        self.config
-            .socket_bind_options
-            .set_local_address(addr.into());
+        self.config.bind_options.set_local_address(addr.into());
         self
     }
 
@@ -1375,9 +1373,7 @@ impl ClientBuilder {
         V4: Into<Option<Ipv4Addr>>,
         V6: Into<Option<Ipv6Addr>>,
     {
-        self.config
-            .socket_bind_options
-            .set_local_addresses(ipv4, ipv6);
+        self.config.bind_options.set_local_addresses(ipv4, ipv6);
         self
     }
 
@@ -1445,7 +1441,7 @@ impl ClientBuilder {
     where
         T: Into<std::borrow::Cow<'static, str>>,
     {
-        self.config.socket_bind_options.set_interface(interface);
+        self.config.bind_options.set_interface(interface);
         self
     }
 
@@ -1543,13 +1539,12 @@ impl ClientBuilder {
         self
     }
 
-    /// Sets the TLS session cache.
-    ///
-    /// By default, an in-memory LRU cache is used. Use this method to provide
-    /// a custom [`TlsSessionCache`] implementation (e.g., file-based or distributed).
+    /// Replaces the built-in in-memory LRU session store.
+    /// Only share a store between clients with the same base TLS configuration.
+    /// Request-specific connection settings remain part of each session key.
     #[inline]
-    pub fn tls_session_cache<S: IntoTlsSessionCache>(mut self, store: S) -> ClientBuilder {
-        self.config.tls_session_cache = Some(store.into_shared());
+    pub fn tls_session_store<S: IntoTlsSessionStore>(mut self, store: S) -> ClientBuilder {
+        self.config.tls_session_store = Some(store.into_shared());
         self
     }
 
@@ -1744,7 +1739,7 @@ mod sealed {
     #[must_use]
     pub struct Client<C, B>
     where
-        C: tower::Service<ConnectionDescriptor> + Clone + Send + Sync + 'static,
+        C: tower::Service<ConnectContext> + Clone + Send + Sync + 'static,
         C::Response: AsyncRead + AsyncWrite + Connection + Unpin + Send + 'static,
         C::Error: Into<BoxError>,
         C::Future: Unpin + Send + 'static,
@@ -1786,7 +1781,7 @@ mod sealed {
 
     impl<C, B> Service<HttpRequest<B>> for Client<C, B>
     where
-        C: tower::Service<ConnectionDescriptor> + Clone + Send + Sync + 'static,
+        C: tower::Service<ConnectContext> + Clone + Send + Sync + 'static,
         C::Response: AsyncRead + AsyncWrite + Connection + Unpin + Send + 'static,
         C::Error: Into<BoxError>,
         C::Future: Unpin + Send + 'static,
@@ -1831,7 +1826,7 @@ mod sealed {
 
     impl<C, B> Clone for Client<C, B>
     where
-        C: tower::Service<ConnectionDescriptor> + Clone + Send + Sync + 'static,
+        C: tower::Service<ConnectContext> + Clone + Send + Sync + 'static,
         C::Response: AsyncRead + AsyncWrite + Connection + Unpin + Send + 'static,
         C::Error: Into<BoxError>,
         C::Future: Unpin + Send + 'static,
@@ -1983,7 +1978,7 @@ mod sealed {
         /// Consumes the builder and wraps `connector` in the complete client stack.
         pub fn build<C, B>(self, connector: C) -> Client<C, B>
         where
-            C: tower::Service<ConnectionDescriptor> + Clone + Send + Sync + 'static,
+            C: tower::Service<ConnectContext> + Clone + Send + Sync + 'static,
             C::Response: AsyncRead + AsyncWrite + Connection + Unpin + Send + 'static,
             C::Error: Into<BoxError>,
             C::Future: Unpin + Send + 'static,

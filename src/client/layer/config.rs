@@ -6,11 +6,10 @@ use std::{
 use futures_util::future::{self, Either, Ready};
 use http::{HeaderMap, Request, Response, Version};
 use tower::{Layer, Service};
-use wreq_proto::{http1::Http1Options, http2::Http2Options};
 
 use crate::{
-    Error, config::RequestConfig, conn::net::SocketBindOptions, ext::UriExt, group::Group,
-    header::OrigHeaderMap, proxy::Matcher, tls::TlsOptions,
+    Error, config::RequestConfig, conn::context::Extensions, ext::UriExt, group::Group,
+    header::OrigHeaderMap,
 };
 
 /// A marker type for the default headers configuration value.
@@ -23,12 +22,8 @@ pub(crate) struct DefaultHeaders;
 #[non_exhaustive]
 pub(crate) struct RequestOptions {
     pub group: Group,
-    pub proxy: Option<Matcher>,
     pub version: Option<Version>,
-    pub tls_options: Option<TlsOptions>,
-    pub http1_options: Option<Http1Options>,
-    pub http2_options: Option<Http2Options>,
-    pub socket_bind_options: Option<SocketBindOptions>,
+    pub extensions: Extensions,
 }
 
 /// Configuration for the [`ConfigService`].

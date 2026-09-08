@@ -9,12 +9,16 @@ pub mod keylog;
 pub mod session;
 pub mod trust;
 
-use std::borrow::Cow;
+use std::{
+    borrow::Cow,
+    hash::{Hash, Hasher},
+};
 
 /// Re-exports of TLS-related types from `btls` for public use.
 pub use btls::ssl::{ExtensionType, KeyShare};
 use bytes::{BufMut, Bytes, BytesMut};
 use compress::CertificateCompressor;
+use educe::Educe;
 
 /// Http extension carrying extra TLS layer information.
 /// Made available to clients on responses when `tls_info` is set.
@@ -133,7 +137,8 @@ pub struct TlsOptionsBuilder {
 ///
 /// All fields are optional or have defaults. See each field for details.
 #[non_exhaustive]
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Educe)]
+#[educe(PartialEq, Eq, Hash)]
 pub struct TlsOptions {
     /// Application-Layer Protocol Negotiation ([RFC 7301](https://datatracker.ietf.org/doc/html/rfc7301)).
     ///
@@ -293,6 +298,10 @@ pub struct TlsOptions {
     /// Supported certificate compression algorithms ([RFC 8879](https://datatracker.ietf.org/doc/html/rfc8879)).
     ///
     /// **Default:** `None`
+    #[educe(
+        PartialEq(method(certificate_compressors_eq)),
+        Hash(method(hash_certificate_compressors))
+    )]
     pub certificate_compressors: Option<Cow<'static, [&'static dyn CertificateCompressor]>>,
 
     /// Supported TLS extensions, used for extension ordering/permutation.
@@ -309,6 +318,32 @@ pub struct TlsOptions {
     ///
     /// **Default:** `false`
     pub random_aes_hw_override: bool,
+}
+
+fn certificate_compressors_eq(
+    left: &Option<Cow<'static, [&'static dyn CertificateCompressor]>>,
+    right: &Option<Cow<'static, [&'static dyn CertificateCompressor]>>,
+) -> bool {
+    left.as_deref()
+        .into_iter()
+        .flatten()
+        .map(|compressor| compressor.algorithm())
+        .eq(right
+            .as_deref()
+            .into_iter()
+            .flatten()
+            .map(|compressor| compressor.algorithm()))
+}
+
+fn hash_certificate_compressors<H: Hasher>(
+    compressors: &Option<Cow<'static, [&'static dyn CertificateCompressor]>>,
+    state: &mut H,
+) {
+    let compressors = compressors.as_deref();
+    compressors.map_or(0, <[_]>::len).hash(state);
+    for compressor in compressors.into_iter().flatten() {
+        compressor.algorithm().hash(state);
+    }
 }
 
 impl TlsOptionsBuilder {

@@ -14,11 +14,8 @@ use tokio::io::{AsyncRead, AsyncWrite};
 use tower::{BoxError, Service};
 
 use super::{
-    Connection,
-    net::{
-        SocketBindOptions,
-        tcp::{ConnectError, ConnectingTcp, TcpConnector, TcpKeepaliveOptions, TcpOptions},
-    },
+    BindOptions, Connection,
+    net::tcp::{ConnectError, ConnectingTcp, TcpConnector, TcpKeepaliveOptions, TcpOptions},
 };
 use crate::dns::{self, DnsResolver};
 
@@ -148,7 +145,7 @@ impl<R, S> HttpConnector<R, S> {
                 #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
                 tcp_user_timeout: None,
                 tcp_keepalive: TcpKeepaliveOptions::default(),
-                socket_bind: SocketBindOptions::default(),
+                bind_options: BindOptions::default(),
             }),
             resolver,
             connector,
@@ -305,7 +302,7 @@ where
         target_os = "watchos",
     ))]
     fn set_interface<I: Into<std::borrow::Cow<'static, str>>>(&mut self, interface: I) {
-        self.config_mut().socket_bind.set_interface(interface);
+        self.config_mut().bind_options.set_interface(interface);
     }
 
     /// Set that all sockets are bound to the configured IPv4 or IPv6 address (depending on host's
@@ -320,7 +317,7 @@ where
         V6: Into<Option<Ipv6Addr>>,
     {
         self.config_mut()
-            .socket_bind
+            .bind_options
             .set_local_addresses(ipv4_address, ipv6_address);
     }
 }

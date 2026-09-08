@@ -20,10 +20,7 @@
 
 use std::collections::BTreeMap;
 
-use http::Uri;
 use name::GroupId;
-
-use crate::{HttpVersion, conn::net::SocketBindOptions, proxy::Matcher};
 
 macro_rules! impl_group_variants {
     ($($name:ident $(($ty:ty))?,)*) => {
@@ -43,10 +40,6 @@ impl_group_variants! {
     Request(Group),
     Emulate(Group),
     Named(GroupId),
-    Uri(Uri),
-    Version(HttpVersion),
-    Proxy(Matcher),
-    SocketBind(Option<SocketBindOptions>),
 }
 
 /// A logical identifier for request grouping.
@@ -66,31 +59,6 @@ impl Group {
             GroupKey::Named,
             GroupVariant::Named(name.into()),
         )]))
-    }
-
-    /// Groups the request by a specific target [`Uri`].
-    #[inline]
-    pub(crate) fn uri(&mut self, uri: Uri) -> &mut Self {
-        self.extend(GroupKey::Uri, GroupVariant::Uri(uri))
-    }
-
-    /// Keeps negotiated preferences separate from fixed protocol requirements.
-    /// HTTP/1.0 and HTTP/1.1 share the same HTTP/1 connection group.
-    #[inline]
-    pub(crate) fn version(&mut self, version: Option<HttpVersion>) -> &mut Self {
-        self.extend(GroupKey::Version, version.map(GroupVariant::Version))
-    }
-
-    /// Groups the request based on its proxy [`Matcher`] criteria.
-    #[inline]
-    pub(crate) fn proxy(&mut self, proxy: Option<Matcher>) -> &mut Self {
-        self.extend(GroupKey::Proxy, proxy.map(GroupVariant::Proxy))
-    }
-
-    /// Groups the request by its resolved socket bind options.
-    #[inline]
-    pub(crate) fn socket_bind(&mut self, opts: Option<SocketBindOptions>) -> &mut Self {
-        self.extend(GroupKey::SocketBind, GroupVariant::SocketBind(opts))
     }
 
     /// Creates a nested request group.
@@ -191,10 +159,10 @@ mod tests {
     fn test_group_identity_invariance() {
         let mut g1 = Group::default();
         g1.extend(GroupKey::Named, GroupVariant::Named("worker".into()));
-        g1.version(Some(HttpVersion::Http2));
+        g1.request(Group::new(1));
 
         let mut g2 = Group::default();
-        g2.version(Some(HttpVersion::Http2));
+        g2.request(Group::new(1));
         g2.extend(GroupKey::Named, GroupVariant::Named("worker".into()));
 
         let mut h1 = DefaultHasher::new();

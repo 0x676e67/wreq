@@ -14,7 +14,7 @@ use std::{
 };
 
 use futures_util::future::{self, BoxFuture, Either, Ready};
-use http::{Request, Response, Uri, Version, uri::PathAndQuery};
+use http::{Request, Response, Uri, Version};
 use http_body::Body;
 use pin_project_lite::pin_project;
 use tokio::io::{AsyncRead, AsyncWrite};
@@ -37,7 +37,7 @@ use super::{
 use crate::{
     HttpVersion,
     config::RequestConfig,
-    conn::{Connection, descriptor::ConnectionDescriptor},
+    conn::{ConnectContext, Connection},
     ext::UriExt,
     rt::{Executor, Timer},
 };
@@ -111,7 +111,7 @@ pin_project! {
 /// encoding never began.
 pub struct Dispatch<C, B>
 where
-    C: Service<ConnectionDescriptor> + Clone + Send + Sync + 'static,
+    C: Service<ConnectContext> + Clone + Send + Sync + 'static,
     C::Response: AsyncRead + AsyncWrite + Connection + Unpin + Send + 'static,
     C::Error: Into<BoxError>,
     C::Future: Unpin + Send + 'static,
@@ -197,26 +197,10 @@ where
     }
 
     fn call(&mut self, mut request: Request<B>) -> Self::Future {
-        // Select connections by origin without changing the request's wire target.
-        let mut parts = request.uri().clone().into_parts();
-        parts.path_and_query = Some(PathAndQuery::from_static("/"));
-        let uri = match Uri::from_parts(parts) {
-            Ok(uri) => uri,
-            Err(source) => {
-                return Either::Right(future::err(
-                    Error::new(ErrorKind::UserAbsoluteUriRequired, source).into(),
-                ));
-            }
-        };
-
         let RequestOptions {
             group,
-            proxy,
             version,
-            tls_options,
-            http1_options,
-            http2_options,
-            socket_bind_options,
+            mut extensions,
         } = RequestConfig::<RequestOptions>::remove(request.extensions_mut()).unwrap_or_default();
 
         // curl's ordinary H2 mode allows HTTPS negotiation; prior knowledge
@@ -226,7 +210,7 @@ where
         let version = match version {
             Some(Version::HTTP_10 | Version::HTTP_11) => Some(HttpVersion::Http1),
             Some(Version::HTTP_2)
-                if uri.is_https()
+                if request.uri().is_https()
                     && self.version != HttpVersion::Http2
                     && request.extensions().get::<http2::ext::Protocol>().is_none() =>
             {
@@ -240,16 +224,21 @@ where
             }
             None => None,
         };
-        let descriptor =
-            ConnectionDescriptor::new(uri, group, proxy, version, tls_options, socket_bind_options);
+        extensions.insert(group);
+        let context = match ConnectContext::new(request.uri().clone(), version, extensions) {
+            Ok(context) => context,
+            Err(source) => {
+                return Either::Right(future::err(
+                    Error::new(ErrorKind::UserAbsoluteUriRequired, source).into(),
+                ));
+            }
+        };
 
         Either::Left(self.inner.call(PoolRequest {
             request,
             connection: Arc::new(ConnectionConfig {
-                descriptor,
+                context,
                 proto: self.proto.clone(),
-                http1_options,
-                http2_options,
             }),
         }))
     }
@@ -355,7 +344,7 @@ impl<B> DispatchError<B> {
 
 impl<C, B> Dispatch<C, B>
 where
-    C: Service<ConnectionDescriptor> + Clone + Send + Sync + 'static,
+    C: Service<ConnectContext> + Clone + Send + Sync + 'static,
     C::Response: AsyncRead + AsyncWrite + Connection + Unpin + Send + 'static,
     C::Error: Into<BoxError>,
     C::Future: Unpin + Send + 'static,
@@ -383,7 +372,7 @@ where
 
 impl<C, B> Clone for Dispatch<C, B>
 where
-    C: Service<ConnectionDescriptor> + Clone + Send + Sync + 'static,
+    C: Service<ConnectContext> + Clone + Send + Sync + 'static,
     C::Response: AsyncRead + AsyncWrite + Connection + Unpin + Send + 'static,
     C::Error: Into<BoxError>,
     C::Future: Unpin + Send + 'static,
@@ -404,7 +393,7 @@ where
 
 impl<C, B> Service<PoolRequest<B>> for Dispatch<C, B>
 where
-    C: Service<ConnectionDescriptor> + Clone + Send + Sync + 'static,
+    C: Service<ConnectContext> + Clone + Send + Sync + 'static,
     C::Response: AsyncRead + AsyncWrite + Connection + Unpin + Send + 'static,
     C::Error: Into<BoxError>,
     C::Future: Unpin + Send + 'static,
@@ -428,7 +417,7 @@ where
                 connection,
             } = request;
 
-            let version = connection.descriptor.version().unwrap_or(this.version);
+            let version = connection.context.version().unwrap_or(this.version);
 
             let mut pooled = match this.pool.checkout(connection.clone(), version).await {
                 Ok(pooled) => pooled,
@@ -449,7 +438,7 @@ where
                 }
             };
 
-            if connection.descriptor.version() == Some(HttpVersion::Auto) {
+            if connection.context.version() == Some(HttpVersion::Auto) {
                 // Resolve the wire version on every attempt: an unsent retry may
                 // select a different protocol, but retains the original preference.
                 *request.version_mut() = if pooled.is_http2() {
@@ -513,7 +502,7 @@ where
                     } else {
                         let mut error = error.into_client_error(ErrorKind::SendRequest);
                         if pooled.is_http2()
-                            && connection.descriptor.uri().is_https()
+                            && connection.context.uri().is_https()
                             && !connect_info.is_negotiated_h2()
                         {
                             error = error.with_context(
@@ -561,6 +550,143 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use super::*;
+
+    #[tokio::test]
+    async fn protocol_options_partition_connections_and_preserve_reuse() {
+        use bytes::Bytes;
+        use http_body_util::{BodyExt, Full};
+
+        for version in [HttpVersion::Http1, HttpVersion::Http2] {
+            let calls = Arc::new(AtomicUsize::new(0));
+            let accepted = calls.clone();
+            let connector = tower::service_fn(move |context: ConnectContext| {
+                let id = accepted.fetch_add(1, Ordering::Relaxed);
+                assert_eq!(context.uri(), "http://localhost/");
+                assert!(
+                    context
+                        .extensions()
+                        .get::<crate::http1::Http1Options>()
+                        .is_some()
+                );
+                assert!(
+                    context
+                        .extensions()
+                        .get::<crate::http2::Http2Options>()
+                        .is_some()
+                );
+                let (client, server) = tokio::io::duplex(16384);
+                tokio::spawn(async move {
+                    let service = hyper::service::service_fn(
+                        move |request: http::Request<hyper::body::Incoming>| async move {
+                            let mut response =
+                                Response::new(Full::new(Bytes::from(id.to_string())));
+                            if request.uri().path() == "/limits" {
+                                for i in 0..40 {
+                                    response.headers_mut().insert(
+                                        http::HeaderName::from_bytes(format!("x-{i}").as_bytes())
+                                            .unwrap(),
+                                        http::HeaderValue::from_static("1"),
+                                    );
+                                }
+                            }
+                            Ok::<_, std::convert::Infallible>(response)
+                        },
+                    );
+                    let _ = hyper_util::server::conn::auto::Builder::new(
+                        hyper_util::rt::TokioExecutor::new(),
+                    )
+                    .serve_connection(hyper_util::rt::TokioIo::new(server), service)
+                    .await;
+                });
+                future::ready(Ok::<_, BoxError>(client))
+            });
+            let mut stack = layer(
+                conn::http1::Builder::default(),
+                conn::http2::Builder::new(Executor::default()),
+                true,
+                version,
+            )
+            .layer(Dispatch::new(
+                pool::Config::default(),
+                connector,
+                Config {
+                    retry_unsent: true,
+                    set_host: true,
+                    version,
+                    #[cfg(feature = "cookies")]
+                    cookie_store: None,
+                },
+                Executor::default(),
+                Timer::default(),
+            ));
+            for (attempt, (strict, id)) in [
+                (false, "0"),
+                (true, "1"),
+                (true, "1"),
+                (false, "0"),
+                (true, "1"),
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                let limits = attempt == 4 && version == HttpVersion::Http1;
+                let mut request = Request::builder()
+                    .uri(if limits {
+                        "http://localhost/limits"
+                    } else {
+                        "http://localhost/"
+                    })
+                    .body(crate::Body::default())
+                    .unwrap();
+                let mut options = RequestOptions::default();
+                options.extensions.insert(
+                    crate::http1::Http1Options::builder()
+                        .max_headers(if strict && version == HttpVersion::Http1 {
+                            32
+                        } else {
+                            64
+                        })
+                        .build(),
+                );
+                options.extensions.insert(
+                    crate::http2::Http2Options::builder()
+                        .header_table_size(if strict && version == HttpVersion::Http2 {
+                            8192
+                        } else {
+                            4096
+                        })
+                        .build(),
+                );
+                request
+                    .extensions_mut()
+                    .insert(RequestConfig::<RequestOptions>::new(Some(options)));
+                let response = tokio::time::timeout(
+                    std::time::Duration::from_secs(2),
+                    stack.ready().await.unwrap().call(request),
+                )
+                .await
+                .unwrap();
+                if limits {
+                    assert!(
+                        response.is_err(),
+                        "the selected HTTP/1 override must reject 40 headers"
+                    );
+                    continue;
+                }
+                let response = response.unwrap();
+                assert_eq!(
+                    response.version(),
+                    if version == HttpVersion::Http1 {
+                        Version::HTTP_11
+                    } else {
+                        Version::HTTP_2
+                    }
+                );
+                assert_eq!(response.into_body().collect().await.unwrap().to_bytes(), id);
+            }
+            assert_eq!(calls.load(Ordering::Relaxed), 2);
+        }
+    }
 
     #[cfg(feature = "cookies")]
     #[tokio::test]
@@ -689,9 +815,9 @@ mod tests {
                 .oneshot(request)
                 .await
                 .unwrap();
-            assert_eq!(request.connection.descriptor.version(), expected);
+            assert_eq!(request.connection.context.version(), expected);
             assert_eq!(request.request.version(), wire.unwrap_or(Version::HTTP_11));
-            keys.push(request.connection.descriptor.id());
+            keys.push(request.connection.context.key());
         }
         assert_eq!(
             keys[0], keys[1],
@@ -728,7 +854,7 @@ mod tests {
             let service = tower::service_fn(move |mut request: PoolRequest<Vec<u8>>| {
                 assert_eq!(request.request.uri(), "http://localhost/upload?part=1");
                 assert_eq!(request.request.body(), b"payload");
-                assert_eq!(request.connection.descriptor.uri(), "http://localhost/");
+                assert_eq!(request.connection.context.uri(), "http://localhost/");
 
                 let result = if attempts.fetch_add(1, Ordering::Relaxed) == 0 && unsent {
                     connection = Some(request.connection.clone());

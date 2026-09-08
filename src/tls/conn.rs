@@ -26,12 +26,12 @@ use tower::{BoxError, Layer, Service};
 
 use crate::{
     Error, HttpVersion,
-    conn::{Connected, Connection, descriptor::ConnectionDescriptor},
+    conn::{ConnectContext, Connected, Connection},
     ext::UriExt,
     tls::{
         AlpnProtocol, AlpsProtocol, KeyShare, TlsOptions, TlsVersion,
         keylog::KeyLog,
-        session::{Key, LruTlsSessionCache, TlsSession, TlsSessionCache},
+        session::{Key, LruTlsSessionStore, TlsSession, TlsSessionStore},
         trust::{CertStore, Identity},
     },
 };
@@ -86,7 +86,7 @@ pub struct TlsConnectorBuilder {
 }
 
 /// Immutable TLS policy used to construct base and request-specific contexts.
-/// Retains trust, identity, client protocols, and the shared session cache.
+/// Retains trust, identity, client protocols, and the shared session store.
 /// Moves from the builder into the base context and is cloned for overrides.
 #[derive(Clone)]
 struct Config {
@@ -99,7 +99,7 @@ struct Config {
     cert_store: Option<CertStore>,
     cert_verification: bool,
     keylog: Option<KeyLog>,
-    session: Arc<dyn TlsSessionCache>,
+    tls_session_store: Arc<dyn TlsSessionStore>,
 }
 
 /// Provides shared TLS state for HTTPS connection services.
@@ -112,12 +112,12 @@ pub struct TlsConnector {
 
 /// A compiled TLS context and its [`HandshakeConfig`].
 /// Retains client policy for rebuilding contexts with request-specific options.
-/// Shares the session cache while keeping each context's TLS settings independent.
+/// Shares the session store while keeping each context's TLS settings independent.
 #[derive(Clone)]
 struct TlsContext {
     config: Config,
     ssl: SslConnector,
-    session: Option<Arc<dyn TlsSessionCache>>,
+    tls_session_store: Option<Arc<dyn TlsSessionStore>>,
     settings: HandshakeConfig,
 }
 
@@ -180,7 +180,7 @@ where
     }
 }
 
-impl<T, S> Service<ConnectionDescriptor> for HttpsConnector<S>
+impl<T, S> Service<ConnectContext> for HttpsConnector<S>
 where
     S: Service<Uri, Response = T> + Send,
     S::Error: Into<BoxError>,
@@ -196,21 +196,21 @@ where
         self.http.poll_ready(cx).map_err(Into::into)
     }
 
-    fn call(&mut self, descriptor: ConnectionDescriptor) -> Self::Future {
+    fn call(&mut self, request: ConnectContext) -> Self::Future {
         let alpn_enabled = self.alpn_enabled;
         let tls = self.tls.clone();
         let context = self.context.clone();
-        let connect = self.http.call(descriptor.uri().clone());
+        let connect = self.http.call(request.route_uri().clone());
 
         Box::pin(async move {
             let conn = connect.await.map_err(Into::into)?;
 
             // Early return if it is not a tls scheme
-            if descriptor.uri().is_http() {
+            if request.route_uri().is_http() {
                 return Ok(MaybeHttpsStream::Http(conn));
             }
 
-            let ssl = tls.ssl_for_connection(descriptor, context.as_ref(), alpn_enabled)?;
+            let ssl = tls.ssl_for_connection(request, context.as_ref(), alpn_enabled)?;
             perform_handshake(ssl, conn).await
         })
     }
@@ -240,11 +240,11 @@ where
 
         Box::pin(async move {
             // Early return if it is not a tls scheme
-            if conn.descriptor.uri().is_http() {
+            if conn.request.route_uri().is_http() {
                 return Ok(MaybeHttpsStream::Http(conn.io));
             }
 
-            let ssl = tls.ssl_for_connection(conn.descriptor, context.as_ref(), alpn_enabled)?;
+            let ssl = tls.ssl_for_connection(conn.request, context.as_ref(), alpn_enabled)?;
             perform_handshake(ssl, conn.io).await
         })
     }
@@ -268,7 +268,7 @@ impl TlsConnector {
     /// Unset or empty request ALPN inherits the base list during handshake setup.
     fn ssl_for_connection(
         &self,
-        descriptor: ConnectionDescriptor,
+        request: ConnectContext,
         context: Option<&TlsContext>,
         alpn_enabled: bool,
     ) -> Result<Ssl, BoxError> {
@@ -298,7 +298,7 @@ impl TlsConnector {
             // TLS list: nonempty request list, then client list, else [h2, http/1.1].
             // None and empty lists inherit; custom list order is preserved.
             let protocols: &[AlpnProtocol] = match (
-                descriptor.version().unwrap_or(context.settings.version),
+                request.version().unwrap_or(context.settings.version),
                 context.settings.alpn_protocols.as_deref(),
                 self.inner.settings.alpn_protocols.as_deref(),
             ) {
@@ -334,16 +334,15 @@ impl TlsConnector {
             cfg.set_client_key_shares(key_shares.as_ref())?;
         }
 
-        let uri = descriptor.uri().clone();
+        let uri = request.route_uri().clone();
         let host = uri.host().ok_or("URI missing host")?;
         let host = Self::normalize_host(host);
 
-        if let Some(ref cache) = context.session {
-            let key = Key(descriptor.id());
+        if let Some(ref store) = context.tls_session_store {
+            let key = Key(request.key());
 
-            // If the session cache is enabled, we try to retrieve the session
-            // associated with the key. If it exists, we set it in the SSL configuration.
-            if let Some(session) = cache.pop(&key) {
+            // Restore a stored session for this connection identity.
+            if let Some(session) = store.pop(&key) {
                 #[allow(unsafe_code)]
                 unsafe { cfg.set_session(&session.0) }?;
 
@@ -383,7 +382,7 @@ impl TlsConnector {
                 cert_store: None,
                 cert_verification: true,
                 keylog: None,
-                session: Arc::new(LruTlsSessionCache::new(8)),
+                tls_session_store: Arc::new(LruTlsSessionStore::new(8)),
             },
         }
     }
@@ -544,27 +543,27 @@ impl TlsContext {
             random_aes_hw_override: opts.is_some_and(|opts| opts.random_aes_hw_override),
         };
 
-        // If the session cache is disabled, we don't need to set up any callbacks.
-        let cache = opts.is_some_and(|opts| opts.pre_shared_key).then(|| {
-            let cache = config.session.clone();
+        // Register session storage callbacks only when resumption is enabled.
+        let tls_session_store = opts.is_some_and(|opts| opts.pre_shared_key).then(|| {
+            let store = config.tls_session_store.clone();
 
             connector.set_session_cache_mode(SslSessionCacheMode::CLIENT);
             connector.set_new_session_callback({
-                let cache = cache.clone();
+                let store = store.clone();
                 move |ssl, session| {
                     if let Ok(Some(key)) = key_index().map(|idx| ssl.ex_data(idx)) {
-                        cache.put(key.clone(), TlsSession(session));
+                        store.put(key.clone(), TlsSession(session));
                     }
                 }
             });
 
-            cache
+            store
         });
 
         Ok(Self {
             config,
             ssl: connector.build(),
-            session: cache,
+            tls_session_store,
             settings,
         })
     }
@@ -647,11 +646,14 @@ impl TlsConnectorBuilder {
         self
     }
 
-    /// Sets the shared TLS session cache.
+    /// Sets the shared TLS session store.
     #[inline]
-    pub fn session(mut self, session: Option<Arc<dyn TlsSessionCache>>) -> Self {
-        if let Some(session) = session {
-            self.config.session = session;
+    pub fn tls_session_store(
+        mut self,
+        tls_session_store: Option<Arc<dyn TlsSessionStore>>,
+    ) -> Self {
+        if let Some(store) = tls_session_store {
+            self.config.tls_session_store = store;
         }
         self
     }
@@ -674,12 +676,12 @@ pub enum MaybeHttpsStream<T> {
     Https(SslStream<T>),
 }
 
-/// An established transport paired with its target connection descriptor.
+/// An established transport paired with its target connection request.
 /// Bypasses physical dialing when the TLS service upgrades a proxy tunnel.
 /// Owns the stream until the handshake completes or the connection attempt is dropped.
 pub struct EstablishedConn<IO> {
     io: IO,
-    descriptor: ConnectionDescriptor,
+    request: ConnectContext,
 }
 
 // ===== impl MaybeHttpsStream =====
@@ -791,7 +793,7 @@ where
 impl<IO> EstablishedConn<IO> {
     /// Creates a new [`EstablishedConn`].
     #[inline]
-    pub fn new(io: IO, descriptor: ConnectionDescriptor) -> EstablishedConn<IO> {
-        EstablishedConn { io, descriptor }
+    pub fn new(io: IO, request: ConnectContext) -> EstablishedConn<IO> {
+        EstablishedConn { io, request }
     }
 }

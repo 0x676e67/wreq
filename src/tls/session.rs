@@ -18,17 +18,17 @@ use std::{
 use btls::ssl::{SslSession, SslVersion};
 use lru::LruCache;
 
-use crate::{conn::descriptor::ConnectionId, sync::Mutex, tls::TlsVersion};
+use crate::{conn::ConnectionKey, sync::Mutex, tls::TlsVersion};
 
-/// An opaque key identifying a TLS session cache entry.
+/// An opaque key identifying a stored TLS session.
 #[derive(Clone, PartialEq, Eq, Hash)]
-pub struct Key(pub(super) ConnectionId);
+pub struct Key(pub(super) ConnectionKey);
 
-/// A TLS session that can be stored and retrieved from a session cache.
+/// A TLS session that can be stored and retrieved from a session store.
 #[derive(Clone)]
 pub struct TlsSession(pub(super) SslSession);
 
-/// A trait for cache storing and retrieving TLS sessions.
+/// Stores and retrieves TLS sessions for subsequent connections.
 ///
 /// # TLS 1.3 Session Handling
 ///
@@ -36,7 +36,7 @@ pub struct TlsSession(pub(super) SslSession);
 /// retrieval to comply with [RFC 8446 Appendix C.4](https://tools.ietf.org/html/rfc8446#appendix-C.4),
 /// which requires that session tickets are used at most once to prevent
 /// concurrent handshakes from reusing the same session.
-pub trait TlsSessionCache: Send + Sync {
+pub trait TlsSessionStore: Send + Sync {
     /// Store a TLS session associated with the given key.
     fn put(&self, key: Key, session: TlsSession);
 
@@ -48,20 +48,20 @@ pub trait TlsSessionCache: Send + Sync {
 }
 
 impl_into_shared!(
-    /// Trait for converting types into a shared [`TlsSessionCache`].
+    /// Trait for converting types into a shared [`TlsSessionStore`].
     ///
-    /// This allows accepting bare types, `Arc<T>`, or `Arc<dyn TlsSessionCache>`.
-    pub trait IntoTlsSessionCache => TlsSessionCache
+    /// This allows accepting bare types, `Arc<T>`, or `Arc<dyn TlsSessionStore>`.
+    pub trait IntoTlsSessionStore => TlsSessionStore
 );
 
-/// The default two-level LRU session cache.
+/// The default two-level LRU session store.
 ///
 /// Maintains both forward (key → sessions) and reverse (session → key) lookups
 /// for efficient session storage, retrieval, and cleanup operations.
 ///
-/// This is the built-in implementation of [`TlsSessionCache`] used when no
+/// This is the built-in implementation of [`TlsSessionStore`] used when no
 /// custom session store is configured.
-pub struct LruTlsSessionCache {
+pub struct LruTlsSessionStore {
     inner: Mutex<Inner>,
     per_host_session_capacity: usize,
 }
@@ -133,12 +133,12 @@ impl Borrow<[u8]> for TlsSession {
     }
 }
 
-// ===== impl LruTlsSessionCache =====
+// ===== impl LruTlsSessionStore =====
 
-impl LruTlsSessionCache {
-    /// Creates a new [`LruTlsSessionCache`] with the given per-host capacity.
+impl LruTlsSessionStore {
+    /// Creates a new [`LruTlsSessionStore`] with the given per-host capacity.
     pub fn new(per_host_session_capacity: usize) -> Self {
-        LruTlsSessionCache {
+        LruTlsSessionStore {
             inner: Mutex::new(Inner {
                 reverse: HashMap::new(),
                 per_host_sessions: HashMap::new(),
@@ -148,7 +148,7 @@ impl LruTlsSessionCache {
     }
 }
 
-impl TlsSessionCache for LruTlsSessionCache {
+impl TlsSessionStore for LruTlsSessionStore {
     fn put(&self, key: Key, session: TlsSession) {
         let mut inner = self.inner.lock();
 

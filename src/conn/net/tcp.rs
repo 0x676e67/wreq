@@ -37,7 +37,7 @@ use futures_util::future::Either;
 use socket2::TcpKeepalive;
 
 use crate::{
-    conn::{Connection, net::SocketBindOptions},
+    conn::{BindOptions, Connection},
     dns,
     error::BoxError,
 };
@@ -127,8 +127,8 @@ where
     pub(crate) fn new(remote_addrs: dns::SocketAddrs, config: &TcpOptions, connector: S) -> Self {
         if let Some(fallback_timeout) = config.happy_eyeballs_timeout {
             let (preferred_addrs, fallback_addrs) = remote_addrs.split_by_preference(
-                config.socket_bind.ipv4_address,
-                config.socket_bind.ipv6_address,
+                config.bind_options.ipv4_address,
+                config.bind_options.ipv6_address,
             );
             if fallback_addrs.is_empty() {
                 return ConnectingTcp {
@@ -527,7 +527,7 @@ where
         target_os = "visionos",
         target_os = "watchos",
     ))]
-    if let Some(interface) = &config.socket_bind.interface {
+    if let Some(interface) = &config.bind_options.interface {
         // On Linux-like systems, set the interface to bind using
         // `SO_BINDTODEVICE`.
         #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
@@ -579,8 +579,8 @@ where
     bind_local_address(
         &socket,
         addr,
-        &config.socket_bind.ipv4_address,
-        &config.socket_bind.ipv6_address,
+        &config.bind_options.ipv4_address,
+        &config.bind_options.ipv6_address,
     )
     .map_err(ConnectError::m("tcp bind local error"))?;
 
@@ -710,7 +710,7 @@ pub(crate) struct TcpOptions {
     #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
     pub tcp_user_timeout: Option<Duration>,
     pub tcp_keepalive: TcpKeepaliveOptions,
-    pub socket_bind: SocketBindOptions,
+    pub bind_options: BindOptions,
 }
 
 #[derive(Default, Debug, Clone, Copy)]
@@ -835,7 +835,7 @@ mod tests {
         connect_with_timeout,
     };
     use crate::{
-        conn::{Connected, Connection, net::SocketBindOptions},
+        conn::{BindOptions, Connected, Connection},
         dns,
     };
 
@@ -950,7 +950,7 @@ mod tests {
             #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
             tcp_user_timeout: None,
             tcp_keepalive: TcpKeepaliveOptions::default(),
-            socket_bind: SocketBindOptions::default(),
+            bind_options: BindOptions::default(),
         }
     }
 
