@@ -774,6 +774,72 @@ async fn http1_only() {
 }
 
 #[tokio::test]
+async fn request_version_survives_conversion_and_middleware() {
+    let server = server::http(|_| async { http::Response::default() });
+    let client = Client::builder().http2_only().no_proxy().build().unwrap();
+    let request = wreq::Request::new(
+        http::Method::GET,
+        format!("http://{}", server.addr()).parse().unwrap(),
+    );
+    let request = wreq::Request::from(http::Request::<wreq::Body>::from(request));
+    assert_eq!(request.version(), None);
+    let response = client.execute(request).await.unwrap();
+    assert_eq!(response.version(), Version::HTTP_2);
+
+    let request = http::Request::builder()
+        .uri(format!("http://{}", server.addr()))
+        .version(Version::HTTP_11)
+        .body(wreq::Body::default())
+        .unwrap();
+    let resp = client.execute(request.into()).await.unwrap();
+    assert_eq!(resp.version(), wreq::Version::HTTP_11);
+
+    let request = http::Request::builder()
+        .uri(format!("http://{}", server.addr()))
+        .version(Version::HTTP_2)
+        .body(wreq::Body::default())
+        .unwrap();
+    let mut request = wreq::Request::from(request);
+    *request.version_mut() = None;
+    let resp = Client::builder()
+        .http1_only()
+        .no_proxy()
+        .build()
+        .unwrap()
+        .execute(request)
+        .await
+        .unwrap();
+    assert_eq!(resp.version(), wreq::Version::HTTP_11);
+
+    let layered_client = Client::builder()
+        .http2_only()
+        .layer(tower::util::MapRequestLayer::new(
+            |mut request: http::Request<wreq::Body>| {
+                *request.version_mut() = Version::HTTP_11;
+                request
+            },
+        ))
+        .build()
+        .unwrap();
+    let resp = layered_client
+        .get(format!("http://{}", server.addr()))
+        .version(Version::HTTP_2)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.version(), wreq::Version::HTTP_11);
+
+    let err = client
+        .get(format!("http://{}", server.addr()))
+        .version(Version::HTTP_3)
+        .send()
+        .await
+        .unwrap_err();
+    assert!(err.is_request());
+    assert!(!err.is_connect());
+}
+
+#[tokio::test]
 async fn http2_only() {
     let server = server::http(move |_| async move { http::Response::default() });
 
@@ -788,7 +854,11 @@ async fn http2_only() {
 
     assert_eq!(resp.version(), wreq::Version::HTTP_2);
 
-    let resp = wreq::get(format!("http://{}", server.addr()))
+    let resp = Client::builder()
+        .http1_only()
+        .build()
+        .unwrap()
+        .get(format!("http://{}", server.addr()))
         .version(Version::HTTP_2)
         .send()
         .await

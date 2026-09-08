@@ -197,11 +197,17 @@ where
     }
 
     fn call(&mut self, mut request: Request<B>) -> Self::Future {
+        let mut options =
+            RequestConfig::<RequestOptions>::remove(request.extensions_mut()).unwrap_or_default();
+        let client_version = match self.version {
+            HttpVersion::Http2 => Version::HTTP_2,
+            HttpVersion::Http1 | HttpVersion::Auto => Version::HTTP_11,
+        };
+        options.reconcile_version(request.version(), client_version);
         let RequestOptions {
-            group,
             version,
-            mut extensions,
-        } = RequestConfig::<RequestOptions>::remove(request.extensions_mut()).unwrap_or_default();
+            extensions,
+        } = options;
 
         // curl's ordinary H2 mode allows HTTPS negotiation; prior knowledge
         // remains explicit: https://curl.se/libcurl/c/CURLOPT_HTTP_VERSION.html
@@ -224,7 +230,6 @@ where
             }
             None => None,
         };
-        extensions.insert(group);
         let context = match ConnectContext::new(request.uri().clone(), version, extensions) {
             Ok(context) => context,
             Err(source) => {
@@ -631,6 +636,11 @@ mod tests {
             {
                 let limits = attempt == 4 && version == HttpVersion::Http1;
                 let mut request = Request::builder()
+                    .version(if version == HttpVersion::Http2 {
+                        Version::HTTP_2
+                    } else {
+                        Version::HTTP_11
+                    })
                     .uri(if limits {
                         "http://localhost/limits"
                     } else {

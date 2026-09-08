@@ -193,9 +193,10 @@ pub struct TlsOptions {
     /// **Default:** `false`
     pub psk_skip_session_ticket: bool,
 
-    /// Enables Pre-Shared Key (PSK) cipher suites ([RFC 4279](https://datatracker.ietf.org/doc/html/rfc4279)).
+    /// Enables ticket-based resumption and the TLS 1.3 `pre_shared_key` extension.
     ///
-    /// Authentication relies on out-of-band pre-shared keys instead of certificates.
+    /// Uses a previously established session, not out-of-band PSKs.
+    /// See [RFC 8446 section 4.2.11](https://www.rfc-editor.org/rfc/rfc8446.html#section-4.2.11).
     ///
     /// **Default:** `false`
     pub pre_shared_key: bool,

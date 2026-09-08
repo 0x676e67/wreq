@@ -437,3 +437,45 @@ impl Service<ConnectContext> for Connector {
         Box::pin(self.clone().connect_auto(request))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::net::{Ipv4Addr, Ipv6Addr};
+
+    use http::Uri;
+
+    use super::*;
+    use crate::{
+        conn::{context::Extensions, net::TcpConnector},
+        dns::{DynResolver, GaiResolver},
+    };
+
+    #[test]
+    fn request_bind_options_configure_each_tcp_attempt() {
+        let resolver = DynResolver::new(Arc::new(GaiResolver::new()));
+        let connector = Connector::new(
+            Config {
+                proxies: Arc::new(Vec::new()),
+                verbose: false,
+                nodelay: false,
+                tls_info: false,
+            },
+            HttpConnector::new(resolver.clone(), TcpConnector::new()),
+            TlsConnector::builder().build(None).unwrap(),
+            #[cfg(feature = "socks")]
+            resolver,
+        );
+        let mut bind_options = BindOptions::default();
+        bind_options.set_local_addresses(Ipv4Addr::LOCALHOST, Ipv6Addr::LOCALHOST);
+        let mut extensions = Extensions::default();
+        extensions.insert(bind_options.clone());
+        let request =
+            ConnectContext::new(Uri::from_static("https://example.test/"), None, extensions)
+                .unwrap();
+
+        let http = connector.http_for_connection(true, &request);
+        assert_eq!(http.bind_options(), &bind_options);
+        assert!(http.nodelay());
+        assert_eq!(connector.http.bind_options(), &BindOptions::default());
+    }
+}

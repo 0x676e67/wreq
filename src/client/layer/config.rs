@@ -8,8 +8,7 @@ use http::{HeaderMap, Request, Response, Version};
 use tower::{Layer, Service};
 
 use crate::{
-    Error, config::RequestConfig, conn::context::Extensions, ext::UriExt, group::Group,
-    header::OrigHeaderMap,
+    Error, config::RequestConfig, conn::context::Extensions, ext::UriExt, header::OrigHeaderMap,
 };
 
 /// A marker type for the default headers configuration value.
@@ -18,10 +17,10 @@ pub(crate) struct DefaultHeaders;
 
 /// Per-request configuration for proxy, protocol, and transport options.
 /// Overrides client defaults for a single request.
+/// Captured before pool lookup and retained across internal retries.
 #[derive(Debug, Default, Clone)]
 #[non_exhaustive]
 pub(crate) struct RequestOptions {
-    pub group: Group,
     pub version: Option<Version>,
     pub extensions: Extensions,
 }
@@ -53,6 +52,16 @@ impl_request_config_value!(DefaultHeaders, bool);
 // ===== impl RequestOptions =====
 
 impl_request_config_value!(RequestOptions);
+
+impl RequestOptions {
+    /// Records a wire-version change made by middleware after request construction.
+    /// An unchanged version preserves the original optional override.
+    pub(crate) fn reconcile_version(&mut self, wire: Version, client: Version) {
+        if wire != self.version.unwrap_or(client) {
+            self.version = Some(wire);
+        }
+    }
+}
 
 // ===== impl ConfigServiceLayer =====
 

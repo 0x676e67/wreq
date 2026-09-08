@@ -31,7 +31,7 @@ use crate::{
     tls::{
         AlpnProtocol, AlpsProtocol, KeyShare, TlsOptions, TlsVersion,
         keylog::KeyLog,
-        session::{Key, LruTlsSessionStore, TlsSession, TlsSessionStore},
+        session::{Key, SessionStore, TlsSessionStore},
         trust::{CertStore, Identity},
     },
 };
@@ -99,7 +99,7 @@ struct Config {
     cert_store: Option<CertStore>,
     cert_verification: bool,
     keylog: Option<KeyLog>,
-    tls_session_store: Arc<dyn TlsSessionStore>,
+    tls_session_store: Arc<SessionStore>,
 }
 
 /// Provides shared TLS state for HTTPS connection services.
@@ -117,7 +117,7 @@ pub struct TlsConnector {
 struct TlsContext {
     config: Config,
     ssl: SslConnector,
-    tls_session_store: Option<Arc<dyn TlsSessionStore>>,
+    session_resumption: bool,
     settings: HandshakeConfig,
 }
 
@@ -338,13 +338,16 @@ impl TlsConnector {
         let host = uri.host().ok_or("URI missing host")?;
         let host = Self::normalize_host(host);
 
-        if let Some(ref store) = context.tls_session_store {
-            let key = Key(request.key());
+        if context.session_resumption {
+            let store = &context.config.tls_session_store;
+            let key = Key(request.key(), store.session_id_context()?);
 
-            // Restore a stored session for this connection identity.
             if let Some(session) = store.pop(&key) {
+                // SAFETY: The store checks the originating key and lifetime. Client scope
+                // fixes trust and identity; ConnectionKey covers request options. This fresh
+                // SSL configuration has not started its handshake.
                 #[allow(unsafe_code)]
-                unsafe { cfg.set_session(&session.0) }?;
+                unsafe { cfg.set_session(&session) }?;
 
                 if context.settings.no_ticket {
                     cfg.set_options(SslOptions::NO_TICKET);
@@ -382,7 +385,7 @@ impl TlsConnector {
                 cert_store: None,
                 cert_verification: true,
                 keylog: None,
-                tls_session_store: Arc::new(LruTlsSessionStore::new(8)),
+                tls_session_store: Arc::new(SessionStore::new(None)),
             },
         }
     }
@@ -544,26 +547,35 @@ impl TlsContext {
         };
 
         // Register session storage callbacks only when resumption is enabled.
-        let tls_session_store = opts.is_some_and(|opts| opts.pre_shared_key).then(|| {
-            let store = config.tls_session_store.clone();
-
-            connector.set_session_cache_mode(SslSessionCacheMode::CLIENT);
-            connector.set_new_session_callback({
-                let store = store.clone();
-                move |ssl, session| {
-                    if let Ok(Some(key)) = key_index().map(|idx| ssl.ex_data(idx)) {
-                        store.put(key.clone(), TlsSession(session));
-                    }
+        let session_resumption = opts.is_some_and(|opts| opts.pre_shared_key);
+        if session_resumption {
+            // Reverify-on-resume requires a custom verifier; this context uses the built-in one.
+            let scope = config
+                .tls_session_store
+                .session_id_context()
+                .map_err(Error::tls)?;
+            connector
+                .set_session_id_context(&scope)
+                .map_err(Error::tls)?;
+            connector.set_session_cache_mode(
+                SslSessionCacheMode::CLIENT | SslSessionCacheMode::NO_INTERNAL,
+            );
+            // This limits TLS 1.2 sessions; TLS 1.3 also obeys the server's ticket lifetime.
+            connector.set_session_timeout(60 * 60);
+            let store = Arc::downgrade(&config.tls_session_store);
+            connector.set_new_session_callback(move |ssl, session| {
+                if let Some(store) = store.upgrade()
+                    && let Ok(Some(key)) = key_index().map(|idx| ssl.ex_data(idx))
+                {
+                    store.insert(key.clone(), session);
                 }
             });
-
-            store
-        });
+        }
 
         Ok(Self {
             config,
             ssl: connector.build(),
-            tls_session_store,
+            session_resumption,
             settings,
         })
     }
@@ -653,7 +665,7 @@ impl TlsConnectorBuilder {
         tls_session_store: Option<Arc<dyn TlsSessionStore>>,
     ) -> Self {
         if let Some(store) = tls_session_store {
-            self.config.tls_session_store = store;
+            self.config.tls_session_store = Arc::new(SessionStore::new(Some(store)));
         }
         self
     }

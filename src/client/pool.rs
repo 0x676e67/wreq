@@ -1710,7 +1710,7 @@ mod tests {
 
     /// Creates connection inputs for a local test origin.
     fn context() -> ConnectContext {
-        grouped_context(Group::default())
+        grouped_context(Group::new("test"))
     }
 
     /// Supplies default protocol configuration for a test connection.

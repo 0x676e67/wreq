@@ -45,6 +45,12 @@ use crate::{
 #[derive(Debug)]
 pub struct Request(http::Request<Option<Body>>);
 
+/// Marks a materialized wire version as inherited from the client.
+/// Travels through conversions to `http::Request` without fixing a preference.
+/// Removed when converting back to the public request type.
+#[derive(Clone, Copy)]
+struct UseClientVersion;
+
 /// A builder to construct the properties of a [`Request`].
 ///
 /// To construct a [`RequestBuilder`], refer to the [`Client`] documentation.
@@ -111,14 +117,16 @@ impl Request {
         self.0.body_mut()
     }
 
-    /// Get the http version.
+    /// Returns the request-level HTTP version override.
+    /// `None` uses the client's configured protocol preference.
     #[inline]
     pub fn version(&self) -> Option<Version> {
         self.config::<RequestOptions>()
             .and_then(|opts| opts.version)
     }
 
-    /// Get a mutable reference to the http version.
+    /// Returns the request-level HTTP version override for mutation.
+    /// Setting it to `None` restores the client's protocol preference.
     #[inline]
     pub fn version_mut(&mut self) -> &mut Option<Version> {
         &mut self
@@ -170,10 +178,18 @@ impl Request {
         };
         let mut req = Request::new(self.method().clone(), self.uri().clone());
         *req.headers_mut() = self.headers().clone();
-        *req.version_mut() = self.version();
+        *req.0.version_mut() = self.0.version();
         *req.extensions_mut() = self.extensions().clone();
         *req.body_mut() = body;
         Some(req)
+    }
+
+    /// Converts this request with an already resolved wire version.
+    #[inline]
+    pub(super) fn into_http(self, version: Version) -> http::Request<Body> {
+        let mut request = self.0.map(|body| body.unwrap_or_else(Body::empty));
+        *request.version_mut() = version;
+        request
     }
 
     #[inline]
@@ -763,21 +779,13 @@ impl RequestBuilder {
         self
     }
 
-    /// Sets the request builder to emulation the specified HTTP context.
-    ///
-    /// This method sets the necessary headers, HTTP/1 and HTTP/2 options configurations, and  TLS
-    /// options config to use the specified HTTP context. It allows the client to mimic the
-    /// behavior of different versions or setups, which can be useful for testing or ensuring
-    /// compatibility with various environments.
-    ///
-    /// # Note
-    /// This will overwrite the existing configuration.
-    /// You must set emulation before you can perform subsequent HTTP1/HTTP2/TLS fine-tuning.
+    /// Applies the profile's headers and TLS, HTTP/1, and HTTP/2 options.
+    /// Existing values in those categories may be replaced; connection group,
+    /// proxy, version, and socket settings remain unchanged.
     pub fn emulation<T: IntoEmulation>(mut self, emulation: T) -> RequestBuilder {
         if let Ok(ref mut req) = self.request {
             let emulation = emulation.into_emulation();
             let opts = req.config_mut::<RequestOptions>().get_or_insert_default();
-            opts.group.emulate(emulation.group);
             opts.extensions.set(emulation.tls_options);
             opts.extensions.set(emulation.http1_options);
             opts.extensions.set(emulation.http2_options);
@@ -789,17 +797,15 @@ impl RequestBuilder {
         self
     }
 
-    /// Assigns a logical group to this request.
-    ///
-    /// Groups define the request's identity and execution context.
-    /// Requests in different groups are logically partitioned to ensure
-    /// resource isolation and prevent metadata leakage.
+    /// Adds a caller-defined connection-pool partition to this request.
+    /// A group can prevent reuse across requests, but it never makes otherwise
+    /// incompatible connection settings share a connection.
     pub fn group(mut self, group: Group) -> RequestBuilder {
         if let Ok(ref mut req) = self.request {
             req.config_mut::<RequestOptions>()
                 .get_or_insert_default()
-                .group
-                .request(group);
+                .extensions
+                .insert(group);
         }
         self
     }
@@ -905,7 +911,20 @@ fn extract_authority(uri: &mut Uri) -> Option<(String, Option<String>)> {
 impl<T: Into<Body>> From<http::Request<T>> for Request {
     #[inline]
     fn from(req: http::Request<T>) -> Request {
-        Request(req.map(Into::into).map(Some))
+        let version = req.version();
+        let mut request = Request(req.map(Into::into).map(Some));
+        let use_client_version = request
+            .extensions_mut()
+            .remove::<UseClientVersion>()
+            .is_some();
+        if !use_client_version || version != Version::HTTP_11 {
+            if let Some(options) = request.config_mut::<RequestOptions>().as_mut() {
+                options.reconcile_version(version, Version::HTTP_11);
+            } else {
+                request.version_mut().replace(version);
+            }
+        }
+        request
     }
 }
 
@@ -913,10 +932,9 @@ impl From<Request> for http::Request<Body> {
     #[inline]
     fn from(req: Request) -> http::Request<Body> {
         let version = req.version();
-        let mut request = req.0.map(|body| body.unwrap_or_else(Body::empty));
-        // Protocol validation and encoding must see the request-local wire version.
-        if let Some(version) = version {
-            *request.version_mut() = version;
+        let mut request = req.into_http(version.unwrap_or(Version::HTTP_11));
+        if version.is_none() {
+            request.extensions_mut().insert(UseClientVersion);
         }
         request
     }

@@ -158,6 +158,18 @@ impl<R, S> HttpConnector<R, S> {
         // clones.
         Arc::make_mut(&mut self.options)
     }
+
+    /// Returns the socket binding used by this connector in tests.
+    #[cfg(test)]
+    pub(crate) fn bind_options(&self) -> &BindOptions {
+        &self.options.bind_options
+    }
+
+    /// Returns whether this connector disables Nagle in tests.
+    #[cfg(test)]
+    pub(crate) fn nodelay(&self) -> bool {
+        self.options.nodelay
+    }
 }
 
 impl<R, S> HttpConnect for HttpConnector<R, S>
