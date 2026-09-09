@@ -94,7 +94,7 @@ async fn tls13_tickets_resume_with_fresh_contexts_and_client_scope() {
         reused
     });
 
-    let tls = TlsOptions::builder()
+    let tls_options = TlsOptions::builder()
         .min_tls_version(TlsVersion::TLS_1_3)
         .max_tls_version(TlsVersion::TLS_1_3)
         .pre_shared_key(true)
@@ -130,7 +130,7 @@ async fn tls13_tickets_resume_with_fresh_contexts_and_client_scope() {
         .tls_session_store(Arc::new(PanickingSessionStore))
         .build()
         .unwrap();
-    let emulation = Emulation::builder().tls_options(tls).build();
+    let emulation = Emulation::builder().tls_options(tls_options).build();
     let url = format!("https://{address}/");
 
     for client in [

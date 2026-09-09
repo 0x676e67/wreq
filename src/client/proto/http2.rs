@@ -241,7 +241,7 @@ where
         let (_, builder) = config.proto.as_ref();
         let builder = builder.clone();
         let builder = match config
-            .context
+            .connect_context
             .extensions()
             .get::<wreq_proto::http2::Http2Options>()
         {

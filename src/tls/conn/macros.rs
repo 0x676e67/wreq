@@ -1,6 +1,7 @@
 macro_rules! set_bool {
     ($cfg:expr, $field:ident, $conn:expr, $setter:ident) => {
-        if $cfg.$field {
+        // Enable-only setters operate on a fresh context with the feature disabled.
+        if let Some(true) = $cfg.$field {
             $conn.$setter();
         }
     };

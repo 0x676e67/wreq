@@ -230,8 +230,9 @@ where
             }
             None => None,
         };
-        let context = match ConnectContext::new(request.uri().clone(), version, extensions) {
-            Ok(context) => context,
+        let connect_context = match ConnectContext::new(request.uri().clone(), version, extensions)
+        {
+            Ok(connect_context) => connect_context,
             Err(source) => {
                 return Either::Right(future::err(
                     Error::new(ErrorKind::UserAbsoluteUriRequired, source).into(),
@@ -242,7 +243,7 @@ where
         Either::Left(self.inner.call(PoolRequest {
             request,
             connection: Arc::new(ConnectionConfig {
-                context,
+                connect_context,
                 proto: self.proto.clone(),
             }),
         }))
@@ -422,7 +423,7 @@ where
                 connection,
             } = request;
 
-            let version = connection.context.version().unwrap_or(this.version);
+            let version = connection.connect_context.version().unwrap_or(this.version);
 
             let mut pooled = match this.pool.checkout(connection.clone(), version).await {
                 Ok(pooled) => pooled,
@@ -443,7 +444,7 @@ where
                 }
             };
 
-            if connection.context.version() == Some(HttpVersion::Auto) {
+            if connection.connect_context.version() == Some(HttpVersion::Auto) {
                 // Resolve the wire version on every attempt: an unsent retry may
                 // select a different protocol, but retains the original preference.
                 *request.version_mut() = if pooled.is_http2() {
@@ -507,7 +508,7 @@ where
                     } else {
                         let mut error = error.into_client_error(ErrorKind::SendRequest);
                         if pooled.is_http2()
-                            && connection.context.uri().is_https()
+                            && connection.connect_context.uri().is_https()
                             && !connect_info.is_negotiated_h2()
                         {
                             error = error.with_context(
@@ -564,17 +565,17 @@ mod tests {
         for version in [HttpVersion::Http1, HttpVersion::Http2] {
             let calls = Arc::new(AtomicUsize::new(0));
             let accepted = calls.clone();
-            let connector = tower::service_fn(move |context: ConnectContext| {
+            let connector = tower::service_fn(move |connect_context: ConnectContext| {
                 let id = accepted.fetch_add(1, Ordering::Relaxed);
-                assert_eq!(context.uri(), "http://localhost/");
+                assert_eq!(connect_context.uri(), "http://localhost/");
                 assert!(
-                    context
+                    connect_context
                         .extensions()
                         .get::<crate::http1::Http1Options>()
                         .is_some()
                 );
                 assert!(
-                    context
+                    connect_context
                         .extensions()
                         .get::<crate::http2::Http2Options>()
                         .is_some()
@@ -825,9 +826,9 @@ mod tests {
                 .oneshot(request)
                 .await
                 .unwrap();
-            assert_eq!(request.connection.context.version(), expected);
+            assert_eq!(request.connection.connect_context.version(), expected);
             assert_eq!(request.request.version(), wire.unwrap_or(Version::HTTP_11));
-            keys.push(request.connection.context.key());
+            keys.push(request.connection.connect_context.key());
         }
         assert_eq!(
             keys[0], keys[1],
@@ -864,7 +865,10 @@ mod tests {
             let service = tower::service_fn(move |mut request: PoolRequest<Vec<u8>>| {
                 assert_eq!(request.request.uri(), "http://localhost/upload?part=1");
                 assert_eq!(request.request.body(), b"payload");
-                assert_eq!(request.connection.context.uri(), "http://localhost/");
+                assert_eq!(
+                    request.connection.connect_context.uri(),
+                    "http://localhost/"
+                );
 
                 let result = if attempts.fetch_add(1, Ordering::Relaxed) == 0 && unsent {
                     connection = Some(request.connection.clone());

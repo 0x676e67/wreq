@@ -63,7 +63,7 @@ pub struct HandshakeConfig {
     tls_sni: bool,
     verify_hostname: bool,
     no_ticket: bool,
-    enable_ech_grease: bool,
+    enable_ech_grease: Option<bool>,
     random_aes_hw_override: bool,
 }
 
@@ -74,7 +74,7 @@ pub struct HandshakeConfig {
 pub struct HttpsConnector<T> {
     http: T,
     tls: TlsConnector,
-    context: Option<TlsContext>,
+    tls_context: Option<TlsContext>,
     alpn_enabled: bool,
 }
 
@@ -127,7 +127,7 @@ impl<S> HttpsConnector<S> {
     /// Prepares a request-specific context before the TLS handshake.
     /// Without overrides, the service continues to borrow the shared base context.
     pub fn with_options(mut self, options: Option<&TlsOptions>) -> crate::Result<Self> {
-        self.context = match options {
+        self.tls_context = match options {
             Some(options) => Some(TlsContext::new(
                 self.tls.inner.config.clone(),
                 Some(options),
@@ -164,7 +164,7 @@ where
     fn call(&mut self, uri: Uri) -> Self::Future {
         let connect = self.http.call(uri.clone());
         let tls = self.tls.clone();
-        let context = self.context.clone();
+        let tls_context = self.tls_context.clone();
 
         Box::pin(async move {
             let conn = connect.await.map_err(Into::into)?;
@@ -174,7 +174,7 @@ where
                 return Ok(MaybeHttpsStream::Http(conn));
             }
 
-            let ssl = tls.ssl_for_uri(uri, context.as_ref())?;
+            let ssl = tls.ssl_for_uri(uri, tls_context.as_ref())?;
             perform_handshake(ssl, conn).await
         })
     }
@@ -196,21 +196,22 @@ where
         self.http.poll_ready(cx).map_err(Into::into)
     }
 
-    fn call(&mut self, request: ConnectContext) -> Self::Future {
+    fn call(&mut self, connect_context: ConnectContext) -> Self::Future {
         let alpn_enabled = self.alpn_enabled;
         let tls = self.tls.clone();
-        let context = self.context.clone();
-        let connect = self.http.call(request.route_uri().clone());
+        let tls_context = self.tls_context.clone();
+        let connect = self.http.call(connect_context.route_uri().clone());
 
         Box::pin(async move {
             let conn = connect.await.map_err(Into::into)?;
 
             // Early return if it is not a tls scheme
-            if request.route_uri().is_http() {
+            if connect_context.route_uri().is_http() {
                 return Ok(MaybeHttpsStream::Http(conn));
             }
 
-            let ssl = tls.ssl_for_connection(request, context.as_ref(), alpn_enabled)?;
+            let ssl =
+                tls.ssl_for_connection(connect_context, tls_context.as_ref(), alpn_enabled)?;
             perform_handshake(ssl, conn).await
         })
     }
@@ -236,15 +237,16 @@ where
     fn call(&mut self, conn: EstablishedConn<IO>) -> Self::Future {
         let alpn_enabled = self.alpn_enabled;
         let tls = self.tls.clone();
-        let context = self.context.clone();
+        let tls_context = self.tls_context.clone();
 
         Box::pin(async move {
             // Early return if it is not a tls scheme
-            if conn.request.route_uri().is_http() {
+            if conn.connect_context.route_uri().is_http() {
                 return Ok(MaybeHttpsStream::Http(conn.io));
             }
 
-            let ssl = tls.ssl_for_connection(conn.request, context.as_ref(), alpn_enabled)?;
+            let ssl =
+                tls.ssl_for_connection(conn.connect_context, tls_context.as_ref(), alpn_enabled)?;
             perform_handshake(ssl, conn.io).await
         })
     }
@@ -253,36 +255,41 @@ where
 // ===== impl TlsConnector =====
 
 impl TlsConnector {
-    /// Prepares URI-only TLS using the request context or shared base context.
-    /// Descriptor-specific ALPN and session selection stay in `ssl_for_connection`.
-    fn ssl_for_uri(&self, uri: Uri, context: Option<&TlsContext>) -> Result<Ssl, BoxError> {
-        let context = context.unwrap_or(&self.inner);
-        let cfg = context.ssl.configure()?;
+    /// Prepares URI-only TLS using the request-specific or shared TLS context.
+    /// Connection-specific ALPN and session selection stay in `ssl_for_connection`.
+    fn ssl_for_uri(&self, uri: Uri, tls_context: Option<&TlsContext>) -> Result<Ssl, BoxError> {
+        let tls_context = tls_context.unwrap_or(&self.inner);
+        let cfg = tls_context.ssl.configure()?;
         let host = uri.host().ok_or("URI missing host")?;
         let host = Self::normalize_host(host);
         let ssl = cfg.into_ssl(host)?;
         Ok(ssl)
     }
 
-    /// Prepares a connection using its request context or the shared base context.
+    /// Prepares a connection using its request-specific or shared TLS context.
     /// Unset or empty request ALPN inherits the base list during handshake setup.
     fn ssl_for_connection(
         &self,
-        request: ConnectContext,
-        context: Option<&TlsContext>,
+        connect_context: ConnectContext,
+        tls_context: Option<&TlsContext>,
         alpn_enabled: bool,
     ) -> Result<Ssl, BoxError> {
-        let context = context.unwrap_or(&self.inner);
-        let mut cfg = context.ssl.configure()?;
+        let tls_context = tls_context.unwrap_or(&self.inner);
+        let mut cfg = tls_context.ssl.configure()?;
 
         // Use server name indication
-        cfg.set_use_server_name_indication(context.settings.tls_sni);
+        cfg.set_use_server_name_indication(tls_context.settings.tls_sni);
 
         // Verify hostname
-        cfg.set_verify_hostname(context.settings.verify_hostname);
+        cfg.set_verify_hostname(tls_context.settings.verify_hostname);
 
-        // Set ECH grease
-        cfg.set_enable_ech_grease(context.settings.enable_ech_grease);
+        // Leave backend defaults untouched when ECH GREASE is not configured.
+        set_option!(
+            tls_context.settings,
+            enable_ech_grease,
+            cfg,
+            set_enable_ech_grease
+        );
 
         // Proxy TLS can suppress ALPN entirely via no_alpn().
         if alpn_enabled {
@@ -298,8 +305,10 @@ impl TlsConnector {
             // TLS list: nonempty request list, then client list, else [h2, http/1.1].
             // None and empty lists inherit; custom list order is preserved.
             let protocols: &[AlpnProtocol] = match (
-                request.version().unwrap_or(context.settings.version),
-                context.settings.alpn_protocols.as_deref(),
+                connect_context
+                    .version()
+                    .unwrap_or(tls_context.settings.version),
+                tls_context.settings.alpn_protocols.as_deref(),
                 self.inner.settings.alpn_protocols.as_deref(),
             ) {
                 (HttpVersion::Http1, _, _) => &[AlpnProtocol::HTTP1],
@@ -312,35 +321,35 @@ impl TlsConnector {
         }
 
         // Set ALPS protos
-        if let Some(ref alps_values) = context.settings.alps_protocols {
+        if let Some(ref alps_values) = tls_context.settings.alps_protocols {
             for alps in alps_values.iter() {
                 cfg.add_application_settings(alps.0)?;
             }
 
             // By default, the new endpoint is used.
             if !alps_values.is_empty() {
-                cfg.set_alps_use_new_codepoint(context.settings.alps_use_new_codepoint);
+                cfg.set_alps_use_new_codepoint(tls_context.settings.alps_use_new_codepoint);
             }
         }
 
         // Set random AES hardware override
-        if context.settings.random_aes_hw_override {
+        if tls_context.settings.random_aes_hw_override {
             let random = (crate::util::fast_random() & 1) == 0;
             cfg.set_aes_hw_override(random);
         }
 
         // Set TLS key shares
-        if let Some(ref key_shares) = context.settings.key_shares {
+        if let Some(ref key_shares) = tls_context.settings.key_shares {
             cfg.set_client_key_shares(key_shares.as_ref())?;
         }
 
-        let uri = request.route_uri().clone();
+        let uri = connect_context.route_uri().clone();
         let host = uri.host().ok_or("URI missing host")?;
         let host = Self::normalize_host(host);
 
-        if context.session_resumption {
-            let store = &context.config.tls_session_store;
-            let key = Key(request.key(), store.session_id_context()?);
+        if tls_context.session_resumption {
+            let store = &tls_context.config.tls_session_store;
+            let key = Key(connect_context.key(), store.session_id_context()?);
 
             if let Some(session) = store.pop(&key) {
                 // SAFETY: The store checks the originating key and lifetime. Client scope
@@ -349,7 +358,7 @@ impl TlsConnector {
                 #[allow(unsafe_code)]
                 unsafe { cfg.set_session(&session) }?;
 
-                if context.settings.no_ticket {
+                if tls_context.settings.no_ticket {
                     cfg.set_options(SslOptions::NO_TICKET);
                 }
             }
@@ -398,7 +407,7 @@ impl<S> Layer<S> for TlsConnector {
         HttpsConnector {
             http,
             tls: self.clone(),
-            context: None,
+            tls_context: None,
             alpn_enabled: true,
         }
     }
@@ -540,7 +549,7 @@ impl TlsContext {
             alpn_protocols: opts.and_then(|opts| opts.alpn_protocols.clone()),
             alps_protocols: opts.and_then(|opts| opts.alps_protocols.clone()),
             alps_use_new_codepoint: opts.is_some_and(|opts| opts.alps_use_new_codepoint),
-            enable_ech_grease: opts.is_some_and(|opts| opts.enable_ech_grease),
+            enable_ech_grease: opts.and_then(|opts| opts.enable_ech_grease),
             key_shares: opts.and_then(|opts| opts.key_shares.clone()),
             no_ticket: opts.is_some_and(|opts| opts.psk_skip_session_ticket),
             random_aes_hw_override: opts.is_some_and(|opts| opts.random_aes_hw_override),
@@ -688,12 +697,12 @@ pub enum MaybeHttpsStream<T> {
     Https(SslStream<T>),
 }
 
-/// An established transport paired with its target connection request.
+/// An established transport paired with its target connection context.
 /// Bypasses physical dialing when the TLS service upgrades a proxy tunnel.
 /// Owns the stream until the handshake completes or the connection attempt is dropped.
 pub struct EstablishedConn<IO> {
     io: IO,
-    request: ConnectContext,
+    connect_context: ConnectContext,
 }
 
 // ===== impl MaybeHttpsStream =====
@@ -805,7 +814,10 @@ where
 impl<IO> EstablishedConn<IO> {
     /// Creates a new [`EstablishedConn`].
     #[inline]
-    pub fn new(io: IO, request: ConnectContext) -> EstablishedConn<IO> {
-        EstablishedConn { io, request }
+    pub fn new(io: IO, connect_context: ConnectContext) -> EstablishedConn<IO> {
+        EstablishedConn {
+            io,
+            connect_context,
+        }
     }
 }

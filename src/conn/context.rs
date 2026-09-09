@@ -15,7 +15,6 @@ use std::{
 use http::Uri;
 use lru::DefaultHasher;
 
-use super::ConnectionKey;
 use crate::{HttpVersion, error::BoxError};
 
 /// Input context shared by pool lookup and transport connection attempts.
@@ -27,15 +26,21 @@ pub struct ConnectContext {
     route_uri: Option<Uri>,
 }
 
+/// Value identity for interchangeable connections.
+/// Pool entries and TLS sessions share the frozen connection context.
+/// Cached hashes accelerate lookup; equality still checks the complete values.
+#[derive(Debug, Clone)]
+pub(crate) struct ConnectionKey(Arc<ContextData>);
+
 /// Immutable values backing a context and its pool/session keys.
 /// The hash is computed once when request configuration is frozen.
 /// Neither routing changes nor protocol builders are retained here.
 #[derive(Debug)]
-pub(super) struct ContextData {
-    pub(super) uri: Uri,
-    pub(super) version: Option<HttpVersion>,
-    pub(super) extensions: Extensions,
-    pub(super) hash: u64,
+struct ContextData {
+    uri: Uri,
+    version: Option<HttpVersion>,
+    extensions: Extensions,
+    hash: u64,
 }
 
 /// Type-indexed connection settings with value equality and hashing.
@@ -125,6 +130,27 @@ impl ConnectContext {
     pub(crate) fn with_route_uri(mut self, uri: Uri) -> Self {
         self.route_uri = Some(uri);
         self
+    }
+}
+
+// ===== impl ConnectionKey =====
+
+impl PartialEq for ConnectionKey {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+            || (self.0.hash == other.0.hash
+                && self.0.uri == other.0.uri
+                && self.0.version == other.0.version
+                && self.0.extensions == other.0.extensions)
+    }
+}
+
+impl Eq for ConnectionKey {}
+
+impl Hash for ConnectionKey {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        // Repeated pool/session lookups do not rehash the full configuration.
+        state.write_u64(self.0.hash);
     }
 }
 
@@ -332,41 +358,41 @@ mod tests {
 
     #[test]
     fn connection_options_partition_reuse_by_value() {
-        let tls = TlsOptions::builder()
+        let tls_options = TlsOptions::builder()
             .alpn_protocols([AlpnProtocol::HTTP2, AlpnProtocol::HTTP1])
             .build();
-        let mut options = Extensions::default();
-        options.insert(tls.clone());
-        options.insert(Http1Options::builder().max_headers(32).build());
-        options.insert(Http2Options::builder().header_table_size(4096).build());
-        let baseline = context(options.clone()).key();
-        assert_eq!(baseline, context(options.clone()).key());
+        let mut extensions = Extensions::default();
+        extensions.insert(tls_options);
+        extensions.insert(Http1Options::builder().max_headers(32).build());
+        extensions.insert(Http2Options::builder().header_table_size(4096).build());
+        let baseline = context(extensions.clone()).key();
+        assert_eq!(baseline, context(extensions.clone()).key());
 
         let mut variants = Vec::new();
-        let mut changed = options.clone();
+        let mut changed = extensions.clone();
         changed.insert(
             TlsOptions::builder()
                 .alpn_protocols([AlpnProtocol::HTTP1, AlpnProtocol::HTTP2])
                 .build(),
         );
         variants.push(changed);
-        let mut changed = options.clone();
+        let mut changed = extensions.clone();
         changed.insert(Http1Options::builder().max_headers(64).build());
         variants.push(changed);
-        let mut changed = options.clone();
+        let mut changed = extensions.clone();
         changed.insert(Http2Options::builder().header_table_size(8192).build());
         variants.push(changed);
-        let mut changed = options.clone();
+        let mut changed = extensions.clone();
         changed.insert(Group::new("tenant"));
         variants.push(changed);
-        let mut changed = options.clone();
+        let mut changed = extensions.clone();
         changed.insert(
             crate::Proxy::all("http://localhost:8080")
                 .unwrap()
                 .into_matcher(),
         );
         variants.push(changed);
-        let mut changed = options.clone();
+        let mut changed = extensions.clone();
         changed.insert(BindOptions {
             ipv4_address: Some(Ipv4Addr::LOCALHOST),
             ..Default::default()
@@ -378,7 +404,7 @@ mod tests {
         let explicit = ConnectContext::new(
             "https://localhost/".parse().unwrap(),
             Some(HttpVersion::Auto),
-            options,
+            extensions,
         )
         .unwrap();
         assert_ne!(baseline, explicit.key());

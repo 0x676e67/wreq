@@ -201,13 +201,10 @@ pub struct TlsOptions {
     /// **Default:** `false`
     pub pre_shared_key: bool,
 
-    /// Controls whether to send a GREASE Encrypted ClientHello (ECH) extension
-    /// when no supported ECH configuration is available.
-    ///
-    /// GREASE prevents protocol ossification by sending unknown extensions.
-    ///
-    /// **Default:** `false`
-    pub enable_ech_grease: bool,
+    /// Controls GREASE ECH when no supported ECH configuration is available.
+    /// `Some(true)` enables it; `Some(false)` disables it.
+    /// **Default:** `None` (backend policy unchanged).
+    pub enable_ech_grease: Option<bool>,
 
     /// Controls whether ClientHello extensions should be permuted.
     ///
@@ -227,14 +224,14 @@ pub struct TlsOptions {
     pub grease_sigalgs_enabled: Option<bool>,
 
     /// Enables OCSP stapling for the connection.
-    ///
-    /// **Default:** `false`
-    pub enable_ocsp_stapling: bool,
+    /// `Some(true)` requests it; `Some(false)` leaves it disabled.
+    /// **Default:** `None` (backend policy unchanged).
+    pub enable_ocsp_stapling: Option<bool>,
 
     /// Enables Signed Certificate Timestamps (SCT).
-    ///
-    /// **Default:** `false`
-    pub enable_signed_cert_timestamps: bool,
+    /// `Some(true)` requests them; `Some(false)` leaves them disabled.
+    /// **Default:** `None` (backend policy unchanged).
+    pub enable_signed_cert_timestamps: Option<bool>,
 
     /// Sets the maximum TLS record size.
     ///
@@ -402,9 +399,10 @@ impl TlsOptionsBuilder {
     }
 
     /// Sets the GREASE ECH extension flag.
+    /// `None` leaves the backend policy unchanged.
     #[inline]
-    pub fn enable_ech_grease(mut self, enabled: bool) -> Self {
-        self.config.enable_ech_grease = enabled;
+    pub fn enable_ech_grease<T: Into<Option<bool>>>(mut self, enabled: T) -> Self {
+        self.config.enable_ech_grease = enabled.into();
         self
     }
 
@@ -440,16 +438,18 @@ impl TlsOptionsBuilder {
     }
 
     /// Sets the OCSP stapling flag.
+    /// `None` leaves the backend policy unchanged.
     #[inline]
-    pub fn enable_ocsp_stapling(mut self, enabled: bool) -> Self {
-        self.config.enable_ocsp_stapling = enabled;
+    pub fn enable_ocsp_stapling<T: Into<Option<bool>>>(mut self, enabled: T) -> Self {
+        self.config.enable_ocsp_stapling = enabled.into();
         self
     }
 
     /// Sets the signed certificate timestamps flag.
+    /// `None` leaves the backend policy unchanged.
     #[inline]
-    pub fn enable_signed_cert_timestamps(mut self, enabled: bool) -> Self {
-        self.config.enable_signed_cert_timestamps = enabled;
+    pub fn enable_signed_cert_timestamps<T: Into<Option<bool>>>(mut self, enabled: T) -> Self {
+        self.config.enable_signed_cert_timestamps = enabled.into();
         self
     }
 

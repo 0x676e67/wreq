@@ -679,9 +679,9 @@ impl RequestBuilder {
                 .config_mut::<RequestOptions>()
                 .get_or_insert_default()
                 .extensions;
-            let mut options = extensions.remove::<BindOptions>().unwrap_or_default();
-            options.set_local_address(local_address);
-            extensions.insert(options);
+            let mut bind_options = extensions.remove::<BindOptions>().unwrap_or_default();
+            bind_options.set_local_address(local_address);
+            extensions.insert(bind_options);
         }
         self
     }
@@ -697,9 +697,9 @@ impl RequestBuilder {
                 .config_mut::<RequestOptions>()
                 .get_or_insert_default()
                 .extensions;
-            let mut options = extensions.remove::<BindOptions>().unwrap_or_default();
-            options.set_local_addresses(ipv4_address, ipv6_address);
-            extensions.insert(options);
+            let mut bind_options = extensions.remove::<BindOptions>().unwrap_or_default();
+            bind_options.set_local_addresses(ipv4_address, ipv6_address);
+            extensions.insert(bind_options);
         }
         self
     }
@@ -772,9 +772,9 @@ impl RequestBuilder {
                 .config_mut::<RequestOptions>()
                 .get_or_insert_default()
                 .extensions;
-            let mut options = extensions.remove::<BindOptions>().unwrap_or_default();
-            options.set_interface(interface);
-            extensions.insert(options);
+            let mut bind_options = extensions.remove::<BindOptions>().unwrap_or_default();
+            bind_options.set_interface(interface);
+            extensions.insert(bind_options);
         }
         self
     }

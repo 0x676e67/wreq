@@ -21,6 +21,7 @@ use crate::sync::Mutex;
 
 const SESSION_ENTRY_CAPACITY: usize = 8;
 const EXPIRATION_CHECK_INTERVAL: usize = 256;
+
 /// Stores session tickets for one client and an optional caller-provided store.
 ///
 /// The session ID context is copied into every per-request `SSL_CTX`. BoringSSL
@@ -68,13 +69,13 @@ impl SessionStore {
     }
 
     /// Stores a session emitted by BoringSSL's new-session callback.
-    pub(crate) fn insert(&self, key: Key, inner: SslSession) {
+    pub(crate) fn insert(&self, key: Key, session: SslSession) {
         if let Some(store) = &self.tls_session_store {
-            let session = TlsSession {
-                inner,
+            let tls_session = TlsSession {
+                inner: session,
                 key: key.clone(),
             };
-            if let Err(payload) = catch_unwind(AssertUnwindSafe(|| store.put(key, session))) {
+            if let Err(payload) = catch_unwind(AssertUnwindSafe(|| store.put(key, tls_session))) {
                 // Dropping an arbitrary panic payload may itself panic. This callback crosses an
                 // FFI boundary, so leak this exceptional value instead of unwinding into BoringSSL.
                 std::mem::forget(payload);
@@ -82,23 +83,16 @@ impl SessionStore {
             return;
         }
 
-        let mut pending = Some(inner);
-        let mut retired_ticket = None;
-        let mut evicted_entry = None;
-
-        {
+        let (retired_ticket, evicted_entry) = {
             let mut state = self.state.lock();
             let sessions = state.sessions.get_or_insert_with(entries);
-            if let Some(entry) = sessions.get_mut(&key) {
-                if let Some(session) = pending.take() {
-                    retired_ticket = entry.push(session);
-                }
-            } else if let Some(session) = pending.take() {
-                evicted_entry = sessions.push(key, SessionEntry::new(session));
+            match sessions.get_mut(&key) {
+                Some(entry) => (entry.push(session), None),
+                None => (None, sessions.push(key, SessionEntry::new(session))),
             }
-        }
+        };
 
-        drop(pending);
+        // Release native sessions and evicted keys after unlocking the store.
         drop(retired_ticket);
         drop(evicted_entry);
     }

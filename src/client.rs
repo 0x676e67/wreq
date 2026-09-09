@@ -73,9 +73,7 @@ use crate::{
     HttpVersion, IntoUri, Method, Proxy,
     conn::{
         BindOptions, BoxedConnectorLayer, BoxedTransportConnector, Conn, ConnectContext,
-        Connection, HttpConnector, Unnameable,
-        connector::{self, Connector, ConnectorLayer},
-        http::HttpConnect,
+        Connection, Connector, ConnectorLayer, HttpConnector, Unnameable, http::HttpConnect,
         net::TcpConnector,
     },
     dns::{DnsResolverWithOverrides, DynResolver, GaiResolver, IntoResolve, Resolve},
@@ -131,7 +129,7 @@ type MaybeDecompressionBody<T> = tower_http::decompression::DecompressionBody<T>
 type ClientService = Timeout<
     ConfigService<
         MaybeDecompression<
-            Retry<RetryPolicy, FollowRedirect<sealed::Client<connector::Stack, Body>>>,
+            Retry<RetryPolicy, FollowRedirect<sealed::Client<crate::conn::Stack, Body>>>,
         >,
     >,
 >;
@@ -588,7 +586,7 @@ impl ClientBuilder {
                     config.connect_timeout,
                 ))
                 .service(Connector::new(
-                    connector::Config {
+                    crate::conn::Config {
                         proxies: Arc::new(config.proxies),
                         verbose: config.connection_verbose,
                         nodelay: config.tcp_nodelay,

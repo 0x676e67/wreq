@@ -239,7 +239,7 @@ pub(super) struct PoolTarget {
 /// builder, so retries and negotiation do not copy unused protocol options.
 pub(super) struct ConnectionConfig {
     /// Frozen origin and complete request-local connection configuration.
-    pub(super) context: ConnectContext,
+    pub(super) connect_context: ConnectContext,
 
     /// Base handshake builders shared with the client configuration layer.
     pub(super) proto: Arc<(conn::http1::Builder, conn::http2::Builder<Executor>)>,
@@ -851,13 +851,13 @@ where
     type Service = Box<dyn Entry<B>>;
 
     fn key(&self, target: &PoolTarget) -> Self::Key {
-        target.connection.context.key()
+        target.connection.connect_context.key()
     }
 
     /// Builds only the pool components required by the target's protocol mode.
     fn service(&self, target: &PoolTarget) -> Self::Service {
         let pool = self.pool.clone();
-        let key = target.connection.context.key();
+        let key = target.connection.connect_context.key();
         let state = Arc::new(EntryState {
             uses: AtomicUsize::new(0),
             maintain: Box::new(move |identity| {
@@ -1327,7 +1327,7 @@ where
             if let Some(started) = &start_signal {
                 started.store(true, Ordering::Release);
             }
-            let io = Oneshot::new(connector, connection.context.clone())
+            let io = Oneshot::new(connector, connection.connect_context.clone())
                 .await
                 .map_err(Into::into)?;
             let connected = io.connected();
@@ -1633,7 +1633,7 @@ mod tests {
             Poll::Ready(Ok(()))
         }
 
-        fn call(&mut self, _target: ConnectContext) -> Self::Future {
+        fn call(&mut self, _connect_context: ConnectContext) -> Self::Future {
             match self {
                 Self::Fails => Box::pin(std::future::ready(Err(io::Error::from(
                     io::ErrorKind::ConnectionRefused,
@@ -1714,9 +1714,9 @@ mod tests {
     }
 
     /// Supplies default protocol configuration for a test connection.
-    fn connection(context: ConnectContext) -> Arc<ConnectionConfig> {
+    fn connection(connect_context: ConnectContext) -> Arc<ConnectionConfig> {
         Arc::new(ConnectionConfig {
-            context,
+            connect_context,
             proto: Arc::new((
                 conn::http1::Builder::default(),
                 conn::http2::Builder::new(Executor::default()),
@@ -2024,9 +2024,9 @@ mod tests {
         assert!(!pool.inner.expire.is_running());
 
         let pool = test_pool(TestConnector::KeepsAlive);
-        let context = grouped_context(Group::new("active"));
+        let connect_context = grouped_context(Group::new("active"));
         let mut first = pool
-            .checkout(connection(context.clone()), HttpVersion::Http1)
+            .checkout(connection(connect_context.clone()), HttpVersion::Http1)
             .await
             .expect("first checkout");
         std::future::poll_fn(|cx| first.poll_ready(cx))
@@ -2064,7 +2064,7 @@ mod tests {
         drop(first);
 
         let second = pool
-            .checkout(connection(context), HttpVersion::Http1)
+            .checkout(connection(connect_context), HttpVersion::Http1)
             .await
             .expect("second checkout");
 
