@@ -270,11 +270,11 @@ impl TlsConnector {
     /// Unset or empty request ALPN inherits the base list during handshake setup.
     fn ssl_for_connection(
         &self,
-        connect_context: ConnectContext,
-        tls_context: Option<&TlsContext>,
+        conn_ctx: ConnectContext,
+        tls_ctx: Option<&TlsContext>,
         alpn_enabled: bool,
     ) -> Result<Ssl, BoxError> {
-        let tls_context = tls_context.unwrap_or(&self.inner);
+        let tls_context = tls_ctx.unwrap_or(&self.inner);
         let mut cfg = tls_context.ssl.configure()?;
 
         // Use server name indication
@@ -305,9 +305,7 @@ impl TlsConnector {
             // TLS list: nonempty request list, then client list, else [h2, http/1.1].
             // None and empty lists inherit; custom list order is preserved.
             let protocols: &[AlpnProtocol] = match (
-                connect_context
-                    .version()
-                    .unwrap_or(tls_context.settings.version),
+                conn_ctx.version().unwrap_or(tls_context.settings.version),
                 tls_context.settings.alpn_protocols.as_deref(),
                 self.inner.settings.alpn_protocols.as_deref(),
             ) {
@@ -343,13 +341,13 @@ impl TlsConnector {
             cfg.set_client_key_shares(key_shares.as_ref())?;
         }
 
-        let uri = connect_context.route_uri().clone();
+        let uri = conn_ctx.route_uri().clone();
         let host = uri.host().ok_or("URI missing host")?;
         let host = Self::normalize_host(host);
 
         if tls_context.session_resumption {
             let store = &tls_context.config.tls_session_store;
-            let key = Key(connect_context.key(), store.session_id_context()?);
+            let key = Key(conn_ctx.key(), store.session_id_context()?);
 
             if let Some(session) = store.pop(&key) {
                 // SAFETY: The store checks the originating key and lifetime. Client scope

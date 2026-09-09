@@ -140,57 +140,47 @@ pub struct TlsOptionsBuilder {
 #[derive(Debug, Clone, Default, Educe)]
 #[educe(PartialEq, Eq, Hash)]
 pub struct TlsOptions {
-    /// Application-Layer Protocol Negotiation ([RFC 7301](https://datatracker.ietf.org/doc/html/rfc7301)).
+    /// Protocols offered through ALPN, in preference order ([RFC 7301](https://datatracker.ietf.org/doc/html/rfc7301)).
     ///
-    /// Specifies which application protocols (e.g., HTTP/2, HTTP/1.1) may be negotiated
-    /// over a single TLS connection.
-    /// Negotiated requests preserve this list and its order; fixed HTTP version
-    /// requirements override it. `None` and empty lists inherit the client's offer,
-    /// which defaults to HTTP/2 then HTTP/1.1 in automatic mode.
+    /// Fixed HTTP version requirements override this list. `None` and empty lists inherit
+    /// the client's offer, which defaults to HTTP/2 then HTTP/1.1 in automatic mode.
     ///
-    /// **Default:** `None`. An automatic client offers HTTP/2, then HTTP/1.1.
+    /// **Default:** `None` (inherits the client's offer).
     pub alpn_protocols: Option<Cow<'static, [AlpnProtocol]>>,
 
-    /// Application-Layer Protocol Settings (ALPS).
+    /// Protocols that exchange application-layer settings through ALPS during the handshake.
     ///
-    /// Enables exchanging application-layer settings during the handshake
-    /// for protocols negotiated via ALPN.
-    ///
-    /// **Default:** `None`
+    /// **Default:** `None`.
     pub alps_protocols: Option<Cow<'static, [AlpsProtocol]>>,
 
-    /// Whether to use an alternative ALPS codepoint for compatibility.
+    /// Selects the new ALPS codepoint when ALPS protocols are configured.
     ///
-    /// Useful when larger ALPS payloads are required.
-    ///
-    /// **Default:** `false`
+    /// **Default:** `false`.
     pub alps_use_new_codepoint: bool,
 
-    /// Enables TLS Session Tickets ([RFC 5077](https://tools.ietf.org/html/rfc5077)).
-    ///
-    /// Allows session resumption without requiring server-side state.
+    /// Controls TLS session tickets ([RFC 5077](https://tools.ietf.org/html/rfc5077)).
     ///
     /// **Default:** `None` (backend policy unchanged).
     pub session_ticket: Option<bool>,
 
     /// Minimum TLS version allowed for the connection.
     ///
-    /// **Default:** `None` (library default applied)
+    /// **Default:** `None` (inherits the client's minimum TLS version).
     pub min_tls_version: Option<TlsVersion>,
 
     /// Maximum TLS version allowed for the connection.
     ///
-    /// **Default:** `None` (library default applied)
+    /// **Default:** `None` (inherits the client's maximum TLS version).
     pub max_tls_version: Option<TlsVersion>,
 
-    /// Enables PSK with (EC)DHE key establishment (`psk_dhe_ke`).
+    /// Controls PSK with (EC)DHE key establishment (`psk_dhe_ke`).
     ///
     /// **Default:** `None` (backend policy unchanged).
     pub psk_dhe_ke: Option<bool>,
 
-    /// Whether to skip session tickets when using PSK.
+    /// Skips session tickets when a cached session is selected for resumption.
     ///
-    /// **Default:** `false`
+    /// **Default:** `false`.
     pub psk_skip_session_ticket: bool,
 
     /// Enables ticket-based resumption and the TLS 1.3 `pre_shared_key` extension.
@@ -198,49 +188,49 @@ pub struct TlsOptions {
     /// Uses a previously established session, not out-of-band PSKs.
     /// See [RFC 8446 section 4.2.11](https://www.rfc-editor.org/rfc/rfc8446.html#section-4.2.11).
     ///
-    /// **Default:** `false`
+    /// **Default:** `false`.
     pub pre_shared_key: bool,
 
     /// Controls GREASE ECH when no supported ECH configuration is available.
     /// `Some(true)` enables it; `Some(false)` disables it.
+    ///
     /// **Default:** `None` (backend policy unchanged).
     pub enable_ech_grease: Option<bool>,
 
-    /// Controls whether ClientHello extensions should be permuted.
+    /// Controls permutation of ClientHello extensions.
     ///
-    /// **Default:** `None` (implementation default)
+    /// **Default:** `None` (backend policy unchanged).
     pub permute_extensions: Option<bool>,
 
-    /// Controls whether GREASE extensions ([RFC 8701](https://datatracker.ietf.org/doc/html/rfc8701))
-    /// are enabled in general.
+    /// Controls TLS GREASE ([RFC 8701](https://datatracker.ietf.org/doc/html/rfc8701)).
     ///
-    /// **Default:** `None` (implementation default)
+    /// **Default:** `None` (backend policy unchanged).
     pub grease_enabled: Option<bool>,
 
     /// Controls whether the ClientHello `signature_algorithms` extension includes a
     /// GREASE value ([RFC 8701](https://www.rfc-editor.org/rfc/rfc8701.html)).
     ///
-    /// **Default:** `None` (implementation default)
+    /// **Default:** `None` (backend policy unchanged).
     pub grease_sigalgs_enabled: Option<bool>,
 
     /// Enables OCSP stapling for the connection.
-    /// `Some(true)` requests it; `Some(false)` leaves it disabled.
-    /// **Default:** `None` (backend policy unchanged).
-    pub enable_ocsp_stapling: Option<bool>,
+    ///
+    /// **Default:** `false`.
+    pub enable_ocsp_stapling: bool,
 
     /// Enables Signed Certificate Timestamps (SCT).
-    /// `Some(true)` requests them; `Some(false)` leaves them disabled.
-    /// **Default:** `None` (backend policy unchanged).
-    pub enable_signed_cert_timestamps: Option<bool>,
-
-    /// Sets the maximum TLS record size.
     ///
-    /// **Default:** `None`
+    /// **Default:** `false`.
+    pub enable_signed_cert_timestamps: bool,
+
+    /// Maximum TLS record size.
+    ///
+    /// **Default:** `None`.
     pub record_size_limit: Option<u16>,
 
-    /// Whether to set specific key shares for TLS 1.3 handshakes.
+    /// Key shares offered in TLS 1.3 handshakes.
     ///
-    /// **Default:** `None`
+    /// **Default:** `None`.
     pub key_shares: Option<Cow<'static, [KeyShare]>>,
 
     /// Encoded Trust Anchor IDs sent in a TLS 1.3 [`ClientHello`].
@@ -252,69 +242,64 @@ pub struct TlsOptions {
     /// `Some(&[])` sends an empty [`trust_anchors` extension]; `None` omits it. Invalid encoding
     /// fails TLS setup, and wreq does not implement the specification's retry mechanism.
     ///
-    /// **Default:** `None`
+    /// **Default:** `None`.
     ///
     /// [`ClientHello`]: https://www.rfc-editor.org/rfc/rfc9846.html#section-4.2.2
     /// [`trust_anchors` extension]: https://datatracker.ietf.org/doc/html/draft-ietf-tls-trust-anchor-ids-04#section-4.1
     pub trust_anchors: Option<Cow<'static, [u8]>>,
 
-    /// Enables TLS renegotiation by sending the `renegotiation_info` extension.
+    /// Controls TLS renegotiation.
     ///
     /// **Default:** `None` (backend policy unchanged).
     pub renegotiation: Option<bool>,
 
-    /// Delegated Credentials ([RFC 9345](https://datatracker.ietf.org/doc/html/rfc9345)).
+    /// Signature algorithms for delegated credentials ([RFC 9345](https://datatracker.ietf.org/doc/html/rfc9345)).
     ///
-    /// Allows TLS 1.3 endpoints to use temporary delegated credentials
-    /// for authentication with reduced long-term key exposure.
-    ///
-    /// **Default:** `None`
+    /// **Default:** `None`.
     pub delegated_credentials: Option<Cow<'static, str>>,
 
     /// List of supported elliptic curves.
     ///
-    /// **Default:** `None`
+    /// **Default:** `None`.
     pub curves_list: Option<Cow<'static, str>>,
 
     /// List of supported signature algorithms.
     ///
-    /// **Default:** `None`
+    /// **Default:** `None`.
     pub sigalgs_list: Option<Cow<'static, str>>,
 
-    /// Cipher suite configuration string.
+    /// Cipher suite selection and ordering in BoringSSL's cipher-list syntax.
     ///
-    /// Uses BoringSSL's mini-language to select, enable, and prioritize ciphers.
-    ///
-    /// **Default:** `None`
+    /// **Default:** `None`.
     pub cipher_list: Option<Cow<'static, str>>,
 
-    /// Sets whether to preserve the TLS 1.3 cipher list as configured by [`Self::cipher_list`].
+    /// Controls whether to preserve the TLS 1.3 cipher list configured by [`Self::cipher_list`].
     ///
-    /// **Default:** `None`
+    /// **Default:** `None` (backend policy unchanged).
     pub preserve_tls13_cipher_list: Option<bool>,
 
     /// Supported certificate compression algorithms ([RFC 8879](https://datatracker.ietf.org/doc/html/rfc8879)).
     ///
-    /// **Default:** `None`
+    /// **Default:** `None`.
     #[educe(
         PartialEq(method(certificate_compressors_eq)),
         Hash(method(hash_certificate_compressors))
     )]
     pub certificate_compressors: Option<Cow<'static, [&'static dyn CertificateCompressor]>>,
 
-    /// Supported TLS extensions, used for extension ordering/permutation.
+    /// TLS extension order used for permutation.
     ///
-    /// **Default:** `None`
+    /// **Default:** `None`.
     pub extension_permutation: Option<Cow<'static, [ExtensionType]>>,
 
     /// Overrides AES hardware acceleration.
     ///
-    /// **Default:** `None`
+    /// **Default:** `None` (backend policy unchanged).
     pub aes_hw_override: Option<bool>,
 
-    /// Overrides the random AES hardware acceleration.
+    /// Randomizes the AES hardware acceleration override for each connection.
     ///
-    /// **Default:** `false`
+    /// **Default:** `false`.
     pub random_aes_hw_override: bool,
 }
 
@@ -438,18 +423,16 @@ impl TlsOptionsBuilder {
     }
 
     /// Sets the OCSP stapling flag.
-    /// `None` leaves the backend policy unchanged.
     #[inline]
-    pub fn enable_ocsp_stapling<T: Into<Option<bool>>>(mut self, enabled: T) -> Self {
-        self.config.enable_ocsp_stapling = enabled.into();
+    pub fn enable_ocsp_stapling(mut self, enabled: bool) -> Self {
+        self.config.enable_ocsp_stapling = enabled;
         self
     }
 
     /// Sets the signed certificate timestamps flag.
-    /// `None` leaves the backend policy unchanged.
     #[inline]
-    pub fn enable_signed_cert_timestamps<T: Into<Option<bool>>>(mut self, enabled: T) -> Self {
-        self.config.enable_signed_cert_timestamps = enabled.into();
+    pub fn enable_signed_cert_timestamps(mut self, enabled: bool) -> Self {
+        self.config.enable_signed_cert_timestamps = enabled;
         self
     }
 
