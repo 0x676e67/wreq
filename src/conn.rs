@@ -220,7 +220,7 @@ impl Connector {
         }
     }
 
-    fn http_for_connection(&self, https: bool, connect_context: &ConnectContext) -> HttpConnector {
+    fn http_for_connection(&self, https: bool, ctx: &ConnectContext) -> HttpConnector {
         let mut http = self.http.clone();
 
         // Disable Nagle's algorithm for TLS handshake
@@ -231,7 +231,7 @@ impl Connector {
         }
 
         // Apply TCP options if provided in metadata
-        if let Some(bind_options) = connect_context.extensions().get::<BindOptions>() {
+        if let Some(bind_options) = ctx.extensions().get::<BindOptions>() {
             http.set_local_addresses(bind_options.ipv4_address, bind_options.ipv6_address);
             #[cfg(any(
                 target_os = "android",
@@ -256,11 +256,11 @@ impl Connector {
     fn build_https_connector(
         &self,
         https: bool,
-        connect_context: &ConnectContext,
+        ctx: &ConnectContext,
     ) -> Result<HttpsConnector<HttpConnector>, BoxError> {
         self.tls
-            .layer(self.http_for_connection(https, connect_context))
-            .with_options(connect_context.extensions().get::<TlsOptions>())
+            .layer(self.http_for_connection(https, ctx))
+            .with_options(ctx.extensions().get::<TlsOptions>())
             .map_err(Into::into)
     }
 
@@ -309,22 +309,22 @@ impl Connector {
 
     async fn connect_auto_proxy<P: Into<Option<Intercept>>>(
         self,
-        connect_context: ConnectContext,
+        ctx: ConnectContext,
         proxy: P,
     ) -> Result<Conn, BoxError> {
-        let is_https = connect_context.route_uri().is_https();
+        let is_https = ctx.route_uri().is_https();
         let proxy = proxy.into();
 
         trace!("connect with maybe proxy: {:?}", proxy);
 
-        let mut connector = self.build_https_connector(is_https, &connect_context)?;
+        let mut connector = self.build_https_connector(is_https, &ctx)?;
 
         // When using a proxy for HTTPS targets, disable ALPN to avoid protocol negotiation issues
         if proxy.is_some() && is_https {
             connector.no_alpn();
         }
 
-        let io = connector.call(connect_context).await?;
+        let io = connector.call(ctx).await?;
 
         // Re-enable Nagle's algorithm if it was disabled earlier
         if_tokio_rt!(block:{
@@ -338,10 +338,10 @@ impl Connector {
 
     async fn connect_via_proxy(
         self,
-        connect_context: ConnectContext,
+        ctx: ConnectContext,
         proxy: Intercepted,
     ) -> Result<Conn, BoxError> {
-        let uri = connect_context.uri().clone();
+        let uri = ctx.uri().clone();
 
         match proxy {
             Intercepted::Proxy(proxy) => {
@@ -366,7 +366,7 @@ impl Connector {
                             // Build a SOCKS connector.
                             let mut socks = SocksConnector::new(
                                 proxy_uri,
-                                self.http_for_connection(is_https, &connect_context),
+                                self.http_for_connection(is_https, &ctx),
                                 self.resolver.clone(),
                             );
                             socks.set_auth(proxy.raw_auth());
@@ -376,13 +376,10 @@ impl Connector {
                         };
 
                         // Build an HTTPS connector.
-                        let mut connector =
-                            self.build_https_connector(is_https, &connect_context)?;
+                        let mut connector = self.build_https_connector(is_https, &ctx)?;
 
                         // Wrap the established SOCKS connection with TLS if needed.
-                        let io = connector
-                            .call(EstablishedConn::new(conn, connect_context))
-                            .await?;
+                        let io = connector.call(EstablishedConn::new(conn, ctx)).await?;
 
                         // Re-enable Nagle's algorithm if it was disabled earlier
                         if_tokio_rt!(block:{
@@ -399,7 +396,7 @@ impl Connector {
                     trace!("tunneling over HTTP(s) proxy: {:?}", proxy_uri);
 
                     // Build an HTTPS connector.
-                    let mut connector = self.build_https_connector(is_https, &connect_context)?;
+                    let mut connector = self.build_https_connector(is_https, &ctx)?;
 
                     // Build a tunnel connector to establish the CONNECT tunnel.
                     let tunneled = {
@@ -421,9 +418,7 @@ impl Connector {
                     };
 
                     // Wrap the established tunneled stream with TLS.
-                    let io = connector
-                        .call(EstablishedConn::new(tunneled, connect_context))
-                        .await?;
+                    let io = connector.call(EstablishedConn::new(tunneled, ctx)).await?;
 
                     // Re-enable Nagle's algorithm if it was disabled earlier
                     if_tokio_rt!(block:{
@@ -435,7 +430,7 @@ impl Connector {
                     return self.tunnel_conn_from_stream(io);
                 }
 
-                self.connect_auto_proxy(connect_context.with_route_uri(proxy_uri), proxy)
+                self.connect_auto_proxy(ctx.with_route_uri(proxy_uri), proxy)
                     .await
                     .map_err(ProxyConnect)
                     .map_err(Into::into)
@@ -448,7 +443,7 @@ impl Connector {
                 let mut connector = self
                     .tls
                     .layer(UnixConnector::new(unix_socket))
-                    .with_options(connect_context.extensions().get::<TlsOptions>())?;
+                    .with_options(ctx.extensions().get::<TlsOptions>())?;
 
                 // If the target URI is HTTPS, establish a CONNECT tunnel over the Unix socket,
                 // then upgrade the tunneled stream to TLS.
@@ -468,41 +463,39 @@ impl Connector {
                     };
 
                     // Wrap the established tunneled stream with TLS.
-                    let io = connector
-                        .call(EstablishedConn::new(tunneled, connect_context))
-                        .await?;
+                    let io = connector.call(EstablishedConn::new(tunneled, ctx)).await?;
 
                     return self.tunnel_conn_from_stream(io);
                 }
 
                 // For plain HTTP, use the Unix connector directly.
-                let io = connector.call(connect_context).await?;
+                let io = connector.call(ctx).await?;
 
                 self.conn_from_stream(io, None)
             }
         }
     }
 
-    async fn connect_auto(self, connect_context: ConnectContext) -> Result<Conn, BoxError> {
-        debug!("starting new connection: {:?}", connect_context.uri());
+    async fn connect_auto(self, ctx: ConnectContext) -> Result<Conn, BoxError> {
+        debug!("starting new connection: {:?}", ctx.uri());
 
         // Determine if a proxy should be used for this request.
-        let intercepted = connect_context
+        let intercepted = ctx
             .extensions()
             .get::<ProxyMatcher>()
-            .and_then(|prox| prox.intercept(connect_context.uri()))
+            .and_then(|prox| prox.intercept(ctx.uri()))
             .or_else(|| {
                 self.config
                     .proxies
                     .iter()
-                    .find_map(|prox| prox.intercept(connect_context.uri()))
+                    .find_map(|prox| prox.intercept(ctx.uri()))
             });
 
         // If a proxy is matched, connect via proxy; otherwise, connect directly.
         if let Some(intercepted) = intercepted {
-            self.connect_via_proxy(connect_context, intercepted).await
+            self.connect_via_proxy(ctx, intercepted).await
         } else {
-            self.connect_auto_proxy(connect_context, None).await
+            self.connect_auto_proxy(ctx, None).await
         }
     }
 }
@@ -518,8 +511,8 @@ impl Service<ConnectContext> for Connector {
     }
 
     #[inline]
-    fn call(&mut self, connect_context: ConnectContext) -> Self::Future {
-        Box::pin(self.clone().connect_auto(connect_context))
+    fn call(&mut self, ctx: ConnectContext) -> Self::Future {
+        Box::pin(self.clone().connect_auto(ctx))
     }
 }
 
@@ -699,11 +692,10 @@ mod tests {
         bind_options.set_local_addresses(Ipv4Addr::LOCALHOST, Ipv6Addr::LOCALHOST);
         let mut extensions = Extensions::default();
         extensions.insert(bind_options.clone());
-        let connect_context =
-            ConnectContext::new(Uri::from_static("https://example.test/"), None, extensions)
-                .unwrap();
+        let ctx = ConnectContext::new(Uri::from_static("https://example.test/"), None, extensions)
+            .unwrap();
 
-        let http = connector.http_for_connection(true, &connect_context);
+        let http = connector.http_for_connection(true, &ctx);
         assert_eq!(http.bind_options(), &bind_options);
         assert!(http.nodelay());
         assert_eq!(connector.http.bind_options(), &BindOptions::default());

@@ -273,7 +273,7 @@ where
         let (builder, _) = config.proto.as_ref();
         let builder = builder.clone();
         let builder = match config
-            .connect_context
+            .ctx
             .extensions()
             .get::<wreq_proto::http1::Http1Options>()
         {

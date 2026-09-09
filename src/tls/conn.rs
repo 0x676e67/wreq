@@ -74,7 +74,7 @@ pub struct HandshakeConfig {
 pub struct HttpsConnector<T> {
     http: T,
     tls: TlsConnector,
-    tls_context: Option<TlsContext>,
+    ctx: Option<TlsContext>,
     alpn_enabled: bool,
 }
 
@@ -99,7 +99,7 @@ struct Config {
     cert_store: Option<CertStore>,
     cert_verification: bool,
     keylog: Option<KeyLog>,
-    tls_session_store: Arc<SessionStore>,
+    session: Arc<SessionStore>,
 }
 
 /// Provides shared TLS state for HTTPS connection services.
@@ -127,7 +127,7 @@ impl<S> HttpsConnector<S> {
     /// Prepares a request-specific context before the TLS handshake.
     /// Without overrides, the service continues to borrow the shared base context.
     pub fn with_options(mut self, options: Option<&TlsOptions>) -> crate::Result<Self> {
-        self.tls_context = match options {
+        self.ctx = match options {
             Some(options) => Some(TlsContext::new(
                 self.tls.inner.config.clone(),
                 Some(options),
@@ -164,7 +164,7 @@ where
     fn call(&mut self, uri: Uri) -> Self::Future {
         let connect = self.http.call(uri.clone());
         let tls = self.tls.clone();
-        let tls_context = self.tls_context.clone();
+        let tls_context = self.ctx.clone();
 
         Box::pin(async move {
             let conn = connect.await.map_err(Into::into)?;
@@ -196,22 +196,21 @@ where
         self.http.poll_ready(cx).map_err(Into::into)
     }
 
-    fn call(&mut self, connect_context: ConnectContext) -> Self::Future {
+    fn call(&mut self, ctx: ConnectContext) -> Self::Future {
         let alpn_enabled = self.alpn_enabled;
         let tls = self.tls.clone();
-        let tls_context = self.tls_context.clone();
-        let connect = self.http.call(connect_context.route_uri().clone());
+        let tls_context = self.ctx.clone();
+        let connect = self.http.call(ctx.route_uri().clone());
 
         Box::pin(async move {
             let conn = connect.await.map_err(Into::into)?;
 
             // Early return if it is not a tls scheme
-            if connect_context.route_uri().is_http() {
+            if ctx.route_uri().is_http() {
                 return Ok(MaybeHttpsStream::Http(conn));
             }
 
-            let ssl =
-                tls.ssl_for_connection(connect_context, tls_context.as_ref(), alpn_enabled)?;
+            let ssl = tls.ssl_for_connection(ctx, tls_context.as_ref(), alpn_enabled)?;
             perform_handshake(ssl, conn).await
         })
     }
@@ -237,16 +236,15 @@ where
     fn call(&mut self, conn: EstablishedConn<IO>) -> Self::Future {
         let alpn_enabled = self.alpn_enabled;
         let tls = self.tls.clone();
-        let tls_context = self.tls_context.clone();
+        let tls_context = self.ctx.clone();
 
         Box::pin(async move {
             // Early return if it is not a tls scheme
-            if conn.connect_context.route_uri().is_http() {
+            if conn.ctx.route_uri().is_http() {
                 return Ok(MaybeHttpsStream::Http(conn.io));
             }
 
-            let ssl =
-                tls.ssl_for_connection(conn.connect_context, tls_context.as_ref(), alpn_enabled)?;
+            let ssl = tls.ssl_for_connection(conn.ctx, tls_context.as_ref(), alpn_enabled)?;
             perform_handshake(ssl, conn.io).await
         })
     }
@@ -346,7 +344,7 @@ impl TlsConnector {
         let host = Self::normalize_host(host);
 
         if tls_context.session_resumption {
-            let store = &tls_context.config.tls_session_store;
+            let store = &tls_context.config.session;
             let key = Key(conn_ctx.key(), store.session_id_context()?);
 
             if let Some(session) = store.pop(&key) {
@@ -392,7 +390,7 @@ impl TlsConnector {
                 cert_store: None,
                 cert_verification: true,
                 keylog: None,
-                tls_session_store: Arc::new(SessionStore::new(None)),
+                session: Arc::new(SessionStore::new(None)),
             },
         }
     }
@@ -405,7 +403,7 @@ impl<S> Layer<S> for TlsConnector {
         HttpsConnector {
             http,
             tls: self.clone(),
-            tls_context: None,
+            ctx: None,
             alpn_enabled: true,
         }
     }
@@ -557,10 +555,7 @@ impl TlsContext {
         let session_resumption = opts.is_some_and(|opts| opts.pre_shared_key);
         if session_resumption {
             // Reverify-on-resume requires a custom verifier; this context uses the built-in one.
-            let scope = config
-                .tls_session_store
-                .session_id_context()
-                .map_err(Error::tls)?;
+            let scope = config.session.session_id_context().map_err(Error::tls)?;
             connector
                 .set_session_id_context(&scope)
                 .map_err(Error::tls)?;
@@ -569,7 +564,7 @@ impl TlsContext {
             );
             // This limits TLS 1.2 sessions; TLS 1.3 also obeys the server's ticket lifetime.
             connector.set_session_timeout(60 * 60);
-            let store = Arc::downgrade(&config.tls_session_store);
+            let store = Arc::downgrade(&config.session);
             connector.set_new_session_callback(move |ssl, session| {
                 if let Some(store) = store.upgrade()
                     && let Ok(Some(key)) = key_index().map(|idx| ssl.ex_data(idx))
@@ -672,7 +667,7 @@ impl TlsConnectorBuilder {
         tls_session_store: Option<Arc<dyn TlsSessionStore>>,
     ) -> Self {
         if let Some(store) = tls_session_store {
-            self.config.tls_session_store = Arc::new(SessionStore::new(Some(store)));
+            self.config.session = Arc::new(SessionStore::new(Some(store)));
         }
         self
     }
@@ -700,7 +695,7 @@ pub enum MaybeHttpsStream<T> {
 /// Owns the stream until the handshake completes or the connection attempt is dropped.
 pub struct EstablishedConn<IO> {
     io: IO,
-    connect_context: ConnectContext,
+    ctx: ConnectContext,
 }
 
 // ===== impl MaybeHttpsStream =====
@@ -812,10 +807,7 @@ where
 impl<IO> EstablishedConn<IO> {
     /// Creates a new [`EstablishedConn`].
     #[inline]
-    pub fn new(io: IO, connect_context: ConnectContext) -> EstablishedConn<IO> {
-        EstablishedConn {
-            io,
-            connect_context,
-        }
+    pub fn new(io: IO, ctx: ConnectContext) -> EstablishedConn<IO> {
+        EstablishedConn { io, ctx }
     }
 }
