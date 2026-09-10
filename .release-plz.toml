@@ -1,6 +1,7 @@
 [workspace]
 # set the path of all the crates to the changelog to the root of the repository
 changelog_path = "./RELEASE.md"
+changelog_config = "./.cliff.toml"
 release_always = false
 # Tag CI runs the full checks before publishing to crates.io.
 publish = false
