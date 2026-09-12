@@ -272,11 +272,7 @@ where
 
         let (builder, _) = config.proto.as_ref();
         let builder = builder.clone();
-        let builder = match config
-            .ctx
-            .extensions()
-            .get::<wreq_proto::http1::Http1Options>()
-        {
+        let builder = match config.req.extra().get::<wreq_proto::http1::Http1Options>() {
             Some(options) => builder.options(options.clone()),
             None => builder,
         };
@@ -354,6 +350,14 @@ where
     }
 
     fn call(&mut self, mut req: Request<B>) -> Self::Future {
+        // Extended CONNECT cannot be encoded as an HTTP/1 tunnel (RFC 8441 section 4).
+        // https://www.rfc-editor.org/rfc/rfc8441.html#section-4
+        if req.extensions().get::<http2::ext::Protocol>().is_some() {
+            return Either::Right(future::err(
+                Error::from_kind(ErrorKind::UserUnsupportedVersion).into(),
+            ));
+        }
+
         // Host must be derived before the absolute URI becomes a wire target.
         if self.set_host
             && !req.headers().contains_key(HOST)

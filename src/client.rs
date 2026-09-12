@@ -72,8 +72,8 @@ use crate::dns::hickory::HickoryDnsResolver;
 use crate::{
     HttpVersion, IntoUri, Method, Proxy,
     conn::{
-        BindOptions, BoxedConnectorLayer, BoxedTransportConnector, Conn, ConnectContext,
-        Connection, Connector, ConnectorLayer, HttpConnector, Unnameable, http::HttpConnect,
+        BoxedConnectorLayer, BoxedTransportConnector, Conn, ConnectRequest, Connection, Connector,
+        ConnectorLayer, HttpConnector, SocketOptions, Unnameable, http::HttpConnect,
         net::TcpConnector,
     },
     dns::{DnsResolverWithOverrides, DynResolver, GaiResolver, IntoResolve, Resolve},
@@ -165,15 +165,7 @@ type BoxedClientServiceLayer = BoxCloneSyncServiceLayer<
 ///
 /// [`Rc`]: std::rc::Rc
 #[derive(Clone)]
-pub struct Client(Arc<ClientInner>);
-
-/// Shared request service and protocol version exposed to user layers.
-/// Every [`Client`] clone retains this same instance.
-/// The version supplies the wire default before request middleware runs.
-struct ClientInner {
-    service: Either<ClientService, BoxedClientService>,
-    version: Version,
-}
+pub struct Client(Arc<Either<ClientService, BoxedClientService>>);
 
 /// A [`ClientBuilder`] can be used to create a [`Client`] with custom configuration.
 #[must_use]
@@ -212,7 +204,7 @@ struct Config {
     tcp_send_buffer_size: Option<usize>,
     tcp_recv_buffer_size: Option<usize>,
     tcp_happy_eyeballs_timeout: Option<Duration>,
-    bind_options: BindOptions,
+    socket_options: SocketOptions,
     proxies: Vec<ProxyMatcher>,
     auto_sys_proxy: bool,
     retry_policy: retry::Policy,
@@ -300,7 +292,7 @@ impl Client {
                 tcp_send_buffer_size: None,
                 tcp_recv_buffer_size: None,
                 tcp_happy_eyeballs_timeout: Some(Duration::from_millis(300)),
-                bind_options: BindOptions::default(),
+                socket_options: SocketOptions::default(),
                 proxies: Vec::new(),
                 auto_sys_proxy: true,
                 retry_policy: retry::Policy::default(),
@@ -443,11 +435,10 @@ impl Client {
     /// This method fails if there was an error while sending request,
     /// redirect loop was detected or redirect limit was exhausted.
     pub fn execute(&self, request: Request) -> Pending {
-        let version = request.version().unwrap_or(self.0.version);
-        let req = request.into_http(version);
+        let req: HttpRequest<Body> = request.into();
         Pending::Request {
             uri: Some(req.uri().clone()),
-            fut: Box::pin(Oneshot::new(self.0.service.clone(), req)),
+            fut: Box::pin(Oneshot::new(self.0.as_ref().clone(), req)),
         }
     }
 }
@@ -499,11 +490,6 @@ impl ClientBuilder {
         if let Some(err) = config.error {
             return Err(err);
         }
-
-        let version = match config.http_version {
-            HttpVersion::Http2 => Version::HTTP_2,
-            HttpVersion::Http1 | HttpVersion::Auto => Version::HTTP_11,
-        };
 
         // Prepare proxies
         if config.auto_sys_proxy {
@@ -571,12 +557,12 @@ impl ClientBuilder {
                 target_os = "visionos",
                 target_os = "watchos",
             ))]
-            if let Some(interface) = config.bind_options.interface {
+            if let Some(interface) = config.socket_options.interface {
                 http.set_interface(interface);
             }
             http.set_local_addresses(
-                config.bind_options.ipv4_address,
-                config.bind_options.ipv6_address,
+                config.socket_options.ipv4_address,
+                config.socket_options.ipv6_address,
             );
 
             let connector = ServiceBuilder::new()
@@ -668,10 +654,7 @@ impl ClientBuilder {
             }
         };
 
-        Ok(Client(Arc::new(ClientInner {
-            service: client,
-            version,
-        })))
+        Ok(Client(Arc::new(client)))
     }
 
     // Runtime options
@@ -1364,7 +1347,7 @@ impl ClientBuilder {
     where
         T: Into<Option<IpAddr>>,
     {
-        self.config.bind_options.set_local_address(addr.into());
+        self.config.socket_options.set_local_address(addr.into());
         self
     }
 
@@ -1388,7 +1371,7 @@ impl ClientBuilder {
         V4: Into<Option<Ipv4Addr>>,
         V6: Into<Option<Ipv6Addr>>,
     {
-        self.config.bind_options.set_local_addresses(ipv4, ipv6);
+        self.config.socket_options.set_local_addresses(ipv4, ipv6);
         self
     }
 
@@ -1456,7 +1439,7 @@ impl ClientBuilder {
     where
         T: Into<std::borrow::Cow<'static, str>>,
     {
-        self.config.bind_options.set_interface(interface);
+        self.config.socket_options.set_interface(interface);
         self
     }
 
@@ -1747,7 +1730,7 @@ mod sealed {
     #[must_use]
     pub struct Client<C, B>
     where
-        C: tower::Service<ConnectContext> + Clone + Send + Sync + 'static,
+        C: tower::Service<ConnectRequest> + Clone + Send + Sync + 'static,
         C::Response: AsyncRead + AsyncWrite + Connection + Unpin + Send + 'static,
         C::Error: Into<BoxError>,
         C::Future: Unpin + Send + 'static,
@@ -1789,7 +1772,7 @@ mod sealed {
 
     impl<C, B> Service<HttpRequest<B>> for Client<C, B>
     where
-        C: tower::Service<ConnectContext> + Clone + Send + Sync + 'static,
+        C: tower::Service<ConnectRequest> + Clone + Send + Sync + 'static,
         C::Response: AsyncRead + AsyncWrite + Connection + Unpin + Send + 'static,
         C::Error: Into<BoxError>,
         C::Future: Unpin + Send + 'static,
@@ -1834,7 +1817,7 @@ mod sealed {
 
     impl<C, B> Clone for Client<C, B>
     where
-        C: tower::Service<ConnectContext> + Clone + Send + Sync + 'static,
+        C: tower::Service<ConnectRequest> + Clone + Send + Sync + 'static,
         C::Response: AsyncRead + AsyncWrite + Connection + Unpin + Send + 'static,
         C::Error: Into<BoxError>,
         C::Future: Unpin + Send + 'static,
@@ -1986,7 +1969,7 @@ mod sealed {
         /// Consumes the builder and wraps `connector` in the complete client stack.
         pub fn build<C, B>(self, connector: C) -> Client<C, B>
         where
-            C: tower::Service<ConnectContext> + Clone + Send + Sync + 'static,
+            C: tower::Service<ConnectRequest> + Clone + Send + Sync + 'static,
             C::Response: AsyncRead + AsyncWrite + Connection + Unpin + Send + 'static,
             C::Error: Into<BoxError>,
             C::Future: Unpin + Send + 'static,

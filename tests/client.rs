@@ -774,7 +774,28 @@ async fn http1_only() {
 }
 
 #[tokio::test]
-async fn request_version_survives_conversion_and_middleware() {
+async fn request_version_configuration_survives_clone_and_conversion() {
+    for version in [
+        None,
+        Some(Version::HTTP_10),
+        Some(Version::HTTP_11),
+        Some(Version::HTTP_2),
+    ] {
+        let mut request =
+            wreq::Request::new(http::Method::POST, "http://localhost/".parse().unwrap());
+        *request.version_mut() = version;
+        *request.body_mut() = Some("payload".into());
+        let mut cloned = request.try_clone().unwrap();
+        assert_eq!(cloned.version(), version);
+        *cloned.version_mut() = Some(Version::HTTP_2);
+        assert_eq!(request.version(), version);
+        *cloned.version_mut() = version;
+        let converted = http::Request::<wreq::Body>::from(cloned);
+        assert_eq!(converted.version(), version.unwrap_or(Version::HTTP_11));
+        let converted = wreq::Request::from(converted);
+        assert_eq!(converted.version(), version);
+    }
+
     let server = server::http(|_| async { http::Response::default() });
     let client = Client::builder().http2_only().no_proxy().build().unwrap();
     let request = wreq::Request::new(
@@ -791,15 +812,16 @@ async fn request_version_survives_conversion_and_middleware() {
         .version(Version::HTTP_11)
         .body(wreq::Body::default())
         .unwrap();
-    let resp = client.execute(request.into()).await.unwrap();
-    assert_eq!(resp.version(), wreq::Version::HTTP_11);
+    let request = wreq::Request::from(request);
+    assert_eq!(request.version(), None);
+    let resp = client.execute(request).await.unwrap();
+    assert_eq!(resp.version(), wreq::Version::HTTP_2);
 
-    let request = http::Request::builder()
-        .uri(format!("http://{}", server.addr()))
+    let mut request = client
+        .get(format!("http://{}", server.addr()))
         .version(Version::HTTP_2)
-        .body(wreq::Body::default())
+        .build()
         .unwrap();
-    let mut request = wreq::Request::from(request);
     *request.version_mut() = None;
     let resp = Client::builder()
         .http1_only()
@@ -827,7 +849,8 @@ async fn request_version_survives_conversion_and_middleware() {
         .send()
         .await
         .unwrap();
-    assert_eq!(resp.version(), wreq::Version::HTTP_11);
+    // Wire mutations do not replace the explicit request-level protocol configuration.
+    assert_eq!(resp.version(), wreq::Version::HTTP_2);
 
     let err = client
         .get(format!("http://{}", server.addr()))
@@ -1067,15 +1090,16 @@ async fn connection_pool_respects_https_version_policy() {
 }
 
 #[tokio::test]
-async fn connection_pool_forced_http2_keeps_protocol_error() {
+async fn connection_pool_http2_errors_respect_negotiation() {
     use std::error::Error as _;
 
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-    for (request_version, extended_connect) in [
-        (None, false),
-        (Some(Version::HTTP_2), false),
-        (Some(Version::HTTP_2), true),
+    for (request_version, extended_connect, forced) in [
+        (None, false, true),
+        (Some(Version::HTTP_2), false, true),
+        (Some(Version::HTTP_2), true, true),
+        (Some(Version::HTTP_2), true, false),
     ] {
         let acceptor = server::tls_acceptor(b"");
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -1084,6 +1108,12 @@ async fn connection_pool_forced_http2_keeps_protocol_error() {
             let (socket, _) = listener.accept().await.unwrap();
             let mut stream = server::tls_accept(&acceptor, socket).await;
             assert!(stream.ssl().selected_alpn_protocol().is_none());
+            if !forced {
+                // Negotiated H1 must not send an extended CONNECT as a tunnel.
+                let mut byte = [0];
+                assert_eq!(stream.read(&mut byte).await.unwrap(), 0);
+                return;
+            }
             let mut preface = [0; 24];
             stream.read_exact(&mut preface).await.unwrap();
             assert_eq!(&preface, b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n");
@@ -1101,10 +1131,10 @@ async fn connection_pool_forced_http2_keeps_protocol_error() {
             );
         });
 
-        let builder = if extended_connect {
-            Client::builder()
-        } else {
+        let builder = if forced {
             Client::builder().http2_only()
+        } else {
+            Client::builder()
         };
         let client = builder
             .no_proxy()
@@ -1128,14 +1158,23 @@ async fn connection_pool_forced_http2_keeps_protocol_error() {
         let mut source = error.source();
         let mut has_context = false;
         let mut has_protocol_error = false;
+        let mut unsupported_version = false;
         while let Some(error) = source {
+            unsupported_version |= error.to_string().contains("UserUnsupportedVersion");
             has_context |= error.to_string().contains("without reported h2 ALPN");
             has_protocol_error |= error
                 .downcast_ref::<http2::Error>()
                 .is_some_and(|error| error.reason() == Some(http2::Reason::FRAME_SIZE_ERROR));
             source = error.source();
         }
-        assert!(has_context && has_protocol_error, "{error:?}");
+        if forced {
+            assert!(has_context && has_protocol_error, "{error:?}");
+        } else {
+            assert!(
+                unsupported_version && !has_context && !has_protocol_error,
+                "{error:?}"
+            );
+        }
         drop(client);
         tokio::time::timeout(Duration::from_secs(5), server)
             .await

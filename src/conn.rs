@@ -1,8 +1,8 @@
 //! Transport connector composition and established stream adapters.
 //! Connection metadata is exposed through [`Connected`]; protocol pools live in the client.
 
-mod connected;
-pub(crate) mod context;
+mod extra;
+pub(crate) mod request;
 mod timeout;
 mod tls_info;
 mod verbose;
@@ -12,15 +12,19 @@ pub(super) mod net;
 pub(super) mod proxy;
 
 use std::{
+    fmt::{self, Debug, Formatter},
     io::{self, IoSlice},
     pin::Pin,
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
     task::{Context, Poll},
     time::Duration,
 };
 
-pub use connected::Connected;
-pub(crate) use context::{BindOptions, ConnectContext, ConnectionKey};
+use ::http::{Extensions, HeaderMap, HeaderValue};
+pub(crate) use extra::Extra;
 use futures_util::future::BoxFuture;
 use http::HttpConnect;
 #[cfg(any(feature = "tokio-rt", feature = "compio-rt"))]
@@ -28,6 +32,7 @@ use net::TcpConnector;
 #[cfg(unix)]
 use net::UnixConnector;
 use pin_project_lite::pin_project;
+pub(crate) use request::{ConnectRequest, ConnectionKey, SocketOptions};
 use timeout::{Timeout, TimeoutLayer};
 use tls_info::TlsInfoFactory;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
@@ -66,7 +71,7 @@ pub(crate) struct Config {
 /// Both branches accept connection inputs and time each connection attempt separately.
 pub type Stack = Either<
     Timeout<Connector>,
-    MapRequest<BoxedTransportConnector, fn(ConnectContext) -> Unnameable>,
+    MapRequest<BoxedTransportConnector, fn(ConnectRequest) -> Unnameable>,
 >;
 
 /// Composes user connector layers inside the complete connection timeout.
@@ -100,12 +105,12 @@ pub type BoxedTransportConnector = BoxCloneSyncService<Unnameable, Conn, BoxErro
 pub type BoxedConnectorLayer =
     BoxCloneSyncServiceLayer<BoxedTransportConnector, Unnameable, Conn, BoxError>;
 
-/// A wrapper type for [`ConnectContext`] used to erase its concrete type.
+/// A wrapper type for [`ConnectRequest`] used to erase its concrete type.
 ///
 /// [`Unnameable`] allows passing connection requests through trait objects or
 /// type-erased interfaces where the concrete type of the request is not important.
 /// This is mainly used internally to simplify service composition and dynamic dispatch.
-pub struct Unnameable(pub(super) ConnectContext);
+pub struct Unnameable(pub(super) ConnectRequest);
 
 /// A trait alias for types that can be used as async connections.
 ///
@@ -148,6 +153,40 @@ pin_project! {
         #[pin]
         stream: SslStream<T>,
     }
+}
+
+/// Indicates the negotiated ALPN protocol.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Alpn {
+    H2,
+    None,
+}
+
+/// Shared reuse status for an established connection.
+/// Poisoning any clone prevents the transport from returning to the pool.
+/// The flag stays alive while connection metadata still references it.
+#[derive(Clone)]
+struct PoisonPill(Arc<AtomicBool>);
+
+/// Information about an HTTP proxy identity.
+/// Carries forward-proxy status, credentials, and headers for request preparation.
+/// Connection clones share it; updates use copy-on-write to preserve other clones.
+#[derive(Debug, Default, Clone)]
+struct ProxyIdentity {
+    is_proxied: bool,
+    auth: Option<HeaderValue>,
+    headers: Option<HeaderMap>,
+}
+
+/// Metadata describing the established transport and its negotiated protocol.
+/// Carries proxy details and extra values copied into response extensions.
+/// Clones share the poison flag so reuse can be disabled from any response.
+#[derive(Debug, Clone)]
+pub struct Connected {
+    alpn: Alpn,
+    proxy: Arc<ProxyIdentity>,
+    extra: Extra,
+    poisoned: PoisonPill,
 }
 
 /// Describes a type returned by a connector.
@@ -194,7 +233,7 @@ impl Layer<Connector> for ConnectorLayer {
 
         let service = MapRequest::new(
             BoxCloneSyncService::new(service),
-            Unnameable as fn(ConnectContext) -> Unnameable,
+            Unnameable as fn(ConnectRequest) -> Unnameable,
         );
 
         Either::Right(service)
@@ -220,7 +259,7 @@ impl Connector {
         }
     }
 
-    fn http_for_connection(&self, https: bool, ctx: &ConnectContext) -> HttpConnector {
+    fn http_for_connection(&self, https: bool, req: &ConnectRequest) -> HttpConnector {
         let mut http = self.http.clone();
 
         // Disable Nagle's algorithm for TLS handshake
@@ -230,9 +269,9 @@ impl Connector {
             http.set_nodelay(true);
         }
 
-        // Apply TCP options if provided in metadata
-        if let Some(bind_options) = ctx.extensions().get::<BindOptions>() {
-            http.set_local_addresses(bind_options.ipv4_address, bind_options.ipv6_address);
+        // Apply request-local socket configuration before connecting.
+        if let Some(socket_options) = req.extra().get::<SocketOptions>() {
+            http.set_local_addresses(socket_options.ipv4_address, socket_options.ipv6_address);
             #[cfg(any(
                 target_os = "android",
                 target_os = "fuchsia",
@@ -245,7 +284,7 @@ impl Connector {
                 target_os = "visionos",
                 target_os = "watchos",
             ))]
-            if let Some(interface) = &bind_options.interface {
+            if let Some(interface) = &socket_options.interface {
                 http.set_interface(interface.clone());
             }
         }
@@ -256,11 +295,11 @@ impl Connector {
     fn build_https_connector(
         &self,
         https: bool,
-        ctx: &ConnectContext,
+        req: &ConnectRequest,
     ) -> Result<HttpsConnector<HttpConnector>, BoxError> {
         self.tls
-            .layer(self.http_for_connection(https, ctx))
-            .with_options(ctx.extensions().get::<TlsOptions>())
+            .layer(self.http_for_connection(https, req))
+            .with_options(req.extra().get::<TlsOptions>())
             .map_err(Into::into)
     }
 
@@ -309,22 +348,22 @@ impl Connector {
 
     async fn connect_auto_proxy<P: Into<Option<Intercept>>>(
         self,
-        ctx: ConnectContext,
+        req: ConnectRequest,
         proxy: P,
     ) -> Result<Conn, BoxError> {
-        let is_https = ctx.route_uri().is_https();
+        let is_https = req.route_uri().is_https();
         let proxy = proxy.into();
 
         trace!("connect with maybe proxy: {:?}", proxy);
 
-        let mut connector = self.build_https_connector(is_https, &ctx)?;
+        let mut connector = self.build_https_connector(is_https, &req)?;
 
         // When using a proxy for HTTPS targets, disable ALPN to avoid protocol negotiation issues
         if proxy.is_some() && is_https {
             connector.no_alpn();
         }
 
-        let io = connector.call(ctx).await?;
+        let io = connector.call(req).await?;
 
         // Re-enable Nagle's algorithm if it was disabled earlier
         if_tokio_rt!(block:{
@@ -338,10 +377,10 @@ impl Connector {
 
     async fn connect_via_proxy(
         self,
-        ctx: ConnectContext,
+        req: ConnectRequest,
         proxy: Intercepted,
     ) -> Result<Conn, BoxError> {
-        let uri = ctx.uri().clone();
+        let uri = req.uri().clone();
 
         match proxy {
             Intercepted::Proxy(proxy) => {
@@ -366,7 +405,7 @@ impl Connector {
                             // Build a SOCKS connector.
                             let mut socks = SocksConnector::new(
                                 proxy_uri,
-                                self.http_for_connection(is_https, &ctx),
+                                self.http_for_connection(is_https, &req),
                                 self.resolver.clone(),
                             );
                             socks.set_auth(proxy.raw_auth());
@@ -376,10 +415,10 @@ impl Connector {
                         };
 
                         // Build an HTTPS connector.
-                        let mut connector = self.build_https_connector(is_https, &ctx)?;
+                        let mut connector = self.build_https_connector(is_https, &req)?;
 
                         // Wrap the established SOCKS connection with TLS if needed.
-                        let io = connector.call(EstablishedConn::new(conn, ctx)).await?;
+                        let io = connector.call(EstablishedConn::new(conn, req)).await?;
 
                         // Re-enable Nagle's algorithm if it was disabled earlier
                         if_tokio_rt!(block:{
@@ -396,7 +435,7 @@ impl Connector {
                     trace!("tunneling over HTTP(s) proxy: {:?}", proxy_uri);
 
                     // Build an HTTPS connector.
-                    let mut connector = self.build_https_connector(is_https, &ctx)?;
+                    let mut connector = self.build_https_connector(is_https, &req)?;
 
                     // Build a tunnel connector to establish the CONNECT tunnel.
                     let tunneled = {
@@ -418,7 +457,7 @@ impl Connector {
                     };
 
                     // Wrap the established tunneled stream with TLS.
-                    let io = connector.call(EstablishedConn::new(tunneled, ctx)).await?;
+                    let io = connector.call(EstablishedConn::new(tunneled, req)).await?;
 
                     // Re-enable Nagle's algorithm if it was disabled earlier
                     if_tokio_rt!(block:{
@@ -430,7 +469,7 @@ impl Connector {
                     return self.tunnel_conn_from_stream(io);
                 }
 
-                self.connect_auto_proxy(ctx.with_route_uri(proxy_uri), proxy)
+                self.connect_auto_proxy(req.with_route_uri(proxy_uri), proxy)
                     .await
                     .map_err(ProxyConnect)
                     .map_err(Into::into)
@@ -443,7 +482,7 @@ impl Connector {
                 let mut connector = self
                     .tls
                     .layer(UnixConnector::new(unix_socket))
-                    .with_options(ctx.extensions().get::<TlsOptions>())?;
+                    .with_options(req.extra().get::<TlsOptions>())?;
 
                 // If the target URI is HTTPS, establish a CONNECT tunnel over the Unix socket,
                 // then upgrade the tunneled stream to TLS.
@@ -463,44 +502,44 @@ impl Connector {
                     };
 
                     // Wrap the established tunneled stream with TLS.
-                    let io = connector.call(EstablishedConn::new(tunneled, ctx)).await?;
+                    let io = connector.call(EstablishedConn::new(tunneled, req)).await?;
 
                     return self.tunnel_conn_from_stream(io);
                 }
 
                 // For plain HTTP, use the Unix connector directly.
-                let io = connector.call(ctx).await?;
+                let io = connector.call(req).await?;
 
                 self.conn_from_stream(io, None)
             }
         }
     }
 
-    async fn connect_auto(self, ctx: ConnectContext) -> Result<Conn, BoxError> {
-        debug!("starting new connection: {:?}", ctx.uri());
+    async fn connect_auto(self, req: ConnectRequest) -> Result<Conn, BoxError> {
+        debug!("starting new connection: {:?}", req.uri());
 
         // Determine if a proxy should be used for this request.
-        let intercepted = ctx
-            .extensions()
+        let intercepted = req
+            .extra()
             .get::<ProxyMatcher>()
-            .and_then(|prox| prox.intercept(ctx.uri()))
+            .and_then(|prox| prox.intercept(req.uri()))
             .or_else(|| {
                 self.config
                     .proxies
                     .iter()
-                    .find_map(|prox| prox.intercept(ctx.uri()))
+                    .find_map(|prox| prox.intercept(req.uri()))
             });
 
         // If a proxy is matched, connect via proxy; otherwise, connect directly.
         if let Some(intercepted) = intercepted {
-            self.connect_via_proxy(ctx, intercepted).await
+            self.connect_via_proxy(req, intercepted).await
         } else {
-            self.connect_auto_proxy(ctx, None).await
+            self.connect_auto_proxy(req, None).await
         }
     }
 }
 
-impl Service<ConnectContext> for Connector {
+impl Service<ConnectRequest> for Connector {
     type Response = Conn;
     type Error = BoxError;
     type Future = BoxFuture<'static, Result<Conn, BoxError>>;
@@ -511,8 +550,8 @@ impl Service<ConnectContext> for Connector {
     }
 
     #[inline]
-    fn call(&mut self, ctx: ConnectContext) -> Self::Future {
-        Box::pin(self.clone().connect_auto(ctx))
+    fn call(&mut self, req: ConnectRequest) -> Self::Future {
+        Box::pin(self.clone().connect_auto(req))
     }
 }
 
@@ -661,20 +700,139 @@ where
     }
 }
 
+// ===== impl PoisonPill =====
+
+impl fmt::Debug for PoisonPill {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        // print the address of the pill—this makes debugging issues much easier
+        write!(
+            f,
+            "PoisonPill@{:p} {{ poisoned: {} }}",
+            self.0,
+            self.0.load(Ordering::Relaxed)
+        )
+    }
+}
+
+impl PoisonPill {
+    /// Create a healthy (not poisoned) pill.
+    #[inline]
+    fn healthy() -> Self {
+        Self(Arc::new(AtomicBool::new(false)))
+    }
+}
+
+// ===== impl Connected =====
+
+impl Connected {
+    /// Create new `Connected` type with empty metadata.
+    pub fn new() -> Connected {
+        Connected {
+            alpn: Alpn::None,
+            proxy: Arc::new(ProxyIdentity::default()),
+            extra: Extra::default(),
+            poisoned: PoisonPill::healthy(),
+        }
+    }
+
+    /// Attaches metadata copied into the extensions of every response.
+    /// A later value replaces an earlier value of the same Rust type.
+    /// Other connection clones retain their existing metadata.
+    pub fn extra<T: Clone + Send + Sync + 'static>(mut self, extra: T) -> Connected {
+        self.extra.insert(extra);
+        self
+    }
+
+    /// Copies attached metadata into response extensions by concrete Rust type.
+    /// Each stored metadata value is cloned once; connection configuration is omitted.
+    #[inline]
+    pub fn set_extras(&self, extensions: &mut Extensions) {
+        self.extra.copy_metadata_to(extensions);
+    }
+
+    /// Set that the proxy was used for this connected transport.
+    pub fn proxy(mut self, proxy: Intercept) -> Connected {
+        let identity = Arc::make_mut(&mut self.proxy);
+        identity.is_proxied = true;
+
+        if let Some(auth) = proxy.basic_auth() {
+            identity.auth.replace(auth.clone());
+        }
+
+        if let Some(headers) = proxy.custom_headers() {
+            identity.headers.replace(headers.clone());
+        }
+
+        self
+    }
+
+    /// Determines if the connected transport is to an HTTP proxy.
+    #[inline]
+    pub fn is_proxied(&self) -> bool {
+        self.proxy.is_proxied
+    }
+
+    /// Get the proxy identity information for the connected transport.
+    #[inline]
+    pub fn proxy_auth(&self) -> Option<&HeaderValue> {
+        self.proxy.auth.as_ref()
+    }
+
+    /// Get the custom proxy headers for the connected transport.
+    #[inline]
+    pub fn proxy_headers(&self) -> Option<&HeaderMap> {
+        self.proxy.headers.as_ref()
+    }
+
+    /// Set that the connected transport negotiated HTTP/2 as its next protocol.
+    #[inline]
+    pub fn negotiated_h2(mut self) -> Connected {
+        self.alpn = Alpn::H2;
+        self
+    }
+
+    /// Determines if the connected transport negotiated HTTP/2 as its next protocol.
+    #[inline]
+    pub fn is_negotiated_h2(&self) -> bool {
+        self.alpn == Alpn::H2
+    }
+
+    /// Determine if this connection is poisoned
+    #[inline]
+    pub fn poisoned(&self) -> bool {
+        self.poisoned.0.load(Ordering::Relaxed)
+    }
+
+    /// Poison this connection
+    ///
+    /// A poisoned connection will not be reused for subsequent requests by the pool
+    #[allow(unused)]
+    #[inline]
+    pub fn poison(&self) {
+        self.poisoned.0.store(true, Ordering::Relaxed);
+        debug!(
+            "connection was poisoned. this connection will not be reused for subsequent requests"
+        );
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use std::net::{Ipv4Addr, Ipv6Addr};
+    use std::{
+        net::{Ipv4Addr, Ipv6Addr},
+        sync::atomic::AtomicUsize,
+    };
 
-    use ::http::Uri;
+    use ::http::{Uri, header::VIA};
 
     use super::*;
     use crate::{
-        conn::{context::Extensions, net::TcpConnector},
+        conn::net::TcpConnector,
         dns::{DynResolver, GaiResolver},
     };
 
     #[test]
-    fn request_bind_options_configure_each_tcp_attempt() {
+    fn request_socket_options_configure_each_tcp_attempt() {
         let resolver = DynResolver::new(Arc::new(GaiResolver::new()));
         let connector = Connector::new(
             Config {
@@ -688,16 +846,72 @@ mod tests {
             #[cfg(feature = "socks")]
             resolver,
         );
-        let mut bind_options = BindOptions::default();
-        bind_options.set_local_addresses(Ipv4Addr::LOCALHOST, Ipv6Addr::LOCALHOST);
-        let mut extensions = Extensions::default();
-        extensions.insert(bind_options.clone());
-        let ctx = ConnectContext::new(Uri::from_static("https://example.test/"), None, extensions)
-            .unwrap();
+        let mut socket_options = SocketOptions::default();
+        socket_options.set_local_addresses(Ipv4Addr::LOCALHOST, Ipv6Addr::LOCALHOST);
+        let mut extra = Extra::default();
+        extra.insert_config(socket_options.clone());
+        let req =
+            ConnectRequest::new(Uri::from_static("https://example.test/"), None, extra).unwrap();
 
-        let http = connector.http_for_connection(true, &ctx);
-        assert_eq!(http.bind_options(), &bind_options);
+        let http = connector.http_for_connection(true, &req);
+        assert_eq!(http.socket_options(), &socket_options);
         assert!(http.nodelay());
-        assert_eq!(connector.http.bind_options(), &BindOptions::default());
+        assert_eq!(connector.http.socket_options(), &SocketOptions::default());
+    }
+
+    /// Counts copies of user metadata, excluding shared handle clones.
+    /// Acts as a response extra whose Clone increments the test's counter.
+    /// The counter survives metadata drops so each insertion remains observable.
+    #[derive(Debug)]
+    struct CloneCount(Arc<AtomicUsize>);
+
+    impl Clone for CloneCount {
+        fn clone(&self) -> Self {
+            self.0.fetch_add(1, Ordering::Relaxed);
+            Self(self.0.clone())
+        }
+    }
+
+    #[test]
+    fn connected_shares_metadata_without_changing_response_extras() {
+        let clones = Arc::new(AtomicUsize::new(0));
+        let original = Connected::new()
+            .extra(CloneCount(clones.clone()))
+            .extra(String::from("original"));
+        let changed = original
+            .clone()
+            .extra(CloneCount(clones.clone()))
+            .extra(String::from("changed"));
+        let proxy = crate::Proxy::http("http://localhost:8080")
+            .unwrap()
+            .basic_auth("user", "password")
+            .custom_http_headers(HeaderMap::from_iter([(
+                VIA,
+                HeaderValue::from_static("1.1 localhost"),
+            )]))
+            .into_matcher();
+        let proxy = match proxy.intercept(&"http://localhost/".parse().unwrap()) {
+            Some(crate::proxy::Intercepted::Proxy(proxy)) => proxy,
+            _ => unreachable!("expected HTTP proxy"),
+        };
+        let changed = changed.proxy(proxy).negotiated_h2();
+        assert_eq!(clones.load(Ordering::Relaxed), 0);
+        assert!(!original.is_proxied());
+        assert!(!original.is_negotiated_h2());
+        assert_eq!(original.proxy_auth(), None);
+        assert_eq!(original.proxy_headers(), None);
+        assert!(changed.is_proxied());
+        assert!(changed.proxy_auth().is_some());
+        assert_eq!(changed.proxy_headers().unwrap()[VIA], "1.1 localhost");
+
+        for (connected, value) in [(&original, "original"), (&changed, "changed")] {
+            let mut extensions = Extensions::new();
+            connected.set_extras(&mut extensions);
+            assert_eq!(extensions.get::<String>().unwrap(), value);
+            assert!(extensions.get::<CloneCount>().is_some());
+        }
+        assert_eq!(clones.load(Ordering::Relaxed), 2);
+        changed.poison();
+        assert!(original.poisoned());
     }
 }

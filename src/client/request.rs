@@ -24,17 +24,14 @@ use super::layer::decoder::AcceptEncoding;
 use super::{
     Body, Client, IntoEmulation, Response,
     future::Pending,
-    layer::{
-        config::{DefaultHeaders, RequestOptions},
-        timeout::TimeoutOptions,
-    },
+    layer::{config::DefaultHeaders, timeout::TimeoutOptions},
 };
 #[cfg(feature = "cookies")]
 use crate::cookie::{CookieStore, IntoCookieStore};
 use crate::{
     Error, Method, Proxy,
     config::{RequestConfig, RequestConfigValue},
-    conn::BindOptions,
+    conn::{Extra, SocketOptions},
     ext::UriExt,
     group::Group,
     header::{AUTHORIZATION, HeaderMap, HeaderName, HeaderValue, OrigHeaderMap},
@@ -44,12 +41,6 @@ use crate::{
 /// A request which can be executed with [`Client::execute()`].
 #[derive(Debug)]
 pub struct Request(http::Request<Option<Body>>);
-
-/// Marks a materialized wire version as inherited from the client.
-/// Travels through conversions to `http::Request` without fixing a preference.
-/// Removed when converting back to the public request type.
-#[derive(Clone, Copy)]
-struct UseClientVersion;
 
 /// A builder to construct the properties of a [`Request`].
 ///
@@ -121,18 +112,18 @@ impl Request {
     /// `None` uses the client's configured protocol preference.
     #[inline]
     pub fn version(&self) -> Option<Version> {
-        self.config::<RequestOptions>()
-            .and_then(|opts| opts.version)
+        self.extensions()
+            .get::<Extra>()?
+            .get::<Option<Version>>()
+            .copied()
+            .flatten()
     }
 
     /// Returns the request-level HTTP version override for mutation.
     /// Setting it to `None` restores the client's protocol preference.
     #[inline]
     pub fn version_mut(&mut self) -> &mut Option<Version> {
-        &mut self
-            .config_mut::<RequestOptions>()
-            .get_or_insert_default()
-            .version
+        self.extra_mut().config_or_default::<Option<Version>>()
     }
 
     /// Returns a reference to the associated extensions.
@@ -178,34 +169,22 @@ impl Request {
         };
         let mut req = Request::new(self.method().clone(), self.uri().clone());
         *req.headers_mut() = self.headers().clone();
-        *req.0.version_mut() = self.0.version();
         *req.extensions_mut() = self.extensions().clone();
         *req.body_mut() = body;
         Some(req)
     }
 
-    /// Converts this request with an already resolved wire version.
     #[inline]
-    pub(super) fn into_http(self, version: Version) -> http::Request<Body> {
-        let mut request = self.0.map(|body| body.unwrap_or_else(Body::empty));
-        *request.version_mut() = version;
-        request
-    }
-
-    #[inline]
-    pub(crate) fn config<T>(&self) -> Option<&T::Value>
-    where
-        T: RequestConfigValue,
-    {
-        RequestConfig::<T>::get(self.extensions())
-    }
-
-    #[inline]
-    pub(crate) fn config_mut<T>(&mut self) -> &mut Option<T::Value>
+    fn config_mut<T>(&mut self) -> &mut Option<T::Value>
     where
         T: RequestConfigValue,
     {
         RequestConfig::<T>::get_mut(self.extensions_mut())
+    }
+
+    #[inline]
+    fn extra_mut(&mut self) -> &mut Extra {
+        self.extensions_mut().get_or_insert_default::<Extra>()
     }
 }
 
@@ -581,7 +560,7 @@ impl RequestBuilder {
     /// client uses [`ClientBuilder::http2_only`](crate::ClientBuilder::http2_only).
     /// This preference preserves the configured TLS ALPN list and its order.
     /// Cleartext HTTP/2 uses prior knowledge without an HTTP/1 Upgrade.
-    /// HTTP/2 Extended CONNECT requests never fall back to HTTP/1.
+    /// Extended CONNECT fails if negotiation selects HTTP/1; its handshake is not rewritten.
     pub fn version(mut self, version: Version) -> RequestBuilder {
         if let Ok(ref mut req) = self.request {
             req.version_mut().replace(version);
@@ -661,10 +640,7 @@ impl RequestBuilder {
     /// Set the proxy for this request.
     pub fn proxy(mut self, proxy: Proxy) -> RequestBuilder {
         if let Ok(ref mut req) = self.request {
-            req.config_mut::<RequestOptions>()
-                .get_or_insert_default()
-                .extensions
-                .set(Some(proxy.into_matcher()));
+            req.extra_mut().set_config(Some(proxy.into_matcher()));
         }
         self
     }
@@ -675,13 +651,9 @@ impl RequestBuilder {
         V: Into<Option<IpAddr>>,
     {
         if let Ok(ref mut req) = self.request {
-            let extensions = &mut req
-                .config_mut::<RequestOptions>()
-                .get_or_insert_default()
-                .extensions;
-            let mut bind_options = extensions.remove::<BindOptions>().unwrap_or_default();
-            bind_options.set_local_address(local_address);
-            extensions.insert(bind_options);
+            req.extra_mut()
+                .config_or_default::<SocketOptions>()
+                .set_local_address(local_address);
         }
         self
     }
@@ -693,13 +665,9 @@ impl RequestBuilder {
         V6: Into<Option<Ipv6Addr>>,
     {
         if let Ok(ref mut req) = self.request {
-            let extensions = &mut req
-                .config_mut::<RequestOptions>()
-                .get_or_insert_default()
-                .extensions;
-            let mut bind_options = extensions.remove::<BindOptions>().unwrap_or_default();
-            bind_options.set_local_addresses(ipv4_address, ipv6_address);
-            extensions.insert(bind_options);
+            req.extra_mut()
+                .config_or_default::<SocketOptions>()
+                .set_local_addresses(ipv4_address, ipv6_address);
         }
         self
     }
@@ -768,13 +736,9 @@ impl RequestBuilder {
         I: Into<std::borrow::Cow<'static, str>>,
     {
         if let Ok(ref mut req) = self.request {
-            let extensions = &mut req
-                .config_mut::<RequestOptions>()
-                .get_or_insert_default()
-                .extensions;
-            let mut bind_options = extensions.remove::<BindOptions>().unwrap_or_default();
-            bind_options.set_interface(interface);
-            extensions.insert(bind_options);
+            req.extra_mut()
+                .config_or_default::<SocketOptions>()
+                .set_interface(interface);
         }
         self
     }
@@ -785,10 +749,10 @@ impl RequestBuilder {
     pub fn emulation<T: IntoEmulation>(mut self, emulation: T) -> RequestBuilder {
         if let Ok(ref mut req) = self.request {
             let emulation = emulation.into_emulation();
-            let opts = req.config_mut::<RequestOptions>().get_or_insert_default();
-            opts.extensions.set(emulation.tls_options);
-            opts.extensions.set(emulation.http1_options);
-            opts.extensions.set(emulation.http2_options);
+            req.extra_mut()
+                .set_config(emulation.tls_options)
+                .set_config(emulation.http1_options)
+                .set_config(emulation.http2_options);
             return self
                 .headers(emulation.headers)
                 .orig_headers(emulation.orig_headers);
@@ -802,10 +766,7 @@ impl RequestBuilder {
     /// incompatible connection settings share a connection.
     pub fn group(mut self, group: Group) -> RequestBuilder {
         if let Ok(ref mut req) = self.request {
-            req.config_mut::<RequestOptions>()
-                .get_or_insert_default()
-                .extensions
-                .insert(group);
+            req.extra_mut().insert_config(group);
         }
         self
     }
@@ -911,20 +872,7 @@ fn extract_authority(uri: &mut Uri) -> Option<(String, Option<String>)> {
 impl<T: Into<Body>> From<http::Request<T>> for Request {
     #[inline]
     fn from(req: http::Request<T>) -> Request {
-        let version = req.version();
-        let mut request = Request(req.map(Into::into).map(Some));
-        let use_client_version = request
-            .extensions_mut()
-            .remove::<UseClientVersion>()
-            .is_some();
-        if !use_client_version || version != Version::HTTP_11 {
-            if let Some(options) = request.config_mut::<RequestOptions>().as_mut() {
-                options.reconcile_version(version, Version::HTTP_11);
-            } else {
-                request.version_mut().replace(version);
-            }
-        }
-        request
+        Request(req.map(Into::into).map(Some))
     }
 }
 
@@ -932,9 +880,10 @@ impl From<Request> for http::Request<Body> {
     #[inline]
     fn from(req: Request) -> http::Request<Body> {
         let version = req.version();
-        let mut request = req.into_http(version.unwrap_or(Version::HTTP_11));
-        if version.is_none() {
-            request.extensions_mut().insert(UseClientVersion);
+        let mut request = req.0.map(|body| body.unwrap_or_else(Body::empty));
+        // Protocol validation and encoding must see the request-local wire version.
+        if let Some(version) = version {
+            *request.version_mut() = version;
         }
         request
     }

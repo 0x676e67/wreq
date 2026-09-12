@@ -240,11 +240,7 @@ where
 
         let (_, builder) = config.proto.as_ref();
         let builder = builder.clone();
-        let builder = match config
-            .ctx
-            .extensions()
-            .get::<wreq_proto::http2::Http2Options>()
-        {
+        let builder = match config.req.extra().get::<wreq_proto::http2::Http2Options>() {
             Some(options) => builder.options(options.clone()),
             None => builder,
         };

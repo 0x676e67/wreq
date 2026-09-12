@@ -4,26 +4,14 @@ use std::{
 };
 
 use futures_util::future::{self, Either, Ready};
-use http::{HeaderMap, Request, Response, Version};
+use http::{HeaderMap, Request, Response};
 use tower::{Layer, Service};
 
-use crate::{
-    Error, config::RequestConfig, conn::context::Extensions, ext::UriExt, header::OrigHeaderMap,
-};
+use crate::{Error, config::RequestConfig, ext::UriExt, header::OrigHeaderMap};
 
 /// A marker type for the default headers configuration value.
 #[derive(Clone, Copy)]
 pub(crate) struct DefaultHeaders;
-
-/// Per-request configuration for proxy, protocol, and transport options.
-/// Overrides client defaults for a single request.
-/// Captured before pool lookup and retained across internal retries.
-#[derive(Debug, Default, Clone)]
-#[non_exhaustive]
-pub(crate) struct RequestOptions {
-    pub version: Option<Version>,
-    pub extensions: Extensions,
-}
 
 /// Configuration for the [`ConfigService`].
 struct Config {
@@ -48,20 +36,6 @@ pub struct ConfigService<S> {
 // ===== impl DefaultHeaders =====
 
 impl_request_config_value!(DefaultHeaders, bool);
-
-// ===== impl RequestOptions =====
-
-impl_request_config_value!(RequestOptions);
-
-impl RequestOptions {
-    /// Records a wire-version change made by middleware after request construction.
-    /// An unchanged version preserves the original optional override.
-    pub(crate) fn reconcile_version(&mut self, wire: Version, client: Version) {
-        if wire != self.version.unwrap_or(client) {
-            self.version = Some(wire);
-        }
-    }
-}
 
 // ===== impl ConfigServiceLayer =====
 
