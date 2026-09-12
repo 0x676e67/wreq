@@ -1,6 +1,6 @@
 //! Composes the client connection pool from small service components.
 //!
-//! [`Map`] owns one entry per [`ConnectionId`]. Fixed
+//! [`Map`] owns one entry per [`ConnectionKey`]. Fixed
 //! protocol entries build only an HTTP/1 [`cache::Cache`] or an HTTP/2
 //! [`singleton::Singleton`]. Automatic entries use [`Negotiate`] to route an
 //! established connection between both pools.
@@ -66,10 +66,7 @@ use self::{
 use super::proto::{Established, SendError, http1, http2};
 use crate::{
     HttpVersion,
-    conn::{
-        Connected, Connection,
-        descriptor::{ConnectionDescriptor, ConnectionId},
-    },
+    conn::{ConnectRequest, Connected, Connection, ConnectionKey},
     rt::{Executor, Timer},
     sync::Mutex,
 };
@@ -169,7 +166,7 @@ impl Default for Config {
 /// from keeping the routing map alive.
 pub(super) struct Pool<C, B>
 where
-    C: Service<ConnectionDescriptor> + Clone + Send + Sync + 'static,
+    C: Service<ConnectRequest> + Clone + Send + Sync + 'static,
     C::Response: AsyncRead + AsyncWrite + Connection + Unpin + Send + 'static,
     C::Error: Into<BoxError>,
     C::Future: Unpin + Send + 'static,
@@ -192,7 +189,7 @@ where
 /// allowing long idle timers to stop immediately when this coordinator drops.
 struct PoolInner<C, B>
 where
-    C: Service<ConnectionDescriptor> + Clone + Send + Sync + 'static,
+    C: Service<ConnectRequest> + Clone + Send + Sync + 'static,
     C::Response: AsyncRead + AsyncWrite + Connection + Unpin + Send + 'static,
     C::Error: Into<BoxError>,
     C::Future: Unpin + Send + 'static,
@@ -218,8 +215,8 @@ where
 
 /// Destination and protocol configuration for one pool checkout.
 ///
-/// The descriptor is both the physical connection blueprint and the source of
-/// the map compatibility key. Shared base builders and request-local overrides
+/// The key freezes the origin and all connection overrides before checkout.
+/// Shared base builders and request-local overrides
 /// travel together so each new connection uses its initiating request's settings.
 /// `wait_for_reuse` is computed by the existing entry, keeping cold starts free
 /// of the reuse-first delay.
@@ -238,19 +235,14 @@ pub(super) struct PoolTarget {
 /// Immutable connection inputs shared by one request's checkout and retries.
 ///
 /// Pool hits only clone the shared handle. A connection attempt clones the
-/// descriptor after the reuse wait; the selected handshake alone prepares its
+/// request after the reuse wait; the selected handshake alone prepares its
 /// builder, so retries and negotiation do not copy unused protocol options.
 pub(super) struct ConnectionConfig {
-    /// Physical connection blueprint and existing compatibility key.
-    pub(super) descriptor: ConnectionDescriptor,
+    /// Frozen origin and complete request-local connection configuration.
+    pub(super) req: ConnectRequest,
 
     /// Base handshake builders shared with the client configuration layer.
     pub(super) proto: Arc<(conn::http1::Builder, conn::http2::Builder<Executor>)>,
-
-    /// HTTP/1 overrides applied only for a new transport.
-    pub(super) http1_options: Option<wreq_proto::http1::Http1Options>,
-    /// HTTP/2 overrides applied only for a new transport.
-    pub(super) http2_options: Option<wreq_proto::http2::Http2Options>,
 }
 
 /// Factory that creates one protocol-specific service graph per destination group.
@@ -261,7 +253,7 @@ pub(super) struct ConnectionConfig {
 /// [`PoolInner`].
 struct PoolTargeter<C, B>
 where
-    C: Service<ConnectionDescriptor> + Clone + Send + Sync + 'static,
+    C: Service<ConnectRequest> + Clone + Send + Sync + 'static,
     C::Response: AsyncRead + AsyncWrite + Connection + Unpin + Send + 'static,
     C::Error: Into<BoxError>,
     C::Future: Unpin + Send + 'static,
@@ -492,7 +484,7 @@ where
 #[derive(Clone)]
 struct ConnectionMaker<C>
 where
-    C: Service<ConnectionDescriptor> + Clone + Send + Sync + 'static,
+    C: Service<ConnectRequest> + Clone + Send + Sync + 'static,
     C::Response: AsyncRead + AsyncWrite + Connection + Unpin + Send + 'static,
     C::Error: Into<BoxError>,
     C::Future: Unpin + Send + 'static,
@@ -581,7 +573,7 @@ where
 
 impl<C, B> Pool<C, B>
 where
-    C: Service<ConnectionDescriptor> + Clone + Send + Sync + 'static,
+    C: Service<ConnectRequest> + Clone + Send + Sync + 'static,
     C::Response: AsyncRead + AsyncWrite + Connection + Unpin + Send + 'static,
     C::Error: Into<BoxError>,
     C::Future: Unpin + Send + 'static,
@@ -671,7 +663,7 @@ where
 
 impl<C, B> Clone for Pool<C, B>
 where
-    C: Service<ConnectionDescriptor> + Clone + Send + Sync + 'static,
+    C: Service<ConnectRequest> + Clone + Send + Sync + 'static,
     C::Response: AsyncRead + AsyncWrite + Connection + Unpin + Send + 'static,
     C::Error: Into<BoxError>,
     C::Future: Unpin + Send + 'static,
@@ -690,7 +682,7 @@ where
 
 impl<C, B> PoolInner<C, B>
 where
-    C: Service<ConnectionDescriptor> + Clone + Send + Sync + 'static,
+    C: Service<ConnectRequest> + Clone + Send + Sync + 'static,
     C::Response: AsyncRead + AsyncWrite + Connection + Unpin + Send + 'static,
     C::Error: Into<BoxError>,
     C::Future: Unpin + Send + 'static,
@@ -711,7 +703,7 @@ where
     }
 
     /// Reconciles one entry with empty cleanup and the global idle-group LRU.
-    fn maintain_entry(self: &Arc<Self>, key: &ConnectionId, identity: &Arc<EntryState>) {
+    fn maintain_entry(self: &Arc<Self>, key: &ConnectionKey, identity: &Arc<EntryState>) {
         let (removed, discarded, schedule_expiration) = {
             let mut services = self.services.lock();
             // Keep per-entry maintenance independent of the retained-group count.
@@ -759,7 +751,7 @@ where
 
 impl<C, B> Inspect for PoolInner<C, B>
 where
-    C: Service<ConnectionDescriptor> + Clone + Send + Sync + 'static,
+    C: Service<ConnectRequest> + Clone + Send + Sync + 'static,
     C::Response: AsyncRead + AsyncWrite + Connection + Unpin + Send + 'static,
     C::Error: Into<BoxError>,
     C::Future: Unpin + Send + 'static,
@@ -801,7 +793,7 @@ where
 
 impl<C, B> PoolTargeter<C, B>
 where
-    C: Service<ConnectionDescriptor> + Clone + Send + Sync + 'static,
+    C: Service<ConnectRequest> + Clone + Send + Sync + 'static,
     C::Response: AsyncRead + AsyncWrite + Connection + Unpin + Send + 'static,
     C::Error: Into<BoxError>,
     C::Future: Unpin + Send + 'static,
@@ -847,7 +839,7 @@ where
 
 impl<C, B> Target<PoolTarget> for PoolTargeter<C, B>
 where
-    C: Service<ConnectionDescriptor> + Clone + Send + Sync + 'static,
+    C: Service<ConnectRequest> + Clone + Send + Sync + 'static,
     C::Response: AsyncRead + AsyncWrite + Connection + Unpin + Send + 'static,
     C::Error: Into<BoxError>,
     C::Future: Unpin + Send + 'static,
@@ -855,18 +847,17 @@ where
     B::Data: Send,
     B::Error: Into<BoxError>,
 {
-    type Key = ConnectionId;
+    type Key = ConnectionKey;
     type Service = Box<dyn Entry<B>>;
 
-    /// Uses the descriptor's key, including the caller's configuration group.
     fn key(&self, target: &PoolTarget) -> Self::Key {
-        target.connection.descriptor.id()
+        target.connection.req.key()
     }
 
     /// Builds only the pool components required by the target's protocol mode.
     fn service(&self, target: &PoolTarget) -> Self::Service {
         let pool = self.pool.clone();
-        let key = target.connection.descriptor.id();
+        let key = target.connection.req.key();
         let state = Arc::new(EntryState {
             uses: AtomicUsize::new(0),
             maintain: Box::new(move |identity| {
@@ -1297,7 +1288,7 @@ where
 
 impl<C> Service<PoolTarget> for ConnectionMaker<C>
 where
-    C: Service<ConnectionDescriptor> + Clone + Send + Sync + 'static,
+    C: Service<ConnectRequest> + Clone + Send + Sync + 'static,
     C::Response: AsyncRead + AsyncWrite + Connection + Unpin + Send + 'static,
     C::Error: Into<BoxError>,
     C::Future: Unpin + Send + 'static,
@@ -1336,7 +1327,7 @@ where
             if let Some(started) = &start_signal {
                 started.store(true, Ordering::Release);
             }
-            let io = Oneshot::new(connector, connection.descriptor.clone())
+            let io = Oneshot::new(connector, connection.req.clone())
                 .await
                 .map_err(Into::into)?;
             let connected = io.connected();
@@ -1633,7 +1624,7 @@ mod tests {
         Http2(Arc<AtomicUsize>, Arc<tokio::sync::Semaphore>),
     }
 
-    impl Service<ConnectionDescriptor> for TestConnector {
+    impl Service<ConnectRequest> for TestConnector {
         type Response = tokio::io::DuplexStream;
         type Error = BoxError;
         type Future = BoxFuture<'static, Result<Self::Response, Self::Error>>;
@@ -1642,7 +1633,7 @@ mod tests {
             Poll::Ready(Ok(()))
         }
 
-        fn call(&mut self, _target: ConnectionDescriptor) -> Self::Future {
+        fn call(&mut self, _req: ConnectRequest) -> Self::Future {
             match self {
                 Self::Fails => Box::pin(std::future::ready(Err(io::Error::from(
                     io::ErrorKind::ConnectionRefused,
@@ -1717,34 +1708,32 @@ mod tests {
         }
     }
 
-    /// Creates a descriptor for a local test origin.
-    fn descriptor() -> ConnectionDescriptor {
-        grouped_descriptor(Group::default())
+    /// Creates connection inputs for a local test origin.
+    fn connect_request() -> ConnectRequest {
+        grouped_request(Group::new("test"))
     }
 
     /// Supplies default protocol configuration for a test connection.
-    fn connection(descriptor: ConnectionDescriptor) -> Arc<ConnectionConfig> {
+    fn connection(req: ConnectRequest) -> Arc<ConnectionConfig> {
         Arc::new(ConnectionConfig {
-            descriptor,
+            req,
             proto: Arc::new((
                 conn::http1::Builder::default(),
                 conn::http2::Builder::new(Executor::default()),
             )),
-            http1_options: None,
-            http2_options: None,
         })
     }
 
-    /// Creates a descriptor with an explicit connection compatibility group.
-    fn grouped_descriptor(group: Group) -> ConnectionDescriptor {
-        ConnectionDescriptor::new(
+    /// Creates connection inputs with an explicit compatibility group.
+    fn grouped_request(group: Group) -> ConnectRequest {
+        let mut extra = crate::conn::Extra::default();
+        extra.insert_config(group);
+        ConnectRequest::new(
             "http://localhost/".parse().expect("valid test URI"),
-            group,
             None,
-            None,
-            None,
-            None,
+            extra,
         )
+        .unwrap()
     }
 
     /// Creates a pool without periodic cleanup so empty-entry removal is explicit.
@@ -1777,7 +1766,7 @@ mod tests {
 
         let clones = Arc::new(AtomicUsize::new(0));
         let counter = CloneCounter(clones.clone());
-        let connector = tower::service_fn(move |_: ConnectionDescriptor| {
+        let connector = tower::service_fn(move |_: ConnectRequest| {
             let _counter = &counter;
             std::future::pending::<Result<tokio::io::DuplexStream, BoxError>>()
         });
@@ -1795,7 +1784,7 @@ mod tests {
             .enumerate()
         {
             let target = PoolTarget {
-                connection: connection(descriptor()),
+                connection: connection(connect_request()),
                 version,
                 wait_for_reuse: false,
             };
@@ -1814,7 +1803,7 @@ mod tests {
             let pool = test_pool(TestConnector::Http2(calls.clone(), gate.clone()));
             let checkout = || {
                 let target = PoolTarget {
-                    connection: connection(descriptor()),
+                    connection: connection(connect_request()),
                     version,
                     wait_for_reuse: false,
                 };
@@ -1920,7 +1909,7 @@ mod tests {
             true,
         );
         let pooled = pool
-            .checkout(connection(descriptor()), HttpVersion::Http1)
+            .checkout(connection(connect_request()), HttpVersion::Http1)
             .await
             .expect("successful checkout");
 
@@ -1946,7 +1935,7 @@ mod tests {
             true,
         );
         let pooled = pool
-            .checkout(connection(descriptor()), HttpVersion::Http1)
+            .checkout(connection(connect_request()), HttpVersion::Http1)
             .await
             .expect("successful checkout");
 
@@ -1962,16 +1951,16 @@ mod tests {
     async fn checkouts_remove_empty_map_entries() {
         for version in [HttpVersion::Http1, HttpVersion::Http2, HttpVersion::Auto] {
             let pool = test_pool(TestConnector::Fails);
-            let result = pool.checkout(connection(descriptor()), version).await;
+            let result = pool.checkout(connection(connect_request()), version).await;
             assert!(result.is_err());
             assert!(pool.inner.services.lock().is_empty());
             assert!(!pool.inner.expire.is_running());
 
             let pool = test_pool(TestConnector::Pending);
             let mut first =
-                tokio_test::task::spawn(pool.checkout(connection(descriptor()), version));
+                tokio_test::task::spawn(pool.checkout(connection(connect_request()), version));
             let mut second =
-                tokio_test::task::spawn(pool.checkout(connection(descriptor()), version));
+                tokio_test::task::spawn(pool.checkout(connection(connect_request()), version));
             assert!(first.poll().is_pending());
             assert!(second.poll().is_pending());
             drop(first);
@@ -1983,7 +1972,7 @@ mod tests {
 
         let pool = test_pool(TestConnector::ClosesAfterResponse);
         let mut pooled = pool
-            .checkout(connection(descriptor()), HttpVersion::Http1)
+            .checkout(connection(connect_request()), HttpVersion::Http1)
             .await
             .expect("successful checkout");
         std::future::poll_fn(|cx| pooled.poll_ready(cx))
@@ -2012,7 +2001,7 @@ mod tests {
         let request_read = Arc::new(tokio::sync::Notify::new());
         let pool = test_pool(TestConnector::StallsAfterRequest(request_read.clone()));
         let mut pooled = pool
-            .checkout(connection(descriptor()), HttpVersion::Http1)
+            .checkout(connection(connect_request()), HttpVersion::Http1)
             .await
             .expect("successful checkout");
         std::future::poll_fn(|cx| pooled.poll_ready(cx))
@@ -2037,9 +2026,9 @@ mod tests {
         assert!(!pool.inner.expire.is_running());
 
         let pool = test_pool(TestConnector::KeepsAlive);
-        let descriptor = grouped_descriptor(Group::new("active"));
+        let req = grouped_request(Group::new("active"));
         let mut first = pool
-            .checkout(connection(descriptor.clone()), HttpVersion::Http1)
+            .checkout(connection(req.clone()), HttpVersion::Http1)
             .await
             .expect("first checkout");
         std::future::poll_fn(|cx| first.poll_ready(cx))
@@ -2077,7 +2066,7 @@ mod tests {
         drop(first);
 
         let second = pool
-            .checkout(connection(descriptor), HttpVersion::Http1)
+            .checkout(connection(req), HttpVersion::Http1)
             .await
             .expect("second checkout");
 
@@ -2113,19 +2102,19 @@ mod tests {
             Timer::default(),
             true,
         );
-        let first_descriptor = grouped_descriptor(Group::new("first"));
-        let second_descriptor = grouped_descriptor(Group::new("second"));
-        let first_key = first_descriptor.id();
-        let second_key = second_descriptor.id();
+        let first_req = grouped_request(Group::new("first"));
+        let second_req = grouped_request(Group::new("second"));
+        let first_key = first_req.key();
+        let second_key = second_req.key();
 
         let mut first = pool
-            .checkout(connection(first_descriptor), HttpVersion::Http1)
+            .checkout(connection(first_req), HttpVersion::Http1)
             .await
             .expect("first checkout");
         send(&mut first).await;
 
         let mut second = pool
-            .checkout(connection(second_descriptor), HttpVersion::Http1)
+            .checkout(connection(second_req), HttpVersion::Http1)
             .await
             .expect("second checkout");
         send(&mut second).await;

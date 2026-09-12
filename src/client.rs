@@ -72,11 +72,9 @@ use crate::dns::hickory::HickoryDnsResolver;
 use crate::{
     HttpVersion, IntoUri, Method, Proxy,
     conn::{
-        BoxedConnectorLayer, BoxedTransportConnector, Conn, Connection, HttpConnector, Unnameable,
-        connector::{self, Connector, ConnectorLayer},
-        descriptor::ConnectionDescriptor,
-        http::HttpConnect,
-        net::{SocketBindOptions, TcpConnector},
+        BoxedConnectorLayer, BoxedTransportConnector, Conn, ConnectRequest, Connection, Connector,
+        ConnectorLayer, HttpConnector, SocketOptions, Unnameable, http::HttpConnect,
+        net::TcpConnector,
     },
     dns::{DnsResolverWithOverrides, DynResolver, GaiResolver, IntoResolve, Resolve},
     error::Error,
@@ -91,7 +89,7 @@ use crate::{
         TlsOptions, TlsVersion,
         conn::TlsConnector,
         keylog::KeyLog,
-        session::{IntoTlsSessionCache, TlsSessionCache},
+        session::{IntoTlsSessionStore, TlsSessionStore},
         trust::{CertStore, Identity},
     },
 };
@@ -131,7 +129,7 @@ type MaybeDecompressionBody<T> = tower_http::decompression::DecompressionBody<T>
 type ClientService = Timeout<
     ConfigService<
         MaybeDecompression<
-            Retry<RetryPolicy, FollowRedirect<sealed::Client<connector::Stack, Body>>>,
+            Retry<RetryPolicy, FollowRedirect<sealed::Client<crate::conn::Stack, Body>>>,
         >,
     >,
 >;
@@ -206,7 +204,7 @@ struct Config {
     tcp_send_buffer_size: Option<usize>,
     tcp_recv_buffer_size: Option<usize>,
     tcp_happy_eyeballs_timeout: Option<Duration>,
-    socket_bind_options: SocketBindOptions,
+    socket_options: SocketOptions,
     proxies: Vec<ProxyMatcher>,
     auto_sys_proxy: bool,
     retry_policy: retry::Policy,
@@ -232,7 +230,7 @@ struct Config {
     tls_verify_hostname: bool,
     tls_min_version: Option<TlsVersion>,
     tls_max_version: Option<TlsVersion>,
-    tls_session_cache: Option<Arc<dyn TlsSessionCache>>,
+    tls_session_store: Option<Arc<dyn TlsSessionStore>>,
     tls_options: Option<TlsOptions>,
     http1_options: Option<Http1Options>,
     http2_options: Option<Http2Options>,
@@ -294,7 +292,7 @@ impl Client {
                 tcp_send_buffer_size: None,
                 tcp_recv_buffer_size: None,
                 tcp_happy_eyeballs_timeout: Some(Duration::from_millis(300)),
-                socket_bind_options: SocketBindOptions::default(),
+                socket_options: SocketOptions::default(),
                 proxies: Vec::new(),
                 auto_sys_proxy: true,
                 retry_policy: retry::Policy::default(),
@@ -322,7 +320,7 @@ impl Client {
                 tls_verify_hostname: true,
                 tls_min_version: None,
                 tls_max_version: None,
-                tls_session_cache: None,
+                tls_session_store: None,
                 tls_options: None,
                 timer: Timer::default(),
                 executor: Executor::default(),
@@ -437,10 +435,10 @@ impl Client {
     /// This method fails if there was an error while sending request,
     /// redirect loop was detected or redirect limit was exhausted.
     pub fn execute(&self, request: Request) -> Pending {
-        let req = http::Request::<Body>::from(request);
+        let req: HttpRequest<Body> = request.into();
         Pending::Request {
             uri: Some(req.uri().clone()),
-            fut: Box::pin(Oneshot::new((*self.0).clone(), req)),
+            fut: Box::pin(Oneshot::new(self.0.as_ref().clone(), req)),
         }
     }
 }
@@ -527,7 +525,7 @@ impl ClientBuilder {
                 .verify_hostname(config.tls_verify_hostname)
                 .cert_verification(config.tls_cert_verification)
                 .tls_sni(config.tls_sni)
-                .session(config.tls_session_cache)
+                .tls_session_store(config.tls_session_store)
                 .build(config.tls_options)?;
 
             #[cfg(feature = "socks")]
@@ -559,12 +557,12 @@ impl ClientBuilder {
                 target_os = "visionos",
                 target_os = "watchos",
             ))]
-            if let Some(interface) = config.socket_bind_options.interface {
+            if let Some(interface) = config.socket_options.interface {
                 http.set_interface(interface);
             }
             http.set_local_addresses(
-                config.socket_bind_options.ipv4_address,
-                config.socket_bind_options.ipv6_address,
+                config.socket_options.ipv4_address,
+                config.socket_options.ipv6_address,
             );
 
             let connector = ServiceBuilder::new()
@@ -574,7 +572,7 @@ impl ClientBuilder {
                     config.connect_timeout,
                 ))
                 .service(Connector::new(
-                    connector::Config {
+                    crate::conn::Config {
                         proxies: Arc::new(config.proxies),
                         verbose: config.connection_verbose,
                         nodelay: config.tcp_nodelay,
@@ -1349,9 +1347,7 @@ impl ClientBuilder {
     where
         T: Into<Option<IpAddr>>,
     {
-        self.config
-            .socket_bind_options
-            .set_local_address(addr.into());
+        self.config.socket_options.set_local_address(addr.into());
         self
     }
 
@@ -1375,9 +1371,7 @@ impl ClientBuilder {
         V4: Into<Option<Ipv4Addr>>,
         V6: Into<Option<Ipv6Addr>>,
     {
-        self.config
-            .socket_bind_options
-            .set_local_addresses(ipv4, ipv6);
+        self.config.socket_options.set_local_addresses(ipv4, ipv6);
         self
     }
 
@@ -1445,7 +1439,7 @@ impl ClientBuilder {
     where
         T: Into<std::borrow::Cow<'static, str>>,
     {
-        self.config.socket_bind_options.set_interface(interface);
+        self.config.socket_options.set_interface(interface);
         self
     }
 
@@ -1543,13 +1537,12 @@ impl ClientBuilder {
         self
     }
 
-    /// Sets the TLS session cache.
-    ///
-    /// By default, an in-memory LRU cache is used. Use this method to provide
-    /// a custom [`TlsSessionCache`] implementation (e.g., file-based or distributed).
+    /// Replaces the built-in store of eight connection keys with two tickets each.
+    /// The supplied store controls retention when ticket-based resumption is enabled.
+    /// Session keys remain scoped to this client and its request configuration.
     #[inline]
-    pub fn tls_session_cache<S: IntoTlsSessionCache>(mut self, store: S) -> ClientBuilder {
-        self.config.tls_session_cache = Some(store.into_shared());
+    pub fn tls_session_store<S: IntoTlsSessionStore>(mut self, store: S) -> ClientBuilder {
+        self.config.tls_session_store = Some(store.into_shared());
         self
     }
 
@@ -1709,16 +1702,9 @@ impl ClientBuilder {
 
     // TLS/HTTP2 emulation options
 
-    /// Configures the client builder to emulation the specified HTTP context.
-    ///
-    /// This method sets the necessary headers, HTTP/1 and HTTP/2 options configurations, and  TLS
-    /// options config to use the specified HTTP context. It allows the client to mimic the
-    /// behavior of different versions or setups, which can be useful for testing or ensuring
-    /// compatibility with various environments.
-    ///
-    /// # Note
-    /// This will overwrite the existing configuration.
-    /// You must set emulation before you can perform subsequent HTTP1/HTTP2/TLS fine-tuning.
+    /// Applies the profile's headers and TLS, HTTP/1, and HTTP/2 options.
+    /// These values replace the corresponding client settings; the profile
+    /// does not create a connection group.
     #[inline]
     pub fn emulation<T: IntoEmulation>(self, emulation: T) -> ClientBuilder {
         let emulation = emulation.into_emulation();
@@ -1744,7 +1730,7 @@ mod sealed {
     #[must_use]
     pub struct Client<C, B>
     where
-        C: tower::Service<ConnectionDescriptor> + Clone + Send + Sync + 'static,
+        C: tower::Service<ConnectRequest> + Clone + Send + Sync + 'static,
         C::Response: AsyncRead + AsyncWrite + Connection + Unpin + Send + 'static,
         C::Error: Into<BoxError>,
         C::Future: Unpin + Send + 'static,
@@ -1786,7 +1772,7 @@ mod sealed {
 
     impl<C, B> Service<HttpRequest<B>> for Client<C, B>
     where
-        C: tower::Service<ConnectionDescriptor> + Clone + Send + Sync + 'static,
+        C: tower::Service<ConnectRequest> + Clone + Send + Sync + 'static,
         C::Response: AsyncRead + AsyncWrite + Connection + Unpin + Send + 'static,
         C::Error: Into<BoxError>,
         C::Future: Unpin + Send + 'static,
@@ -1831,7 +1817,7 @@ mod sealed {
 
     impl<C, B> Clone for Client<C, B>
     where
-        C: tower::Service<ConnectionDescriptor> + Clone + Send + Sync + 'static,
+        C: tower::Service<ConnectRequest> + Clone + Send + Sync + 'static,
         C::Response: AsyncRead + AsyncWrite + Connection + Unpin + Send + 'static,
         C::Error: Into<BoxError>,
         C::Future: Unpin + Send + 'static,
@@ -1983,7 +1969,7 @@ mod sealed {
         /// Consumes the builder and wraps `connector` in the complete client stack.
         pub fn build<C, B>(self, connector: C) -> Client<C, B>
         where
-            C: tower::Service<ConnectionDescriptor> + Clone + Send + Sync + 'static,
+            C: tower::Service<ConnectRequest> + Clone + Send + Sync + 'static,
             C::Response: AsyncRead + AsyncWrite + Connection + Unpin + Send + 'static,
             C::Error: Into<BoxError>,
             C::Future: Unpin + Send + 'static,

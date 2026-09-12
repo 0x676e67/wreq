@@ -24,16 +24,14 @@ use super::layer::decoder::AcceptEncoding;
 use super::{
     Body, Client, IntoEmulation, Response,
     future::Pending,
-    layer::{
-        config::{DefaultHeaders, RequestOptions},
-        timeout::TimeoutOptions,
-    },
+    layer::{config::DefaultHeaders, timeout::TimeoutOptions},
 };
 #[cfg(feature = "cookies")]
 use crate::cookie::{CookieStore, IntoCookieStore};
 use crate::{
     Error, Method, Proxy,
     config::{RequestConfig, RequestConfigValue},
+    conn::{Extra, SocketOptions},
     ext::UriExt,
     group::Group,
     header::{AUTHORIZATION, HeaderMap, HeaderName, HeaderValue, OrigHeaderMap},
@@ -110,20 +108,22 @@ impl Request {
         self.0.body_mut()
     }
 
-    /// Get the http version.
+    /// Returns the request-level HTTP version override.
+    /// `None` uses the client's configured protocol preference.
     #[inline]
     pub fn version(&self) -> Option<Version> {
-        self.config::<RequestOptions>()
-            .and_then(|opts| opts.version)
+        self.extensions()
+            .get::<Extra>()?
+            .get::<Option<Version>>()
+            .copied()
+            .flatten()
     }
 
-    /// Get a mutable reference to the http version.
+    /// Returns the request-level HTTP version override for mutation.
+    /// Setting it to `None` restores the client's protocol preference.
     #[inline]
     pub fn version_mut(&mut self) -> &mut Option<Version> {
-        &mut self
-            .config_mut::<RequestOptions>()
-            .get_or_insert_default()
-            .version
+        self.extra_mut().config_or_default::<Option<Version>>()
     }
 
     /// Returns a reference to the associated extensions.
@@ -169,26 +169,22 @@ impl Request {
         };
         let mut req = Request::new(self.method().clone(), self.uri().clone());
         *req.headers_mut() = self.headers().clone();
-        *req.version_mut() = self.version();
         *req.extensions_mut() = self.extensions().clone();
         *req.body_mut() = body;
         Some(req)
     }
 
     #[inline]
-    pub(crate) fn config<T>(&self) -> Option<&T::Value>
-    where
-        T: RequestConfigValue,
-    {
-        RequestConfig::<T>::get(self.extensions())
-    }
-
-    #[inline]
-    pub(crate) fn config_mut<T>(&mut self) -> &mut Option<T::Value>
+    fn config_mut<T>(&mut self) -> &mut Option<T::Value>
     where
         T: RequestConfigValue,
     {
         RequestConfig::<T>::get_mut(self.extensions_mut())
+    }
+
+    #[inline]
+    fn extra_mut(&mut self) -> &mut Extra {
+        self.extensions_mut().get_or_insert_default::<Extra>()
     }
 }
 
@@ -564,7 +560,7 @@ impl RequestBuilder {
     /// client uses [`ClientBuilder::http2_only`](crate::ClientBuilder::http2_only).
     /// This preference preserves the configured TLS ALPN list and its order.
     /// Cleartext HTTP/2 uses prior knowledge without an HTTP/1 Upgrade.
-    /// HTTP/2 Extended CONNECT requests never fall back to HTTP/1.
+    /// Negotiation does not rewrite an HTTP/2 WebSocket handshake into HTTP/1 Upgrade.
     pub fn version(mut self, version: Version) -> RequestBuilder {
         if let Ok(ref mut req) = self.request {
             req.version_mut().replace(version);
@@ -644,9 +640,7 @@ impl RequestBuilder {
     /// Set the proxy for this request.
     pub fn proxy(mut self, proxy: Proxy) -> RequestBuilder {
         if let Ok(ref mut req) = self.request {
-            req.config_mut::<RequestOptions>()
-                .get_or_insert_default()
-                .proxy = Some(proxy.into_matcher());
+            req.extra_mut().set_config(Some(proxy.into_matcher()));
         }
         self
     }
@@ -657,10 +651,8 @@ impl RequestBuilder {
         V: Into<Option<IpAddr>>,
     {
         if let Ok(ref mut req) = self.request {
-            req.config_mut::<RequestOptions>()
-                .get_or_insert_default()
-                .socket_bind_options
-                .get_or_insert_default()
+            req.extra_mut()
+                .config_or_default::<SocketOptions>()
                 .set_local_address(local_address);
         }
         self
@@ -673,10 +665,8 @@ impl RequestBuilder {
         V6: Into<Option<Ipv6Addr>>,
     {
         if let Ok(ref mut req) = self.request {
-            req.config_mut::<RequestOptions>()
-                .get_or_insert_default()
-                .socket_bind_options
-                .get_or_insert_default()
+            req.extra_mut()
+                .config_or_default::<SocketOptions>()
                 .set_local_addresses(ipv4_address, ipv6_address);
         }
         self
@@ -746,33 +736,23 @@ impl RequestBuilder {
         I: Into<std::borrow::Cow<'static, str>>,
     {
         if let Ok(ref mut req) = self.request {
-            req.config_mut::<RequestOptions>()
-                .get_or_insert_default()
-                .socket_bind_options
-                .get_or_insert_default()
+            req.extra_mut()
+                .config_or_default::<SocketOptions>()
                 .set_interface(interface);
         }
         self
     }
 
-    /// Sets the request builder to emulation the specified HTTP context.
-    ///
-    /// This method sets the necessary headers, HTTP/1 and HTTP/2 options configurations, and  TLS
-    /// options config to use the specified HTTP context. It allows the client to mimic the
-    /// behavior of different versions or setups, which can be useful for testing or ensuring
-    /// compatibility with various environments.
-    ///
-    /// # Note
-    /// This will overwrite the existing configuration.
-    /// You must set emulation before you can perform subsequent HTTP1/HTTP2/TLS fine-tuning.
+    /// Applies the profile's headers and TLS, HTTP/1, and HTTP/2 options.
+    /// Existing values in those categories may be replaced; connection group,
+    /// proxy, version, and socket settings remain unchanged.
     pub fn emulation<T: IntoEmulation>(mut self, emulation: T) -> RequestBuilder {
         if let Ok(ref mut req) = self.request {
             let emulation = emulation.into_emulation();
-            let opts = req.config_mut::<RequestOptions>().get_or_insert_default();
-            opts.group.emulate(emulation.group);
-            opts.tls_options = emulation.tls_options;
-            opts.http1_options = emulation.http1_options;
-            opts.http2_options = emulation.http2_options;
+            req.extra_mut()
+                .set_config(emulation.tls_options)
+                .set_config(emulation.http1_options)
+                .set_config(emulation.http2_options);
             return self
                 .headers(emulation.headers)
                 .orig_headers(emulation.orig_headers);
@@ -781,17 +761,12 @@ impl RequestBuilder {
         self
     }
 
-    /// Assigns a logical group to this request.
-    ///
-    /// Groups define the request's identity and execution context.
-    /// Requests in different groups are logically partitioned to ensure
-    /// resource isolation and prevent metadata leakage.
+    /// Adds a caller-defined connection-pool partition to this request.
+    /// A group can prevent reuse across requests, but it never makes otherwise
+    /// incompatible connection settings share a connection.
     pub fn group(mut self, group: Group) -> RequestBuilder {
         if let Ok(ref mut req) = self.request {
-            req.config_mut::<RequestOptions>()
-                .get_or_insert_default()
-                .group
-                .request(group);
+            req.extra_mut().insert_config(group);
         }
         self
     }
