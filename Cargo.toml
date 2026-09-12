@@ -108,7 +108,7 @@ tokio-btls = "0.5.6"
 tokio = { version = "1.52.3", default-features = false }
 compio = { version = "0.19.2", features = ["io", "io-compat"], optional = true }
 wreq-rt = { version = "0.2.2-rc.2", default-features = false }
-wreq-proto = { version = "0.2.3", default-features = false }
+wreq-proto = { version = "0.2.6", default-features = false }
 tower = { version = "0.5.3", default-features = false, features = [
     "timeout",
     "util",
@@ -217,6 +217,12 @@ incremental = false
 [profile.bench]
 codegen-units = 1
 incremental = false
+
+[[bench]]
+name = "pool"
+path = "bench/pool.rs"
+harness = false
+required-features = ["tokio-rt", "stream"]
 
 [[bench]]
 name = "http1_current_thread"

@@ -7,10 +7,12 @@ use std::{
     },
 };
 
-use http::{Uri, Version};
+use http::Uri;
 use lru::DefaultHasher;
 
-use crate::{conn::net::SocketBindOptions, group::Group, proxy::Matcher, tls::TlsOptions};
+use crate::{
+    HttpVersion, conn::net::SocketBindOptions, group::Group, proxy::Matcher, tls::TlsOptions,
+};
 
 /// A key that uniquely identifies a group of interchangeable connections for pooling.
 ///
@@ -26,9 +28,9 @@ pub(crate) struct ConnectionId(Arc<(Group, AtomicU64)>);
 /// and other configurations needed to establish a connection.
 #[must_use]
 #[derive(Clone)]
-pub(crate) struct ConnectionDescriptor {
+pub struct ConnectionDescriptor {
     uri: Uri,
-    version: Option<Version>,
+    version: Option<HttpVersion>,
     proxy: Option<Matcher>,
     tls_options: Option<TlsOptions>,
     socket_bind: Option<SocketBindOptions>,
@@ -72,12 +74,14 @@ impl Eq for ConnectionId {}
 // ===== impl ConnectionDescriptor =====
 
 impl ConnectionDescriptor {
-    /// Create a new [`ConnectionDescriptor`].
+    /// Creates a connection blueprint from request-local configuration.
+    /// Protocol selection is shared by TLS and the pool's compatibility key.
+    /// The request retains its wire version independently of this descriptor.
     pub(crate) fn new(
         uri: Uri,
         mut group: Group,
         proxy: Option<Matcher>,
-        version: Option<Version>,
+        version: Option<HttpVersion>,
         tls_options: Option<TlsOptions>,
         socket_bind: Option<SocketBindOptions>,
     ) -> ConnectionDescriptor {
@@ -118,8 +122,9 @@ impl ConnectionDescriptor {
         &mut self.uri
     }
 
-    /// Return the negotiated HTTP version, if any.
-    pub(crate) fn version(&self) -> Option<Version> {
+    /// Returns the request's protocol selection, not the negotiated wire version.
+    /// `None` inherits the client; `Some(Auto)` explicitly allows negotiation.
+    pub(crate) fn version(&self) -> Option<HttpVersion> {
         self.version
     }
 

@@ -2,6 +2,13 @@ mod support;
 
 #[cfg(feature = "json")]
 use std::collections::HashMap;
+use std::{
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
+    time::Duration,
+};
 
 use bytes::Bytes;
 use http::{
@@ -14,8 +21,8 @@ use http::{
 use http_body_util::{BodyExt, Full};
 use pretty_env_logger::env_logger;
 use support::server;
-use tokio::io::AsyncWriteExt;
-use wreq::{Client, header::OrigHeaderMap, tls::TlsInfo};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use wreq::{Client, PoolStrategy, header::OrigHeaderMap, http1::Http1Options, tls::TlsInfo};
 
 #[tokio::test]
 async fn auto_headers() {
@@ -714,20 +721,50 @@ async fn error_has_url() {
 
 #[tokio::test]
 async fn http1_only() {
-    let server = server::http(move |_| async move { http::Response::default() });
-
-    let resp = Client::builder()
+    let mut server = server::http(move |request| async move {
+        http::Response::builder()
+            .header("x-wire-version", format!("{:?}", request.version()))
+            .body(Default::default())
+            .unwrap()
+    });
+    let client = Client::builder()
         .http1_only()
+        .no_proxy()
+        .timeout(Duration::from_secs(5))
         .build()
-        .unwrap()
-        .get(format!("http://{}", server.addr()))
-        .send()
-        .await
         .unwrap();
+    let url = format!("http://{}", server.addr());
 
-    assert_eq!(resp.version(), wreq::Version::HTTP_11);
+    // The protocol sender caps later requests after the peer answers with HTTP/1.0.
+    for (version, wire_version) in [
+        (Version::HTTP_11, Version::HTTP_11),
+        (Version::HTTP_10, Version::HTTP_10),
+        (Version::HTTP_11, Version::HTTP_10),
+    ] {
+        let response = client
+            .get(&url)
+            .version(version)
+            .header(header::CONNECTION, "keep-alive")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(
+            response.headers()["x-wire-version"],
+            format!("{wire_version:?}")
+        );
+        response.bytes().await.unwrap();
+    }
+    let accepted = server
+        .events()
+        .iter()
+        .filter(|event| matches!(event, server::Event::ConnectionAccepted))
+        .count();
+    assert_eq!(
+        accepted, 1,
+        "HTTP/1 minor versions share a reusable connection"
+    );
 
-    let resp = wreq::get(format!("http://{}", server.addr()))
+    let resp = wreq::get(url)
         .version(Version::HTTP_11)
         .send()
         .await
@@ -761,39 +798,653 @@ async fn http2_only() {
 }
 
 #[tokio::test]
-async fn connection_pool_cache() {
-    let client = Client::default();
-    let url = "https://hyper.rs";
+async fn connection_pool_respects_https_version_policy() {
+    use std::{borrow::Cow, sync::Mutex};
 
-    let resp = client
-        .get(url)
-        .version(http::Version::HTTP_2)
-        .send()
+    use wreq::tls::{AlpnProtocol, TlsOptions};
+
+    /// Echoes the cookie serialization version into the request headers.
+    /// Lets the server verify that cookies follow the negotiated wire protocol.
+    /// Holds no cookie state and ignores response updates.
+    #[cfg(feature = "cookies")]
+    struct VersionCookies;
+
+    #[cfg(feature = "cookies")]
+    impl wreq::cookie::CookieStore for VersionCookies {
+        fn set_cookies(&self, _: &mut dyn Iterator<Item = &http::HeaderValue>, _: &http::Uri) {}
+
+        fn cookies(&self, _: &http::Uri, version: Version) -> wreq::cookie::Cookies {
+            wreq::cookie::Cookies::Compressed(http::HeaderValue::from_static(
+                if version == Version::HTTP_2 {
+                    "h2=1"
+                } else {
+                    "h1=1"
+                },
+            ))
+        }
+    }
+
+    let both = b"\x02h2\x08http/1.1".as_slice();
+    let h1 = b"\x08http/1.1".as_slice();
+    let h2 = b"\x02h2".as_slice();
+    let protocols = Some([AlpnProtocol::HTTP2, AlpnProtocol::HTTP1].as_slice());
+    for (alpn, client_version, tls_alpn, configured_offer) in [
+        (both, None, protocols, both),
+        (h1, None, protocols, both),
+        (b"", None, protocols, both),
+        (both, Some(Version::HTTP_11), protocols, both),
+        (both, Some(Version::HTTP_2), protocols, both),
+        (both, None, Some([AlpnProtocol::HTTP1].as_slice()), h1),
+        (both, None, Some([AlpnProtocol::HTTP2].as_slice()), h2),
+        (
+            both,
+            None,
+            Some([AlpnProtocol::HTTP1, AlpnProtocol::HTTP2].as_slice()),
+            b"\x08http/1.1\x02h2",
+        ),
+        (
+            both,
+            None,
+            Some(
+                [
+                    AlpnProtocol::HTTP1,
+                    AlpnProtocol::HTTP2,
+                    AlpnProtocol::HTTP1,
+                ]
+                .as_slice(),
+            ),
+            b"\x08http/1.1\x02h2\x08http/1.1",
+        ),
+        (both, None, None, both),
+        (both, None, Some([].as_slice()), both),
+        (both, Some(Version::HTTP_11), None, both),
+        (both, Some(Version::HTTP_2), None, both),
+        (both, Some(Version::HTTP_11), Some([].as_slice()), both),
+        (both, Some(Version::HTTP_2), Some([].as_slice()), both),
+        (
+            both,
+            Some(Version::HTTP_11),
+            Some([AlpnProtocol::HTTP2].as_slice()),
+            h2,
+        ),
+        (
+            both,
+            Some(Version::HTTP_2),
+            Some([AlpnProtocol::HTTP1].as_slice()),
+            h1,
+        ),
+    ] {
+        let offers = Arc::new(Mutex::new(Vec::new()));
+        let acceptor = server::tls_acceptor_with_alpn(alpn, {
+            let offers = offers.clone();
+            move |offered| offers.lock().unwrap().push(offered.to_vec())
+        });
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("https://{}/upload?part=1", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move {
+            let mut connections = tokio::task::JoinSet::new();
+            // One transport per request policy; extra dialing cannot pass as reuse.
+            for id in ["0", "1", "2"] {
+                let (socket, _) = listener.accept().await.unwrap();
+                let stream = server::tls_accept(&acceptor, socket).await;
+                let version = match stream.ssl().selected_alpn_protocol() {
+                    Some(b"h2") => Version::HTTP_2,
+                    Some(b"http/1.1") | None => Version::HTTP_11,
+                    alpn => panic!("unexpected ALPN: {alpn:?}"),
+                };
+                connections.spawn(async move {
+                    // RFC 9113 section 3.2: select HTTPS from ALPN, not wire sniffing.
+                    // https://www.rfc-editor.org/rfc/rfc9113.html#section-3.2
+                    server::serve_connection(
+                        stream,
+                        version,
+                        move |request: http::Request<hyper::body::Incoming>| {
+                            assert_eq!(request.version(), version);
+                            assert_eq!(request.method(), http::Method::POST);
+                            assert_eq!(request.uri().path_and_query().unwrap(), "/upload?part=1");
+                            #[cfg(feature = "cookies")]
+                            assert_eq!(
+                                request.headers()[http::header::COOKIE],
+                                if version == Version::HTTP_2 {
+                                    "h2=1"
+                                } else {
+                                    "h1=1"
+                                }
+                            );
+                            async move {
+                                assert_eq!(
+                                    request.into_body().collect().await.unwrap().to_bytes(),
+                                    "payload"
+                                );
+                                http::Response::new(Full::new(Bytes::from_static(id.as_bytes())))
+                            }
+                        },
+                    )
+                    .await
+                    .unwrap();
+                });
+            }
+            while let Some(result) = connections.join_next().await {
+                result.unwrap();
+            }
+        });
+        let builder = Client::builder().http_version(match client_version {
+            Some(Version::HTTP_11) => wreq::HttpVersion::Http1,
+            Some(Version::HTTP_2) => wreq::HttpVersion::Http2,
+            _ => wreq::HttpVersion::Auto,
+        });
+        #[cfg(feature = "cookies")]
+        let builder = builder.cookie_provider(VersionCookies);
+        let tls = tls_alpn.map(|protocols| {
+            let mut tls = TlsOptions::default();
+            tls.alpn_protocols = Some(Cow::Borrowed(protocols));
+            tls
+        });
+        let client = builder
+            .tls_options(tls)
+            .no_proxy()
+            .tls_cert_verification(false)
+            .pool_idle_timeout(None)
+            .timeout(Duration::from_secs(5))
+            .build()
+            .unwrap();
+
+        let preference_offer = if client_version == Some(Version::HTTP_2) {
+            h2
+        } else {
+            configured_offer
+        };
+        let client_offer = match client_version {
+            Some(Version::HTTP_11) => h1,
+            Some(Version::HTTP_2) => h2,
+            _ => configured_offer,
+        };
+        for (version, id, offer) in [
+            (Some(Version::HTTP_2), "0", preference_offer),
+            (Some(Version::HTTP_11), "1", h1),
+            (Some(Version::HTTP_2), "0", preference_offer),
+            (Some(Version::HTTP_11), "1", h1),
+            (None, "2", client_offer),
+            (None, "2", client_offer),
+        ] {
+            let mut request = client.post(&url).body("payload");
+            if let Some(version) = version {
+                request = request.version(version);
+            }
+            let response = request.send().await.unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            let expected = match btls::ssl::select_next_proto(alpn, offer) {
+                Some(b"h2") => Version::HTTP_2,
+                _ => Version::HTTP_11,
+            };
+            assert_eq!(
+                response.version(),
+                expected,
+                "server ALPN={alpn:?}, client={client_version:?}, TLS ALPN={tls_alpn:?}, request={version:?}, offer={offer:?}",
+            );
+            assert_eq!(response.bytes().await.unwrap(), id);
+        }
+        drop(client);
+        tokio::time::timeout(Duration::from_secs(5), server)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            *offers.lock().unwrap(),
+            [preference_offer, h1, client_offer]
+        );
+    }
+}
+
+#[tokio::test]
+async fn connection_pool_forced_http2_keeps_protocol_error() {
+    use std::error::Error as _;
+
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    for (request_version, extended_connect) in [
+        (None, false),
+        (Some(Version::HTTP_2), false),
+        (Some(Version::HTTP_2), true),
+    ] {
+        let acceptor = server::tls_acceptor(b"");
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("https://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move {
+            let (socket, _) = listener.accept().await.unwrap();
+            let mut stream = server::tls_accept(&acceptor, socket).await;
+            assert!(stream.ssl().selected_alpn_protocol().is_none());
+            let mut preface = [0; 24];
+            stream.read_exact(&mut preface).await.unwrap();
+            assert_eq!(&preface, b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n");
+            stream
+                .write_all(b"HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\n\r\n")
+                .await
+                .unwrap();
+            // Drain input so a TCP reset cannot hide the protocol parsing error.
+            let mut buffer = [0; 1024];
+            while stream.read(&mut buffer).await.unwrap_or_default() != 0 {}
+            assert!(
+                tokio::time::timeout(Duration::from_millis(100), listener.accept())
+                    .await
+                    .is_err()
+            );
+        });
+
+        let builder = if extended_connect {
+            Client::builder()
+        } else {
+            Client::builder().http2_only()
+        };
+        let client = builder
+            .no_proxy()
+            .tls_cert_verification(false)
+            .timeout(Duration::from_secs(5))
+            .build()
+            .unwrap();
+        let mut request = client.get(url);
+        if let Some(version) = request_version {
+            request = request.version(version);
+        }
+        let mut request = request.build().unwrap();
+        if extended_connect {
+            *request.method_mut() = http::Method::CONNECT;
+            request
+                .extensions_mut()
+                .insert(http2::ext::Protocol::from_static("websocket"));
+        }
+        let error = client.execute(request).await.unwrap_err();
+        assert!(!error.is_timeout(), "{error:?}");
+        let mut source = error.source();
+        let mut has_context = false;
+        let mut has_protocol_error = false;
+        while let Some(error) = source {
+            has_context |= error.to_string().contains("without reported h2 ALPN");
+            has_protocol_error |= error
+                .downcast_ref::<http2::Error>()
+                .is_some_and(|error| error.reason() == Some(http2::Reason::FRAME_SIZE_ERROR));
+            source = error.source();
+        }
+        assert!(has_context && has_protocol_error, "{error:?}");
+        drop(client);
+        tokio::time::timeout(Duration::from_secs(5), server)
+            .await
+            .unwrap()
+            .unwrap();
+    }
+}
+
+#[tokio::test]
+async fn connection_pool_reuses_and_discards_poisoned_connections() {
+    let mut server = server::http(move |_| async move { http::Response::default() });
+    let url = format!("http://{}", server.addr());
+
+    let http1 = Client::builder().http1_only().build().unwrap();
+    for _ in 0..2 {
+        http1.get(&url).send().await.unwrap().bytes().await.unwrap();
+    }
+
+    let http2 = Client::builder().http2_only().build().unwrap();
+    let responses = futures_util::future::join_all((0..8).map(|_| http2.get(&url).send())).await;
+    for response in responses {
+        response.unwrap();
+    }
+
+    let accepted = server
+        .events()
+        .iter()
+        .filter(|event| matches!(event, server::Event::ConnectionAccepted))
+        .count();
+    assert_eq!(accepted, 2);
+
+    for client in [&http1, &http2] {
+        let response = client.get(&url).send().await.unwrap();
+        response.forbid_recycle();
+        response.bytes().await.unwrap();
+
+        for _ in 0..2 {
+            client
+                .get(&url)
+                .send()
+                .await
+                .unwrap()
+                .bytes()
+                .await
+                .unwrap();
+        }
+    }
+
+    let replacement_connections = server
+        .events()
+        .iter()
+        .filter(|event| matches!(event, server::Event::ConnectionAccepted))
+        .count();
+    assert_eq!(replacement_connections, 2);
+}
+
+#[tokio::test]
+async fn connection_pool_reuse_first_waits_for_busy_http1_connection() {
+    let requests = Arc::new(AtomicUsize::new(0));
+    let first_started = Arc::new(tokio::sync::Notify::new());
+    let release_first = Arc::new(tokio::sync::Notify::new());
+    let mut server = server::http({
+        let requests = requests.clone();
+        let first_started = first_started.clone();
+        let release_first = release_first.clone();
+        move |_| {
+            let requests = requests.clone();
+            let first_started = first_started.clone();
+            let release_first = release_first.clone();
+            async move {
+                if requests.fetch_add(1, Ordering::SeqCst) == 0 {
+                    first_started.notify_one();
+                    release_first.notified().await;
+                }
+                http::Response::default()
+            }
+        }
+    });
+    let client = Client::builder()
+        .http1_only()
+        .pool_strategy(PoolStrategy::ReuseFirst(Duration::from_secs(3)))
+        .build()
+        .unwrap();
+    let url = format!("http://{}", server.addr());
+
+    let first = tokio::spawn({
+        let client = client.clone();
+        let url = url.clone();
+        async move { client.get(url).send().await }
+    });
+    tokio::time::timeout(Duration::from_secs(1), first_started.notified())
+        .await
+        .expect("an empty pool should connect without the reuse delay");
+
+    let mut second = Box::pin(client.get(url).send());
+    assert!(
+        tokio::time::timeout(Duration::from_millis(100), second.as_mut())
+            .await
+            .is_err(),
+        "the busy HTTP/1 connection should keep the second request waiting"
+    );
+    release_first.notify_one();
+
+    tokio::time::timeout(Duration::from_secs(1), first)
+        .await
+        .expect("released response should complete promptly")
+        .unwrap()
+        .unwrap()
+        .bytes()
+        .await
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(1), second)
+        .await
+        .expect("returned connection should wake the waiting request")
+        .unwrap()
+        .bytes()
         .await
         .unwrap();
 
-    assert_eq!(resp.status(), wreq::StatusCode::OK);
-    assert_eq!(resp.version(), http::Version::HTTP_2);
+    let accepted = server
+        .events()
+        .iter()
+        .filter(|event| matches!(event, server::Event::ConnectionAccepted))
+        .count();
+    assert_eq!(accepted, 1);
+}
 
-    let resp = client
-        .get(url)
-        .version(http::Version::HTTP_11)
-        .send()
+#[tokio::test]
+async fn connection_pool_applies_client_http1_options() {
+    use std::error::Error as _;
+
+    let responses = Arc::new(AtomicUsize::new(0));
+    let server = server::low_level_with_response(move |_, stream| {
+        let response = if responses.fetch_add(1, Ordering::Relaxed).is_multiple_of(2) {
+            b"HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: 0\r\n\r\n".as_slice()
+        } else {
+            b"HTTP/1.1 200 OK\r\nX-0: 0\r\nX-1: 1\r\nX-2: 2\r\nX-3: 3\r\nX-4: 4\r\nX-5: 5\r\nX-6: 6\r\nX-7: 7\r\nConnection: close\r\nContent-Length: 0\r\n\r\n".as_slice()
+        };
+        Box::new(async move {
+            stream.write_all(response).await.unwrap();
+            stream.shutdown().await.unwrap();
+        })
+    });
+    let url = format!("http://{}", server.addr());
+
+    for max_headers in [4, 16] {
+        let client = Client::builder()
+            .http1_only()
+            .no_proxy()
+            .http1_options(Http1Options::builder().max_headers(max_headers).build())
+            .build()
+            .unwrap();
+
+        client
+            .get(&url)
+            .send()
+            .await
+            .unwrap()
+            .bytes()
+            .await
+            .unwrap();
+        // Connection: close forces the next handshake to reuse the client's options.
+        let response = client.get(&url).send().await;
+        if max_headers == 4 {
+            let error = response.unwrap_err();
+            assert!(
+                std::iter::successors(error.source(), |&source| source.source()).any(|source| {
+                    source
+                        .downcast_ref::<wreq_proto::Error>()
+                        .is_some_and(wreq_proto::Error::is_parse)
+                }),
+                "{error:?}"
+            );
+        } else {
+            assert_eq!(response.unwrap().headers()["x-7"], "7");
+        }
+    }
+}
+
+#[tokio::test]
+async fn connection_pool_closes_idle_transports() {
+    // Adapted from hyper-util tests/legacy_client.rs: drop_client_closes_idle_connections
+    // and no_keep_alive_closes_connection.
+    for version in [Version::HTTP_11, Version::HTTP_2] {
+        for keep_alive in [true, false] {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let url = format!("http://{}", listener.local_addr().unwrap());
+            let mut server = tokio::spawn(async move {
+                let (io, _) = listener.accept().await.unwrap();
+                server::serve_connection(io, version, |_| async {
+                    http::Response::new(Full::new(Bytes::from_static(b"body")))
+                })
+                .await
+                .unwrap();
+            });
+            let client = Client::builder()
+                .no_proxy()
+                .pool_idle_timeout(None)
+                .pool_max_idle_per_host(if keep_alive { 1 } else { 0 })
+                .timeout(Duration::from_secs(2))
+                .build()
+                .unwrap();
+            let response = client.get(&url).version(version).send().await.unwrap();
+            assert_eq!(response.version(), version);
+            assert_eq!(response.bytes().await.unwrap(), "body");
+
+            if keep_alive {
+                let clone = client.clone();
+                drop(client);
+                assert!(futures_util::poll!(&mut server).is_pending());
+                // The listener accepts only once, so this must reuse the live socket.
+                tokio::time::timeout(Duration::from_secs(2), async {
+                    clone
+                        .get(&url)
+                        .version(version)
+                        .send()
+                        .await
+                        .unwrap()
+                        .bytes()
+                        .await
+                        .unwrap();
+                })
+                .await
+                .unwrap();
+                drop(clone);
+            }
+
+            tokio::time::timeout(Duration::from_secs(2), server)
+                .await
+                .expect("the transport must close without an idle timer")
+                .unwrap();
+        }
+    }
+}
+
+#[tokio::test]
+async fn connection_pool_cancellation_closes_http1_transport() {
+    // Adapted from hyper-util tests/legacy_client.rs:
+    // drop_response_future_closes_in_progress_connection
+    // and drop_response_body_closes_in_progress_connection (Hyper #1353).
+    for response_started in [false, true] {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let (received, request_received) = tokio::sync::oneshot::channel();
+        let server = tokio::spawn(async move {
+            let (mut io, _) = listener.accept().await.unwrap();
+            let mut head = Vec::new();
+            while !head.ends_with(b"\r\n\r\n") {
+                head.push(io.read_u8().await.unwrap());
+            }
+            if response_started {
+                io.write_all(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n")
+                    .await
+                    .unwrap();
+            }
+            received.send(()).unwrap();
+            let mut byte = [0];
+            match io.read(&mut byte).await {
+                Ok(0) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::ConnectionReset => {}
+                result => panic!("canceled transport remained open: {result:?}"),
+            }
+        });
+        let client = Client::builder().http1_only().no_proxy().build().unwrap();
+        let mut request = Box::pin(client.get(url).send());
+        tokio::time::timeout(Duration::from_secs(2), async {
+            if response_started {
+                drop(request.as_mut().await.unwrap());
+            } else {
+                tokio::select! {
+                    _ = request_received => {}
+                    result = request.as_mut() => panic!("unexpected response: {result:?}"),
+                }
+            }
+        })
         .await
         .unwrap();
+        drop(request);
 
-    assert_eq!(resp.status(), wreq::StatusCode::OK);
-    assert_eq!(resp.version(), http::Version::HTTP_11);
+        // Keep Client alive: cancellation itself must close the busy transport.
+        tokio::time::timeout(Duration::from_secs(2), server)
+            .await
+            .expect("cancellation must release the transport")
+            .unwrap();
+        drop(client);
+    }
+}
 
-    let resp = client
-        .get(url)
-        .version(http::Version::HTTP_2)
-        .send()
+#[tokio::test]
+async fn connection_pool_preserves_upload_after_response_headers() {
+    // Adapted from hyper-util tests/legacy_client.rs:
+    // client_keep_alive_when_response_before_request_body_ends.
+    for version in [Version::HTTP_11, Version::HTTP_2] {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let (uploaded, mut upload_received) = tokio::sync::oneshot::channel();
+        let uploaded = Arc::new(std::sync::Mutex::new(Some(uploaded)));
+        let server = tokio::spawn(async move {
+            let (io, _) = listener.accept().await.unwrap();
+            server::serve_connection(
+                io,
+                version,
+                move |request: http::Request<hyper::body::Incoming>| {
+                    if request.method() == http::Method::POST {
+                        let uploaded = uploaded.lock().unwrap().take().unwrap();
+                        tokio::spawn(async move {
+                            uploaded
+                                .send(request.into_body().collect().await.unwrap().to_bytes())
+                                .unwrap();
+                        });
+                    }
+                    async { http::Response::new(Full::new(Bytes::new())) }
+                },
+            )
+            .await
+            .unwrap();
+        });
+        let client = Client::builder()
+            .no_proxy()
+            .pool_idle_timeout(None)
+            .pool_strategy(PoolStrategy::ReuseFirst(Duration::from_secs(30)))
+            .build()
+            .unwrap();
+        let (release, upload) = tokio::sync::oneshot::channel();
+        let body = wreq::Body::wrap(http_body_util::StreamBody::new(futures_util::stream::once(
+            async { upload.await.map(http_body::Frame::data) },
+        )));
+        tokio::time::timeout(Duration::from_secs(2), async {
+            client
+                .post(&url)
+                .version(version)
+                .body(body)
+                .send()
+                .await
+                .unwrap()
+                .bytes()
+                .await
+                .unwrap();
+        })
         .await
-        .unwrap();
+        .expect("response headers must not wait for the upload");
+        assert!(futures_util::poll!(&mut upload_received).is_pending());
 
-    assert_eq!(resp.status(), wreq::StatusCode::OK);
-    assert_eq!(resp.version(), http::Version::HTTP_2);
+        let mut second = Box::pin(client.get(&url).version(version).send());
+        if version == Version::HTTP_11 {
+            assert!(futures_util::poll!(second.as_mut()).is_pending());
+        } else {
+            tokio::time::timeout(Duration::from_secs(2), second.as_mut())
+                .await
+                .unwrap()
+                .unwrap()
+                .bytes()
+                .await
+                .unwrap();
+        }
+        release.send(Bytes::from_static(b"upload")).unwrap();
+        assert_eq!(
+            tokio::time::timeout(Duration::from_secs(2), upload_received)
+                .await
+                .unwrap()
+                .unwrap(),
+            "upload"
+        );
+        if version == Version::HTTP_11 {
+            tokio::time::timeout(Duration::from_secs(2), second.as_mut())
+                .await
+                .unwrap()
+                .unwrap()
+                .bytes()
+                .await
+                .unwrap();
+        }
+        drop(second);
+        drop(client);
+        tokio::time::timeout(Duration::from_secs(2), server)
+            .await
+            .unwrap()
+            .unwrap();
+    }
 }
 
 #[tokio::test]

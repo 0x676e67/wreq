@@ -558,13 +558,16 @@ impl RequestBuilder {
         self
     }
 
-    /// Set HTTP version
+    /// Sets the HTTP version for this request.
+    ///
+    /// HTTP/2 over HTTPS is a preference and may negotiate HTTP/1.1, unless the
+    /// client uses [`ClientBuilder::http2_only`](crate::ClientBuilder::http2_only).
+    /// This preference preserves the configured TLS ALPN list and its order.
+    /// Cleartext HTTP/2 uses prior knowledge without an HTTP/1 Upgrade.
+    /// HTTP/2 Extended CONNECT requests never fall back to HTTP/1.
     pub fn version(mut self, version: Version) -> RequestBuilder {
         if let Ok(ref mut req) = self.request {
             req.version_mut().replace(version);
-            req.config_mut::<RequestOptions>()
-                .get_or_insert_default()
-                .version = Some(version);
         }
         self
     }
@@ -901,6 +904,12 @@ impl<T: Into<Body>> From<http::Request<T>> for Request {
 impl From<Request> for http::Request<Body> {
     #[inline]
     fn from(req: Request) -> http::Request<Body> {
-        req.0.map(|body| body.unwrap_or_else(Body::empty))
+        let version = req.version();
+        let mut request = req.0.map(|body| body.unwrap_or_else(Body::empty));
+        // Protocol validation and encoding must see the request-local wire version.
+        if let Some(version) = version {
+            *request.version_mut() = version;
+        }
+        request
     }
 }

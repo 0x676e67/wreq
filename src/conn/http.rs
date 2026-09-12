@@ -121,26 +121,9 @@ pub struct HttpConnector<R, S> {
     connector: S,
 }
 
-/// Extra information about the transport when an HttpConnector is used.
-///
-/// # Example
-///
-/// ```
-/// # fn doc(res: http::Response<()>) {
-/// use crate::util::client::connect::HttpInfo;
-///
-/// // res = http::Response
-/// res.extensions().get::<HttpInfo>().map(|info| {
-///     println!("remote addr = {}", info.remote_addr());
-/// });
-/// # }
-/// ```
-///
-/// # Note
-///
-/// If a different connector is used besides [`HttpConnector`],
-/// this value will not exist in the extensions. Consult that specific
-/// connector to see what "extra" information it might provide to responses.
+/// Socket addresses captured by [`HttpConnector`] after connecting.
+/// Stored in connection metadata and attached to response extensions.
+/// Custom transports may omit this information.
 #[derive(Clone, Debug)]
 pub struct HttpInfo {
     pub(crate) remote_addr: SocketAddr,
