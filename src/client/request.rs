@@ -23,6 +23,7 @@ use {super::multipart, bytes::Bytes, http::header::CONTENT_LENGTH};
 use super::layer::decoder::AcceptEncoding;
 use super::{
     Body, Client, IntoEmulation, Response,
+    emulate::Emulation,
     future::Pending,
     layer::{config::DefaultHeaders, timeout::TimeoutOptions},
 };
@@ -744,18 +745,13 @@ impl RequestBuilder {
     }
 
     /// Applies the profile's headers and TLS, HTTP/1, and HTTP/2 options.
-    /// Existing values in those categories may be replaced; connection group,
-    /// proxy, version, and socket settings remain unchanged.
+    /// Supplied protocol options replace matching overrides; absent ones are kept.
+    /// Connection group, proxy, version, and socket settings remain unchanged.
     pub fn emulation<T: IntoEmulation>(mut self, emulation: T) -> RequestBuilder {
         if let Ok(ref mut req) = self.request {
-            let emulation = emulation.into_emulation();
-            req.extra_mut()
-                .set_config(emulation.tls_options)
-                .set_config(emulation.http1_options)
-                .set_config(emulation.http2_options);
-            return self
-                .headers(emulation.headers)
-                .orig_headers(emulation.orig_headers);
+            let Emulation(headers, orig_headers, extra) = emulation.into_emulation();
+            req.extra_mut().extend(extra);
+            return self.headers(headers).orig_headers(orig_headers);
         }
 
         self

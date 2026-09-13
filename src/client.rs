@@ -1703,16 +1703,24 @@ impl ClientBuilder {
     // TLS/HTTP2 emulation options
 
     /// Applies the profile's headers and TLS, HTTP/1, and HTTP/2 options.
-    /// These values replace the corresponding client settings; the profile
-    /// does not create a connection group.
+    /// Supplied protocol options replace matching settings; absent ones are kept.
+    /// The profile does not create a connection group.
     #[inline]
-    pub fn emulation<T: IntoEmulation>(self, emulation: T) -> ClientBuilder {
-        let emulation = emulation.into_emulation();
-        self.tls_options(emulation.tls_options)
-            .http1_options(emulation.http1_options)
-            .http2_options(emulation.http2_options)
-            .default_headers(emulation.headers)
-            .orig_headers(emulation.orig_headers)
+    pub fn emulation<T: IntoEmulation>(mut self, emulation: T) -> ClientBuilder {
+        let emulate::Emulation(headers, orig_headers, mut extra) = emulation.into_emulation();
+        self.config.tls_options = extra
+            .remove::<TlsOptions>()
+            .map(Arc::unwrap_or_clone)
+            .or(self.config.tls_options);
+        self.config.http1_options = extra
+            .remove::<Http1Options>()
+            .map(Arc::unwrap_or_clone)
+            .or(self.config.http1_options);
+        self.config.http2_options = extra
+            .remove::<Http2Options>()
+            .map(Arc::unwrap_or_clone)
+            .or(self.config.http2_options);
+        self.default_headers(headers).orig_headers(orig_headers)
     }
 }
 

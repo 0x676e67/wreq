@@ -70,6 +70,23 @@ impl Extra {
             .and_then(|entry| (entry.value.as_ref() as &dyn Any).downcast_ref())
     }
 
+    /// Merges typed values, replacing matching types with their incoming roles.
+    /// Values remain shared; an empty destination takes the incoming storage.
+    pub(crate) fn extend(&mut self, other: Self) {
+        if self.0.is_none() {
+            self.0 = other.0;
+        } else if let Some(entries) = other.0 {
+            let target = self.entries_mut();
+            match Arc::try_unwrap(entries) {
+                Ok(entries) => target.extend(entries),
+                // Clone handles directly into the target, without allocating a temporary map.
+                Err(entries) => {
+                    target.extend(entries.iter().map(|(id, entry)| (*id, entry.clone())))
+                }
+            }
+        }
+    }
+
     /// Removes configuration or metadata, returning its shared value without cloning it.
     /// Missing types leave shared storage unchanged.
     pub(crate) fn remove<T: Send + Sync + 'static>(&mut self) -> Option<Arc<T>> {
@@ -266,6 +283,7 @@ mod tests {
     fn shares_values_and_keeps_configuration_out_of_responses() {
         let copies = Arc::new(AtomicUsize::new(0));
         let mut extra = Extra::default();
+        extra.extend(Extra::default());
         assert!(extra.0.is_none());
         assert!(extra.remove::<u32>().is_none());
         extra.set_config::<u32>(None);
@@ -339,5 +357,24 @@ mod tests {
         let shared = extra.0.as_ref().unwrap().clone();
         let sibling = frozen.0.as_ref().unwrap().clone();
         assert!(!Arc::ptr_eq(&shared, &sibling));
+
+        let mut incoming = Extra::default();
+        incoming.insert(Copies(copies.clone()));
+        incoming.insert(String::from("metadata replaces configuration"));
+        incoming.insert_config(9_u32);
+        let frozen = incoming.clone();
+        let mut merged = Extra::default();
+        merged.extend(incoming.clone());
+        assert!(Arc::ptr_eq(
+            merged.0.as_ref().unwrap(),
+            incoming.0.as_ref().unwrap()
+        ));
+        let before = copies.load(Ordering::Relaxed);
+        extra.extend(incoming);
+        assert_eq!(copies.load(Ordering::Relaxed), before);
+        assert_eq!(extra, frozen);
+        assert_eq!(extra.get::<String>(), frozen.get::<String>());
+        *extra.config_or_default::<u32>() = 10;
+        assert_eq!(frozen.get::<u32>(), Some(&9));
     }
 }
