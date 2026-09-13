@@ -16,22 +16,6 @@
 //! Returned services go to the oldest waiter before they enter the idle list.
 //! If reuse wins after connection work has started, the configured event handler
 //! may finish that work in the background and cache the result.
-//!
-//! # Example
-//!
-//! A cache wraps a maker service. Tower readiness reserves a returned service
-//! for the next call on that same cache clone:
-//!
-//! ```rust,ignore
-//! let mut cache = cache::builder()
-//!     .max_idle(8)
-//!     .executor(executor)
-//!     .build(maker);
-//!
-//! poll_fn(|cx| cache.poll_ready(cx)).await?;
-//! let sender = cache.call(destination).await?;
-//! drop(sender); // returns the exclusive service unless marked for discard
-//! ```
 
 use std::{
     collections::VecDeque,
@@ -398,25 +382,24 @@ where
                 Poll::Ready(result)
             }
             Poll::Pending => {
-                let (reserved, replaced_waker) = {
-                    let mut shared = self.shared.lock();
-                    if let Some(id) = self.ready_waiter {
-                        let service = shared.take_reserved(id);
-                        let replaced = if service.is_none() {
-                            shared.store_waker(id, cx.waker())
-                        } else {
-                            None
-                        };
-                        (service, replaced)
-                    } else if let Some(service) = shared.take_available() {
-                        (Some(service), None)
+                let mut shared = self.shared.lock();
+                let (reserved, replaced_waker) = if let Some(id) = self.ready_waiter {
+                    let service = shared.take_reserved(id);
+                    let replaced = if service.is_none() {
+                        shared.store_waker(id, cx.waker())
                     } else {
-                        let id = shared.push_waiter();
-                        let replaced = shared.store_waker(id, cx.waker());
-                        self.ready_waiter = Some(id);
-                        (None, replaced)
-                    }
+                        None
+                    };
+                    (service, replaced)
+                } else if let Some(service) = shared.take_available() {
+                    (Some(service), None)
+                } else {
+                    let id = shared.push_waiter();
+                    let replaced = shared.store_waker(id, cx.waker());
+                    self.ready_waiter = Some(id);
+                    (None, replaced)
                 };
+                drop(shared);
                 drop(replaced_waker);
 
                 if let Some(service) = reserved {
@@ -564,21 +547,21 @@ where
                 events,
                 active,
             } => {
-                let (reused, replaced_waker) = {
-                    let mut locked = shared.lock();
-                    if let Some(service) = locked.take_reserved(*waiter) {
-                        let shutdown = cache_shutdown(locked.shutdown.subscribe());
-                        let background = future.take().map(|future| BackgroundConnect {
-                            future,
-                            shared: Arc::downgrade(shared),
-                            shutdown,
-                        });
-                        (Some((service, background)), None)
-                    } else {
-                        let replaced = locked.store_waker(*waiter, cx.waker());
-                        (None, replaced)
-                    }
+                let mut locked = shared.lock();
+                let (reused, replaced_waker) = if let Some(service) = locked.take_reserved(*waiter)
+                {
+                    let shutdown = cache_shutdown(locked.shutdown.subscribe());
+                    let background = future.take().map(|future| BackgroundConnect {
+                        future,
+                        shared: Arc::downgrade(shared),
+                        shutdown,
+                    });
+                    (Some((service, background)), None)
+                } else {
+                    let replaced = locked.store_waker(*waiter, cx.waker());
+                    (None, replaced)
                 };
+                drop(locked);
                 drop(replaced_waker);
 
                 if let Some((service, background)) = reused {
@@ -599,25 +582,25 @@ where
                 let connected = match ready!(Pin::new(connecting).poll(cx)) {
                     Ok(service) => service,
                     Err(error) => {
-                        let (reused, canceled) = {
+                        let reserved = {
                             let mut locked = shared.lock();
                             match locked.take_reserved(*waiter) {
-                                Some(service) => (Some(service), None),
-                                None => (None, Some(locked.cancel_waiter(*waiter))),
+                                Some(service) => Ok(service),
+                                None => Err(locked.cancel_waiter(*waiter)),
                             }
                         };
-                        if let Some(canceled) = canceled {
-                            finish_cancel(canceled);
-                        }
-                        if let Some(service) = reused {
-                            return Poll::Ready(Ok(Cached::new(
+                        return Poll::Ready(match reserved {
+                            Ok(service) => Ok(Cached::new(
                                 service,
                                 Arc::downgrade(shared),
                                 active.clone(),
                                 true,
-                            )));
-                        }
-                        return Poll::Ready(Err(error));
+                            )),
+                            Err(canceled) => {
+                                finish_cancel(canceled);
+                                Err(error)
+                            }
+                        });
                     }
                 };
 

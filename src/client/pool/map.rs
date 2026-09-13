@@ -1,31 +1,13 @@
 //! Maps connection destinations to independently managed pool services.
 //!
 //! [`Map`] is the outer routing component of the pool. [`Target`] derives a
-//! complete connection compatibility key and constructs the service for a new
-//! key. A lookup therefore follows this model:
-//!
-//! ```text
-//! destination -> compatibility key -> cache/negotiation service
-//! ```
+//! complete connection compatibility key and constructs the service for a new key.
 //!
 //! Entries are created lazily in an unbounded routing map. An optional LRU tracks
-//! only entries that currently retain reusable connection state, preserving the
-//! legacy pool's global idle-host limit without counting active work.
-//!
-//! # Example
+//! only entries that currently retain reusable connection state.
 //!
 //! The pool coordinator performs lookup while holding its map lock, then drops
-//! any evicted service after releasing that lock:
-//!
-//! ```rust,ignore
-//! let (checkout, discarded) = map.with_service(&targeter, target, |service, target| {
-//!     let discarded = service.retain(now, idle_timeout);
-//!     let checkout = service.checkout(target, true);
-//!     (checkout, discarded)
-//! });
-//! drop(discarded);
-//! let sender = checkout.await?;
-//! ```
+//! any evicted service after releasing that lock.
 
 use std::{collections::HashMap, hash::Hash, marker::PhantomData, num::NonZeroUsize};
 

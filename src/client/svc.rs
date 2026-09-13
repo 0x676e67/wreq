@@ -73,7 +73,7 @@ pub struct Stack<S, B> {
 /// Dispatch returns this value only when the original body has not been sent.
 pub struct PoolRequest<B> {
     request: Request<B>,
-    connection: Arc<ConnectionConfig>,
+    connection: ConnectionConfig,
 }
 
 /// Retries canceled checkouts and unsent requests on reused connections.
@@ -198,6 +198,8 @@ where
     }
 
     fn call(&mut self, mut request: Request<B>) -> Self::Future {
+        let uri = request.uri().clone();
+
         let mut extra = request
             .extensions_mut()
             .remove::<Extra>()
@@ -212,9 +214,7 @@ where
         // remains explicit: https://curl.se/libcurl/c/CURLOPT_HTTP_VERSION.html
         let version = match version {
             Some(Version::HTTP_10 | Version::HTTP_11) => Some(HttpVersion::Http1),
-            Some(Version::HTTP_2)
-                if request.uri().is_https() && self.version != HttpVersion::Http2 =>
-            {
+            Some(Version::HTTP_2) if uri.is_https() && self.version != HttpVersion::Http2 => {
                 Some(HttpVersion::Auto)
             }
             Some(Version::HTTP_2) => Some(HttpVersion::Http2),
@@ -226,22 +226,18 @@ where
             None => None,
         };
 
-        let conn_req = match ConnectRequest::new(request.uri().clone(), version, extra) {
-            Ok(conn_req) => conn_req,
-            Err(source) => {
-                return Either::Right(future::err(
-                    Error::new(ErrorKind::UserAbsoluteUriRequired, source).into(),
-                ));
-            }
-        };
-
-        Either::Left(self.inner.call(PoolRequest {
-            request,
-            connection: Arc::new(ConnectionConfig {
-                req: conn_req,
-                proto: self.proto.clone(),
-            }),
-        }))
+        match ConnectRequest::new(uri, version, extra) {
+            Ok(req) => Either::Left(self.inner.call(PoolRequest {
+                request,
+                connection: ConnectionConfig {
+                    req,
+                    proto: self.proto.clone(),
+                },
+            })),
+            Err(source) => Either::Right(future::err(
+                Error::new(ErrorKind::UserAbsoluteUriRequired, source).into(),
+            )),
+        }
     }
 }
 
@@ -881,7 +877,8 @@ mod tests {
                     })
                 } else {
                     if let Some(connection) = &connection {
-                        assert!(Arc::ptr_eq(connection, &request.connection));
+                        assert_eq!(connection.req.key(), request.connection.req.key());
+                        assert!(Arc::ptr_eq(&connection.proto, &request.connection.proto));
                     }
                     Ok(())
                 };

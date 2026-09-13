@@ -231,12 +231,10 @@ impl Layer<Connector> for ConnectorLayer {
             .layer(service)
             .map_err(map_timeout_to_connector_error);
 
-        let service = MapRequest::new(
+        Either::Right(MapRequest::new(
             BoxCloneSyncService::new(service),
             Unnameable as fn(ConnectRequest) -> Unnameable,
-        );
-
-        Either::Right(service)
+        ))
     }
 }
 
@@ -303,13 +301,13 @@ impl Connector {
             .map_err(Into::into)
     }
 
-    fn tunnel_conn_from_stream<IO>(&self, io: MaybeHttpsStream<IO>) -> Result<Conn, BoxError>
+    fn tunnel_conn_from_stream<IO>(&self, io: MaybeHttpsStream<IO>) -> Conn
     where
         IO: AsyncConnWithInfo,
         TlsConn<IO>: Connection,
         SslStream<IO>: TlsInfoFactory,
     {
-        let conn = match io {
+        match io {
             MaybeHttpsStream::Http(stream) => Conn {
                 stream: Verbose(self.config.verbose).wrap(stream),
                 tls_info: false,
@@ -320,12 +318,10 @@ impl Connector {
                 tls_info: self.config.tls_info,
                 proxy: None,
             },
-        };
-
-        Ok(conn)
+        }
     }
 
-    fn conn_from_stream<IO, P>(&self, io: MaybeHttpsStream<IO>, proxy: P) -> Result<Conn, BoxError>
+    fn conn_from_stream<IO, P>(&self, io: MaybeHttpsStream<IO>, proxy: P) -> Conn
     where
         IO: AsyncConnWithInfo,
         TlsConn<IO>: Connection,
@@ -339,11 +335,11 @@ impl Connector {
             }
         };
 
-        Ok(Conn {
+        Conn {
             stream: conn,
             tls_info: self.config.tls_info,
             proxy: proxy.into(),
-        })
+        }
     }
 
     async fn connect_auto_proxy<P: Into<Option<Intercept>>>(
@@ -372,7 +368,7 @@ impl Connector {
             }
         });
 
-        self.conn_from_stream(io, proxy)
+        Ok(self.conn_from_stream(io, proxy))
     }
 
     async fn connect_via_proxy(
@@ -427,7 +423,7 @@ impl Connector {
                             }
                         });
 
-                        return self.tunnel_conn_from_stream(io);
+                        return Ok(self.tunnel_conn_from_stream(io));
                     }
                 }
 
@@ -466,7 +462,7 @@ impl Connector {
                         }
                     });
 
-                    return self.tunnel_conn_from_stream(io);
+                    return Ok(self.tunnel_conn_from_stream(io));
                 }
 
                 self.connect_auto_proxy(req.with_route_uri(proxy_uri), proxy)
@@ -504,13 +500,13 @@ impl Connector {
                     // Wrap the established tunneled stream with TLS.
                     let io = connector.call(EstablishedConn::new(tunneled, req)).await?;
 
-                    return self.tunnel_conn_from_stream(io);
+                    return Ok(self.tunnel_conn_from_stream(io));
                 }
 
                 // For plain HTTP, use the Unix connector directly.
                 let io = connector.call(req).await?;
 
-                self.conn_from_stream(io, None)
+                Ok(self.conn_from_stream(io, None))
             }
         }
     }
@@ -565,15 +561,12 @@ impl Connection for Conn {
             connected = connected.proxy(proxy.clone());
         }
 
-        if self.tls_info {
-            if let Some(tls_info) = self.stream.tls_info() {
-                connected.extra(tls_info)
-            } else {
-                connected
-            }
-        } else {
-            connected
+        if self.tls_info
+            && let Some(tls_info) = self.stream.tls_info()
+        {
+            connected = connected.extra(tls_info);
         }
+        connected
     }
 }
 

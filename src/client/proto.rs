@@ -11,10 +11,7 @@
 pub(super) mod http1;
 pub(super) mod http2;
 
-use std::{
-    sync::Arc,
-    time::{Duration, Instant},
-};
+use std::time::{Duration, Instant};
 
 use http::Request;
 use wreq_proto::{conn::TrySendError, rt::Timer as _};
@@ -35,7 +32,7 @@ pub(super) struct Established<T> {
     io: T,
     connected: Connected,
     version: HttpVersion,
-    config: Arc<ConnectionConfig>,
+    config: ConnectionConfig,
     idle_at: Instant,
 }
 
@@ -59,7 +56,7 @@ impl<T> Established<T> {
         io: T,
         connected: Connected,
         version: HttpVersion,
-        config: Arc<ConnectionConfig>,
+        config: ConnectionConfig,
         idle_at: Instant,
     ) -> Self {
         Self {

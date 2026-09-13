@@ -127,13 +127,9 @@ impl<S> HttpsConnector<S> {
     /// Prepares a request-specific context before the TLS handshake.
     /// Without overrides, the service continues to borrow the shared base context.
     pub fn with_options(mut self, options: Option<&TlsOptions>) -> crate::Result<Self> {
-        self.ctx = match options {
-            Some(options) => Some(TlsContext::new(
-                self.tls.inner.config.clone(),
-                Some(options),
-            )?),
-            None => None,
-        };
+        self.ctx = options
+            .map(|options| TlsContext::new(self.tls.inner.config.clone(), Some(options)))
+            .transpose()?;
         Ok(self)
     }
 
@@ -260,8 +256,7 @@ impl TlsConnector {
         let cfg = ctx.ssl.configure()?;
         let host = uri.host().ok_or("URI missing host")?;
         let host = Self::normalize_host(host);
-        let ssl = cfg.into_ssl(host)?;
-        Ok(ssl)
+        Ok(cfg.into_ssl(host)?)
     }
 
     /// Prepares a connection using its request-specific or shared TLS context.
@@ -290,11 +285,11 @@ impl TlsConnector {
             // | Client     | Request                   | TlsOptions ALPN | Offered ALPN |
             // |------------|---------------------------|-----------------|--------------|
             // | any        | HTTP/1.0 or HTTP/1.1      | ignored         | [http/1.1]   |
-            // | any        | HTTP/2 + Extended CONNECT | ignored         | [h2]         |
             // | Http1      | unset                     | ignored         | [http/1.1]   |
             // | Http2      | unset or HTTP/2           | ignored         | [h2]         |
             // | Auto       | unset                     | see below       | TLS list     |
-            // | Auto/Http1 | HTTP/2 (ordinary request) | see below       | TLS list     |
+            // | Auto/Http1 | HTTP/2                    | see below       | TLS list     |
+            // Extended CONNECT follows the same version selection.
             // TLS list: nonempty request list, then client list, else [h2, http/1.1].
             // None and empty lists inherit; custom list order is preserved.
             let protocols: &[AlpnProtocol] = match (
@@ -334,8 +329,7 @@ impl TlsConnector {
             cfg.set_client_key_shares(key_shares.as_ref())?;
         }
 
-        let uri = req.route_uri().clone();
-        let host = uri.host().ok_or("URI missing host")?;
+        let host = req.route_uri().host().ok_or("URI missing host")?;
         let host = Self::normalize_host(host);
 
         if ctx.session_resumption {

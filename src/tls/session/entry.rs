@@ -85,15 +85,12 @@ impl<T> TicketSlots<T> {
     where
         F: FnOnce(&T) -> bool,
     {
-        let retired = if self.slots[0].as_ref().is_some_and(should_be_single_use) {
-            let retired = self.slots[1].take();
-            self.slots[1] = self.slots[0].take();
-            retired
+        if self.slots[0].as_ref().is_some_and(should_be_single_use) {
+            let primary = self.slots[0].replace(ticket);
+            std::mem::replace(&mut self.slots[1], primary)
         } else {
-            self.slots[0].take()
-        };
-        self.slots[0] = Some(ticket);
-        retired
+            self.slots[0].replace(ticket)
+        }
     }
 
     /// Retrieves the preferred ticket and applies its consumption rule.
@@ -123,19 +120,11 @@ impl<T> TicketSlots<T> {
     where
         F: FnMut(&T) -> bool,
     {
-        let Some(ticket) = self.slots[0].as_ref() else {
-            return [None, self.slots[1].take()];
-        };
-        if is_expired(ticket) {
+        if self.slots[0].as_ref().is_none_or(&mut is_expired) {
             return [self.slots[0].take(), self.slots[1].take()];
         }
 
-        let second = if self.slots[1].as_ref().is_some_and(is_expired) {
-            self.slots[1].take()
-        } else {
-            None
-        };
-        [None, second]
+        [None, self.slots[1].take_if(|ticket| is_expired(ticket))]
     }
 
     /// Returns whether neither slot contains a ticket.

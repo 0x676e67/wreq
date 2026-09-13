@@ -3,31 +3,12 @@
 //! Unlike request routing, negotiation chooses from an intermediate connection
 //! result. wreq uses the fallback path to establish a transport and inspect its
 //! ALPN result. HTTP/1 stays in the fallback cache, while HTTP/2 is handed to the
-//! upgraded singleton:
-//!
-//! ```text
-//! connect -> inspect -> HTTP/1 cache
-//!                   -> pending HTTP/2 -> singleton
-//! ```
+//! upgraded singleton.
 //!
 //! An upgraded result enters the pending queue before [`UpgradeSignal`] wakes
 //! concurrent fallback attempts. Selection checks the singleton and removes queued
 //! transports under the pending lock; maker calls and future polling happen afterward.
 //! A stale notification starts a fresh fallback attempt if no upgraded work remains.
-//!
-//! # Example
-//!
-//! The builder composes a connector, an inspection predicate, and one layer for
-//! each protocol path:
-//!
-//! ```rust,ignore
-//! let pool = negotiate::builder()
-//!     .connect(connector)
-//!     .inspect(|established| established.negotiated_h2())
-//!     .fallback(http1_cache_layer)
-//!     .upgrade(http2_singleton_layer)
-//!     .build();
-//! ```
 
 use std::{
     collections::VecDeque,
@@ -457,16 +438,17 @@ fn select_upgrade<R, S>(upgrade: &mut R, pending: &Mutex<VecDeque<S>>) -> Select
 where
     R: Existing<S>,
 {
-    let (selection, discarded) = {
-        let mut pending = pending.lock();
-        match checkout_existing(upgrade, &mut pending) {
-            Some((future, discarded)) => (Selection::Existing(future), discarded),
-            None => match pending.pop_front() {
-                Some(service) => (Selection::Pending(service), std::mem::take(&mut *pending)),
-                None => (Selection::Fallback, VecDeque::new()),
-            },
+    let mut pending = pending.lock();
+    let (selection, discarded) = match checkout_existing(upgrade, &mut pending) {
+        Some((future, discarded)) => (Selection::Existing(future), discarded),
+        None => {
+            let Some(service) = pending.pop_front() else {
+                return Selection::Fallback;
+            };
+            (Selection::Pending(service), std::mem::take(&mut *pending))
         }
     };
+    drop(pending);
     drop(discarded);
     selection
 }

@@ -69,15 +69,8 @@ impl_into_shared!(
 /// Key count is unbounded; the client's built-in store has a separate global limit.
 /// Single-use tickets are consumed on lookup, while reusable tickets remain stored.
 pub struct LruTlsSessionStore {
-    inner: Mutex<LruState>,
+    inner: Mutex<HashMap<Key, LruCache<TlsSession, ()>>>,
     per_key_capacity: usize,
-}
-
-/// Per-key session LRUs protected by the cache lock.
-/// Each key owns its ticket list independently of other clients and origins.
-/// Removed native sessions are returned for destruction after unlocking.
-struct LruState {
-    keys: HashMap<Key, LruCache<TlsSession, ()>>,
 }
 
 // ===== impl TlsSession =====
@@ -146,9 +139,7 @@ impl LruTlsSessionStore {
     /// A zero capacity disables storage; this does not limit the number of keys.
     pub fn new(per_key_capacity: usize) -> Self {
         Self {
-            inner: Mutex::new(LruState {
-                keys: HashMap::new(),
-            }),
+            inner: Mutex::new(HashMap::new()),
             per_key_capacity,
         }
     }
@@ -156,35 +147,34 @@ impl LruTlsSessionStore {
 
 impl TlsSessionStore for LruTlsSessionStore {
     fn put(&self, key: Key, session: TlsSession) {
-        if self.per_key_capacity == 0 {
+        let Some(capacity) = NonZeroUsize::new(self.per_key_capacity) else {
             return;
-        }
-
-        let evicted = {
-            let mut state = self.inner.lock();
-            let sessions = state.keys.entry(key).or_insert_with(|| {
-                NonZeroUsize::new(self.per_key_capacity)
-                    .map_or_else(LruCache::unbounded, LruCache::new)
-            });
-            sessions.push(session, ()).map(|(session, ())| session)
         };
+
+        let mut keys = self.inner.lock();
+        let evicted = keys
+            .entry(key)
+            .or_insert_with(|| LruCache::new(capacity))
+            .push(session, ());
+        drop(keys);
         drop(evicted);
     }
 
     fn pop(&self, key: &Key) -> Option<TlsSession> {
-        let (session, retired_session, retired_entry) = {
-            let mut state = self.inner.lock();
-            let sessions = state.keys.get_mut(key)?;
-            let session = sessions.peek_mru()?.0.clone();
-            let retired_session = session
-                .should_be_single_use()
-                .then(|| sessions.pop_entry(&session))
-                .flatten();
-            let empty = sessions.is_empty();
-            let retired_entry = empty.then(|| state.keys.remove_entry(key)).flatten();
-            (session, retired_session, retired_entry)
+        let mut keys = self.inner.lock();
+        let sessions = keys.get_mut(key)?;
+        let session = sessions.peek_mru()?.0.clone();
+        let retired_session = if session.should_be_single_use() {
+            sessions.pop_entry(&session)
+        } else {
+            None
         };
-
+        let retired_entry = if sessions.is_empty() {
+            keys.remove_entry(key)
+        } else {
+            None
+        };
+        drop(keys);
         drop(retired_session);
         drop(retired_entry);
         Some(session)

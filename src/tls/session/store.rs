@@ -83,16 +83,13 @@ impl SessionStore {
             return;
         }
 
-        let (retired_ticket, evicted_entry) = {
-            let mut state = self.state.lock();
-            let sessions = state.sessions.get_or_insert_with(entries);
-            match sessions.get_mut(&key) {
-                Some(entry) => (entry.push(session), None),
-                None => (None, sessions.push(key, SessionEntry::new(session))),
-            }
+        let mut state = self.state.lock();
+        let sessions = state.sessions.get_or_insert_with(entries);
+        let (retired_ticket, evicted_entry) = match sessions.get_mut(&key) {
+            Some(entry) => (entry.push(session), None),
+            None => (None, sessions.push(key, SessionEntry::new(session))),
         };
-
-        // Release native sessions and evicted keys after unlocking the store.
+        drop(state);
         drop(retired_ticket);
         drop(evicted_entry);
     }
@@ -108,10 +105,9 @@ impl SessionStore {
         let mut retired_entries = Vec::new();
         let mut retired_keys = Vec::new();
         let mut retired_tickets = Vec::new();
-        let mut session = None;
         let now = unix_time();
 
-        {
+        let session = {
             let mut state = self.state.lock();
             let sweep = state.note_lookup();
             let sessions = state.sessions.as_mut()?;
@@ -125,18 +121,18 @@ impl SessionStore {
                 );
             }
 
-            let mut remove_entry = false;
-            if let Some(entry) = sessions.get_mut(key) {
-                // Match Chromium's Lookup: consume first, then expire the remaining slots.
-                session = entry.pop();
-                retired_tickets.extend(entry.expire(now).into_iter().flatten());
-                remove_entry = entry.is_empty();
-            }
+            let entry = sessions.get_mut(key)?;
+            // Match Chromium's Lookup: consume first, then expire the remaining slots.
+            let session = entry.pop();
+            retired_tickets.extend(entry.expire(now).into_iter().flatten());
 
-            if remove_entry && let Some(entry) = sessions.pop_entry(key) {
+            if entry.is_empty()
+                && let Some(entry) = sessions.pop_entry(key)
+            {
                 retired_entries.push(entry);
             }
-        }
+            session
+        };
 
         drop(retired_tickets);
         drop(retired_keys);
