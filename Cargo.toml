@@ -89,6 +89,7 @@ parking_lot = ["dep:parking_lot", "http2/parking_lot"]
 prefix-symbols = ["btls/prefix-symbols"]
 
 [dependencies]
+educe = { version = "0.7.6", default-features = false, features = ["PartialEq", "Eq", "Hash"] }
 url = "2.5.8"
 bytes = "1.11.1"
 http = "1.4.0"
@@ -108,7 +109,7 @@ tokio-btls = "0.5.6"
 tokio = { version = "1.52.3", default-features = false }
 compio = { version = "0.19.2", features = ["io", "io-compat"], optional = true }
 wreq-rt = { version = "0.2.2-rc.2", default-features = false }
-wreq-proto = { version = "0.2.6", default-features = false }
+wreq-proto = { version = "=0.2.5", default-features = false }
 tower = { version = "0.5.3", default-features = false, features = [
     "timeout",
     "util",
@@ -386,5 +387,6 @@ path = "examples/rt.rs"
 required-features = ["compio-rt"]
 
 [patch.crates-io]
+wreq-proto = { git = "https://github.com/0x676e67/wreq-proto", rev = "dae7159cc6b0ff1788a07c57a69844eeb3a1717e" }
 btls = { git = "https://github.com/0x676e67/btls", branch = "main" }
 btls-sys = { git = "https://github.com/0x676e67/btls", branch = "main" }

@@ -34,7 +34,7 @@ use super::{Established, SendError, clock_now, is_expired};
 use crate::{
     client::{
         error::{Error, ErrorKind},
-        pool::Started,
+        pool::cache::Started,
     },
     conn::Connected,
     rt::{Executor, Timer},
@@ -272,7 +272,7 @@ where
 
         let (builder, _) = config.proto.as_ref();
         let builder = builder.clone();
-        let builder = match &config.http1_options {
+        let builder = match config.req.extra().get::<wreq_proto::http1::Http1Options>() {
             Some(options) => builder.options(options.clone()),
             None => builder,
         };

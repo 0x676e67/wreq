@@ -2,11 +2,7 @@
 //!
 //! [`Singleton`] fits multiplexed protocols such as HTTP/2. The first checkout
 //! starts a maker future and becomes its driver. Concurrent checkouts join the
-//! same [`Batch`], then receive clones of the completed service:
-//!
-//! ```text
-//! Empty -> Making(driver + waiters) -> Made(shared service)
-//! ```
+//! same [`Batch`], then receive clones of the completed service.
 //!
 //! If the driver is canceled, one waiter takes over the same pinned maker
 //! future. This avoids abandoning a connection attempt while another request is
@@ -15,18 +11,6 @@
 //! cancellation and can form a new batch. A failed checkout may clear only the
 //! generation that produced it, so a stale sender cannot remove a newer
 //! replacement.
-//!
-//! # Example
-//!
-//! The first call creates the service. A concurrent checkout joins that same
-//! creation batch, and later checkouts clone the completed service:
-//!
-//! ```rust,ignore
-//! let mut singleton = Singleton::new(maker);
-//! let first = singleton.call(destination.clone());
-//! let second = singleton.checkout().expect("creation is in progress");
-//! let (first, second) = futures_util::try_join!(first, second)?;
-//! ```
 
 use std::{
     fmt,
@@ -60,8 +44,10 @@ where
 {
     /// Creates the shared service when the singleton is empty.
     maker: M,
+
     /// Shared empty, creating, or created state.
     state: Arc<Mutex<State<M::Future, M::Response>>>,
+
     /// Carries the destination type without owning a destination.
     _dst: PhantomData<fn(Dst)>,
 }
@@ -188,16 +174,15 @@ where
                 drop(state);
 
                 let future = Box::pin(self.maker.call(dst));
-                let future = {
-                    let mut state = self.state.lock();
-                    match &mut *state {
-                        State::Making(batch) if Arc::ptr_eq(&generation, &batch.generation) => {
-                            batch.restore_future(id, future).err()
-                        }
-                        State::Empty | State::Making(_) | State::Made { .. } => Some(future),
+                let mut state = self.state.lock();
+                let unused = match &mut *state {
+                    State::Making(batch) if Arc::ptr_eq(&generation, &batch.generation) => {
+                        batch.restore_future(id, future)
                     }
+                    State::Empty | State::Making(_) | State::Made { .. } => Err(future),
                 };
-                drop(future);
+                drop(state);
+                drop(unused);
 
                 SingletonFuture::Participating {
                     id,
@@ -513,21 +498,18 @@ where
                     Poll::Ready(Err(error)) => {
                         drop(future);
                         let error: BoxError = error.into();
-                        let waiters = {
-                            let mut locked = state.lock();
-                            match &mut *locked {
-                                State::Making(batch)
-                                    if Arc::ptr_eq(generation, &batch.generation) =>
-                                {
-                                    let waiters = batch.take_waiters();
-                                    *locked = State::Empty;
-                                    waiters
-                                }
-                                State::Making(_) | State::Made { .. } | State::Empty => {
-                                    return Poll::Ready(Err(SingletonError::canceled()));
-                                }
+                        let mut locked = state.lock();
+                        let waiters = match &mut *locked {
+                            State::Making(batch) if Arc::ptr_eq(generation, &batch.generation) => {
+                                let waiters = batch.take_waiters();
+                                *locked = State::Empty;
+                                waiters
+                            }
+                            State::Making(_) | State::Made { .. } | State::Empty => {
+                                return Poll::Ready(Err(SingletonError::canceled()));
                             }
                         };
+                        drop(locked);
                         drop(waiters);
                         Poll::Ready(Err(SingletonError::new(error)))
                     }
@@ -552,35 +534,31 @@ where
 
 impl<F, S> Drop for SingletonFuture<F, S> {
     fn drop(&mut self) {
-        if let Self::Participating {
+        let Self::Participating {
             id,
             generation,
             state,
             ..
         } = self
-        {
-            let (waiter, future) = {
-                let mut locked = state.lock();
-                if let State::Making(batch) = &mut *locked {
-                    if Arc::ptr_eq(generation, &batch.generation) {
-                        let removed = batch.remove(*id);
-                        if removed.batch_empty {
-                            *locked = State::Empty;
-                        }
-                        (removed.waiter, removed.future)
-                    } else {
-                        (None, None)
-                    }
-                } else {
-                    (None, None)
-                }
-            };
+        else {
+            return;
+        };
 
-            // Closing a waiter's receiver and canceling the maker can
-            // wake arbitrary tasks, so both values are dropped outside the lock.
-            drop(waiter);
-            drop(future);
+        let mut locked = state.lock();
+        let State::Making(batch) = &mut *locked else {
+            return;
+        };
+        if !Arc::ptr_eq(generation, &batch.generation) {
+            return;
         }
+        let removed = batch.remove(*id);
+        if removed.batch_empty {
+            *locked = State::Empty;
+        }
+
+        drop(locked);
+        drop(removed.waiter);
+        drop(removed.future);
     }
 }
 
@@ -745,23 +723,22 @@ where
 
 /// Removes one completed singleton generation and drops it outside the lock.
 fn discard_generation<F, S>(state: &Weak<Mutex<State<F, S>>>, generation: &Arc<()>) {
-    let discarded = state.upgrade().and_then(|state| {
-        let mut locked = state.lock();
-        if matches!(
-            &*locked,
-            State::Made {
-                generation: current,
-                ..
-            } if Arc::ptr_eq(current, generation)
-        ) {
-            match std::mem::replace(&mut *locked, State::Empty) {
-                State::Made { service, .. } => Some(service),
-                _ => None,
-            }
-        } else {
-            None
-        }
-    });
+    let Some(state) = state.upgrade() else {
+        return;
+    };
+    let mut locked = state.lock();
+    if !matches!(
+        &*locked,
+        State::Made {
+            generation: current,
+            ..
+        } if Arc::ptr_eq(current, generation)
+    ) {
+        return;
+    }
+    let discarded = std::mem::replace(&mut *locked, State::Empty);
+    drop(locked);
+    drop(state);
     drop(discarded);
 }
 
