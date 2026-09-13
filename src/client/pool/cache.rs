@@ -229,8 +229,10 @@ struct Waiter {
 struct CancelResult<S> {
     /// Queued waiter removed before it received a service.
     canceled: Option<Waiter>,
+
     /// Next waiter to wake after reservation handoff.
     wake: Option<Waker>,
+
     /// Service rejected by the idle limit during handoff.
     discarded: Option<S>,
 }

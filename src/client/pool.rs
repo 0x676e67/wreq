@@ -26,6 +26,12 @@
 //! destroy a sender, poll user-provided service code, or wake a task first moves
 //! the affected value out of the lock.
 
+pub(super) mod cache;
+pub(super) mod expire;
+pub(super) mod map;
+pub(super) mod negotiate;
+pub(super) mod singleton;
+
 use std::{
     fmt,
     future::Future,
@@ -47,13 +53,12 @@ use tokio::io::{AsyncRead, AsyncWrite};
 use tower::{BoxError, Layer, Service, ServiceBuilder, util::Oneshot};
 use wreq_proto::{body::Incoming, conn, rt::Timer as _};
 
-pub(super) use self::cache::Started;
 use self::{
-    cache::Cached,
+    cache::{BackgroundConnect, Cache, Cached, Started},
     expire::{Expire, Inspect},
     map::{Map, Target},
-    negotiate::{Negotiate, Negotiated},
-    singleton::Singled,
+    negotiate::{Existing, Negotiate, Negotiated},
+    singleton::{Singled, Singleton, SingletonError, SingletonFuture},
 };
 use super::proto::{Established, SendError, http1, http2};
 use crate::{
@@ -63,15 +68,9 @@ use crate::{
     sync::Mutex,
 };
 
-mod cache;
-mod expire;
-mod map;
-mod negotiate;
-mod singleton;
-
 /// Returns whether an internal singleton batch asks the client to retry.
 pub(super) fn is_canceled(error: &(dyn std::error::Error + 'static)) -> bool {
-    singleton::SingletonError::is_canceled(error)
+    SingletonError::is_canceled(error)
 }
 
 /// Selects when the pool starts a new connection while reuse is unavailable.
@@ -166,7 +165,6 @@ where
     B::Data: Send,
     B::Error: Into<BoxError>,
 {
-    /// Shared map, timers, and service factory.
     inner: Arc<PoolInner<C, B>>,
 }
 
@@ -320,7 +318,6 @@ where
 struct Http1Entry<L> {
     /// Exclusive HTTP/1 sender cache.
     service: L,
-
     /// Checkout count and identity-aware cleanup for this entry.
     state: Arc<EntryState>,
 }
@@ -331,7 +328,6 @@ struct Http1Entry<L> {
 struct Http2Entry<R> {
     /// Shared HTTP/2 sender singleton.
     service: R,
-
     /// Checkout count and identity-aware cleanup for this entry.
     state: Arc<EntryState>,
 }
@@ -344,7 +340,6 @@ struct Http2Entry<R> {
 struct NegotiatedEntry<L, R, S> {
     /// Fallback and upgraded pool composition.
     service: Negotiate<L, R, S>,
-
     /// Checkout count and failed-checkout cleanup for this entry.
     state: Arc<EntryState>,
 }
@@ -400,7 +395,7 @@ type H2MakeFuture<B> = BoxFuture<'static, Result<http2::Connection<B>, BoxError>
 type H2Pooled<B> = Singled<H2MakeFuture<B>, http2::Connection<B>>;
 
 /// Future joining an existing HTTP/2 singleton generation.
-type H2Checkout<B> = singleton::SingletonFuture<H2MakeFuture<B>, http2::Connection<B>>;
+type H2Checkout<B> = SingletonFuture<H2MakeFuture<B>, http2::Connection<B>>;
 
 /// Defers checkout completion and resource destruction until the map is unlocked.
 ///
@@ -438,7 +433,7 @@ type PooledInner<B> = Negotiated<Cached<http1::Connection<B>>, H2Pooled<B>>;
 type DeferredDrop = Box<dyn Send>;
 
 /// Identity-aware maintenance operation for one mapped entry.
-type EntryMaintenance = dyn Fn(&Arc<EntryState>) + Send + Sync;
+type EntryMaintenance = Box<dyn Fn(&Arc<EntryState>) + Send + Sync>;
 
 /// Protocol-agnostic sender checked out from one pool entry.
 ///
@@ -497,8 +492,10 @@ where
 struct ConnectFuture<T> {
     /// Deferred delay and physical connect work.
     future: BoxFuture<'static, Result<T, BoxError>>,
+
     /// Records whether the future has ever been polled.
     polled: bool,
+
     /// Separates waiting for policy from useful connection work.
     started: Option<Arc<AtomicBool>>,
 }
@@ -539,7 +536,7 @@ struct EntryState {
     /// Number of checkout futures keeping the entry active.
     uses: AtomicUsize,
     /// Reconciles this exact entry with cleanup and idle-group limits.
-    maintain: Box<EntryMaintenance>,
+    maintain: EntryMaintenance,
 }
 
 /// Type-erases one aggregate resource for destruction after unlocking.
@@ -801,11 +798,7 @@ where
         state: &Arc<EntryState>,
     ) -> impl Layer<
         S,
-        Service = cache::Cache<
-            http1::Connect<S, B>,
-            PoolTarget,
-            cache::events::WithExecutor<Executor>,
-        >,
+        Service = Cache<http1::Connect<S, B>, PoolTarget, cache::events::WithExecutor<Executor>>,
     >
     where
         S: Service<PoolTarget, Response = Established<T>, Error = BoxError> + Clone,
@@ -876,7 +869,7 @@ where
             }
             HttpVersion::Http2 => Box::new(Http2Entry {
                 service: ServiceBuilder::new()
-                    .layer_fn(singleton::Singleton::new)
+                    .layer_fn(Singleton::new)
                     .layer(http2::ConnectLayer::new(
                         self.exec.clone(),
                         self.timer.clone(),
@@ -886,18 +879,18 @@ where
             }),
             HttpVersion::Auto => {
                 let inspect: fn(&Established<C::Response>) -> bool = Established::should_use_http2;
+                let upgrade =
+                    ServiceBuilder::new()
+                        .layer_fn(Singleton::new)
+                        .layer(http2::ConnectLayer::new(
+                            self.exec.clone(),
+                            self.timer.clone(),
+                        ));
                 let service = negotiate::builder()
                     .connect(connect)
                     .inspect(inspect)
                     .fallback(self.http1_layer(&state))
-                    .upgrade(
-                        ServiceBuilder::new()
-                            .layer_fn(singleton::Singleton::new)
-                            .layer(http2::ConnectLayer::new(
-                                self.exec.clone(),
-                                self.timer.clone(),
-                            )),
-                    )
+                    .upgrade(upgrade)
                     .build::<PoolTarget>();
 
                 Box::new(NegotiatedEntry { service, state })
@@ -975,7 +968,7 @@ where
 
 // ===== impl Http2Entry =====
 
-impl<M, B> Entry<B> for Http2Entry<singleton::Singleton<M, PoolTarget>>
+impl<M, B> Entry<B> for Http2Entry<Singleton<M, PoolTarget>>
 where
     M: Service<
             PoolTarget,
@@ -1069,8 +1062,7 @@ impl<L, R, T, B> Entry<B> for NegotiatedEntry<L, R, Established<T>>
 where
     L: Http1Pool<B>,
     L::Future: Send,
-    R: Http2Pool<B>
-        + negotiate::Existing<Established<T>, Response = H2Pooled<B>, Future = H2Checkout<B>>,
+    R: Http2Pool<B> + Existing<Established<T>, Response = H2Pooled<B>, Future = H2Checkout<B>>,
     R::Error: Into<BoxError>,
     R::Future: Send,
     T: Send + 'static,
@@ -1204,7 +1196,7 @@ where
 
 // ===== impl Cache =====
 
-impl<M, Ev, B> Http1Pool<B> for cache::Cache<M, PoolTarget, Ev>
+impl<M, Ev, B> Http1Pool<B> for Cache<M, PoolTarget, Ev>
 where
     M: Service<PoolTarget, Response = http1::Connection<B>, Error = BoxError>
         + Clone
@@ -1212,7 +1204,7 @@ where
         + 'static,
     M::Future: Unpin + Send,
     M::Response: Unpin,
-    Ev: cache::events::Events<cache::BackgroundConnect<M::Future, M::Response>>
+    Ev: cache::events::Events<BackgroundConnect<M::Future, M::Response>>
         + Clone
         + Send
         + Unpin
@@ -1232,12 +1224,12 @@ where
 
     /// Drains unreserved idle HTTP/1 senders.
     fn drain_idle(&mut self) -> Vec<http1::Connection<B>> {
-        cache::Cache::drain_idle(self)
+        Cache::drain_idle(self)
     }
 
     /// Reports whether an unreserved HTTP/1 sender is idle.
     fn has_idle(&self) -> bool {
-        cache::Cache::has_idle(self)
+        Cache::has_idle(self)
     }
 
     /// Returns whether the cache owns no ready, idle, or active sender.
@@ -1248,7 +1240,7 @@ where
 
 // ===== impl Singleton =====
 
-impl<M, Dst, B> Http2Pool<B> for singleton::Singleton<M, Dst>
+impl<M, Dst, B> Http2Pool<B> for Singleton<M, Dst>
 where
     M: Service<Dst, Response = http2::Connection<B>> + Clone + Send + 'static,
     M::Future: Send + 'static,
@@ -1284,7 +1276,7 @@ where
     }
 }
 
-impl<M, S> negotiate::Existing<S> for singleton::Singleton<M, S>
+impl<M, S> Existing<S> for Singleton<M, S>
 where
     M: Service<S>,
     M::Response: Clone,
@@ -1292,7 +1284,7 @@ where
 {
     /// Joins only existing or in-progress singleton state.
     fn checkout(&self) -> Option<Self::Future> {
-        singleton::Singleton::checkout(self)
+        Singleton::checkout(self)
     }
 }
 

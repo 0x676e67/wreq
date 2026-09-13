@@ -34,7 +34,7 @@ use super::{Established, SendError, clock_now, is_expired};
 use crate::{
     client::{
         error::{Error, ErrorKind},
-        pool::Started,
+        pool::cache::Started,
     },
     conn::Connected,
     rt::{Executor, Timer},

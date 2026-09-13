@@ -44,8 +44,10 @@ where
 {
     /// Creates the shared service when the singleton is empty.
     maker: M,
+
     /// Shared empty, creating, or created state.
     state: Arc<Mutex<State<M::Future, M::Response>>>,
+
     /// Carries the destination type without owning a destination.
     _dst: PhantomData<fn(Dst)>,
 }

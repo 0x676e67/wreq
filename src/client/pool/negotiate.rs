@@ -57,8 +57,10 @@ pub(super) fn builder() -> Builder<WantsConnect, WantsInspect, WantsFallback, Wa
 pub(super) struct Negotiate<L, R, S> {
     /// Pool used when inspection rejects the upgraded protocol.
     fallback: L,
+
     /// Pool used when inspection accepts the upgraded protocol.
     upgrade: R,
+
     /// Upgraded connections waiting to enter the singleton.
     pending: Arc<Mutex<VecDeque<S>>>,
 }
@@ -474,7 +476,6 @@ where
 /// later state change. The signal is a hint; consumers recover from stale wakes.
 #[derive(Clone, Debug)]
 pub(super) struct UpgradeSignal {
-    /// Wrapping generation observed by each fallback attempt.
     generation: watch::Sender<usize>,
 }
 
