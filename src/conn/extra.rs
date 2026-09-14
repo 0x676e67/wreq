@@ -36,7 +36,7 @@ struct Identity {
 }
 
 trait Value: Any + Send + Sync {
-    fn copy_to(&self, extensions: &mut http::Extensions);
+    fn copy_to(&self, ext: &mut http::Extensions);
     fn type_name(&self) -> &'static str;
 }
 
@@ -45,21 +45,23 @@ trait Value: Any + Send + Sync {
 impl Extra {
     /// Inserts response metadata, discarding the previous value without cloning it.
     /// Replacing configuration with metadata removes that type from reuse identity.
-    pub(crate) fn insert<T>(&mut self, value: T)
+    pub(crate) fn insert_metadata<T>(&mut self, value: T) -> &mut Self
     where
         T: Clone + Send + Sync + 'static,
     {
         self.insert_entry(value, None);
+        self
     }
 
     /// Inserts configuration whose complete value participates in reuse identity.
     /// Eq and Hash must remain stable while any connection request retains it.
     /// Configuration is never copied into response extensions as metadata.
-    pub(crate) fn insert_config<T>(&mut self, value: T)
+    pub(crate) fn insert_config<T>(&mut self, value: T) -> &mut Self
     where
         T: Clone + Eq + Hash + Send + Sync + 'static,
     {
         self.insert_entry(value, Some(Identity::of::<T>()));
+        self
     }
 
     /// Returns the value stored for this exact Rust type, regardless of its role.
@@ -104,25 +106,10 @@ impl Extra {
         value.downcast().ok()
     }
 
-    /// Sets configuration or removes the existing value when absent.
-    /// Discarded shared values are released without cloning them.
-    pub(crate) fn set_config<T>(&mut self, value: Option<T>) -> &mut Self
-    where
-        T: Clone + Eq + Hash + Send + Sync + 'static,
-    {
-        match value {
-            Some(value) => self.insert_config(value),
-            None => {
-                self.remove::<T>();
-            }
-        }
-        self
-    }
-
     /// Returns mutable configuration, inserting its default value when absent.
     /// Shared values are cloned before mutation to preserve frozen keys.
     /// An existing metadata value becomes configuration before it is returned.
-    pub(crate) fn config_or_default<T>(&mut self) -> &mut T
+    pub(crate) fn config_mut_or_default<T>(&mut self) -> &mut T
     where
         T: Default + Clone + Eq + Hash + Send + Sync + 'static,
     {
@@ -286,21 +273,20 @@ mod tests {
         extra.extend(Extra::default());
         assert!(extra.0.is_none());
         assert!(extra.remove::<u32>().is_none());
-        extra.set_config::<u32>(None);
         assert!(extra.0.is_none());
 
-        extra.insert(Copies(copies.clone()));
-        extra.insert(String::from("private metadata"));
-        extra.insert_config(7_u32);
+        extra
+            .insert_metadata(Copies(copies.clone()))
+            .insert_metadata(String::from("private metadata"))
+            .insert_config(7_u32);
         let frozen = extra.clone();
         assert!(extra.remove::<u64>().is_none());
-        extra.set_config::<u64>(None);
         assert!(Arc::ptr_eq(
             extra.0.as_ref().unwrap(),
             frozen.0.as_ref().unwrap()
         ));
-        *extra.config_or_default::<u32>() += 1;
-        extra.insert(String::from("replacement"));
+        *extra.config_mut_or_default::<u32>() += 1;
+        extra.insert_metadata(String::from("replacement"));
         assert_eq!(copies.load(Ordering::Relaxed), 0);
         assert_eq!(frozen.get::<u32>(), Some(&7));
         assert_eq!(extra.get::<u32>(), Some(&8));
@@ -329,11 +315,11 @@ mod tests {
         assert_eq!(copies.load(Ordering::Relaxed), 2);
 
         let mut extra = Extra::default();
-        extra.insert(3_u32);
-        *extra.config_or_default::<u32>() += 1;
+        extra.insert_metadata(3_u32);
+        *extra.config_mut_or_default::<u32>() += 1;
         let config = extra.clone();
         assert_ne!(config, Extra::default());
-        extra.insert(5_u32);
+        extra.insert_metadata(5_u32);
         assert_eq!(extra.get::<u32>(), Some(&5));
         assert_eq!(extra, Extra::default());
         extra.insert_config(6_u32);
@@ -347,11 +333,11 @@ mod tests {
         assert_eq!(config.get::<u32>(), Some(&4));
 
         let mut extra = Extra::default();
-        extra.config_or_default::<String>().push_str("first");
+        extra.config_mut_or_default::<String>().push_str("first");
         let buffer = extra.get::<String>().unwrap().as_ptr();
-        assert_eq!(extra.config_or_default::<String>().as_ptr(), buffer);
+        assert_eq!(extra.config_mut_or_default::<String>().as_ptr(), buffer);
         let frozen = extra.clone();
-        extra.config_or_default::<String>().push_str(" second");
+        extra.config_mut_or_default::<String>().push_str(" second");
         assert_eq!(frozen.get::<String>().unwrap(), "first");
         assert_eq!(extra.get::<String>().unwrap(), "first second");
         let shared = extra.0.as_ref().unwrap().clone();
@@ -359,9 +345,10 @@ mod tests {
         assert!(!Arc::ptr_eq(&shared, &sibling));
 
         let mut incoming = Extra::default();
-        incoming.insert(Copies(copies.clone()));
-        incoming.insert(String::from("metadata replaces configuration"));
-        incoming.insert_config(9_u32);
+        incoming
+            .insert_metadata(Copies(copies.clone()))
+            .insert_metadata(String::from("metadata replaces configuration"))
+            .insert_config(9_u32);
         let frozen = incoming.clone();
         let mut merged = Extra::default();
         merged.extend(incoming.clone());
@@ -374,7 +361,7 @@ mod tests {
         assert_eq!(copies.load(Ordering::Relaxed), before);
         assert_eq!(extra, frozen);
         assert_eq!(extra.get::<String>(), frozen.get::<String>());
-        *extra.config_or_default::<u32>() = 10;
+        *extra.config_mut_or_default::<u32>() = 10;
         assert_eq!(frozen.get::<u32>(), Some(&9));
     }
 }

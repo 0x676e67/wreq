@@ -14,8 +14,9 @@ use tokio::io::{AsyncRead, AsyncWrite};
 use tower::{BoxError, Service};
 
 use super::{
-    Connection, SocketOptions,
+    Connection,
     net::tcp::{ConnectError, ConnectingTcp, TcpConnector, TcpKeepaliveOptions, TcpOptions},
+    request::SocketOptions,
 };
 use crate::dns::{self, DnsResolver};
 

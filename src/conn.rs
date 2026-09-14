@@ -1,7 +1,7 @@
 //! Transport connector composition and established stream adapters.
 //! Connection metadata is exposed through [`Connected`]; protocol pools live in the client.
 
-mod extra;
+pub(crate) mod extra;
 pub(crate) mod request;
 mod timeout;
 mod tls_info;
@@ -24,7 +24,7 @@ use std::{
 };
 
 use ::http::{Extensions, HeaderMap, HeaderValue};
-pub(crate) use extra::Extra;
+use extra::Extra;
 use futures_util::future::BoxFuture;
 use http::HttpConnect;
 #[cfg(any(feature = "tokio-rt", feature = "compio-rt"))]
@@ -32,7 +32,7 @@ use net::TcpConnector;
 #[cfg(unix)]
 use net::UnixConnector;
 use pin_project_lite::pin_project;
-pub(crate) use request::{ConnectRequest, ConnectionKey, SocketOptions};
+use request::{ConnectRequest, SocketOptions};
 use timeout::{Timeout, TimeoutLayer};
 use tls_info::TlsInfoFactory;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
@@ -732,7 +732,7 @@ impl Connected {
     /// A later value replaces an earlier value of the same Rust type.
     /// Other connection clones retain their existing metadata.
     pub fn extra<T: Clone + Send + Sync + 'static>(mut self, extra: T) -> Connected {
-        self.extra.insert(extra);
+        self.extra.insert_metadata(extra);
         self
     }
 

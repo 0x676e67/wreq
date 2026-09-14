@@ -1,30 +1,27 @@
-//! Composes the client connection pool from small service components.
+//! Composable client connection pooling, adapted from [hyper-util].
+//! The port extends its design with connection-configuration isolation,
+//! acquisition policies, and idle cleanup.
 //!
-//! [`Map`] owns one entry per [`ConnectionKey`]. Fixed
-//! protocol entries build only an HTTP/1 [`cache::Cache`] or an HTTP/2
-//! [`singleton::Singleton`]. Automatic entries use [`Negotiate`] to route an
-//! established connection between both pools.
-//! The key includes request-local connection configuration; [`crate::Group`]
-//! adds an optional partition.
+//! [hyper-util]: https://github.com/hyperium/hyper-util/blob/master/src/client/pool/mod.rs
 //!
-//! HTTP/1 checkouts own an exclusive sender through dispatch and return it only
-//! after the protocol reports readiness. HTTP/2 checkouts clone a shared sender;
-//! their current accounting ends at response headers and does not yet represent
-//! the full stream lifetime.
+//! [`Map`] groups connections by [`ConnectionKey`], including request-local
+//! configuration and an optional [`crate::Group`] partition. Fixed modes use
+//! an HTTP/1 [`Cache`] or HTTP/2 [`Singleton`]; Auto routes through [`Negotiate`].
+//!
+//! HTTP/1 senders are exclusive and return only when ready. HTTP/2 senders are
+//! shared; checkout accounting ends at response headers, not at stream completion.
 //!
 //! # Checkout flow
 //!
-//! 1. The map finds or creates the complete connection-compatibility group.
-//! 2. Fixed entries check only their protocol pool. Automatic entries first try reusable HTTP/2
-//!    state, then HTTP/1 reuse, and only then allow the connection maker to dial.
-//! 3. The established transport carries the request's shared protocol configuration into the
-//!    selected handshake.
-//! 4. A successful checkout transfers entry cleanup into [`Pooled`]. Cancellation instead removes
-//!    the same map entry when no shared work remains.
+//! 1. Find or create the entry for the connection key.
+//! 2. Check the fixed protocol pool, or try HTTP/2 then HTTP/1 reuse in Auto mode before allowing a
+//!    new connection.
+//! 3. Handshake using the request's protocol configuration.
+//! 4. Transfer cleanup to [`Pooled`] on success; on cancellation, remove the same entry only when
+//!    no shared work remains.
 //!
-//! Pool locks protect routing and bookkeeping only. Any operation that can
-//! destroy a sender, poll user-provided service code, or wake a task first moves
-//! the affected value out of the lock.
+//! Locks protect routing and bookkeeping. Sender destruction, user service
+//! polling, and task wakeups run after releasing them.
 
 pub(super) mod cache;
 pub(super) mod expire;
@@ -63,7 +60,10 @@ use self::{
 use super::proto::{Established, SendError, http1, http2};
 use crate::{
     HttpVersion,
-    conn::{ConnectRequest, Connected, Connection, ConnectionKey},
+    conn::{
+        Connected, Connection,
+        request::{ConnectRequest, ConnectionKey},
+    },
     rt::{Executor, Timer},
     sync::Mutex,
 };
@@ -77,6 +77,8 @@ pub(super) fn is_canceled(error: &(dyn std::error::Error + 'static)) -> bool {
 ///
 /// This changes acquisition timing only. Idle timeouts and retention limits are
 /// configured separately on [`ClientBuilder`](crate::ClientBuilder).
+/// Existing HTTP/2 creation is shared under either strategy, without a competing
+/// connection attempt; the reuse delay does not limit that wait.
 ///
 /// # Examples
 ///
@@ -1730,7 +1732,7 @@ mod tests {
 
     /// Creates connection inputs with an explicit compatibility group.
     fn grouped_request(group: Group) -> ConnectRequest {
-        let mut extra = crate::conn::Extra::default();
+        let mut extra = crate::conn::extra::Extra::default();
         extra.insert_config(group);
         ConnectRequest::new(
             "http://localhost/".parse().expect("valid test URI"),
@@ -1821,7 +1823,7 @@ mod tests {
                 let released = Arc::new(AtomicBool::new(false));
                 let req = connect_request();
                 let mut extra = req.extra().clone();
-                extra.insert(Released(released.clone()));
+                extra.insert_metadata(Released(released.clone()));
                 let target = PoolTarget {
                     connection: connection(
                         ConnectRequest::new(req.uri().clone(), req.version(), extra).unwrap(),

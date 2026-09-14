@@ -26,7 +26,7 @@ use tower::{BoxError, Layer, Service};
 
 use crate::{
     Error, HttpVersion,
-    conn::{ConnectRequest, Connected, Connection},
+    conn::{Connected, Connection, request::ConnectRequest},
     ext::UriExt,
     tls::{
         AlpnProtocol, AlpsProtocol, KeyShare, TlsOptions, TlsVersion,

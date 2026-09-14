@@ -12,7 +12,7 @@ use std::{
 use http::Uri;
 use lru::DefaultHasher;
 
-use super::Extra;
+use super::extra::Extra;
 use crate::{HttpVersion, error::BoxError};
 
 /// Connection request shared by pool lookup and transport connection attempts.
@@ -242,15 +242,16 @@ mod tests {
     #[test]
     fn typed_extensions_freeze_value_identity() {
         let mut first = Extra::default();
-        *first.config_or_default::<u32>() = 6;
-        *first.config_or_default::<u32>() += 1;
+        *first.config_mut_or_default::<u32>() = 6;
+        *first.config_mut_or_default::<u32>() += 1;
         first.insert_config(Cow::Borrowed("config"));
         let frozen = request(first.clone());
         let mut second = Extra::default();
-        second.insert_config(Cow::<'static, str>::Owned("config".into()));
-        second.insert_config(7_u32);
+        second
+            .insert_config(Cow::<'static, str>::Owned("config".into()))
+            .insert_config(7_u32);
         // Ordinary metadata neither partitions reuse nor needs value identity.
-        second.insert(Arc::new(std::sync::atomic::AtomicUsize::new(1)));
+        second.insert_metadata(Arc::new(std::sync::atomic::AtomicUsize::new(1)));
         assert_eq!(first, second);
         assert_eq!(hash(&first), hash(&second));
         assert_eq!(frozen.key(), request(second.clone()).key());
@@ -263,11 +264,11 @@ mod tests {
         assert!(second.get::<u32>().is_none());
         second.insert_config(7_u64);
         assert_ne!(frozen.key(), request(second).key());
-        *first.config_or_default::<u32>() = 8;
+        *first.config_mut_or_default::<u32>() = 8;
         assert_eq!(first.get::<u32>(), Some(&8));
         assert_eq!(frozen.extra().get::<u32>(), Some(&7));
         assert_ne!(frozen.key(), request(first.clone()).key());
-        first.set_config::<u32>(None);
+        first.remove::<u32>();
         assert!(first.get::<u32>().is_none());
 
         let rerouted = frozen
@@ -291,9 +292,10 @@ mod tests {
             .alpn_protocols([AlpnProtocol::HTTP2, AlpnProtocol::HTTP1])
             .build();
         let mut extra = Extra::default();
-        extra.insert_config(tls_options);
-        extra.insert_config(Http1Options::builder().max_headers(32).build());
-        extra.insert_config(Http2Options::builder().header_table_size(4096).build());
+        extra
+            .insert_config(tls_options)
+            .insert_config(Http1Options::builder().max_headers(32).build())
+            .insert_config(Http2Options::builder().header_table_size(4096).build());
         let baseline = request(extra.clone()).key();
         assert_eq!(baseline, request(extra.clone()).key());
 

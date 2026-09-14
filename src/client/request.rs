@@ -32,7 +32,7 @@ use crate::cookie::{CookieStore, IntoCookieStore};
 use crate::{
     Error, Method, Proxy,
     config::{RequestConfig, RequestConfigValue},
-    conn::{Extra, SocketOptions},
+    conn::{extra::Extra, request::SocketOptions},
     ext::UriExt,
     group::Group,
     header::{AUTHORIZATION, HeaderMap, HeaderName, HeaderValue, OrigHeaderMap},
@@ -124,7 +124,7 @@ impl Request {
     /// Setting it to `None` restores the client's protocol preference.
     #[inline]
     pub fn version_mut(&mut self) -> &mut Option<Version> {
-        self.extra_mut().config_or_default::<Option<Version>>()
+        self.extra_mut().config_mut_or_default::<Option<Version>>()
     }
 
     /// Returns a reference to the associated extensions.
@@ -641,7 +641,7 @@ impl RequestBuilder {
     /// Set the proxy for this request.
     pub fn proxy(mut self, proxy: Proxy) -> RequestBuilder {
         if let Ok(ref mut req) = self.request {
-            req.extra_mut().set_config(Some(proxy.into_matcher()));
+            req.extra_mut().insert_config(proxy.into_matcher());
         }
         self
     }
@@ -653,7 +653,7 @@ impl RequestBuilder {
     {
         if let Ok(ref mut req) = self.request {
             req.extra_mut()
-                .config_or_default::<SocketOptions>()
+                .config_mut_or_default::<SocketOptions>()
                 .set_local_address(local_address);
         }
         self
@@ -667,7 +667,7 @@ impl RequestBuilder {
     {
         if let Ok(ref mut req) = self.request {
             req.extra_mut()
-                .config_or_default::<SocketOptions>()
+                .config_mut_or_default::<SocketOptions>()
                 .set_local_addresses(ipv4_address, ipv6_address);
         }
         self
@@ -738,7 +738,7 @@ impl RequestBuilder {
     {
         if let Ok(ref mut req) = self.request {
             req.extra_mut()
-                .config_or_default::<SocketOptions>()
+                .config_mut_or_default::<SocketOptions>()
                 .set_interface(interface);
         }
         self

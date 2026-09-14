@@ -72,9 +72,11 @@ use crate::dns::hickory::HickoryDnsResolver;
 use crate::{
     HttpVersion, IntoUri, Method, Proxy,
     conn::{
-        BoxedConnectorLayer, BoxedTransportConnector, Conn, ConnectRequest, Connection, Connector,
-        ConnectorLayer, HttpConnector, SocketOptions, Unnameable, http::HttpConnect,
+        BoxedConnectorLayer, BoxedTransportConnector, Conn, Connection, Connector, ConnectorLayer,
+        HttpConnector, Unnameable,
+        http::HttpConnect,
         net::TcpConnector,
+        request::{ConnectRequest, SocketOptions},
     },
     dns::{DnsResolverWithOverrides, DynResolver, GaiResolver, IntoResolve, Resolve},
     error::Error,
@@ -1868,8 +1870,8 @@ mod sealed {
 
         /// Sets how long a connection considered idle remains eligible for reuse.
         ///
-        /// `None` disables time-based eviction. A timer supplied through
-        /// [`Builder::pool_timer`] is required. The default is 90 seconds.
+        /// `None` disables time-based eviction. Without a [`Builder::pool_timer`],
+        /// expiration is checked only during checkout. The default is 90 seconds.
         #[inline]
         pub fn pool_idle_timeout<D>(mut self, val: D) -> Self
         where

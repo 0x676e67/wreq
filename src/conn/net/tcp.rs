@@ -37,7 +37,7 @@ use futures_util::future::Either;
 use socket2::TcpKeepalive;
 
 use crate::{
-    conn::{Connection, SocketOptions},
+    conn::{Connection, request::SocketOptions},
     dns,
     error::BoxError,
 };
@@ -835,7 +835,7 @@ mod tests {
         connect_with_timeout,
     };
     use crate::{
-        conn::{Connected, Connection, SocketOptions},
+        conn::{Connected, Connection, request::SocketOptions},
         dns,
     };
 

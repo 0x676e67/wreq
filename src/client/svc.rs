@@ -38,7 +38,7 @@ use super::{
 };
 use crate::{
     HttpVersion,
-    conn::{ConnectRequest, Connection, Extra},
+    conn::{Connection, extra::Extra, request::ConnectRequest},
     ext::UriExt,
     rt::{Executor, Timer},
 };

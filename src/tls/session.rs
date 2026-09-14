@@ -18,7 +18,7 @@ use btls::ssl::SslSession;
 use lru::LruCache;
 pub(crate) use store::SessionStore;
 
-use crate::{conn::ConnectionKey, sync::Mutex, tls::TlsVersion};
+use crate::{conn::request::ConnectionKey, sync::Mutex, tls::TlsVersion};
 
 const SESSION_ID_CONTEXT_LENGTH: usize = 32;
 

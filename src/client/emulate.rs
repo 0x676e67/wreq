@@ -1,7 +1,7 @@
 use http::HeaderMap;
 use wreq_proto::{http1::Http1Options, http2::Http2Options};
 
-use crate::{conn::Extra, header::OrigHeaderMap, tls::TlsOptions};
+use crate::{conn::extra::Extra, header::OrigHeaderMap, tls::TlsOptions};
 
 /// Converts a predefined or user-defined profile into [`Emulation`].
 pub trait IntoEmulation {
@@ -96,7 +96,7 @@ impl<T: Into<Emulation>> IntoEmulation for T {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Client, Group, config::RequestConfig, conn::SocketOptions};
+    use crate::{Client, Group, config::RequestConfig, conn::request::SocketOptions};
 
     #[test]
     fn profiles_replace_protocol_options_and_preserve_request_settings() {
