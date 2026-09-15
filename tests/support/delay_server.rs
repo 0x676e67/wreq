@@ -1,4 +1,7 @@
-#![allow(unused)]
+#![allow(
+    dead_code,
+    reason = "Shared support is compiled by tests that do not need delayed HTTP setup"
+)]
 use std::{convert::Infallible, future::Future, net, time::Duration};
 
 use futures_util::FutureExt;
