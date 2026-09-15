@@ -1014,15 +1014,13 @@ where
         (future, None)
     }
 
-    /// Removes a completed HTTP/2 sender when it is closed or has expired idle.
+    /// Removes a completed HTTP/2 sender when poisoned, closed, or expired idle.
     ///
     /// Pending singleton creation is left untouched. Active sender checkouts are
     /// kept by [`http2::Connection::is_reusable`].
     fn retain(&mut self, now: Instant, timeout: Option<Duration>) -> Option<DeferredDrop> {
-        if self.state.uses.load(Ordering::Acquire) != 0 {
-            return None;
-        }
-
+        // Pending checkouts defer idle expiry, never poison or closure checks.
+        let timeout = timeout.filter(|_| self.state.uses.load(Ordering::Acquire) == 0);
         self.service
             .retain(|connection| connection.is_reusable(now, timeout))
             .map(defer_drop)
@@ -1112,11 +1110,11 @@ where
             Default::default()
         };
         let fallback = self.service.fallback_mut().retain_idle(now, timeout);
-        let upgrade = if entry_in_use {
-            None
-        } else {
-            self.service.upgrade_mut().retain_idle(now, timeout)
-        };
+        // Keep health checks active while another checkout protects against idle expiry.
+        let upgrade = self
+            .service
+            .upgrade_mut()
+            .retain_idle(now, timeout.filter(|_| !entry_in_use));
 
         (!pending.is_empty() || !fallback.is_empty() || upgrade.is_some())
             .then(|| defer_drop((pending, fallback, upgrade)))
@@ -1889,15 +1887,32 @@ mod tests {
             }
             assert_eq!(calls.load(Ordering::Relaxed), 1);
 
-            let poisoned = checkout().await.unwrap();
-            poisoned.conn_info().poison();
-            drop(poisoned);
+            let pending = checkout();
+            let completed = checkout().await.unwrap();
+            let connected = completed.conn_info().clone();
+            drop(completed);
+            // Response::forbid_recycle poisons after dispatch releases its checkout.
+            // Another unpolled checkout must not suppress this health check.
+            connected.poison();
+            let discarded = pool
+                .inner
+                .services
+                .lock()
+                .get_mut(&connect_request().key())
+                .unwrap()
+                .retain(pool.inner.now(), None);
+            assert!(
+                discarded.is_some(),
+                "{version:?}: poisoned sender was retained"
+            );
+            drop(discarded);
             gate.add_permits(1);
             let mut replacement = tokio::time::timeout(Duration::from_secs(1), checkout())
                 .await
                 .unwrap()
                 .unwrap();
             assert!(!replacement.is_reused());
+            drop(pending);
             drop(held);
             assert!(checkout().await.unwrap().is_reused());
             assert_eq!(calls.load(Ordering::Relaxed), 2);
