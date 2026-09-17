@@ -140,7 +140,7 @@ where
                 let Some(location) = res
                     .headers()
                     .get(LOCATION)
-                    .and_then(|loc| loc.to_str().ok())
+                    .and_then(|loc| std::str::from_utf8(loc.as_bytes()).ok())
                     .and_then(|loc| resolve_uri(loc, request.uri()))
                 else {
                     return Poll::Ready(Ok(res));
