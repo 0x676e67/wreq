@@ -681,6 +681,41 @@ async fn test_redirect_async_pending_follow() {
 }
 
 #[tokio::test]
+async fn test_redirect_utf8_location_is_encoded() {
+    let server = server::http(move |req| async move {
+        if req.uri() == "/start" {
+            http::Response::builder()
+                .status(302)
+                .header(
+                    header::LOCATION,
+                    header::HeaderValue::from_bytes("/café".as_bytes()).unwrap(),
+                )
+                .body(Body::default())
+                .unwrap()
+        } else {
+            assert_eq!(req.uri(), "/caf%C3%A9");
+            http::Response::builder()
+                .status(StatusCode::OK)
+                .body(Body::from("OK"))
+                .unwrap()
+        }
+    });
+
+    let url = format!("http://{}/start", server.addr());
+    let dst = format!("http://{}/caf%C3%A9", server.addr());
+
+    let res = wreq::get(&url)
+        .redirect(Policy::default())
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(res.status(), StatusCode::OK);
+    assert_eq!(res.uri(), dst.as_str());
+    assert_eq!(res.text().await.unwrap(), "OK");
+}
+
+#[tokio::test]
 async fn test_redirect_location_is_encoded() {
     let server = server::http(move |req| async move {
         if req.uri() == "/start" {
