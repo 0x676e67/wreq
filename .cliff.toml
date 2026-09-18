@@ -111,12 +111,6 @@ protect_breaking_commits = false
 filter_commits = false
 # Regex to select git tags that represent releases.
 tag_pattern = "v[0-9].*"
-# Regex to select git tags that do not represent proper releases.
-# Takes precedence over `tag_pattern`.
-# Changes belonging to these releases will be included in the next release.
-skip_tags = ""
-# Regex to exclude git tags after applying the tag_pattern.
-ignore_tags = "v2.1.0|v2.1.1"
 # Order releases topologically instead of chronologically.
 topo_order = false
 # Order of commits in each group/release within the changelog.
