@@ -3,9 +3,11 @@
 changelog_path = "./RELEASE.md"
 changelog_config = "./.cliff.toml"
 release_always = false
-# Tag CI runs the full checks before publishing to crates.io.
-publish = false
-# Tag CI creates GitHub releases with auto-generated notes.
-git_release_enable = false
+# GitHub release with notes generated server-side by GitHub.
+git_release_enable = true
+git_release_name = "v{{ version }}"
+git_release_type = "auto"
+git_release_body = ""
+git_release_generate_notes = true
 git_tag_enable = true
 git_tag_name = "v{{ version }}"
