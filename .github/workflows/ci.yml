@@ -98,7 +98,7 @@ jobs:
           toolchain: stable
           override: true
       - uses: Swatinem/rust-cache@v2
-      - uses: taiki-e/install-action@v2.87.12
+      - uses: taiki-e/install-action@v2.87.17
         with:
           tool: cargo-nextest
       - name: Run tests (${{ matrix.feature-set }})
