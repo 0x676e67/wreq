@@ -6,6 +6,37 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+## [0.17.0](https://github.com/0x676e67/wreq/compare/v0.16.1..v0.17.0) - 2026-09-23
+
+### Features
+
+- *(tls)* Add chromium roots and trust anchor IDs ([#1273](https://github.com/0x676e67/wreq/issues/1273)) - ([23001d1](https://github.com/0x676e67/wreq/commit/23001d171da01a5a97191801797c1e20222bda6c))
+- *(tls)* Expose signature algorithms GREASE setting ([#1270](https://github.com/0x676e67/wreq/issues/1270)) - ([ef638cc](https://github.com/0x676e67/wreq/commit/ef638cca03002f97d1d81c2cfa931b150ff9f343))
+
+### Bug Fixes
+
+- *(redirect)* Accept UTF-8 Location headers ([#1291](https://github.com/0x676e67/wreq/issues/1291)) - ([8a4f9d4](https://github.com/0x676e67/wreq/commit/8a4f9d4242331e5e00d4221c8f1c998bf17f109c))
+
+### Miscellaneous Tasks
+
+- *(example)* Update examples - ([abd421d](https://github.com/0x676e67/wreq/commit/abd421d16dd48b3c2d7fb812f185eec3c6ec3132))
+
+### Bench
+
+- Split protocol benchmarks by runtime ([#1271](https://github.com/0x676e67/wreq/issues/1271)) - ([c59eaef](https://github.com/0x676e67/wreq/commit/c59eaef1c70caf9221231a5b3a9cfeab3f816347))
+
+### Build
+
+- *(deps)* Bump reqwest from 0.13.4 to 0.13.5 ([#1287](https://github.com/0x676e67/wreq/issues/1287)) - ([391493f](https://github.com/0x676e67/wreq/commit/391493f9c96d865f1d680e0fc1346edd8ab58ff1))
+- *(deps)* Bump hickory-resolver from 0.26.1 to 0.26.3 ([#1288](https://github.com/0x676e67/wreq/issues/1288)) - ([e62b6bf](https://github.com/0x676e67/wreq/commit/e62b6bf9c4eafacbd88573cb151dcf73acd233dd))
+- *(deps)* Bump lru from 0.18.3 to 0.18.4 ([#1282](https://github.com/0x676e67/wreq/issues/1282)) - ([cd76bcd](https://github.com/0x676e67/wreq/commit/cd76bcdf1307153de289d34e072528bdf0510a3b))
+- *(deps)* Bump ipnet from 2.12.1 to 2.12.2 ([#1281](https://github.com/0x676e67/wreq/issues/1281)) - ([b5d65e6](https://github.com/0x676e67/wreq/commit/b5d65e6b093482bd78a34fee88aef7fd2be928c8))
+- *(deps)* Bump windows-registry from 0.6.1 to 0.100.0 ([#1284](https://github.com/0x676e67/wreq/issues/1284)) - ([737b289](https://github.com/0x676e67/wreq/commit/737b2892d29fbb2ee5c48c8c01fa33a2cee34485))
+- *(deps)* Update system-configuration requirement from 0.7.0 to 0.8.0 ([#1252](https://github.com/0x676e67/wreq/issues/1252)) - ([3900183](https://github.com/0x676e67/wreq/commit/39001837015f09428047804f430f64b018668d3e))
+- *(deps)* Update tower-http requirement from 0.6.8 to 0.7.0 ([#1251](https://github.com/0x676e67/wreq/issues/1251)) - ([2a4080e](https://github.com/0x676e67/wreq/commit/2a4080e3443f0280e4922d8e51ed713ed0b308e3))
+- *(deps)* Bump taiki-e/install-action from 2.86.3 to 2.86.6 ([#1267](https://github.com/0x676e67/wreq/issues/1267)) - ([1d30ffc](https://github.com/0x676e67/wreq/commit/1d30ffc4cde8d795e7ba9830c6cf36dc84baf91d))
+- Track Cargo.lock ([#1275](https://github.com/0x676e67/wreq/issues/1275)) - ([ea78ef5](https://github.com/0x676e67/wreq/commit/ea78ef5eff0c9092dcfaea36a46e443511c54c6e))
+
 
 ## [0.16.1](https://github.com/0x676e67/wreq/compare/v0.16.0...v0.16.1) - 2026-08-25
 
