@@ -102,7 +102,7 @@ async fn main() -> wreq::Result<()> {
         .http2_options(http2)
         .orig_headers(orig_headers)
         .headers(headers)
-        .build(Default::default());
+        .build();
 
     // Use the API you're already familiar with
     let resp = wreq::get("https://pingly.us.kg/api/all")
