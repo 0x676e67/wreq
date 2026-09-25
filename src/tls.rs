@@ -162,6 +162,26 @@ pub struct TlsOptions {
     /// **Default:** `false`
     pub alps_use_new_codepoint: bool,
 
+    /// Requested trust anchor identifiers
+    /// ([draft-ietf-tls-trust-anchor-ids](https://datatracker.ietf.org/doc/draft-ietf-tls-trust-anchor-ids/)).
+    ///
+    /// When set, the client sends the TLS `trust_anchors` extension
+    /// (codepoint 0xca34 = 51764) in ClientHello, advertising the supplied
+    /// trust anchor IDs to the server.
+    ///
+    /// The value is the **wire-format** ID list: a series of non-empty,
+    /// 8-bit length-prefixed strings, as defined by the draft. wreq does not
+    /// validate the encoding; callers must supply a pre-formatted byte string.
+    ///
+    /// An **empty list** (`Some` of an empty slice) still sends the
+    /// `trust_anchors` extension with an empty value. This signals support for
+    /// the retry flow without requesting any specific trust anchor. `None`
+    /// (the default) sends no extension at all. The two states are intentionally
+    /// distinct and are not collapsed.
+    ///
+    /// **Default:** `None`
+    pub requested_trust_anchors: Option<Cow<'static, [u8]>>,
+
     /// Enables TLS Session Tickets ([RFC 5077](https://tools.ietf.org/html/rfc5077)).
     ///
     /// Allows session resumption without requiring server-side state.
@@ -556,6 +576,22 @@ impl TlsOptionsBuilder {
         self
     }
 
+    /// Sets the requested trust anchor identifiers (wire-format).
+    ///
+    /// The value must be the wire-format ID list described in
+    /// [`TlsOptions::requested_trust_anchors`]: a series of non-empty, 8-bit
+    /// length-prefixed strings. An empty slice sends the `trust_anchors`
+    /// extension with an empty value (retry-flow signal); use `None` (leave the
+    /// default) to send no extension at all.
+    #[inline]
+    pub fn requested_trust_anchors<T>(mut self, ids: T) -> Self
+    where
+        T: Into<Cow<'static, [u8]>>,
+    {
+        self.config.requested_trust_anchors = Some(ids.into());
+        self
+    }
+
     /// Sets the AES hardware override flag.
     #[inline]
     pub fn aes_hw_override<T>(mut self, enabled: T) -> Self
@@ -595,6 +631,7 @@ impl Default for TlsOptions {
             alpn_protocols: Some(Cow::Borrowed(&[AlpnProtocol::HTTP2, AlpnProtocol::HTTP1])),
             alps_protocols: None,
             alps_use_new_codepoint: false,
+            requested_trust_anchors: None,
             session_ticket: true,
             min_tls_version: None,
             max_tls_version: None,
@@ -660,5 +697,25 @@ mod tests {
 
         let alpn = AlpnProtocol::HTTP3.encode();
         assert_eq!(alpn, b"\x02h3".as_ref());
+    }
+
+    #[test]
+    fn requested_trust_anchors_roundtrip() {
+        // Absent: no extension is sent.
+        let opts = TlsOptions::builder().build();
+        assert!(opts.requested_trust_anchors.is_none());
+
+        // Empty wire list: the extension is still sent (retry-flow signal).
+        let opts = TlsOptions::builder()
+            .requested_trust_anchors(Vec::<u8>::new())
+            .build();
+        assert_eq!(opts.requested_trust_anchors.as_deref(), Some(&[][..]));
+
+        // Non-empty wire list: two 8-bit length-prefixed trust anchor IDs.
+        let wire: Vec<u8> = vec![0x03, b'a', b'b', b'c', 0x02, b'd', b'e'];
+        let opts = TlsOptions::builder()
+            .requested_trust_anchors(wire.clone())
+            .build();
+        assert_eq!(opts.requested_trust_anchors.as_deref(), Some(&wire[..]));
     }
 }
