@@ -419,7 +419,9 @@ where
                         }
                         Poll::Ready(Ok(Err(error))) => return Poll::Ready(Err(error)),
                         Poll::Ready(Err(_)) => *receiver = None,
-                        Poll::Pending => {}
+                        // The batch may already be empty while its result is sent unlocked.
+                        // Only a closed channel hands this waiter the driver role.
+                        Poll::Pending => return Poll::Pending,
                     }
                 }
 
@@ -992,6 +994,37 @@ mod tests {
         };
         assert_eq!(*driver_service.inner(), "shared");
         assert_eq!(*waiter_service.inner(), "shared");
+
+        let sender = Arc::new(Mutex::new(None));
+        let singleton = Singleton::new(ControlledMaker {
+            sender: sender.clone(),
+        });
+        let mut driver = tokio_test::task::spawn(Oneshot::new(singleton.clone(), ()));
+        assert!(driver.poll().is_pending());
+        let sender = sender.lock().take().expect("maker started");
+        let mut waiter = tokio_test::task::spawn(Oneshot::new(singleton.clone(), ()));
+        assert!(waiter.poll().is_pending());
+
+        // Failure empties the batch before broadcasting unlocked; a waiter polled in
+        // between must keep waiting for the shared error instead of retrying.
+        let waiters = {
+            let mut state = singleton.state.lock();
+            let State::Making(batch) = &mut *state else {
+                panic!("maker should still be running");
+            };
+            let waiters = batch.take_waiters();
+            *state = State::Empty;
+            waiters
+        };
+        assert!(waiter.poll().is_pending());
+        let error = super::SingletonError::new("maker failed".into());
+        super::send_result(waiters, Err(&error));
+        let std::task::Poll::Ready(Err(waiter_error)) = waiter.poll() else {
+            panic!("waiter should receive the broadcast error");
+        };
+        assert!(!super::SingletonError::is_canceled(&waiter_error));
+        drop(driver);
+        drop(sender);
 
         let sender = Arc::new(Mutex::new(None));
         let singleton = Singleton::new(ControlledMaker {
