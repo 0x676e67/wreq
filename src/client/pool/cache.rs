@@ -554,7 +554,15 @@ where
                 {
                     let shutdown = cache_shutdown(locked.shutdown.subscribe());
                     let background = future.take().map(|future| {
-                        BackgroundConnect::new(future, Arc::downgrade(shared), shutdown, active)
+                        let _ = active.try_update(Ordering::AcqRel, Ordering::Acquire, |count| {
+                            Some(count.saturating_add(1))
+                        });
+                        BackgroundConnect {
+                            future,
+                            shared: Arc::downgrade(shared),
+                            shutdown,
+                            active: active.clone(),
+                        }
                     });
                     (Some((service, background)), None)
                 } else {
@@ -878,26 +886,6 @@ pub(super) struct BackgroundConnect<F, S> {
 
 // ===== impl BackgroundConnect =====
 
-impl<F, S> BackgroundConnect<F, S> {
-    /// Wraps a lost maker future and records it as active cache work.
-    fn new(
-        future: F,
-        shared: Weak<Mutex<Shared<S>>>,
-        shutdown: BoxFuture<'static, ()>,
-        active: &Arc<AtomicUsize>,
-    ) -> Self {
-        let _ = active.try_update(Ordering::AcqRel, Ordering::Acquire, |count| {
-            Some(count.saturating_add(1))
-        });
-        Self {
-            future,
-            shared,
-            shutdown,
-            active: active.clone(),
-        }
-    }
-}
-
 impl<F, S> Drop for BackgroundConnect<F, S> {
     fn drop(&mut self) {
         let _ = self
@@ -1078,14 +1066,13 @@ mod tests {
             shutdown: watch::channel(()).0,
         }));
         let shutdown = cache_shutdown(shared.lock().shutdown.subscribe());
-        let active = Arc::new(AtomicUsize::new(0));
-        let mut connect = Box::pin(BackgroundConnect::new(
-            CountingPending(polls.clone()),
-            Arc::downgrade(&shared),
+        let active = Arc::new(AtomicUsize::new(1));
+        let mut connect = Box::pin(BackgroundConnect {
+            future: CountingPending(polls.clone()),
+            shared: Arc::downgrade(&shared),
             shutdown,
-            &active,
-        ));
-        assert_eq!(active.load(Ordering::SeqCst), 1);
+            active: active.clone(),
+        });
 
         let mut task = tokio_test::task::spawn(connect.as_mut());
         assert!(task.poll().is_pending());
