@@ -123,7 +123,10 @@ where
         }
 
         let target = self.target.clone();
-        let running = self.running.clone();
+        let mut running = Running {
+            flag: self.running.clone(),
+            owned: true,
+        };
         let timer = self.timer.clone();
         let mut shutdown = self.shutdown.subscribe();
 
@@ -148,14 +151,12 @@ where
                     continue;
                 }
 
-                running.store(false, Ordering::Release);
+                running.release();
                 if let Some(deadline) = target
                     .next()
                     .filter(|next| *next != Duration::ZERO)
                     .and_then(|next| timer.now().checked_add(next))
-                    && running
-                        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-                        .is_ok()
+                    && running.reacquire()
                 {
                     timer.reset(&mut sleep, deadline);
                     continue;
@@ -163,6 +164,41 @@ where
                 return;
             }
         });
+    }
+}
+
+/// Watcher ownership of [`Expire::running`], cleared when the task stops.
+///
+/// Dropping the task without completion, for example during runtime shutdown,
+/// must still let a later [`Expire::schedule`] start a replacement watcher.
+struct Running {
+    flag: Arc<AtomicBool>,
+    owned: bool,
+}
+
+// ===== impl Running =====
+
+impl Running {
+    /// Gives up ownership so another schedule can start a watcher.
+    fn release(&mut self) {
+        if std::mem::take(&mut self.owned) {
+            self.flag.store(false, Ordering::Release);
+        }
+    }
+
+    /// Takes ownership back unless another watcher has already started.
+    fn reacquire(&mut self) -> bool {
+        self.owned = self
+            .flag
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_ok();
+        self.owned
+    }
+}
+
+impl Drop for Running {
+    fn drop(&mut self) {
+        self.release();
     }
 }
 
@@ -213,6 +249,32 @@ mod tests {
                 .load(Ordering::SeqCst)
                 .then_some(Duration::from_millis(100))
         }
+    }
+
+    #[test]
+    fn watcher_flag_resets_when_runtime_drops_task() {
+        let target = Arc::new(TestTarget {
+            retained: AtomicBool::new(true),
+            checks: AtomicUsize::new(0),
+        });
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .build()
+            .unwrap();
+        let expire = runtime.block_on(async {
+            let expire = Expire::new(
+                Arc::downgrade(&target),
+                Executor::default(),
+                Timer::default(),
+            );
+            expire.schedule(Some(Duration::from_secs(60)));
+            expire
+        });
+        assert!(expire.is_running());
+
+        // Runtime shutdown drops the unpolled watcher; a later schedule must start again.
+        drop(runtime);
+        assert!(!expire.is_running());
     }
 
     #[tokio::test(start_paused = true)]

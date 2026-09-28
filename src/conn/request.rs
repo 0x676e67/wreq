@@ -9,7 +9,7 @@ use std::{
     sync::{Arc, LazyLock},
 };
 
-use http::Uri;
+use http::{Uri, uri::PathAndQuery};
 use lru::DefaultHasher;
 
 use super::extra::Extra;
@@ -80,7 +80,7 @@ impl ConnectRequest {
         let uri = Uri::builder()
             .scheme(uri.scheme().ok_or("URI missing scheme")?.clone())
             .authority(uri.authority().ok_or("URI missing authority")?.clone())
-            .path_and_query("/")
+            .path_and_query(PathAndQuery::from_static("/"))
             .build()?;
         static HASHER: LazyLock<DefaultHasher> = LazyLock::new(DefaultHasher::default);
         let mut hasher = HASHER.build_hasher();

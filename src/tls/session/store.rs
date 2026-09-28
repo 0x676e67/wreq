@@ -19,7 +19,8 @@ use super::{
 };
 use crate::sync::Mutex;
 
-const SESSION_ENTRY_CAPACITY: usize = 8;
+// Keys isolate origins and connection options; keep room for multi-origin clients.
+const SESSION_ENTRY_CAPACITY: usize = 256;
 const EXPIRATION_CHECK_INTERVAL: usize = 256;
 
 /// Stores session tickets for one client and an optional caller-provided store.

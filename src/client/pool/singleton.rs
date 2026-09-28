@@ -7,10 +7,10 @@
 //! If the driver is canceled, one waiter takes over the same pinned maker
 //! future. This avoids abandoning a connection attempt while another request is
 //! still waiting for it. Every batch also owns a generation marker. A failed
-//! maker reports its root cause only to the driver; waiters receive a retryable
-//! cancellation and can form a new batch. A failed checkout may clear only the
-//! generation that produced it, so a stale sender cannot remove a newer
-//! replacement.
+//! maker reports its shared root cause to every participant, so concurrent
+//! checkouts do not retry the same failure one after another. A failed checkout
+//! may clear only the generation that produced it, so a stale sender cannot
+//! remove a newer replacement.
 
 use std::{
     fmt,
@@ -247,7 +247,7 @@ pub(super) enum SingletonFuture<F, S> {
         /// Shared singleton state.
         state: Arc<Mutex<State<F, S>>>,
         /// Result channel for a non-driver participant.
-        receiver: Option<oneshot::Receiver<S>>,
+        receiver: Option<oneshot::Receiver<Result<S, SingletonError>>>,
         /// Whether this checkout joined work started by another caller.
         reused: bool,
     },
@@ -345,14 +345,13 @@ struct Driver {
 
 /// Non-driver participant waiting for the shared result.
 ///
-/// Dropping its sender wakes the receiver during driver promotion. Normal
-/// completion sends a clone of the shared service. A maker failure closes the
-/// channel so the participant can retry in a new generation.
+/// Dropping its sender wakes the receiver during driver promotion. Completion
+/// sends a clone of the shared service or of the maker's failure.
 struct Waiter<S> {
     /// Waiter participant identifier.
     id: WaiterId,
-    /// Delivers the shared service; maker failure closes the channel.
-    sender: oneshot::Sender<S>,
+    /// Delivers the shared result; closing it signals driver promotion.
+    sender: oneshot::Sender<Result<S, SingletonError>>,
 }
 
 /// Values removed when one singleton participant is canceled.
@@ -410,7 +409,7 @@ where
             } => {
                 if let Some(rx) = receiver.as_mut() {
                     match Pin::new(rx).poll(cx) {
-                        Poll::Ready(Ok(service)) => {
+                        Poll::Ready(Ok(Ok(service))) => {
                             return Poll::Ready(Ok(Singled::new(
                                 service,
                                 Arc::downgrade(state),
@@ -418,8 +417,11 @@ where
                                 *reused,
                             )));
                         }
+                        Poll::Ready(Ok(Err(error))) => return Poll::Ready(Err(error)),
                         Poll::Ready(Err(_)) => *receiver = None,
-                        Poll::Pending => {}
+                        // The batch may already be empty while its result is sent unlocked.
+                        // Only a closed channel hands this waiter the driver role.
+                        Poll::Pending => return Poll::Pending,
                     }
                 }
 
@@ -492,12 +494,12 @@ where
                                 }
                             }
                         };
-                        send_service(waiters, &service);
+                        send_result(waiters, Ok(&service));
                         Poll::Ready(Ok(Singled::new(service, weak, generation.clone(), *reused)))
                     }
                     Poll::Ready(Err(error)) => {
                         drop(future);
-                        let error: BoxError = error.into();
+                        let error = SingletonError::new(error.into());
                         let mut locked = state.lock();
                         let waiters = match &mut *locked {
                             State::Making(batch) if Arc::ptr_eq(generation, &batch.generation) => {
@@ -510,8 +512,8 @@ where
                             }
                         };
                         drop(locked);
-                        drop(waiters);
-                        Poll::Ready(Err(SingletonError::new(error)))
+                        send_result(waiters, Err(&error));
+                        Poll::Ready(Err(error))
                     }
                 }
             }
@@ -643,7 +645,7 @@ impl<F, S> Batch<F, S> {
     }
 
     /// Registers a participant waiting for the shared result.
-    fn register_waiter(&mut self) -> (WaiterId, oneshot::Receiver<S>) {
+    fn register_waiter(&mut self) -> (WaiterId, oneshot::Receiver<Result<S, SingletonError>>) {
         let id = self.next_id();
         let (sender, receiver) = oneshot::channel();
         self.waiters.push(Waiter { id, sender });
@@ -711,13 +713,13 @@ impl<F, S> Batch<F, S> {
     }
 }
 
-/// Sends one service clone per waiter after the singleton state lock is released.
-fn send_service<S>(waiters: Vec<Waiter<S>>, service: &S)
+/// Sends one result clone per waiter after the singleton state lock is released.
+fn send_result<S>(waiters: Vec<Waiter<S>>, result: Result<&S, &SingletonError>)
 where
     S: Clone,
 {
     for waiter in waiters {
-        let _ = waiter.sender.send(service.clone());
+        let _ = waiter.sender.send(result.cloned().map_err(Clone::clone));
     }
 }
 
@@ -744,22 +746,22 @@ fn discard_generation<F, S>(state: &Weak<Mutex<State<F, S>>>, generation: &Arc<(
 
 /// Error returned when a singleton service cannot be created or joined.
 ///
-/// The driver receives the maker's original error. Other participants observe a
-/// closed result channel and retry in a new generation.
-#[derive(Debug)]
-pub(super) struct SingletonError(BoxError);
+/// Every participant of a failed batch shares the maker's error. Only a batch
+/// that disappeared without a result reports a retryable cancellation.
+#[derive(Clone, Debug)]
+pub(super) struct SingletonError(Arc<dyn std::error::Error + Send + Sync>);
 
 // ===== impl SingletonError =====
 
 impl SingletonError {
     /// Wraps an error produced before or while creating the service.
     fn new(error: BoxError) -> Self {
-        Self(error)
+        Self(Arc::from(error))
     }
 
     /// Creates the error returned when the participant's batch disappeared.
     fn canceled() -> Self {
-        Self(Box::new(Canceled))
+        Self(Arc::new(Canceled))
     }
 
     /// Returns whether this error asks the caller to start a new batch.
@@ -807,6 +809,7 @@ impl std::error::Error for Canceled {}
 #[cfg(test)]
 mod tests {
     use std::{
+        error::Error as _,
         future::Ready,
         sync::{
             Arc,
@@ -999,6 +1002,37 @@ mod tests {
         let mut driver = tokio_test::task::spawn(Oneshot::new(singleton.clone(), ()));
         assert!(driver.poll().is_pending());
         let sender = sender.lock().take().expect("maker started");
+        let mut waiter = tokio_test::task::spawn(Oneshot::new(singleton.clone(), ()));
+        assert!(waiter.poll().is_pending());
+
+        // Failure empties the batch before broadcasting unlocked; a waiter polled in
+        // between must keep waiting for the shared error instead of retrying.
+        let waiters = {
+            let mut state = singleton.state.lock();
+            let State::Making(batch) = &mut *state else {
+                panic!("maker should still be running");
+            };
+            let waiters = batch.take_waiters();
+            *state = State::Empty;
+            waiters
+        };
+        assert!(waiter.poll().is_pending());
+        let error = super::SingletonError::new("maker failed".into());
+        super::send_result(waiters, Err(&error));
+        let std::task::Poll::Ready(Err(waiter_error)) = waiter.poll() else {
+            panic!("waiter should receive the broadcast error");
+        };
+        assert!(!super::SingletonError::is_canceled(&waiter_error));
+        drop(driver);
+        drop(sender);
+
+        let sender = Arc::new(Mutex::new(None));
+        let singleton = Singleton::new(ControlledMaker {
+            sender: sender.clone(),
+        });
+        let mut driver = tokio_test::task::spawn(Oneshot::new(singleton.clone(), ()));
+        assert!(driver.poll().is_pending());
+        let sender = sender.lock().take().expect("maker started");
         let mut waiter = tokio_test::task::spawn(Oneshot::new(singleton, ()));
         assert!(waiter.poll().is_pending());
 
@@ -1010,9 +1044,13 @@ mod tests {
         assert!(!super::SingletonError::is_canceled(&driver_error));
         assert!(waiter.is_woken());
         let std::task::Poll::Ready(Err(waiter_error)) = waiter.poll() else {
-            panic!("waiter should be released for a new batch");
+            panic!("waiter should share the maker error");
         };
-        assert!(super::SingletonError::is_canceled(&waiter_error));
+        assert!(!super::SingletonError::is_canceled(&waiter_error));
+        assert_eq!(
+            waiter_error.source().map(ToString::to_string),
+            driver_error.source().map(ToString::to_string)
+        );
 
         let sender = Arc::new(Mutex::new(None));
         let singleton = Singleton::new(ControlledMaker {

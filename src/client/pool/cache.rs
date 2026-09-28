@@ -83,7 +83,7 @@ where
     /// FIFO waiter registered by this clone during `poll_ready`.
     ready_waiter: Option<WaiterId>,
 
-    /// Number of services currently checked out from this cache.
+    /// Number of checked-out services and background connects.
     active: Arc<AtomicUsize>,
 
     /// Carries the destination type without owning a destination.
@@ -553,10 +553,16 @@ where
                 let (reused, replaced_waker) = if let Some(service) = locked.take_reserved(*waiter)
                 {
                     let shutdown = cache_shutdown(locked.shutdown.subscribe());
-                    let background = future.take().map(|future| BackgroundConnect {
-                        future,
-                        shared: Arc::downgrade(shared),
-                        shutdown,
+                    let background = future.take().map(|future| {
+                        let _ = active.try_update(Ordering::AcqRel, Ordering::Acquire, |count| {
+                            Some(count.saturating_add(1))
+                        });
+                        BackgroundConnect {
+                            future,
+                            shared: Arc::downgrade(shared),
+                            shutdown,
+                            active: active.clone(),
+                        }
                     });
                     (Some((service, background)), None)
                 } else {
@@ -865,7 +871,8 @@ fn finish_cancel<S>(result: CancelResult<S>) {
 /// The future does not keep the cache alive. It exits when the cache shutdown
 /// signal fires, and otherwise returns a successful result to the cache if the
 /// shared state still exists. Connection errors are intentionally ignored
-/// because another service already satisfied the checkout.
+/// because another service already satisfied the checkout. Until dropped, it
+/// counts as active work so entry cleanup does not cancel it.
 pub(super) struct BackgroundConnect<F, S> {
     /// Maker future that already began useful work.
     future: F,
@@ -873,9 +880,21 @@ pub(super) struct BackgroundConnect<F, S> {
     shared: Weak<Mutex<Shared<S>>>,
     /// Wakes the task when the destination cache is dropped.
     shutdown: BoxFuture<'static, ()>,
+    /// Active-work counter released on drop.
+    active: Arc<AtomicUsize>,
 }
 
 // ===== impl BackgroundConnect =====
+
+impl<F, S> Drop for BackgroundConnect<F, S> {
+    fn drop(&mut self) {
+        let _ = self
+            .active
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |count| {
+                Some(count.saturating_sub(1))
+            });
+    }
+}
 
 impl<F, S, E> Started for BackgroundConnect<F, S>
 where
@@ -1047,10 +1066,12 @@ mod tests {
             shutdown: watch::channel(()).0,
         }));
         let shutdown = cache_shutdown(shared.lock().shutdown.subscribe());
+        let active = Arc::new(AtomicUsize::new(1));
         let mut connect = Box::pin(BackgroundConnect {
             future: CountingPending(polls.clone()),
             shared: Arc::downgrade(&shared),
             shutdown,
+            active: active.clone(),
         });
 
         let mut task = tokio_test::task::spawn(connect.as_mut());
@@ -1062,6 +1083,9 @@ mod tests {
         assert!(task.is_woken());
         assert!(task.poll().is_ready());
         assert_eq!(polls.load(Ordering::SeqCst), 1);
+        drop(task);
+        drop(connect);
+        assert_eq!(active.load(Ordering::SeqCst), 0);
     }
 
     #[test]
