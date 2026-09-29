@@ -112,15 +112,13 @@ With simple API integration, consistent performance, and competitive pricing, it
 
 ---
 
-<a href="https://byteful.com/?utm_source=github_rust&utm_medium=github-sponsor&utm_campaign=wreq_github_sponsorship" target="_blank">
-  <img src="./.github/assets/byteful-logo.svg" width="149" height="47" alt="Byteful">
-</a>
+<a href="https://byteful.com/?utm_source=github_rust&utm_medium=github-sponsor&utm_campaign=wreq_github_sponsorship" target="_blank"><img src="./.github/assets/byteful-logo.svg" width="149" height="47" alt="Byteful"></a>
 
-**[Byteful](https://byteful.com/?utm_source=github_rust&utm_medium=github-sponsor&utm_campaign=wreq_github_sponsorship)** is a UK-based web data infrastructure platform offering ethically sourced residential, mobile, static residential (ISP), and datacenter proxies, plus API-first tools for web scraping, data collection, and AI-driven automation. It processes tens of billions of requests per month.
+**35M+ residential IPs with 99.9% success rates**
 
-35M+ residential IPs · 99.9% success rates · Free geo-targeting · ~0.5s response time
+**[Byteful](https://byteful.com/?utm_source=github_rust&utm_medium=github-sponsor&utm_campaign=wreq_github_sponsorship)** is a UK-based web data infrastructure platform offering ethically sourced residential, mobile, static residential (ISP), and datacenter proxies. Its API-first tools support web scraping, data collection, and AI-driven automation, processing tens of billions of requests per month.
 
-**Get 10% off Byteful residential proxies** with code `WREQ10`.
+With free geo-targeting and ~0.5s response times, Byteful helps you collect data at scale. Use code **`WREQ10`** for **10% off residential proxies**.
 
 **[Dashboard](https://dashboard.byteful.com/)** | **[Docs](https://documentation.byteful.com/)** | **[Discord](https://discord.com/invite/ping-proxies-584021352940568578)**
 
