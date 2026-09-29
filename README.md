@@ -112,9 +112,7 @@ With simple API integration, consistent performance, and competitive pricing, it
 
 ---
 
-<a href="https://byteful.com/?utm_source=github_rust&utm_medium=github-sponsor&utm_campaign=wreq_github_sponsorship" target="_blank">
-  <img src="./.github/assets/byteful-logo.svg" width="149" height="47" alt="Byteful">
-</a>
+<a href="https://byteful.com/?utm_source=github_rust&utm_medium=github-sponsor&utm_campaign=wreq_github_sponsorship" target="_blank"><img src="./.github/assets/byteful-logo.svg" width="149" height="47" alt="Byteful"></a>
 
 **[Byteful](https://byteful.com/?utm_source=github_rust&utm_medium=github-sponsor&utm_campaign=wreq_github_sponsorship)** is a UK-based web data infrastructure platform offering ethically sourced residential, mobile, static residential (ISP), and datacenter proxies, plus API-first tools for web scraping, data collection, and AI-driven automation. It processes tens of billions of requests per month.
 
