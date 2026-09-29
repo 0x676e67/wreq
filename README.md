@@ -112,15 +112,17 @@ With simple API integration, consistent performance, and competitive pricing, it
 
 ---
 
-<a href="https://hypersolutions.co/?utm_source=github&utm_medium=readme&utm_campaign=wreq" target="_blank"><img src="https://raw.githubusercontent.com/0x676e67/wreq/main/.github/assets/hypersolutions.jpg" height="47" width="149"></a>
+<a href="https://byteful.com/?utm_source=github_rust&utm_medium=github-sponsor&utm_campaign=wreq_github_sponsorship" target="_blank">
+  <img src="./.github/assets/byteful-logo.svg" width="149" height="47" alt="Byteful">
+</a>
 
-TLS fingerprinting alone isn't enough for modern bot protection. **[Hyper Solutions](https://hypersolutions.co?utm_source=github&utm_medium=readme&utm_campaign=wreq)** provides the missing piece - API endpoints that generate valid antibot tokens for:
+**[Byteful](https://byteful.com/?utm_source=github_rust&utm_medium=github-sponsor&utm_campaign=wreq_github_sponsorship)** is a UK-based web data infrastructure platform offering ethically sourced residential, mobile, static residential (ISP), and datacenter proxies, plus API-first tools for web scraping, data collection, and AI-driven automation. It processes tens of billions of requests per month.
 
-**Akamai** • **DataDome** • **Kasada** • **Incapsula**
+35M+ residential IPs · 99.9% success rates · Free geo-targeting · ~0.5s response time
 
-No browser automation. Just simple API calls that return the exact cookies and headers these systems require.
+**Get 10% off Byteful residential proxies** with code `WREQ10`.
 
-**[Dashboard](https://hypersolutions.co?utm_source=github&utm_medium=readme&utm_campaign=wreq)** | **[Docs](https://docs.justhyped.dev)** | **[Discord](https://discord.gg/akamai)**
+**[Dashboard](https://dashboard.byteful.com/)** | **[Docs](https://documentation.byteful.com/)** | **[Discord](https://discord.com/invite/ping-proxies-584021352940568578)**
 
 ## Accolades
 
