@@ -112,6 +112,18 @@ With simple API integration, consistent performance, and competitive pricing, it
 
 ---
 
+<a href="https://byteful.com/?utm_source=github_rust&utm_medium=github-sponsor&utm_campaign=wreq_github_sponsorship" target="_blank"><img src="./.github/assets/byteful-logo.svg" width="149" height="47" alt="Byteful"></a>
+
+**35M+ residential IPs with 99.9% success rates**
+
+UK-based **[Byteful](https://byteful.com/?utm_source=github_rust&utm_medium=github-sponsor&utm_campaign=wreq_github_sponsorship)** provides ethically sourced residential, mobile, static residential (ISP), and datacenter proxies. Its API-first scraping, data collection, and AI automation tools handle tens of billions of monthly requests.
+
+With free geo-targeting and ~0.5s response times, Byteful helps you collect data at scale. Use code **`WREQ10`** for **10% off residential proxies**.
+
+**[Dashboard](https://dashboard.byteful.com/)** | **[Docs](https://documentation.byteful.com/)** | **[Discord](https://discord.com/invite/ping-proxies-584021352940568578)**
+
+---
+
 <a href="https://hypersolutions.co/?utm_source=github&utm_medium=readme&utm_campaign=wreq" target="_blank"><img src="https://raw.githubusercontent.com/0x676e67/wreq/main/.github/assets/hypersolutions.jpg" height="47" width="149"></a>
 
 TLS fingerprinting alone isn't enough for modern bot protection. **[Hyper Solutions](https://hypersolutions.co?utm_source=github&utm_medium=readme&utm_campaign=wreq)** provides the missing piece - API endpoints that generate valid antibot tokens for:
