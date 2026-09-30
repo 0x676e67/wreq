@@ -390,3 +390,4 @@ required-features = ["compio-rt"]
 wreq-proto = { git = "https://github.com/0x676e67/wreq-proto", rev = "dae7159cc6b0ff1788a07c57a69844eeb3a1717e" }
 btls = { git = "https://github.com/0x676e67/btls", branch = "main" }
 btls-sys = { git = "https://github.com/0x676e67/btls", branch = "main" }
+tokio-btls = { git = "https://github.com/0x676e67/btls", branch = "main" }

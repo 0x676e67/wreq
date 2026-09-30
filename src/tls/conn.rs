@@ -309,7 +309,7 @@ impl TlsConnector {
         // Set ALPS protos
         if let Some(ref alps_values) = ctx.settings.alps_protocols {
             for alps in alps_values.iter() {
-                cfg.add_application_settings(alps.0)?;
+                cfg.add_application_settings(alps.0, None)?;
             }
 
             // By default, the new endpoint is used.
