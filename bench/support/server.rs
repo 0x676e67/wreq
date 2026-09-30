@@ -96,6 +96,8 @@ impl Server {
                 }
                 accept = listener.accept() => {
                     let (socket, _peer_addr) = accept?;
+                    // Nagle would hold small response writes until the client's delayed ACK.
+                    socket.set_nodelay(true)?;
                     let tls_acceptor = self.tls_acceptor.clone();
                     let builder = self.builder.clone();
                     join_set.spawn(handle_connection(socket, tls_acceptor, builder));
