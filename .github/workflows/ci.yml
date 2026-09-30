@@ -29,6 +29,10 @@ jobs:
           toolchain: nightly
           override: true
           components: rustfmt, clippy
+      - uses: actions/setup-go@v7
+        with:
+          go-version: stable
+          cache: false
       - name: Style check
         run: cargo fmt --all -- --check
       - name: Clippy check
@@ -43,6 +47,10 @@ jobs:
         with:
           toolchain: stable
           override: true
+      - uses: actions/setup-go@v7
+        with:
+          go-version: stable
+          cache: false
       - name: Build docs
         run: cargo doc --document-private-items --all-features
 
@@ -98,6 +106,11 @@ jobs:
           toolchain: stable
           override: true
       - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-go@v7
+        if: matrix.feature-set == '--all-features'
+        with:
+          go-version: stable
+          cache: false
       - uses: taiki-e/install-action@v2.87.17
         with:
           tool: cargo-nextest
@@ -125,6 +138,10 @@ jobs:
         with:
           toolchain: stable
           override: true
+      - uses: actions/setup-go@v7
+        with:
+          go-version: stable
+          cache: false
       - name: Install NASM (Windows)
         if: matrix.os == 'windows-latest'
         run: choco install nasm -y
