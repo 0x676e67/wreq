@@ -19,7 +19,7 @@ rustdoc-args = ["--cfg", "docsrs"]
 targets = ["x86_64-unknown-linux-gnu"]
 
 [features]
-default = ["chromium-roots", "tokio-rt"]
+default = ["webpki-roots", "tokio-rt"]
 
 # Enable tokio as the async runtime (default).
 tokio-rt = ["tokio/rt", "tokio/net", "tokio/fs", "wreq-rt/tokio-rt"]
@@ -69,11 +69,11 @@ socks = ["dep:tokio-socks"]
 # Enable WebSocket support.
 ws = ["dep:tokio-tungstenite", "tokio-tungstenite?/handshake"]
 
-# Use static Chromium Root Store certificates for TLS verification (default).
-chromium-roots = ["dep:chromium-roots"]
-
 # Use static Mozilla root certificates for TLS verification.
 webpki-roots = ["dep:webpki-root-certs"]
+
+# Use static Chromium Root Store certificates for TLS verification (default).
+chromium-roots = ["dep:chromium-roots"]
 
 # Use the system's proxy configuration.
 system-proxy = ["dep:system-configuration", "dep:windows-registry"]
