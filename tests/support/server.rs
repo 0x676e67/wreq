@@ -5,6 +5,9 @@ use std::{
 use tokio::{io::AsyncReadExt, net::TcpStream, runtime, sync::oneshot};
 use wreq::Body;
 
+/// Handle for a test server running on its own runtime thread.
+/// Exposes the listener address and recorded connection lifecycle events.
+/// Drop requests shutdown and checks that the server thread finished without panic.
 pub struct Server {
     addr: net::SocketAddr,
     panic_rx: std_mpsc::Receiver<()>,
@@ -14,6 +17,7 @@ pub struct Server {
 
 #[non_exhaustive]
 pub enum Event {
+    ConnectionAccepted,
     ConnectionClosed,
 }
 
@@ -22,7 +26,10 @@ impl Server {
         self.addr
     }
 
-    #[allow(unused)]
+    #[allow(
+        dead_code,
+        reason = "Only connection lifecycle tests consume server events"
+    )]
     pub fn events(&mut self) -> Vec<Event> {
         let mut events = Vec::new();
         while let Ok(event) = self.events_rx.try_recv() {
@@ -46,7 +53,115 @@ impl Drop for Server {
     }
 }
 
-#[allow(unused)]
+/// Builds the local certificate fixture and optionally selects an offered ALPN.
+/// An empty list leaves ALPN unacknowledged for negotiation-failure tests.
+#[allow(
+    dead_code,
+    reason = "Shared support is also compiled by tests without TLS fixtures"
+)]
+pub fn tls_acceptor(alpn: &'static [u8]) -> btls::ssl::SslAcceptor {
+    tls_acceptor_with_alpn(alpn, |_| {})
+}
+
+/// Builds the TLS fixture while exposing the client's offered ALPN bytes.
+/// Observes the offer before selection; absent extensions do not call the observer.
+#[allow(
+    dead_code,
+    reason = "Only ALPN policy tests inspect the ClientHello offer"
+)]
+pub fn tls_acceptor_with_alpn(
+    alpn: &'static [u8],
+    observe: impl Fn(&[u8]) + Send + Sync + 'static,
+) -> btls::ssl::SslAcceptor {
+    use btls::{
+        pkey::PKey,
+        ssl::{AlpnError, SslAcceptor, SslMethod, select_next_proto},
+        x509::X509,
+    };
+
+    let mut acceptor = SslAcceptor::mozilla_intermediate_v5(SslMethod::tls()).unwrap();
+    acceptor
+        .set_certificate(&X509::from_der(include_bytes!("server.cert")).unwrap())
+        .unwrap();
+    acceptor
+        .set_private_key(&PKey::private_key_from_der(include_bytes!("server.key")).unwrap())
+        .unwrap();
+    acceptor.check_private_key().unwrap();
+    acceptor.set_alpn_select_callback(move |_, offered| {
+        observe(offered);
+        if alpn.is_empty() {
+            Err(AlpnError::NOACK)
+        } else {
+            select_next_proto(alpn, offered).ok_or(AlpnError::ALERT_FATAL)
+        }
+    });
+    acceptor.build()
+}
+
+/// Accepts TLS on one socket without choosing its HTTP wire protocol.
+/// Callers retain ownership of connection counts, fault injection, and shutdown.
+#[allow(
+    dead_code,
+    reason = "Shared support is also compiled by tests without TLS fixtures"
+)]
+pub async fn tls_accept<IO>(
+    acceptor: &btls::ssl::SslAcceptor,
+    socket: IO,
+) -> tokio_btls::SslStream<IO>
+where
+    IO: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+{
+    let ssl = btls::ssl::Ssl::new(acceptor.context()).unwrap();
+    let mut stream = tokio_btls::SslStream::new(ssl, socket).unwrap();
+    std::pin::Pin::new(&mut stream).accept().await.unwrap();
+    stream
+}
+
+/// Serves a single transport using the protocol chosen by the test or TLS ALPN.
+/// It does not sniff the wire or spawn detached work; awaiting it observes closure.
+#[allow(
+    dead_code,
+    reason = "Only protocol-specific tests select a fixed server protocol"
+)]
+pub async fn serve_connection<I, F, Fut, B>(
+    io: I,
+    version: http::Version,
+    handler: F,
+) -> Result<(), hyper::Error>
+where
+    I: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
+    F: Fn(http::Request<hyper::body::Incoming>) -> Fut + Send + 'static,
+    Fut: Future<Output = http::Response<B>> + Send + 'static,
+    B: http_body::Body + Send + 'static,
+    B::Data: Send,
+    B::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
+{
+    use hyper_util::rt::{TokioExecutor, TokioIo};
+
+    let service = hyper::service::service_fn(move |request| {
+        let response = handler(request);
+        async move { Ok::<_, Infallible>(response.await) }
+    });
+    let io = TokioIo::new(io);
+    match version {
+        http::Version::HTTP_10 | http::Version::HTTP_11 => {
+            hyper::server::conn::http1::Builder::new()
+                .serve_connection(io, service)
+                .await
+        }
+        http::Version::HTTP_2 => {
+            hyper::server::conn::http2::Builder::new(TokioExecutor::new())
+                .serve_connection(io, service)
+                .await
+        }
+        version => panic!("unsupported test server version: {version:?}"),
+    }
+}
+
+#[allow(
+    dead_code,
+    reason = "Some test targets use only the configurable or raw server"
+)]
 pub fn http<F, Fut>(func: F) -> Server
 where
     F: Fn(http::Request<hyper::body::Incoming>) -> Fut + Clone + Send + 'static,
@@ -103,6 +218,7 @@ where
                             }
                             accepted = listener.accept() => {
                                 let (io, _) = accepted.expect("accepted");
+                                let _ = events_tx.send(Event::ConnectionAccepted);
                                 let func = func.clone();
                                 let svc = hyper::service::service_fn(func);
                                 let builder = builder.clone();
@@ -129,7 +245,10 @@ where
     .unwrap()
 }
 
-#[allow(unused)]
+#[allow(
+    dead_code,
+    reason = "Only raw-wire tests provide their own response bytes"
+)]
 pub fn low_level_with_response<F>(do_response: F) -> Server
 where
     for<'c> F: Fn(&'c [u8], &'c mut TcpStream) -> Box<dyn Future<Output = ()> + Send + 'c>
@@ -166,6 +285,7 @@ where
                             }
                             accepted = listener.accept() => {
                                 let (io, _) = accepted.expect("accepted");
+                                let _ = events_tx.send(Event::ConnectionAccepted);
                                 let do_response = do_response.clone();
                                 let events_tx = events_tx.clone();
                                 tokio::spawn(async move {
@@ -190,7 +310,6 @@ where
     .unwrap()
 }
 
-#[allow(unused)]
 async fn low_level_server_client<F>(mut client_socket: TcpStream, do_response: F)
 where
     for<'c> F: Fn(&'c [u8], &'c mut TcpStream) -> Box<dyn Future<Output = ()> + Send + 'c>,
@@ -208,7 +327,6 @@ where
     }
 }
 
-#[allow(unused)]
 async fn low_level_read_http_request(client_socket: &mut TcpStream) -> io::Result<Vec<u8>> {
     let mut buf = Vec::new();
 

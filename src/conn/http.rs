@@ -15,10 +15,8 @@ use tower::{BoxError, Service};
 
 use super::{
     Connection,
-    net::{
-        SocketBindOptions,
-        tcp::{ConnectError, ConnectingTcp, TcpConnector, TcpKeepaliveOptions, TcpOptions},
-    },
+    net::tcp::{ConnectError, ConnectingTcp, TcpConnector, TcpKeepaliveOptions, TcpOptions},
+    request::SocketOptions,
 };
 use crate::dns::{self, DnsResolver};
 
@@ -121,26 +119,9 @@ pub struct HttpConnector<R, S> {
     connector: S,
 }
 
-/// Extra information about the transport when an HttpConnector is used.
-///
-/// # Example
-///
-/// ```
-/// # fn doc(res: http::Response<()>) {
-/// use crate::util::client::connect::HttpInfo;
-///
-/// // res = http::Response
-/// res.extensions().get::<HttpInfo>().map(|info| {
-///     println!("remote addr = {}", info.remote_addr());
-/// });
-/// # }
-/// ```
-///
-/// # Note
-///
-/// If a different connector is used besides [`HttpConnector`],
-/// this value will not exist in the extensions. Consult that specific
-/// connector to see what "extra" information it might provide to responses.
+/// Socket addresses captured by [`HttpConnector`] after connecting.
+/// Stored in connection metadata and attached to response extensions.
+/// Custom transports may omit this information.
 #[derive(Clone, Debug)]
 pub struct HttpInfo {
     pub(crate) remote_addr: SocketAddr,
@@ -165,7 +146,7 @@ impl<R, S> HttpConnector<R, S> {
                 #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
                 tcp_user_timeout: None,
                 tcp_keepalive: TcpKeepaliveOptions::default(),
-                socket_bind: SocketBindOptions::default(),
+                socket_options: SocketOptions::default(),
             }),
             resolver,
             connector,
@@ -177,6 +158,18 @@ impl<R, S> HttpConnector<R, S> {
         // config. So mutating the config won't ever affect previous
         // clones.
         Arc::make_mut(&mut self.options)
+    }
+
+    /// Returns the socket binding used by this connector in tests.
+    #[cfg(test)]
+    pub(crate) fn socket_options(&self) -> &SocketOptions {
+        &self.options.socket_options
+    }
+
+    /// Returns whether this connector disables Nagle in tests.
+    #[cfg(test)]
+    pub(crate) fn nodelay(&self) -> bool {
+        self.options.nodelay
     }
 }
 
@@ -322,7 +315,7 @@ where
         target_os = "watchos",
     ))]
     fn set_interface<I: Into<std::borrow::Cow<'static, str>>>(&mut self, interface: I) {
-        self.config_mut().socket_bind.set_interface(interface);
+        self.config_mut().socket_options.set_interface(interface);
     }
 
     /// Set that all sockets are bound to the configured IPv4 or IPv6 address (depending on host's
@@ -337,7 +330,7 @@ where
         V6: Into<Option<Ipv6Addr>>,
     {
         self.config_mut()
-            .socket_bind
+            .socket_options
             .set_local_addresses(ipv4_address, ipv6_address);
     }
 }

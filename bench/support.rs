@@ -1,10 +1,10 @@
 //! Shared types and lifecycle helpers for the protocol benchmark targets.
 
 mod case;
-mod client;
+pub(crate) mod client;
 mod runner;
 mod runtime;
-mod server;
+pub(crate) mod server;
 
 pub use case::{BenchTarget, HttpVersion, ThreadMode, Tls};
 pub(crate) use case::{BodyCase, BodyKind};

@@ -1,7 +1,12 @@
+mod proto;
+mod svc;
+
 pub(super) mod body;
 pub(super) mod emulate;
+pub(super) mod error;
 pub(super) mod future;
 pub(super) mod layer;
+pub(super) mod pool;
 pub(super) mod request;
 pub(super) mod response;
 pub(super) mod upgrade;
@@ -22,13 +27,20 @@ use std::{
     time::Duration,
 };
 
-use http::header::{HeaderMap, HeaderValue, USER_AGENT};
+use futures_util::future::{Either as FutureEither, Ready, err as future_err};
+use http::{
+    Request as HttpRequest, Response as HttpResponse, Uri, Version,
+    header::{HeaderMap, HeaderValue, USER_AGENT},
+    uri::{PathAndQuery, Scheme},
+};
+use http_body::Body as HttpBody;
+use tokio::io::{AsyncRead, AsyncWrite};
 use tower::{
     BoxError, Layer, Service, ServiceBuilder, ServiceExt,
     retry::{Retry, RetryLayer},
     util::{BoxCloneSyncService, BoxCloneSyncServiceLayer, Either, Oneshot},
 };
-use wreq_proto::body::Incoming;
+use wreq_proto::{body::Incoming, conn};
 
 #[cfg(any(
     feature = "gzip",
@@ -44,12 +56,12 @@ use self::{
     emulate::IntoEmulation,
     future::Pending,
     layer::{
-        client::HttpClient,
         config::{ConfigService, ConfigServiceLayer},
         redirect::{FollowRedirect, FollowRedirectLayer},
         retry::RetryPolicy,
         timeout::{Timeout, TimeoutLayer, TimeoutOptions, body::TimeoutBody},
     },
+    pool::PoolStrategy,
     request::{Request, RequestBuilder},
     response::Response,
 };
@@ -58,15 +70,16 @@ use crate::cookie;
 #[cfg(feature = "hickory-dns")]
 use crate::dns::hickory::HickoryDnsResolver;
 use crate::{
-    IntoUri, Method, Proxy,
+    HttpVersion, IntoUri, Method, Proxy,
     conn::{
-        BoxedConnectorLayer, BoxedTransportConnector, Conn, Unnameable,
-        connector::{Connector, ConnectorBuilder},
+        BoxedConnectorLayer, BoxedTransportConnector, Conn, Connection, Connector, ConnectorLayer,
+        HttpConnector, Unnameable,
         http::HttpConnect,
-        net::SocketBindOptions,
+        net::TcpConnector,
+        request::{ConnectRequest, SocketOptions},
     },
     dns::{DnsResolverWithOverrides, DynResolver, GaiResolver, IntoResolve, Resolve},
-    error::{self, Error},
+    error::Error,
     header::OrigHeaderMap,
     http1::Http1Options,
     http2::Http2Options,
@@ -75,9 +88,10 @@ use crate::{
     retry,
     rt::{BoxSendFuture, Executor, Timer},
     tls::{
-        AlpnProtocol, TlsOptions, TlsVersion,
+        TlsOptions, TlsVersion,
+        conn::TlsConnector,
         keylog::KeyLog,
-        session::{IntoTlsSessionCache, TlsSessionCache},
+        session::{IntoTlsSessionStore, TlsSessionStore},
         trust::{CertStore, Identity},
     },
 };
@@ -116,7 +130,9 @@ type MaybeDecompressionBody<T> = tower_http::decompression::DecompressionBody<T>
 
 type ClientService = Timeout<
     ConfigService<
-        MaybeDecompression<Retry<RetryPolicy, FollowRedirect<HttpClient<Connector, Body>>>>,
+        MaybeDecompression<
+            Retry<RetryPolicy, FollowRedirect<sealed::Client<crate::conn::Stack, Body>>>,
+        >,
     >,
 >;
 
@@ -159,14 +175,9 @@ pub struct ClientBuilder {
     config: Config,
 }
 
-/// The HTTP version preference for the client.
-#[repr(u8)]
-enum HttpVersionPref {
-    Http1,
-    Http2,
-    All,
-}
-
+/// Configuration collected before the client service stack is built.
+/// Holds transport settings, protocol selection, and request defaults.
+/// Building consumes it into the shared services and their middleware.
 struct Config {
     error: Option<Error>,
     headers: HeaderMap,
@@ -183,6 +194,7 @@ struct Config {
     pool_idle_timeout: Option<Duration>,
     pool_max_idle_per_host: usize,
     pool_max_size: Option<NonZeroUsize>,
+    pool_strategy: PoolStrategy,
     tcp_nodelay: bool,
     tcp_reuse_address: bool,
     tcp_linger: Option<Duration>,
@@ -194,7 +206,7 @@ struct Config {
     tcp_send_buffer_size: Option<usize>,
     tcp_recv_buffer_size: Option<usize>,
     tcp_happy_eyeballs_timeout: Option<Duration>,
-    socket_bind_options: SocketBindOptions,
+    socket_options: SocketOptions,
     proxies: Vec<ProxyMatcher>,
     auto_sys_proxy: bool,
     retry_policy: retry::Policy,
@@ -207,7 +219,7 @@ struct Config {
     hickory_dns: bool,
     dns_overrides: HashMap<Cow<'static, str>, Vec<SocketAddr>>,
     dns_resolver: Option<Arc<dyn Resolve>>,
-    http_version_pref: HttpVersionPref,
+    http_version: HttpVersion,
     https_only: bool,
     layers: Vec<BoxedClientServiceLayer>,
     connector_layers: Vec<BoxedConnectorLayer>,
@@ -220,7 +232,7 @@ struct Config {
     tls_verify_hostname: bool,
     tls_min_version: Option<TlsVersion>,
     tls_max_version: Option<TlsVersion>,
-    tls_session_cache: Option<Arc<dyn TlsSessionCache>>,
+    tls_session_store: Option<Arc<dyn TlsSessionStore>>,
     tls_options: Option<TlsOptions>,
     http1_options: Option<Http1Options>,
     http2_options: Option<Http2Options>,
@@ -244,7 +256,7 @@ impl Client {
     /// This method panics if a TLS backend cannot be initialized, or the resolver
     /// cannot load the system configuration.
     ///
-    /// Use [`Client::builder()`] if you wish to handle the failure as an [`Error`]
+    /// Use [`Client::builder()`] if you wish to handle the failure as a [`crate::Error`]
     /// instead of panicking.
     #[inline]
     pub fn new() -> Client {
@@ -270,6 +282,7 @@ impl Client {
                 pool_idle_timeout: Some(Duration::from_secs(90)),
                 pool_max_idle_per_host: usize::MAX,
                 pool_max_size: None,
+                pool_strategy: PoolStrategy::default(),
                 tcp_keepalive: Some(Duration::from_secs(15)),
                 tcp_keepalive_interval: Some(Duration::from_secs(15)),
                 tcp_keepalive_retries: Some(3),
@@ -281,7 +294,7 @@ impl Client {
                 tcp_send_buffer_size: None,
                 tcp_recv_buffer_size: None,
                 tcp_happy_eyeballs_timeout: Some(Duration::from_millis(300)),
-                socket_bind_options: SocketBindOptions::default(),
+                socket_options: SocketOptions::default(),
                 proxies: Vec::new(),
                 auto_sys_proxy: true,
                 retry_policy: retry::Policy::default(),
@@ -294,7 +307,7 @@ impl Client {
                 cookie_store: None,
                 dns_overrides: HashMap::new(),
                 dns_resolver: None,
-                http_version_pref: HttpVersionPref::All,
+                http_version: HttpVersion::Auto,
                 https_only: false,
                 http1_options: None,
                 http2_options: None,
@@ -309,7 +322,7 @@ impl Client {
                 tls_verify_hostname: true,
                 tls_min_version: None,
                 tls_max_version: None,
-                tls_session_cache: None,
+                tls_session_store: None,
                 tls_options: None,
                 timer: Timer::default(),
                 executor: Executor::default(),
@@ -424,10 +437,10 @@ impl Client {
     /// This method fails if there was an error while sending request,
     /// redirect loop was detected or redirect limit was exhausted.
     pub fn execute(&self, request: Request) -> Pending {
-        let req = http::Request::<Body>::from(request);
+        let req: HttpRequest<Body> = request.into();
         Pending::Request {
             uri: Some(req.uri().clone()),
-            fut: Box::pin(Oneshot::new((*self.0).clone(), req)),
+            fut: Box::pin(Oneshot::new(self.0.as_ref().clone(), req)),
         }
     }
 }
@@ -504,84 +517,89 @@ impl ClientBuilder {
                 DynResolver::new(resolver)
             };
 
-            let connector = ConnectorBuilder::new(config.proxies, resolver)
-                .timer(config.timer.clone())
-                .timeout(config.connect_timeout)
-                .tls_info(config.tls_info)
-                .tcp_nodelay(config.tcp_nodelay)
-                .verbose(config.connection_verbose)
-                .with_tls(|tls| {
-                    tls.alpn_protocol(match config.http_version_pref {
-                        HttpVersionPref::Http1 => Some(AlpnProtocol::HTTP1),
-                        HttpVersionPref::Http2 => Some(AlpnProtocol::HTTP2),
-                        _ => None,
-                    })
-                    .keylog(config.tls_keylog)
-                    .cert_store(config.tls_cert_store)
-                    .identity(config.tls_identity)
-                    .max_version(config.tls_max_version)
-                    .min_version(config.tls_min_version)
-                    .tls_sni(config.tls_sni)
-                    .verify_hostname(config.tls_verify_hostname)
-                    .cert_verification(config.tls_cert_verification)
-                    .session_store(config.tls_session_cache)
-                })
-                .with_http(|http| {
-                    http.enforce_http(false);
-                    http.set_keepalive(config.tcp_keepalive);
-                    http.set_keepalive_interval(config.tcp_keepalive_interval);
-                    http.set_keepalive_retries(config.tcp_keepalive_retries);
-                    http.set_reuse_address(config.tcp_reuse_address);
-                    http.set_linger(config.tcp_linger);
-                    http.set_connect_timeout(config.connect_timeout);
-                    http.set_nodelay(config.tcp_nodelay);
-                    http.set_send_buffer_size(config.tcp_send_buffer_size);
-                    http.set_recv_buffer_size(config.tcp_recv_buffer_size);
-                    http.set_happy_eyeballs_timeout(config.tcp_happy_eyeballs_timeout);
+            let tls = TlsConnector::builder()
+                .http_version(config.http_version)
+                .keylog(config.tls_keylog)
+                .cert_store(config.tls_cert_store)
+                .identity(config.tls_identity)
+                .max_version(config.tls_max_version)
+                .min_version(config.tls_min_version)
+                .verify_hostname(config.tls_verify_hostname)
+                .cert_verification(config.tls_cert_verification)
+                .tls_sni(config.tls_sni)
+                .tls_session_store(config.tls_session_store)
+                .build(config.tls_options)?;
 
-                    #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
-                    http.set_tcp_user_timeout(config.tcp_user_timeout);
+            #[cfg(feature = "socks")]
+            let socks_resolver = resolver.clone();
 
-                    #[cfg(any(
-                        target_os = "android",
-                        target_os = "fuchsia",
-                        target_os = "illumos",
-                        target_os = "ios",
-                        target_os = "linux",
-                        target_os = "macos",
-                        target_os = "solaris",
-                        target_os = "tvos",
-                        target_os = "visionos",
-                        target_os = "watchos",
-                    ))]
-                    if let Some(interface) = config.socket_bind_options.interface {
-                        http.set_interface(interface);
-                    }
-
-                    http.set_local_addresses(
-                        config.socket_bind_options.ipv4_address,
-                        config.socket_bind_options.ipv6_address,
-                    );
-                })
-                .build(config.tls_options, config.connector_layers)?;
-
-            #[allow(unused_mut)]
-            let mut builder = HttpClient::builder(config.executor);
-
-            #[cfg(feature = "cookies")]
-            {
-                builder = builder.cookie_store(config.cookie_store);
+            let mut http = HttpConnector::new(resolver, TcpConnector::new());
+            http.enforce_http(false);
+            http.set_keepalive(config.tcp_keepalive);
+            http.set_keepalive_interval(config.tcp_keepalive_interval);
+            http.set_keepalive_retries(config.tcp_keepalive_retries);
+            http.set_reuse_address(config.tcp_reuse_address);
+            http.set_linger(config.tcp_linger);
+            http.set_connect_timeout(config.connect_timeout);
+            http.set_nodelay(config.tcp_nodelay);
+            http.set_send_buffer_size(config.tcp_send_buffer_size);
+            http.set_recv_buffer_size(config.tcp_recv_buffer_size);
+            http.set_happy_eyeballs_timeout(config.tcp_happy_eyeballs_timeout);
+            #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
+            http.set_tcp_user_timeout(config.tcp_user_timeout);
+            #[cfg(any(
+                target_os = "android",
+                target_os = "fuchsia",
+                target_os = "illumos",
+                target_os = "ios",
+                target_os = "linux",
+                target_os = "macos",
+                target_os = "solaris",
+                target_os = "tvos",
+                target_os = "visionos",
+                target_os = "watchos",
+            ))]
+            if let Some(interface) = config.socket_options.interface {
+                http.set_interface(interface);
             }
+            http.set_local_addresses(
+                config.socket_options.ipv4_address,
+                config.socket_options.ipv6_address,
+            );
 
-            builder
+            let connector = ServiceBuilder::new()
+                .layer(ConnectorLayer::new(
+                    config.connector_layers,
+                    config.timer.clone(),
+                    config.connect_timeout,
+                ))
+                .service(Connector::new(
+                    crate::conn::Config {
+                        proxies: Arc::new(config.proxies),
+                        verbose: config.connection_verbose,
+                        nodelay: config.tcp_nodelay,
+                        tls_info: config.tls_info,
+                    },
+                    http,
+                    tls,
+                    #[cfg(feature = "socks")]
+                    socks_resolver,
+                ));
+
+            sealed::Builder::new(config.executor)
+                .cookie_store(
+                    #[cfg(feature = "cookies")]
+                    config.cookie_store,
+                )
                 .http1_options(config.http1_options)
                 .http2_options(config.http2_options)
-                .http2_only(matches!(config.http_version_pref, HttpVersionPref::Http2))
+                .http_version(config.http_version)
                 .http2_timer(config.timer.clone())
                 .pool_timer(config.timer.clone())
                 .pool_idle_timeout(config.pool_idle_timeout)
                 .pool_max_idle_per_host(config.pool_max_idle_per_host)
                 .pool_max_size(config.pool_max_size)
+                .pool_strategy(config.pool_strategy)
                 .build(connector)
         };
 
@@ -632,7 +650,7 @@ impl ClientBuilder {
                 let service = ServiceBuilder::new()
                     .layer(TimeoutLayer::new(config.timer, config.timeout_options))
                     .service(service)
-                    .map_err(error::map_timeout_to_request_error);
+                    .map_err(crate::error::map_timeout_to_request_error);
 
                 Either::Right(BoxCloneSyncService::new(service))
             }
@@ -1069,11 +1087,9 @@ impl ClientBuilder {
 
     // HTTP options
 
-    /// Set an optional timeout for idle sockets being kept-alive.
+    /// Sets how long an idle pooled connection remains eligible for reuse.
     ///
-    /// Pass `None` to disable timeout.
-    ///
-    /// Default is 90 seconds.
+    /// Pass `None` to disable time-based eviction. The default is 90 seconds.
     #[inline]
     pub fn pool_idle_timeout<D>(mut self, val: D) -> ClientBuilder
     where
@@ -1083,17 +1099,31 @@ impl ClientBuilder {
         self
     }
 
-    /// Sets the maximum idle connection per host allowed in the pool.
+    /// Sets the maximum idle HTTP/1 connections retained per compatibility group.
+    ///
+    /// This does not limit active physical connections. Passing `0` disables
+    /// connection reuse.
     #[inline]
     pub fn pool_max_idle_per_host(mut self, max: usize) -> ClientBuilder {
         self.config.pool_max_idle_per_host = max;
         self
     }
 
-    /// Sets the maximum number of connections in the pool.
+    /// Sets the maximum number of compatibility groups retaining reusable connections.
+    ///
+    /// Idle HTTP/1 senders and shared HTTP/2 senders count toward this limit,
+    /// including HTTP/2 senders with active requests. Eviction leaves existing
+    /// requests running. This does not limit physical connections; `0` means unlimited.
     #[inline]
     pub fn pool_max_size(mut self, max: usize) -> ClientBuilder {
         self.config.pool_max_size = NonZeroUsize::new(max);
+        self
+    }
+
+    /// Selects whether a reuse miss immediately connects or briefly waits for reuse.
+    #[inline]
+    pub fn pool_strategy(mut self, strategy: PoolStrategy) -> ClientBuilder {
+        self.config.pool_strategy = strategy;
         self
     }
 
@@ -1106,18 +1136,33 @@ impl ClientBuilder {
         self
     }
 
-    /// Only use HTTP/1.
+    /// Selects the client's HTTP protocol, defaulting to [`HttpVersion::Auto`].
+    /// An explicit request [`version`](RequestBuilder::version) overrides this setting.
+    /// Fixed modes take precedence over TLS ALPN options.
     #[inline]
-    pub fn http1_only(mut self) -> ClientBuilder {
-        self.config.http_version_pref = HttpVersionPref::Http1;
+    pub fn http_version(mut self, version: HttpVersion) -> ClientBuilder {
+        self.config.http_version = version;
         self
     }
 
-    /// Only use HTTP/2.
+    /// Uses HTTP/1 for both cleartext and TLS connections, without upgrading to H2.
+    /// Only `http/1.1` is offered through TLS ALPN. A request-level
+    /// [`version`](RequestBuilder::version) overrides this client setting.
     #[inline]
-    pub fn http2_only(mut self) -> ClientBuilder {
-        self.config.http_version_pref = HttpVersionPref::Http2;
-        self
+    pub fn http1_only(self) -> ClientBuilder {
+        self.http_version(HttpVersion::Http1)
+    }
+
+    /// Uses HTTP/2 without falling back to HTTP/1.
+    ///
+    /// Cleartext connections use prior knowledge, without an HTTP/1 Upgrade.
+    /// TLS connections offer only `h2` through ALPN; if the peer omits ALPN,
+    /// the client still attempts H2 and fails if the peer cannot speak it.
+    /// An explicit HTTP/1 [`version`](RequestBuilder::version) on a request
+    /// overrides this setting.
+    #[inline]
+    pub fn http2_only(self) -> ClientBuilder {
+        self.http_version(HttpVersion::Http2)
     }
 
     /// Sets the HTTP/1 options for the client.
@@ -1304,9 +1349,7 @@ impl ClientBuilder {
     where
         T: Into<Option<IpAddr>>,
     {
-        self.config
-            .socket_bind_options
-            .set_local_address(addr.into());
+        self.config.socket_options.set_local_address(addr.into());
         self
     }
 
@@ -1330,9 +1373,7 @@ impl ClientBuilder {
         V4: Into<Option<Ipv4Addr>>,
         V6: Into<Option<Ipv6Addr>>,
     {
-        self.config
-            .socket_bind_options
-            .set_local_addresses(ipv4, ipv6);
+        self.config.socket_options.set_local_addresses(ipv4, ipv6);
         self
     }
 
@@ -1400,7 +1441,7 @@ impl ClientBuilder {
     where
         T: Into<std::borrow::Cow<'static, str>>,
     {
-        self.config.socket_bind_options.set_interface(interface);
+        self.config.socket_options.set_interface(interface);
         self
     }
 
@@ -1498,13 +1539,12 @@ impl ClientBuilder {
         self
     }
 
-    /// Sets the TLS session cache.
-    ///
-    /// By default, an in-memory LRU cache is used. Use this method to provide
-    /// a custom [`TlsSessionCache`] implementation (e.g., file-based or distributed).
+    /// Replaces the built-in store of eight connection keys with two tickets each.
+    /// The supplied store controls retention when ticket-based resumption is enabled.
+    /// Session keys remain scoped to this client and its request configuration.
     #[inline]
-    pub fn tls_session_cache<S: IntoTlsSessionCache>(mut self, store: S) -> ClientBuilder {
-        self.config.tls_session_cache = Some(store.into_shared());
+    pub fn tls_session_store<S: IntoTlsSessionStore>(mut self, store: S) -> ClientBuilder {
+        self.config.tls_session_store = Some(store.into_shared());
         self
     }
 
@@ -1664,23 +1704,357 @@ impl ClientBuilder {
 
     // TLS/HTTP2 emulation options
 
-    /// Configures the client builder to emulation the specified HTTP context.
-    ///
-    /// This method sets the necessary headers, HTTP/1 and HTTP/2 options configurations, and  TLS
-    /// options config to use the specified HTTP context. It allows the client to mimic the
-    /// behavior of different versions or setups, which can be useful for testing or ensuring
-    /// compatibility with various environments.
-    ///
-    /// # Note
-    /// This will overwrite the existing configuration.
-    /// You must set emulation before you can perform subsequent HTTP1/HTTP2/TLS fine-tuning.
+    /// Applies the profile's headers and TLS, HTTP/1, and HTTP/2 options.
+    /// Supplied protocol options replace matching settings; absent ones are kept.
+    /// The profile does not create a connection group.
     #[inline]
-    pub fn emulation<T: IntoEmulation>(self, emulation: T) -> ClientBuilder {
-        let emulation = emulation.into_emulation();
-        self.tls_options(emulation.tls_options)
-            .http1_options(emulation.http1_options)
-            .http2_options(emulation.http2_options)
-            .default_headers(emulation.headers)
-            .orig_headers(emulation.orig_headers)
+    pub fn emulation<T: IntoEmulation>(mut self, emulation: T) -> ClientBuilder {
+        let emulate::Emulation(headers, orig_headers, mut extra) = emulation.into_emulation();
+        self.config.tls_options = extra
+            .remove::<TlsOptions>()
+            .map(Arc::unwrap_or_clone)
+            .or(self.config.tls_options);
+        self.config.http1_options = extra
+            .remove::<Http1Options>()
+            .map(Arc::unwrap_or_clone)
+            .or(self.config.http1_options);
+        self.config.http2_options = extra
+            .remove::<Http2Options>()
+            .map(Arc::unwrap_or_clone)
+            .or(self.config.http2_options);
+        self.default_headers(headers).orig_headers(orig_headers)
+    }
+}
+
+/// Low-level Tower client and builder used by the public client.
+mod sealed {
+    use super::*;
+
+    /// Validates and sends low-level HTTP requests through the client service stack.
+    ///
+    /// This is the caller-facing Tower service used beneath [`crate::Client`]. It
+    /// validates request versions and absolute URIs before request-local
+    /// configuration, internal cancellation retries, connection checkout, and
+    /// protocol dispatch. Clones share all connection-pool state and never clone
+    /// request bodies.
+    #[must_use]
+    pub struct Client<C, B>
+    where
+        C: tower::Service<ConnectRequest> + Clone + Send + Sync + 'static,
+        C::Response: AsyncRead + AsyncWrite + Connection + Unpin + Send + 'static,
+        C::Error: Into<BoxError>,
+        C::Future: Unpin + Send + 'static,
+        B: HttpBody + Send + Unpin + 'static,
+        B::Data: Send,
+        B::Error: Into<BoxError>,
+    {
+        /// Composed service stack shared by client clones.
+        inner: svc::Stack<svc::Dispatch<C, B>, B>,
+    }
+
+    /// Assembles the protocol, runtime, and pool services used by [`Client`].
+    ///
+    /// The builder owns base handshake configuration until [`Builder::build`]
+    /// consumes it. The resulting client clones share the pool created around
+    /// the supplied connector.
+    #[derive(Clone)]
+    pub struct Builder {
+        /// Request retry and protocol-selection behavior.
+        config: svc::Config,
+
+        /// Runtime used by protocol drivers and pool maintenance.
+        exec: Executor,
+
+        /// Base HTTP/1 handshake configuration.
+        h1_builder: conn::http1::Builder,
+
+        /// Base HTTP/2 handshake configuration.
+        h2_builder: conn::http2::Builder<Executor>,
+
+        /// Connection-pool reuse and retention policy.
+        pool_config: pool::Config,
+
+        /// Clock used by connection-pool maintenance.
+        pool_timer: Timer,
+    }
+
+    // ===== impl Client =====
+
+    impl<C, B> Service<HttpRequest<B>> for Client<C, B>
+    where
+        C: tower::Service<ConnectRequest> + Clone + Send + Sync + 'static,
+        C::Response: AsyncRead + AsyncWrite + Connection + Unpin + Send + 'static,
+        C::Error: Into<BoxError>,
+        C::Future: Unpin + Send + 'static,
+        B: HttpBody + Send + Unpin + 'static,
+        B::Data: Send,
+        B::Error: Into<BoxError>,
+    {
+        type Response = HttpResponse<Incoming>;
+        type Error = BoxError;
+        type Future = FutureEither<
+            <svc::Stack<svc::Dispatch<C, B>, B> as Service<HttpRequest<B>>>::Future,
+            Ready<Result<Self::Response, Self::Error>>,
+        >;
+
+        fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+            self.inner.poll_ready(cx)
+        }
+
+        fn call(&mut self, mut req: HttpRequest<B>) -> Self::Future {
+            let is_http_connect = req.method() == Method::CONNECT;
+            match req.version() {
+                Version::HTTP_10 if is_http_connect => {
+                    warn!("CONNECT is not allowed for HTTP/1.0");
+                    let error =
+                        error::Error::from_kind(error::ErrorKind::UserUnsupportedRequestMethod);
+                    return FutureEither::Right(future_err(error.into()));
+                }
+                Version::HTTP_10 | Version::HTTP_11 | Version::HTTP_2 => {}
+                _unsupported => {
+                    warn!("Request has unsupported version: {:?}", _unsupported);
+                    let error = error::Error::from_kind(error::ErrorKind::UserUnsupportedVersion);
+                    return FutureEither::Right(future_err(error.into()));
+                }
+            }
+
+            match normalize_uri(&mut req, is_http_connect) {
+                Ok(()) => FutureEither::Left(self.inner.call(req)),
+                Err(error) => FutureEither::Right(future_err(error.into())),
+            }
+        }
+    }
+
+    impl<C, B> Clone for Client<C, B>
+    where
+        C: tower::Service<ConnectRequest> + Clone + Send + Sync + 'static,
+        C::Response: AsyncRead + AsyncWrite + Connection + Unpin + Send + 'static,
+        C::Error: Into<BoxError>,
+        C::Future: Unpin + Send + 'static,
+        B: HttpBody + Send + Unpin + 'static,
+        B::Data: Send,
+        B::Error: Into<BoxError>,
+    {
+        fn clone(&self) -> Self {
+            Self {
+                inner: self.inner.clone(),
+            }
+        }
+    }
+
+    // ===== impl Builder =====
+
+    impl Builder {
+        /// Creates a builder using `exec` for protocol drivers and pool tasks.
+        pub fn new(exec: Executor) -> Self {
+            Self {
+                config: svc::Config {
+                    retry_unsent: true,
+                    set_host: true,
+                    version: HttpVersion::Auto,
+                    #[cfg(feature = "cookies")]
+                    cookie_store: None,
+                },
+                exec: exec.clone(),
+                h1_builder: conn::http1::Builder::default(),
+                h2_builder: conn::http2::Builder::new(exec),
+                pool_config: pool::Config {
+                    idle_timeout: Some(Duration::from_secs(90)),
+                    max_idle_per_host: usize::MAX,
+                    max_pool_size: None,
+                    ..pool::Config::default()
+                },
+                pool_timer: Timer::default(),
+            }
+        }
+
+        /// Sets how long a connection considered idle remains eligible for reuse.
+        ///
+        /// `None` disables time-based eviction. Without a [`Builder::pool_timer`],
+        /// expiration is checked only during checkout. The default is 90 seconds.
+        #[inline]
+        pub fn pool_idle_timeout<D>(mut self, val: D) -> Self
+        where
+            D: Into<Option<Duration>>,
+        {
+            self.pool_config.idle_timeout = val.into();
+            self
+        }
+
+        /// Sets the maximum idle HTTP/1 senders retained per compatibility group.
+        ///
+        /// This does not limit active physical connections. `0` disables pooling;
+        /// the default is `usize::MAX`.
+        #[inline]
+        pub fn pool_max_idle_per_host(mut self, max_idle: usize) -> Self {
+            self.pool_config.max_idle_per_host = max_idle;
+            self
+        }
+
+        /// Sets the maximum number of compatibility groups retaining idle state.
+        ///
+        /// An entry is counted only while it owns a reusable sender. Routing-only
+        /// and connecting entries are not counted. This does not limit physical
+        /// connections. The default is `None`.
+        #[inline]
+        pub fn pool_max_size(mut self, max_size: impl Into<Option<NonZeroUsize>>) -> Self {
+            self.pool_config.max_pool_size = max_size.into();
+            self
+        }
+
+        /// Selects whether a reuse miss immediately connects or waits for reuse.
+        #[inline]
+        pub fn pool_strategy(mut self, strategy: PoolStrategy) -> Self {
+            self.pool_config.strategy = strategy;
+            self
+        }
+
+        /// Shares the client's protocol selection with the request stack and pool.
+        #[inline]
+        pub fn http_version(mut self, version: HttpVersion) -> Self {
+            self.config.version = version;
+            self
+        }
+
+        /// Sets the timer used by the HTTP/2 protocol driver.
+        #[inline]
+        pub fn http2_timer(mut self, timer: Timer) -> Self {
+            self.h2_builder = self.h2_builder.timer(timer);
+            self
+        }
+
+        /// Sets the base HTTP/1 handshake options.
+        ///
+        /// Request-local options may override this base for one connection attempt.
+        #[inline]
+        pub fn http1_options<O>(mut self, opts: O) -> Self
+        where
+            O: Into<Option<Http1Options>>,
+        {
+            if let Some(opts) = opts.into() {
+                self.h1_builder = self.h1_builder.options(opts);
+            }
+
+            self
+        }
+
+        /// Sets the base HTTP/2 handshake options.
+        ///
+        /// Request-local options may override this base for one connection attempt.
+        #[inline]
+        pub fn http2_options<O>(mut self, opts: O) -> Self
+        where
+            O: Into<Option<Http2Options>>,
+        {
+            if let Some(opts) = opts.into() {
+                self.h2_builder = self.h2_builder.options(opts);
+            }
+            self
+        }
+
+        /// Sets the clock and sleeper used by pool delays and idle cleanup.
+        #[inline]
+        pub fn pool_timer(mut self, timer: Timer) -> Self {
+            self.pool_timer = timer;
+            self
+        }
+
+        /// Sets the cookie store consulted immediately around protocol dispatch.
+        #[inline]
+        pub fn cookie_store(
+            #[cfg_attr(
+                not(feature = "cookies"),
+                expect(unused_mut, reason = "Only the cookies feature mutates this builder")
+            )]
+            mut self,
+            #[cfg(feature = "cookies")] cookie_store: Option<Arc<dyn cookie::CookieStore>>,
+        ) -> Self {
+            #[cfg(feature = "cookies")]
+            {
+                self.config.cookie_store = cookie_store;
+            }
+            self
+        }
+
+        /// Consumes the builder and wraps `connector` in the complete client stack.
+        pub fn build<C, B>(self, connector: C) -> Client<C, B>
+        where
+            C: tower::Service<ConnectRequest> + Clone + Send + Sync + 'static,
+            C::Response: AsyncRead + AsyncWrite + Connection + Unpin + Send + 'static,
+            C::Error: Into<BoxError>,
+            C::Future: Unpin + Send + 'static,
+            B: HttpBody + Send + Unpin + 'static,
+            B::Data: Send,
+            B::Error: Into<BoxError>,
+        {
+            Client {
+                inner: ServiceBuilder::new()
+                    .layer(svc::layer(
+                        self.h1_builder,
+                        self.h2_builder,
+                        self.config.retry_unsent,
+                        self.config.version,
+                    ))
+                    .service(svc::Dispatch::new(
+                        self.pool_config,
+                        connector,
+                        self.config,
+                        self.exec,
+                        self.pool_timer,
+                    )),
+            }
+        }
+    }
+
+    /// Prepares a request URI for the client service stack.
+    ///
+    /// URIs with both a scheme and authority pass through unchanged. An
+    /// authority-form `CONNECT` target is converted to an internal absolute URI
+    /// using `https` for port 443 and `http` otherwise, allowing connection
+    /// selection to use the same URI shape as other requests. HTTP/1 target handling
+    /// converts it back to authority-form before encoding, as required by RFC 9112
+    /// section 3.2.3:
+    /// <https://www.rfc-editor.org/rfc/rfc9112.html#section-3.2.3>
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the request target is neither absolute nor a valid
+    /// authority-form `CONNECT` target, or when the normalized URI cannot be built.
+    fn normalize_uri<B>(
+        req: &mut HttpRequest<B>,
+        is_http_connect: bool,
+    ) -> Result<(), error::Error> {
+        match (req.uri().scheme(), req.uri().authority()) {
+            (Some(_), Some(_)) => Ok(()),
+            (None, Some(authority)) if is_http_connect => {
+                let scheme = match authority.port_u16() {
+                    Some(443) => Scheme::HTTPS,
+                    _ => Scheme::HTTP,
+                };
+                set_scheme(req.uri_mut(), scheme)
+            }
+            _ => {
+                debug!(
+                    "Client requires absolute-form URIs, received: {:?}",
+                    req.uri()
+                );
+                Err(error::Error::from_kind(
+                    error::ErrorKind::UserAbsoluteUriRequired,
+                ))
+            }
+        }
+    }
+
+    /// Adds a scheme and `/` path to an authority-form URI.
+    /// Returns an error if these parts cannot form an absolute URI.
+    fn set_scheme(uri: &mut Uri, scheme: Scheme) -> Result<(), error::Error> {
+        let old = std::mem::take(uri);
+        let mut parts: http::uri::Parts = old.into();
+        parts.scheme = Some(scheme);
+        parts.path_and_query = Some(PathAndQuery::from_static("/"));
+        *uri = Uri::from_parts(parts).map_err(|source| {
+            error::Error::new(error::ErrorKind::UserAbsoluteUriRequired, source)
+        })?;
+        Ok(())
     }
 }

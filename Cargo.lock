@@ -953,6 +953,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "92773504d58c093f6de2459af4af33faa518c13451eb8f2b5698ed3d36e7c813"
 
 [[package]]
+name = "educe"
+version = "0.7.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e451fac8dd8dece16234604bf1efce6e90fddd8ab6ad4d66eec0eca5160959dd"
+dependencies = [
+ "enum-ordinalize",
+ "proc-macro2",
+ "quote",
+ "syn 3.0.4",
+]
+
+[[package]]
 name = "either"
 version = "1.18.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3867,6 +3879,7 @@ dependencies = [
  "cookie",
  "criterion",
  "cyper",
+ "educe",
  "encoding_rs",
  "flate2",
  "futures",
@@ -3916,9 +3929,8 @@ dependencies = [
 
 [[package]]
 name = "wreq-proto"
-version = "0.2.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cb4d829f0427a5064829976fe790641ca21abb1d83d844812baf022dc0bdf2db"
+version = "0.2.5"
+source = "git+https://github.com/0x676e67/wreq-proto?rev=dae7159cc6b0ff1788a07c57a69844eeb3a1717e#dae7159cc6b0ff1788a07c57a69844eeb3a1717e"
 dependencies = [
  "bytes",
  "futures-channel",

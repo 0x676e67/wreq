@@ -1,4 +1,7 @@
-use btls::ssl::{SslConnectorBuilder, SslVerifyMode};
+use btls::{
+    error::ErrorStack,
+    ssl::{SslConnectorBuilder, SslVerifyMode},
+};
 
 use crate::{
     Error,
@@ -19,11 +22,12 @@ pub trait SslConnectorBuilderExt {
     /// Configure the certificate verification for the given `SslConnectorBuilder`.
     fn set_cert_verification(self, enable: bool) -> SslConnectorBuilder;
 
-    /// Configure the certificate compressors for the given `SslConnectorBuilder`.
+    /// Registers certificate compressors in the supplied order.
+    /// Returns backend errors for the caller to classify once.
     fn set_cert_compressors(
-        self,
-        compressors: Option<&[&'static dyn CertificateCompressor]>,
-    ) -> crate::Result<SslConnectorBuilder>;
+        &mut self,
+        compressors: &[&dyn CertificateCompressor],
+    ) -> Result<(), ErrorStack>;
 }
 
 impl SslConnectorBuilderExt for SslConnectorBuilder {
@@ -95,15 +99,13 @@ impl SslConnectorBuilderExt for SslConnectorBuilder {
     }
 
     fn set_cert_compressors(
-        mut self,
-        compressors: Option<&[&'static dyn CertificateCompressor]>,
-    ) -> crate::Result<SslConnectorBuilder> {
-        if let Some(compressors) = compressors {
-            for compressor in compressors {
-                compress::register(*compressor, &mut self).map_err(Error::tls)?;
-            }
+        &mut self,
+        compressors: &[&dyn CertificateCompressor],
+    ) -> Result<(), ErrorStack> {
+        for &compressor in compressors {
+            compress::register(compressor, self)?;
         }
 
-        Ok(self)
+        Ok(())
     }
 }

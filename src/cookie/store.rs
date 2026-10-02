@@ -27,7 +27,7 @@ pub struct CookieEntry {
 /// Keeps host-only and `Domain` cookies separate because the host-only flag is part of a cookie's
 /// identity under the RFC 6265bis storage model.
 ///
-/// https://httpwg.org/http-extensions/draft-ietf-httpbis-rfc6265bis.html#section-5.7
+/// <https://httpwg.org/http-extensions/draft-ietf-httpbis-rfc6265bis.html#section-5.7>
 #[derive(Debug, Default)]
 pub struct CookieScopeMap {
     host_only: NameMap,
@@ -210,7 +210,7 @@ impl Store {
     /// Returns whether an insecure cookie would overlay an unexpired `Secure` cookie.
     ///
     /// RFC 6265bis section 5.7:
-    /// https://httpwg.org/http-extensions/draft-ietf-httpbis-rfc6265bis.html#section-5.7
+    /// <https://httpwg.org/http-extensions/draft-ietf-httpbis-rfc6265bis.html#section-5.7>
     pub fn would_overlay_secure_cookie(
         &self,
         name: &str,
@@ -266,7 +266,7 @@ pub fn cookie_is_expired(cookie: &RawCookie<'_>, now: OffsetDateTime) -> bool {
 
 /// Determines whether `host` domain-matches `domain` as defined by RFC 6265 section 5.1.3.
 ///
-/// https://www.rfc-editor.org/rfc/rfc6265.html#section-5.1.3
+/// <https://www.rfc-editor.org/rfc/rfc6265.html#section-5.1.3>
 pub fn domain_match(host: &CanonicalHost, domain: &CanonicalHost) -> bool {
     if host == domain {
         return true;
@@ -283,7 +283,7 @@ pub fn domain_match(host: &CanonicalHost, domain: &CanonicalHost) -> bool {
 
 /// Determines whether `request_path` path-matches `cookie_path` under RFC 6265 section 5.1.4.
 ///
-/// https://www.rfc-editor.org/rfc/rfc6265.html#section-5.1.4
+/// <https://www.rfc-editor.org/rfc/rfc6265.html#section-5.1.4>
 fn path_match(request_path: &str, cookie_path: &str) -> bool {
     request_path == cookie_path
         || request_path.starts_with(cookie_path)
@@ -306,7 +306,7 @@ pub fn canonical_host(host: &str) -> Option<CanonicalHost> {
 
 /// Computes the default cookie path from a request path under RFC 6265 section 5.1.4.
 ///
-/// https://www.rfc-editor.org/rfc/rfc6265.html#section-5.1.4
+/// <https://www.rfc-editor.org/rfc/rfc6265.html#section-5.1.4>
 pub fn normalize_path(path: &str) -> &str {
     if !path.starts_with(DEFAULT_PATH) {
         return DEFAULT_PATH;

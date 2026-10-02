@@ -27,7 +27,7 @@ use tokio_tungstenite::tungstenite::{
 
 use self::message::{CloseCode, Message, Utf8Bytes};
 use super::{emulate::IntoEmulation, request::RequestBuilder, response::Response};
-use crate::{Error, Upgraded, header::OrigHeaderMap, proxy::Proxy};
+use crate::{Error, Upgraded, group::Group, header::OrigHeaderMap, proxy::Proxy};
 
 /// A WebSocket stream.
 type WebSocketStream = tokio_tungstenite::WebSocketStream<Upgraded>;
@@ -388,19 +388,20 @@ impl WebSocketRequestBuilder {
         self
     }
 
-    /// Sets the request builder to emulation the specified HTTP context.
-    ///
-    /// This method sets the necessary headers, HTTP/1 and HTTP/2 options configurations, and  TLS
-    /// options config to use the specified HTTP context. It allows the client to mimic the
-    /// behavior of different versions or setups, which can be useful for testing or ensuring
-    /// compatibility with various environments.
-    ///
-    /// # Note
-    /// This will overwrite the existing configuration.
-    /// You must set emulation before you can perform subsequent HTTP1/HTTP2/TLS fine-tuning.
+    /// Applies the profile's headers and TLS, HTTP/1, and HTTP/2 options.
+    /// Existing values in those categories may be replaced; connection group,
+    /// proxy, version, and socket settings remain unchanged.
     #[inline]
     pub fn emulation<T: IntoEmulation>(mut self, emulation: T) -> Self {
         self.inner = self.inner.emulation(emulation);
+        self
+    }
+
+    /// Adds a connection-pool partition to this WebSocket request.
+    /// The partition can only make connection reuse more restrictive.
+    #[inline]
+    pub fn group(mut self, group: Group) -> Self {
+        self.inner = self.inner.group(group);
         self
     }
 
