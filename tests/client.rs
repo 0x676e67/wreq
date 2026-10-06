@@ -1178,30 +1178,21 @@ async fn connection_pool_http2_errors_respect_negotiation() {
             let (socket, _) = listener.accept().await.unwrap();
             let mut stream = server::tls_accept(&acceptor, socket).await;
             assert!(stream.ssl().selected_alpn_protocol().is_none());
+            let mut buffer = [0; 1024];
             if forced {
                 let mut preface = [0; 24];
                 stream.read_exact(&mut preface).await.unwrap();
                 assert_eq!(&preface, b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n");
+                stream
+                    .write_all(b"HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\n\r\n")
+                    .await
+                    .unwrap();
+                // Drain input so a TCP reset cannot hide the protocol parsing error.
+                while stream.read(&mut buffer).await.unwrap_or_default() != 0 {}
             } else {
-                // H1 ignores the H2 extension and encodes an ordinary CONNECT.
-                let mut head = Vec::new();
-                while !head.ends_with(b"\r\n\r\n") {
-                    head.push(stream.read_u8().await.unwrap());
-                }
-                let head = String::from_utf8(head).unwrap();
-                assert_eq!(
-                    head.lines().next().unwrap(),
-                    format!("CONNECT {} HTTP/1.1", listener.local_addr().unwrap())
-                );
-                assert!(!head.contains("websocket"));
+                // Extended CONNECT is refused before any HTTP/1 bytes are written.
+                assert_eq!(stream.read(&mut buffer).await.unwrap_or_default(), 0);
             }
-            stream
-                .write_all(b"HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\n\r\n")
-                .await
-                .unwrap();
-            // Drain input so a TCP reset cannot hide the protocol parsing error.
-            let mut buffer = [0; 1024];
-            while stream.read(&mut buffer).await.unwrap_or_default() != 0 {}
             assert!(
                 tokio::time::timeout(Duration::from_millis(100), listener.accept())
                     .await
@@ -1247,10 +1238,14 @@ async fn connection_pool_http2_errors_respect_negotiation() {
             }
             assert!(has_context && has_protocol_error, "{error:?}");
         } else {
-            let response = result.unwrap();
-            assert_eq!(response.status(), StatusCode::BAD_REQUEST);
-            assert_eq!(response.version(), Version::HTTP_11);
-            response.bytes().await.unwrap();
+            let error = result.unwrap_err();
+            let mut source = error.source();
+            let mut unsupported = false;
+            while let Some(error) = source {
+                unsupported |= error.to_string().contains("UserUnsupportedVersion");
+                source = error.source();
+            }
+            assert!(unsupported, "{error:?}");
         }
         drop(client);
         tokio::time::timeout(Duration::from_secs(5), server)

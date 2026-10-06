@@ -435,6 +435,17 @@ where
                 }
             };
 
+            // RFC 8441 extended CONNECT exists only in HTTP/2. Over HTTP/1 it would be an
+            // ordinary tunnel request (RFC 9110 section 9.3.6), so it is never sent there:
+            // https://www.rfc-editor.org/rfc/rfc8441.html#section-4
+            if pooled.is_http1() && request.extensions().get::<http2::ext::Protocol>().is_some() {
+                warn!("Connection is HTTP/1, but extended CONNECT requires HTTP/2");
+                return Err(DispatchError::Terminal(
+                    Error::from_kind(ErrorKind::UserUnsupportedVersion)
+                        .with_connect_info(pooled.conn_info().clone()),
+                ));
+            }
+
             if connection.req.version() == Some(HttpVersion::Auto) {
                 // Resolve the wire version on every attempt: an unsent retry may
                 // select a different protocol, but retains the original preference.
