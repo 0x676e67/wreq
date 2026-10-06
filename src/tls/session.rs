@@ -15,22 +15,41 @@ use std::{
 };
 
 use btls::ssl::SslSession;
+use http::Uri;
 use lru::LruCache;
 pub(crate) use store::SessionStore;
 
-use crate::{conn::request::ConnectionKey, sync::Mutex, tls::TlsVersion};
+use crate::{
+    conn::{extra::Extra, request::ConnectRequest},
+    http1::Http1Options,
+    http2::Http2Options,
+    sync::Mutex,
+    tls::TlsVersion,
+};
 
 const SESSION_ID_CONTEXT_LENGTH: usize = 32;
 
 /// An opaque key identifying a TLS session cache entry.
 ///
-/// It contains the client session scope and complete connection identity. This
+/// It contains the client session scope and the connection's TLS identity. This
 /// prevents a cache shared by multiple clients from returning a foreign ticket.
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub struct Key(
-    pub(super) ConnectionKey,
+    pub(super) SessionKey,
     pub(super) [u8; SESSION_ID_CONTEXT_LENGTH],
 );
+
+/// TLS identity of one connection: origin, TLS peer, and connection configuration.
+///
+/// HTTP version preference and HTTP/1 or HTTP/2 options only change ALPN or
+/// framing, so they are left out and connections with different ALPN offers
+/// share tickets. Unknown configuration stays in.
+#[derive(Clone, PartialEq, Eq, Hash)]
+pub(crate) struct SessionKey {
+    origin: Uri,
+    route: Uri,
+    extra: Extra,
+}
 
 /// A TLS session that can be stored and retrieved from a session cache.
 ///
@@ -71,6 +90,22 @@ impl_into_shared!(
 pub struct LruTlsSessionStore {
     inner: Mutex<HashMap<Key, LruCache<TlsSession, ()>>>,
     per_key_capacity: usize,
+}
+
+// ===== impl SessionKey =====
+
+impl SessionKey {
+    /// Derives the TLS identity of a connection request.
+    pub(crate) fn new(req: &ConnectRequest) -> Self {
+        let mut extra = req.extra().clone();
+        extra.remove::<Http1Options>();
+        extra.remove::<Http2Options>();
+        Self {
+            origin: req.uri().clone(),
+            route: req.route_uri().clone(),
+            extra,
+        }
+    }
 }
 
 // ===== impl TlsSession =====
@@ -178,5 +213,35 @@ impl TlsSessionStore for LruTlsSessionStore {
         drop(retired_session);
         drop(retired_entry);
         Some(session)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{HttpVersion, group::Group, tls::TlsOptions};
+
+    #[test]
+    fn session_key_ignores_http_only_configuration() {
+        let request = |version, extra| {
+            ConnectRequest::new(Uri::from_static("https://example.com/a"), version, extra).unwrap()
+        };
+        let mut base = Extra::default();
+        base.insert_config(TlsOptions::default());
+        let mut http = base.clone();
+        http.insert_config(Http1Options::builder().max_headers(8).build())
+            .insert_config(Http2Options::builder().header_table_size(1024).build());
+        let key = SessionKey::new(&request(None, base.clone()));
+
+        assert!(key == SessionKey::new(&request(Some(HttpVersion::Http1), http)));
+
+        let mut tls = Extra::default();
+        tls.insert_config(TlsOptions::builder().pre_shared_key(true).build());
+        let mut grouped = base.clone();
+        grouped.insert_config(Group::new("tenant"));
+        let proxied = request(None, base).with_route_uri(Uri::from_static("https://proxy:8443"));
+        for other in [request(None, tls), request(None, grouped), proxied] {
+            assert!(key != SessionKey::new(&other));
+        }
     }
 }

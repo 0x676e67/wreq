@@ -96,3 +96,79 @@ async fn http2_upgrade() {
     upgraded.read_to_end(&mut buf).await.unwrap();
     assert_eq!(buf, b"bar=foo");
 }
+
+#[cfg(feature = "ws")]
+#[tokio::test]
+async fn websocket_uses_dedicated_http1_connection() {
+    use std::{
+        convert::Infallible,
+        sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+        },
+    };
+
+    use http::header::{CONNECTION, SEC_WEBSOCKET_ACCEPT, SEC_WEBSOCKET_KEY, UPGRADE};
+    use tokio_tungstenite::tungstenite::handshake::derive_accept_key;
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let accepted = Arc::new(AtomicUsize::new(0));
+    tokio::spawn({
+        let accepted = accepted.clone();
+        async move {
+            loop {
+                let (io, _) = listener.accept().await.unwrap();
+                accepted.fetch_add(1, Ordering::SeqCst);
+                tokio::spawn(async move {
+                    let service = hyper::service::service_fn(
+                        |req: http::Request<hyper::body::Incoming>| async move {
+                            let mut res = http::Response::new(wreq::Body::default());
+                            if let Some(key) = req.headers().get(SEC_WEBSOCKET_KEY) {
+                                *res.status_mut() = http::StatusCode::SWITCHING_PROTOCOLS;
+                                let headers = res.headers_mut();
+                                headers.insert(UPGRADE, "websocket".parse().unwrap());
+                                headers.insert(CONNECTION, "upgrade".parse().unwrap());
+                                headers.insert(
+                                    SEC_WEBSOCKET_ACCEPT,
+                                    derive_accept_key(key.as_bytes()).parse().unwrap(),
+                                );
+                            }
+                            Ok::<_, Infallible>(res)
+                        },
+                    );
+                    let _ = hyper::server::conn::http1::Builder::new()
+                        .serve_connection(hyper_util::rt::TokioIo::new(io), service)
+                        .with_upgrades()
+                        .await;
+                });
+            }
+        }
+    });
+
+    let client = Client::builder().no_proxy().build().unwrap();
+    let get = || {
+        client
+            .get(format!("http://{addr}"))
+            .version(http::Version::HTTP_11)
+            .send()
+    };
+    get().await.unwrap().bytes().await.unwrap();
+    assert_eq!(accepted.load(Ordering::SeqCst), 1);
+
+    // The handshake opens its own socket instead of taking the idle keep-alive one.
+    let websocket = client
+        .websocket(format!("ws://{addr}"))
+        .send()
+        .await
+        .unwrap()
+        .into_websocket()
+        .await
+        .unwrap();
+    assert_eq!(accepted.load(Ordering::SeqCst), 2);
+    drop(websocket);
+
+    // The idle connection is still pooled, and the WebSocket socket never joined it.
+    get().await.unwrap().bytes().await.unwrap();
+    assert_eq!(accepted.load(Ordering::SeqCst), 2);
+}

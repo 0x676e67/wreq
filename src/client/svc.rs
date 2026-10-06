@@ -68,6 +68,17 @@ pub struct Stack<S, B> {
     version: HttpVersion,
 }
 
+/// Requests a new HTTP/1 connection that is never taken from or returned to the pool.
+#[derive(Clone, Copy)]
+#[cfg_attr(
+    not(feature = "ws"),
+    allow(
+        dead_code,
+        reason = "Only WebSocket handshakes request dedicated connections"
+    )
+)]
+pub(super) struct DedicatedConnection;
+
 /// A request paired with the connection configuration shared by its attempts.
 /// Configuration is captured before checkout and retained across unsent retries.
 /// Dispatch returns this value only when the original body has not been sent.
@@ -204,6 +215,10 @@ where
             .extensions_mut()
             .remove::<Extra>()
             .unwrap_or_default();
+        let dedicated = request
+            .extensions_mut()
+            .remove::<DedicatedConnection>()
+            .is_some();
 
         // Only the resolved protocol below belongs in the key; H1.0/H1.1 share a pool.
         let version = extra
@@ -232,6 +247,7 @@ where
                 connection: ConnectionConfig {
                     req,
                     proto: self.proto.clone(),
+                    dedicated,
                 },
             })),
             Err(source) => Either::Right(future::err(
@@ -434,6 +450,17 @@ where
                     )));
                 }
             };
+
+            // RFC 8441 extended CONNECT exists only in HTTP/2. Over HTTP/1 it would be an
+            // ordinary tunnel request (RFC 9110 section 9.3.6), so it is never sent there:
+            // https://www.rfc-editor.org/rfc/rfc8441.html#section-4
+            if pooled.is_http1() && request.extensions().get::<http2::ext::Protocol>().is_some() {
+                warn!("Connection is HTTP/1, but extended CONNECT requires HTTP/2");
+                return Err(DispatchError::Terminal(
+                    Error::from_kind(ErrorKind::UserUnsupportedVersion)
+                        .with_connect_info(pooled.conn_info().clone()),
+                ));
+            }
 
             if connection.req.version() == Some(HttpVersion::Auto) {
                 // Resolve the wire version on every attempt: an unsent retry may

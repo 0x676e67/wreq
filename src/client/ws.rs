@@ -26,7 +26,9 @@ use tokio_tungstenite::tungstenite::{
 };
 
 use self::message::{CloseCode, Message, Utf8Bytes};
-use super::{emulate::IntoEmulation, request::RequestBuilder, response::Response};
+use super::{
+    emulate::IntoEmulation, request::RequestBuilder, response::Response, svc::DedicatedConnection,
+};
 use crate::{Error, Upgraded, group::Group, header::OrigHeaderMap, proxy::Proxy};
 
 /// A WebSocket stream.
@@ -450,6 +452,8 @@ impl WebSocketRequestBuilder {
 
                 *request.method_mut() = Method::GET;
                 *request.version_mut() = Some(Version::HTTP_11);
+                // Never reuse an idle socket or return this one to the pool.
+                request.extensions_mut().insert(DedicatedConnection);
                 Some(nonce)
             }
             Some(Version::HTTP_2) => {
