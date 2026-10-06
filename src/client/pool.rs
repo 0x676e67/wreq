@@ -231,6 +231,8 @@ pub(super) struct PoolTarget {
 pub(super) struct ConnectionConfig {
     pub(super) req: ConnectRequest,
     pub(super) proto: Arc<(conn::http1::Builder, conn::http2::Builder<Executor>)>,
+    /// Whether checkout always connects and never returns the sender to the pool.
+    pub(super) dedicated: bool,
 }
 
 /// Factory that creates one protocol-specific service graph per destination group.
@@ -615,7 +617,8 @@ where
     /// Checks out a sender compatible with the destination and handshake builders.
     ///
     /// The map lock is released before the returned future is polled. When
-    /// pooling is disabled, the call creates a temporary entry for this request.
+    /// pooling is disabled or the connection is dedicated, the call creates a
+    /// temporary entry for this request.
     pub(super) async fn checkout(
         &self,
         connection: ConnectionConfig,
@@ -627,7 +630,7 @@ where
             wait_for_reuse: false,
         };
 
-        if !self.inner.enabled {
+        if !self.inner.enabled || target.connection.dedicated {
             return self
                 .inner
                 .targeter
@@ -1725,6 +1728,7 @@ mod tests {
                 conn::http1::Builder::default(),
                 conn::http2::Builder::new(Executor::default()),
             )),
+            dedicated: false,
         }
     }
 

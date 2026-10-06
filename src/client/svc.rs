@@ -68,6 +68,20 @@ pub struct Stack<S, B> {
     version: HttpVersion,
 }
 
+/// Requests a new HTTP/1 connection that is never taken from or returned to the pool.
+///
+/// Chromium opens WebSocket handshakes on such sockets:
+/// <https://github.com/chromium/chromium/blob/9f3f52d585430bdeb7fd125b023e4721448f7b6c/net/socket/websocket_transport_client_socket_pool.cc#L181-L240>
+#[derive(Clone, Copy)]
+#[cfg_attr(
+    not(feature = "ws"),
+    allow(
+        dead_code,
+        reason = "Only WebSocket handshakes request dedicated connections"
+    )
+)]
+pub(super) struct DedicatedConnection;
+
 /// A request paired with the connection configuration shared by its attempts.
 /// Configuration is captured before checkout and retained across unsent retries.
 /// Dispatch returns this value only when the original body has not been sent.
@@ -204,6 +218,10 @@ where
             .extensions_mut()
             .remove::<Extra>()
             .unwrap_or_default();
+        let dedicated = request
+            .extensions_mut()
+            .remove::<DedicatedConnection>()
+            .is_some();
 
         // Only the resolved protocol below belongs in the key; H1.0/H1.1 share a pool.
         let version = extra
@@ -232,6 +250,7 @@ where
                 connection: ConnectionConfig {
                     req,
                     proto: self.proto.clone(),
+                    dedicated,
                 },
             })),
             Err(source) => Either::Right(future::err(
