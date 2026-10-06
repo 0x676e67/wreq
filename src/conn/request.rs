@@ -82,18 +82,8 @@ impl ConnectRequest {
             .authority(uri.authority().ok_or("URI missing authority")?.clone())
             .path_and_query(PathAndQuery::from_static("/"))
             .build()?;
-        static HASHER: LazyLock<DefaultHasher> = LazyLock::new(DefaultHasher::default);
-        let mut hasher = HASHER.build_hasher();
-        (&uri, version).hash(&mut hasher);
-        extra.hash(&mut hasher);
-        let hash = hasher.finish();
         Ok(Self {
-            inner: Arc::new(RequestData {
-                uri,
-                version,
-                extra,
-                hash,
-            }),
+            inner: RequestData::new(uri, version, extra),
             route_uri: None,
         })
     }
@@ -126,6 +116,16 @@ impl ConnectRequest {
         ConnectionKey(self.inner.clone())
     }
 
+    /// Returns the reuse identity of this origin and configuration under another
+    /// protocol preference, without changing this request.
+    pub(crate) fn key_with_version(&self, version: Option<HttpVersion>) -> ConnectionKey {
+        ConnectionKey(RequestData::new(
+            self.inner.uri.clone(),
+            version,
+            self.inner.extra.clone(),
+        ))
+    }
+
     /// Returns the address used for transport setup and TLS host selection.
     /// It defaults to the original origin until a proxy supplies another route.
     /// Routing does not participate in the original connection's reuse identity.
@@ -139,6 +139,25 @@ impl ConnectRequest {
     pub(crate) fn with_route_uri(mut self, uri: Uri) -> Self {
         self.route_uri = Some(uri);
         self
+    }
+}
+
+// ===== impl RequestData =====
+
+impl RequestData {
+    /// Freezes reuse identity and caches its hash.
+    fn new(uri: Uri, version: Option<HttpVersion>, extra: Extra) -> Arc<Self> {
+        static HASHER: LazyLock<DefaultHasher> = LazyLock::new(DefaultHasher::default);
+        let mut hasher = HASHER.build_hasher();
+        (&uri, version).hash(&mut hasher);
+        extra.hash(&mut hasher);
+        let hash = hasher.finish();
+        Arc::new(Self {
+            uri,
+            version,
+            extra,
+            hash,
+        })
     }
 }
 

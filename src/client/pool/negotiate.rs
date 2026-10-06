@@ -169,6 +169,9 @@ pub(super) struct WantsUpgrade;
 pub(super) trait Existing<S>: Service<S> {
     /// Joins existing upgraded state without starting a new maker.
     fn checkout(&self) -> Option<Self::Future>;
+
+    /// Clones only completed upgraded state, never joining a maker.
+    fn checkout_made(&self) -> Option<Self::Response>;
 }
 
 /// Existing upgraded work selected before falling back to a new connection.

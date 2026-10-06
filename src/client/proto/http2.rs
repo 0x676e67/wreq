@@ -276,6 +276,11 @@ where
         self.tx.is_closed()
     }
 
+    /// Returns whether the peer enabled extended CONNECT, or `None` before its SETTINGS.
+    pub fn extended_connect(&self) -> Option<bool> {
+        self.tx.is_extended_connect_protocol_enabled()
+    }
+
     /// Marks the shared sender checked out until response headers are returned.
     pub fn begin_checkout(&self) {
         self.state.acquire();

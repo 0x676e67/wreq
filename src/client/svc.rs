@@ -14,7 +14,10 @@ use std::{
 };
 
 use futures_util::future::{self, BoxFuture, Either, Ready};
-use http::{Request, Response, Uri, Version};
+use http::{
+    HeaderValue, Method, Request, Response, Uri, Version,
+    header::{CONNECTION, SEC_WEBSOCKET_KEY, UPGRADE},
+};
 use http_body::Body;
 use pin_project_lite::pin_project;
 use tokio::io::{AsyncRead, AsyncWrite};
@@ -38,7 +41,11 @@ use super::{
 };
 use crate::{
     HttpVersion,
-    conn::{Connection, extra::Extra, request::ConnectRequest},
+    conn::{
+        Connection,
+        extra::Extra,
+        request::{ConnectRequest, ConnectionKey},
+    },
     ext::UriExt,
     rt::{Executor, Timer},
 };
@@ -69,6 +76,9 @@ pub struct Stack<S, B> {
 }
 
 /// Requests a new HTTP/1 connection that is never taken from or returned to the pool.
+///
+/// With `extended_connect`, dispatch first tries an established connection of the
+/// default request group whose peer enabled RFC 8441 extended CONNECT.
 #[derive(Clone, Copy)]
 #[cfg_attr(
     not(feature = "ws"),
@@ -77,7 +87,17 @@ pub struct Stack<S, B> {
         reason = "Only WebSocket handshakes request dedicated connections"
     )
 )]
-pub(super) struct DedicatedConnection;
+pub(super) struct DedicatedConnection {
+    pub(super) extended_connect: bool,
+}
+
+/// RFC 6455 fields removed while a WebSocket handshake rides extended CONNECT.
+/// They are restored if the request returns unsent, so a retry can use HTTP/1.1.
+struct Http1Upgrade {
+    upgrade: Option<HeaderValue>,
+    connection: Option<HeaderValue>,
+    key: Option<HeaderValue>,
+}
 
 /// A request paired with the connection configuration shared by its attempts.
 /// Configuration is captured before checkout and retained across unsent retries.
@@ -85,6 +105,8 @@ pub(super) struct DedicatedConnection;
 pub struct PoolRequest<B> {
     request: Request<B>,
     connection: ConnectionConfig,
+    /// Default-group key whose established sender may carry this WebSocket.
+    extended_connect: Option<ConnectionKey>,
 }
 
 /// Retries canceled checkouts and unsent requests on reused connections.
@@ -215,10 +237,7 @@ where
             .extensions_mut()
             .remove::<Extra>()
             .unwrap_or_default();
-        let dedicated = request
-            .extensions_mut()
-            .remove::<DedicatedConnection>()
-            .is_some();
+        let dedicated = request.extensions_mut().remove::<DedicatedConnection>();
 
         // Only the resolved protocol below belongs in the key; H1.0/H1.1 share a pool.
         let version = extra
@@ -242,14 +261,21 @@ where
         };
 
         match ConnectRequest::new(uri, version, extra) {
-            Ok(req) => Either::Left(self.inner.call(PoolRequest {
-                request,
-                connection: ConnectionConfig {
-                    req,
-                    proto: self.proto.clone(),
-                    dedicated,
-                },
-            })),
+            Ok(req) => {
+                // Only clients that may negotiate HTTP/2 have a default group to probe.
+                let extended_connect = (dedicated.is_some_and(|d| d.extended_connect)
+                    && self.version != HttpVersion::Http1)
+                    .then(|| req.key_with_version(None));
+                Either::Left(self.inner.call(PoolRequest {
+                    request,
+                    connection: ConnectionConfig {
+                        req,
+                        proto: self.proto.clone(),
+                        dedicated: dedicated.is_some(),
+                    },
+                    extended_connect,
+                }))
+            }
             Err(source) => Either::Right(future::err(
                 Error::new(ErrorKind::UserAbsoluteUriRequired, source).into(),
             )),
@@ -353,6 +379,70 @@ impl<B> DispatchError<B> {
     }
 }
 
+// ===== impl Http1Upgrade =====
+
+impl Http1Upgrade {
+    /// Rewrites the GET upgrade as extended CONNECT, keeping the other WebSocket fields:
+    /// https://www.rfc-editor.org/rfc/rfc8441#section-5
+    fn into_extended_connect<B>(request: &mut Request<B>) -> Self {
+        *request.method_mut() = Method::CONNECT;
+        *request.version_mut() = Version::HTTP_2;
+        request
+            .extensions_mut()
+            .insert(http2::ext::Protocol::from_static("websocket"));
+        let headers = request.headers_mut();
+        // Connection-specific fields are malformed in HTTP/2:
+        // https://www.rfc-editor.org/rfc/rfc9113#section-8.2.2
+        Self {
+            upgrade: headers.remove(UPGRADE),
+            connection: headers.remove(CONNECTION),
+            key: headers.remove(SEC_WEBSOCKET_KEY),
+        }
+    }
+
+    /// Restores the RFC 6455 GET after an unsent extended CONNECT.
+    fn restore<B>(self, request: &mut Request<B>) {
+        *request.method_mut() = Method::GET;
+        *request.version_mut() = Version::HTTP_11;
+        request.extensions_mut().remove::<http2::ext::Protocol>();
+        let headers = request.headers_mut();
+        for (name, value) in [
+            (UPGRADE, self.upgrade),
+            (CONNECTION, self.connection),
+            (SEC_WEBSOCKET_KEY, self.key),
+        ] {
+            if let Some(value) = value {
+                headers.insert(name, value);
+            }
+        }
+    }
+}
+
+/// Explains failures of HTTP/2 used over HTTPS without negotiating `h2` in ALPN.
+fn with_h2_alpn_context(error: Error, unnegotiated_h2: bool) -> Error {
+    if unnegotiated_h2 {
+        error.with_context(
+            "HTTP/2 was used for HTTPS without reported h2 ALPN; \
+             the peer may not support HTTP/2",
+        )
+    } else {
+        error
+    }
+}
+
+/// Rejects extended CONNECT on a connection whose peer did not enable it (RFC 8441 §3).
+fn extended_connect_disabled<B>(pooled: &pool::Pooled<B>) -> Error
+where
+    B: Body + Send + Unpin + 'static,
+    B::Data: Send,
+    B::Error: Into<BoxError>,
+{
+    warn!("peer did not enable extended CONNECT");
+    Error::from_kind(ErrorKind::UserUnsupportedVersion)
+        .with_context("peer did not enable extended CONNECT")
+        .with_connect_info(pooled.conn_info().clone())
+}
+
 // ===== impl Dispatch =====
 
 impl<C, B> Dispatch<C, B>
@@ -428,38 +518,59 @@ where
             let PoolRequest {
                 mut request,
                 connection,
+                extended_connect,
             } = request;
 
-            let version = connection.req.version().unwrap_or(this.version);
+            // RFC 8441 §3: extended CONNECT only after the peer enabled it. A miss keeps
+            // the dedicated HTTP/1.1 upgrade, so no HTTP/2 connection is opened for it.
+            let reused = extended_connect
+                .as_ref()
+                .and_then(|key| this.pool.checkout_extended_connect(key));
+            let upgrade = reused
+                .is_some()
+                .then(|| Http1Upgrade::into_extended_connect(&mut request));
 
-            let mut pooled = match this.pool.checkout(connection.clone(), version).await {
-                Ok(pooled) => pooled,
-                Err(error) if pool::is_canceled(&*error) => {
-                    return Err(DispatchError::CheckoutCanceled {
-                        error: Error::new(ErrorKind::Connect, error),
-                        request: Box::new(PoolRequest {
-                            request,
-                            connection,
-                        }),
-                    });
-                }
-                Err(error) => {
-                    return Err(DispatchError::Terminal(Error::new(
-                        ErrorKind::Connect,
-                        error,
-                    )));
+            let mut pooled = match reused {
+                Some(pooled) => pooled,
+                None => {
+                    let version = connection.req.version().unwrap_or(this.version);
+                    match this.pool.checkout(connection.clone(), version).await {
+                        Ok(pooled) => pooled,
+                        Err(error) if pool::is_canceled(&*error) => {
+                            return Err(DispatchError::CheckoutCanceled {
+                                error: Error::new(ErrorKind::Connect, error),
+                                request: Box::new(PoolRequest {
+                                    request,
+                                    connection,
+                                    extended_connect,
+                                }),
+                            });
+                        }
+                        Err(error) => {
+                            return Err(DispatchError::Terminal(Error::new(
+                                ErrorKind::Connect,
+                                error,
+                            )));
+                        }
+                    }
                 }
             };
 
-            // RFC 8441 extended CONNECT exists only in HTTP/2. Over HTTP/1 it would be an
-            // ordinary tunnel request (RFC 9110 section 9.3.6), so it is never sent there:
-            // https://www.rfc-editor.org/rfc/rfc8441.html#section-4
-            if pooled.is_http1() && request.extensions().get::<http2::ext::Protocol>().is_some() {
-                warn!("Connection is HTTP/1, but extended CONNECT requires HTTP/2");
-                return Err(DispatchError::Terminal(
-                    Error::from_kind(ErrorKind::UserUnsupportedVersion)
-                        .with_connect_info(pooled.conn_info().clone()),
-                ));
+            let extended = request.extensions().get::<http2::ext::Protocol>().is_some();
+            if extended {
+                // RFC 8441 extended CONNECT exists only in HTTP/2. Over HTTP/1 it would be an
+                // ordinary tunnel request (RFC 9110 section 9.3.6), so it is never sent there:
+                // https://www.rfc-editor.org/rfc/rfc8441.html#section-4
+                if pooled.is_http1() {
+                    warn!("Connection is HTTP/1, but extended CONNECT requires HTTP/2");
+                    return Err(DispatchError::Terminal(
+                        Error::from_kind(ErrorKind::UserUnsupportedVersion)
+                            .with_connect_info(pooled.conn_info().clone()),
+                    ));
+                }
+                if pooled.extended_connect() == Some(false) {
+                    return Err(DispatchError::Terminal(extended_connect_disabled(&pooled)));
+                }
             }
 
             if connection.req.version() == Some(HttpVersion::Auto) {
@@ -512,32 +623,37 @@ where
                 Err(mut error) => {
                     let connection_reused = pooled.is_reused();
                     let connect_info = pooled.conn_info().clone();
-                    return if let Some(request) = error.take_message() {
-                        Err(DispatchError::Unsent {
-                            error: error
-                                .into_client_error(ErrorKind::Canceled)
+                    let unnegotiated_h2 = pooled.is_http2()
+                        && connection.req.uri().is_https()
+                        && !connect_info.is_negotiated_h2();
+                    // A returned request was not sent, but only a canceled dispatch is
+                    // transient; protocol rejections repeat on the same connection.
+                    if let Some(mut request) =
+                        error.is_canceled().then(|| error.take_message()).flatten()
+                    {
+                        if let Some(upgrade) = upgrade {
+                            upgrade.restore(&mut request);
+                        }
+                        let error = error.into_client_error(ErrorKind::Canceled);
+                        return Err(DispatchError::Unsent {
+                            error: with_h2_alpn_context(error, unnegotiated_h2)
                                 .with_connect_info(connect_info),
                             request: Box::new(PoolRequest {
                                 request,
                                 connection,
+                                extended_connect,
                             }),
                             connection_reused,
-                        })
-                    } else {
-                        let mut error = error.into_client_error(ErrorKind::SendRequest);
-                        if pooled.is_http2()
-                            && connection.req.uri().is_https()
-                            && !connect_info.is_negotiated_h2()
-                        {
-                            error = error.with_context(
-                                "HTTP/2 was used for HTTPS without reported h2 ALPN; \
-                                 the peer may not support HTTP/2",
-                            );
-                        }
-                        Err(DispatchError::Terminal(
-                            error.with_connect_info(connect_info),
-                        ))
-                    };
+                        });
+                    }
+                    if extended && pooled.extended_connect() == Some(false) {
+                        return Err(DispatchError::Terminal(extended_connect_disabled(&pooled)));
+                    }
+                    let error = error.into_client_error(ErrorKind::SendRequest);
+                    return Err(DispatchError::Terminal(
+                        with_h2_alpn_context(error, unnegotiated_h2)
+                            .with_connect_info(connect_info),
+                    ));
                 }
             };
 
@@ -876,6 +992,76 @@ mod tests {
         );
         assert_eq!(keys[2], keys[5], "Protocol does not override negotiation");
         assert_eq!(keys[2], keys[7], "request negotiation overrides fixed H1");
+    }
+
+    #[tokio::test]
+    async fn websocket_route_probes_default_group_and_restores_upgrade() {
+        for (client, extended_connect, probes) in [
+            (HttpVersion::Auto, true, true),
+            (HttpVersion::Http2, true, true),
+            (HttpVersion::Auto, false, false),
+            (HttpVersion::Http1, true, false),
+        ] {
+            let mut request = Request::builder()
+                .uri("https://localhost/chat")
+                .body(())
+                .unwrap();
+            request
+                .extensions_mut()
+                .get_or_insert_default::<Extra>()
+                .insert_config(Some(Version::HTTP_11));
+            request
+                .extensions_mut()
+                .insert(DedicatedConnection { extended_connect });
+            let service = tower::service_fn(|request: PoolRequest<()>| {
+                future::ready(Ok::<_, DispatchError<()>>(request))
+            });
+            let request = ServiceBuilder::new()
+                .layer(layer(
+                    conn::http1::Builder::default(),
+                    conn::http2::Builder::new(Executor::default()),
+                    true,
+                    client,
+                ))
+                .service(service)
+                .oneshot(request)
+                .await
+                .unwrap();
+            let req = &request.connection.req;
+            assert!(request.connection.dedicated);
+            assert_eq!(req.version(), Some(HttpVersion::Http1));
+            // The probe uses the group of requests that inherit the client mode.
+            let expected = probes.then(|| req.key_with_version(None));
+            assert_eq!(request.extended_connect, expected);
+            assert!(expected.is_none_or(|key| key != req.key()));
+        }
+
+        let mut request = Request::get("https://localhost/chat")
+            .version(Version::HTTP_11)
+            .header(UPGRADE, "websocket")
+            .header(CONNECTION, "upgrade")
+            .header(SEC_WEBSOCKET_KEY, "dGhlIHNhbXBsZSBub25jZQ==")
+            .header(http::header::SEC_WEBSOCKET_VERSION, "13")
+            .body(())
+            .unwrap();
+        let original = request.headers().clone();
+        let upgrade = Http1Upgrade::into_extended_connect(&mut request);
+        assert_eq!(request.method(), Method::CONNECT);
+        assert_eq!(request.version(), Version::HTTP_2);
+        assert!(request.extensions().get::<http2::ext::Protocol>().is_some());
+        let headers = request.headers();
+        assert!(
+            ![UPGRADE, CONNECTION, SEC_WEBSOCKET_KEY]
+                .iter()
+                .any(|name| headers.contains_key(name))
+        );
+        assert_eq!(headers[http::header::SEC_WEBSOCKET_VERSION], "13");
+
+        upgrade.restore(&mut request);
+        assert_eq!(request.method(), Method::GET);
+        assert_eq!(request.version(), Version::HTTP_11);
+        assert!(request.extensions().get::<http2::ext::Protocol>().is_none());
+        assert_eq!(*request.headers(), original);
     }
 
     #[tokio::test]

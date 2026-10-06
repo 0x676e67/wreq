@@ -114,6 +114,24 @@ where
         matches!(*self.state.lock(), State::Made { .. })
     }
 
+    /// Clones the completed service without joining or starting creation.
+    ///
+    /// Returns `None` while the singleton is empty or still making its service.
+    pub(super) fn checkout_made(&self) -> Option<Singled<M::Future, M::Response>> {
+        match &*self.state.lock() {
+            State::Made {
+                service,
+                generation,
+            } => Some(Singled::new(
+                service.clone(),
+                Arc::downgrade(&self.state),
+                generation.clone(),
+                true,
+            )),
+            State::Empty | State::Making(_) => None,
+        }
+    }
+
     /// Joins an existing service or in-progress creation.
     ///
     /// Returns `None` instead of starting the maker when the singleton is empty.

@@ -172,3 +172,129 @@ async fn websocket_uses_dedicated_http1_connection() {
     get().await.unwrap().bytes().await.unwrap();
     assert_eq!(accepted.load(Ordering::SeqCst), 2);
 }
+
+#[cfg(feature = "ws")]
+#[tokio::test]
+async fn websocket_reuses_established_http2_with_extended_connect() {
+    use std::{convert::Infallible, error::Error as _};
+
+    use futures_util::{SinkExt, StreamExt};
+    use http::header::{CONNECTION, SEC_WEBSOCKET_ACCEPT, SEC_WEBSOCKET_KEY, UPGRADE};
+    use support::server::Event;
+    use tokio_tungstenite::{
+        WebSocketStream,
+        tungstenite::{handshake::derive_accept_key, protocol::Role},
+    };
+    use wreq::ws::message::Message;
+
+    async fn echo(upgrade: hyper::upgrade::OnUpgrade) {
+        let io = hyper_util::rt::TokioIo::new(upgrade.await.unwrap());
+        let mut ws = WebSocketStream::from_raw_socket(io, Role::Server, None).await;
+        while let Some(Ok(message)) = ws.next().await {
+            if message.is_text() && ws.send(message).await.is_err() {
+                break;
+            }
+        }
+    }
+
+    for enabled in [true, false] {
+        let mut server = server::http_with_config(
+            |mut req: http::Request<hyper::body::Incoming>| async move {
+                let mut res = http::Response::new(wreq::Body::default());
+                if req.method() == Method::CONNECT {
+                    // RFC 8441 §5: no RFC 6455 key or connection-specific fields.
+                    assert_eq!(req.version(), http::Version::HTTP_2);
+                    let protocol = req.extensions().get::<hyper::ext::Protocol>().unwrap();
+                    assert_eq!(protocol.as_str(), "websocket");
+                    for name in [SEC_WEBSOCKET_KEY, UPGRADE, CONNECTION] {
+                        assert!(!req.headers().contains_key(name));
+                    }
+                    tokio::spawn(echo(hyper::upgrade::on(&mut req)));
+                } else if let Some(key) = req.headers().get(SEC_WEBSOCKET_KEY) {
+                    assert_eq!(req.version(), http::Version::HTTP_11);
+                    *res.status_mut() = http::StatusCode::SWITCHING_PROTOCOLS;
+                    let accept = derive_accept_key(key.as_bytes()).parse().unwrap();
+                    let headers = res.headers_mut();
+                    headers.insert(UPGRADE, "websocket".parse().unwrap());
+                    headers.insert(CONNECTION, "upgrade".parse().unwrap());
+                    headers.insert(SEC_WEBSOCKET_ACCEPT, accept);
+                    tokio::spawn(echo(hyper::upgrade::on(&mut req)));
+                }
+                Ok::<_, Infallible>(res)
+            },
+            move |builder| {
+                if enabled {
+                    builder.http2().enable_connect_protocol();
+                }
+            },
+        );
+        let mut accepted = 0;
+        let mut accepted = move |server: &mut server::Server| {
+            accepted += server
+                .events()
+                .into_iter()
+                .filter(|event| matches!(event, Event::ConnectionAccepted))
+                .count();
+            accepted
+        };
+        let client = Client::builder().http2_only().no_proxy().build().unwrap();
+        let ws_url = format!("ws://{}", server.addr());
+        let http_url = format!("http://{}", server.addr());
+
+        // A WebSocket never opens an HTTP/2 connection for itself.
+        let response = client.websocket(&ws_url).send().await.unwrap();
+        assert_eq!(response.version(), http::Version::HTTP_11);
+        drop(response);
+        assert_eq!(accepted(&mut server), 1);
+
+        let response = client.get(&http_url).send().await.unwrap();
+        assert_eq!(response.version(), http::Version::HTTP_2);
+        response.bytes().await.unwrap();
+        assert_eq!(accepted(&mut server), 2);
+
+        // The default route rides the established connection only if its peer allows it.
+        let response = client.websocket(&ws_url).send().await.unwrap();
+        let expected = if enabled {
+            http::Version::HTTP_2
+        } else {
+            http::Version::HTTP_11
+        };
+        assert_eq!(response.version(), expected);
+        let mut websocket = response.into_websocket().await.unwrap();
+        websocket.send(Message::text("ping")).await.unwrap();
+        assert_eq!(
+            websocket.recv().await.unwrap().unwrap(),
+            Message::text("ping")
+        );
+        assert_eq!(accepted(&mut server), if enabled { 2 } else { 3 });
+
+        let response = client.get(&http_url).send().await.unwrap();
+        assert_eq!(response.version(), http::Version::HTTP_2);
+        response.bytes().await.unwrap();
+        drop(websocket);
+
+        // Explicit HTTP/2 uses its own group: a new connection waits for SETTINGS, and a
+        // known refusal fails before sending instead of retrying the same connection.
+        let before = accepted(&mut server);
+        for _ in 0..2 {
+            let result = client
+                .websocket(&ws_url)
+                .version(http::Version::HTTP_2)
+                .send()
+                .await;
+            if enabled {
+                assert_eq!(result.unwrap().version(), http::Version::HTTP_2);
+            } else {
+                let error = result.unwrap_err();
+                let mut source = error.source();
+                let mut unsupported = false;
+                while let Some(error) = source {
+                    unsupported |= error.to_string().contains("UserUnsupportedVersion");
+                    source = error.source();
+                }
+                assert!(unsupported, "{error:?}");
+            }
+        }
+        assert_eq!(accepted(&mut server), before + 1);
+    }
+}

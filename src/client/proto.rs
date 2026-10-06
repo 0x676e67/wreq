@@ -94,6 +94,11 @@ impl<B> SendError<B> {
         Self::Protocol(Box::new(error))
     }
 
+    /// Returns whether dispatch was canceled before encoding, the only retryable failure.
+    pub fn is_canceled(&self) -> bool {
+        matches!(self, Self::Protocol(error) if error.error().is_canceled())
+    }
+
     /// Takes a request recovered before protocol encoding began.
     pub fn take_message(&mut self) -> Option<Request<B>> {
         match self {

@@ -296,6 +296,10 @@ where
         enabled: bool,
     ) -> (Checkout<B>, Option<ConnectionConfig>);
 
+    /// Clones an established multiplexed sender without creating, joining, or
+    /// draining work. HTTP/1 entries and generations still being made return `None`.
+    fn checkout_made(&self) -> Option<(PooledInner<B>, Arc<EntryState>)>;
+
     /// Removes expired or closed idle connections for unlocked destruction.
     fn retain(&mut self, now: Instant, timeout: Option<Duration>) -> Option<DeferredDrop>;
 
@@ -659,6 +663,27 @@ where
 
         future.await
     }
+
+    /// Checks out an established sender whose peer enabled extended CONNECT.
+    ///
+    /// Never creates entries or connections, joins pending handshakes, or touches
+    /// HTTP/1 state, so a miss costs one map lookup.
+    pub(super) fn checkout_extended_connect(&self, key: &ConnectionKey) -> Option<Pooled<B>> {
+        if !self.inner.enabled {
+            return None;
+        }
+        let (inner, state) = self.inner.services.lock().get_mut(key)?.checkout_made()?;
+        // Pooled::new runs map maintenance, so it must stay outside the map lock.
+        let usable = match &inner {
+            Negotiated::Left(_) => false,
+            Negotiated::Right(service) => {
+                let connection = service.inner();
+                connection.extended_connect() == Some(true)
+                    && connection.is_reusable(self.inner.now(), self.inner.idle_timeout)
+            }
+        };
+        usable.then(|| Pooled::new(inner, true, EntryUse::new(state)))
+    }
 }
 
 impl<C, B> Clone for Pool<C, B>
@@ -935,6 +960,10 @@ where
         (future, None)
     }
 
+    fn checkout_made(&self) -> Option<(PooledInner<B>, Arc<EntryState>)> {
+        None
+    }
+
     /// Removes closed or expired idle senders for unlocked destruction.
     ///
     /// Active checkouts and FIFO waiters remain owned by the cache.
@@ -1015,6 +1044,11 @@ where
             Ok(Pooled::new(Negotiated::Right(service), enabled, usage))
         }));
         (future, None)
+    }
+
+    fn checkout_made(&self) -> Option<(PooledInner<B>, Arc<EntryState>)> {
+        let service = self.service.checkout_made()?;
+        Some((Negotiated::Right(service), self.state.clone()))
     }
 
     /// Removes a completed HTTP/2 sender when poisoned, closed, or expired idle.
@@ -1099,6 +1133,12 @@ where
                 .map(|service| Pooled::new(service, enabled, usage))
         }));
         (future, None)
+    }
+
+    /// Uses only the upgraded side; HTTP/1 fallback and pending transports stay untouched.
+    fn checkout_made(&self) -> Option<(PooledInner<B>, Arc<EntryState>)> {
+        let service = self.service.upgrade().checkout_made()?;
+        Some((Negotiated::Right(service), self.state.clone()))
     }
 
     /// Cleans pending negotiation results and both protocol pools.
@@ -1289,6 +1329,10 @@ where
     fn checkout(&self) -> Option<Self::Future> {
         Singleton::checkout(self)
     }
+
+    fn checkout_made(&self) -> Option<Self::Response> {
+        Singleton::checkout_made(self)
+    }
 }
 
 // ===== impl ConnectionMaker =====
@@ -1406,6 +1450,15 @@ where
     /// Returns whether this checkout uses HTTP/2.
     pub(super) fn is_http2(&self) -> bool {
         matches!(self.inner, Negotiated::Right(_))
+    }
+
+    /// Returns whether the peer enabled extended CONNECT, or `None` before its SETTINGS.
+    /// HTTP/1 never supports it.
+    pub(super) fn extended_connect(&self) -> Option<bool> {
+        match &self.inner {
+            Negotiated::Left(_) => Some(false),
+            Negotiated::Right(service) => service.inner().extended_connect(),
+        }
     }
 
     /// Returns whether the sender came from an existing pooled connection.
@@ -1660,6 +1713,7 @@ mod tests {
                             let _ = hyper::server::conn::http2::Builder::new(
                                 hyper_util::rt::TokioExecutor::new(),
                             )
+                            .enable_connect_protocol()
                             .serve_connection(hyper_util::rt::TokioIo::new(server), service)
                             .await;
                         });
@@ -1994,6 +2048,61 @@ mod tests {
 
         assert!(!pool.inner.services.lock().is_empty());
         assert!(!pool.inner.expire.is_running());
+    }
+
+    #[tokio::test]
+    async fn extended_connect_checkout_only_clones_established_senders() {
+        for version in [HttpVersion::Http2, HttpVersion::Auto] {
+            let calls = Arc::new(AtomicUsize::new(0));
+            let gate = Arc::new(tokio::sync::Semaphore::new(0));
+            let pool = test_pool(TestConnector::Http2(calls.clone(), gate.clone()));
+            let key = connect_request().key();
+            let checkout = || {
+                let target = PoolTarget {
+                    connection: connection(connect_request()),
+                    version,
+                    wait_for_reuse: false,
+                };
+                let (future, _) = pool.inner.services.lock().with_service(
+                    &pool.inner.targeter,
+                    target,
+                    |entry, mut target| {
+                        // Auto selects H2 where ALPN would, as in the generation test.
+                        target.version = HttpVersion::Http2;
+                        entry.checkout(target, true)
+                    },
+                );
+                future
+            };
+
+            // A miss neither connects nor leaves an entry behind.
+            assert!(pool.checkout_extended_connect(&key).is_none());
+            assert!(pool.inner.services.lock().get_mut(&key).is_none());
+
+            // A generation still being made is not joined.
+            let mut making = tokio_test::task::spawn(checkout());
+            assert!(making.poll().is_pending());
+            assert!(pool.checkout_extended_connect(&key).is_none());
+            gate.add_permits(1);
+            let mut pooled = making.await.unwrap();
+
+            // A response proves the peer's SETTINGS were applied.
+            let request = Request::get("http://localhost/")
+                .body(crate::Body::default())
+                .unwrap();
+            pooled.call(request).await.unwrap();
+            drop(pooled);
+            let probed = pool.checkout_extended_connect(&key).unwrap();
+            assert!(probed.is_http2() && probed.is_reused());
+            assert_eq!(probed.extended_connect(), Some(true));
+            assert_eq!(calls.load(Ordering::Relaxed), 1);
+
+            // Unusable senders are skipped without the probe evicting them.
+            probed.conn_info().poison();
+            assert!(pool.checkout_extended_connect(&key).is_none());
+            assert!(pool.inner.services.lock().get_mut(&key).is_some());
+            drop(probed);
+        }
     }
 
     #[tokio::test]

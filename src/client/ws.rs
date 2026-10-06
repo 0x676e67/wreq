@@ -38,6 +38,8 @@ type WebSocketStream = tokio_tungstenite::WebSocketStream<Upgraded>;
 /// websocket handshake when sent.
 pub struct WebSocketRequestBuilder {
     inner: RequestBuilder,
+    /// Handshake version from [`Self::version`]; `None` selects the default route.
+    version: Option<Version>,
     accept_key: Option<Cow<'static, str>>,
     protocols: Option<Vec<Cow<'static, str>>>,
     config: WebSocketConfig,
@@ -47,7 +49,8 @@ impl WebSocketRequestBuilder {
     /// Creates a new WebSocket request builder.
     pub fn new(inner: RequestBuilder) -> Self {
         Self {
-            inner: inner.version(Version::HTTP_11),
+            inner,
+            version: None,
             accept_key: None,
             protocols: None,
             config: WebSocketConfig::default(),
@@ -65,6 +68,8 @@ impl WebSocketRequestBuilder {
     /// # Returns
     ///
     /// * `Self` - The modified instance with the custom WebSocket accept key.
+    ///
+    /// The key is unused when the handshake runs over HTTP/2.
     #[inline]
     pub fn accept_key<K>(mut self, key: K) -> Self
     where
@@ -77,24 +82,29 @@ impl WebSocketRequestBuilder {
     /// Set HTTP version
     ///
     /// Configures the HTTP version used for the WebSocket handshake.
-    /// Defaults to HTTP/1.1.
     ///
-    /// # HTTP/1.1 (default)
+    /// # Default
     ///
-    /// - Uses the standard `Upgrade: websocket` mechanism (RFC 6455)
-    /// - Sends an HTTP `GET` request with `Connection: Upgrade` and `Upgrade: websocket` headers
-    /// - Widely supported by servers
+    /// - Uses the Extended CONNECT Protocol ([RFC 8441]) on an established pooled HTTP/2 connection
+    ///   to the same origin with the same options, if its server enabled it
+    /// - Otherwise sends the RFC 6455 upgrade on a new HTTP/1.1 connection that is never pooled; no
+    ///   HTTP/2 connection is opened for the handshake
+    ///
+    /// # HTTP/1.1
+    ///
+    /// - Always uses the standard `Upgrade: websocket` mechanism (RFC 6455) on a new, never pooled
+    ///   connection
     ///
     /// # HTTP/2
     ///
-    /// - Uses the Extended CONNECT Protocol (RFC 8441)
-    /// - Sends a `CONNECT` request with the `:protocol: websocket` pseudo-header instead of the
-    ///   traditional upgrade mechanism
-    /// - Requires explicit server support for HTTP/2 WebSocket connections
-    /// - Will fail if the server does not support HTTP/2 WebSocket upgrade
+    /// - Always sends a `CONNECT` request with the `:protocol: websocket` pseudo-header, which may
+    ///   open an HTTP/2 connection
+    /// - Waits for the server's SETTINGS and fails if it did not enable the protocol
+    ///
+    /// [RFC 8441]: https://www.rfc-editor.org/rfc/rfc8441
     #[inline]
     pub fn version(mut self, version: Version) -> Self {
-        self.inner = self.inner.version(version);
+        self.version = Some(version);
         self
     }
 
@@ -425,8 +435,7 @@ impl WebSocketRequestBuilder {
             *uri = Uri::from_parts(parts).map_err(Error::builder)?;
         }
 
-        // Get the version of the request
-        let version = request.version();
+        let version = self.version;
 
         // Set the headers for the websocket handshake
         let headers = request.headers_mut();
@@ -437,7 +446,7 @@ impl WebSocketRequestBuilder {
 
         // Ensure the request is HTTP 1.1/HTTP 2
         let accept_key = match version {
-            Some(Version::HTTP_10 | Version::HTTP_11) => {
+            None | Some(Version::HTTP_10 | Version::HTTP_11) => {
                 // Generate a nonce if one wasn't provided
                 let nonce = self
                     .accept_key
@@ -452,8 +461,11 @@ impl WebSocketRequestBuilder {
 
                 *request.method_mut() = Method::GET;
                 *request.version_mut() = Some(Version::HTTP_11);
-                // Never reuse an idle socket or return this one to the pool.
-                request.extensions_mut().insert(DedicatedConnection);
+                // Never reuse an idle socket or return this one to the pool. The default
+                // route may still ride an established HTTP/2 connection instead.
+                request.extensions_mut().insert(DedicatedConnection {
+                    extended_connect: version.is_none(),
+                });
                 Some(nonce)
             }
             Some(Version::HTTP_2) => {
