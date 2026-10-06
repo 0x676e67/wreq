@@ -1044,6 +1044,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "fastrand"
+version = "2.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "da7c62ceae207dd37ea5b845da6a0696c799f85e97da1ab5b7910be3c1c80223"
+
+[[package]]
 name = "find-msvc-tools"
 version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1458,6 +1464,22 @@ dependencies = [
  "smallvec",
  "tokio",
  "tokio-util",
+ "tracing",
+]
+
+[[package]]
+name = "http3"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "daf8014b014f52d76dd0652d424e60569227cdb29f11a29f3e98814521a287bf"
+dependencies = [
+ "bytes",
+ "fastrand",
+ "futures-util",
+ "http",
+ "pin-project-lite",
+ "smallvec",
+ "tokio",
  "tracing",
 ]
 
@@ -1990,6 +2012,28 @@ name = "ndk-context"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "27b02d87554356db9e9a873add8782d4ea6e3e58ea071a9adb9a2e8ddb884a8b"
+
+[[package]]
+name = "netty"
+version = "0.2.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a6d4d60c6b6193ac462e05a1c8ae826a624eff20368e208e59101f5a1fbfc055"
+dependencies = [
+ "bytes",
+ "futures-channel",
+ "futures-util",
+ "http",
+ "http-body",
+ "http2",
+ "http3",
+ "httparse",
+ "pin-project-lite",
+ "smallvec",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "want",
+]
 
 [[package]]
 name = "nom"
@@ -3917,6 +3961,7 @@ dependencies = [
  "lru",
  "mime",
  "mime_guess",
+ "netty",
  "parking_lot",
  "percent-encoding",
  "pin-project-lite",
@@ -3942,43 +3987,20 @@ dependencies = [
  "url",
  "webpki-root-certs",
  "windows-registry 0.100.0",
- "wreq-proto",
  "wreq-rt",
  "zstd",
 ]
 
 [[package]]
-name = "wreq-proto"
-version = "0.2.5"
-source = "git+https://github.com/0x676e67/wreq-proto?rev=dae7159cc6b0ff1788a07c57a69844eeb3a1717e#dae7159cc6b0ff1788a07c57a69844eeb3a1717e"
-dependencies = [
- "bytes",
- "futures-channel",
- "futures-util",
- "http",
- "http-body",
- "http2",
- "httparse",
- "pin-project-lite",
- "smallvec",
- "tokio",
- "tokio-util",
- "tracing",
- "want",
-]
-
-[[package]]
 name = "wreq-rt"
 version = "0.2.2-rc.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "99e9bce67a3fa3dd3f1503f066d86661c9caf399a763d3bd184da7afaf886c8b"
 dependencies = [
  "compio",
  "futures-util",
+ "netty",
  "pin-project-lite",
  "send_wrapper",
  "tokio",
- "wreq-proto",
 ]
 
 [[package]]
