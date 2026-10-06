@@ -268,14 +268,16 @@ async fn websocket_reuses_established_http2_with_extended_connect() {
         );
         assert_eq!(accepted(&mut server), if enabled { 2 } else { 3 });
 
+        // The shared connection stays reusable while the tunnel is open.
         let response = client.get(&http_url).send().await.unwrap();
         assert_eq!(response.version(), http::Version::HTTP_2);
         response.bytes().await.unwrap();
+        let before = if enabled { 2 } else { 3 };
+        assert_eq!(accepted(&mut server), before);
         drop(websocket);
 
         // Explicit HTTP/2 uses its own group: a new connection waits for SETTINGS, and a
         // known refusal fails before sending instead of retrying the same connection.
-        let before = accepted(&mut server);
         for _ in 0..2 {
             let result = client
                 .websocket(&ws_url)
@@ -287,12 +289,14 @@ async fn websocket_reuses_established_http2_with_extended_connect() {
             } else {
                 let error = result.unwrap_err();
                 let mut source = error.source();
-                let mut unsupported = false;
+                let mut disabled = false;
                 while let Some(error) = source {
-                    unsupported |= error.to_string().contains("UserUnsupportedVersion");
+                    disabled |= error
+                        .to_string()
+                        .contains("peer did not enable extended CONNECT");
                     source = error.source();
                 }
-                assert!(unsupported, "{error:?}");
+                assert!(disabled, "{error:?}");
             }
         }
         assert_eq!(accepted(&mut server), before + 1);

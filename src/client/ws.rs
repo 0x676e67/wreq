@@ -60,6 +60,7 @@ impl WebSocketRequestBuilder {
     /// Sets a custom WebSocket accept key.
     ///
     /// This method allows you to set a custom WebSocket accept key for the connection.
+    /// The key is unused when the handshake runs over HTTP/2.
     ///
     /// # Arguments
     ///
@@ -68,8 +69,6 @@ impl WebSocketRequestBuilder {
     /// # Returns
     ///
     /// * `Self` - The modified instance with the custom WebSocket accept key.
-    ///
-    /// The key is unused when the handshake runs over HTTP/2.
     #[inline]
     pub fn accept_key<K>(mut self, key: K) -> Self
     where
@@ -86,7 +85,8 @@ impl WebSocketRequestBuilder {
     /// # Default
     ///
     /// - Uses the Extended CONNECT Protocol ([RFC 8441]) on an established pooled HTTP/2 connection
-    ///   to the same origin with the same options, if its server enabled it
+    ///   opened by requests to the same origin with the same options and no explicit version, if
+    ///   its server enabled it; the WebSocket then holds a stream on that shared connection
     /// - Otherwise sends the RFC 6455 upgrade on a new HTTP/1.1 connection that is never pooled; no
     ///   HTTP/2 connection is opened for the handshake
     ///

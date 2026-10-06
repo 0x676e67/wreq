@@ -15,7 +15,7 @@ use std::{
 
 use futures_util::future::{self, BoxFuture, Either, Ready};
 use http::{
-    HeaderValue, Method, Request, Response, Uri, Version,
+    HeaderMap, Method, Request, Response, Uri, Version,
     header::{CONNECTION, SEC_WEBSOCKET_KEY, UPGRADE},
 };
 use http_body::Body;
@@ -91,12 +91,10 @@ pub(super) struct DedicatedConnection {
     pub(super) extended_connect: bool,
 }
 
-/// RFC 6455 fields removed while a WebSocket handshake rides extended CONNECT.
-/// They are restored if the request returns unsent, so a retry can use HTTP/1.1.
+/// Original RFC 6455 header fields of a WebSocket handshake riding extended CONNECT.
+/// They are restored in order if the request returns unsent, so a retry can use HTTP/1.1.
 struct Http1Upgrade {
-    upgrade: Option<HeaderValue>,
-    connection: Option<HeaderValue>,
-    key: Option<HeaderValue>,
+    headers: HeaderMap,
 }
 
 /// A request paired with the connection configuration shared by its attempts.
@@ -390,14 +388,17 @@ impl Http1Upgrade {
         request
             .extensions_mut()
             .insert(http2::ext::Protocol::from_static("websocket"));
-        let headers = request.headers_mut();
-        // Connection-specific fields are malformed in HTTP/2:
+        let headers = mem::take(request.headers_mut());
+        // Connection-specific fields are malformed in HTTP/2; the rest keep their order:
         // https://www.rfc-editor.org/rfc/rfc9113#section-8.2.2
-        Self {
-            upgrade: headers.remove(UPGRADE),
-            connection: headers.remove(CONNECTION),
-            key: headers.remove(SEC_WEBSOCKET_KEY),
+        let extended = request.headers_mut();
+        extended.reserve(headers.len());
+        for (name, value) in &headers {
+            if ![UPGRADE, CONNECTION, SEC_WEBSOCKET_KEY].contains(name) {
+                extended.append(name, value.clone());
+            }
         }
+        Self { headers }
     }
 
     /// Restores the RFC 6455 GET after an unsent extended CONNECT.
@@ -405,16 +406,7 @@ impl Http1Upgrade {
         *request.method_mut() = Method::GET;
         *request.version_mut() = Version::HTTP_11;
         request.extensions_mut().remove::<http2::ext::Protocol>();
-        let headers = request.headers_mut();
-        for (name, value) in [
-            (UPGRADE, self.upgrade),
-            (CONNECTION, self.connection),
-            (SEC_WEBSOCKET_KEY, self.key),
-        ] {
-            if let Some(value) = value {
-                headers.insert(name, value);
-            }
-        }
+        *request.headers_mut() = self.headers;
     }
 }
 
@@ -996,52 +988,61 @@ mod tests {
 
     #[tokio::test]
     async fn websocket_route_probes_default_group_and_restores_upgrade() {
+        let request = |websocket: Option<bool>| {
+            let mut request = Request::builder()
+                .uri("https://localhost/chat")
+                .body(())
+                .unwrap();
+            let extra = request.extensions_mut().get_or_insert_default::<Extra>();
+            extra.insert_config(7_u32);
+            if let Some(extended_connect) = websocket {
+                extra.insert_config(Some(Version::HTTP_11));
+                request
+                    .extensions_mut()
+                    .insert(DedicatedConnection { extended_connect });
+            }
+            request
+        };
         for (client, extended_connect, probes) in [
             (HttpVersion::Auto, true, true),
             (HttpVersion::Http2, true, true),
             (HttpVersion::Auto, false, false),
             (HttpVersion::Http1, true, false),
         ] {
-            let mut request = Request::builder()
-                .uri("https://localhost/chat")
-                .body(())
-                .unwrap();
-            request
-                .extensions_mut()
-                .get_or_insert_default::<Extra>()
-                .insert_config(Some(Version::HTTP_11));
-            request
-                .extensions_mut()
-                .insert(DedicatedConnection { extended_connect });
-            let service = tower::service_fn(|request: PoolRequest<()>| {
-                future::ready(Ok::<_, DispatchError<()>>(request))
-            });
-            let request = ServiceBuilder::new()
+            let stack = ServiceBuilder::new()
                 .layer(layer(
                     conn::http1::Builder::default(),
                     conn::http2::Builder::new(Executor::default()),
                     true,
                     client,
                 ))
-                .service(service)
-                .oneshot(request)
+                .service(tower::service_fn(|request: PoolRequest<()>| {
+                    future::ready(Ok::<_, DispatchError<()>>(request))
+                }));
+            let websocket = stack
+                .clone()
+                .oneshot(request(Some(extended_connect)))
                 .await
                 .unwrap();
-            let req = &request.connection.req;
-            assert!(request.connection.dedicated);
-            assert_eq!(req.version(), Some(HttpVersion::Http1));
-            // The probe uses the group of requests that inherit the client mode.
-            let expected = probes.then(|| req.key_with_version(None));
-            assert_eq!(request.extended_connect, expected);
-            assert!(expected.is_none_or(|key| key != req.key()));
+            let plain = stack.oneshot(request(None)).await.unwrap();
+            assert!(websocket.connection.dedicated);
+            assert_eq!(websocket.connection.req.version(), Some(HttpVersion::Http1));
+            // The probe targets the group ordinary requests use; those never probe.
+            assert!(plain.extended_connect.is_none());
+            assert_eq!(
+                websocket.extended_connect,
+                probes.then(|| plain.connection.req.key())
+            );
         }
 
         let mut request = Request::get("https://localhost/chat")
             .version(Version::HTTP_11)
+            .header(http::header::SEC_WEBSOCKET_VERSION, "13")
             .header(UPGRADE, "websocket")
+            .header(http::header::ORIGIN, "https://localhost")
             .header(CONNECTION, "upgrade")
             .header(SEC_WEBSOCKET_KEY, "dGhlIHNhbXBsZSBub25jZQ==")
-            .header(http::header::SEC_WEBSOCKET_VERSION, "13")
+            .header(http::header::SEC_WEBSOCKET_PROTOCOL, "chat")
             .body(())
             .unwrap();
         let original = request.headers().clone();
@@ -1049,19 +1050,17 @@ mod tests {
         assert_eq!(request.method(), Method::CONNECT);
         assert_eq!(request.version(), Version::HTTP_2);
         assert!(request.extensions().get::<http2::ext::Protocol>().is_some());
-        let headers = request.headers();
-        assert!(
-            ![UPGRADE, CONNECTION, SEC_WEBSOCKET_KEY]
-                .iter()
-                .any(|name| headers.contains_key(name))
+        let names: Vec<_> = request.headers().keys().map(|name| name.as_str()).collect();
+        assert_eq!(
+            names,
+            ["sec-websocket-version", "origin", "sec-websocket-protocol"]
         );
-        assert_eq!(headers[http::header::SEC_WEBSOCKET_VERSION], "13");
 
         upgrade.restore(&mut request);
         assert_eq!(request.method(), Method::GET);
         assert_eq!(request.version(), Version::HTTP_11);
         assert!(request.extensions().get::<http2::ext::Protocol>().is_none());
-        assert_eq!(*request.headers(), original);
+        assert!(request.headers().iter().eq(original.iter()));
     }
 
     #[tokio::test]

@@ -296,9 +296,9 @@ where
         enabled: bool,
     ) -> (Checkout<B>, Option<ConnectionConfig>);
 
-    /// Clones an established multiplexed sender without creating, joining, or
-    /// draining work. HTTP/1 entries and generations still being made return `None`.
-    fn checkout_made(&self) -> Option<(PooledInner<B>, Arc<EntryState>)>;
+    /// Clones an established HTTP/2 sender without creating, joining, or draining
+    /// work. HTTP/1 entries and generations still being made return `None`.
+    fn checkout_made(&self) -> Option<(H2Pooled<B>, Arc<EntryState>)>;
 
     /// Removes expired or closed idle connections for unlocked destruction.
     fn retain(&mut self, now: Instant, timeout: Option<Duration>) -> Option<DeferredDrop>;
@@ -672,17 +672,12 @@ where
         if !self.inner.enabled {
             return None;
         }
-        let (inner, state) = self.inner.services.lock().get_mut(key)?.checkout_made()?;
+        let (service, state) = self.inner.services.lock().get_mut(key)?.checkout_made()?;
         // Pooled::new runs map maintenance, so it must stay outside the map lock.
-        let usable = match &inner {
-            Negotiated::Left(_) => false,
-            Negotiated::Right(service) => {
-                let connection = service.inner();
-                connection.extended_connect() == Some(true)
-                    && connection.is_reusable(self.inner.now(), self.inner.idle_timeout)
-            }
-        };
-        usable.then(|| Pooled::new(inner, true, EntryUse::new(state)))
+        let connection = service.inner();
+        let usable = connection.extended_connect() == Some(true)
+            && connection.is_reusable(self.inner.now(), self.inner.idle_timeout);
+        usable.then(|| Pooled::new(Negotiated::Right(service), true, EntryUse::new(state)))
     }
 }
 
@@ -960,7 +955,7 @@ where
         (future, None)
     }
 
-    fn checkout_made(&self) -> Option<(PooledInner<B>, Arc<EntryState>)> {
+    fn checkout_made(&self) -> Option<(H2Pooled<B>, Arc<EntryState>)> {
         None
     }
 
@@ -1046,9 +1041,8 @@ where
         (future, None)
     }
 
-    fn checkout_made(&self) -> Option<(PooledInner<B>, Arc<EntryState>)> {
-        let service = self.service.checkout_made()?;
-        Some((Negotiated::Right(service), self.state.clone()))
+    fn checkout_made(&self) -> Option<(H2Pooled<B>, Arc<EntryState>)> {
+        Some((self.service.checkout_made()?, self.state.clone()))
     }
 
     /// Removes a completed HTTP/2 sender when poisoned, closed, or expired idle.
@@ -1136,9 +1130,8 @@ where
     }
 
     /// Uses only the upgraded side; HTTP/1 fallback and pending transports stay untouched.
-    fn checkout_made(&self) -> Option<(PooledInner<B>, Arc<EntryState>)> {
-        let service = self.service.upgrade().checkout_made()?;
-        Some((Negotiated::Right(service), self.state.clone()))
+    fn checkout_made(&self) -> Option<(H2Pooled<B>, Arc<EntryState>)> {
+        Some((self.service.upgrade().checkout_made()?, self.state.clone()))
     }
 
     /// Cleans pending negotiation results and both protocol pools.
@@ -2085,6 +2078,9 @@ mod tests {
             assert!(pool.checkout_extended_connect(&key).is_none());
             gate.add_permits(1);
             let mut pooled = making.await.unwrap();
+            // Support is unknown until the peer's SETTINGS; the probe must not guess.
+            assert_eq!(pooled.extended_connect(), None);
+            assert!(pool.checkout_extended_connect(&key).is_none());
 
             // A response proves the peer's SETTINGS were applied.
             let request = Request::get("http://localhost/")
@@ -2101,7 +2097,9 @@ mod tests {
             probed.conn_info().poison();
             assert!(pool.checkout_extended_connect(&key).is_none());
             assert!(pool.inner.services.lock().get_mut(&key).is_some());
+            // A probed checkout discards its sender like any other.
             drop(probed);
+            assert!(pool.inner.services.lock().get_mut(&key).is_none());
         }
     }
 
