@@ -74,7 +74,7 @@ async fn tls13_tickets_resume_with_fresh_contexts_and_client_scope() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     let server = tokio::spawn(async move {
-        let mut reused = [false; 12];
+        let mut reused = [false; 14];
         for session_reused in &mut reused {
             let (socket, _) = listener.accept().await.unwrap();
             let ssl = Ssl::new(acceptor.context()).unwrap();
@@ -130,29 +130,39 @@ async fn tls13_tickets_resume_with_fresh_contexts_and_client_scope() {
         .tls_session_store(Arc::new(PanickingSessionStore))
         .build()
         .unwrap();
+    // An automatic client offers [h2, http/1.1]; a forced HTTP/1.1 request offers only
+    // http/1.1 and must still resume the earlier ticket, as Chromium WebSockets do.
+    let auto_client = Client::builder()
+        .no_proxy()
+        .pool_max_idle_per_host(0)
+        .tls_cert_verification(false)
+        .timeout(Duration::from_secs(5))
+        .build()
+        .unwrap();
     let emulation = Emulation::builder().tls_options(tls_options).build();
     let url = format!("https://{address}/");
 
-    for client in [
-        &default_client,
-        &default_client,
-        &first_client,
-        &first_client,
-        &second_client,
-        &second_client,
-        &third_client,
-        &third_client,
-        &fourth_client,
-        &fourth_client,
-        &panicking_client,
-        &panicking_client,
+    for (client, version) in [
+        (&default_client, None),
+        (&default_client, None),
+        (&first_client, None),
+        (&first_client, None),
+        (&second_client, None),
+        (&second_client, None),
+        (&third_client, None),
+        (&third_client, None),
+        (&fourth_client, None),
+        (&fourth_client, None),
+        (&panicking_client, None),
+        (&panicking_client, None),
+        (&auto_client, None),
+        (&auto_client, Some(http::Version::HTTP_11)),
     ] {
-        let response = client
-            .get(&url)
-            .emulation(emulation.clone())
-            .send()
-            .await
-            .unwrap();
+        let mut request = client.get(&url).emulation(emulation.clone());
+        if let Some(version) = version {
+            request = request.version(version);
+        }
+        let response = request.send().await.unwrap();
         assert_eq!(response.bytes().await.unwrap(), "ok");
     }
 
@@ -162,7 +172,8 @@ async fn tls13_tickets_resume_with_fresh_contexts_and_client_scope() {
             .unwrap()
             .unwrap(),
         [
-            false, true, false, true, false, true, false, true, false, true, false, false
+            false, true, false, true, false, true, false, true, false, true, false, false, false,
+            true
         ]
     );
 }

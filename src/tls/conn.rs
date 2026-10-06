@@ -31,7 +31,7 @@ use crate::{
     tls::{
         AlpnProtocol, AlpsProtocol, KeyShare, TlsOptions, TlsVersion,
         keylog::KeyLog,
-        session::{Key, SessionStore, TlsSessionStore},
+        session::{Key, SessionKey, SessionStore, TlsSessionStore},
         trust::{CertStore, Identity},
     },
 };
@@ -345,12 +345,14 @@ impl TlsConnector {
 
         if ctx.session_resumption {
             let store = &ctx.config.session;
-            let key = Key(req.key(), store.session_id_context()?);
+            let key = Key(SessionKey::new(&req), store.session_id_context()?);
 
             if let Some(session) = store.pop(&key) {
                 // SAFETY: The store checks the originating key and lifetime. Client scope
-                // fixes trust and identity; ConnectionKey covers request options. This fresh
-                // SSL configuration has not started its handshake.
+                // fixes trust, verification, and identity; the key covers the TLS peer,
+                // request TLS options, proxy, and socket bindings. HTTP-only options and
+                // ALPN do not affect resumption without early data, which is never enabled.
+                // This fresh SSL configuration has not started its handshake.
                 #[allow(unsafe_code)]
                 unsafe { cfg.set_session(&session) }?;
 
