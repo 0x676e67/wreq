@@ -137,8 +137,8 @@ pub struct TlsOptionsBuilder {
 ///
 /// All fields are optional or have defaults. See each field for details.
 #[non_exhaustive]
-#[derive(Debug, Clone, Default, Educe)]
-#[educe(PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Educe)]
+#[educe(Default, PartialEq, Eq, Hash)]
 pub struct TlsOptions {
     /// Protocols offered through ALPN, in preference order ([RFC 7301](https://datatracker.ietf.org/doc/html/rfc7301)).
     ///
@@ -150,12 +150,18 @@ pub struct TlsOptions {
 
     /// Protocols that exchange application-layer settings through ALPS during the handshake.
     ///
+    /// Only protocols also offered through ALPN are sent, as in Chromium. Unlike ALPN,
+    /// request-level options do not inherit the client's list.
+    ///
     /// **Default:** `None`.
     pub alps_protocols: Option<Cow<'static, [AlpsProtocol]>>,
 
-    /// Selects the new ALPS codepoint when ALPS protocols are configured.
+    /// Selects the new ALPS codepoint when ALPS protocols are offered.
     ///
-    /// **Default:** `false`.
+    /// Current Chrome and BoringSSL use the new codepoint.
+    ///
+    /// **Default:** `true`.
+    #[educe(Default = true)]
     pub alps_use_new_codepoint: bool,
 
     /// Controls TLS session tickets ([RFC 5077](https://tools.ietf.org/html/rfc5077)).

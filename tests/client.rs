@@ -1090,6 +1090,76 @@ async fn connection_pool_respects_https_version_policy() {
 }
 
 #[tokio::test]
+async fn tls_alps_follows_alpn_offer() {
+    use std::sync::Mutex;
+
+    use btls::ssl::{ExtensionType, SelectCertError, SslAcceptor, SslMethod};
+    use wreq::{
+        Emulation,
+        tls::{AlpsProtocol, TlsOptions},
+    };
+
+    // Records ALPN and both ALPS codepoints, then aborts before certificate selection.
+    let hellos = Arc::new(Mutex::new(Vec::new()));
+    let mut acceptor = SslAcceptor::mozilla_intermediate_v5(SslMethod::tls()).unwrap();
+    acceptor.set_select_certificate_callback({
+        let hellos = hellos.clone();
+        move |hello| {
+            hellos.lock().unwrap().push((
+                hello
+                    .get_extension(ExtensionType::APPLICATION_LAYER_PROTOCOL_NEGOTIATION)
+                    .map(<[u8]>::to_vec),
+                hello
+                    .get_extension(ExtensionType::APPLICATION_SETTINGS)
+                    .is_some(),
+                hello
+                    .get_extension(ExtensionType::APPLICATION_SETTINGS_OLD)
+                    .is_some(),
+            ));
+            Err(SelectCertError::ERROR)
+        }
+    });
+    let acceptor = acceptor.build();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("https://{}", listener.local_addr().unwrap());
+    tokio::spawn(async move {
+        loop {
+            let (socket, _) = listener.accept().await.unwrap();
+            let ssl = btls::ssl::Ssl::new(acceptor.context()).unwrap();
+            let mut stream = tokio_btls::SslStream::new(ssl, socket).unwrap();
+            let _ = std::pin::Pin::new(&mut stream).accept().await;
+        }
+    });
+
+    let tls = TlsOptions::builder()
+        .alps_protocols([AlpsProtocol::HTTP2])
+        .build();
+    let client = Client::builder()
+        .emulation(Emulation::builder().tls_options(tls).build())
+        .no_proxy()
+        .timeout(Duration::from_secs(5))
+        .build()
+        .unwrap();
+
+    client.get(&url).send().await.unwrap_err();
+    client
+        .get(&url)
+        .version(Version::HTTP_11)
+        .send()
+        .await
+        .unwrap_err();
+
+    // ALPS is offered only for protocols in the ALPN list, with the new codepoint by default.
+    assert_eq!(
+        *hellos.lock().unwrap(),
+        [
+            (Some(b"\x00\x0c\x02h2\x08http/1.1".to_vec()), true, false),
+            (Some(b"\x00\x09\x08http/1.1".to_vec()), false, false),
+        ]
+    );
+}
+
+#[tokio::test]
 async fn connection_pool_http2_errors_respect_negotiation() {
     use std::error::Error as _;
 

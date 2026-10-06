@@ -279,20 +279,20 @@ impl TlsConnector {
         // Leave backend defaults untouched when ECH GREASE is not configured.
         set_option!(ctx.settings, enable_ech_grease, cfg, set_enable_ech_grease);
 
+        // HTTPS ALPN after client::svc::Stack resolves the explicit request version:
+        // | Client     | Request                   | TlsOptions ALPN | Offered ALPN |
+        // |------------|---------------------------|-----------------|--------------|
+        // | any        | HTTP/1.0 or HTTP/1.1      | ignored         | [http/1.1]   |
+        // | Http1      | unset                     | ignored         | [http/1.1]   |
+        // | Http2      | unset or HTTP/2           | ignored         | [h2]         |
+        // | Auto       | unset                     | see below       | TLS list     |
+        // | Auto/Http1 | HTTP/2                    | see below       | TLS list     |
+        // Extended CONNECT follows the same version selection.
+        // TLS list: nonempty request list, then client list, else [h2, http/1.1].
+        // None and empty lists inherit; custom list order is preserved.
         // Proxy TLS can suppress ALPN entirely via no_alpn().
-        if alpn_enabled {
-            // HTTPS ALPN after client::svc::Stack resolves the explicit request version:
-            // | Client     | Request                   | TlsOptions ALPN | Offered ALPN |
-            // |------------|---------------------------|-----------------|--------------|
-            // | any        | HTTP/1.0 or HTTP/1.1      | ignored         | [http/1.1]   |
-            // | Http1      | unset                     | ignored         | [http/1.1]   |
-            // | Http2      | unset or HTTP/2           | ignored         | [h2]         |
-            // | Auto       | unset                     | see below       | TLS list     |
-            // | Auto/Http1 | HTTP/2                    | see below       | TLS list     |
-            // Extended CONNECT follows the same version selection.
-            // TLS list: nonempty request list, then client list, else [h2, http/1.1].
-            // None and empty lists inherit; custom list order is preserved.
-            let protocols: &[AlpnProtocol] = match (
+        let protocols: &[AlpnProtocol] = if alpn_enabled {
+            match (
                 req.version().unwrap_or(ctx.settings.version),
                 ctx.settings.alpn_protocols.as_deref(),
                 self.inner.settings.alpn_protocols.as_deref(),
@@ -302,18 +302,29 @@ impl TlsConnector {
                 (HttpVersion::Auto, Some(protocols), _) if !protocols.is_empty() => protocols,
                 (HttpVersion::Auto, _, Some(protocols)) if !protocols.is_empty() => protocols,
                 (HttpVersion::Auto, _, _) => &[AlpnProtocol::HTTP2, AlpnProtocol::HTTP1],
-            };
+            }
+        } else {
+            &[]
+        };
+        if alpn_enabled {
             cfg.set_alpn_protos(&AlpnProtocol::encode_sequence(protocols))?;
         }
 
-        // Set ALPS protos
-        if let Some(ref alps_values) = ctx.settings.alps_protocols {
-            for alps in alps_values.iter() {
-                cfg.add_application_settings(alps.0, None)?;
+        // Offer ALPS only for protocols in this ALPN list, in ALPN order, as Chromium does;
+        // BoringSSL sends every configured ALPS protocol otherwise:
+        // https://github.com/chromium/chromium/blob/9f3f52d585430bdeb7fd125b023e4721448f7b6c/net/socket/ssl_client_socket_impl.cc#L819-L836
+        if let Some(ref alps) = ctx.settings.alps_protocols {
+            let mut offered = false;
+            for (index, protocol) in protocols.iter().enumerate() {
+                let configured = alps.iter().any(|alps| alps.0 == protocol.0);
+                let repeated = protocols[..index].iter().any(|seen| seen.0 == protocol.0);
+                if configured && !repeated {
+                    cfg.add_application_settings(protocol.0, None)?;
+                    offered = true;
+                }
             }
 
-            // By default, the new endpoint is used.
-            if !alps_values.is_empty() {
+            if offered {
                 cfg.set_alps_use_new_codepoint(ctx.settings.alps_use_new_codepoint);
             }
         }
