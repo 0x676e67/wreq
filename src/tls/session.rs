@@ -42,8 +42,8 @@ pub struct Key(
 /// TLS identity of one connection: origin, TLS peer, and connection configuration.
 ///
 /// HTTP version preference and HTTP/1 or HTTP/2 options only change ALPN or
-/// framing, so they are left out. Like Chromium's session cache, connections
-/// with different ALPN offers then share tickets. Unknown configuration stays in.
+/// framing, so they are left out and connections with different ALPN offers
+/// share tickets. Unknown configuration stays in.
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub(crate) struct SessionKey {
     origin: Uri,

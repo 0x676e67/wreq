@@ -310,9 +310,8 @@ impl TlsConnector {
             cfg.set_alpn_protos(&AlpnProtocol::encode_sequence(protocols))?;
         }
 
-        // Offer ALPS only for protocols in this ALPN list, in ALPN order, as Chromium does;
-        // BoringSSL sends every configured ALPS protocol otherwise:
-        // https://github.com/chromium/chromium/blob/9f3f52d585430bdeb7fd125b023e4721448f7b6c/net/socket/ssl_client_socket_impl.cc#L819-L836
+        // Offer ALPS only for protocols in this ALPN list, in ALPN order;
+        // BoringSSL sends every configured ALPS protocol otherwise.
         if let Some(ref alps) = ctx.settings.alps_protocols {
             let mut offered = false;
             for (index, protocol) in protocols.iter().enumerate() {

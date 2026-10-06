@@ -69,9 +69,6 @@ pub struct Stack<S, B> {
 }
 
 /// Requests a new HTTP/1 connection that is never taken from or returned to the pool.
-///
-/// Chromium opens WebSocket handshakes on such sockets:
-/// <https://github.com/chromium/chromium/blob/9f3f52d585430bdeb7fd125b023e4721448f7b6c/net/socket/websocket_transport_client_socket_pool.cc#L181-L240>
 #[derive(Clone, Copy)]
 #[cfg_attr(
     not(feature = "ws"),

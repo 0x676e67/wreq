@@ -452,7 +452,7 @@ impl WebSocketRequestBuilder {
 
                 *request.method_mut() = Method::GET;
                 *request.version_mut() = Some(Version::HTTP_11);
-                // Like Chromium, never reuse an idle socket or return this one to the pool.
+                // Never reuse an idle socket or return this one to the pool.
                 request.extensions_mut().insert(DedicatedConnection);
                 Some(nonce)
             }

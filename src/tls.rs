@@ -150,7 +150,7 @@ pub struct TlsOptions {
 
     /// Protocols that exchange application-layer settings through ALPS during the handshake.
     ///
-    /// Only protocols also offered through ALPN are sent, as in Chromium. Unlike ALPN,
+    /// Only protocols also offered through ALPN are sent. Unlike ALPN,
     /// request-level options do not inherit the client's list.
     ///
     /// **Default:** `None`.
@@ -158,7 +158,7 @@ pub struct TlsOptions {
 
     /// Selects the new ALPS codepoint when ALPS protocols are offered.
     ///
-    /// Current Chrome and BoringSSL use the new codepoint.
+    /// Current browsers and BoringSSL use the new codepoint.
     ///
     /// **Default:** `true`.
     #[educe(Default = true)]

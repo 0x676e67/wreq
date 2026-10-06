@@ -131,7 +131,7 @@ async fn tls13_tickets_resume_with_fresh_contexts_and_client_scope() {
         .build()
         .unwrap();
     // An automatic client offers [h2, http/1.1]; a forced HTTP/1.1 request offers only
-    // http/1.1 and must still resume the earlier ticket, as Chromium WebSockets do.
+    // http/1.1 and must still resume the earlier ticket, as WebSocket handshakes do.
     let auto_client = Client::builder()
         .no_proxy()
         .pool_max_idle_per_host(0)
