@@ -387,7 +387,7 @@ path = "examples/rt.rs"
 required-features = ["compio-rt"]
 
 [patch.crates-io]
-netty = { git = "https://github.com/0x676e67/netty", branch = "demo/extended-connect-state" }
+netty = { git = "https://github.com/0x676e67/netty", rev = "3703f250846b832f222dc284e84af771c7e855a2" }
 http2 = { git = "https://github.com/0x676e67/http2", rev = "c932fc91f3139f5613a579b7b11df2860d66745c" }
 btls = { git = "https://github.com/0x676e67/btls", branch = "main" }
 btls-sys = { git = "https://github.com/0x676e67/btls", branch = "main" }

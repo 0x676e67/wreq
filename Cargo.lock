@@ -2015,7 +2015,7 @@ checksum = "27b02d87554356db9e9a873add8782d4ea6e3e58ea071a9adb9a2e8ddb884a8b"
 [[package]]
 name = "netty"
 version = "0.2.5"
-source = "git+https://github.com/0x676e67/netty?branch=demo%2Fextended-connect-state#e356fe2b86c57f03626ec8ca5efb7c8ab6183e2a"
+source = "git+https://github.com/0x676e67/netty?rev=3703f250846b832f222dc284e84af771c7e855a2#3703f250846b832f222dc284e84af771c7e855a2"
 dependencies = [
  "bytes",
  "futures-channel",
