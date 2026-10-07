@@ -90,6 +90,12 @@ impl WebSocketRequestBuilder {
     /// - Otherwise sends the RFC 6455 upgrade on a new HTTP/1.1 connection that is never pooled; no
     ///   HTTP/2 connection is opened for the handshake
     ///
+    /// A WebSocket on a shared HTTP/2 connection counts toward the server's concurrent stream limit
+    /// and shares the connection flow-control window, so many open or unread WebSockets can delay
+    /// other requests on that connection. A non-200 response to the Extended CONNECT fails the
+    /// handshake without retrying over HTTP/1.1. Use [`Version::HTTP_11`] to keep the WebSocket on
+    /// its own connection.
+    ///
     /// # HTTP/1.1
     ///
     /// - Always uses the standard `Upgrade: websocket` mechanism (RFC 6455) on a new, never pooled
