@@ -618,10 +618,10 @@ where
                     let unnegotiated_h2 = pooled.is_http2()
                         && connection.req.uri().is_https()
                         && !connect_info.is_negotiated_h2();
-                    // A returned request was not sent, but only a canceled dispatch is
-                    // transient; protocol rejections repeat on the same connection.
+                    // A returned request was not sent; only protocol rejections are final,
+                    // since they repeat on the same connection.
                     if let Some(mut request) =
-                        error.is_canceled().then(|| error.take_message()).flatten()
+                        (!error.is_user()).then(|| error.take_message()).flatten()
                     {
                         if let Some(upgrade) = upgrade {
                             upgrade.restore(&mut request);
