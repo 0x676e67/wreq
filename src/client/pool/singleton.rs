@@ -6,11 +6,12 @@
 //!
 //! If the driver is canceled, one waiter takes over the same pinned maker
 //! future. This avoids abandoning a connection attempt while another request is
-//! still waiting for it. Every batch also owns a generation marker. A failed
-//! maker reports its shared root cause to every participant, so concurrent
-//! checkouts do not retry the same failure one after another. A failed checkout
-//! may clear only the generation that produced it, so a stale sender cannot
-//! remove a newer replacement.
+//! still waiting for it. A maker lost to a panic cancels its batch instead, so
+//! waiters retry rather than wait forever. Every batch also owns a generation
+//! marker. A failed maker reports its shared root cause to every participant, so
+//! concurrent checkouts do not retry the same failure one after another. A
+//! failed checkout may clear only the generation that produced it, so a stale
+//! sender cannot remove a newer replacement.
 
 use std::{
     fmt,
@@ -191,6 +192,14 @@ where
                 *state = State::Making(batch);
                 drop(state);
 
+                // Created before the maker call so a panic there still leaves the batch.
+                let driver = SingletonFuture::Participating {
+                    id,
+                    generation: generation.clone(),
+                    state: self.state.clone(),
+                    receiver: None,
+                    reused: false,
+                };
                 let future = Box::pin(self.maker.call(dst));
                 let mut state = self.state.lock();
                 let unused = match &mut *state {
@@ -201,14 +210,7 @@ where
                 };
                 drop(state);
                 drop(unused);
-
-                SingletonFuture::Participating {
-                    id,
-                    generation,
-                    state: self.state.clone(),
-                    receiver: None,
-                    reused: false,
-                }
+                driver
             }
             State::Making(batch) => {
                 let (id, receiver) = batch.register_waiter();
@@ -448,10 +450,19 @@ where
                     let mut locked = state.lock();
                     match &mut *locked {
                         State::Making(batch) if Arc::ptr_eq(generation, &batch.generation) => {
-                            let Some(future) = batch.take_future(*id) else {
-                                return Poll::Pending;
-                            };
-                            future
+                            match batch.take_future(*id) {
+                                Some(future) => future,
+                                // Only the driver gets here. Its maker is missing only when
+                                // an earlier driver panicked inside it, so restart the batch.
+                                None => {
+                                    let waiters = batch.take_waiters();
+                                    *locked = State::Empty;
+                                    drop(locked);
+                                    let error = SingletonError::canceled();
+                                    send_result(waiters, Err(&error));
+                                    return Poll::Ready(Err(error));
+                                }
+                            }
                         }
                         State::Made {
                             service,
@@ -918,6 +929,49 @@ mod tests {
                 fail: self.fail.clone(),
             }))
         }
+    }
+
+    /// Maker that panics in `call` or while its future is polled.
+    #[derive(Clone)]
+    struct PanickingMaker {
+        in_call: bool,
+    }
+
+    impl Service<()> for PanickingMaker {
+        type Response = &'static str;
+        type Error = BoxError;
+        type Future = futures_util::future::BoxFuture<'static, Result<Self::Response, Self::Error>>;
+
+        fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+            Poll::Ready(Ok(()))
+        }
+
+        fn call(&mut self, _target: ()) -> Self::Future {
+            assert!(!self.in_call, "maker call panicked");
+            Box::pin(async { panic!("maker future panicked") })
+        }
+    }
+
+    #[test]
+    fn maker_panic_cancels_batch() {
+        use std::panic::{AssertUnwindSafe, catch_unwind};
+
+        let mut singleton = Singleton::new(PanickingMaker { in_call: true });
+        assert!(catch_unwind(AssertUnwindSafe(|| singleton.call(()))).is_err());
+        assert!(singleton.is_empty());
+
+        let singleton = Singleton::new(PanickingMaker { in_call: false });
+        let mut driver = tokio_test::task::spawn(Oneshot::new(singleton.clone(), ()));
+        let mut waiter = tokio_test::task::spawn(Oneshot::new(singleton.clone(), ()));
+        assert!(catch_unwind(AssertUnwindSafe(|| driver.poll())).is_err());
+        assert!(waiter.poll().is_pending());
+        drop(driver);
+        assert!(waiter.is_woken());
+        let Poll::Ready(Err(error)) = waiter.poll() else {
+            panic!("waiter should not wait for a maker lost to a panic");
+        };
+        assert!(super::SingletonError::is_canceled(&error));
+        assert!(singleton.is_empty());
     }
 
     #[test]
