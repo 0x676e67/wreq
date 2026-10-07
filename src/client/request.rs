@@ -562,6 +562,7 @@ impl RequestBuilder {
     /// This preference preserves the configured TLS ALPN list and its order.
     /// Cleartext HTTP/2 uses prior knowledge without an HTTP/1 Upgrade.
     /// Negotiation does not rewrite an HTTP/2 WebSocket handshake into HTTP/1 Upgrade.
+    /// Requests with an explicit version are pooled apart from requests without one.
     pub fn version(mut self, version: Version) -> RequestBuilder {
         if let Ok(ref mut req) = self.request {
             req.version_mut().replace(version);

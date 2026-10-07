@@ -1,6 +1,6 @@
 //! Runtime components — executor and timer implementations.
 //!
-//! Selects between tokio (`tokio-rt` feature) and compio (`compio` feature)
+//! Selects between tokio (`tokio-rt` feature) and compio (`compio-rt` feature)
 //! runtime backends.
 
 #[cfg(feature = "compio-rt")]

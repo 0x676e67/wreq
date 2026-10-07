@@ -38,10 +38,10 @@ pub(super) struct Established<T> {
 
 /// Error returned while preparing or dispatching a protocol request.
 ///
-/// Preparation failures originate in the HTTP/1 sender and never
-/// carry a request for retry. Protocol failures preserve wreq-proto's optional
-/// unsent request so the outer client can retry only when encoding did not
-/// begin.
+/// Preparation failures come from a sender's readiness check or HTTP/1
+/// request-target conversion and never carry a request for retry. Protocol
+/// failures preserve netty's optional unsent request so the outer client can
+/// retry only when encoding did not begin.
 #[derive(Debug)]
 pub enum SendError<B> {
     Request(Error),
