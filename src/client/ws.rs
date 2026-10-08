@@ -754,7 +754,7 @@ impl Stream for WebSocket {
                         return Poll::Ready(Some(Ok(msg)));
                     }
                 }
-                Some(Err(err)) => return Poll::Ready(Some(Err(Error::body(err)))),
+                Some(Err(err)) => return Poll::Ready(Some(Err(Error::websocket(err)))),
                 None => return Poll::Ready(None),
             }
         }
