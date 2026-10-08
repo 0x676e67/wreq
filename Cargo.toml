@@ -300,6 +300,11 @@ required-features = ["multipart", "stream"]
 name = "retry"
 path = "tests/retry.rs"
 
+[[test]]
+name = "websocket"
+path = "tests/websocket.rs"
+required-features = ["ws"]
+
 [[example]]
 name = "json_dynamic"
 path = "examples/json_dynamic.rs"
