@@ -1159,7 +1159,8 @@ impl ClientBuilder {
     /// TLS connections offer only `h2` through ALPN; if the peer omits ALPN,
     /// the client still attempts H2 and fails if the peer cannot speak it.
     /// An explicit HTTP/1 [`version`](RequestBuilder::version) on a request
-    /// overrides this setting.
+    /// overrides this setting. A WebSocket handshake without an explicit version
+    /// may still use a dedicated HTTP/1.1 connection.
     #[inline]
     pub fn http2_only(self) -> ClientBuilder {
         self.http_version(HttpVersion::Http2)
@@ -1539,7 +1540,7 @@ impl ClientBuilder {
         self
     }
 
-    /// Replaces the built-in store of eight connection keys with two tickets each.
+    /// Replaces the built-in store of 256 connection keys with two tickets each.
     /// The supplied store controls retention when ticket-based resumption is enabled.
     /// Session keys remain scoped to this client and its request configuration.
     #[inline]

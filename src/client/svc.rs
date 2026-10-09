@@ -380,8 +380,8 @@ impl<B> DispatchError<B> {
 // ===== impl Http1Upgrade =====
 
 impl Http1Upgrade {
-    /// Rewrites the GET upgrade as extended CONNECT, keeping the other WebSocket fields:
-    /// https://www.rfc-editor.org/rfc/rfc8441#section-5
+    /// Rewrites the GET upgrade as extended CONNECT, keeping the other WebSocket fields
+    /// ([RFC 8441 §5](https://www.rfc-editor.org/rfc/rfc8441#section-5)).
     fn into_extended_connect<B>(request: &mut Request<B>) -> Self {
         *request.method_mut() = Method::CONNECT;
         *request.version_mut() = Version::HTTP_2;

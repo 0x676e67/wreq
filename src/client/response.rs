@@ -408,9 +408,12 @@ impl Response {
     /// will be discarded instead of reused after the current request-response cycle completes.
     ///
     /// # Note on Lifecycle
-    /// Marking the connection does not trigger an immediate shutdown. For pooled
-    /// connections, the physical closure is deferred until the `Response` body
-    /// is dropped or the pool's background cleaner reclaims the resource.
+    /// Marking the connection does not trigger an immediate shutdown. An HTTP/1
+    /// connection still reading this body closes once the body completes or is
+    /// dropped. A connection already back in the pool, such as a shared HTTP/2
+    /// connection or an HTTP/1 connection after an empty body, is discarded the
+    /// next time the pool inspects it, such as the next request with the same
+    /// origin and options or the idle sweep; open streams continue.
     #[inline]
     pub fn forbid_recycle(&self) {
         self.res
