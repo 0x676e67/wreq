@@ -5,11 +5,18 @@ use super::AsyncConnWithInfo;
 /// When enabled (with the `tracing` feature), connections are wrapped to log I/O operations for
 /// debugging.
 #[derive(Clone, Copy)]
-pub struct Verbose(pub(super) bool);
+pub struct Verbose(
+    #[cfg_attr(
+        not(feature = "tracing"),
+        expect(
+            dead_code,
+            reason = "The I/O wrapper reads this flag only with tracing enabled"
+        )
+    )]
+    pub(super) bool,
+);
 
 impl Verbose {
-    pub const OFF: Verbose = Verbose(false);
-
     #[cfg_attr(not(feature = "tracing"), inline(always))]
     pub(super) fn wrap<T>(&self, conn: T) -> Box<dyn AsyncConnWithInfo>
     where

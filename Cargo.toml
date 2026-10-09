@@ -69,10 +69,10 @@ socks = ["dep:tokio-socks"]
 # Enable WebSocket support.
 ws = ["dep:tokio-tungstenite", "tokio-tungstenite?/handshake"]
 
-# Use static Mozilla root certificates for TLS verification.
+# Use static Mozilla root certificates for TLS verification (default).
 webpki-roots = ["dep:webpki-root-certs"]
 
-# Use static Chromium Root Store certificates for TLS verification (default).
+# Use static Chromium Root Store certificates for TLS verification.
 chromium-roots = ["dep:chromium-roots"]
 
 # Use the system's proxy configuration.
@@ -89,6 +89,7 @@ parking_lot = ["dep:parking_lot", "http2/parking_lot"]
 prefix-symbols = ["btls/prefix-symbols"]
 
 [dependencies]
+educe = { version = "0.7.6", default-features = false, features = ["Default", "PartialEq", "Eq", "Hash"] }
 url = "2.5.8"
 bytes = "1.11.1"
 http = "1.4.0"
@@ -107,8 +108,8 @@ btls-sys = "0.5.6"
 tokio-btls = "0.5.6"
 tokio = { version = "1.52.3", default-features = false }
 compio = { version = "0.19.2", features = ["io", "io-compat"], optional = true }
-wreq-rt = { version = "0.2.2-rc.2", default-features = false }
-wreq-proto = { version = "0.2.3", default-features = false }
+wreq-rt = { version = "0.2.2-rc.4", path = "wreq-rt", default-features = false }
+wreq-proto = { package = "netty", version = "0.2.5", default-features = false }
 tower = { version = "0.5.3", default-features = false, features = [
     "timeout",
     "util",
@@ -175,7 +176,7 @@ system-configuration = { version = "0.8.0", optional = true }
 libc = "0.2.186"
 
 [dev-dependencies]
-wreq-rt = { version = "0.2.2-rc.1", features = ["tokio-rt", "compio-rt"] }
+wreq-rt = { version = "0.2.2-rc.4", path = "wreq-rt", features = ["tokio-rt", "compio-rt"] }
 tokio = { version = "1.0", default-features = false, features = [
     "macros",
     "rt-multi-thread",
@@ -217,6 +218,12 @@ incremental = false
 [profile.bench]
 codegen-units = 1
 incremental = false
+
+[[bench]]
+name = "pool"
+path = "bench/pool.rs"
+harness = false
+required-features = ["tokio-rt", "stream"]
 
 [[bench]]
 name = "http1_current_thread"
@@ -385,6 +392,8 @@ path = "examples/rt.rs"
 required-features = ["compio-rt"]
 
 [patch.crates-io]
+netty = { git = "https://github.com/0x676e67/netty", rev = "3703f250846b832f222dc284e84af771c7e855a2" }
+http2 = { git = "https://github.com/0x676e67/http2", rev = "c932fc91f3139f5613a579b7b11df2860d66745c" }
 btls = { git = "https://github.com/0x676e67/btls", branch = "main" }
 btls-sys = { git = "https://github.com/0x676e67/btls", branch = "main" }
 tokio-btls = { git = "https://github.com/0x676e67/btls", branch = "main" }

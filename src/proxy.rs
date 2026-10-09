@@ -389,19 +389,29 @@ impl Matcher {
 impl Hash for Extra {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.auth.hash(state);
-        if let Some(ref misc) = self.misc {
-            for (k, v) in misc.iter() {
-                k.as_str().hash(state);
-                v.as_bytes().hash(state);
+        match &self.misc {
+            Some(headers) => {
+                1u8.hash(state);
+                headers.len().hash(state);
+
+                let mut names = headers.keys().collect::<Vec<_>>();
+                names.sort_unstable_by(|left, right| left.as_str().cmp(right.as_str()));
+                for name in names {
+                    name.as_str().hash(state);
+                    for value in headers.get_all(name).iter() {
+                        value.as_bytes().hash(state);
+                    }
+                }
             }
-        } else {
-            1u8.hash(state);
+            None => 0u8.hash(state),
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::collections::hash_map::DefaultHasher;
+
     use super::*;
 
     fn uri(s: &str) -> Uri {
@@ -505,11 +515,34 @@ mod tests {
 
         let mut headers = HeaderMap::new();
         headers.insert("x-custom-header", HeaderValue::from_static("custom-value"));
+        headers.insert(
+            "x-another-header",
+            HeaderValue::from_static("another-value"),
+        );
+
+        let mut reversed_headers = HeaderMap::new();
+        reversed_headers.insert(
+            "x-another-header",
+            HeaderValue::from_static("another-value"),
+        );
+        reversed_headers.insert("x-custom-header", HeaderValue::from_static("custom-value"));
 
         let m = Proxy::all("https://yo.local")
             .unwrap()
             .custom_http_headers(headers.clone())
             .into_matcher();
+        let same = Proxy::all("https://yo.local")
+            .unwrap()
+            .custom_http_headers(reversed_headers)
+            .into_matcher();
+
+        let hash = |matcher: &Matcher| {
+            let mut state = DefaultHasher::new();
+            matcher.hash(&mut state);
+            state.finish()
+        };
+        assert_eq!(m, same);
+        assert_eq!(hash(&m), hash(&same));
 
         let proxy = intercept(&m, &uri);
         let got_headers = proxy.custom_headers().unwrap();
