@@ -26,8 +26,10 @@ use tokio_tungstenite::tungstenite::{
 };
 
 use self::message::{CloseCode, Message, Utf8Bytes};
-use super::{emulate::IntoEmulation, request::RequestBuilder, response::Response};
-use crate::{Error, Upgraded, header::OrigHeaderMap, proxy::Proxy};
+use super::{
+    emulate::IntoEmulation, request::RequestBuilder, response::Response, svc::DedicatedConnection,
+};
+use crate::{Error, Upgraded, group::Group, header::OrigHeaderMap, proxy::Proxy};
 
 /// A WebSocket stream.
 type WebSocketStream = tokio_tungstenite::WebSocketStream<Upgraded>;
@@ -36,6 +38,8 @@ type WebSocketStream = tokio_tungstenite::WebSocketStream<Upgraded>;
 /// websocket handshake when sent.
 pub struct WebSocketRequestBuilder {
     inner: RequestBuilder,
+    /// Handshake version from [`Self::version`]; `None` selects the default route.
+    version: Option<Version>,
     accept_key: Option<Cow<'static, str>>,
     protocols: Option<Vec<Cow<'static, str>>>,
     config: WebSocketConfig,
@@ -45,7 +49,8 @@ impl WebSocketRequestBuilder {
     /// Creates a new WebSocket request builder.
     pub fn new(inner: RequestBuilder) -> Self {
         Self {
-            inner: inner.version(Version::HTTP_11),
+            inner,
+            version: None,
             accept_key: None,
             protocols: None,
             config: WebSocketConfig::default(),
@@ -55,6 +60,7 @@ impl WebSocketRequestBuilder {
     /// Sets a custom WebSocket accept key.
     ///
     /// This method allows you to set a custom WebSocket accept key for the connection.
+    /// The key is unused when the handshake runs over HTTP/2.
     ///
     /// # Arguments
     ///
@@ -75,24 +81,36 @@ impl WebSocketRequestBuilder {
     /// Set HTTP version
     ///
     /// Configures the HTTP version used for the WebSocket handshake.
-    /// Defaults to HTTP/1.1.
     ///
-    /// # HTTP/1.1 (default)
+    /// # Default
     ///
-    /// - Uses the standard `Upgrade: websocket` mechanism (RFC 6455)
-    /// - Sends an HTTP `GET` request with `Connection: Upgrade` and `Upgrade: websocket` headers
-    /// - Widely supported by servers
+    /// - Uses the Extended CONNECT Protocol ([RFC 8441]) on an established pooled HTTP/2 connection
+    ///   opened by requests to the same origin with the same options and no explicit version, if
+    ///   its server enabled it; the WebSocket then holds a stream on that shared connection
+    /// - Otherwise sends the RFC 6455 upgrade on a new HTTP/1.1 connection that is never pooled; no
+    ///   HTTP/2 connection is opened for the handshake
+    ///
+    /// A WebSocket on a shared HTTP/2 connection counts toward the server's concurrent stream limit
+    /// and shares the connection flow-control window, so many open or unread WebSockets can delay
+    /// other requests on that connection. A non-200 response to the Extended CONNECT fails the
+    /// handshake without retrying over HTTP/1.1. Use [`Version::HTTP_11`] to keep the WebSocket on
+    /// its own connection.
+    ///
+    /// # HTTP/1.1
+    ///
+    /// - Always uses the standard `Upgrade: websocket` mechanism (RFC 6455) on a new, never pooled
+    ///   connection
     ///
     /// # HTTP/2
     ///
-    /// - Uses the Extended CONNECT Protocol (RFC 8441)
-    /// - Sends a `CONNECT` request with the `:protocol: websocket` pseudo-header instead of the
-    ///   traditional upgrade mechanism
-    /// - Requires explicit server support for HTTP/2 WebSocket connections
-    /// - Will fail if the server does not support HTTP/2 WebSocket upgrade
+    /// - Always sends a `CONNECT` request with the `:protocol: websocket` pseudo-header, which may
+    ///   open an HTTP/2 connection
+    /// - Waits for the server's SETTINGS and fails if it did not enable the protocol
+    ///
+    /// [RFC 8441]: https://www.rfc-editor.org/rfc/rfc8441
     #[inline]
     pub fn version(mut self, version: Version) -> Self {
-        self.inner = self.inner.version(version);
+        self.version = Some(version);
         self
     }
 
@@ -388,19 +406,20 @@ impl WebSocketRequestBuilder {
         self
     }
 
-    /// Sets the request builder to emulation the specified HTTP context.
-    ///
-    /// This method sets the necessary headers, HTTP/1 and HTTP/2 options configurations, and  TLS
-    /// options config to use the specified HTTP context. It allows the client to mimic the
-    /// behavior of different versions or setups, which can be useful for testing or ensuring
-    /// compatibility with various environments.
-    ///
-    /// # Note
-    /// This will overwrite the existing configuration.
-    /// You must set emulation before you can perform subsequent HTTP1/HTTP2/TLS fine-tuning.
+    /// Applies the profile's headers and TLS, HTTP/1, and HTTP/2 options.
+    /// Existing values in those categories may be replaced; connection group,
+    /// proxy, version, and socket settings remain unchanged.
     #[inline]
     pub fn emulation<T: IntoEmulation>(mut self, emulation: T) -> Self {
         self.inner = self.inner.emulation(emulation);
+        self
+    }
+
+    /// Adds a connection-pool partition to this WebSocket request.
+    /// The partition can only make connection reuse more restrictive.
+    #[inline]
+    pub fn group(mut self, group: Group) -> Self {
+        self.inner = self.inner.group(group);
         self
     }
 
@@ -422,8 +441,7 @@ impl WebSocketRequestBuilder {
             *uri = Uri::from_parts(parts).map_err(Error::builder)?;
         }
 
-        // Get the version of the request
-        let version = request.version();
+        let version = self.version;
 
         // Set the headers for the websocket handshake
         let headers = request.headers_mut();
@@ -434,7 +452,7 @@ impl WebSocketRequestBuilder {
 
         // Ensure the request is HTTP 1.1/HTTP 2
         let accept_key = match version {
-            Some(Version::HTTP_10 | Version::HTTP_11) => {
+            None | Some(Version::HTTP_10 | Version::HTTP_11) => {
                 // Generate a nonce if one wasn't provided
                 let nonce = self
                     .accept_key
@@ -449,6 +467,11 @@ impl WebSocketRequestBuilder {
 
                 *request.method_mut() = Method::GET;
                 *request.version_mut() = Some(Version::HTTP_11);
+                // Never reuse an idle socket or return this one to the pool. The default
+                // route may still ride an established HTTP/2 connection instead.
+                request.extensions_mut().insert(DedicatedConnection {
+                    extended_connect: version.is_none(),
+                });
                 Some(nonce)
             }
             Some(Version::HTTP_2) => {

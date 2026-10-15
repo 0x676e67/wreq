@@ -209,12 +209,10 @@ impl Error {
 
     /// Returns true if the error is related to connect
     pub fn is_connect(&self) -> bool {
-        use crate::client::layer::client::Error;
-
         let mut source = self.source();
 
         while let Some(err) = source {
-            if let Some(err) = err.downcast_ref::<Error>()
+            if let Some(err) = err.downcast_ref::<crate::client::error::Error>()
                 && err.is_connect()
             {
                 return true;
@@ -228,12 +226,10 @@ impl Error {
 
     /// Returns true if the error is related to proxy connect
     pub fn is_proxy_connect(&self) -> bool {
-        use crate::client::layer::client::Error;
-
         let mut source = self.source();
 
         while let Some(err) = source {
-            if let Some(err) = err.downcast_ref::<Error>()
+            if let Some(err) = err.downcast_ref::<crate::client::error::Error>()
                 && err.is_proxy_connect()
             {
                 return true;

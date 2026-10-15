@@ -1,6 +1,5 @@
 //! Middleware for the client.
 
-pub mod client;
 pub mod config;
 #[cfg(any(
     feature = "gzip",
