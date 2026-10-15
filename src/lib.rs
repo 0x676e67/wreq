@@ -318,6 +318,7 @@ mod util;
 pub mod cookie;
 pub mod dns;
 pub mod header;
+pub mod observe;
 pub mod redirect;
 pub mod retry;
 pub mod tls;

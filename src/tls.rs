@@ -42,7 +42,7 @@ impl TlsInfo {
 
 /// A TLS protocol version.
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
-pub struct TlsVersion(btls::ssl::SslVersion);
+pub struct TlsVersion(pub(crate) btls::ssl::SslVersion);
 
 impl TlsVersion {
     /// Version 1.0 of the TLS protocol.

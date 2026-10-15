@@ -6,7 +6,6 @@ use std::{
 };
 
 use futures_util::future::BoxFuture;
-use tokio_btls::SslStream;
 use tower::{
     BoxError, Layer, Service, ServiceBuilder, ServiceExt,
     util::{BoxCloneSyncService, Either, MapRequest, MapRequestLayer},
@@ -16,10 +15,11 @@ use tower::{
 use super::net::UnixConnector;
 use super::{
     AsyncConnWithInfo, BoxedConnectorLayer, BoxedTransportConnector, Conn, Connection,
-    HttpConnector, TlsConn, TlsInfoFactory, Unnameable,
+    HttpConnector, TlsConn, Unnameable,
     descriptor::ConnectionDescriptor,
     http::HttpConnect,
     net::TcpConnector,
+    observe::{Observed, Probe},
     proxy,
     timeout::{Timeout, TimeoutLayer},
     verbose::Verbose,
@@ -28,6 +28,7 @@ use crate::{
     dns::DynResolver,
     error::{ProxyConnect, map_timeout_to_connector_error},
     ext::UriExt,
+    observe::ConnectionObserver,
     proxy::{Intercepted, Matcher as ProxyMatcher, matcher::Intercept},
     rt::Timer,
     tls::{
@@ -47,6 +48,7 @@ use crate::{
 struct Config {
     proxies: Arc<Vec<ProxyMatcher>>,
     verbose: Verbose,
+    observer: Option<Arc<dyn ConnectionObserver>>,
     nodelay: bool,
     tls_info: bool,
 }
@@ -100,6 +102,7 @@ impl ConnectorBuilder {
             config: Config {
                 proxies: Arc::new(proxies),
                 verbose: Verbose::OFF,
+                observer: None,
                 nodelay: true,
                 tls_info: false,
             },
@@ -143,6 +146,13 @@ impl ConnectorBuilder {
     #[inline]
     pub fn timer(mut self, timer: Timer) -> ConnectorBuilder {
         self.timer = timer;
+        self
+    }
+
+    /// Set the observer that receives connection events.
+    #[inline]
+    pub fn observer(mut self, observer: Option<Arc<dyn ConnectionObserver>>) -> ConnectorBuilder {
+        self.config.observer = observer;
         self
     }
 
@@ -219,6 +229,21 @@ impl ConnectorBuilder {
     }
 }
 
+// ===== impl Config =====
+
+impl Config {
+    /// Boxes a connected transport with its plaintext observation and verbose tracing.
+    fn wrap<T>(&self, conn: T, probe: Option<Probe>) -> Box<dyn AsyncConnWithInfo>
+    where
+        T: AsyncConnWithInfo + 'static,
+    {
+        match probe {
+            Some(probe) => self.verbose.wrap(Observed::new(conn, probe)),
+            None => self.verbose.wrap(conn),
+        }
+    }
+}
+
 // ===== impl TransportConnector =====
 
 impl TransportConnector {
@@ -226,6 +251,7 @@ impl TransportConnector {
         &self,
         https: bool,
         descriptor: &ConnectionDescriptor,
+        probe: Option<Probe>,
     ) -> Result<HttpsConnector<HttpConnector>, BoxError> {
         let mut http = self.http.clone();
 
@@ -263,23 +289,26 @@ impl TransportConnector {
             .transpose()?
             .unwrap_or_else(|| self.tls.clone());
 
-        Ok(HttpsConnector::new(http, tls))
+        Ok(HttpsConnector::new(http, tls, probe))
     }
 
-    fn tunnel_conn_from_stream<IO>(&self, io: MaybeHttpsStream<IO>) -> Result<Conn, BoxError>
+    fn tunnel_conn_from_stream<IO>(
+        &self,
+        io: MaybeHttpsStream<IO>,
+        probe: Option<Probe>,
+    ) -> Result<Conn, BoxError>
     where
         IO: AsyncConnWithInfo,
         TlsConn<IO>: Connection,
-        SslStream<IO>: TlsInfoFactory,
     {
         let conn = match io {
             MaybeHttpsStream::Http(stream) => Conn {
-                stream: self.config.verbose.wrap(stream),
+                stream: self.config.wrap(stream, probe),
                 tls_info: false,
                 proxy: None,
             },
             MaybeHttpsStream::Https(stream) => Conn {
-                stream: self.config.verbose.wrap(TlsConn { stream }),
+                stream: self.config.wrap(TlsConn { stream }, probe),
                 tls_info: self.config.tls_info,
                 proxy: None,
             },
@@ -288,16 +317,20 @@ impl TransportConnector {
         Ok(conn)
     }
 
-    fn conn_from_stream<IO, P>(&self, io: MaybeHttpsStream<IO>, proxy: P) -> Result<Conn, BoxError>
+    fn conn_from_stream<IO, P>(
+        &self,
+        io: MaybeHttpsStream<IO>,
+        proxy: P,
+        probe: Option<Probe>,
+    ) -> Result<Conn, BoxError>
     where
         IO: AsyncConnWithInfo,
         TlsConn<IO>: Connection,
-        SslStream<IO>: TlsInfoFactory,
         P: Into<Option<Intercept>>,
     {
         let conn = match io {
-            MaybeHttpsStream::Http(stream) => self.config.verbose.wrap(stream),
-            MaybeHttpsStream::Https(stream) => self.config.verbose.wrap(TlsConn { stream }),
+            MaybeHttpsStream::Http(stream) => self.config.wrap(stream, probe),
+            MaybeHttpsStream::Https(stream) => self.config.wrap(TlsConn { stream }, probe),
         };
 
         Ok(Conn {
@@ -311,13 +344,14 @@ impl TransportConnector {
         self,
         descriptor: ConnectionDescriptor,
         proxy: P,
+        probe: Option<Probe>,
     ) -> Result<Conn, BoxError> {
         let is_https = descriptor.uri().is_https();
         let proxy = proxy.into();
 
         trace!("connect with maybe proxy: {:?}", proxy);
 
-        let mut connector = self.build_https_connector(is_https, &descriptor)?;
+        let mut connector = self.build_https_connector(is_https, &descriptor, probe.clone())?;
 
         // When using a proxy for HTTPS targets, disable ALPN to avoid protocol negotiation issues
         if proxy.is_some() && is_https {
@@ -333,13 +367,14 @@ impl TransportConnector {
             }
         });
 
-        self.conn_from_stream(io, proxy)
+        self.conn_from_stream(io, proxy, probe)
     }
 
     async fn connect_via_proxy(
         self,
         mut descriptor: ConnectionDescriptor,
         proxy: Intercepted,
+        probe: Option<Probe>,
     ) -> Result<Conn, BoxError> {
         let uri = descriptor.uri().clone();
 
@@ -376,7 +411,8 @@ impl TransportConnector {
                         };
 
                         // Build an HTTPS connector.
-                        let mut connector = self.build_https_connector(is_https, &descriptor)?;
+                        let mut connector =
+                            self.build_https_connector(is_https, &descriptor, probe.clone())?;
 
                         // Wrap the established SOCKS connection with TLS if needed.
                         let io = connector
@@ -390,7 +426,7 @@ impl TransportConnector {
                             }
                         });
 
-                        return self.tunnel_conn_from_stream(io);
+                        return self.tunnel_conn_from_stream(io, probe);
                     }
                 }
 
@@ -398,7 +434,8 @@ impl TransportConnector {
                     trace!("tunneling over HTTP(s) proxy: {:?}", proxy_uri);
 
                     // Build an HTTPS connector.
-                    let mut connector = self.build_https_connector(is_https, &descriptor)?;
+                    let mut connector =
+                        self.build_https_connector(is_https, &descriptor, probe.clone())?;
 
                     // Build a tunnel connector to establish the CONNECT tunnel.
                     let tunneled = {
@@ -431,11 +468,11 @@ impl TransportConnector {
                         }
                     });
 
-                    return self.tunnel_conn_from_stream(io);
+                    return self.tunnel_conn_from_stream(io, probe);
                 }
 
                 *descriptor.uri_mut() = proxy_uri;
-                self.connect_auto_proxy(descriptor, proxy)
+                self.connect_auto_proxy(descriptor, proxy, probe)
                     .await
                     .map_err(ProxyConnect)
                     .map_err(Into::into)
@@ -445,8 +482,11 @@ impl TransportConnector {
                 trace!("connecting via Unix socket: {:?}", unix_socket);
 
                 // Create a Unix connector with the specified socket path.
-                let mut connector =
-                    HttpsConnector::new(UnixConnector::new(unix_socket), self.tls.clone());
+                let mut connector = HttpsConnector::new(
+                    UnixConnector::new(unix_socket),
+                    self.tls.clone(),
+                    probe.clone(),
+                );
 
                 // If the target URI is HTTPS, establish a CONNECT tunnel over the Unix socket,
                 // then upgrade the tunneled stream to TLS.
@@ -470,13 +510,13 @@ impl TransportConnector {
                         .call(EstablishedConn::new(tunneled, descriptor))
                         .await?;
 
-                    return self.tunnel_conn_from_stream(io);
+                    return self.tunnel_conn_from_stream(io, probe);
                 }
 
                 // For plain HTTP, use the Unix connector directly.
                 let io = connector.call(descriptor).await?;
 
-                self.conn_from_stream(io, None)
+                self.conn_from_stream(io, None, probe)
             }
         }
     }
@@ -495,11 +535,14 @@ impl TransportConnector {
                     .find_map(|prox| prox.intercept(req.uri()))
             });
 
+        // Bind the observer to this connection before any handshake is reported.
+        let probe = self.config.observer.clone().map(Probe::new);
+
         // If a proxy is matched, connect via proxy; otherwise, connect directly.
         if let Some(intercepted) = intercepted {
-            self.connect_via_proxy(req, intercepted).await
+            self.connect_via_proxy(req, intercepted, probe).await
         } else {
-            self.connect_auto_proxy(req, None).await
+            self.connect_auto_proxy(req, None, probe).await
         }
     }
 }

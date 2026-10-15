@@ -36,10 +36,11 @@ mod sealed {
         task::{Context, Poll},
     };
 
+    use btls::ssl::SslRef;
     use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 
     use super::super::{Connected, Connection, TlsInfoFactory};
-    use crate::{tls::TlsInfo, util::Escape};
+    use crate::util::Escape;
 
     pub(super) struct Wrapper<T> {
         pub(super) id: u64,
@@ -122,8 +123,9 @@ mod sealed {
     }
 
     impl<T: TlsInfoFactory> TlsInfoFactory for Wrapper<T> {
-        fn tls_info(&self) -> Option<TlsInfo> {
-            self.inner.tls_info()
+        #[inline]
+        fn ssl(&self) -> Option<&SslRef> {
+            self.inner.ssl()
         }
     }
 

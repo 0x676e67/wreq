@@ -10,20 +10,38 @@ use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_btls::SslStream;
 use tower::{BoxError, Service};
 
-use super::{EstablishedConn, HttpsConnector, MaybeHttpsStream};
+use super::{EstablishedConn, HttpsConnector, MaybeHttpsStream, TlsConnector};
 use crate::{
-    conn::{Connection, descriptor::ConnectionDescriptor},
+    conn::{
+        Connection,
+        descriptor::ConnectionDescriptor,
+        observe::{HandshakeTap, Probe},
+    },
     ext::UriExt,
 };
 
 type BoxFuture<T, E> = Pin<Box<dyn Future<Output = Result<T, E>> + Send>>;
 
-async fn perform_handshake<T>(ssl: btls::ssl::Ssl, conn: T) -> Result<MaybeHttpsStream<T>, BoxError>
+/// Wraps `conn` so the handshake for `uri` is reported to the connection's observer.
+fn tap<T>(conn: T, probe: Option<Probe>, uri: &Uri) -> HandshakeTap<T> {
+    let host = uri
+        .host()
+        .map(TlsConnector::normalize_host)
+        .unwrap_or_default();
+    HandshakeTap::new(conn, probe, host)
+}
+
+async fn perform_handshake<T>(
+    ssl: btls::ssl::Ssl,
+    io: HandshakeTap<T>,
+) -> Result<MaybeHttpsStream<T>, BoxError>
 where
     T: AsyncRead + AsyncWrite + Unpin,
 {
-    let mut stream = SslStream::new(ssl, conn)?;
+    let mut stream = SslStream::new(ssl, io)?;
     Pin::new(&mut stream).connect().await?;
+    // Later records carry encrypted application data, which the plaintext layer reports instead.
+    stream.get_mut().finish();
     Ok(MaybeHttpsStream::Https(stream))
 }
 
@@ -46,6 +64,7 @@ where
     fn call(&mut self, uri: Uri) -> Self::Future {
         let connect = self.http.call(uri.clone());
         let tls = self.tls.clone();
+        let probe = self.probe.clone();
 
         let f = async move {
             let conn = connect.await.map_err(Into::into)?;
@@ -55,8 +74,9 @@ where
                 return Ok(MaybeHttpsStream::Http(conn));
             }
 
+            let io = tap(conn, probe, &uri);
             let ssl = tls.setup_ssl(uri)?;
-            perform_handshake(ssl, conn).await
+            perform_handshake(ssl, io).await
         };
 
         Box::pin(f)
@@ -83,6 +103,7 @@ where
         let uri = descriptor.uri().clone();
         let connect = self.http.call(uri.clone());
         let tls = self.tls.clone();
+        let probe = self.probe.clone();
 
         let f = async move {
             let conn = connect.await.map_err(Into::into)?;
@@ -92,8 +113,9 @@ where
                 return Ok(MaybeHttpsStream::Http(conn));
             }
 
+            let io = tap(conn, probe, &uri);
             let ssl = tls.setup_ssl2(descriptor)?;
-            perform_handshake(ssl, conn).await
+            perform_handshake(ssl, io).await
         };
 
         Box::pin(f)
@@ -119,14 +141,16 @@ where
 
     fn call(&mut self, conn: EstablishedConn<IO>) -> Self::Future {
         let tls = self.tls.clone();
+        let probe = self.probe.clone();
         let fut = async move {
             // Early return if it is not a tls scheme
             if conn.descriptor.uri().is_http() {
                 return Ok(MaybeHttpsStream::Http(conn.io));
             }
 
+            let io = tap(conn.io, probe, conn.descriptor.uri());
             let ssl = tls.setup_ssl2(conn.descriptor)?;
-            perform_handshake(ssl, conn.io).await
+            perform_handshake(ssl, io).await
         };
 
         Box::pin(fut)

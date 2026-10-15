@@ -203,6 +203,7 @@ pretty_env_logger = "0.5"
 brotli = "8.0.2"
 flate2 = "1.1.9"
 zstd = "0.14.2"
+pingly = "0.2.0"
 
 # for benchmarks
 sysinfo = { version = "0.39.1", default-features = false, features = ["system"] }
@@ -374,6 +375,10 @@ required-features = ["ws", "futures-util/std"]
 [[example]]
 name = "keylog"
 path = "examples/keylog.rs"
+
+[[example]]
+name = "fingerprint"
+path = "examples/fingerprint.rs"
 
 [[example]]
 name = "unix_socket"

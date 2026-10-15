@@ -6,6 +6,7 @@ pub(super) mod connector;
 pub(super) mod descriptor;
 pub(super) mod http;
 pub(super) mod net;
+pub(super) mod observe;
 pub(super) mod proxy;
 
 use std::{
@@ -21,12 +22,12 @@ use std::{
 };
 
 use ::http::{Extensions, HeaderMap, HeaderValue};
+use btls::ssl::SslRef;
 #[cfg(any(feature = "tokio-rt", feature = "compio-rt"))]
 use net::TcpConnector;
 use pin_project_lite::pin_project;
 use tls_info::TlsInfoFactory;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
-use tokio_btls::SslStream;
 use tower::{
     BoxError,
     util::{BoxCloneSyncService, BoxCloneSyncServiceLayer},
@@ -35,7 +36,7 @@ use tower::{
 use crate::{
     dns::DynResolver,
     proxy::matcher::Intercept,
-    tls::{AlpnProtocol, TlsInfo},
+    tls::{AlpnProtocol, conn::TlsStream},
 };
 
 /// HTTP connector with dynamic DNS resolver.
@@ -94,7 +95,7 @@ pin_project! {
     /// It is mainly used internally to abstract over different connection types.
     pub struct TlsConn<T> {
         #[pin]
-        stream: SslStream<T>,
+        stream: TlsStream<T>,
     }
 }
 
@@ -291,13 +292,10 @@ impl<T: AsyncRead + AsyncWrite + Unpin> AsyncWrite for TlsConn<T> {
     }
 }
 
-impl<T> TlsInfoFactory for TlsConn<T>
-where
-    SslStream<T>: TlsInfoFactory,
-{
+impl<T> TlsInfoFactory for TlsConn<T> {
     #[inline]
-    fn tls_info(&self) -> Option<TlsInfo> {
-        self.stream.tls_info()
+    fn ssl(&self) -> Option<&SslRef> {
+        Some(self.stream.ssl())
     }
 }
 

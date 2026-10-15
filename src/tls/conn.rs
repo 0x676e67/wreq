@@ -27,7 +27,11 @@ use tower::{BoxError, Service};
 
 use crate::{
     Error,
-    conn::{Connected, Connection, descriptor::ConnectionDescriptor},
+    conn::{
+        Connected, Connection,
+        descriptor::ConnectionDescriptor,
+        observe::{HandshakeTap, Probe},
+    },
     tls::{
         AlpnProtocol, AlpsProtocol, KeyShare, TlsOptions, TlsVersion,
         keylog::KeyLog,
@@ -60,6 +64,7 @@ pub struct HandshakeSettings {
 pub struct HttpsConnector<T> {
     http: T,
     tls: TlsConnector,
+    probe: Option<Probe>,
 }
 
 /// A builder for creating a `TlsConnector`.
@@ -94,9 +99,11 @@ where
     T: AsyncRead + AsyncWrite + Connection + Unpin + Debug + Sync + Send + 'static,
 {
     /// Creates a new [`HttpsConnector`] with a given [`TlsConnector`].
+    ///
+    /// Handshakes are reported to `probe`, which belongs to the connection being established.
     #[inline]
-    pub fn new(http: S, tls: TlsConnector) -> HttpsConnector<S> {
-        HttpsConnector { http, tls }
+    pub fn new(http: S, tls: TlsConnector, probe: Option<Probe>) -> HttpsConnector<S> {
+        HttpsConnector { http, tls, probe }
     }
 
     /// Disables ALPN negotiation.
@@ -488,12 +495,15 @@ impl TlsConnectorBuilder {
     }
 }
 
+/// A TLS stream whose transport reports handshake records to the connection's observer.
+pub type TlsStream<T> = SslStream<HandshakeTap<T>>;
+
 /// A stream which may be wrapped with TLS.
 pub enum MaybeHttpsStream<T> {
     /// A raw HTTP stream.
     Http(T),
     /// An SSL-wrapped HTTP stream.
-    Https(SslStream<T>),
+    Https(TlsStream<T>),
 }
 
 /// A connection that has been established with a TLS handshake.
@@ -509,7 +519,7 @@ impl<T> AsRef<T> for MaybeHttpsStream<T> {
     fn as_ref(&self) -> &T {
         match self {
             MaybeHttpsStream::Http(s) => s,
-            MaybeHttpsStream::Https(s) => s.get_ref(),
+            MaybeHttpsStream::Https(s) => s.get_ref().get_ref(),
         }
     }
 }

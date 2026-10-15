@@ -70,6 +70,7 @@ use crate::{
     header::OrigHeaderMap,
     http1::Http1Options,
     http2::Http2Options,
+    observe::{ConnectionObserver, IntoConnectionObserver},
     proxy::Matcher as ProxyMatcher,
     redirect::{self, FollowRedirectPolicy},
     retry,
@@ -180,6 +181,7 @@ struct Config {
     accept_encoding: AcceptEncoding,
     connect_timeout: Option<Duration>,
     connection_verbose: bool,
+    connection_observer: Option<Arc<dyn ConnectionObserver>>,
     pool_idle_timeout: Option<Duration>,
     pool_max_idle_per_host: usize,
     pool_max_size: Option<NonZeroUsize>,
@@ -267,6 +269,7 @@ impl Client {
                 accept_encoding: AcceptEncoding::default(),
                 connect_timeout: None,
                 connection_verbose: false,
+                connection_observer: None,
                 pool_idle_timeout: Some(Duration::from_secs(90)),
                 pool_max_idle_per_host: usize::MAX,
                 pool_max_size: None,
@@ -510,6 +513,7 @@ impl ClientBuilder {
                 .tls_info(config.tls_info)
                 .tcp_nodelay(config.tcp_nodelay)
                 .verbose(config.connection_verbose)
+                .observer(config.connection_observer)
                 .with_tls(|tls| {
                     tls.alpn_protocol(match config.http_version_pref {
                         HttpVersionPref::Http1 => Some(AlpnProtocol::HTTP1),
@@ -1064,6 +1068,17 @@ impl ClientBuilder {
     #[inline]
     pub fn connection_verbose(mut self, verbose: bool) -> ClientBuilder {
         self.config.connection_verbose = verbose;
+        self
+    }
+
+    /// Reports connection events to an observer.
+    ///
+    /// The observer receives the TLS handshake records and plaintext I/O of every connection,
+    /// independently of [`connection_verbose`](Self::connection_verbose). See
+    /// [`observe`](crate::observe) for the event model.
+    #[inline]
+    pub fn connection_observer<O: IntoConnectionObserver>(mut self, observer: O) -> ClientBuilder {
+        self.config.connection_observer = Some(observer.into_shared());
         self
     }
 
