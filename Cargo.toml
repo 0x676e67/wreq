@@ -105,6 +105,10 @@ lru = "0.18.0"
 btls = "0.5.6"
 btls-sys = "0.5.6"
 tokio-btls = "0.5.6"
+# Direct dep so `ForeignTypeRef::as_ptr` is nameable on btls's `SslRef`/`Ssl`
+# when calling BoringSSL FFI that btls does not wrap (e.g. trust_anchors).
+# Already a transitive dependency via btls; promoting it adds no new resolution.
+foreign-types = "0.5"
 tokio = { version = "1.52.3", default-features = false }
 compio = { version = "0.19.2", features = ["io", "io-compat"], optional = true }
 wreq-rt = { version = "0.2.2-rc.2", default-features = false }
