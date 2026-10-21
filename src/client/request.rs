@@ -418,7 +418,8 @@ impl RequestBuilder {
                     return self;
                 }
             };
-            let len = url.query().map_or(0, str::len);
+
+            let query_len = url.query().map_or(0, str::len);
             if let Err(err) =
                 query.serialize(serde_html_form::Serializer::new(&mut url.query_pairs_mut()))
             {
@@ -426,7 +427,7 @@ impl RequestBuilder {
                 return self;
             }
 
-            if url.query().is_some_and(|query| query.len() != len) {
+            if url.query().is_some_and(|query| query.len() != query_len) {
                 match Uri::try_from(String::from(url)) {
                     Ok(value) => *uri = value,
                     Err(err) => self.request = Err(Error::builder(err)),
