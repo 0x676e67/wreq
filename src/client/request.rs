@@ -374,9 +374,9 @@ impl RequestBuilder {
 
     /// Enables a read timeout.
     ///
-    /// The read timeout is applied from when the response body starts being read
-    /// until the response body has finished. It affects only this request and
-    /// overrides the read timeout configured using `ClientBuilder::read_timeout()`.
+    /// The timeout applies while waiting for response headers and reading each body frame. Time
+    /// spent by the caller between body reads is not counted. It affects only this request and
+    /// overrides `ClientBuilder::read_timeout()`.
     pub fn read_timeout(mut self, timeout: Duration) -> RequestBuilder {
         if let Ok(ref mut req) = self.request {
             req.config_mut::<TimeoutOptions>()
