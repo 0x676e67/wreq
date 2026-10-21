@@ -4,6 +4,7 @@ mod future;
 mod policy;
 
 use std::{
+    future::ready,
     mem,
     task::{Context, Poll},
 };
@@ -117,9 +118,13 @@ where
         let mut body_repr = BodyRepr::None;
         body_repr.try_clone_from(req.body());
 
-        policy.on_request(&mut req);
         let (parts, body) = req.into_parts();
-        let request = Request::from_parts(parts, ());
+        let mut request = Request::from_parts(parts, ());
+        if let Err(err) = policy.on_request(&mut request) {
+            return ResponseFuture::Error {
+                future: ready(Err(err.into())),
+            };
+        }
         ResponseFuture::Redirect {
             future: Either::Left(service.call(request.clone().map(|_| body))),
             pending_future: None,

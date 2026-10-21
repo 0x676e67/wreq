@@ -271,6 +271,204 @@ async fn test_redirect_referrer_policy() {
 }
 
 #[tokio::test]
+async fn test_redirect_callbacks() {
+    use std::sync::{Arc, Mutex};
+
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let observe = |policy: Policy| {
+        let requests = events.clone();
+        let responses = events.clone();
+        policy
+            .on_request(move |request| {
+                let path = request.uri().path().to_owned();
+                if matches!(path.as_str(), "/middle" | "/end") {
+                    assert_eq!(request.method(), "GET");
+                    assert!(!request.headers().contains_key(header::COOKIE));
+                    assert!(!request.headers().contains_key(header::CONTENT_TYPE));
+                    if path == "/middle" {
+                        assert!(!request.headers().contains_key(header::AUTHORIZATION));
+                        assert_eq!(request.headers()[header::REFERER], "http://source.example/");
+                        request.headers_mut().insert(
+                            header::AUTHORIZATION,
+                            header::HeaderValue::from_static("destination-secret"),
+                        );
+                        request.headers_mut().remove("x-remove");
+                        request.headers_mut().remove(header::REFERER);
+                        *request.uri_mut() =
+                            format!("{}?callback=1", request.uri()).parse().unwrap();
+                    } else {
+                        assert_eq!(
+                            request.headers()[header::AUTHORIZATION],
+                            "destination-secret"
+                        );
+                        assert!(!request.headers().contains_key("x-remove"));
+                        assert!(!request.headers().contains_key(header::REFERER));
+                    }
+                }
+                let hop = request.extensions().get::<usize>().copied().unwrap_or(0) + 1;
+                request.extensions_mut().insert(hop);
+                request
+                    .headers_mut()
+                    .insert("x-path", header::HeaderValue::from_str(&path).unwrap());
+                requests
+                    .lock()
+                    .unwrap()
+                    .push((true, path, request.method().to_string()));
+            })
+            .on_response(move |request, response| {
+                let path = request.uri().path();
+                assert_eq!(response.headers()["x-hop"], path);
+                assert_eq!(request.headers()["x-path"], path);
+                assert_eq!(response.version(), http::Version::HTTP_11);
+                assert_eq!(
+                    request.extensions().get::<usize>(),
+                    Some(&match path {
+                        "/middle" => 2,
+                        "/end" => 3,
+                        _ => 1,
+                    }),
+                );
+                responses.lock().unwrap().push((
+                    false,
+                    path.to_owned(),
+                    request.method().to_string(),
+                ));
+            })
+    };
+
+    let destination = server::http(|req| async move {
+        let path = req.uri().path();
+        assert!(matches!(path, "/middle" | "/end"));
+        assert_eq!(req.headers()["x-path"], path);
+        assert_eq!(req.headers()[header::AUTHORIZATION], "destination-secret");
+        assert!(!req.headers().contains_key(header::COOKIE));
+        assert!(!req.headers().contains_key("x-remove"));
+        assert!(!req.headers().contains_key(header::REFERER));
+        let response = http::Response::builder().header("x-hop", path);
+        if path == "/middle" {
+            assert_eq!(req.uri().query(), Some("callback=1"));
+            response.status(302).header(header::LOCATION, "/end")
+        } else {
+            response
+        }
+        .body(Body::from("complete"))
+        .unwrap()
+    });
+    let destination_addr = destination.addr();
+    let source = server::http(move |req| async move {
+        let path = req.uri().path();
+        assert_eq!(req.headers()["x-path"], path);
+        let response = http::Response::builder().header("x-hop", path);
+        match path {
+            "/start" => {
+                assert_eq!(req.method(), "POST");
+                assert_eq!(req.headers()[header::AUTHORIZATION], "secret");
+                assert_eq!(req.headers()[header::COOKIE], "key=value");
+                response
+                    .status(302)
+                    .header(
+                        header::LOCATION,
+                        format!("http://{destination_addr}/middle"),
+                    )
+                    .header(header::REFERRER_POLICY, "origin")
+            }
+            "/stop" | "/unreplayable" => {
+                response.status(302).header(header::LOCATION, "/unexpected")
+            }
+            "/invalid" => response
+                .status(302)
+                .header(header::LOCATION, "http://invalid{host}/"),
+            "/missing" => response.status(302),
+            path => panic!("unexpected redirect path: {path}"),
+        }
+        .body(Body::default())
+        .unwrap()
+    });
+    let client = Client::builder()
+        .redirect(observe(Policy::default()))
+        .no_proxy()
+        .build()
+        .unwrap();
+    let base = format!("http://{}", source.addr());
+
+    for policy in [
+        Policy::default(),
+        Policy::custom(|attempt| {
+            attempt.pending(|attempt| async move {
+                tokio::task::yield_now().await;
+                attempt.follow()
+            })
+        }),
+    ] {
+        let response = client
+            .post(format!("{base}/start"))
+            .redirect(observe(policy))
+            .header(header::AUTHORIZATION, "secret")
+            .header(header::COOKIE, "key=value")
+            .header(header::CONTENT_TYPE, "text/plain")
+            .header(header::REFERER, "http://source.example/private")
+            .header("x-remove", "value")
+            .body("payload")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let mut history = response.extensions().get::<History>().unwrap().into_iter();
+        assert_eq!(history.next().unwrap().uri.query(), Some("callback=1"));
+        assert_eq!(history.next().unwrap().uri.path(), "/end");
+        assert!(history.next().is_none());
+        assert_eq!(response.text().await.unwrap(), "complete");
+        assert_eq!(
+            std::mem::take(&mut *events.lock().unwrap()),
+            [
+                (true, "/start", "POST"),
+                (false, "/start", "POST"),
+                (true, "/middle", "GET"),
+                (false, "/middle", "GET"),
+                (true, "/end", "GET"),
+                (false, "/end", "GET"),
+            ]
+            .map(|(outgoing, path, method)| (
+                outgoing,
+                path.to_owned(),
+                method.to_owned()
+            )),
+        );
+    }
+
+    for (path, policy, fails) in [
+        ("/stop", Policy::none(), false),
+        ("/stop", Policy::custom(|attempt| attempt.stop()), false),
+        ("/missing", Policy::default(), false),
+        ("/invalid", Policy::default(), false),
+        ("/unreplayable", Policy::default(), false),
+        ("/stop", Policy::limited(0), true),
+    ] {
+        let mut request = client
+            .get(format!("{base}{path}"))
+            .redirect(observe(policy));
+        if path == "/unreplayable" {
+            request = request.body(Body::wrap(http_body_util::Full::new(
+                bytes::Bytes::from_static(b"payload"),
+            )));
+        }
+        let response = request.send().await;
+        if fails {
+            assert!(response.unwrap_err().is_redirect());
+        } else {
+            assert_eq!(response.unwrap().status(), StatusCode::FOUND);
+        }
+        assert_eq!(
+            std::mem::take(&mut *events.lock().unwrap()),
+            [
+                (true, path.to_owned(), "GET".to_owned()),
+                (false, path.to_owned(), "GET".to_owned())
+            ],
+        );
+    }
+}
+
+#[tokio::test]
 async fn test_redirect_policy_can_return_errors() {
     let server = server::http(move |req| async move {
         assert_eq!(req.uri(), "/loop");
