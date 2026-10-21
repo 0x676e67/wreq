@@ -6,6 +6,30 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+## [0.16.2](https://github.com/0x676e67/wreq/compare/v0.16.1..v0.16.2) - 2026-10-21
+
+### Features
+
+- *(cookie)* Expose storage host in Jar::get_all - ([e589532](https://github.com/0x676e67/wreq/commit/e589532583634686f534aa774a05e5982c7443bd))
+
+### Bug Fixes
+
+- *(redirect)* Accept UTF-8 Location headers - ([e7adb4c](https://github.com/0x676e67/wreq/commit/e7adb4c74bad24f10289a9e556725fbda279b9f9))
+- *(ws)* Classify WebSocket read errors as websocket errors - ([79c3013](https://github.com/0x676e67/wreq/commit/79c30130bbe9364138848d7bb2fc5f0e143df901))
+
+### Testing
+
+- Fix nightly clippy warning ([#1335](https://github.com/0x676e67/wreq/issues/1335)) - ([c97d598](https://github.com/0x676e67/wreq/commit/c97d598e08cfa4a59d01ae598723e1a08549b05f))
+- Fix nightly clippy warning - ([b6268cc](https://github.com/0x676e67/wreq/commit/b6268cc24c4b2dae19586ac17d29a56f145f422a))
+
+### Miscellaneous Tasks
+
+- *(release)* Enable trusted publishing on 0.16.x - ([e632a98](https://github.com/0x676e67/wreq/commit/e632a98d88881aaa3bfde67b174759049d870973))
+
+### Revert
+
+- Route nightly clippy fix through review - ([c4941d2](https://github.com/0x676e67/wreq/commit/c4941d2ec50f046f9a357276cbb02d1815daf2bb))
+
 
 ## [0.16.1](https://github.com/0x676e67/wreq/compare/v0.16.0...v0.16.1) - 2026-08-25
 
