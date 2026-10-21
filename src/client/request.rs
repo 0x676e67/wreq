@@ -409,21 +409,30 @@ impl RequestBuilder {
     #[cfg(feature = "query")]
     #[cfg_attr(docsrs, doc(cfg(feature = "query")))]
     pub fn query<T: Serialize + ?Sized>(mut self, query: &T) -> RequestBuilder {
-        use url::Url;
-
-        self.request = self.request.and_then(|mut req| {
+        if let Ok(ref mut req) = self.request {
             let uri = req.uri_mut();
-            let mut url = Url::parse(&uri.to_string()).map_err(Error::builder)?;
+            let mut url = match url::Url::parse(&uri.to_string()) {
+                Ok(url) => url,
+                Err(err) => {
+                    self.request = Err(Error::builder(err));
+                    return self;
+                }
+            };
             let len = url.query().map_or(0, str::len);
-            query
-                .serialize(serde_html_form::Serializer::new(&mut url.query_pairs_mut()))
-                .map_err(Error::builder)?;
+            if let Err(err) =
+                query.serialize(serde_html_form::Serializer::new(&mut url.query_pairs_mut()))
+            {
+                self.request = Err(Error::builder(err));
+                return self;
+            }
 
             if url.query().is_some_and(|query| query.len() != len) {
-                *uri = Uri::try_from(String::from(url)).map_err(Error::builder)?;
+                match Uri::try_from(String::from(url)) {
+                    Ok(value) => *uri = value,
+                    Err(err) => self.request = Err(Error::builder(err)),
+                }
             }
-            Ok(req)
-        });
+        }
         self
     }
 
