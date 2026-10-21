@@ -394,6 +394,8 @@ impl RequestBuilder {
     /// overwritten if the same key is used. The key will simply show up
     /// twice in the query string.
     /// Calling `.query(&[("foo", "a"), ("foo", "b")])` gives `"foo=a&foo=b"`.
+    /// The URI is normalized according to the [URL Standard](https://url.spec.whatwg.org/)
+    /// when parameters are appended.
     ///
     /// # Note
     /// This method does not support serializing a single key-value
@@ -402,24 +404,26 @@ impl RequestBuilder {
     /// and maps into a key-value pair.
     ///
     /// # Errors
-    /// This method will fail if the object you provide cannot be serialized
-    /// into a query string.
+    /// This method fails if the URI cannot be parsed as a URL, the parameters
+    /// cannot be serialized, or the resulting URI is invalid.
     #[cfg(feature = "query")]
     #[cfg_attr(docsrs, doc(cfg(feature = "query")))]
     pub fn query<T: Serialize + ?Sized>(mut self, query: &T) -> RequestBuilder {
-        let mut error = None;
-        if let Ok(ref mut req) = self.request {
-            match serde_html_form::to_string(query) {
-                Ok(serializer) => {
-                    let uri = req.uri_mut();
-                    uri.set_query(serializer);
-                }
-                Err(err) => error = Some(Error::builder(err)),
+        use url::Url;
+
+        self.request = self.request.and_then(|mut req| {
+            let uri = req.uri_mut();
+            let mut url = Url::parse(&uri.to_string()).map_err(Error::builder)?;
+            let len = url.query().map_or(0, str::len);
+            query
+                .serialize(serde_html_form::Serializer::new(&mut url.query_pairs_mut()))
+                .map_err(Error::builder)?;
+
+            if url.query().is_some_and(|query| query.len() != len) {
+                *uri = Uri::try_from(String::from(url)).map_err(Error::builder)?;
             }
-        }
-        if let Some(err) = error {
-            self.request = Err(err);
-        }
+            Ok(req)
+        });
         self
     }
 
