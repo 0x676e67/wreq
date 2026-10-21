@@ -54,7 +54,7 @@ pin_project! {
 pin_project! {
     /// A body wrapper that enforces a timeout for each read operation.
     ///
-    /// The deadline starts when a frame poll begins and is cleared once it completes,
+    /// The deadline starts when a frame poll begins and is disarmed once it completes,
     /// so time spent between reads is not counted.
     pub struct ReadTimeoutBody<B> {
         #[pin]

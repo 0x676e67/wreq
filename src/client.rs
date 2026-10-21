@@ -1034,7 +1034,9 @@ impl ClientBuilder {
         self
     }
 
-    /// Set a timeout for only the read phase of a `Client`.
+    /// Sets a timeout for waiting for response headers and reading each body frame.
+    ///
+    /// Time spent by the caller between body reads is not counted.
     ///
     /// Default is `None`.
     #[inline]
