@@ -112,9 +112,6 @@ where
             };
         };
 
-        let service = self.inner.clone();
-        let mut service = mem::replace(&mut self.inner, service);
-
         let (parts, body) = req.into_parts();
         let mut request = Request::from_parts(parts, ());
         if let Err(err) = policy.on_request(&mut request) {
@@ -122,6 +119,9 @@ where
                 future: ready(Err(err.into())),
             };
         }
+
+        let service = self.inner.clone();
+        let mut service = mem::replace(&mut self.inner, service);
         let mut body_repr = BodyRepr::None;
         if policy.follows_redirects() {
             body_repr.try_clone_from(&body);

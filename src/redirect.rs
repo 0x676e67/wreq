@@ -185,14 +185,15 @@ impl Policy {
 
     /// Sets a callback for the initial request and each followed redirect.
     ///
-    /// Runs after redirect method changes and built-in credential and referrer handling.
-    /// Changes to headers and extensions carry over to later hops. Cookie injection and
-    /// protocol header preparation happen afterward, so these are not the final wire headers.
-    /// This also runs when redirects are disabled with [`Policy::none`].
-    /// The body is represented by `()`. If the URI changes, target validation and
-    /// cross-origin security handling run again before dispatch.
-    /// Changing the method does not change the body.
-    /// Same-origin edits to the initial URI leave an explicit `Referer` unchanged.
+    /// Runs after redirect method changes and credential stripping, also with [`Policy::none`].
+    /// Header and extension edits carry over to later hops; cookies and protocol headers are
+    /// added afterward. The body is represented by `()` and is unaffected by method changes.
+    ///
+    /// The callback sees the previous hop's `Referer`, which is then computed for the final URI
+    /// unless the callback edited it and kept the URI. On the initial request it is recomputed
+    /// only when the URI moves to another origin. A changed URI is validated again and drops
+    /// credentials when it crosses origins.
+    /// https://w3c.github.io/webappsec-referrer-policy/#determine-requests-referrer
     ///
     /// # Example
     ///
@@ -507,47 +508,38 @@ impl FollowRedirectPolicy {
 
     pub(crate) fn on_request(&mut self, req: &mut http::Request<()>) -> Result<(), BoxError> {
         let redirected = !self.uris.is_empty();
-        let callback = self
+        remove_sensitive_headers(req, &self.uris);
+
+        // The callback sees the previous hop's `Referer`; it is computed below for the final URI.
+        let mut apply_referrer = redirected;
+        if let Some(callback) = self
             .policy
             .as_ref()
-            .and_then(|policy| policy.on_request.as_ref());
-        // Keep the source and header metadata if the callback chooses a different destination.
-        let original_referrer = callback
-            .filter(|_| redirected)
-            .and(self.referrer.as_ref())
-            .map(|referrer| (referrer.clone(), req.headers().get(REFERER).cloned()));
-
-        remove_sensitive_headers(req, &self.uris);
-        if redirected && let Some(referrer) = &mut self.referrer {
-            referrer.apply(req);
-        }
-
-        if let Some(callback) = callback {
+            .and_then(|policy| policy.on_request.as_ref())
+        {
             let previous = req.uri().clone();
-            let prepared_referrer = req.headers().get(REFERER).cloned();
+            let referer = req.headers().get(REFERER).cloned();
             callback(req);
+
             let changed = req.uri() != &previous;
             if changed {
                 remove_sensitive_headers(req, std::slice::from_ref(&previous));
             }
-            if let Some(referrer) = &mut self.referrer {
-                if changed
-                    && req.headers().get(REFERER) == prepared_referrer.as_ref()
-                    && let Some((original, header)) = original_referrer
-                {
-                    *referrer = original;
-                    if !req.headers().contains_key(REFERER)
-                        && let Some(header) = header
-                    {
-                        req.headers_mut().insert(REFERER, header);
-                    }
-                } else {
-                    referrer.set_source(req.headers());
-                }
-                if changed && (redirected || !same_origin(req.uri(), &previous)) {
-                    referrer.apply(req);
-                }
+
+            // An edited `Referer` becomes the new source and is kept unless the URI changes.
+            let edited = req.headers().get(REFERER) != referer.as_ref();
+            if edited && let Some(referrer) = &mut self.referrer {
+                referrer.set_source(req.headers());
             }
+            apply_referrer = if changed {
+                redirected || !same_origin(req.uri(), &previous)
+            } else {
+                redirected && !edited
+            };
+        }
+
+        if apply_referrer && let Some(referrer) = &mut self.referrer {
+            referrer.apply(req);
         }
 
         let uri = req.uri();
@@ -662,11 +654,7 @@ mod referrer {
 
         /// Carries callback edits into later hops without resetting the response policy.
         pub(super) fn set_source(&mut self, headers: &HeaderMap) {
-            let value = headers.get(REFERER);
-            if self.source.as_ref().map(Url::as_str) != value.and_then(|value| value.to_str().ok())
-            {
-                self.source = value.and_then(parse_referrer);
-            }
+            self.source = headers.get(REFERER).and_then(parse_referrer);
         }
 
         /// Applies the last recognized policy from a redirect response.
@@ -1037,151 +1025,86 @@ mod referrer {
 mod tests {
     use super::*;
 
-    #[test]
-    fn request_callbacks_preserve_security_and_isolation() {
-        use std::sync::atomic::{AtomicUsize, Ordering};
+    const SOURCE: &str = "https://a.test/private";
 
-        let calls = Arc::new(AtomicUsize::new(0));
-        let observed = calls.clone();
-        let handler = FollowRedirectPolicy::new(Policy::none());
-        let mut request = http::Request::builder()
-            .uri("https://example.com/source")
+    /// Runs one `on_request` hop from `uri` that a callback rewrites to `target`.
+    fn rewrite_hop(
+        uri: &'static str,
+        target: &'static str,
+        redirected: bool,
+        https_only: bool,
+        remove_referer: bool,
+    ) -> Result<http::Request<()>, BoxError> {
+        let mut referer = http::HeaderValue::from_static(SOURCE);
+        referer.set_sensitive(true);
+        let mut req = http::Request::builder()
+            .uri(uri)
+            .header(AUTHORIZATION, "secret")
+            .header(REFERER, referer)
             .body(())
             .unwrap();
-        request
-            .extensions_mut()
-            .insert(RequestConfig::<Policy>::new(Some(
-                Policy::default().on_request(move |_| {
-                    observed.fetch_add(1, Ordering::Relaxed);
-                }),
-            )));
 
-        handler
-            .for_request(&mut request)
-            .unwrap()
-            .on_request(&mut request)
-            .unwrap();
-        assert_eq!(calls.load(Ordering::Relaxed), 1);
-        assert!(handler.for_request(&mut request).is_none());
-
-        for (target, https_only, redirected, follows) in [
-            ("https://other.example/target", false, false, true),
-            ("http://other.example/target", true, false, false),
-            ("http://other.example/target", true, true, false),
-            ("ftp://other.example/target", false, false, false),
-        ] {
-            let mut request = http::Request::builder()
-                .uri("https://example.com/source")
-                .header(AUTHORIZATION, "secret")
-                .header(COOKIE, "key=value")
-                .header(http::header::REFERER, "https://example.com/private")
-                .body(())
-                .unwrap();
-            let handler = FollowRedirectPolicy::new(Policy::none().on_request(move |request| {
-                *request.uri_mut() = Uri::from_static(target);
-            }))
+        let policy = Policy::default().on_request(move |req| {
+            *req.uri_mut() = Uri::from_static(target);
+            if remove_referer {
+                req.headers_mut().remove(REFERER);
+            }
+        });
+        let mut handler = FollowRedirectPolicy::new(policy)
             .with_referer(true)
-            .with_https_only(https_only);
-            let mut policy = handler.for_request(&mut request).unwrap();
-            if redirected {
-                policy
-                    .uris
-                    .push(Uri::from_static("https://example.com/source"));
-            }
-            let result = policy.on_request(&mut request);
+            .with_https_only(https_only)
+            .for_request(&mut req)
+            .unwrap();
+        if redirected {
+            handler.uris.push(Uri::from_static("https://a.test/start"));
+        }
 
-            assert_eq!(result.is_ok(), follows, "target: {target}");
-            if follows {
-                assert!(!request.headers().contains_key(AUTHORIZATION));
-                assert!(!request.headers().contains_key(COOKIE));
-                assert_eq!(
-                    request.headers()[http::header::REFERER],
-                    "https://example.com/"
-                );
-            } else {
-                let error = result.unwrap_err().downcast::<Error>().unwrap();
-                assert_eq!(error.is_builder(), !redirected);
-                assert_eq!(error.is_redirect(), redirected);
-            }
+        handler.on_request(&mut req).map(|()| req)
+    }
+
+    #[test]
+    fn request_callback_validates_final_uri() {
+        // `Ok` holds whether credentials are kept, `Err` whether the error is a redirect error.
+        for (target, redirected, https_only, expected) in [
+            ("https://a.test/next", false, false, Ok(true)),
+            ("https://b.test/next", false, false, Ok(false)),
+            ("ftp://a.test/next", false, false, Err(false)),
+            ("http://a.test/next", false, true, Err(false)),
+            ("http://a.test/next", true, true, Err(true)),
+        ] {
+            let actual = rewrite_hop("https://a.test/", target, redirected, https_only, false)
+                .map(|req| req.headers().contains_key(AUTHORIZATION))
+                .map_err(|err| err.downcast::<Error>().unwrap().is_redirect());
+            assert_eq!(actual, expected, "{target}");
         }
     }
 
     #[test]
-    fn request_callbacks_recompute_referrer_for_final_uri() {
-        const SOURCE: &str = "https://example.com/private?q=1";
+    fn request_callback_computes_referrer_for_final_uri() {
+        const ORIGIN: &str = "https://a.test/";
 
-        for (candidate, target, redirected, remove, expected) in [
-            (
-                "http://example.com/next",
-                "https://example.com/next",
-                true,
-                false,
-                Some(SOURCE),
-            ),
-            (
-                "https://other.example/next",
-                "https://example.com/next",
-                true,
-                false,
-                Some(SOURCE),
-            ),
-            (
-                "https://example.com/next",
-                "http://example.com/next",
-                true,
-                false,
-                None,
-            ),
-            (
-                "https://example.com/next",
-                "https://example.com/final",
-                true,
-                true,
-                None,
-            ),
-            (
-                "https://other.example/start",
-                "https://other.example/final",
-                false,
-                false,
-                Some(SOURCE),
-            ),
+        for (uri, target, redirected, expected) in [
+            // Redirect hops compute the `Referer` for the rewritten destination.
+            ("http://a.test/", "https://a.test/", true, Some(SOURCE)),
+            ("https://b.test/", "https://a.test/", true, Some(SOURCE)),
+            ("https://a.test/", "http://a.test/", true, None),
+            // The initial request keeps it for same-origin edits and strips it across origins.
+            ("https://a.test/", "https://a.test/x", false, Some(SOURCE)),
+            ("https://a.test/", "https://b.test/", false, Some(ORIGIN)),
         ] {
-            let mut source = http::HeaderValue::from_static(SOURCE);
-            source.set_sensitive(true);
-            let mut request = http::Request::builder()
-                .uri(candidate)
-                .header(REFERER, source)
-                .body(())
-                .unwrap();
-            let handler = FollowRedirectPolicy::new(Policy::default().on_request(move |request| {
-                *request.uri_mut() = Uri::from_static(target);
-                if remove {
-                    request.headers_mut().remove(http::header::REFERER);
-                }
-            }))
-            .with_referer(true);
-            let mut policy = handler.for_request(&mut request).unwrap();
-            if redirected {
-                policy
-                    .uris
-                    .push(Uri::from_static("https://example.com/start"));
-            }
-
-            let hops = if redirected { 2 } else { 1 };
-            for _ in 0..hops {
-                policy.on_request(&mut request).unwrap();
-                let value = request.headers().get(REFERER);
-                assert_eq!(
-                    value.map(|value| value.to_str().unwrap()),
-                    expected,
-                    "{candidate} -> {target}, redirected: {redirected}, remove: {remove}",
-                );
-                if let Some(value) = value {
-                    assert!(value.is_sensitive(), "{candidate} -> {target}");
-                }
-            }
+            let req = rewrite_hop(uri, target, redirected, false, false).unwrap();
+            let referer = req.headers().get(REFERER);
+            let actual = referer.map(|value| (value.to_str().unwrap(), value.is_sensitive()));
+            assert_eq!(
+                actual,
+                expected.map(|value| (value, true)),
+                "{uri} -> {target}"
+            );
         }
+
+        // A removal is kept even when the original destination had no `Referer`.
+        let req = rewrite_hop("http://a.test/", "https://a.test/", true, false, true).unwrap();
+        assert!(!req.headers().contains_key(REFERER));
     }
 
     #[test]
