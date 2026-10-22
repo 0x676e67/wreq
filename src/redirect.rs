@@ -511,11 +511,11 @@ impl FollowRedirectPolicy {
             .policy
             .as_ref()
             .and_then(|policy| policy.on_request.as_ref());
-        // Keep the unfiltered source if the callback chooses a different destination.
+        // Keep the source and header metadata if the callback chooses a different destination.
         let original_referrer = callback
             .filter(|_| redirected)
             .and(self.referrer.as_ref())
-            .cloned();
+            .map(|referrer| (referrer.clone(), req.headers().get(REFERER).cloned()));
 
         remove_sensitive_headers(req, &self.uris);
         if redirected && let Some(referrer) = &mut self.referrer {
@@ -533,9 +533,14 @@ impl FollowRedirectPolicy {
             if let Some(referrer) = &mut self.referrer {
                 if changed
                     && req.headers().get(REFERER) == prepared_referrer.as_ref()
-                    && let Some(original) = original_referrer
+                    && let Some((original, header)) = original_referrer
                 {
                     *referrer = original;
+                    if !req.headers().contains_key(REFERER)
+                        && let Some(header) = header
+                    {
+                        req.headers_mut().insert(REFERER, header);
+                    }
                 } else {
                     referrer.set_source(req.headers());
                 }
@@ -1142,9 +1147,11 @@ mod tests {
                 Some(SOURCE),
             ),
         ] {
+            let mut source = http::HeaderValue::from_static(SOURCE);
+            source.set_sensitive(true);
             let mut request = http::Request::builder()
                 .uri(candidate)
-                .header(http::header::REFERER, SOURCE)
+                .header(REFERER, source)
                 .body(())
                 .unwrap();
             let handler = FollowRedirectPolicy::new(Policy::default().on_request(move |request| {
@@ -1164,14 +1171,15 @@ mod tests {
             let hops = if redirected { 2 } else { 1 };
             for _ in 0..hops {
                 policy.on_request(&mut request).unwrap();
+                let value = request.headers().get(REFERER);
                 assert_eq!(
-                    request
-                        .headers()
-                        .get(http::header::REFERER)
-                        .map(|value| value.to_str().unwrap()),
+                    value.map(|value| value.to_str().unwrap()),
                     expected,
                     "{candidate} -> {target}, redirected: {redirected}, remove: {remove}",
                 );
+                if let Some(value) = value {
+                    assert!(value.is_sensitive(), "{candidate} -> {target}");
+                }
             }
         }
     }
