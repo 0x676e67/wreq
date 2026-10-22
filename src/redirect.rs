@@ -15,7 +15,7 @@ use crate::{
     config::RequestConfig,
     error::{BoxError, Error},
     ext::UriExt,
-    header::{AUTHORIZATION, COOKIE, PROXY_AUTHORIZATION, WWW_AUTHENTICATE},
+    header::{AUTHORIZATION, COOKIE, PROXY_AUTHORIZATION, REFERER, WWW_AUTHENTICATE},
 };
 
 type RequestCallback = dyn Fn(&mut http::Request<()>) + Send + Sync;
@@ -32,6 +32,7 @@ type ResponseCallback = dyn Fn(&http::Request<()>, &http::Response<()>) + Send +
 /// - `custom` can be used to create a customized policy.
 ///
 /// Request and response callbacks run synchronously and are shared by cloned policies.
+/// Request policies inherit client callbacks they do not replace.
 #[derive(Clone)]
 pub struct Policy {
     inner: PolicyKind,
@@ -72,10 +73,10 @@ pub struct HistoryEntry {
     /// The status code of the redirect response.
     pub status: StatusCode,
 
-    /// The URI of the redirect response.
+    /// The destination URI, including changes made by the request callback.
     pub uri: Uri,
 
-    /// The previous URI before the redirect response.
+    /// The URI that produced the redirect response.
     pub previous: Uri,
 
     /// The headers of the redirect response.
@@ -191,6 +192,7 @@ impl Policy {
     /// The body is represented by `()`. If the URI changes, target validation and
     /// cross-origin security handling run again before dispatch.
     /// Changing the method does not change the body.
+    /// Same-origin edits to the initial URI leave an explicit `Referer` unchanged.
     ///
     /// # Example
     ///
@@ -464,28 +466,19 @@ impl FollowRedirectPolicy {
             return Err(Error::redirect(err, previous_uri.clone()).into());
         }
 
-        // Handle follow redirect action
-        if matches!(&action, redirect::Action::Follow) {
-            // Validate the redirect URI scheme
-            if !(next_uri.is_http() || next_uri.is_https()) {
-                return Err(Error::uri_bad_scheme(next_uri.clone()).into());
-            }
-
-            // Check HTTPS-only policy
-            if self.https_only && !next_uri.is_https() {
-                return Err(Error::redirect(
-                    Error::uri_bad_scheme(next_uri.clone()),
-                    next_uri.clone(),
-                )
-                .into());
-            }
-        }
-
         Ok(action)
     }
 
     pub(crate) fn for_request<B>(&self, request: &mut http::Request<B>) -> Option<Self> {
-        let policy = self.policy.take(request.extensions_mut())?;
+        let mut policy = self.policy.take(request.extensions_mut())?;
+        if let Some(client_policy) = self.policy.as_ref() {
+            policy.on_request = policy
+                .on_request
+                .or_else(|| client_policy.on_request.clone());
+            policy.on_response = policy
+                .on_response
+                .or_else(|| client_policy.on_response.clone());
+        }
         if matches!(policy.inner, PolicyKind::None)
             && policy.on_request.is_none()
             && policy.on_response.is_none()
@@ -505,28 +498,48 @@ impl FollowRedirectPolicy {
         })
     }
 
+    /// Returns whether the policy may follow a redirect response.
+    pub(crate) fn follows_redirects(&self) -> bool {
+        self.policy
+            .as_ref()
+            .is_some_and(|policy| !matches!(policy.inner, PolicyKind::None))
+    }
+
     pub(crate) fn on_request(&mut self, req: &mut http::Request<()>) -> Result<(), BoxError> {
+        let redirected = !self.uris.is_empty();
+        let callback = self
+            .policy
+            .as_ref()
+            .and_then(|policy| policy.on_request.as_ref());
+        // Keep the unfiltered source if the callback chooses a different destination.
+        let original_referrer = callback
+            .filter(|_| redirected)
+            .and(self.referrer.as_ref())
+            .cloned();
+
         remove_sensitive_headers(req, &self.uris);
-        if !self.uris.is_empty()
-            && let Some(referrer) = &mut self.referrer
-        {
+        if redirected && let Some(referrer) = &mut self.referrer {
             referrer.apply(req);
         }
 
-        if let Some(callback) = self
-            .policy
-            .as_ref()
-            .and_then(|policy| policy.on_request.as_ref())
-        {
+        if let Some(callback) = callback {
             let previous = req.uri().clone();
+            let prepared_referrer = req.headers().get(REFERER).cloned();
             callback(req);
             let changed = req.uri() != &previous;
             if changed {
                 remove_sensitive_headers(req, std::slice::from_ref(&previous));
             }
             if let Some(referrer) = &mut self.referrer {
-                referrer.set_source(req.headers());
-                if changed {
+                if changed
+                    && req.headers().get(REFERER) == prepared_referrer.as_ref()
+                    && let Some(original) = original_referrer
+                {
+                    *referrer = original;
+                } else {
+                    referrer.set_source(req.headers());
+                }
+                if changed && (redirected || !same_origin(req.uri(), &previous)) {
                     referrer.apply(req);
                 }
             }
@@ -537,7 +550,13 @@ impl FollowRedirectPolicy {
             return Err(Error::uri_bad_scheme(uri.clone()).into());
         }
         if self.https_only && !uri.is_https() {
-            return Err(Error::redirect(Error::uri_bad_scheme(uri.clone()), uri.clone()).into());
+            let error = Error::uri_bad_scheme(uri.clone());
+            return Err(if redirected {
+                Error::redirect(error, uri.clone())
+            } else {
+                error
+            }
+            .into());
         }
         Ok(())
     }
@@ -1040,10 +1059,11 @@ mod tests {
         assert_eq!(calls.load(Ordering::Relaxed), 1);
         assert!(handler.for_request(&mut request).is_none());
 
-        for (target, https_only, follows) in [
-            ("https://other.example/target", false, true),
-            ("http://other.example/target", true, false),
-            ("ftp://other.example/target", false, false),
+        for (target, https_only, redirected, follows) in [
+            ("https://other.example/target", false, false, true),
+            ("http://other.example/target", true, false, false),
+            ("http://other.example/target", true, true, false),
+            ("ftp://other.example/target", false, false, false),
         ] {
             let mut request = http::Request::builder()
                 .uri("https://example.com/source")
@@ -1057,10 +1077,13 @@ mod tests {
             }))
             .with_referer(true)
             .with_https_only(https_only);
-            let result = handler
-                .for_request(&mut request)
-                .unwrap()
-                .on_request(&mut request);
+            let mut policy = handler.for_request(&mut request).unwrap();
+            if redirected {
+                policy
+                    .uris
+                    .push(Uri::from_static("https://example.com/source"));
+            }
+            let result = policy.on_request(&mut request);
 
             assert_eq!(result.is_ok(), follows, "target: {target}");
             if follows {
@@ -1069,6 +1092,85 @@ mod tests {
                 assert_eq!(
                     request.headers()[http::header::REFERER],
                     "https://example.com/"
+                );
+            } else {
+                let error = result.unwrap_err().downcast::<Error>().unwrap();
+                assert_eq!(error.is_builder(), !redirected);
+                assert_eq!(error.is_redirect(), redirected);
+            }
+        }
+    }
+
+    #[test]
+    fn request_callbacks_recompute_referrer_for_final_uri() {
+        const SOURCE: &str = "https://example.com/private?q=1";
+
+        for (candidate, target, redirected, remove, expected) in [
+            (
+                "http://example.com/next",
+                "https://example.com/next",
+                true,
+                false,
+                Some(SOURCE),
+            ),
+            (
+                "https://other.example/next",
+                "https://example.com/next",
+                true,
+                false,
+                Some(SOURCE),
+            ),
+            (
+                "https://example.com/next",
+                "http://example.com/next",
+                true,
+                false,
+                None,
+            ),
+            (
+                "https://example.com/next",
+                "https://example.com/final",
+                true,
+                true,
+                None,
+            ),
+            (
+                "https://other.example/start",
+                "https://other.example/final",
+                false,
+                false,
+                Some(SOURCE),
+            ),
+        ] {
+            let mut request = http::Request::builder()
+                .uri(candidate)
+                .header(http::header::REFERER, SOURCE)
+                .body(())
+                .unwrap();
+            let handler = FollowRedirectPolicy::new(Policy::default().on_request(move |request| {
+                *request.uri_mut() = Uri::from_static(target);
+                if remove {
+                    request.headers_mut().remove(http::header::REFERER);
+                }
+            }))
+            .with_referer(true);
+            let mut policy = handler.for_request(&mut request).unwrap();
+            if redirected {
+                policy
+                    .uris
+                    .push(Uri::from_static("https://example.com/start"));
+            }
+
+            let hops = if redirected { 2 } else { 1 };
+            for _ in 0..hops {
+                policy.on_request(&mut request).unwrap();
+                assert_eq!(
+                    request
+                        .headers()
+                        .get(http::header::REFERER)
+                        .map(|value| value.to_str().unwrap()),
+                    expected,
+                    "{candidate} -> {target}, redirected: {redirected}, remove: {remove}",
                 );
             }
         }

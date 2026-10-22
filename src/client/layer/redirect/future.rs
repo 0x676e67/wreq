@@ -112,6 +112,9 @@ where
                 // Observe the completed hop before rewriting its method or headers for a redirect.
                 // https://www.rfc-editor.org/rfc/rfc9110.html#section-15.4
                 let res = policy.on_response(request, res);
+                if !policy.follows_redirects() {
+                    return Poll::Ready(Ok(policy.finish(res)));
+                }
 
                 // Determine if the response is a redirect
                 match res.status() {
@@ -249,8 +252,8 @@ where
     match redirect.action {
         Action::Follow => {
             *redirect.request.uri_mut() = redirect.location;
-            redirect.body_repr.try_clone_from(&redirect.body);
             redirect.policy.on_request(redirect.request)?;
+            redirect.body_repr.try_clone_from(&redirect.body);
             redirect
                 .policy
                 .record_redirect(&redirect.res, redirect.request.uri());

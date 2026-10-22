@@ -393,16 +393,16 @@ async fn test_redirect_callbacks() {
 
     for policy in [
         Policy::default(),
-        Policy::custom(|attempt| {
+        observe(Policy::custom(|attempt| {
             attempt.pending(|attempt| async move {
                 tokio::task::yield_now().await;
                 attempt.follow()
             })
-        }),
+        })),
     ] {
         let response = client
             .post(format!("{base}/start"))
-            .redirect(observe(policy))
+            .redirect(policy)
             .header(header::AUTHORIZATION, "secret")
             .header(header::COOKIE, "key=value")
             .header(header::CONTENT_TYPE, "text/plain")
@@ -444,9 +444,7 @@ async fn test_redirect_callbacks() {
         ("/unreplayable", Policy::default(), false),
         ("/stop", Policy::limited(0), true),
     ] {
-        let mut request = client
-            .get(format!("{base}{path}"))
-            .redirect(observe(policy));
+        let mut request = client.get(format!("{base}{path}")).redirect(policy);
         if path == "/unreplayable" {
             request = request.body(Body::wrap(http_body_util::Full::new(
                 bytes::Bytes::from_static(b"payload"),

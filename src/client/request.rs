@@ -584,6 +584,7 @@ impl RequestBuilder {
     }
 
     /// Set the redirect policy for this request.
+    /// Callbacks not set on this policy inherit the client's callbacks.
     pub fn redirect(mut self, policy: redirect::Policy) -> RequestBuilder {
         if let Ok(ref mut req) = self.request {
             req.config_mut::<redirect::Policy>().replace(policy);
