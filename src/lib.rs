@@ -316,6 +316,11 @@ mod util;
 
 #[cfg(feature = "cookies")]
 pub mod cookie;
+/// Connection metadata for downstream connector layers.
+pub mod connector {
+    pub use crate::conn::{Connected, Connection};
+}
+
 pub mod dns;
 pub mod header;
 pub mod redirect;
