@@ -716,59 +716,26 @@ pub(crate) struct TcpOptions {
 #[derive(Default, Debug, Clone, Copy)]
 pub(crate) struct TcpKeepaliveOptions {
     pub time: Option<Duration>,
-    #[cfg(any(
-        target_os = "android",
-        target_os = "dragonfly",
-        target_os = "freebsd",
-        target_os = "fuchsia",
-        target_os = "illumos",
-        target_os = "ios",
-        target_os = "visionos",
-        target_os = "linux",
-        target_os = "macos",
-        target_os = "netbsd",
-        target_os = "tvos",
-        target_os = "watchos",
-        target_os = "windows",
-        target_os = "cygwin",
-    ))]
     pub interval: Option<Duration>,
-    #[cfg(any(
-        target_os = "android",
-        target_os = "dragonfly",
-        target_os = "freebsd",
-        target_os = "fuchsia",
-        target_os = "illumos",
-        target_os = "ios",
-        target_os = "visionos",
-        target_os = "linux",
-        target_os = "macos",
-        target_os = "netbsd",
-        target_os = "tvos",
-        target_os = "watchos",
-        target_os = "cygwin",
-        target_os = "windows",
-    ))]
     pub retries: Option<u32>,
 }
 
 impl TcpKeepaliveOptions {
     /// Converts into a `socket2::TcpKeealive` if there is any keep alive configuration.
     pub(crate) fn into_tcpkeepalive(self) -> Option<TcpKeepalive> {
+        let Self {
+            time,
+            interval: _interval,
+            retries: _retries,
+        } = self;
+
         let mut dirty = false;
         let mut ka = TcpKeepalive::new();
-        if let Some(time) = self.time {
+        if let Some(time) = time {
             ka = ka.with_time(time);
             dirty = true
         }
 
-        // Set the value of the `TCP_KEEPINTVL` option. On Windows, this sets the
-        // value of the `tcp_keepalive` struct's `keepaliveinterval` field.
-        //
-        // Sets the time interval between TCP keepalive probes.
-        //
-        // Some platforms specify this value in seconds, so sub-second
-        // specifications may be omitted.
         #[cfg(any(
             target_os = "android",
             target_os = "dragonfly",
@@ -786,36 +753,19 @@ impl TcpKeepaliveOptions {
             target_os = "cygwin",
         ))]
         {
-            if let Some(interval) = self.interval {
+            // Set the time between TCP keepalive probes. Some platforms specify
+            // this value in seconds, so sub-second values may be omitted.
+            if let Some(interval) = _interval {
                 dirty = true;
                 ka = ka.with_interval(interval)
             };
-        }
 
-        // Set the value of the `TCP_KEEPCNT` option.
-        //
-        // Set the maximum number of TCP keepalive probes that will be sent before
-        // dropping a connection, if TCP keepalive is enabled on this socket.
-        #[cfg(any(
-            target_os = "android",
-            target_os = "dragonfly",
-            target_os = "freebsd",
-            target_os = "fuchsia",
-            target_os = "illumos",
-            target_os = "ios",
-            target_os = "visionos",
-            target_os = "linux",
-            target_os = "macos",
-            target_os = "netbsd",
-            target_os = "tvos",
-            target_os = "watchos",
-            target_os = "cygwin",
-            target_os = "windows",
-        ))]
-        if let Some(retries) = self.retries {
-            dirty = true;
-            ka = ka.with_retries(retries)
-        };
+            // Set how many unanswered probes are sent before dropping the connection.
+            if let Some(retries) = _retries {
+                dirty = true;
+                ka = ka.with_retries(retries)
+            };
+        }
 
         if dirty { Some(ka) } else { None }
     }
