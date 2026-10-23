@@ -716,39 +716,45 @@ pub(crate) struct TcpOptions {
 #[derive(Default, Debug, Clone, Copy)]
 pub(crate) struct TcpKeepaliveOptions {
     pub time: Option<Duration>,
-    #[cfg(any(
-        target_os = "android",
-        target_os = "dragonfly",
-        target_os = "freebsd",
-        target_os = "fuchsia",
-        target_os = "illumos",
-        target_os = "ios",
-        target_os = "visionos",
-        target_os = "linux",
-        target_os = "macos",
-        target_os = "netbsd",
-        target_os = "tvos",
-        target_os = "watchos",
-        target_os = "windows",
-        target_os = "cygwin",
-    ))]
+    #[cfg_attr(
+        not(any(
+            target_os = "android",
+            target_os = "dragonfly",
+            target_os = "freebsd",
+            target_os = "fuchsia",
+            target_os = "illumos",
+            target_os = "ios",
+            target_os = "visionos",
+            target_os = "linux",
+            target_os = "macos",
+            target_os = "netbsd",
+            target_os = "tvos",
+            target_os = "watchos",
+            target_os = "windows",
+            target_os = "cygwin",
+        )),
+        allow(dead_code)
+    )]
     pub interval: Option<Duration>,
-    #[cfg(any(
-        target_os = "android",
-        target_os = "dragonfly",
-        target_os = "freebsd",
-        target_os = "fuchsia",
-        target_os = "illumos",
-        target_os = "ios",
-        target_os = "visionos",
-        target_os = "linux",
-        target_os = "macos",
-        target_os = "netbsd",
-        target_os = "tvos",
-        target_os = "watchos",
-        target_os = "cygwin",
-        target_os = "windows",
-    ))]
+    #[cfg_attr(
+        not(any(
+            target_os = "android",
+            target_os = "dragonfly",
+            target_os = "freebsd",
+            target_os = "fuchsia",
+            target_os = "illumos",
+            target_os = "ios",
+            target_os = "visionos",
+            target_os = "linux",
+            target_os = "macos",
+            target_os = "netbsd",
+            target_os = "tvos",
+            target_os = "watchos",
+            target_os = "cygwin",
+            target_os = "windows",
+        )),
+        allow(dead_code)
+    )]
     pub retries: Option<u32>,
 }
 
