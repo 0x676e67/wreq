@@ -1,19 +1,29 @@
-use wreq::redirect::Policy;
+use wreq::{header::HeaderValue, redirect::Policy};
 
 #[tokio::main]
 async fn main() -> wreq::Result<()> {
-    // Use the API you're already familiar with
-    let resp = wreq::get("https://google.com/")
-        .redirect(Policy::custom(|attempt| {
-            // we can inspect the redirect attempt
-            println!(
-                "Redirecting (status: {}) to {:?} and headers: {:#?}",
-                attempt.status, attempt.uri, attempt.headers
-            );
+    let policy = Policy::default()
+        .on_request(|request| {
+            request
+                .headers_mut()
+                .insert("x-client", HeaderValue::from_static("wreq"));
 
-            // we can follow redirects as normal
-            attempt.follow()
-        }))
+            // Cookie injection and protocol header preparation happen after this callback.
+            println!("--> {} {}", request.method(), request.uri());
+            println!("{:#?}", request.headers());
+        })
+        .on_response(|request, response| {
+            println!(
+                "<-- {} {:?} {}",
+                response.status(),
+                response.version(),
+                request.uri(),
+            );
+            println!("{:#?}", response.headers());
+        });
+
+    let resp = wreq::get("https://google.com/")
+        .redirect(policy)
         .send()
         .await?;
     println!("{}", resp.text().await?);
