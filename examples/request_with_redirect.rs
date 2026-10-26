@@ -1,3 +1,5 @@
+use std::ops::ControlFlow;
+
 use wreq::{header::HeaderValue, redirect::Policy};
 
 #[tokio::main]
@@ -20,6 +22,7 @@ async fn main() -> wreq::Result<()> {
                 request.uri(),
             );
             println!("{:#?}", response.headers());
+            ControlFlow::Continue(())
         });
 
     let resp = wreq::get("https://google.com/")

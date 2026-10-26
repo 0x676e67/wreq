@@ -1,5 +1,6 @@
 use std::{
     future::{Future, Ready},
+    ops::ControlFlow,
     pin::Pin,
     str,
     task::{Context, Poll, ready},
@@ -111,10 +112,10 @@ where
 
                 // Observe the completed hop before rewriting its method or headers for a redirect.
                 // https://www.rfc-editor.org/rfc/rfc9110.html#section-15.4
-                let res = policy.on_response(request, res);
-                if !policy.follows_redirects() {
-                    return Poll::Ready(Ok(policy.finish(res)));
-                }
+                let res = match policy.on_response(request, res) {
+                    ControlFlow::Continue(res) => res,
+                    ControlFlow::Break(res) => return Poll::Ready(Ok(policy.finish(res))),
+                };
 
                 // Determine if the response is a redirect
                 match res.status() {

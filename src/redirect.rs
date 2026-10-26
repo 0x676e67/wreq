@@ -4,7 +4,7 @@
 //! redirect handling with a maximum redirect chain of 10 hops, use a [`Policy`]
 //! with [`ClientBuilder::redirect()`](crate::ClientBuilder::redirect).
 
-use std::{borrow::Cow, error::Error as StdError, fmt, sync::Arc};
+use std::{borrow::Cow, error::Error as StdError, fmt, ops::ControlFlow, sync::Arc};
 
 use futures_util::FutureExt;
 use http::{HeaderMap, HeaderName, StatusCode, Uri};
@@ -19,7 +19,8 @@ use crate::{
 };
 
 type RequestCallback = dyn Fn(&mut http::Request<()>) + Send + Sync;
-type ResponseCallback = dyn Fn(&http::Request<()>, &http::Response<()>) + Send + Sync;
+type ResponseCallback =
+    dyn Fn(&http::Request<()>, &http::Response<()>) -> ControlFlow<()> + Send + Sync;
 
 /// A type that controls the policy on how to handle the following of redirects.
 ///
@@ -193,11 +194,12 @@ impl Policy {
     /// unless the callback edited it and kept the URI. On the initial request it is recomputed
     /// only when the URI moves to another origin. A changed URI is validated again and drops
     /// credentials when it crosses origins.
-    /// https://w3c.github.io/webappsec-referrer-policy/#determine-requests-referrer
+    /// <https://w3c.github.io/webappsec-referrer-policy/#determine-requests-referrer>
     ///
     /// # Example
     ///
     /// ```
+    /// use std::ops::ControlFlow;
     /// use wreq::{header::HeaderValue, redirect::Policy};
     ///
     /// let policy = Policy::default()
@@ -206,6 +208,7 @@ impl Policy {
     ///     })
     ///     .on_response(|request, response| {
     ///         eprintln!("{} {}", request.uri(), response.status());
+    ///         ControlFlow::Continue(())
     ///     });
     /// ```
     pub fn on_request<F>(mut self, callback: F) -> Self
@@ -221,9 +224,12 @@ impl Policy {
     /// Runs before preparing the next request, borrowing its source request and response.
     /// Both bodies are represented by `()`; response headers and extensions are not copied.
     /// The request reflects the [`on_request`](Self::on_request) stage, not final wire headers.
+    ///
+    /// Return [`ControlFlow::Break`] to stop and return the current response, including its body.
+    /// [`ControlFlow::Continue`] leaves the redirect decision to this policy.
     pub fn on_response<F>(mut self, callback: F) -> Self
     where
-        F: Fn(&http::Request<()>, &http::Response<()>) + Send + Sync + 'static,
+        F: Fn(&http::Request<()>, &http::Response<()>) -> ControlFlow<()> + Send + Sync + 'static,
     {
         self.on_response = Some(Arc::new(callback));
         self
@@ -561,19 +567,26 @@ impl FollowRedirectPolicy {
     pub(crate) fn on_response<B>(
         &self,
         request: &http::Request<()>,
-        response: http::Response<B>,
-    ) -> http::Response<B> {
+        mut response: http::Response<B>,
+    ) -> ControlFlow<http::Response<B>, http::Response<B>> {
         if let Some(callback) = self
             .policy
             .as_ref()
             .and_then(|policy| policy.on_response.as_ref())
         {
             let (parts, body) = response.into_parts();
-            let response = http::Response::from_parts(parts, ());
-            callback(request, &response);
-            return response.map(|_| body);
+            let head = http::Response::from_parts(parts, ());
+            let flow = callback(request, &head);
+            response = head.map(|_| body);
+            if flow.is_break() {
+                return ControlFlow::Break(response);
+            }
         }
-        response
+        if self.follows_redirects() {
+            ControlFlow::Continue(response)
+        } else {
+            ControlFlow::Break(response)
+        }
     }
 
     pub(crate) fn record_redirect<B>(&mut self, response: &http::Response<B>, uri: &Uri) {

@@ -1,5 +1,8 @@
 mod support;
-use std::sync::{Arc, Mutex};
+use std::{
+    ops::ControlFlow,
+    sync::{Arc, Mutex},
+};
 
 use http::StatusCode;
 use http_body_util::BodyExt;
@@ -274,7 +277,7 @@ async fn test_redirect_referrer_policy() {
 
 type Events = Arc<Mutex<Vec<String>>>;
 
-/// Records each hop as `> METHOD PATH #HOP` and `< STATUS PATH`.
+/// Records each hop as `> METHOD PATH #HOP` and `< STATUS METHOD PATH`.
 fn record(policy: Policy, events: &Events) -> Policy {
     let (requests, responses) = (events.clone(), events.clone());
     policy
@@ -285,8 +288,14 @@ fn record(policy: Policy, events: &Events) -> Policy {
             requests.lock().unwrap().push(event);
         })
         .on_response(move |req, res| {
-            let event = format!("< {} {}", res.status().as_u16(), req.uri().path());
+            let event = format!(
+                "< {} {} {}",
+                res.status().as_u16(),
+                req.method(),
+                req.uri().path()
+            );
             responses.lock().unwrap().push(event);
+            ControlFlow::Continue(())
         })
 }
 
@@ -314,9 +323,17 @@ async fn test_redirect_callbacks_observe_each_hop() {
         assert_eq!(req.method(), "GET");
         assert!(!req.headers().contains_key(header::AUTHORIZATION));
         assert!(!req.headers().contains_key(header::COOKIE));
-        http::Response::default()
+        match req.uri().path() {
+            "/challenge" => http::Response::builder()
+                .status(StatusCode::FOUND)
+                .header(header::LOCATION, "/end")
+                .body(Body::from("challenge"))
+                .unwrap(),
+            "/end" => http::Response::new(Body::from("done")),
+            path => panic!("unexpected redirect path: {path}"),
+        }
     });
-    let source = redirect_to(format!("http://{}/end", destination.addr()));
+    let source = redirect_to(format!("http://{}/challenge", destination.addr()));
 
     let events = Events::default();
     let client = Client::builder()
@@ -332,7 +349,27 @@ async fn test_redirect_callbacks_observe_each_hop() {
             attempt.follow()
         })
     });
-    for policy in [Policy::default(), pending] {
+    let responses = events.clone();
+    let stop = Policy::custom(|attempt| {
+        // The challenge's redirect must not reach the policy when the response hook breaks.
+        assert_eq!(attempt.uri.path(), "/challenge");
+        attempt.follow()
+    })
+    .on_response(move |req, res| {
+        let event = format!(
+            "< {} {} {}",
+            res.status().as_u16(),
+            req.method(),
+            req.uri().path()
+        );
+        responses.lock().unwrap().push(event);
+        if req.uri().path() == "/challenge" {
+            ControlFlow::Break(())
+        } else {
+            ControlFlow::Continue(())
+        }
+    });
+    for (policy, stops) in [(Policy::default(), false), (stop, true), (pending, false)] {
         let res = client
             .post(format!("http://{}/start", source.addr()))
             .redirect(policy)
@@ -343,18 +380,31 @@ async fn test_redirect_callbacks_observe_each_hop() {
             .await
             .unwrap();
 
-        assert_eq!(res.status(), StatusCode::OK);
-        let history = res.extensions().get::<History>().unwrap();
-        assert_eq!(history.into_iter().count(), 1);
+        let (status, path, body, hops) = if stops {
+            (StatusCode::FOUND, "/challenge", "challenge", 1)
+        } else {
+            (StatusCode::OK, "/end", "done", 2)
+        };
+        assert_eq!(res.status(), status);
         assert_eq!(
-            take(&events),
-            [
-                "> POST /start #1",
-                "< 302 /start",
-                "> GET /end #2",
-                "< 200 /end"
-            ],
+            res.uri(),
+            format!("http://{}{path}", destination.addr()).as_str()
         );
+        let history = res.extensions().get::<History>().unwrap();
+        assert_eq!(history.into_iter().count(), hops);
+        assert_eq!(history.into_iter().last().unwrap().uri, *res.uri());
+        assert_eq!(res.text().await.unwrap(), body);
+
+        let mut expected = vec![
+            "> POST /start #1",
+            "< 302 POST /start",
+            "> GET /challenge #2",
+            "< 302 GET /challenge",
+        ];
+        if !stops {
+            expected.extend(["> GET /end #3", "< 200 GET /end"]);
+        }
+        assert_eq!(take(&events), expected);
     }
 }
 
@@ -437,7 +487,7 @@ async fn test_redirect_callbacks_observe_unfollowed_hop() {
         }
         assert_eq!(
             take(&events),
-            [format!("> GET {path} #1"), format!("< 302 {path}")],
+            [format!("> GET {path} #1"), format!("< 302 GET {path}")],
         );
     }
 }
