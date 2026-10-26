@@ -136,7 +136,6 @@ impl CertStoreBuilder {
             let host = host.as_ref();
             let param = builder.verify_param_mut();
             param.set_hostflags(X509CheckFlags::NEVER_CHECK_SUBJECT);
-
             let result = match host.parse::<IpAddr>() {
                 Ok(ip) => param.set_ip(ip),
                 Err(_) => param.set_host(host),
