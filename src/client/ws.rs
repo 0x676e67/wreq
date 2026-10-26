@@ -275,6 +275,7 @@ impl WebSocketRequestBuilder {
     /// overwritten if the same key is used. The key will simply show up
     /// twice in the query string.
     /// Calling `.query(&[("foo", "a"), ("foo", "b")])` gives `"foo=a&foo=b"`.
+    /// Existing URI components and query encoding are preserved.
     ///
     /// # Note
     /// This method does not support serializing a single key-value
@@ -283,8 +284,8 @@ impl WebSocketRequestBuilder {
     /// and maps into a key-value pair.
     ///
     /// # Errors
-    /// This method will fail if the object you provide cannot be serialized
-    /// into a query string.
+    /// This method fails if the parameters cannot be serialized or the
+    /// resulting URI is invalid.
     #[inline]
     #[cfg(feature = "query")]
     #[cfg_attr(docsrs, doc(cfg(feature = "query")))]

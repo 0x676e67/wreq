@@ -394,6 +394,7 @@ impl RequestBuilder {
     /// overwritten if the same key is used. The key will simply show up
     /// twice in the query string.
     /// Calling `.query(&[("foo", "a"), ("foo", "b")])` gives `"foo=a&foo=b"`.
+    /// Existing URI components and query encoding are preserved.
     ///
     /// # Note
     /// This method does not support serializing a single key-value
@@ -402,22 +403,33 @@ impl RequestBuilder {
     /// and maps into a key-value pair.
     ///
     /// # Errors
-    /// This method will fail if the object you provide cannot be serialized
-    /// into a query string.
+    /// This method fails if the parameters cannot be serialized or the
+    /// resulting URI is invalid.
     #[cfg(feature = "query")]
     #[cfg_attr(docsrs, doc(cfg(feature = "query")))]
     pub fn query<T: Serialize + ?Sized>(mut self, query: &T) -> RequestBuilder {
-        let mut error = None;
-        if let Ok(ref mut req) = self.request {
-            match serde_html_form::to_string(query) {
-                Ok(serializer) => {
+        if let Ok(ref mut req) = self.request
+            && let Err(err) = serde_html_form::to_string(query)
+                .map_err(Error::builder)
+                .and_then(|query| {
+                    if query.is_empty() {
+                        return Ok(());
+                    }
+
                     let uri = req.uri_mut();
-                    uri.set_query(serializer);
-                }
-                Err(err) => error = Some(Error::builder(err)),
-            }
-        }
-        if let Some(err) = error {
+                    let path = uri.path();
+                    let path_and_query = match uri.query().filter(|query| !query.is_empty()) {
+                        Some(existing) => format!("{path}?{existing}&{query}"),
+                        None => format!("{path}?{query}"),
+                    };
+                    let path_and_query = http::uri::PathAndQuery::try_from(path_and_query)
+                        .map_err(Error::builder)?;
+                    let mut parts = uri.clone().into_parts();
+                    parts.path_and_query = Some(path_and_query);
+                    *uri = Uri::from_parts(parts).map_err(Error::builder)?;
+                    Ok(())
+                })
+        {
             self.request = Err(err);
         }
         self

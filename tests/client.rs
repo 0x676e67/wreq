@@ -594,6 +594,95 @@ async fn overridden_dns_resolution_with_hickory_dns_multiple() {
 }
 
 #[test]
+#[cfg(feature = "query")]
+fn query_appends_parameters() {
+    let client = Client::new();
+    let empty: [(&str, &str); 0] = [];
+    let cases = [
+        (
+            "http://example.com",
+            "http://example.com/?foo=bar&foo=a+b%26c%3Dd",
+        ),
+        (
+            "http://example.com/path",
+            "http://example.com/path?foo=bar&foo=a+b%26c%3Dd",
+        ),
+        (
+            "http://example.com/path?",
+            "http://example.com/path?foo=bar&foo=a+b%26c%3Dd",
+        ),
+        (
+            "http://EXAMPLE.com:80/a/../%2f?foo=original&encoded=%2f+%20",
+            "http://EXAMPLE.com:80/a/../%2f?foo=original&encoded=%2f+%20&foo=bar&foo=a+b%26c%3Dd",
+        ),
+        (
+            "https://example.com?existing=1",
+            "https://example.com/?existing=1&foo=bar&foo=a+b%26c%3Dd",
+        ),
+        (
+            "custom://example.com?existing=1",
+            "custom://example.com/?existing=1&foo=bar&foo=a+b%26c%3Dd",
+        ),
+        (
+            "https://[::1]:443/path?existing=%2F",
+            "https://[::1]:443/path?existing=%2F&foo=bar&foo=a+b%26c%3Dd",
+        ),
+        (
+            "https://example.com/a/%2e%2e/b?quoted='value'",
+            "https://example.com/a/%2e%2e/b?quoted='value'&foo=bar&foo=a+b%26c%3Dd",
+        ),
+        (
+            "/relative?foo=original&encoded=%2f+%20",
+            "/relative?foo=original&encoded=%2f+%20&foo=bar&foo=a+b%26c%3Dd",
+        ),
+        ("/relative?", "/relative?foo=bar&foo=a+b%26c%3Dd"),
+        (
+            "/relative?foo=original&",
+            "/relative?foo=original&&foo=bar&foo=a+b%26c%3Dd",
+        ),
+    ];
+
+    for (uri, expected) in cases {
+        let original: http::Uri = uri.parse().unwrap();
+        let request = wreq::Request::new(http::Method::GET, original.clone());
+        let builder = wreq::RequestBuilder::from_parts(client.clone(), request);
+        let request = builder.try_clone().unwrap().query(&empty).build().unwrap();
+        assert_eq!(request.uri().to_string(), original.to_string());
+
+        let request = builder
+            .query(&[("foo", "bar")])
+            .query(&empty)
+            .query(&[("foo", "a b&c=d")])
+            .build()
+            .unwrap();
+        assert_eq!(request.uri().to_string(), expected);
+        assert!(
+            request
+                .uri()
+                .path_and_query()
+                .unwrap()
+                .as_str()
+                .starts_with('/')
+        );
+    }
+
+    let error = client
+        .get("http://example.com/")
+        .query(&42)
+        .query(&[("foo", "bar")])
+        .build()
+        .unwrap_err();
+    assert!(error.is_builder());
+
+    let request = wreq::Request::new(http::Method::CONNECT, "example.com:80".parse().unwrap());
+    let builder = wreq::RequestBuilder::from_parts(client, request);
+    let request = builder.try_clone().unwrap().query(&empty).build().unwrap();
+    assert_eq!(request.uri(), "example.com:80");
+    let error = builder.query(&[("foo", "bar")]).build().unwrap_err();
+    assert!(error.is_builder());
+}
+
+#[test]
 #[cfg(feature = "json")]
 fn add_json_default_content_type_if_not_set_manually() {
     let mut map = HashMap::new();
