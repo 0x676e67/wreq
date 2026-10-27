@@ -1,0 +1,30 @@
+name: PR Template Verification
+
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize]
+
+permissions: {}
+
+jobs:
+  verify-template:
+    name: Verify template
+    if: >-
+      ${{
+        !contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.pull_request.author_association) &&
+        !contains(fromJSON('["dependabot[bot]", "github-actions[bot]"]'), github.event.pull_request.user.login)
+      }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check human-authorship statement
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const body = context.payload.pull_request.body || "";
+            const statement = "- [x] The description, docs, and comments (words meant for humans) are written by a human, not by an LLM.";
+
+            if (!body.includes(statement)) {
+              core.setFailed(
+                "PR description must include the checked human-authorship statement from the template. Check it only if it accurately describes your contribution."
+              );
+            }
