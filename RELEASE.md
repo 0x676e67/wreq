@@ -6,6 +6,37 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+## [0.16.2](https://github.com/0x676e67/wreq/compare/v0.16.1..v0.16.2) - 2026-10-27
+
+### Features
+
+- *(cookie)* Expose storage host in Jar::get_all - ([e589532](https://github.com/0x676e67/wreq/commit/e589532583634686f534aa774a05e5982c7443bd))
+
+### Bug Fixes
+
+- *(conn)* Build on targets without keepalive interval and retries ([#1346](https://github.com/0x676e67/wreq/issues/1346)) ([#1351](https://github.com/0x676e67/wreq/issues/1351)) - ([59f46f4](https://github.com/0x676e67/wreq/commit/59f46f4783a697a07e2de7eeb6d8824911297cb1))
+- *(redirect)* Accept UTF-8 Location headers - ([e7adb4c](https://github.com/0x676e67/wreq/commit/e7adb4c74bad24f10289a9e556725fbda279b9f9))
+- *(request)* Append query parameters without replacing existing values ([#1352](https://github.com/0x676e67/wreq/issues/1352)) - ([ce2366e](https://github.com/0x676e67/wreq/commit/ce2366ee3937fe1d0618b39fae49957e936474e1))
+- *(timeout)* Start read timeout when polling next frame ([#1339](https://github.com/0x676e67/wreq/issues/1339)) ([#1350](https://github.com/0x676e67/wreq/issues/1350)) - ([acac4fb](https://github.com/0x676e67/wreq/commit/acac4fb167edac5e9e9061701f6201adb3df268f))
+- *(ws)* Classify WebSocket read errors as websocket errors - ([79c3013](https://github.com/0x676e67/wreq/commit/79c30130bbe9364138848d7bb2fc5f0e143df901))
+
+### Testing
+
+- Fix nightly clippy warning ([#1335](https://github.com/0x676e67/wreq/issues/1335)) - ([c97d598](https://github.com/0x676e67/wreq/commit/c97d598e08cfa4a59d01ae598723e1a08549b05f))
+- Fix nightly clippy warning - ([b6268cc](https://github.com/0x676e67/wreq/commit/b6268cc24c4b2dae19586ac17d29a56f145f422a))
+
+### Miscellaneous Tasks
+
+- *(release)* Enable trusted publishing on 0.16.x - ([e632a98](https://github.com/0x676e67/wreq/commit/e632a98d88881aaa3bfde67b174759049d870973))
+
+### Revert
+
+- Route nightly clippy fix through review - ([c4941d2](https://github.com/0x676e67/wreq/commit/c4941d2ec50f046f9a357276cbb02d1815daf2bb))
+
+### Build
+
+- *(deps)* Bump lru from 0.18.5 to 0.19.0 ([#1354](https://github.com/0x676e67/wreq/issues/1354)) - ([a351af5](https://github.com/0x676e67/wreq/commit/a351af5ccfbb42c5d055e6620252a39bb1c8fa65))
+
 
 ## [0.16.1](https://github.com/0x676e67/wreq/compare/v0.16.0...v0.16.1) - 2026-08-25
 
