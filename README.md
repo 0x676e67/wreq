@@ -73,6 +73,17 @@ Due to the complexity of **TLS** encryption and the widespread adoption of **HTT
 
 **TLS** and **HTTP/2** fingerprints are often identical across various browser models because these underlying protocols evolve slower than browser release cycles. **100+ browser device emulation profiles** are maintained in [wreq-util](https://github.com/0x676e67/wreq-util).
 
+## MSRV and Edition
+
+The current MSRV is 1.97. The current edition is Rust 2024.
+
+`tailscale-rs` has a rolling MSRV (Minimum Supported Rust Version) policy to support the current and previous Rust
+compiler versions, and the latest [edition of Rust](https://doc.rust-lang.org/edition-guide/editions/index.html).
+
+We may periodically lag the MSRV behind this latest version/edition in rare cases for our dependencies to catch up and
+for us to perform any necessary
+fixes.
+
 ## Building
 
 Compiling alongside **openssl-sys** can cause symbol conflicts with **boringssl** that lead to [link failures](https://github.com/cloudflare/boring/issues/197), and on **Linux** and **Android** this can be avoided by enabling the **`prefix-symbols`** feature.
