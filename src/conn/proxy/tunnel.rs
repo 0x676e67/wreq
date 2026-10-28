@@ -38,7 +38,7 @@ pub enum TunnelError {
     MissingHost,
     ProxyAuthRequired,
     TunnelUnexpectedEof,
-    TunnelUnsuccessful,
+    TunnelUnsuccessful(Option<u16>),
 }
 
 impl<C> TunnelConnector<C> {
@@ -191,7 +191,7 @@ where
             httparse::Status::Complete(_) => match res.code {
                 Some(200) => return Ok(conn),
                 Some(407) => return Err(TunnelError::ProxyAuthRequired),
-                Some(_) | None => return Err(TunnelError::TunnelUnsuccessful),
+                status => return Err(TunnelError::TunnelUnsuccessful(status)),
             },
         }
     }
@@ -201,15 +201,18 @@ impl std::fmt::Display for TunnelError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("tunnel error: ")?;
 
-        f.write_str(match self {
-            TunnelError::MissingHost => "missing destination host",
-            TunnelError::ProxyAuthRequired => "proxy authorization required",
-            TunnelError::Parse(_) => "invalid proxy response",
-            TunnelError::TunnelUnexpectedEof => "unexpected end of file",
-            TunnelError::TunnelUnsuccessful => "unsuccessful",
-            TunnelError::ConnectFailed(_) => "failed to create underlying connection",
-            TunnelError::Io(_) => "io error establishing tunnel",
-        })
+        match self {
+            TunnelError::MissingHost => f.write_str("missing destination host"),
+            TunnelError::ProxyAuthRequired => f.write_str("proxy authorization required"),
+            TunnelError::Parse(_) => f.write_str("invalid proxy response"),
+            TunnelError::TunnelUnexpectedEof => f.write_str("unexpected end of file"),
+            TunnelError::TunnelUnsuccessful(Some(status)) => {
+                write!(f, "unsuccessful (status {status})")
+            }
+            TunnelError::TunnelUnsuccessful(None) => f.write_str("unsuccessful"),
+            TunnelError::ConnectFailed(_) => f.write_str("failed to create underlying connection"),
+            TunnelError::Io(_) => f.write_str("io error establishing tunnel"),
+        }
     }
 }
 

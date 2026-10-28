@@ -402,6 +402,40 @@ async fn tunnel_includes_user_agent() {
 }
 
 #[tokio::test]
+async fn tunnel_reports_proxy_status() {
+    let url = "https://hyper.rs.local/prox";
+
+    let server = server::http(move |req| {
+        assert_eq!(req.method(), "CONNECT");
+        assert_eq!(req.uri(), "hyper.rs.local:443");
+
+        async {
+            // reject the tunnel with a status callers can tell apart
+            let mut res = http::Response::default();
+            *res.status_mut() = http::StatusCode::PAYMENT_REQUIRED;
+            res
+        }
+    });
+
+    let proxy = format!("http://{}", server.addr());
+
+    let err = Client::builder()
+        .proxy(wreq::Proxy::https(&proxy).unwrap())
+        .build()
+        .unwrap()
+        .get(url)
+        .send()
+        .await
+        .unwrap_err();
+
+    let err = support::error::inspect(err).pop().unwrap();
+    assert!(
+        err.contains("unsuccessful (status 402)"),
+        "proxy status expected, got: {err:?}"
+    );
+}
+
+#[tokio::test]
 async fn proxy_tunnel_connect_error() {
     let client = Client::builder()
         .tls_cert_verification(false)
