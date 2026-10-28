@@ -1,4 +1,9 @@
 mod support;
+use std::{
+    ops::ControlFlow,
+    sync::{Arc, Mutex},
+};
+
 use http::StatusCode;
 use http_body_util::BodyExt;
 use support::server;
@@ -267,6 +272,223 @@ async fn test_redirect_referrer_policy() {
 
         let response = request.send().await.unwrap();
         assert_eq!(response.uri().path(), end, "case: {start}");
+    }
+}
+
+type Events = Arc<Mutex<Vec<String>>>;
+
+/// Records each hop as `> METHOD PATH #HOP` and `< STATUS METHOD PATH`.
+fn record(policy: Policy, events: &Events) -> Policy {
+    let (requests, responses) = (events.clone(), events.clone());
+    policy
+        .on_request(move |req| {
+            let hop = req.extensions().get::<usize>().map_or(1, |hop| hop + 1);
+            req.extensions_mut().insert(hop);
+            let event = format!("> {} {} #{hop}", req.method(), req.uri().path());
+            requests.lock().unwrap().push(event);
+        })
+        .on_response(move |req, res| {
+            let event = format!(
+                "< {} {} {}",
+                res.status().as_u16(),
+                req.method(),
+                req.uri().path()
+            );
+            responses.lock().unwrap().push(event);
+            ControlFlow::Continue(())
+        })
+}
+
+fn take(events: &Events) -> Vec<String> {
+    std::mem::take(&mut events.lock().unwrap())
+}
+
+/// Starts a server that redirects every request to `location`.
+fn redirect_to(location: String) -> server::Server {
+    server::http(move |_| {
+        let location = location.clone();
+        async move {
+            http::Response::builder()
+                .status(StatusCode::FOUND)
+                .header(header::LOCATION, location)
+                .body(Body::default())
+                .unwrap()
+        }
+    })
+}
+
+#[tokio::test]
+async fn test_redirect_callbacks_observe_each_hop() {
+    let destination = server::http(|req| async move {
+        assert_eq!(req.method(), "GET");
+        assert!(!req.headers().contains_key(header::AUTHORIZATION));
+        assert!(!req.headers().contains_key(header::COOKIE));
+        match req.uri().path() {
+            "/challenge" => http::Response::builder()
+                .status(StatusCode::FOUND)
+                .header(header::LOCATION, "/end")
+                .body(Body::from("challenge"))
+                .unwrap(),
+            "/end" => http::Response::new(Body::from("done")),
+            path => panic!("unexpected redirect path: {path}"),
+        }
+    });
+    let source = redirect_to(format!("http://{}/challenge", destination.addr()));
+
+    let events = Events::default();
+    let client = Client::builder()
+        .redirect(record(Policy::default(), &events))
+        .no_proxy()
+        .build()
+        .unwrap();
+
+    // Request policies inherit client callbacks on both synchronous and pending decisions.
+    let pending = Policy::custom(|attempt| {
+        attempt.pending(|attempt| async move {
+            tokio::task::yield_now().await;
+            attempt.follow()
+        })
+    });
+    let responses = events.clone();
+    let stop = Policy::custom(|attempt| {
+        // The challenge's redirect must not reach the policy when the response hook breaks.
+        assert_eq!(attempt.uri.path(), "/challenge");
+        attempt.follow()
+    })
+    .on_response(move |req, res| {
+        let event = format!(
+            "< {} {} {}",
+            res.status().as_u16(),
+            req.method(),
+            req.uri().path()
+        );
+        responses.lock().unwrap().push(event);
+        if req.uri().path() == "/challenge" {
+            ControlFlow::Break(())
+        } else {
+            ControlFlow::Continue(())
+        }
+    });
+    for (policy, stops) in [(Policy::default(), false), (stop, true), (pending, false)] {
+        let res = client
+            .post(format!("http://{}/start", source.addr()))
+            .redirect(policy)
+            .header(header::AUTHORIZATION, "secret")
+            .header(header::COOKIE, "key=value")
+            .body("payload")
+            .send()
+            .await
+            .unwrap();
+
+        let (status, path, body, hops) = if stops {
+            (StatusCode::FOUND, "/challenge", "challenge", 1)
+        } else {
+            (StatusCode::OK, "/end", "done", 2)
+        };
+        assert_eq!(res.status(), status);
+        assert_eq!(
+            res.uri(),
+            format!("http://{}{path}", destination.addr()).as_str()
+        );
+        let history = res.extensions().get::<History>().unwrap();
+        assert_eq!(history.into_iter().count(), hops);
+        assert_eq!(history.into_iter().last().unwrap().uri, *res.uri());
+        assert_eq!(res.text().await.unwrap(), body);
+
+        let mut expected = vec![
+            "> POST /start #1",
+            "< 302 POST /start",
+            "> GET /challenge #2",
+            "< 302 GET /challenge",
+        ];
+        if !stops {
+            expected.extend(["> GET /end #3", "< 200 GET /end"]);
+        }
+        assert_eq!(take(&events), expected);
+    }
+}
+
+#[tokio::test]
+async fn test_redirect_callback_rewrites_hop() {
+    let destination = server::http(|req| async move {
+        assert_eq!(req.uri(), "/new");
+        assert_eq!(req.headers()[header::AUTHORIZATION], "destination");
+        http::Response::default()
+    });
+    let source = redirect_to(format!("http://{}/old", destination.addr()));
+
+    // The callback overrides the stripped credentials and the redirect target.
+    let policy = Policy::default().on_request(|req| {
+        if req.uri().path() == "/old" {
+            assert!(!req.headers().contains_key(header::AUTHORIZATION));
+            let uri = req.uri().to_string().replace("/old", "/new");
+            *req.uri_mut() = uri.parse().unwrap();
+            req.headers_mut().insert(
+                header::AUTHORIZATION,
+                header::HeaderValue::from_static("destination"),
+            );
+        }
+    });
+    let res = Client::builder()
+        .redirect(policy)
+        .no_proxy()
+        .build()
+        .unwrap()
+        .get(format!("http://{}/start", source.addr()))
+        .header(header::AUTHORIZATION, "secret")
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(res.status(), StatusCode::OK);
+    let history = res.extensions().get::<History>().unwrap();
+    assert_eq!(history.into_iter().next().unwrap().uri.path(), "/new");
+}
+
+#[tokio::test]
+async fn test_redirect_callbacks_observe_unfollowed_hop() {
+    let server = server::http(|req| async move {
+        let res = http::Response::builder().status(StatusCode::FOUND);
+        match req.uri().path() {
+            "/missing" => res,
+            "/invalid" => res.header(header::LOCATION, "http://invalid{host}/"),
+            _ => res.header(header::LOCATION, "/unexpected"),
+        }
+        .body(Body::default())
+        .unwrap()
+    });
+
+    let events = Events::default();
+    let client = Client::builder()
+        .redirect(record(Policy::default(), &events))
+        .no_proxy()
+        .build()
+        .unwrap();
+
+    for (path, policy, fails) in [
+        ("/stop", Policy::none(), false),
+        ("/stop", Policy::custom(|attempt| attempt.stop()), false),
+        ("/stop", Policy::limited(0), true),
+        ("/missing", Policy::default(), false),
+        ("/invalid", Policy::default(), false),
+        ("/unreplayable", Policy::default(), false),
+    ] {
+        let mut req = client
+            .get(format!("http://{}{path}", server.addr()))
+            .redirect(policy);
+        if path == "/unreplayable" {
+            let body = http_body_util::Full::new(bytes::Bytes::from_static(b"payload"));
+            req = req.body(Body::wrap(body));
+        }
+
+        match req.send().await {
+            Ok(res) => assert!(!fails && res.status() == StatusCode::FOUND, "{path}"),
+            Err(err) => assert!(fails && err.is_redirect(), "{path}: {err}"),
+        }
+        assert_eq!(
+            take(&events),
+            [format!("> GET {path} #1"), format!("< 302 GET {path}")],
+        );
     }
 }
 

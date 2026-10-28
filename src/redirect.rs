@@ -4,7 +4,7 @@
 //! redirect handling with a maximum redirect chain of 10 hops, use a [`Policy`]
 //! with [`ClientBuilder::redirect()`](crate::ClientBuilder::redirect).
 
-use std::{borrow::Cow, error::Error as StdError, fmt, sync::Arc};
+use std::{borrow::Cow, error::Error as StdError, fmt, ops::ControlFlow, sync::Arc};
 
 use futures_util::FutureExt;
 use http::{HeaderMap, HeaderName, StatusCode, Uri};
@@ -15,8 +15,12 @@ use crate::{
     config::RequestConfig,
     error::{BoxError, Error},
     ext::UriExt,
-    header::{AUTHORIZATION, COOKIE, PROXY_AUTHORIZATION, WWW_AUTHENTICATE},
+    header::{AUTHORIZATION, COOKIE, PROXY_AUTHORIZATION, REFERER, WWW_AUTHENTICATE},
 };
+
+type RequestCallback = dyn Fn(&mut http::Request<()>) + Send + Sync;
+type ResponseCallback =
+    dyn Fn(&http::Request<()>, &http::Response<()>) -> ControlFlow<()> + Send + Sync;
 
 /// A type that controls the policy on how to handle the following of redirects.
 ///
@@ -25,11 +29,16 @@ use crate::{
 ///
 /// - `limited` can be used have the same as the default behavior, but adjust the allowed maximum
 ///   redirect hops in a chain.
-/// - `none` can be used to disable all redirect behavior.
+/// - `none` can be used to disable following redirects.
 /// - `custom` can be used to create a customized policy.
-#[derive(Debug, Clone)]
+///
+/// Request and response callbacks run synchronously and are shared by cloned policies.
+/// Request policies inherit client callbacks they do not replace.
+#[derive(Clone)]
 pub struct Policy {
     inner: PolicyKind,
+    on_request: Option<Arc<RequestCallback>>,
+    on_response: Option<Arc<ResponseCallback>>,
 }
 
 /// A type that holds information on the next request and previous requests
@@ -65,10 +74,10 @@ pub struct HistoryEntry {
     /// The status code of the redirect response.
     pub status: StatusCode,
 
-    /// The URI of the redirect response.
+    /// The destination URI, including changes made by the request callback.
     pub uri: Uri,
 
-    /// The previous URI before the redirect response.
+    /// The URI that produced the redirect response.
     pub previous: Uri,
 
     /// The headers of the redirect response.
@@ -114,6 +123,8 @@ impl Policy {
     pub fn limited(max: usize) -> Self {
         Self {
             inner: PolicyKind::Limit(max),
+            on_request: None,
+            on_response: None,
         }
     }
 
@@ -122,6 +133,8 @@ impl Policy {
     pub fn none() -> Self {
         Self {
             inner: PolicyKind::None,
+            on_request: None,
+            on_response: None,
         }
     }
 
@@ -166,7 +179,60 @@ impl Policy {
     {
         Self {
             inner: PolicyKind::Custom(Arc::new(policy)),
+            on_request: None,
+            on_response: None,
         }
+    }
+
+    /// Sets a callback for the initial request and each followed redirect.
+    ///
+    /// Runs after redirect method changes and credential stripping, also with [`Policy::none`].
+    /// Header and extension edits carry over to later hops; cookies and protocol headers are
+    /// added afterward. The body is represented by `()` and is unaffected by method changes.
+    ///
+    /// The callback sees the previous hop's `Referer`, which is then computed for the final URI
+    /// unless the callback edited it and kept the URI. On the initial request it is recomputed
+    /// only when the URI moves to another origin. A changed URI is validated again and drops
+    /// credentials when it crosses origins.
+    /// <https://w3c.github.io/webappsec-referrer-policy/#determine-requests-referrer>
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use std::ops::ControlFlow;
+    /// use wreq::{header::HeaderValue, redirect::Policy};
+    ///
+    /// let policy = Policy::default()
+    ///     .on_request(|request| {
+    ///         request.headers_mut().insert("x-client", HeaderValue::from_static("wreq"));
+    ///     })
+    ///     .on_response(|request, response| {
+    ///         eprintln!("{} {}", request.uri(), response.status());
+    ///         ControlFlow::Continue(())
+    ///     });
+    /// ```
+    pub fn on_request<F>(mut self, callback: F) -> Self
+    where
+        F: Fn(&mut http::Request<()>) + Send + Sync + 'static,
+    {
+        self.on_request = Some(Arc::new(callback));
+        self
+    }
+
+    /// Sets a callback for every hop's response, including responses that are not followed.
+    ///
+    /// Runs before preparing the next request, borrowing its source request and response.
+    /// Both bodies are represented by `()`; response headers and extensions are not copied.
+    /// The request reflects the [`on_request`](Self::on_request) stage, not final wire headers.
+    ///
+    /// Return [`ControlFlow::Break`] to stop and return the current response, including its body.
+    /// [`ControlFlow::Continue`] leaves the redirect decision to this policy.
+    pub fn on_response<F>(mut self, callback: F) -> Self
+    where
+        F: Fn(&http::Request<()>, &http::Response<()>) -> ControlFlow<()> + Send + Sync + 'static,
+    {
+        self.on_response = Some(Arc::new(callback));
+        self
     }
 
     /// Apply this policy to a given [`Attempt`] to produce a [`Action`].
@@ -220,6 +286,16 @@ impl Policy {
             previous: Cow::Borrowed(previous),
         })
         .0
+    }
+}
+
+impl fmt::Debug for Policy {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Policy")
+            .field("inner", &self.inner)
+            .field("on_request", &self.on_request.is_some())
+            .field("on_response", &self.on_response.is_some())
+            .finish()
     }
 }
 
@@ -397,60 +473,138 @@ impl FollowRedirectPolicy {
             return Err(Error::redirect(err, previous_uri.clone()).into());
         }
 
-        // Handle follow redirect action
-        if matches!(&action, redirect::Action::Follow) {
-            // Validate the redirect URI scheme
-            if !(next_uri.is_http() || next_uri.is_https()) {
-                return Err(Error::uri_bad_scheme(next_uri.clone()).into());
-            }
-
-            // Check HTTPS-only policy
-            if self.https_only && !next_uri.is_https() {
-                return Err(Error::redirect(
-                    Error::uri_bad_scheme(next_uri.clone()),
-                    next_uri.clone(),
-                )
-                .into());
-            }
-
-            // Record redirect history
-            if !matches!(policy.inner, PolicyKind::None) {
-                self.history.get_or_insert_default().push(HistoryEntry {
-                    status: attempt.status,
-                    uri: attempt.location.clone(),
-                    previous: attempt.previous.clone(),
-                    headers: attempt.headers.clone(),
-                });
-            }
-        }
-
         Ok(action)
     }
 
-    pub(crate) fn for_request<B>(&mut self, request: &mut http::Request<B>) -> Option<Self> {
-        self.policy
-            .load(request.extensions_mut())
-            .is_some_and(|policy| !matches!(policy.inner, PolicyKind::None))
-            .then(|| {
-                let mut policy = self.clone();
-                policy.referrer = policy.referrer.map(|_| Referrer::new(request.headers()));
-                policy
-            })
+    pub(crate) fn for_request<B>(&self, request: &mut http::Request<B>) -> Option<Self> {
+        let mut policy = self.policy.take(request.extensions_mut())?;
+        if let Some(client_policy) = self.policy.as_ref() {
+            policy.on_request = policy
+                .on_request
+                .or_else(|| client_policy.on_request.clone());
+            policy.on_response = policy
+                .on_response
+                .or_else(|| client_policy.on_response.clone());
+        }
+        if matches!(policy.inner, PolicyKind::None)
+            && policy.on_request.is_none()
+            && policy.on_response.is_none()
+        {
+            return None;
+        }
+
+        Some(Self {
+            policy: RequestConfig::new(Some(policy)),
+            referrer: self
+                .referrer
+                .as_ref()
+                .map(|_| Referrer::new(request.headers())),
+            uris: Vec::new(),
+            https_only: self.https_only,
+            history: None,
+        })
     }
 
-    pub(crate) fn on_request<B>(&mut self, req: &mut http::Request<B>) {
+    /// Returns whether the policy may follow a redirect response.
+    pub(crate) fn follows_redirects(&self) -> bool {
+        self.policy
+            .as_ref()
+            .is_some_and(|policy| !matches!(policy.inner, PolicyKind::None))
+    }
+
+    pub(crate) fn on_request(&mut self, req: &mut http::Request<()>) -> Result<(), BoxError> {
+        let redirected = !self.uris.is_empty();
         remove_sensitive_headers(req, &self.uris);
-        if !self.uris.is_empty()
-            && let Some(referrer) = &mut self.referrer
+
+        // The callback sees the previous hop's `Referer`; it is computed below for the final URI.
+        let mut apply_referrer = redirected;
+        if let Some(callback) = self
+            .policy
+            .as_ref()
+            .and_then(|policy| policy.on_request.as_ref())
         {
+            let previous = req.uri().clone();
+            let referer = req.headers().get(REFERER).cloned();
+            callback(req);
+
+            let changed = req.uri() != &previous;
+            if changed {
+                remove_sensitive_headers(req, std::slice::from_ref(&previous));
+            }
+
+            // An edited `Referer` becomes the new source and is kept unless the URI changes.
+            let edited = req.headers().get(REFERER) != referer.as_ref();
+            if edited && let Some(referrer) = &mut self.referrer {
+                referrer.set_source(req.headers());
+            }
+            apply_referrer = if changed {
+                redirected || !same_origin(req.uri(), &previous)
+            } else {
+                redirected && !edited
+            };
+        }
+
+        if apply_referrer && let Some(referrer) = &mut self.referrer {
             referrer.apply(req);
+        }
+
+        let uri = req.uri();
+        if !(uri.is_http() || uri.is_https()) {
+            return Err(Error::uri_bad_scheme(uri.clone()).into());
+        }
+        if self.https_only && !uri.is_https() {
+            let error = Error::uri_bad_scheme(uri.clone());
+            return Err(if redirected {
+                Error::redirect(error, uri.clone())
+            } else {
+                error
+            }
+            .into());
+        }
+        Ok(())
+    }
+
+    pub(crate) fn on_response<B>(
+        &self,
+        request: &http::Request<()>,
+        mut response: http::Response<B>,
+    ) -> ControlFlow<http::Response<B>, http::Response<B>> {
+        if let Some(callback) = self
+            .policy
+            .as_ref()
+            .and_then(|policy| policy.on_response.as_ref())
+        {
+            let (parts, body) = response.into_parts();
+            let head = http::Response::from_parts(parts, ());
+            let flow = callback(request, &head);
+            response = head.map(|_| body);
+            if flow.is_break() {
+                return ControlFlow::Break(response);
+            }
+        }
+        if self.follows_redirects() {
+            ControlFlow::Continue(response)
+        } else {
+            ControlFlow::Break(response)
         }
     }
 
-    pub(crate) fn on_response<B>(&mut self, response: &mut http::Response<B>) {
+    pub(crate) fn record_redirect<B>(&mut self, response: &http::Response<B>, uri: &Uri) {
+        if let Some(previous) = self.uris.last() {
+            self.history.get_or_insert_default().push(HistoryEntry {
+                status: response.status(),
+                uri: uri.clone(),
+                previous: previous.clone(),
+                headers: response.headers().clone(),
+            });
+        }
+    }
+
+    pub(crate) fn finish<B>(&mut self, mut response: http::Response<B>) -> http::Response<B> {
         if let Some(history) = self.history.take() {
             response.extensions_mut().insert(History(history));
         }
+        response
     }
 }
 
@@ -509,6 +663,11 @@ mod referrer {
                 source: headers.get(REFERER).and_then(parse_referrer),
                 policy: ReferrerPolicy::default(),
             }
+        }
+
+        /// Carries callback edits into later hops without resetting the response policy.
+        pub(super) fn set_source(&mut self, headers: &HeaderMap) {
+            self.source = headers.get(REFERER).and_then(parse_referrer);
         }
 
         /// Applies the last recognized policy from a redirect response.
@@ -878,6 +1037,88 @@ mod referrer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const SOURCE: &str = "https://a.test/private";
+
+    /// Runs one `on_request` hop from `uri` that a callback rewrites to `target`.
+    fn rewrite_hop(
+        uri: &'static str,
+        target: &'static str,
+        redirected: bool,
+        https_only: bool,
+        remove_referer: bool,
+    ) -> Result<http::Request<()>, BoxError> {
+        let mut referer = http::HeaderValue::from_static(SOURCE);
+        referer.set_sensitive(true);
+        let mut req = http::Request::builder()
+            .uri(uri)
+            .header(AUTHORIZATION, "secret")
+            .header(REFERER, referer)
+            .body(())
+            .unwrap();
+
+        let policy = Policy::default().on_request(move |req| {
+            *req.uri_mut() = Uri::from_static(target);
+            if remove_referer {
+                req.headers_mut().remove(REFERER);
+            }
+        });
+        let mut handler = FollowRedirectPolicy::new(policy)
+            .with_referer(true)
+            .with_https_only(https_only)
+            .for_request(&mut req)
+            .unwrap();
+        if redirected {
+            handler.uris.push(Uri::from_static("https://a.test/start"));
+        }
+
+        handler.on_request(&mut req).map(|()| req)
+    }
+
+    #[test]
+    fn request_callback_validates_final_uri() {
+        // `Ok` holds whether credentials are kept, `Err` whether the error is a redirect error.
+        for (target, redirected, https_only, expected) in [
+            ("https://a.test/next", false, false, Ok(true)),
+            ("https://b.test/next", false, false, Ok(false)),
+            ("ftp://a.test/next", false, false, Err(false)),
+            ("http://a.test/next", false, true, Err(false)),
+            ("http://a.test/next", true, true, Err(true)),
+        ] {
+            let actual = rewrite_hop("https://a.test/", target, redirected, https_only, false)
+                .map(|req| req.headers().contains_key(AUTHORIZATION))
+                .map_err(|err| err.downcast::<Error>().unwrap().is_redirect());
+            assert_eq!(actual, expected, "{target}");
+        }
+    }
+
+    #[test]
+    fn request_callback_computes_referrer_for_final_uri() {
+        const ORIGIN: &str = "https://a.test/";
+
+        for (uri, target, redirected, expected) in [
+            // Redirect hops compute the `Referer` for the rewritten destination.
+            ("http://a.test/", "https://a.test/", true, Some(SOURCE)),
+            ("https://b.test/", "https://a.test/", true, Some(SOURCE)),
+            ("https://a.test/", "http://a.test/", true, None),
+            // The initial request keeps it for same-origin edits and strips it across origins.
+            ("https://a.test/", "https://a.test/x", false, Some(SOURCE)),
+            ("https://a.test/", "https://b.test/", false, Some(ORIGIN)),
+        ] {
+            let req = rewrite_hop(uri, target, redirected, false, false).unwrap();
+            let referer = req.headers().get(REFERER);
+            let actual = referer.map(|value| (value.to_str().unwrap(), value.is_sensitive()));
+            assert_eq!(
+                actual,
+                expected.map(|value| (value, true)),
+                "{uri} -> {target}"
+            );
+        }
+
+        // A removal is kept even when the original destination had no `Referer`.
+        let req = rewrite_hop("http://a.test/", "https://a.test/", true, false, true).unwrap();
+        assert!(!req.headers().contains_key(REFERER));
+    }
 
     #[test]
     fn test_redirect_policy_limit() {
