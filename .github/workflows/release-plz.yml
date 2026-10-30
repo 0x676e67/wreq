@@ -61,11 +61,30 @@ jobs:
         run: |
           python3 - <<'PY'
           import os
+          import subprocess
           from pathlib import Path
           import tomllib
 
           package = tomllib.loads(Path("Cargo.toml").read_text())["package"]
           if package["name"] == "wreq" and package["version"] == "0.16.2":
+              # Use the withdrawn version's source as a local comparison boundary.
+              # This tag exists only on the runner and must not be pushed.
+              baseline = "38de3ecd924df6f3183d096538fc9a6a26ab38ee"
+              subprocess.run(
+                  ["git", "merge-base", "--is-ancestor", baseline, "HEAD"], check=True
+              )
+              tag = subprocess.run(
+                  ["git", "rev-parse", "--verify", "--quiet", "refs/tags/v0.16.2^{commit}"],
+                  capture_output=True,
+                  text=True,
+              )
+              if tag.returncode == 1:
+                  subprocess.run(
+                      ["git", "tag", "--no-sign", "v0.16.2", baseline], check=True
+                  )
+              elif tag.returncode != 0 or tag.stdout.strip() != baseline:
+                  raise SystemExit("The local v0.16.2 tag does not match the published source")
+
               # Remove only the accidentally exposed runtime APIs in this patch release.
               # The exception expires once the release PR sets the version to 0.16.3.
               config = Path(os.environ["RUNNER_TEMP"]) / "release-plz-0.16.3.toml"
