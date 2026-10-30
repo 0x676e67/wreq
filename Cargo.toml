@@ -380,7 +380,7 @@ name = "unix_socket"
 path = "examples/unix_socket.rs"
 
 [patch.crates-io]
-btls = { git = "https://github.com/0x676e67/btls", branch = "main" }
-btls-sys = { git = "https://github.com/0x676e67/btls", branch = "main" }
-tokio-btls = { git = "https://github.com/0x676e67/btls", branch = "main" }
+btls = { git = "https://github.com/0x676e67/btls", rev = "0f5416d1f61eb4f64a9f2f4d8b867495305d61c1" }
+btls-sys = { git = "https://github.com/0x676e67/btls", rev = "0f5416d1f61eb4f64a9f2f4d8b867495305d61c1" }
+tokio-btls = { git = "https://github.com/0x676e67/btls", rev = "0f5416d1f61eb4f64a9f2f4d8b867495305d61c1" }
 http2 = { git = "https://github.com/0x676e67/http2", branch = "master" }
