@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+## [0.17.0](https://github.com/0x676e67/wreq/compare/v0.16.3..v0.17.0) - 2026-10-30
+
+### Testing
+
+- *(tls)* Remove redundant TLS tests ([#1368](https://github.com/0x676e67/wreq/issues/1368)) ([#1369](https://github.com/0x676e67/wreq/issues/1369)) - ([37ecccf](https://github.com/0x676e67/wreq/commit/37ecccf90e3f2e947b19770a6d0113f9fa03950e))
+
 ## [0.16.3](https://github.com/0x676e67/wreq/compare/v0.16.2..v0.16.3) - 2026-10-30
 
 ### Features
