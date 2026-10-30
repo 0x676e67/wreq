@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+## [0.16.3](https://github.com/0x676e67/wreq/compare/v0.16.2..v0.16.3) - 2026-10-30
+
+### Features
+
+- *(tls)* Add `CertStoreBuilder::verify_host` - ([ae5de74](https://github.com/0x676e67/wreq/commit/ae5de749070a902f9b04cdff5d20e83cc975395c))
+
+### Bug Fixes
+
+- *(rt)* Remove accidentally exposed runtime APIs - ([a11a385](https://github.com/0x676e67/wreq/commit/a11a385cbf25aec355e597df599a000cb84e6367))
+
+### Miscellaneous Tasks
+
+- Add PR template verification - ([c132006](https://github.com/0x676e67/wreq/commit/c1320067d012c3bea5e0a87a40231d95a14fbecd))
+
 ## [0.16.2](https://github.com/0x676e67/wreq/compare/v0.16.1..v0.16.2) - 2026-10-27
 
 ### Features
