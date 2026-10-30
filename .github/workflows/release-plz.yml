@@ -55,9 +55,31 @@ jobs:
     steps:
       - *checkout
       - *install-rust
+      - name: Configure the 0.16.3 compatibility exception
+        id: release-config
+        if: ${{ github.ref == 'refs/heads/0.16.x' }}
+        run: |
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          import tomllib
+
+          package = tomllib.loads(Path("Cargo.toml").read_text())["package"]
+          if package["name"] == "wreq" and package["version"] == "0.16.2":
+              # Remove only the accidentally exposed runtime APIs in this patch release.
+              # The exception expires once the release PR sets the version to 0.16.3.
+              config = Path(os.environ["RUNNER_TEMP"]) / "release-plz-0.16.3.toml"
+              config.write_text(
+                  Path(".release-plz.toml").read_text()
+                  + '\n[[package]]\nname = "wreq"\nsemver_check = false\n'
+              )
+              with open(os.environ["GITHUB_OUTPUT"], "a") as output:
+                  output.write(f"path={config}\n")
+          PY
       - name: Run release-plz
         uses: release-plz/action@v0.5
         with:
           command: release-pr
+          config: ${{ steps.release-config.outputs.path || '.release-plz.toml' }}
         env:
           GITHUB_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
