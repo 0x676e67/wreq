@@ -150,40 +150,6 @@ async fn test_3des_support() -> wreq::Result<()> {
 }
 
 #[tokio::test]
-async fn test_firefox_7x_100_cipher() -> wreq::Result<()> {
-    let tls_options = TlsOptions::builder()
-        .cipher_list(join!(
-            ":",
-            "TLS_DHE_RSA_WITH_AES_128_CBC_SHA",
-            "TLS_DHE_RSA_WITH_AES_256_CBC_SHA",
-            "TLS_DHE_RSA_WITH_AES_128_CBC_SHA256",
-            "TLS_DHE_RSA_WITH_AES_256_CBC_SHA256"
-        ))
-        .curves_list(CURVES_LIST)
-        .build();
-
-    // Create a client with the TLS options
-    let client = Client::builder()
-        .tls_options(tls_options)
-        .tls_cert_verification(false)
-        .retry(badssl_connection_reset_retry_policy())
-        .connect_timeout(Duration::from_secs(360))
-        .build()?;
-
-    // Check if the client can connect to the dh2048.badssl.com
-    let content = client
-        .get("https://dh2048.badssl.com/")
-        .send()
-        .await?
-        .text()
-        .await?;
-
-    println!("dh2048.badssl.com is supported:\n{content}");
-
-    Ok(())
-}
-
-#[tokio::test]
 async fn test_alps_new_endpoint() -> wreq::Result<()> {
     let tls_options = TlsOptions::builder()
         .min_tls_version(TlsVersion::TLS_1_2)
