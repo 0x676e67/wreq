@@ -8,7 +8,21 @@ pr_branch_prefix = "release-plz-0.16-"
 git_release_enable = true
 git_release_name = "v{{ version }}"
 git_release_type = "auto"
-git_release_body = ""
+git_release_body = """
+{% if version == "0.16.3" -%}
+## Runtime API removals
+
+The following runtime implementation APIs were accidentally exposed and are removed in this patch release:
+
+- `wreq::dns::GaiResolver`
+- `ClientBuilder::timer`
+- `ClientBuilder::executor`
+
+Code using these APIs must be updated. Select the built-in runtime through the `tokio-rt` or `compio-rt` features; custom DNS resolvers remain supported through `ClientBuilder::dns_resolver` and `Resolve`.
+The related `rt` example has also been removed. Version 0.16.2 was withdrawn; use 0.16.3 instead.
+
+{% endif -%}
+"""
 git_release_generate_notes = true
 git_tag_enable = true
 git_tag_name = "v{{ version }}"

@@ -73,7 +73,7 @@ use crate::{
     proxy::Matcher as ProxyMatcher,
     redirect::{self, FollowRedirectPolicy},
     retry,
-    rt::{BoxSendFuture, Executor, Timer},
+    rt::{Executor, Timer},
     tls::{
         AlpnProtocol, TlsOptions, TlsVersion,
         keylog::KeyLog,
@@ -639,28 +639,6 @@ impl ClientBuilder {
         };
 
         Ok(Client(Arc::new(client)))
-    }
-
-    // Runtime options
-
-    /// Provide a timer to be used for timeouts and intervals in client.
-    #[inline]
-    pub fn timer<M>(mut self, timer: M) -> Self
-    where
-        M: wreq_proto::rt::Timer + Send + Sync + 'static,
-    {
-        self.config.timer = Timer::new(timer);
-        self
-    }
-
-    /// Provide an executor to run background tasks in the client.
-    #[inline]
-    pub fn executor<E>(mut self, executor: E) -> Self
-    where
-        E: wreq_proto::rt::Executor<BoxSendFuture> + Send + Sync + 'static,
-    {
-        self.config.executor = Executor::new(executor);
-        self
     }
 
     // Higher-level options

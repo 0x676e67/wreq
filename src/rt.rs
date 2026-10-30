@@ -57,20 +57,6 @@ pub struct Executor(Arc<dyn rt::Executor<BoxSendFuture> + Send + Sync>);
 
 // ===== impl Executor =====
 
-impl Executor {
-    /// Creates an [`Executor`] backed by a custom implementation.
-    ///
-    /// The value is wrapped in an [`Arc`] and type-erased, so the resulting
-    /// handle is cheap to clone and safe to share across threads.
-    #[inline]
-    pub fn new<E>(exec: E) -> Self
-    where
-        E: rt::Executor<BoxSendFuture> + Send + Sync + 'static,
-    {
-        Executor(Arc::new(exec))
-    }
-}
-
 impl<Fut> rt::Executor<Fut> for Executor
 where
     Fut: Future<Output = ()> + Send + 'static,
@@ -139,6 +125,7 @@ pub struct Timer(Time);
 
 impl Timer {
     /// Creates a [`Timer`] backed by a custom implementation.
+    #[cfg(test)]
     #[inline]
     pub fn new<M>(timer: M) -> Self
     where

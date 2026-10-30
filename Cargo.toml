@@ -353,8 +353,3 @@ path = "examples/keylog.rs"
 [[example]]
 name = "unix_socket"
 path = "examples/unix_socket.rs"
-
-[[example]]
-name = "rt"
-path = "examples/rt.rs"
-required-features = ["compio-rt"]
