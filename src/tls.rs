@@ -310,12 +310,18 @@ pub struct TlsOptions {
     /// **Default:** `None`
     pub extension_permutation: Option<Cow<'static, [ExtensionType]>>,
 
-    /// Overrides AES hardware acceleration.
+    /// Overrides hardware-based TLS 1.3 cipher ordering.
+    ///
+    /// `Some(true)` prefers AES-GCM and `Some(false)` prefers ChaCha20.
+    /// This does not change hardware acceleration or the pre-TLS 1.3 cipher list.
+    /// A nonempty preserved TLS 1.3 list takes precedence.
     ///
     /// **Default:** `None`
     pub aes_hw_override: Option<bool>,
 
-    /// Overrides the random AES hardware acceleration.
+    /// Randomizes AES-GCM versus ChaCha20 TLS 1.3 preference for each connection.
+    ///
+    /// A nonempty preserved TLS 1.3 list takes precedence.
     ///
     /// **Default:** `false`
     pub random_aes_hw_override: bool,
@@ -577,7 +583,9 @@ impl TlsOptionsBuilder {
         self
     }
 
-    /// Sets the AES hardware override flag.
+    /// Sets the hardware-based TLS 1.3 cipher ordering override.
+    ///
+    /// See [`TlsOptions::aes_hw_override`].
     #[inline]
     pub fn aes_hw_override<T>(mut self, enabled: T) -> Self
     where
@@ -587,7 +595,9 @@ impl TlsOptionsBuilder {
         self
     }
 
-    /// Sets the random AES hardware override flag.
+    /// Sets per-connection random TLS 1.3 cipher ordering.
+    ///
+    /// See [`TlsOptions::random_aes_hw_override`].
     #[inline]
     pub fn random_aes_hw_override(mut self, enabled: bool) -> Self {
         self.config.random_aes_hw_override = enabled;

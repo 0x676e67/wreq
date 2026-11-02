@@ -2,6 +2,7 @@
 
 #[macro_use]
 mod macros;
+mod cipher;
 mod ext;
 mod service;
 
@@ -150,7 +151,11 @@ impl TlsConnector {
         // Set random AES hardware override
         if self.settings.random_aes_hw_override {
             let random = (crate::util::fast_random() & 1) == 0;
-            cfg.set_aes_hw_override(random);
+            cfg.set_tls13_ciphers(if random {
+                &cipher::AES_FIRST
+            } else {
+                &cipher::CHACHA_FIRST
+            })?;
         }
 
         // Set ALPN protocols
@@ -415,16 +420,31 @@ impl TlsConnectorBuilder {
         // Set TLS signature algorithms list
         set_option_ref_try!(opts, sigalgs_list, connector, set_sigalgs_list);
 
-        // Set TLS prreserve TLS 1.3 cipher list order
-        set_option!(
-            opts,
-            preserve_tls13_cipher_list,
-            connector,
-            set_preserve_tls13_cipher_list
-        );
-
         // Set TLS cipher list
         set_option_ref_try!(opts, cipher_list, connector, set_cipher_list);
+
+        // Explicit TLS 1.3 preferences take precedence over hardware ordering,
+        // including the per-connection random override.
+        let preserved_ciphers = opts
+            .cipher_list
+            .as_deref()
+            .filter(|_| opts.preserve_tls13_cipher_list == Some(true))
+            .map(cipher::preserved_ciphers)
+            .unwrap_or_default();
+        let preserves_ciphers = !preserved_ciphers.is_empty();
+        if preserves_ciphers {
+            connector
+                .set_tls13_ciphers(&preserved_ciphers)
+                .map_err(Error::tls)?;
+        } else if let Some(aes) = opts.aes_hw_override {
+            connector
+                .set_tls13_ciphers(if aes {
+                    &cipher::AES_FIRST
+                } else {
+                    &cipher::CHACHA_FIRST
+                })
+                .map_err(Error::tls)?;
+        }
 
         // Set TLS delegated credentials
         set_option_ref_try!(
@@ -436,9 +456,6 @@ impl TlsConnectorBuilder {
 
         // Set TLS record size limit
         set_option!(opts, record_size_limit, connector, set_record_size_limit);
-
-        // Set TLS aes hardware override
-        set_option!(opts, aes_hw_override, connector, set_aes_hw_override);
 
         // Set TLS extension permutation
         if let Some(ref extension_permutation) = opts.extension_permutation {
@@ -465,7 +482,7 @@ impl TlsConnectorBuilder {
             alps_use_new_codepoint: opts.alps_use_new_codepoint,
             enable_ech_grease: opts.enable_ech_grease,
             key_shares: opts.key_shares.clone(),
-            random_aes_hw_override: opts.random_aes_hw_override,
+            random_aes_hw_override: opts.random_aes_hw_override && !preserves_ciphers,
             server_padding: opts.server_padding,
         };
 
