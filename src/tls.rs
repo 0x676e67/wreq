@@ -129,10 +129,10 @@ impl PartialEq<[u8]> for AlpsProtocol {
 pub enum EchGrease {
     /// BoringSSL's default policy, as used by Chromium.
     Default,
-    /// NSS before 3.127, as used by Firefox 119-154.
+    /// NSS before 3.127: pad the inner length to 32k + 31.
     NssPre3127,
-    /// NSS 3.127 onward, using RFC 9849 padding as in Firefox 155+.
-    Rfc9849,
+    /// NSS 3.127: round the inner length up to a multiple of 32.
+    Nss3127,
 }
 
 /// Builder for [`TlsOptions`].

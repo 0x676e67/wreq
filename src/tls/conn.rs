@@ -197,7 +197,7 @@ impl TlsConnector {
                 EchGrease::NssPre3127 => {
                     info.nss_parameters(100, host_length, EchGreaseRounding::NssPre3127)
                 }
-                EchGrease::Rfc9849 => {
+                EchGrease::Nss3127 => {
                     info.nss_parameters(100, host_length, EchGreaseRounding::Rfc9849)
                 }
             })?;
