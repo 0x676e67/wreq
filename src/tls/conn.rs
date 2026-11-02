@@ -17,7 +17,10 @@ use std::{
 use btls::{
     error::ErrorStack,
     ex_data::Index,
-    ssl::{EchGreaseRounding, Ssl, SslConnector, SslMethod, SslOptions, SslSessionCacheMode},
+    ssl::{
+        EchGreaseParameters, EchGreaseRounding, EchGreaseSizeInfo, Ssl, SslConnector, SslMethod,
+        SslOptions, SslRef, SslSessionCacheMode,
+    },
 };
 use ext::SslConnectorBuilderExt;
 use http::{Uri, Version};
@@ -41,11 +44,35 @@ fn key_index() -> Result<Index<Ssl, Key>, ErrorStack> {
     IDX.clone()
 }
 
+fn host_length_index() -> Result<Index<Ssl, usize>, ErrorStack> {
+    static IDX: LazyLock<Result<Index<Ssl, usize>, ErrorStack>> = LazyLock::new(Ssl::new_ex_index);
+    IDX.clone()
+}
+
+/// Context-level ECH GREASE policy; NSS sizing reads the URL host length that
+/// `setup_ssl2` stores on every connection with GREASE enabled.
+fn ech_grease_parameters(
+    policy: EchGrease,
+    ssl: &SslRef,
+    info: EchGreaseSizeInfo<'_>,
+) -> Result<EchGreaseParameters, ErrorStack> {
+    let nss = |rounding| -> Result<EchGreaseParameters, ErrorStack> {
+        let host_length = ssl.ex_data(host_length_index()?).copied().unwrap_or(0);
+        info.nss_parameters(100, host_length, rounding)
+    };
+    match policy {
+        EchGrease::Default => info.boringssl_parameters(info.default_aead()),
+        EchGrease::Aead(aead) => info.boringssl_parameters(aead),
+        EchGrease::NssPre3127 => nss(EchGreaseRounding::NssPre3127),
+        EchGrease::Nss3127 => nss(EchGreaseRounding::Rfc9849),
+    }
+}
+
 /// Settings for [`TlsConnector`]
 #[derive(Clone)]
 pub struct HandshakeSettings {
     no_ticket: bool,
-    enable_ech_grease: Option<EchGrease>,
+    ech_grease: Option<EchGrease>,
     verify_hostname: bool,
     tls_sni: bool,
     alpn_protocols: Option<Cow<'static, [AlpnProtocol]>>,
@@ -188,19 +215,10 @@ impl TlsConnector {
         let host = uri.host().ok_or("URI missing host")?;
         let host = Self::normalize_host(host);
 
-        if let Some(policy) = self.settings.enable_ech_grease {
+        if self.settings.ech_grease.is_some() {
             cfg.set_enable_ech_grease(true);
             // NSS sizes name padding from the URL host, even for IPs or when SNI is disabled.
-            let host_length = host.len();
-            cfg.set_ech_grease_callback(move |_, info| match policy {
-                EchGrease::Default => info.boringssl_parameters(info.default_aead()),
-                EchGrease::NssPre3127 => {
-                    info.nss_parameters(100, host_length, EchGreaseRounding::NssPre3127)
-                }
-                EchGrease::Nss3127 => {
-                    info.nss_parameters(100, host_length, EchGreaseRounding::Rfc9849)
-                }
-            })?;
+            cfg.set_ex_data(host_length_index()?, host.len());
         }
 
         if let Some(ref cache) = self.cache {
@@ -442,6 +460,14 @@ impl TlsConnectorBuilder {
                 .map_err(Error::tls)?;
         }
 
+        // Set TLS ECH GREASE policy; BoringSSL's default needs no callback.
+        if let Some(policy) = opts.ech_grease
+            && policy != EchGrease::Default
+        {
+            connector
+                .set_ech_grease_callback(move |ssl, info| ech_grease_parameters(policy, ssl, info));
+        }
+
         // Set TLS keylog handler.
         if let Some(ref policy) = self.keylog {
             let handle = policy.clone().handle().map_err(Error::tls)?;
@@ -458,7 +484,7 @@ impl TlsConnectorBuilder {
             alpn_protocols,
             alps_protocols: opts.alps_protocols.clone(),
             alps_use_new_codepoint: opts.alps_use_new_codepoint,
-            enable_ech_grease: opts.enable_ech_grease,
+            ech_grease: opts.ech_grease,
             key_shares: opts.key_shares.clone(),
             server_padding: opts.server_padding,
         };

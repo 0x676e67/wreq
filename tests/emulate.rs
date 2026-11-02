@@ -171,7 +171,7 @@ fn tls_options_template() -> TlsOptions {
         .alpn_protocols([AlpnProtocol::HTTP2, AlpnProtocol::HTTP1])
         .record_size_limit(0x4001)
         .pre_shared_key(true)
-        .enable_ech_grease(EchGrease::NssPre3127)
+        .ech_grease(EchGrease::NssPre3127)
         .enable_ocsp_stapling(true)
         .enable_signed_cert_timestamps(true)
         .min_tls_version(TlsVersion::TLS_1_2)
