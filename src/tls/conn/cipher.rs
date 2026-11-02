@@ -92,9 +92,8 @@ mod tests {
     use btls::ssl::{ErrorCode, Ssl, SslConnector, SslMethod, SslStream};
     use http::Uri;
 
-    use crate::{conn::descriptor::ConnectionDescriptor, group::Group, tls::TlsOptions};
-
     use super::super::TlsConnector;
+    use crate::{conn::descriptor::ConnectionDescriptor, group::Group, tls::TlsOptions};
 
     #[test]
     fn cipher_preferences_reach_client_hello_without_changing_tls12() {
