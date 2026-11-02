@@ -12,7 +12,7 @@ pub mod trust;
 use std::borrow::Cow;
 
 /// Re-exports of TLS-related types from `btls` for public use.
-pub use btls::ssl::{ExtensionType, KeyShare};
+pub use btls::ssl::{EchGreaseAead, EchGreaseRounding, ExtensionType, KeyShare, Tls13Cipher};
 use bytes::{BufMut, Bytes, BytesMut};
 use compress::CertificateCompressor;
 
@@ -119,7 +119,30 @@ impl PartialEq<[u8]> for AlpsProtocol {
     }
 }
 
-/// Builder for `[`TlsOptions`]`.
+/// Policy used to generate an ECH GREASE extension.
+///
+/// AEAD selection here is independent of TLS cipher suite preferences.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum EchGrease {
+    /// BoringSSL's random payload sizing and an X25519 public key for `enc`.
+    BoringSsl {
+        /// Advertised AEAD, or `None` to use BoringSSL's hardware-based choice.
+        aead: Option<EchGreaseAead>,
+    },
+    /// NSS inner-ClientHello sizing, random AEAD and uniformly random `enc`.
+    ///
+    /// Put ECH last in [`TlsOptions::extension_permutation`] to match NSS's
+    /// extension order. This policy does not change other TLS settings.
+    Nss {
+        /// Name padding target, as in Firefox's `security.tls.ech.grease_size`.
+        max_name_length: u8,
+        /// Historical NSS or RFC 9849 padding behavior.
+        rounding: EchGreaseRounding,
+    },
+}
+
+/// Builder for [`TlsOptions`].
 #[must_use]
 #[derive(Debug, Clone)]
 pub struct TlsOptionsBuilder {
@@ -133,7 +156,7 @@ pub struct TlsOptionsBuilder {
 /// - **Protocol negotiation** (ALPN, ALPS, TLS versions)
 /// - **Session management** (tickets, PSK, key shares)
 /// - **Security & privacy** (OCSP, GREASE, ECH, delegated credentials)
-/// - **Performance tuning** (record size, cipher preferences, hardware overrides)
+/// - **Performance tuning** (record size, cipher preferences)
 ///
 /// All fields are optional or have defaults. See each field for details.
 #[non_exhaustive]
@@ -196,13 +219,13 @@ pub struct TlsOptions {
     /// **Default:** `false`
     pub pre_shared_key: bool,
 
-    /// Controls whether to send a GREASE Encrypted ClientHello (ECH) extension
-    /// when no supported ECH configuration is available.
+    /// ECH GREASE policy when no supported ECH configuration is available.
     ///
-    /// GREASE prevents protocol ossification by sending unknown extensions.
+    /// `None` omits GREASE. A policy uses an internal btls callback and does not
+    /// affect TLS cipher preferences.
     ///
-    /// **Default:** `false`
-    pub enable_ech_grease: bool,
+    /// **Default:** `None`
+    pub ech_grease: Option<EchGrease>,
 
     /// Controls whether ClientHello extensions should be permuted.
     ///
@@ -290,15 +313,19 @@ pub struct TlsOptions {
 
     /// Cipher suite configuration string.
     ///
-    /// Uses BoringSSL's mini-language to select, enable, and prioritize ciphers.
+    /// Uses BoringSSL's mini-language to configure ciphers before TLS 1.3.
+    ///
+    /// Configure TLS 1.3 separately with [`Self::tls13_cipher_list`].
     ///
     /// **Default:** `None`
     pub cipher_list: Option<Cow<'static, str>>,
 
-    /// Sets whether to preserve the TLS 1.3 cipher list as configured by [`Self::cipher_list`].
+    /// TLS 1.3 cipher suites in wire preference order.
+    ///
+    /// An empty list restores BoringSSL's hardware-dependent defaults.
     ///
     /// **Default:** `None`
-    pub preserve_tls13_cipher_list: Option<bool>,
+    pub tls13_cipher_list: Option<Cow<'static, [Tls13Cipher]>>,
 
     /// Supported certificate compression algorithms ([RFC 8879](https://datatracker.ietf.org/doc/html/rfc8879)).
     ///
@@ -309,22 +336,6 @@ pub struct TlsOptions {
     ///
     /// **Default:** `None`
     pub extension_permutation: Option<Cow<'static, [ExtensionType]>>,
-
-    /// Overrides hardware-based TLS 1.3 cipher ordering.
-    ///
-    /// `Some(true)` prefers AES-GCM and `Some(false)` prefers ChaCha20.
-    /// This does not change hardware acceleration or the pre-TLS 1.3 cipher list.
-    /// A nonempty preserved TLS 1.3 list takes precedence.
-    ///
-    /// **Default:** `None`
-    pub aes_hw_override: Option<bool>,
-
-    /// Randomizes AES-GCM versus ChaCha20 TLS 1.3 preference for each connection.
-    ///
-    /// A nonempty preserved TLS 1.3 list takes precedence.
-    ///
-    /// **Default:** `false`
-    pub random_aes_hw_override: bool,
 }
 
 impl TlsOptionsBuilder {
@@ -381,10 +392,13 @@ impl TlsOptionsBuilder {
         self
     }
 
-    /// Sets the GREASE ECH extension flag.
+    /// Sets the ECH GREASE policy, or disables GREASE with `None`.
     #[inline]
-    pub fn enable_ech_grease(mut self, enabled: bool) -> Self {
-        self.config.enable_ech_grease = enabled;
+    pub fn ech_grease<T>(mut self, policy: T) -> Self
+    where
+        T: Into<Option<EchGrease>>,
+    {
+        self.config.ech_grease = policy.into();
         self
     }
 
@@ -532,7 +546,9 @@ impl TlsOptionsBuilder {
         self
     }
 
-    /// Sets the cipher list.
+    /// Sets the cipher list for TLS 1.2 and earlier.
+    ///
+    /// Configure TLS 1.3 separately with [`Self::tls13_cipher_list`].
     #[inline]
     pub fn cipher_list<T>(mut self, ciphers: T) -> Self
     where
@@ -542,24 +558,15 @@ impl TlsOptionsBuilder {
         self
     }
 
-    /// Sets whether to preserve the TLS 1.3 cipher list as configured by [`Self::cipher_list`].
+    /// Sets TLS 1.3 cipher suites in wire preference order.
     ///
-    /// By default, BoringSSL does not preserve the TLS 1.3 cipher list. When this option is
-    /// disabled (the default), BoringSSL uses its internal default TLS 1.3 cipher suites in its
-    /// default order, regardless of what is set via [`Self::cipher_list`].
-    ///
-    /// When enabled, this option ensures that the TLS 1.3 cipher suites explicitly set via
-    /// [`Self::cipher_list`] are retained in their original order, without being reordered or
-    /// modified by BoringSSL's internal logic. This is useful for maintaining specific cipher suite
-    /// priorities for TLS 1.3. Note that if [`Self::cipher_list`] does not include any TLS 1.3
-    /// cipher suites, BoringSSL will still fall back to its default TLS 1.3 cipher suites and
-    /// order.
+    /// See [`TlsOptions::tls13_cipher_list`] for empty-list behavior.
     #[inline]
-    pub fn preserve_tls13_cipher_list<T>(mut self, enabled: T) -> Self
+    pub fn tls13_cipher_list<T>(mut self, ciphers: T) -> Self
     where
-        T: Into<Option<bool>>,
+        T: Into<Cow<'static, [Tls13Cipher]>>,
     {
-        self.config.preserve_tls13_cipher_list = enabled.into();
+        self.config.tls13_cipher_list = Some(ciphers.into());
         self
     }
 
@@ -580,27 +587,6 @@ impl TlsOptionsBuilder {
         T: Into<Cow<'static, [ExtensionType]>>,
     {
         self.config.extension_permutation = Some(permutation.into());
-        self
-    }
-
-    /// Sets the hardware-based TLS 1.3 cipher ordering override.
-    ///
-    /// See [`TlsOptions::aes_hw_override`].
-    #[inline]
-    pub fn aes_hw_override<T>(mut self, enabled: T) -> Self
-    where
-        T: Into<Option<bool>>,
-    {
-        self.config.aes_hw_override = enabled.into();
-        self
-    }
-
-    /// Sets per-connection random TLS 1.3 cipher ordering.
-    ///
-    /// See [`TlsOptions::random_aes_hw_override`].
-    #[inline]
-    pub fn random_aes_hw_override(mut self, enabled: bool) -> Self {
-        self.config.random_aes_hw_override = enabled;
         self
     }
 
@@ -629,7 +615,7 @@ impl Default for TlsOptions {
             session_ticket: true,
             min_tls_version: None,
             max_tls_version: None,
-            enable_ech_grease: false,
+            ech_grease: None,
             permute_extensions: None,
             grease_enabled: None,
             grease_sigalgs_enabled: None,
@@ -647,11 +633,9 @@ impl Default for TlsOptions {
             curves_list: None,
             sigalgs_list: None,
             cipher_list: None,
-            preserve_tls13_cipher_list: None,
+            tls13_cipher_list: None,
             certificate_compressors: None,
             extension_permutation: None,
-            aes_hw_override: None,
-            random_aes_hw_override: false,
         }
     }
 }

@@ -2,7 +2,6 @@
 
 #[macro_use]
 mod macros;
-mod cipher;
 mod ext;
 mod service;
 
@@ -30,7 +29,7 @@ use crate::{
     Error,
     conn::{Connected, Connection, descriptor::ConnectionDescriptor},
     tls::{
-        AlpnProtocol, AlpsProtocol, KeyShare, TlsOptions, TlsVersion,
+        AlpnProtocol, AlpsProtocol, EchGrease, KeyShare, TlsOptions, TlsVersion,
         keylog::KeyLog,
         session::{Key, LruTlsSessionCache, TlsSession, TlsSessionCache},
         trust::{CertStore, Identity},
@@ -46,14 +45,13 @@ fn key_index() -> Result<Index<Ssl, Key>, ErrorStack> {
 #[derive(Clone)]
 pub struct HandshakeSettings {
     no_ticket: bool,
-    enable_ech_grease: bool,
+    ech_grease: Option<EchGrease>,
     verify_hostname: bool,
     tls_sni: bool,
     alpn_protocols: Option<Cow<'static, [AlpnProtocol]>>,
     alps_protocols: Option<Cow<'static, [AlpsProtocol]>>,
     alps_use_new_codepoint: bool,
     key_shares: Option<Cow<'static, [KeyShare]>>,
-    random_aes_hw_override: bool,
     server_padding: Option<u16>,
 }
 
@@ -145,19 +143,6 @@ impl TlsConnector {
         // Verify hostname
         cfg.set_verify_hostname(self.settings.verify_hostname);
 
-        // Set ECH grease
-        cfg.set_enable_ech_grease(self.settings.enable_ech_grease);
-
-        // Set random AES hardware override
-        if self.settings.random_aes_hw_override {
-            let random = (crate::util::fast_random() & 1) == 0;
-            cfg.set_tls13_ciphers(if random {
-                &cipher::AES_FIRST
-            } else {
-                &cipher::CHACHA_FIRST
-            })?;
-        }
-
         // Set ALPN protocols
         if let Some(version) = descriptor.version() {
             match version {
@@ -202,6 +187,21 @@ impl TlsConnector {
         let uri = descriptor.uri().clone();
         let host = uri.host().ok_or("URI missing host")?;
         let host = Self::normalize_host(host);
+
+        cfg.set_enable_ech_grease(self.settings.ech_grease.is_some());
+        if let Some(policy) = self.settings.ech_grease {
+            // NSS sizes name padding from the URL host, even for IPs or when SNI is disabled.
+            let host_length = host.len();
+            cfg.set_ech_grease_callback(move |_, info| match policy {
+                EchGrease::BoringSsl { aead } => {
+                    info.boringssl_parameters(aead.unwrap_or_else(|| info.default_aead()))
+                }
+                EchGrease::Nss {
+                    max_name_length,
+                    rounding,
+                } => info.nss_parameters(max_name_length, host_length, rounding),
+            })?;
+        }
 
         if let Some(ref cache) = self.cache {
             let key = Key(descriptor.id());
@@ -423,28 +423,7 @@ impl TlsConnectorBuilder {
         // Set TLS cipher list
         set_option_ref_try!(opts, cipher_list, connector, set_cipher_list);
 
-        // Explicit TLS 1.3 preferences take precedence over hardware ordering,
-        // including the per-connection random override.
-        let preserved_ciphers = opts
-            .cipher_list
-            .as_deref()
-            .filter(|_| opts.preserve_tls13_cipher_list == Some(true))
-            .map(cipher::preserved_ciphers)
-            .unwrap_or_default();
-        let preserves_ciphers = !preserved_ciphers.is_empty();
-        if preserves_ciphers {
-            connector
-                .set_tls13_ciphers(&preserved_ciphers)
-                .map_err(Error::tls)?;
-        } else if let Some(aes) = opts.aes_hw_override {
-            connector
-                .set_tls13_ciphers(if aes {
-                    &cipher::AES_FIRST
-                } else {
-                    &cipher::CHACHA_FIRST
-                })
-                .map_err(Error::tls)?;
-        }
+        set_option_ref_try!(opts, tls13_cipher_list, connector, set_tls13_ciphers);
 
         // Set TLS delegated credentials
         set_option_ref_try!(
@@ -480,9 +459,8 @@ impl TlsConnectorBuilder {
             alpn_protocols,
             alps_protocols: opts.alps_protocols.clone(),
             alps_use_new_codepoint: opts.alps_use_new_codepoint,
-            enable_ech_grease: opts.enable_ech_grease,
+            ech_grease: opts.ech_grease,
             key_shares: opts.key_shares.clone(),
-            random_aes_hw_override: opts.random_aes_hw_override && !preserves_ciphers,
             server_padding: opts.server_padding,
         };
 
@@ -636,5 +614,212 @@ impl<IO> EstablishedConn<IO> {
     #[inline]
     pub fn new(io: IO, descriptor: ConnectionDescriptor) -> EstablishedConn<IO> {
         EstablishedConn { io, descriptor }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::{Read, Write};
+
+    use btls::ssl::{ErrorCode, SslStream as CaptureStream};
+
+    use super::*;
+    use crate::{
+        Group,
+        tls::{EchGreaseAead, EchGreaseRounding, Tls13Cipher},
+    };
+
+    #[test]
+    fn tls13_cipher_list_preserves_order_independently_of_tls12() {
+        for (ciphers, expected) in [
+            (
+                vec![
+                    Tls13Cipher::AES_256_GCM_SHA384,
+                    Tls13Cipher::CHACHA20_POLY1305_SHA256,
+                    Tls13Cipher::AES_128_GCM_SHA256,
+                ],
+                vec![0x1302, 0x1303, 0x1301, 0xc02f, 0xc030],
+            ),
+            (
+                vec![Tls13Cipher::CHACHA20_POLY1305_SHA256],
+                vec![0x1303, 0xc02f, 0xc030],
+            ),
+        ] {
+            let options = TlsOptions::builder()
+                .cipher_list("ECDHE-RSA-AES128-GCM-SHA256:ECDHE-RSA-AES256-GCM-SHA384")
+                .tls13_cipher_list(ciphers)
+                .build();
+            let connector = TlsConnector::builder()
+                .build(Cow::Borrowed(&options))
+                .unwrap();
+            for _ in 0..2 {
+                assert_eq!(
+                    client_hello(&connector, "https://example.com/").ciphers,
+                    expected
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn ech_grease_policy_controls_payload_without_changing_ciphers() {
+        let options = TlsOptions::builder()
+            .tls13_cipher_list(vec![
+                Tls13Cipher::CHACHA20_POLY1305_SHA256,
+                Tls13Cipher::AES_128_GCM_SHA256,
+            ])
+            .build();
+        let baseline = client_hello(
+            &TlsConnector::builder()
+                .build(Cow::Borrowed(&options))
+                .unwrap(),
+            "https://example.com/",
+        );
+        assert!(baseline.extension(0xfe0d).is_none());
+
+        for aead in [EchGreaseAead::AES_128_GCM, EchGreaseAead::CHACHA20_POLY1305] {
+            let mut options = options.clone();
+            options.ech_grease = Some(EchGrease::BoringSsl { aead: Some(aead) });
+            let hello = client_hello(
+                &TlsConnector::builder()
+                    .build(Cow::Borrowed(&options))
+                    .unwrap(),
+                "https://example.com/",
+            );
+            let ech = hello.extension(0xfe0d).unwrap();
+            assert_eq!(u16::from_be_bytes([ech[3], ech[4]]), aead.id());
+            assert_eq!(&ech[6..8], &[0, 32]);
+            assert!(matches!(ech.len() - 42, 144 | 176 | 208 | 240));
+            assert_eq!(ech[39] & 0x80, 0); // X25519 public enc, not random octets.
+            assert_eq!(hello.ciphers, baseline.ciphers);
+        }
+
+        for rounding in [EchGreaseRounding::NssPre3127, EchGreaseRounding::Rfc9849] {
+            let mut options = options.clone();
+            options.ech_grease = Some(EchGrease::Nss {
+                max_name_length: 100,
+                rounding,
+            });
+            let connector = TlsConnector::builder()
+                .build(Cow::Borrowed(&options))
+                .unwrap();
+            for (uri, host_length) in [("https://example.com/", 11), ("https://[::1]/", 3)] {
+                let hello = client_hello(&connector, uri);
+                let ech = hello.extension(0xfe0d).unwrap();
+                assert!(matches!(u16::from_be_bytes([ech[3], ech[4]]), 1 | 3));
+                assert_eq!(&ech[6..8], &[0, 32]);
+                assert_eq!(
+                    ech.len() - 42,
+                    nss_payload_length(&hello, host_length, rounding)
+                );
+                assert_eq!(hello.ciphers, baseline.ciphers);
+            }
+        }
+    }
+
+    // Independently size the non-PSK fixture from its serialized fields. This
+    // catches a policy wired to SNI length instead of the normalized URL host.
+    fn nss_payload_length(
+        hello: &ClientHello,
+        host_length: usize,
+        rounding: EchGreaseRounding,
+    ) -> usize {
+        let mut inner = 41 + hello.ciphers.len() * 2 + 5 + 7;
+        if let Some(sni) = hello.extension(0) {
+            inner += 4 + sni.len();
+        }
+        let compressed = hello
+            .extensions
+            .iter()
+            .filter(|(kind, _)| ![0, 11, 21, 23, 35, 43, 46, 0xfe0d, 0xff01].contains(kind))
+            .count();
+        if compressed != 0 {
+            inner += 5 + 2 * compressed;
+        }
+        inner += 100usize.saturating_sub(host_length);
+        match rounding {
+            EchGreaseRounding::NssPre3127 => inner + 31 - inner % 32 + 16,
+            EchGreaseRounding::Rfc9849 => inner.div_ceil(32) * 32 + 16,
+            _ => panic!("unsupported test rounding"),
+        }
+    }
+
+    struct ClientHello {
+        ciphers: Vec<u16>,
+        extensions: Vec<(u16, Vec<u8>)>,
+    }
+
+    impl ClientHello {
+        fn extension(&self, kind: u16) -> Option<&[u8]> {
+            self.extensions
+                .iter()
+                .find(|(id, _)| *id == kind)
+                .map(|(_, body)| body.as_slice())
+        }
+    }
+
+    fn client_hello(connector: &TlsConnector, uri: &str) -> ClientHello {
+        let descriptor = ConnectionDescriptor::new(
+            uri.parse().unwrap(),
+            Group::default(),
+            None,
+            None,
+            None,
+            None,
+        );
+        let ssl = connector.setup_ssl2(descriptor).unwrap();
+        let mut stream = CaptureStream::new(ssl, Capture(Vec::new())).unwrap();
+        assert_eq!(stream.connect().unwrap_err().code(), ErrorCode::WANT_READ);
+        let bytes = &stream.get_ref().0;
+        assert_eq!(bytes[0], 22);
+        let mut offset = 44 + usize::from(bytes[43]);
+        let mut vector = || {
+            let len = usize::from(u16::from_be_bytes([bytes[offset], bytes[offset + 1]]));
+            offset += 2;
+            let body = &bytes[offset..offset + len];
+            offset += len;
+            body
+        };
+        let ciphers = vector()
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .copied()
+            .map(u16::from_be_bytes)
+            .collect();
+        offset += 1 + usize::from(bytes[offset]); // Compression methods.
+        let end = offset + 2 + usize::from(u16::from_be_bytes([bytes[offset], bytes[offset + 1]]));
+        offset += 2;
+        let mut extensions = Vec::new();
+        while offset < end {
+            let kind = u16::from_be_bytes([bytes[offset], bytes[offset + 1]]);
+            let len = usize::from(u16::from_be_bytes([bytes[offset + 2], bytes[offset + 3]]));
+            offset += 4;
+            extensions.push((kind, bytes[offset..offset + len].to_vec()));
+            offset += len;
+        }
+        ClientHello {
+            ciphers,
+            extensions,
+        }
+    }
+
+    struct Capture(Vec<u8>);
+
+    impl Read for Capture {
+        fn read(&mut self, _: &mut [u8]) -> io::Result<usize> {
+            Err(io::ErrorKind::WouldBlock.into())
+        }
+    }
+
+    impl Write for Capture {
+        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+            self.0.extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
     }
 }
