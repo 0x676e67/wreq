@@ -53,6 +53,7 @@ pub struct HandshakeSettings {
     alps_use_new_codepoint: bool,
     key_shares: Option<Cow<'static, [KeyShare]>>,
     random_aes_hw_override: bool,
+    server_padding: Option<u16>,
 }
 
 /// A Connector using BoringSSL to support `http` and `https` schemes.
@@ -215,7 +216,11 @@ impl TlsConnector {
             cfg.set_ex_data(idx, key);
         }
 
-        Ok(cfg.into_ssl(host)?)
+        let mut ssl = cfg.into_ssl(host)?;
+        if let Some(num_bytes) = self.settings.server_padding {
+            ssl.set_server_padding_request(num_bytes);
+        }
+        Ok(ssl)
     }
 
     /// If `host` is an IPv6 address, we must strip away the square brackets that surround
@@ -461,6 +466,7 @@ impl TlsConnectorBuilder {
             enable_ech_grease: opts.enable_ech_grease,
             key_shares: opts.key_shares.clone(),
             random_aes_hw_override: opts.random_aes_hw_override,
+            server_padding: opts.server_padding,
         };
 
         // If the session cache is disabled, we don't need to set up any callbacks.
