@@ -127,7 +127,7 @@ impl PartialEq<[u8]> for AlpsProtocol {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum EchGrease {
-    /// BoringSSL's default policy, as used by Chromium.
+    /// BoringSSL's default policy.
     Default,
     /// NSS before 3.127: pad the inner length to 32k + 31.
     NssPre3127,
