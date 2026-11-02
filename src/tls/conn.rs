@@ -188,8 +188,8 @@ impl TlsConnector {
         let host = uri.host().ok_or("URI missing host")?;
         let host = Self::normalize_host(host);
 
-        cfg.set_enable_ech_grease(self.settings.ech_grease.is_some());
         if let Some(policy) = self.settings.ech_grease {
+            cfg.set_enable_ech_grease(true);
             // NSS sizes name padding from the URL host, even for IPs or when SNI is disabled.
             let host_length = host.len();
             cfg.set_ech_grease_callback(move |_, info| match policy {
