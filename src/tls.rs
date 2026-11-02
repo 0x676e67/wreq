@@ -254,7 +254,16 @@ pub struct TlsOptions {
     /// [`trust_anchors` extension]: https://datatracker.ietf.org/doc/html/draft-ietf-tls-trust-anchor-ids-04#section-4.1
     pub trust_anchors: Option<Cow<'static, [u8]>>,
 
-    /// Controls TLS renegotiation.
+    /// Requests TLS 1.3 EncryptedExtensions padding from the server.
+    ///
+    /// `Some(0)` sends the experimental `server_padding` extension (4832) with
+    /// a zero-byte padding request; `None` omits the extension. Servers may ignore
+    /// the request and only honor padding requests of at most 16 KiB.
+    ///
+    /// **Default:** `None`
+    pub server_padding: Option<u16>,
+
+    /// Enables TLS renegotiation by sending the `renegotiation_info` extension.
     ///
     /// **Default:** `None` (backend policy unchanged).
     pub renegotiation: Option<bool>,
@@ -506,6 +515,18 @@ impl TlsOptionsBuilder {
         T: Into<Cow<'static, [u8]>>,
     {
         self.config.trust_anchors = Some(ids.into());
+        self
+    }
+
+    /// Sets the requested TLS 1.3 server padding, or disables the extension.
+    ///
+    /// See [`TlsOptions::server_padding`] for the experimental extension's behavior.
+    #[inline]
+    pub fn server_padding<T>(mut self, num_bytes: T) -> Self
+    where
+        T: Into<Option<u16>>,
+    {
+        self.config.server_padding = num_bytes.into();
         self
     }
 

@@ -295,6 +295,31 @@ async fn read_timeout_allows_slow_response_body() {
     assert_eq!(body, "012");
 }
 
+#[cfg(feature = "stream")]
+#[tokio::test]
+async fn read_timeout_ignores_time_between_reads() {
+    use futures_util::StreamExt;
+
+    let _ = env_logger::try_init();
+
+    let server = server::http(move |_req| async { http::Response::new("Hello".into()) });
+
+    let client = Client::builder()
+        .read_timeout(Duration::from_millis(100))
+        .no_proxy()
+        .build()
+        .unwrap();
+
+    let url = format!("http://{}/pause", server.addr());
+    let res = client.get(&url).send().await.expect("Failed to get");
+    let mut stream = res.bytes_stream();
+    assert_eq!(stream.next().await.unwrap().unwrap(), "Hello");
+
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let next = stream.next().await.transpose().expect("read after pause");
+    assert!(next.is_none());
+}
+
 #[tokio::test]
 async fn response_body_timeout_forwards_size_hint() {
     let _ = env_logger::try_init();

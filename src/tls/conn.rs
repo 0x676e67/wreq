@@ -65,6 +65,7 @@ pub struct HandshakeConfig {
     no_ticket: bool,
     enable_ech_grease: Option<bool>,
     random_aes_hw_override: bool,
+    server_padding: Option<u16>,
 }
 
 /// Connects an inner transport and applies TLS when the destination requires it.
@@ -364,7 +365,11 @@ impl TlsConnector {
             cfg.set_ex_data(idx, key);
         }
 
-        Ok(cfg.into_ssl(host)?)
+        let mut ssl = cfg.into_ssl(host)?;
+        if let Some(num_bytes) = ctx.settings.server_padding {
+            ssl.set_server_padding_request(num_bytes);
+        }
+        Ok(ssl)
     }
 
     /// Strips brackets from valid IPv6 literals before TLS hostname verification.
@@ -550,6 +555,7 @@ impl TlsContext {
             key_shares: opts.and_then(|opts| opts.key_shares.clone()),
             no_ticket: opts.is_some_and(|opts| opts.psk_skip_session_ticket),
             random_aes_hw_override: opts.is_some_and(|opts| opts.random_aes_hw_override),
+            server_padding: opts.and_then(|opts| opts.server_padding),
         };
 
         // Register session storage callbacks only when resumption is enabled.

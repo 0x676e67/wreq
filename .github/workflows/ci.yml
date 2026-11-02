@@ -111,7 +111,7 @@ jobs:
         with:
           go-version: stable
           cache: false
-      - uses: taiki-e/install-action@v2.87.17
+      - uses: taiki-e/install-action@v2.87.24
         with:
           tool: cargo-nextest
       - name: Run tests (${{ matrix.feature-set }})
