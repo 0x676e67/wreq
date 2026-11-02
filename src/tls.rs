@@ -12,7 +12,7 @@ pub mod trust;
 use std::borrow::Cow;
 
 /// Re-exports of TLS-related types from `btls` for public use.
-pub use btls::ssl::{EchGreaseAead, EchGreaseRounding, ExtensionType, KeyShare, Tls13Cipher};
+pub use btls::ssl::{ExtensionType, KeyShare, Tls13Cipher};
 use bytes::{BufMut, Bytes, BytesMut};
 use compress::CertificateCompressor;
 
@@ -122,24 +122,17 @@ impl PartialEq<[u8]> for AlpsProtocol {
 /// Policy used to generate an ECH GREASE extension.
 ///
 /// AEAD selection here is independent of TLS cipher suite preferences.
+/// For NSS policies, put ECH last in [`TlsOptions::extension_permutation`]
+/// to match NSS's extension order. Other TLS settings are unchanged.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum EchGrease {
-    /// BoringSSL's random payload sizing and an X25519 public key for `enc`.
-    BoringSsl {
-        /// Advertised AEAD, or `None` to use BoringSSL's hardware-based choice.
-        aead: Option<EchGreaseAead>,
-    },
-    /// NSS inner-ClientHello sizing, random AEAD and uniformly random `enc`.
-    ///
-    /// Put ECH last in [`TlsOptions::extension_permutation`] to match NSS's
-    /// extension order. This policy does not change other TLS settings.
-    Nss {
-        /// Name padding target, as in Firefox's `security.tls.ech.grease_size`.
-        max_name_length: u8,
-        /// Historical NSS or RFC 9849 padding behavior.
-        rounding: EchGreaseRounding,
-    },
+    /// BoringSSL's default policy, as used by Chromium.
+    Default,
+    /// NSS before 3.127, as used by Firefox 119-154.
+    NssPre3127,
+    /// NSS 3.127 onward, using RFC 9849 padding as in Firefox 155+.
+    Rfc9849,
 }
 
 /// Builder for [`TlsOptions`].
@@ -225,7 +218,7 @@ pub struct TlsOptions {
     /// affect TLS cipher preferences.
     ///
     /// **Default:** `None`
-    pub ech_grease: Option<EchGrease>,
+    pub enable_ech_grease: Option<EchGrease>,
 
     /// Controls whether ClientHello extensions should be permuted.
     ///
@@ -394,11 +387,11 @@ impl TlsOptionsBuilder {
 
     /// Sets the ECH GREASE policy, or disables GREASE with `None`.
     #[inline]
-    pub fn ech_grease<T>(mut self, policy: T) -> Self
+    pub fn enable_ech_grease<T>(mut self, policy: T) -> Self
     where
         T: Into<Option<EchGrease>>,
     {
-        self.config.ech_grease = policy.into();
+        self.config.enable_ech_grease = policy.into();
         self
     }
 
@@ -615,7 +608,7 @@ impl Default for TlsOptions {
             session_ticket: true,
             min_tls_version: None,
             max_tls_version: None,
-            ech_grease: None,
+            enable_ech_grease: None,
             permute_extensions: None,
             grease_enabled: None,
             grease_sigalgs_enabled: None,

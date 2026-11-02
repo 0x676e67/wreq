@@ -12,8 +12,7 @@ use wreq::{
         Http2Options, PseudoId, PseudoOrder, SettingId, SettingsOrder, StreamDependency, StreamId,
     },
     tls::{
-        AlpnProtocol, EchGrease, EchGreaseRounding, ExtensionType, KeyShare, Tls13Cipher,
-        TlsOptions, TlsVersion,
+        AlpnProtocol, EchGrease, ExtensionType, KeyShare, Tls13Cipher, TlsOptions, TlsVersion,
         compress::{CertificateCompressionAlgorithm, CertificateCompressor, Codec},
     },
 };
@@ -172,10 +171,7 @@ fn tls_options_template() -> TlsOptions {
         .alpn_protocols([AlpnProtocol::HTTP2, AlpnProtocol::HTTP1])
         .record_size_limit(0x4001)
         .pre_shared_key(true)
-        .ech_grease(EchGrease::Nss {
-            max_name_length: 100,
-            rounding: EchGreaseRounding::NssPre3127,
-        })
+        .enable_ech_grease(EchGrease::NssPre3127)
         .enable_ocsp_stapling(true)
         .enable_signed_cert_timestamps(true)
         .min_tls_version(TlsVersion::TLS_1_2)
