@@ -422,7 +422,6 @@ impl TlsConnectorBuilder {
 
         // Set TLS cipher list
         set_option_ref_try!(opts, cipher_list, connector, set_cipher_list);
-
         set_option_ref_try!(opts, tls13_cipher_list, connector, set_tls13_ciphers);
 
         // Set TLS delegated credentials
