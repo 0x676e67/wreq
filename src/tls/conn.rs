@@ -64,7 +64,7 @@ fn ech_grease_parameters(
         EchGrease::Default => info.boringssl_parameters(info.default_aead()),
         EchGrease::Aead(aead) => info.boringssl_parameters(aead),
         EchGrease::NssPre3127 => nss(EchGreaseRounding::NssPre3127),
-        EchGrease::Nss3127 => nss(EchGreaseRounding::Rfc9849),
+        EchGrease::Nss3127 => nss(EchGreaseRounding::Nss3127),
     }
 }
 
