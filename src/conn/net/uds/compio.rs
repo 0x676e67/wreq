@@ -11,7 +11,9 @@ use std::{
 
 use compio::net::UnixStream;
 use http::Uri;
-use wreq_rt::rt::compio::{future::SendFuture, io::CompioIO};
+use send_wrapper::SendWrapper;
+
+use crate::rt::compio::io::CompioIO;
 
 use super::BoxConnecting;
 use crate::conn::{Connected, Connection, net::io::CompioConnection, tls_info::TlsInfoFactory};
@@ -39,7 +41,7 @@ impl tower::Service<Uri> for UnixConnector {
 
     fn call(&mut self, _: Uri) -> Self::Future {
         let fut = UnixStream::connect(self.0.clone());
-        Box::pin(SendFuture::new(async move {
+        Box::pin(SendWrapper::new(async move {
             let io = fut.await?;
             Ok(CompioConnection {
                 peer_addr: None,

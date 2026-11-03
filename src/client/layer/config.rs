@@ -5,8 +5,10 @@ use std::{
 
 use futures_util::future::{self, Either, Ready};
 use http::{HeaderMap, Request, Response, Version};
+use netty::http1::Http1Options;
+#[cfg(feature = "http2")]
+use netty::http2::Http2Options;
 use tower::{Layer, Service};
-use wreq_proto::{http1::Http1Options, http2::Http2Options};
 
 use crate::{
     Error, config::RequestConfig, conn::net::SocketBindOptions, ext::UriExt, group::Group,
@@ -27,6 +29,7 @@ pub(crate) struct RequestOptions {
     pub version: Option<Version>,
     pub tls_options: Option<TlsOptions>,
     pub http1_options: Option<Http1Options>,
+    #[cfg(feature = "http2")]
     pub http2_options: Option<Http2Options>,
     pub socket_bind_options: Option<SocketBindOptions>,
 }
@@ -129,7 +132,7 @@ where
 
         // store the original headers in request extensions
         if let Some(orig_headers) = self.config.orig_headers.take(req.extensions_mut()) {
-            wreq_proto::ext::on_preserve_header(&mut req, orig_headers);
+            netty::ext::on_preserve_header(&mut req, orig_headers);
         }
 
         Either::Left(self.inner.call(req))

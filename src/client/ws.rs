@@ -18,6 +18,7 @@ use futures_util::{Sink, SinkExt, Stream, StreamExt, stream::FusedStream};
 use http::{
     HeaderMap, HeaderName, HeaderValue, Method, StatusCode, Uri, Version, header, uri::Scheme,
 };
+#[cfg(feature = "http2")]
 use http2::ext::Protocol;
 use pin_project_lite::pin_project;
 use tokio_tungstenite::tungstenite::{
@@ -84,6 +85,8 @@ impl WebSocketRequestBuilder {
     /// - Widely supported by servers
     ///
     /// # HTTP/2
+    ///
+    /// Requires the `http2` feature; otherwise the handshake fails with an unsupported version.
     ///
     /// - Uses the Extended CONNECT Protocol (RFC 8441)
     /// - Sends a `CONNECT` request with the `:protocol: websocket` pseudo-header instead of the
@@ -453,6 +456,7 @@ impl WebSocketRequestBuilder {
                 *request.version_mut() = Some(Version::HTTP_11);
                 Some(nonce)
             }
+            #[cfg(feature = "http2")]
             Some(Version::HTTP_2) => {
                 *request.method_mut() = Method::CONNECT;
                 *request.version_mut() = Some(Version::HTTP_2);

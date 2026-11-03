@@ -25,7 +25,12 @@ use std::{
     time::{Duration, Instant},
 };
 
-use wreq_proto::rt::{self, Sleep, Time};
+use netty::rt::{self, Sleep, Time};
+
+#[cfg(feature = "compio-rt")]
+pub mod compio;
+#[cfg(feature = "tokio-rt")]
+pub mod tokio;
 
 /// A heap-allocated, type-erased future that is [`Send`] and resolves to `()`.
 ///
@@ -80,15 +85,15 @@ impl Default for Executor {
     #[inline]
     fn default() -> Self {
         if_tokio_rt!(block: {
-            return Executor(Arc::new(wreq_rt::rt::tokio::TokioExecutor::new()))
+            return Executor(Arc::new(tokio::TokioExecutor))
         });
 
         if_compio_rt!(block: {
-            return Executor(Arc::new(wreq_rt::rt::compio::CompioExecutor::new()))
+            return Executor(Arc::new(compio::CompioExecutor))
         });
 
         if_all_rt!(block: {
-            return Executor(Arc::new(wreq_rt::rt::tokio::TokioExecutor::new()))
+            return Executor(Arc::new(tokio::TokioExecutor))
         });
 
         if_no_rt!(block:{
@@ -151,15 +156,15 @@ impl Default for Timer {
     #[inline]
     fn default() -> Self {
         if_tokio_rt!(block: {
-            return Timer(rt::Time::Timer(Arc::new(wreq_rt::rt::tokio::TokioTimer::new())))
+            return Timer(rt::Time::Timer(Arc::new(tokio::TokioTimer)))
         });
 
         if_compio_rt!(block: {
-            return Timer(rt::Time::Timer(Arc::new(wreq_rt::rt::compio::CompioTimer::new())))
+            return Timer(rt::Time::Timer(Arc::new(compio::CompioTimer)))
         });
 
         if_all_rt!(block: {
-            return Timer(rt::Time::Timer(Arc::new(wreq_rt::rt::tokio::TokioTimer::new())))
+            return Timer(rt::Time::Timer(Arc::new(tokio::TokioTimer)))
         });
 
         if_no_rt!(block: {

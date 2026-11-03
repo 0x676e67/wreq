@@ -86,6 +86,7 @@ jobs:
       matrix:
         feature-set:
           - "" # default (tokio-rt)
+          - "--no-default-features --features tokio-rt,webpki-roots" # HTTP/1 only
           - "--features compio-rt"
           - "--all-features"
           - "--features form"

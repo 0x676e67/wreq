@@ -1,5 +1,7 @@
 use http::HeaderMap;
-use wreq_proto::{http1::Http1Options, http2::Http2Options};
+use netty::http1::Http1Options;
+#[cfg(feature = "http2")]
+use netty::http2::Http2Options;
 
 use crate::{group::Group, header::OrigHeaderMap, tls::TlsOptions};
 
@@ -43,6 +45,8 @@ pub struct Emulation {
     pub http1_options: Option<Http1Options>,
 
     /// HTTP/2 configuration.
+    #[cfg(feature = "http2")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "http2")))]
     pub http2_options: Option<Http2Options>,
 }
 
@@ -58,6 +62,8 @@ impl EmulationBuilder {
 
     /// Sets the HTTP/2 options configuration.
     #[inline]
+    #[cfg(feature = "http2")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "http2")))]
     pub fn http2_options(mut self, opts: Http2Options) -> Self {
         self.emulation.http2_options = Some(opts);
         self
@@ -105,6 +111,7 @@ impl Emulation {
                 orig_headers: OrigHeaderMap::new(),
                 tls_options: None,
                 http1_options: None,
+                #[cfg(feature = "http2")]
                 http2_options: None,
             },
         }

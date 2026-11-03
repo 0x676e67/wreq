@@ -14,9 +14,9 @@ use http_body::{Body as HttpBody, Frame};
 use http_body_util::{BodyExt, Collected};
 #[cfg(feature = "charset")]
 use mime::Mime;
+use netty::ext::ReasonPhrase;
 #[cfg(feature = "json")]
 use serde::de::DeserializeOwned;
-use wreq_proto::ext::ReasonPhrase;
 
 #[cfg(feature = "cookies")]
 use crate::cookie;

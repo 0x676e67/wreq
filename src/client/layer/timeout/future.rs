@@ -6,8 +6,8 @@ use std::{
 };
 
 use http::Response;
+use netty::rt::Sleep;
 use pin_project_lite::pin_project;
-use wreq_proto::rt::Sleep;
 
 use super::body::TimeoutBody;
 use crate::{
