@@ -259,7 +259,7 @@ dependencies = [
 [[package]]
 name = "btls"
 version = "0.5.6"
-source = "git+https://github.com/0x676e67/btls?rev=e8ff52e92998dda9274953c59d32c2a56a5862f6#e8ff52e92998dda9274953c59d32c2a56a5862f6"
+source = "git+https://github.com/0x676e67/btls?rev=5ec1c113a03626a5877b34dd6d2ea8d440897a91#5ec1c113a03626a5877b34dd6d2ea8d440897a91"
 dependencies = [
  "bitflags",
  "btls-sys",
@@ -271,7 +271,7 @@ dependencies = [
 [[package]]
 name = "btls-sys"
 version = "0.5.6"
-source = "git+https://github.com/0x676e67/btls?rev=e8ff52e92998dda9274953c59d32c2a56a5862f6#e8ff52e92998dda9274953c59d32c2a56a5862f6"
+source = "git+https://github.com/0x676e67/btls?rev=5ec1c113a03626a5877b34dd6d2ea8d440897a91#5ec1c113a03626a5877b34dd6d2ea8d440897a91"
 dependencies = [
  "bindgen",
  "cmake",
@@ -1446,7 +1446,7 @@ dependencies = [
 [[package]]
 name = "http2"
 version = "0.5.20"
-source = "git+https://github.com/0x676e67/http2?branch=master#fb5bf8bdbf3e9d9aad7073759a6f06f47373342e"
+source = "git+https://github.com/0x676e67/http2?rev=fb5bf8bdbf3e9d9aad7073759a6f06f47373342e#fb5bf8bdbf3e9d9aad7073759a6f06f47373342e"
 dependencies = [
  "atomic-waker",
  "bytes",
@@ -3166,7 +3166,7 @@ dependencies = [
 [[package]]
 name = "tokio-btls"
 version = "0.5.6"
-source = "git+https://github.com/0x676e67/btls?rev=e8ff52e92998dda9274953c59d32c2a56a5862f6#e8ff52e92998dda9274953c59d32c2a56a5862f6"
+source = "git+https://github.com/0x676e67/btls?rev=5ec1c113a03626a5877b34dd6d2ea8d440897a91#5ec1c113a03626a5877b34dd6d2ea8d440897a91"
 dependencies = [
  "btls",
  "btls-sys",
