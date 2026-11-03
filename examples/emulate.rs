@@ -2,7 +2,7 @@ use wreq::{
     Client, Emulation,
     header::{self, HeaderMap, HeaderValue, OrigHeaderMap},
     http2::{Http2Options, PseudoId, PseudoOrder},
-    tls::{AlpnProtocol, TlsOptions, TlsVersion},
+    tls::{AlpnProtocol, Tls13Cipher, TlsOptions, TlsVersion},
 };
 
 macro_rules! join {
@@ -23,9 +23,6 @@ async fn main() -> wreq::Result<()> {
         .curves_list(join!(":", "X25519", "P-256", "P-384"))
         .cipher_list(join!(
             ":",
-            "TLS_AES_128_GCM_SHA256",
-            "TLS_AES_256_GCM_SHA384",
-            "TLS_CHACHA20_POLY1305_SHA256",
             "TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256",
             "TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384",
             "TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256",
@@ -33,6 +30,11 @@ async fn main() -> wreq::Result<()> {
             "TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384",
             "TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256"
         ))
+        .tls13_cipher_list(vec![
+            Tls13Cipher::AES_128_GCM_SHA256,
+            Tls13Cipher::AES_256_GCM_SHA384,
+            Tls13Cipher::CHACHA20_POLY1305_SHA256,
+        ])
         .sigalgs_list(join!(
             ":",
             "ecdsa_secp256r1_sha256",

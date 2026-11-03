@@ -36,6 +36,7 @@ where
     header
 }
 
+#[cfg(any(feature = "tracing", feature = "multipart"))]
 pub(crate) fn fast_random() -> u64 {
     use std::{
         cell::Cell,
