@@ -2,9 +2,9 @@
 //!
 //! [`RuntimeHandle`] connects the public [`Runtime`] contract to the executor and
 //! timer traits required by the protocol implementation and, with HTTP/3, to the
-//! QUIC runtime. Generic protocol tasks are boxed at this boundary; [`BoxSleep`]
-//! transfers its existing allocation. The runtime is its own [`Timer`], so every
-//! protocol layer shares one executor and clock.
+//! QUIC runtime. Generic protocol tasks are boxed at this boundary; protocol timers
+//! reuse the [`BoxSleep`] allocation, and each QUIC connection boxes its one timer.
+//! The runtime is its own [`Timer`], so every protocol layer shares one executor and clock.
 
 use std::{
     future::Future,
@@ -119,7 +119,7 @@ impl rt::Timer for RuntimeHandle {
 impl ::quic::Runtime for RuntimeHandle {
     #[inline]
     fn new_timer(&self, deadline: Instant) -> Pin<Box<dyn ::quic::AsyncTimer>> {
-        Timer::sleep_until(self, deadline).into_quic()
+        Box::pin(Timer::sleep_until(self, deadline))
     }
 
     #[inline]

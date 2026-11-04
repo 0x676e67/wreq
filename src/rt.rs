@@ -123,15 +123,8 @@ pub trait Sleep: Future<Output = ()> + Send + Sync {
 /// Moving this handle keeps the underlying future pinned; dropping it cancels the wait.
 /// Construction adapts and boxes the concrete sleep in one allocation.
 pub struct BoxSleep {
-    inner: Pin<Box<dyn ProtocolSleep>>,
+    inner: Pin<Box<dyn netty::rt::Sleep>>,
 }
-
-/// Object type behind [`BoxSleep`]; with HTTP/3 it also serves as a QUIC timer.
-/// Protocol layers upcast the same allocation to the interface they drive.
-#[cfg(feature = "http3")]
-trait ProtocolSleep: netty::rt::Sleep + ::quic::AsyncTimer {}
-#[cfg(not(feature = "http3"))]
-trait ProtocolSleep: netty::rt::Sleep {}
 
 pin_project! {
     /// Adapts a concrete sleep before boxing it for the protocol timer interface.
@@ -167,17 +160,11 @@ impl BoxSleep {
     /// Sets a new deadline, including after completion, without replacing the outer allocation.
     #[inline]
     pub fn reset(&mut self, deadline: Instant) {
-        netty::rt::Sleep::reset(self.inner.as_mut(), deadline);
+        self.inner.as_mut().reset(deadline);
     }
 
     #[inline]
     fn into_inner(self) -> Pin<Box<dyn netty::rt::Sleep>> {
-        self.inner
-    }
-
-    #[cfg(feature = "http3")]
-    #[inline]
-    pub(crate) fn into_quic(self) -> Pin<Box<dyn ::quic::AsyncTimer>> {
         self.inner
     }
 }
@@ -187,7 +174,26 @@ impl Future for BoxSleep {
 
     #[inline]
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<()> {
-        Future::poll(self.get_mut().inner.as_mut(), cx)
+        self.get_mut().inner.as_mut().poll(cx)
+    }
+}
+
+#[cfg(feature = "http3")]
+impl ::quic::AsyncTimer for BoxSleep {
+    #[inline]
+    fn reset(self: Pin<&mut Self>, deadline: Instant) {
+        self.get_mut().reset(deadline);
+    }
+
+    #[inline]
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<()> {
+        Future::poll(self, cx)
+    }
+}
+
+impl Debug for BoxSleep {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        f.debug_struct("BoxSleep").finish_non_exhaustive()
     }
 }
 
@@ -206,26 +212,5 @@ impl<S: Sleep> netty::rt::Sleep for SleepAdapter<S> {
     #[inline]
     fn reset(self: Pin<&mut Self>, deadline: Instant) {
         self.project().inner.reset(deadline);
-    }
-}
-
-#[cfg(feature = "http3")]
-impl<S: Sleep + 'static> ::quic::AsyncTimer for SleepAdapter<S> {
-    #[inline]
-    fn reset(self: Pin<&mut Self>, deadline: Instant) {
-        self.project().inner.reset(deadline);
-    }
-
-    #[inline]
-    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<()> {
-        self.project().inner.poll(cx)
-    }
-}
-
-impl<S: Sleep + 'static> ProtocolSleep for SleepAdapter<S> {}
-
-impl<S> Debug for SleepAdapter<S> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        f.debug_struct("SleepAdapter").finish_non_exhaustive()
     }
 }
