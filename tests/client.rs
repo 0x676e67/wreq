@@ -2081,12 +2081,12 @@ async fn dns_resolution_failure_is_dns_error() {
 
 #[tokio::test]
 async fn runtime_resolver_is_used_without_dns_configuration() {
-    use std::net::SocketAddr;
+    use std::{net::SocketAddr, time::Instant};
 
     use futures_util::future::BoxFuture;
     use wreq::{
         dns::{Addrs, Name, Resolve, Resolving},
-        rt::{Connecting, Runtime, Timer, tokio::TokioRuntime},
+        rt::{BoxSleep, Connecting, Runtime, Timer, tokio::TokioRuntime},
     };
 
     #[derive(Clone, Debug)]
@@ -2095,11 +2095,21 @@ async fn runtime_resolver_is_used_without_dns_configuration() {
         lookups: Arc<AtomicUsize>,
     }
 
-    impl Runtime for SelectedRuntime {
-        fn new_timer(&self) -> Arc<dyn Timer> {
-            Arc::new(TokioRuntime)
+    impl Timer for SelectedRuntime {
+        fn sleep(&self, duration: Duration) -> BoxSleep {
+            TokioRuntime.sleep(duration)
         }
 
+        fn sleep_until(&self, deadline: Instant) -> BoxSleep {
+            TokioRuntime.sleep_until(deadline)
+        }
+
+        fn now(&self) -> Instant {
+            TokioRuntime.now()
+        }
+    }
+
+    impl Runtime for SelectedRuntime {
         fn execute(&self, future: BoxFuture<'static, ()>) {
             TokioRuntime.execute(future);
         }
@@ -2115,11 +2125,6 @@ async fn runtime_resolver_is_used_without_dns_configuration() {
 
         fn resolver(&self) -> Arc<dyn Resolve> {
             Arc::new(self.clone())
-        }
-
-        #[cfg(feature = "http3")]
-        fn quic(&self) -> Arc<dyn quic::Runtime> {
-            Arc::new(quic::TokioRuntime)
         }
     }
 

@@ -29,17 +29,14 @@ use crate::dns::Resolve;
 
 /// Runtime facilities selected when constructing a client.
 ///
-/// Supplies background execution, timers, socket I/O and a default DNS resolver.
-/// Blocking DNS lookups should be offloaded by the resolver implementation.
+/// Supplies background execution, timers through [`Timer`], socket I/O and a default
+/// DNS resolver. Blocking DNS lookups should be offloaded by the resolver implementation.
 /// Callers can replace the resolver with
 /// [`ClientBuilder::dns_resolver`](crate::ClientBuilder::dns_resolver).
-pub trait Runtime: Send + Sync + Debug + 'static {
+pub trait Runtime: Timer + Send + Sync + Debug + 'static {
     /// Schedules a task to run in the background.
+    #[track_caller]
     fn execute(&self, fut: BoxFuture<'static, ()>);
-
-    /// Returns the timer provider used by this runtime.
-    /// Implementations may return a shared provider for reuse across timer contexts.
-    fn new_timer(&self) -> Arc<dyn Timer>;
 
     /// Returns the resolver used unless the client builder overrides DNS.
     fn resolver(&self) -> Arc<dyn Resolve>;
@@ -52,9 +49,19 @@ pub trait Runtime: Send + Sync + Debug + 'static {
     #[cfg(unix)]
     fn connect_unix(&self, path: Arc<std::path::Path>) -> Connecting;
 
-    /// Returns the QUIC runtime required when HTTP/3 is enabled.
+    /// Registers a bound, nonblocking UDP socket for HTTP/3 over QUIC.
+    /// Defaults to an [`Unsupported`](io::ErrorKind::Unsupported) error, which fails
+    /// HTTP/3 connections without affecting HTTP/1 or HTTP/2.
     #[cfg(feature = "http3")]
-    fn quic(&self) -> Arc<dyn quic::Runtime>;
+    fn udp_socket(
+        &self,
+        _socket: std::net::UdpSocket,
+    ) -> io::Result<Box<dyn ::quic::AsyncUdpSocket>> {
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "runtime does not support UDP sockets",
+        ))
+    }
 }
 
 impl_into_shared!(
@@ -116,8 +123,15 @@ pub trait Sleep: Future<Output = ()> + Send + Sync {
 /// Moving this handle keeps the underlying future pinned; dropping it cancels the wait.
 /// Construction adapts and boxes the concrete sleep in one allocation.
 pub struct BoxSleep {
-    inner: Pin<Box<dyn netty::rt::Sleep>>,
+    inner: Pin<Box<dyn ProtocolSleep>>,
 }
+
+/// Object type behind [`BoxSleep`]; with HTTP/3 it also serves as a QUIC timer.
+/// Protocol layers upcast the same allocation to the interface they drive.
+#[cfg(feature = "http3")]
+trait ProtocolSleep: netty::rt::Sleep + ::quic::AsyncTimer {}
+#[cfg(not(feature = "http3"))]
+trait ProtocolSleep: netty::rt::Sleep {}
 
 pin_project! {
     /// Adapts a concrete sleep before boxing it for the protocol timer interface.
@@ -153,11 +167,17 @@ impl BoxSleep {
     /// Sets a new deadline, including after completion, without replacing the outer allocation.
     #[inline]
     pub fn reset(&mut self, deadline: Instant) {
-        self.inner.as_mut().reset(deadline);
+        netty::rt::Sleep::reset(self.inner.as_mut(), deadline);
     }
 
     #[inline]
     fn into_inner(self) -> Pin<Box<dyn netty::rt::Sleep>> {
+        self.inner
+    }
+
+    #[cfg(feature = "http3")]
+    #[inline]
+    pub(crate) fn into_quic(self) -> Pin<Box<dyn ::quic::AsyncTimer>> {
         self.inner
     }
 }
@@ -167,7 +187,7 @@ impl Future for BoxSleep {
 
     #[inline]
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<()> {
-        self.get_mut().inner.as_mut().poll(cx)
+        Future::poll(self.get_mut().inner.as_mut(), cx)
     }
 }
 
@@ -186,5 +206,26 @@ impl<S: Sleep> netty::rt::Sleep for SleepAdapter<S> {
     #[inline]
     fn reset(self: Pin<&mut Self>, deadline: Instant) {
         self.project().inner.reset(deadline);
+    }
+}
+
+#[cfg(feature = "http3")]
+impl<S: Sleep + 'static> ::quic::AsyncTimer for SleepAdapter<S> {
+    #[inline]
+    fn reset(self: Pin<&mut Self>, deadline: Instant) {
+        self.project().inner.reset(deadline);
+    }
+
+    #[inline]
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<()> {
+        self.project().inner.poll(cx)
+    }
+}
+
+impl<S: Sleep + 'static> ProtocolSleep for SleepAdapter<S> {}
+
+impl<S> Debug for SleepAdapter<S> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        f.debug_struct("SleepAdapter").finish_non_exhaustive()
     }
 }

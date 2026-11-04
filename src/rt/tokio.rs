@@ -59,11 +59,6 @@ impl Timer for TokioRuntime {
 
 impl super::Runtime for TokioRuntime {
     #[inline]
-    fn new_timer(&self) -> Arc<dyn Timer> {
-        Arc::new(*self)
-    }
-
-    #[inline]
     fn execute(&self, task: BoxFuture<'static, ()>) {
         ::tokio::spawn(task);
     }
@@ -98,8 +93,12 @@ impl super::Runtime for TokioRuntime {
 
     #[inline]
     #[cfg(feature = "http3")]
-    fn quic(&self) -> Arc<dyn quic::Runtime> {
-        Arc::new(quic::TokioRuntime)
+    fn udp_socket(
+        &self,
+        socket: std::net::UdpSocket,
+    ) -> io::Result<Box<dyn ::quic::AsyncUdpSocket>> {
+        use ::quic::Runtime as _;
+        ::quic::TokioRuntime.wrap_udp_socket(socket)
     }
 }
 

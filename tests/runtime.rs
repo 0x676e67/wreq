@@ -1,4 +1,4 @@
-#![cfg(all(feature = "compio-rt", not(feature = "http3")))]
+#![cfg(feature = "compio-rt")]
 
 mod support;
 

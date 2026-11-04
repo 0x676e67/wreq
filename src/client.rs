@@ -330,7 +330,7 @@ impl Client {
     }
 
     /// Creates a client builder using Compio for tasks, timers and DNS.
-    #[cfg(all(feature = "compio-rt", not(feature = "http3")))]
+    #[cfg(feature = "compio-rt")]
     pub fn builder_compio() -> ClientBuilder {
         Self::builder(crate::rt::compio::CompioRuntime)
     }

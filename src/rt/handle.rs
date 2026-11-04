@@ -1,9 +1,10 @@
 //! Shared runtime ownership and private protocol runtime adapters.
 //!
 //! [`RuntimeHandle`] connects the public [`Runtime`] contract to the executor and
-//! timer traits required by the protocol implementation. Generic protocol tasks
-//! are boxed at this boundary; [`BoxSleep`] transfers its existing allocation.
-//! Timer providers come from [`Runtime::new_timer`], which controls their sharing.
+//! timer traits required by the protocol implementation and, with HTTP/3, to the
+//! QUIC runtime. Generic protocol tasks are boxed at this boundary; [`BoxSleep`]
+//! transfers its existing allocation. The runtime is its own [`Timer`], so every
+//! protocol layer shares one executor and clock.
 
 use std::{
     future::Future,
@@ -23,9 +24,8 @@ use super::{BoxSleep, IntoRuntime, Runtime, Timer};
 /// Created with the client builder, this handle keeps the runtime alive while
 /// services or background tasks retain a clone. Clones share the same `Arc`.
 ///
-/// [`Deref`] exposes the runtime's capabilities. Timer operations obtain a provider
-/// on demand; callers can retain the returned `Arc<dyn Timer>` independently.
-#[derive(Clone)]
+/// [`Deref`] exposes the runtime's capabilities, and timer operations forward to it.
+#[derive(Clone, Debug)]
 pub(crate) struct RuntimeHandle(Arc<dyn Runtime>);
 
 impl RuntimeHandle {
@@ -35,19 +35,25 @@ impl RuntimeHandle {
         Self(runtime.into_shared())
     }
 
-    /// Obtains a timer provider through [`Runtime::new_timer`].
-    /// The runtime decides whether to allocate or reuse a provider; callers may
-    /// retain and clone the returned `Arc` for repeated timer operations.
+    /// Shares the runtime as a timer provider by cloning the existing `Arc`.
     #[inline]
     pub(crate) fn timer(&self) -> Arc<dyn Timer> {
-        self.0.new_timer()
+        self.0.clone()
     }
 
     /// Submits an already boxed task to the selected runtime.
     /// Forwards ownership without another allocation or a handle clone.
     #[inline]
+    #[track_caller]
     pub(crate) fn execute(&self, fut: BoxFuture<'static, ()>) {
         self.0.execute(fut);
+    }
+
+    /// Shares this handle as the runtime of a QUIC endpoint.
+    #[cfg(feature = "http3")]
+    #[inline]
+    pub(crate) fn quic(&self) -> Arc<dyn ::quic::Runtime> {
+        Arc::new(self.clone())
     }
 }
 
@@ -63,17 +69,17 @@ impl Deref for RuntimeHandle {
 impl Timer for RuntimeHandle {
     #[inline]
     fn sleep(&self, duration: Duration) -> BoxSleep {
-        self.timer().sleep(duration)
+        self.0.sleep(duration)
     }
 
     #[inline]
     fn sleep_until(&self, deadline: Instant) -> BoxSleep {
-        self.timer().sleep_until(deadline)
+        self.0.sleep_until(deadline)
     }
 
     #[inline]
     fn now(&self) -> Instant {
-        self.timer().now()
+        self.0.now()
     }
 }
 
@@ -106,5 +112,31 @@ impl rt::Timer for RuntimeHandle {
     #[inline]
     fn reset(&self, sleep: &mut Pin<Box<dyn rt::Sleep>>, deadline: Instant) {
         sleep.as_mut().reset(deadline);
+    }
+}
+
+#[cfg(feature = "http3")]
+impl ::quic::Runtime for RuntimeHandle {
+    #[inline]
+    fn new_timer(&self, deadline: Instant) -> Pin<Box<dyn ::quic::AsyncTimer>> {
+        Timer::sleep_until(self, deadline).into_quic()
+    }
+
+    #[inline]
+    fn spawn(&self, future: Pin<Box<dyn Future<Output = ()> + Send>>) {
+        self.execute(future);
+    }
+
+    #[inline]
+    fn wrap_udp_socket(
+        &self,
+        socket: std::net::UdpSocket,
+    ) -> std::io::Result<Box<dyn ::quic::AsyncUdpSocket>> {
+        self.0.udp_socket(socket)
+    }
+
+    #[inline]
+    fn now(&self) -> Instant {
+        Timer::now(self)
     }
 }

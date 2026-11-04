@@ -178,8 +178,7 @@ impl QuicConnector {
         }
         Ok(self
             .runtime
-            .quic()
-            .wrap_udp_socket(self.bind_socket(&options, remote)?)?)
+            .udp_socket(self.bind_socket(&options, remote)?)?)
     }
 
     /// Merges request bindings over the client's per field, as TCP connections do.
