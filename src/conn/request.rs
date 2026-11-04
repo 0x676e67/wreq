@@ -320,27 +320,7 @@ mod tests {
         assert_eq!(rerouted.key(), changed.key());
 
         // Inherited and explicit choices keep their meaning through proxy routing.
-        #[allow(
-            clippy::single_element_loop,
-            reason = "Protocol cases depend on enabled features"
-        )]
-        for (client, protocol, resolved) in [
-            (Protocol::Http1, None, Protocol::Http1),
-            #[cfg(feature = "http2")]
-            (Protocol::Http2, None, Protocol::Http2),
-            #[cfg(feature = "http2")]
-            (Protocol::Http2, Some(Protocol::Auto), Protocol::Auto),
-            #[cfg(feature = "http3")]
-            (Protocol::Http3, None, Protocol::Http3),
-            #[cfg(feature = "http3")]
-            (Protocol::Http3, Some(Protocol::Auto), Protocol::Auto),
-            #[cfg(feature = "http3")]
-            (Protocol::Http3, Some(Protocol::Http1), Protocol::Http1),
-            #[cfg(all(feature = "http2", feature = "http3"))]
-            (Protocol::Http3, Some(Protocol::Http2), Protocol::Http2),
-            #[cfg(feature = "http3")]
-            (Protocol::Auto, Some(Protocol::Http3), Protocol::Http3),
-        ] {
+        let assert_rerouted = |client: Protocol, protocol: Option<Protocol>, resolved: Protocol| {
             let request = ConnectRequest::new(
                 changed.uri(),
                 protocol,
@@ -356,7 +336,22 @@ mod tests {
             assert_eq!(rerouted.protocol(), protocol);
             assert_eq!(rerouted.resolved_protocol(), resolved);
             assert_eq!(rerouted.key(), key);
+        };
+        assert_rerouted(Protocol::Http1, None, Protocol::Http1);
+        #[cfg(feature = "http2")]
+        {
+            assert_rerouted(Protocol::Http2, None, Protocol::Http2);
+            assert_rerouted(Protocol::Http2, Some(Protocol::Auto), Protocol::Auto);
         }
+        #[cfg(feature = "http3")]
+        {
+            assert_rerouted(Protocol::Http3, None, Protocol::Http3);
+            assert_rerouted(Protocol::Http3, Some(Protocol::Auto), Protocol::Auto);
+            assert_rerouted(Protocol::Http3, Some(Protocol::Http1), Protocol::Http1);
+            assert_rerouted(Protocol::Auto, Some(Protocol::Http3), Protocol::Http3);
+        }
+        #[cfg(all(feature = "http2", feature = "http3"))]
+        assert_rerouted(Protocol::Http3, Some(Protocol::Http2), Protocol::Http2);
 
         // Equal hashes still compare the counted values.
         let mut collision = changed.key();

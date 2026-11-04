@@ -497,15 +497,7 @@ mod tests {
             ipv4_address: Some(Ipv4Addr::UNSPECIFIED),
             ..Default::default()
         })));
-        #[allow(
-            clippy::single_element_loop,
-            reason = "Transports depend on enabled features"
-        )]
-        for transport in [
-            SessionTransport::Stream,
-            #[cfg(feature = "http3")]
-            SessionTransport::Quic,
-        ] {
+        let assert_bindings = |transport: SessionTransport| {
             let inherited_key = SessionKey::new(&inherited, &client_config_set, transport);
             assert!(inherited_key == SessionKey::new(&equal, &client_config_set, transport));
             assert!(inherited_key != SessionKey::new(&changed, &client_config_set, transport));
@@ -515,6 +507,9 @@ mod tests {
                 Overrides::for_context(req.config_set().clone(), &client_config_set, transport)
             };
             assert!(context(&inherited) == context(&changed));
-        }
+        };
+        assert_bindings(SessionTransport::Stream);
+        #[cfg(feature = "http3")]
+        assert_bindings(SessionTransport::Quic);
     }
 }
